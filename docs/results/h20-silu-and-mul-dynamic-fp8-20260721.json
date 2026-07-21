@@ -1,0 +1,168 @@
+{
+  "project": "loom-kernels",
+  "operator": "silu_and_mul_dynamic_per_block_fp8",
+  "date": "2026-07-21",
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "driver": "535.161.08",
+    "cuda_compiler": "13.1",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "vllm": "0.24.0",
+    "adapter_backend": "cpp-dispatch"
+  },
+  "contract": {
+    "input": "contiguous FP16 or BF16 [rows, 2 * width] with split-half gate/up layout",
+    "output": "FP8 E4M3FN [rows, width]",
+    "scales": "F32 logical [rows, width / group_size], row-major publicly and row/group-major through the vLLM-compatible operator",
+    "group_size": [64, 128],
+    "quantization": "symmetric dynamic per-block with qmax 448 and minimum scale 1 / (448 * 512)",
+    "arithmetic": "SiLU activation and multiplication remain F32 until direct FP8 conversion",
+    "optional_scale_upper_bound": "supported by the vLLM-compatible operator",
+    "stream": "caller-selected CUDA stream; PyTorch uses the current stream",
+    "aliasing": "input, output, and scales must not overlap"
+  },
+  "implementation": {
+    "mapping": "one CUDA block per flattened row/group pair",
+    "threads": "one thread per element; 64 or 128 threads",
+    "reduction": "CUB block absmax reduction",
+    "fusion": "one launch; fused value remains in a register across scale reduction",
+    "surfaces": [
+      "Rust contract and CPU oracle",
+      "raw C ABI",
+      "safe Rust CUDA backend",
+      "allocating and caller-owned PyTorch APIs",
+      "vLLM-compatible mutable dispatcher schema",
+      "opt-in vLLM 0.24 activation-quant fusion registration"
+    ]
+  },
+  "validation": {
+    "rust_core_tests": "17 passed",
+    "remote_cuda_feature_clippy": "passed with -D warnings",
+    "python_suite": "61 passed",
+    "focused_activation_and_vllm_tests": "27 passed",
+    "vllm_exact_comparison": {
+      "input_dtypes": ["f16", "bf16"],
+      "group_sizes": [64, 128],
+      "representative_shape_rows_by_width": [8, 11008],
+      "small_shapes_rows_by_width": [[3, 128], [2, 256]],
+      "higher_rank_prefix": "passed",
+      "row_major_scales": "passed",
+      "group_major_scales": "passed",
+      "optional_scale_upper_bound": "passed",
+      "output_byte_mismatches": 0,
+      "maximum_scale_abs_error": 0.0
+    },
+    "external_stream": "passed",
+    "torch_library_opcheck": "passed schema and FakeTensor checks",
+    "torch_compile": "unchecked and auto-functionalized mutable boundaries passed fullgraph compilation",
+    "cuda_graph_capture_replay": "passed",
+    "vllm_fusion_registration": "dynamic symmetric FP8 group-64 and group-128 entries mapped to Loom",
+    "vllm_pattern_rewrite": "official dynamic group-128 activation-quant pattern matched once and emitted Loom as the auto-functionalized mutable target"
+  },
+  "raw_cuda": {
+    "protocol": "Cargo bench, CUDA events, CPU oracle before timing; 100 warmups, 9 samples, 1000 launches per sample",
+    "shape_rows_by_width": [8, 11008],
+    "cases": [
+      {
+        "dtype": "f16",
+        "group_size": 64,
+        "minimum_us": 3.263040065765381,
+        "median_us": 3.2680959701538086,
+        "maximum_us": 3.2702720165252686,
+        "output_byte_mismatches": 0,
+        "maximum_scale_abs_error": 0.0,
+        "maximum_dequantized_abs_error": 0.0
+      },
+      {
+        "dtype": "f16",
+        "group_size": 128,
+        "minimum_us": 3.052191972732544,
+        "median_us": 3.059648036956787,
+        "maximum_us": 3.064255952835083,
+        "output_byte_mismatches": 0,
+        "maximum_scale_abs_error": 0.0,
+        "maximum_dequantized_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "group_size": 64,
+        "minimum_us": 3.2586240768432617,
+        "median_us": 3.2616639137268066,
+        "maximum_us": 3.2807679176330566,
+        "output_byte_mismatches": 0,
+        "maximum_scale_abs_error": 0.0,
+        "maximum_dequantized_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "group_size": 128,
+        "minimum_us": 2.9466240406036377,
+        "median_us": 2.9523520469665527,
+        "maximum_us": 2.9847359657287598,
+        "output_byte_mismatches": 0,
+        "maximum_scale_abs_error": 0.0,
+        "maximum_dequantized_abs_error": 0.0
+      }
+    ]
+  },
+  "vllm_named_baseline": {
+    "protocol": "same preallocated PyTorch C++ custom-operator boundary, one second BF16 GEMM warmup per provider, 100 operator warmups, 15 samples, 2000 launches per sample",
+    "dtype": "bf16",
+    "shape_rows_by_width": [8, 11008],
+    "group_size": 128,
+    "runs": [
+      {
+        "provider_order": "loom-vllm_fused-vllm_composed",
+        "loom_eager_median_us": 4.893616199493408,
+        "vllm_fused_eager_median_us": 5.949488162994385,
+        "loom_eager_speedup_vs_vllm_fused": 1.2157651766009523,
+        "loom_eager_latency_reduction_pct_vs_vllm_fused": 17.74727395994271,
+        "loom_graph_median_us": 2.7339038848876953,
+        "vllm_fused_graph_median_us": 2.9570560455322266,
+        "loom_graph_speedup_vs_vllm_fused": 1.081623996321911,
+        "loom_graph_latency_reduction_pct_vs_vllm_fused": 7.546429868371574,
+        "vllm_composed_eager_median_us": 11.558416366577148,
+        "loom_eager_speedup_vs_vllm_composed": 2.3619376541572032,
+        "vllm_composed_graph_median_us": 6.1079840660095215,
+        "loom_graph_speedup_vs_vllm_composed": 2.2341619614986676
+      },
+      {
+        "provider_order": "vllm_composed-vllm_fused-loom",
+        "loom_eager_median_us": 5.287471771240234,
+        "vllm_fused_eager_median_us": 6.5103840827941895,
+        "loom_eager_speedup_vs_vllm_fused": 1.231284887080751,
+        "loom_eager_latency_reduction_pct_vs_vllm_fused": 18.78402711732322,
+        "loom_graph_median_us": 2.8539040088653564,
+        "vllm_fused_graph_median_us": 2.9600799083709717,
+        "loom_graph_speedup_vs_vllm_fused": 1.0372037388699098,
+        "loom_graph_latency_reduction_pct_vs_vllm_fused": 3.5869267990149445,
+        "vllm_composed_eager_median_us": 12.176095962524414,
+        "loom_eager_speedup_vs_vllm_composed": 2.3028200412819184,
+        "vllm_composed_graph_median_us": 6.1064958572387695,
+        "loom_graph_speedup_vs_vllm_composed": 2.1396991063012543
+      }
+    ],
+    "fused_correctness": {
+      "output_byte_mismatches": 0,
+      "maximum_scale_abs_error": 0.0,
+      "maximum_dequantized_abs_error": 0.0
+    },
+    "composed_semantic_difference": {
+      "reason": "standalone vLLM SiLU rounds a BF16 intermediate before per-group quantization",
+      "output_byte_mismatches": 2789,
+      "maximum_scale_abs_error": 0.00008544418960809708,
+      "maximum_scale_relative_error": 0.006506904494017363,
+      "maximum_dequantized_abs_error": 0.2870016098022461
+    },
+    "interpretation": "Against the semantically identical vLLM fused operator, Loom's advantage is order-stable: 1.216-1.231x eager speedup ratio (17.7-18.8% lower latency) and 1.037-1.082x CUDA Graph ratio (3.6-7.5% lower latency). The 2.14-2.36x composed-path ratios include both launch fusion and different intermediate-rounding semantics."
+  },
+  "engine_gate": {
+    "compiler_boundary": "vLLM 0.24 fusion-table registration, official pattern rewrite, and auto-functionalized torch.compile path passed",
+    "real_fp8_model": "not run",
+    "interpretation": "compiler integration is proven, but a real quantized model must invoke the fusion before any engine or end-to-end claim"
+  },
+  "claim": "Loom implements a Rust/CUDA/PyTorch/vLLM-compatible fused SiLU-and-Mul plus dynamic per-block FP8 operator. H20 evidence closes contract, exact correctness, stream, compilation, CUDA Graph, and named-baseline gates with an order-stable operator-level advantage; real FP8-model and end-to-end gates remain open."
+}

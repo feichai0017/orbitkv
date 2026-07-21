@@ -1,23 +1,24 @@
 [build-system]
-requires = ["setuptools>=75"]
+requires = ["setuptools>=68"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "loom-attention-engine"
+name = "loom-kernels"
 version = "2.0.0a1"
-description = "Python integration and data-path tools for the Loom attention runtime"
+description = "PyTorch and vLLM adapters for the Loom Kernels CUDA backend"
 requires-python = ">=3.10"
-license = { text = "MIT" }
-dependencies = []
+license = "MIT"
 
 [project.optional-dependencies]
-vllm = ["vllm>=0.25,<0.26"]
-cuda = ["torch>=2.4"]
-flashinfer = ["torch>=2.4", "flashinfer-python>=0.6,<0.7"]
+torch = ["torch>=2.4"]
+vllm = ["vllm>=0.24,<0.25"]
+test = ["pytest>=8"]
 
 [project.entry-points."vllm.general_plugins"]
-loom = "loom_attention.vllm_plugin:register"
+loom_kernels = "loom_kernels.vllm:register_vllm_ir"
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["loom_attention*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

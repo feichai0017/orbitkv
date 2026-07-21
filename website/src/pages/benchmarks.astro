@@ -1,0 +1,67 @@
+---
+import DocsNav from "../components/DocsNav.astro";
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { evidence, repositoryUrl } from "../data/site";
+---
+
+<SiteLayout
+  title="Evidence — Loom Kernels"
+  description="Hardware-qualified correctness and performance evidence for Loom Kernels on NVIDIA H20."
+  active="Evidence"
+>
+  <header class="page-hero">
+    <p class="eyebrow">Evidence / NVIDIA H20</p>
+    <h1>Claims with a measurement boundary.</h1>
+    <p>
+      Every reported latency names the shape, dtype, GPU, baseline, dispatcher,
+      warm-up, sample count, and correctness gate. Microbenchmarks never stand in
+      for model-level TTFT or TPOT.
+    </p>
+  </header>
+
+  <div class="docs-layout">
+    <DocsNav active="Evidence" />
+    <article class="prose">
+      <h2>Current qualified results</h2>
+      <div class="evidence-grid">
+        {evidence.map((item) => (
+          <article class="evidence-card">
+            <h3>{item.operator}</h3>
+            <span class="result">{item.result}</span>
+            <p>{item.detail}</p>
+            <small>{item.shape}</small>
+          </article>
+        ))}
+      </div>
+
+      <h2>What the ratios mean</h2>
+      <p>
+        A ratio above 1.0 is baseline latency divided by Loom latency. For
+        SiLU-and-Mul plus block FP8, the order-reversed CUDA Graph ratio of
+        1.037–1.082 corresponds to 3.6–7.5% lower operator latency. Loom and the
+        fused vLLM baseline had zero output-byte, scale, or dequantized mismatch.
+      </p>
+
+      <h2>Validation ladder</h2>
+      <ol>
+        <li>Rust contract checks and CPU oracle.</li>
+        <li>Raw CUDA correctness before event timing.</li>
+        <li>PyTorch current-stream, mutation schema, and buffer-reuse tests.</li>
+        <li><code>torch.compile</code> and CUDA Graph capture/replay.</li>
+        <li>Named vLLM comparison with forward and reverse provider order.</li>
+        <li>Real engine and end-to-end workload gates, tracked separately.</li>
+      </ol>
+
+      <h2>Reproduce</h2>
+      <pre><code>PYTHONPATH=python/src \
+python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
+  --dtype bf16 --rows 8 --width 11008 --group-size 128 \
+  --warmup 100 --iterations 2000 --samples 15 \
+  --provider-order forward</code></pre>
+      <p>
+        Machine-readable reports are versioned in{" "}
+        <a href={`${repositoryUrl}/tree/main/docs/results`}>docs/results</a>.
+      </p>
+    </article>
+  </div>
+</SiteLayout>

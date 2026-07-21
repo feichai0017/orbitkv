@@ -1,0 +1,26 @@
+---
+interface Props {
+  active: "Start" | "Operators" | "Integration" | "Evidence";
+}
+
+const { active } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const items = [
+  { label: "Start", href: "/docs/" },
+  { label: "Operators", href: "/docs/operators/" },
+  { label: "Integration", href: "/docs/integration/" },
+  { label: "Evidence", href: "/benchmarks/" },
+];
+---
+
+<aside class="docs-sidebar" aria-label="Documentation">
+  <p>Documentation</p>
+  {items.map((item) => (
+    <a
+      href={`${base}${item.href}`}
+      aria-current={active === item.label ? "page" : undefined}
+    >
+      {item.label}
+    </a>
+  ))}
+</aside>

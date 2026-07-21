@@ -1,0 +1,79 @@
+---
+import DocsNav from "../../components/DocsNav.astro";
+import SiteLayout from "../../layouts/SiteLayout.astro";
+import { repositoryUrl } from "../../data/site";
+---
+
+<SiteLayout
+  title="Integration — Loom Kernels"
+  description="Use Loom Kernels through Rust, PyTorch current-stream operators, or vLLM 0.24 integration points."
+  active="Integration"
+>
+  <header class="page-hero">
+    <p class="eyebrow">Documentation / Integration</p>
+    <h1>Adapters translate. Engines decide.</h1>
+    <p>
+      Loom does not own scheduling, weights, KV lifetime, or serving policy.
+      Adapters preserve the engine's tensors, mutation schema, and current CUDA
+      stream while dispatching a supported operator contract.
+    </p>
+  </header>
+
+  <div class="docs-layout">
+    <DocsNav active="Integration" />
+    <article class="prose">
+      <h2>Build the Python bridge</h2>
+      <pre><code>python3 -m venv .venv-vllm
+.venv-vllm/bin/pip install -e 'python[vllm,test]'
+
+CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
+  .venv-vllm/bin/python python/build_native.py
+
+CUDA_HOME=/usr/local/cuda-13.1 \
+  .venv-vllm/bin/python python/build_torch_extension.py</code></pre>
+      <p>
+        The first step builds the CUDA shared library. The second creates the
+        small C++ dispatcher shim used by hot paths. PyTorch calls launch on its
+        current CUDA stream and caller-owned buffers can be reused.
+      </p>
+
+      <h2>Direct PyTorch use</h2>
+      <pre><code>from loom_kernels import silu_and_mul_dynamic_fp8
+
+fp8_output, block_scales = silu_and_mul_dynamic_fp8(
+    gate_and_up_bf16,
+    group_size=128,
+)</code></pre>
+
+      <h2>vLLM Add + RMSNorm provider</h2>
+      <pre><code>from vllm import LLM
+
+engine = LLM(
+    model="/path/to/model",
+    ir_op_priority=&#123;"fused_add_rms_norm": ["loom_cuda"]&#125;,
+)</code></pre>
+      <p>
+        vLLM appends its native fallback. Loom declines unsupported tensor
+        contracts instead of copying, casting, or silently changing semantics.
+      </p>
+
+      <h2>Opt-in activation boundaries</h2>
+      <pre><code># Standalone vLLM SiluAndMul replacement
+LOOM_KERNELS_ENABLE_SILU_AND_MUL=1 python your_service.py
+
+# vLLM 0.24 dynamic block-FP8 fusion replacement
+LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8=1 python your_service.py</code></pre>
+      <p>
+        The block-FP8 replacement covers dynamic symmetric groups 64 and 128.
+        Its compiler rewrite and operator evidence are closed; a real quantized
+        model engine gate is still open.
+      </p>
+
+      <h2>Compatibility contract</h2>
+      <p>
+        Full schemas, build details, and limits live in the{" "}
+        <a href={`${repositoryUrl}/blob/main/docs/guides/vllm-ir-provider.md`}>vLLM provider guide</a>.
+      </p>
+    </article>
+  </div>
+</SiteLayout>

@@ -1,0 +1,100 @@
+{
+  "project": "loom-kernels",
+  "operator": "rms_norm",
+  "backend": "loom-cuda",
+  "dtype": "f32",
+  "date": "2026-07-21",
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "gpu_memory_mib": 97871,
+    "driver": "535.161.08",
+    "cuda_compiler": "13.1.115",
+    "rustc": "1.97.1",
+    "cargo": "1.97.1",
+    "cuda_arch": "sm_90"
+  },
+  "validation": {
+    "cpu_oracle": "loom-kernels F64-accumulation RMSNorm reference",
+    "accuracy_gate_max_abs_error": 0.00005,
+    "cuda_feature_clippy": "passed",
+    "cases": [
+      {
+        "rows": 1,
+        "hidden_size": 1,
+        "samples": 3,
+        "iterations_per_sample": 20,
+        "median_us": 3.52960005402565,
+        "max_abs_error": 2.9802322e-8,
+        "max_rel_error": 5.960472e-8
+      },
+      {
+        "rows": 3,
+        "hidden_size": 127,
+        "samples": 3,
+        "iterations_per_sample": 20,
+        "median_us": 3.070399910211563,
+        "max_abs_error": 2.3841858e-7,
+        "max_rel_error": 1.1916363e-7
+      },
+      {
+        "rows": 4,
+        "hidden_size": 768,
+        "samples": 3,
+        "iterations_per_sample": 20,
+        "median_us": 3.2127998769283295,
+        "max_abs_error": 2.3841858e-7,
+        "max_rel_error": 1.8252894e-7
+      },
+      {
+        "rows": 8,
+        "hidden_size": 4096,
+        "samples": 7,
+        "iterations_per_sample": 100,
+        "minimum_us": 7.524160146713257,
+        "median_us": 7.538880109786987,
+        "maximum_us": 7.632960081100464,
+        "max_abs_error": 4.7683716e-7,
+        "max_rel_error": 2.3322394e-7
+      },
+      {
+        "rows": 16,
+        "hidden_size": 8192,
+        "samples": 3,
+        "iterations_per_sample": 20,
+        "median_us": 13.078400492668152,
+        "max_abs_error": 4.7683716e-7,
+        "max_rel_error": 2.3874722e-7
+      },
+      {
+        "rows": 64,
+        "hidden_size": 4096,
+        "samples": 3,
+        "iterations_per_sample": 20,
+        "median_us": 7.8752003610134125,
+        "max_abs_error": 4.7683716e-7,
+        "max_rel_error": 2.3322394e-7
+      }
+    ],
+    "post_cleanup_revalidation": {
+      "rows": 8,
+      "hidden_size": 4096,
+      "samples": 7,
+      "iterations_per_sample": 100,
+      "minimum_us": 7.258880138397217,
+      "median_us": 7.2678399085998535,
+      "maximum_us": 7.2809600830078125,
+      "max_abs_error": 4.7683716e-7,
+      "max_rel_error": 2.3322394e-7,
+      "note": "Rebuilt after removing the legacy Attention translation unit and runtime. Timing variation is not claimed as an optimization."
+    }
+  },
+  "baseline": {
+    "name": "pytorch-native",
+    "status": "not-run",
+    "reason": "the forge-gas1 host Python environment does not provide torch",
+    "script": "benchmarks/pytorch_rms_norm.py"
+  },
+  "claim": "This closes F32 correctness and isolated CUDA latency bring-up only; it is not an end-to-end performance claim."
+}

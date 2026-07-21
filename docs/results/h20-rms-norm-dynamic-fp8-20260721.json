@@ -1,0 +1,123 @@
+{
+  "project": "loom-kernels",
+  "operator": "rms_norm_dynamic_per_token_fp8",
+  "date": "2026-07-21",
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "driver": "535.161.08",
+    "cuda_compiler": "13.1.115",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "vllm": "0.24.0",
+    "adapter_backend": "cpp-dispatch"
+  },
+  "contract": {
+    "inputs": "contiguous F32, FP16, or BF16 [rows, hidden_size] plus matching [hidden_size] weight",
+    "output": "FP8 E4M3FN with the input logical shape",
+    "scales": "F32 [rows, 1] where normalized_weighted_value is approximately fp8_value * scale",
+    "quantization": "symmetric dynamic per-token with qmax 448 and minimum scale 1 / (448 * 512)",
+    "rounding": "input-scalar arithmetic boundaries followed by finite-saturating FP8 conversion",
+    "stream": "caller-selected CUDA stream; PyTorch adapter uses the current stream",
+    "allocation": "safe Rust and PyTorch out variants use caller-owned output and scale buffers"
+  },
+  "implementation": {
+    "passes": 3,
+    "description": "RMS reduction, normalized weighted absmax reduction, then FP8 quantization",
+    "large_shape_threads_per_row": 1024,
+    "small_shape_behavior": "block size follows min(hidden_size, 1024) and CUB reductions receive the valid thread count",
+    "vectorization": "four input elements and four FP8 output bytes per pack when alignment permits; scalar fallback otherwise"
+  },
+  "validation": {
+    "rust_core_tests": "11 passed",
+    "python_torch_tests": "20 passed",
+    "external_stream": "passed",
+    "torch_compile": "dynamic FP8 unchecked out operator passed fullgraph compilation with bitwise vLLM output",
+    "cuda_graph_capture_replay": "passed",
+    "vllm_bitwise_comparison": {
+      "dtypes": ["f32", "f16", "bf16"],
+      "shapes": [[8, 4096], [3, 127], [2, 128]],
+      "output_byte_mismatches": 0,
+      "maximum_scale_abs_error": 0.0,
+      "maximum_scale_rel_error": 0.0
+    }
+  },
+  "raw_cuda": {
+    "protocol": "Cargo bench, CUDA events, CPU oracle before timing; no GEMM clock warmup",
+    "cases": [
+      {
+        "dtype": "f32",
+        "shape": [8, 4096],
+        "warmups": 20,
+        "samples": 5,
+        "launches_per_sample": 500,
+        "minimum_us": 3.845184087753296,
+        "median_us": 3.8474879264831543,
+        "maximum_us": 3.8495359420776367,
+        "output_byte_mismatches": 0
+      },
+      {
+        "dtype": "f16",
+        "shape": [8, 4096],
+        "warmups": 20,
+        "samples": 5,
+        "launches_per_sample": 500,
+        "minimum_us": 4.074368000030518,
+        "median_us": 4.0780158042907715,
+        "maximum_us": 4.081024169921875,
+        "output_byte_mismatches": 0
+      },
+      {
+        "dtype": "bf16",
+        "shape": [8, 4096],
+        "warmups": 100,
+        "samples": 15,
+        "launches_per_sample": 2000,
+        "minimum_us": 4.1725921630859375,
+        "median_us": 4.173696041107178,
+        "maximum_us": 4.174960136413574,
+        "output_byte_mismatches": 0
+      },
+      {
+        "dtype": "bf16",
+        "shape": [3, 127],
+        "warmups": 20,
+        "samples": 5,
+        "launches_per_sample": 500,
+        "minimum_us": 2.9112958908081055,
+        "median_us": 3.0643839836120605,
+        "maximum_us": 3.080319881439209,
+        "output_byte_mismatches": 0
+      }
+    ]
+  },
+  "vllm_named_baseline": {
+    "protocol": "same preallocated PyTorch C++ custom-operator boundary, 1 second BF16 GEMM warmup per provider, 100 operator warmups, 15 samples, 2000 launches per sample",
+    "dtype": "bf16",
+    "shape": [8, 4096],
+    "runs": [
+      {
+        "provider_order": "loom-first",
+        "loom_eager_median_us": 5.310783863067627,
+        "vllm_c_eager_median_us": 8.052495956420898,
+        "loom_eager_speedup": 1.5162537516203112,
+        "loom_graph_median_us": 4.043903827667236,
+        "vllm_c_graph_median_us": 4.273776054382324,
+        "loom_graph_speedup": 1.0568441378705318
+      },
+      {
+        "provider_order": "vllm-first",
+        "loom_eager_median_us": 5.4300642013549805,
+        "vllm_c_eager_median_us": 7.994207859039307,
+        "loom_eager_speedup": 1.4722124016589873,
+        "loom_graph_median_us": 3.9467039108276367,
+        "vllm_c_graph_median_us": 4.245920181274414,
+        "loom_graph_speedup": 1.0758142179416825
+      }
+    ],
+    "correctness": "Loom output bytes and scales were bitwise identical to vLLM in both runs",
+    "interpretation": "The operator-level advantage is order-stable: 47.2-51.6% by eager-dispatch ratio and 5.7-7.6% under CUDA Graph replay. This does not establish model-level benefit."
+  },
+  "claim": "Loom implements a vLLM-compatible fused RMSNorm plus dynamic per-token FP8 operator across Rust, CUDA, C ABI, and PyTorch. H20 evidence closes contract, correctness, named-baseline, stream, and CUDA Graph gates; a real engine workload gate remains open."
+}

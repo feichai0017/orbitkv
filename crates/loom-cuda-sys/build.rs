@@ -10,9 +10,20 @@ fn main() {
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set"));
     let cuda_dir = manifest_dir.join("../../cuda");
     let header = cuda_dir.join("include/loom_cuda.h");
-    let source = cuda_dir.join("src/attention_kernels.cu");
+    let rms_norm_source = cuda_dir.join("src/rms_norm.cu");
+    let rms_norm_quant_source = cuda_dir.join("src/rms_norm_quant.cu");
+    let add_rms_norm_source = cuda_dir.join("src/add_rms_norm.cu");
+    let silu_and_mul_source = cuda_dir.join("src/silu_and_mul.cu");
+    let silu_and_mul_quant_source = cuda_dir.join("src/silu_and_mul_quant.cu");
     println!("cargo:rerun-if-changed={}", header.display());
-    println!("cargo:rerun-if-changed={}", source.display());
+    println!("cargo:rerun-if-changed={}", rms_norm_source.display());
+    println!("cargo:rerun-if-changed={}", rms_norm_quant_source.display());
+    println!("cargo:rerun-if-changed={}", add_rms_norm_source.display());
+    println!("cargo:rerun-if-changed={}", silu_and_mul_source.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        silu_and_mul_quant_source.display()
+    );
 
     if env::var_os("CARGO_FEATURE_CUDA").is_none() {
         return;
@@ -37,7 +48,11 @@ fn main() {
         .cuda(true)
         .compiler(&nvcc)
         .include(cuda_dir.join("include"))
-        .file(&source)
+        .file(&rms_norm_source)
+        .file(&rms_norm_quant_source)
+        .file(&add_rms_norm_source)
+        .file(&silu_and_mul_source)
+        .file(&silu_and_mul_quant_source)
         .flag("-O3")
         .flag("-Xcompiler=-fPIC")
         .flag("-std=c++17")

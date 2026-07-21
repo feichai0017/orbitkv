@@ -1,31 +1,30 @@
 # Documentation
 
-## Read First
+- [Operator library design](design/operator-library.md): architecture and
+  admission gates.
+- [LLM inference operator catalog](operator-catalog.md): complete intended
+  common-operator surface, scope, priority, and current state.
+- [Roadmap](roadmap.md): prioritized operator sequence and exit criteria.
+- [Implementation status](status.md): what is implemented and validated now.
+- [vLLM IR provider guide](guides/vllm-ir-provider.md): build, load, select,
+  test, and benchmark the engine adapter.
+- [H20 F32 RMSNorm report](results/h20-rms-norm-f32-smoke-20260721.json):
+  hardware-qualified bring-up evidence.
+- [H20 FP16/BF16 RMSNorm report](results/h20-rms-norm-low-precision-20260721.json):
+  pair-vectorized and odd-size fallback evidence.
+- [H20 fused Add+RMSNorm report](results/h20-add-rms-norm-20260721.json):
+  double in-place, multi-dtype, and odd-size evidence.
+- [H20 vLLM IR integration report](results/h20-vllm-ir-add-rms-norm-20260721.json):
+  named baseline, PyTorch bridge, CUDA Graph, and engine-run evidence.
+- [H20 RMSNorm+dynamic-FP8 report](results/h20-rms-norm-dynamic-fp8-20260721.json):
+  multi-dtype bitwise compatibility, raw CUDA, and order-reversed vLLM evidence.
+- [H20 SiLU-and-Mul report](results/h20-silu-and-mul-20260721.json):
+  multi-dtype compatibility, graph parity, eager instability, and vLLM engine
+  smoke evidence.
+- [H20 SiLU-and-Mul+dynamic-block-FP8 report](results/h20-silu-and-mul-dynamic-fp8-20260721.json):
+  exact fused-vLLM compatibility, raw CUDA, compiler-boundary, and
+  order-reversed named-baseline evidence.
 
-1. [Architecture](design/architecture.md) defines the system boundary and data
-   path.
-2. [Implementation status](status.md) records what the `main` branch actually
-   implements and what has been validated.
-3. [Protocol invariants](design/protocols.md) defines correctness and recovery
-   requirements.
-4. [Roadmap](roadmap.md) contains future milestones and exit criteria.
-
-## Guides
-
-- [vLLM local attention backend](guides/vllm-local-backend.md)
-- [Two-GPU Route-Q acceptance gate](guides/two-gpu-route-q.md)
-- [Rust/CUDA fused local-tail operator](guides/rust-cuda-fused-tail.md)
-
-## Research Notes
-
-- [ByteDance AML reading map](research/bytedance-aml-reading-map.md)
-- [Flux and Comet overlap notes](research/flux-comet-overlap-notes.md)
-- [MegaScale-Infer notes](research/megascale-infer-notes.md)
-
-## Documentation Rules
-
-- `design/` contains stable ownership, protocol, and correctness contracts.
-- `guides/` contains commands and hardware-specific acceptance procedures.
-- `status.md` is the only source of truth for implemented versus missing work.
-- `roadmap.md` describes planned work and must not claim completion.
-- `research/` records paper-derived ideas; it is not implementation evidence.
+Only results under `docs/results` count as performance evidence. A CPU test, a
+successful CUDA launch, or an isolated number without a named baseline is not a
+speedup claim.

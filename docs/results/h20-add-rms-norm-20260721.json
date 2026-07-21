@@ -1,0 +1,120 @@
+{
+  "project": "loom-kernels",
+  "operator": "add_rms_norm",
+  "backend": "loom-cuda",
+  "date": "2026-07-21",
+  "semantics": "residual=input+residual; input=rms_norm(residual,weight)",
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "driver": "535.161.08",
+    "cuda_compiler": "13.1.115",
+    "cuda_arch": "sm_90",
+    "rustc": "1.97.1",
+    "cargo": "1.97.1"
+  },
+  "implementation": {
+    "accumulation_dtype": "f32",
+    "aligned_hidden_size_multiple_of_8": "128-bit pack8 load/store for FP16 and BF16",
+    "aligned_even_hidden_size": "two-element fallback for FP16 and BF16",
+    "odd_hidden_size": "scalar fallback",
+    "cpu_oracle": "F64 accumulation over the materialized storage-dtype residual, followed by storage-dtype output quantization",
+    "safe_rust_aliasing": "exclusive mutable DeviceBuffer borrows for input and residual; shared borrow for weight"
+  },
+  "measurement_protocol": {
+    "correctness_fixture": "deterministic nonzero operands, one fused launch",
+    "timing_fixture": "zero input and residual, a stable in-place fixed point with the same branch-free instruction path",
+    "timed_region": "CUDA events around kernel launches only; no reset copies"
+  },
+  "validation": {
+    "local_tests": "passed",
+    "cuda_feature_clippy": "passed",
+    "cuda_release_build": "passed",
+    "cuda_feature_tests": "passed",
+    "max_residual_abs_error_gate": 0.0,
+    "cases": [
+      {
+        "dtype": "f32",
+        "rows": 8,
+        "hidden_size": 4096,
+        "vectorization": "scalar",
+        "samples": 9,
+        "iterations_per_sample": 1000,
+        "minimum_us": 9.058112144470215,
+        "median_us": 9.061663627624512,
+        "maximum_us": 9.066047668457031,
+        "max_output_abs_error": 4.7683716e-7,
+        "max_output_rel_error": 2.3039165e-7,
+        "max_residual_abs_error": 0.0
+      },
+      {
+        "dtype": "f16",
+        "rows": 8,
+        "hidden_size": 4096,
+        "vectorization": "pack8",
+        "samples": 15,
+        "iterations_per_sample": 2000,
+        "minimum_us": 3.037247896194458,
+        "median_us": 3.060800075531006,
+        "maximum_us": 3.258960008621216,
+        "max_output_abs_error": 0.00048828125,
+        "max_output_rel_error": 0.00095238094,
+        "max_residual_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "rows": 8,
+        "hidden_size": 4096,
+        "vectorization": "pack8",
+        "samples": 15,
+        "iterations_per_sample": 2000,
+        "minimum_us": 2.909359931945801,
+        "median_us": 2.913503885269165,
+        "maximum_us": 2.9630720615386963,
+        "max_output_abs_error": 0.0,
+        "max_output_rel_error": 0.0,
+        "max_residual_abs_error": 0.0
+      },
+      {
+        "dtype": "f16",
+        "rows": 3,
+        "hidden_size": 127,
+        "vectorization": "scalar-fallback",
+        "samples": 3,
+        "iterations_per_sample": 200,
+        "median_us": 2.903040051460266,
+        "max_output_abs_error": 0.0,
+        "max_residual_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "rows": 3,
+        "hidden_size": 127,
+        "vectorization": "scalar-fallback",
+        "samples": 3,
+        "iterations_per_sample": 200,
+        "median_us": 2.9793599247932434,
+        "max_output_abs_error": 0.0,
+        "max_residual_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "rows": 16,
+        "hidden_size": 8192,
+        "vectorization": "pair (superseded implementation)",
+        "samples": 7,
+        "iterations_per_sample": 500,
+        "median_us": 8.8405122756958,
+        "max_output_abs_error": 0.0,
+        "max_residual_abs_error": 0.0
+      }
+    ]
+  },
+  "baseline": {
+    "name": "vllm_c through vLLM IR",
+    "status": "passed",
+    "report": "h20-vllm-ir-add-rms-norm-20260721.json"
+  },
+  "claim": "This closes the raw fused-kernel gate. The separate vLLM IR report establishes an operator-level named-baseline advantage and real engine execution, but not end-to-end speedup."
+}

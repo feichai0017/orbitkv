@@ -10,17 +10,16 @@
 AGENTS.md
 GEMINI.md
 
-# Python engine adapters and experiments
+# Python benchmark artifacts
 __pycache__/
 *.pyc
-*.so
 *.egg-info/
 .venv/
-python/build/
+.venv-*/
 /build/
+python/src/loom_kernels/lib/*.so
 
-# Runtime state
-.loom/
-
-# Local research corpus
-papers/
+# Astro website artifacts
+website/node_modules/
+website/dist/
+website/.astro/

@@ -1,0 +1,71 @@
+---
+import DocsNav from "../../components/DocsNav.astro";
+import SiteLayout from "../../layouts/SiteLayout.astro";
+import { nextOperators, supportedOperators } from "../../data/site";
+---
+
+<SiteLayout
+  title="Operators — Loom Kernels"
+  description="The supported and planned LLM inference operator surface in Loom Kernels."
+  active="Operators"
+>
+  <header class="page-hero">
+    <p class="eyebrow">Documentation / Operators</p>
+    <h1>A deliberately narrow surface.</h1>
+    <p>
+      An operator becomes supported only after contract, oracle, accelerator,
+      named-baseline, and framework boundaries exist. Engine and end-to-end gates
+      remain explicit even after the kernel is fast.
+    </p>
+  </header>
+
+  <div class="docs-layout">
+    <DocsNav active="Operators" />
+    <article class="prose">
+      <h2>Supported</h2>
+      <table class="operator-table">
+        <thead>
+          <tr><th>Operator</th><th>Dtypes</th><th>Fusion boundary</th></tr>
+        </thead>
+        <tbody>
+          {supportedOperators.map((operator) => (
+            <tr>
+              <td>{operator.name}</td>
+              <td>{operator.dtypes}</td>
+              <td>{operator.boundary}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <h2>Next families</h2>
+      <div class="doc-grid">
+        {nextOperators.map((operator) => (
+          <div class="doc-card">
+            <h3>{operator.name}</h3>
+            <p>{operator.reason}</p>
+          </div>
+        ))}
+      </div>
+
+      <h2>Implementation policy</h2>
+      <ul>
+        <li>Handwrite memory-bound and fusion-sensitive kernels.</li>
+        <li>Use cuBLASLt, CUTLASS, or an engine-selected vendor path for base GEMM.</li>
+        <li>Key tuning by device, dtype, shape, layout, and alignment.</li>
+        <li>Expose one stable Rust contract across backend implementations.</li>
+        <li>Do not turn incidental layout helpers into public APIs without a consumer.</li>
+      </ul>
+
+      <h2>Six independent gates</h2>
+      <ol>
+        <li>Validated contract and invalid-input tests.</li>
+        <li>Deterministic CPU or high-precision oracle.</li>
+        <li>Accelerator correctness over edge and representative shapes.</li>
+        <li>Warmed repeated measurement against a named baseline.</li>
+        <li>Invocation from a real inference-engine execution path.</li>
+        <li>TTFT, TPOT, throughput, memory, or goodput benefit.</li>
+      </ol>
+    </article>
+  </div>
+</SiteLayout>

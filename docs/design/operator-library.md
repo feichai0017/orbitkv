@@ -1,0 +1,154 @@
+# Loom Kernels Architecture
+
+## Product Boundary
+
+Loom Kernels is an operator backend that can be embedded into Rust-native or
+existing LLM inference engines. It does not own model scheduling, weights,
+tokenization, KV lifetime, or request serving.
+
+## Layers
+
+| Layer | Responsibility |
+| --- | --- |
+| `loom-kernels` | dtype, shape/layout, aliasing, capability, and reference contracts |
+| `loom-cuda-sys` | stable dependency-light C ABI and CUDA compilation |
+| `loom-cuda` | safe resource ownership, validation, dispatch, and benchmarks |
+| `cuda` | handwritten kernels and vendor-library glue |
+| engine adapters | translate engine tensors/streams without owning engine policy |
+
+CPU references never call accelerator code. Backends report unsupported
+contracts explicitly; they do not silently copy, cast, or fall back.
+
+## Add+RMSNorm Contract
+
+The fused normalization path follows the double in-place convention used by
+LLM inference engines:
+
+1. materialize `residual = input + residual` in the storage dtype;
+2. compute the RMS statistic from that materialized residual;
+3. overwrite `input = RMSNorm(residual, weight, epsilon)`.
+
+The safe Rust entrypoint requires separate exclusive borrows for `input` and
+`residual`, plus a shared borrow for `weight`. Owned `DeviceBuffer` values are
+not cloneable, so ordinary safe callers cannot accidentally alias these three
+allocations. Raw C ABI callers must obey the documented non-overlap rule.
+
+FP16 and BF16 fused kernels use aligned 128-bit, eight-element packs when the
+row shape and all pointers permit it. An aligned two-element path handles other
+even sizes, while odd or unaligned shapes select the scalar implementation.
+Launches are asynchronous on the caller-selected backend stream.
+
+Because repeated in-place calls change nonzero operands, the standalone
+benchmark separates correctness from timing. Correctness uses one nonzero
+launch; latency uses zero-valued input/residual buffers, which are a stable
+fixed point and execute the same branch-free kernel path. Reset copies are not
+included in the kernel latency.
+
+## RMSNorm+Dynamic-FP8 Contract
+
+The quantized normalization path consumes contiguous F32, FP16, or BF16 input
+and a matching one-dimensional weight. It writes FP8 E4M3FN values with the
+same logical shape plus one F32 dequantization scale per flattened row. The
+scale is `max(absmax / 448, 1 / (448 * 512))`, so zero rows remain valid.
+
+For FP16 and BF16, both the normalized intermediate and weighted value follow
+the input scalar arithmetic boundaries before FP8 conversion. This detail is
+part of the public compatibility contract, not an implementation accident.
+The CUDA kernel uses three passes—RMS reduction, weighted absmax reduction,
+and quantization—and follows the caller's stream without synchronizing.
+
+Safe Rust and the PyTorch out variant require caller-owned output and scale
+buffers. The convenience Python API allocates those buffers once per call;
+engine and benchmark paths should use the out variant to reuse memory.
+
+## SiLU-And-Mul Contract
+
+The SwiGLU activation consumes a contiguous tensor whose final dimension is
+`2 * width`. The first half is the gate and the second half is the up branch:
+
+```text
+output[..., index] = silu(input[..., index]) * input[..., width + index]
+```
+
+F32, FP16, and BF16 are supported. Low-precision compatibility includes the
+storage-dtype rounding point used by vLLM: the SiLU activation is rounded to
+the input dtype before multiplication, then the product is rounded into the
+output dtype. The output is separately allocated, has the same prefix shape,
+and has final dimension `width`; input/output overlap is forbidden.
+
+Aligned rows use 16-byte packs (four F32 or eight FP16/BF16 elements), while
+odd widths and unaligned pointers use a scalar path. Both safe Rust and
+PyTorch launch asynchronously on the caller's current stream.
+
+The vLLM out-of-tree layer replacement is explicitly opt-in because its graph
+latency is currently at parity with vLLM's native CUDA operator. Compatibility
+and engine integration are useful coverage, but do not justify silently
+changing an installed engine. The next performance-motivated boundary is
+SiLU-and-Mul fused with dynamic output quantization.
+
+## SiLU-And-Mul+Dynamic-Block-FP8 Contract
+
+The fused quantized path accepts contiguous FP16 or BF16 input with the same
+split-half `[rows, 2 * width]` layout. It produces FP8 E4M3FN output with shape
+`[rows, width]` and one F32 dequantization scale for every 64 or 128 adjacent
+output elements. `width` must be divisible by the selected group size.
+
+Unlike the standalone compatibility operator, this fusion does not materialize
+or round a FP16/BF16 SiLU intermediate. Gate activation, multiplication by the
+up branch, group absmax, and division by scale use F32 before the final FP8
+conversion. Each scale is:
+
+```text
+max(min(absmax / 448, optional_scale_upper_bound), 1 / (448 * 512))
+```
+
+The public Rust and Python APIs emit contiguous row-major scales with logical
+shape `[rows, width / group_size]`. The vLLM compatibility operator additionally
+accepts the same logical shape backed by group-major strides and its optional
+same-device F32 scale upper bound. Output, scales, and input storage must not
+overlap; all launches use the caller's current CUDA stream.
+
+The CUDA mapping assigns one thread block to each row/group pair and holds one
+fused value per thread in a register across the absmax reduction. This removes
+the temporary low-precision activation tensor and the second kernel launch of
+the composed path. Because the composed path rounds that temporary tensor, it
+is a useful performance comparison but not an exact semantic baseline; vLLM's
+own fused per-block operator is the compatibility baseline.
+
+## Operator Contract
+
+Every operator contract must make these properties explicit:
+
+- input/output dtype and accumulation dtype;
+- logical shape, physical layout, strides, and alignment;
+- aliasing and in-place mutation rules;
+- stream and synchronization semantics;
+- temporary workspace ownership and lifetime;
+- supported shape range and deterministic fallback behavior.
+
+## Admission Gates
+
+An operator joins the supported surface only after closing six independent
+gates:
+
+1. validated contract and invalid-input tests;
+2. deterministic CPU or high-precision oracle;
+3. accelerator correctness over edge and representative shapes;
+4. warmed repeated measurements against a named baseline;
+5. invocation from a real inference-engine execution path;
+6. TTFT, TPOT, throughput, memory, or goodput benefit on the motivating workload.
+
+Kernel latency closes gate 4 only when the baseline and measurement protocol
+are equivalent. It does not close engine integration or end-to-end value.
+
+## Implementation Policy
+
+- Handwrite memory-bound and fusion-sensitive kernels.
+- Reuse cuBLAS/cuBLASLt or equivalent for base GEMM and own valuable epilogues.
+- Keep tuning decisions keyed by device, dtype, layout, and shape.
+- Preserve one stable Rust contract across CUDA implementations.
+- Add another backend only after a real consumer and benchmark justify it.
+
+The complete product surface is tracked in the
+[LLM inference operator catalog](../operator-catalog.md); items in that catalog
+still have to pass these gates one by one.

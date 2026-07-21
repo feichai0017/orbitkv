@@ -1,0 +1,98 @@
+{
+  "project": "loom-kernels",
+  "operator": "rms_norm",
+  "date": "2026-07-21",
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "cuda_compiler": "13.1.115",
+    "cuda_arch": "sm_90",
+    "rustc": "1.97.1",
+    "cargo": "1.97.1"
+  },
+  "implementation": {
+    "accumulation_dtype": "f32",
+    "even_hidden_size": "two elements per load/store",
+    "odd_hidden_size": "scalar fallback",
+    "cpu_oracle": "F64 accumulation over dtype-quantized inputs and weights, followed by dtype output quantization"
+  },
+  "validation": {
+    "cuda_feature_clippy": "passed",
+    "cases": [
+      {
+        "dtype": "f16",
+        "rows": 8,
+        "hidden_size": 4096,
+        "vectorization": "pair",
+        "samples": 7,
+        "iterations_per_sample": 100,
+        "minimum_us": 4.735360145568848,
+        "median_us": 4.746879935264587,
+        "maximum_us": 4.763199985027313,
+        "max_abs_error": 0.001953125,
+        "max_rel_error": 0.00089206063
+      },
+      {
+        "dtype": "bf16",
+        "rows": 8,
+        "hidden_size": 4096,
+        "vectorization": "pair",
+        "samples": 7,
+        "iterations_per_sample": 100,
+        "minimum_us": 4.707840085029602,
+        "median_us": 4.713599979877472,
+        "maximum_us": 4.722880125045776,
+        "max_abs_error": 0.0,
+        "max_rel_error": 0.0
+      },
+      {
+        "dtype": "f16",
+        "rows": 1,
+        "hidden_size": 1,
+        "vectorization": "scalar-fallback",
+        "median_us": 3.089600056409836,
+        "max_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "rows": 1,
+        "hidden_size": 1,
+        "vectorization": "scalar-fallback",
+        "median_us": 3.187200054526329,
+        "max_abs_error": 0.0
+      },
+      {
+        "dtype": "f16",
+        "rows": 3,
+        "hidden_size": 127,
+        "vectorization": "scalar-fallback",
+        "median_us": 3.1759999692440033,
+        "max_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "rows": 3,
+        "hidden_size": 127,
+        "vectorization": "scalar-fallback",
+        "median_us": 3.0751999467611313,
+        "max_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "rows": 16,
+        "hidden_size": 8192,
+        "vectorization": "pair",
+        "median_us": 7.705599814653397,
+        "max_abs_error": 0.0
+      }
+    ]
+  },
+  "baseline": {
+    "name": "pytorch-native",
+    "status": "not-run",
+    "reason": "the forge-gas1 host Python environment does not provide torch",
+    "script": "benchmarks/pytorch_rms_norm.py"
+  },
+  "claim": "This closes isolated FP16/BF16 correctness and latency gates only. It does not establish a PyTorch or end-to-end speedup."
+}

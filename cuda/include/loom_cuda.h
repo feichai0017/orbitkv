@@ -15,40 +15,94 @@ enum LoomCudaStatus {
   LOOM_CUDA_UNAVAILABLE = 4,
 };
 
-enum LoomCudaDType {
-  LOOM_CUDA_FP16 = 0,
-  LOOM_CUDA_BF16 = 1,
-};
-
 const char* loom_cuda_status_string(int status);
 
-// Tensor layout for every entry point is contiguous row-major:
-//   query/output: [rows, query_heads, head_dim]
-//   tail K/V:     [tail_tokens, kv_heads, head_dim], shared across rows
-//   LSE:          [rows, query_heads] in FP32
+// F32 bring-up implementation of RMSNorm over contiguous [rows, hidden_size]
+// input/output tensors and one contiguous [hidden_size] weight vector. The
+// launch is asynchronous with respect to the supplied CUDA stream.
+int loom_cuda_rms_norm_f32(const float* input, const float* weight,
+                           float* output, uint32_t rows,
+                           uint32_t hidden_size, float epsilon, void* stream);
 
-// Compute a mergeable output-plus-LSE state over the local active tail.
-int loom_cuda_tail_attention_state(
-    const void* query, const void* tail_key, const void* tail_value,
-    void* tail_output, float* tail_lse, uint32_t rows, uint32_t query_heads,
-    uint32_t kv_heads, uint32_t head_dim, uint32_t tail_tokens, float scale,
-    enum LoomCudaDType dtype, void* stream);
+// Pair-vectorized FP16 and BF16 implementations. Odd hidden sizes use a
+// scalar fallback so row starts never violate four-byte pair alignment.
+int loom_cuda_rms_norm_f16(const uint16_t* input, const uint16_t* weight,
+                           uint16_t* output, uint32_t rows,
+                           uint32_t hidden_size, float epsilon, void* stream);
 
-// Merge two disjoint-KV attention states exactly.
-int loom_cuda_merge_two_states(
-    const void* left_output, const float* left_lse,
-    const void* right_output, const float* right_lse, void* merged_output,
-    float* merged_lse, uint32_t rows, uint32_t query_heads,
-    uint32_t head_dim, enum LoomCudaDType dtype, void* stream);
+int loom_cuda_rms_norm_bf16(const uint16_t* input, const uint16_t* weight,
+                            uint16_t* output, uint32_t rows,
+                            uint32_t hidden_size, float epsilon, void* stream);
 
-// Compute local-tail attention and merge it with a remote state without
-// materializing the local output or local LSE tensors.
-int loom_cuda_fused_tail_attention_merge(
-    const void* query, const void* tail_key, const void* tail_value,
-    const void* remote_output, const float* remote_lse, void* merged_output,
-    float* merged_lse, uint32_t rows, uint32_t query_heads,
-    uint32_t kv_heads, uint32_t head_dim, uint32_t tail_tokens, float scale,
-    enum LoomCudaDType dtype, void* stream);
+// RMSNorm followed by dynamic per-token FP8 E4M3FN quantization. Output holds
+// raw FP8 storage bytes and scales has one F32 value per row, with
+// approximately normalized_value = fp8(output) * scale. Low-precision inputs
+// follow the input scalar arithmetic boundaries for both normalization and
+// weight multiplication, matching vLLM's fused quantization contract.
+int loom_cuda_rms_norm_dynamic_fp8_f32(
+    const float* input, const float* weight, uint8_t* output, float* scales,
+    uint32_t rows, uint32_t hidden_size, float epsilon, void* stream);
+
+int loom_cuda_rms_norm_dynamic_fp8_f16(
+    const uint16_t* input, const uint16_t* weight, uint8_t* output,
+    float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
+    void* stream);
+
+int loom_cuda_rms_norm_dynamic_fp8_bf16(
+    const uint16_t* input, const uint16_t* weight, uint8_t* output,
+    float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
+    void* stream);
+
+// Fused residual addition and RMSNorm over contiguous tensors. Both input and
+// residual are updated in place:
+//   residual = input + residual
+//   input = RMSNorm(residual, weight, epsilon)
+// input, residual, and weight must point to non-overlapping allocations.
+int loom_cuda_add_rms_norm_f32(float* input, float* residual,
+                               const float* weight, uint32_t rows,
+                               uint32_t hidden_size, float epsilon,
+                               void* stream);
+
+// FP16 and BF16 use 128-bit/eight-element vectors when pointer/row alignment
+// permits, then two-element vectors, then a scalar fallback. The materialized
+// sum is rounded to the storage dtype before computing the RMS statistic.
+int loom_cuda_add_rms_norm_f16(uint16_t* input, uint16_t* residual,
+                               const uint16_t* weight, uint32_t rows,
+                               uint32_t hidden_size, float epsilon,
+                               void* stream);
+
+int loom_cuda_add_rms_norm_bf16(uint16_t* input, uint16_t* residual,
+                                const uint16_t* weight, uint32_t rows,
+                                uint32_t hidden_size, float epsilon,
+                                void* stream);
+
+// Fused split-half SwiGLU activation over input [rows, 2 * width] and output
+// [rows, width]: output = silu(input[:, :width]) * input[:, width:]. Low-
+// precision activation values are rounded to their storage dtype before the
+// multiply, matching vLLM. Input/output storage ranges must not overlap.
+int loom_cuda_silu_and_mul_f32(const float* input, float* output,
+                               uint32_t rows, uint32_t width, void* stream);
+
+int loom_cuda_silu_and_mul_f16(const uint16_t* input, uint16_t* output,
+                               uint32_t rows, uint32_t width, void* stream);
+
+int loom_cuda_silu_and_mul_bf16(const uint16_t* input, uint16_t* output,
+                                uint32_t rows, uint32_t width, void* stream);
+
+// Fused SwiGLU and dynamic per-block FP8 E4M3FN quantization. FP16/BF16
+// inputs use [rows, 2 * width]; output holds [rows, width] raw FP8 bytes.
+// Scales have logical shape [rows, width / group_size] and may use row-major
+// or group-major storage. group_size must be 64 or 128. scale_ub may be null;
+// activation and multiplication remain in F32 until direct FP8 conversion.
+int loom_cuda_silu_and_mul_dynamic_fp8_f16(
+    const uint16_t* input, uint8_t* output, float* scales, uint32_t rows,
+    uint32_t width, uint32_t group_size, const float* scale_ub,
+    uint32_t scales_transposed, void* stream);
+
+int loom_cuda_silu_and_mul_dynamic_fp8_bf16(
+    const uint16_t* input, uint8_t* output, float* scales, uint32_t rows,
+    uint32_t width, uint32_t group_size, const float* scale_ub,
+    uint32_t scales_transposed, void* stream);
 
 #ifdef __cplusplus
 }

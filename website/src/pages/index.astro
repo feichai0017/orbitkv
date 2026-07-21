@@ -1,0 +1,186 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import {
+  evidence,
+  nextOperators,
+  repositoryUrl,
+  supportedOperators,
+} from "../data/site";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<SiteLayout active="Overview">
+  <section class="hero">
+    <div class="hero-copy">
+      <p class="eyebrow">Rust-first · CUDA-backed · Engine-ready</p>
+      <h1>Own the<br /><span>operator boundary.</span></h1>
+      <p>
+        Loom Kernels turns inference-critical fusion points into explicit Rust
+        contracts, handwritten CUDA, and reproducible engine evidence. No
+        framework reinvention. No benchmark-free claims.
+      </p>
+      <div class="hero-actions">
+        <a class="button primary" href={`${base}/docs/operators/`}>
+          Explore operators&nbsp; →
+        </a>
+        <a class="button" href={repositoryUrl} target="_blank" rel="noreferrer">
+          Read the source&nbsp; ↗
+        </a>
+      </div>
+    </div>
+
+    <div class="kernel-window" aria-label="Operator contract example">
+      <div class="window-bar">
+        <span>crates/loom-kernels/src/lib.rs</span>
+        <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+      </div>
+      <pre class="kernel-code"><code><span class="token-keyword">pub struct</span> <span class="token-type">SiluAndMulDynamicFp8Spec</span> &#123;
+  rows: usize,
+  width: usize,
+  group_size: <span class="token-value">64 | 128</span>,
+  input_dtype: <span class="token-type">F16 | Bf16</span>,
+  output_dtype: <span class="token-type">Fp8E4M3Fn</span>,
+&#125;
+
+<span class="token-comment">// Contract → oracle → CUDA → engine gate</span></code></pre>
+      <div class="pipeline" aria-label="Execution path">
+        <div><span>01</span><strong>Contract</strong></div>
+        <div><span>02</span><strong>CUDA</strong></div>
+        <div><span>03</span><strong>Dispatch</strong></div>
+        <div><span>04</span><strong>Engine</strong></div>
+      </div>
+    </div>
+  </section>
+
+  <section class="metrics-strip" aria-label="Project status">
+    <div class="metric"><strong>05</strong><span>qualified operator paths</span></div>
+    <div class="metric"><strong>61/61</strong><span>H20 Python tests passing</span></div>
+    <div class="metric"><strong>SM90</strong><span>NVIDIA H20 evidence</span></div>
+    <div class="metric"><strong>v0.24</strong><span>vLLM integration target</span></div>
+  </section>
+
+  <section class="section" id="operators">
+    <header class="section-header">
+      <div>
+        <p class="eyebrow">Supported now</p>
+        <h2>Small surface.<br />Real fusion value.</h2>
+      </div>
+      <p>
+        Loom admits operators where layout knowledge, quantization, or launch
+        reduction matters to an inference engine. Dense GEMM stays with vendor
+        libraries; Loom owns the contracts and useful epilogues around it.
+      </p>
+    </header>
+
+    <div class="operator-grid">
+      {supportedOperators.map((operator, index) => (
+        <article class="operator-card">
+          <span class="card-index">OP::{String(index + 1).padStart(2, "0")}</span>
+          <h3>{operator.name}</h3>
+          <p>{operator.boundary}</p>
+          <footer>
+            <span>{operator.dtypes}</span>
+            <span class="status-dot">{operator.status}</span>
+          </footer>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="section">
+    <header class="section-header">
+      <div>
+        <p class="eyebrow">Architecture</p>
+        <h2>One contract.<br />Several consumers.</h2>
+      </div>
+      <p>
+        The Rust core never calls accelerator code. CUDA backends either support
+        the exact contract or decline it. Framework adapters translate tensors
+        and streams without quietly changing policy.
+      </p>
+    </header>
+
+    <div class="architecture-grid">
+      <article class="architecture-card">
+        <span class="card-index">01 / loom-kernels</span>
+        <h3>Backend-independent truth</h3>
+        <p>Dtypes, shapes, layouts, aliasing rules, capabilities, and CPU oracles.</p>
+      </article>
+      <article class="architecture-card">
+        <span class="card-index">02 / loom-cuda-sys</span>
+        <h3>Stable raw boundary</h3>
+        <p>A dependency-light C ABI that keeps CUDA compilation out of public contracts.</p>
+      </article>
+      <article class="architecture-card">
+        <span class="card-index">03 / loom-cuda</span>
+        <h3>Safe execution</h3>
+        <p>Owned streams, buffers, events, checked dispatch, and oracle-backed benches.</p>
+      </article>
+      <article class="architecture-card">
+        <span class="card-index">04 / adapters</span>
+        <h3>Engine-native invocation</h3>
+        <p>PyTorch current-stream operators and narrow vLLM registration points.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section" id="evidence">
+    <header class="section-header">
+      <div>
+        <p class="eyebrow">Measured on H20</p>
+        <h2>Evidence before adjectives.</h2>
+      </div>
+      <p>
+        Correctness is checked before timing. Named baselines share the same
+        dispatcher boundary, GPU warm-up, sample count, and provider-order reversal.
+      </p>
+    </header>
+
+    <div class="evidence-grid">
+      {evidence.map((item) => (
+        <article class="evidence-card">
+          <h3>{item.operator}</h3>
+          <span class="result">{item.result}</span>
+          <p>{item.detail}</p>
+          <small>{item.shape}</small>
+        </article>
+      ))}
+    </div>
+    <p class="caveat">
+      Operator-level ratios are not model-level throughput claims. End-to-end
+      TTFT, TPOT, memory, and goodput remain separate admission gates.
+    </p>
+  </section>
+
+  <section class="section">
+    <header class="section-header">
+      <div>
+        <p class="eyebrow">Next boundaries</p>
+        <h2>Build where engines pay.</h2>
+      </div>
+      <p>
+        The roadmap follows memory traffic and launch count—not a checklist of
+        every tensor expression. Each family must earn its public surface.
+      </p>
+    </header>
+
+    <div class="roadmap-grid">
+      {nextOperators.map((operator, index) => (
+        <article class="roadmap-card">
+          <span class="card-index">K{index + 3}</span>
+          <h3>{operator.name}</h3>
+          <p>{operator.reason}</p>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="cta-band">
+    <div>
+      <h2>Start at the contract.</h2>
+      <p>Inspect the operator surface, run the CPU gates, then qualify CUDA.</p>
+    </div>
+    <a class="button primary" href={`${base}/docs/`}>Open the guide&nbsp; →</a>
+  </section>
+</SiteLayout>

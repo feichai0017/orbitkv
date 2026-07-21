@@ -1,28 +1,22 @@
 [workspace]
 members = [
-    "crates/loom-attention",
     "crates/loom-cuda",
     "crates/loom-cuda-sys",
+    "crates/loom-kernels",
 ]
-default-members = ["crates/loom-attention"]
+default-members = ["crates/loom-kernels", "crates/loom-cuda"]
 resolver = "2"
 
 [workspace.package]
 version = "2.0.0-alpha.1"
 edition = "2021"
 license = "MIT"
-repository = "https://github.com/feichai0017/loom-attention"
+repository = "https://github.com/feichai0017/loom-kernels"
 
 [workspace.dependencies]
-async-trait = "0.1"
-axum = "0.8"
 clap = { version = "4.5.23", features = ["derive"] }
-holt = "0.5.4"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 thiserror = "2.0.12"
-tokio = { version = "1.42", features = ["macros", "net", "rt-multi-thread", "signal", "sync"] }
-tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 cc = "1.2"
 half = "2.7"

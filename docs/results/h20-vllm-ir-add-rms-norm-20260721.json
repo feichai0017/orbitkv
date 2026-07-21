@@ -1,0 +1,133 @@
+{
+  "project": "loom-kernels",
+  "integration": "vllm_ir_fused_add_rms_norm",
+  "date": "2026-07-21",
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "driver": "535.161.08",
+    "cuda_compiler": "13.1.115",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "vllm": "0.24.0",
+    "adapter_backend": "cpp-dispatch"
+  },
+  "contract": {
+    "semantics": "residual=input+residual; input=rms_norm(residual,weight)",
+    "mutation": "double-in-place",
+    "stream": "PyTorch current CUDA stream",
+    "vllm_provider": "loom_cuda",
+    "vllm_fallback": "native"
+  },
+  "adapter": {
+    "native_library": "dependency-light CUDA shared library built from cuda/src",
+    "torch_bridge": "C++ dispatcher shim with checked public and unchecked IR hot-path operators",
+    "registration": "vllm.general_plugins entry point and fused_add_rms_norm IR provider",
+    "compilation": "passed torch.compile fullgraph and vLLM V1 compilation",
+    "cuda_graph": "passed capture and replay in direct tests and the vLLM engine"
+  },
+  "validation": {
+    "python_suite": "passed",
+    "torch_library_opcheck": "passed schema and FakeTensor checks",
+    "external_stream": "passed",
+    "direct_vllm_provider_comparison": {
+      "dtype": "bf16",
+      "shapes": [[1, 4096], [8, 4096], [128, 4096], [8, 8192]],
+      "loom_output_bitwise_equal_to_vllm_c": true,
+      "loom_residual_bitwise_equal_to_vllm_c": true
+    }
+  },
+  "raw_cuda": {
+    "protocol": "CUDA events, stable zero in-place fixture, 100 warmups, 15 samples, 2000 launches per sample",
+    "cases": [
+      {
+        "dtype": "f16",
+        "shape": [8, 4096],
+        "vectorization": "pack8",
+        "minimum_us": 3.037247896194458,
+        "median_us": 3.060800075531006,
+        "maximum_us": 3.258960008621216,
+        "max_output_abs_error": 0.00048828125,
+        "max_residual_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "shape": [8, 4096],
+        "vectorization": "pack8",
+        "minimum_us": 2.909359931945801,
+        "median_us": 2.913503885269165,
+        "maximum_us": 2.9630720615386963,
+        "max_output_abs_error": 0.0,
+        "max_residual_abs_error": 0.0
+      }
+    ]
+  },
+  "vllm_ir_microbenchmark": {
+    "dtype": "bf16",
+    "shape": [8, 4096],
+    "protocol": "same vLLM IR maybe_inplace dispatch, 1 second BF16 GEMM clock warmup per provider, 100 operator warmups, 15 samples, 2000 launches per sample",
+    "correctness_reference": "FP32 sum and reduction followed by BF16 output quantization",
+    "runs": [
+      {
+        "provider_order": "loom-first",
+        "loom_eager_median_us": 8.260239601135254,
+        "vllm_c_eager_median_us": 9.132911682128906,
+        "loom_eager_speedup": 1.1056473084477738,
+        "loom_graph_median_us": 2.778815984725952,
+        "vllm_c_graph_median_us": 2.8765599727630615,
+        "loom_graph_speedup": 1.0351746889950142
+      },
+      {
+        "provider_order": "vllm-first",
+        "loom_eager_median_us": 8.261119842529297,
+        "vllm_c_eager_median_us": 9.202079772949219,
+        "loom_eager_speedup": 1.1139022249230353,
+        "loom_graph_median_us": 2.7686240673065186,
+        "vllm_c_graph_median_us": 2.8657279014587402,
+        "loom_graph_speedup": 1.0350729574660853
+      }
+    ],
+    "maximum_output_abs_error_for_both_providers": 0.0625,
+    "maximum_output_relative_error_for_both_providers": 0.0078125,
+    "maximum_residual_abs_error_for_both_providers": 0.0,
+    "interpretation": "Order-stable operator-level advantage: 10.6-11.4% through eager IR dispatch and about 3.5% under CUDA Graph replay."
+  },
+  "vllm_engine": {
+    "model": "synthetic-random-qwen2",
+    "model_details": {
+      "layers": 4,
+      "hidden_size": 4096,
+      "intermediate_size": 4096,
+      "attention_heads": 32,
+      "kv_heads": 8,
+      "parameters": 377548800,
+      "weights": "random BF16; not pretrained"
+    },
+    "workload": {
+      "batch_size": 8,
+      "input_tokens_per_request": 128,
+      "output_tokens_per_request": 128,
+      "runner": "normal vLLM Qwen2 V1 engine with compilation and CUDA Graphs"
+    },
+    "runs": [
+      {
+        "execution_order": "vllm_c then loom_cuda",
+        "warmups": 2,
+        "repeats": 7,
+        "vllm_c_latency_ms": {"minimum": 184.391338378191, "median": 185.3925846517086, "maximum": 188.2578209042549},
+        "loom_cuda_latency_ms": {"minimum": 182.84538388252258, "median": 190.13962522149086, "maximum": 192.82909482717514}
+      },
+      {
+        "execution_order": "loom_cuda then vllm_c",
+        "warmups": 4,
+        "repeats": 15,
+        "loom_cuda_latency_ms": {"minimum": 182.2243519127369, "median": 199.69895854592323, "maximum": 281.62624314427376},
+        "vllm_c_latency_ms": {"minimum": 182.01018497347832, "median": 191.75927340984344, "maximum": 281.2054827809334}
+      }
+    ],
+    "token_note": "Independent engine runs, including vllm_c versus vllm_c, diverged on this random model. Direct provider tests were bitwise identical, so cross-process token divergence is not attributed to Loom.",
+    "interpretation": "The adapter completes a real engine path, but the end-to-end runs are noisy and the isolated graph-replay saving is under 0.1 microsecond per call. No model-level speedup or regression is claimed."
+  },
+  "claim": "Loom is a working vLLM 0.24 fused Add+RMSNorm provider with H20 correctness, compilation, current-stream, and CUDA Graph evidence. It has an order-stable operator-level advantage over vllm_c, but no measurable end-to-end engine benefit has been established."
+}

@@ -9,34 +9,6 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  python:
-    name: engine adapter contract
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Python
-        uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Test adapter contract
-        run: PYTHONPATH=python/src:python/tests python -m unittest discover -s python/tests -v
-
-      - name: Compile adapter package
-        run: python -m compileall -q python/src/loom_attention python/tests/integration
-
-      - name: Validate two-GPU payload plan
-        run: PYTHONPATH=python/src:python/tests python -m integration.two_gpu_smoke plan
-
-      - name: Build adapter wheel
-        run: python -m pip wheel --no-deps --wheel-dir /tmp/loom-attention-wheel ./python
-
-      - name: Verify wheel excludes acceptance tools
-        run: |
-          wheel=$(find /tmp/loom-attention-wheel -name '*.whl' -print -quit)
-          ! unzip -l "$wheel" | grep -E 'loom_attention/(two_gpu|vllm_smoke)'
-
   rust:
     name: fmt · clippy · test
     runs-on: ubuntu-latest
@@ -61,3 +33,40 @@ jobs:
 
       - name: Release check
         run: cargo check --workspace --release
+
+  benchmark-tools:
+    name: python package · benchmark syntax
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Compile baseline tools
+        run: python -m compileall -q benchmarks python
+
+      - name: Build Python adapter wheel
+        run: python -m pip wheel --no-deps --wheel-dir /tmp/loom-kernels-wheel ./python
+
+  website:
+    name: astro website
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Check and build
+        run: npm run build

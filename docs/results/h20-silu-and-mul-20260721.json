@@ -1,0 +1,145 @@
+{
+  "project": "loom-kernels",
+  "operator": "silu_and_mul",
+  "date": "2026-07-21",
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "driver": "535.161.08",
+    "cuda_compiler": "13.1.115",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "vllm": "0.24.0",
+    "adapter_backend": "cpp-dispatch"
+  },
+  "contract": {
+    "input": "contiguous F32, FP16, or BF16 [..., 2 * width]",
+    "layout": "first half gate, second half up branch",
+    "semantics": "output = silu(gate) * up",
+    "output": "same prefix shape and dtype with final dimension width",
+    "low_precision_rounding": "SiLU activation rounded to input dtype before multiply; product rounded to output dtype",
+    "aliasing": "input and output must not overlap",
+    "stream": "caller-selected CUDA stream; PyTorch adapter uses the current stream"
+  },
+  "implementation": {
+    "mapping": "one CUDA block per flattened row",
+    "vectorization": "16-byte packs: four F32 or eight FP16/BF16 values",
+    "fallback": "scalar path for odd widths or insufficient alignment",
+    "surfaces": [
+      "Rust contract and CPU oracle",
+      "raw C ABI",
+      "safe Rust CUDA backend",
+      "caller-allocated and allocating PyTorch APIs",
+      "opt-in vLLM out-of-tree SiluAndMul replacement"
+    ]
+  },
+  "validation": {
+    "rust_core_tests": "14 passed",
+    "python_suite": "43 passed",
+    "operator_python_tests": "14 passed",
+    "vllm_direct_comparison": {
+      "dtypes": ["f32", "f16", "bf16"],
+      "shapes_rows_by_width": [[8, 11008], [3, 127], [2, 128]],
+      "higher_rank_prefix": "passed",
+      "output_byte_mismatches": 0
+    },
+    "external_stream": "passed",
+    "torch_library_opcheck": "passed schema and FakeTensor checks",
+    "torch_compile": "unchecked out operator passed fullgraph compilation",
+    "cuda_graph_capture_replay": "passed",
+    "vllm_layer_dispatch": "registered SiluAndMul instantiated the Loom replacement and matched vLLM bitwise"
+  },
+  "raw_cuda": {
+    "protocol": "Cargo bench, CUDA events, CPU oracle before timing; no GEMM clock warmup",
+    "cases": [
+      {
+        "dtype": "f32",
+        "shape_rows_by_width": [8, 11008],
+        "warmups": 20,
+        "samples": 5,
+        "launches_per_sample": 500,
+        "minimum_us": 3.971008062362671,
+        "median_us": 3.9752960205078125,
+        "maximum_us": 3.978368043899536,
+        "max_abs_error": 2.3841858e-7
+      },
+      {
+        "dtype": "f16",
+        "shape_rows_by_width": [8, 11008],
+        "warmups": 20,
+        "samples": 5,
+        "launches_per_sample": 500,
+        "minimum_us": 4.276800155639648,
+        "median_us": 4.279232025146484,
+        "maximum_us": 4.2809600830078125,
+        "max_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "shape_rows_by_width": [8, 11008],
+        "warmups": 100,
+        "samples": 15,
+        "launches_per_sample": 2000,
+        "minimum_us": 4.390575885772705,
+        "median_us": 4.391839981079102,
+        "maximum_us": 4.396080017089844,
+        "max_abs_error": 0.0
+      },
+      {
+        "dtype": "bf16",
+        "shape_rows_by_width": [3, 127],
+        "warmups": 20,
+        "samples": 5,
+        "launches_per_sample": 500,
+        "minimum_us": 2.8577280044555664,
+        "median_us": 2.931648015975952,
+        "maximum_us": 2.962815999984741,
+        "max_abs_error": 0.0
+      }
+    ]
+  },
+  "vllm_named_baseline": {
+    "protocol": "same preallocated PyTorch C++ custom-operator boundary, one second BF16 GEMM warmup per provider, 100 operator warmups, 15 samples, 2000 launches per sample",
+    "dtype": "bf16",
+    "shape_rows_by_width": [8, 11008],
+    "runs": [
+      {
+        "provider_order": "loom-first",
+        "loom_eager_median_us": 4.702655792236328,
+        "vllm_c_eager_median_us": 5.432991981506348,
+        "loom_eager_ratio": 1.1553029227603135,
+        "loom_graph_median_us": 4.060160160064697,
+        "vllm_c_graph_median_us": 4.061183929443359,
+        "loom_graph_ratio": 1.0002521499985966
+      },
+      {
+        "provider_order": "vllm-first",
+        "loom_eager_median_us": 7.04091215133667,
+        "vllm_c_eager_median_us": 5.376880168914795,
+        "loom_eager_ratio": 0.7636624422155346,
+        "loom_graph_median_us": 3.931663990020752,
+        "vllm_c_graph_median_us": 3.935472011566162,
+        "loom_graph_ratio": 1.0009685521334162
+      }
+    ],
+    "correctness": "Loom output was bitwise identical to vLLM in both runs",
+    "interpretation": "CUDA Graph replay is effectively parity: the two orderings differ by less than 0.1%. Eager dispatch changed materially with provider order and host scheduling, so it is not used for a speedup claim."
+  },
+  "vllm_engine_smoke": {
+    "model": "synthetic-random-qwen2-h4096-l4",
+    "workload": {
+      "batch_size": 2,
+      "input_tokens_per_request": 16,
+      "output_tokens_per_request": 8,
+      "warmups": 1,
+      "repeats": 1
+    },
+    "runner": "normal vLLM V1 Qwen2 model with torch.compile and CUDA Graph capture",
+    "activation_override": "LOOM_KERNELS_ENABLE_SILU_AND_MUL=1",
+    "result": "completed generation with the Loom Add+RMSNorm provider and opt-in SiluAndMul replacement loaded",
+    "latency_ms": 13.148956000804901,
+    "interpretation": "integration smoke only; one short random-model run is not performance evidence"
+  },
+  "claim": "Loom provides a Rust/CUDA/PyTorch/vLLM-compatible SiLU-and-Mul operator with multi-dtype and engine evidence. It closes compatibility and integration gates but does not outperform vLLM under CUDA Graph replay. The next performance-motivated operator is SiLU-and-Mul fused with output quantization."
+}

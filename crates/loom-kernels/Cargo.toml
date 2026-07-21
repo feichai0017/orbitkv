@@ -1,0 +1,10 @@
+[package]
+name = "loom-kernels"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Rust-first contracts, dispatch, and CPU references for high-performance inference kernels"
+
+[dependencies]
+half.workspace = true
