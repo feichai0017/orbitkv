@@ -62,6 +62,12 @@ export const supportedOperators = [
     boundary: "In-place row-max threshold; shape-gated in vLLM",
     status: "supported",
   },
+  {
+    name: "Paged MQA/GQA decode",
+    dtypes: "F32 · FP16 · BF16",
+    boundary: "GQA head packing + native paged-KV reads",
+    status: "supported",
+  },
 ];
 
 export const nextOperators = [
@@ -74,8 +80,8 @@ export const nextOperators = [
     reason: "Own the launch-heavy path around vendor grouped GEMM.",
   },
   {
-    name: "Paged decode attention",
-    reason: "Rust contract and oracle are fixed; next qualify CUDA against engine-owned paged KV.",
+    name: "Paged decode 128+",
+    reason: "Add split-K/LSE kernels and broaden shapes before an explicit FA3 fallback route.",
   },
 ];
 
@@ -127,5 +133,11 @@ export const evidence = [
     shape: "F32 · 151,936 vocab · 128 rows",
     result: "1.885×",
     detail: "0 tensor-sized temp; smaller batches route back to vLLM",
+  },
+  {
+    operator: "Paged MQA/GQA decode",
+    shape: "BF16 · Hq/Hkv 32/8 · 16–64 tokens",
+    result: "1.28–2.16×",
+    detail: "Winning CUDA Graph shapes vs FA3; all batches lose by 128 tokens",
   },
 ];

@@ -38,7 +38,8 @@
   tensors;
 - base paged MQA/GQA decode attention for one query per request: Rust contract
   and stable CPU oracle, F32/FP16/BF16 handwritten CUDA/C ABI, safe Rust
-  entrypoints, contiguous NHD cache indirection, distinct K/V widths, and a
+  entrypoints, contiguous NHD cache indirection, distinct K/V widths, a
+  two/four-query-head GQA specialization that reuses paged K/V loads, and a
   current-stream caller-allocated PyTorch operator capped at 1,024 tokens;
 - a C++ PyTorch dispatcher bridge using the current CUDA stream;
 - a source-adapter Python wheel with explicit framework extras, project
@@ -163,7 +164,7 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the current complete H20 Python suite passes 144 tests; the Rust core passes
+- the current complete H20 Python suite passes 150 tests; the Rust core passes
   30 contract/oracle tests, and the CUDA-feature workspace passes formatting,
   Clippy, release build, plus five safe-wrapper CPU-oracle tests;
 - against vLLM's exact `compute_logprobs + gather_logprobs(0)` path for the
@@ -183,16 +184,16 @@
   1, 8, 32, and 128 rows. The vLLM adapter therefore requires at least 32 rows
   and a 65,536-token vocabulary, falling back below either threshold. A second
   65,536-vocabulary sweep measured `1.35x` and `2.35x` at 32 and 128 rows;
-- paged-decode focused tests pass 16/16 across F32/FP16/BF16, MQA/GQA,
-  shuffled physical blocks, partial pages, distinct value widths, external
-  streams, schema/FakeTensor, `torch.compile`, and launch telemetry; the safe
-  Rust F32 wrapper also matches the CPU oracle on H20;
+- paged-decode focused tests pass 22/22 across F32/FP16/BF16, MQA/GQA,
+  shuffled physical blocks, partial pages, odd head sizes, distinct value
+  widths, external streams, schema/FakeTensor, `torch.compile`, and launch
+  telemetry; the safe Rust F32 wrapper also matches the CPU oracle on H20;
 - against vLLM 0.24 FlashAttention FA3 for BF16 Qwen-style Hq/Hkv `32/8` and
-  head size 128, CUDA Graph speedups at context 16 are `1.426x`, `1.439x`, and
-  `2.036x` for batches 1, 8, and 32. Batch 32 remains `1.112x` ahead at context
-  32, while all tested 64-512-token cases are slower. Correctness support
-  remains available through 1,024 tokens, but no automatic vLLM route is
-  admitted from this evidence;
+  head size 128, CUDA Graph speedups at contexts 16/32 are `1.421x/1.322x`,
+  `1.448x/1.284x`, and `2.042x/2.162x` for batches 1, 8, and 32. Batch 32 also
+  reaches `1.382x` at context 64; all three batches lose by context 128.
+  Correctness support remains available through 1,024 tokens, but no automatic
+  vLLM route is admitted from this single geometry;
 
 See the [F32 report](results/h20-rms-norm-f32-smoke-20260721.json) and
 [low-precision report](results/h20-rms-norm-low-precision-20260721.json), plus
@@ -242,8 +243,9 @@ against vLLM 0.24 FA3.
 - Min-P real-model invocation and end-to-end serving benefit;
 - Loom-owned logits preprocessing, top-k/top-p, stochastic sampling, and
   general top-k logprob integration;
-- paged decode-attention vLLM routing, real-model invocation, end-to-end
-  benefit, and competitive 32-1,024-token kernels;
+- paged decode-attention vLLM routing, broader head/layout qualification,
+  real-model invocation, end-to-end benefit, and competitive 128-1,024-token
+  kernels;
 - integration into SGLang or a Rust-native engine path;
 - larger production-model and serving-workload validation;
 - automated binary-wheel packaging;

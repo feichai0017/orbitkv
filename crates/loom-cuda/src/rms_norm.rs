@@ -382,7 +382,7 @@ impl Backend for CudaBackend {
                 if spec.max_sequence_length() > crate::paged_decode::PAGED_DECODE_MAX_CONTEXT =>
             {
                 Support::Unsupported(
-                    "the first CUDA paged decode kernel supports at most 1024 context tokens",
+                    "CUDA paged decode attention supports at most 1024 context tokens",
                 )
             }
             OperatorSpec::PagedDecodeAttention(_) => {

@@ -106,6 +106,10 @@ CASES = [
     (3, 12, 4, 80, 48, 32, [63, 129, 255]),
     # Exercise the upper half of the initial short-context envelope.
     (2, 8, 2, 128, 96, 32, [257, 511]),
+    # Force the four-query-head GQA path at its 128 KV-work-item threshold.
+    (16, 32, 8, 32, 24, 16, list(range(17, 33))),
+    # Exercise the scalar Q/K fallback inside the packed GQA kernel.
+    (2, 8, 2, 33, 17, 8, [17, 23]),
 ]
 
 

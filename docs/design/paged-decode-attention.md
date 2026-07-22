@@ -48,13 +48,21 @@ Those options become separate contract fields only after the base kernel and a
 named engine path are correct. They will not be hidden behind silent fallback
 inside the Rust operator.
 
-## Implemented Short-Context Kernel
+## Implemented Short-Context Kernels
 
-The first handwritten CUDA implementation assigns one 256-thread block to
-each `(sequence, query_head)` pair. Eight warps compute Q/K dot products over
-the paged cache, a block reduction performs stable max-subtracted softmax in
-F32, and threads accumulate independent value dimensions. The dynamic score
-buffer deliberately caps this path at 1,024 tokens.
+The base handwritten CUDA implementation assigns one 256-thread block to each
+`(sequence, query_head)` pair. Eight warps compute Q/K dot products over the
+paged cache, a block reduction performs stable max-subtracted softmax in F32,
+and threads accumulate independent value dimensions.
+
+For GQA contexts above 16 tokens, a packed specialization assigns one block to
+two query heads that share a KV head. It resolves each paged token once, uses
+pair loads for Q/K where alignment permits, computes both softmax rows, and
+loads each V element once for both output heads. When the grid contains at
+least 128 `(sequence, kv_head)` work items and the GQA ratio is divisible by
+four, the H20-qualified dispatch packs four query heads instead. Small grids
+keep two-head packing to retain enough independent thread blocks. The dynamic
+score and token-offset buffers deliberately cap both paths at 1,024 tokens.
 
 The C ABI and PyTorch boundary accept contiguous int32 block tables and
 sequence lengths, matching vLLM's live metadata. Their active values are
@@ -75,14 +83,17 @@ fallback is introduced on the launch path.
 
 Steps 1-4 and the operator-level part of step 6 are complete. Randomized
 PyTorch tests cover MQA/GQA, partial final blocks, shuffled physical blocks,
-distinct value widths, F32/FP16/BF16, external streams, FakeTensor/schema,
-`torch.compile`, and launch telemetry. On NVIDIA H20 all 16 focused tests and
-the 144-test Python suite pass.
+odd head sizes, distinct value widths, F32/FP16/BF16, external streams,
+FakeTensor/schema,
+`torch.compile`, and launch telemetry. On NVIDIA H20 all 22 focused tests and
+the 150-test Python suite pass.
 
 The named BF16 FA3 matrix establishes a narrow performance envelope rather
-than a blanket replacement. At context 16, CUDA Graph speedups are `1.43x`,
-`1.44x`, and `2.04x` for batches 1, 8, and 32. At context 32 only batch 32
-remains ahead (`1.11x`); at 64-512 tokens the first kernel is slower than FA3.
-Therefore step 5 remains open and vLLM automatic routing is intentionally not
-enabled. The next CUDA work is a tiled/split-K design for the 32-128-token
-region, followed by an explicit measured-shape fallback and real-model gate.
+than a blanket replacement. CUDA Graph speedups at contexts 16/32 are
+`1.42x/1.32x`, `1.45x/1.28x`, and `2.04x/2.16x` for batches 1, 8, and 32.
+Batch 32 remains `1.38x` ahead at context 64, while batches 1/8 are
+`0.88x/0.88x`. By context 128 all three batches lose (`0.55x`, `0.55x`, and
+`0.80x`). Therefore step 5 remains open and vLLM automatic routing is
+intentionally not enabled. The next qualification work broadens head/layout
+shapes around the 32/64-token crossover; a split-K/LSE design targets 128+
+tokens before an explicit measured-shape fallback and real-model gate.

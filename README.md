@@ -55,10 +55,10 @@ execution, or lower dispatch overhead can create measurable engine value.
   Loom only for at least 32 rows and a 65,536-token vocabulary, with smaller
   decode batches falling back to vLLM;
 - paged MQA/GQA decode attention spans Rust contract/oracle, safe Rust/C ABI,
-  handwritten F32/FP16/BF16 CUDA, and a current-stream PyTorch out API. H20
-  tests pass against randomized PyTorch and vLLM FA3 references. The first
-  kernel beats FA3 consistently at context 16, but loses at 64+ tokens, so no
-  automatic vLLM replacement is enabled yet;
+  handwritten F32/FP16/BF16 CUDA, and a current-stream PyTorch out API. Its
+  GQA path reuses paged K/V loads across two or four query heads. On H20 it
+  beats vLLM FA3 through context 32 at batches 1/8 and through context 64 at
+  batch 32; context 128 still loses, so automatic routing remains disabled;
 
 ## Workspace
 
@@ -81,7 +81,7 @@ execution, or lower dispatch overhead can create measurable engine value.
 | P0 | RoPE+KV write, KV append/layout/quantization | removes extra HBM passes around KV-cache updates |
 | P0 | SwiGLU/GELU fused epilogues | combines activation, multiply, bias, and quantization |
 | P0 | sampling and selected-token logprob | reduces decode-tail launches and temporary tensors |
-| P1 | paged decode attention | first short-context CUDA path is qualified; optimize 32-128 tokens before a shape-gated engine route |
+| P1 | paged decode attention | GQA-packed short-context CUDA is qualified; broaden shapes before a measured engine route |
 | P1 | MoE top-k, permutation, grouped dispatch | routing and movement often dominate small expert batches |
 | P1 | quantized GEMM epilogues | wrap vendor GEMM and own the fusion, not another basic GEMM |
 | P2 | communication-aware fusions | RMSNorm/all-reduce and TP epilogues after single-GPU evidence |
@@ -300,11 +300,12 @@ vocabulary gate.
 
 The paged-decode
 [operator report](docs/results/h20-paged-decode-attention-20260722.json)
-compares the first handwritten kernel directly with vLLM 0.24 FA3 over batch
-1/8/32 and context 16-512. CUDA Graph ratios at context 16 are
-`1.43x/1.44x/2.04x`; only batch 32 remains ahead at context 32 (`1.11x`), and
-all 64+ cases lose. This is evidence for a narrow short-context kernel and the
-next optimization target, not evidence for replacing the engine backend.
+compares the GQA-packed handwritten kernel directly with vLLM 0.24 FA3 over
+batch 1/8/32 and context 16-512. CUDA Graph ratios at contexts 16/32 are
+`1.42x/1.32x` for batch 1, `1.45x/1.28x` for batch 8, and
+`2.04x/2.16x` for batch 32. Batch 32 also reaches `1.38x` at context 64;
+context 128 falls to `0.55x/0.55x/0.80x`. This admits a measured short-context
+candidate, not a blanket replacement for the engine backend.
 
 For the Python build and engine configuration, see the
 [vLLM IR provider guide](docs/guides/vllm-ir-provider.md).

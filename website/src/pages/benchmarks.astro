@@ -47,7 +47,10 @@ import { evidence, repositoryUrl } from "../data/site";
         selected-token path reaches 2.77–3.78× while leaving sampling policy
         with vLLM. Min-P crosses from a small-batch regression to 1.10× at 32
         rows and 1.89× at 128 rows, so its adapter routes smaller shapes back
-        to vLLM instead of applying a blanket override.
+        to vLLM instead of applying a blanket override. GQA-packed paged decode
+        reaches 1.32×/1.28×/2.16× at context 32 for batches 1/8/32 and 1.38×
+        at context 64 for batch 32, but every tested batch loses by context
+        128; no automatic attention route is admitted from that narrow matrix.
       </p>
 
       <h2>Validation ladder</h2>
@@ -88,6 +91,11 @@ python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
 
 .venv-vllm/bin/python benchmarks/vllm_min_p_filter.py \
   --rows 1,8,32,128 --vocab-size 151936
+
+.venv-vllm/bin/python benchmarks/vllm_paged_decode_attention.py \
+  --batches 1,8,32 --contexts 16,32,64,128,256,512 \
+  --dtype bf16 --query-heads 32 --kv-heads 8 --head-size 128 \
+  --warmup 30 --iterations 200 --samples 7
 
 .venv-vllm/bin/python benchmarks/vllm_engine_greedy_logprobs.py \
   --model /path/to/Qwen2.5-0.5B-Instruct --sampling-mode top-k-top-p \

@@ -202,7 +202,7 @@ fn validate_buffers<T: Copy>(
     output.require_len(spec.output_numel(), "paged decode output")?;
     if spec.max_sequence_length() > PAGED_DECODE_MAX_CONTEXT {
         return Err(CudaExecutorError::InvalidContract(format!(
-            "paged decode maximum context {} exceeds the first CUDA kernel limit {PAGED_DECODE_MAX_CONTEXT}",
+            "paged decode maximum context {} exceeds the CUDA kernel limit {PAGED_DECODE_MAX_CONTEXT}",
             spec.max_sequence_length()
         )));
     }

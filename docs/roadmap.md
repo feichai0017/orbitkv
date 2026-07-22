@@ -97,9 +97,12 @@ Status: in progress.
   native paged KV, MQA/GQA mapping, and block-table validation are fixed;
 - ~~first handwritten short-context CUDA candidate~~ — F32/FP16/BF16 C ABI,
   safe Rust, current-stream PyTorch, randomized oracle, compile/graph gates,
-  and an H20 FA3 comparison are complete; it wins consistently only at
-  context 16 and remains correctness-only through context 1024;
-- tiled or split-K/LSE optimization for the measured 32-128-token gap;
+  and an H20 FA3 comparison are complete;
+- ~~GQA-packed 32/64-token optimization~~ — two/four query heads reuse each
+  paged K/V load; the Qwen-style H20 matrix now wins through context 32 at
+  batches 1/8 and through context 64 at batch 32;
+- broader head/layout qualification and tiled or split-K/LSE optimization for
+  the measured 128-1024-token gap;
 - measured-shape vLLM 0.24 adapter with explicit FA3 fallback, followed by a
   real-model engine gate;
 - vendor attention integration where it wins;

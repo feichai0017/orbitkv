@@ -15,12 +15,19 @@ namespace {
 
 constexpr uint32_t kThreads = 256;
 constexpr uint32_t kWarps = kThreads / 32;
+constexpr uint32_t kPackedThreads = 256;
+constexpr uint32_t kPackedWarps = kPackedThreads / 32;
 constexpr uint32_t kMaxContext = 1024;
+constexpr uint32_t kSingleHeadMaximumContext = 16;
+constexpr uint64_t kFourHeadMinimumKvWorkItems = 128;
 
 struct FloatOps {
   using Scalar = float;
   __device__ static float to_float(float value) { return value; }
   __device__ static float from_float(float value) { return value; }
+  __device__ static float2 load_pair(const float* values) {
+    return *reinterpret_cast<const float2*>(values);
+  }
 };
 
 struct HalfOps {
@@ -28,6 +35,9 @@ struct HalfOps {
   __device__ static float to_float(__half value) { return __half2float(value); }
   __device__ static __half from_float(float value) {
     return __float2half_rn(value);
+  }
+  __device__ static float2 load_pair(const __half* values) {
+    return __half22float2(*reinterpret_cast<const __half2*>(values));
   }
 };
 
@@ -38,6 +48,10 @@ struct Bfloat16Ops {
   }
   __device__ static __nv_bfloat16 from_float(float value) {
     return __float2bfloat16(value);
+  }
+  __device__ static float2 load_pair(const __nv_bfloat16* values) {
+    return __bfloat1622float2(
+        *reinterpret_cast<const __nv_bfloat162*>(values));
   }
 };
 
@@ -159,6 +173,171 @@ __global__ void paged_decode_attention_kernel(
   }
 }
 
+template <typename Ops, int PackedQueryHeads>
+__global__ void paged_decode_attention_gqa_kernel(
+    const typename Ops::Scalar* query, const typename Ops::Scalar* key_cache,
+    const typename Ops::Scalar* value_cache, const int32_t* block_tables,
+    const int32_t* sequence_lengths, typename Ops::Scalar* output,
+    uint32_t query_heads, uint32_t kv_heads, uint32_t head_size,
+    uint32_t value_head_size, uint32_t block_size,
+    uint32_t max_blocks_per_sequence, uint32_t max_sequence_length,
+    float scale) {
+  const uint32_t queries_per_kv = query_heads / kv_heads;
+  const uint32_t packed_groups_per_kv = queries_per_kv / PackedQueryHeads;
+  const uint32_t packed_groups_per_sequence =
+      kv_heads * packed_groups_per_kv;
+  const uint32_t sequence = blockIdx.x / packed_groups_per_sequence;
+  const uint32_t packed_group = blockIdx.x % packed_groups_per_sequence;
+  const uint32_t kv_head = packed_group / packed_groups_per_kv;
+  const uint32_t subgroup = packed_group % packed_groups_per_kv;
+  const uint32_t first_query_head =
+      kv_head * queries_per_kv + subgroup * PackedQueryHeads;
+  const uint32_t sequence_length =
+      static_cast<uint32_t>(sequence_lengths[sequence]);
+
+  extern __shared__ unsigned char shared_bytes[];
+  float* scores = reinterpret_cast<float*>(shared_bytes);
+  const size_t score_bytes =
+      static_cast<size_t>(PackedQueryHeads) * max_sequence_length *
+      sizeof(float);
+  const size_t token_offset_start =
+      (score_bytes + alignof(size_t) - 1U) & ~(alignof(size_t) - 1U);
+  size_t* token_offsets =
+      reinterpret_cast<size_t*>(shared_bytes + token_offset_start);
+  using BlockReduce = cub::BlockReduce<float, kPackedThreads>;
+  __shared__ typename BlockReduce::TempStorage reduction_storage;
+  __shared__ float maximum;
+  __shared__ float inverse_denominators[PackedQueryHeads];
+
+  const size_t table_offset =
+      static_cast<size_t>(sequence) * max_blocks_per_sequence;
+  for (uint32_t position = threadIdx.x; position < sequence_length;
+       position += kPackedThreads) {
+    const uint32_t logical_block = position / block_size;
+    const uint32_t block_offset = position % block_size;
+    const uint32_t physical_block =
+        static_cast<uint32_t>(block_tables[table_offset + logical_block]);
+    token_offsets[position] =
+        static_cast<size_t>(physical_block) * block_size + block_offset;
+  }
+  __syncthreads();
+
+  const uint32_t lane = threadIdx.x & 31U;
+  const uint32_t warp = threadIdx.x >> 5U;
+  for (uint32_t position = warp; position < sequence_length;
+       position += kPackedWarps) {
+    float partials[PackedQueryHeads] = {};
+    const size_t key_offset =
+        (token_offsets[position] * kv_heads + kv_head) * head_size;
+    if (head_size % 2U == 0U) {
+      for (uint32_t dimension = lane * 2U; dimension < head_size;
+           dimension += 64U) {
+        const float2 key_values =
+            Ops::load_pair(key_cache + key_offset + dimension);
+#pragma unroll
+        for (int packed_head = 0; packed_head < PackedQueryHeads;
+             ++packed_head) {
+          const uint32_t query_head = first_query_head + packed_head;
+          const size_t query_offset =
+              (static_cast<size_t>(sequence) * query_heads + query_head) *
+              head_size;
+          const float2 query_values =
+              Ops::load_pair(query + query_offset + dimension);
+          partials[packed_head] =
+              fmaf(query_values.x, key_values.x, partials[packed_head]);
+          partials[packed_head] =
+              fmaf(query_values.y, key_values.y, partials[packed_head]);
+        }
+      }
+    } else {
+      for (uint32_t dimension = lane; dimension < head_size;
+           dimension += 32U) {
+        const float key_value =
+            Ops::to_float(key_cache[key_offset + dimension]);
+#pragma unroll
+        for (int packed_head = 0; packed_head < PackedQueryHeads;
+             ++packed_head) {
+          const uint32_t query_head = first_query_head + packed_head;
+          const size_t query_offset =
+              (static_cast<size_t>(sequence) * query_heads + query_head) *
+              head_size;
+          partials[packed_head] +=
+              Ops::to_float(query[query_offset + dimension]) * key_value;
+        }
+      }
+    }
+#pragma unroll
+    for (int packed_head = 0; packed_head < PackedQueryHeads; ++packed_head) {
+      partials[packed_head] = warp_sum(partials[packed_head]);
+      if (lane == 0U) {
+        scores[static_cast<size_t>(packed_head) * max_sequence_length +
+               position] = partials[packed_head] * scale;
+      }
+    }
+  }
+  __syncthreads();
+
+#pragma unroll
+  for (int packed_head = 0; packed_head < PackedQueryHeads; ++packed_head) {
+    float local_maximum = -CUDART_INF_F;
+    float* head_scores =
+        scores + static_cast<size_t>(packed_head) * max_sequence_length;
+    for (uint32_t position = threadIdx.x; position < sequence_length;
+         position += kPackedThreads) {
+      local_maximum = fmaxf(local_maximum, head_scores[position]);
+    }
+    const float reduced_maximum =
+        BlockReduce(reduction_storage).Reduce(local_maximum, Maximum{});
+    if (threadIdx.x == 0U) {
+      maximum = reduced_maximum;
+    }
+    __syncthreads();
+
+    float local_denominator = 0.0F;
+    for (uint32_t position = threadIdx.x; position < sequence_length;
+         position += kPackedThreads) {
+      const float weight = expf(head_scores[position] - maximum);
+      head_scores[position] = weight;
+      local_denominator += weight;
+    }
+    __syncthreads();
+    const float denominator =
+        BlockReduce(reduction_storage).Sum(local_denominator);
+    if (threadIdx.x == 0U) {
+      inverse_denominators[packed_head] = 1.0F / denominator;
+    }
+    __syncthreads();
+  }
+
+  for (uint32_t dimension = threadIdx.x; dimension < value_head_size;
+       dimension += kPackedThreads) {
+    float accumulators[PackedQueryHeads] = {};
+    for (uint32_t position = 0; position < sequence_length; ++position) {
+      const size_t value_offset =
+          (token_offsets[position] * kv_heads + kv_head) * value_head_size;
+      const float value =
+          Ops::to_float(value_cache[value_offset + dimension]);
+#pragma unroll
+      for (int packed_head = 0; packed_head < PackedQueryHeads;
+           ++packed_head) {
+        accumulators[packed_head] +=
+            scores[static_cast<size_t>(packed_head) * max_sequence_length +
+                   position] *
+            value;
+      }
+    }
+#pragma unroll
+    for (int packed_head = 0; packed_head < PackedQueryHeads; ++packed_head) {
+      const uint32_t query_head = first_query_head + packed_head;
+      const size_t output_offset =
+          (static_cast<size_t>(sequence) * query_heads + query_head) *
+          value_head_size;
+      output[output_offset + dimension] = Ops::from_float(
+          accumulators[packed_head] * inverse_denominators[packed_head]);
+    }
+  }
+}
+
 bool checked_product(const uint32_t* dimensions, size_t count) {
   size_t product = 1;
   for (size_t index = 0; index < count; ++index) {
@@ -211,14 +390,63 @@ int launch_paged_decode_attention(
     return LOOM_CUDA_INVALID_ARGUMENT;
   }
 
-  const size_t shared_bytes =
-      static_cast<size_t>(max_sequence_length) * sizeof(float);
-  paged_decode_attention_kernel<Ops>
-      <<<static_cast<uint32_t>(grid_size), kThreads, shared_bytes,
-         static_cast<cudaStream_t>(stream)>>>(
-          query, key_cache, value_cache, block_tables, sequence_lengths,
-          output, query_heads, kv_heads, head_size, value_head_size, block_size,
-          max_blocks_per_sequence, scale);
+  cudaStream_t cuda_stream = static_cast<cudaStream_t>(stream);
+  const uint32_t queries_per_kv = query_heads / kv_heads;
+  const uint64_t kv_work_items =
+      static_cast<uint64_t>(sequences) * kv_heads;
+  // Packing four query heads cuts the grid by 4x. Keep enough independent
+  // (sequence, KV-head) work on the H20-qualified path to preserve occupancy.
+  if (max_sequence_length > kSingleHeadMaximumContext &&
+      queries_per_kv % 4U == 0U &&
+      kv_work_items >= kFourHeadMinimumKvWorkItems) {
+    constexpr uint32_t packed_query_heads = 4;
+    const uint64_t packed_grid_size =
+        kv_work_items * (queries_per_kv / packed_query_heads);
+    const size_t score_bytes =
+        static_cast<size_t>(packed_query_heads) * max_sequence_length *
+        sizeof(float);
+    const size_t token_offset_start =
+        (score_bytes + alignof(size_t) - 1U) & ~(alignof(size_t) - 1U);
+    const size_t shared_bytes =
+        token_offset_start +
+        static_cast<size_t>(max_sequence_length) * sizeof(size_t);
+    paged_decode_attention_gqa_kernel<Ops, packed_query_heads>
+        <<<static_cast<uint32_t>(packed_grid_size), kPackedThreads,
+           shared_bytes,
+           cuda_stream>>>(
+            query, key_cache, value_cache, block_tables, sequence_lengths,
+            output, query_heads, kv_heads, head_size, value_head_size,
+            block_size, max_blocks_per_sequence, max_sequence_length, scale);
+  } else if (max_sequence_length > kSingleHeadMaximumContext &&
+             queries_per_kv % 2U == 0U) {
+    constexpr uint32_t packed_query_heads = 2;
+    const uint64_t packed_grid_size =
+        kv_work_items * (queries_per_kv / packed_query_heads);
+    const size_t score_bytes =
+        static_cast<size_t>(packed_query_heads) * max_sequence_length *
+        sizeof(float);
+    const size_t token_offset_start =
+        (score_bytes + alignof(size_t) - 1U) & ~(alignof(size_t) - 1U);
+    const size_t shared_bytes =
+        token_offset_start +
+        static_cast<size_t>(max_sequence_length) * sizeof(size_t);
+    paged_decode_attention_gqa_kernel<Ops, packed_query_heads>
+        <<<static_cast<uint32_t>(packed_grid_size), kPackedThreads,
+           shared_bytes,
+           cuda_stream>>>(
+            query, key_cache, value_cache, block_tables, sequence_lengths,
+            output, query_heads, kv_heads, head_size, value_head_size,
+            block_size, max_blocks_per_sequence, max_sequence_length, scale);
+  } else {
+    const size_t shared_bytes =
+        static_cast<size_t>(max_sequence_length) * sizeof(float);
+    paged_decode_attention_kernel<Ops>
+        <<<static_cast<uint32_t>(grid_size), kThreads, shared_bytes,
+           cuda_stream>>>(query, key_cache, value_cache, block_tables,
+                          sequence_lengths, output, query_heads, kv_heads,
+                          head_size, value_head_size, block_size,
+                          max_blocks_per_sequence, scale);
+  }
   return cudaGetLastError() == cudaSuccess ? LOOM_CUDA_SUCCESS
                                            : LOOM_CUDA_LAUNCH_ERROR;
 }

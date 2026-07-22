@@ -157,7 +157,7 @@ int loom_cuda_min_p_filter_bf16(uint16_t* logits, const float* min_p,
 // caches are contiguous NHD [blocks, block_size, kv_heads, dim]. Block tables
 // and sequence lengths are contiguous int32 engine metadata. Sequence lengths
 // include the current token and are trusted to be in [1, max_sequence_length];
-// active block IDs are trusted to be in [0, num_blocks). The first kernel is
+// active block IDs are trusted to be in [0, num_blocks). This kernel family is
 // intentionally limited to max_sequence_length <= 1024 and does not implement
 // ALiBi, sliding windows, soft caps, quantized KV, or multi-token queries.
 int loom_cuda_paged_decode_attention_f32(
