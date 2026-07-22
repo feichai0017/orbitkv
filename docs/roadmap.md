@@ -57,13 +57,19 @@ Exit: fewer HBM passes and lower TPOT in a real engine.
 
 ## K4: Decode Tail
 
-Status: planned.
+Status: in progress.
 
-- fused SwiGLU/GELU epilogues;
-- repetition/frequency penalties, top-k/top-p, sampling, and selected logprob;
-- MoE top-k routing and token permutation.
+- ~~greedy argmax plus sampled-token raw logprob~~ — Rust oracle, safe
+  CUDA/C ABI, PyTorch, and narrow vLLM 0.24 integration complete; H20 named
+  baseline and both real-engine provider orders show exact token/rank parity
+  and material latency/TPOT benefit;
+- fused logits bias, masking, bad-word suppression, and history penalties;
+- top-k/top-p/min-p filtering, renormalization, and deterministic RNG sampling;
+- general selected-token and top-k logprobs.
 
-Exit: fewer launches and temporary tensors with identical token results.
+Exit: fewer launches and temporary tensors with identical token results. The
+first exit gate is closed for pure greedy requests with `logprobs=0`; general
+sampling remains open.
 
 ## K5: MoE Routing And Movement
 

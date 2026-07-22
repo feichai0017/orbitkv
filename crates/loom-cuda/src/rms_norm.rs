@@ -342,6 +342,14 @@ impl Backend for CudaBackend {
             OperatorSpec::SiluAndMulDynamicFp8(_) => {
                 Support::Unsupported("CUDA SiLU-and-Mul+FP8 supports FP16 and BF16 inputs")
             }
+            OperatorSpec::GreedySampleLogprobs(spec)
+                if matches!(spec.dtype(), DType::F32 | DType::F16 | DType::Bf16) =>
+            {
+                Support::Supported
+            }
+            OperatorSpec::GreedySampleLogprobs(_) => {
+                Support::Unsupported("CUDA greedy sampling supports F32, FP16, and BF16 logits")
+            }
             OperatorSpec::RotaryEmbedding(_) => Support::Unsupported(
                 "standalone CUDA RoPE is not exposed yet; use the fused RoPE+paged-KV contract",
             ),

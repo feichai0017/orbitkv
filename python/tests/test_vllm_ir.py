@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -9,16 +11,63 @@ from loom_kernels.vllm import (
     ACT_QUANT_OVERRIDE_ENV,
     ACT_QUANT_OVERRIDE_KEY,
     DEFAULT_PROVIDER,
+    GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY,
     ROPE_PAGED_KV_OVERRIDE_KEY,
     SILU_OVERRIDE_ENV,
     SILU_OVERRIDE_KEY,
     configure_vllm_rope_paged_kv,
     provider_metadata,
     register_vllm_ir,
+    register_vllm_greedy_sample_logprobs,
     register_vllm_rope_paged_kv,
     register_vllm_silu_and_mul,
     register_vllm_silu_and_mul_dynamic_fp8,
 )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_vllm_greedy_sample_logprobs_fast_path_matches_sampler_semantics():
+    from vllm.v1.sample.sampler import Sampler
+
+    assert (
+        register_vllm_greedy_sample_logprobs()
+        == GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY
+    )
+    logits = torch.randn((5, 4096), device="cuda", dtype=torch.float32)
+    metadata = SimpleNamespace(
+        all_greedy=True,
+        max_num_logprobs=0,
+        logprob_token_ids=None,
+        no_penalties=True,
+        allowed_token_ids_mask=None,
+        bad_words_token_ids={},
+        logitsprocs=SimpleNamespace(non_argmax_invariant=[]),
+        thinking_budget_state_holder=None,
+    )
+    output = Sampler().forward(logits, metadata)
+    expected_ids = logits.argmax(-1).to(torch.int32)
+    expected_logprobs = logits.log_softmax(-1).gather(
+        -1, expected_ids.long().unsqueeze(-1)
+    )
+    torch.cuda.synchronize()
+
+    assert torch.equal(output.sampled_token_ids[:, 0], expected_ids)
+    assert output.logprobs_tensors is not None
+    torch.testing.assert_close(
+        output.logprobs_tensors.logprobs,
+        expected_logprobs,
+        rtol=2.0e-5,
+        atol=2.0e-5,
+    )
+    expected_ranks = (
+        logits
+        >= logits.gather(-1, expected_ids.long().unsqueeze(-1))
+    ).sum(dim=-1)
+    assert torch.equal(
+        output.logprobs_tensors.selected_token_ranks,
+        expected_ranks,
+    )
+    assert provider_metadata()["greedy_sample_logprobs_override"] is True
 
 
 def test_configures_vllm_rope_paged_kv_fusion():

@@ -210,6 +210,21 @@ pub struct SiluAndMulDynamicFp8Spec {
     output_dtype: DType,
 }
 
+/// Contract for fused greedy token selection and its normalized logprob.
+///
+/// Logits are contiguous `[rows, vocab_size]`. Each output row contains the
+/// lowest token index attaining the maximum logit, its log-softmax value, and
+/// an integration-defined sampled-token rank. The CUDA and Python adapters
+/// match vLLM's tie-aware rank by counting all logits equal to the maximum.
+/// This deterministic boundary is useful for greedy decode requests that ask
+/// only for the sampled token's logprob.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct GreedySampleLogprobsSpec {
+    rows: usize,
+    vocab_size: usize,
+    dtype: DType,
+}
+
 /// Pairing convention used by rotary positional embeddings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
 pub enum RotaryStyle {
@@ -485,6 +500,38 @@ impl SiluAndMulDynamicFp8Spec {
     }
 }
 
+impl GreedySampleLogprobsSpec {
+    /// Creates a validated contiguous logits contract.
+    pub fn new(rows: usize, vocab_size: usize, dtype: DType) -> Result<Self, ContractError> {
+        if rows == 0 || vocab_size == 0 {
+            return Err(ContractError::ZeroDimension);
+        }
+        rows.checked_mul(vocab_size)
+            .ok_or(ContractError::ElementCountOverflow)?;
+        Ok(Self {
+            rows,
+            vocab_size,
+            dtype,
+        })
+    }
+
+    pub const fn rows(self) -> usize {
+        self.rows
+    }
+
+    pub const fn vocab_size(self) -> usize {
+        self.vocab_size
+    }
+
+    pub const fn dtype(self) -> DType {
+        self.dtype
+    }
+
+    pub const fn logits_numel(self) -> usize {
+        self.rows * self.vocab_size
+    }
+}
+
 impl SiluAndMulSpec {
     /// Creates a validated contiguous split-half SwiGLU contract.
     pub fn new(rows: usize, width: usize, dtype: DType) -> Result<Self, ContractError> {
@@ -622,6 +669,7 @@ pub enum OperatorSpec {
     RmsNormDynamicFp8(RmsNormDynamicFp8Spec),
     SiluAndMul(SiluAndMulSpec),
     SiluAndMulDynamicFp8(SiluAndMulDynamicFp8Spec),
+    GreedySampleLogprobs(GreedySampleLogprobsSpec),
     RotaryEmbedding(RotaryEmbeddingSpec),
     RopePagedKvWrite(RopePagedKvWriteSpec),
 }
@@ -1012,6 +1060,36 @@ pub fn silu_and_mul_dynamic_fp8_bf16_reference(
     silu_and_mul_dynamic_fp8_reference(input, output, scales, spec, DType::Bf16)
 }
 
+/// Selects the first maximum F32 logit per row and returns its log-softmax.
+pub fn greedy_sample_logprobs_f32_reference(
+    logits: &[f32],
+    token_ids: &mut [u32],
+    logprobs: &mut [f32],
+    spec: GreedySampleLogprobsSpec,
+) -> Result<(), ContractError> {
+    greedy_sample_logprobs_reference(logits, token_ids, logprobs, spec, DType::F32)
+}
+
+/// Selects the first maximum FP16 logit per row and returns its F32 log-softmax.
+pub fn greedy_sample_logprobs_f16_reference(
+    logits: &[f16],
+    token_ids: &mut [u32],
+    logprobs: &mut [f32],
+    spec: GreedySampleLogprobsSpec,
+) -> Result<(), ContractError> {
+    greedy_sample_logprobs_reference(logits, token_ids, logprobs, spec, DType::F16)
+}
+
+/// Selects the first maximum BF16 logit per row and returns its F32 log-softmax.
+pub fn greedy_sample_logprobs_bf16_reference(
+    logits: &[bf16],
+    token_ids: &mut [u32],
+    logprobs: &mut [f32],
+    spec: GreedySampleLogprobsSpec,
+) -> Result<(), ContractError> {
+    greedy_sample_logprobs_reference(logits, token_ids, logprobs, spec, DType::Bf16)
+}
+
 /// Applies vLLM-compatible F32 rotary embedding to Q and K in place.
 pub fn rotary_embedding_f32_reference(
     query: &mut [f32],
@@ -1128,6 +1206,67 @@ pub fn rope_paged_kv_write_bf16_reference(
         spec,
         DType::Bf16,
     )
+}
+
+trait LogitElement: Copy {
+    fn to_f32(self) -> f32;
+}
+
+impl LogitElement for f32 {
+    fn to_f32(self) -> f32 {
+        self
+    }
+}
+
+impl LogitElement for f16 {
+    fn to_f32(self) -> f32 {
+        self.to_f32()
+    }
+}
+
+impl LogitElement for bf16 {
+    fn to_f32(self) -> f32 {
+        self.to_f32()
+    }
+}
+
+fn greedy_sample_logprobs_reference<T: LogitElement>(
+    logits: &[T],
+    token_ids: &mut [u32],
+    logprobs: &mut [f32],
+    spec: GreedySampleLogprobsSpec,
+    expected_dtype: DType,
+) -> Result<(), ContractError> {
+    if spec.dtype() != expected_dtype {
+        return Err(ContractError::UnsupportedDType(spec.dtype()));
+    }
+    require_len("logits", logits.len(), spec.logits_numel())?;
+    require_len("token_ids", token_ids.len(), spec.rows())?;
+    require_len("logprobs", logprobs.len(), spec.rows())?;
+
+    for ((row, token_id), logprob) in logits
+        .chunks_exact(spec.vocab_size())
+        .zip(token_ids.iter_mut())
+        .zip(logprobs.iter_mut())
+    {
+        let mut maximum = row[0].to_f32();
+        let mut maximum_index = 0_usize;
+        for (index, &value) in row.iter().enumerate().skip(1) {
+            let value = value.to_f32();
+            if value > maximum {
+                maximum = value;
+                maximum_index = index;
+            }
+        }
+
+        let exponential_sum = row
+            .iter()
+            .map(|&value| f64::from(value.to_f32() - maximum).exp())
+            .sum::<f64>();
+        *token_id = maximum_index as u32;
+        *logprob = -(exponential_sum.ln() as f32);
+    }
+    Ok(())
 }
 
 trait RotaryElement: Copy {
@@ -1944,6 +2083,47 @@ mod tests {
                 wrong_dtype,
             ),
             Err(ContractError::UnsupportedDType(DType::F32))
+        );
+    }
+
+    #[test]
+    fn greedy_sample_logprobs_selects_first_tie_and_normalizes() {
+        let spec = GreedySampleLogprobsSpec::new(2, 4, DType::F32).unwrap();
+        let logits = [1.0_f32, 3.0, 3.0, -1.0, -2.0, -1.0, 2.0, 0.0];
+        let mut token_ids = [u32::MAX; 2];
+        let mut logprobs = [0.0_f32; 2];
+
+        greedy_sample_logprobs_f32_reference(&logits, &mut token_ids, &mut logprobs, spec).unwrap();
+
+        assert_eq!(token_ids, [1, 2]);
+        let first_sum = (-2.0_f64).exp() + 1.0 + 1.0 + (-4.0_f64).exp();
+        let second_sum = (-4.0_f64).exp() + (-3.0_f64).exp() + 1.0 + (-2.0_f64).exp();
+        assert!((logprobs[0] + first_sum.ln() as f32).abs() < 1.0e-6);
+        assert!((logprobs[1] + second_sum.ln() as f32).abs() < 1.0e-6);
+    }
+
+    #[test]
+    fn greedy_sample_logprobs_supports_low_precision_and_validates_buffers() {
+        let spec = GreedySampleLogprobsSpec::new(1, 3, DType::Bf16).unwrap();
+        let logits = [
+            bf16::from_f32(-1.0),
+            bf16::from_f32(2.0),
+            bf16::from_f32(0.5),
+        ];
+        let mut token_ids = [u32::MAX];
+        let mut logprobs = [0.0_f32];
+        greedy_sample_logprobs_bf16_reference(&logits, &mut token_ids, &mut logprobs, spec)
+            .unwrap();
+        assert_eq!(token_ids, [1]);
+        assert!(logprobs[0].is_finite() && logprobs[0] < 0.0);
+
+        assert_eq!(
+            greedy_sample_logprobs_bf16_reference(&logits, &mut [u32::MAX; 2], &mut logprobs, spec,),
+            Err(ContractError::LengthMismatch {
+                buffer: "token_ids",
+                expected: 1,
+                actual: 2,
+            })
         );
     }
 

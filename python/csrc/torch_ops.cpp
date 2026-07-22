@@ -11,11 +11,13 @@
 #include <limits>
 #include <optional>
 #include <string>
+#include <tuple>
 
 namespace {
 
 std::atomic<int64_t> vllm_silu_and_mul_per_block_fp8_launches{0};
 std::atomic<int64_t> rope_paged_kv_write_launches{0};
+std::atomic<int64_t> greedy_sample_logprobs_launches{0};
 
 bool byte_ranges_overlap(const at::Tensor& left, const at::Tensor& right) {
   const auto left_begin = reinterpret_cast<uintptr_t>(left.data_ptr());
@@ -390,6 +392,92 @@ void reset_rope_paged_kv_write_launch_count() {
   rope_paged_kv_write_launches.store(0, std::memory_order_relaxed);
 }
 
+void check_greedy_sample_logprobs_shape(const at::Tensor& logits) {
+  TORCH_CHECK(logits.dim() == 2 && logits.size(0) > 0 && logits.size(1) > 0,
+              "Loom greedy sampling logits must be non-empty rank-2");
+  TORCH_CHECK(logits.size(0) <= std::numeric_limits<uint32_t>::max() &&
+                  logits.size(1) <= std::numeric_limits<int32_t>::max(),
+              "Loom greedy sampling shape exceeds the CUDA ABI");
+}
+
+void check_greedy_sample_logprobs_contract(const at::Tensor& logits) {
+  check_greedy_sample_logprobs_shape(logits);
+  TORCH_CHECK(logits.is_cuda(), "Loom greedy sampling logits must be CUDA");
+  TORCH_CHECK(logits.scalar_type() == at::kFloat ||
+                  logits.scalar_type() == at::kHalf ||
+                  logits.scalar_type() == at::kBFloat16,
+              "Loom greedy sampling supports F32, FP16, and BF16 logits");
+  TORCH_CHECK(logits.stride(1) == 1 && logits.stride(0) >= logits.size(1),
+              "Loom greedy sampling logits require unit vocabulary stride "
+              "and non-overlapping positive row stride");
+  TORCH_CHECK(!logits.requires_grad(),
+              "Loom greedy sampling is an inference-only operator");
+}
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor>
+launch_greedy_sample_logprobs(const at::Tensor& logits) {
+  const auto rows = static_cast<uint32_t>(logits.size(0));
+  const auto vocab_size = static_cast<uint32_t>(logits.size(1));
+  const auto row_stride = static_cast<uint64_t>(logits.stride(0));
+  at::Tensor token_ids =
+      at::empty({logits.size(0)}, logits.options().dtype(at::kInt));
+  at::Tensor logprobs =
+      at::empty({logits.size(0)}, logits.options().dtype(at::kFloat));
+  at::Tensor ranks =
+      at::empty({logits.size(0)}, logits.options().dtype(at::kLong));
+
+  const c10::cuda::CUDAGuard device_guard(logits.device());
+  const auto stream = at::cuda::getCurrentCUDAStream(logits.device().index());
+  int status = LOOM_CUDA_UNSUPPORTED;
+  if (logits.scalar_type() == at::kFloat) {
+    status = loom_cuda_greedy_sample_logprobs_f32(
+        logits.data_ptr<float>(), token_ids.data_ptr<int32_t>(),
+        logprobs.data_ptr<float>(), ranks.data_ptr<int64_t>(), rows, vocab_size,
+        row_stride, stream.stream());
+  } else if (logits.scalar_type() == at::kHalf) {
+    status = loom_cuda_greedy_sample_logprobs_f16(
+        reinterpret_cast<const uint16_t*>(logits.data_ptr<at::Half>()),
+        token_ids.data_ptr<int32_t>(), logprobs.data_ptr<float>(),
+        ranks.data_ptr<int64_t>(), rows, vocab_size, row_stride,
+        stream.stream());
+  } else if (logits.scalar_type() == at::kBFloat16) {
+    status = loom_cuda_greedy_sample_logprobs_bf16(
+        reinterpret_cast<const uint16_t*>(logits.data_ptr<at::BFloat16>()),
+        token_ids.data_ptr<int32_t>(), logprobs.data_ptr<float>(),
+        ranks.data_ptr<int64_t>(), rows, vocab_size, row_stride,
+        stream.stream());
+  }
+  TORCH_CHECK(status == LOOM_CUDA_SUCCESS,
+              "Loom CUDA greedy sampling launch failed: ",
+              loom_cuda_status_string(status), " (status ", status, ")");
+  greedy_sample_logprobs_launches.fetch_add(1, std::memory_order_relaxed);
+  return {token_ids, logprobs, ranks};
+}
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor> greedy_sample_logprobs(
+    const at::Tensor& logits) {
+  check_greedy_sample_logprobs_contract(logits);
+  return launch_greedy_sample_logprobs(logits);
+}
+
+std::tuple<at::Tensor, at::Tensor, at::Tensor> greedy_sample_logprobs_meta(
+    const at::Tensor& logits) {
+  check_greedy_sample_logprobs_shape(logits);
+  return {
+      at::empty({logits.size(0)}, logits.options().dtype(at::kInt)),
+      at::empty({logits.size(0)}, logits.options().dtype(at::kFloat)),
+      at::empty({logits.size(0)}, logits.options().dtype(at::kLong)),
+  };
+}
+
+int64_t greedy_sample_logprobs_launch_count() {
+  return greedy_sample_logprobs_launches.load(std::memory_order_relaxed);
+}
+
+void reset_greedy_sample_logprobs_launch_count() {
+  greedy_sample_logprobs_launches.store(0, std::memory_order_relaxed);
+}
+
 void check_rope_paged_kv_write_contract(
     const at::Tensor& query, const at::Tensor& key, const at::Tensor& value,
     const at::Tensor& positions, const at::Tensor& cos_sin_cache,
@@ -624,6 +712,13 @@ TORCH_LIBRARY(loom_kernels, library) {
   library.def("reset_rope_paged_kv_write_launch_count() -> ()",
               &reset_rope_paged_kv_write_launch_count);
   library.def(
+      "greedy_sample_logprobs(Tensor logits) -> (Tensor token_ids, Tensor "
+      "logprobs, Tensor ranks)");
+  library.def("greedy_sample_logprobs_launch_count() -> int",
+              &greedy_sample_logprobs_launch_count);
+  library.def("reset_greedy_sample_logprobs_launch_count() -> ()",
+              &reset_greedy_sample_logprobs_launch_count);
+  library.def(
       "rope_paged_kv_write_(Tensor(a!) query, Tensor(b!) key, Tensor value, "
       "Tensor positions, Tensor cos_sin_cache, Tensor(c!) key_cache, "
       "Tensor(d!) value_cache, Tensor slot_mapping, bool is_neox) -> ()");
@@ -647,7 +742,12 @@ TORCH_LIBRARY_IMPL(loom_kernels, CUDA, library) {
                &launch_silu_and_mul_dynamic_fp8);
   library.impl("silu_and_mul_per_block_fp8",
                &vllm_silu_and_mul_per_block_fp8);
+  library.impl("greedy_sample_logprobs", &greedy_sample_logprobs);
   library.impl("rope_paged_kv_write_", &rope_paged_kv_write);
   library.impl("rope_paged_kv_write_unchecked_",
                &launch_rope_paged_kv_write);
+}
+
+TORCH_LIBRARY_IMPL(loom_kernels, Meta, library) {
+  library.impl("greedy_sample_logprobs", &greedy_sample_logprobs_meta);
 }

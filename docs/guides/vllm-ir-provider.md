@@ -23,6 +23,13 @@ It preserves packed-QKV token/head strides, NHD or HND cache strides, negative
 slots, and the shorter slot mapping used with padded engine inputs. Quantized
 KV caches are deliberately declined.
 
+A fourth explicit registration replaces only vLLM 0.24's pure-greedy
+`logprobs=0` sampler tail. It fuses argmax, sampled-token raw logprob, and
+tie-aware rank without materializing a full-vocabulary F32 logprob tensor.
+Unlike the parity-only integrations above, pinned Qwen2.5-0.5B H20 runs show
+an order-stable end-to-end latency and TPOT improvement for this narrow
+request contract.
+
 The registered contract is:
 
 ```text
@@ -65,6 +72,7 @@ output, updated_residual = add_rms_norm_(
 )
 
 from loom_kernels import (
+    greedy_sample_logprobs,
     rope_paged_kv_write_,
     silu_and_mul,
     silu_and_mul_dynamic_fp8,
@@ -79,6 +87,8 @@ fp8_output, block_scales = silu_and_mul_dynamic_fp8(
     gate_and_up_bf16,
     group_size=128,
 )
+
+token_ids, sampled_logprobs, sampled_ranks = greedy_sample_logprobs(logits)
 silu_and_mul_dynamic_fp8_out(
     gate_and_up_bf16,
     reusable_fp8_output,
@@ -169,6 +179,25 @@ is intentional: the H20 advantage is largest for decode-sized batches and
 narrows as long prefill becomes compute-bound. The adapter targets vLLM 0.24's
 version-specific compiler contract and native F32/FP16/BF16 cache dtype.
 
+To enable the pure-greedy sampled-logprob fast path, register it before engine
+construction:
+
+```python
+from vllm import LLM
+from loom_kernels.vllm import register_vllm_greedy_sample_logprobs
+
+assert register_vllm_greedy_sample_logprobs() == "greedy_sample_logprobs"
+engine = LLM(model="/path/to/model")
+```
+
+The adapter only intercepts requests whose sampler contract is all-greedy,
+uses raw logprobs, and asks for `logprobs=0`. It also requires no penalties,
+allowed-token mask, bad words, per-request logprob token IDs, thinking-budget
+state, or active argmax-changing logits processor. F32/FP16/BF16 logits may
+have padded rows but require unit vocabulary stride. Every unsupported case
+runs the original vLLM sampler; speculative bonus-token sampling is also
+declined. Registration is version-gated to vLLM 0.24.
+
 The provider can only replace a graph-visible activation-quant boundary. On
 the tested H20 stack, vLLM's automatic `fp8_per_block` selection uses a
 FlashInfer/DeepGEMM linear kernel that accepts BF16 and performs activation
@@ -239,6 +268,22 @@ PY
   --case 1x32x64 --case 8x32x64 --warmup 2 --repeats 5 \
   --provider-order loom-first \
   --result-json /tmp/qwen25-rope-kv-loom-first.json
+
+.venv-vllm/bin/python benchmarks/vllm_greedy_sample_logprobs.py \
+  --rows 1,2,4,8,16,32,64,128 --vocab-size 151936 --dtype bf16 \
+  --warmup 100 --iterations 1000 --repeats 7
+
+.venv-vllm/bin/python benchmarks/vllm_engine_greedy_logprobs.py \
+  --model /path/to/Qwen2.5-0.5B-Instruct \
+  --case 1x32x64 --case 8x32x64 --case 32x32x32 \
+  --warmup 2 --repeats 5 --provider-order baseline-first \
+  --result-json /tmp/qwen25-greedy-logprobs-baseline-first.json
+
+.venv-vllm/bin/python benchmarks/vllm_engine_greedy_logprobs.py \
+  --model /path/to/Qwen2.5-0.5B-Instruct \
+  --case 1x32x64 --case 8x32x64 --case 32x32x32 \
+  --warmup 2 --repeats 5 --provider-order loom-first \
+  --result-json /tmp/qwen25-greedy-logprobs-loom-first.json
 ```
 
 The microbenchmark compares `loom_cuda` and `vllm_c` through the same vLLM IR
@@ -292,6 +337,16 @@ integration plus operator-level benefit, not model-level acceleration. See the
 [large-token sweep](../results/h20-rope-paged-kv-large-20260722.json), and
 [engine report](../results/h20-vllm-qwen25-rope-paged-kv-engine-20260722.json).
 
+For greedy sampled logprobs, Loom matched vLLM's token IDs and tie-aware ranks
+exactly over a 151,936-token BF16 vocabulary; maximum sampled-logprob error was
+`9.54e-7`. The fused operator measured `3.16-4.35x` faster for 1-128 rows. Two
+isolated provider orders on Qwen2.5-0.5B matched every generated token and
+rank, recorded 1120 Loom submissions only in each Loom process, and measured
+`1.129-1.250x` batch-latency plus `1.147-1.257x` TPOT ratios. See the
+[operator report](../results/h20-greedy-sample-logprobs-20260722.json),
+[baseline-first engine report](../results/h20-vllm-greedy-logprobs-baseline-first-20260722.json),
+and [Loom-first engine report](../results/h20-vllm-greedy-logprobs-loom-first-20260722.json).
+
 The compatible arithmetic and schema follow vLLM 0.24's
 [fused CUDA implementation](https://github.com/vllm-project/vllm/blob/v0.24.0/csrc/libtorch_stable/quantization/fused_kernels/fused_silu_mul_block_quant.cu)
 and its documented
@@ -310,9 +365,12 @@ dispatcher bridge follows PyTorch's
 - one selectable IR provider (`fused_add_rms_norm`), one opt-in out-of-tree
   layer replacement (`SiluAndMul`), and one vLLM-version-specific
   activation-quant fusion-table replacement, plus a vLLM 0.24-specific
-  RoPE+native-KV compiler-pass adapter;
+  RoPE+native-KV compiler-pass adapter and pure-greedy sampled-logprob sampler
+  override;
 - the activation-quant provider requires a graph-visible quantization boundary;
   it does not intercept vLLM's fused BF16-input FlashInfer/DeepGEMM path;
 - the isolated operator is faster on H20 and real-model invocation is proven,
   but no model-level speedup has been established for either FP8 activation
-  fusion or RoPE+paged-KV.
+  fusion or RoPE+paged-KV;
+- the sampler fast path does not cover penalties, masks, top-k/top-p/min-p,
+  stochastic sampling, top-k logprobs, or non-raw logprob modes.

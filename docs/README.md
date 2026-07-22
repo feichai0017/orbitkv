@@ -27,6 +27,12 @@
 - [H20 Qwen2.5 FP8 engine report](results/h20-vllm-qwen25-05b-fp8-engine-20260722.json):
   pinned pretrained checkpoint, compiler and launch path evidence, exact-token
   generation, and order-reversed end-to-end parity.
+- [H20 greedy sampled-logprob operator report](results/h20-greedy-sample-logprobs-20260722.json):
+  exact token/rank gates and the 1-128 row Qwen-vocabulary microbenchmark.
+- [H20 greedy sampled-logprob engine report, baseline first](results/h20-vllm-greedy-logprobs-baseline-first-20260722.json):
+  pinned Qwen2.5 path hits, exact outputs, and real-engine latency/TPOT benefit.
+- [H20 greedy sampled-logprob engine report, Loom first](results/h20-vllm-greedy-logprobs-loom-first-20260722.json):
+  reverse-order confirmation of the same correctness and performance result.
 
 Only results under `docs/results` count as performance evidence. A CPU test, a
 successful CUDA launch, or an isolated number without a named baseline is not a

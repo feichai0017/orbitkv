@@ -44,12 +44,18 @@ export const supportedOperators = [
     boundary: "Packed Q/K rotation + native cache write",
     status: "supported",
   },
+  {
+    name: "Greedy + sampled logprob",
+    dtypes: "F32 · FP16 · BF16",
+    boundary: "Argmax + logsumexp + gather + tie rank",
+    status: "supported",
+  },
 ];
 
 export const nextOperators = [
   {
-    name: "Decode-tail sampling",
-    reason: "Fuse penalties, filtering, selection, and logprob work.",
+    name: "General sampling",
+    reason: "Extend the greedy win to penalties, top-k/top-p, and RNG.",
   },
   {
     name: "MoE routing + movement",
@@ -91,5 +97,11 @@ export const evidence = [
     shape: "BF16 · Qwen2.5-style · 1–512 tokens",
     result: "2.30–2.40×",
     detail: "Dispatcher ratio vs separate vLLM ops",
+  },
+  {
+    operator: "Greedy + sampled logprob",
+    shape: "Qwen2.5-0.5B · batches 1 / 8 / 32",
+    result: "1.129–1.250×",
+    detail: "Order-stable real-engine batch-latency ratio",
   },
 ];

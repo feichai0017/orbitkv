@@ -15,8 +15,9 @@ execution, or lower dispatch overhead can create measurable engine value.
 
 ## Current Status
 
-- `loom-kernels`: dtype, tensor, capability, normalization, quantization, and
-  split-half SiLU-and-Mul contracts plus CPU oracles;
+- `loom-kernels`: dtype, tensor, capability, normalization, quantization,
+  split-half SiLU-and-Mul, RoPE/KV, and greedy-sampling contracts plus CPU
+  oracles;
 - `loom-cuda`: safe CUDA stream/buffer/event ownership and checked dispatch;
 - `loom-cuda-sys`: dependency-light raw C ABI;
 - handwritten F32 plus vectorized FP16/BF16 RMSNorm, fused Add+RMSNorm,
@@ -36,6 +37,12 @@ execution, or lower dispatch overhead can create measurable engine value.
   CPU oracles, safe Rust/C ABI, handwritten F32/FP16/BF16 CUDA, PyTorch, and an
   opt-in vLLM 0.24 FlashAttention/FlashInfer integration. Packed-QKV source
   strides plus NHD/HND cache strides are preserved without materialization;
+- fused greedy argmax plus sampled-token raw logprob spans Rust, safe CUDA/C
+  ABI, handwritten F32/FP16/BF16 CUDA, PyTorch, and a narrow opt-in vLLM 0.24
+  sampler fast path. On H20 it is `3.16-4.35x` faster than vLLM's exact
+  decode-tail sequence for 1-128 Qwen-sized rows; order-reversed real
+  Qwen2.5-0.5B runs show `1.129-1.250x` batch-latency ratios with exact tokens
+  and sampled-token ranks;
 - RMSNorm+FP8 is bitwise compatible with vLLM's named CUDA baseline; routing it
   through a real engine graph is the remaining integration gate.
 
@@ -179,6 +186,18 @@ PYTHONPATH=python/src .venv-vllm/bin/python benchmarks/vllm_rope_paged_kv.py \
   --model /path/to/Qwen2.5-0.5B-Instruct \
   --case 1x32x64 --case 8x32x64 --warmup 2 --repeats 5 \
   --provider-order baseline-first --result-json /tmp/loom-rope-kv-ab.json
+
+PYTHONPATH=python/src .venv-vllm/bin/python \
+  benchmarks/vllm_greedy_sample_logprobs.py \
+  --rows 1,2,4,8,16,32,64,128 --vocab-size 151936 --dtype bf16 \
+  --warmup 100 --iterations 1000 --repeats 7
+
+PYTHONPATH=python/src .venv-vllm/bin/python \
+  benchmarks/vllm_engine_greedy_logprobs.py \
+  --model /path/to/Qwen2.5-0.5B-Instruct \
+  --case 1x32x64 --case 8x32x64 --case 32x32x32 \
+  --warmup 2 --repeats 5 --provider-order baseline-first \
+  --result-json /tmp/loom-greedy-logprobs-ab.json
 ```
 
 The H20 reports cover
@@ -211,6 +230,19 @@ ops for 1-512 tokens; the advantage narrows to `1.09x` at 8192 tokens in the
 [real Qwen2.5 engine gate](docs/results/h20-vllm-qwen25-rope-paged-kv-engine-20260722.json)
 proves exact tokens and direct Loom launches. Order reversal moves end-to-end
 ratios across parity, so no model-level speedup is claimed yet.
+
+The greedy decode-tail
+[operator report](docs/results/h20-greedy-sample-logprobs-20260722.json)
+compares one Loom launch with vLLM's full `log_softmax`, argmax, selected-value
+gather, and rank path over a 151,936-token BF16 vocabulary. Token IDs and
+tie-aware ranks are exact, maximum logprob error is `9.54e-7`, and the H20
+ratio is `3.16-4.35x` for 1-128 rows. The order-reversed
+[baseline-first](docs/results/h20-vllm-greedy-logprobs-baseline-first-20260722.json)
+and [Loom-first](docs/results/h20-vllm-greedy-logprobs-loom-first-20260722.json)
+Qwen2.5 engine gates both pass. Across batches 1, 8, and 32, batch-latency
+ratios are `1.129-1.250x` and TPOT ratios are `1.147-1.257x`, with 1120 Loom
+path hits only in each fused process. This claim is deliberately limited to
+pure greedy requests asking for only the sampled token's raw logprob.
 
 For the Python build and engine configuration, see the
 [vLLM IR provider guide](docs/guides/vllm-ir-provider.md).

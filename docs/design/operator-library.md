@@ -115,6 +115,27 @@ the composed path. Because the composed path rounds that temporary tensor, it
 is a useful performance comparison but not an exact semantic baseline; vLLM's
 own fused per-block operator is the compatibility baseline.
 
+## Greedy-Sampling+Selected-Logprob Contract
+
+The decode-tail operator consumes finite rank-2 F32, FP16, or BF16 logits with
+a unit vocabulary stride and an explicit, possibly padded row stride. For each
+row it returns the lowest token index attaining the maximum, that token's F32
+raw log-softmax value, and an `int64` sampled-token rank. The rank deliberately
+matches vLLM 0.24: it counts values greater than or equal to the selected
+value, so tied maximum logits produce a rank greater than one.
+
+One CUDA block performs first-index argmax, online logsumexp, and maximum-tie
+counting in the same vocabulary pass. This avoids materializing the full F32
+logprob tensor and replaces vLLM's separate log-softmax, argmax, gather, and
+rank work. Launches follow the caller's current stream; token IDs, logprobs,
+and ranks are separately allocated outputs.
+
+The vLLM adapter is intentionally narrower than the CUDA primitive. It only
+intercepts vLLM 0.24 requests where every row is greedy, `max_num_logprobs` is
+zero, raw logprobs are requested, and masks, penalties, bad words, thinking
+state, and argmax-changing processors are inactive. Other requests execute
+vLLM's original sampler unchanged.
+
 ## Operator Contract
 
 Every operator contract must make these properties explicit:

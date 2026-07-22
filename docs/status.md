@@ -22,12 +22,18 @@
   RoPE+paged-KV write oracle for native NHD/HND cache layouts;
 - F32/FP16/BF16 fused CUDA with explicit packed-QKV token/head strides,
   independent rotation/cache token counts, and strided paged-cache writes;
+- greedy-sampling contract and CPU oracles with first-index tie breaking,
+  sampled-token log-softmax, and explicit finite-logit precondition;
+- one-block-per-row F32/FP16/BF16 CUDA fusion of argmax, online logsumexp,
+  selected logprob, and vLLM-compatible maximum-tie rank, including padded
+  vocabulary row strides;
 - a C++ PyTorch dispatcher bridge using the current CUDA stream;
 - a source-adapter Python wheel with explicit framework extras, project
   metadata, license/readme payloads, and a CI install/entry-point smoke gate;
 - a `loom_cuda` vLLM IR provider with native fallback and an opt-in vLLM
   `SiluAndMul` out-of-tree layer replacement, plus an opt-in activation-quant
-  fusion-table replacement and RoPE+KV compiler-pass adapter for vLLM 0.24;
+  fusion-table replacement, RoPE+KV compiler-pass adapter, and pure-greedy
+  sampled-logprob sampler fast path for vLLM 0.24;
 - per-operator JSON correctness/latency benchmarks and named vLLM baselines.
 
 ## Validated
@@ -112,9 +118,9 @@
   `reshape_and_cache_flash` operations across F32/FP16/BF16, NeoX/interleaved,
   NHD/HND cache layouts, partial RoPE, negative slots, external streams,
   packed-QKV views, and padded tensors with a shorter slot mapping;
-- the complete H20 Python suite passed 77 tests; the Rust workspace passed 21
-  contract/oracle tests, Clippy, formatting, and a CUDA-feature safe-wrapper
-  test against the CPU oracle;
+- the complete H20 Python suite passed 94 tests; the Rust core passed 23
+  contract/oracle tests, and the CUDA-feature workspace passed formatting,
+  Clippy, release checking, plus two safe-wrapper tests against CPU oracles;
 - on H20 BF16 Qwen2.5-style shapes, the fused dispatcher path measured roughly
   `2.30-2.40x` faster than vLLM's two-op path for 1-512 tokens. Ratios narrowed
   to `1.686x`, `1.240x`, `1.145x`, and `1.088x` at 1024, 2048, 4096, and 8192
@@ -125,6 +131,21 @@
 - order-reversed engine batch-latency ratios ranged from `0.9957x` to
   `1.0180x`. Invocation and correctness are proven, but the end-to-end result
   crosses parity with provider order and does not establish a speedup.
+- greedy argmax+sampled-logprob PyTorch tests cover F32/FP16/BF16, Qwen's
+  151,936-token vocabulary, explicit ties, padded rows, external streams,
+  FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay; the 30
+  focused operator/vLLM tests pass;
+- against vLLM's exact `compute_logprobs + greedy_sample + gather_logprobs(0)`
+  BF16 path on H20, token IDs and tie-aware ranks were exact and maximum
+  logprob error was `9.54e-7`; 1-128 row speedup ratios were `3.16-4.35x`;
+- baseline-first and Loom-first Qwen2.5-0.5B runs for `1x32x64`, `8x32x64`,
+  and `32x32x32` matched every generated token, sampled-token rank, and
+  sampled logprob within `1.32e-6`. Each baseline recorded zero Loom launches
+  and each fused process recorded 1120;
+- across both provider orders, real-engine batch-latency ratios were
+  `1.129-1.250x` and TPOT ratios were `1.147-1.257x`. This establishes a
+  model-level win for the deliberately narrow pure-greedy `logprobs=0` path,
+  not for general sampling.
 
 See the [F32 report](results/h20-rms-norm-f32-smoke-20260721.json) and
 [low-precision report](results/h20-rms-norm-low-precision-20260721.json), plus
@@ -146,6 +167,11 @@ The [RoPE+paged-KV report](results/h20-rope-paged-kv-20260722.json),
 [Qwen2.5 engine gate](results/h20-vllm-qwen25-rope-paged-kv-engine-20260722.json)
 separate operator-level benefit from real-engine invocation and end-to-end
 parity.
+The [greedy sampled-logprob operator report](results/h20-greedy-sample-logprobs-20260722.json)
+and order-reversed
+[baseline-first](results/h20-vllm-greedy-logprobs-baseline-first-20260722.json)
+and [Loom-first](results/h20-vllm-greedy-logprobs-loom-first-20260722.json)
+engine reports record the first qualified end-to-end acceleration.
 
 ## Not Yet Proven
 
@@ -154,7 +180,9 @@ parity.
   activation-quant boundary is material;
 - RoPE+paged-KV model-level TTFT/TPOT or throughput benefit beyond the current
   exact-token engine integration gate;
+- logits preprocessing, top-k/top-p/min-p, stochastic sampling, and general
+  top-k logprob integration;
 - integration into SGLang or a Rust-native engine path;
 - larger production-model and serving-workload validation;
 - automated binary-wheel packaging;
-- end-to-end TTFT, TPOT, throughput, or memory improvement.
+- serving-scale concurrency, goodput, and memory improvement.

@@ -8,6 +8,7 @@ import torch
 
 from ._native import (
     launch_add_rms_norm,
+    launch_greedy_sample_logprobs,
     launch_rms_norm_dynamic_fp8,
     launch_rope_paged_kv_write,
     launch_silu_and_mul,
@@ -121,6 +122,22 @@ def supports_silu_and_mul_dynamic_fp8(
         and group_size in (64, 128)
         and width % group_size == 0
         and input_tensor.is_contiguous()
+    )
+
+
+def supports_greedy_sample_logprobs(logits: torch.Tensor) -> bool:
+    """Return whether logits match the deterministic greedy CUDA boundary."""
+    return bool(
+        logits.device.type == "cuda"
+        and logits.dtype in _DTYPE_NAMES
+        and logits.dim() == 2
+        and logits.shape[0] > 0
+        and logits.shape[1] > 0
+        and logits.shape[0] <= 0xFFFF_FFFF
+        and logits.shape[1] <= 0x7FFF_FFFF
+        and logits.stride(1) == 1
+        and logits.stride(0) >= logits.shape[1]
+        and not logits.requires_grad
     )
 
 
@@ -361,6 +378,23 @@ def _validate_silu_and_mul_dynamic_fp8_buffers(
     return dtype, rows, width
 
 
+def _validate_greedy_sample_logits(
+    logits: torch.Tensor,
+) -> tuple[str, int, int, int]:
+    if not supports_greedy_sample_logprobs(logits):
+        raise ValueError(
+            "Loom greedy sampling requires finite, non-empty rank-2 "
+            "F32/FP16/BF16 CUDA logits with unit vocabulary stride, "
+            "non-overlapping rows, and no gradients"
+        )
+    return (
+        _DTYPE_NAMES[logits.dtype],
+        logits.shape[0],
+        logits.shape[1],
+        logits.stride(0),
+    )
+
+
 def _validate_rope_paged_kv_write(
     query: torch.Tensor,
     key: torch.Tensor,
@@ -543,6 +577,49 @@ if _EXTENSION_PATH is None:
             )
 
     @torch.library.custom_op(
+        "loom_kernels::greedy_sample_logprobs",
+        mutates_args=(),
+        device_types="cuda",
+    )
+    def _greedy_sample_logprobs(
+        logits: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        dtype, rows, vocab_size, row_stride = _validate_greedy_sample_logits(logits)
+        token_ids = torch.empty(rows, device=logits.device, dtype=torch.int32)
+        logprobs = torch.empty(rows, device=logits.device, dtype=torch.float32)
+        ranks = torch.empty(rows, device=logits.device, dtype=torch.int64)
+        device_index = logits.device.index
+        if device_index is None:
+            device_index = torch.cuda.current_device()
+        with torch.cuda.device(device_index):
+            stream = torch.cuda.current_stream(device_index)
+            launch_greedy_sample_logprobs(
+                dtype,
+                logits.data_ptr(),
+                token_ids.data_ptr(),
+                logprobs.data_ptr(),
+                ranks.data_ptr(),
+                rows,
+                vocab_size,
+                row_stride,
+                stream.cuda_stream,
+            )
+        return token_ids, logprobs, ranks
+
+    @_greedy_sample_logprobs.register_fake
+    def _greedy_sample_logprobs_fake(
+        logits: torch.Tensor,
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+        if logits.dim() != 2 or logits.shape[0] == 0 or logits.shape[1] == 0:
+            raise ValueError("greedy sampling logits must be non-empty rank-2")
+        rows = logits.shape[0]
+        return (
+            torch.empty(rows, device=logits.device, dtype=torch.int32),
+            torch.empty(rows, device=logits.device, dtype=torch.float32),
+            torch.empty(rows, device=logits.device, dtype=torch.int64),
+        )
+
+    @torch.library.custom_op(
         "loom_kernels::rope_paged_kv_write_",
         mutates_args={"query", "key", "key_cache", "value_cache"},
         device_types="cuda",
@@ -608,6 +685,7 @@ if _EXTENSION_PATH is None:
     _rms_norm_dynamic_fp8_unchecked = _rms_norm_dynamic_fp8
     _silu_and_mul_unchecked = _silu_and_mul
     _silu_and_mul_dynamic_fp8_unchecked = _silu_and_mul_dynamic_fp8
+    _greedy_sample_logprobs_unchecked = _greedy_sample_logprobs
     _rope_paged_kv_write_unchecked = _rope_paged_kv_write
 else:
     _add_rms_norm_mut = torch.ops.loom_kernels.add_rms_norm_mut.default
@@ -626,6 +704,10 @@ else:
     _silu_and_mul_dynamic_fp8_unchecked = (
         torch.ops.loom_kernels.silu_and_mul_dynamic_fp8_unchecked.default
     )
+    _greedy_sample_logprobs = (
+        torch.ops.loom_kernels.greedy_sample_logprobs.default
+    )
+    _greedy_sample_logprobs_unchecked = _greedy_sample_logprobs
     _rope_paged_kv_write = torch.ops.loom_kernels.rope_paged_kv_write_.default
     _rope_paged_kv_write_unchecked = (
         torch.ops.loom_kernels.rope_paged_kv_write_unchecked_.default
@@ -722,6 +804,14 @@ def silu_and_mul_dynamic_fp8(
     )
 
 
+def greedy_sample_logprobs(
+    logits: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return greedy IDs, sampled logprobs, and vLLM-compatible tie ranks."""
+    _validate_greedy_sample_logits(logits)
+    return _greedy_sample_logprobs(logits)
+
+
 def rope_paged_kv_write_(
     query: torch.Tensor,
     key: torch.Tensor,
@@ -788,6 +878,11 @@ def rope_paged_kv_write_unchecked_custom_op():
     return _rope_paged_kv_write_unchecked
 
 
+def greedy_sample_logprobs_custom_op():
+    """Expose fused greedy sampling for dispatcher and FakeTensor checks."""
+    return _greedy_sample_logprobs
+
+
 def vllm_silu_and_mul_per_block_fp8_launch_count() -> int:
     """Return host submissions through vLLM's Loom activation-FP8 boundary.
 
@@ -827,6 +922,20 @@ def reset_rope_paged_kv_write_launch_count() -> None:
     torch.ops.loom_kernels.reset_rope_paged_kv_write_launch_count()
 
 
+def greedy_sample_logprobs_launch_count() -> int:
+    """Return host submissions through the fused greedy sampling boundary."""
+    if _EXTENSION_PATH is None:
+        raise RuntimeError("launch telemetry requires the C++ dispatcher bridge")
+    return int(torch.ops.loom_kernels.greedy_sample_logprobs_launch_count())
+
+
+def reset_greedy_sample_logprobs_launch_count() -> None:
+    """Reset host-side greedy sampling launch telemetry."""
+    if _EXTENSION_PATH is None:
+        raise RuntimeError("launch telemetry requires the C++ dispatcher bridge")
+    torch.ops.loom_kernels.reset_greedy_sample_logprobs_launch_count()
+
+
 def adapter_backend() -> str:
     """Return the active dispatcher bridge implementation."""
     return _ADAPTER_BACKEND
@@ -837,6 +946,9 @@ __all__ = [
     "add_rms_norm_",
     "dynamic_fp8_custom_op",
     "dynamic_fp8_unchecked_custom_op",
+    "greedy_sample_logprobs",
+    "greedy_sample_logprobs_custom_op",
+    "greedy_sample_logprobs_launch_count",
     "mutable_custom_op",
     "rms_norm_dynamic_fp8",
     "rms_norm_dynamic_fp8_out",
@@ -845,6 +957,7 @@ __all__ = [
     "rope_paged_kv_write_launch_count",
     "rope_paged_kv_write_unchecked_custom_op",
     "reset_rope_paged_kv_write_launch_count",
+    "reset_greedy_sample_logprobs_launch_count",
     "reset_vllm_silu_and_mul_per_block_fp8_launch_count",
     "silu_and_mul",
     "silu_and_mul_custom_op",
@@ -854,6 +967,7 @@ __all__ = [
     "silu_and_mul_dynamic_fp8_unchecked_custom_op",
     "silu_and_mul_out",
     "supports_add_rms_norm",
+    "supports_greedy_sample_logprobs",
     "supports_rms_norm_dynamic_fp8",
     "supports_rope_paged_kv_write",
     "supports_silu_and_mul",

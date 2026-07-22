@@ -104,6 +104,25 @@ int loom_cuda_silu_and_mul_dynamic_fp8_bf16(
     uint32_t width, uint32_t group_size, const float* scale_ub,
     uint32_t scales_transposed, void* stream);
 
+// Fused greedy argmax and sampled-token logprob over logical
+// [rows, vocab_size] logits with a unit vocabulary stride and explicit row
+// stride. Token IDs use first-index tie breaking, logprobs are F32, and ranks
+// are int64 counts of tokens tied at the maximum, matching vLLM's greater-than
+// or-equal rank semantics. Logits must be finite.
+int loom_cuda_greedy_sample_logprobs_f32(
+    const float* logits, int32_t* token_ids, float* logprobs, int64_t* ranks,
+    uint32_t rows, uint32_t vocab_size, uint64_t row_stride, void* stream);
+
+int loom_cuda_greedy_sample_logprobs_f16(
+    const uint16_t* logits, int32_t* token_ids, float* logprobs,
+    int64_t* ranks, uint32_t rows, uint32_t vocab_size, uint64_t row_stride,
+    void* stream);
+
+int loom_cuda_greedy_sample_logprobs_bf16(
+    const uint16_t* logits, int32_t* token_ids, float* logprobs,
+    int64_t* ranks, uint32_t rows, uint32_t vocab_size, uint64_t row_stride,
+    void* stream);
+
 // Fused in-place RoPE and paged K/V cache write. Query, key, and value have
 // logical [tokens, heads, dim] dimensions, a unit dim stride, and explicit
 // token/head element strides so packed-QKV views do not need materialization.

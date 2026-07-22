@@ -35,6 +35,13 @@ def rope_paged_kv_write_(*args: Any, **kwargs: Any) -> Any:
     return implementation(*args, **kwargs)
 
 
+def greedy_sample_logprobs(*args: Any, **kwargs: Any) -> Any:
+    """Lazily execute fused greedy selection and sampled-token logprob."""
+    from .torch_ops import greedy_sample_logprobs as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def silu_and_mul(*args: Any, **kwargs: Any) -> Any:
     """Lazily execute fused split-half SiLU-and-Mul."""
     from .torch_ops import silu_and_mul as implementation
@@ -66,6 +73,7 @@ def silu_and_mul_dynamic_fp8_out(*args: Any, **kwargs: Any) -> Any:
 __all__ = [
     "__version__",
     "add_rms_norm_",
+    "greedy_sample_logprobs",
     "rms_norm_dynamic_fp8",
     "rms_norm_dynamic_fp8_out",
     "rope_paged_kv_write_",

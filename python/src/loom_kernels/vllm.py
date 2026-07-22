@@ -16,10 +16,15 @@ SILU_OVERRIDE_ENV = "LOOM_KERNELS_ENABLE_SILU_AND_MUL"
 ACT_QUANT_OVERRIDE_KEY = "silu_and_mul_dynamic_fp8"
 ACT_QUANT_OVERRIDE_ENV = "LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8"
 ROPE_PAGED_KV_OVERRIDE_KEY = "rope_paged_kv"
+GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY = "greedy_sample_logprobs"
 _SILU_OVERRIDE_CLASS: type | None = None
 _ACT_QUANT_OVERRIDE_REGISTERED = False
 _ROPE_PAGED_KV_REGISTERED = False
 _ROPE_PAGED_KV_FIRST_CONTRACT: dict[str, Any] | None = None
+_GREEDY_SAMPLE_LOGPROBS_REGISTERED = False
+_GREEDY_SAMPLE_LOGPROBS_ORIGINAL_FORWARD: Any | None = None
+_GREEDY_SAMPLE_LOGPROBS_FIRST_CONTRACT: dict[str, Any] | None = None
+_GREEDY_SAMPLE_LOGPROBS_FIRST_REJECTION: dict[str, Any] | None = None
 
 
 def _env_enabled(name: str) -> bool:
@@ -252,6 +257,176 @@ def configure_vllm_rope_paged_kv(
     return configured
 
 
+def register_vllm_greedy_sample_logprobs() -> str | None:
+    """Install the deterministic vLLM 0.24 greedy+logprob fast path.
+
+    The override is deliberately narrow: all requests must be greedy, request
+    only the sampled token's raw logprob (`max_num_logprobs == 0`), and have no
+    logits mutation from masks, bad words, penalties, or processors. Every
+    other sampler contract executes vLLM's original implementation.
+    """
+    global _GREEDY_SAMPLE_LOGPROBS_ORIGINAL_FORWARD
+    global _GREEDY_SAMPLE_LOGPROBS_REGISTERED
+    if _GREEDY_SAMPLE_LOGPROBS_REGISTERED:
+        return GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY
+    if not native_available():
+        return None
+
+    from .torch_ops import adapter_backend
+
+    if adapter_backend() != "cpp-dispatch":
+        return None
+
+    from importlib.metadata import version
+
+    if not version("vllm").startswith("0.24."):
+        return None
+
+    from vllm.v1.outputs import LogprobsTensors, SamplerOutput
+    from vllm.v1.sample.logits_processor import AdapterLogitsProcessor
+    from vllm.v1.sample.logits_processor.builtin import (
+        LogitBiasLogitsProcessor,
+        MinTokensLogitsProcessor,
+    )
+    from vllm.v1.sample.sampler import Sampler
+
+    implementation = torch.ops.loom_kernels.greedy_sample_logprobs.default
+    original_forward = Sampler.forward
+
+    def non_argmax_processors_are_inactive(processors: list[Any]) -> bool:
+        for processor in processors:
+            if isinstance(processor, MinTokensLogitsProcessor):
+                if not processor.min_toks:
+                    continue
+            elif isinstance(processor, LogitBiasLogitsProcessor):
+                if not processor.biases:
+                    continue
+            elif isinstance(processor, AdapterLogitsProcessor):
+                if not processor.req_info:
+                    continue
+            return False
+        return True
+
+    def can_use_fast_path(
+        sampler: Any,
+        logits: torch.Tensor,
+        sampling_metadata: Any,
+        predict_bonus_token: bool,
+        logprobs_mode_override: Any,
+    ) -> bool:
+        logprobs_mode = logprobs_mode_override or sampler.logprobs_mode
+        holder = sampling_metadata.thinking_budget_state_holder
+        thinking_active = holder is not None and holder.has_tracked_requests()
+        return bool(
+            logprobs_mode == "raw_logprobs"
+            and sampling_metadata.all_greedy
+            and sampling_metadata.max_num_logprobs == 0
+            and not sampling_metadata.logprob_token_ids
+            and sampling_metadata.no_penalties
+            and sampling_metadata.allowed_token_ids_mask is None
+            and not sampling_metadata.bad_words_token_ids
+            and non_argmax_processors_are_inactive(
+                sampling_metadata.logitsprocs.non_argmax_invariant
+            )
+            and not thinking_active
+            and not predict_bonus_token
+            and logits.device.type == "cuda"
+            and logits.dtype in (torch.float32, torch.float16, torch.bfloat16)
+            and logits.dim() == 2
+            and logits.shape[0] > 0
+            and logits.shape[1] > 0
+            and logits.shape[1] <= 0x7FFF_FFFF
+            and logits.stride(1) == 1
+            and logits.stride(0) >= logits.shape[1]
+            and not logits.requires_grad
+        )
+
+    def forward(
+        sampler: Any,
+        logits: torch.Tensor,
+        sampling_metadata: Any,
+        predict_bonus_token: bool = False,
+        logprobs_mode_override: Any = None,
+    ) -> Any:
+        global _GREEDY_SAMPLE_LOGPROBS_FIRST_CONTRACT
+        global _GREEDY_SAMPLE_LOGPROBS_FIRST_REJECTION
+        use_fast_path = can_use_fast_path(
+            sampler,
+            logits,
+            sampling_metadata,
+            predict_bonus_token,
+            logprobs_mode_override,
+        )
+        if not use_fast_path:
+            if (
+                _GREEDY_SAMPLE_LOGPROBS_FIRST_REJECTION is None
+                and (
+                    sampling_metadata.max_num_logprobs is not None
+                    or sampling_metadata.all_greedy
+                )
+            ):
+                holder = sampling_metadata.thinking_budget_state_holder
+                _GREEDY_SAMPLE_LOGPROBS_FIRST_REJECTION = {
+                    "shape": list(logits.shape),
+                    "stride": list(logits.stride()),
+                    "dtype": str(logits.dtype),
+                    "logprobs_mode": (
+                        logprobs_mode_override or sampler.logprobs_mode
+                    ),
+                    "max_num_logprobs": sampling_metadata.max_num_logprobs,
+                    "has_logprob_token_ids": bool(
+                        sampling_metadata.logprob_token_ids
+                    ),
+                    "all_greedy": sampling_metadata.all_greedy,
+                    "no_penalties": sampling_metadata.no_penalties,
+                    "has_allowed_mask": (
+                        sampling_metadata.allowed_token_ids_mask is not None
+                    ),
+                    "has_bad_words": bool(sampling_metadata.bad_words_token_ids),
+                    "non_argmax_processors": len(
+                        sampling_metadata.logitsprocs.non_argmax_invariant
+                    ),
+                    "thinking_active": (
+                        holder is not None and holder.has_tracked_requests()
+                    ),
+                    "predict_bonus_token": predict_bonus_token,
+                    "is_contiguous": logits.is_contiguous(),
+                    "requires_grad": logits.requires_grad,
+                }
+            return original_forward(
+                sampler,
+                logits,
+                sampling_metadata,
+                predict_bonus_token,
+                logprobs_mode_override,
+            )
+
+        if _GREEDY_SAMPLE_LOGPROBS_FIRST_CONTRACT is None:
+            _GREEDY_SAMPLE_LOGPROBS_FIRST_CONTRACT = {
+                "shape": list(logits.shape),
+                "stride": list(logits.stride()),
+                "dtype": str(logits.dtype),
+                "max_num_logprobs": sampling_metadata.max_num_logprobs,
+                "all_greedy": sampling_metadata.all_greedy,
+            }
+        token_ids, logprobs, ranks = implementation(logits)
+        token_ids = token_ids.unsqueeze(-1)
+        logprobs_tensors = LogprobsTensors(
+            logprob_token_ids=token_ids,
+            logprobs=logprobs.unsqueeze(-1),
+            selected_token_ranks=ranks,
+        )
+        return SamplerOutput(
+            sampled_token_ids=token_ids,
+            logprobs_tensors=logprobs_tensors,
+        )
+
+    _GREEDY_SAMPLE_LOGPROBS_ORIGINAL_FORWARD = original_forward
+    Sampler.forward = forward
+    _GREEDY_SAMPLE_LOGPROBS_REGISTERED = True
+    return GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY
+
+
 def register_vllm_ir(provider: str = DEFAULT_PROVIDER) -> str:
     """Register Loom as an in-place fused_add_rms_norm IR provider."""
     from vllm import ir
@@ -322,6 +497,13 @@ def provider_metadata() -> dict[str, Any]:
         "silu_and_mul_fp8_override": _ACT_QUANT_OVERRIDE_REGISTERED,
         "rope_paged_kv_override": _ROPE_PAGED_KV_REGISTERED,
         "rope_paged_kv_first_contract": _ROPE_PAGED_KV_FIRST_CONTRACT,
+        "greedy_sample_logprobs_override": _GREEDY_SAMPLE_LOGPROBS_REGISTERED,
+        "greedy_sample_logprobs_first_contract": (
+            _GREEDY_SAMPLE_LOGPROBS_FIRST_CONTRACT
+        ),
+        "greedy_sample_logprobs_first_rejection": (
+            _GREEDY_SAMPLE_LOGPROBS_FIRST_REJECTION
+        ),
     }
 
 
@@ -329,12 +511,14 @@ __all__ = [
     "ACT_QUANT_OVERRIDE_ENV",
     "ACT_QUANT_OVERRIDE_KEY",
     "DEFAULT_PROVIDER",
+    "GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY",
     "ROPE_PAGED_KV_OVERRIDE_KEY",
     "SILU_OVERRIDE_ENV",
     "SILU_OVERRIDE_KEY",
     "provider_metadata",
     "configure_vllm_rope_paged_kv",
     "register_vllm_ir",
+    "register_vllm_greedy_sample_logprobs",
     "register_vllm_rope_paged_kv",
     "register_vllm_silu_and_mul",
     "register_vllm_silu_and_mul_dynamic_fp8",

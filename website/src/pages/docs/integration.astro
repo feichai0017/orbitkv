@@ -38,12 +38,14 @@ CUDA_HOME=/usr/local/cuda-13.1 \
       </p>
 
       <h2>Direct PyTorch use</h2>
-      <pre><code>from loom_kernels import silu_and_mul_dynamic_fp8
+      <pre><code>from loom_kernels import greedy_sample_logprobs, silu_and_mul_dynamic_fp8
 
 fp8_output, block_scales = silu_and_mul_dynamic_fp8(
     gate_and_up_bf16,
     group_size=128,
-)</code></pre>
+)
+
+token_ids, logprobs, ranks = greedy_sample_logprobs(logits)</code></pre>
 
       <h2>vLLM Add + RMSNorm provider</h2>
       <pre><code>from vllm import LLM
@@ -95,6 +97,22 @@ engine = LLM(
         FlashInfer/DeepGEMM GEMM. Loom only applies when quantization remains a
         graph node. The qualified A/B fixes the Cutlass linear backend for both
         providers, keeping GEMM constant while swapping only SiLU plus FP8.
+      </p>
+
+      <h2>vLLM greedy sampled-logprob fast path</h2>
+      <pre><code>from vllm import LLM
+from loom_kernels.vllm import register_vllm_greedy_sample_logprobs
+
+register_vllm_greedy_sample_logprobs()
+engine = LLM(model="/path/to/model")</code></pre>
+      <p>
+        The vLLM 0.24 override applies only when all rows are greedy, raw
+        <code>logprobs=0</code> are requested, and masks, penalties, bad words,
+        thinking state, bonus-token prediction, and argmax-changing processors
+        are inactive. Every other sampler contract falls back to vLLM
+        unchanged. On the qualified
+        Qwen2.5-0.5B H20 gate, both provider orders show an exact-output,
+        order-stable latency and TPOT improvement.
       </p>
 
       <h2>Compatibility contract</h2>
