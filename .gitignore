@@ -17,6 +17,7 @@ __pycache__/
 .venv/
 .venv-*/
 /build/
+python/build/
 python/src/loom_kernels/lib/*.so
 
 # Astro website artifacts

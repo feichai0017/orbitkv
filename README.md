@@ -7,6 +7,7 @@
     <a href="docs/operator-catalog.md">Operator catalog</a> ·
     <a href="docs/guides/vllm-ir-provider.md">Integration guide</a> ·
     <a href="docs/results/README.md">H20 evidence</a> ·
+    <a href="CHANGELOG.md">Changelog</a> ·
     <a href="https://feichai0017.github.io/loom-kernels/">Website</a>
   </p>
   <p>
@@ -68,6 +69,18 @@ silently copy, cast, reshape, or change sampling policy to force a Loom path.
 
 ## Quick start
 
+Use the backend-independent contracts from any Rust project:
+
+```bash
+cargo add loom-kernels@1.0.0-alpha.1
+```
+
+On a CUDA build host, add the safe GPU backend explicitly:
+
+```bash
+cargo add loom-cuda@1.0.0-alpha.1 --features cuda
+```
+
 The default workspace is dependency-light and does not require CUDA:
 
 ```bash
@@ -85,6 +98,10 @@ On an NVIDIA CUDA host, set the toolkit and target architecture explicitly:
 ```bash
 CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
   cargo check -p loom-cuda --features cuda --release
+
+CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
+  cargo run -p loom-cuda --features cuda --release \
+  --example rust_cuda_smoke
 
 CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
   cargo bench -p loom-cuda --features cuda \
@@ -134,8 +151,7 @@ opens the raw JSON artifact used for the claim.
 | --- | --- |
 | `crates/loom-kernels` | Public Rust contracts, capabilities, and CPU references |
 | `crates/loom-cuda` | Safe CUDA backend and oracle-backed benchmarks |
-| `crates/loom-cuda-sys` | Dependency-light raw CUDA ABI and build plumbing |
-| `cuda` | Handwritten CUDA kernels |
+| `crates/loom-cuda-sys` | Raw CUDA ABI, build plumbing, and packaged handwritten kernels |
 | `python` | PyTorch dispatcher bridge and vLLM adapters |
 | `benchmarks` | Named framework and engine baselines |
 | `docs/results` | Hardware-qualified machine-readable evidence |
@@ -153,6 +169,7 @@ opens the raw JSON artifact used for the claim.
 | [Implementation status](docs/status.md) | See what is implemented, validated, and still open |
 | [Evidence index](docs/results/README.md) | Browse accepted, parity, fallback, and rejected experiments |
 | [Roadmap](docs/roadmap.md) | Follow the next operator boundaries and exit criteria |
+| [Changelog](CHANGELOG.md) | Review released surfaces and alpha compatibility boundaries |
 
 ## License
 

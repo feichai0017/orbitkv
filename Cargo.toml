@@ -8,10 +8,11 @@ default-members = ["crates/loom-kernels", "crates/loom-cuda"]
 resolver = "2"
 
 [workspace.package]
-version = "2.0.0-alpha.1"
+version = "1.0.0-alpha.1"
 edition = "2021"
 license = "MIT"
 repository = "https://github.com/feichai0017/loom-kernels"
+homepage = "https://feichai0017.github.io/loom-kernels/"
 
 [workspace.dependencies]
 clap = { version = "4.5.23", features = ["derive"] }

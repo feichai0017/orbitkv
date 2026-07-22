@@ -31,6 +31,7 @@ def parse_args() -> argparse.Namespace:
 def main() -> None:
     args = parse_args()
     repository = Path(__file__).resolve().parents[1]
+    cuda_sources = repository / "crates" / "loom-cuda-sys" / "cuda"
     output = args.output or repository / "build" / "libloom_kernels_cuda.so"
     output = output.resolve()
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -56,7 +57,7 @@ def main() -> None:
         "-Xcompiler=-fPIC",
         "-lineinfo",
         "-I",
-        str(repository / "cuda" / "include"),
+        str(cuda_sources / "include"),
     ]
     for arch in archs:
         command.extend(
@@ -64,15 +65,15 @@ def main() -> None:
         )
     command.extend(
         [
-            str(repository / "cuda" / "src" / "rms_norm.cu"),
-            str(repository / "cuda" / "src" / "rms_norm_quant.cu"),
-            str(repository / "cuda" / "src" / "add_rms_norm.cu"),
-            str(repository / "cuda" / "src" / "silu_and_mul.cu"),
-            str(repository / "cuda" / "src" / "silu_and_mul_quant.cu"),
-            str(repository / "cuda" / "src" / "greedy_sample.cu"),
-            str(repository / "cuda" / "src" / "min_p.cu"),
-            str(repository / "cuda" / "src" / "paged_decode_attention.cu"),
-            str(repository / "cuda" / "src" / "rope_paged_kv.cu"),
+            str(cuda_sources / "src" / "rms_norm.cu"),
+            str(cuda_sources / "src" / "rms_norm_quant.cu"),
+            str(cuda_sources / "src" / "add_rms_norm.cu"),
+            str(cuda_sources / "src" / "silu_and_mul.cu"),
+            str(cuda_sources / "src" / "silu_and_mul_quant.cu"),
+            str(cuda_sources / "src" / "greedy_sample.cu"),
+            str(cuda_sources / "src" / "min_p.cu"),
+            str(cuda_sources / "src" / "paged_decode_attention.cu"),
+            str(cuda_sources / "src" / "rope_paged_kv.cu"),
             "-o",
             str(output),
         ]

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-__version__ = "2.0.0a1"
+__version__ = "1.0.0a1"
 
 
 def add_rms_norm_(*args: Any, **kwargs: Any) -> Any:

@@ -15,6 +15,7 @@ def main() -> None:
     interpreter_bin = str(Path(sys.executable).parent)
     os.environ["PATH"] = interpreter_bin + os.pathsep + os.environ.get("PATH", "")
     repository = Path(__file__).resolve().parents[1]
+    cuda_sources = repository / "crates" / "loom-cuda-sys" / "cuda"
     cuda_home = Path(os.environ.get("CUDA_HOME", "/usr/local/cuda"))
     cuda_include = cuda_home / "include"
     if not cuda_include.is_dir():
@@ -32,7 +33,7 @@ def main() -> None:
         name="loom_kernels_torch_ops",
         sources=[str(repository / "python" / "csrc" / "torch_ops.cpp")],
         extra_include_paths=[
-            str(repository / "cuda" / "include"),
+            str(cuda_sources / "include"),
             str(cuda_include),
         ],
         extra_cflags=["-O3", "-std=c++17"],

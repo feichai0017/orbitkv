@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Rust-first contracts, dispatch, and CPU references for high-performance inference kernels"
+documentation = "https://docs.rs/loom-kernels"
+readme = "README.md"
+keywords = ["gpu", "inference", "kernels", "llm", "rust"]
+categories = ["science"]
 
 [dependencies]
 half.workspace = true

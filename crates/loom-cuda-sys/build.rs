@@ -8,7 +8,9 @@ fn main() {
 
     let manifest_dir =
         PathBuf::from(env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR is always set"));
-    let cuda_dir = manifest_dir.join("../../cuda");
+    // Keep native sources inside this crate so a crates.io source archive is
+    // self-contained when consumers enable the `cuda` feature.
+    let cuda_dir = manifest_dir.join("cuda");
     let header = cuda_dir.join("include/loom_cuda.h");
     let rms_norm_source = cuda_dir.join("src/rms_norm.cu");
     let rms_norm_quant_source = cuda_dir.join("src/rms_norm_quant.cu");

@@ -157,7 +157,7 @@ checksum = "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
 
 [[package]]
 name = "loom-cuda"
-version = "2.0.0-alpha.1"
+version = "1.0.0-alpha.1"
 dependencies = [
  "clap",
  "half",
@@ -170,14 +170,14 @@ dependencies = [
 
 [[package]]
 name = "loom-cuda-sys"
-version = "2.0.0-alpha.1"
+version = "1.0.0-alpha.1"
 dependencies = [
  "cc",
 ]
 
 [[package]]
 name = "loom-kernels"
-version = "2.0.0-alpha.1"
+version = "1.0.0-alpha.1"
 dependencies = [
  "half",
 ]

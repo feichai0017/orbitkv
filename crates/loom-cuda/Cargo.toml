@@ -4,20 +4,31 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "Safe Rust CUDA backend and benchmarks for Loom Kernels"
+homepage.workspace = true
+description = "Safe Rust CUDA backend for Loom Kernels"
+documentation = "https://docs.rs/loom-cuda"
+readme = "README.md"
+keywords = ["cuda", "gpu", "inference", "llm", "rust"]
+categories = ["hardware-support", "science"]
 
 [features]
 default = []
 cuda = ["loom-cuda-sys/cuda"]
 
 [dependencies]
-clap.workspace = true
 half.workspace = true
-loom-cuda-sys = { path = "../loom-cuda-sys" }
-loom-kernels = { path = "../loom-kernels" }
+loom-cuda-sys = { version = "1.0.0-alpha.1", path = "../loom-cuda-sys" }
+loom-kernels = { version = "1.0.0-alpha.1", path = "../loom-kernels" }
+thiserror.workspace = true
+
+[dev-dependencies]
+clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
-thiserror.workspace = true
+
+[[example]]
+name = "rust_cuda_smoke"
+required-features = ["cuda"]
 
 [[bench]]
 name = "rms_norm"

@@ -11,9 +11,8 @@ tokenization, KV lifetime, or request serving.
 | Layer | Responsibility |
 | --- | --- |
 | `loom-kernels` | dtype, shape/layout, aliasing, capability, and reference contracts |
-| `loom-cuda-sys` | stable dependency-light C ABI and CUDA compilation |
+| `loom-cuda-sys` | stable C ABI, CUDA compilation, and packaged handwritten kernels |
 | `loom-cuda` | safe resource ownership, validation, dispatch, and benchmarks |
-| `cuda` | handwritten kernels and vendor-library glue |
 | engine adapters | translate engine tensors/streams without owning engine policy |
 
 CPU references never call accelerator code. Backends report unsupported

@@ -4,7 +4,12 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 repository.workspace = true
+homepage.workspace = true
 description = "Raw CUDA kernel bindings for Loom Kernels"
+documentation = "https://docs.rs/loom-cuda-sys"
+readme = "README.md"
+keywords = ["cuda", "ffi", "gpu", "inference", "llm"]
+categories = ["external-ffi-bindings", "hardware-support"]
 links = "loom_cuda_kernels"
 
 [features]

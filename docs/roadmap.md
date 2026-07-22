@@ -8,6 +8,24 @@ Status: complete.
 - safe CUDA resource ownership and C ABI;
 - reproducible correctness and latency report format.
 
+## K0.5: Publishable Rust Distribution
+
+Status: complete for the Rust source crates in `1.0.0-alpha.1`.
+
+- independent `loom-kernels`, `loom-cuda-sys`, and `loom-cuda` package
+  metadata with versioned registry dependencies;
+- handwritten CUDA sources packaged inside `loom-cuda-sys`, so an extracted
+  crate does not depend on repository-relative files;
+- package-specific READMEs, changelog, Cargo archive checks in CI, and a pure
+  Rust H2D → CUDA → D2H oracle smoke example;
+- clean archive rebuild of `loom-kernels` plus CUDA-enabled archive rebuild of
+  `loom-cuda-sys` on NVIDIA H20;
+- source-adapter Python wheel metadata at `1.0.0a1`; portable, automated
+  CUDA/LibTorch binary wheels remain a later distribution milestone.
+
+Exit: a downstream Rust consumer can build the published source crates and run
+an oracle-checked CUDA path without cloning the repository.
+
 ## K1: Useful Normalization Family
 
 Status: in progress.
