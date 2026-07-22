@@ -690,6 +690,33 @@ main {
   margin-top: 0;
 }
 
+.doc-card .card-index + h3 {
+  margin-top: 0.75rem;
+}
+
+.doc-card > a {
+  display: inline-block;
+  margin-top: 0.9rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+}
+
+.doc-note {
+  margin: 2rem 0;
+  padding: 1.15rem 1.25rem;
+  border-left: 2px solid var(--acid);
+  background: linear-gradient(90deg, var(--acid-soft), transparent);
+}
+
+.doc-note strong {
+  color: var(--text);
+  font-size: 0.9rem;
+}
+
+.doc-note p {
+  margin: 0.45rem 0 0;
+}
+
 .operator-table {
   width: 100%;
   border-collapse: collapse;

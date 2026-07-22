@@ -1,10 +1,24 @@
-# Loom Kernels Python adapters
+# Loom Kernels · Python adapters
 
-This package exposes PyTorch current-stream operators and narrow vLLM 0.24
-integration points for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
+Current-stream PyTorch operators and narrow, opt-in vLLM 0.24 integration for
+[Loom Kernels](https://github.com/feichai0017/loom-kernels).
 
-The source wheel contains the Python adapter layer. Build the CUDA C ABI and
-LibTorch dispatcher bridge from a repository checkout before GPU use:
+[Project README](../README.md) · [Integration guide](../docs/guides/vllm-ir-provider.md) · [Operator catalog](../docs/operator-catalog.md)
+
+> [!NOTE]
+> The source wheel contains adapters, not prebuilt CUDA binaries. Build the
+> native library and LibTorch dispatcher bridge from a repository checkout.
+
+## Install
+
+Choose only the framework dependencies used by the consumer:
+
+```bash
+pip install -e 'python[torch,test]'
+pip install -e 'python[vllm,test]'
+```
+
+## Build the native bridge
 
 ```bash
 CUDA_HOME=/usr/local/cuda LOOM_CUDA_ARCHS=90 \
@@ -14,36 +28,70 @@ CUDA_HOME=/usr/local/cuda \
   python python/build_torch_extension.py
 ```
 
-Repository checkouts discover both libraries under `build/`. A packaged or
-externally managed deployment can set `LOOM_KERNELS_CUDA_LIBRARY` and
-`LOOM_KERNELS_TORCH_LIBRARY` to their absolute paths. Automated binary wheels
-are not published yet.
-
-The base paged-decode API is available as
-`loom_kernels.paged_decode_attention` and `paged_decode_attention_out`. It
-accepts one contiguous `[B, Hq, D]` query, dense-inner NHD paged K/V caches
-with an optional outer block stride, and contiguous int32 block
-tables/sequence lengths. This directly accepts the K/V views of vLLM's
-`[blocks, 2, block, Hkv, D]` storage. The CUDA path supports F32/FP16/BF16
-through 1,024 tokens and reuses K/V loads across GQA query-head groups.
-
-The vLLM 0.24 paged-decode replacement is opt-in with
-`LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1`. Its H20-qualified route is
-deliberately exact: FP16/BF16, Hq/Hkv `32/8`, head size 128, block size 16 or
-32, one query token per sequence, batch at most 128, and maximum context at
-most 32. Unsupported shapes and attention features run the original FA3 path.
-
-The vLLM 0.24 Min-P processor replacement is opt-in with
-`LOOM_KERNELS_ENABLE_MIN_P=1`. Its H20-qualified fast path requires at least 32
-rows and a 65,536-token vocabulary; smaller shapes use vLLM's original path.
-
-Install the framework dependencies needed by the consumer:
+Repository checkouts discover both libraries under `build/`. Packaged or
+externally managed deployments can set absolute paths explicitly:
 
 ```bash
-pip install -e 'python[torch]'
-pip install -e 'python[vllm,test]'
+export LOOM_KERNELS_CUDA_LIBRARY=/path/to/libloom_cuda_kernels.so
+export LOOM_KERNELS_TORCH_LIBRARY=/path/to/loom_kernels_torch.so
 ```
 
-See the full
-[vLLM provider guide](https://github.com/feichai0017/loom-kernels/blob/main/docs/guides/vllm-ir-provider.md)
-for supported contracts, opt-ins, and validation commands.
+Automated binary wheels are not published yet.
+
+## Direct PyTorch use
+
+```python
+from loom_kernels import (
+    greedy_sample_logprobs,
+    min_p_filter_,
+    selected_token_logprobs,
+    silu_and_mul_dynamic_fp8,
+)
+
+fp8_output, block_scales = silu_and_mul_dynamic_fp8(
+    gate_and_up_bf16,
+    group_size=128,
+)
+
+token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
+logprobs, ranks = selected_token_logprobs(logits, sampled_ids_i64)
+min_p_filter_(sampling_logits_f32, min_p_f32)
+```
+
+All CUDA calls use PyTorch's current stream. Out variants accept caller-owned
+buffers for capture-safe reuse.
+
+## Exported operator families
+
+| Family | Python entry points |
+| --- | --- |
+| Normalization | `add_rms_norm_`, `rms_norm_dynamic_fp8`, `rms_norm_dynamic_fp8_out` |
+| Activation | `silu_and_mul`, `silu_and_mul_out`, `silu_and_mul_dynamic_fp8`, `silu_and_mul_dynamic_fp8_out` |
+| Position and KV | `rope_paged_kv_write_` |
+| Decode tail | `greedy_sample_logprobs`, `selected_token_logprobs`, `min_p_filter_` |
+| Attention | `paged_decode_attention`, `paged_decode_attention_out` |
+
+The base paged-decode API accepts one contiguous `[B, Hq, D]` query,
+dense-inner NHD paged K/V views, and contiguous int32 block tables and sequence
+lengths. It directly accepts K/V views from vLLM's
+`[blocks, 2, block, Hkv, D]` storage.
+
+## vLLM opt-ins
+
+| Route | Enable |
+| --- | --- |
+| Add+RMSNorm IR provider | `ir_op_priority={"fused_add_rms_norm": ["loom_cuda"]}` |
+| Standalone SiLU-and-Mul | `LOOM_KERNELS_ENABLE_SILU_AND_MUL=1` |
+| SiLU-and-Mul→block FP8 | `LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8=1` |
+| RoPE+paged-KV compiler pass | `configure_vllm_rope_paged_kv(...)` |
+| Short paged decode | `LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1` |
+| Greedy sampled logprob | `register_vllm_greedy_sample_logprobs()` |
+| Selected-token logprob | `register_vllm_selected_token_logprobs()` |
+| Min-P processor | `LOOM_KERNELS_ENABLE_MIN_P=1` |
+
+Every route checks its exact dtype, shape, layout, and semantic contract. An
+unsupported request runs the original vLLM path instead of being copied,
+cast, or reshaped into eligibility.
+
+The full compatibility matrix, build details, and validation commands live in
+the [vLLM provider guide](../docs/guides/vllm-ir-provider.md).

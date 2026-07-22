@@ -6,22 +6,46 @@ import { repositoryUrl } from "../../data/site";
 
 <SiteLayout
   title="Integration — Loom Kernels"
-  description="Use Loom Kernels through Rust, PyTorch current-stream operators, or vLLM 0.24 integration points."
+  description="Use Loom Kernels through Rust contracts, current-stream PyTorch operators, or narrow vLLM 0.24 routes."
   active="Integration"
 >
   <header class="page-hero">
     <p class="eyebrow">Documentation / Integration</p>
     <h1>Adapters translate. Engines decide.</h1>
     <p>
-      Loom does not own scheduling, weights, KV lifetime, or serving policy.
-      Adapters preserve the engine's tensors, mutation schema, and current CUDA
-      stream while dispatching a supported operator contract.
+      Loom preserves engine-owned tensors, mutation schemas, layouts, and the
+      current CUDA stream. A route either accepts the exact contract or returns
+      to the native implementation.
     </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Integration" />
     <article class="prose">
+      <h2>Pick an integration surface</h2>
+      <div class="doc-grid">
+        <div class="doc-card">
+          <span class="card-index">01 / Rust</span>
+          <h3>Contracts and dispatch</h3>
+          <p>Use backend-independent specs and CPU oracles without linking CUDA.</p>
+        </div>
+        <div class="doc-card">
+          <span class="card-index">02 / PyTorch</span>
+          <h3>Current-stream operators</h3>
+          <p>Call allocating or caller-owned out variants with capture-safe mutation schemas.</p>
+        </div>
+        <div class="doc-card">
+          <span class="card-index">03 / vLLM</span>
+          <h3>Measured opt-ins</h3>
+          <p>Enable only the routes whose exact shapes and semantics passed H20 gates.</p>
+        </div>
+        <div class="doc-card">
+          <span class="card-index">04 / Fallback</span>
+          <h3>Native by default</h3>
+          <p>Unsupported dtypes, layouts, shapes, or policies execute the original engine path.</p>
+        </div>
+      </div>
+
       <h2>Build the Python bridge</h2>
       <pre><code>python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install -e 'python[vllm,test]'
@@ -32,13 +56,18 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 CUDA_HOME=/usr/local/cuda-13.1 \
   .venv-vllm/bin/python python/build_torch_extension.py</code></pre>
       <p>
-        The first step builds the CUDA shared library. The second creates the
-        small C++ dispatcher shim used by hot paths. PyTorch calls launch on its
-        current CUDA stream and caller-owned buffers can be reused.
+        The first command builds the CUDA C ABI. The second creates the small
+        LibTorch dispatcher shim. Repository checkouts discover both libraries
+        under <code>build/</code>.
       </p>
 
-      <h2>Direct PyTorch use</h2>
-      <pre><code>from loom_kernels import greedy_sample_logprobs, min_p_filter_, selected_token_logprobs, silu_and_mul_dynamic_fp8
+      <h2>Call PyTorch directly</h2>
+      <pre><code>from loom_kernels import (
+    greedy_sample_logprobs,
+    min_p_filter_,
+    selected_token_logprobs,
+    silu_and_mul_dynamic_fp8,
+)
 
 fp8_output, block_scales = silu_and_mul_dynamic_fp8(
     gate_and_up_bf16,
@@ -49,118 +78,39 @@ token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
 logprobs, ranks = selected_token_logprobs(logits, sampled_ids_i64)
 min_p_filter_(sampling_logits_f32, min_p_f32)</code></pre>
 
-      <h2>vLLM Add + RMSNorm provider</h2>
-      <pre><code>from vllm import LLM
+      <h2>vLLM 0.24 opt-ins</h2>
+      <table class="operator-table">
+        <thead>
+          <tr><th>Route</th><th>Enable</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Add+RMSNorm IR</td><td><code>ir_op_priority=&#123;"fused_add_rms_norm": ["loom_cuda"]&#125;</code></td></tr>
+          <tr><td>SiLU-and-Mul</td><td><code>LOOM_KERNELS_ENABLE_SILU_AND_MUL=1</code></td></tr>
+          <tr><td>SiLU-and-Mul→block FP8</td><td><code>LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8=1</code></td></tr>
+          <tr><td>RoPE+paged-KV</td><td><code>configure_vllm_rope_paged_kv(...)</code></td></tr>
+          <tr><td>Short paged decode</td><td><code>LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1</code></td></tr>
+          <tr><td>Greedy sampled logprob</td><td><code>register_vllm_greedy_sample_logprobs()</code></td></tr>
+          <tr><td>Selected-token logprob</td><td><code>register_vllm_selected_token_logprobs()</code></td></tr>
+          <tr><td>Min-P</td><td><code>LOOM_KERNELS_ENABLE_MIN_P=1</code></td></tr>
+        </tbody>
+      </table>
 
-engine = LLM(
-    model="/path/to/model",
-    ir_op_priority=&#123;"fused_add_rms_norm": ["loom_cuda"]&#125;,
-)</code></pre>
+      <div class="doc-note">
+        <strong>Fallback is part of the API.</strong>
+        <p>
+          Loom does not copy, cast, reshape, or alter sampling policy to force
+          eligibility. The adapter declines unsupported contracts and preserves
+          the original vLLM path.
+        </p>
+      </div>
+
+      <h2>Read the exact contracts</h2>
       <p>
-        vLLM appends its native fallback. Loom declines unsupported tensor
-        contracts instead of copying, casting, or silently changing semantics.
-      </p>
-
-      <h2>Opt-in activation boundaries</h2>
-      <pre><code># Standalone vLLM SiluAndMul replacement
-LOOM_KERNELS_ENABLE_SILU_AND_MUL=1 python your_service.py
-
-# vLLM 0.24 dynamic block-FP8 fusion replacement
-LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8=1 python your_service.py</code></pre>
-      <p>
-        The block-FP8 replacement covers dynamic symmetric groups 64 and 128.
-        A pinned Qwen2.5-0.5B online-FP8 run now closes compiler path-hit,
-        exact-token, CUDA Graph, and real-model invocation gates. End-to-end
-        latency remains at parity, so no model-level speedup is claimed.
-      </p>
-
-      <h2>vLLM RoPE + paged-KV fusion</h2>
-      <pre><code>from vllm import LLM
-from loom_kernels.vllm import configure_vllm_rope_paged_kv
-
-engine = LLM(
-    model="/path/to/model",
-    compilation_config=configure_vllm_rope_paged_kv(
-        max_token_num=256,
-    ),
-)</code></pre>
-      <p>
-        The vLLM 0.24 adapter preserves packed-QKV and NHD/HND strides, uses
-        native F32/FP16/BF16 cache storage, and declines quantized caches. The
-        256-token default focuses the pass on decode-sized batches where the
-        qualified operator result is material. Real Qwen2.5 exact-token and
-        path-hit gates pass; end-to-end latency still crosses parity by run
-        order.
-      </p>
-
-      <h2>vLLM paged-decode fast path</h2>
-      <pre><code>LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1 python your_service.py</code></pre>
-      <p>
-        The vLLM 0.24 override reads native interleaved KV storage without a
-        copy. Loom is selected only for FP16/BF16 Hq/Hkv 32/8, D128, block
-        size 16/32, one-token causal decode, batch at most 128, and context at
-        most 32. Every other shape or semantic feature executes the original
-        FA3 method. All 24 routed H20 backend cases win; a synthetic-Qwen
-        engine gate proves path hits and exact stable tokens. An experimental
-        Qwen2.5 14/2-head route reached the engine but failed token and latency
-        gates, so it was removed rather than broadening this contract.
-      </p>
-
-      <h2>Graph-visible boundary</h2>
-      <p>
-        vLLM's automatic H20 path folds activation quantization into its
-        FlashInfer/DeepGEMM GEMM. Loom only applies when quantization remains a
-        graph node. The qualified A/B fixes the Cutlass linear backend for both
-        providers, keeping GEMM constant while swapping only SiLU plus FP8.
-      </p>
-
-      <h2>vLLM greedy sampled-logprob fast path</h2>
-      <pre><code>from vllm import LLM
-from loom_kernels.vllm import register_vllm_greedy_sample_logprobs
-
-register_vllm_greedy_sample_logprobs()
-engine = LLM(model="/path/to/model")</code></pre>
-      <p>
-        The vLLM 0.24 override applies only when all rows are greedy, raw
-        <code>logprobs=0</code> are requested, and masks, penalties, bad words,
-        thinking state, bonus-token prediction, and argmax-changing processors
-        are inactive. Every other sampler contract falls back to vLLM
-        unchanged. On the qualified
-        Qwen2.5-0.5B H20 gate, both provider orders show an exact-output,
-        order-stable latency and TPOT improvement.
-      </p>
-
-      <h2>vLLM general selected-token logprobs</h2>
-      <pre><code>from vllm import LLM
-from loom_kernels.vllm import register_vllm_selected_token_logprobs
-
-register_vllm_selected_token_logprobs()
-engine = LLM(model="/path/to/model")</code></pre>
-      <p>
-        vLLM 0.24 still owns masks, penalties, temperature, top-k/top-p, RNG,
-        and token selection. For BF16/FP16 raw <code>logprobs=0</code> requests,
-        Loom scans the preserved raw logits only after selection and returns
-        the selected token's logprob and tie-aware rank. Top-k logprob lists,
-        processed modes, and unsupported layouts fall back unchanged. The
-        order-reversed Qwen2.5 top-k/top-p H20 gate preserves every token and
-        rank while improving batch latency and TPOT.
-      </p>
-
-      <h2>vLLM Min-P processor</h2>
-      <pre><code>LOOM_KERNELS_ENABLE_MIN_P=1 python your_service.py</code></pre>
-      <p>
-        Loom cancels the softmax denominator and filters in place from each
-        row maximum. The H20-qualified route requires at least 32 rows and a
-        65,536-token vocabulary; smaller shapes call the original vLLM 0.24
-        processor because the current kernel is slower there. The qualified
-        128-row case is 1.885× faster and removes 97.24 MB of tensor-sized
-        temporary allocations. A real-model end-to-end gate remains open.
-      </p>
-
-      <h2>Compatibility contract</h2>
-      <p>
-        Full schemas, build details, and limits live in the{" "}
-        <a href={`${repositoryUrl}/blob/main/docs/guides/vllm-ir-provider.md`}>vLLM provider guide</a>.
+        Route-specific shapes, dtypes, environment variables, build details,
+        and validation commands live in the{" "}
+        <a href={`${repositoryUrl}/blob/main/docs/guides/vllm-ir-provider.md`}>complete vLLM provider guide</a>.
+        The{" "}<a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>evidence index</a>{" "}
+        records accepted, parity, fallback, and rejected experiments.
       </p>
     </article>
   </div>

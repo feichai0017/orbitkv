@@ -5,46 +5,54 @@ import { repositoryUrl } from "../../data/site";
 ---
 
 <SiteLayout
-  title="Getting started — Loom Kernels"
-  description="Build, validate, and embed Loom Kernels from Rust, CUDA, or PyTorch."
+  title="Documentation — Loom Kernels"
+  description="Choose a short path through Loom Kernels contracts, CUDA execution, integration, and evidence."
 >
   <header class="page-hero">
-    <p class="eyebrow">Documentation / Start</p>
-    <h1>From contract to CUDA launch.</h1>
+    <p class="eyebrow">Documentation</p>
+    <h1>Start with the boundary.</h1>
     <p>
-      Loom Kernels is an inference operator backend, not an inference engine or
-      tensor framework. Start with the dependency-light Rust core; enable CUDA
-      only on a qualified accelerator host.
+      Loom is a Rust-first operator backend—not an inference engine or tensor
+      framework. Pick the contract you need, validate it on CPU, then qualify
+      CUDA and the engine path independently.
     </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Start" />
     <article class="prose">
-      <h2>Workspace layers</h2>
+      <h2>Choose a path</h2>
       <div class="doc-grid">
         <div class="doc-card">
-          <h3>loom-kernels</h3>
-          <p>Public contracts, capability queries, and deterministic CPU references.</p>
+          <span class="card-index">01 / Understand</span>
+          <h3>Read the contracts</h3>
+          <p>Architecture, supported operators, admission gates, and deliberate exclusions.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/design/operator-library.md`}>Open the design →</a>
         </div>
         <div class="doc-card">
-          <h3>loom-cuda</h3>
-          <p>Safe stream and buffer ownership, checked dispatch, and benchmarks.</p>
+          <span class="card-index">02 / Integrate</span>
+          <h3>Connect an engine</h3>
+          <p>Build the Python bridge, preserve current streams, and enable narrow vLLM routes.</p>
+          <a href={`${import.meta.env.BASE_URL}docs/integration/`}>Open integration →</a>
         </div>
         <div class="doc-card">
-          <h3>loom-cuda-sys</h3>
-          <p>Raw CUDA ABI and compilation plumbing with minimal dependencies.</p>
+          <span class="card-index">03 / Evaluate</span>
+          <h3>Inspect the evidence</h3>
+          <p>Separate operator, CUDA Graph, engine, parity, fallback, and rejected results.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>Open the evidence index →</a>
         </div>
         <div class="doc-card">
-          <h3>python</h3>
-          <p>Current-stream PyTorch operators and narrow vLLM integration points.</p>
+          <span class="card-index">04 / Build</span>
+          <h3>Pick the next boundary</h3>
+          <p>Follow the measured roadmap instead of implementing an unbounded operator checklist.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/roadmap.md`}>Open the roadmap →</a>
         </div>
       </div>
 
-      <h2>CPU contract gates</h2>
+      <h2>Validate the Rust core</h2>
       <p>
-        The default workspace does not require a CUDA toolkit. It validates
-        shape, dtype, buffer, and numerical reference behavior first.
+        The default workspace has no CUDA requirement. It checks dtype, shape,
+        buffer, aliasing, and deterministic reference behavior first.
       </p>
       <pre><code>git clone https://github.com/feichai0017/loom-kernels.git
 cd loom-kernels
@@ -54,24 +62,38 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
 cargo check --workspace --release</code></pre>
 
-      <h2>CUDA qualification</h2>
-      <p>
-        Set the toolkit and architecture explicitly. The example below targets
-        Hopper compute capability 9.0 and runs correctness before CUDA-event timing.
-      </p>
+      <div class="doc-note">
+        <strong>Support is a ladder.</strong>
+        <p>
+          Contract correctness, accelerator correctness, named-baseline speed,
+          framework dispatch, engine invocation, and serving benefit are six
+          separate gates. Passing one never implies the next.
+        </p>
+      </div>
+
+      <h2>Workspace layers</h2>
+      <table class="operator-table">
+        <thead>
+          <tr><th>Layer</th><th>Responsibility</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>loom-kernels</td><td>Public contracts, capabilities, and deterministic CPU references.</td></tr>
+          <tr><td>loom-cuda</td><td>Safe stream/buffer ownership, checked dispatch, and benchmarks.</td></tr>
+          <tr><td>loom-cuda-sys</td><td>Dependency-light raw CUDA ABI and compilation plumbing.</td></tr>
+          <tr><td>python</td><td>Current-stream PyTorch operators and narrow vLLM integration.</td></tr>
+        </tbody>
+      </table>
+
+      <h2>Qualify CUDA explicitly</h2>
       <pre><code>CUDA_HOME=/usr/local/cuda-13.1 \
 LOOM_CUDA_ARCHS=90 \
 cargo bench -p loom-cuda --features cuda \
-  --bench silu_and_mul_dynamic_fp8 -- \
-  --dtype bf16 --rows 8 --width 11008 --group-size 128 \
-  --warmup 100 --iterations 1000 --samples 9</code></pre>
-
-      <h2>Read the contracts</h2>
+  --bench add_rms_norm -- \
+  --dtype bf16 --rows 8 --hidden-size 4096</code></pre>
       <p>
-        The <a href={`${repositoryUrl}/blob/main/docs/design/operator-library.md`}>architecture document</a>
-        {" "}defines public admission gates. The{" "}
-        <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>operator catalog</a>
-        {" "}separates supported, next, planned, profile-gated, and vendor-backed work.
+        Benchmarks check their GPU result against the CPU oracle before
+        reporting CUDA-event latency. The complete result archive lives in the{" "}
+        <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>H20 evidence index</a>.
       </p>
     </article>
   </div>

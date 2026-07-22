@@ -1,0 +1,65 @@
+# H20 evidence index
+
+Machine-readable correctness and performance artifacts for Loom Kernels. All
+results in this directory were captured on NVIDIA H20 unless the artifact says
+otherwise.
+
+[Documentation](../README.md) · [Implementation status](../status.md) · [Benchmark page](https://feichai0017.github.io/loom-kernels/benchmarks/)
+
+> [!IMPORTANT]
+> Operator latency, dispatcher latency, CUDA Graph replay, engine latency, and
+> serving performance are different claims. The decision column below states
+> the narrow conclusion supported by each result set.
+
+## Evidence ladder
+
+| Level | What it proves |
+| --- | --- |
+| Correctness | The accelerator agrees with the declared oracle and contract |
+| Operator | A warmed kernel or fused boundary beats a named equivalent baseline |
+| Engine | A real framework/engine invokes Loom and preserves outputs |
+| Serving | TTFT, TPOT, throughput, memory, or goodput improves under load |
+
+## Normalization and activation
+
+| Boundary | Result set | Current conclusion |
+| --- | --- | --- |
+| RMSNorm | [F32 bring-up](h20-rms-norm-f32-smoke-20260721.json) · [FP16/BF16 paths](h20-rms-norm-low-precision-20260721.json) | Handwritten CUDA correctness and low-precision vector paths are qualified |
+| Add+RMSNorm | [Operator gate](h20-add-rms-norm-20260721.json) · [vLLM IR gate](h20-vllm-ir-add-rms-norm-20260721.json) | Double in-place fusion and current-stream engine dispatch are supported |
+| RMSNorm→FP8 | [Operator gate](h20-rms-norm-dynamic-fp8-20260721.json) · [Qwen2.5 engine gate](h20-vllm-qwen25-05b-fp8-engine-20260722.json) | Exact path invocation is proven; real-model latency remains at parity |
+| SiLU-and-Mul | [Operator and engine gate](h20-silu-and-mul-20260721.json) | Compatible and engine-valid; CUDA Graph latency is at parity |
+| SiLU-and-Mul→block FP8 | [Fused operator gate](h20-silu-and-mul-dynamic-fp8-20260721.json) · [Qwen2.5 engine gate](h20-vllm-qwen25-05b-fp8-engine-20260722.json) | Operator-level advantage; exact real-model invocation; end-to-end parity |
+
+## RoPE and paged-KV write
+
+| Result set | Current conclusion |
+| --- | --- |
+| [Decode-sized operator sweep](h20-rope-paged-kv-20260722.json) · [large-token sweep](h20-rope-paged-kv-large-20260722.json) | Fusion wins most strongly at decode-sized token counts and narrows with larger batches |
+| [Baseline-first engine gate](h20-vllm-qwen25-rope-paged-kv-engine-20260722.json) · [Loom-first engine gate](h20-vllm-qwen25-rope-paged-kv-engine-loom-first-20260722.json) | Exact tokens and Loom path hits are proven; order reversal crosses parity, so no model-level speedup is claimed |
+
+## Sampling and log probabilities
+
+| Boundary | Result set | Current conclusion |
+| --- | --- | --- |
+| Greedy + sampled logprob | [Operator gate](h20-greedy-sample-logprobs-20260722.json) · [baseline first](h20-vllm-greedy-logprobs-baseline-first-20260722.json) · [Loom first](h20-vllm-greedy-logprobs-loom-first-20260722.json) | Exact tokens/ranks and an order-stable real-engine win for pure greedy `logprobs=0` |
+| Selected-token logprob + rank | [Operator gate](h20-selected-token-logprobs-20260722.json) · [baseline first](h20-vllm-selected-logprobs-baseline-first-20260722.json) · [Loom first](h20-vllm-selected-logprobs-loom-first-20260722.json) | vLLM-owned top-k/top-p sampling preserves exact tokens/ranks and shows an order-stable engine win |
+| Min-P | [151,936-vocabulary sweep](h20-min-p-filter-20260722.json) · [65,536-vocabulary boundary](h20-min-p-filter-vocab65536-20260722.json) | The crossover is shape-dependent; the adapter routes only qualified larger rows/vocabularies |
+
+## Paged-decode attention
+
+| Evidence set | Result set | Current conclusion |
+| --- | --- | --- |
+| Bring-up | [Separate-cache report](h20-paged-decode-attention-20260722.json) | Base Rust/CUDA/PyTorch contract and correctness path |
+| Native-layout breadth | [156-case interleaved sweep](h20-paged-decode-interleaved-shape-sweep-20260722.json) · [Qwen 32/8 batch sweep](h20-paged-decode-qwen-batch-sweep-20260722.json) | Performance is geometry-dependent; only the measured short envelope is admitted |
+| vLLM short route | [Backend gate](h20-vllm-paged-decode-backend-20260722.json) · [baseline-first engine gate](h20-vllm-paged-decode-engine-baseline-first-20260722.json) · [Loom-first engine gate](h20-vllm-paged-decode-engine-loom-first-20260722.json) | All 24 admitted backend cases win; synthetic-engine path and stable tokens are proven, not pretrained-model acceleration |
+| Odd GQA experiment | [72-case sweep](h20-paged-decode-odd-gqa-20260722.json) · [rejected Qwen2.5 route](h20-vllm-qwen25-paged-decode-rejected-20260722.json) · [32/8 non-regression gate](h20-vllm-paged-decode-tail-gqa-backend-20260722.json) | The broader Qwen2.5 route failed token and latency gates and was removed; the existing route remains qualified |
+| Local split-K/LSE | [BF16 block-16](h20-paged-decode-split-k-20260722.json) · [FP16](h20-paged-decode-split-k-f16-20260722.json) · [BF16 block-32](h20-paged-decode-split-k-block32-20260722.json) | Faster than legacy Loom across the tested long-context matrix; FA3 remains the engine fallback |
+
+## Reproducing a claim
+
+1. Use the commit, GPU, software versions, shapes, warm-up, iterations, and
+   sample counts recorded in the JSON artifact.
+2. Run correctness before timing.
+3. Keep the named baseline and dispatch boundary unchanged.
+4. Reverse provider order for engine comparisons.
+5. Report regressions and rejected routes alongside wins.
