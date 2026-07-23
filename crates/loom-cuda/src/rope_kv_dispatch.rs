@@ -4,7 +4,13 @@ use crate::cuda_backend::CudaBackend;
 use crate::runtime::{loom_status_result, CudaDeviceRead, CudaDeviceWrite, CudaStreamHandle};
 use crate::{CudaExecutorError, RopePagedKvLayout};
 use half::{bf16, f16};
-use loom_kernels::{DType, RopePagedKvWriteSpec, RotaryStyle};
+use loom_kernels::{
+    DType, KvCacheEncoding, KvCacheScaleGranularity, RopePagedKvWriteSpec, RotaryStyle,
+};
+use std::ptr;
+
+const CACHE_ENCODING_NATIVE: u32 = 0;
+const CACHE_ENCODING_FP8_E4M3: u32 = 1;
 
 impl<S: CudaStreamHandle> CudaBackend<S> {
     /// Applies F32 RoPE in place and writes K/V to contiguous NHD caches.
@@ -23,6 +29,7 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
         layout: RopePagedKvLayout,
     ) -> Result<(), CudaExecutorError> {
         require_dtype(spec, DType::F32)?;
+        require_native_encoding(spec)?;
         let shape = validate_buffers(
             query,
             key,
@@ -42,8 +49,10 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
                 value.as_ptr(),
                 positions.as_ptr(),
                 cos_sin_cache.as_ptr(),
-                key_cache.as_mut_ptr(),
-                value_cache.as_mut_ptr(),
+                key_cache.as_mut_ptr().cast(),
+                value_cache.as_mut_ptr().cast(),
+                ptr::null(),
+                ptr::null(),
                 slot_mapping.as_ptr(),
                 shape.tokens,
                 shape.cache_tokens,
@@ -55,6 +64,8 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
                 shape.max_position,
                 shape.num_blocks,
                 shape.block_size,
+                CACHE_ENCODING_NATIVE,
+                0,
                 shape.query_token_stride,
                 shape.query_head_stride,
                 shape.key_token_stride,
@@ -89,6 +100,7 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
         layout: RopePagedKvLayout,
     ) -> Result<(), CudaExecutorError> {
         require_dtype(spec, DType::F16)?;
+        require_native_encoding(spec)?;
         let shape = validate_buffers(
             query,
             key,
@@ -108,8 +120,10 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
                 value.as_ptr().cast::<u16>(),
                 positions.as_ptr(),
                 cos_sin_cache.as_ptr().cast::<u16>(),
-                key_cache.as_mut_ptr().cast::<u16>(),
-                value_cache.as_mut_ptr().cast::<u16>(),
+                key_cache.as_mut_ptr().cast(),
+                value_cache.as_mut_ptr().cast(),
+                ptr::null(),
+                ptr::null(),
                 slot_mapping.as_ptr(),
                 shape.tokens,
                 shape.cache_tokens,
@@ -121,6 +135,8 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
                 shape.max_position,
                 shape.num_blocks,
                 shape.block_size,
+                CACHE_ENCODING_NATIVE,
+                0,
                 shape.query_token_stride,
                 shape.query_head_stride,
                 shape.key_token_stride,
@@ -155,6 +171,7 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
         layout: RopePagedKvLayout,
     ) -> Result<(), CudaExecutorError> {
         require_dtype(spec, DType::Bf16)?;
+        require_native_encoding(spec)?;
         let shape = validate_buffers(
             query,
             key,
@@ -174,8 +191,10 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
                 value.as_ptr().cast::<u16>(),
                 positions.as_ptr(),
                 cos_sin_cache.as_ptr().cast::<u16>(),
-                key_cache.as_mut_ptr().cast::<u16>(),
-                value_cache.as_mut_ptr().cast::<u16>(),
+                key_cache.as_mut_ptr().cast(),
+                value_cache.as_mut_ptr().cast(),
+                ptr::null(),
+                ptr::null(),
                 slot_mapping.as_ptr(),
                 shape.tokens,
                 shape.cache_tokens,
@@ -187,6 +206,230 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
                 shape.max_position,
                 shape.num_blocks,
                 shape.block_size,
+                CACHE_ENCODING_NATIVE,
+                0,
+                shape.query_token_stride,
+                shape.query_head_stride,
+                shape.key_token_stride,
+                shape.source_key_head_stride,
+                shape.value_token_stride,
+                shape.source_value_head_stride,
+                shape.key_block_stride,
+                shape.key_page_stride,
+                shape.key_head_stride,
+                shape.value_block_stride,
+                shape.value_page_stride,
+                shape.value_head_stride,
+                shape.is_neox,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Applies F32 RoPE in place and writes statically scaled FP8 E4M3 caches.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rope_paged_kv_write_fp8_e4m3_f32(
+        &self,
+        query: &mut impl CudaDeviceWrite<f32>,
+        key: &mut impl CudaDeviceWrite<f32>,
+        value: &impl CudaDeviceRead<f32>,
+        positions: &impl CudaDeviceRead<i64>,
+        cos_sin_cache: &impl CudaDeviceRead<f32>,
+        key_cache: &mut impl CudaDeviceWrite<u8>,
+        value_cache: &mut impl CudaDeviceWrite<u8>,
+        slot_mapping: &impl CudaDeviceRead<i64>,
+        key_scales: &impl CudaDeviceRead<f32>,
+        value_scales: &impl CudaDeviceRead<f32>,
+        spec: RopePagedKvWriteSpec,
+        layout: RopePagedKvLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_dtype(spec, DType::F32)?;
+        let scale_stride = require_fp8_encoding(spec)?;
+        validate_scales(key_scales, value_scales, spec)?;
+        let shape = validate_buffers(
+            query,
+            key,
+            value,
+            positions,
+            cos_sin_cache,
+            key_cache,
+            value_cache,
+            slot_mapping,
+            spec,
+            layout,
+        )?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_rope_paged_kv_write_f32(
+                query.as_mut_ptr(),
+                key.as_mut_ptr(),
+                value.as_ptr(),
+                positions.as_ptr(),
+                cos_sin_cache.as_ptr(),
+                key_cache.as_mut_ptr().cast(),
+                value_cache.as_mut_ptr().cast(),
+                key_scales.as_ptr(),
+                value_scales.as_ptr(),
+                slot_mapping.as_ptr(),
+                shape.tokens,
+                shape.cache_tokens,
+                shape.query_heads,
+                shape.kv_heads,
+                shape.head_size,
+                shape.value_head_size,
+                shape.rotary_dim,
+                shape.max_position,
+                shape.num_blocks,
+                shape.block_size,
+                CACHE_ENCODING_FP8_E4M3,
+                scale_stride,
+                shape.query_token_stride,
+                shape.query_head_stride,
+                shape.key_token_stride,
+                shape.source_key_head_stride,
+                shape.value_token_stride,
+                shape.source_value_head_stride,
+                shape.key_block_stride,
+                shape.key_page_stride,
+                shape.key_head_stride,
+                shape.value_block_stride,
+                shape.value_page_stride,
+                shape.value_head_stride,
+                shape.is_neox,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Applies FP16 RoPE in place and writes statically scaled FP8 E4M3 caches.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rope_paged_kv_write_fp8_e4m3_f16(
+        &self,
+        query: &mut impl CudaDeviceWrite<f16>,
+        key: &mut impl CudaDeviceWrite<f16>,
+        value: &impl CudaDeviceRead<f16>,
+        positions: &impl CudaDeviceRead<i64>,
+        cos_sin_cache: &impl CudaDeviceRead<f16>,
+        key_cache: &mut impl CudaDeviceWrite<u8>,
+        value_cache: &mut impl CudaDeviceWrite<u8>,
+        slot_mapping: &impl CudaDeviceRead<i64>,
+        key_scales: &impl CudaDeviceRead<f32>,
+        value_scales: &impl CudaDeviceRead<f32>,
+        spec: RopePagedKvWriteSpec,
+        layout: RopePagedKvLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_dtype(spec, DType::F16)?;
+        let scale_stride = require_fp8_encoding(spec)?;
+        validate_scales(key_scales, value_scales, spec)?;
+        let shape = validate_buffers(
+            query,
+            key,
+            value,
+            positions,
+            cos_sin_cache,
+            key_cache,
+            value_cache,
+            slot_mapping,
+            spec,
+            layout,
+        )?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_rope_paged_kv_write_f16(
+                query.as_mut_ptr().cast::<u16>(),
+                key.as_mut_ptr().cast::<u16>(),
+                value.as_ptr().cast::<u16>(),
+                positions.as_ptr(),
+                cos_sin_cache.as_ptr().cast::<u16>(),
+                key_cache.as_mut_ptr().cast(),
+                value_cache.as_mut_ptr().cast(),
+                key_scales.as_ptr(),
+                value_scales.as_ptr(),
+                slot_mapping.as_ptr(),
+                shape.tokens,
+                shape.cache_tokens,
+                shape.query_heads,
+                shape.kv_heads,
+                shape.head_size,
+                shape.value_head_size,
+                shape.rotary_dim,
+                shape.max_position,
+                shape.num_blocks,
+                shape.block_size,
+                CACHE_ENCODING_FP8_E4M3,
+                scale_stride,
+                shape.query_token_stride,
+                shape.query_head_stride,
+                shape.key_token_stride,
+                shape.source_key_head_stride,
+                shape.value_token_stride,
+                shape.source_value_head_stride,
+                shape.key_block_stride,
+                shape.key_page_stride,
+                shape.key_head_stride,
+                shape.value_block_stride,
+                shape.value_page_stride,
+                shape.value_head_stride,
+                shape.is_neox,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Applies BF16 RoPE in place and writes statically scaled FP8 E4M3 caches.
+    #[allow(clippy::too_many_arguments)]
+    pub fn rope_paged_kv_write_fp8_e4m3_bf16(
+        &self,
+        query: &mut impl CudaDeviceWrite<bf16>,
+        key: &mut impl CudaDeviceWrite<bf16>,
+        value: &impl CudaDeviceRead<bf16>,
+        positions: &impl CudaDeviceRead<i64>,
+        cos_sin_cache: &impl CudaDeviceRead<bf16>,
+        key_cache: &mut impl CudaDeviceWrite<u8>,
+        value_cache: &mut impl CudaDeviceWrite<u8>,
+        slot_mapping: &impl CudaDeviceRead<i64>,
+        key_scales: &impl CudaDeviceRead<f32>,
+        value_scales: &impl CudaDeviceRead<f32>,
+        spec: RopePagedKvWriteSpec,
+        layout: RopePagedKvLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_dtype(spec, DType::Bf16)?;
+        let scale_stride = require_fp8_encoding(spec)?;
+        validate_scales(key_scales, value_scales, spec)?;
+        let shape = validate_buffers(
+            query,
+            key,
+            value,
+            positions,
+            cos_sin_cache,
+            key_cache,
+            value_cache,
+            slot_mapping,
+            spec,
+            layout,
+        )?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_rope_paged_kv_write_bf16(
+                query.as_mut_ptr().cast::<u16>(),
+                key.as_mut_ptr().cast::<u16>(),
+                value.as_ptr().cast::<u16>(),
+                positions.as_ptr(),
+                cos_sin_cache.as_ptr().cast::<u16>(),
+                key_cache.as_mut_ptr().cast(),
+                value_cache.as_mut_ptr().cast(),
+                key_scales.as_ptr(),
+                value_scales.as_ptr(),
+                slot_mapping.as_ptr(),
+                shape.tokens,
+                shape.cache_tokens,
+                shape.query_heads,
+                shape.kv_heads,
+                shape.head_size,
+                shape.value_head_size,
+                shape.rotary_dim,
+                shape.max_position,
+                shape.num_blocks,
+                shape.block_size,
+                CACHE_ENCODING_FP8_E4M3,
+                scale_stride,
                 shape.query_token_stride,
                 shape.query_head_stride,
                 shape.key_token_stride,
@@ -217,6 +460,35 @@ fn require_dtype(spec: RopePagedKvWriteSpec, expected: DType) -> Result<(), Cuda
     }
 }
 
+fn require_native_encoding(spec: RopePagedKvWriteSpec) -> Result<(), CudaExecutorError> {
+    if spec.cache_encoding() == KvCacheEncoding::Native {
+        Ok(())
+    } else {
+        Err(CudaExecutorError::InvalidContract(
+            "native RoPE+paged-KV dispatch requires native cache encoding".into(),
+        ))
+    }
+}
+
+fn require_fp8_encoding(spec: RopePagedKvWriteSpec) -> Result<u32, CudaExecutorError> {
+    match spec.cache_encoding() {
+        KvCacheEncoding::Fp8E4M3Fn(KvCacheScaleGranularity::PerTensor) => Ok(0),
+        KvCacheEncoding::Fp8E4M3Fn(KvCacheScaleGranularity::PerHead) => Ok(1),
+        KvCacheEncoding::Native => Err(CudaExecutorError::InvalidContract(
+            "FP8 RoPE+paged-KV dispatch requires FP8 E4M3 cache encoding".into(),
+        )),
+    }
+}
+
+fn validate_scales(
+    key_scales: &impl CudaDeviceRead<f32>,
+    value_scales: &impl CudaDeviceRead<f32>,
+    spec: RopePagedKvWriteSpec,
+) -> Result<(), CudaExecutorError> {
+    key_scales.require_len(spec.scale_elements(), "paged key cache scales")?;
+    value_scales.require_len(spec.scale_elements(), "paged value cache scales")
+}
+
 #[derive(Clone, Copy)]
 struct AbiShape {
     tokens: u32,
@@ -245,14 +517,14 @@ struct AbiShape {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn validate_buffers<T: Copy>(
+fn validate_buffers<T: Copy, C: Copy>(
     query: &impl CudaDeviceRead<T>,
     key: &impl CudaDeviceRead<T>,
     value: &impl CudaDeviceRead<T>,
     positions: &impl CudaDeviceRead<i64>,
     cos_sin_cache: &impl CudaDeviceRead<T>,
-    key_cache: &impl CudaDeviceRead<T>,
-    value_cache: &impl CudaDeviceRead<T>,
+    key_cache: &impl CudaDeviceRead<C>,
+    value_cache: &impl CudaDeviceRead<C>,
     slot_mapping: &impl CudaDeviceRead<i64>,
     spec: RopePagedKvWriteSpec,
     layout: RopePagedKvLayout,
@@ -316,13 +588,16 @@ fn validate_buffers<T: Copy>(
 mod tests {
     use super::*;
     use crate::runtime::DeviceBuffer;
-    use loom_kernels::{rope_paged_kv_write_f32_reference, RotaryEmbeddingSpec, RotaryStyle};
+    use loom_kernels::{
+        rope_paged_kv_write_f32_reference, rope_paged_kv_write_fp8_e4m3_f32_reference,
+        KvCacheEncoding, KvCacheScaleGranularity, RotaryEmbeddingSpec, RotaryStyle,
+    };
 
     #[test]
     fn safe_rust_wrapper_matches_the_cpu_oracle() {
         let rotary =
             RotaryEmbeddingSpec::new(2, 2, 1, 4, 4, 2, DType::F32, RotaryStyle::NeoX).unwrap();
-        let spec = RopePagedKvWriteSpec::new(rotary, 4, 1, 4).unwrap();
+        let spec = RopePagedKvWriteSpec::new(rotary, 4, 1, 4, KvCacheEncoding::Native).unwrap();
         let positions = [0_i64, 1];
         let slots = [3_i64, -1];
         let cos_sin = [1.0_f32, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0];
@@ -369,6 +644,87 @@ mod tests {
                 &mut key_cache_device,
                 &mut value_cache_device,
                 &slots_device,
+                spec,
+                RopePagedKvLayout::contiguous(spec).unwrap(),
+            )
+            .unwrap();
+        backend.stream().synchronize().unwrap();
+
+        assert_eq!(query_device.copy_to_vec().unwrap(), expected_query);
+        assert_eq!(key_device.copy_to_vec().unwrap(), expected_key);
+        assert_eq!(key_cache_device.copy_to_vec().unwrap(), expected_key_cache);
+        assert_eq!(
+            value_cache_device.copy_to_vec().unwrap(),
+            expected_value_cache
+        );
+    }
+
+    #[test]
+    fn safe_rust_wrapper_matches_the_fp8_cpu_oracle() {
+        let rotary =
+            RotaryEmbeddingSpec::new(2, 2, 1, 4, 4, 2, DType::F32, RotaryStyle::NeoX).unwrap();
+        let spec = RopePagedKvWriteSpec::new(
+            rotary,
+            4,
+            1,
+            4,
+            KvCacheEncoding::Fp8E4M3Fn(KvCacheScaleGranularity::PerTensor),
+        )
+        .unwrap();
+        let positions = [0_i64, 1];
+        let slots = [3_i64, -1];
+        let cos_sin = [1.0_f32, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0];
+        let query = [
+            1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0, 9.0, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0,
+            16.0,
+        ];
+        let key = [17.0_f32, 18.0, 19.0, 20.0, 21.0, 22.0, 23.0, 24.0];
+        let value = [25.0_f32, 26.0, 27.0, 28.0, 29.0, 30.0, 31.0, 32.0];
+        let key_scales = [0.25_f32];
+        let value_scales = [0.5_f32];
+        let mut expected_query = query;
+        let mut expected_key = key;
+        let mut expected_key_cache = [0xaa_u8; 16];
+        let mut expected_value_cache = [0xaa_u8; 16];
+        rope_paged_kv_write_fp8_e4m3_f32_reference(
+            &mut expected_query,
+            &mut expected_key,
+            &value,
+            &positions,
+            &cos_sin,
+            &mut expected_key_cache,
+            &mut expected_value_cache,
+            &slots,
+            &key_scales,
+            &value_scales,
+            spec,
+        )
+        .unwrap();
+
+        let backend = CudaBackend::new().unwrap();
+        let mut query_device = DeviceBuffer::from_slice(&query).unwrap();
+        let mut key_device = DeviceBuffer::from_slice(&key).unwrap();
+        let value_device = DeviceBuffer::from_slice(&value).unwrap();
+        let positions_device = DeviceBuffer::from_slice(&positions).unwrap();
+        let cos_sin_device = DeviceBuffer::from_slice(&cos_sin).unwrap();
+        let mut key_cache_device = DeviceBuffer::from_slice(&[0xaa_u8; 16]).unwrap();
+        let mut value_cache_device = DeviceBuffer::from_slice(&[0xaa_u8; 16]).unwrap();
+        let slots_device = DeviceBuffer::from_slice(&slots).unwrap();
+        let key_scales_device = DeviceBuffer::from_slice(&key_scales).unwrap();
+        let value_scales_device = DeviceBuffer::from_slice(&value_scales).unwrap();
+
+        backend
+            .rope_paged_kv_write_fp8_e4m3_f32(
+                &mut query_device,
+                &mut key_device,
+                &value_device,
+                &positions_device,
+                &cos_sin_device,
+                &mut key_cache_device,
+                &mut value_cache_device,
+                &slots_device,
+                &key_scales_device,
+                &value_scales_device,
                 spec,
                 RopePagedKvLayout::contiguous(spec).unwrap(),
             )

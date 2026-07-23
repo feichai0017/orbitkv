@@ -52,6 +52,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=7)
     parser.add_argument("--max-fused-tokens", type=int, default=256)
+    parser.add_argument(
+        "--kv-cache-dtype",
+        choices=("auto", "fp8", "fp8_e4m3"),
+        default="auto",
+    )
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.5)
     parser.add_argument("--seed", type=int, default=31)
     parser.add_argument(
@@ -205,6 +210,7 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
         gpu_memory_utilization=args.gpu_memory_utilization,
         seed=args.seed,
         disable_log_stats=True,
+        kv_cache_dtype=args.kv_cache_dtype,
         compilation_config=compilation_config,
     )
     launches_after_engine_init = launch_count(Operator.ROPE_PAGED_KV_WRITE)
@@ -218,6 +224,7 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
         "provider": provider,
         "model": model,
         "dtype": "bfloat16",
+        "kv_cache_dtype": args.kv_cache_dtype,
         "warmup": args.warmup,
         "repeats": args.repeats,
         "max_fused_tokens": args.max_fused_tokens,
@@ -265,6 +272,8 @@ def child_command(
         str(args.repeats),
         "--max-fused-tokens",
         str(args.max_fused_tokens),
+        "--kv-cache-dtype",
+        args.kv_cache_dtype,
         "--gpu-memory-utilization",
         str(args.gpu_memory_utilization),
         "--seed",

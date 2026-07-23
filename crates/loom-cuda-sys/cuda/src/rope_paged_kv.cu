@@ -2,11 +2,13 @@
 
 #include <cuda_bf16.h>
 #include <cuda_fp16.h>
+#include <cuda_fp8.h>
 #include <cuda_runtime.h>
 
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <type_traits>
 
 namespace {
 
@@ -41,16 +43,35 @@ struct Bfloat16Ops {
   }
 };
 
-template <typename Ops>
+template <typename Ops, bool Fp8Cache>
+using CacheScalar =
+    std::conditional_t<Fp8Cache, uint8_t, typename Ops::Scalar>;
+
+template <typename Ops, bool Fp8Cache>
+__device__ CacheScalar<Ops, Fp8Cache> encode_cache_value(
+    typename Ops::Scalar value, const float* scales, uint32_t head,
+    uint32_t scale_stride) {
+  if constexpr (Fp8Cache) {
+    const float scale = scales[static_cast<size_t>(head) * scale_stride];
+    return __nv_cvt_float_to_fp8(Ops::to_float(value) / scale, __NV_SATFINITE,
+                                 __NV_E4M3);
+  } else {
+    return value;
+  }
+}
+
+template <typename Ops, bool Fp8Cache>
 __global__ __launch_bounds__(kThreads) void rope_paged_kv_write_kernel(
     typename Ops::Scalar* query, typename Ops::Scalar* key,
     const typename Ops::Scalar* value, const int64_t* positions,
     const typename Ops::Scalar* cos_sin_cache,
-    typename Ops::Scalar* key_cache, typename Ops::Scalar* value_cache,
-    const int64_t* slot_mapping, uint32_t query_heads, uint32_t kv_heads,
-    uint32_t head_size, uint32_t value_head_size, uint32_t rotary_dim,
-    uint32_t max_position, uint32_t cache_tokens, uint32_t num_blocks,
-    uint32_t block_size, uint64_t query_token_stride,
+    CacheScalar<Ops, Fp8Cache>* key_cache,
+    CacheScalar<Ops, Fp8Cache>* value_cache, const float* key_scales,
+    const float* value_scales, const int64_t* slot_mapping,
+    uint32_t query_heads, uint32_t kv_heads, uint32_t head_size,
+    uint32_t value_head_size, uint32_t rotary_dim, uint32_t max_position,
+    uint32_t cache_tokens, uint32_t num_blocks, uint32_t block_size,
+    uint32_t scale_stride, uint64_t query_token_stride,
     uint64_t query_head_stride, uint64_t key_token_stride,
     uint64_t key_head_stride, uint64_t value_token_stride,
     uint64_t value_head_stride,
@@ -137,8 +158,12 @@ __global__ __launch_bounds__(kThreads) void rope_paged_kv_write_kernel(
           cache_block * key_cache_block_stride +
           cache_page * key_cache_page_stride +
           static_cast<uint64_t>(head) * key_cache_head_stride;
-      key_cache[target_head_offset + first_dim] = rotated_first;
-      key_cache[target_head_offset + second_dim] = rotated_second;
+      key_cache[target_head_offset + first_dim] =
+          encode_cache_value<Ops, Fp8Cache>(rotated_first, key_scales, head,
+                                            scale_stride);
+      key_cache[target_head_offset + second_dim] =
+          encode_cache_value<Ops, Fp8Cache>(rotated_second, key_scales, head,
+                                            scale_stride);
     }
   }
 
@@ -158,7 +183,8 @@ __global__ __launch_bounds__(kThreads) void rope_paged_kv_write_kernel(
                               static_cast<uint64_t>(head) *
                                   key_cache_head_stride +
                               dim;
-      key_cache[target] = key[source];
+      key_cache[target] = encode_cache_value<Ops, Fp8Cache>(
+          key[source], key_scales, head, scale_stride);
     }
   }
 
@@ -179,21 +205,23 @@ __global__ __launch_bounds__(kThreads) void rope_paged_kv_write_kernel(
                               static_cast<uint64_t>(head) *
                                   value_cache_head_stride +
                               dim;
-      value_cache[target] = value[source];
+      value_cache[target] = encode_cache_value<Ops, Fp8Cache>(
+          value[source], value_scales, head, scale_stride);
     }
   }
 }
 
-template <typename Ops>
+template <typename Ops, bool Fp8Cache>
 int launch_rope_paged_kv_write(
     typename Ops::Scalar* query, typename Ops::Scalar* key,
     const typename Ops::Scalar* value, const int64_t* positions,
     const typename Ops::Scalar* cos_sin_cache,
-    typename Ops::Scalar* key_cache, typename Ops::Scalar* value_cache,
-    const int64_t* slot_mapping, uint32_t tokens, uint32_t cache_tokens,
-    uint32_t query_heads, uint32_t kv_heads, uint32_t head_size,
-    uint32_t value_head_size, uint32_t rotary_dim, uint32_t max_position,
-    uint32_t num_blocks, uint32_t block_size, uint64_t query_token_stride,
+    void* key_cache, void* value_cache, const float* key_scales,
+    const float* value_scales, const int64_t* slot_mapping, uint32_t tokens,
+    uint32_t cache_tokens, uint32_t query_heads, uint32_t kv_heads,
+    uint32_t head_size, uint32_t value_head_size, uint32_t rotary_dim,
+    uint32_t max_position, uint32_t num_blocks, uint32_t block_size,
+    uint32_t scale_stride, uint64_t query_token_stride,
     uint64_t query_head_stride, uint64_t key_token_stride,
     uint64_t key_head_stride, uint64_t value_token_stride,
     uint64_t value_head_stride, uint64_t key_cache_block_stride,
@@ -203,6 +231,7 @@ int launch_rope_paged_kv_write(
   if (query == nullptr || key == nullptr || value == nullptr ||
       positions == nullptr || cos_sin_cache == nullptr ||
       key_cache == nullptr || value_cache == nullptr || tokens == 0 ||
+      (Fp8Cache && (key_scales == nullptr || value_scales == nullptr)) ||
       (cache_tokens > 0 && slot_mapping == nullptr) || cache_tokens > tokens ||
       query_heads == 0 || kv_heads == 0 || head_size == 0 ||
       value_head_size == 0 ||
@@ -215,20 +244,23 @@ int launch_rope_paged_kv_write(
       key_cache_page_stride == 0 || key_cache_head_stride == 0 ||
       value_cache_block_stride == 0 || value_cache_page_stride == 0 ||
       value_cache_head_stride == 0 || is_neox > 1U ||
+      scale_stride > 1U ||
       tokens > static_cast<uint32_t>(std::numeric_limits<int>::max())) {
     return LOOM_CUDA_INVALID_ARGUMENT;
   }
 
-  rope_paged_kv_write_kernel<Ops><<<tokens, kThreads, 0,
-                                    static_cast<cudaStream_t>(stream)>>>(
-      query, key, value, positions, cos_sin_cache, key_cache, value_cache,
-      slot_mapping, query_heads, kv_heads, head_size, value_head_size,
-      rotary_dim, max_position, cache_tokens, num_blocks, block_size,
-      query_token_stride, query_head_stride, key_token_stride, key_head_stride,
-      value_token_stride, value_head_stride, key_cache_block_stride,
-      key_cache_page_stride, key_cache_head_stride,
-      value_cache_block_stride, value_cache_page_stride,
-      value_cache_head_stride, is_neox != 0U);
+  rope_paged_kv_write_kernel<Ops, Fp8Cache>
+      <<<tokens, kThreads, 0, static_cast<cudaStream_t>(stream)>>>(
+          query, key, value, positions, cos_sin_cache,
+          static_cast<CacheScalar<Ops, Fp8Cache>*>(key_cache),
+          static_cast<CacheScalar<Ops, Fp8Cache>*>(value_cache), key_scales,
+          value_scales, slot_mapping, query_heads, kv_heads, head_size,
+          value_head_size, rotary_dim, max_position, cache_tokens, num_blocks,
+          block_size, scale_stride, query_token_stride, query_head_stride,
+          key_token_stride, key_head_stride, value_token_stride,
+          value_head_stride, key_cache_block_stride, key_cache_page_stride,
+          key_cache_head_stride, value_cache_block_stride,
+          value_cache_page_stride, value_cache_head_stride, is_neox != 0U);
   return cudaGetLastError() == cudaSuccess ? LOOM_CUDA_SUCCESS
                                            : LOOM_CUDA_LAUNCH_ERROR;
 }
@@ -237,81 +269,138 @@ int launch_rope_paged_kv_write(
 
 extern "C" int loom_cuda_rope_paged_kv_write_f32(
     float* query, float* key, const float* value, const int64_t* positions,
-    const float* cos_sin_cache, float* key_cache, float* value_cache,
+    const float* cos_sin_cache, void* key_cache, void* value_cache,
+    const float* key_scales, const float* value_scales,
     const int64_t* slot_mapping, uint32_t tokens, uint32_t cache_tokens,
     uint32_t query_heads, uint32_t kv_heads, uint32_t head_size,
     uint32_t value_head_size, uint32_t rotary_dim, uint32_t max_position,
-    uint32_t num_blocks, uint32_t block_size, uint64_t query_token_stride,
+    uint32_t num_blocks, uint32_t block_size, uint32_t cache_encoding,
+    uint32_t scale_stride, uint64_t query_token_stride,
     uint64_t query_head_stride, uint64_t key_token_stride,
     uint64_t key_head_stride, uint64_t value_token_stride,
     uint64_t value_head_stride, uint64_t key_cache_block_stride,
     uint64_t key_cache_page_stride, uint64_t key_cache_head_stride,
     uint64_t value_cache_block_stride, uint64_t value_cache_page_stride,
     uint64_t value_cache_head_stride, uint32_t is_neox, void* stream) {
-  return launch_rope_paged_kv_write<FloatOps>(
-      query, key, value, positions, cos_sin_cache, key_cache, value_cache,
-      slot_mapping, tokens, cache_tokens, query_heads, kv_heads, head_size,
-      value_head_size, rotary_dim, max_position, num_blocks, block_size,
-      query_token_stride, query_head_stride, key_token_stride, key_head_stride,
-      value_token_stride, value_head_stride, key_cache_block_stride,
-      key_cache_page_stride, key_cache_head_stride,
-      value_cache_block_stride, value_cache_page_stride,
-      value_cache_head_stride, is_neox, stream);
+  if (cache_encoding == LOOM_CUDA_KV_CACHE_NATIVE) {
+    return launch_rope_paged_kv_write<FloatOps, false>(
+        query, key, value, positions, cos_sin_cache, key_cache, value_cache,
+        key_scales, value_scales, slot_mapping, tokens, cache_tokens,
+        query_heads, kv_heads, head_size, value_head_size, rotary_dim,
+        max_position, num_blocks, block_size, scale_stride,
+        query_token_stride, query_head_stride, key_token_stride,
+        key_head_stride, value_token_stride, value_head_stride,
+        key_cache_block_stride, key_cache_page_stride,
+        key_cache_head_stride, value_cache_block_stride,
+        value_cache_page_stride, value_cache_head_stride, is_neox, stream);
+  }
+  if (cache_encoding == LOOM_CUDA_KV_CACHE_FP8_E4M3) {
+    return launch_rope_paged_kv_write<FloatOps, true>(
+        query, key, value, positions, cos_sin_cache, key_cache, value_cache,
+        key_scales, value_scales, slot_mapping, tokens, cache_tokens,
+        query_heads, kv_heads, head_size, value_head_size, rotary_dim,
+        max_position, num_blocks, block_size, scale_stride,
+        query_token_stride, query_head_stride, key_token_stride,
+        key_head_stride, value_token_stride, value_head_stride,
+        key_cache_block_stride, key_cache_page_stride,
+        key_cache_head_stride, value_cache_block_stride,
+        value_cache_page_stride, value_cache_head_stride, is_neox, stream);
+  }
+  return LOOM_CUDA_INVALID_ARGUMENT;
 }
 
 extern "C" int loom_cuda_rope_paged_kv_write_f16(
     uint16_t* query, uint16_t* key, const uint16_t* value,
     const int64_t* positions, const uint16_t* cos_sin_cache,
-    uint16_t* key_cache, uint16_t* value_cache,
-    const int64_t* slot_mapping, uint32_t tokens, uint32_t cache_tokens,
-    uint32_t query_heads, uint32_t kv_heads, uint32_t head_size,
-    uint32_t value_head_size, uint32_t rotary_dim, uint32_t max_position,
-    uint32_t num_blocks, uint32_t block_size, uint64_t query_token_stride,
+    void* key_cache, void* value_cache, const float* key_scales,
+    const float* value_scales, const int64_t* slot_mapping, uint32_t tokens,
+    uint32_t cache_tokens, uint32_t query_heads, uint32_t kv_heads,
+    uint32_t head_size, uint32_t value_head_size, uint32_t rotary_dim,
+    uint32_t max_position, uint32_t num_blocks, uint32_t block_size,
+    uint32_t cache_encoding, uint32_t scale_stride,
+    uint64_t query_token_stride,
     uint64_t query_head_stride, uint64_t key_token_stride,
     uint64_t key_head_stride, uint64_t value_token_stride,
     uint64_t value_head_stride, uint64_t key_cache_block_stride,
     uint64_t key_cache_page_stride, uint64_t key_cache_head_stride,
     uint64_t value_cache_block_stride, uint64_t value_cache_page_stride,
     uint64_t value_cache_head_stride, uint32_t is_neox, void* stream) {
-  return launch_rope_paged_kv_write<HalfOps>(
-      reinterpret_cast<__half*>(query), reinterpret_cast<__half*>(key),
-      reinterpret_cast<const __half*>(value), positions,
-      reinterpret_cast<const __half*>(cos_sin_cache),
-      reinterpret_cast<__half*>(key_cache),
-      reinterpret_cast<__half*>(value_cache), slot_mapping, tokens,
-      cache_tokens, query_heads, kv_heads, head_size, value_head_size,
-      rotary_dim, max_position, num_blocks, block_size, query_token_stride,
-      query_head_stride, key_token_stride, key_head_stride, value_token_stride,
-      value_head_stride, key_cache_block_stride, key_cache_page_stride,
-      key_cache_head_stride, value_cache_block_stride,
-      value_cache_page_stride, value_cache_head_stride, is_neox, stream);
+  if (cache_encoding == LOOM_CUDA_KV_CACHE_NATIVE) {
+    return launch_rope_paged_kv_write<HalfOps, false>(
+        reinterpret_cast<__half*>(query), reinterpret_cast<__half*>(key),
+        reinterpret_cast<const __half*>(value), positions,
+        reinterpret_cast<const __half*>(cos_sin_cache), key_cache, value_cache,
+        key_scales, value_scales, slot_mapping, tokens, cache_tokens,
+        query_heads, kv_heads, head_size, value_head_size, rotary_dim,
+        max_position, num_blocks, block_size, scale_stride,
+        query_token_stride, query_head_stride, key_token_stride,
+        key_head_stride, value_token_stride, value_head_stride,
+        key_cache_block_stride, key_cache_page_stride,
+        key_cache_head_stride, value_cache_block_stride,
+        value_cache_page_stride, value_cache_head_stride, is_neox, stream);
+  }
+  if (cache_encoding == LOOM_CUDA_KV_CACHE_FP8_E4M3) {
+    return launch_rope_paged_kv_write<HalfOps, true>(
+        reinterpret_cast<__half*>(query), reinterpret_cast<__half*>(key),
+        reinterpret_cast<const __half*>(value), positions,
+        reinterpret_cast<const __half*>(cos_sin_cache), key_cache, value_cache,
+        key_scales, value_scales, slot_mapping, tokens, cache_tokens,
+        query_heads, kv_heads, head_size, value_head_size, rotary_dim,
+        max_position, num_blocks, block_size, scale_stride,
+        query_token_stride, query_head_stride, key_token_stride,
+        key_head_stride, value_token_stride, value_head_stride,
+        key_cache_block_stride, key_cache_page_stride,
+        key_cache_head_stride, value_cache_block_stride,
+        value_cache_page_stride, value_cache_head_stride, is_neox, stream);
+  }
+  return LOOM_CUDA_INVALID_ARGUMENT;
 }
 
 extern "C" int loom_cuda_rope_paged_kv_write_bf16(
     uint16_t* query, uint16_t* key, const uint16_t* value,
     const int64_t* positions, const uint16_t* cos_sin_cache,
-    uint16_t* key_cache, uint16_t* value_cache,
-    const int64_t* slot_mapping, uint32_t tokens, uint32_t cache_tokens,
-    uint32_t query_heads, uint32_t kv_heads, uint32_t head_size,
-    uint32_t value_head_size, uint32_t rotary_dim, uint32_t max_position,
-    uint32_t num_blocks, uint32_t block_size, uint64_t query_token_stride,
+    void* key_cache, void* value_cache, const float* key_scales,
+    const float* value_scales, const int64_t* slot_mapping, uint32_t tokens,
+    uint32_t cache_tokens, uint32_t query_heads, uint32_t kv_heads,
+    uint32_t head_size, uint32_t value_head_size, uint32_t rotary_dim,
+    uint32_t max_position, uint32_t num_blocks, uint32_t block_size,
+    uint32_t cache_encoding, uint32_t scale_stride,
+    uint64_t query_token_stride,
     uint64_t query_head_stride, uint64_t key_token_stride,
     uint64_t key_head_stride, uint64_t value_token_stride,
     uint64_t value_head_stride, uint64_t key_cache_block_stride,
     uint64_t key_cache_page_stride, uint64_t key_cache_head_stride,
     uint64_t value_cache_block_stride, uint64_t value_cache_page_stride,
     uint64_t value_cache_head_stride, uint32_t is_neox, void* stream) {
-  return launch_rope_paged_kv_write<Bfloat16Ops>(
-      reinterpret_cast<__nv_bfloat16*>(query),
-      reinterpret_cast<__nv_bfloat16*>(key),
-      reinterpret_cast<const __nv_bfloat16*>(value), positions,
-      reinterpret_cast<const __nv_bfloat16*>(cos_sin_cache),
-      reinterpret_cast<__nv_bfloat16*>(key_cache),
-      reinterpret_cast<__nv_bfloat16*>(value_cache), slot_mapping, tokens,
-      cache_tokens, query_heads, kv_heads, head_size, value_head_size,
-      rotary_dim, max_position, num_blocks, block_size, query_token_stride,
-      query_head_stride, key_token_stride, key_head_stride, value_token_stride,
-      value_head_stride, key_cache_block_stride, key_cache_page_stride,
-      key_cache_head_stride, value_cache_block_stride,
-      value_cache_page_stride, value_cache_head_stride, is_neox, stream);
+  if (cache_encoding == LOOM_CUDA_KV_CACHE_NATIVE) {
+    return launch_rope_paged_kv_write<Bfloat16Ops, false>(
+        reinterpret_cast<__nv_bfloat16*>(query),
+        reinterpret_cast<__nv_bfloat16*>(key),
+        reinterpret_cast<const __nv_bfloat16*>(value), positions,
+        reinterpret_cast<const __nv_bfloat16*>(cos_sin_cache), key_cache,
+        value_cache, key_scales, value_scales, slot_mapping, tokens,
+        cache_tokens, query_heads, kv_heads, head_size, value_head_size,
+        rotary_dim, max_position, num_blocks, block_size, scale_stride,
+        query_token_stride, query_head_stride, key_token_stride,
+        key_head_stride, value_token_stride, value_head_stride,
+        key_cache_block_stride, key_cache_page_stride,
+        key_cache_head_stride, value_cache_block_stride,
+        value_cache_page_stride, value_cache_head_stride, is_neox, stream);
+  }
+  if (cache_encoding == LOOM_CUDA_KV_CACHE_FP8_E4M3) {
+    return launch_rope_paged_kv_write<Bfloat16Ops, true>(
+        reinterpret_cast<__nv_bfloat16*>(query),
+        reinterpret_cast<__nv_bfloat16*>(key),
+        reinterpret_cast<const __nv_bfloat16*>(value), positions,
+        reinterpret_cast<const __nv_bfloat16*>(cos_sin_cache), key_cache,
+        value_cache, key_scales, value_scales, slot_mapping, tokens,
+        cache_tokens, query_heads, kv_heads, head_size, value_head_size,
+        rotary_dim, max_position, num_blocks, block_size, scale_stride,
+        query_token_stride, query_head_stride, key_token_stride,
+        key_head_stride, value_token_stride, value_head_stride,
+        key_cache_block_stride, key_cache_page_stride,
+        key_cache_head_stride, value_cache_block_stride,
+        value_cache_page_stride, value_cache_head_stride, is_neox, stream);
+  }
+  return LOOM_CUDA_INVALID_ARGUMENT;
 }

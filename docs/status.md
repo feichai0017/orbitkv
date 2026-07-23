@@ -25,6 +25,10 @@
   RoPE+paged-KV write oracle for native NHD/HND cache layouts;
 - F32/FP16/BF16 fused CUDA with explicit packed-QKV token/head strides,
   independent rotation/cache token counts, and strided paged-cache writes;
+- static per-tensor/per-head FP8 E4M3 KV encoding in that same fused
+  RoPE+paged-write contract, with byte-typed cache views, explicit F32 scales,
+  CPU oracles, safe Rust dispatch, checked bridge ABI v2, Stable ABI PyTorch,
+  and vLLM 0.24/0.25 adapter support;
 - greedy-sampling contract and CPU oracles with first-index tie breaking,
   sampled-token log-softmax, and explicit finite-logit precondition;
 - one-block-per-row F32/FP16/BF16 CUDA fusion of argmax, online logsumexp,
@@ -68,7 +72,8 @@
   fusion-table replacement, RoPE+KV compiler-pass adapter, and pure-greedy
   general selected-token sampled-logprob fast paths, and a measured-shape
   Min-P override, deterministic greedy speculative verifier, plus a
-  native-cache short-context paged-decode override for vLLM 0.24 and 0.25;
+  native/FP8-cache RoPE+KV compiler adapter and native-cache short-context
+  paged-decode override for vLLM 0.24 and 0.25;
 - per-operator JSON correctness/latency benchmarks and named vLLM baselines.
 
 ## Validated
@@ -369,8 +374,9 @@ FA3 for the engine's 128-1,024-token path.
   metadata, stochastic residual-distribution rejection, and KV commit/remap
   remain profile-gated after the real-engine verifier share measured below
   `0.2%`;
-- FP8/INT8 KV-cache compression with measured cache bytes, quality, admitted
-  context/batch, and TPOT;
+- FP8 KV-cache H20 exact-byte/wheel qualification and system evidence for
+  measured cache bytes, quality, admitted context/batch, and TPOT; INT8 remains
+  unimplemented;
 - prefix-cache/preemption KV movement and compaction in a real scheduler path;
 - MoE routing/permutation/combine benefit around an unchanged vendor grouped
   GEMM;

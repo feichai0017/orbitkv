@@ -6,6 +6,7 @@ void check_rope_paged_kv_write_contract(
     const Tensor& query, const Tensor& key, const Tensor& value,
     const Tensor& positions, const Tensor& cos_sin_cache,
     const Tensor& key_cache, const Tensor& value_cache,
+    const Tensor& key_scales, const Tensor& value_scales,
     const Tensor& slot_mapping) {
   STD_TORCH_CHECK(query.is_cuda(), "Loom RoPE+paged-KV query must be CUDA");
   STD_TORCH_CHECK(key.device() == query.device() &&
@@ -14,23 +15,40 @@ void check_rope_paged_kv_write_contract(
                   cos_sin_cache.device() == query.device() &&
                   key_cache.device() == query.device() &&
                   value_cache.device() == query.device() &&
+                  key_scales.device() == query.device() &&
+                  value_scales.device() == query.device() &&
                   slot_mapping.device() == query.device(),
               "Loom RoPE+paged-KV tensors must be on one CUDA device");
   STD_TORCH_CHECK(query.scalar_type() == key.scalar_type() &&
                   query.scalar_type() == value.scalar_type() &&
-                  query.scalar_type() == cos_sin_cache.scalar_type() &&
-                  query.scalar_type() == key_cache.scalar_type() &&
-                  query.scalar_type() == value_cache.scalar_type(),
-              "Loom RoPE+paged-KV data and native caches must share a dtype");
+                  query.scalar_type() == cos_sin_cache.scalar_type(),
+              "Loom RoPE+paged-KV Q/K/V and cos/sin cache must share a dtype");
   STD_TORCH_CHECK(query.scalar_type() == ScalarType::Float ||
                   query.scalar_type() == ScalarType::Half ||
                   query.scalar_type() == ScalarType::BFloat16,
-              "Loom RoPE+paged-KV supports F32, FP16, and BF16 native caches");
+              "Loom RoPE+paged-KV supports F32, FP16, and BF16 sources");
+  STD_TORCH_CHECK(query.dim() == 3 && key.dim() == 3 && value.dim() == 3,
+              "Loom RoPE+paged-KV Q/K/V must have rank 3");
+  const bool native_cache =
+      key_cache.scalar_type() == query.scalar_type() &&
+      value_cache.scalar_type() == query.scalar_type();
+  const bool fp8_cache =
+      key_cache.scalar_type() == ScalarType::Byte &&
+      value_cache.scalar_type() == ScalarType::Byte;
+  STD_TORCH_CHECK(native_cache || fp8_cache,
+              "Loom paged K/V caches must use the source dtype or uint8 "
+              "FP8 E4M3 storage");
+  STD_TORCH_CHECK(key_scales.scalar_type() == ScalarType::Float &&
+                  value_scales.scalar_type() == ScalarType::Float &&
+                  key_scales.is_contiguous() && value_scales.is_contiguous() &&
+                  key_scales.numel() == value_scales.numel() &&
+                  (key_scales.numel() == 1 ||
+                   key_scales.numel() == key.size(1)),
+              "Loom paged K/V cache scales must be contiguous float32 "
+              "tensors with one element or one element per KV head");
   STD_TORCH_CHECK(positions.scalar_type() == ScalarType::Long &&
                   slot_mapping.scalar_type() == ScalarType::Long,
               "Loom RoPE+paged-KV positions and slot mapping must be int64");
-  STD_TORCH_CHECK(query.dim() == 3 && key.dim() == 3 && value.dim() == 3,
-              "Loom RoPE+paged-KV Q/K/V must have rank 3");
   STD_TORCH_CHECK(query.size(0) > 0 && query.size(1) > 0 && query.size(2) > 0,
               "Loom RoPE+paged-KV query must be non-empty");
   STD_TORCH_CHECK(key.size(0) == query.size(0) &&
@@ -88,6 +106,7 @@ void launch_rope_paged_kv_write(
     Tensor query, Tensor key, const Tensor& value,
     const Tensor& positions, const Tensor& cos_sin_cache,
     Tensor key_cache, Tensor value_cache,
+    const Tensor& key_scales, const Tensor& value_scales,
     const Tensor& slot_mapping, bool is_neox) {
   const int64_t limits[] = {
       query.size(0),       query.size(1),       key.size(1),
@@ -128,9 +147,13 @@ void launch_rope_paged_kv_write(
       static_cast<uint64_t>(value_cache.stride(1));
   const auto value_cache_head_stride =
       static_cast<uint64_t>(value_cache.stride(2));
+  const uint32_t cache_encoding =
+      key_cache.scalar_type() == ScalarType::Byte
+          ? LOOM_CUDA_BRIDGE_KV_CACHE_FP8_E4M3
+          : LOOM_CUDA_BRIDGE_KV_CACHE_NATIVE;
 
   const int status = loom_cuda_bridge_rope_paged_kv_write(
-      bridge_dtype(query), query.mutable_data_ptr(),
+      bridge_dtype(query), cache_encoding, query.mutable_data_ptr(),
       storage_span_elements(query), key.mutable_data_ptr(),
       storage_span_elements(key), value.const_data_ptr(),
       storage_span_elements(value), positions.const_data_ptr<int64_t>(),
@@ -139,6 +162,10 @@ void launch_rope_paged_kv_write(
       static_cast<uint64_t>(cos_sin_cache.numel()),
       key_cache.mutable_data_ptr(), storage_span_elements(key_cache),
       value_cache.mutable_data_ptr(), storage_span_elements(value_cache),
+      key_scales.const_data_ptr<float>(),
+      static_cast<uint64_t>(key_scales.numel()),
+      value_scales.const_data_ptr<float>(),
+      static_cast<uint64_t>(value_scales.numel()),
       slot_mapping.const_data_ptr<int64_t>(),
       static_cast<uint64_t>(slot_mapping.numel()), tokens, cache_tokens,
       query_heads, kv_heads, head_size, value_head_size, rotary_dim,
@@ -155,12 +182,14 @@ void rope_paged_kv_write(
     Tensor query, Tensor key, const Tensor& value,
     const Tensor& positions, const Tensor& cos_sin_cache,
     Tensor key_cache, Tensor value_cache,
+    const Tensor& key_scales, const Tensor& value_scales,
     const Tensor& slot_mapping, bool is_neox) {
   check_rope_paged_kv_write_contract(query, key, value, positions,
                                      cos_sin_cache, key_cache, value_cache,
-                                     slot_mapping);
+                                     key_scales, value_scales, slot_mapping);
   launch_rope_paged_kv_write(query, key, value, positions, cos_sin_cache,
-                             key_cache, value_cache, slot_mapping, is_neox);
+                             key_cache, value_cache, key_scales, value_scales,
+                             slot_mapping, is_neox);
 }
 
 

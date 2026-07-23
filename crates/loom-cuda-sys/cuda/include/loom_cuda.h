@@ -15,6 +15,11 @@ enum LoomCudaStatus {
   LOOM_CUDA_UNAVAILABLE = 4,
 };
 
+enum LoomCudaKvCacheEncoding {
+  LOOM_CUDA_KV_CACHE_NATIVE = 0,
+  LOOM_CUDA_KV_CACHE_FP8_E4M3 = 1,
+};
+
 const char* loom_cuda_status_string(int status);
 
 // F32 bring-up implementation of RMSNorm over contiguous [rows, hidden_size]
@@ -251,16 +256,20 @@ int loom_cuda_paged_decode_attention_split_k_bf16(
 // then sine halves. Key/value cache tensors have logical
 // [blocks, block_size, kv_heads, dim] dimensions; their element strides make
 // both vLLM NHD and HND physical layouts expressible. cache_tokens may be less
-// than tokens when the engine pads Q/K/V but not slot_mapping. Negative slots
-// skip the cache write while RoPE still updates Q/K. Positions and non-negative
-// slots are trusted engine metadata and must be in range.
+// than tokens when the engine pads Q/K/V but not slot_mapping. FP8 E4M3 cache
+// storage uses one scale for all heads (scale_stride=0) or one scale per KV
+// head (scale_stride=1). Negative slots skip the cache write while RoPE still
+// updates Q/K. Positions and non-negative slots are trusted engine metadata
+// and must be in range.
 int loom_cuda_rope_paged_kv_write_f32(
     float* query, float* key, const float* value, const int64_t* positions,
-    const float* cos_sin_cache, float* key_cache, float* value_cache,
+    const float* cos_sin_cache, void* key_cache, void* value_cache,
+    const float* key_scales, const float* value_scales,
     const int64_t* slot_mapping, uint32_t tokens, uint32_t cache_tokens,
     uint32_t query_heads, uint32_t kv_heads, uint32_t head_size,
     uint32_t value_head_size, uint32_t rotary_dim, uint32_t max_position,
-    uint32_t num_blocks, uint32_t block_size, uint64_t query_token_stride,
+    uint32_t num_blocks, uint32_t block_size, uint32_t cache_encoding,
+    uint32_t scale_stride, uint64_t query_token_stride,
     uint64_t query_head_stride, uint64_t key_token_stride,
     uint64_t key_head_stride, uint64_t value_token_stride,
     uint64_t value_head_stride, uint64_t key_cache_block_stride,
@@ -271,11 +280,13 @@ int loom_cuda_rope_paged_kv_write_f32(
 int loom_cuda_rope_paged_kv_write_f16(
     uint16_t* query, uint16_t* key, const uint16_t* value,
     const int64_t* positions, const uint16_t* cos_sin_cache,
-    uint16_t* key_cache, uint16_t* value_cache,
-    const int64_t* slot_mapping, uint32_t tokens, uint32_t cache_tokens,
-    uint32_t query_heads, uint32_t kv_heads, uint32_t head_size,
-    uint32_t value_head_size, uint32_t rotary_dim, uint32_t max_position,
-    uint32_t num_blocks, uint32_t block_size, uint64_t query_token_stride,
+    void* key_cache, void* value_cache, const float* key_scales,
+    const float* value_scales, const int64_t* slot_mapping, uint32_t tokens,
+    uint32_t cache_tokens, uint32_t query_heads, uint32_t kv_heads,
+    uint32_t head_size, uint32_t value_head_size, uint32_t rotary_dim,
+    uint32_t max_position, uint32_t num_blocks, uint32_t block_size,
+    uint32_t cache_encoding, uint32_t scale_stride,
+    uint64_t query_token_stride,
     uint64_t query_head_stride, uint64_t key_token_stride,
     uint64_t key_head_stride, uint64_t value_token_stride,
     uint64_t value_head_stride, uint64_t key_cache_block_stride,
@@ -286,11 +297,13 @@ int loom_cuda_rope_paged_kv_write_f16(
 int loom_cuda_rope_paged_kv_write_bf16(
     uint16_t* query, uint16_t* key, const uint16_t* value,
     const int64_t* positions, const uint16_t* cos_sin_cache,
-    uint16_t* key_cache, uint16_t* value_cache,
-    const int64_t* slot_mapping, uint32_t tokens, uint32_t cache_tokens,
-    uint32_t query_heads, uint32_t kv_heads, uint32_t head_size,
-    uint32_t value_head_size, uint32_t rotary_dim, uint32_t max_position,
-    uint32_t num_blocks, uint32_t block_size, uint64_t query_token_stride,
+    void* key_cache, void* value_cache, const float* key_scales,
+    const float* value_scales, const int64_t* slot_mapping, uint32_t tokens,
+    uint32_t cache_tokens, uint32_t query_heads, uint32_t kv_heads,
+    uint32_t head_size, uint32_t value_head_size, uint32_t rotary_dim,
+    uint32_t max_position, uint32_t num_blocks, uint32_t block_size,
+    uint32_t cache_encoding, uint32_t scale_stride,
+    uint64_t query_token_stride,
     uint64_t query_head_stride, uint64_t key_token_stride,
     uint64_t key_head_stride, uint64_t value_token_stride,
     uint64_t value_head_stride, uint64_t key_cache_block_stride,

@@ -179,9 +179,14 @@ Status: in progress.
   layouts, vLLM compiler fusion, H20 named baseline, and exact-token Qwen2.5
   engine gates complete; operator benefit is measurable, model-level benefit
   remains open;
-- FP8 KV quantize-on-write and dequantize-on-read with an explicit per-head or
-  per-block scale contract is the next cache deliverable; INT8 follows only
-  when a named engine/model path requires it;
+- FP8 E4M3 quantize-on-write with explicit static per-tensor or per-head
+  scales is implemented through the Rust contract/oracle, safe CUDA backend,
+  checked bridge, Stable ABI PyTorch operator, and vLLM adapter; H20 exact-byte,
+  wheel, memory, quality, and TPOT gates remain open;
+- FlashAttention/FlashInfer consume the compressed cache directly, so Loom
+  deliberately does not add a full-cache dequantize-on-read pass;
+- dynamic per-token-head scale caches and INT8 follow only when a named
+  engine/model path requires those distinct contracts;
 - append/copy with layout conversion for engine-native paged caches;
 - block copy, swap, gather, scatter, compact, and remap for prefix caching,
   preemptive scheduling, beam movement, and cache defragmentation;

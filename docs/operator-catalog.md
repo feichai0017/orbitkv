@@ -21,6 +21,7 @@ isolated microbenchmark is not sufficient.
 | State | Meaning |
 | --- | --- |
 | supported | contract, oracle, CUDA, framework adapter, and H20 evidence exist |
+| in progress | source path exists, but required hardware or engine evidence is still open |
 | next | admitted to the immediate implementation queue |
 | planned | useful surface with a named engine consumer, ordered after `next` |
 | profile-gated | implemented only when a real workload shows material cost |
@@ -58,7 +59,8 @@ isolated microbenchmark is not sufficient.
 | RoPE+paged-KV write | P0 | supported | position encoding without materializing another K pass |
 | paged-KV reshape/store/append | P0 | next | engine tensor to cache layout |
 | KV block copy, swap, gather, scatter, compact, and remap | P0 | next | prefix reuse, preemption, beam movement, and cache compaction |
-| FP8 KV quantize/dequantize with scale update | P0 | next | compressed cache read/write with explicit per-head or per-block scales |
+| RoPE+paged-KV write to static FP8 E4M3 | P0 | in progress | one fused position, per-tensor/per-head quantize, and paged-write pass; H20 qualification remains open |
+| dynamic FP8 per-token-head scale/write | P1 | planned | separate engine scale-cache contract only when a named backend requires it |
 | INT8 KV quantize/dequantize with scale update | P1 | planned | admitted only by a named engine/model cache contract |
 | embedding gather and parallel-vocabulary embedding | P1 | profile-gated | lookup plus dtype/layout conversion |
 
@@ -130,8 +132,9 @@ the boundary or an isolated implementation is measurably useful.
 
 ## Implementation Order
 
-1. Add FP8 KV-cache compression with explicit scales and prove cache bytes,
-   admitted context/batch, quality, and TPOT together.
+1. Finish H20 and clean-wheel qualification for the static FP8 E4M3
+   quantize-on-write path, then prove cache bytes, admitted context/batch,
+   quality, and TPOT together.
 2. Complete the sampling tail with fused preprocessing, penalties, top-k/top-p,
    renormalization, deterministic RNG, and top-k logprobs.
 3. Add KV block movement for a real prefix-cache, preemption, or compaction

@@ -48,13 +48,18 @@ def register_vllm_rope_paged_kv() -> str | None:
         torch.bfloat16,
         torch.float32,
     }
+    fp8_cache_dtypes = {"fp8", "fp8_e4m3"}
+    supported_cache_dtypes = native_cache_dtypes | fp8_cache_dtypes
 
     def supported(attention: Any) -> bool:
+        # FlashInfer rejects non-decoder construction but does not retain an
+        # attn_type field; FlashAttention retains the explicit enum.
+        attention_type = getattr(attention, "attn_type", AttentionType.DECODER)
         return bool(
             getattr(attention, "kv_sharing_target_layer_name", None) is None
-            and getattr(attention, "kv_cache_dtype", None) in native_cache_dtypes
-            and getattr(attention, "attn_type", AttentionType.DECODER)
-            == AttentionType.DECODER
+            and getattr(attention, "kv_cache_dtype", None)
+            in supported_cache_dtypes
+            and attention_type == AttentionType.DECODER
         )
 
     def do_rope_and_kv_cache_update(
@@ -70,7 +75,7 @@ def register_vllm_rope_paged_kv() -> str | None:
         layer_slot_mapping: torch.Tensor,
     ) -> None:
         global _ROPE_PAGED_KV_FIRST_CONTRACT
-        del attention, layer
+        del attention
         key_cache, value_cache = kv_cache.unbind(1)
         if _ROPE_PAGED_KV_FIRST_CONTRACT is None:
             _ROPE_PAGED_KV_FIRST_CONTRACT = {
@@ -100,6 +105,14 @@ def register_vllm_rope_paged_kv() -> str | None:
                     "dtype": str(kv_cache.dtype),
                 },
                 "slot_mapping": list(layer_slot_mapping.shape),
+                "key_scales": {
+                    "shape": list(layer._k_scale.shape),
+                    "dtype": str(layer._k_scale.dtype),
+                },
+                "value_scales": {
+                    "shape": list(layer._v_scale.shape),
+                    "dtype": str(layer._v_scale.dtype),
+                },
                 "is_neox": is_neox,
             }
         implementation(
@@ -110,6 +123,8 @@ def register_vllm_rope_paged_kv() -> str | None:
             cos_sin_cache,
             key_cache,
             value_cache,
+            layer._k_scale,
+            layer._v_scale,
             layer_slot_mapping,
             is_neox,
         )

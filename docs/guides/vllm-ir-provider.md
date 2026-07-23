@@ -19,10 +19,11 @@ is at parity rather than a demonstrated speedup.
 
 A third opt-in uses the existing RoPE+KV compiler fusion pass in vLLM 0.24 and
 0.25 with Loom's CUDA implementation for FlashAttention and FlashInfer native
-caches.
-It preserves packed-QKV token/head strides, NHD or HND cache strides, negative
-slots, and the shorter slot mapping used with padded engine inputs. Quantized
-KV caches are deliberately declined.
+or static FP8 E4M3 caches. It preserves packed-QKV token/head strides, NHD or
+HND cache strides, negative slots, the shorter slot mapping used with padded
+engine inputs, and vLLM's `[1]` or `[num_kv_heads]` K/V scales. E5M2, dynamic
+per-token-head scales, INT8, NVFP4, and model-specific cache formats are
+deliberately declined.
 
 A fourth explicit registration replaces only the pure-greedy `logprobs=0`
 sampler tail in vLLM 0.24 and 0.25. It fuses argmax, sampled-token raw logprob,
@@ -58,11 +59,12 @@ input = RMSNorm(residual, weight, epsilon)
 ## Compatibility
 
 The supported package interval is `vllm>=0.24,<0.26`. The qualified native
-wheel passes 192 H20 tests with each minor. The current source revision adds
-greedy speculative verification and passes the expanded 202-test suite on
-both official vLLM 0.24.0 and 0.25.1 packages; that new source is not yet a
-published native wheel. Existing model-level performance artifacts were
-captured on 0.24.0 and are not automatically performance claims for 0.25.1.
+wheel passes 192 H20 tests with each minor. The subsequent greedy speculative
+revision passed an expanded 202-test suite on both official vLLM 0.24.0 and
+0.25.1 packages. The current source additionally adds FP8 KV quantize-on-write;
+its new H20 matrix is still open and it is not a published native wheel.
+Existing model-level performance artifacts were captured on 0.24.0 and are
+not automatically performance claims for 0.25.1.
 See the
 [compatibility matrix](../compatibility.md) and
 [native-wheel gate](../results/h20-native-wheel-clean-install-20260723.json).
@@ -85,7 +87,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-1cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -159,6 +161,8 @@ rope_paged_kv_write_(
     cos_sin_cache,
     key_cache,
     value_cache,
+    key_scales_f32,
+    value_scales_f32,
     slot_mapping,
     is_neox=True,
 )
@@ -178,7 +182,9 @@ Add+RMSNorm and standalone SiLU-and-Mul tensors must be contiguous CUDA tensors
 using their documented matching F32, FP16, or BF16 dtype. The dynamic-block-FP8
 path accepts FP16/BF16 input, group size 64 or 128, and a width divisible by the
 group. `weight` must be one-dimensional and match the final normalization
-dimension. Checked public operators reject gradients and aliasing.
+dimension. The RoPE+KV path accepts native caches or uint8 FP8 E4M3 caches,
+with contiguous CUDA F32 K/V scales shaped `[1]` or `[num_kv_heads]`. Checked
+public operators reject gradients and aliasing.
 
 ## vLLM Use
 
@@ -436,6 +442,16 @@ PY
   --provider-order baseline-first \
   --result-json /tmp/paged-decode-engine.json
 
+.venv-vllm/bin/python benchmarks/vllm_rope_paged_kv.py \
+  --dtype bf16 --cache-dtype fp8 --scale-mode per-tensor \
+  --layouts NHD,HND --tokens 1,2,4,8,16,32,64,128 \
+  --output /tmp/rope-paged-kv-fp8.json
+
+.venv-vllm/bin/python benchmarks/vllm_engine_rope_paged_kv.py \
+  --model /path/to/Qwen2.5-0.5B-Instruct \
+  --kv-cache-dtype fp8 --provider-order baseline-first \
+  --result-json /tmp/qwen25-rope-paged-kv-fp8.json
+
 .venv-vllm/bin/python benchmarks/vllm_greedy_sample_logprobs.py \
   --rows 1,2,4,8,16,32,64,128 --vocab-size 151936 --dtype bf16 \
   --warmup 100 --iterations 1000 --repeats 7
@@ -519,6 +535,10 @@ integration plus operator-level benefit, not model-level acceleration. See the
 [operator report](../results/h20-rope-paged-kv-20260722.json),
 [large-token sweep](../results/h20-rope-paged-kv-large-20260722.json), and
 [engine report](../results/h20-vllm-qwen25-rope-paged-kv-engine-20260722.json).
+Those artifacts cover native caches only. The static FP8 E4M3 source path
+reuses the same operator and vLLM compiler pass, but has no accepted H20 result
+yet; its exact-byte, clean-wheel, quality, cache-capacity, and TPOT gates remain
+open. See the [FP8 KV-cache contract](../design/fp8-kv-cache.md).
 
 For paged decode, the native-interleaved
 [156-case shape sweep](../results/h20-paged-decode-interleaved-shape-sweep-20260722.json)
@@ -632,7 +652,7 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
 - one selectable IR provider (`fused_add_rms_norm`), one opt-in out-of-tree
   layer replacement (`SiluAndMul`), and one vLLM-version-specific
   activation-quant fusion-table replacement, plus a vLLM 0.24/0.25-specific
-  RoPE+native-KV compiler-pass adapter, greedy/general selected-token
+  RoPE+native/static-FP8-KV compiler-pass adapter, greedy/general selected-token
   sampled-logprob sampler overrides, a shape-gated Min-P override, and a
   measured-shape FlashAttention paged-decode override;
 - the activation-quant provider requires a graph-visible quantization boundary;

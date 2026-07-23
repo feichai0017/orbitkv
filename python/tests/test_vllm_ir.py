@@ -314,6 +314,7 @@ def test_vllm_selected_token_path_handles_processed_greedy_batches(monkeypatch):
 
 def test_configures_vllm_rope_paged_kv_fusion():
     from vllm.config import CompilationConfig
+    from vllm.v1.attention.backend import AttentionType
     from vllm.v1.attention.backends.flash_attn import FlashAttentionImpl
     from vllm.v1.attention.backends.flashinfer import FlashInferImpl
 
@@ -331,6 +332,39 @@ def test_configures_vllm_rope_paged_kv_fusion():
     assert FlashInferImpl.fused_rope_kvcache_supported.__module__ == (
         "loom_kernels.vllm.rope_kv"
     )
+    for cache_dtype in ("auto", "fp8", "fp8_e4m3", torch.bfloat16):
+        attention = SimpleNamespace(
+            attn_type=AttentionType.DECODER,
+            kv_cache_dtype=cache_dtype,
+            kv_sharing_target_layer_name=None,
+        )
+        assert FlashAttentionImpl.fused_rope_kvcache_supported(attention)
+        assert FlashInferImpl.fused_rope_kvcache_supported(attention)
+    for cache_dtype in (
+        "fp8_e5m2",
+        "fp8_per_token_head",
+        "int8",
+        "nvfp4",
+    ):
+        attention = SimpleNamespace(
+            attn_type=AttentionType.DECODER,
+            kv_cache_dtype=cache_dtype,
+            kv_sharing_target_layer_name=None,
+        )
+        assert not FlashAttentionImpl.fused_rope_kvcache_supported(attention)
+        assert not FlashInferImpl.fused_rope_kvcache_supported(attention)
+    shared_attention = SimpleNamespace(
+        attn_type=AttentionType.DECODER,
+        kv_cache_dtype="fp8",
+        kv_sharing_target_layer_name="model.layers.0.self_attn",
+    )
+    assert not FlashAttentionImpl.fused_rope_kvcache_supported(shared_attention)
+    encoder_attention = SimpleNamespace(
+        attn_type=AttentionType.ENCODER,
+        kv_cache_dtype="fp8",
+        kv_sharing_target_layer_name=None,
+    )
+    assert not FlashAttentionImpl.fused_rope_kvcache_supported(encoder_attention)
     assert provider_metadata()["rope_paged_kv_override"] is True
 
 

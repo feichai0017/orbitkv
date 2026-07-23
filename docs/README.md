@@ -16,6 +16,7 @@ the evidence used to qualify them.
 | Integrate PyTorch or vLLM | [Python README](../python/README.md) | [vLLM provider guide](guides/vllm-ir-provider.md) |
 | Check supported versions | [Compatibility matrix](compatibility.md) | [Implementation status](status.md) |
 | Work on paged decode | [Paged-decode design](design/paged-decode-attention.md) | [Paged-decode evidence](results/README.md#paged-decode-attention) |
+| Work on FP8 KV cache | [FP8 KV-cache design](design/fp8-kv-cache.md) | [K3 roadmap](roadmap.md#k3-kv-cache-update-family) |
 | Work on speculative decode | [Greedy verifier design](design/greedy-speculative-verify.md) | [Speculative evidence](results/README.md#speculative-decoding) |
 | Evaluate performance | [Evidence index](results/README.md) | Raw JSON under [`results/`](results/) |
 | Pick the next operator | [Roadmap](roadmap.md) | [Catalog implementation order](operator-catalog.md#implementation-order) |
@@ -46,12 +47,15 @@ the evidence used to qualify them.
   0.24/0.25 build, opt-in, fallback, test, and benchmark contracts.
 - [Paged-decode design](design/paged-decode-attention.md) documents native KV
   layouts, GQA packing, local split-K/LSE, and routing exclusions.
+- [FP8 KV-cache design](design/fp8-kv-cache.md) documents static per-tensor and
+  per-head scales, fused quantize-on-write, and the vendor-attention handoff.
 
 ## What a status means
 
 | State | Meaning |
 | --- | --- |
 | `supported` | Contract, oracle, CUDA, framework adapter, and H20 evidence exist |
+| `in progress` | Source path exists, but one or more required hardware or engine gates remain open |
 | `next` | Admitted to the immediate implementation queue |
 | `planned` | Has a named engine consumer but is ordered later |
 | `profile-gated` | Becomes public only after a real workload shows material cost |

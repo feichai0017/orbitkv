@@ -27,6 +27,10 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   `build/`.
 - renamed private Rust CUDA modules to `<domain>_dispatch.rs` and checked C
   modules to `<domain>_bridge.rs`; no legacy source-path aliases remain.
+- changed `RopePagedKvWriteSpec::new` and the PyTorch
+  `rope_paged_kv_write_` schema to carry an explicit cache encoding and K/V
+  scale tensors; the checked bridge ABI is now version 2 and native wheels use
+  a distinct `2cu...` build tag.
 
 ### Added
 
@@ -51,6 +55,10 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - a process-isolated vLLM draft/target benchmark with exact native/Loom token
   and acceptance gates, measured launch coverage, post-timing CUDA boundary
   profiling, provider-order reversal, and pinned Qwen2.5 H20 evidence.
+- static per-tensor/per-head FP8 E4M3 quantize-on-write in the existing fused
+  RoPE+paged-KV path, including CPU oracles, byte-typed safe CUDA dispatch,
+  checked Rust bridge, Stable ABI PyTorch schema, vLLM 0.24/0.25 admission, and
+  native-versus-FP8 benchmark metadata. H20 qualification remains open.
 
 ### Fixed
 

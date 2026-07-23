@@ -56,7 +56,8 @@ fn rotary_reference_supports_both_pairing_styles_and_partial_rope() {
 #[test]
 fn fused_rope_paged_write_rotates_padding_but_skips_its_cache_slot() {
     let rotary = RotaryEmbeddingSpec::new(2, 1, 1, 4, 4, 2, DType::F32, RotaryStyle::NeoX).unwrap();
-    let spec = RopePagedKvWriteSpec::new(rotary, 2, 2, 2).unwrap();
+    let spec = RopePagedKvWriteSpec::new(rotary, 2, 2, 2, KvCacheEncoding::Native).unwrap();
+    assert_eq!(spec.scale_elements(), 0);
     let mut query = [1.0_f32, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0];
     let mut key = [9.0_f32, 10.0, 11.0, 12.0, 13.0, 14.0, 15.0, 16.0];
     let value = [17.0_f32, 18.0, 19.0, 20.0];
@@ -91,7 +92,7 @@ fn fused_rope_paged_write_rotates_padding_but_skips_its_cache_slot() {
 #[test]
 fn fused_rope_paged_write_rejects_bad_metadata_before_mutation() {
     let rotary = RotaryEmbeddingSpec::new(2, 1, 1, 4, 4, 2, DType::F32, RotaryStyle::NeoX).unwrap();
-    let spec = RopePagedKvWriteSpec::new(rotary, 4, 1, 2).unwrap();
+    let spec = RopePagedKvWriteSpec::new(rotary, 4, 1, 2, KvCacheEncoding::Native).unwrap();
     let original = [1.0_f32; 8];
     let mut query = original;
     let mut key = original;
@@ -133,6 +134,93 @@ fn fused_rope_paged_write_rejects_bad_metadata_before_mutation() {
             max_position: 2,
         }
     );
+    assert_eq!(query, original);
+    assert_eq!(key, original);
+}
+
+#[test]
+fn fused_rope_paged_write_quantizes_fp8_with_per_head_scales() {
+    let rotary = RotaryEmbeddingSpec::new(1, 1, 2, 4, 4, 1, DType::F32, RotaryStyle::NeoX).unwrap();
+    let spec = RopePagedKvWriteSpec::new(
+        rotary,
+        2,
+        1,
+        2,
+        KvCacheEncoding::Fp8E4M3Fn(KvCacheScaleGranularity::PerHead),
+    )
+    .unwrap();
+    assert_eq!(spec.scale_elements(), 2);
+
+    let mut query = [1.0_f32, 2.0, 3.0, 4.0];
+    let mut key = [1.0_f32, 2.0, 3.0, 4.0, 10.0, 20.0, 30.0, 40.0];
+    let value = [2.0_f32, 4.0, 8.0, 12.0];
+    let positions = [0_i64];
+    let cos_sin_cache = [1.0_f32, 1.0, 0.0, 0.0];
+    let slots = [1_i64];
+    let mut key_cache = [0xaa_u8; 16];
+    let mut value_cache = [0xaa_u8; 8];
+
+    rope_paged_kv_write_fp8_e4m3_f32_reference(
+        &mut query,
+        &mut key,
+        &value,
+        &positions,
+        &cos_sin_cache,
+        &mut key_cache,
+        &mut value_cache,
+        &slots,
+        &[1.0, 10.0],
+        &[2.0, 4.0],
+        spec,
+    )
+    .unwrap();
+
+    assert!(key_cache[..8].iter().all(|&value| value == 0xaa));
+    assert_eq!(
+        &key_cache[8..],
+        &[1.0_f32, 2.0, 3.0, 4.0, 1.0, 2.0, 3.0, 4.0].map(fp8_e4m3fn_from_f32)
+    );
+    assert!(value_cache[..4].iter().all(|&value| value == 0xaa));
+    assert_eq!(
+        &value_cache[4..],
+        &[1.0_f32, 2.0, 2.0, 3.0].map(fp8_e4m3fn_from_f32)
+    );
+}
+
+#[test]
+fn fp8_rope_paged_write_rejects_invalid_scales_before_mutation() {
+    let rotary = RotaryEmbeddingSpec::new(1, 1, 1, 4, 4, 1, DType::F32, RotaryStyle::NeoX).unwrap();
+    let spec = RopePagedKvWriteSpec::new(
+        rotary,
+        4,
+        1,
+        1,
+        KvCacheEncoding::Fp8E4M3Fn(KvCacheScaleGranularity::PerTensor),
+    )
+    .unwrap();
+    let original = [1.0_f32, 2.0, 3.0, 4.0];
+    let mut query = original;
+    let mut key = original;
+    let value = original;
+    let mut key_cache = [0_u8; 4];
+    let mut value_cache = [0_u8; 4];
+
+    let error = rope_paged_kv_write_fp8_e4m3_f32_reference(
+        &mut query,
+        &mut key,
+        &value,
+        &[0],
+        &[0.0, 0.0, 1.0, 1.0],
+        &mut key_cache,
+        &mut value_cache,
+        &[0],
+        &[0.0],
+        &[1.0],
+        spec,
+    )
+    .unwrap_err();
+
+    assert_eq!(error, ContractError::InvalidScale(0.0));
     assert_eq!(query, original);
     assert_eq!(key, original);
 }

@@ -2,6 +2,7 @@
 
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
 unsafe fn launch_rms_norm<T: Scalar>(
     input: *const T,
     input_elements: u64,

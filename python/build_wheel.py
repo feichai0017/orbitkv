@@ -24,7 +24,7 @@ import torch
 
 TORCH_TARGET_VERSION = "2.10"
 TORCH_MAX_VERSION = "2.12"
-BRIDGE_ABI_VERSION = 1
+BRIDGE_ABI_VERSION = 2
 LIBRARIES = (
     "libloom_cuda_bridge.so",
     "libloom_kernels_torch.so",
@@ -153,7 +153,7 @@ def platform_tag() -> str:
 def wheel_build_tag(cuda: str, archs: list[int]) -> str:
     cuda_digits = cuda.replace(".", "")
     arch_suffix = "".join(f"sm{arch}" for arch in archs)
-    return f"1cu{cuda_digits}torch210{arch_suffix}"
+    return f"{BRIDGE_ABI_VERSION}cu{cuda_digits}torch210{arch_suffix}"
 
 
 def needed_libraries(readelf_output: str) -> list[str]:

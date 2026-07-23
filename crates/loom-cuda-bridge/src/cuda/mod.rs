@@ -6,10 +6,10 @@ use loom_cuda::{
     SiluAndMulDynamicFp8Options,
 };
 use loom_kernels::{
-    AddRmsNormSpec, DType, GreedySampleLogprobsSpec, GreedySpeculativeVerifySpec, MinPFilterSpec,
-    PagedDecodeAttentionSpec, RmsNormDynamicFp8Spec, RmsNormSpec, RopePagedKvWriteSpec,
-    RotaryEmbeddingSpec, RotaryStyle, SelectedTokenLogprobsSpec, SiluAndMulDynamicFp8Spec,
-    SiluAndMulSpec,
+    AddRmsNormSpec, DType, GreedySampleLogprobsSpec, GreedySpeculativeVerifySpec, KvCacheEncoding,
+    KvCacheScaleGranularity, MinPFilterSpec, PagedDecodeAttentionSpec, RmsNormDynamicFp8Spec,
+    RmsNormSpec, RopePagedKvWriteSpec, RotaryEmbeddingSpec, RotaryStyle, SelectedTokenLogprobsSpec,
+    SiluAndMulDynamicFp8Spec, SiluAndMulSpec,
 };
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void, CString};
@@ -25,6 +25,9 @@ const UNAVAILABLE: c_int = 3;
 const DTYPE_F32: u32 = 0;
 const DTYPE_F16: u32 = 1;
 const DTYPE_BF16: u32 = 2;
+
+const KV_CACHE_NATIVE: u32 = 0;
+const KV_CACHE_FP8_E4M3: u32 = 1;
 
 const OP_RMS_NORM: usize = 0;
 const OP_ADD_RMS_NORM: usize = 1;
@@ -335,6 +338,23 @@ trait Scalar: Copy {
     ) -> Result<(), CudaExecutorError>;
 
     #[allow(clippy::too_many_arguments)]
+    fn rope_paged_kv_write_fp8_e4m3<S: CudaStreamHandle>(
+        backend: &CudaBackend<S>,
+        query: &mut DeviceSliceMut<'_, Self>,
+        key: &mut DeviceSliceMut<'_, Self>,
+        value: &DeviceSlice<'_, Self>,
+        positions: &DeviceSlice<'_, i64>,
+        cos_sin_cache: &DeviceSlice<'_, Self>,
+        key_cache: &mut DeviceSliceMut<'_, u8>,
+        value_cache: &mut DeviceSliceMut<'_, u8>,
+        slot_mapping: &DeviceSlice<'_, i64>,
+        key_scales: &DeviceSlice<'_, f32>,
+        value_scales: &DeviceSlice<'_, f32>,
+        spec: RopePagedKvWriteSpec,
+        layout: RopePagedKvLayout,
+    ) -> Result<(), CudaExecutorError>;
+
+    #[allow(clippy::too_many_arguments)]
     fn paged_decode_attention<S: CudaStreamHandle>(
         backend: &CudaBackend<S>,
         query: &DeviceSlice<'_, Self>,
@@ -374,6 +394,7 @@ macro_rules! impl_scalar {
         $selected:ident,
         $min_p:ident,
         $rope:ident,
+        $rope_fp8:ident,
         $paged:ident,
         $paged_split_k:ident
     ) => {
@@ -388,6 +409,37 @@ macro_rules! impl_scalar {
                 spec: RmsNormSpec,
             ) -> Result<(), CudaExecutorError> {
                 backend.$rms_norm(input, weight, output, spec)
+            }
+
+            fn rope_paged_kv_write_fp8_e4m3<S: CudaStreamHandle>(
+                backend: &CudaBackend<S>,
+                query: &mut DeviceSliceMut<'_, Self>,
+                key: &mut DeviceSliceMut<'_, Self>,
+                value: &DeviceSlice<'_, Self>,
+                positions: &DeviceSlice<'_, i64>,
+                cos_sin_cache: &DeviceSlice<'_, Self>,
+                key_cache: &mut DeviceSliceMut<'_, u8>,
+                value_cache: &mut DeviceSliceMut<'_, u8>,
+                slot_mapping: &DeviceSlice<'_, i64>,
+                key_scales: &DeviceSlice<'_, f32>,
+                value_scales: &DeviceSlice<'_, f32>,
+                spec: RopePagedKvWriteSpec,
+                layout: RopePagedKvLayout,
+            ) -> Result<(), CudaExecutorError> {
+                backend.$rope_fp8(
+                    query,
+                    key,
+                    value,
+                    positions,
+                    cos_sin_cache,
+                    key_cache,
+                    value_cache,
+                    slot_mapping,
+                    key_scales,
+                    value_scales,
+                    spec,
+                    layout,
+                )
             }
 
             fn add_rms_norm<S: CudaStreamHandle>(
@@ -543,6 +595,7 @@ impl_scalar!(
     selected_token_logprobs_f32,
     min_p_filter_f32,
     rope_paged_kv_write_f32,
+    rope_paged_kv_write_fp8_e4m3_f32,
     paged_decode_attention_f32,
     paged_decode_attention_split_k_f32
 );
@@ -557,6 +610,7 @@ impl_scalar!(
     selected_token_logprobs_f16,
     min_p_filter_f16,
     rope_paged_kv_write_f16,
+    rope_paged_kv_write_fp8_e4m3_f16,
     paged_decode_attention_f16,
     paged_decode_attention_split_k_f16
 );
@@ -571,6 +625,7 @@ impl_scalar!(
     selected_token_logprobs_bf16,
     min_p_filter_bf16,
     rope_paged_kv_write_bf16,
+    rope_paged_kv_write_fp8_e4m3_bf16,
     paged_decode_attention_bf16,
     paged_decode_attention_split_k_bf16
 );
@@ -622,8 +677,6 @@ fn invalid_contract(error: impl std::fmt::Display) -> CudaExecutorError {
     CudaExecutorError::InvalidContract(error.to_string())
 }
 
-#[allow(clippy::too_many_arguments)]
-
 fn set_last_error(message: &str) {
     let sanitized = message.replace('\0', "\\0");
     LAST_ERROR.with(|last_error| {
@@ -667,7 +720,7 @@ macro_rules! dispatch_scalar {
 /// Return the bridge ABI version.
 #[no_mangle]
 pub extern "C" fn loom_cuda_bridge_abi_version() -> u32 {
-    1
+    2
 }
 
 /// Return the detailed error recorded by the most recent failed bridge call

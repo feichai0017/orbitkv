@@ -20,6 +20,11 @@ enum loom_cuda_bridge_dtype {
   LOOM_CUDA_BRIDGE_BF16 = 2,
 };
 
+enum loom_cuda_bridge_kv_cache_encoding {
+  LOOM_CUDA_BRIDGE_KV_CACHE_NATIVE = 0,
+  LOOM_CUDA_BRIDGE_KV_CACHE_FP8_E4M3 = 1,
+};
+
 enum loom_cuda_bridge_operator {
   LOOM_CUDA_BRIDGE_RMS_NORM = 0,
   LOOM_CUDA_BRIDGE_ADD_RMS_NORM = 1,
@@ -96,12 +101,15 @@ int loom_cuda_bridge_min_p_filter(
     uint32_t vocab_size, uint64_t row_stride, void* stream);
 
 int loom_cuda_bridge_rope_paged_kv_write(
-    uint32_t dtype, void* query, uint64_t query_elements, void* key,
-    uint64_t key_elements, const void* value, uint64_t value_elements,
-    const int64_t* positions, uint64_t position_elements,
-    const void* cos_sin_cache, uint64_t cos_sin_cache_elements,
-    void* key_cache, uint64_t key_cache_elements, void* value_cache,
-    uint64_t value_cache_elements, const int64_t* slot_mapping,
+    uint32_t dtype, uint32_t cache_encoding, void* query,
+    uint64_t query_elements, void* key, uint64_t key_elements,
+    const void* value, uint64_t value_elements, const int64_t* positions,
+    uint64_t position_elements, const void* cos_sin_cache,
+    uint64_t cos_sin_cache_elements, void* key_cache,
+    uint64_t key_cache_elements, void* value_cache,
+    uint64_t value_cache_elements, const float* key_scales,
+    uint64_t key_scale_elements, const float* value_scales,
+    uint64_t value_scale_elements, const int64_t* slot_mapping,
     uint64_t slot_mapping_elements, uint32_t tokens, uint32_t cache_tokens,
     uint32_t query_heads, uint32_t kv_heads, uint32_t head_size,
     uint32_t value_head_size, uint32_t rotary_dim, uint32_t max_position,

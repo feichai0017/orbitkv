@@ -5,6 +5,7 @@ use std::collections::HashMap;
 use half::{bf16, f16};
 
 use crate::contract::{require_len, ContractError, DType};
+use crate::quantization::fp8_e4m3fn_from_f32;
 
 /// Pairing convention used by rotary positional embeddings.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
@@ -13,6 +14,35 @@ pub enum RotaryStyle {
     NeoX,
     /// Pairs adjacent even and odd elements (GPT-J style).
     Interleaved,
+}
+
+/// Scale layout used by a statically quantized K/V cache.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum KvCacheScaleGranularity {
+    /// One scale is shared by every K/V head in the layer.
+    PerTensor,
+    /// Each K/V head has an independent scale.
+    PerHead,
+}
+
+/// Physical encoding used by the paged K/V cache.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Hash)]
+pub enum KvCacheEncoding {
+    /// Cache elements use the same storage type as the source K/V tensors.
+    Native,
+    /// Cache elements are OCP FP8 E4M3FN bytes with explicit static scales.
+    Fp8E4M3Fn(KvCacheScaleGranularity),
+}
+
+impl KvCacheEncoding {
+    /// Returns the number of scale elements required for one K or V cache.
+    pub const fn scale_elements(self, kv_heads: usize) -> usize {
+        match self {
+            Self::Native => 0,
+            Self::Fp8E4M3Fn(KvCacheScaleGranularity::PerTensor) => 1,
+            Self::Fp8E4M3Fn(KvCacheScaleGranularity::PerHead) => kv_heads,
+        }
+    }
 }
 
 /// Contract for in-place rotary embedding of contiguous Q and K tensors.
@@ -140,6 +170,7 @@ pub struct RopePagedKvWriteSpec {
     value_head_size: usize,
     num_blocks: usize,
     block_size: usize,
+    cache_encoding: KvCacheEncoding,
 }
 
 impl RopePagedKvWriteSpec {
@@ -148,6 +179,7 @@ impl RopePagedKvWriteSpec {
         value_head_size: usize,
         num_blocks: usize,
         block_size: usize,
+        cache_encoding: KvCacheEncoding,
     ) -> Result<Self, ContractError> {
         if value_head_size == 0 || num_blocks == 0 || block_size == 0 {
             return Err(ContractError::ZeroDimension);
@@ -173,6 +205,7 @@ impl RopePagedKvWriteSpec {
             value_head_size,
             num_blocks,
             block_size,
+            cache_encoding,
         })
     }
 
@@ -190,6 +223,14 @@ impl RopePagedKvWriteSpec {
 
     pub const fn block_size(self) -> usize {
         self.block_size
+    }
+
+    pub const fn cache_encoding(self) -> KvCacheEncoding {
+        self.cache_encoding
+    }
+
+    pub const fn scale_elements(self) -> usize {
+        self.cache_encoding.scale_elements(self.rotary.key_heads)
     }
 
     pub const fn slot_capacity(self) -> usize {
@@ -327,6 +368,99 @@ pub fn rope_paged_kv_write_bf16_reference(
     )
 }
 
+/// Applies F32 RoPE and writes statically scaled FP8 E4M3 K/V cache bytes.
+#[allow(clippy::too_many_arguments)]
+pub fn rope_paged_kv_write_fp8_e4m3_f32_reference(
+    query: &mut [f32],
+    key: &mut [f32],
+    value: &[f32],
+    positions: &[i64],
+    cos_sin_cache: &[f32],
+    key_cache: &mut [u8],
+    value_cache: &mut [u8],
+    slot_mapping: &[i64],
+    key_scales: &[f32],
+    value_scales: &[f32],
+    spec: RopePagedKvWriteSpec,
+) -> Result<(), ContractError> {
+    rope_paged_kv_write_fp8_e4m3_reference(
+        query,
+        key,
+        value,
+        positions,
+        cos_sin_cache,
+        key_cache,
+        value_cache,
+        slot_mapping,
+        key_scales,
+        value_scales,
+        spec,
+        DType::F32,
+    )
+}
+
+/// Applies FP16 RoPE and writes statically scaled FP8 E4M3 K/V cache bytes.
+#[allow(clippy::too_many_arguments)]
+pub fn rope_paged_kv_write_fp8_e4m3_f16_reference(
+    query: &mut [f16],
+    key: &mut [f16],
+    value: &[f16],
+    positions: &[i64],
+    cos_sin_cache: &[f16],
+    key_cache: &mut [u8],
+    value_cache: &mut [u8],
+    slot_mapping: &[i64],
+    key_scales: &[f32],
+    value_scales: &[f32],
+    spec: RopePagedKvWriteSpec,
+) -> Result<(), ContractError> {
+    rope_paged_kv_write_fp8_e4m3_reference(
+        query,
+        key,
+        value,
+        positions,
+        cos_sin_cache,
+        key_cache,
+        value_cache,
+        slot_mapping,
+        key_scales,
+        value_scales,
+        spec,
+        DType::F16,
+    )
+}
+
+/// Applies BF16 RoPE and writes statically scaled FP8 E4M3 K/V cache bytes.
+#[allow(clippy::too_many_arguments)]
+pub fn rope_paged_kv_write_fp8_e4m3_bf16_reference(
+    query: &mut [bf16],
+    key: &mut [bf16],
+    value: &[bf16],
+    positions: &[i64],
+    cos_sin_cache: &[bf16],
+    key_cache: &mut [u8],
+    value_cache: &mut [u8],
+    slot_mapping: &[i64],
+    key_scales: &[f32],
+    value_scales: &[f32],
+    spec: RopePagedKvWriteSpec,
+) -> Result<(), ContractError> {
+    rope_paged_kv_write_fp8_e4m3_reference(
+        query,
+        key,
+        value,
+        positions,
+        cos_sin_cache,
+        key_cache,
+        value_cache,
+        slot_mapping,
+        key_scales,
+        value_scales,
+        spec,
+        DType::Bf16,
+    )
+}
+
 trait RotaryElement: Copy {
     fn to_f32(self) -> f32;
     fn from_f32(value: f32) -> Self;
@@ -388,13 +522,22 @@ fn rope_paged_kv_write_reference<T: RotaryElement>(
     spec: RopePagedKvWriteSpec,
     expected_dtype: DType,
 ) -> Result<(), ContractError> {
+    if spec.cache_encoding() != KvCacheEncoding::Native {
+        return Err(ContractError::UnsupportedDType(DType::Fp8E4M3Fn));
+    }
     let rotary = spec.rotary();
-    validate_rotary_buffers(query, key, positions, cos_sin_cache, rotary, expected_dtype)?;
-    require_len("value", value.len(), spec.value_numel())?;
-    require_len("key_cache", key_cache.len(), spec.key_cache_numel())?;
-    require_len("value_cache", value_cache.len(), spec.value_cache_numel())?;
-    require_len("slot_mapping", slot_mapping.len(), rotary.tokens())?;
-    validate_slot_mapping(slot_mapping, spec.slot_capacity())?;
+    validate_rope_paged_kv_buffers(
+        query,
+        key,
+        value,
+        positions,
+        cos_sin_cache,
+        key_cache,
+        value_cache,
+        slot_mapping,
+        spec,
+        expected_dtype,
+    )?;
 
     apply_validated_rotary_embedding(query, key, positions, cos_sin_cache, rotary);
 
@@ -413,6 +556,111 @@ fn rope_paged_kv_write_reference<T: RotaryElement>(
             let target_value = (slot * rotary.key_heads() + head) * spec.value_head_size();
             value_cache[target_value..target_value + spec.value_head_size()]
                 .copy_from_slice(&value[source_value..source_value + spec.value_head_size()]);
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn rope_paged_kv_write_fp8_e4m3_reference<T: RotaryElement>(
+    query: &mut [T],
+    key: &mut [T],
+    value: &[T],
+    positions: &[i64],
+    cos_sin_cache: &[T],
+    key_cache: &mut [u8],
+    value_cache: &mut [u8],
+    slot_mapping: &[i64],
+    key_scales: &[f32],
+    value_scales: &[f32],
+    spec: RopePagedKvWriteSpec,
+    expected_dtype: DType,
+) -> Result<(), ContractError> {
+    let granularity = match spec.cache_encoding() {
+        KvCacheEncoding::Fp8E4M3Fn(granularity) => granularity,
+        KvCacheEncoding::Native => {
+            return Err(ContractError::UnsupportedDType(spec.rotary().dtype()))
+        }
+    };
+    validate_rope_paged_kv_buffers(
+        query,
+        key,
+        value,
+        positions,
+        cos_sin_cache,
+        key_cache,
+        value_cache,
+        slot_mapping,
+        spec,
+        expected_dtype,
+    )?;
+    validate_kv_scales(key_scales, value_scales, spec)?;
+
+    let rotary = spec.rotary();
+    apply_validated_rotary_embedding(query, key, positions, cos_sin_cache, rotary);
+
+    for (token, &slot) in slot_mapping.iter().enumerate() {
+        if slot < 0 {
+            continue;
+        }
+        let slot = slot as usize;
+        for head in 0..rotary.key_heads() {
+            let scale_index = match granularity {
+                KvCacheScaleGranularity::PerTensor => 0,
+                KvCacheScaleGranularity::PerHead => head,
+            };
+            let key_scale = key_scales[scale_index];
+            let value_scale = value_scales[scale_index];
+            let source_key = (token * rotary.key_heads() + head) * rotary.head_size();
+            let target_key = (slot * rotary.key_heads() + head) * rotary.head_size();
+            for dim in 0..rotary.head_size() {
+                key_cache[target_key + dim] =
+                    fp8_e4m3fn_from_f32(key[source_key + dim].to_f32() / key_scale);
+            }
+
+            let source_value = (token * rotary.key_heads() + head) * spec.value_head_size();
+            let target_value = (slot * rotary.key_heads() + head) * spec.value_head_size();
+            for dim in 0..spec.value_head_size() {
+                value_cache[target_value + dim] =
+                    fp8_e4m3fn_from_f32(value[source_value + dim].to_f32() / value_scale);
+            }
+        }
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_rope_paged_kv_buffers<T, C>(
+    query: &[T],
+    key: &[T],
+    value: &[T],
+    positions: &[i64],
+    cos_sin_cache: &[T],
+    key_cache: &[C],
+    value_cache: &[C],
+    slot_mapping: &[i64],
+    spec: RopePagedKvWriteSpec,
+    expected_dtype: DType,
+) -> Result<(), ContractError> {
+    let rotary = spec.rotary();
+    validate_rotary_buffers(query, key, positions, cos_sin_cache, rotary, expected_dtype)?;
+    require_len("value", value.len(), spec.value_numel())?;
+    require_len("key_cache", key_cache.len(), spec.key_cache_numel())?;
+    require_len("value_cache", value_cache.len(), spec.value_cache_numel())?;
+    require_len("slot_mapping", slot_mapping.len(), rotary.tokens())?;
+    validate_slot_mapping(slot_mapping, spec.slot_capacity())
+}
+
+fn validate_kv_scales(
+    key_scales: &[f32],
+    value_scales: &[f32],
+    spec: RopePagedKvWriteSpec,
+) -> Result<(), ContractError> {
+    require_len("key_scales", key_scales.len(), spec.scale_elements())?;
+    require_len("value_scales", value_scales.len(), spec.scale_elements())?;
+    for &scale in key_scales.iter().chain(value_scales) {
+        if !scale.is_finite() || scale <= 0.0 {
+            return Err(ContractError::InvalidScale(scale));
         }
     }
     Ok(())

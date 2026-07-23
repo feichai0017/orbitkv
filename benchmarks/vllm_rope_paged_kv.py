@@ -28,6 +28,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tokens", default="1,2,4,8,16,32,64,128")
     parser.add_argument("--layouts", default="NHD,HND")
     parser.add_argument("--dtype", choices=DTYPES, default="bf16")
+    parser.add_argument("--cache-dtype", choices=("native", "fp8"), default="native")
+    parser.add_argument(
+        "--scale-mode", choices=("per-tensor", "per-head"), default="per-tensor"
+    )
     parser.add_argument("--query-heads", type=int, default=14)
     parser.add_argument("--kv-heads", type=int, default=2)
     parser.add_argument("--head-size", type=int, default=64)
@@ -115,6 +119,8 @@ def benchmark_case(
     tokens: int,
     layout: str,
     dtype: torch.dtype,
+    cache_dtype: str,
+    scale_mode: str,
     query_heads: int,
     kv_heads: int,
     head_size: int,
@@ -132,7 +138,18 @@ def benchmark_case(
         torch.arange(tokens, device="cuda", dtype=torch.int64) + 37
     ) % max_position
     slots = torch.arange(tokens, device="cuda", dtype=torch.int64)
-    scale = torch.ones((), device="cuda", dtype=torch.float32)
+    if scale_mode == "per-tensor":
+        key_scales = torch.tensor([0.25], device="cuda", dtype=torch.float32)
+        value_scales = torch.tensor([0.375], device="cuda", dtype=torch.float32)
+    else:
+        key_scales = torch.linspace(
+            0.25, 0.5, kv_heads, device="cuda", dtype=torch.float32
+        )
+        value_scales = torch.linspace(
+            0.375, 0.75, kv_heads, device="cuda", dtype=torch.float32
+        )
+    cache_torch_dtype = dtype if cache_dtype == "native" else torch.uint8
+    vllm_cache_dtype = "auto" if cache_dtype == "native" else "fp8"
     query_source = torch.randn(
         (tokens, query_heads, head_size), device="cuda", dtype=dtype
     )
@@ -146,12 +163,12 @@ def benchmark_case(
     baseline_query = query_source.clone()
     baseline_key = key_source.clone()
     baseline_combined, baseline_key_cache, baseline_value_cache = make_cache(
-        num_blocks, block_size, kv_heads, head_size, dtype, layout
+        num_blocks, block_size, kv_heads, head_size, cache_torch_dtype, layout
     )
     loom_query = query_source.clone()
     loom_key = key_source.clone()
     loom_combined, loom_key_cache, loom_value_cache = make_cache(
-        num_blocks, block_size, kv_heads, head_size, dtype, layout
+        num_blocks, block_size, kv_heads, head_size, cache_torch_dtype, layout
     )
 
     def baseline() -> None:
@@ -169,9 +186,9 @@ def benchmark_case(
             baseline_key_cache,
             baseline_value_cache,
             slots,
-            "auto",
-            scale,
-            scale,
+            vllm_cache_dtype,
+            key_scales,
+            value_scales,
         )
 
     def loom() -> None:
@@ -183,6 +200,8 @@ def benchmark_case(
             cos_sin_cache,
             loom_key_cache,
             loom_value_cache,
+            key_scales,
+            value_scales,
             slots,
             is_neox,
         )
@@ -202,9 +221,12 @@ def benchmark_case(
     torch.testing.assert_close(
         loom_key, baseline_key, rtol=tolerance[0], atol=tolerance[1]
     )
-    torch.testing.assert_close(
-        loom_combined, baseline_combined, rtol=tolerance[0], atol=tolerance[1]
-    )
+    if cache_dtype == "fp8":
+        assert torch.equal(loom_combined, baseline_combined)
+    else:
+        torch.testing.assert_close(
+            loom_combined, baseline_combined, rtol=tolerance[0], atol=tolerance[1]
+        )
 
     baseline_samples: list[float] = []
     loom_samples: list[float] = []
@@ -222,9 +244,21 @@ def benchmark_case(
 
     baseline_median = statistics.median(baseline_samples)
     loom_median = statistics.median(loom_samples)
+    cache_storage_bytes = (
+        baseline_combined.numel() * baseline_combined.element_size()
+    )
+    native_cache_storage_bytes = baseline_combined.numel() * dtype.itemsize
     return {
         "tokens": tokens,
         "layout": layout,
+        "cache_dtype": cache_dtype,
+        "scale_mode": scale_mode,
+        "cache_storage_bytes": cache_storage_bytes,
+        "native_cache_storage_bytes": native_cache_storage_bytes,
+        "cache_bytes_saved_vs_native": native_cache_storage_bytes
+        - cache_storage_bytes,
+        "native_over_selected_cache_bytes": native_cache_storage_bytes
+        / cache_storage_bytes,
         "baseline_us": baseline_median,
         "loom_us": loom_median,
         "speedup": baseline_median / loom_median,
@@ -260,6 +294,8 @@ def main() -> None:
             tokens=tokens,
             layout=layout,
             dtype=dtype,
+            cache_dtype=args.cache_dtype,
+            scale_mode=args.scale_mode,
             query_heads=args.query_heads,
             kv_heads=args.kv_heads,
             head_size=args.head_size,
@@ -286,6 +322,8 @@ def main() -> None:
         "baseline": "vLLM _C.rotary_embedding + _C_cache_ops.reshape_and_cache_flash",
         "candidate": "Loom rope_paged_kv_write_",
         "dtype": args.dtype,
+        "cache_dtype": args.cache_dtype,
+        "scale_mode": args.scale_mode,
         "query_heads": args.query_heads,
         "kv_heads": args.kv_heads,
         "head_size": args.head_size,

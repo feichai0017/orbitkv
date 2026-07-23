@@ -2,7 +2,20 @@
 
 use super::*;
 
+enum CacheSlices<'a, T: Copy> {
+    Native {
+        key: DeviceSliceMut<'a, T>,
+        value: DeviceSliceMut<'a, T>,
+    },
+    Fp8E4M3 {
+        key: DeviceSliceMut<'a, u8>,
+        value: DeviceSliceMut<'a, u8>,
+    },
+}
+
+#[allow(clippy::too_many_arguments)]
 unsafe fn launch_rope_paged_kv_write<T: Scalar>(
+    cache_encoding: u32,
     query: *mut T,
     query_elements: u64,
     key: *mut T,
@@ -13,10 +26,14 @@ unsafe fn launch_rope_paged_kv_write<T: Scalar>(
     position_elements: u64,
     cos_sin_cache: *const T,
     cos_sin_cache_elements: u64,
-    key_cache: *mut T,
+    key_cache: *mut c_void,
     key_cache_elements: u64,
-    value_cache: *mut T,
+    value_cache: *mut c_void,
     value_cache_elements: u64,
+    key_scales: *const f32,
+    key_scale_elements: u64,
+    value_scales: *const f32,
+    value_scale_elements: u64,
     slot_mapping: *const i64,
     slot_mapping_elements: u64,
     tokens: u32,
@@ -64,11 +81,44 @@ unsafe fn launch_rope_paged_kv_write<T: Scalar>(
         style,
     )
     .map_err(invalid_contract)?;
+    let key_scale_count = element_count(key_scale_elements, "paged key cache scale count")?;
+    let value_scale_count = element_count(value_scale_elements, "paged value cache scale count")?;
+    if key_scale_count != value_scale_count {
+        return Err(CudaExecutorError::InvalidContract(
+            "paged K/V cache scale tensors must have the same length".into(),
+        ));
+    }
+    // The stable framework schema mirrors vLLM and always carries scale
+    // tensors. Native caches ignore their values; FP8 caches use their length
+    // to select per-tensor or per-head indexing.
+    let valid_scale_count = key_scale_count == 1 || key_scale_count == kv_heads as usize;
+    if !valid_scale_count {
+        return Err(CudaExecutorError::InvalidContract(
+            "paged K/V cache scales must contain one value or one value per KV head".into(),
+        ));
+    }
+    let encoding = match cache_encoding {
+        KV_CACHE_NATIVE => KvCacheEncoding::Native,
+        KV_CACHE_FP8_E4M3 => {
+            let granularity = if key_scale_count == 1 {
+                KvCacheScaleGranularity::PerTensor
+            } else {
+                KvCacheScaleGranularity::PerHead
+            };
+            KvCacheEncoding::Fp8E4M3Fn(granularity)
+        }
+        _ => {
+            return Err(CudaExecutorError::InvalidContract(
+                "unsupported paged K/V cache encoding".into(),
+            ))
+        }
+    };
     let spec = RopePagedKvWriteSpec::new(
         rotary,
         value_head_size as usize,
         num_blocks as usize,
         block_size as usize,
+        encoding,
     )
     .map_err(invalid_contract)?;
     let layout = RopePagedKvLayout::new(
@@ -95,10 +145,47 @@ unsafe fn launch_rope_paged_kv_write<T: Scalar>(
         unsafe { read_slice(positions, position_elements, "RoPE positions") }?;
     let (cos_sin_cache, cos_sin_cache_range) =
         unsafe { read_slice(cos_sin_cache, cos_sin_cache_elements, "RoPE cos/sin cache") }?;
-    let (mut key_cache, key_cache_range) =
-        unsafe { write_slice(key_cache, key_cache_elements, "paged key cache") }?;
-    let (mut value_cache, value_cache_range) =
-        unsafe { write_slice(value_cache, value_cache_elements, "paged value cache") }?;
+    let (cache_slices, key_cache_range, value_cache_range) = match encoding {
+        KvCacheEncoding::Native => {
+            let (key, key_range) = unsafe {
+                write_slice(key_cache.cast::<T>(), key_cache_elements, "paged key cache")
+            }?;
+            let (value, value_range) = unsafe {
+                write_slice(
+                    value_cache.cast::<T>(),
+                    value_cache_elements,
+                    "paged value cache",
+                )
+            }?;
+            (CacheSlices::Native { key, value }, key_range, value_range)
+        }
+        KvCacheEncoding::Fp8E4M3Fn(_) => {
+            let (key, key_range) = unsafe {
+                write_slice(
+                    key_cache.cast::<u8>(),
+                    key_cache_elements,
+                    "paged FP8 key cache",
+                )
+            }?;
+            let (value, value_range) = unsafe {
+                write_slice(
+                    value_cache.cast::<u8>(),
+                    value_cache_elements,
+                    "paged FP8 value cache",
+                )
+            }?;
+            (CacheSlices::Fp8E4M3 { key, value }, key_range, value_range)
+        }
+    };
+    let (key_scales, key_scale_range) =
+        unsafe { read_slice(key_scales, key_scale_elements, "paged key cache scales") }?;
+    let (value_scales, value_scale_range) = unsafe {
+        read_slice(
+            value_scales,
+            value_scale_elements,
+            "paged value cache scales",
+        )
+    }?;
     let (slot_mapping, slot_mapping_range) =
         unsafe { read_slice(slot_mapping, slot_mapping_elements, "paged slot mapping") }?;
 
@@ -173,23 +260,38 @@ unsafe fn launch_rope_paged_kv_write<T: Scalar>(
     let dense_value_cache_block = (layout.value_block_storage_elements(spec)?
         == value_cache_block_elements)
         .then_some(value_cache_block_elements);
-    require_disjoint_or_dense_packed_axis::<T>(
-        "key cache",
-        key_cache_range,
-        layout.key_block_stride(),
-        dense_key_cache_block,
-        "value cache",
-        value_cache_range,
-        layout.value_block_stride(),
-        dense_value_cache_block,
-        "RoPE+paged-KV",
-    )?;
+    match encoding {
+        KvCacheEncoding::Native => require_disjoint_or_dense_packed_axis::<T>(
+            "key cache",
+            key_cache_range,
+            layout.key_block_stride(),
+            dense_key_cache_block,
+            "value cache",
+            value_cache_range,
+            layout.value_block_stride(),
+            dense_value_cache_block,
+            "RoPE+paged-KV",
+        )?,
+        KvCacheEncoding::Fp8E4M3Fn(_) => require_disjoint_or_dense_packed_axis::<u8>(
+            "key cache",
+            key_cache_range,
+            layout.key_block_stride(),
+            dense_key_cache_block,
+            "value cache",
+            value_cache_range,
+            layout.value_block_stride(),
+            dense_value_cache_block,
+            "RoPE+paged-KV",
+        )?,
+    }
 
     let metadata_and_caches = [
         ("positions", positions_range),
         ("cos/sin cache", cos_sin_cache_range),
         ("key cache", key_cache_range),
         ("value cache", value_cache_range),
+        ("key scales", key_scale_range),
+        ("value scales", value_scale_range),
         ("slot mapping", slot_mapping_range),
     ];
     require_disjoint_from("query", query_range, &metadata_and_caches, "RoPE+paged-KV")?;
@@ -201,6 +303,8 @@ unsafe fn launch_rope_paged_kv_write<T: Scalar>(
             ("value", value_range),
             ("positions", positions_range),
             ("cos/sin cache", cos_sin_cache_range),
+            ("key scales", key_scale_range),
+            ("value scales", value_scale_range),
             ("slot mapping", slot_mapping_range),
         ],
         "RoPE+paged-KV",
@@ -212,24 +316,49 @@ unsafe fn launch_rope_paged_kv_write<T: Scalar>(
             ("value", value_range),
             ("positions", positions_range),
             ("cos/sin cache", cos_sin_cache_range),
+            ("key scales", key_scale_range),
+            ("value scales", value_scale_range),
             ("slot mapping", slot_mapping_range),
         ],
         "RoPE+paged-KV",
     )?;
 
-    T::rope_paged_kv_write(
-        &stream_backend(stream),
-        &mut query,
-        &mut key,
-        &value,
-        &positions,
-        &cos_sin_cache,
-        &mut key_cache,
-        &mut value_cache,
-        &slot_mapping,
-        spec,
-        layout,
-    )?;
+    match cache_slices {
+        CacheSlices::Native {
+            key: mut cache_key,
+            value: mut cache_value,
+        } => T::rope_paged_kv_write(
+            &stream_backend(stream),
+            &mut query,
+            &mut key,
+            &value,
+            &positions,
+            &cos_sin_cache,
+            &mut cache_key,
+            &mut cache_value,
+            &slot_mapping,
+            spec,
+            layout,
+        )?,
+        CacheSlices::Fp8E4M3 {
+            key: mut cache_key,
+            value: mut cache_value,
+        } => T::rope_paged_kv_write_fp8_e4m3(
+            &stream_backend(stream),
+            &mut query,
+            &mut key,
+            &value,
+            &positions,
+            &cos_sin_cache,
+            &mut cache_key,
+            &mut cache_value,
+            &slot_mapping,
+            &key_scales,
+            &value_scales,
+            spec,
+            layout,
+        )?,
+    }
     record_launch(OP_ROPE_PAGED_KV_WRITE);
     Ok(())
 }
@@ -246,6 +375,7 @@ unsafe fn launch_rope_paged_kv_write<T: Scalar>(
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn loom_cuda_bridge_rope_paged_kv_write(
     dtype: u32,
+    cache_encoding: u32,
     query: *mut c_void,
     query_elements: u64,
     key: *mut c_void,
@@ -260,6 +390,10 @@ pub unsafe extern "C" fn loom_cuda_bridge_rope_paged_kv_write(
     key_cache_elements: u64,
     value_cache: *mut c_void,
     value_cache_elements: u64,
+    key_scales: *const f32,
+    key_scale_elements: u64,
+    value_scales: *const f32,
+    value_scale_elements: u64,
     slot_mapping: *const i64,
     slot_mapping_elements: u64,
     tokens: u32,
@@ -292,6 +426,7 @@ pub unsafe extern "C" fn loom_cuda_bridge_rope_paged_kv_write(
         dispatch_scalar!(
             kind,
             launch_rope_paged_kv_write(
+                cache_encoding,
                 query.cast(),
                 query_elements,
                 key.cast(),
@@ -302,10 +437,14 @@ pub unsafe extern "C" fn loom_cuda_bridge_rope_paged_kv_write(
                 position_elements,
                 cos_sin_cache.cast(),
                 cos_sin_cache_elements,
-                key_cache.cast(),
+                key_cache,
                 key_cache_elements,
-                value_cache.cast(),
+                value_cache,
                 value_cache_elements,
+                key_scales,
+                key_scale_elements,
+                value_scales,
+                value_scale_elements,
                 slot_mapping,
                 slot_mapping_elements,
                 tokens,

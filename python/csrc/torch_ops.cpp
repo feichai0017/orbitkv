@@ -39,7 +39,8 @@ STABLE_TORCH_LIBRARY(loom_kernels, library) {
   library.def(
       "rope_paged_kv_write_(Tensor(a!) query, Tensor(b!) key, Tensor value, "
       "Tensor positions, Tensor cos_sin_cache, Tensor(c!) key_cache, "
-      "Tensor(d!) value_cache, Tensor slot_mapping, bool is_neox) -> ()");
+      "Tensor(d!) value_cache, Tensor key_scales, Tensor value_scales, "
+      "Tensor slot_mapping, bool is_neox) -> ()");
   library.def("bridge_abi_version() -> int");
   library.def("bridge_launch_count(int operation) -> int");
   library.def("reset_bridge_launch_count(int operation) -> ()");

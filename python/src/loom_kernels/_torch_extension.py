@@ -14,7 +14,7 @@ import torch
 from ._native_build import native_build_info
 
 
-BRIDGE_ABI_VERSION = 1
+BRIDGE_ABI_VERSION = 2
 _LOCK = threading.Lock()
 _LOADED_PATH: Path | None = None
 

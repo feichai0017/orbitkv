@@ -140,9 +140,9 @@ impl<S: CudaStreamHandle> Backend for CudaBackend<S> {
             {
                 Support::Supported
             }
-            OperatorSpec::RopePagedKvWrite(_) => Support::Unsupported(
-                "CUDA RoPE+paged-KV supports F32, FP16, and BF16 native caches",
-            ),
+            OperatorSpec::RopePagedKvWrite(_) => {
+                Support::Unsupported("CUDA RoPE+paged-KV supports F32, FP16, and BF16 sources")
+            }
         }
     }
 }

@@ -24,13 +24,19 @@ The first matrix row is:
 | vLLM extra | `>=0.24,<0.26` |
 | Native payload | `libloom_cuda_bridge.so`, `libloom_kernels_torch.so` |
 
-The build tag encodes the row:
+The qualified artifact's build tag encodes its ABI-1 row:
 `1cu131torch210sm90`. The exact H20 artifact and three clean-install gates are
 recorded in the
 [native-wheel evidence](../docs/results/h20-native-wheel-clean-install-20260723.json).
-That wheel contains the 192-test K0.7 surface. The current source revision adds
-greedy speculative verification and passes 202 tests on both supported vLLM
-minors; a new native wheel has not been published.
+That wheel contains the 192-test K0.7 surface. The subsequent greedy
+speculative revision passed 202 tests on both supported vLLM minors. The
+current source additionally adds static FP8 E4M3 KV quantize-on-write; its new
+H20 matrix and clean-wheel gates are still open, and no newer wheel has been
+published.
+
+Because the current bridge signature is ABI 2, `build_wheel.py` emits the
+distinct candidate tag `2cu131torch210sm90`; it never overwrites or masquerades
+as the accepted ABI-1 artifact.
 
 ## Install a built wheel
 
@@ -40,11 +46,11 @@ without PyTorch. vLLM and tests remain explicit extras:
 ```bash
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-1cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 
 # Add the supported vLLM integration when needed.
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-1cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -106,10 +112,13 @@ direct raw-CUDA framework path.
 ## Direct PyTorch use
 
 ```python
+import torch
+
 from loom_kernels import (
     greedy_sample_logprobs,
     greedy_speculative_verify,
     min_p_filter_,
+    rope_paged_kv_write_,
     selected_token_logprobs,
     silu_and_mul_dynamic_fp8,
 )
@@ -129,6 +138,23 @@ verified_ids, accepted_lengths, emitted_lengths = greedy_speculative_verify(
     max_draft_tokens,
 )
 min_p_filter_(sampling_logits_f32, min_p_f32)
+
+# Native caches ignore the scale values. FP8 uint8 caches use either one
+# calibrated F32 scale or one scale per KV head.
+cache_scales = torch.ones(1, device=query.device, dtype=torch.float32)
+rope_paged_kv_write_(
+    query,
+    key,
+    value,
+    positions_i64,
+    cos_sin_cache,
+    key_cache,
+    value_cache,
+    cache_scales,
+    cache_scales,
+    slot_mapping_i64,
+    is_neox=True,
+)
 ```
 
 All CUDA calls use PyTorch's current stream. Out variants accept caller-owned
@@ -141,7 +167,7 @@ tensors that require gradients.
 | --- | --- |
 | Normalization | `rms_norm`, `rms_norm_out`, `add_rms_norm_`, `rms_norm_dynamic_fp8`, `rms_norm_dynamic_fp8_out` |
 | Activation | `silu_and_mul`, `silu_and_mul_out`, `silu_and_mul_dynamic_fp8`, `silu_and_mul_dynamic_fp8_out` |
-| Position and KV | `rope_paged_kv_write_` |
+| Position and KV | `rope_paged_kv_write_` for native or static FP8 E4M3 paged caches |
 | Decode tail | `greedy_sample_logprobs`, `selected_token_logprobs`, `min_p_filter_` |
 | Speculative decode | `greedy_speculative_verify` |
 | Attention | `paged_decode_attention`, `paged_decode_attention_out` |
@@ -150,6 +176,12 @@ The base paged-decode API accepts one contiguous `[B, Hq, D]` query,
 dense-inner NHD paged K/V views, and contiguous int32 block tables and sequence
 lengths. It directly accepts K/V views from vLLM's
 `[blocks, 2, block, Hkv, D]` storage.
+
+`rope_paged_kv_write_` accepts F32/FP16/BF16 sources and either matching native
+cache tensors or `torch.uint8` FP8 E4M3 storage. K/V scales are contiguous
+CUDA F32 tensors with one element or one element per KV head. Dynamic
+per-token-head scales, E5M2, INT8, and NVFP4 are not silently coerced into this
+contract.
 
 ## vLLM opt-ins
 

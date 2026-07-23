@@ -15,12 +15,14 @@ binary portability. A green row below applies only to the stated boundary.
 | vLLM | 0.24.0 | clean wheel install and all 192 registered-adapter/operator tests | [native-wheel gate](results/h20-native-wheel-clean-install-20260723.json) |
 | vLLM | 0.25.1 | clean install from the official wheel and all 192 registered-adapter/operator tests | [native-wheel gate](results/h20-native-wheel-clean-install-20260723.json) |
 
-The current source revision adds greedy speculative verification after that
-wheel was built. On the same H20 PyTorch 2.11 stack, both vLLM 0.24.0 and
-0.25.1 pass the expanded 202-test suite, including the real rejection-sampler
-hook. This source result is recorded in the
+The subsequent source revision added greedy speculative verification after
+that wheel was built. On the same H20 PyTorch 2.11 stack, both vLLM 0.24.0 and
+0.25.1 passed the expanded 202-test suite, including the real
+rejection-sampler hook. This source result is recorded in the
 [speculative verifier evidence](results/h20-greedy-speculative-verify-20260723.json);
-it does not turn the older 192-test artifact into a new wheel.
+it does not turn the older 192-test artifact into a new wheel. The current
+source additionally changes the RoPE/KV signature for static FP8 E4M3 cache
+writes and uses bridge ABI 2. Its H20 and clean-wheel matrix is still open.
 
 The process-isolated Qwen2.5 draft/target engine benchmark is qualified on
 vLLM 0.24 only; its [native-first](results/h20-vllm-qwen25-speculative-native-first-20260723.json)
@@ -58,6 +60,12 @@ contains exactly:
 target, bridge ABI, and PyTorch runtime range. Installed wheels load only this
 package-local pair. `PYTHONPATH`, `LD_LIBRARY_PATH`, and an external dispatcher
 override were absent from every clean gate.
+
+The current ABI-2 builder emits
+`loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl`.
+That distinct build tag prevents the new bridge signature from colliding with
+the accepted ABI-1 artifact. It is a candidate filename, not a qualified result
+until the new clean-install matrix passes.
 
 The wheel is Python-ABI-independent (`py3-none`) because neither native library
 uses the CPython C API. Its platform tag remains the conservative

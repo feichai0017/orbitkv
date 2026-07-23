@@ -48,14 +48,14 @@ core; it will not implement a competing GEMM.
 | --- | --- | --- |
 | Normalization | RMSNorm · Add+RMSNorm · RMSNorm→dynamic FP8 | F32, FP16, BF16; PyTorch and vLLM IR coverage |
 | MLP | split-half SiLU-and-Mul · SiLU-and-Mul→block FP8 | F32, FP16, BF16; opt-in vLLM activation paths |
-| Position and KV | NeoX/interleaved RoPE + paged-KV write | packed QKV, NHD/HND cache views, current-stream PyTorch |
+| Position and KV | NeoX/interleaved RoPE + native paged-KV write | packed QKV, NHD/HND cache views, current-stream PyTorch |
 | Decode tail | greedy + sampled logprob · selected-token logprob + rank · Min-P | exact-token/rank gates and measured vLLM fallbacks |
 | Speculative decode | greedy draft verify + accepted/bonus-token compaction | flattened ragged int32 metadata, exact vLLM 0.24/0.25 rejection semantics, real vLLM 0.24 draft/target invocation |
 | Attention | paged MQA/GQA decode · local split-K/LSE merge | native paged KV, GQA reuse, short shape-gated vLLM route |
 
-The [operator catalog](docs/operator-catalog.md) separates `supported`, `next`,
-`planned`, `profile-gated`, and `vendor-backed` work. Catalog membership alone
-is never a performance claim.
+The [operator catalog](docs/operator-catalog.md) separates `supported`,
+`in progress`, `next`, `planned`, `profile-gated`, and `vendor-backed` work.
+Catalog membership alone is never a performance claim.
 
 ## Next value program
 
@@ -79,6 +79,13 @@ is now:
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV work only after a named workload exposes a material non-GEMM boundary |
 | 5 | MoE routing and movement | routing, histogram/prefix sum, permutation, and combine around vendor grouped GEMM |
 | 6 | Minimal Rust decode proof | one zero-copy decode step over borrowed tensors and streams, without becoming an inference engine |
+
+The first K3 source slice now extends the same fused RoPE+paged-KV operator to
+write vLLM-compatible FP8 E4M3 cache bytes with static per-tensor or per-head
+scales. Its Rust, CUDA, bridge, PyTorch, and vLLM paths are implemented, but it
+remains `in progress` until the H20 exact-byte, wheel, engine-quality, memory,
+and TPOT gates are recorded. See the
+[FP8 KV-cache design](docs/design/fp8-kv-cache.md).
 
 The detailed contracts and exit criteria live in the
 [roadmap](docs/roadmap.md).
@@ -167,7 +174,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-1cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 ```
 
 The wheel contains exactly `libloom_cuda_bridge.so` and the boxed
@@ -231,6 +238,7 @@ opens the raw JSON artifact used for the claim.
 | [Operator-library design](docs/design/operator-library.md) | Understand architecture and admission gates |
 | [Code layout](docs/design/code-layout.md) | Trace an operator across contracts, CUDA, bridge, PyTorch, and vLLM |
 | [Greedy speculative-verify design](docs/design/greedy-speculative-verify.md) | Read the ragged contract, ownership boundary, and deliberate exclusions |
+| [FP8 KV-cache design](docs/design/fp8-kv-cache.md) | Read the static-scale write contract, vendor-attention boundary, and open gates |
 | [Paged-decode design](docs/design/paged-decode-attention.md) | Read cache layouts, split-K semantics, and exclusions |
 | [vLLM provider guide](docs/guides/vllm-ir-provider.md) | Build, configure, validate, and benchmark engine adapters |
 | [Compatibility matrix](docs/compatibility.md) | Check Rust, CUDA, PyTorch, vLLM, and binary distribution boundaries |

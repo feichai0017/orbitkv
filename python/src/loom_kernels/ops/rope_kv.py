@@ -16,9 +16,11 @@ def supports_rope_paged_kv_write(
     cos_sin_cache: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
+    key_scales: torch.Tensor,
+    value_scales: torch.Tensor,
     slot_mapping: torch.Tensor,
 ) -> bool:
-    """Return whether tensors match the native-cache RoPE+paged-write ABI."""
+    """Return whether tensors match the native/FP8 RoPE+paged-write ABI."""
     if query.dim() != 3 or key.dim() != 3 or value.dim() != 3:
         return False
     if query.numel() == 0 or key.numel() == 0 or value.numel() == 0:
@@ -26,6 +28,10 @@ def supports_rope_paged_kv_write(
     if cos_sin_cache.dim() != 2:
         return False
     rotary_dim = cos_sin_cache.shape[1]
+    native_cache = (
+        key_cache.dtype == query.dtype and value_cache.dtype == query.dtype
+    )
+    fp8_cache = key_cache.dtype == torch.uint8 and value_cache.dtype == torch.uint8
     return bool(
         query.device.type == "cuda"
         and key.device == query.device
@@ -34,13 +40,20 @@ def supports_rope_paged_kv_write(
         and cos_sin_cache.device == query.device
         and key_cache.device == query.device
         and value_cache.device == query.device
+        and key_scales.device == query.device
+        and value_scales.device == query.device
         and slot_mapping.device == query.device
         and query.dtype in _DTYPE_NAMES
         and key.dtype == query.dtype
         and value.dtype == query.dtype
         and cos_sin_cache.dtype == query.dtype
-        and key_cache.dtype == query.dtype
-        and value_cache.dtype == query.dtype
+        and (native_cache or fp8_cache)
+        and key_scales.dtype == torch.float32
+        and value_scales.dtype == torch.float32
+        and key_scales.numel() == value_scales.numel()
+        and key_scales.numel() in (1, key.shape[1])
+        and key_scales.is_contiguous()
+        and value_scales.is_contiguous()
         and positions.dtype == torch.int64
         and slot_mapping.dtype == torch.int64
         and query.shape[0] == key.shape[0] == value.shape[0]
@@ -82,6 +95,7 @@ def supports_rope_paged_kv_write(
         and not cos_sin_cache.requires_grad
     )
 
+
 def rope_paged_kv_write_(
     query: torch.Tensor,
     key: torch.Tensor,
@@ -90,10 +104,12 @@ def rope_paged_kv_write_(
     cos_sin_cache: torch.Tensor,
     key_cache: torch.Tensor,
     value_cache: torch.Tensor,
+    key_scales: torch.Tensor,
+    value_scales: torch.Tensor,
     slot_mapping: torch.Tensor,
     is_neox: bool = True,
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Rotate Q/K in place and scatter rotated K plus V into paged caches."""
+    """Rotate Q/K and write native or scaled FP8 E4M3 paged K/V caches."""
     _require_inference_tensors(
         query,
         key,
@@ -101,6 +117,8 @@ def rope_paged_kv_write_(
         cos_sin_cache,
         key_cache,
         value_cache,
+        key_scales,
+        value_scales,
     )
     _rope_paged_kv_write(
         query,
@@ -110,6 +128,8 @@ def rope_paged_kv_write_(
         cos_sin_cache,
         key_cache,
         value_cache,
+        key_scales,
+        value_scales,
         slot_mapping,
         bool(is_neox),
     )
