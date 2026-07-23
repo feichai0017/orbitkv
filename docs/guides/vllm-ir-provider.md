@@ -42,6 +42,12 @@ FlashAttention decode method. Loom reads vLLM's interleaved native KV cache
 directly and routes every unsupported shape or semantic feature to the
 original FA3 method.
 
+A seventh explicit registration replaces vLLM's deterministic all-greedy
+speculative rejection kernel. It consumes the engine's flattened ragged draft
+metadata, verifies target argmax IDs, and compacts the accepted prefix plus
+mismatch or bonus token. Stochastic rejection and every model, attention,
+GEMM, RNG, scheduler, and KV-cache policy remain engine-owned.
+
 The registered contract is:
 
 ```text
@@ -51,10 +57,13 @@ input = RMSNorm(residual, weight, epsilon)
 
 ## Compatibility
 
-The supported package interval is `vllm>=0.24,<0.26`. Official vLLM 0.24.0 and
-0.25.1 packages each pass the complete 192-test H20 GPU suite with the current
-adapter. The existing model-level performance artifacts were captured on
-0.24.0 and are not automatically performance claims for 0.25.1. See the
+The supported package interval is `vllm>=0.24,<0.26`. The qualified native
+wheel passes 192 H20 tests with each minor. The current source revision adds
+greedy speculative verification and passes the expanded 202-test suite on
+both official vLLM 0.24.0 and 0.25.1 packages; that new source is not yet a
+published native wheel. Existing model-level performance artifacts were
+captured on 0.24.0 and are not automatically performance claims for 0.25.1.
+See the
 [compatibility matrix](../compatibility.md) and
 [native-wheel gate](../results/h20-native-wheel-clean-install-20260723.json).
 
@@ -108,6 +117,7 @@ output, updated_residual = add_rms_norm_(
 
 from loom_kernels import (
     greedy_sample_logprobs,
+    greedy_speculative_verify,
     paged_decode_attention_out,
     rope_paged_kv_write_,
     silu_and_mul,
@@ -127,6 +137,13 @@ fp8_output, block_scales = silu_and_mul_dynamic_fp8(
 
 token_ids, sampled_logprobs, sampled_ranks = greedy_sample_logprobs(logits)
 sampled_logprobs, sampled_ranks = selected_token_logprobs(logits, token_ids_i64)
+verified_ids, accepted_lengths, emitted_lengths = greedy_speculative_verify(
+    flattened_draft_ids_i32,
+    flattened_target_argmax_ids_i64,
+    bonus_ids_i32,
+    inclusive_cumulative_draft_lengths_i32,
+    max_draft_tokens,
+)
 silu_and_mul_dynamic_fp8_out(
     gate_and_up_bf16,
     reusable_fp8_output,
@@ -264,6 +281,30 @@ runs the original vLLM sampler; speculative bonus-token sampling is also
 declined. Registration is version-gated to vLLM 0.24/0.25. Both contiguous and
 padded logits enter the same checked Rust bridge with an explicit row stride.
 
+To replace vLLM's deterministic speculative verifier, register it before
+constructing the engine:
+
+```python
+from vllm import LLM
+from loom_kernels.vllm import register_vllm_greedy_speculative_verify
+
+assert (
+    register_vllm_greedy_speculative_verify()
+    == "greedy_speculative_verify"
+)
+engine = LLM(model="/path/to/model")
+```
+
+The hook intercepts only `sampling_metadata.all_greedy` with standard,
+non-synthetic rejection semantics. vLLM computes target argmax and owns draft
+generation, bonus-token selection, attention, GEMM, scheduler state, and every
+stochastic path. Loom consumes contiguous flattened int32 draft IDs, matching
+int64 target IDs, int32 bonus IDs shaped `[requests, 1]`, and inclusive int32
+cumulative draft lengths. Unsupported contracts call the original vLLM
+function. Registration is explicit because the current gate proves exact
+operator behavior and lower verifier latency, not end-to-end speculative
+decode acceleration.
+
 To preserve vLLM's full sampling policy but avoid its full-vocabulary raw
 log-softmax output, use the general registration instead:
 
@@ -307,6 +348,11 @@ PY
 
 ```bash
 .venv-vllm/bin/pytest -q python/tests
+
+.venv-vllm/bin/python benchmarks/vllm_greedy_speculative_verify.py \
+  --batches 1,8,32,128,256 --draft-lengths 1,4,8 \
+  --warmup 30 --iterations 300 --samples 9 \
+  --output /tmp/greedy-speculative-verify.json
 
 .venv-vllm/bin/python benchmarks/vllm_ir_add_rms_norm.py \
   --dtype bf16 --rows 8 --hidden-size 4096 \
@@ -503,6 +549,16 @@ batch-latency plus `1.054-1.130x` TPOT ratios. See the
 [operator report](../results/h20-selected-token-logprobs-20260722.json),
 [baseline-first engine report](../results/h20-vllm-selected-logprobs-baseline-first-20260722.json),
 and [Loom-first engine report](../results/h20-vllm-selected-logprobs-loom-first-20260722.json).
+
+For deterministic greedy speculative verification, Loom matches vLLM's
+flattened ragged rejection output bit-for-bit, including zero-draft requests,
+first mismatches, full acceptance, and bonus-token emission. All 15 H20 cases
+across batches 1-256 and draft lengths 1/4/8 measured `1.101-1.128x` against
+vLLM 0.24's exact Triton verifier through equivalent allocating Python calls.
+Both vLLM minors pass the expanded 202-test source suite. This is an
+operator-level result; no draft/target model A/B has closed the end-to-end
+gate. See the
+[H20 verifier report](../results/h20-greedy-speculative-verify-20260723.json).
 
 ## Opt-In Min-P Filtering
 

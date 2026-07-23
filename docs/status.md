@@ -39,6 +39,11 @@
   PyTorch mutation schemas, and an opt-in vLLM 0.24/0.25 processor override
   that cancels the softmax denominator instead of allocating probability and
   mask tensors;
+- deterministic greedy speculative verification over flattened ragged int32
+  draft metadata, with a validating Rust CPU oracle, one-warp handwritten
+  CUDA, accepted/bonus-token compaction, accepted/emitted length outputs,
+  caller-current-stream PyTorch dispatch, and an explicit all-greedy vLLM
+  0.24/0.25 rejection-sampler registration;
 - base paged MQA/GQA decode attention for one query per request: Rust contract
   and stable CPU oracle, F32/FP16/BF16 handwritten CUDA/C ABI, safe Rust
   entrypoints, dense-inner NHD cache indirection with explicit outer block
@@ -52,7 +57,7 @@
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
-  using the current CUDA stream; all ten semantic operators route through
+  using the current CUDA stream; all eleven semantic operators route through
   `loom-cuda-bridge` into borrowed safe Rust dispatch with explicit storage
   spans and layouts;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test
@@ -62,8 +67,8 @@
   `SiluAndMul` out-of-tree layer replacement, plus an opt-in activation-quant
   fusion-table replacement, RoPE+KV compiler-pass adapter, and pure-greedy
   general selected-token sampled-logprob fast paths, and a measured-shape
-  Min-P override plus a native-cache short-context paged-decode override for
-  vLLM 0.24 and 0.25;
+  Min-P override, deterministic greedy speculative verifier, plus a
+  native-cache short-context paged-decode override for vLLM 0.24 and 0.25;
 - per-operator JSON correctness/latency benchmarks and named vLLM baselines.
 
 ## Validated
@@ -205,11 +210,11 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the current complete H20 Python suite passes 192 tests; the Rust core passes
-  30 contract/oracle tests, and the CUDA-feature workspace passes formatting,
-  Clippy, release build, plus seven safe-wrapper CPU-oracle tests;
-- the final shared-library audit exposes 15 versioned bridge symbols and no
-  raw CUDA launch symbols; the PyTorch shim depends on those same 15 bridge
+- the current complete H20 source suite passes 202 tests on each of vLLM
+  0.24.0 and 0.25.1; the Rust core passes 32 contract/oracle tests, and the
+  CUDA-feature workspace includes eight safe-wrapper CPU-oracle tests;
+- the current bridge exposes 16 versioned operator/runtime symbols and no
+  raw CUDA launch symbols; the PyTorch shim depends only on those bridge
   symbols and no raw launch symbol;
 - against vLLM's exact `compute_logprobs + gather_logprobs(0)` path for the
   same caller-selected BF16 IDs, ranks were exact and maximum logprob error was
@@ -228,6 +233,15 @@
   1, 8, 32, and 128 rows. The vLLM adapter therefore requires at least 32 rows
   and a 65,536-token vocabulary, falling back below either threshold. A second
   65,536-vocabulary sweep measured `1.35x` and `2.35x` at 32 and 128 rows;
+- greedy speculative verification matches vLLM's all-greedy rejection output
+  exactly for ragged rows, zero-draft requests inside a nonempty batch,
+  mismatch/full-accept cases, external streams, FakeTensor/opcheck,
+  `torch.compile`, and CUDA Graph replay; the safe Rust CUDA wrapper matches
+  the CPU oracle on H20;
+- the same source revision passes 202/202 H20 tests on both vLLM 0.24.0 and
+  0.25.1 through the real `rejection_sample` hook. Across batches 1-256 and
+  draft lengths 1/4/8, all 15 vLLM 0.24 baseline cases are bit-exact and the
+  dispatcher-level ratio is `1.101-1.128x` (`9.2-11.3%` lower latency);
 - paged-decode focused tests pass 46/46 across F32/FP16/BF16, MQA/GQA,
   odd GQA tail groups, shuffled physical blocks, partial pages, odd head sizes,
   distinct value widths, native vLLM-interleaved cache strides, external
@@ -299,6 +313,9 @@ The [Min-P operator report](results/h20-min-p-filter-20260722.json) records the
 exact-mask gate, memory reduction, small-batch regression, and crossover point;
 the [65,536-token sweep](results/h20-min-p-filter-vocab65536-20260722.json)
 records the lower vocabulary boundary behind the vLLM routing threshold.
+The [greedy speculative-verifier report](results/h20-greedy-speculative-verify-20260723.json)
+records the flattened ragged contract, complete source-suite matrix, exact
+vLLM output gate, and operator-level latency boundary.
 The original
 [paged decode-attention report](results/h20-paged-decode-attention-20260722.json)
 records separate-cache bring-up. The
@@ -331,8 +348,8 @@ FA3 for the engine's 128-1,024-token path.
 - Min-P real-model invocation and end-to-end serving benefit;
 - Loom-owned logits preprocessing, top-k/top-p, stochastic sampling, and
   general top-k logprob integration;
-- speculative draft verification, acceptance/rejection, token compaction, and
-  an end-to-end draft/target engine win;
+- speculative tree/branch metadata, stochastic residual-distribution
+  rejection, KV commit/remap, and an end-to-end draft/target engine win;
 - FP8/INT8 KV-cache compression with measured cache bytes, quality, admitted
   context/batch, and TPOT;
 - prefix-cache/preemption KV movement and compaction in a real scheduler path;

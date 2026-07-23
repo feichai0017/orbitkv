@@ -189,6 +189,25 @@ order. Loom runs afterward against the preserved BF16/FP16 raw logits only for
 the narrower fused argmax path. F32 logits, top-k logprob lists, specific-token
 lists, processed-logprob modes, and version-mismatched vLLM builds fall back.
 
+## Greedy Speculative-Verify Contract
+
+The deterministic speculative boundary consumes flattened int32 draft IDs,
+matching int64 target argmax IDs, one int32 bonus ID per request, and inclusive
+int32 cumulative draft lengths. It emits a `-1`-padded int32
+`[requests, max_draft_tokens + 1]` matrix plus accepted and emitted lengths.
+Each row contains the accepted draft prefix followed by the first target
+mismatch, or the bonus token after full acceptance.
+
+The public Python call uses one combined caller-owned allocation for all three
+outputs. The bridge validates disjoint physical spans and launches one warp per
+request on the current stream; no host synchronization or hidden workspace is
+introduced. The explicit vLLM 0.24/0.25 registration replaces only the
+all-greedy rejection branch. Stochastic residual sampling, RNG, tree masks,
+KV-cache policy, attention, and GEMM remain engine/vendor-owned.
+
+The complete contract and evidence boundary are documented in
+[greedy speculative verification](greedy-speculative-verify.md).
+
 ## Operator Contract
 
 Every operator contract must make these properties explicit:

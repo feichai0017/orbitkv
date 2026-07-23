@@ -68,13 +68,19 @@ export const supportedOperators = [
     boundary: "GQA packing + local split-K/LSE; short shapes route into vLLM",
     status: "supported",
   },
+  {
+    name: "Greedy speculative verify",
+    dtypes: "int32 drafts · int64 target IDs",
+    boundary: "Ragged acceptance + mismatch/bonus-token compaction",
+    status: "supported",
+  },
 ];
 
 export const nextOperators = [
   {
     milestone: "K4.5 · P0",
-    name: "Speculative decoding",
-    reason: "Prepare batched verification metadata, deterministic accept/reject, and token compaction around vendor attention and GEMM.",
+    name: "Finish speculative decoding",
+    reason: "Add tree metadata, stochastic residual rejection, KV commit/remap, and a real draft/target engine gate.",
   },
   {
     milestone: "K3 · P0",
@@ -163,5 +169,11 @@ export const evidence = [
     shape: "BF16 · batch 1–8 · context 128–1,024",
     result: "1.14–6.22×",
     detail: "CUDA Graph ratio vs legacy Loom; FA3 remains the engine fallback",
+  },
+  {
+    operator: "Greedy speculative verify",
+    shape: "H20 · batch 1–256 · draft length 1 / 4 / 8",
+    result: "1.101–1.128×",
+    detail: "Bit-exact verifier-level ratio vs vLLM 0.24; no model-level claim",
   },
 ];

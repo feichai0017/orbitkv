@@ -15,6 +15,13 @@ binary portability. A green row below applies only to the stated boundary.
 | vLLM | 0.24.0 | clean wheel install and all 192 registered-adapter/operator tests | [native-wheel gate](results/h20-native-wheel-clean-install-20260723.json) |
 | vLLM | 0.25.1 | clean install from the official wheel and all 192 registered-adapter/operator tests | [native-wheel gate](results/h20-native-wheel-clean-install-20260723.json) |
 
+The current source revision adds greedy speculative verification after that
+wheel was built. On the same H20 PyTorch 2.11 stack, both vLLM 0.24.0 and
+0.25.1 pass the expanded 202-test suite, including the real rejection-sampler
+hook. This source result is recorded in the
+[speculative verifier evidence](results/h20-greedy-speculative-verify-20260723.json);
+it does not turn the older 192-test artifact into a new wheel.
+
 The 0.25.1 gate proves that the current adapters and CUDA paths execute against
 the official vLLM wheel. It does not retroactively transfer the 0.24
 model-level latency results to 0.25.1. A new engine benchmark is required before
@@ -67,7 +74,7 @@ production dispatcher now uses that boundary:
 - all schemas use boxed Stable ABI registration;
 - tensor metadata, allocations, pointers, device guards, and the current CUDA
   stream use stable headers or AOTI C shims;
-- all ten semantic operators continue into `loom-cuda-bridge`; the dispatcher
+- all eleven semantic operators continue into `loom-cuda-bridge`; the dispatcher
   has no ATen/c10 C++ symbol dependency and consumes no raw CUDA launch symbol;
 - the public Python APIs and vLLM admission predicates reject tensors requiring
   gradients. No autograd kernel is advertised;

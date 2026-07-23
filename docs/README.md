@@ -16,6 +16,7 @@ the evidence used to qualify them.
 | Integrate PyTorch or vLLM | [Python README](../python/README.md) | [vLLM provider guide](guides/vllm-ir-provider.md) |
 | Check supported versions | [Compatibility matrix](compatibility.md) | [Implementation status](status.md) |
 | Work on paged decode | [Paged-decode design](design/paged-decode-attention.md) | [Paged-decode evidence](results/README.md#paged-decode-attention) |
+| Work on speculative decode | [Greedy verifier design](design/greedy-speculative-verify.md) | [Speculative evidence](results/README.md#speculative-decoding) |
 | Evaluate performance | [Evidence index](results/README.md) | Raw JSON under [`results/`](results/) |
 | Pick the next operator | [Roadmap](roadmap.md) | [Catalog implementation order](operator-catalog.md#implementation-order) |
 

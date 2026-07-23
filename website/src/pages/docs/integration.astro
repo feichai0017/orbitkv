@@ -71,6 +71,7 @@ python3 -m venv .venv-vllm
       <h2>Call PyTorch directly</h2>
       <pre><code>from loom_kernels import (
     greedy_sample_logprobs,
+    greedy_speculative_verify,
     min_p_filter_,
     selected_token_logprobs,
     silu_and_mul_dynamic_fp8,
@@ -82,6 +83,10 @@ fp8_output, block_scales = silu_and_mul_dynamic_fp8(
 )
 
 token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
+verified_ids, accepted, emitted = greedy_speculative_verify(
+    draft_ids_i32, target_argmax_ids_i64, bonus_ids_i32,
+    cumulative_draft_lengths_i32, max_draft_tokens,
+)
 logprobs, ranks = selected_token_logprobs(logits, sampled_ids_i64)
 min_p_filter_(sampling_logits_f32, min_p_f32)</code></pre>
 
@@ -97,6 +102,7 @@ min_p_filter_(sampling_logits_f32, min_p_f32)</code></pre>
           <tr><td>RoPE+paged-KV</td><td><code>configure_vllm_rope_paged_kv(...)</code></td></tr>
           <tr><td>Short paged decode</td><td><code>LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1</code></td></tr>
           <tr><td>Greedy sampled logprob</td><td><code>register_vllm_greedy_sample_logprobs()</code></td></tr>
+          <tr><td>Greedy speculative verify</td><td><code>register_vllm_greedy_speculative_verify()</code></td></tr>
           <tr><td>Selected-token logprob</td><td><code>register_vllm_selected_token_logprobs()</code></td></tr>
           <tr><td>Min-P</td><td><code>LOOM_KERNELS_ENABLE_MIN_P=1</code></td></tr>
         </tbody>
@@ -114,8 +120,10 @@ min_p_filter_(sampling_logits_f32, min_p_f32)</code></pre>
       <h2>Compatibility is explicit</h2>
       <p>
         Fresh native-wheel installs with official vLLM 0.24.0 and 0.25.1
-        packages each pass the complete 192-test H20 GPU suite on PyTorch 2.11.
-        The same exact wheel also passes its applicable Loom gates on PyTorch
+        packages each pass the 192-test K0.7 H20 suite on PyTorch 2.11. The
+        current source revision adds speculative verification and passes 202
+        tests on each minor; a new native wheel has not been published. The
+        same exact K0.7 wheel also passes its applicable Loom gates on PyTorch
         2.10 without recompilation.
         Existing model-level performance artifacts remain tied to the version
         recorded in each result; compatibility does not transfer a speedup

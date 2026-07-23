@@ -56,6 +56,9 @@ import { evidence, repositoryUrl } from "../data/site";
         legacy Loom in all 16 BF16 cases by 1.14–6.22× (2.50× median). At
         batch one it reaches 90–95% of FA3 through 512 tokens, but FA3 remains
         faster overall and continues to own the engine's long-context route.
+        Greedy speculative verification is bit-exact across 15 ragged batch
+        shapes and reaches 1.101–1.128× against vLLM's exact greedy verifier;
+        that result stops at the operator boundary.
       </p>
 
       <h2>Validation ladder</h2>
@@ -96,6 +99,10 @@ python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
 
 .venv-vllm/bin/python benchmarks/vllm_min_p_filter.py \
   --rows 1,8,32,128 --vocab-size 151936
+
+.venv-vllm/bin/python benchmarks/vllm_greedy_speculative_verify.py \
+  --batches 1,8,32,128,256 --draft-lengths 1,4,8 \
+  --warmup 30 --iterations 300 --samples 9
 
 .venv-vllm/bin/python benchmarks/vllm_paged_decode_attention.py \
   --batches 1,2,4,8 --contexts 128,256,512,1024 \

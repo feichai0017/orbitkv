@@ -50,6 +50,7 @@ core; it will not implement a competing GEMM.
 | MLP | split-half SiLU-and-Mul · SiLU-and-Mul→block FP8 | F32, FP16, BF16; opt-in vLLM activation paths |
 | Position and KV | NeoX/interleaved RoPE + paged-KV write | packed QKV, NHD/HND cache views, current-stream PyTorch |
 | Decode tail | greedy + sampled logprob · selected-token logprob + rank · Min-P | exact-token/rank gates and measured vLLM fallbacks |
+| Speculative decode | greedy draft verify + accepted/bonus-token compaction | flattened ragged int32 metadata, exact vLLM 0.24/0.25 rejection semantics |
 | Attention | paged MQA/GQA decode · local split-K/LSE merge | native paged KV, GQA reuse, short shape-gated vLLM route |
 
 The [operator catalog](docs/operator-catalog.md) separates `supported`, `next`,
@@ -60,12 +61,14 @@ is never a performance claim.
 
 K0.7's first native-wheel engineering gate is complete for Linux x86_64,
 CUDA 13.1, SM90, Python 3.11, PyTorch 2.10/2.11, and vLLM 0.24/0.25. The
-artifact is qualified but not published to a package index. The ordered
-feature program now is:
+artifact is qualified but not published to a package index. The first
+post-K0.7 slice is also complete: deterministic greedy speculative
+verification and token compaction now follow the same Rust-owned path. The
+ordered feature program is:
 
 | Order | Direction | First proof |
 | --- | --- | --- |
-| 1 | Speculative decoding support | batched verification metadata, deterministic accept/reject, token compaction, and a real draft/target engine win |
+| 1 | Finish speculative decoding support | tree/branch metadata, stochastic rejection with explicit RNG, KV commit/remap, and a real draft/target engine win |
 | 2 | FP8 KV-cache compression | lower cache bytes and a larger admitted context or batch size with quality and TPOT reported |
 | 3 | Complete sampling tail | penalties, top-k/top-p, deterministic RNG, and top-k logprobs through one engine path |
 | 4 | KV-cache movement and quantization plumbing | measured prefix/preemption movement plus scale/pack/layout work around unchanged vendor GEMM |
@@ -186,6 +189,7 @@ opens the raw JSON artifact used for the claim.
 | [Greedy + sampled logprob](docs/results/h20-greedy-sample-logprobs-20260722.json) | `3.16–4.35×` operator ratio; `1.129–1.250×` real-engine batch-latency ratio | Pure greedy requests with raw `logprobs=0` |
 | [Selected-token logprob + rank](docs/results/h20-selected-token-logprobs-20260722.json) | `2.77–3.78×` operator ratio; `1.044–1.125×` real-engine batch-latency ratio | vLLM still owns top-k/top-p, RNG, and selection |
 | [Min-P filtering](docs/results/h20-min-p-filter-20260722.json) | `1.885×` at 128 rows and no tensor-sized probability/mask temporaries | Smaller batches fall back to vLLM |
+| [Greedy speculative verify + compact](docs/results/h20-greedy-speculative-verify-20260723.json) | `1.101–1.128×` dispatcher ratio across 15 batch/draft shapes; bit-exact with vLLM | Deterministic all-greedy rejection only; no model-level speedup claim |
 | [RoPE + paged-KV write](docs/results/h20-rope-paged-kv-20260722.json) | `2.30–2.40×` dispatcher ratio for 1–512 tokens | Real-engine invocation is proven; end-to-end remains at parity |
 | [Short paged decode](docs/results/h20-vllm-paged-decode-backend-20260722.json) | `1.154–2.374×` across all 24 admitted backend cases | FP16/BF16, Hq/Hkv 32/8, D128, context ≤32; other shapes use FA3 |
 | [Local split-K paged decode](docs/results/h20-paged-decode-split-k-20260722.json) | `1.14–6.22×` versus legacy Loom | Improves the Rust/CUDA backend; FA3 remains the long-context engine fallback |
@@ -218,6 +222,7 @@ opens the raw JSON artifact used for the claim.
 | [Documentation index](docs/README.md) | Choose the shortest path through the project |
 | [Operator catalog](docs/operator-catalog.md) | Inspect the complete supported and planned surface |
 | [Operator-library design](docs/design/operator-library.md) | Understand architecture and admission gates |
+| [Greedy speculative-verify design](docs/design/greedy-speculative-verify.md) | Read the ragged contract, ownership boundary, and deliberate exclusions |
 | [Paged-decode design](docs/design/paged-decode-attention.md) | Read cache layouts, split-K semantics, and exclusions |
 | [vLLM provider guide](docs/guides/vllm-ir-provider.md) | Build, configure, validate, and benchmark engine adapters |
 | [Compatibility matrix](docs/compatibility.md) | Check Rust, CUDA, PyTorch, vLLM, and binary distribution boundaries |

@@ -28,6 +28,9 @@ The build tag encodes the row:
 `1cu131torch210sm90`. The exact H20 artifact and three clean-install gates are
 recorded in the
 [native-wheel evidence](../docs/results/h20-native-wheel-clean-install-20260723.json).
+That wheel contains the 192-test K0.7 surface. The current source revision adds
+greedy speculative verification and passes 202 tests on both supported vLLM
+minors; a new native wheel has not been published.
 
 ## Install a built wheel
 
@@ -105,6 +108,7 @@ direct raw-CUDA framework path.
 ```python
 from loom_kernels import (
     greedy_sample_logprobs,
+    greedy_speculative_verify,
     min_p_filter_,
     selected_token_logprobs,
     silu_and_mul_dynamic_fp8,
@@ -117,6 +121,13 @@ fp8_output, block_scales = silu_and_mul_dynamic_fp8(
 
 token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
 logprobs, ranks = selected_token_logprobs(logits, sampled_ids_i64)
+verified_ids, accepted_lengths, emitted_lengths = greedy_speculative_verify(
+    flattened_draft_ids_i32,
+    flattened_target_argmax_ids_i64,
+    bonus_ids_i32,
+    inclusive_cumulative_draft_lengths_i32,
+    max_draft_tokens,
+)
 min_p_filter_(sampling_logits_f32, min_p_f32)
 ```
 
@@ -132,6 +143,7 @@ tensors that require gradients.
 | Activation | `silu_and_mul`, `silu_and_mul_out`, `silu_and_mul_dynamic_fp8`, `silu_and_mul_dynamic_fp8_out` |
 | Position and KV | `rope_paged_kv_write_` |
 | Decode tail | `greedy_sample_logprobs`, `selected_token_logprobs`, `min_p_filter_` |
+| Speculative decode | `greedy_speculative_verify` |
 | Attention | `paged_decode_attention`, `paged_decode_attention_out` |
 
 The base paged-decode API accepts one contiguous `[B, Hq, D]` query,
@@ -149,6 +161,7 @@ lengths. It directly accepts K/V views from vLLM's
 | RoPE+paged-KV compiler pass | `configure_vllm_rope_paged_kv(...)` |
 | Short paged decode | `LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1` |
 | Greedy sampled logprob | `register_vllm_greedy_sample_logprobs()` |
+| Greedy speculative verify | `register_vllm_greedy_speculative_verify()` |
 | Selected-token logprob | `register_vllm_selected_token_logprobs()` |
 | Min-P processor | `LOOM_KERNELS_ENABLE_MIN_P=1` |
 

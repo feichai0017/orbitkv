@@ -27,7 +27,7 @@ feature. New feature work follows this order:
 
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
-| 1 | Speculative decoding support | batched verification metadata plus deterministic accept/reject and token compaction | a named draft/target model pair preserves output semantics and improves decode latency or throughput |
+| 1 | Speculative decoding support | deterministic greedy verify/compact is complete; tree metadata and stochastic rejection are next | a named draft/target model pair preserves output semantics and improves decode latency or throughput |
 | 2 | KV-cache compression | FP8 KV write/read boundary with explicit scale layout | lower cache bytes and higher admitted context or batch size without unacceptable quality or TPOT loss |
 | 3 | Complete sampling tail | fused penalties, top-k/top-p, renormalization, and deterministic RNG | seeded token parity or a declared statistical contract plus an order-reversed engine win |
 | 4 | KV-cache movement | block copy/gather/scatter/compact/remap for prefix reuse and preemption | fewer launches or less movement time in a real scheduler path |
@@ -221,14 +221,18 @@ sampling requests with `logprobs=0`; owning the selection kernels remains open.
 
 ## K4.5: Speculative Decoding Support
 
-Status: next after K0.7.
+Status: in progress.
 
+- ~~verify flattened ragged greedy drafts and compact accepted/bonus tokens~~ —
+  Rust contract and CPU oracle, one-warp handwritten CUDA, safe borrowed-Rust
+  dispatch, PyTorch current-stream/compile/graph coverage, and explicit vLLM
+  0.24/0.25 registration are complete; all 15 H20 benchmark shapes are
+  bit-exact and reduce verifier-level latency by `9.2-11.3%`;
 - construct batched draft-verification metadata and tree/branch masks consumed
   by an engine-selected attention backend;
-- verify draft-token probabilities in bulk and implement deterministic
-  acceptance/rejection using an explicit RNG state contract;
-- compact accepted tokens, emit the bonus-token decision, and update
-  caller-owned sequence/KV metadata without host round trips;
+- implement stochastic residual-distribution acceptance/rejection using an
+  explicit counter-based RNG state contract;
+- update caller-owned sequence/KV metadata without host round trips;
 - add cache commit/rollback or slot-remap primitives only where the selected
   engine exposes that boundary;
 - keep draft/target model GEMM and verification attention in vendor libraries.

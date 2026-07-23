@@ -54,6 +54,12 @@ otherwise.
 | Selected-token logprob + rank | [Operator gate](h20-selected-token-logprobs-20260722.json) · [baseline first](h20-vllm-selected-logprobs-baseline-first-20260722.json) · [Loom first](h20-vllm-selected-logprobs-loom-first-20260722.json) | vLLM-owned top-k/top-p sampling preserves exact tokens/ranks and shows an order-stable engine win |
 | Min-P | [151,936-vocabulary sweep](h20-min-p-filter-20260722.json) · [65,536-vocabulary boundary](h20-min-p-filter-vocab65536-20260722.json) | The crossover is shape-dependent; the adapter routes only qualified larger rows/vocabularies |
 
+## Speculative decoding
+
+| Boundary | Result set | Current conclusion |
+| --- | --- | --- |
+| Greedy verify + accepted/bonus compaction | [15-case H20 gate](h20-greedy-speculative-verify-20260723.json) | Bit-exact with vLLM 0.24 across batches 1-256 and draft lengths 1/4/8; `1.101-1.128x` operator-level ratio. The source suite also passes 202 tests on vLLM 0.24 and 0.25.1. No end-to-end model claim. |
+
 ## Paged-decode attention
 
 | Evidence set | Result set | Current conclusion |
