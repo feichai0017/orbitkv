@@ -1,50 +1,104 @@
-# Loom Kernels · Python adapters
+# Loom Kernels · Python
 
-Current-stream PyTorch operators and narrow, opt-in vLLM 0.24/0.25 integration
-for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
+Native current-stream PyTorch operators and narrow, opt-in vLLM 0.24/0.25
+integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 
 [Project README](../README.md) · [Integration guide](../docs/guides/vllm-ir-provider.md) · [Operator catalog](../docs/operator-catalog.md)
 
-> [!NOTE]
-> The source wheel contains adapters, not prebuilt CUDA binaries. Build the
-> native library and LibTorch Stable ABI dispatcher from a repository checkout.
+> [!IMPORTANT]
+> The first native wheel is H20-qualified but is not published to a package
+> index yet. A source-only wheel is intentionally unsupported:
+> `pip wheel ./python` fails unless `build_wheel.py` has staged both native
+> libraries and their manifest.
 
-## Install
+## Qualified artifact
 
-Choose only the framework dependencies used by the consumer:
+The first matrix row is:
+
+| Axis | Qualified value |
+| --- | --- |
+| Artifact | `py3-none-linux_x86_64` |
+| CUDA build | toolkit 13.1, `sm_90` |
+| PyTorch runtime | `>=2.10,<2.12` through a 2.10 Stable ABI target |
+| Python runtime tested on H20 | 3.11 |
+| vLLM extra | `>=0.24,<0.26` |
+| Native payload | `libloom_cuda_bridge.so`, `libloom_kernels_torch.so` |
+
+The build tag encodes the row:
+`1cu131torch210sm90`. The exact H20 artifact and three clean-install gates are
+recorded in the
+[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-20260723.json).
+
+## Install a built wheel
+
+The wheel has a hard PyTorch dependency because its dispatcher is not useful
+without PyTorch. vLLM and tests remain explicit extras:
 
 ```bash
-pip install -e 'python[torch,test]'
-pip install -e 'python[vllm,test]'
+python3 -m venv .venv-loom
+.venv-loom/bin/pip install \
+  'dist/loom_kernels-1.0.0a1-1cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+
+# Add the supported vLLM integration when needed.
+.venv-loom/bin/pip install \
+  'dist/loom_kernels-1.0.0a1-1cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'vllm>=0.24,<0.26'
 ```
 
-## Build the native bridge
+No repository checkout, `PYTHONPATH`, `LD_LIBRARY_PATH`, or external library
+override is used at runtime. The installed package reads
+`loom_kernels/lib/native.json`, validates the PyTorch range and bridge ABI,
+verifies both library hashes, and loads only its packaged dispatcher.
+
+```python
+import loom_kernels
+
+print(loom_kernels.native_build_info())
+```
+
+## Build the matrix wheel
+
+Use a clean Linux x86_64 checkout with Cargo, CUDA, ELF inspection tools, and a
+CUDA-enabled PyTorch build:
 
 ```bash
-CUDA_HOME=/usr/local/cuda LOOM_CUDA_ARCHS=90 \
-  python python/build_native.py
+python3 -m venv .venv-wheel
+.venv-wheel/bin/pip install \
+  'setuptools>=80,<82' 'wheel>=0.45' build 'torch>=2.10,<2.12'
 
-CUDA_HOME=/usr/local/cuda \
-  python python/build_torch_extension.py
+CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
+  .venv-wheel/bin/python python/build_wheel.py \
+  --cuda-home /usr/local/cuda-13.1 \
+  --archs 90 \
+  --wheel-dir dist
 ```
 
-Repository checkouts discover the dispatcher under `build/`. Packaged or
-externally managed deployments can set its absolute path explicitly:
+`build_wheel.py` is the only binary-wheel entrypoint. It builds the Rust CUDA
+bridge, builds the boxed LibTorch Stable ABI dispatcher, rejects ATen/c10 C++
+and raw CUDA-launch dependencies, verifies `$ORIGIN` loading, writes the
+revision/toolkit/SM/runtime manifest, and checks the final archive contains
+exactly the two Loom `.so` files.
+
+## Source development
+
+Editable source work remains available without creating a distributable
+source wheel:
 
 ```bash
-export LOOM_KERNELS_TORCH_LIBRARY=/path/to/libloom_kernels_torch.so
+python3 -m venv .venv-dev
+.venv-dev/bin/pip install -e 'python[test]'
+
+CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
+  .venv-dev/bin/python python/build_native.py
+CUDA_HOME=/usr/local/cuda-13.1 \
+  .venv-dev/bin/python python/build_torch_extension.py
 ```
 
-`build_native.py` builds the only native backend library,
-`libloom_cuda_bridge.so`. Keep it next to `libloom_kernels_torch.so` (or in its
-parent directory) so the dispatcher's relative runtime search path can load
-it. `build_torch_extension.py` builds the sole boxed LibTorch Stable ABI
-dispatcher with a PyTorch 2.10 target. Every operator, including padded logits
-and strided paged-cache views, enters checked borrowed Rust dispatch. There is
-no ctypes, ATen dispatcher twin, or direct raw-CUDA framework path.
-
-The exact H20 dispatcher binary is qualified on PyTorch 2.10 and 2.11.
-Automated native binary wheels are not published yet.
+Source checkouts discover the paired libraries only under repository
+`build/`. Installed wheels discover them only under `loom_kernels/lib/`.
+Every operator, including padded logits and strided paged-cache views, enters
+checked borrowed Rust dispatch. There is no ctypes, ATen dispatcher twin, or
+direct raw-CUDA framework path.
 
 ## Direct PyTorch use
 

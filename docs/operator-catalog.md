@@ -130,9 +130,9 @@ the boundary or an isolated implementation is measurably useful.
 
 ## Implementation Order
 
-1. After K0.7 native wheels, implement speculative verification metadata,
-   deterministic accept/reject, and accepted-token compaction for one named
-   draft/target engine path.
+1. With K0.7's first native-wheel row complete, implement speculative
+   verification metadata, deterministic accept/reject, and accepted-token
+   compaction for one named draft/target engine path.
 2. Add FP8 KV-cache compression with explicit scales and prove cache bytes,
    admitted context/batch, quality, and TPOT together.
 3. Complete the sampling tail with fused preprocessing, penalties, top-k/top-p,

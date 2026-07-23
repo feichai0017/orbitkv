@@ -58,8 +58,10 @@ is never a performance claim.
 
 ## Next value program
 
-K0.7 native-wheel distribution is the current release gate. The ordered feature
-program after it is:
+K0.7's first native-wheel engineering gate is complete for Linux x86_64,
+CUDA 13.1, SM90, Python 3.11, PyTorch 2.10/2.11, and vLLM 0.24/0.25. The
+artifact is qualified but not published to a package index. The ordered
+feature program now is:
 
 | Order | Direction | First proof |
 | --- | --- | --- |
@@ -142,27 +144,37 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
   --dtype bf16 --rows 8 --hidden-size 4096
 ```
 
-Build the optional Python bridge from a repository checkout:
+Build the native Python artifact from a clean Linux x86_64 checkout:
 
 ```bash
-python3 -m venv .venv-vllm
-.venv-vllm/bin/pip install -e 'python[torch,test]'
+python3 -m venv .venv-wheel
+.venv-wheel/bin/pip install \
+  'setuptools>=80,<82' 'wheel>=0.45' build 'torch>=2.10,<2.12'
 
 CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
-  .venv-vllm/bin/python python/build_native.py
-CUDA_HOME=/usr/local/cuda-13.1 \
-  .venv-vllm/bin/python python/build_torch_extension.py
+  .venv-wheel/bin/python python/build_wheel.py \
+  --cuda-home /usr/local/cuda-13.1 \
+  --archs 90 \
+  --wheel-dir dist
+
+python3 -m venv .venv-loom
+.venv-loom/bin/pip install \
+  'dist/loom_kernels-1.0.0a1-1cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 ```
 
-The first build produces `libloom_cuda_bridge.so`, including the Rust-owned
-CUDA backend. The second builds the boxed LibTorch Stable ABI dispatcher. The
-dispatcher uses PyTorch only for schema/tensor translation and current-stream
-access; every GPU operator still enters the versioned Rust bridge.
+The wheel contains exactly `libloom_cuda_bridge.so` and the boxed
+`libloom_kernels_torch.so` Stable ABI dispatcher, plus a manifest binding the
+Git revision, CUDA toolkit, SM targets, runtime range, and library hashes. A
+source-only wheel is rejected. The installed package validates that manifest
+and loads only its packaged libraries; no repository checkout or library-path
+override is used.
 
-See the [Python adapter README](python/README.md) for direct calls and the
+See the [Python README](python/README.md) for binary and editable development
+flows, direct calls, and the
 [vLLM integration guide](docs/guides/vllm-ir-provider.md) for every opt-in and
 fallback contract. The [compatibility matrix](docs/compatibility.md) separates
-source builds, qualified framework versions, and future binary-wheel work.
+source development, qualified framework versions, and the native-wheel
+boundary.
 
 ## Evidence, not blanket claims
 
@@ -178,6 +190,7 @@ opens the raw JSON artifact used for the claim.
 | [Short paged decode](docs/results/h20-vllm-paged-decode-backend-20260722.json) | `1.154–2.374×` across all 24 admitted backend cases | FP16/BF16, Hq/Hkv 32/8, D128, context ≤32; other shapes use FA3 |
 | [Local split-K paged decode](docs/results/h20-paged-decode-split-k-20260722.json) | `1.14–6.22×` versus legacy Loom | Improves the Rust/CUDA backend; FA3 remains the long-context engine fallback |
 | [LibTorch Stable ABI dispatcher](docs/results/h20-libtorch-stable-abi-20260723.json) | Same `.so`: 192 tests on PyTorch 2.11 with each vLLM minor; 123 applicable tests on PyTorch 2.10 | Binary compatibility result only; native wheels and broader PyTorch versions remain unclaimed |
+| [Native matrix wheel](docs/results/h20-native-wheel-clean-install-20260723.json) | Same wheel: 192 tests with each vLLM minor; 123 applicable tests on PyTorch 2.10 | Linux x86_64, CUDA 13.1, SM90, Python 3.11; artifact is not published |
 
 > [!NOTE]
 > A fast kernel is not automatically a faster model. Loom records operator,

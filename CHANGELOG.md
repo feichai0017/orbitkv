@@ -1,7 +1,7 @@
 # Changelog
 
 Loom Kernels follows Semantic Versioning. The Rust crates use Cargo's SemVer
-spelling; Python source-adapter metadata uses the equivalent PEP 440 spelling.
+spelling; Python package metadata uses the equivalent PEP 440 spelling.
 
 ## Unreleased
 
@@ -21,7 +21,10 @@ spelling; Python source-adapter metadata uses the equivalent PEP 440 spelling.
   `max_sequence_length` independently from block-table capacity;
 - replaced the production ATen/c10 dispatcher with one boxed LibTorch Stable
   ABI implementation targeting PyTorch 2.10; no old dispatcher or experimental
-  probe remains.
+  probe remains;
+- removed `LOOM_KERNELS_TORCH_LIBRARY`: installed wheels load only their
+  package-local native pair, while editable source checkouts use repository
+  `build/`.
 
 ### Added
 
@@ -35,13 +38,19 @@ spelling; Python source-adapter metadata uses the equivalent PEP 440 spelling.
 - vLLM 0.25 support, an explicit compatibility matrix, H20 0.24/0.25 GPU-suite
   evidence, contribution guidance, and structured issue forms;
 - a two-minor H20 binary gate proving the exact same dispatcher `.so` on
-  PyTorch 2.10 and 2.11, plus a CI guard against unstable ATen/c10 C++ APIs.
+  PyTorch 2.10 and 2.11, plus a CI guard against unstable ATen/c10 C++ APIs;
+- a clean-revision native wheel builder that packages exactly the Rust CUDA
+  bridge and Stable ABI dispatcher, emits and validates their matrix manifest
+  and hashes, and rejects accidental source-only wheels;
+- fresh H20 wheel-install evidence for PyTorch 2.10/2.11 and vLLM 0.24/0.25.
 
 ### Fixed
 
 - source-checkout library discovery now follows the packaged
   `crates/loom-cuda-sys/cuda` layout after removal of the legacy root `cuda`
-  directory.
+  directory;
+- constrained the wheel build backend to setuptools 80–81 to match PyTorch
+  2.11's build dependency range.
 
 ## 1.0.0-alpha.1 — 2026-07-22
 

@@ -55,8 +55,9 @@
   using the current CUDA stream; all ten semantic operators route through
   `loom-cuda-bridge` into borrowed safe Rust dispatch with explicit storage
   spans and layouts;
-- a source-adapter Python wheel with explicit framework extras, project
-  metadata, license/readme payloads, and a CI install/entry-point smoke gate;
+- one native Python wheel path with a hard PyTorch range, optional vLLM/test
+  extras, exactly two packaged `.so` files, a revision/toolkit/SM/hash manifest,
+  runtime ABI/hash checks, and a CI guard that rejects source-only wheels;
 - a `loom_cuda` vLLM IR provider with exact-contract admission and an opt-in vLLM
   `SiluAndMul` out-of-tree layer replacement, plus an opt-in activation-quant
   fusion-table replacement, RoPE+KV compiler-pass adapter, and pure-greedy
@@ -68,8 +69,13 @@
 ## Validated
 
 - local formatting, clippy, tests, and release build;
-- the Python adapter wheel built, installed into an isolated environment,
-  passed dependency checks, imported, and exposed its vLLM entry point;
+- the first `py3-none-linux_x86_64` native wheel built from a clean revision
+  for CUDA 13.1 and SM90, passed archive/ELF/RPATH/symbol/auditwheel checks,
+  and retained identical packaged library hashes across all runtime gates;
+- fresh Python 3.11 venv installs passed `pip check`, package-local loading,
+  BF16 H20 smoke, and the applicable full suites on PyTorch 2.10.0+cu128,
+  PyTorch 2.11.0+cu130 with vLLM 0.24.0, and the same PyTorch with the official
+  vLLM 0.25.1 wheel; the native artifact is not published;
 - CUDA-feature clippy on `forge-gas1`;
 - NVIDIA H20 correctness for six shapes from `1x1` through `16x8192` and a
   `64x4096` batch;
@@ -338,6 +344,7 @@ FA3 for the engine's 128-1,024-token path.
 - an FA3-competitive paged-decode kernel at 1,024 tokens and batches above one;
 - integration into SGLang or a Rust-native engine path;
 - larger production-model and serving-workload validation;
-- automated native Python/PyTorch/CUDA matrix wheels, clean-install gates, or
-  binary compatibility beyond the tested PyTorch 2.10/2.11 runtimes;
+- publication of the qualified native wheel, H20 runtime validation on Python
+  versions other than 3.11, GPU architectures other than SM90, or binary
+  compatibility beyond the tested PyTorch 2.10/2.11 runtimes;
 - serving-scale concurrency, goodput, and memory improvement.

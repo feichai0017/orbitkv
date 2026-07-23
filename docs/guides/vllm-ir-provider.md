@@ -56,34 +56,43 @@ The supported package interval is `vllm>=0.24,<0.26`. Official vLLM 0.24.0 and
 adapter. The existing model-level performance artifacts were captured on
 0.24.0 and are not automatically performance claims for 0.25.1. See the
 [compatibility matrix](../compatibility.md) and
-[Stable ABI gate](../results/h20-libtorch-stable-abi-20260723.json).
+[native-wheel gate](../results/h20-native-wheel-clean-install-20260723.json).
 
-## Build
+## Build and install
 
-Use an isolated Python environment with a CUDA-enabled PyTorch and vLLM:
+Build the matrix artifact from a clean Linux x86_64 checkout with a
+CUDA-enabled PyTorch:
 
 ```bash
+python3 -m venv .venv-wheel
+.venv-wheel/bin/pip install \
+  'setuptools>=80,<82' 'wheel>=0.45' build 'torch>=2.10,<2.12'
+
+CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
+  .venv-wheel/bin/python python/build_wheel.py \
+  --cuda-home /usr/local/cuda-13.1 \
+  --archs 90 \
+  --wheel-dir dist
+
 python3 -m venv .venv-vllm
-.venv-vllm/bin/pip install -e 'python[vllm,test]'
-
-CUDA_HOME=/usr/local/cuda LOOM_CUDA_ARCHS=90 \
-  .venv-vllm/bin/python python/build_native.py
-
-CUDA_HOME=/usr/local/cuda \
-  .venv-vllm/bin/python python/build_torch_extension.py
+.venv-vllm/bin/pip install \
+  'dist/loom_kernels-1.0.0a1-1cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'vllm>=0.24,<0.26'
 ```
 
-The first command builds the single native backend,
-`build/libloom_cuda_bridge.so`. The second builds the boxed LibTorch Stable ABI
-dispatcher at `build/libloom_kernels_torch.so`, targeting PyTorch 2.10. Every
-admitted operator passes physical buffer spans, strides, and PyTorch's current
-stream through the Rust bridge into safe borrowed dispatch. There is no
-Python/ctypes fallback, ATen dispatcher twin, unchecked twin, or direct
-C++-to-CUDA route. Repository checkouts discover the files automatically. A
-packaged deployment may set
-`LOOM_KERNELS_TORCH_LIBRARY` to an absolute path and must keep
-`libloom_cuda_bridge.so` next to the dispatcher library or in its parent
-directory.
+The wheel contains the single native backend, `libloom_cuda_bridge.so`, and
+the boxed LibTorch Stable ABI dispatcher, `libloom_kernels_torch.so`, targeting
+PyTorch 2.10. Installed packages validate the matrix manifest and both hashes,
+then load only that package-local pair. Every admitted operator passes physical
+buffer spans, strides, and PyTorch's current stream through the Rust bridge
+into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
+dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
+dispatcher override.
+
+The first qualified artifact is not published to a package index. Editable
+source development remains documented in the
+[Python README](../../python/README.md#source-development), but it cannot
+produce a source-only wheel.
 
 ## Direct PyTorch Use
 
@@ -529,7 +538,8 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
 ## Current Limits
 
 - Linux and CUDA only;
-- source/editable deployment; an automated binary-wheel build is not provided;
+- the first native artifact is qualified only for Linux x86_64, CUDA 13.1,
+  SM90, and H20 Python 3.11; it is not published;
 - inference-only mutation, with no autograd implementation;
 - one selectable IR provider (`fused_add_rms_norm`), one opt-in out-of-tree
   layer replacement (`SiluAndMul`), and one vLLM-version-specific

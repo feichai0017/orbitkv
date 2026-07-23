@@ -9,19 +9,21 @@ binary portability. A green row below applies only to the stated boundary.
 | --- | --- | --- | --- |
 | Rust | current stable toolchain | format, Clippy, tests, release checks, source crate archives | GitHub CI |
 | CUDA | 13.1, `sm_90` | `loom-cuda`, `loom-cuda-sys`, and `loom-cuda-bridge` build and execute | NVIDIA H20 gate |
-| PyTorch | 2.10.0+cu128 | the exact dispatcher binary built on 2.11 loads without recompilation; 123 applicable Loom tests pass | [Stable ABI gate](results/h20-libtorch-stable-abi-20260723.json) |
-| PyTorch | 2.11.0+cu130 | Stable ABI dispatcher, current stream, `torch.compile`, FakeTensor/opcheck, CUDA Graph replay | [Stable ABI gate](results/h20-libtorch-stable-abi-20260723.json) |
-| vLLM | 0.24.0 | all registered adapters plus the existing operator and real-engine evidence | [evidence index](results/README.md) |
-| vLLM | 0.25.1 | official wheel import, registered adapters, dispatcher behavior, and the complete 192-test H20 suite | [Stable ABI gate](results/h20-libtorch-stable-abi-20260723.json) |
+| Python | 3.11.2 | clean native-wheel install; the `py3-none` artifact does not use the CPython C API | [native-wheel gate](results/h20-native-wheel-clean-install-20260723.json) |
+| PyTorch | 2.10.0+cu128 | the exact wheel built on 2.11 loads without recompilation; 123 applicable Loom tests pass | [native-wheel gate](results/h20-native-wheel-clean-install-20260723.json) |
+| PyTorch | 2.11.0+cu130 | clean wheel install, current stream, `torch.compile`, FakeTensor/opcheck, and CUDA Graph replay | [native-wheel gate](results/h20-native-wheel-clean-install-20260723.json) |
+| vLLM | 0.24.0 | clean wheel install and all 192 registered-adapter/operator tests | [native-wheel gate](results/h20-native-wheel-clean-install-20260723.json) |
+| vLLM | 0.25.1 | clean install from the official wheel and all 192 registered-adapter/operator tests | [native-wheel gate](results/h20-native-wheel-clean-install-20260723.json) |
 
 The 0.25.1 gate proves that the current adapters and CUDA paths execute against
 the official vLLM wheel. It does not retroactively transfer the 0.24
 model-level latency results to 0.25.1. A new engine benchmark is required before
 making a 0.25.1 performance claim.
 
-Python package metadata therefore accepts:
+Python package metadata therefore requires or accepts:
 
 ```text
+torch>=2.10,<2.12
 vllm>=0.24,<0.26
 ```
 
@@ -29,22 +31,32 @@ Versions outside that interval are not supported. Loom's optional registration
 functions also check the installed vLLM series before patching engine classes
 or compiler tables.
 
-## Current binary boundary
+## Current native-wheel boundary
 
-The published Rust crates are self-contained source distributions. The Python
-wheel currently contains Python adapters only; users build these native
-libraries against their local CUDA and PyTorch installations:
+The published Rust crates remain self-contained source distributions. The
+first qualified Python artifact is
+`loom_kernels-1.0.0a1-1cu131torch210sm90-py3-none-linux_x86_64.whl`.
+It is built only through `python/build_wheel.py` from a clean Git revision and
+contains exactly:
 
 - `libloom_cuda_bridge.so` — Rust contracts, borrowed safe dispatch, and the
   internal handwritten CUDA launch layer;
 - `libloom_kernels_torch.so` — boxed LibTorch Stable ABI dispatcher.
 
-The production dispatcher targets PyTorch 2.10 with
-`TORCH_TARGET_VERSION`, registers through `STABLE_TORCH_LIBRARY`, and uses
-`torch::stable::Tensor`. The exact binary built with PyTorch 2.11.0+cu130
-passed its applicable H20 GPU gates without recompilation on PyTorch
-2.10.0+cu128. This proves the recorded two-minor binary boundary; it is not a
-claim for untested PyTorch releases or a published native wheel.
+`native.json` records their hashes, Git revision, CUDA 13.1 toolkit, SM90
+target, bridge ABI, and PyTorch runtime range. Installed wheels load only this
+package-local pair. `PYTHONPATH`, `LD_LIBRARY_PATH`, and an external dispatcher
+override were absent from every clean gate.
+
+The wheel is Python-ABI-independent (`py3-none`) because neither native library
+uses the CPython C API. Its platform tag remains the conservative
+`linux_x86_64`; auditwheel 6.7 found a `manylinux_2_34_x86_64` symbol floor,
+but Loom does not claim an earlier manylinux baseline. H20 runtime validation
+currently covers Python 3.11 only.
+
+The artifact is not published to PyPI or a GitHub release. This is a qualified
+build/install boundary, not a claim that `pip install loom-kernels` can fetch a
+native wheel from a public index.
 
 ## Current Stable ABI boundary
 
@@ -62,9 +74,10 @@ production dispatcher now uses that boundary:
 - the temporary Add+RMSNorm probe and the previous ATen dispatcher were deleted
   after the production migration passed.
 
-The remaining distribution task is to package the already-qualified boundary
-as automated Python/PyTorch/CUDA matrix wheels and prove clean installs. Source
-builds remain the supported path until those native wheels are published.
+`python/build_wheel.py` now automates the first CUDA/PyTorch/Python matrix row,
+audits its ELF boundary, and rejects accidental source-only wheels. One exact
+artifact passed fresh-venv gates on PyTorch 2.10/2.11 and vLLM 0.24/0.25.
+Publishing that artifact remains a separate, explicit release action.
 
 ## What must be revalidated
 

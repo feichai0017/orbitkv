@@ -21,8 +21,9 @@ Microbenchmark opportunity alone is not admission.
 
 ## Execution Order After K0.7
 
-K0.7 native-wheel distribution remains the current blocking release track.
-After it closes, new feature work follows this order:
+K0.7's first native-wheel matrix row is complete. Publication remains an
+explicit release action, not an engineering prerequisite for starting the next
+feature. New feature work follows this order:
 
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
@@ -54,8 +55,8 @@ Status: complete for the Rust source crates in `1.0.0-alpha.1`.
   Rust H2D → CUDA → D2H oracle smoke example;
 - clean archive rebuild of `loom-kernels` plus CUDA-enabled archive rebuild of
   `loom-cuda-sys` on NVIDIA H20;
-- source-adapter Python wheel metadata at `1.0.0a1`; portable, automated
-  CUDA/LibTorch binary wheels remain a later distribution milestone.
+- source-adapter Python metadata at `1.0.0a1`, which established the package
+  name and entry point before K0.7 added native distribution.
 
 Exit: a downstream Rust consumer can build the published source crates and run
 an oracle-checked CUDA path without cloning the repository.
@@ -93,25 +94,33 @@ transfer.
 
 ## K0.7: Framework Compatibility And Binary Distribution
 
-Status: in progress.
+Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
 
 - ~~qualify the next vLLM minor without weakening adapter gates~~ — official
   vLLM 0.24.0 and 0.25.1 packages each pass the complete 192-test H20 GPU suite;
 - ~~centralize runtime version admission and package metadata~~ — supported
   range is `vllm>=0.24,<0.26`, with registration-time series checks;
 - ~~document the current binary boundary and Stable ABI decision~~ — the
-  Python artifact remains a source adapter until native wheels are automated;
+  dispatcher target, runtime range, and revalidation rules are explicit;
 - ~~replace the entire production dispatcher with PyTorch's Stable ABI~~ —
   every schema and kernel uses the boxed Stable ABI with a declared PyTorch
   2.10 target; the temporary probe and previous ATen dispatcher were deleted;
 - ~~validate one binary across two PyTorch minor releases~~ — the exact H20
   `.so` built with PyTorch 2.11 passes on 2.10 and 2.11, including complete
   vLLM 0.24/0.25 suites on the qualified 2.11 stack;
-- automate CUDA/PyTorch/Python matrix wheels and clean-install smoke tests.
+- ~~automate the CUDA/PyTorch/Python matrix artifact~~ —
+  `python/build_wheel.py` builds from a clean revision, packages exactly the
+  two native libraries, emits their manifest, audits ELF/RPATH/symbols, and
+  refuses an accidental source-only wheel;
+- ~~prove repository-free H20 clean installs~~ — one exact
+  `py3-none-linux_x86_64` artifact passes fresh Python 3.11 venv gates on
+  PyTorch 2.10/2.11 and vLLM 0.24/0.25, including `pip check`, package-local
+  library loading, BF16 smoke, and the applicable complete suites.
 
-Exit: a published binary artifact installs without a repository checkout,
-uses a declared PyTorch ABI boundary, and passes the same framework and H20
-gates as the source build.
+Exit: a qualified binary artifact installs without a repository checkout, uses
+a declared PyTorch ABI boundary, and passes the same framework and H20 gates as
+the source build. The first row reached this exit; it has not been published to
+a package index.
 
 ## K1: Useful Normalization Family
 
@@ -123,8 +132,8 @@ Status: in progress.
    vLLM bitwise/performance gates complete; INT8 remains planned;
 4. ~~named vLLM baseline and engine integration~~ — IR provider, compilation,
    CUDA Graph, and synthetic-Qwen2 generate-loop gates complete;
-5. ~~source-adapter wheel metadata and isolated-install smoke gate~~; automated
-   CUDA/LibTorch binary wheels and a production model/workload gate remain.
+5. ~~native CUDA/LibTorch wheel and clean-install matrix gate~~; a production
+   model/workload gate remains.
 
 Exit: one fused path improves a real decode workload, not only a microbenchmark.
 

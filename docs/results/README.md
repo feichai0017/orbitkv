@@ -24,7 +24,8 @@ otherwise.
 
 | Boundary | Result set | Current conclusion |
 | --- | --- | --- |
-| LibTorch Stable ABI across PyTorch minors | [two-minor H20 binary gate](h20-libtorch-stable-abi-20260723.json) | The sole production dispatcher targets PyTorch 2.10; one exact `.so` passes its applicable gates on 2.10 and 2.11, with 192/192 tests for each qualified vLLM minor on 2.11. Native wheels and broader PyTorch versions remain unclaimed. |
+| Native Python matrix wheel | [clean-install H20 gate](h20-native-wheel-clean-install-20260723.json) | One exact `py3-none-linux_x86_64` wheel contains the two Loom `.so` files and passes fresh-venv gates on PyTorch 2.10/2.11 plus vLLM 0.24/0.25. It is not published. |
+| LibTorch Stable ABI across PyTorch minors | [two-minor H20 binary gate](h20-libtorch-stable-abi-20260723.json) | The source-built predecessor established the PyTorch 2.10 Stable ABI target and same-binary 2.10/2.11 boundary; the packaged clean-install result is the row above. |
 | Pre-Stable-ABI single Rust bridge | [breaking-change H20 gate](h20-single-rust-bridge-compatibility-20260723.json) | Historical revision `cb5feaf` first proved all ten framework families on the Rust-owned path and passed 191 tests on each vLLM minor. The current dispatcher result is the row above. |
 | Historical partial-bridge baseline | [pre-unification 0.24/0.25 gate](h20-vllm-compatibility-rust-bridge-20260723.json) | Preserved as historical evidence for revision `3ae4210`; its raw-ABI routing description does not apply to the current architecture. |
 

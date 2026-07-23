@@ -13,7 +13,7 @@ the evidence used to qualify them.
 | --- | --- | --- |
 | Understand the project | [Operator-library design](design/operator-library.md) | [Operator catalog](operator-catalog.md) |
 | Use Rust or CUDA | [Project quick start](../README.md#quick-start) | [Implementation status](status.md) |
-| Integrate PyTorch or vLLM | [Python adapter README](../python/README.md) | [vLLM provider guide](guides/vllm-ir-provider.md) |
+| Integrate PyTorch or vLLM | [Python README](../python/README.md) | [vLLM provider guide](guides/vllm-ir-provider.md) |
 | Check supported versions | [Compatibility matrix](compatibility.md) | [Implementation status](status.md) |
 | Work on paged decode | [Paged-decode design](design/paged-decode-attention.md) | [Paged-decode evidence](results/README.md#paged-decode-attention) |
 | Evaluate performance | [Evidence index](results/README.md) | Raw JSON under [`results/`](results/) |
@@ -37,8 +37,8 @@ the evidence used to qualify them.
 
 ### Integration
 
-- [Python adapter README](../python/README.md) covers installation, native
-  library discovery, and direct PyTorch use.
+- [Python README](../python/README.md) covers native-wheel build/install,
+  editable development, matrix inspection, and direct PyTorch use.
 - [vLLM provider guide](guides/vllm-ir-provider.md) contains the complete vLLM
   0.24/0.25 build, opt-in, fallback, test, and benchmark contracts.
 - [Paged-decode design](design/paged-decode-attention.md) documents native KV
