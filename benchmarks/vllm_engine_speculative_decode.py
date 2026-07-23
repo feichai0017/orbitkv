@@ -117,6 +117,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--case", action="append", type=parse_case, dest="cases")
     parser.add_argument("--warmup", type=int, default=2)
     parser.add_argument("--repeats", type=int, default=5)
+    parser.add_argument("--boundary-profile-repeats", type=int, default=0)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.7)
     parser.add_argument("--seed", type=int, default=31)
     parser.add_argument(
@@ -151,6 +152,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("spec-tokens must be positive")
     if args.warmup <= 0 or args.repeats <= 0:
         parser.error("warmup and repeats must be positive")
+    if args.boundary_profile_repeats < 0:
+        parser.error("boundary-profile-repeats must be non-negative")
     if not 0.0 < args.gpu_memory_utilization < 1.0:
         parser.error("gpu-memory-utilization must be between zero and one")
     if args.internal_provider is not None and (
@@ -247,6 +250,7 @@ class RejectionCollector:
 
     def __init__(self) -> None:
         self._installed = False
+        self._cuda_timing_enabled = False
         self.reset()
 
     def install(self) -> None:
@@ -258,7 +262,18 @@ class RejectionCollector:
 
         @wraps(original)
         def tracked(*args: Any, **kwargs: Any) -> Any:
+            event_pair = None
+            if self._cuda_timing_enabled:
+                import torch
+
+                started = torch.cuda.Event(enable_timing=True)
+                finished = torch.cuda.Event(enable_timing=True)
+                started.record()
+                event_pair = (started, finished)
             output = original(*args, **kwargs)
+            if event_pair is not None:
+                event_pair[1].record()
+                self.cuda_event_pairs.append(event_pair)
             if len(args) >= 2:
                 draft_lengths = args[1]
             else:
@@ -277,6 +292,19 @@ class RejectionCollector:
         self.calls = 0
         self.draft_lengths: list[int] = []
         self.outputs: list[Any] = []
+        self.cuda_event_pairs: list[tuple[Any, Any]] = []
+
+    def enable_cuda_timing(self, enabled: bool) -> None:
+        self._cuda_timing_enabled = enabled
+
+    def cuda_event_count(self) -> int:
+        return len(self.cuda_event_pairs)
+
+    def cuda_elapsed_ms_since(self, start: int) -> float:
+        return sum(
+            started.elapsed_time(finished)
+            for started, finished in self.cuda_event_pairs[start:]
+        )
 
     def report(self, spec_tokens: int) -> dict[str, Any]:
         accepted_lengths: list[int] = []
@@ -388,6 +416,16 @@ def run_case(
         token_ids = current_token_ids
 
     launches_after = launch_count_fn()
+    speculative_stats = collector.report(args.spec_tokens)
+    boundary_profile = run_boundary_profile(
+        engine,
+        sampling,
+        prompts,
+        args.boundary_profile_repeats,
+        collector,
+        args.spec_tokens,
+        token_ids,
+    )
     return {
         "case": case.label,
         "batch_size": case.batch_size,
@@ -401,8 +439,70 @@ def run_case(
         "request_e2e_ms": summary(all_e2e_ms),
         "output_tokens_per_second": summary(throughput),
         "token_ids": token_ids,
-        "speculative_stats": collector.report(args.spec_tokens),
+        "speculative_stats": speculative_stats,
+        "boundary_profile": boundary_profile,
         "measured_loom_host_launches": launches_after - launches_before,
+    }
+
+
+def run_boundary_profile(
+    engine: Any,
+    sampling: Any,
+    prompts: list[dict[str, list[int]]],
+    repeats: int,
+    collector: RejectionCollector,
+    spec_tokens: int,
+    expected_token_ids: list[list[int]] | None,
+) -> dict[str, Any] | None:
+    if repeats == 0:
+        return None
+
+    import torch
+
+    collector.reset()
+    collector.enable_cuda_timing(True)
+    batch_latency_ms: list[float] = []
+    rejection_cuda_ms: list[float] = []
+    rejection_share: list[float] = []
+    calls_per_generate: list[int] = []
+    for _ in range(repeats):
+        event_start = collector.cuda_event_count()
+        calls_before = collector.calls
+        torch.cuda.synchronize()
+        started = time.perf_counter()
+        outputs = engine.generate(prompts, sampling, use_tqdm=False)
+        torch.cuda.synchronize()
+        elapsed_ms = (time.perf_counter() - started) * 1000.0
+        current_token_ids = [
+            list(request.outputs[0].token_ids) for request in outputs
+        ]
+        if (
+            expected_token_ids is not None
+            and current_token_ids != expected_token_ids
+        ):
+            raise RuntimeError("boundary profile changed fixed greedy output")
+        boundary_ms = collector.cuda_elapsed_ms_since(event_start)
+        batch_latency_ms.append(elapsed_ms)
+        rejection_cuda_ms.append(boundary_ms)
+        rejection_share.append(
+            boundary_ms / elapsed_ms if elapsed_ms > 0.0 else 0.0
+        )
+        calls_per_generate.append(collector.calls - calls_before)
+    collector.enable_cuda_timing(False)
+    return {
+        "repeats": repeats,
+        "batch_latency_ms": summary(batch_latency_ms),
+        "rejection_boundary_cuda_ms": summary(rejection_cuda_ms),
+        "rejection_boundary_share_of_batch_latency": summary(
+            rejection_share
+        ),
+        "rejection_calls_per_generate": calls_per_generate,
+        "speculative_stats": collector.report(spec_tokens),
+        "method": (
+            "CUDA events bracket the process-local rejection_sample function "
+            "after primary timing; event instrumentation is not part of the "
+            "reported benchmark latency samples"
+        ),
     }
 
 
@@ -565,6 +665,7 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
         "dtype": "bfloat16",
         "warmup": args.warmup,
         "repeats": args.repeats,
+        "boundary_profile_repeats": args.boundary_profile_repeats,
         "seed": args.seed,
         "enforce_eager": args.enforce_eager,
         "max_model_len": max_model_len,
@@ -578,8 +679,9 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
             "total_host_launch_count": total_host_launch_count,
             "provider_metadata": provider_metadata(),
             "counter_semantics": (
-                "successful Rust bridge submissions from measured and warmup "
-                "rejection calls; measured count excludes warmup by delta"
+                "total includes warmup, measured, and optional profile "
+                "submissions; measured count excludes warmup and profile by "
+                "taking its delta first"
             ),
         },
         "environment": {
@@ -640,6 +742,8 @@ def child_command(
         str(args.warmup),
         "--repeats",
         str(args.repeats),
+        "--boundary-profile-repeats",
+        str(args.boundary_profile_repeats),
         "--gpu-memory-utilization",
         str(args.gpu_memory_utilization),
         "--seed",
@@ -669,6 +773,17 @@ def ratio(
 
 def median_metric(case: dict[str, Any], name: str) -> float | None:
     metric = case[name]
+    return None if metric is None else float(metric["median"])
+
+
+def median_profile_metric(
+    case: dict[str, Any],
+    name: str,
+) -> float | None:
+    profile = case["boundary_profile"]
+    if profile is None:
+        return None
+    metric = profile[name]
     return None if metric is None else float(metric["median"])
 
 
@@ -733,6 +848,22 @@ def compare_reports(
             loom,
             "output_tokens_per_second",
         )
+        native_rejection_ms = median_profile_metric(
+            native,
+            "rejection_boundary_cuda_ms",
+        )
+        loom_rejection_ms = median_profile_metric(
+            loom,
+            "rejection_boundary_cuda_ms",
+        )
+        native_rejection_share = median_profile_metric(
+            native,
+            "rejection_boundary_share_of_batch_latency",
+        )
+        loom_rejection_share = median_profile_metric(
+            loom,
+            "rejection_boundary_share_of_batch_latency",
+        )
         comparisons.append(
             {
                 "case": target["case"],
@@ -781,6 +912,18 @@ def compare_reports(
                 "loom_over_native_output_throughput": ratio(
                     loom_throughput,
                     native_throughput,
+                ),
+                "native_rejection_boundary_cuda_ms": native_rejection_ms,
+                "loom_rejection_boundary_cuda_ms": loom_rejection_ms,
+                "native_over_loom_rejection_boundary_cuda_time": ratio(
+                    native_rejection_ms,
+                    loom_rejection_ms,
+                ),
+                "native_rejection_share_of_batch_latency": (
+                    native_rejection_share
+                ),
+                "loom_rejection_share_of_batch_latency": (
+                    loom_rejection_share
                 ),
                 "performance_is_acceptance_gate": False,
             }
@@ -899,6 +1042,7 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
         "draft_revision": args.draft_revision,
         "spec_tokens": args.spec_tokens,
         "prompt_mode": args.prompt_mode,
+        "boundary_profile_repeats": args.boundary_profile_repeats,
         "provider_order": order,
         "acceptance": {
             "passed": accepted,
