@@ -194,6 +194,26 @@ def reset_add_rms_norm_rust_bridge_launch_count() -> None:
     torch.ops.loom_kernels.reset_add_rms_norm_rust_bridge_launch_count()
 
 
+def rms_norm_dynamic_fp8_rust_bridge_launch_count() -> int:
+    """Return successful RMSNorm+FP8 submissions through the Rust bridge."""
+    if _dispatch()._EXTENSION_PATH is None:
+        raise RuntimeError(
+            "Rust bridge telemetry requires the prebuilt PyTorch extension"
+        )
+    return int(
+        torch.ops.loom_kernels.rms_norm_dynamic_fp8_rust_bridge_launch_count()
+    )
+
+
+def reset_rms_norm_dynamic_fp8_rust_bridge_launch_count() -> None:
+    """Reset RMSNorm+FP8 Rust bridge launch telemetry."""
+    if _dispatch()._EXTENSION_PATH is None:
+        raise RuntimeError(
+            "Rust bridge telemetry requires the prebuilt PyTorch extension"
+        )
+    torch.ops.loom_kernels.reset_rms_norm_dynamic_fp8_rust_bridge_launch_count()
+
+
 def rms_norm_dynamic_fp8_out(
     input_tensor: torch.Tensor,
     weight: torch.Tensor,

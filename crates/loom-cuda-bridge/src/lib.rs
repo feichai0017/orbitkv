@@ -20,7 +20,7 @@ mod cuda {
         DeviceSliceMut,
     };
     use loom_cuda::{CudaBackend, CudaExecutorError};
-    use loom_kernels::{AddRmsNormSpec, DType};
+    use loom_kernels::{AddRmsNormSpec, DType, RmsNormDynamicFp8Spec};
     use std::cell::RefCell;
     use std::ffi::{c_char, c_int, c_void, CString};
     use std::mem::{align_of, size_of};
@@ -34,6 +34,7 @@ mod cuda {
     const UNAVAILABLE: c_int = 4;
 
     static ADD_RMS_NORM_LAUNCHES: AtomicU64 = AtomicU64::new(0);
+    static RMS_NORM_DYNAMIC_FP8_LAUNCHES: AtomicU64 = AtomicU64::new(0);
 
     thread_local! {
         static LAST_ERROR: RefCell<CString> = RefCell::new(
@@ -116,6 +117,91 @@ mod cuda {
             W: CudaDeviceRead<Self>,
         {
             backend.add_rms_norm_bf16(input, residual, weight, spec)
+        }
+    }
+
+    trait RmsNormDynamicFp8Scalar: Copy {
+        const DTYPE: DType;
+
+        fn launch<S, I, W, O, Q>(
+            backend: &CudaBackend<S>,
+            input: &I,
+            weight: &W,
+            output: &mut O,
+            scales: &mut Q,
+            spec: RmsNormDynamicFp8Spec,
+        ) -> Result<(), CudaExecutorError>
+        where
+            S: CudaStreamHandle,
+            I: CudaDeviceRead<Self>,
+            W: CudaDeviceRead<Self>,
+            O: CudaDeviceWrite<u8>,
+            Q: CudaDeviceWrite<f32>;
+    }
+
+    impl RmsNormDynamicFp8Scalar for f32 {
+        const DTYPE: DType = DType::F32;
+
+        fn launch<S, I, W, O, Q>(
+            backend: &CudaBackend<S>,
+            input: &I,
+            weight: &W,
+            output: &mut O,
+            scales: &mut Q,
+            spec: RmsNormDynamicFp8Spec,
+        ) -> Result<(), CudaExecutorError>
+        where
+            S: CudaStreamHandle,
+            I: CudaDeviceRead<Self>,
+            W: CudaDeviceRead<Self>,
+            O: CudaDeviceWrite<u8>,
+            Q: CudaDeviceWrite<f32>,
+        {
+            backend.rms_norm_dynamic_fp8_f32(input, weight, output, scales, spec)
+        }
+    }
+
+    impl RmsNormDynamicFp8Scalar for f16 {
+        const DTYPE: DType = DType::F16;
+
+        fn launch<S, I, W, O, Q>(
+            backend: &CudaBackend<S>,
+            input: &I,
+            weight: &W,
+            output: &mut O,
+            scales: &mut Q,
+            spec: RmsNormDynamicFp8Spec,
+        ) -> Result<(), CudaExecutorError>
+        where
+            S: CudaStreamHandle,
+            I: CudaDeviceRead<Self>,
+            W: CudaDeviceRead<Self>,
+            O: CudaDeviceWrite<u8>,
+            Q: CudaDeviceWrite<f32>,
+        {
+            backend.rms_norm_dynamic_fp8_f16(input, weight, output, scales, spec)
+        }
+    }
+
+    impl RmsNormDynamicFp8Scalar for bf16 {
+        const DTYPE: DType = DType::Bf16;
+
+        fn launch<S, I, W, O, Q>(
+            backend: &CudaBackend<S>,
+            input: &I,
+            weight: &W,
+            output: &mut O,
+            scales: &mut Q,
+            spec: RmsNormDynamicFp8Spec,
+        ) -> Result<(), CudaExecutorError>
+        where
+            S: CudaStreamHandle,
+            I: CudaDeviceRead<Self>,
+            W: CudaDeviceRead<Self>,
+            O: CudaDeviceWrite<u8>,
+            Q: CudaDeviceWrite<f32>,
+        {
+            backend.rms_norm_dynamic_fp8_bf16(input, weight, output, scales, spec)
         }
     }
 
@@ -210,6 +296,59 @@ mod cuda {
 
         T::launch(&backend, &mut input, &mut residual, &weight, spec)?;
         ADD_RMS_NORM_LAUNCHES.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn launch_rms_norm_dynamic_fp8<T: RmsNormDynamicFp8Scalar>(
+        input: *const T,
+        input_elements: u64,
+        weight: *const T,
+        weight_elements: u64,
+        output: *mut u8,
+        output_elements: u64,
+        scales: *mut f32,
+        scale_elements: u64,
+        rows: u32,
+        hidden_size: u32,
+        epsilon: f32,
+        stream: *mut c_void,
+    ) -> Result<(), CudaExecutorError> {
+        let input_elements = element_count(input_elements, "RMSNorm+FP8 input")?;
+        let weight_elements = element_count(weight_elements, "RMSNorm+FP8 weight")?;
+        let output_elements = element_count(output_elements, "RMSNorm+FP8 output")?;
+        let scale_elements = element_count(scale_elements, "RMSNorm+FP8 scales")?;
+
+        let input_range = checked_byte_range(input, input_elements, "RMSNorm+FP8 input")?;
+        let weight_range = checked_byte_range(weight, weight_elements, "RMSNorm+FP8 weight")?;
+        let output_range =
+            checked_byte_range(output.cast_const(), output_elements, "RMSNorm+FP8 output")?;
+        let scale_range =
+            checked_byte_range(scales.cast_const(), scale_elements, "RMSNorm+FP8 scales")?;
+        if ranges_overlap(output_range, input_range)
+            || ranges_overlap(output_range, weight_range)
+            || ranges_overlap(output_range, scale_range)
+            || ranges_overlap(scale_range, input_range)
+            || ranges_overlap(scale_range, weight_range)
+        {
+            return Err(CudaExecutorError::InvalidContract(
+                "RMSNorm+FP8 output and scales must not overlap input, weight, or each other"
+                    .into(),
+            ));
+        }
+
+        let spec =
+            RmsNormDynamicFp8Spec::new(rows as usize, hidden_size as usize, epsilon, T::DTYPE)
+                .map_err(|error| CudaExecutorError::InvalidContract(error.to_string()))?;
+        let stream = unsafe { CudaStreamRef::from_raw(stream) };
+        let backend = CudaBackend::from_stream(stream);
+        let input = unsafe { DeviceSlice::from_raw_parts(input, input_elements) }?;
+        let weight = unsafe { DeviceSlice::from_raw_parts(weight, weight_elements) }?;
+        let mut output = unsafe { DeviceSliceMut::from_raw_parts(output, output_elements) }?;
+        let mut scales = unsafe { DeviceSliceMut::from_raw_parts(scales, scale_elements) }?;
+
+        T::launch(&backend, &input, &weight, &mut output, &mut scales, spec)?;
+        RMS_NORM_DYNAMIC_FP8_LAUNCHES.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -380,6 +519,123 @@ mod cuda {
         })
     }
 
+    /// Launch checked F32 RMSNorm plus dynamic per-token FP8 quantization.
+    ///
+    /// # Safety
+    ///
+    /// Device pointers, element counts, active CUDA context, stream lifetime,
+    /// and asynchronous allocation lifetime must satisfy the bridge header.
+    #[no_mangle]
+    pub unsafe extern "C" fn loom_cuda_bridge_rms_norm_dynamic_fp8_f32(
+        input: *const f32,
+        input_elements: u64,
+        weight: *const f32,
+        weight_elements: u64,
+        output: *mut u8,
+        output_elements: u64,
+        scales: *mut f32,
+        scale_elements: u64,
+        rows: u32,
+        hidden_size: u32,
+        epsilon: f32,
+        stream: *mut c_void,
+    ) -> c_int {
+        run_ffi(|| unsafe {
+            launch_rms_norm_dynamic_fp8(
+                input,
+                input_elements,
+                weight,
+                weight_elements,
+                output,
+                output_elements,
+                scales,
+                scale_elements,
+                rows,
+                hidden_size,
+                epsilon,
+                stream,
+            )
+        })
+    }
+
+    /// Launch checked FP16 RMSNorm plus dynamic per-token FP8 quantization.
+    ///
+    /// # Safety
+    ///
+    /// Device pointers, element counts, active CUDA context, stream lifetime,
+    /// and asynchronous allocation lifetime must satisfy the bridge header.
+    #[no_mangle]
+    pub unsafe extern "C" fn loom_cuda_bridge_rms_norm_dynamic_fp8_f16(
+        input: *const u16,
+        input_elements: u64,
+        weight: *const u16,
+        weight_elements: u64,
+        output: *mut u8,
+        output_elements: u64,
+        scales: *mut f32,
+        scale_elements: u64,
+        rows: u32,
+        hidden_size: u32,
+        epsilon: f32,
+        stream: *mut c_void,
+    ) -> c_int {
+        run_ffi(|| unsafe {
+            launch_rms_norm_dynamic_fp8(
+                input.cast::<f16>(),
+                input_elements,
+                weight.cast::<f16>(),
+                weight_elements,
+                output,
+                output_elements,
+                scales,
+                scale_elements,
+                rows,
+                hidden_size,
+                epsilon,
+                stream,
+            )
+        })
+    }
+
+    /// Launch checked BF16 RMSNorm plus dynamic per-token FP8 quantization.
+    ///
+    /// # Safety
+    ///
+    /// Device pointers, element counts, active CUDA context, stream lifetime,
+    /// and asynchronous allocation lifetime must satisfy the bridge header.
+    #[no_mangle]
+    pub unsafe extern "C" fn loom_cuda_bridge_rms_norm_dynamic_fp8_bf16(
+        input: *const u16,
+        input_elements: u64,
+        weight: *const u16,
+        weight_elements: u64,
+        output: *mut u8,
+        output_elements: u64,
+        scales: *mut f32,
+        scale_elements: u64,
+        rows: u32,
+        hidden_size: u32,
+        epsilon: f32,
+        stream: *mut c_void,
+    ) -> c_int {
+        run_ffi(|| unsafe {
+            launch_rms_norm_dynamic_fp8(
+                input.cast::<bf16>(),
+                input_elements,
+                weight.cast::<bf16>(),
+                weight_elements,
+                output,
+                output_elements,
+                scales,
+                scale_elements,
+                rows,
+                hidden_size,
+                epsilon,
+                stream,
+            )
+        })
+    }
+
     /// Return successful Add+RMSNorm submissions through the Rust bridge.
     #[no_mangle]
     pub extern "C" fn loom_cuda_bridge_add_rms_norm_launch_count() -> u64 {
@@ -390,6 +646,18 @@ mod cuda {
     #[no_mangle]
     pub extern "C" fn loom_cuda_bridge_reset_add_rms_norm_launch_count() {
         ADD_RMS_NORM_LAUNCHES.store(0, Ordering::Relaxed);
+    }
+
+    /// Return successful RMSNorm+FP8 submissions through the Rust bridge.
+    #[no_mangle]
+    pub extern "C" fn loom_cuda_bridge_rms_norm_dynamic_fp8_launch_count() -> u64 {
+        RMS_NORM_DYNAMIC_FP8_LAUNCHES.load(Ordering::Relaxed)
+    }
+
+    /// Reset RMSNorm+FP8 bridge launch telemetry.
+    #[no_mangle]
+    pub extern "C" fn loom_cuda_bridge_reset_rms_norm_dynamic_fp8_launch_count() {
+        RMS_NORM_DYNAMIC_FP8_LAUNCHES.store(0, Ordering::Relaxed);
     }
 
     #[cfg(test)]

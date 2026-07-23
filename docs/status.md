@@ -51,9 +51,9 @@
   Rust sizing/execution APIs, two/four-head GQA packing, and CUDA Graph-safe
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
-- a C++ PyTorch dispatcher using the current CUDA stream, with Add+RMSNorm
-  routed through `loom-cuda-bridge` into borrowed safe Rust dispatch while
-  other operators retain the direct raw-CUDA path;
+- a C++ PyTorch dispatcher using the current CUDA stream, with Add+RMSNorm and
+  RMSNorm+dynamic-FP8 routed through `loom-cuda-bridge` into borrowed safe Rust
+  dispatch while other operators retain the direct raw-CUDA path;
 - a source-adapter Python wheel with explicit framework extras, project
   metadata, license/readme payloads, and a CI install/entry-point smoke gate;
 - a `loom_cuda` vLLM IR provider with native fallback and an opt-in vLLM
@@ -89,10 +89,10 @@
   large-shape execution passed at `16x8192`.
 - PyTorch external-stream, mutation-schema/FakeTensor, `torch.compile`, and
   CUDA Graph tests passed with the C++ dispatcher bridge;
-- the checked Add+RMSNorm Rust bridge built and linked on H20, passed
+- the checked normalization Rust bridge built and linked on H20, passed
   CUDA-feature Clippy and its address-range unit test, rejected short and
-  overlapping buffers before launch, and recorded path hits from both direct
-  PyTorch and vLLM IR execution;
+  overlapping buffers before launch, and recorded Add+RMSNorm path hits from
+  direct PyTorch and vLLM IR plus RMSNorm+FP8 path hits from direct PyTorch;
 - Loom and vLLM's CUDA provider were bitwise identical for BF16 at `1x4096`,
   `8x4096`, `128x4096`, and `8x8192`;
 - through the same vLLM IR dispatch, order-reversed H20 runs measured Loom
@@ -102,7 +102,8 @@
   generation with the normal Qwen2 model runner and a synthetic random model.
 - RMSNorm+FP8 F32/FP16/BF16 outputs and F32 row scales were bitwise identical
   to vLLM 0.24 at `8x4096`, `3x127`, and `2x128` on H20;
-- the RMSNorm+FP8 PyTorch suite passed 20 tests covering external streams,
+- the 24-test normalization dispatcher suite passed with RMSNorm+FP8 coverage
+  for external streams,
   dispatcher mutation, out-buffer reuse, fullgraph compilation, and CUDA Graph
   capture/replay;
 - order-reversed BF16 `8x4096` named-baseline runs measured Loom
@@ -181,7 +182,7 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the current complete H20 Python suite passes 179 tests; the Rust core passes
+- the current complete H20 Python suite passes 181 tests; the Rust core passes
   30 contract/oracle tests, and the CUDA-feature workspace passes formatting,
   Clippy, release build, plus six safe-wrapper CPU-oracle tests;
 - against vLLM's exact `compute_logprobs + gather_logprobs(0)` path for the

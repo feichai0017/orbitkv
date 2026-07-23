@@ -58,7 +58,7 @@ is never a performance claim.
 flowchart LR
     A["Inference engine"] --> N["Native Rust adapter"]
     A --> P["PyTorch / vLLM adapter"]
-    P -- "Add+RMSNorm" --> B["Checked Rust FFI bridge"]
+    P -- "Add+RMSNorm / RMSNorm→FP8" --> B["Checked Rust FFI bridge"]
     P -- "Other admitted operators" --> C["Raw CUDA C ABI"]
     N --> R["Safe Rust dispatch"]
     B --> R
@@ -71,11 +71,11 @@ flowchart LR
 
 The backend either accepts the exact contract or declines it. Adapters do not
 silently copy, cast, reshape, or change sampling policy to force a Loom path.
-Add+RMSNorm is the first framework canary routed through
-`loom-cuda-bridge`: PyTorch passes its existing pointers, element counts, and
-current stream into checked Rust borrowed views before launch. Other operators
-still call the raw CUDA C ABI directly and will migrate only after their own
-correctness and engine gates close.
+Add+RMSNorm and RMSNorm→dynamic-FP8 are the first framework paths routed
+through `loom-cuda-bridge`: PyTorch passes its existing pointers, element
+counts, and current stream into checked Rust borrowed views before launch.
+Other operators still call the raw CUDA C ABI directly and will migrate only
+after their own correctness and engine gates close.
 
 ## Quick start
 

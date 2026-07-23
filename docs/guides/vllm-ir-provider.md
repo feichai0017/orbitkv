@@ -67,10 +67,10 @@ The first command builds `build/libloom_kernels_cuda.so` and the checked
 `build/libloom_cuda_bridge.so` from the same CUDA sources used by the Rust
 backend. The second builds a small C++ dispatcher shim at
 `build/libloom_kernels_torch.so`; this avoids Python/ctypes overhead on the
-vLLM hot path. Add+RMSNorm enters safe Rust borrowed dispatch through the
-checked bridge, while the other operator families currently retain the raw C
-ABI. Repository checkouts discover the files automatically. A packaged
-deployment can set `LOOM_KERNELS_CUDA_LIBRARY` and
+vLLM hot path. Add+RMSNorm and RMSNorm+dynamic-FP8 enter safe Rust borrowed
+dispatch through the checked bridge, while the other operator families
+currently retain the raw C ABI. Repository checkouts discover the files
+automatically. A packaged deployment can set `LOOM_KERNELS_CUDA_LIBRARY` and
 `LOOM_KERNELS_TORCH_LIBRARY` to absolute library paths and must keep
 `libloom_cuda_bridge.so` next to the dispatcher library or in its parent
 directory.

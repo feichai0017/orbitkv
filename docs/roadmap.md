@@ -28,8 +28,9 @@ an oracle-checked CUDA path without cloning the repository.
 
 ## K0.6: Engine-Owned Runtime Interop
 
-Status: complete for the Add+RMSNorm vertical slice after
-`v1.0.0-alpha.1`; migration of other operators remains incremental.
+Status: complete for the Add+RMSNorm and RMSNorm+dynamic-FP8 normalization
+vertical slices after `v1.0.0-alpha.1`; migration of other operators remains
+incremental.
 
 - ~~generic safe backend over owned or borrowed CUDA streams~~;
 - ~~sealed read/write device-memory traits shared by owned buffers and borrowed
@@ -37,13 +38,13 @@ Status: complete for the Add+RMSNorm vertical slice after
 - ~~zero-copy H20 oracle smoke on a borrowed stream and borrowed allocations,
   including non-destruction of framework-owned resources~~;
 - ~~route one real framework adapter through the safe Rust boundary instead of
-  calling the raw C ABI directly~~ — PyTorch/vLLM Add+RMSNorm now enters
-  `loom-cuda-bridge` with actual buffer lengths and borrowed current-stream
-  ownership;
+  calling the raw C ABI directly~~ — PyTorch/vLLM Add+RMSNorm and PyTorch
+  RMSNorm+dynamic-FP8 now enter `loom-cuda-bridge` with actual buffer lengths
+  and borrowed current-stream ownership;
 - ~~validate external current-stream ordering, CUDA Graph capture, and engine
   fallback behavior through that Rust-owned path~~ — the H20 gate covers all
-  three dtypes, odd widths, `torch.compile`, CUDA Graph replay, vLLM IR
-  invocation, and Rust-side invalid-buffer rejection.
+  three dtypes, odd widths, `torch.compile`, CUDA Graph replay, Add+RMSNorm
+  vLLM IR invocation, and Rust-side invalid-buffer rejection for both paths.
 
 Exit: an inference-engine call reaches checked Rust dispatch using its existing
 tensor memory and CUDA stream, with no hidden copy, allocation, or ownership

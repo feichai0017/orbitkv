@@ -11,8 +11,10 @@ from loom_kernels.torch_ops import (
     dynamic_fp8_unchecked_custom_op,
     mutable_custom_op,
     reset_add_rms_norm_rust_bridge_launch_count,
+    reset_rms_norm_dynamic_fp8_rust_bridge_launch_count,
     rms_norm_dynamic_fp8,
     rms_norm_dynamic_fp8_out,
+    rms_norm_dynamic_fp8_rust_bridge_launch_count,
 )
 
 
@@ -133,11 +135,13 @@ def test_rms_norm_dynamic_fp8_matches_vllm_on_external_stream(dtype, shape):
         input_tensor, weight, epsilon
     )
 
+    reset_rms_norm_dynamic_fp8_rust_bridge_launch_count()
     stream = torch.cuda.Stream()
     with torch.cuda.stream(stream):
         output, scales = rms_norm_dynamic_fp8(input_tensor, weight, epsilon)
     stream.synchronize()
 
+    assert rms_norm_dynamic_fp8_rust_bridge_launch_count() == 1
     assert output.dtype == torch.float8_e4m3fn
     assert scales.shape == (input_tensor.numel() // shape[-1], 1)
     assert torch.equal(output.view(torch.uint8), expected_output.view(torch.uint8))
@@ -162,6 +166,36 @@ def test_rms_norm_dynamic_fp8_out_reuses_caller_buffers():
     assert returned_scales is scales
     assert output.data_ptr() == output_pointer
     assert scales.data_ptr() == scales_pointer
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_unchecked_dynamic_fp8_rejects_short_scales_in_rust_bridge():
+    input_tensor = torch.randn(2, 128, device="cuda", dtype=torch.float16)
+    weight = torch.ones(128, device="cuda", dtype=torch.float16)
+    output = torch.empty_like(input_tensor, dtype=torch.float8_e4m3fn)
+    scales = torch.empty(1, 1, device="cuda", dtype=torch.float32)
+
+    reset_rms_norm_dynamic_fp8_rust_bridge_launch_count()
+    with pytest.raises(RuntimeError, match=r"scales has 1 elements, expected 2"):
+        torch.ops.loom_kernels.rms_norm_dynamic_fp8_unchecked(
+            input_tensor, weight, output, scales, 1.0e-5
+        )
+    assert rms_norm_dynamic_fp8_rust_bridge_launch_count() == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_unchecked_dynamic_fp8_rejects_output_alias_in_rust_bridge():
+    input_tensor = torch.randn(2, 128, device="cuda", dtype=torch.float16)
+    weight = torch.ones(128, device="cuda", dtype=torch.float16)
+    output = input_tensor.view(torch.uint8).flatten()[: input_tensor.numel()]
+    scales = torch.empty(2, 1, device="cuda", dtype=torch.float32)
+
+    reset_rms_norm_dynamic_fp8_rust_bridge_launch_count()
+    with pytest.raises(RuntimeError, match=r"must not overlap"):
+        torch.ops.loom_kernels.rms_norm_dynamic_fp8_unchecked(
+            input_tensor, weight, output, scales, 1.0e-5
+        )
+    assert rms_norm_dynamic_fp8_rust_bridge_launch_count() == 0
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -262,6 +296,7 @@ def test_dynamic_fp8_checked_op_can_be_captured_and_replayed():
     output = torch.empty_like(input_tensor, dtype=torch.float8_e4m3fn)
     scales = torch.empty(2, 1, device="cuda", dtype=torch.float32)
 
+    reset_rms_norm_dynamic_fp8_rust_bridge_launch_count()
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
         torch.ops.loom_kernels.rms_norm_dynamic_fp8(
@@ -272,5 +307,6 @@ def test_dynamic_fp8_checked_op_can_be_captured_and_replayed():
     graph.replay()
     torch.cuda.synchronize()
 
+    assert rms_norm_dynamic_fp8_rust_bridge_launch_count() == 1
     assert torch.equal(output.view(torch.uint8), expected_output.view(torch.uint8))
     torch.testing.assert_close(scales, expected_scales, rtol=2.0e-6, atol=1.0e-8)

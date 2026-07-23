@@ -178,30 +178,37 @@ void launch_rms_norm_dynamic_fp8(const at::Tensor& input,
   const auto stream = at::cuda::getCurrentCUDAStream(input.device().index());
   const auto rows = static_cast<uint32_t>(rows_i64);
   const auto hidden_size = static_cast<uint32_t>(hidden_size_i64);
+  const auto input_elements = static_cast<uint64_t>(input.numel());
+  const auto weight_elements = static_cast<uint64_t>(weight.numel());
+  const auto output_elements = static_cast<uint64_t>(output.numel());
+  const auto scale_elements = static_cast<uint64_t>(scales.numel());
   const auto epsilon_f32 = static_cast<float>(epsilon);
   auto* output_bytes = reinterpret_cast<uint8_t*>(output.data_ptr());
   auto* scale_values = scales.data_ptr<float>();
-  int status = LOOM_CUDA_UNSUPPORTED;
+  int status = LOOM_CUDA_BRIDGE_UNSUPPORTED;
   if (input.scalar_type() == at::kFloat) {
-    status = loom_cuda_rms_norm_dynamic_fp8_f32(
-        input.data_ptr<float>(), weight.data_ptr<float>(), output_bytes,
-        scale_values, rows, hidden_size, epsilon_f32, stream.stream());
+    status = loom_cuda_bridge_rms_norm_dynamic_fp8_f32(
+        input.data_ptr<float>(), input_elements, weight.data_ptr<float>(),
+        weight_elements, output_bytes, output_elements, scale_values,
+        scale_elements, rows, hidden_size, epsilon_f32, stream.stream());
   } else if (input.scalar_type() == at::kHalf) {
-    status = loom_cuda_rms_norm_dynamic_fp8_f16(
+    status = loom_cuda_bridge_rms_norm_dynamic_fp8_f16(
         reinterpret_cast<const uint16_t*>(input.data_ptr<at::Half>()),
+        input_elements,
         reinterpret_cast<const uint16_t*>(weight.data_ptr<at::Half>()),
-        output_bytes, scale_values, rows, hidden_size, epsilon_f32,
-        stream.stream());
+        weight_elements, output_bytes, output_elements, scale_values,
+        scale_elements, rows, hidden_size, epsilon_f32, stream.stream());
   } else if (input.scalar_type() == at::kBFloat16) {
-    status = loom_cuda_rms_norm_dynamic_fp8_bf16(
+    status = loom_cuda_bridge_rms_norm_dynamic_fp8_bf16(
         reinterpret_cast<const uint16_t*>(input.data_ptr<at::BFloat16>()),
+        input_elements,
         reinterpret_cast<const uint16_t*>(weight.data_ptr<at::BFloat16>()),
-        output_bytes, scale_values, rows, hidden_size, epsilon_f32,
-        stream.stream());
+        weight_elements, output_bytes, output_elements, scale_values,
+        scale_elements, rows, hidden_size, epsilon_f32, stream.stream());
   }
-  TORCH_CHECK(status == LOOM_CUDA_SUCCESS,
-              "Loom CUDA RMSNorm+FP8 launch failed: ",
-              loom_cuda_status_string(status), " (status ", status, ")");
+  TORCH_CHECK(status == LOOM_CUDA_BRIDGE_SUCCESS,
+              "Loom Rust RMSNorm+FP8 bridge failed: ",
+              loom_cuda_bridge_last_error_message(), " (status ", status, ")");
 }
 
 void rms_norm_dynamic_fp8(const at::Tensor& input, const at::Tensor& weight,
@@ -1099,6 +1106,18 @@ void reset_add_rms_norm_rust_bridge_launch_count() {
   loom_cuda_bridge_reset_add_rms_norm_launch_count();
 }
 
+int64_t rms_norm_dynamic_fp8_rust_bridge_launch_count() {
+  const auto count = loom_cuda_bridge_rms_norm_dynamic_fp8_launch_count();
+  TORCH_CHECK(
+      count <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+      "Loom Rust RMSNorm+FP8 bridge launch count exceeds int64");
+  return static_cast<int64_t>(count);
+}
+
+void reset_rms_norm_dynamic_fp8_rust_bridge_launch_count() {
+  loom_cuda_bridge_reset_rms_norm_dynamic_fp8_launch_count();
+}
+
 }  // namespace
 
 TORCH_LIBRARY(loom_kernels, library) {
@@ -1112,6 +1131,10 @@ TORCH_LIBRARY(loom_kernels, library) {
               &add_rms_norm_rust_bridge_launch_count);
   library.def("reset_add_rms_norm_rust_bridge_launch_count() -> ()",
               &reset_add_rms_norm_rust_bridge_launch_count);
+  library.def("rms_norm_dynamic_fp8_rust_bridge_launch_count() -> int",
+              &rms_norm_dynamic_fp8_rust_bridge_launch_count);
+  library.def("reset_rms_norm_dynamic_fp8_rust_bridge_launch_count() -> ()",
+              &reset_rms_norm_dynamic_fp8_rust_bridge_launch_count);
   library.def(
       "rms_norm_dynamic_fp8(Tensor input_tensor, Tensor weight, "
       "Tensor(a!) output, Tensor(b!) scales, float epsilon) -> ()");

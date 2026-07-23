@@ -38,8 +38,9 @@ export LOOM_KERNELS_TORCH_LIBRARY=/path/to/libloom_kernels_torch.so
 
 `build_native.py` also builds `libloom_cuda_bridge.so`. Keep that library next
 to `libloom_kernels_torch.so` (or in its parent directory) so the dispatcher's
-relative runtime search path can load it. Add+RMSNorm uses this checked Rust
-path; the remaining operator families currently use the raw CUDA library.
+relative runtime search path can load it. Add+RMSNorm and RMSNorm+dynamic-FP8
+use this checked Rust path; the remaining operator families currently use the
+raw CUDA library.
 
 Automated binary wheels are not published yet.
 

@@ -10,9 +10,9 @@ spelling; Python source-adapter metadata uses the equivalent PEP 440 spelling.
 - `loom-cuda-bridge`, a panic-contained checked C boundary that converts
   framework-owned pointers, element counts, and CUDA streams into borrowed safe
   Rust resources;
-- a first Add+RMSNorm PyTorch/vLLM vertical slice through that bridge, with
-  launch telemetry, external-stream, `torch.compile`, CUDA Graph, and invalid
-  buffer gates on NVIDIA H20.
+- Add+RMSNorm PyTorch/vLLM and RMSNorm+dynamic-FP8 PyTorch vertical slices
+  through that bridge, with independent launch telemetry, external-stream,
+  `torch.compile`, CUDA Graph, and invalid-buffer gates on NVIDIA H20.
 
 ### Fixed
 

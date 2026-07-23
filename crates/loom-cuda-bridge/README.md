@@ -8,9 +8,10 @@ counts, and the stream handle once; Rust constructs non-owning typed views,
 validates the operator contract, and launches asynchronously without copying,
 allocating device memory, synchronizing, or taking ownership.
 
-The first admitted bridge path is fused Add+RMSNorm. Other C ABI operators
-remain in `loom-cuda-sys` until their framework paths are migrated and
-validated independently.
+The first admitted bridge paths are fused Add+RMSNorm and RMSNorm followed by
+dynamic per-token FP8 quantization. Other C ABI operators remain in
+`loom-cuda-sys` until their framework paths are migrated and validated
+independently.
 
 ```bash
 CUDA_HOME=/usr/local/cuda LOOM_CUDA_ARCHS=90 \

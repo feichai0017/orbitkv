@@ -40,8 +40,32 @@ int loom_cuda_bridge_add_rms_norm_bf16(
     uint64_t weight_elements, uint32_t rows, uint32_t hidden_size,
     float epsilon, void* stream);
 
+// Checked Rust-runtime RMSNorm plus dynamic per-token FP8 entrypoints. Output
+// element counts are raw FP8 bytes; scales contains one F32 element per row.
+// Mutable output and scale regions must not overlap input, weight, or each
+// other. Launches use the supplied framework-owned CUDA stream.
+int loom_cuda_bridge_rms_norm_dynamic_fp8_f32(
+    const float* input, uint64_t input_elements, const float* weight,
+    uint64_t weight_elements, uint8_t* output, uint64_t output_elements,
+    float* scales, uint64_t scale_elements, uint32_t rows,
+    uint32_t hidden_size, float epsilon, void* stream);
+
+int loom_cuda_bridge_rms_norm_dynamic_fp8_f16(
+    const uint16_t* input, uint64_t input_elements, const uint16_t* weight,
+    uint64_t weight_elements, uint8_t* output, uint64_t output_elements,
+    float* scales, uint64_t scale_elements, uint32_t rows,
+    uint32_t hidden_size, float epsilon, void* stream);
+
+int loom_cuda_bridge_rms_norm_dynamic_fp8_bf16(
+    const uint16_t* input, uint64_t input_elements, const uint16_t* weight,
+    uint64_t weight_elements, uint8_t* output, uint64_t output_elements,
+    float* scales, uint64_t scale_elements, uint32_t rows,
+    uint32_t hidden_size, float epsilon, void* stream);
+
 uint64_t loom_cuda_bridge_add_rms_norm_launch_count(void);
 void loom_cuda_bridge_reset_add_rms_norm_launch_count(void);
+uint64_t loom_cuda_bridge_rms_norm_dynamic_fp8_launch_count(void);
+void loom_cuda_bridge_reset_rms_norm_dynamic_fp8_launch_count(void);
 
 #ifdef __cplusplus
 }  // extern "C"
