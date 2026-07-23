@@ -48,7 +48,12 @@ def main() -> None:
     extension_build.mkdir(parents=True, exist_ok=True)
     loaded_path = load(
         name="loom_kernels_torch_ops",
-        sources=[str(repository / "python" / "csrc" / "torch_ops.cpp")],
+        sources=[
+            str(source)
+            for source in sorted(
+                (repository / "python" / "csrc").glob("*.cpp")
+            )
+        ],
         extra_include_paths=[
             str(repository / "crates" / "loom-cuda-bridge" / "include"),
             str(cuda_include),

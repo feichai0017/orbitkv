@@ -66,14 +66,14 @@ jobs:
       - name: Enforce the LibTorch Stable ABI source boundary
         run: |
           grep -F 'STABLE_TORCH_LIBRARY(loom_kernels' python/csrc/torch_ops.cpp
-          grep -F 'TORCH_TARGET_VERSION' python/csrc/torch_ops.cpp
-          if grep -Eq '#include <(ATen|c10|torch/library\.h)' \
-            python/csrc/torch_ops.cpp; then
+          grep -F 'TORCH_TARGET_VERSION' python/csrc/common.h
+          if grep -REq --include='*.cpp' --include='*.h' \
+            '#include <(ATen|c10|torch/library\.h)' python/csrc; then
             echo "unstable LibTorch header included by the dispatcher"
             exit 1
           fi
-          if grep -Eq '(^|[^[:alnum:]_])(at|c10)::' \
-            python/csrc/torch_ops.cpp; then
+          if grep -REq --include='*.cpp' --include='*.h' \
+            '(^|[^[:alnum:]_])(at|c10)::' python/csrc; then
             echo "unstable LibTorch C++ namespace used by the dispatcher"
             exit 1
           fi

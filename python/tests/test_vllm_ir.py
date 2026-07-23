@@ -48,9 +48,10 @@ def test_installed_vllm_series_is_supported():
 
 def test_unqualified_vllm_series_is_rejected(monkeypatch):
     import loom_kernels.vllm as integration
+    import loom_kernels.vllm._runtime as runtime
 
     monkeypatch.setattr(
-        integration, "installed_vllm_version", lambda: "0.26.0"
+        runtime, "installed_vllm_version", lambda: "0.26.0"
     )
     assert integration.supports_installed_vllm() is False
     assert integration.register_vllm_ir() is None
@@ -115,7 +116,7 @@ def test_vllm_greedy_speculative_verify_matches_rejection_semantics(
 ):
     from vllm.v1.sample import rejection_sampler
 
-    import loom_kernels.vllm as loom_vllm
+    import loom_kernels.vllm.speculative as speculative_integration
     from loom_kernels.torch_ops import (
         Operator,
         launch_count,
@@ -176,7 +177,7 @@ def test_vllm_greedy_speculative_verify_matches_rejection_semantics(
         return sentinel
 
     monkeypatch.setattr(
-        loom_vllm,
+        speculative_integration,
         "_GREEDY_SPECULATIVE_VERIFY_ORIGINAL",
         fallback,
     )
@@ -325,10 +326,10 @@ def test_configures_vllm_rope_paged_kv_fusion():
     assert config.splitting_ops == []
     assert "+rotary_embedding" in config.custom_ops
     assert FlashAttentionImpl.fused_rope_kvcache_supported.__module__ == (
-        "loom_kernels.vllm"
+        "loom_kernels.vllm.rope_kv"
     )
     assert FlashInferImpl.fused_rope_kvcache_supported.__module__ == (
-        "loom_kernels.vllm"
+        "loom_kernels.vllm.rope_kv"
     )
     assert provider_metadata()["rope_paged_kv_override"] is True
 

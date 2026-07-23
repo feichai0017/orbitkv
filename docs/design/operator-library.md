@@ -18,6 +18,8 @@ tokenization, KV lifetime, or request serving.
 
 CPU references never call accelerator code. Backends report unsupported
 contracts explicitly; they do not silently copy, cast, or fall back.
+The concrete module map and rules for extending these layers are documented in
+[code layout](code-layout.md).
 
 ## Engine-Owned CUDA Resources
 

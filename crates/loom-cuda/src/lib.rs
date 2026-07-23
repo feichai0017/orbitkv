@@ -8,31 +8,33 @@
 use thiserror::Error;
 
 #[cfg(feature = "cuda")]
-mod greedy_sample;
+mod activation;
+#[cfg(feature = "cuda")]
+mod attention;
+#[cfg(feature = "cuda")]
+mod backend;
 #[cfg(feature = "cuda")]
 mod layout;
 #[cfg(feature = "cuda")]
 pub use layout::{PagedDecodeLayout, RopePagedKvLayout, RowStridedLayout};
 #[cfg(feature = "cuda")]
-mod min_p;
+mod logits;
 #[cfg(feature = "cuda")]
-mod paged_decode;
+mod norm;
 #[cfg(feature = "cuda")]
-pub use paged_decode::paged_decode_attention_split_k_workspace_elements;
-#[cfg(feature = "cuda")]
-mod rms_norm;
-#[cfg(feature = "cuda")]
-mod rope_paged_kv;
+mod rope_kv;
 #[cfg(feature = "cuda")]
 pub mod runtime;
 #[cfg(feature = "cuda")]
-mod silu_and_mul;
+mod sampling;
 #[cfg(feature = "cuda")]
 mod speculative;
 #[cfg(feature = "cuda")]
-pub use rms_norm::CudaBackend;
+pub use activation::{Fp8ScaleLayout, SiluAndMulDynamicFp8Options};
 #[cfg(feature = "cuda")]
-pub use silu_and_mul::{Fp8ScaleLayout, SiluAndMulDynamicFp8Options};
+pub use attention::paged_decode_attention_split_k_workspace_elements;
+#[cfg(feature = "cuda")]
+pub use backend::CudaBackend;
 
 /// Validation, availability, or CUDA launch failure.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

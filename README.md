@@ -210,7 +210,8 @@ opens the raw JSON artifact used for the claim.
 | `crates/loom-cuda` | Safe CUDA backend and oracle-backed benchmarks |
 | `crates/loom-cuda-bridge` | Checked C boundary from framework-owned tensors into borrowed Rust dispatch |
 | `crates/loom-cuda-sys` | Internal CUDA launch ABI, build plumbing, and packaged handwritten kernels |
-| `python` | LibTorch Stable ABI dispatcher and vLLM adapters |
+| `python/csrc` | Stable ABI schemas plus domain-specific PyTorch tensor/stream adapters |
+| `python/src/loom_kernels/vllm` | Public vLLM facade plus domain-specific registration policy |
 | `benchmarks` | Named framework and engine baselines |
 | `docs/results` | Hardware-qualified machine-readable evidence |
 | `website` | Astro documentation site |
@@ -222,6 +223,7 @@ opens the raw JSON artifact used for the claim.
 | [Documentation index](docs/README.md) | Choose the shortest path through the project |
 | [Operator catalog](docs/operator-catalog.md) | Inspect the complete supported and planned surface |
 | [Operator-library design](docs/design/operator-library.md) | Understand architecture and admission gates |
+| [Code layout](docs/design/code-layout.md) | Trace an operator across contracts, CUDA, bridge, PyTorch, and vLLM |
 | [Greedy speculative-verify design](docs/design/greedy-speculative-verify.md) | Read the ragged contract, ownership boundary, and deliberate exclusions |
 | [Paged-decode design](docs/design/paged-decode-attention.md) | Read cache layouts, split-K semantics, and exclusions |
 | [vLLM provider guide](docs/guides/vllm-ir-provider.md) | Build, configure, validate, and benchmark engine adapters |

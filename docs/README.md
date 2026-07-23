@@ -11,7 +11,7 @@ the evidence used to qualify them.
 
 | Goal | Start here | Then read |
 | --- | --- | --- |
-| Understand the project | [Operator-library design](design/operator-library.md) | [Operator catalog](operator-catalog.md) |
+| Understand the project | [Operator-library design](design/operator-library.md) | [Code layout](design/code-layout.md) |
 | Use Rust or CUDA | [Project quick start](../README.md#quick-start) | [Implementation status](status.md) |
 | Integrate PyTorch or vLLM | [Python README](../python/README.md) | [vLLM provider guide](guides/vllm-ir-provider.md) |
 | Check supported versions | [Compatibility matrix](compatibility.md) | [Implementation status](status.md) |
@@ -26,6 +26,8 @@ the evidence used to qualify them.
 
 - [Operator-library design](design/operator-library.md) defines what Loom owns,
   what remains vendor-backed, and the six admission gates.
+- [Code layout](design/code-layout.md) defines the vertical operator trace,
+  domain module names, dependency direction, and file-splitting rules.
 - [Operator catalog](operator-catalog.md) is the complete intended inference
   surface with explicit status and priority.
 - [Implementation status](status.md) separates implemented code, validation,

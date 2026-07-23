@@ -1,4 +1,4 @@
-use crate::rms_norm::CudaBackend;
+use crate::backend::CudaBackend;
 use crate::runtime::{loom_status_result, CudaDeviceRead, CudaDeviceWrite, CudaStreamHandle};
 use crate::{CudaExecutorError, PagedDecodeLayout};
 use half::{bf16, f16};
