@@ -76,9 +76,9 @@ score and token-offset buffers serve the one-pass path; the public contract
 deliberately caps every implementation at 1,024 tokens.
 
 For D128 with equal K/V widths, batches up to eight, and maximum contexts from
-128 through 1,024, the C++ dispatcher selects a two-stage split-K path. Stage
-one partitions the logical KV sequence into at most 16 contiguous tiles and
-writes one F32 state per packed query head:
+128 through 1,024, the Stable ABI dispatcher selects a two-stage split-K path.
+Stage one partitions the logical KV sequence into at most 16 contiguous tiles
+and writes one F32 state per packed query head:
 
 ```text
 partial_state = (local_max, local_exp_sum, unnormalized_output[Dv])
@@ -91,12 +91,12 @@ incorrect. Dispatch keeps at most 64 tokens in a tile while targeting at least
 128 partial CTAs. It packs two GQA heads by default and uses four only for the
 measured higher-work regime `batch * max_context >= 4096`.
 
-The old allocation-free ABI remains unchanged. New sizing and split-K entry
-points accept caller-owned F32 workspace; safe Rust exposes the same explicit
-ownership contract. The PyTorch C++ bridge obtains a temporary tensor from the
-framework allocator, so CUDA Graph capture owns a stable allocation while
-graph replay performs only the two captured kernel launches. Shapes outside
-the qualified split-K predicate retain the original one-pass path.
+The allocation-free one-pass launch ABI remains the default. Split-K sizing and
+execution accept caller-owned F32 workspace; safe Rust exposes the same
+explicit ownership contract. The Stable ABI dispatcher obtains a temporary
+tensor from the framework allocator, so CUDA Graph capture owns a stable
+allocation while graph replay performs only the two captured kernel launches.
+Shapes outside the qualified split-K predicate use the one-pass kernel.
 
 The C ABI carries independent K/V block strides and accepts contiguous int32
 block tables and sequence lengths, matching vLLM's live metadata. Their active
@@ -142,7 +142,7 @@ streams, FakeTensor/schema, `torch.compile`, CUDA Graph replay,
 vLLM-interleaved cache strides, caller-owned split-K workspace, stable LSE
 merge, and launch telemetry. On NVIDIA H20 all 46 focused paged-decode tests,
 the 34-test paged-decode/vLLM gate, the safe Rust CUDA tests, and the
-191-test Python suite pass.
+192-test Python suite pass.
 
 The native-interleaved 156-case shape sweep establishes why the route is
 narrow: 82 cases beat FA3 and 74 lose. A focused 132-case Hq/Hkv `32/8`

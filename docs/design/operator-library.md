@@ -43,19 +43,19 @@ implementations or pass read-only storage as a mutable output. Kernel launches
 remain asynchronous.
 
 The pure-Rust H20 smoke test exercises this zero-copy path. Every framework
-operator uses the same mechanism: the C++ PyTorch dispatcher passes tensor
-pointers, physical storage spans, layout strides, and PyTorch's current stream
-through `loom-cuda-bridge`, which constructs borrowed Rust views and calls safe
-`CudaBackend` methods. The bridge validates lengths, alignment, address
-overflow, layouts, and non-overlap, contains Rust panics behind a versioned
-status ABI, and keeps a thread-local detailed error. It does not copy,
-synchronize, free, or destroy framework resources. The paged-decode bridge may
-request an exact caller-owned split-K workspace, which PyTorch allocates before
-launch.
+operator uses the same mechanism: the boxed LibTorch Stable ABI dispatcher
+targets PyTorch 2.10 and passes tensor pointers, physical storage spans, layout
+strides, and PyTorch's current stream through `loom-cuda-bridge`, which
+constructs borrowed Rust views and calls safe `CudaBackend` methods. The bridge
+validates lengths, alignment, address overflow, layouts, and non-overlap,
+contains Rust panics behind a versioned status ABI, and keeps a thread-local
+detailed error. It does not copy, synchronize, free, or destroy framework
+resources. The paged-decode bridge may request an exact caller-owned split-K
+workspace, which PyTorch allocates before launch.
 
 The raw CUDA ABI exists only below safe Rust as an internal kernel-launch
 layer. Framework code cannot bypass Rust validation, and no parallel ctypes,
-unchecked, or direct-CUDA adapter is retained.
+ATen, unchecked, or direct-CUDA adapter is retained.
 
 ## Add+RMSNorm Contract
 

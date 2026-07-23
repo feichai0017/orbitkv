@@ -7,7 +7,7 @@ for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 
 > [!NOTE]
 > The source wheel contains adapters, not prebuilt CUDA binaries. Build the
-> native library and LibTorch dispatcher bridge from a repository checkout.
+> native library and LibTorch Stable ABI dispatcher from a repository checkout.
 
 ## Install
 
@@ -38,11 +38,13 @@ export LOOM_KERNELS_TORCH_LIBRARY=/path/to/libloom_kernels_torch.so
 `build_native.py` builds the only native backend library,
 `libloom_cuda_bridge.so`. Keep it next to `libloom_kernels_torch.so` (or in its
 parent directory) so the dispatcher's relative runtime search path can load
-it. Every operator, including padded logits and strided paged-cache views,
-enters checked borrowed Rust dispatch. There is no ctypes or direct raw-CUDA
-framework path.
+it. `build_torch_extension.py` builds the sole boxed LibTorch Stable ABI
+dispatcher with a PyTorch 2.10 target. Every operator, including padded logits
+and strided paged-cache views, enters checked borrowed Rust dispatch. There is
+no ctypes, ATen dispatcher twin, or direct raw-CUDA framework path.
 
-Automated binary wheels are not published yet.
+The exact H20 dispatcher binary is qualified on PyTorch 2.10 and 2.11.
+Automated native binary wheels are not published yet.
 
 ## Direct PyTorch use
 
@@ -65,7 +67,8 @@ min_p_filter_(sampling_logits_f32, min_p_f32)
 ```
 
 All CUDA calls use PyTorch's current stream. Out variants accept caller-owned
-buffers for capture-safe reuse.
+buffers for capture-safe reuse. Public APIs are inference-only and reject
+tensors that require gradients.
 
 ## Exported operator families
 

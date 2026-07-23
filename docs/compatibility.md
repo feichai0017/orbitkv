@@ -9,9 +9,10 @@ binary portability. A green row below applies only to the stated boundary.
 | --- | --- | --- | --- |
 | Rust | current stable toolchain | format, Clippy, tests, release checks, source crate archives | GitHub CI |
 | CUDA | 13.1, `sm_90` | `loom-cuda`, `loom-cuda-sys`, and `loom-cuda-bridge` build and execute | NVIDIA H20 gate |
-| PyTorch | 2.11.0+cu130 | source-built dispatcher, current stream, `torch.compile`, FakeTensor/opcheck, CUDA Graph replay | 191-test H20 suite |
+| PyTorch | 2.10.0+cu128 | the exact dispatcher binary built on 2.11 loads without recompilation; 123 applicable Loom tests pass | [Stable ABI gate](results/h20-libtorch-stable-abi-20260723.json) |
+| PyTorch | 2.11.0+cu130 | Stable ABI dispatcher, current stream, `torch.compile`, FakeTensor/opcheck, CUDA Graph replay | [Stable ABI gate](results/h20-libtorch-stable-abi-20260723.json) |
 | vLLM | 0.24.0 | all registered adapters plus the existing operator and real-engine evidence | [evidence index](results/README.md) |
-| vLLM | 0.25.1 | official wheel import, registered adapters, dispatcher behavior, and the complete 191-test H20 suite | [single-bridge gate](results/h20-single-rust-bridge-compatibility-20260723.json) |
+| vLLM | 0.25.1 | official wheel import, registered adapters, dispatcher behavior, and the complete 192-test H20 suite | [Stable ABI gate](results/h20-libtorch-stable-abi-20260723.json) |
 
 The 0.25.1 gate proves that the current adapters and CUDA paths execute against
 the official vLLM wheel. It does not retroactively transfer the 0.24
@@ -36,30 +37,34 @@ libraries against their local CUDA and PyTorch installations:
 
 - `libloom_cuda_bridge.so` — Rust contracts, borrowed safe dispatch, and the
   internal handwritten CUDA launch layer;
-- `libloom_kernels_torch.so` — PyTorch dispatcher shim.
+- `libloom_kernels_torch.so` — boxed LibTorch Stable ABI dispatcher.
 
-The dispatcher currently includes standard ATen/LibTorch headers and uses
-`TORCH_LIBRARY`, so it is not yet a PyTorch-version-independent binary. Do not
-label a locally built library or wheel as Stable ABI compatible.
+The production dispatcher targets PyTorch 2.10 with
+`TORCH_TARGET_VERSION`, registers through `STABLE_TORCH_LIBRARY`, and uses
+`torch::stable::Tensor`. The exact binary built with PyTorch 2.11.0+cu130
+passed its applicable H20 GPU gates without recompilation on PyTorch
+2.10.0+cu128. This proves the recorded two-minor binary boundary; it is not a
+claim for untested PyTorch releases or a published native wheel.
 
-## Stable ABI plan
+## Current Stable ABI boundary
 
 PyTorch documents a [LibTorch Stable ABI](https://docs.pytorch.org/docs/stable/notes/libtorch_stable_abi.html)
-and stable registration APIs for PyTorch 2.10 and newer. Loom will adopt it in
-four independently testable steps:
+and stable registration APIs for PyTorch 2.10 and newer. Loom's single
+production dispatcher now uses that boundary:
 
-1. keep tensor semantics and CUDA execution behind `loom-cuda-bridge`, so the
-   framework shim remains translation-only;
-2. prototype one boxed Stable ABI operator for contiguous Add+RMSNorm without
-   changing the existing dispatcher;
-3. prove current-device/current-stream access, mutation schemas, FakeTensor,
-   `torch.compile`, and CUDA Graph behavior across two PyTorch minor releases;
-4. only then build a CUDA/PyTorch matrix wheel and declare a minimum
-   `TORCH_TARGET_VERSION`.
+- all schemas use boxed Stable ABI registration;
+- tensor metadata, allocations, pointers, device guards, and the current CUDA
+  stream use stable headers or AOTI C shims;
+- all ten semantic operators continue into `loom-cuda-bridge`; the dispatcher
+  has no ATen/c10 C++ symbol dependency and consumes no raw CUDA launch symbol;
+- the public Python APIs and vLLM admission predicates reject tensors requiring
+  gradients. No autograd kernel is advertised;
+- the temporary Add+RMSNorm probe and the previous ATen dispatcher were deleted
+  after the production migration passed.
 
-If the Stable ABI cannot express a required CUDA stream or tensor operation,
-Loom will publish per-PyTorch binary wheels instead of weakening the runtime
-contract. Source builds remain the supported fallback throughout the migration.
+The remaining distribution task is to package the already-qualified boundary
+as automated Python/PyTorch/CUDA matrix wheels and prove clean installs. Source
+builds remain the supported path until those native wheels are published.
 
 ## What must be revalidated
 

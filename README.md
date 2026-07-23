@@ -60,7 +60,7 @@ is never a performance claim.
 flowchart LR
     A["Inference engine"] --> N["Native Rust adapter"]
     A --> P["PyTorch / vLLM adapter"]
-    P --> T["Thin C++ dispatcher"]
+    P --> T["LibTorch Stable ABI dispatcher"]
     T --> B["Versioned Rust bridge"]
     N --> R["Safe Rust dispatch"]
     B --> R
@@ -75,10 +75,11 @@ Every framework operator follows this path. There is no Python/ctypes
 implementation, unchecked dispatcher twin, direct C++-to-CUDA launch, or
 layout-specific fallback inside Loom. PyTorch passes existing pointers,
 physical storage spans, strides, and its current stream through the versioned
-bridge; Rust constructs checked borrowed views and selects the CUDA kernel.
-The backend either accepts the exact contract or returns an error. Engine
-adapters decide whether to call Loom before dispatch and retain the engine's
-native implementation for unsupported semantics.
+bridge through one LibTorch Stable ABI dispatcher targeting PyTorch 2.10;
+Rust constructs checked borrowed views and selects the CUDA kernel. The backend
+either accepts the exact contract or returns an error. Engine adapters decide
+whether to call Loom before dispatch and retain the engine's native
+implementation for unsupported semantics.
 
 ## Quick start
 
@@ -135,8 +136,9 @@ CUDA_HOME=/usr/local/cuda-13.1 \
 ```
 
 The first build produces `libloom_cuda_bridge.so`, including the Rust-owned
-CUDA backend. The second links the thin PyTorch dispatcher only against that
-bridge.
+CUDA backend. The second builds the boxed LibTorch Stable ABI dispatcher. The
+dispatcher uses PyTorch only for schema/tensor translation and current-stream
+access; every GPU operator still enters the versioned Rust bridge.
 
 See the [Python adapter README](python/README.md) for direct calls and the
 [vLLM integration guide](docs/guides/vllm-ir-provider.md) for every opt-in and
@@ -156,7 +158,7 @@ opens the raw JSON artifact used for the claim.
 | [RoPE + paged-KV write](docs/results/h20-rope-paged-kv-20260722.json) | `2.30–2.40×` dispatcher ratio for 1–512 tokens | Real-engine invocation is proven; end-to-end remains at parity |
 | [Short paged decode](docs/results/h20-vllm-paged-decode-backend-20260722.json) | `1.154–2.374×` across all 24 admitted backend cases | FP16/BF16, Hq/Hkv 32/8, D128, context ≤32; other shapes use FA3 |
 | [Local split-K paged decode](docs/results/h20-paged-decode-split-k-20260722.json) | `1.14–6.22×` versus legacy Loom | Improves the Rust/CUDA backend; FA3 remains the long-context engine fallback |
-| [Single Rust bridge + vLLM 0.24/0.25](docs/results/h20-single-rust-bridge-compatibility-20260723.json) | 191/191 H20 GPU tests on each package; zero raw launch symbols consumed by the shim | Architecture and compatibility result only; no 0.25 performance transfer |
+| [LibTorch Stable ABI dispatcher](docs/results/h20-libtorch-stable-abi-20260723.json) | Same `.so`: 192 tests on PyTorch 2.11 with each vLLM minor; 123 applicable tests on PyTorch 2.10 | Binary compatibility result only; native wheels and broader PyTorch versions remain unclaimed |
 
 > [!NOTE]
 > A fast kernel is not automatically a faster model. Loom records operator,
@@ -172,7 +174,7 @@ opens the raw JSON artifact used for the claim.
 | `crates/loom-cuda` | Safe CUDA backend and oracle-backed benchmarks |
 | `crates/loom-cuda-bridge` | Checked C boundary from framework-owned tensors into borrowed Rust dispatch |
 | `crates/loom-cuda-sys` | Internal CUDA launch ABI, build plumbing, and packaged handwritten kernels |
-| `python` | PyTorch dispatcher bridge and vLLM adapters |
+| `python` | LibTorch Stable ABI dispatcher and vLLM adapters |
 | `benchmarks` | Named framework and engine baselines |
 | `docs/results` | Hardware-qualified machine-readable evidence |
 | `website` | Astro documentation site |

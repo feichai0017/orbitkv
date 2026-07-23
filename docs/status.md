@@ -51,9 +51,10 @@
   Rust sizing/execution APIs, two/four-head GQA packing, and CUDA Graph-safe
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
-- a single C++ PyTorch dispatcher path using the current CUDA stream; all ten
-  semantic operators route through `loom-cuda-bridge` into borrowed safe Rust
-  dispatch with explicit storage spans and layouts;
+- a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
+  using the current CUDA stream; all ten semantic operators route through
+  `loom-cuda-bridge` into borrowed safe Rust dispatch with explicit storage
+  spans and layouts;
 - a source-adapter Python wheel with explicit framework extras, project
   metadata, license/readme payloads, and a CI install/entry-point smoke gate;
 - a `loom_cuda` vLLM IR provider with exact-contract admission and an opt-in vLLM
@@ -88,7 +89,15 @@
 - fused FP16/BF16 scalar fallbacks passed at `3x127`, and low-precision
   large-shape execution passed at `16x8192`.
 - PyTorch external-stream, mutation-schema/FakeTensor, `torch.compile`, and
-  CUDA Graph tests passed with the C++ dispatcher bridge;
+  CUDA Graph tests passed with the Stable ABI dispatcher;
+- one exact dispatcher binary built with PyTorch 2.11.0+cu130 passed without
+  recompilation on PyTorch 2.10.0+cu128; the 2.11 vLLM 0.24 and 0.25.1
+  environments each passed 192 tests, while the vLLM-free 2.10 environment
+  passed 123 applicable tests with 44 vLLM-dependent skips and two deselected
+  vLLM-reference cases;
+- the dispatcher exposes only `aoti_torch_*`/`torch_*` PyTorch symbol families,
+  has no ATen/c10 C++ or raw CUDA launch dependency, and is protected by a
+  source-level CI boundary;
 - the checked normalization Rust bridge built and linked on H20, passed
   CUDA-feature Clippy and its address-range unit test, rejected short and
   overlapping buffers before launch, and recorded Add+RMSNorm path hits from
@@ -97,7 +106,7 @@
   for both contiguous and padded row-strided logits, rejects short/overlapping
   regions before submission, and passes external-stream, compile, graph, and
   vLLM adapter tests;
-- official vLLM 0.24.0 and 0.25.1 packages each passed the complete 191-test
+- official vLLM 0.24.0 and 0.25.1 packages each passed the complete 192-test
   H20 Python GPU suite on Torch 2.11.0+cu130; the 0.25.1 process loaded its own
   `vllm/_C_stable_libtorch.abi3.so`, and the focused greedy/vLLM gate passed
   40 tests;
@@ -190,7 +199,7 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the current complete H20 Python suite passes 191 tests; the Rust core passes
+- the current complete H20 Python suite passes 192 tests; the Rust core passes
   30 contract/oracle tests, and the CUDA-feature workspace passes formatting,
   Clippy, release build, plus seven safe-wrapper CPU-oracle tests;
 - the final shared-library audit exposes 15 versioned bridge symbols and no
@@ -321,5 +330,6 @@ FA3 for the engine's 128-1,024-token path.
 - an FA3-competitive paged-decode kernel at 1,024 tokens and batches above one;
 - integration into SGLang or a Rust-native engine path;
 - larger production-model and serving-workload validation;
-- PyTorch Stable ABI migration or per-PyTorch automated binary-wheel packaging;
+- automated native Python/PyTorch/CUDA matrix wheels, clean-install gates, or
+  binary compatibility beyond the tested PyTorch 2.10/2.11 runtimes;
 - serving-scale concurrency, goodput, and memory improvement.

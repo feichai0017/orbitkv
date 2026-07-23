@@ -58,9 +58,10 @@ CUDA_HOME=/usr/local/cuda-13.1 \
       <p>
         The first command builds the Rust-owned
         <code>libloom_cuda_bridge.so</code>, including its internal CUDA
-        backend. The second creates the thin LibTorch dispatcher shim, linked
-        only against that bridge. Repository checkouts discover both libraries
-        under <code>build/</code>.
+        backend. The second creates the boxed LibTorch Stable ABI dispatcher,
+        targeting PyTorch 2.10. Every GPU operator then enters the versioned
+        Rust bridge. Repository checkouts discover both libraries under
+        <code>build/</code>.
       </p>
 
       <h2>Call PyTorch directly</h2>
@@ -108,10 +109,12 @@ min_p_filter_(sampling_logits_f32, min_p_f32)</code></pre>
 
       <h2>Compatibility is explicit</h2>
       <p>
-        Official vLLM 0.24.0 and 0.25.1 packages each pass the complete 191-test
-        H20 GPU suite. Existing model-level performance artifacts remain tied
-        to the version recorded in each result; compatibility does not transfer
-        a speedup claim. Read the{" "}
+        Official vLLM 0.24.0 and 0.25.1 packages each pass the complete 192-test
+        H20 GPU suite on PyTorch 2.11. The same exact dispatcher binary also
+        passes its applicable Loom gates on PyTorch 2.10 without recompilation.
+        Existing model-level performance artifacts remain tied to the version
+        recorded in each result; compatibility does not transfer a speedup
+        claim. Read the{" "}
         <a href={`${repositoryUrl}/blob/main/docs/compatibility.md`}>compatibility matrix</a>.
       </p>
 

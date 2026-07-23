@@ -62,16 +62,18 @@ transfer.
 Status: in progress.
 
 - ~~qualify the next vLLM minor without weakening adapter gates~~ — official
-  vLLM 0.24.0 and 0.25.1 packages each pass the complete 191-test H20 GPU suite;
+  vLLM 0.24.0 and 0.25.1 packages each pass the complete 192-test H20 GPU suite;
 - ~~centralize runtime version admission and package metadata~~ — supported
   range is `vllm>=0.24,<0.26`, with registration-time series checks;
 - ~~document the current binary boundary and Stable ABI decision~~ — the
-  Python artifact remains a source adapter, and the current ATen/LibTorch
-  dispatcher is explicitly not advertised as ABI-stable;
-- prototype Add+RMSNorm with PyTorch's Stable ABI while retaining the existing
-  dispatcher as the reference path;
-- validate one binary across two PyTorch minor releases, then automate
-  CUDA/PyTorch/Python matrix wheels and clean-install smoke tests.
+  Python artifact remains a source adapter until native wheels are automated;
+- ~~replace the entire production dispatcher with PyTorch's Stable ABI~~ —
+  every schema and kernel uses the boxed Stable ABI with a declared PyTorch
+  2.10 target; the temporary probe and previous ATen dispatcher were deleted;
+- ~~validate one binary across two PyTorch minor releases~~ — the exact H20
+  `.so` built with PyTorch 2.11 passes on 2.10 and 2.11, including complete
+  vLLM 0.24/0.25 suites on the qualified 2.11 stack;
+- automate CUDA/PyTorch/Python matrix wheels and clean-install smoke tests.
 
 Exit: a published binary artifact installs without a repository checkout,
 uses a declared PyTorch ABI boundary, and passes the same framework and H20

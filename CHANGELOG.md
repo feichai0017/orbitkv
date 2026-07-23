@@ -18,7 +18,10 @@ spelling; Python source-adapter metadata uses the equivalent PEP 440 spelling.
 - changed Rust CUDA entrypoints for row-strided logits, paged decode, RoPE/KV,
   and activation FP8 to require explicit physical-layout objects;
 - changed `PagedDecodeAttentionSpec::new` to accept
-  `max_sequence_length` independently from block-table capacity.
+  `max_sequence_length` independently from block-table capacity;
+- replaced the production ATen/c10 dispatcher with one boxed LibTorch Stable
+  ABI implementation targeting PyTorch 2.10; no old dispatcher or experimental
+  probe remains.
 
 ### Added
 
@@ -30,7 +33,9 @@ spelling; Python source-adapter metadata uses the equivalent PEP 440 spelling.
   bounds;
 - standalone PyTorch `rms_norm` and `rms_norm_out` APIs;
 - vLLM 0.25 support, an explicit compatibility matrix, H20 0.24/0.25 GPU-suite
-  evidence, contribution guidance, and structured issue forms.
+  evidence, contribution guidance, and structured issue forms;
+- a two-minor H20 binary gate proving the exact same dispatcher `.so` on
+  PyTorch 2.10 and 2.11, plus a CI guard against unstable ATen/c10 C++ APIs.
 
 ### Fixed
 

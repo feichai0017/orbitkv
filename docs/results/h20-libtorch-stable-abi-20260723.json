@@ -1,0 +1,107 @@
+{
+  "schema_version": 1,
+  "date": "2026-07-23",
+  "purpose": "production LibTorch Stable ABI dispatcher and two-minor binary gate",
+  "tested_revision": "39883c2357967beb96f03e6363989d9dd586a719",
+  "hardware": {
+    "gpu": "NVIDIA H20",
+    "compute_capability": "sm_90",
+    "driver": "535.161.08"
+  },
+  "toolchain": {
+    "cuda": "13.1 (compiler build 37061995)",
+    "python": "3.11.2",
+    "build_torch": "2.11.0+cu130",
+    "target_torch_abi": "2.10"
+  },
+  "artifact": {
+    "path": "build/libloom_kernels_torch.so",
+    "sha256": "c11a7d9c2b5f558fbce7127f190050d5dd491ff2d73b0225e64a2b82e451a964",
+    "compiled_once": true,
+    "rebuilt_between_runtime_gates": false,
+    "production_registration": "STABLE_TORCH_LIBRARY with boxed Stable ABI kernels",
+    "stable_tensor_api": "torch::stable::Tensor",
+    "current_stream_api": "aoti_torch_get_current_cuda_stream",
+    "experiment_retained": false,
+    "previous_aten_dispatcher_retained": false
+  },
+  "runtime_matrix": [
+    {
+      "torch": "2.11.0+cu130",
+      "vllm": "0.24.0",
+      "python_gpu_suite": {
+        "passed": 192,
+        "failed": 0,
+        "duration_seconds": 8.54
+      }
+    },
+    {
+      "torch": "2.11.0+cu130",
+      "vllm": "0.25.1",
+      "python_gpu_suite": {
+        "passed": 192,
+        "failed": 0,
+        "duration_seconds": 8.02
+      }
+    },
+    {
+      "torch": "2.10.0+cu128",
+      "vllm": null,
+      "same_binary": true,
+      "python_gpu_suite": {
+        "passed": 123,
+        "failed": 0,
+        "skipped": 44,
+        "deselected": 2,
+        "duration_seconds": 4.54,
+        "scope_note": "The environment intentionally contained no vLLM. The skipped tests require vLLM; the two deselected parameter cases compare against a vLLM custom operator. Loom operator, stream, schema, FakeTensor, torch.compile, CUDA Graph, aliasing, and public inference-only gates passed."
+      }
+    }
+  ],
+  "binary_audit": {
+    "needed_libraries": [
+      "libloom_cuda_bridge.so",
+      "libtorch_cuda.so",
+      "libc10.so",
+      "libtorch_cpu.so",
+      "libstdc++.so.6",
+      "libgcc_s.so.1",
+      "libc.so.6"
+    ],
+    "libtorch_so_needed": false,
+    "libtorch_python_so_needed": false,
+    "undefined_aten_or_c10_cpp_symbols": 0,
+    "undefined_raw_cuda_launch_symbols": 0,
+    "torch_symbol_families": [
+      "aoti_torch_*",
+      "torch_*"
+    ]
+  },
+  "contract": {
+    "framework_path": "PyTorch/vLLM -> LibTorch Stable ABI dispatcher -> versioned Rust bridge -> safe borrowed Rust dispatch -> internal CUDA launch ABI -> handwritten CUDA",
+    "inference_only": true,
+    "requires_grad_enforcement": "public Python APIs and vLLM admission predicates",
+    "autograd_kernel": false,
+    "source_guard": "CI rejects ATen/c10/torch/library.h includes and at:: or c10:: C++ namespace use in the dispatcher"
+  },
+  "commands": [
+    "CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 python python/build_native.py",
+    "CUDA_HOME=/usr/local/cuda-13.1 python python/build_torch_extension.py",
+    "PYTHONPATH=python/src LOOM_KERNELS_TORCH_LIBRARY=build/libloom_kernels_torch.so python -m pytest -q python/tests",
+    "PYTHONPATH=python/src:<vllm-0.25.1-site-packages> LOOM_KERNELS_TORCH_LIBRARY=build/libloom_kernels_torch.so python -m pytest -q python/tests",
+    "PYTHONPATH=python/src LOOM_KERNELS_TORCH_LIBRARY=build/libloom_kernels_torch.so <torch-2.10-python> -m pytest -q python/tests -k 'not vllm_compatible_schema_supports_scale_layout_and_upper_bound'",
+    "readelf -d build/libloom_kernels_torch.so",
+    "nm -D --undefined-only build/libloom_kernels_torch.so"
+  ],
+  "decision": {
+    "accepted": true,
+    "minimum_target_torch": "2.10",
+    "claim": "The sole production dispatcher uses the LibTorch Stable ABI, and one exact H20 binary passes its applicable GPU gates on PyTorch 2.10 and 2.11 while retaining the complete vLLM 0.24 and 0.25 suites on the qualified PyTorch 2.11 stack.",
+    "not_claimed": [
+      "a published native Python wheel",
+      "compatibility beyond the tested PyTorch 2.10 and 2.11 runtimes",
+      "a new operator or model-level performance result"
+    ],
+    "next_gate": "automated Python, PyTorch, and CUDA matrix wheels with clean-install smoke tests"
+  }
+}

@@ -52,11 +52,11 @@ input = RMSNorm(residual, weight, epsilon)
 ## Compatibility
 
 The supported package interval is `vllm>=0.24,<0.26`. Official vLLM 0.24.0 and
-0.25.1 packages each pass the complete 191-test H20 GPU suite with the current
+0.25.1 packages each pass the complete 192-test H20 GPU suite with the current
 adapter. The existing model-level performance artifacts were captured on
 0.24.0 and are not automatically performance claims for 0.25.1. See the
 [compatibility matrix](../compatibility.md) and
-[single-bridge gate](../results/h20-single-rust-bridge-compatibility-20260723.json).
+[Stable ABI gate](../results/h20-libtorch-stable-abi-20260723.json).
 
 ## Build
 
@@ -74,12 +74,13 @@ CUDA_HOME=/usr/local/cuda \
 ```
 
 The first command builds the single native backend,
-`build/libloom_cuda_bridge.so`. The second builds a small C++ schema/dispatcher
-shim at `build/libloom_kernels_torch.so`. Every admitted operator passes
-physical buffer spans, strides, and PyTorch's current stream through the Rust
-bridge into safe borrowed dispatch. There is no Python/ctypes fallback,
-unchecked twin, or direct C++-to-CUDA route. Repository checkouts discover the
-files automatically. A packaged deployment may set
+`build/libloom_cuda_bridge.so`. The second builds the boxed LibTorch Stable ABI
+dispatcher at `build/libloom_kernels_torch.so`, targeting PyTorch 2.10. Every
+admitted operator passes physical buffer spans, strides, and PyTorch's current
+stream through the Rust bridge into safe borrowed dispatch. There is no
+Python/ctypes fallback, ATen dispatcher twin, unchecked twin, or direct
+C++-to-CUDA route. Repository checkouts discover the files automatically. A
+packaged deployment may set
 `LOOM_KERNELS_TORCH_LIBRARY` to an absolute path and must keep
 `libloom_cuda_bridge.so` next to the dispatcher library or in its parent
 directory.
@@ -521,8 +522,9 @@ and its documented
 
 The provider API follows vLLM's
 [IR design](https://docs.vllm.ai/en/v0.22.1/design/vllm_ir/) and the mutable
-dispatcher bridge follows PyTorch's
-[custom-operator contract](https://docs.pytorch.org/docs/stable/library.html).
+dispatcher follows PyTorch's
+[LibTorch Stable ABI](https://docs.pytorch.org/docs/stable/notes/libtorch_stable_abi.html)
+and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html).
 
 ## Current Limits
 
