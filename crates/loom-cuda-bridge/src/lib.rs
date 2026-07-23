@@ -20,7 +20,7 @@ mod cuda {
         DeviceSliceMut,
     };
     use loom_cuda::{CudaBackend, CudaExecutorError};
-    use loom_kernels::{AddRmsNormSpec, DType, RmsNormDynamicFp8Spec};
+    use loom_kernels::{AddRmsNormSpec, DType, GreedySampleLogprobsSpec, RmsNormDynamicFp8Spec};
     use std::cell::RefCell;
     use std::ffi::{c_char, c_int, c_void, CString};
     use std::mem::{align_of, size_of};
@@ -35,6 +35,7 @@ mod cuda {
 
     static ADD_RMS_NORM_LAUNCHES: AtomicU64 = AtomicU64::new(0);
     static RMS_NORM_DYNAMIC_FP8_LAUNCHES: AtomicU64 = AtomicU64::new(0);
+    static GREEDY_SAMPLE_LOGPROBS_LAUNCHES: AtomicU64 = AtomicU64::new(0);
 
     thread_local! {
         static LAST_ERROR: RefCell<CString> = RefCell::new(
@@ -205,6 +206,91 @@ mod cuda {
         }
     }
 
+    trait GreedySampleLogprobsScalar: Copy {
+        const DTYPE: DType;
+
+        fn launch<S, I, T, L, R>(
+            backend: &CudaBackend<S>,
+            logits: &I,
+            token_ids: &mut T,
+            logprobs: &mut L,
+            ranks: &mut R,
+            spec: GreedySampleLogprobsSpec,
+        ) -> Result<(), CudaExecutorError>
+        where
+            S: CudaStreamHandle,
+            I: CudaDeviceRead<Self>,
+            T: CudaDeviceWrite<i32>,
+            L: CudaDeviceWrite<f32>,
+            R: CudaDeviceWrite<i64>;
+    }
+
+    impl GreedySampleLogprobsScalar for f32 {
+        const DTYPE: DType = DType::F32;
+
+        fn launch<S, I, T, L, R>(
+            backend: &CudaBackend<S>,
+            logits: &I,
+            token_ids: &mut T,
+            logprobs: &mut L,
+            ranks: &mut R,
+            spec: GreedySampleLogprobsSpec,
+        ) -> Result<(), CudaExecutorError>
+        where
+            S: CudaStreamHandle,
+            I: CudaDeviceRead<Self>,
+            T: CudaDeviceWrite<i32>,
+            L: CudaDeviceWrite<f32>,
+            R: CudaDeviceWrite<i64>,
+        {
+            backend.greedy_sample_logprobs_f32(logits, token_ids, logprobs, ranks, spec)
+        }
+    }
+
+    impl GreedySampleLogprobsScalar for f16 {
+        const DTYPE: DType = DType::F16;
+
+        fn launch<S, I, T, L, R>(
+            backend: &CudaBackend<S>,
+            logits: &I,
+            token_ids: &mut T,
+            logprobs: &mut L,
+            ranks: &mut R,
+            spec: GreedySampleLogprobsSpec,
+        ) -> Result<(), CudaExecutorError>
+        where
+            S: CudaStreamHandle,
+            I: CudaDeviceRead<Self>,
+            T: CudaDeviceWrite<i32>,
+            L: CudaDeviceWrite<f32>,
+            R: CudaDeviceWrite<i64>,
+        {
+            backend.greedy_sample_logprobs_f16(logits, token_ids, logprobs, ranks, spec)
+        }
+    }
+
+    impl GreedySampleLogprobsScalar for bf16 {
+        const DTYPE: DType = DType::Bf16;
+
+        fn launch<S, I, T, L, R>(
+            backend: &CudaBackend<S>,
+            logits: &I,
+            token_ids: &mut T,
+            logprobs: &mut L,
+            ranks: &mut R,
+            spec: GreedySampleLogprobsSpec,
+        ) -> Result<(), CudaExecutorError>
+        where
+            S: CudaStreamHandle,
+            I: CudaDeviceRead<Self>,
+            T: CudaDeviceWrite<i32>,
+            L: CudaDeviceWrite<f32>,
+            R: CudaDeviceWrite<i64>,
+        {
+            backend.greedy_sample_logprobs_bf16(logits, token_ids, logprobs, ranks, spec)
+        }
+    }
+
     #[derive(Clone, Copy)]
     struct ByteRange {
         start: usize,
@@ -349,6 +435,72 @@ mod cuda {
 
         T::launch(&backend, &input, &weight, &mut output, &mut scales, spec)?;
         RMS_NORM_DYNAMIC_FP8_LAUNCHES.fetch_add(1, Ordering::Relaxed);
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    unsafe fn launch_greedy_sample_logprobs<T: GreedySampleLogprobsScalar>(
+        logits: *const T,
+        logits_elements: u64,
+        token_ids: *mut i32,
+        token_id_elements: u64,
+        logprobs: *mut f32,
+        logprob_elements: u64,
+        ranks: *mut i64,
+        rank_elements: u64,
+        rows: u32,
+        vocab_size: u32,
+        stream: *mut c_void,
+    ) -> Result<(), CudaExecutorError> {
+        let logits_elements = element_count(logits_elements, "greedy-sampling logits")?;
+        let token_id_elements = element_count(token_id_elements, "greedy-sampling token IDs")?;
+        let logprob_elements = element_count(logprob_elements, "greedy-sampling logprobs")?;
+        let rank_elements = element_count(rank_elements, "greedy-sampling ranks")?;
+
+        let logits_range = checked_byte_range(logits, logits_elements, "greedy-sampling logits")?;
+        let token_id_range = checked_byte_range(
+            token_ids.cast_const(),
+            token_id_elements,
+            "greedy-sampling token IDs",
+        )?;
+        let logprob_range = checked_byte_range(
+            logprobs.cast_const(),
+            logprob_elements,
+            "greedy-sampling logprobs",
+        )?;
+        let rank_range =
+            checked_byte_range(ranks.cast_const(), rank_elements, "greedy-sampling ranks")?;
+        if ranges_overlap(logits_range, token_id_range)
+            || ranges_overlap(logits_range, logprob_range)
+            || ranges_overlap(logits_range, rank_range)
+            || ranges_overlap(token_id_range, logprob_range)
+            || ranges_overlap(token_id_range, rank_range)
+            || ranges_overlap(logprob_range, rank_range)
+        {
+            return Err(CudaExecutorError::InvalidContract(
+                "greedy-sampling logits and output regions must not overlap".into(),
+            ));
+        }
+
+        let spec = GreedySampleLogprobsSpec::new(rows as usize, vocab_size as usize, T::DTYPE)
+            .map_err(|error| CudaExecutorError::InvalidContract(error.to_string()))?;
+        let stream = unsafe { CudaStreamRef::from_raw(stream) };
+        let backend = CudaBackend::from_stream(stream);
+        let logits = unsafe { DeviceSlice::from_raw_parts(logits, logits_elements) }?;
+        let mut token_ids =
+            unsafe { DeviceSliceMut::from_raw_parts(token_ids, token_id_elements) }?;
+        let mut logprobs = unsafe { DeviceSliceMut::from_raw_parts(logprobs, logprob_elements) }?;
+        let mut ranks = unsafe { DeviceSliceMut::from_raw_parts(ranks, rank_elements) }?;
+
+        T::launch(
+            &backend,
+            &logits,
+            &mut token_ids,
+            &mut logprobs,
+            &mut ranks,
+            spec,
+        )?;
+        GREEDY_SAMPLE_LOGPROBS_LAUNCHES.fetch_add(1, Ordering::Relaxed);
         Ok(())
     }
 
@@ -636,6 +788,120 @@ mod cuda {
         })
     }
 
+    /// Launch checked contiguous F32 greedy selection, logprobs, and ranks.
+    ///
+    /// # Safety
+    ///
+    /// Device pointers, exact element counts, active CUDA context, stream
+    /// lifetime, and asynchronous allocation lifetime must satisfy the bridge
+    /// header.
+    #[no_mangle]
+    pub unsafe extern "C" fn loom_cuda_bridge_greedy_sample_logprobs_f32(
+        logits: *const f32,
+        logits_elements: u64,
+        token_ids: *mut i32,
+        token_id_elements: u64,
+        logprobs: *mut f32,
+        logprob_elements: u64,
+        ranks: *mut i64,
+        rank_elements: u64,
+        rows: u32,
+        vocab_size: u32,
+        stream: *mut c_void,
+    ) -> c_int {
+        run_ffi(|| unsafe {
+            launch_greedy_sample_logprobs(
+                logits,
+                logits_elements,
+                token_ids,
+                token_id_elements,
+                logprobs,
+                logprob_elements,
+                ranks,
+                rank_elements,
+                rows,
+                vocab_size,
+                stream,
+            )
+        })
+    }
+
+    /// Launch checked contiguous FP16 greedy selection, logprobs, and ranks.
+    ///
+    /// # Safety
+    ///
+    /// Device pointers, exact element counts, active CUDA context, stream
+    /// lifetime, and asynchronous allocation lifetime must satisfy the bridge
+    /// header.
+    #[no_mangle]
+    pub unsafe extern "C" fn loom_cuda_bridge_greedy_sample_logprobs_f16(
+        logits: *const u16,
+        logits_elements: u64,
+        token_ids: *mut i32,
+        token_id_elements: u64,
+        logprobs: *mut f32,
+        logprob_elements: u64,
+        ranks: *mut i64,
+        rank_elements: u64,
+        rows: u32,
+        vocab_size: u32,
+        stream: *mut c_void,
+    ) -> c_int {
+        run_ffi(|| unsafe {
+            launch_greedy_sample_logprobs(
+                logits.cast::<f16>(),
+                logits_elements,
+                token_ids,
+                token_id_elements,
+                logprobs,
+                logprob_elements,
+                ranks,
+                rank_elements,
+                rows,
+                vocab_size,
+                stream,
+            )
+        })
+    }
+
+    /// Launch checked contiguous BF16 greedy selection, logprobs, and ranks.
+    ///
+    /// # Safety
+    ///
+    /// Device pointers, exact element counts, active CUDA context, stream
+    /// lifetime, and asynchronous allocation lifetime must satisfy the bridge
+    /// header.
+    #[no_mangle]
+    pub unsafe extern "C" fn loom_cuda_bridge_greedy_sample_logprobs_bf16(
+        logits: *const u16,
+        logits_elements: u64,
+        token_ids: *mut i32,
+        token_id_elements: u64,
+        logprobs: *mut f32,
+        logprob_elements: u64,
+        ranks: *mut i64,
+        rank_elements: u64,
+        rows: u32,
+        vocab_size: u32,
+        stream: *mut c_void,
+    ) -> c_int {
+        run_ffi(|| unsafe {
+            launch_greedy_sample_logprobs(
+                logits.cast::<bf16>(),
+                logits_elements,
+                token_ids,
+                token_id_elements,
+                logprobs,
+                logprob_elements,
+                ranks,
+                rank_elements,
+                rows,
+                vocab_size,
+                stream,
+            )
+        })
+    }
+
     /// Return successful Add+RMSNorm submissions through the Rust bridge.
     #[no_mangle]
     pub extern "C" fn loom_cuda_bridge_add_rms_norm_launch_count() -> u64 {
@@ -660,9 +926,22 @@ mod cuda {
         RMS_NORM_DYNAMIC_FP8_LAUNCHES.store(0, Ordering::Relaxed);
     }
 
+    /// Return successful greedy-sampling submissions through the Rust bridge.
+    #[no_mangle]
+    pub extern "C" fn loom_cuda_bridge_greedy_sample_logprobs_launch_count() -> u64 {
+        GREEDY_SAMPLE_LOGPROBS_LAUNCHES.load(Ordering::Relaxed)
+    }
+
+    /// Reset greedy-sampling bridge launch telemetry.
+    #[no_mangle]
+    pub extern "C" fn loom_cuda_bridge_reset_greedy_sample_logprobs_launch_count() {
+        GREEDY_SAMPLE_LOGPROBS_LAUNCHES.store(0, Ordering::Relaxed);
+    }
+
     #[cfg(test)]
     mod tests {
-        use super::{checked_byte_range, ranges_overlap};
+        use super::{checked_byte_range, launch_greedy_sample_logprobs, ranges_overlap};
+        use loom_cuda::CudaExecutorError;
 
         #[test]
         fn byte_ranges_reject_overflow_and_detect_overlap() {
@@ -680,6 +959,49 @@ mod cuda {
                 "overflow",
             )
             .is_err());
+        }
+
+        #[test]
+        fn greedy_regions_reject_bad_lengths_and_overlap_before_submission() {
+            let short_logits = unsafe {
+                launch_greedy_sample_logprobs::<f32>(
+                    0x1000_usize as *const f32,
+                    7,
+                    0x2000_usize as *mut i32,
+                    2,
+                    0x3000_usize as *mut f32,
+                    2,
+                    0x4000_usize as *mut i64,
+                    2,
+                    2,
+                    4,
+                    std::ptr::null_mut(),
+                )
+            };
+            assert!(matches!(
+                short_logits,
+                Err(CudaExecutorError::InvalidContract(_))
+            ));
+
+            let overlapping_output = unsafe {
+                launch_greedy_sample_logprobs::<f32>(
+                    0x1000_usize as *const f32,
+                    8,
+                    0x1000_usize as *mut i32,
+                    2,
+                    0x3000_usize as *mut f32,
+                    2,
+                    0x4000_usize as *mut i64,
+                    2,
+                    2,
+                    4,
+                    std::ptr::null_mut(),
+                )
+            };
+            assert!(matches!(
+                overlapping_output,
+                Err(CudaExecutorError::InvalidContract(_))
+            ));
         }
     }
 }

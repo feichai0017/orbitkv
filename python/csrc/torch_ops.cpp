@@ -450,6 +450,10 @@ launch_greedy_sample_logprobs(const at::Tensor& logits) {
   const auto rows = static_cast<uint32_t>(logits.size(0));
   const auto vocab_size = static_cast<uint32_t>(logits.size(1));
   const auto row_stride = static_cast<uint64_t>(logits.stride(0));
+  const auto logits_elements = static_cast<uint64_t>(logits.numel());
+  const auto output_elements = static_cast<uint64_t>(logits.size(0));
+  const bool use_rust_bridge =
+      row_stride == static_cast<uint64_t>(vocab_size);
   at::Tensor token_ids =
       at::empty({logits.size(0)}, logits.options().dtype(at::kInt));
   at::Tensor logprobs =
@@ -461,26 +465,58 @@ launch_greedy_sample_logprobs(const at::Tensor& logits) {
   const auto stream = at::cuda::getCurrentCUDAStream(logits.device().index());
   int status = LOOM_CUDA_UNSUPPORTED;
   if (logits.scalar_type() == at::kFloat) {
-    status = loom_cuda_greedy_sample_logprobs_f32(
-        logits.data_ptr<float>(), token_ids.data_ptr<int32_t>(),
-        logprobs.data_ptr<float>(), ranks.data_ptr<int64_t>(), rows, vocab_size,
-        row_stride, stream.stream());
+    if (use_rust_bridge) {
+      status = loom_cuda_bridge_greedy_sample_logprobs_f32(
+          logits.data_ptr<float>(), logits_elements,
+          token_ids.data_ptr<int32_t>(), output_elements,
+          logprobs.data_ptr<float>(), output_elements, ranks.data_ptr<int64_t>(),
+          output_elements, rows, vocab_size, stream.stream());
+    } else {
+      status = loom_cuda_greedy_sample_logprobs_f32(
+          logits.data_ptr<float>(), token_ids.data_ptr<int32_t>(),
+          logprobs.data_ptr<float>(), ranks.data_ptr<int64_t>(), rows,
+          vocab_size, row_stride, stream.stream());
+    }
   } else if (logits.scalar_type() == at::kHalf) {
-    status = loom_cuda_greedy_sample_logprobs_f16(
-        reinterpret_cast<const uint16_t*>(logits.data_ptr<at::Half>()),
-        token_ids.data_ptr<int32_t>(), logprobs.data_ptr<float>(),
-        ranks.data_ptr<int64_t>(), rows, vocab_size, row_stride,
-        stream.stream());
+    if (use_rust_bridge) {
+      status = loom_cuda_bridge_greedy_sample_logprobs_f16(
+          reinterpret_cast<const uint16_t*>(logits.data_ptr<at::Half>()),
+          logits_elements, token_ids.data_ptr<int32_t>(), output_elements,
+          logprobs.data_ptr<float>(), output_elements, ranks.data_ptr<int64_t>(),
+          output_elements, rows, vocab_size, stream.stream());
+    } else {
+      status = loom_cuda_greedy_sample_logprobs_f16(
+          reinterpret_cast<const uint16_t*>(logits.data_ptr<at::Half>()),
+          token_ids.data_ptr<int32_t>(), logprobs.data_ptr<float>(),
+          ranks.data_ptr<int64_t>(), rows, vocab_size, row_stride,
+          stream.stream());
+    }
   } else if (logits.scalar_type() == at::kBFloat16) {
-    status = loom_cuda_greedy_sample_logprobs_bf16(
-        reinterpret_cast<const uint16_t*>(logits.data_ptr<at::BFloat16>()),
-        token_ids.data_ptr<int32_t>(), logprobs.data_ptr<float>(),
-        ranks.data_ptr<int64_t>(), rows, vocab_size, row_stride,
-        stream.stream());
+    if (use_rust_bridge) {
+      status = loom_cuda_bridge_greedy_sample_logprobs_bf16(
+          reinterpret_cast<const uint16_t*>(
+              logits.data_ptr<at::BFloat16>()),
+          logits_elements, token_ids.data_ptr<int32_t>(), output_elements,
+          logprobs.data_ptr<float>(), output_elements, ranks.data_ptr<int64_t>(),
+          output_elements, rows, vocab_size, stream.stream());
+    } else {
+      status = loom_cuda_greedy_sample_logprobs_bf16(
+          reinterpret_cast<const uint16_t*>(logits.data_ptr<at::BFloat16>()),
+          token_ids.data_ptr<int32_t>(), logprobs.data_ptr<float>(),
+          ranks.data_ptr<int64_t>(), rows, vocab_size, row_stride,
+          stream.stream());
+    }
   }
-  TORCH_CHECK(status == LOOM_CUDA_SUCCESS,
-              "Loom CUDA greedy sampling launch failed: ",
-              loom_cuda_status_string(status), " (status ", status, ")");
+  if (use_rust_bridge) {
+    TORCH_CHECK(status == LOOM_CUDA_BRIDGE_SUCCESS,
+                "Loom Rust greedy-sampling bridge failed: ",
+                loom_cuda_bridge_last_error_message(), " (status ", status,
+                ")");
+  } else {
+    TORCH_CHECK(status == LOOM_CUDA_SUCCESS,
+                "Loom CUDA greedy sampling launch failed: ",
+                loom_cuda_status_string(status), " (status ", status, ")");
+  }
   greedy_sample_logprobs_launches.fetch_add(1, std::memory_order_relaxed);
   return {token_ids, logprobs, ranks};
 }
@@ -1118,6 +1154,19 @@ void reset_rms_norm_dynamic_fp8_rust_bridge_launch_count() {
   loom_cuda_bridge_reset_rms_norm_dynamic_fp8_launch_count();
 }
 
+int64_t greedy_sample_logprobs_rust_bridge_launch_count() {
+  const auto count =
+      loom_cuda_bridge_greedy_sample_logprobs_launch_count();
+  TORCH_CHECK(
+      count <= static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+      "Loom Rust greedy-sampling bridge launch count exceeds int64");
+  return static_cast<int64_t>(count);
+}
+
+void reset_greedy_sample_logprobs_rust_bridge_launch_count() {
+  loom_cuda_bridge_reset_greedy_sample_logprobs_launch_count();
+}
+
 }  // namespace
 
 TORCH_LIBRARY(loom_kernels, library) {
@@ -1170,6 +1219,11 @@ TORCH_LIBRARY(loom_kernels, library) {
               &greedy_sample_logprobs_launch_count);
   library.def("reset_greedy_sample_logprobs_launch_count() -> ()",
               &reset_greedy_sample_logprobs_launch_count);
+  library.def("greedy_sample_logprobs_rust_bridge_launch_count() -> int",
+              &greedy_sample_logprobs_rust_bridge_launch_count);
+  library.def(
+      "reset_greedy_sample_logprobs_rust_bridge_launch_count() -> ()",
+      &reset_greedy_sample_logprobs_rust_bridge_launch_count);
   library.def(
       "selected_token_logprobs(Tensor logits, Tensor token_ids) -> (Tensor "
       "logprobs, Tensor ranks)");

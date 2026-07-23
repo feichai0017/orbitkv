@@ -62,10 +62,34 @@ int loom_cuda_bridge_rms_norm_dynamic_fp8_bf16(
     float* scales, uint64_t scale_elements, uint32_t rows,
     uint32_t hidden_size, float epsilon, void* stream);
 
+// Checked Rust-runtime greedy sampling entrypoints for contiguous
+// [rows, vocab_size] logits. Every element count must exactly match its
+// logical tensor. All four memory regions must be disjoint. Launches use the
+// supplied framework-owned CUDA stream.
+int loom_cuda_bridge_greedy_sample_logprobs_f32(
+    const float* logits, uint64_t logits_elements, int32_t* token_ids,
+    uint64_t token_id_elements, float* logprobs, uint64_t logprob_elements,
+    int64_t* ranks, uint64_t rank_elements, uint32_t rows,
+    uint32_t vocab_size, void* stream);
+
+int loom_cuda_bridge_greedy_sample_logprobs_f16(
+    const uint16_t* logits, uint64_t logits_elements, int32_t* token_ids,
+    uint64_t token_id_elements, float* logprobs, uint64_t logprob_elements,
+    int64_t* ranks, uint64_t rank_elements, uint32_t rows,
+    uint32_t vocab_size, void* stream);
+
+int loom_cuda_bridge_greedy_sample_logprobs_bf16(
+    const uint16_t* logits, uint64_t logits_elements, int32_t* token_ids,
+    uint64_t token_id_elements, float* logprobs, uint64_t logprob_elements,
+    int64_t* ranks, uint64_t rank_elements, uint32_t rows,
+    uint32_t vocab_size, void* stream);
+
 uint64_t loom_cuda_bridge_add_rms_norm_launch_count(void);
 void loom_cuda_bridge_reset_add_rms_norm_launch_count(void);
 uint64_t loom_cuda_bridge_rms_norm_dynamic_fp8_launch_count(void);
 void loom_cuda_bridge_reset_rms_norm_dynamic_fp8_launch_count(void);
+uint64_t loom_cuda_bridge_greedy_sample_logprobs_launch_count(void);
+void loom_cuda_bridge_reset_greedy_sample_logprobs_launch_count(void);
 
 #ifdef __cplusplus
 }  // extern "C"

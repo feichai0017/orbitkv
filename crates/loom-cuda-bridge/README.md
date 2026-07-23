@@ -8,10 +8,11 @@ counts, and the stream handle once; Rust constructs non-owning typed views,
 validates the operator contract, and launches asynchronously without copying,
 allocating device memory, synchronizing, or taking ownership.
 
-The first admitted bridge paths are fused Add+RMSNorm and RMSNorm followed by
-dynamic per-token FP8 quantization. Other C ABI operators remain in
-`loom-cuda-sys` until their framework paths are migrated and validated
-independently.
+The admitted bridge paths are fused Add+RMSNorm, RMSNorm followed by dynamic
+per-token FP8 quantization, and contiguous greedy selection plus sampled-token
+logprob/rank. Greedy logits with padded row strides preserve the existing raw
+C ABI fallback. Other operators remain in `loom-cuda-sys` until their framework
+paths are migrated and validated independently.
 
 ```bash
 CUDA_HOME=/usr/local/cuda LOOM_CUDA_ARCHS=90 \

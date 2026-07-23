@@ -123,6 +123,26 @@ def reset_greedy_sample_logprobs_launch_count() -> None:
     torch.ops.loom_kernels.reset_greedy_sample_logprobs_launch_count()
 
 
+def greedy_sample_logprobs_rust_bridge_launch_count() -> int:
+    """Return successful contiguous greedy submissions through Rust."""
+    if _dispatch()._EXTENSION_PATH is None:
+        raise RuntimeError(
+            "Rust bridge telemetry requires the prebuilt PyTorch extension"
+        )
+    return int(
+        torch.ops.loom_kernels.greedy_sample_logprobs_rust_bridge_launch_count()
+    )
+
+
+def reset_greedy_sample_logprobs_rust_bridge_launch_count() -> None:
+    """Reset contiguous greedy-sampling Rust bridge telemetry."""
+    if _dispatch()._EXTENSION_PATH is None:
+        raise RuntimeError(
+            "Rust bridge telemetry requires the prebuilt PyTorch extension"
+        )
+    torch.ops.loom_kernels.reset_greedy_sample_logprobs_rust_bridge_launch_count()
+
+
 def selected_token_logprobs_launch_count() -> int:
     """Return host submissions through selected-token normalization."""
     if _dispatch()._EXTENSION_PATH is None:

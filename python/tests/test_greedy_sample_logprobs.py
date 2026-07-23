@@ -8,6 +8,8 @@ from loom_kernels.torch_ops import (
     adapter_backend,
     greedy_sample_logprobs,
     greedy_sample_logprobs_custom_op,
+    greedy_sample_logprobs_rust_bridge_launch_count,
+    reset_greedy_sample_logprobs_rust_bridge_launch_count,
 )
 
 
@@ -29,10 +31,12 @@ def test_greedy_sample_logprobs_matches_pytorch(dtype, shape):
     torch.manual_seed(113)
     logits = torch.randn(shape, device="cuda", dtype=dtype)
     expected = reference(logits)
+    reset_greedy_sample_logprobs_rust_bridge_launch_count()
     actual = greedy_sample_logprobs(logits)
     torch.cuda.synchronize()
 
     assert adapter_backend() == "cpp-dispatch"
+    assert greedy_sample_logprobs_rust_bridge_launch_count() == 1
     assert torch.equal(actual[0], expected[0])
     torch.testing.assert_close(actual[1], expected[1], rtol=2.0e-5, atol=2.0e-5)
     assert torch.equal(actual[2], expected[2])
@@ -63,9 +67,11 @@ def test_greedy_sample_logprobs_accepts_padded_vocabulary_rows():
     assert not logits.is_contiguous()
     assert logits.stride() == (152064, 1)
 
+    reset_greedy_sample_logprobs_rust_bridge_launch_count()
     actual = greedy_sample_logprobs(logits)
     expected = reference(logits)
     torch.cuda.synchronize()
+    assert greedy_sample_logprobs_rust_bridge_launch_count() == 0
     assert torch.equal(actual[0], expected[0])
     torch.testing.assert_close(actual[1], expected[1], rtol=2.0e-5, atol=2.0e-5)
     assert torch.equal(actual[2], expected[2])
