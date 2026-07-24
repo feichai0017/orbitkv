@@ -388,8 +388,8 @@ FA3 for the engine's 128-1,024-token path.
 - FP8 KV-cache pretrained native-versus-FP8 system evidence for quality,
   admitted context/batch, engine peak memory, TTFT, and TPOT; the
   process-isolated measurement harness now records these fields plus model,
-  corpus, package, token-divergence, and path provenance, but no accepted
-  pinned large-model artifact exists yet; the exact-byte, operator,
+  corpus, package, calibrated-scale, token-divergence, and path provenance, but
+  no accepted pinned large-model artifact exists yet; the exact-byte, operator,
   clean-wheel, and engine-invocation gates are complete, while INT8 remains
   unimplemented;
 - prefix-cache/preemption KV movement and compaction in a real scheduler path;

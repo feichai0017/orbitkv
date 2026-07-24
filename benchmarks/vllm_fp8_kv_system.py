@@ -301,8 +301,16 @@ def model_kv_geometry(engine: Any, cache_dtype: str) -> dict[str, Any]:
     head_size = int(
         getattr(config, "head_dim", config.hidden_size // attention_heads)
     )
-    element_bytes = 1 if cache_dtype == "fp8" else 2
+    element_bytes = 1 if cache_dtype in {"fp8", "fp8_e4m3"} else 2
     bytes_per_token = 2 * layers * kv_heads * head_size * element_bytes
+    quantization_config = getattr(config, "quantization_config", None)
+    if hasattr(quantization_config, "to_dict"):
+        quantization_config = quantization_config.to_dict()
+    checkpoint_kv_cache_scheme = (
+        quantization_config.get("kv_cache_scheme")
+        if isinstance(quantization_config, dict)
+        else None
+    )
     return {
         "num_hidden_layers": layers,
         "num_attention_heads": attention_heads,
@@ -310,6 +318,7 @@ def model_kv_geometry(engine: Any, cache_dtype: str) -> dict[str, Any]:
         "head_size": head_size,
         "cache_element_bytes": element_bytes,
         "theoretical_kv_bytes_per_token": bytes_per_token,
+        "checkpoint_kv_cache_scheme": checkpoint_kv_cache_scheme,
     }
 
 
@@ -430,7 +439,9 @@ def run_variant(args: argparse.Namespace) -> dict[str, Any]:
     )
     from loom_kernels.vllm import configure_vllm_rope_paged_kv, provider_metadata
 
-    cache_dtype = "auto" if variant == "native-vllm" else "fp8"
+    # A calibrated checkpoint can declare an FP8 KV-cache scheme that makes
+    # vLLM resolve "auto" to FP8. Keep the native baseline explicitly BF16.
+    cache_dtype = "bfloat16" if variant == "native-vllm" else "fp8"
     use_loom = variant == "fp8-loom"
     # Keep graph partitioning and operator opacity identical across variants.
     # The only compiler difference is that fp8-loom enables vLLM's official
@@ -472,7 +483,7 @@ def run_variant(args: argparse.Namespace) -> dict[str, Any]:
     init_seconds = time.perf_counter() - init_started
     memory_after_init = cuda_memory_snapshot(torch)
     capacity = cache_capacity(engine, args.max_model_len, args.max_num_seqs)
-    geometry = model_kv_geometry(engine, cache_dtype)
+    geometry = model_kv_geometry(engine, str(capacity["cache_dtype"]))
     launches_after_init = launch_count(Operator.ROPE_PAGED_KV_WRITE)
 
     cases = [
@@ -718,6 +729,7 @@ def system_gate(
     args: argparse.Namespace,
     operational_passed: bool,
     native_vs_fp8_loom: dict[str, Any],
+    fp8_loom: dict[str, Any],
 ) -> dict[str, Any]:
     quality = native_vs_fp8_loom["quality"]
     if quality is None:
@@ -731,6 +743,15 @@ def system_gate(
             "status": "not_run",
             "passed": False,
             "reason": "model-revision was not supplied",
+        }
+    checkpoint_kv_cache_scheme = fp8_loom["model_kv_geometry"][
+        "checkpoint_kv_cache_scheme"
+    ]
+    if checkpoint_kv_cache_scheme is None:
+        return {
+            "status": "not_run",
+            "passed": False,
+            "reason": "checkpoint does not declare dataset-calibrated KV scales",
         }
     capacity_ratio = native_vs_fp8_loom["cache_capacity"][
         "candidate_over_reference_tokens"
@@ -763,6 +784,7 @@ def system_gate(
             "cache_capacity_ratio": capacity_ratio,
             "perplexity_ratio": perplexity_ratio,
             "worst_tpot_regression": worst_tpot_regression,
+            "checkpoint_kv_cache_scheme": checkpoint_kv_cache_scheme,
         },
     }
 
@@ -820,7 +842,10 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
             "fp8_vllm_and_loom_generated_tokens_match": fp8_fusion_tokens_match,
         },
         "system_value_gate": system_gate(
-            args, operational_passed, native_vs_fp8_loom
+            args,
+            operational_passed,
+            native_vs_fp8_loom,
+            reports["fp8-loom"],
         ),
         "comparisons": {
             "native_vllm_vs_fp8_vllm": native_vs_fp8_vllm,

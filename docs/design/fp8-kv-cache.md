@@ -129,9 +129,13 @@ native vLLM, static-FP8 vLLM, and static-FP8 Loom in isolated processes while
 holding graph partitioning constant. The report records the pinned model
 revision or checkpoint digest, corpus SHA-256, native wheel manifest, cache
 capacity, CUDA memory, perplexity, TTFT, TPOT, throughput, token divergence,
-and Loom launch telemetry. Both variant orders must pass before an artifact is
-accepted. Omitting the quality corpus or model revision leaves the system gate
-explicitly `not_run`.
+and Loom launch telemetry. The native baseline requests BF16 explicitly so a
+checkpoint-declared FP8 cache scheme cannot silently change it. The final gate
+requires dataset-calibrated checkpoint K/V scales; uncalibrated scale `1.0` and
+random-token warmup calibration remain diagnostic modes, not accepted
+evidence. Both variant orders must pass before an artifact is accepted.
+Omitting the quality corpus, model revision, or calibrated cache scheme leaves
+the system gate explicitly `not_run`.
 
 The first four gates prove implementation and integration; the raw result is
 [recorded here](../results/h20-fp8-kv-cache-write-20260724.json). They show

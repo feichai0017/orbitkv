@@ -453,7 +453,7 @@ PY
   --result-json /tmp/qwen25-rope-paged-kv-fp8.json
 
 .venv-vllm/bin/python benchmarks/vllm_fp8_kv_system.py \
-  --model /path/to/Qwen2.5-7B-Instruct \
+  --model /path/to/Qwen2.5-7B-Instruct-kvattn-fp8-attn-head \
   --model-revision <pinned-revision-or-checkpoint-digest> \
   --quality-jsonl /path/to/pinned-quality-corpus.jsonl \
   --variant-order native-first \
