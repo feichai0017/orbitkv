@@ -9,7 +9,7 @@ use loom_kernels::{
     AddRmsNormSpec, DType, GreedySampleLogprobsSpec, GreedySpeculativeVerifySpec, KvCacheEncoding,
     KvCacheScaleGranularity, MinPFilterSpec, PagedDecodeAttentionSpec, RmsNormDynamicFp8Spec,
     RmsNormSpec, RopePagedKvWriteSpec, RotaryEmbeddingSpec, RotaryStyle, SelectedTokenLogprobsSpec,
-    SiluAndMulDynamicFp8Spec, SiluAndMulSpec, TokenPenaltiesSpec,
+    SiluAndMulDynamicFp8Spec, SiluAndMulSpec, TokenPenaltiesSpec, TopKSampledLogprobsSpec,
 };
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void, CString};
@@ -41,7 +41,8 @@ const OP_MIN_P_FILTER: usize = 8;
 const OP_PAGED_DECODE_ATTENTION: usize = 9;
 const OP_GREEDY_SPECULATIVE_VERIFY: usize = 10;
 const OP_TOKEN_PENALTIES: usize = 11;
-const OPERATOR_COUNT: usize = 12;
+const OP_TOPK_SAMPLED_LOGPROBS: usize = 12;
+const OPERATOR_COUNT: usize = 13;
 
 static LAUNCH_COUNTS: [AtomicU64; OPERATOR_COUNT] = [const { AtomicU64::new(0) }; OPERATOR_COUNT];
 
@@ -315,6 +316,19 @@ trait Scalar: Copy {
         layout: RowStridedLayout,
     ) -> Result<(), CudaExecutorError>;
 
+    #[allow(clippy::too_many_arguments)]
+    fn topk_sampled_logprobs<S: CudaStreamHandle>(
+        backend: &CudaBackend<S>,
+        logits: &DeviceSlice<'_, Self>,
+        sampled_token_ids: &DeviceSlice<'_, i64>,
+        output_token_ids: &mut DeviceSliceMut<'_, i32>,
+        output_logprobs: &mut DeviceSliceMut<'_, f32>,
+        sampled_token_ranks: &mut DeviceSliceMut<'_, i64>,
+        workspace: &mut DeviceSliceMut<'_, u8>,
+        spec: TopKSampledLogprobsSpec,
+        layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError>;
+
     fn min_p_filter<S: CudaStreamHandle>(
         backend: &CudaBackend<S>,
         logits: &mut DeviceSliceMut<'_, Self>,
@@ -393,6 +407,7 @@ macro_rules! impl_scalar {
         $silu_and_mul:ident,
         $greedy:ident,
         $selected:ident,
+        $topk_sampled:ident,
         $min_p:ident,
         $rope:ident,
         $rope_fp8:ident,
@@ -497,6 +512,30 @@ macro_rules! impl_scalar {
                 backend.$selected(logits, token_ids, logprobs, ranks, spec, layout)
             }
 
+            #[allow(clippy::too_many_arguments)]
+            fn topk_sampled_logprobs<S: CudaStreamHandle>(
+                backend: &CudaBackend<S>,
+                logits: &DeviceSlice<'_, Self>,
+                sampled_token_ids: &DeviceSlice<'_, i64>,
+                output_token_ids: &mut DeviceSliceMut<'_, i32>,
+                output_logprobs: &mut DeviceSliceMut<'_, f32>,
+                sampled_token_ranks: &mut DeviceSliceMut<'_, i64>,
+                workspace: &mut DeviceSliceMut<'_, u8>,
+                spec: TopKSampledLogprobsSpec,
+                layout: RowStridedLayout,
+            ) -> Result<(), CudaExecutorError> {
+                backend.$topk_sampled(
+                    logits,
+                    sampled_token_ids,
+                    output_token_ids,
+                    output_logprobs,
+                    sampled_token_ranks,
+                    workspace,
+                    spec,
+                    layout,
+                )
+            }
+
             fn min_p_filter<S: CudaStreamHandle>(
                 backend: &CudaBackend<S>,
                 logits: &mut DeviceSliceMut<'_, Self>,
@@ -594,6 +633,7 @@ impl_scalar!(
     silu_and_mul_f32,
     greedy_sample_logprobs_f32,
     selected_token_logprobs_f32,
+    topk_sampled_logprobs_f32,
     min_p_filter_f32,
     rope_paged_kv_write_f32,
     rope_paged_kv_write_fp8_e4m3_f32,
@@ -609,6 +649,7 @@ impl_scalar!(
     silu_and_mul_f16,
     greedy_sample_logprobs_f16,
     selected_token_logprobs_f16,
+    topk_sampled_logprobs_f16,
     min_p_filter_f16,
     rope_paged_kv_write_f16,
     rope_paged_kv_write_fp8_e4m3_f16,
@@ -624,6 +665,7 @@ impl_scalar!(
     silu_and_mul_bf16,
     greedy_sample_logprobs_bf16,
     selected_token_logprobs_bf16,
+    topk_sampled_logprobs_bf16,
     min_p_filter_bf16,
     rope_paged_kv_write_bf16,
     rope_paged_kv_write_fp8_e4m3_bf16,
@@ -721,7 +763,7 @@ macro_rules! dispatch_scalar {
 /// Return the bridge ABI version.
 #[no_mangle]
 pub extern "C" fn loom_cuda_bridge_abi_version() -> u32 {
-    3
+    4
 }
 
 /// Return the detailed error recorded by the most recent failed bridge call

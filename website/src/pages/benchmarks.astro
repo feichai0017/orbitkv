@@ -45,7 +45,10 @@ import { evidence, repositoryUrl } from "../data/site";
         greedy sampled-logprob fusion reaches 3.16–4.35× against vLLM's exact
         full decode-tail sequence for 1–128 Qwen-vocabulary rows. The general
         selected-token path reaches 2.77–3.78× while leaving sampling policy
-        with vLLM. Min-P crosses from a small-batch regression to 1.10× at 32
+        with vLLM. The deterministic top-k logprob operator reaches
+        3.25×/2.60×/1.19× at 1/8/32 rows and near parity at 128; its exact
+        vLLM adapter preserves engine tie order but crosses parity after
+        provider-order reversal. Min-P crosses from a small-batch regression to 1.10× at 32
         rows and 1.89× at 128 rows, so its adapter routes smaller shapes back
         to vLLM instead of applying a blanket override. Sparse token penalties
         reach 5.82–34.30× against vLLM's vocabulary-sized counting path for
@@ -105,6 +108,9 @@ python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
 .venv-vllm/bin/python benchmarks/vllm_selected_token_logprobs.py \
   --rows 1,2,4,8,16,32,64,128 --vocab-size 151936 --dtype bf16
 
+.venv-vllm/bin/python benchmarks/vllm_topk_sampled_logprobs.py \
+  --rows 1,8,32,128 --vocab-size 151936 --top-k 20 --dtype bf16
+
 .venv-vllm/bin/python benchmarks/vllm_min_p_filter.py \
   --rows 1,8,32,128 --vocab-size 151936
 
@@ -155,6 +161,7 @@ python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
 
 .venv-vllm/bin/python benchmarks/vllm_engine_greedy_logprobs.py \
   --model /path/to/Qwen2.5-0.5B-Instruct --sampling-mode top-k-top-p \
+  --num-logprobs 20 \
   --case 1x32x64 --case 8x32x64 --case 32x32x32 \
   --provider-order baseline-first</code></pre>
       <p>
@@ -182,6 +189,14 @@ python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
         matched every token and rank within 1.20e-6, with 1440 Loom launches
         only on the candidate side. Batch-latency ratios were 1.044–1.125× and
         TPOT ratios were 1.054–1.130×.
+      </p>
+      <p>
+        The top-k logprob A/B additionally requests 20 returned candidates.
+        Both orders match every generated token, returned ID/rank, and logprob
+        within 1.91e-6, with 1440 Loom selected-token launches only on the
+        candidate side. Baseline-first latency ratios are 1.037–1.053×, while
+        Loom-first ratios are 0.969–0.982×. This proves exact engine integration
+        and smaller raw-logprob intermediates—not stable end-to-end acceleration.
       </p>
       <p>
         The sparse-penalty A/B keeps vLLM's parameters, output-history

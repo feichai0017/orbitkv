@@ -6,7 +6,9 @@ use crate::{CudaExecutorError, RowStridedLayout};
 use half::{bf16, f16};
 use loom_kernels::{
     DType, GreedySampleLogprobsSpec, SelectedTokenLogprobsSpec, TokenPenaltiesSpec,
+    TopKSampledLogprobsSpec,
 };
+use std::mem::align_of;
 
 impl<S: CudaStreamHandle> CudaBackend<S> {
     /// Fuses F32 greedy selection with the sampled token's logprob and rank.
@@ -171,6 +173,135 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
         })
     }
 
+    /// Fuses F32 normalization, sampled-token rank, and deterministic top-k.
+    #[allow(clippy::too_many_arguments)]
+    pub fn topk_sampled_logprobs_f32(
+        &self,
+        logits: &impl CudaDeviceRead<f32>,
+        sampled_token_ids: &impl CudaDeviceRead<i64>,
+        output_token_ids: &mut impl CudaDeviceWrite<i32>,
+        output_logprobs: &mut impl CudaDeviceWrite<f32>,
+        sampled_token_ranks: &mut impl CudaDeviceWrite<i64>,
+        workspace: &mut impl CudaDeviceWrite<u8>,
+        spec: TopKSampledLogprobsSpec,
+        layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_topk_dtype(spec, DType::F32)?;
+        let launch = validate_topk_buffers(
+            logits,
+            sampled_token_ids,
+            output_token_ids,
+            output_logprobs,
+            sampled_token_ranks,
+            workspace,
+            spec,
+            layout,
+        )?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_topk_sampled_logprobs_f32(
+                logits.as_ptr(),
+                sampled_token_ids.as_ptr(),
+                output_token_ids.as_mut_ptr(),
+                output_logprobs.as_mut_ptr(),
+                sampled_token_ranks.as_mut_ptr(),
+                launch.rows,
+                launch.vocab_size,
+                launch.top_k,
+                launch.row_stride,
+                workspace.as_mut_ptr(),
+                launch.workspace_bytes,
+                launch.partitions,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Fuses FP16 normalization, sampled-token rank, and deterministic top-k.
+    #[allow(clippy::too_many_arguments)]
+    pub fn topk_sampled_logprobs_f16(
+        &self,
+        logits: &impl CudaDeviceRead<f16>,
+        sampled_token_ids: &impl CudaDeviceRead<i64>,
+        output_token_ids: &mut impl CudaDeviceWrite<i32>,
+        output_logprobs: &mut impl CudaDeviceWrite<f32>,
+        sampled_token_ranks: &mut impl CudaDeviceWrite<i64>,
+        workspace: &mut impl CudaDeviceWrite<u8>,
+        spec: TopKSampledLogprobsSpec,
+        layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_topk_dtype(spec, DType::F16)?;
+        let launch = validate_topk_buffers(
+            logits,
+            sampled_token_ids,
+            output_token_ids,
+            output_logprobs,
+            sampled_token_ranks,
+            workspace,
+            spec,
+            layout,
+        )?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_topk_sampled_logprobs_f16(
+                logits.as_ptr().cast::<u16>(),
+                sampled_token_ids.as_ptr(),
+                output_token_ids.as_mut_ptr(),
+                output_logprobs.as_mut_ptr(),
+                sampled_token_ranks.as_mut_ptr(),
+                launch.rows,
+                launch.vocab_size,
+                launch.top_k,
+                launch.row_stride,
+                workspace.as_mut_ptr(),
+                launch.workspace_bytes,
+                launch.partitions,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Fuses BF16 normalization, sampled-token rank, and deterministic top-k.
+    #[allow(clippy::too_many_arguments)]
+    pub fn topk_sampled_logprobs_bf16(
+        &self,
+        logits: &impl CudaDeviceRead<bf16>,
+        sampled_token_ids: &impl CudaDeviceRead<i64>,
+        output_token_ids: &mut impl CudaDeviceWrite<i32>,
+        output_logprobs: &mut impl CudaDeviceWrite<f32>,
+        sampled_token_ranks: &mut impl CudaDeviceWrite<i64>,
+        workspace: &mut impl CudaDeviceWrite<u8>,
+        spec: TopKSampledLogprobsSpec,
+        layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_topk_dtype(spec, DType::Bf16)?;
+        let launch = validate_topk_buffers(
+            logits,
+            sampled_token_ids,
+            output_token_ids,
+            output_logprobs,
+            sampled_token_ranks,
+            workspace,
+            spec,
+            layout,
+        )?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_topk_sampled_logprobs_bf16(
+                logits.as_ptr().cast::<u16>(),
+                sampled_token_ids.as_ptr(),
+                output_token_ids.as_mut_ptr(),
+                output_logprobs.as_mut_ptr(),
+                sampled_token_ranks.as_mut_ptr(),
+                launch.rows,
+                launch.vocab_size,
+                launch.top_k,
+                launch.row_stride,
+                workspace.as_mut_ptr(),
+                launch.workspace_bytes,
+                launch.partitions,
+                self.raw_stream(),
+            )
+        })
+    }
+
     /// Applies sparse F32 repetition, frequency, and presence penalties.
     #[allow(clippy::too_many_arguments)]
     pub fn apply_token_penalties_f32(
@@ -236,6 +367,108 @@ struct TokenPenaltiesLaunch {
     prompt_row_stride: u64,
     output_row_stride: u64,
     workspace_row_stride: u64,
+}
+
+struct TopKSampledLogprobsLaunch {
+    rows: u32,
+    vocab_size: u32,
+    top_k: u32,
+    row_stride: u64,
+    workspace_bytes: u64,
+    partitions: u32,
+}
+
+fn require_topk_dtype(
+    spec: TopKSampledLogprobsSpec,
+    expected: DType,
+) -> Result<(), CudaExecutorError> {
+    if spec.dtype() == expected {
+        Ok(())
+    } else {
+        Err(CudaExecutorError::InvalidContract(format!(
+            "top-k sampled logprobs for {expected:?} cannot execute {:?}",
+            spec.dtype()
+        )))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_topk_buffers<T: Copy>(
+    logits: &impl CudaDeviceRead<T>,
+    sampled_token_ids: &impl CudaDeviceRead<i64>,
+    output_token_ids: &impl CudaDeviceRead<i32>,
+    output_logprobs: &impl CudaDeviceRead<f32>,
+    sampled_token_ranks: &impl CudaDeviceRead<i64>,
+    workspace: &impl CudaDeviceRead<u8>,
+    spec: TopKSampledLogprobsSpec,
+    layout: RowStridedLayout,
+) -> Result<TopKSampledLogprobsLaunch, CudaExecutorError> {
+    logits.require_len(
+        layout.storage_elements(spec.rows(), spec.vocab_size())?,
+        "top-k sampled-logprob logits",
+    )?;
+    sampled_token_ids.require_len(spec.rows(), "sampled token IDs")?;
+    output_token_ids.require_len(spec.output_numel(), "top-k output token IDs")?;
+    output_logprobs.require_len(spec.output_numel(), "top-k output logprobs")?;
+    sampled_token_ranks.require_len(spec.rows(), "sampled token ranks")?;
+    workspace.require_len(spec.workspace_bytes(), "top-k sampled-logprob workspace")?;
+    if !(workspace.as_ptr() as usize).is_multiple_of(align_of::<f32>()) {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-k sampled-logprob workspace must be aligned to 4 bytes".into(),
+        ));
+    }
+
+    let rows = u32::try_from(spec.rows()).map_err(|_| {
+        CudaExecutorError::InvalidContract("top-k sampled-logprob rows exceed the CUDA ABI".into())
+    })?;
+    if rows > i32::MAX as u32 {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-k sampled-logprob rows exceed the CUDA grid".into(),
+        ));
+    }
+    let vocab_size = u32::try_from(spec.vocab_size()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "top-k sampled-logprob vocabulary exceeds the CUDA ABI".into(),
+        )
+    })?;
+    if vocab_size > i32::MAX as u32 {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-k sampled-logprob vocabulary exceeds int32 token IDs".into(),
+        ));
+    }
+    let top_k = u32::try_from(spec.top_k()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "top-k sampled-logprob width exceeds the CUDA ABI".into(),
+        )
+    })?;
+    let row_stride = u64::try_from(layout.row_stride()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "top-k sampled-logprob row stride exceeds the CUDA ABI".into(),
+        )
+    })?;
+    let workspace_bytes = u64::try_from(spec.workspace_bytes()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "top-k sampled-logprob workspace exceeds the CUDA ABI".into(),
+        )
+    })?;
+    let partitions = u32::try_from(spec.workspace_partitions()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "top-k sampled-logprob partitions exceed the CUDA ABI".into(),
+        )
+    })?;
+    if rows > i32::MAX as u32 / partitions {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-k sampled-logprob partition grid exceeds CUDA grid.x".into(),
+        ));
+    }
+    Ok(TopKSampledLogprobsLaunch {
+        rows,
+        vocab_size,
+        top_k,
+        row_stride,
+        workspace_bytes,
+        partitions,
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -402,10 +635,10 @@ fn validate_selected_buffers<T: Copy>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::runtime::DeviceBuffer;
+    use crate::runtime::{DeviceBuffer, DeviceSliceMut};
     use loom_kernels::{
         apply_token_penalties_f32_reference, greedy_sample_logprobs_f32_reference,
-        selected_token_logprobs_f32_reference,
+        selected_token_logprobs_f32_reference, topk_sampled_logprobs_f32_reference,
     };
 
     #[test]
@@ -494,6 +727,83 @@ mod tests {
             assert!((actual - expected).abs() < 1.0e-5);
         }
         assert_eq!(ranks_device.copy_to_vec().unwrap(), expected_ranks);
+    }
+
+    #[test]
+    fn topk_sampled_logprobs_wrapper_matches_the_cpu_oracle() {
+        let spec = TopKSampledLogprobsSpec::new(2, 5, 3, DType::F32).unwrap();
+        let logits = [1.0_f32, 3.0, 3.0, -1.0, 0.5, -2.0, -1.0, 2.0, 0.0, 1.0];
+        let sampled_token_ids = [0_i64, 4_i64];
+        let mut expected_ids = [-1_i32; 8];
+        let mut expected_logprobs = [0.0_f32; 8];
+        let mut expected_ranks = [0_i64; 2];
+        topk_sampled_logprobs_f32_reference(
+            &logits,
+            &sampled_token_ids,
+            &mut expected_ids,
+            &mut expected_logprobs,
+            &mut expected_ranks,
+            spec,
+        )
+        .unwrap();
+
+        let backend = CudaBackend::new().unwrap();
+        let logits_device = DeviceBuffer::from_slice(&logits).unwrap();
+        let sampled_ids_device = DeviceBuffer::from_slice(&sampled_token_ids).unwrap();
+        let mut ids_device = DeviceBuffer::from_slice(&[-1_i32; 8]).unwrap();
+        let mut logprobs_device = DeviceBuffer::from_slice(&[0.0_f32; 8]).unwrap();
+        let mut ranks_device = DeviceBuffer::from_slice(&[0_i64; 2]).unwrap();
+        let mut workspace_device =
+            DeviceBuffer::from_slice(&vec![0_u8; spec.workspace_bytes()]).unwrap();
+        backend
+            .topk_sampled_logprobs_f32(
+                &logits_device,
+                &sampled_ids_device,
+                &mut ids_device,
+                &mut logprobs_device,
+                &mut ranks_device,
+                &mut workspace_device,
+                spec,
+                RowStridedLayout::contiguous(spec.vocab_size()),
+            )
+            .unwrap();
+        backend.stream().synchronize().unwrap();
+
+        assert_eq!(ids_device.copy_to_vec().unwrap(), expected_ids);
+        for (actual, expected) in logprobs_device
+            .copy_to_vec()
+            .unwrap()
+            .iter()
+            .zip(expected_logprobs)
+        {
+            assert!((actual - expected).abs() < 1.0e-5);
+        }
+        assert_eq!(ranks_device.copy_to_vec().unwrap(), expected_ranks);
+
+        let mut workspace_storage =
+            DeviceBuffer::from_slice(&vec![0_u8; spec.workspace_bytes() + 1]).unwrap();
+        let mut misaligned_workspace = unsafe {
+            DeviceSliceMut::from_raw_parts(
+                workspace_storage.as_mut_ptr().add(1),
+                spec.workspace_bytes(),
+            )
+        }
+        .unwrap();
+        let error = backend
+            .topk_sampled_logprobs_f32(
+                &logits_device,
+                &sampled_ids_device,
+                &mut ids_device,
+                &mut logprobs_device,
+                &mut ranks_device,
+                &mut misaligned_workspace,
+                spec,
+                RowStridedLayout::contiguous(spec.vocab_size()),
+            )
+            .expect_err("misaligned workspace must be rejected");
+        assert!(
+            matches!(error, CudaExecutorError::InvalidContract(message) if message.contains("aligned to 4 bytes"))
+        );
     }
 
     #[test]

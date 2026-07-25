@@ -72,10 +72,10 @@ isolated microbenchmark is not sufficient.
 | repetition, presence, and frequency penalties | P0 | supported | one sparse history hash and in-place update instead of full-vocabulary count/mask tensors |
 | greedy argmax+sampled-token raw logprob | P0 | supported | one-pass selection, normalization, gather, and tie-aware rank |
 | general selected-token raw logprob+rank | P0 | supported | engine-owned sampling followed by one-pass normalization and tie-aware rank |
+| sampled-token + top-k raw logprobs | P0 | supported | deterministic direct reduction without full-vocabulary probabilities; exact vLLM adapter preserves engine `torch.topk` order and replaces full raw log-softmax/rank |
 | in-place min-p filtering | P0 | supported | row-max threshold without probability or mask tensors; vLLM route is H20 shape-gated |
 | deterministic counter-based RNG sampling | P0 | next | seeded token selection without host round trips |
 | top-k, top-p, and renormalization | P0 | next | fused candidate filtering and sampling |
-| top-k logprobs | P0 | next | avoid full-vocabulary probability tensors when multiple candidates are returned |
 | sharded-vocabulary top-k/logsumexp merge | P1 | planned | tensor-parallel token selection |
 | structured-output bitmask application | P1 | profile-gated | grammar mask plus logits processing |
 
@@ -135,9 +135,9 @@ the boundary or an isolated implementation is measurably useful.
 1. Finish system-level qualification for the static FP8 E4M3 quantize-on-write
    path by proving cache bytes, admitted context/batch, quality, TTFT, and TPOT
    together; H20 operator and clean-wheel qualification are complete.
-2. Continue the sampling tail after the completed sparse-penalty slice with
-   fused preprocessing, top-k/top-p, renormalization, deterministic RNG, and
-   top-k logprobs.
+2. Continue the sampling tail after the completed sparse-penalty and top-k
+   logprob slices with fused preprocessing, top-k/top-p, renormalization, and
+   deterministic RNG.
 3. Add KV block movement for a real prefix-cache, preemption, or compaction
    call site.
 4. Return to tree metadata, stochastic speculative rejection, or KV

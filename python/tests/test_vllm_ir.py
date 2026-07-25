@@ -23,6 +23,7 @@ from loom_kernels.vllm import (
     SILU_OVERRIDE_KEY,
     SUPPORTED_VLLM_SERIES,
     TOKEN_PENALTIES_OVERRIDE_KEY,
+    TOPK_SAMPLED_LOGPROBS_OVERRIDE_KEY,
     configure_vllm_rope_paged_kv,
     installed_vllm_version,
     provider_metadata,
@@ -36,6 +37,7 @@ from loom_kernels.vllm import (
     register_vllm_silu_and_mul,
     register_vllm_silu_and_mul_dynamic_fp8,
     register_vllm_token_penalties,
+    register_vllm_topk_sampled_logprobs,
     supports_installed_vllm,
     supports_vllm_paged_decode_shape,
 )
@@ -312,6 +314,93 @@ def test_vllm_selected_token_path_handles_processed_greedy_batches(monkeypatch):
     assert torch.equal(output.sampled_token_ids[:, 0], sampled.to(torch.int32))
     assert launch_count(Operator.GREEDY_SAMPLE_LOGPROBS) == 0
     assert launch_count(Operator.SELECTED_TOKEN_LOGPROBS) == 1
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_vllm_topk_sampled_logprobs_preserves_engine_selection(monkeypatch):
+    from vllm.v1.sample.sampler import Sampler
+
+    from loom_kernels.torch_ops import (
+        Operator,
+        launch_count,
+        reset_launch_count,
+    )
+
+    assert (
+        register_vllm_topk_sampled_logprobs()
+        == TOPK_SAMPLED_LOGPROBS_OVERRIDE_KEY
+    )
+    rows, vocab_size, top_k = 5, 4096, 20
+    torch.manual_seed(193)
+    logits = torch.randn(
+        (rows, vocab_size), device="cuda", dtype=torch.float32
+    )
+    sampled = torch.tensor([0, 17, 2048, 4095, 7], device="cuda")
+    metadata = SimpleNamespace(
+        all_greedy=False,
+        all_random=True,
+        max_num_logprobs=top_k,
+        logprob_token_ids=None,
+        top_k=torch.full((rows,), 50, device="cuda", dtype=torch.int32),
+        top_p=torch.full((rows,), 0.9, device="cuda"),
+        no_penalties=False,
+    )
+    sampler = Sampler()
+    observed = {}
+
+    def apply_processors(sampling_logits, received_metadata, predict_bonus_token):
+        observed["input_dtype"] = sampling_logits.dtype
+        observed["metadata"] = received_metadata
+        observed["predict_bonus_token"] = predict_bonus_token
+        return sampling_logits
+
+    def sample(sampling_logits, received_metadata):
+        observed["sample_logits_dtype"] = sampling_logits.dtype
+        observed["sample_metadata"] = received_metadata
+        return sampled, None
+
+    monkeypatch.setattr(sampler, "apply_logits_processors", apply_processors)
+    monkeypatch.setattr(sampler, "sample", sample)
+    reset_launch_count(Operator.SELECTED_TOKEN_LOGPROBS)
+    reset_launch_count(Operator.TOPK_SAMPLED_LOGPROBS)
+    output = sampler.forward(logits, metadata, predict_bonus_token=True)
+    raw_logprobs = logits.log_softmax(-1)
+    top_logprobs, top_token_ids = torch.topk(raw_logprobs, top_k, dim=-1)
+    sampled_logprobs = raw_logprobs.gather(-1, sampled.unsqueeze(-1))
+    sampled_logits = logits.gather(-1, sampled.unsqueeze(-1))
+    expected_ranks = (logits >= sampled_logits).sum(dim=-1)
+    expected_ids = torch.cat(
+        (sampled.unsqueeze(-1), top_token_ids), dim=-1
+    ).to(torch.int32)
+    expected_logprobs = torch.cat(
+        (sampled_logprobs, top_logprobs), dim=-1
+    )
+    torch.cuda.synchronize()
+
+    assert observed == {
+        "input_dtype": torch.float32,
+        "metadata": metadata,
+        "predict_bonus_token": True,
+        "sample_logits_dtype": torch.float32,
+        "sample_metadata": metadata,
+    }
+    assert torch.equal(output.sampled_token_ids[:, 0], sampled.to(torch.int32))
+    assert output.logprobs_tensors is not None
+    assert torch.equal(
+        output.logprobs_tensors.logprob_token_ids, expected_ids
+    )
+    torch.testing.assert_close(
+        output.logprobs_tensors.logprobs,
+        expected_logprobs,
+        rtol=2.0e-5,
+        atol=2.0e-5,
+    )
+    assert torch.equal(
+        output.logprobs_tensors.selected_token_ranks, expected_ranks
+    )
+    assert launch_count(Operator.SELECTED_TOKEN_LOGPROBS) == 1
+    assert launch_count(Operator.TOPK_SAMPLED_LOGPROBS) == 0
+    assert provider_metadata()["topk_sampled_logprobs_override"] is True
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")

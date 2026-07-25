@@ -35,6 +35,9 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   `rope_paged_kv_write_` schema with the engine's single packed
   `[blocks, 2, block, heads, head_size]` allocation; no legacy overload is
   retained.
+- advanced the checked framework bridge to ABI 4 for sampled-token plus top-k
+  logprobs; current source wheels use a distinct `4cu...` build tag and do not
+  claim the older ABI2 clean-install matrix.
 
 ### Added
 
@@ -70,6 +73,11 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   observer, and output digests without adding calibration dependencies to the
   runtime wheel; the attention/KV-only recipe requires a stateful multi-sample
   observer and leaves model weights unchanged.
+- deterministic sampled-token plus top-k raw logprobs for F32/FP16/BF16,
+  including CPU oracles, a two-stage handwritten CUDA reduction with
+  caller-owned workspace, safe Rust and checked bridge dispatch, PyTorch
+  compile/graph coverage, direct H20 evidence, and an exact vLLM 0.24 adapter
+  that preserves engine `torch.topk` tie order.
 
 ### Fixed
 

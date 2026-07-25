@@ -1,4 +1,4 @@
-"""vLLM greedy and selected-token sampling-tail registrations."""
+"""vLLM sampling-tail registrations."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ from ._runtime import supports_installed_vllm
 GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY = "greedy_sample_logprobs"
 SELECTED_TOKEN_LOGPROBS_OVERRIDE_KEY = "selected_token_logprobs"
 TOKEN_PENALTIES_OVERRIDE_KEY = "token_penalties"
+TOPK_SAMPLED_LOGPROBS_OVERRIDE_KEY = "topk_sampled_logprobs"
+TOPK_SAMPLED_LOGPROBS_MAX_ROWS = 32
 
 _GREEDY_SAMPLE_LOGPROBS_REGISTERED = False
 _GREEDY_SAMPLE_LOGPROBS_ORIGINAL_FORWARD: Any | None = None
@@ -27,6 +29,10 @@ _TOKEN_PENALTIES_ORIGINAL_APPLY: Any | None = None
 _TOKEN_PENALTIES_FIRST_CONTRACT: dict[str, Any] | None = None
 _TOKEN_PENALTIES_FIRST_REJECTION: dict[str, Any] | None = None
 _TOKEN_PENALTIES_WORKSPACES: dict[tuple[int, int], torch.Tensor] = {}
+_TOPK_SAMPLED_LOGPROBS_REGISTERED = False
+_TOPK_SAMPLED_LOGPROBS_ORIGINAL_FORWARD: Any | None = None
+_TOPK_SAMPLED_LOGPROBS_FIRST_CONTRACT: dict[str, Any] | None = None
+_TOPK_SAMPLED_LOGPROBS_FIRST_REJECTION: dict[str, Any] | None = None
 
 
 def _token_penalties_workspace(
@@ -510,6 +516,173 @@ def register_vllm_selected_token_logprobs() -> str | None:
     _SELECTED_TOKEN_LOGPROBS_REGISTERED = True
     return SELECTED_TOKEN_LOGPROBS_OVERRIDE_KEY
 
+
+def register_vllm_topk_sampled_logprobs() -> str | None:
+    """Remove vLLM's full-vocabulary raw-logprob tensor around top-k.
+
+    vLLM retains ownership of processors, penalties, temperature, top-k/top-p
+    sampling, RNG, the selected token, and `torch.topk`'s observable tie order.
+    Loom replaces full-vocabulary log-softmax and sampled-token ranking with
+    its selected-token reduction, then normalizes vLLM's small top-k values.
+    This path is admitted only for one through 32 requested raw logprobs and
+    no separately requested token IDs.
+    """
+    global _TOPK_SAMPLED_LOGPROBS_ORIGINAL_FORWARD
+    global _TOPK_SAMPLED_LOGPROBS_REGISTERED
+    if _TOPK_SAMPLED_LOGPROBS_REGISTERED:
+        return TOPK_SAMPLED_LOGPROBS_OVERRIDE_KEY
+    if register_vllm_selected_token_logprobs() is None:
+        return None
+    if not supports_installed_vllm():
+        return None
+
+    from vllm.v1.outputs import LogprobsTensors, SamplerOutput
+    from vllm.v1.sample.sampler import Sampler
+
+    load_torch_extension()
+    selected_implementation = (
+        torch.ops.loom_kernels.selected_token_logprobs.default
+    )
+    original_forward = Sampler.forward
+
+    def can_use_fast_path(
+        sampler: Any,
+        logits: torch.Tensor,
+        sampling_metadata: Any,
+        logprobs_mode_override: Any,
+    ) -> bool:
+        logprobs_mode = logprobs_mode_override or sampler.logprobs_mode
+        topk_topp_mode = getattr(
+            sampler.topk_topp_sampler, "logprobs_mode", sampler.logprobs_mode
+        )
+        num_logprobs = sampling_metadata.max_num_logprobs
+        maximum = min(logits.shape[1], 32) if logits.dim() == 2 else 0
+        return bool(
+            sampler.logprobs_mode == "raw_logprobs"
+            and topk_topp_mode == "raw_logprobs"
+            and logprobs_mode == "raw_logprobs"
+            and isinstance(num_logprobs, int)
+            and not isinstance(num_logprobs, bool)
+            and 1 <= num_logprobs <= maximum
+            and logits.shape[0] <= TOPK_SAMPLED_LOGPROBS_MAX_ROWS
+            and not sampling_metadata.logprob_token_ids
+            and logits.device.type == "cuda"
+            and logits.dtype in (torch.float32, torch.float16, torch.bfloat16)
+            and logits.dim() == 2
+            and logits.shape[0] > 0
+            and logits.shape[1] > 0
+            and logits.shape[1] <= 0x7FFF_FFFF
+            and logits.stride(1) == 1
+            and logits.stride(0) >= logits.shape[1]
+            and not logits.requires_grad
+        )
+
+    def forward(
+        sampler: Any,
+        logits: torch.Tensor,
+        sampling_metadata: Any,
+        predict_bonus_token: bool = False,
+        logprobs_mode_override: Any = None,
+    ) -> Any:
+        global _TOPK_SAMPLED_LOGPROBS_FIRST_CONTRACT
+        global _TOPK_SAMPLED_LOGPROBS_FIRST_REJECTION
+        if not can_use_fast_path(
+            sampler, logits, sampling_metadata, logprobs_mode_override
+        ):
+            if (
+                _TOPK_SAMPLED_LOGPROBS_FIRST_REJECTION is None
+                and sampling_metadata.max_num_logprobs is not None
+                and sampling_metadata.max_num_logprobs != 0
+            ):
+                _TOPK_SAMPLED_LOGPROBS_FIRST_REJECTION = {
+                    "shape": list(logits.shape),
+                    "stride": list(logits.stride()),
+                    "dtype": str(logits.dtype),
+                    "sampler_logprobs_mode": sampler.logprobs_mode,
+                    "logprobs_mode": (
+                        logprobs_mode_override or sampler.logprobs_mode
+                    ),
+                    "max_num_logprobs": sampling_metadata.max_num_logprobs,
+                    "has_logprob_token_ids": bool(
+                        sampling_metadata.logprob_token_ids
+                    ),
+                    "requires_grad": logits.requires_grad,
+                }
+            return original_forward(
+                sampler,
+                logits,
+                sampling_metadata,
+                predict_bonus_token,
+                logprobs_mode_override,
+            )
+
+        num_logprobs = sampling_metadata.max_num_logprobs
+        assert isinstance(num_logprobs, int)
+        if _TOPK_SAMPLED_LOGPROBS_FIRST_CONTRACT is None:
+            _TOPK_SAMPLED_LOGPROBS_FIRST_CONTRACT = {
+                "shape": list(logits.shape),
+                "stride": list(logits.stride()),
+                "dtype": str(logits.dtype),
+                "max_num_logprobs": num_logprobs,
+                "all_greedy": sampling_metadata.all_greedy,
+                "all_random": sampling_metadata.all_random,
+                "has_top_k": sampling_metadata.top_k is not None,
+                "has_top_p": sampling_metadata.top_p is not None,
+                "no_penalties": sampling_metadata.no_penalties,
+                "predict_bonus_token": predict_bonus_token,
+                "topk_order": "vLLM torch.topk",
+                "loom_kernel": "selected_token_logprobs",
+            }
+
+        raw_logits = logits
+        sampling_logits = logits.to(torch.float32)
+        topk_values, topk_token_ids = torch.topk(
+            sampling_logits, num_logprobs, dim=-1
+        )
+        sampling_logits = sampler.apply_logits_processors(
+            sampling_logits, sampling_metadata, predict_bonus_token
+        )
+        sampled, processed_logprobs = sampler.sample(
+            sampling_logits, sampling_metadata
+        )
+        if processed_logprobs is not None:
+            raise RuntimeError(
+                "vLLM returned processed logprobs under Loom's raw-logprob "
+                "top-k contract"
+            )
+        sampled = sampled.long().contiguous()
+        sampled_logprobs, ranks = selected_implementation(
+            raw_logits, sampled
+        )
+        sampled_raw_logits = (
+            raw_logits.gather(-1, sampled.unsqueeze(-1))
+            .to(torch.float32)
+            .squeeze(-1)
+        )
+        log_normalizer = sampled_raw_logits - sampled_logprobs
+        topk_logprobs = topk_values - log_normalizer.unsqueeze(-1)
+        sampled_column = sampled.to(torch.int32).unsqueeze(-1)
+        token_ids = torch.cat(
+            (sampled_column, topk_token_ids.to(torch.int32)), dim=-1
+        )
+        logprobs = torch.cat(
+            (sampled_logprobs.unsqueeze(-1), topk_logprobs), dim=-1
+        )
+        return SamplerOutput(
+            sampled_token_ids=sampled_column,
+            logprobs_tensors=LogprobsTensors(
+                logprob_token_ids=token_ids,
+                logprobs=logprobs,
+                selected_token_ranks=ranks,
+            ),
+        )
+
+    _TOPK_SAMPLED_LOGPROBS_ORIGINAL_FORWARD = original_forward
+    Sampler.forward = forward
+    _TOPK_SAMPLED_LOGPROBS_REGISTERED = True
+    return TOPK_SAMPLED_LOGPROBS_OVERRIDE_KEY
+
+
 def _metadata() -> dict[str, object]:
     return {
         "greedy_sample_logprobs_override": _GREEDY_SAMPLE_LOGPROBS_REGISTERED,
@@ -521,4 +694,7 @@ def _metadata() -> dict[str, object]:
         "token_penalties_override": _TOKEN_PENALTIES_REGISTERED,
         "token_penalties_first_contract": _TOKEN_PENALTIES_FIRST_CONTRACT,
         "token_penalties_first_rejection": _TOKEN_PENALTIES_FIRST_REJECTION,
+        "topk_sampled_logprobs_override": _TOPK_SAMPLED_LOGPROBS_REGISTERED,
+        "topk_sampled_logprobs_first_contract": _TOPK_SAMPLED_LOGPROBS_FIRST_CONTRACT,
+        "topk_sampled_logprobs_first_rejection": _TOPK_SAMPLED_LOGPROBS_FIRST_REJECTION,
     }

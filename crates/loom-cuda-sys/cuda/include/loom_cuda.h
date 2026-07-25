@@ -147,6 +147,32 @@ int loom_cuda_selected_token_logprobs_bf16(
     int64_t* ranks, uint32_t rows, uint32_t vocab_size, uint64_t row_stride,
     void* stream);
 
+// Return sampled-token plus top-k normalized logprobs without materializing a
+// full-vocabulary F32 log-softmax. Each output row has width top_k + 1 and
+// starts with the sampled token. Top-k ties use ascending token IDs; sampled
+// ranks count logits greater than or equal to the sampled value. Workspace
+// must be aligned to at least four bytes.
+int loom_cuda_topk_sampled_logprobs_f32(
+    const float* logits, const int64_t* sampled_token_ids,
+    int32_t* output_token_ids, float* output_logprobs,
+    int64_t* sampled_token_ranks, uint32_t rows, uint32_t vocab_size,
+    uint32_t top_k, uint64_t row_stride, uint8_t* workspace,
+    uint64_t workspace_bytes, uint32_t partitions, void* stream);
+
+int loom_cuda_topk_sampled_logprobs_f16(
+    const uint16_t* logits, const int64_t* sampled_token_ids,
+    int32_t* output_token_ids, float* output_logprobs,
+    int64_t* sampled_token_ranks, uint32_t rows, uint32_t vocab_size,
+    uint32_t top_k, uint64_t row_stride, uint8_t* workspace,
+    uint64_t workspace_bytes, uint32_t partitions, void* stream);
+
+int loom_cuda_topk_sampled_logprobs_bf16(
+    const uint16_t* logits, const int64_t* sampled_token_ids,
+    int32_t* output_token_ids, float* output_logprobs,
+    int64_t* sampled_token_ranks, uint32_t rows, uint32_t vocab_size,
+    uint32_t top_k, uint64_t row_stride, uint8_t* workspace,
+    uint64_t workspace_bytes, uint32_t partitions, void* stream);
+
 // Apply repetition once to the prompt/output union, then frequency and
 // presence penalties from output counts. Token IDs outside [0, vocab_size)
 // are padding. workspace is [rows, workspace_capacity] packed uint64 hash

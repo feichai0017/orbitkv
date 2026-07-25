@@ -12,6 +12,7 @@
 #include <torch/headeronly/core/ScalarType.h>
 #include <torch/headeronly/macros/Macros.h>
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>

@@ -7,8 +7,9 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 
 > [!IMPORTANT]
 > The K0.7 bridge-ABI-2 native wheel is H20-qualified but is not published to
-> a package index. Current source uses bridge ABI 3 for sparse token penalties
-> and does not yet have a replacement qualified wheel. A source-only wheel is
+> a package index. Current source uses bridge ABI 4 for sparse token penalties
+> and sampled-token plus top-k logprobs, and does not yet have a replacement
+> qualified wheel. A source-only wheel is
 > intentionally unsupported:
 > `pip wheel ./python` fails unless `build_wheel.py` has staged both native
 > libraries and their manifest.
@@ -125,6 +126,7 @@ from loom_kernels import (
     selected_token_logprobs,
     silu_and_mul_dynamic_fp8,
     token_penalties_workspace_capacity,
+    topk_sampled_logprobs,
 )
 
 fp8_output, block_scales = silu_and_mul_dynamic_fp8(
@@ -134,6 +136,9 @@ fp8_output, block_scales = silu_and_mul_dynamic_fp8(
 
 token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
 logprobs, ranks = selected_token_logprobs(logits, sampled_ids_i64)
+topk_ids, topk_logprobs, sampled_ranks = topk_sampled_logprobs(
+    logits, sampled_ids_i64, top_k=20
+)
 verified_ids, accepted_lengths, emitted_lengths = greedy_speculative_verify(
     flattened_draft_ids_i32,
     flattened_target_argmax_ids_i64,
@@ -191,7 +196,7 @@ tensors that require gradients.
 | Normalization | `rms_norm`, `rms_norm_out`, `add_rms_norm_`, `rms_norm_dynamic_fp8`, `rms_norm_dynamic_fp8_out` |
 | Activation | `silu_and_mul`, `silu_and_mul_out`, `silu_and_mul_dynamic_fp8`, `silu_and_mul_dynamic_fp8_out` |
 | Position and KV | `rope_paged_kv_write_` for native or static FP8 E4M3 paged caches |
-| Decode tail | `greedy_sample_logprobs`, `selected_token_logprobs`, `min_p_filter_`, `apply_token_penalties_` |
+| Decode tail | `greedy_sample_logprobs`, `selected_token_logprobs`, `topk_sampled_logprobs`, `min_p_filter_`, `apply_token_penalties_` |
 | Speculative decode | `greedy_speculative_verify` |
 | Attention | `paged_decode_attention`, `paged_decode_attention_out` |
 
@@ -221,6 +226,7 @@ into this contract.
 | Greedy sampled logprob | `register_vllm_greedy_sample_logprobs()` |
 | Greedy speculative verify | `register_vllm_greedy_speculative_verify()` |
 | Selected-token logprob | `register_vllm_selected_token_logprobs()` |
+| Top-k sampled logprobs | `register_vllm_topk_sampled_logprobs()` |
 | Sparse token penalties | `register_vllm_token_penalties()` |
 | Min-P processor | `LOOM_KERNELS_ENABLE_MIN_P=1` |
 

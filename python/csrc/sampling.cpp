@@ -117,6 +117,84 @@ std::tuple<Tensor, Tensor> selected_token_logprobs_meta(
   };
 }
 
+void check_topk_sampled_logprobs_shape(
+    const Tensor& logits, const Tensor& sampled_token_ids, int64_t top_k) {
+  check_selected_token_logprobs_shape(logits, sampled_token_ids);
+  const int64_t maximum = std::min<int64_t>(logits.size(1), 32);
+  STD_TORCH_CHECK(
+      top_k > 0 && top_k <= maximum,
+      "Loom top-k sampled logprobs require 1 <= top_k <= ", maximum,
+      "; got ", top_k);
+}
+
+void check_topk_sampled_logprobs_contract(
+    const Tensor& logits, const Tensor& sampled_token_ids, int64_t top_k) {
+  check_selected_token_logprobs_contract(logits, sampled_token_ids);
+  check_topk_sampled_logprobs_shape(logits, sampled_token_ids, top_k);
+}
+
+std::tuple<Tensor, Tensor, Tensor> launch_topk_sampled_logprobs(
+    const Tensor& logits, const Tensor& sampled_token_ids, int64_t top_k) {
+  const auto rows = static_cast<uint32_t>(logits.size(0));
+  const auto vocab_size = static_cast<uint32_t>(logits.size(1));
+  const auto row_stride = static_cast<uint64_t>(logits.stride(0));
+  const int64_t output_width = top_k + 1;
+  const uint64_t output_elements =
+      static_cast<uint64_t>(logits.size(0)) *
+      static_cast<uint64_t>(output_width);
+  uint64_t workspace_bytes = 0;
+  const int workspace_status =
+      loom_cuda_bridge_topk_sampled_logprobs_workspace_size(
+          rows, vocab_size, static_cast<uint32_t>(top_k), &workspace_bytes);
+  check_bridge_status(workspace_status, "top-k workspace query");
+  STD_TORCH_CHECK(
+      workspace_bytes <=
+          static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+      "Loom top-k workspace exceeds the PyTorch shape ABI");
+  Tensor output_token_ids =
+      new_empty(logits, {logits.size(0), output_width}, ScalarType::Int);
+  Tensor output_logprobs =
+      new_empty(logits, {logits.size(0), output_width}, ScalarType::Float);
+  Tensor sampled_token_ranks =
+      new_empty(logits, {logits.size(0)}, ScalarType::Long);
+  Tensor workspace = new_empty(
+      logits, {static_cast<int64_t>(workspace_bytes)}, ScalarType::Byte);
+
+  const CudaDeviceGuard device_guard(logits.device());
+  const auto stream = current_cuda_stream(logits.device().index());
+  const int status = loom_cuda_bridge_topk_sampled_logprobs(
+      bridge_dtype(logits), logits.const_data_ptr(),
+      storage_span_elements(logits),
+      sampled_token_ids.const_data_ptr<int64_t>(),
+      static_cast<uint64_t>(sampled_token_ids.numel()),
+      output_token_ids.mutable_data_ptr<int32_t>(), output_elements,
+      output_logprobs.mutable_data_ptr<float>(), output_elements,
+      sampled_token_ranks.mutable_data_ptr<int64_t>(),
+      static_cast<uint64_t>(sampled_token_ranks.numel()),
+      workspace.mutable_data_ptr<uint8_t>(),
+      static_cast<uint64_t>(workspace.numel()), rows, vocab_size,
+      static_cast<uint32_t>(top_k), row_stride, stream.stream());
+  check_bridge_status(status, "top-k sampled logprobs");
+  return {output_token_ids, output_logprobs, sampled_token_ranks};
+}
+
+std::tuple<Tensor, Tensor, Tensor> topk_sampled_logprobs(
+    const Tensor& logits, const Tensor& sampled_token_ids, int64_t top_k) {
+  check_topk_sampled_logprobs_contract(logits, sampled_token_ids, top_k);
+  return launch_topk_sampled_logprobs(logits, sampled_token_ids, top_k);
+}
+
+std::tuple<Tensor, Tensor, Tensor> topk_sampled_logprobs_meta(
+    const Tensor& logits, const Tensor& sampled_token_ids, int64_t top_k) {
+  check_topk_sampled_logprobs_shape(logits, sampled_token_ids, top_k);
+  const int64_t output_width = top_k + 1;
+  return {
+      new_empty(logits, {logits.size(0), output_width}, ScalarType::Int),
+      new_empty(logits, {logits.size(0), output_width}, ScalarType::Float),
+      new_empty(logits, {logits.size(0)}, ScalarType::Long),
+  };
+}
+
 uint64_t required_token_penalty_workspace(int64_t prompt_tokens,
                                           int64_t output_tokens) {
   STD_TORCH_CHECK(prompt_tokens > 0 && output_tokens > 0,
@@ -285,6 +363,9 @@ STABLE_TORCH_LIBRARY_IMPL(loom_kernels, CUDA, library) {
       "selected_token_logprobs",
       TORCH_BOX(&loom_kernels::torch_adapter::selected_token_logprobs));
   library.impl(
+      "topk_sampled_logprobs",
+      TORCH_BOX(&loom_kernels::torch_adapter::topk_sampled_logprobs));
+  library.impl(
       "apply_token_penalties_",
       TORCH_BOX(&loom_kernels::torch_adapter::apply_token_penalties_));
 }
@@ -296,6 +377,9 @@ STABLE_TORCH_LIBRARY_IMPL(loom_kernels, Meta, library) {
   library.impl(
       "selected_token_logprobs",
       TORCH_BOX(&loom_kernels::torch_adapter::selected_token_logprobs_meta));
+  library.impl(
+      "topk_sampled_logprobs",
+      TORCH_BOX(&loom_kernels::torch_adapter::topk_sampled_logprobs_meta));
   library.impl(
       "apply_token_penalties_",
       TORCH_BOX(&loom_kernels::torch_adapter::apply_token_penalties_meta));

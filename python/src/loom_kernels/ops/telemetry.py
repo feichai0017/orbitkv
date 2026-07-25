@@ -24,6 +24,7 @@ class Operator(IntEnum):
     PAGED_DECODE_ATTENTION = 9
     GREEDY_SPECULATIVE_VERIFY = 10
     TOKEN_PENALTIES = 11
+    TOPK_SAMPLED_LOGPROBS = 12
 
 
 def _operator_id(operator: Operator) -> int:

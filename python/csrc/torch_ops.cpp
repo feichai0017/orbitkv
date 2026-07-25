@@ -26,6 +26,9 @@ STABLE_TORCH_LIBRARY(loom_kernels, library) {
       "selected_token_logprobs(Tensor logits, Tensor token_ids) -> (Tensor "
       "logprobs, Tensor ranks)");
   library.def(
+      "topk_sampled_logprobs(Tensor logits, Tensor sampled_token_ids, int "
+      "top_k) -> (Tensor token_ids, Tensor logprobs, Tensor ranks)");
+  library.def(
       "apply_token_penalties_(Tensor(a!) logits, Tensor prompt_token_ids, "
       "Tensor output_token_ids, Tensor presence_penalties, Tensor "
       "frequency_penalties, Tensor repetition_penalties, Tensor(b!) "

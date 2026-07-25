@@ -93,6 +93,96 @@ fn selected_token_logprobs_validates_ids_and_low_precision_buffers() {
 }
 
 #[test]
+fn topk_sampled_logprobs_normalize_rank_and_order_ties_by_token() {
+    let spec = TopKSampledLogprobsSpec::new(2, 5, 3, DType::F32).unwrap();
+    let logits = [3.0_f32, 1.0, 3.0, 2.0, -1.0, -2.0, 4.0, 0.0, 1.0, 3.0];
+    let sampled = [3_i64, 2_i64];
+    let mut token_ids = [-1_i32; 8];
+    let mut logprobs = [0.0_f32; 8];
+    let mut ranks = [0_i64; 2];
+
+    topk_sampled_logprobs_f32_reference(
+        &logits,
+        &sampled,
+        &mut token_ids,
+        &mut logprobs,
+        &mut ranks,
+        spec,
+    )
+    .unwrap();
+
+    assert_eq!(token_ids, [3, 0, 2, 3, 2, 1, 4, 3]);
+    assert_eq!(ranks, [3, 4]);
+    let first_normalizer =
+        3.0 + (1.0_f64 + (-2.0_f64).exp() + 1.0 + (-1.0_f64).exp() + (-4.0_f64).exp()).ln() as f32;
+    assert!((logprobs[0] - (2.0 - first_normalizer)).abs() < 1.0e-6);
+    assert!((logprobs[1] - (3.0 - first_normalizer)).abs() < 1.0e-6);
+    assert!((logprobs[2] - (3.0 - first_normalizer)).abs() < 1.0e-6);
+}
+
+#[test]
+fn topk_sampled_logprobs_validate_k_ids_and_low_precision() {
+    assert_eq!(
+        TopKSampledLogprobsSpec::new(1, 64, 33, DType::Bf16),
+        Err(ContractError::TopKLogprobsOutOfRange {
+            top_k: 33,
+            maximum: MAX_TOPK_LOGPROBS,
+        })
+    );
+    let spec = TopKSampledLogprobsSpec::new(1, 3, 2, DType::Bf16).unwrap();
+    let logits = [
+        bf16::from_f32(-1.0),
+        bf16::from_f32(2.0),
+        bf16::from_f32(0.5),
+    ];
+    let mut token_ids = [-1_i32; 3];
+    let mut logprobs = [0.0_f32; 3];
+    let mut ranks = [0_i64; 1];
+    topk_sampled_logprobs_bf16_reference(
+        &logits,
+        &[2],
+        &mut token_ids,
+        &mut logprobs,
+        &mut ranks,
+        spec,
+    )
+    .unwrap();
+    assert_eq!(token_ids, [2, 1, 2]);
+    assert_eq!(ranks, [2]);
+    assert_eq!(
+        topk_sampled_logprobs_bf16_reference(
+            &logits,
+            &[3],
+            &mut token_ids,
+            &mut logprobs,
+            &mut ranks,
+            spec,
+        ),
+        Err(ContractError::TokenIdOutOfBounds {
+            row: 0,
+            token_id: 3,
+            vocab_size: 3,
+        })
+    );
+}
+
+#[test]
+fn topk_sampled_logprobs_workspace_bounds_every_radix_partition() {
+    let cases = [
+        (1, 151_936, 20, 128, 22_016),
+        (32, 151_936, 20, 38, 209_152),
+        (1, 5, 3, 1, 36),
+        (1, 524_289, 1, 129, 2_580),
+    ];
+    for (rows, vocab_size, top_k, partitions, workspace_bytes) in cases {
+        let spec = TopKSampledLogprobsSpec::new(rows, vocab_size, top_k, DType::F32).unwrap();
+        assert_eq!(spec.workspace_partitions(), partitions);
+        assert_eq!(spec.workspace_bytes(), workspace_bytes);
+        assert!(vocab_size.div_ceil(partitions) <= 4_096);
+    }
+}
+
+#[test]
 fn token_penalties_match_sparse_history_semantics() {
     let spec = TokenPenaltiesSpec::new(2, 6, 5, 4, 32).unwrap();
     let mut logits = [

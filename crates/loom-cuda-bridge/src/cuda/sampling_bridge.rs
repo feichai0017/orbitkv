@@ -103,6 +103,101 @@ unsafe fn launch_selected_token_logprobs<T: Scalar>(
 }
 
 #[allow(clippy::too_many_arguments)]
+unsafe fn launch_topk_sampled_logprobs<T: Scalar>(
+    logits: *const T,
+    logits_elements: u64,
+    sampled_token_ids: *const i64,
+    sampled_token_id_elements: u64,
+    output_token_ids: *mut i32,
+    output_token_id_elements: u64,
+    output_logprobs: *mut f32,
+    output_logprob_elements: u64,
+    sampled_token_ranks: *mut i64,
+    sampled_token_rank_elements: u64,
+    workspace: *mut u8,
+    workspace_elements: u64,
+    rows: u32,
+    vocab_size: u32,
+    top_k: u32,
+    row_stride: u64,
+    stream: *mut c_void,
+) -> Result<(), CudaExecutorError> {
+    let (logits, logits_range) =
+        unsafe { read_slice(logits, logits_elements, "top-k sampled-logprob logits") }?;
+    let (sampled_token_ids, sampled_ids_range) = unsafe {
+        read_slice(
+            sampled_token_ids,
+            sampled_token_id_elements,
+            "sampled token IDs",
+        )
+    }?;
+    let (mut output_token_ids, output_ids_range) = unsafe {
+        write_slice(
+            output_token_ids,
+            output_token_id_elements,
+            "top-k output token IDs",
+        )
+    }?;
+    let (mut output_logprobs, output_logprobs_range) = unsafe {
+        write_slice(
+            output_logprobs,
+            output_logprob_elements,
+            "top-k output logprobs",
+        )
+    }?;
+    let (mut sampled_token_ranks, sampled_ranks_range) = unsafe {
+        write_slice(
+            sampled_token_ranks,
+            sampled_token_rank_elements,
+            "sampled token ranks",
+        )
+    }?;
+    if !(workspace as usize).is_multiple_of(align_of::<f32>()) {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-k sampled-logprob workspace must be aligned to 4 bytes".into(),
+        ));
+    }
+    let (mut workspace, workspace_range) = unsafe {
+        write_slice(
+            workspace,
+            workspace_elements,
+            "top-k sampled-logprob workspace",
+        )
+    }?;
+    require_disjoint(
+        &[
+            ("logits", logits_range),
+            ("sampled token IDs", sampled_ids_range),
+            ("output token IDs", output_ids_range),
+            ("output logprobs", output_logprobs_range),
+            ("sampled token ranks", sampled_ranks_range),
+            ("workspace", workspace_range),
+        ],
+        "top-k sampled logprobs",
+    )?;
+    let spec =
+        TopKSampledLogprobsSpec::new(rows as usize, vocab_size as usize, top_k as usize, T::DTYPE)
+            .map_err(invalid_contract)?;
+    let layout = RowStridedLayout::new(
+        spec.vocab_size(),
+        element_count(row_stride, "top-k sampled-logprob row stride")?,
+    )?;
+    T::topk_sampled_logprobs(
+        &stream_backend(stream),
+        &logits,
+        &sampled_token_ids,
+        &mut output_token_ids,
+        &mut output_logprobs,
+        &mut sampled_token_ranks,
+        &mut workspace,
+        spec,
+        layout,
+    )?;
+    record_launch(OP_TOPK_SAMPLED_LOGPROBS);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 unsafe fn launch_token_penalties(
     logits: *mut f32,
     logits_elements: u64,
@@ -324,6 +419,100 @@ pub unsafe extern "C" fn loom_cuda_bridge_selected_token_logprobs(
                 stream,
             )
         )
+    })
+}
+
+/// Checked sampled-token plus deterministic top-k logprobs and rank.
+///
+/// # Safety
+///
+/// Every pointer must identify the declared CUDA storage on the active
+/// context and remain alive until work on `stream` completes. `workspace`
+/// must be aligned to at least four bytes.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn loom_cuda_bridge_topk_sampled_logprobs(
+    dtype: u32,
+    logits: *const c_void,
+    logits_elements: u64,
+    sampled_token_ids: *const i64,
+    sampled_token_id_elements: u64,
+    output_token_ids: *mut i32,
+    output_token_id_elements: u64,
+    output_logprobs: *mut f32,
+    output_logprob_elements: u64,
+    sampled_token_ranks: *mut i64,
+    sampled_token_rank_elements: u64,
+    workspace: *mut u8,
+    workspace_elements: u64,
+    rows: u32,
+    vocab_size: u32,
+    top_k: u32,
+    row_stride: u64,
+    stream: *mut c_void,
+) -> c_int {
+    bridge_call(|| {
+        let kind = scalar_kind(dtype)?;
+        dispatch_scalar!(
+            kind,
+            launch_topk_sampled_logprobs(
+                logits.cast(),
+                logits_elements,
+                sampled_token_ids,
+                sampled_token_id_elements,
+                output_token_ids,
+                output_token_id_elements,
+                output_logprobs,
+                output_logprob_elements,
+                sampled_token_ranks,
+                sampled_token_rank_elements,
+                workspace,
+                workspace_elements,
+                rows,
+                vocab_size,
+                top_k,
+                row_stride,
+                stream,
+            )
+        )
+    })
+}
+
+/// Return the caller-owned byte workspace required by top-k logprobs.
+///
+/// # Safety
+///
+/// `workspace_bytes` must be a valid aligned writable host pointer.
+#[no_mangle]
+pub unsafe extern "C" fn loom_cuda_bridge_topk_sampled_logprobs_workspace_size(
+    rows: u32,
+    vocab_size: u32,
+    top_k: u32,
+    workspace_bytes: *mut u64,
+) -> c_int {
+    bridge_call(|| {
+        if workspace_bytes.is_null()
+            || !(workspace_bytes as usize).is_multiple_of(align_of::<u64>())
+        {
+            return Err(CudaExecutorError::InvalidContract(
+                "top-k workspace-size output is null or misaligned".into(),
+            ));
+        }
+        let spec = TopKSampledLogprobsSpec::new(
+            rows as usize,
+            vocab_size as usize,
+            top_k as usize,
+            DType::F32,
+        )
+        .map_err(invalid_contract)?;
+        unsafe {
+            *workspace_bytes = u64::try_from(spec.workspace_bytes()).map_err(|_| {
+                CudaExecutorError::InvalidContract(
+                    "top-k workspace size exceeds the bridge ABI".into(),
+                )
+            })?;
+        }
+        Ok(())
     })
 }
 

@@ -49,7 +49,7 @@ core; it will not implement a competing GEMM.
 | Normalization | RMSNorm · Add+RMSNorm · RMSNorm→dynamic FP8 | F32, FP16, BF16; PyTorch and vLLM IR coverage |
 | MLP | split-half SiLU-and-Mul · SiLU-and-Mul→block FP8 | F32, FP16, BF16; opt-in vLLM activation paths |
 | Position and KV | NeoX/interleaved RoPE + native/static-FP8 paged-KV write | packed QKV, NHD/HND cache views, static per-tensor/per-head FP8 E4M3 scales, current-stream PyTorch |
-| Decode tail | greedy + sampled logprob · selected-token logprob + rank · Min-P | exact-token/rank gates and measured vLLM fallbacks |
+| Decode tail | greedy + sampled logprob · selected-token logprob + rank · sampled-token + top-k logprobs · sparse penalties · Min-P | exact-token/rank gates and measured vLLM fallbacks |
 | Speculative decode | greedy draft verify + accepted/bonus-token compaction | flattened ragged int32 metadata, exact vLLM 0.24/0.25 rejection semantics, real vLLM 0.24 draft/target invocation |
 | Attention | paged MQA/GQA decode · local split-K/LSE merge | native paged KV, GQA reuse, short shape-gated vLLM route |
 
@@ -62,8 +62,9 @@ Catalog membership alone is never a performance claim.
 K0.7's bridge-ABI-2 native-wheel engineering gate is complete for
 Linux x86_64, CUDA 13.1, SM90, Python 3.11, PyTorch 2.10/2.11, and vLLM
 0.24/0.25. The exact artifact is qualified but not published to a package
-index. Current source uses bridge ABI 3 for the new sparse token-penalty
-boundary; its replacement matrix wheel is not yet qualified. The first
+index. Current source uses bridge ABI 4 for sparse token penalties and the
+sampled-token plus top-k logprob boundary; its replacement matrix wheel is not
+yet qualified. The first
 post-K0.7 slice is also complete: deterministic greedy speculative
 verification and token compaction now follow the same Rust-owned path, and a
 process-isolated Qwen2.5-1.5B/0.5B vLLM 0.24 gate proves exact native/Loom
@@ -76,7 +77,7 @@ is now:
 | Order | Direction | First proof |
 | --- | --- | --- |
 | 1 | FP8 KV-cache compression | lower cache bytes and a larger admitted context or batch size with quality and TPOT reported |
-| 2 | Complete sampling tail | top-k/top-p, deterministic RNG, and top-k logprobs through one engine path; sparse penalties are complete |
+| 2 | Complete sampling tail | logits preprocessing, top-k/top-p, and deterministic RNG; sparse penalties and top-k logprobs are complete |
 | 3 | KV-cache movement and quantization plumbing | measured prefix/preemption movement plus scale/pack/layout work around unchanged vendor GEMM |
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV work only after a named workload exposes a material non-GEMM boundary |
 | 5 | MoE routing and movement | routing, histogram/prefix sum, permutation, and combine around vendor grouped GEMM |
@@ -183,7 +184,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-4cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 ```
 
 The wheel contains exactly `libloom_cuda_bridge.so` and the boxed
@@ -192,6 +193,10 @@ Git revision, CUDA toolkit, SM targets, runtime range, and library hashes. A
 source-only wheel is rejected. The installed package validates that manifest
 and loads only its packaged libraries; no repository checkout or library-path
 override is used.
+
+That command builds the current ABI4 source artifact. The last
+clean-install-qualified matrix artifact remains ABI2; ABI4 has not yet
+completed the PyTorch/CUDA/Python/vLLM matrix and is not published.
 
 See the [Python README](python/README.md) for binary and editable development
 flows, direct calls, and the
@@ -209,6 +214,7 @@ opens the raw JSON artifact used for the claim.
 | --- | --- | --- |
 | [Greedy + sampled logprob](docs/results/h20-greedy-sample-logprobs-20260722.json) | `3.16–4.35×` operator ratio; `1.129–1.250×` real-engine batch-latency ratio | Pure greedy requests with raw `logprobs=0` |
 | [Selected-token logprob + rank](docs/results/h20-selected-token-logprobs-20260722.json) | `2.77–3.78×` operator ratio; `1.044–1.125×` real-engine batch-latency ratio | vLLM still owns top-k/top-p, RNG, and selection |
+| Sampled-token + top-k logprobs: [operator](docs/results/h20-topk-sampled-logprobs-20260725.json) · [baseline first](docs/results/h20-vllm-qwen25-topk-logprobs-baseline-first-20260725.json) · [Loom first](docs/results/h20-vllm-qwen25-topk-logprobs-loom-first-20260725.json) | `3.25×`, `2.60×`, and `1.19×` operator ratios at 1/8/32 rows; exact engine tokens, returned IDs, and ranks | Direct Loom ties are deterministic; the exact vLLM adapter preserves `torch.topk` order. Engine latency crosses parity after provider-order reversal, so no model-level speedup is claimed |
 | [Min-P filtering](docs/results/h20-min-p-filter-20260722.json) | `1.885×` at 128 rows and no tensor-sized probability/mask temporaries | Smaller batches fall back to vLLM |
 | Sparse token penalties: [operator](docs/results/h20-token-penalties-20260725.json) · [baseline first](docs/results/h20-vllm-qwen25-token-penalties-baseline-first-20260725.json) · [Loom first](docs/results/h20-vllm-qwen25-token-penalties-loom-first-20260725.json) | Exact outputs; `5.82–34.30×` operator ratio; `1.056–1.123×` order-stable Qwen engine batch-latency ratio | F32 repetition/frequency/presence; `1440/0` Loom path hits per provider order; serving-scale goodput remains separate |
 | [Greedy speculative verify + compact](docs/results/h20-greedy-speculative-verify-20260723.json) | `1.101–1.128×` dispatcher ratio across 15 batch/draft shapes; bit-exact with vLLM | Deterministic all-greedy rejection only; the real-model gate is the next row |

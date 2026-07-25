@@ -16,8 +16,9 @@ binary portability. A green row below applies only to the stated boundary.
 | vLLM | 0.25.1 | clean install from the official wheel and all 225 registered-adapter/operator tests | [ABI2 native-wheel gate](results/h20-native-wheel-clean-install-abi2-20260724.json) |
 
 These rows qualify the immutable K0.7 ABI2 artifact. Current source uses bridge
-ABI3 for sparse token penalties; a new clean-install wheel matrix must pass
-before that source state inherits the packaged-runtime claim.
+ABI4 for sparse token penalties and sampled-token plus top-k logprobs; a new
+clean-install wheel matrix must pass before that source state inherits the
+packaged-runtime claim.
 
 The current exact wheel includes greedy speculative verification and static
 FP8 E4M3 KV quantize-on-write through bridge ABI 2. Both vLLM minors pass the
@@ -31,9 +32,14 @@ The process-isolated Qwen2.5 draft/target engine benchmark is qualified on
 vLLM 0.24 only; its [native-first](results/h20-vllm-qwen25-speculative-native-first-20260723.json)
 and [Loom-first](results/h20-vllm-qwen25-speculative-loom-first-20260723.json)
 reports prove invocation and provider equivalence, not acceleration. The
-ABI3 sparse-penalty source has a separate vLLM 0.24 order-reversed Qwen gate:
+post-ABI2 sparse-penalty source has a separate vLLM 0.24 order-reversed Qwen gate:
 [baseline first](results/h20-vllm-qwen25-token-penalties-baseline-first-20260725.json)
 and [Loom first](results/h20-vllm-qwen25-token-penalties-loom-first-20260725.json).
+ABI4 top-k logprob source also has exact order-reversed Qwen gates:
+[baseline first](results/h20-vllm-qwen25-topk-logprobs-baseline-first-20260725.json)
+and [Loom first](results/h20-vllm-qwen25-topk-logprobs-loom-first-20260725.json).
+Their latency ratios cross parity, so they qualify compatibility and invocation,
+not a stable engine speedup.
 The 0.25.1 compatibility gate does not retroactively transfer either 0.24
 model-level latency result to 0.25.1. A new engine benchmark is required
 before making a 0.25.1 performance claim.
@@ -89,7 +95,7 @@ production dispatcher now uses that boundary:
 - all schemas use boxed Stable ABI registration;
 - tensor metadata, allocations, pointers, device guards, and the current CUDA
   stream use stable headers or AOTI C shims;
-- all eleven semantic operators continue into `loom-cuda-bridge`; the dispatcher
+- all thirteen semantic operators continue into `loom-cuda-bridge`; the dispatcher
   has no ATen/c10 C++ symbol dependency and consumes no raw CUDA launch symbol;
 - the public Python APIs and vLLM admission predicates reject tensors requiring
   gradients. No autograd kernel is advertised;

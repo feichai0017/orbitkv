@@ -115,6 +115,10 @@ pub enum ContractError {
         required: usize,
         actual: usize,
     },
+    TopKLogprobsOutOfRange {
+        top_k: usize,
+        maximum: usize,
+    },
     TargetTokenIdOutOfI32Range {
         token: usize,
         token_id: i64,
@@ -227,6 +231,10 @@ impl fmt::Display for ContractError {
             Self::TokenPenaltyWorkspaceTooSmall { required, actual } => write!(
                 formatter,
                 "token-penalty workspace requires at least {required} hash slots per row, got {actual}"
+            ),
+            Self::TopKLogprobsOutOfRange { top_k, maximum } => write!(
+                formatter,
+                "top-k logprobs must request between 1 and {maximum} entries, got {top_k}"
             ),
             Self::TargetTokenIdOutOfI32Range { token, token_id } => write!(
                 formatter,

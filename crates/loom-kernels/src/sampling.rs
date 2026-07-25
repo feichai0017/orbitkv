@@ -4,6 +4,13 @@ use half::{bf16, f16};
 
 use crate::contract::{require_len, ContractError, DType};
 
+/// Largest top-k logprob list admitted by the fused reduction.
+pub const MAX_TOPK_LOGPROBS: usize = 32;
+const TOPK_TARGET_PARTITIONS: usize = 128;
+const TOPK_SORT_CAPACITY_PER_PARTITION: usize = 4096;
+const TOPK_PARTIAL_STATE_BYTES: usize = 12;
+const TOPK_CANDIDATE_BYTES: usize = 8;
+
 /// Contract for fused greedy token selection and its normalized logprob.
 ///
 /// Logits are contiguous `[rows, vocab_size]`. Each output row contains the
@@ -31,6 +38,21 @@ pub struct GreedySampleLogprobsSpec {
 pub struct SelectedTokenLogprobsSpec {
     rows: usize,
     vocab_size: usize,
+    dtype: DType,
+}
+
+/// Contract for sampled-token plus top-k raw logprobs.
+///
+/// Logits are `[rows, vocab_size]`; sampled IDs contain one int64 value per
+/// row. Each output row starts with the sampled token and then contains
+/// `top_k` tokens ordered by descending logit and ascending token ID for ties.
+/// Logprobs share one row normalization and the sampled-token rank counts all
+/// logits greater than or equal to its value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TopKSampledLogprobsSpec {
+    rows: usize,
+    vocab_size: usize,
+    top_k: usize,
     dtype: DType,
 }
 
@@ -112,6 +134,98 @@ impl SelectedTokenLogprobsSpec {
 
     pub const fn logits_numel(self) -> usize {
         self.rows * self.vocab_size
+    }
+}
+
+impl TopKSampledLogprobsSpec {
+    /// Creates a validated sampled-token plus top-k contract.
+    pub fn new(
+        rows: usize,
+        vocab_size: usize,
+        top_k: usize,
+        dtype: DType,
+    ) -> Result<Self, ContractError> {
+        if rows == 0 || vocab_size == 0 {
+            return Err(ContractError::ZeroDimension);
+        }
+        let maximum = vocab_size.min(MAX_TOPK_LOGPROBS);
+        if top_k == 0 || top_k > maximum {
+            return Err(ContractError::TopKLogprobsOutOfRange { top_k, maximum });
+        }
+        rows.checked_mul(vocab_size)
+            .and_then(|_| rows.checked_mul(top_k + 1))
+            .and_then(|_| rows.checked_mul(topk_workspace_partitions(rows, vocab_size, top_k)))
+            .and_then(|partials| {
+                partials.checked_mul(TOPK_PARTIAL_STATE_BYTES + top_k * TOPK_CANDIDATE_BYTES)
+            })
+            .ok_or(ContractError::ElementCountOverflow)?;
+        Ok(Self {
+            rows,
+            vocab_size,
+            top_k,
+            dtype,
+        })
+    }
+
+    pub const fn rows(self) -> usize {
+        self.rows
+    }
+
+    pub const fn vocab_size(self) -> usize {
+        self.vocab_size
+    }
+
+    pub const fn top_k(self) -> usize {
+        self.top_k
+    }
+
+    pub const fn dtype(self) -> DType {
+        self.dtype
+    }
+
+    pub const fn logits_numel(self) -> usize {
+        self.rows * self.vocab_size
+    }
+
+    pub const fn output_width(self) -> usize {
+        self.top_k + 1
+    }
+
+    pub const fn output_numel(self) -> usize {
+        self.rows * self.output_width()
+    }
+
+    /// Number of parallel row partitions used by the CUDA reduction.
+    pub const fn workspace_partitions(self) -> usize {
+        topk_workspace_partitions(self.rows, self.vocab_size, self.top_k)
+    }
+
+    /// Caller-owned byte workspace for partial logsumexp and top-k states.
+    pub const fn workspace_bytes(self) -> usize {
+        self.rows
+            * self.workspace_partitions()
+            * (TOPK_PARTIAL_STATE_BYTES + self.top_k * TOPK_CANDIDATE_BYTES)
+    }
+}
+
+const fn topk_workspace_partitions(rows: usize, vocab_size: usize, top_k: usize) -> usize {
+    let target_blocks = TOPK_TARGET_PARTITIONS.div_ceil(rows);
+    let capacity_partitions = vocab_size.div_ceil(TOPK_SORT_CAPACITY_PER_PARTITION);
+    let desired = if target_blocks > capacity_partitions {
+        target_blocks
+    } else {
+        capacity_partitions
+    };
+    let item_limit = vocab_size / top_k;
+    let partitions = if desired < item_limit {
+        desired
+    } else {
+        item_limit
+    };
+    if partitions == 0 {
+        1
+    } else {
+        partitions
     }
 }
 
@@ -268,6 +382,66 @@ pub fn selected_token_logprobs_bf16_reference(
     spec: SelectedTokenLogprobsSpec,
 ) -> Result<(), ContractError> {
     selected_token_logprobs_reference(logits, token_ids, logprobs, ranks, spec, DType::Bf16)
+}
+
+/// Returns sampled-token plus top-k F32 logprobs from F32 logits.
+pub fn topk_sampled_logprobs_f32_reference(
+    logits: &[f32],
+    sampled_token_ids: &[i64],
+    output_token_ids: &mut [i32],
+    output_logprobs: &mut [f32],
+    sampled_token_ranks: &mut [i64],
+    spec: TopKSampledLogprobsSpec,
+) -> Result<(), ContractError> {
+    topk_sampled_logprobs_reference(
+        logits,
+        sampled_token_ids,
+        output_token_ids,
+        output_logprobs,
+        sampled_token_ranks,
+        spec,
+        DType::F32,
+    )
+}
+
+/// Returns sampled-token plus top-k F32 logprobs from FP16 logits.
+pub fn topk_sampled_logprobs_f16_reference(
+    logits: &[f16],
+    sampled_token_ids: &[i64],
+    output_token_ids: &mut [i32],
+    output_logprobs: &mut [f32],
+    sampled_token_ranks: &mut [i64],
+    spec: TopKSampledLogprobsSpec,
+) -> Result<(), ContractError> {
+    topk_sampled_logprobs_reference(
+        logits,
+        sampled_token_ids,
+        output_token_ids,
+        output_logprobs,
+        sampled_token_ranks,
+        spec,
+        DType::F16,
+    )
+}
+
+/// Returns sampled-token plus top-k F32 logprobs from BF16 logits.
+pub fn topk_sampled_logprobs_bf16_reference(
+    logits: &[bf16],
+    sampled_token_ids: &[i64],
+    output_token_ids: &mut [i32],
+    output_logprobs: &mut [f32],
+    sampled_token_ranks: &mut [i64],
+    spec: TopKSampledLogprobsSpec,
+) -> Result<(), ContractError> {
+    topk_sampled_logprobs_reference(
+        logits,
+        sampled_token_ids,
+        output_token_ids,
+        output_logprobs,
+        sampled_token_ranks,
+        spec,
+        DType::Bf16,
+    )
 }
 
 /// Applies vLLM-compatible repetition, frequency, and presence penalties.
@@ -459,6 +633,91 @@ fn selected_token_logprobs_reference<T: LogitElement>(
             .iter()
             .filter(|&&value| value.to_f32() >= selected)
             .count() as i64;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn topk_sampled_logprobs_reference<T: LogitElement>(
+    logits: &[T],
+    sampled_token_ids: &[i64],
+    output_token_ids: &mut [i32],
+    output_logprobs: &mut [f32],
+    sampled_token_ranks: &mut [i64],
+    spec: TopKSampledLogprobsSpec,
+    expected_dtype: DType,
+) -> Result<(), ContractError> {
+    if spec.dtype() != expected_dtype {
+        return Err(ContractError::UnsupportedDType(spec.dtype()));
+    }
+    require_len("logits", logits.len(), spec.logits_numel())?;
+    require_len("sampled_token_ids", sampled_token_ids.len(), spec.rows())?;
+    require_len(
+        "output_token_ids",
+        output_token_ids.len(),
+        spec.output_numel(),
+    )?;
+    require_len(
+        "output_logprobs",
+        output_logprobs.len(),
+        spec.output_numel(),
+    )?;
+    require_len(
+        "sampled_token_ranks",
+        sampled_token_ranks.len(),
+        spec.rows(),
+    )?;
+
+    for row_index in 0..spec.rows() {
+        let row_start = row_index * spec.vocab_size();
+        let row = &logits[row_start..row_start + spec.vocab_size()];
+        let token_id = sampled_token_ids[row_index];
+        let sampled_index =
+            usize::try_from(token_id).map_err(|_| ContractError::TokenIdOutOfBounds {
+                row: row_index,
+                token_id,
+                vocab_size: spec.vocab_size(),
+            })?;
+        if sampled_index >= spec.vocab_size() {
+            return Err(ContractError::TokenIdOutOfBounds {
+                row: row_index,
+                token_id,
+                vocab_size: spec.vocab_size(),
+            });
+        }
+
+        let maximum = row
+            .iter()
+            .map(|&value| value.to_f32())
+            .fold(f32::NEG_INFINITY, f32::max);
+        let exponential_sum = row
+            .iter()
+            .map(|&value| f64::from(value.to_f32() - maximum).exp())
+            .sum::<f64>();
+        let log_normalizer = maximum + exponential_sum.ln() as f32;
+        let sampled = row[sampled_index].to_f32();
+        let output_start = row_index * spec.output_width();
+        output_token_ids[output_start] = sampled_index as i32;
+        output_logprobs[output_start] = sampled - log_normalizer;
+        sampled_token_ranks[row_index] = row
+            .iter()
+            .filter(|&&value| value.to_f32() >= sampled)
+            .count() as i64;
+
+        let mut candidates = row
+            .iter()
+            .enumerate()
+            .map(|(index, &value)| (index, value.to_f32()))
+            .collect::<Vec<_>>();
+        candidates.sort_unstable_by(|(left_index, left), (right_index, right)| {
+            right
+                .total_cmp(left)
+                .then_with(|| left_index.cmp(right_index))
+        });
+        for (slot, &(index, value)) in candidates[..spec.top_k()].iter().enumerate() {
+            output_token_ids[output_start + slot + 1] = index as i32;
+            output_logprobs[output_start + slot + 1] = value - log_normalizer;
+        }
     }
     Ok(())
 }

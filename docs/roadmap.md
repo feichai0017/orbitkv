@@ -28,7 +28,7 @@ feature. New feature work follows this order:
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
 | 1 | KV-cache compression | FP8 KV write/read boundary with explicit scale layout | lower cache bytes and higher admitted context or batch size without unacceptable quality or TPOT loss |
-| 2 | Complete sampling tail | top-k/top-p, renormalization, deterministic RNG, and top-k logprobs; sparse penalties are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
+| 2 | Complete sampling tail | top-k/top-p, renormalization, and deterministic RNG; sparse penalties and top-k logprobs are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
 | 3 | KV-cache movement | block copy/gather/scatter/compact/remap for prefix reuse and preemption | fewer launches or less movement time in a real scheduler path |
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV boundaries only after profiling exposes material non-GEMM cost | a named draft/target model pair improves decode latency or throughput |
 | 5 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
@@ -228,22 +228,31 @@ Status: in progress.
   65,536+ vocabulary, while smaller shapes fall back because the
   one-block-per-row kernel is slower there;
 - ~~sparse repetition/presence/frequency penalties~~ — exact Rust oracle,
-  one-kernel CUDA hash, caller workspace, checked ABI 3, PyTorch
+  one-kernel CUDA hash, caller workspace, checked bridge, PyTorch
   compile/graph coverage, and explicit vLLM 0.24/0.25 registration are
   complete; the H20 operator gate is `5.82–34.30x` faster for rows 1–128 and
   replaces up to `427.85 MB` of vLLM temporaries with a `2 MiB` caller
   workspace; both vLLM 0.24 Qwen2.5-0.5B provider orders preserve every token,
   record `1440/0` Loom submissions, and measure `1.056–1.123x` batch-latency
   plus `1.068–1.126x` TPOT ratios;
+- ~~sampled-token plus top-k raw logprobs~~ — Rust F32/FP16/BF16 oracles,
+  deterministic two-stage CUDA with caller-owned workspace, ABI4 PyTorch
+  compile/graph coverage, and an exact vLLM 0.24 adapter are complete. The
+  direct operator is `3.25x`, `2.60x`, and `1.19x` faster at 1/8/32
+  Qwen-vocabulary rows and near parity at 128 rows. Both engine orders preserve
+  tokens, returned top-k IDs/ranks, and values within `1.91e-6`, with
+  `1440/0` Loom submissions; latency crosses parity under order reversal, so no
+  model-level speedup is claimed;
 - fused logits bias, temperature, masking, and bad-word suppression;
 - top-k/top-p filtering, renormalization, and deterministic counter-based RNG
-  sampling without a host round trip;
-- top-k logprobs without a full-vocabulary probability tensor.
+  sampling without a host round trip.
 
 Exit: fewer launches and temporary tensors with identical token results. The
 selected-logprob exit gates are closed for pure greedy and engine-owned general
 sampling requests with `logprobs=0`; the sparse-penalty gate is also closed for
-the pinned deterministic Qwen workload. Owning selection and RNG remains open.
+the pinned deterministic Qwen workload, and top-k raw-logprob correctness plus
+temporary reduction is closed without a stable engine-speedup claim. Owning
+selection and RNG remains open.
 
 ## K4.5: Speculative Decoding Support
 

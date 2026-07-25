@@ -225,6 +225,54 @@ unsafe extern "C" {
         stream: *mut c_void,
     ) -> c_int;
 
+    pub fn loom_cuda_topk_sampled_logprobs_f32(
+        logits: *const f32,
+        sampled_token_ids: *const i64,
+        output_token_ids: *mut i32,
+        output_logprobs: *mut f32,
+        sampled_token_ranks: *mut i64,
+        rows: u32,
+        vocab_size: u32,
+        top_k: u32,
+        row_stride: u64,
+        workspace: *mut u8,
+        workspace_bytes: u64,
+        partitions: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_topk_sampled_logprobs_f16(
+        logits: *const u16,
+        sampled_token_ids: *const i64,
+        output_token_ids: *mut i32,
+        output_logprobs: *mut f32,
+        sampled_token_ranks: *mut i64,
+        rows: u32,
+        vocab_size: u32,
+        top_k: u32,
+        row_stride: u64,
+        workspace: *mut u8,
+        workspace_bytes: u64,
+        partitions: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_topk_sampled_logprobs_bf16(
+        logits: *const u16,
+        sampled_token_ids: *const i64,
+        output_token_ids: *mut i32,
+        output_logprobs: *mut f32,
+        sampled_token_ranks: *mut i64,
+        rows: u32,
+        vocab_size: u32,
+        top_k: u32,
+        row_stride: u64,
+        workspace: *mut u8,
+        workspace_bytes: u64,
+        partitions: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
     pub fn loom_cuda_apply_token_penalties_f32(
         logits: *mut f32,
         prompt_token_ids: *const i64,

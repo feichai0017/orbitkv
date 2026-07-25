@@ -38,9 +38,11 @@ from .ops.sampling import (
     apply_token_penalties_,
     greedy_sample_logprobs,
     selected_token_logprobs,
+    topk_sampled_logprobs,
     supports_apply_token_penalties,
     supports_greedy_sample_logprobs,
     supports_selected_token_logprobs,
+    supports_topk_sampled_logprobs,
     token_penalties_workspace_capacity,
 )
 from .ops.speculative import (
@@ -90,5 +92,7 @@ __all__ = [
     "supports_selected_token_logprobs",
     "supports_silu_and_mul",
     "supports_silu_and_mul_dynamic_fp8",
+    "supports_topk_sampled_logprobs",
     "token_penalties_workspace_capacity",
+    "topk_sampled_logprobs",
 ]

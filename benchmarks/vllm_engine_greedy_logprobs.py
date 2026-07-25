@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import dataclass
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -16,6 +17,11 @@ from typing import Any
 
 
 PROVIDERS = ("vllm", "loom")
+RETURNED_LOGPROB_FIELDS = (
+    "returned_logprob_token_ids",
+    "returned_logprob_values",
+    "returned_logprob_ranks",
+)
 
 
 @dataclass(frozen=True)
@@ -61,6 +67,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--temperature", type=float, default=0.8)
     parser.add_argument("--top-k", type=int, default=50)
     parser.add_argument("--top-p", type=float, default=0.9)
+    parser.add_argument("--num-logprobs", type=int, default=0)
     parser.add_argument(
         "--provider-order",
         choices=("baseline-first", "loom-first"),
@@ -83,6 +90,8 @@ def parse_args() -> argparse.Namespace:
         parser.error("gpu-memory-utilization must be between zero and one")
     if args.temperature <= 0.0 or args.top_k <= 0 or not 0.0 < args.top_p <= 1.0:
         parser.error("temperature/top-k must be positive and top-p must be in (0, 1]")
+    if not 0 <= args.num_logprobs <= 32:
+        parser.error("num-logprobs must be between zero and 32")
     if args.internal_provider is not None and (
         args.internal_result is None or args.internal_cache_root is None
     ):
@@ -131,15 +140,27 @@ def request_metrics(outputs: list[Any]) -> tuple[list[float], list[float]]:
 
 def selected_logprob_data(
     outputs: list[Any],
-) -> tuple[list[list[float]], list[list[int]]]:
+) -> tuple[
+    list[list[float]],
+    list[list[int]],
+    list[list[list[int]]],
+    list[list[list[float]]],
+    list[list[list[int | None]]],
+]:
     values: list[list[float]] = []
     ranks: list[list[int]] = []
+    returned_token_ids: list[list[list[int]]] = []
+    returned_values: list[list[list[float]]] = []
+    returned_ranks: list[list[list[int | None]]] = []
     for request in outputs:
         completion = request.outputs[0]
         if completion.logprobs is None:
             raise RuntimeError("vLLM did not return requested sampled-token logprobs")
         request_values: list[float] = []
         request_ranks: list[int] = []
+        request_returned_token_ids: list[list[int]] = []
+        request_returned_values: list[list[float]] = []
+        request_returned_ranks: list[list[int | None]] = []
         for token_id, step in zip(
             completion.token_ids, completion.logprobs, strict=True
         ):
@@ -148,9 +169,31 @@ def selected_logprob_data(
                 raise RuntimeError("vLLM did not return a sampled-token rank")
             request_values.append(float(selected.logprob))
             request_ranks.append(int(selected.rank))
+            sorted_items = sorted(step.items())
+            request_returned_token_ids.append(
+                [int(returned_token_id) for returned_token_id, _ in sorted_items]
+            )
+            request_returned_values.append(
+                [float(logprob.logprob) for _, logprob in sorted_items]
+            )
+            request_returned_ranks.append(
+                [
+                    None if logprob.rank is None else int(logprob.rank)
+                    for _, logprob in sorted_items
+                ]
+            )
         values.append(request_values)
         ranks.append(request_ranks)
-    return values, ranks
+        returned_token_ids.append(request_returned_token_ids)
+        returned_values.append(request_returned_values)
+        returned_ranks.append(request_returned_ranks)
+    return (
+        values,
+        ranks,
+        returned_token_ids,
+        returned_values,
+        returned_ranks,
+    )
 
 
 def run_case(
@@ -164,6 +207,7 @@ def run_case(
     temperature: float,
     top_k: int,
     top_p: float,
+    num_logprobs: int,
 ) -> dict[str, Any]:
     import torch
 
@@ -171,7 +215,7 @@ def run_case(
     sampling_arguments: dict[str, Any] = {
         "max_tokens": case.output_len,
         "ignore_eos": True,
-        "logprobs": 0,
+        "logprobs": num_logprobs,
     }
     if sampling_mode == "greedy":
         sampling_arguments["temperature"] = 0.0
@@ -193,6 +237,9 @@ def run_case(
     token_ids: list[list[int]] = []
     logprobs: list[list[float]] = []
     ranks: list[list[int]] = []
+    returned_logprob_token_ids: list[list[list[int]]] = []
+    returned_logprob_values: list[list[list[float]]] = []
+    returned_logprob_ranks: list[list[list[int | None]]] = []
     for _ in range(repeats):
         torch.cuda.synchronize()
         started = time.perf_counter()
@@ -207,7 +254,13 @@ def run_case(
         all_ttft_ms.extend(ttft_ms)
         all_tpot_ms.extend(tpot_ms)
         token_ids = [list(request.outputs[0].token_ids) for request in outputs]
-        logprobs, ranks = selected_logprob_data(outputs)
+        (
+            logprobs,
+            ranks,
+            returned_logprob_token_ids,
+            returned_logprob_values,
+            returned_logprob_ranks,
+        ) = selected_logprob_data(outputs)
         if any(len(tokens) != case.output_len for tokens in token_ids):
             raise RuntimeError("vLLM returned an unexpected output length")
 
@@ -223,6 +276,9 @@ def run_case(
         "token_ids": token_ids,
         "sampled_token_logprobs": logprobs,
         "sampled_token_ranks": ranks,
+        "returned_logprob_token_ids": returned_logprob_token_ids,
+        "returned_logprob_values": returned_logprob_values,
+        "returned_logprob_ranks": returned_logprob_ranks,
     }
 
 
@@ -262,19 +318,23 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
         provider_metadata,
         register_vllm_greedy_sample_logprobs,
         register_vllm_selected_token_logprobs,
+        register_vllm_topk_sampled_logprobs,
     )
 
     explicit_registration = None
     if provider == "loom":
-        registration = (
-            register_vllm_greedy_sample_logprobs
-            if args.sampling_mode == "greedy"
-            else register_vllm_selected_token_logprobs
-        )
+        if args.num_logprobs > 0:
+            registration = register_vllm_topk_sampled_logprobs
+        elif args.sampling_mode == "greedy":
+            registration = register_vllm_greedy_sample_logprobs
+        else:
+            registration = register_vllm_selected_token_logprobs
         explicit_registration = registration()
         if explicit_registration is None:
             raise RuntimeError("Loom sampled-token logprob registration failed")
-    if args.sampling_mode == "greedy":
+    if args.num_logprobs > 0:
+        operator = Operator.SELECTED_TOKEN_LOGPROBS
+    elif args.sampling_mode == "greedy":
         operator = Operator.GREEDY_SAMPLE_LOGPROBS
     else:
         operator = Operator.SELECTED_TOKEN_LOGPROBS
@@ -307,6 +367,7 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
             args.temperature,
             args.top_k,
             args.top_p,
+            args.num_logprobs,
         )
         for case in args.cases
     ]
@@ -316,15 +377,17 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
         "model": model,
         "dtype": "bfloat16 logits observed by the sampler",
         "sampling": (
-            "temperature=0, logprobs=0, ignore_eos=true"
+            f"temperature=0, logprobs={args.num_logprobs}, ignore_eos=true"
             if args.sampling_mode == "greedy"
             else (
                 f"temperature={args.temperature}, top_k={args.top_k}, "
-                f"top_p={args.top_p}, seed={args.seed}, logprobs=0, "
+                f"top_p={args.top_p}, seed={args.seed}, "
+                f"logprobs={args.num_logprobs}, "
                 "ignore_eos=true"
             )
         ),
         "sampling_mode": args.sampling_mode,
+        "num_logprobs": args.num_logprobs,
         "warmup": args.warmup,
         "repeats": args.repeats,
         "seed": args.seed,
@@ -380,6 +443,8 @@ def child_command(
         str(args.top_k),
         "--top-p",
         str(args.top_p),
+        "--num-logprobs",
+        str(args.num_logprobs),
         "--internal-provider",
         provider,
         "--internal-result",
@@ -400,6 +465,45 @@ def maximum_logprob_error(
         for expected_request, actual_request in zip(baseline, loom, strict=True)
         for expected, actual in zip(expected_request, actual_request, strict=True)
     )
+
+
+def maximum_returned_logprob_error(
+    baseline: list[list[list[float]]],
+    loom: list[list[list[float]]],
+) -> float:
+    return max(
+        abs(expected - actual)
+        for expected_request, actual_request in zip(baseline, loom, strict=True)
+        for expected_step, actual_step in zip(
+            expected_request, actual_request, strict=True
+        )
+        for expected, actual in zip(expected_step, actual_step, strict=True)
+    )
+
+
+def compact_provider_report(report: dict[str, Any]) -> dict[str, Any]:
+    """Keep reproducible summaries without embedding every returned top-k item."""
+    compact = {key: value for key, value in report.items() if key != "cases"}
+    compact_cases = []
+    for case in report["cases"]:
+        compact_case = {
+            key: value
+            for key, value in case.items()
+            if key not in RETURNED_LOGPROB_FIELDS
+        }
+        compact_case["returned_logprob_sha256"] = {
+            key: hashlib.sha256(
+                json.dumps(
+                    case[key],
+                    allow_nan=False,
+                    separators=(",", ":"),
+                ).encode()
+            ).hexdigest()
+            for key in RETURNED_LOGPROB_FIELDS
+        }
+        compact_cases.append(compact_case)
+    compact["cases"] = compact_cases
+    return compact
 
 
 def run_controller(args: argparse.Namespace) -> dict[str, Any]:
@@ -431,7 +535,30 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
         logprob_error = maximum_logprob_error(
             baseline["sampled_token_logprobs"], loom["sampled_token_logprobs"]
         )
-        case_matches = token_ids_match and ranks_match and logprob_error <= 2.0e-5
+        returned_ids_match = (
+            baseline["returned_logprob_token_ids"]
+            == loom["returned_logprob_token_ids"]
+        )
+        returned_ranks_match = (
+            baseline["returned_logprob_ranks"]
+            == loom["returned_logprob_ranks"]
+        )
+        returned_logprob_error = (
+            maximum_returned_logprob_error(
+                baseline["returned_logprob_values"],
+                loom["returned_logprob_values"],
+            )
+            if returned_ids_match
+            else float("inf")
+        )
+        case_matches = (
+            token_ids_match
+            and ranks_match
+            and returned_ids_match
+            and returned_ranks_match
+            and logprob_error <= 2.0e-5
+            and returned_logprob_error <= 2.0e-5
+        )
         outputs_match = outputs_match and case_matches
         baseline_latency = baseline["batch_latency_ms"]["median"]
         loom_latency = loom["batch_latency_ms"]["median"]
@@ -443,6 +570,9 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
                 "token_ids_match": token_ids_match,
                 "sampled_token_ranks_match": ranks_match,
                 "maximum_sampled_logprob_error": logprob_error,
+                "returned_logprob_token_ids_match": returned_ids_match,
+                "returned_logprob_ranks_match": returned_ranks_match,
+                "maximum_returned_logprob_error": returned_logprob_error,
                 "baseline_over_loom_batch_latency": (
                     baseline_latency / loom_latency
                 ),
@@ -454,7 +584,10 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
     loom_launches = reports["loom"]["loom_path"]["host_launch_count"]
     accepted = outputs_match and baseline_launches == 0 and loom_launches > 0
     report = {
-        "benchmark": f"vllm_engine_{args.sampling_mode}_sample_logprobs_ab",
+        "benchmark": (
+            f"vllm_engine_{args.sampling_mode}_sample_logprobs_"
+            f"top{args.num_logprobs}_ab"
+        ),
         "model": args.model,
         "provider_order": list(order),
         "acceptance": {
@@ -464,8 +597,15 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
             "baseline_host_launch_count": baseline_launches,
             "loom_host_launch_count": loom_launches,
         },
+        "evidence_payload": (
+            "provider metrics, generated tokens, sampled-token values/ranks, "
+            "and SHA-256 summaries of returned top-k lists"
+        ),
         "comparisons": comparisons,
-        "providers": reports,
+        "providers": {
+            provider: compact_provider_report(report)
+            for provider, report in reports.items()
+        },
     }
     rendered = json.dumps(report, indent=2)
     if args.result_json is not None:
@@ -473,7 +613,7 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
         args.result_json.write_text(rendered + "\n")
     print(rendered)
     if not accepted:
-        raise SystemExit("vLLM greedy sampled-logprob acceptance gate failed")
+        raise SystemExit("vLLM sampled-logprob acceptance gate failed")
     return report
 
 

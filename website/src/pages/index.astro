@@ -163,6 +163,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       Both Qwen provider orders preserve every token and show
       1.056–1.123× batch-latency ratios for the pinned offline workload;
       serving-scale concurrency and goodput remain separate.
+      Sampled-token plus top-k logprobs now have a deterministic direct
+      operator and an exact vLLM-order adapter. The direct path wins at up to
+      32 rows and sharply reduces temporaries; real-engine latency crosses
+      parity under provider-order reversal, so no model-level speedup is
+      claimed.
       Paged decode now has a native-cache, context-32 vLLM route,
       synthetic-engine path proof, and a local 128–1,024-token split-K path
       that is 1.14–6.22× faster than legacy Loom. FA3 still wins the long
@@ -184,10 +189,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       </div>
       <p>
         The K0.7 bridge-ABI-2 wheel remains the last clean-install-qualified
-        artifact; the token-penalty entrypoint moves current source to ABI3, so
-        its replacement wheel matrix is still open. The first K4 sampling
-        slice is complete through its real-engine gate. Top-k/top-p and
-        deterministic RNG follow, while the next K3 proof remains a
+        artifact; token penalties and top-k logprobs move current source to
+        ABI4, so its replacement wheel matrix is still open. The first K4
+        sampling slices are complete through their real-engine gates.
+        Logits preprocessing, top-k/top-p selection, and deterministic RNG
+        follow, while the next K3 proof remains a
         native-versus-FP8 capacity, quality, memory, TTFT, and TPOT study.
         Tree, stochastic, and speculative-KV work waits for a named profile
         that shows material cost.

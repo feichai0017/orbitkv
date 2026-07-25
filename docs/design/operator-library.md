@@ -189,7 +189,23 @@ runs greedy or random top-k/top-p selection, and consumes RNG in its original
 order. Loom runs afterward against the preserved BF16/FP16 raw logits only for
 `raw_logprobs` requests with `max_num_logprobs == 0`; all-greedy batches retain
 the narrower fused argmax path. F32 logits, top-k logprob lists, specific-token
-lists, processed-logprob modes, and version-mismatched vLLM builds fall back.
+lists, processed-logprob modes, and version-mismatched vLLM builds fall back
+from this registration.
+
+The direct `topk_sampled_logprobs` contract returns the sampled token followed
+by up to 32 top tokens, one shared F32 normalization, and the sampled-token
+rank. A two-stage handwritten CUDA reduction writes partition-local
+logsumexp/top-k states into caller-owned byte workspace and merges them in
+descending-logit, ascending-token-ID order. This deterministic tie rule is part
+of Loom's public operator contract.
+
+vLLM exposes `torch.topk`'s otherwise unspecified tie order through returned
+token ranks, so its exact adapter deliberately keeps that engine operation. It
+reuses vLLM's mandatory F32 sampling logits for the small top-k list and calls
+Loom's selected-token reduction on preserved raw logits to recover the shared
+normalizer and rank without a full-vocabulary raw-logprob tensor. Thus the
+direct fused operator and the vLLM adapter share normalization semantics but
+do not pretend to share tie-order policy.
 
 ## Greedy Speculative-Verify Contract
 

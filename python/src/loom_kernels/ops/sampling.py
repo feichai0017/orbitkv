@@ -8,6 +8,7 @@ from .._torch_dispatch import (
     _apply_token_penalties,
     _greedy_sample_logprobs,
     _selected_token_logprobs,
+    _topk_sampled_logprobs,
 )
 from ._common import _DTYPE_NAMES
 
@@ -40,6 +41,20 @@ def supports_selected_token_logprobs(
         and token_ids.shape[0] == logits.shape[0]
         and token_ids.is_contiguous()
         and not token_ids.requires_grad
+    )
+
+
+def supports_topk_sampled_logprobs(
+    logits: torch.Tensor,
+    sampled_token_ids: torch.Tensor,
+    top_k: int,
+) -> bool:
+    """Return whether sampled-token plus top-k logprobs can be fused."""
+    return bool(
+        supports_selected_token_logprobs(logits, sampled_token_ids)
+        and isinstance(top_k, int)
+        and not isinstance(top_k, bool)
+        and 1 <= top_k <= min(logits.shape[1], 32)
     )
 
 
@@ -131,6 +146,8 @@ def _validate_greedy_sample_logits(
             "F32/FP16/BF16 CUDA logits with unit vocabulary stride, "
             "non-overlapping rows, and no gradients"
         )
+
+
 def _validate_selected_token_logprobs(
     logits: torch.Tensor,
     token_ids: torch.Tensor,
@@ -141,6 +158,21 @@ def _validate_selected_token_logprobs(
             "F32/FP16/BF16 CUDA logits with unit vocabulary stride and one "
             "same-device contiguous int64 token ID per row; token IDs must "
             "be in vocabulary range"
+        )
+
+
+def _validate_topk_sampled_logprobs(
+    logits: torch.Tensor,
+    sampled_token_ids: torch.Tensor,
+    top_k: int,
+) -> None:
+    if not supports_topk_sampled_logprobs(logits, sampled_token_ids, top_k):
+        maximum = min(logits.shape[1], 32) if logits.dim() == 2 else 32
+        raise ValueError(
+            "Loom top-k sampled logprobs require inference-only, non-empty "
+            "rank-2 F32/FP16/BF16 CUDA logits with unit vocabulary stride; "
+            "one same-device contiguous int64 sampled token ID per row; and "
+            f"1 <= top_k <= {maximum}"
         )
 
 
@@ -186,6 +218,16 @@ def selected_token_logprobs(
     """Return normalized logprobs and ranks for one selected token per row."""
     _validate_selected_token_logprobs(logits, token_ids)
     return _selected_token_logprobs(logits, token_ids)
+
+
+def topk_sampled_logprobs(
+    logits: torch.Tensor,
+    sampled_token_ids: torch.Tensor,
+    top_k: int,
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Return sampled token, deterministic top-k logprobs, and sampled ranks."""
+    _validate_topk_sampled_logprobs(logits, sampled_token_ids, top_k)
+    return _topk_sampled_logprobs(logits, sampled_token_ids, top_k)
 
 
 def apply_token_penalties_(

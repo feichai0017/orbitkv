@@ -49,6 +49,13 @@ metadata, verifies target argmax IDs, and compacts the accepted prefix plus
 mismatch or bonus token. Stochastic rejection and every model, attention,
 GEMM, RNG, scheduler, and KV-cache policy remain engine-owned.
 
+An eighth registration replaces vLLM's vocabulary-sized repetition,
+frequency, and presence temporaries with a sparse history hash.
+
+A ninth registration handles raw top-k logprob lists without changing sampling
+or observable tie order. vLLM keeps `torch.topk`, processors, top-k/top-p, and
+RNG; Loom supplies the shared raw normalization and selected-token rank.
+
 The registered contract is:
 
 ```text
@@ -61,8 +68,9 @@ input = RMSNorm(residual, weight, epsilon)
 The supported package interval is `vllm>=0.24,<0.26`. The K0.7 bridge-ABI-2
 native wheel passes 225 H20 tests with each official vLLM minor and includes
 greedy speculative verification plus static FP8 KV quantize-on-write. It is
-qualified but not published. Current source uses bridge ABI 3 for sparse token
-penalties; its replacement wheel matrix remains open.
+qualified but not published. Current source uses bridge ABI 4 for sparse token
+penalties and sampled-token plus top-k logprobs; its replacement wheel matrix
+remains open.
 Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
@@ -87,7 +95,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-4cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -100,7 +108,8 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-The first qualified artifact is not published to a package index. Editable
+This command builds current ABI4 source; the clean-install-qualified artifact
+remains ABI2. Neither artifact is published to a package index. Editable
 source development remains documented in the
 [Python README](../../python/README.md#source-development), but it cannot
 produce a source-only wheel.
@@ -127,6 +136,7 @@ from loom_kernels import (
     silu_and_mul_dynamic_fp8_out,
     silu_and_mul_out,
     selected_token_logprobs,
+    topk_sampled_logprobs,
 )
 
 output = silu_and_mul(gate_and_up)
@@ -139,6 +149,9 @@ fp8_output, block_scales = silu_and_mul_dynamic_fp8(
 
 token_ids, sampled_logprobs, sampled_ranks = greedy_sample_logprobs(logits)
 sampled_logprobs, sampled_ranks = selected_token_logprobs(logits, token_ids_i64)
+topk_ids, topk_logprobs, sampled_ranks = topk_sampled_logprobs(
+    logits, token_ids_i64, 20
+)
 verified_ids, accepted_lengths, emitted_lengths = greedy_speculative_verify(
     flattened_draft_ids_i32,
     flattened_target_argmax_ids_i64,
@@ -359,6 +372,27 @@ processors and sampler first; Loom then scans the preserved raw logits for the
 selected int64 IDs. F32 logits and processed-logprob modes conservatively fall
 back because vLLM may mutate their storage in place.
 
+For raw top-k logprob lists, register the exact adapter before engine
+construction:
+
+```python
+from vllm import LLM
+from loom_kernels.vllm import register_vllm_topk_sampled_logprobs
+
+assert register_vllm_topk_sampled_logprobs() == "topk_sampled_logprobs"
+engine = LLM(model="/path/to/model")
+```
+
+This path accepts 1–32 requested raw logprobs, at most 32 rows, and no
+specific-token list. It retains vLLM's F32 `torch.topk` result because equal
+low-precision logits make that order externally observable through returned
+ranks. After vLLM applies its processors and samples normally, Loom scans the
+preserved raw logits for the sampled IDs. The adapter derives the shared
+normalizer from the sampled raw logit/logprob pair and applies it only to the
+small top-k values. The standalone `topk_sampled_logprobs` operator instead
+declares deterministic descending-logit, ascending-token-ID ties; the two
+interfaces do not silently substitute one tie contract for the other.
+
 The provider can only replace a graph-visible activation-quant boundary. On
 the tested H20 stack, vLLM's automatic `fp8_per_block` selection uses a
 FlashInfer/DeepGEMM linear kernel that accepts BF16 and performs activation
@@ -545,6 +579,24 @@ PY
   --case 1x32x64 --case 8x32x64 --case 32x32x32 \
   --warmup 2 --repeats 7 --provider-order loom-first \
   --result-json /tmp/qwen25-selected-logprobs-loom-first.json
+
+.venv-vllm/bin/python benchmarks/vllm_topk_sampled_logprobs.py \
+  --rows 1,8,32,128 --vocab-size 151936 --top-k 20 --dtype bf16 \
+  --warmup 100 --iterations 1000 --repeats 7
+
+.venv-vllm/bin/python benchmarks/vllm_engine_greedy_logprobs.py \
+  --model /path/to/Qwen2.5-0.5B-Instruct --sampling-mode top-k-top-p \
+  --num-logprobs 20 \
+  --case 1x32x64 --case 8x32x64 --case 32x32x32 \
+  --warmup 2 --repeats 7 --provider-order baseline-first \
+  --result-json /tmp/qwen25-topk-logprobs-baseline-first.json
+
+.venv-vllm/bin/python benchmarks/vllm_engine_greedy_logprobs.py \
+  --model /path/to/Qwen2.5-0.5B-Instruct --sampling-mode top-k-top-p \
+  --num-logprobs 20 \
+  --case 1x32x64 --case 8x32x64 --case 32x32x32 \
+  --warmup 2 --repeats 7 --provider-order loom-first \
+  --result-json /tmp/qwen25-topk-logprobs-loom-first.json
 ```
 
 The calibration helper requires `llmcompressor`, `compressed-tensors`, and
@@ -668,6 +720,22 @@ batch-latency plus `1.054-1.130x` TPOT ratios. See the
 [baseline-first engine report](../results/h20-vllm-selected-logprobs-baseline-first-20260722.json),
 and [Loom-first engine report](../results/h20-vllm-selected-logprobs-loom-first-20260722.json).
 
+For sampled-token plus top-k logprobs, the direct deterministic BF16 operator
+matches sampled ranks exactly and top-k values within `9.54e-7`. Against
+vLLM's full F32 composition it measures `3.25x`, `2.60x`, `1.19x`, and
+`0.998x` at 1/8/32/128 rows while reducing peak temporary bytes by roughly two
+orders of magnitude. Its tie IDs may differ in position from `torch.topk`
+because Loom declares ascending token IDs and PyTorch does not declare an equal
+value order. The exact vLLM adapter therefore retains engine `torch.topk`:
+both provider orders preserve every token, returned ID/rank, and logprob within
+`1.91e-6`, with 1440 Loom selected-token submissions only in the candidate.
+Baseline-first latency ratios are `1.037-1.053x`; Loom-first ratios are
+`0.969-0.982x`, so the engine result proves invocation and temporary reduction,
+not stable acceleration. See the
+[operator report](../results/h20-topk-sampled-logprobs-20260725.json),
+[baseline-first engine report](../results/h20-vllm-qwen25-topk-logprobs-baseline-first-20260725.json),
+and [Loom-first engine report](../results/h20-vllm-qwen25-topk-logprobs-loom-first-20260725.json).
+
 For deterministic greedy speculative verification, Loom matches vLLM's
 flattened ragged rejection output bit-for-bit, including zero-draft requests,
 first mismatches, full acceptance, and bonus-token emission. All 15 H20 cases
@@ -737,8 +805,8 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
   layer replacement (`SiluAndMul`), and one vLLM-version-specific
   activation-quant fusion-table replacement, plus a vLLM 0.24/0.25-specific
   RoPE+native/static-FP8-KV compiler-pass adapter, greedy/general selected-token
-  sampled-logprob sampler overrides, a shape-gated Min-P override, and a
-  measured-shape FlashAttention paged-decode override;
+  and top-k sampled-logprob sampler overrides, a shape-gated Min-P override,
+  and a measured-shape FlashAttention paged-decode override;
 - the activation-quant provider requires a graph-visible quantization boundary;
   it does not intercept vLLM's fused BF16-input FlashInfer/DeepGEMM path;
 - the isolated operator is faster on H20 and real-model invocation is proven,
@@ -746,8 +814,8 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
   fusion or RoPE+paged-KV;
 - vLLM-owned penalties, masks, top-k/top-p, and stochastic sampling can feed
   the selected-token path, but Loom does not accelerate those stages yet;
-  Min-P is the first separately qualified processor, while top-k logprob lists
-  and non-raw modes still fall back;
+  Min-P is the first separately qualified processor, raw top-k logprob lists
+  have an exact rows-at-most-32 adapter, and non-raw modes still fall back;
 - paged decode is limited to the exact H20-qualified 32/8-head, D128,
   context-at-most-32 envelope; pretrained-model and serving-scale evidence plus
   competitive 128-1,024-token kernels remain open.

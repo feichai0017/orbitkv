@@ -57,6 +57,12 @@ export const supportedOperators = [
     status: "supported",
   },
   {
+    name: "Sampled-token + top-k logprobs",
+    dtypes: "F32 · FP16 · BF16",
+    boundary: "Deterministic direct reduction · exact engine-order adapter",
+    status: "supported",
+  },
+  {
     name: "Min-P filtering",
     dtypes: "F32 · FP16 · BF16",
     boundary: "In-place row-max threshold; shape-gated in vLLM",
@@ -91,7 +97,7 @@ export const nextOperators = [
   {
     milestone: "K4 · P0",
     name: "Complete sampling tail",
-    reason: "Continue with top-k/top-p, deterministic RNG, and top-k logprobs without host round trips.",
+    reason: "Continue with fused logits preprocessing, top-k/top-p selection, and deterministic RNG without host round trips.",
   },
   {
     milestone: "K3 · P0",
@@ -162,6 +168,12 @@ export const evidence = [
     shape: "Qwen2.5 top-k/top-p · batches 1 / 8 / 32",
     result: "1.044–1.125×",
     detail: "vLLM-owned sampling; order-stable engine ratio",
+  },
+  {
+    operator: "Sampled-token + top-k logprobs",
+    shape: "BF16 · 151,936 vocab · 1 / 8 / 32 rows",
+    result: "3.25 / 2.60 / 1.19×",
+    detail: "Direct operator; exact engine adapter crosses parity after order reversal",
   },
   {
     operator: "Min-P filtering",
