@@ -1,8 +1,8 @@
 {
   "schema_version": 1,
-  "date": "2026-07-24",
+  "date": "2026-07-25",
   "purpose": "ABI-2 native Python matrix wheel and repository-free H20 clean-install gate",
-  "tested_revision": "a2f37666ed31aa8781a26e150980a75f9f569171",
+  "tested_revision": "013d94c5257874fb45f5b92933aca7247879770a",
   "hardware": {
     "gpu": "NVIDIA H20",
     "compute_capability": "sm_90",
@@ -22,8 +22,8 @@
   },
   "artifact": {
     "filename": "loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl",
-    "size_bytes": 2785356,
-    "sha256": "b864f6d7ffd90f8fc0009a19a01418a3d3098033421429ec94da6a1185532540",
+    "size_bytes": 2786776,
+    "sha256": "d4f1c363c2dbdfd3ac84809a403c7b55d6a4afff75e3e7ddbf5b9c5d42482738",
     "published": false,
     "wheel_metadata": {
       "root_is_purelib": false,
@@ -40,15 +40,15 @@
     "native_payload": [
       {
         "path": "loom_kernels/lib/libloom_cuda_bridge.so",
-        "sha256": "f1020ff2157ebbe02c5bd21a25f06bb78eac5a4e086b58296a8c4573a098ccad"
+        "sha256": "a68646b0ece29899124c2e8cec78b0cc30a846383fcb870bc2a029038d1cc5ee"
       },
       {
         "path": "loom_kernels/lib/libloom_kernels_torch.so",
-        "sha256": "283c9073715501ab3d94ba89f9dce03dfff8e7529d7aa0c2e09c72744bca05ba"
+        "sha256": "181c4e648e402df03128d724c4b133a0f21294bac98b562bca6b9341cf772d2c"
       }
     ],
     "manifest": {
-      "revision": "a2f37666ed31aa8781a26e150980a75f9f569171",
+      "revision": "013d94c5257874fb45f5b92933aca7247879770a",
       "cuda_toolkit": "13.1",
       "cuda_architectures": [
         "sm_90"
@@ -105,7 +105,7 @@
       "python_gpu_suite": {
         "passed": 225,
         "failed": 0,
-        "duration_seconds": 9.15
+        "duration_seconds": 8.5
       }
     },
     {
@@ -116,7 +116,9 @@
       "vllm_wheel_sha256": "16fc7a28df1576eb6f7ca0455026551b8f9adb674c19c66059359ef3e964bd1e",
       "torchcodec": "0.14.0",
       "torchcodec_wheel_sha256": "8dd63d5e5f7696b560619952a215a0b9565248a71c42cbea74b2a85282e8b841",
-      "dependency_source_note": "The official vLLM wheel requires torchcodec>=0.14; torchcodec 0.14.0 was installed from official PyPI because the internal mirror ended below that floor.",
+      "pynvvideocodec": "2.0.4",
+      "pynvvideocodec_wheel_sha256": "bd3779ff73ad703393c0a19c3650f269ca25e71902c24efa0719ed4a58cd9390",
+      "dependency_source_note": "The exact vLLM 0.25.1, torchcodec 0.14.0, and PyNvVideoCodec 2.0.4 wheels were staged from official PyPI because the internal mirror did not provide the complete dependency row; all remaining dependencies came from the internal mirror.",
       "fresh_venv": true,
       "system_site_packages": false,
       "pip_check": "passed",
@@ -131,7 +133,7 @@
       "python_gpu_suite": {
         "passed": 225,
         "failed": 0,
-        "duration_seconds": 8.39
+        "duration_seconds": 8.42
       }
     },
     {
@@ -154,7 +156,7 @@
         "passed": 138,
         "failed": 0,
         "skipped": 63,
-        "duration_seconds": 4.84,
+        "duration_seconds": 4.67,
         "scope_note": "This environment intentionally contains no vLLM; vLLM-dependent cases are skipped."
       }
     }
@@ -163,7 +165,7 @@
     "CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 python python/build_wheel.py --cuda-home /usr/local/cuda-13.1 --archs 90 --wheel-dir dist",
     "auditwheel show dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl",
     "python3 -m venv clean-vllm024 && clean-vllm024/bin/pip install 'dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' 'vllm==0.24.0'",
-    "python3 -m venv clean-vllm025 && clean-vllm025/bin/pip install 'dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' torchcodec-0.14.0-cp311-cp311-manylinux_2_28_x86_64.whl vllm-0.25.1-cp38-abi3-manylinux_2_28_x86_64.whl",
+    "python3 -m venv clean-vllm025 && clean-vllm025/bin/pip install 'dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' vllm-0.25.1-cp38-abi3-manylinux_2_28_x86_64.whl torchcodec-0.14.0-cp311-cp311-manylinux_2_28_x86_64.whl pynvvideocodec-2.0.4-cp311-cp311-manylinux_2_28_x86_64.whl",
     "python3 -m venv clean-torch210 && clean-torch210/bin/pip install 'dist/loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl[test]' 'torch==2.10.0'",
     "env -u PYTHONPATH -u LD_LIBRARY_PATH -u LOOM_KERNELS_TORCH_LIBRARY <clean-python> -m pip check",
     "env -u PYTHONPATH -u LD_LIBRARY_PATH -u LOOM_KERNELS_TORCH_LIBRARY <clean-python> -m pytest -q -p no:cacheprovider python/tests"
