@@ -37,6 +37,7 @@ enum loom_cuda_bridge_operator {
   LOOM_CUDA_BRIDGE_MIN_P_FILTER = 8,
   LOOM_CUDA_BRIDGE_PAGED_DECODE_ATTENTION = 9,
   LOOM_CUDA_BRIDGE_GREEDY_SPECULATIVE_VERIFY = 10,
+  LOOM_CUDA_BRIDGE_TOKEN_PENALTIES = 11,
 };
 
 uint32_t loom_cuda_bridge_abi_version(void);
@@ -83,6 +84,19 @@ int loom_cuda_bridge_selected_token_logprobs(
     const int64_t* token_ids, uint64_t token_id_elements, float* logprobs,
     uint64_t logprob_elements, int64_t* ranks, uint64_t rank_elements,
     uint32_t rows, uint32_t vocab_size, uint64_t row_stride, void* stream);
+
+int loom_cuda_bridge_apply_token_penalties(
+    float* logits, uint64_t logits_elements,
+    const int64_t* prompt_token_ids, uint64_t prompt_token_id_elements,
+    const int64_t* output_token_ids, uint64_t output_token_id_elements,
+    const float* presence_penalties, uint64_t presence_penalty_elements,
+    const float* frequency_penalties, uint64_t frequency_penalty_elements,
+    const float* repetition_penalties, uint64_t repetition_penalty_elements,
+    uint64_t* workspace, uint64_t workspace_elements, uint32_t rows,
+    uint32_t vocab_size, uint32_t prompt_tokens, uint32_t output_tokens,
+    uint32_t workspace_capacity, uint64_t logits_row_stride,
+    uint64_t prompt_row_stride, uint64_t output_row_stride,
+    uint64_t workspace_row_stride, void* stream);
 
 int loom_cuda_bridge_greedy_speculative_verify(
     const int32_t* draft_token_ids, uint64_t draft_token_id_elements,

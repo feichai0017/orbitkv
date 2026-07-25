@@ -63,6 +63,12 @@ export const supportedOperators = [
     status: "supported",
   },
   {
+    name: "Sparse token penalties",
+    dtypes: "F32 logits · int64 history",
+    boundary: "Repetition + frequency + presence through an O(history) hash",
+    status: "supported",
+  },
+  {
     name: "Paged MQA/GQA decode",
     dtypes: "F32 · FP16 · BF16",
     boundary: "GQA packing + local split-K/LSE; short shapes route into vLLM",
@@ -85,7 +91,7 @@ export const nextOperators = [
   {
     milestone: "K4 · P0",
     name: "Complete sampling tail",
-    reason: "Own penalties, top-k/top-p, deterministic RNG, and top-k logprobs without host round trips.",
+    reason: "Continue with top-k/top-p, deterministic RNG, and top-k logprobs without host round trips.",
   },
   {
     milestone: "K3 · P0",
@@ -162,6 +168,12 @@ export const evidence = [
     shape: "F32 · 151,936 vocab · 128 rows",
     result: "1.885×",
     detail: "0 tensor-sized temp; smaller batches route back to vLLM",
+  },
+  {
+    operator: "Sparse token penalties",
+    shape: "F32 · 151,936 vocab · rows 1–128",
+    result: "5.82–34.30×",
+    detail: "Exact vLLM arithmetic; 0 operator temp, 16 KiB–2 MiB caller workspace",
   },
   {
     operator: "Paged MQA/GQA decode",

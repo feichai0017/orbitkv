@@ -6,8 +6,10 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 [Project README](../README.md) · [Integration guide](../docs/guides/vllm-ir-provider.md) · [Operator catalog](../docs/operator-catalog.md)
 
 > [!IMPORTANT]
-> The current bridge-ABI-2 native wheel is H20-qualified but is not published
-> to a package index yet. A source-only wheel is intentionally unsupported:
+> The K0.7 bridge-ABI-2 native wheel is H20-qualified but is not published to
+> a package index. Current source uses bridge ABI 3 for sparse token penalties
+> and does not yet have a replacement qualified wheel. A source-only wheel is
+> intentionally unsupported:
 > `pip wheel ./python` fails unless `build_wheel.py` has staged both native
 > libraries and their manifest.
 
@@ -115,12 +117,14 @@ direct raw-CUDA framework path.
 import torch
 
 from loom_kernels import (
+    apply_token_penalties_,
     greedy_sample_logprobs,
     greedy_speculative_verify,
     min_p_filter_,
     rope_paged_kv_write_,
     selected_token_logprobs,
     silu_and_mul_dynamic_fp8,
+    token_penalties_workspace_capacity,
 )
 
 fp8_output, block_scales = silu_and_mul_dynamic_fp8(
@@ -138,6 +142,26 @@ verified_ids, accepted_lengths, emitted_lengths = greedy_speculative_verify(
     max_draft_tokens,
 )
 min_p_filter_(sampling_logits_f32, min_p_f32)
+penalty_workspace = torch.empty(
+    (
+        sampling_logits_f32.shape[0],
+        token_penalties_workspace_capacity(
+            prompt_token_ids_i64.shape[1],
+            output_token_ids_i64.shape[1],
+        ),
+    ),
+    device=sampling_logits_f32.device,
+    dtype=torch.int64,
+)
+apply_token_penalties_(
+    sampling_logits_f32,
+    prompt_token_ids_i64,
+    output_token_ids_i64,
+    presence_penalties_f32,
+    frequency_penalties_f32,
+    repetition_penalties_f32,
+    penalty_workspace,
+)
 
 # Native caches ignore the scale values. FP8 uint8 caches use either one
 # calibrated F32 scale or one scale per KV head.
@@ -167,7 +191,7 @@ tensors that require gradients.
 | Normalization | `rms_norm`, `rms_norm_out`, `add_rms_norm_`, `rms_norm_dynamic_fp8`, `rms_norm_dynamic_fp8_out` |
 | Activation | `silu_and_mul`, `silu_and_mul_out`, `silu_and_mul_dynamic_fp8`, `silu_and_mul_dynamic_fp8_out` |
 | Position and KV | `rope_paged_kv_write_` for native or static FP8 E4M3 paged caches |
-| Decode tail | `greedy_sample_logprobs`, `selected_token_logprobs`, `min_p_filter_` |
+| Decode tail | `greedy_sample_logprobs`, `selected_token_logprobs`, `min_p_filter_`, `apply_token_penalties_` |
 | Speculative decode | `greedy_speculative_verify` |
 | Attention | `paged_decode_attention`, `paged_decode_attention_out` |
 
@@ -197,6 +221,7 @@ into this contract.
 | Greedy sampled logprob | `register_vllm_greedy_sample_logprobs()` |
 | Greedy speculative verify | `register_vllm_greedy_speculative_verify()` |
 | Selected-token logprob | `register_vllm_selected_token_logprobs()` |
+| Sparse token penalties | `register_vllm_token_penalties()` |
 | Min-P processor | `LOOM_KERNELS_ENABLE_MIN_P=1` |
 
 Every route checks its exact dtype, shape, layout, and semantic contract. An

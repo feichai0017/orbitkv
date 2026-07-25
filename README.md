@@ -59,10 +59,11 @@ Catalog membership alone is never a performance claim.
 
 ## Next value program
 
-K0.7's current bridge-ABI-2 native-wheel engineering gate is complete for
+K0.7's bridge-ABI-2 native-wheel engineering gate is complete for
 Linux x86_64, CUDA 13.1, SM90, Python 3.11, PyTorch 2.10/2.11, and vLLM
 0.24/0.25. The exact artifact is qualified but not published to a package
-index. The first
+index. Current source uses bridge ABI 3 for the new sparse token-penalty
+boundary; its replacement matrix wheel is not yet qualified. The first
 post-K0.7 slice is also complete: deterministic greedy speculative
 verification and token compaction now follow the same Rust-owned path, and a
 process-isolated Qwen2.5-1.5B/0.5B vLLM 0.24 gate proves exact native/Loom
@@ -209,6 +210,7 @@ opens the raw JSON artifact used for the claim.
 | [Greedy + sampled logprob](docs/results/h20-greedy-sample-logprobs-20260722.json) | `3.16–4.35×` operator ratio; `1.129–1.250×` real-engine batch-latency ratio | Pure greedy requests with raw `logprobs=0` |
 | [Selected-token logprob + rank](docs/results/h20-selected-token-logprobs-20260722.json) | `2.77–3.78×` operator ratio; `1.044–1.125×` real-engine batch-latency ratio | vLLM still owns top-k/top-p, RNG, and selection |
 | [Min-P filtering](docs/results/h20-min-p-filter-20260722.json) | `1.885×` at 128 rows and no tensor-sized probability/mask temporaries | Smaller batches fall back to vLLM |
+| [Sparse token penalties](docs/results/h20-token-penalties-20260725.json) | Exact outputs; `5.82–34.30×` operator ratio; vLLM peak temporary storage drops from `3.34–427.85 MB` to zero plus `16 KiB–2 MiB` caller workspace | F32 repetition/frequency/presence boundary with 512 prompt + 128 output IDs; real-engine A/B remains open |
 | [Greedy speculative verify + compact](docs/results/h20-greedy-speculative-verify-20260723.json) | `1.101–1.128×` dispatcher ratio across 15 batch/draft shapes; bit-exact with vLLM | Deterministic all-greedy rejection only; the real-model gate is the next row |
 | Real-model speculative decode: [native first](docs/results/h20-vllm-qwen25-speculative-native-first-20260723.json) · [Loom first](docs/results/h20-vllm-qwen25-speculative-loom-first-20260723.json) | Exact native/Loom tokens, `714/714` measured Loom calls per order; verifier share `0.048–0.200%` | Engine path proven; native/Loom latency crosses parity and speculative decode loses to target-only on this model pair |
 | [RoPE + paged-KV write](docs/results/h20-rope-paged-kv-20260722.json) | `2.30–2.40×` dispatcher ratio for 1–512 tokens | Real-engine invocation is proven; end-to-end remains at parity |

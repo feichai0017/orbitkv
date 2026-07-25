@@ -47,10 +47,13 @@ import { evidence, repositoryUrl } from "../data/site";
         selected-token path reaches 2.77–3.78× while leaving sampling policy
         with vLLM. Min-P crosses from a small-batch regression to 1.10× at 32
         rows and 1.89× at 128 rows, so its adapter routes smaller shapes back
-        to vLLM instead of applying a blanket override. Native-interleaved
-        paged decode is similarly shape-gated: all 24 routed Hq/Hkv 32/8,
-        D128, context-at-most-32 backend cases win at 1.154–2.374×, while the
-        context-64 controls fall back to FA3 at graph parity. A broader
+        to vLLM instead of applying a blanket override. Sparse token penalties
+        reach 5.82–34.30× against vLLM's vocabulary-sized counting path for
+        1–128 rows with exact output and zero operator temporary allocation;
+        this is an operator result, not yet an engine-throughput claim.
+        Native-interleaved paged decode is similarly shape-gated: all 24
+        routed Hq/Hkv 32/8, D128, context-at-most-32 backend cases win at
+        1.154–2.374×, while the context-64 controls fall back to FA3. A broader
         156-case sweep still contains 74 losses, so this is not a blanket
         attention replacement. The D128 long-context split-K/LSE path beats
         legacy Loom in all 16 BF16 cases by 1.14–6.22× (2.50× median). At
@@ -101,6 +104,10 @@ python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
 
 .venv-vllm/bin/python benchmarks/vllm_min_p_filter.py \
   --rows 1,8,32,128 --vocab-size 151936
+
+.venv-vllm/bin/python benchmarks/vllm_token_penalties.py \
+  --rows 1,8,32,128 --vocab-size 151936 \
+  --prompt-width 512 --output-width 128
 
 .venv-vllm/bin/python benchmarks/vllm_greedy_speculative_verify.py \
   --batches 1,8,32,128,256 --draft-lengths 1,4,8 \

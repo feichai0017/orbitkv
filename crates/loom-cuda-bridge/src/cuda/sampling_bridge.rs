@@ -102,6 +102,141 @@ unsafe fn launch_selected_token_logprobs<T: Scalar>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+unsafe fn launch_token_penalties(
+    logits: *mut f32,
+    logits_elements: u64,
+    prompt_token_ids: *const i64,
+    prompt_token_id_elements: u64,
+    output_token_ids: *const i64,
+    output_token_id_elements: u64,
+    presence_penalties: *const f32,
+    presence_penalty_elements: u64,
+    frequency_penalties: *const f32,
+    frequency_penalty_elements: u64,
+    repetition_penalties: *const f32,
+    repetition_penalty_elements: u64,
+    workspace: *mut u64,
+    workspace_elements: u64,
+    rows: u32,
+    vocab_size: u32,
+    prompt_tokens: u32,
+    output_tokens: u32,
+    workspace_capacity: u32,
+    logits_row_stride: u64,
+    prompt_row_stride: u64,
+    output_row_stride: u64,
+    workspace_row_stride: u64,
+    stream: *mut c_void,
+) -> Result<(), CudaExecutorError> {
+    let (mut logits, logits_range) =
+        unsafe { write_slice(logits, logits_elements, "token-penalty logits") }?;
+    let (prompt_token_ids, prompt_range) = unsafe {
+        read_slice(
+            prompt_token_ids,
+            prompt_token_id_elements,
+            "token-penalty prompt IDs",
+        )
+    }?;
+    let (output_token_ids, output_range) = unsafe {
+        read_slice(
+            output_token_ids,
+            output_token_id_elements,
+            "token-penalty output IDs",
+        )
+    }?;
+    let (presence_penalties, presence_range) = unsafe {
+        read_slice(
+            presence_penalties,
+            presence_penalty_elements,
+            "presence penalties",
+        )
+    }?;
+    let (frequency_penalties, frequency_range) = unsafe {
+        read_slice(
+            frequency_penalties,
+            frequency_penalty_elements,
+            "frequency penalties",
+        )
+    }?;
+    let (repetition_penalties, repetition_range) = unsafe {
+        read_slice(
+            repetition_penalties,
+            repetition_penalty_elements,
+            "repetition penalties",
+        )
+    }?;
+    let (mut workspace, workspace_range) =
+        unsafe { write_slice(workspace, workspace_elements, "token-penalty workspace") }?;
+    let read_regions = [
+        ("prompt IDs", prompt_range),
+        ("output IDs", output_range),
+        ("presence penalties", presence_range),
+        ("frequency penalties", frequency_range),
+        ("repetition penalties", repetition_range),
+    ];
+    require_disjoint_from(
+        "logits",
+        logits_range,
+        &[
+            read_regions[0],
+            read_regions[1],
+            read_regions[2],
+            read_regions[3],
+            read_regions[4],
+            ("workspace", workspace_range),
+        ],
+        "token penalties",
+    )?;
+    require_disjoint_from(
+        "workspace",
+        workspace_range,
+        &read_regions,
+        "token penalties",
+    )?;
+
+    let spec = TokenPenaltiesSpec::new(
+        rows as usize,
+        vocab_size as usize,
+        prompt_tokens as usize,
+        output_tokens as usize,
+        workspace_capacity as usize,
+    )
+    .map_err(invalid_contract)?;
+    let logits_layout = RowStridedLayout::new(
+        spec.vocab_size(),
+        element_count(logits_row_stride, "token-penalty logits row stride")?,
+    )?;
+    let prompt_layout = RowStridedLayout::new(
+        spec.prompt_tokens(),
+        element_count(prompt_row_stride, "token-penalty prompt row stride")?,
+    )?;
+    let output_layout = RowStridedLayout::new(
+        spec.output_tokens(),
+        element_count(output_row_stride, "token-penalty output row stride")?,
+    )?;
+    let workspace_layout = RowStridedLayout::new(
+        spec.workspace_capacity(),
+        element_count(workspace_row_stride, "token-penalty workspace row stride")?,
+    )?;
+    stream_backend(stream).apply_token_penalties_f32(
+        &mut logits,
+        &prompt_token_ids,
+        &output_token_ids,
+        &presence_penalties,
+        &frequency_penalties,
+        &repetition_penalties,
+        &mut workspace,
+        spec,
+        logits_layout,
+        prompt_layout,
+        output_layout,
+        workspace_layout,
+    )?;
+    record_launch(OP_TOKEN_PENALTIES);
+    Ok(())
+}
+
 /// Checked greedy selection, sampled-token logprob, and rank.
 ///
 /// # Safety
@@ -192,9 +327,74 @@ pub unsafe extern "C" fn loom_cuda_bridge_selected_token_logprobs(
     })
 }
 
+/// Checked in-place sparse token penalties.
+///
+/// # Safety
+///
+/// Every pointer must identify the declared CUDA storage on the active
+/// context and remain alive until work on `stream` completes. Mutable logits
+/// and workspace storage must not overlap any input.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn loom_cuda_bridge_apply_token_penalties(
+    logits: *mut f32,
+    logits_elements: u64,
+    prompt_token_ids: *const i64,
+    prompt_token_id_elements: u64,
+    output_token_ids: *const i64,
+    output_token_id_elements: u64,
+    presence_penalties: *const f32,
+    presence_penalty_elements: u64,
+    frequency_penalties: *const f32,
+    frequency_penalty_elements: u64,
+    repetition_penalties: *const f32,
+    repetition_penalty_elements: u64,
+    workspace: *mut u64,
+    workspace_elements: u64,
+    rows: u32,
+    vocab_size: u32,
+    prompt_tokens: u32,
+    output_tokens: u32,
+    workspace_capacity: u32,
+    logits_row_stride: u64,
+    prompt_row_stride: u64,
+    output_row_stride: u64,
+    workspace_row_stride: u64,
+    stream: *mut c_void,
+) -> c_int {
+    bridge_call(|| unsafe {
+        launch_token_penalties(
+            logits,
+            logits_elements,
+            prompt_token_ids,
+            prompt_token_id_elements,
+            output_token_ids,
+            output_token_id_elements,
+            presence_penalties,
+            presence_penalty_elements,
+            frequency_penalties,
+            frequency_penalty_elements,
+            repetition_penalties,
+            repetition_penalty_elements,
+            workspace,
+            workspace_elements,
+            rows,
+            vocab_size,
+            prompt_tokens,
+            output_tokens,
+            workspace_capacity,
+            logits_row_stride,
+            prompt_row_stride,
+            output_row_stride,
+            workspace_row_stride,
+            stream,
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
-    use super::launch_greedy_sample_logprobs;
+    use super::{launch_greedy_sample_logprobs, launch_token_penalties};
     use loom_cuda::CudaExecutorError;
 
     #[test]
@@ -212,6 +412,39 @@ mod tests {
                 2,
                 4,
                 4,
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(matches!(result, Err(CudaExecutorError::InvalidContract(_))));
+    }
+
+    #[test]
+    fn token_penalties_reject_a_short_workspace_before_submission() {
+        let result = unsafe {
+            launch_token_penalties(
+                0x1000_usize as *mut f32,
+                12,
+                0x2000_usize as *const i64,
+                10,
+                0x3000_usize as *const i64,
+                8,
+                0x4000_usize as *const f32,
+                2,
+                0x5000_usize as *const f32,
+                2,
+                0x6000_usize as *const f32,
+                2,
+                0x7000_usize as *mut u64,
+                32,
+                2,
+                6,
+                5,
+                4,
+                32,
+                6,
+                5,
+                4,
+                32,
                 std::ptr::null_mut(),
             )
         };

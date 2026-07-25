@@ -35,10 +35,13 @@ from .ops.rope_kv import (
     supports_rope_paged_kv_write,
 )
 from .ops.sampling import (
+    apply_token_penalties_,
     greedy_sample_logprobs,
     selected_token_logprobs,
+    supports_apply_token_penalties,
     supports_greedy_sample_logprobs,
     supports_selected_token_logprobs,
+    token_penalties_workspace_capacity,
 )
 from .ops.speculative import (
     greedy_speculative_verify,
@@ -56,6 +59,7 @@ __all__ = [
     "Operator",
     "PAGED_DECODE_MAX_CONTEXT",
     "add_rms_norm_",
+    "apply_token_penalties_",
     "bridge_abi_version",
     "greedy_sample_logprobs",
     "greedy_speculative_verify",
@@ -75,6 +79,7 @@ __all__ = [
     "silu_and_mul_dynamic_fp8_out",
     "silu_and_mul_out",
     "supports_add_rms_norm",
+    "supports_apply_token_penalties",
     "supports_greedy_sample_logprobs",
     "supports_greedy_speculative_verify",
     "supports_min_p_filter",
@@ -85,4 +90,5 @@ __all__ = [
     "supports_selected_token_logprobs",
     "supports_silu_and_mul",
     "supports_silu_and_mul_dynamic_fp8",
+    "token_penalties_workspace_capacity",
 ]

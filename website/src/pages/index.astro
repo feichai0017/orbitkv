@@ -157,9 +157,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       The pinned Qwen2.5 greedy and top-k/top-p selected-logprob gates show
       order-stable real-engine latency and TPOT wins. FP8 and RoPE+KV prove
       exact invocation but remain near parity. Min-P is shape-gated from its
-      measured crossover. Paged decode now has a native-cache, context-32 vLLM
-      route, synthetic-engine path proof, and a local 128–1,024-token split-K
-      path that is 1.14–6.22× faster than legacy Loom. FA3 still wins the long
+      measured crossover. Sparse token penalties preserve exact vLLM
+      repetition, frequency, and presence arithmetic while replacing
+      vocabulary-sized temporary tensors with an O(history) caller workspace;
+      the current result is operator-only until the Qwen engine A/B closes.
+      Paged decode now has a native-cache, context-32 vLLM route,
+      synthetic-engine path proof, and a local 128–1,024-token split-K path
+      that is 1.14–6.22× faster than legacy Loom. FA3 still wins the long
       engine envelope, and a broader Qwen2.5 geometry failed token and latency
       gates, so neither route was widened; serving-scale concurrency, memory,
       and goodput stay separate. Greedy speculative verification is bit-exact
@@ -177,11 +181,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <h2>Build where engines pay.</h2>
       </div>
       <p>
-        With the ABI2 native-wheel and FP8 KV implementation/integration gates
-        complete, the next K3 proof is a native-versus-FP8 capacity, quality,
-        memory, TTFT, and TPOT study. The complete sampling tail follows. Tree,
-        stochastic, and speculative-KV work waits for a named profile that
-        shows material cost.
+        The K0.7 bridge-ABI-2 wheel remains the last clean-install-qualified
+        artifact; the token-penalty entrypoint moves current source to ABI3, so
+        its replacement wheel matrix is still open. The first K4 sampling
+        slice is complete at the operator boundary. Top-k/top-p and
+        deterministic RNG follow, while the next K3 proof remains a
+        native-versus-FP8 capacity, quality, memory, TTFT, and TPOT study.
+        Tree, stochastic, and speculative-KV work waits for a named profile
+        that shows material cost.
       </p>
     </header>
 

@@ -227,8 +227,13 @@ Status: in progress.
   are complete; H20 evidence selects Loom only for at least 32 rows and a
   65,536+ vocabulary, while smaller shapes fall back because the
   one-block-per-row kernel is slower there;
-- fused logits bias, temperature, masking, bad-word suppression, and sparse
-  repetition/presence/frequency penalties;
+- ~~sparse repetition/presence/frequency penalties~~ — exact Rust oracle,
+  one-kernel CUDA hash, caller workspace, checked ABI 3, PyTorch
+  compile/graph coverage, and explicit vLLM 0.24/0.25 registration are
+  complete; the H20 operator gate is `5.82–34.30x` faster for rows 1–128 and
+  replaces up to `427.85 MB` of vLLM temporaries with a `2 MiB` caller
+  workspace; real-engine A/B remains open;
+- fused logits bias, temperature, masking, and bad-word suppression;
 - top-k/top-p filtering, renormalization, and deterministic counter-based RNG
   sampling without a host round trip;
 - top-k logprobs without a full-vocabulary probability tensor.

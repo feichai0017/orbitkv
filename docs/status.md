@@ -27,7 +27,7 @@
   independent rotation/cache token counts, and strided paged-cache writes;
 - static per-tensor/per-head FP8 E4M3 KV encoding in that same fused
   RoPE+paged-write contract, with byte-typed cache views, explicit F32 scales,
-  CPU oracles, safe Rust dispatch, checked bridge ABI v2, Stable ABI PyTorch,
+  CPU oracles, safe Rust dispatch, checked Rust bridge, Stable ABI PyTorch,
   and vLLM 0.24/0.25 adapter support;
 - greedy-sampling contract and CPU oracles with first-index tie breaking,
   sampled-token log-softmax, and explicit finite-logit precondition;
@@ -43,6 +43,13 @@
   PyTorch mutation schemas, and an opt-in vLLM 0.24/0.25 processor override
   that cancels the softmax denominator instead of allocating probability and
   mask tensors;
+- sparse F32 repetition, frequency, and presence penalties with padding-aware
+  prompt/output contracts, a Rust CPU oracle, one handwritten CUDA hash
+  kernel, caller-owned O(history) workspace, checked bridge ABI 3, PyTorch
+  compile/graph coverage, and explicit vLLM 0.24/0.25 registration; the H20
+  operator gate is exact and `5.82–34.30x` faster across rows 1–128 while
+  replacing `3.34–427.85 MB` of vLLM temporaries with `16 KiB–2 MiB` of
+  caller storage;
 - deterministic greedy speculative verification over flattened ragged int32
   draft metadata, with a validating Rust CPU oracle, one-warp handwritten
   CUDA, accepted/bonus-token compaction, accepted/emitted length outputs,
@@ -71,7 +78,8 @@
   `SiluAndMul` out-of-tree layer replacement, plus an opt-in activation-quant
   fusion-table replacement, RoPE+KV compiler-pass adapter, and pure-greedy
   general selected-token sampled-logprob fast paths, and a measured-shape
-  Min-P override, deterministic greedy speculative verifier, plus a
+  Min-P override, sparse token-penalty override, deterministic greedy
+  speculative verifier, plus a
   native/FP8-cache RoPE+KV compiler adapter and native-cache short-context
   paged-decode override for vLLM 0.24 and 0.25;
 - per-operator JSON correctness/latency benchmarks and named vLLM baselines.
@@ -79,7 +87,7 @@
 ## Validated
 
 - local formatting, clippy, tests, and release build;
-- the current bridge-ABI-2 `py3-none-linux_x86_64` native wheel built from a
+- the K0.7 bridge-ABI-2 `py3-none-linux_x86_64` native wheel built from a
   clean revision for CUDA 13.1 and SM90 passed archive/ELF/RPATH/symbol/
   auditwheel checks and retained identical packaged library hashes across all
   runtime gates;
@@ -87,6 +95,9 @@
   BF16 H20 smoke, and the applicable full suites on PyTorch 2.10.0+cu128,
   PyTorch 2.11.0+cu130 with vLLM 0.24.0, and the same PyTorch with the official
   vLLM 0.25.1 wheel; the native artifact is not published;
+- current source has advanced to bridge ABI 3 for sparse token penalties; its
+  replacement clean-install matrix wheel remains to be built after the
+  real-engine gate;
 - CUDA-feature clippy on `forge-gas1`;
 - NVIDIA H20 correctness for six shapes from `1x1` through `16x8192` and a
   `64x4096` batch;
@@ -379,8 +390,9 @@ FA3 for the engine's 128-1,024-token path.
 - RoPE+paged-KV model-level TTFT/TPOT or throughput benefit beyond the current
   exact-token engine integration gate;
 - Min-P real-model invocation and end-to-end serving benefit;
-- Loom-owned logits preprocessing, top-k/top-p, stochastic sampling, and
-  general top-k logprob integration;
+- token-penalty real-engine latency/TPOT benefit, Loom-owned logits
+  preprocessing, top-k/top-p, stochastic sampling, and general top-k logprob
+  integration;
 - an end-to-end speculative draft/target performance win; tree/branch
   metadata, stochastic residual-distribution rejection, and KV commit/remap
   remain profile-gated after the real-engine verifier share measured below

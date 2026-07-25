@@ -147,6 +147,21 @@ int loom_cuda_selected_token_logprobs_bf16(
     int64_t* ranks, uint32_t rows, uint32_t vocab_size, uint64_t row_stride,
     void* stream);
 
+// Apply repetition once to the prompt/output union, then frequency and
+// presence penalties from output counts. Token IDs outside [0, vocab_size)
+// are padding. workspace is [rows, workspace_capacity] packed uint64 hash
+// storage; capacity must be a power of two at least twice the combined padded
+// prompt/output width.
+int loom_cuda_apply_token_penalties_f32(
+    float* logits, const int64_t* prompt_token_ids,
+    const int64_t* output_token_ids, const float* presence_penalties,
+    const float* frequency_penalties, const float* repetition_penalties,
+    uint64_t* workspace, uint32_t rows, uint32_t vocab_size,
+    uint32_t prompt_tokens, uint32_t output_tokens,
+    uint32_t workspace_capacity, uint64_t logits_row_stride,
+    uint64_t prompt_row_stride, uint64_t output_row_stride,
+    uint64_t workspace_row_stride, void* stream);
+
 // Deterministic greedy speculative verification over flattened ragged draft
 // tokens. cumulative_draft_lengths is inclusive and has one int32 entry per
 // request. Output is contiguous [requests, max_draft_tokens + 1], padded with

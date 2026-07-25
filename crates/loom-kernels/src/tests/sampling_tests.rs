@@ -91,3 +91,56 @@ fn selected_token_logprobs_validates_ids_and_low_precision_buffers() {
         })
     );
 }
+
+#[test]
+fn token_penalties_match_sparse_history_semantics() {
+    let spec = TokenPenaltiesSpec::new(2, 6, 5, 4, 32).unwrap();
+    let mut logits = [
+        2.0_f32, -2.0, 0.0, 4.0, -4.0, 1.0, -1.0, 3.0, -3.0, 2.0, -2.0, 0.5,
+    ];
+    let prompt_token_ids = [0_i64, 1, 1, -1, 6, 1, 2, 5, 8, -1];
+    let output_token_ids = [1_i64, 1, 2, 6, 2, 2, 3, -1];
+    let presence = [0.4_f32, 0.25];
+    let frequency = [0.2_f32, -0.5];
+    let repetition = [2.0_f32, 1.25];
+
+    apply_token_penalties_f32_reference(
+        &mut logits,
+        &prompt_token_ids,
+        &output_token_ids,
+        &presence,
+        &frequency,
+        &repetition,
+        spec,
+    )
+    .unwrap();
+
+    let expected = [
+        1.0_f32, -4.8, -0.6, 4.0, -4.0, 1.0, -1.0, 2.4, -3.0, 1.85, -2.0, 0.4,
+    ];
+    for (actual, expected) in logits.into_iter().zip(expected) {
+        assert!((actual - expected).abs() < 1.0e-6);
+    }
+}
+
+#[test]
+fn token_penalties_require_a_power_of_two_workspace_at_half_load() {
+    assert_eq!(
+        TokenPenaltiesSpec::required_workspace_capacity(5, 4),
+        Ok(32)
+    );
+    assert_eq!(
+        TokenPenaltiesSpec::new(2, 6, 5, 4, 16),
+        Err(ContractError::TokenPenaltyWorkspaceTooSmall {
+            required: 32,
+            actual: 16,
+        })
+    );
+    assert_eq!(
+        TokenPenaltiesSpec::new(2, 6, 5, 4, 48),
+        Err(ContractError::TokenPenaltyWorkspaceTooSmall {
+            required: 32,
+            actual: 48,
+        })
+    );
+}

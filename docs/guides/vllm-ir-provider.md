@@ -58,10 +58,11 @@ input = RMSNorm(residual, weight, epsilon)
 
 ## Compatibility
 
-The supported package interval is `vllm>=0.24,<0.26`. The current bridge-ABI-2
+The supported package interval is `vllm>=0.24,<0.26`. The K0.7 bridge-ABI-2
 native wheel passes 225 H20 tests with each official vLLM minor and includes
 greedy speculative verification plus static FP8 KV quantize-on-write. It is
-qualified but not published.
+qualified but not published. Current source uses bridge ABI 3 for sparse token
+penalties; its replacement wheel matrix remains open.
 Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
@@ -286,6 +287,30 @@ have padded rows but require unit vocabulary stride. Every unsupported case
 runs the original vLLM sampler; speculative bonus-token sampling is also
 declined. Registration is version-gated to vLLM 0.24/0.25. Both contiguous and
 padded logits enter the same checked Rust bridge with an explicit row stride.
+
+To replace vLLM's full-vocabulary repetition/frequency/presence temporaries,
+register the sparse penalty path before engine construction:
+
+```python
+from vllm import LLM
+from loom_kernels.vllm import register_vllm_token_penalties
+
+assert register_vllm_token_penalties() == "token_penalties"
+engine = LLM(model="/path/to/model")
+```
+
+vLLM still owns penalty parameters and output-history collection. Loom accepts
+the existing F32 sampling logits, padded int64 prompt/output matrices, and
+three F32 penalty vectors. One packed int64 open-addressing workspace records
+prompt presence and output counts, then one CUDA kernel applies repetition
+once to the prompt/output union followed by frequency and presence updates.
+Negative IDs and IDs at or beyond the vocabulary are padding. The adapter
+caches workspace per CUDA stream and uses Loom only while its power-of-two
+history capacity is no larger than the vocabulary; other contracts execute
+vLLM unchanged. The current H20
+[operator gate](../results/h20-token-penalties-20260725.json) is exact and
+measures `5.82–34.30x` ratios across rows 1–128, but a real-model
+order-reversed engine claim remains open.
 
 To replace vLLM's deterministic speculative verifier, register it before
 constructing the engine:

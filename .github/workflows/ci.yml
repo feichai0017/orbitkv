@@ -49,6 +49,8 @@ jobs:
             /tmp/loom-cuda-sys-package-files
           grep -Eq '/cuda/src/greedy_speculative_verify\.cu$' \
             /tmp/loom-cuda-sys-package-files
+          grep -Eq '/cuda/src/token_penalties\.cu$' \
+            /tmp/loom-cuda-sys-package-files
 
   benchmark-tools:
     name: python package · benchmark syntax

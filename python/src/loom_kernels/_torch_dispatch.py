@@ -20,6 +20,7 @@ _greedy_sample_logprobs = torch.ops.loom_kernels.greedy_sample_logprobs.default
 _selected_token_logprobs = (
     torch.ops.loom_kernels.selected_token_logprobs.default
 )
+_apply_token_penalties = torch.ops.loom_kernels.apply_token_penalties_.default
 _greedy_speculative_verify = (
     torch.ops.loom_kernels.greedy_speculative_verify.default
 )

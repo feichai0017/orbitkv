@@ -64,8 +64,10 @@ python3 -m venv .venv-vllm
         <code>libloom_kernels_torch.so</code> Stable ABI dispatcher. Its
         manifest binds the Git revision, CUDA toolkit, SM targets, PyTorch
         range, bridge ABI, and library hashes. Installed packages load only
-        this package-local pair. The current bridge-ABI-2 H20-qualified wheel
-        is not published to a package index yet.
+        this package-local pair. The K0.7 bridge-ABI-2 wheel is the last
+        H20-qualified artifact and is not published to a package index. Current
+        source is bridge ABI3 after adding sparse token penalties; its
+        replacement matrix wheel is still pending.
       </p>
 
       <h2>Call PyTorch directly</h2>
@@ -75,7 +77,9 @@ python3 -m venv .venv-vllm
     min_p_filter_,
     selected_token_logprobs,
     silu_and_mul_dynamic_fp8,
+    token_penalties_workspace_capacity,
 )
+from loom_kernels.ops.sampling import apply_token_penalties_
 
 fp8_output, block_scales = silu_and_mul_dynamic_fp8(
     gate_and_up_bf16,
@@ -88,7 +92,26 @@ verified_ids, accepted, emitted = greedy_speculative_verify(
     cumulative_draft_lengths_i32, max_draft_tokens,
 )
 logprobs, ranks = selected_token_logprobs(logits, sampled_ids_i64)
-min_p_filter_(sampling_logits_f32, min_p_f32)</code></pre>
+min_p_filter_(sampling_logits_f32, min_p_f32)
+
+capacity = token_penalties_workspace_capacity(
+    prompt_width=prompt_ids_i64.shape[1],
+    output_width=output_ids_i64.shape[1],
+)
+workspace = torch.empty(
+    (sampling_logits_f32.shape[0], capacity),
+    dtype=torch.int64,
+    device=sampling_logits_f32.device,
+)
+apply_token_penalties_(
+    sampling_logits_f32,
+    prompt_ids_i64,
+    output_ids_i64,
+    repetition_penalties_f32,
+    frequency_penalties_f32,
+    presence_penalties_f32,
+    workspace,
+)</code></pre>
 
       <h2>vLLM 0.24/0.25 opt-ins</h2>
       <table class="operator-table">
@@ -105,6 +128,7 @@ min_p_filter_(sampling_logits_f32, min_p_f32)</code></pre>
           <tr><td>Greedy speculative verify</td><td><code>register_vllm_greedy_speculative_verify()</code></td></tr>
           <tr><td>Selected-token logprob</td><td><code>register_vllm_selected_token_logprobs()</code></td></tr>
           <tr><td>Min-P</td><td><code>LOOM_KERNELS_ENABLE_MIN_P=1</code></td></tr>
+          <tr><td>Sparse token penalties</td><td><code>register_vllm_token_penalties()</code></td></tr>
         </tbody>
       </table>
 
@@ -119,15 +143,16 @@ min_p_filter_(sampling_logits_f32, min_p_f32)</code></pre>
 
       <h2>Compatibility is explicit</h2>
       <p>
-        Fresh installs of the current bridge-ABI-2 wheel with official vLLM
-        0.24.0 and 0.25.1 packages each pass the 225-test H20 suite on PyTorch
-        2.11. The same exact wheel passes 138 applicable Loom gates on PyTorch
+        Fresh installs of the K0.7 bridge-ABI-2 wheel with official vLLM 0.24.0
+        and 0.25.1 packages each pass the 225-test H20 suite on PyTorch 2.11.
+        The same exact artifact passes 138 applicable Loom gates on PyTorch
         2.10 without recompilation. It includes speculative verification and
-        static FP8 KV quantize-on-write but has not been published. A pinned
-        Qwen2.5 draft/target engine gate
-        proves exact native/Loom speculative invocation on vLLM 0.24; vLLM
-        0.25 has source-suite compatibility evidence but no transferred
-        model-level result.
+        static FP8 KV quantize-on-write but has not been published. Sparse
+        token penalties are present only in current bridge-ABI-3 source until
+        its replacement wheel matrix closes. A pinned Qwen2.5 draft/target
+        engine gate proves exact native/Loom speculative invocation on vLLM
+        0.24; vLLM 0.25 has source-suite compatibility evidence but no
+        transferred model-level result.
         Existing model-level performance artifacts remain tied to the version
         recorded in each result; compatibility does not transfer a speedup
         claim. Read the{" "}

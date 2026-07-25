@@ -22,6 +22,7 @@ from loom_kernels.vllm import (
     SILU_OVERRIDE_ENV,
     SILU_OVERRIDE_KEY,
     SUPPORTED_VLLM_SERIES,
+    TOKEN_PENALTIES_OVERRIDE_KEY,
     configure_vllm_rope_paged_kv,
     installed_vllm_version,
     provider_metadata,
@@ -34,6 +35,7 @@ from loom_kernels.vllm import (
     register_vllm_selected_token_logprobs,
     register_vllm_silu_and_mul,
     register_vllm_silu_and_mul_dynamic_fp8,
+    register_vllm_token_penalties,
     supports_installed_vllm,
     supports_vllm_paged_decode_shape,
 )
@@ -310,6 +312,75 @@ def test_vllm_selected_token_path_handles_processed_greedy_batches(monkeypatch):
     assert torch.equal(output.sampled_token_ids[:, 0], sampled.to(torch.int32))
     assert launch_count(Operator.GREEDY_SAMPLE_LOGPROBS) == 0
     assert launch_count(Operator.SELECTED_TOKEN_LOGPROBS) == 1
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_vllm_token_penalties_use_sparse_workspace():
+    from vllm.v1.sample.sampler import Sampler
+
+    from loom_kernels.torch_ops import (
+        Operator,
+        launch_count,
+        reset_launch_count,
+    )
+
+    assert (
+        register_vllm_token_penalties() == TOKEN_PENALTIES_OVERRIDE_KEY
+    )
+    rows, vocab_size = 4, 4096
+    logits = torch.randn((rows, vocab_size), device="cuda")
+    original = logits.clone()
+    prompt = torch.randint(0, vocab_size, (rows, 65), device="cuda")
+    prompt[0, :3] = torch.tensor([17, 17, vocab_size], device="cuda")
+    output = [
+        [17, 17, 31],
+        [],
+        [5, 9, 5, 9],
+        [7],
+    ]
+    presence = torch.tensor([0.4, 0.0, -0.2, 0.1], device="cuda")
+    frequency = torch.tensor([0.2, 0.0, 0.3, -0.1], device="cuda")
+    repetition = torch.tensor([1.1, 0.9, 1.2, 1.0], device="cuda")
+    metadata = SimpleNamespace(
+        no_penalties=False,
+        prompt_token_ids=prompt,
+        presence_penalties=presence,
+        frequency_penalties=frequency,
+        repetition_penalties=repetition,
+    )
+
+    expected = original.clone()
+    for row in range(rows):
+        prompt_ids = {
+            int(token)
+            for token in prompt[row].tolist()
+            if 0 <= int(token) < vocab_size
+        }
+        counts: dict[int, int] = {}
+        for token in output[row]:
+            counts[token] = counts.get(token, 0) + 1
+        for token in prompt_ids | counts.keys():
+            value = expected[row, token]
+            expected[row, token] = (
+                value / repetition[row]
+                if value > 0
+                else value * repetition[row]
+            )
+            if token in counts:
+                expected[row, token] -= frequency[row] * counts[token]
+                expected[row, token] -= presence[row]
+
+    reset_launch_count(Operator.TOKEN_PENALTIES)
+    returned = Sampler.apply_penalties(logits, metadata, output)
+    torch.cuda.synchronize()
+
+    assert returned is logits
+    assert launch_count(Operator.TOKEN_PENALTIES) == 1
+    torch.testing.assert_close(logits, expected, rtol=1.0e-6, atol=1.0e-6)
+    contract = provider_metadata()["token_penalties_first_contract"]
+    assert contract is not None
+    assert contract["workspace_capacity"] == 256
+    assert contract["workspace_bytes"] == rows * 256 * 8
 
 
 def test_configures_vllm_rope_paged_kv_fusion():

@@ -60,8 +60,8 @@ borrowed memory. Launches remain asynchronous, so the adapter must keep storage
 alive and preserve stream ordering until the work completes.
 
 The alpha API supports normalization and quantization, SwiGLU, RoPE plus
-paged-KV writes, decode-tail sampling/logprob operations, Min-P, and paged
-MQA/GQA decode attention. See the
+paged-KV writes, decode-tail sampling/logprob operations, Min-P, sparse token
+penalties, and paged MQA/GQA decode attention. See the
 [project documentation](https://feichai0017.github.io/loom-kernels/) for exact
 shape gates and H20 evidence.
 

@@ -111,6 +111,10 @@ pub enum ContractError {
         token_id: i64,
         vocab_size: usize,
     },
+    TokenPenaltyWorkspaceTooSmall {
+        required: usize,
+        actual: usize,
+    },
     TargetTokenIdOutOfI32Range {
         token: usize,
         token_id: i64,
@@ -219,6 +223,10 @@ impl fmt::Display for ContractError {
             } => write!(
                 formatter,
                 "selected token ID {token_id} for row {row} is outside [0, {vocab_size})"
+            ),
+            Self::TokenPenaltyWorkspaceTooSmall { required, actual } => write!(
+                formatter,
+                "token-penalty workspace requires at least {required} hash slots per row, got {actual}"
             ),
             Self::TargetTokenIdOutOfI32Range { token, token_id } => write!(
                 formatter,

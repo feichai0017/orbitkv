@@ -4,7 +4,9 @@ use crate::cuda_backend::CudaBackend;
 use crate::runtime::{loom_status_result, CudaDeviceRead, CudaDeviceWrite, CudaStreamHandle};
 use crate::{CudaExecutorError, RowStridedLayout};
 use half::{bf16, f16};
-use loom_kernels::{DType, GreedySampleLogprobsSpec, SelectedTokenLogprobsSpec};
+use loom_kernels::{
+    DType, GreedySampleLogprobsSpec, SelectedTokenLogprobsSpec, TokenPenaltiesSpec,
+};
 
 impl<S: CudaStreamHandle> CudaBackend<S> {
     /// Fuses F32 greedy selection with the sampled token's logprob and rank.
@@ -168,6 +170,149 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
             )
         })
     }
+
+    /// Applies sparse F32 repetition, frequency, and presence penalties.
+    #[allow(clippy::too_many_arguments)]
+    pub fn apply_token_penalties_f32(
+        &self,
+        logits: &mut impl CudaDeviceWrite<f32>,
+        prompt_token_ids: &impl CudaDeviceRead<i64>,
+        output_token_ids: &impl CudaDeviceRead<i64>,
+        presence_penalties: &impl CudaDeviceRead<f32>,
+        frequency_penalties: &impl CudaDeviceRead<f32>,
+        repetition_penalties: &impl CudaDeviceRead<f32>,
+        workspace: &mut impl CudaDeviceWrite<u64>,
+        spec: TokenPenaltiesSpec,
+        logits_layout: RowStridedLayout,
+        prompt_layout: RowStridedLayout,
+        output_layout: RowStridedLayout,
+        workspace_layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError> {
+        let launch = validate_token_penalty_buffers(
+            logits,
+            prompt_token_ids,
+            output_token_ids,
+            presence_penalties,
+            frequency_penalties,
+            repetition_penalties,
+            workspace,
+            spec,
+            logits_layout,
+            prompt_layout,
+            output_layout,
+            workspace_layout,
+        )?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_apply_token_penalties_f32(
+                logits.as_mut_ptr(),
+                prompt_token_ids.as_ptr(),
+                output_token_ids.as_ptr(),
+                presence_penalties.as_ptr(),
+                frequency_penalties.as_ptr(),
+                repetition_penalties.as_ptr(),
+                workspace.as_mut_ptr(),
+                launch.rows,
+                launch.vocab_size,
+                launch.prompt_tokens,
+                launch.output_tokens,
+                launch.workspace_capacity,
+                launch.logits_row_stride,
+                launch.prompt_row_stride,
+                launch.output_row_stride,
+                launch.workspace_row_stride,
+                self.raw_stream(),
+            )
+        })
+    }
+}
+
+struct TokenPenaltiesLaunch {
+    rows: u32,
+    vocab_size: u32,
+    prompt_tokens: u32,
+    output_tokens: u32,
+    workspace_capacity: u32,
+    logits_row_stride: u64,
+    prompt_row_stride: u64,
+    output_row_stride: u64,
+    workspace_row_stride: u64,
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_token_penalty_buffers(
+    logits: &impl CudaDeviceRead<f32>,
+    prompt_token_ids: &impl CudaDeviceRead<i64>,
+    output_token_ids: &impl CudaDeviceRead<i64>,
+    presence_penalties: &impl CudaDeviceRead<f32>,
+    frequency_penalties: &impl CudaDeviceRead<f32>,
+    repetition_penalties: &impl CudaDeviceRead<f32>,
+    workspace: &impl CudaDeviceRead<u64>,
+    spec: TokenPenaltiesSpec,
+    logits_layout: RowStridedLayout,
+    prompt_layout: RowStridedLayout,
+    output_layout: RowStridedLayout,
+    workspace_layout: RowStridedLayout,
+) -> Result<TokenPenaltiesLaunch, CudaExecutorError> {
+    logits.require_len(
+        logits_layout.storage_elements(spec.rows(), spec.vocab_size())?,
+        "token-penalty logits",
+    )?;
+    prompt_token_ids.require_len(
+        prompt_layout.storage_elements(spec.rows(), spec.prompt_tokens())?,
+        "token-penalty prompt IDs",
+    )?;
+    output_token_ids.require_len(
+        output_layout.storage_elements(spec.rows(), spec.output_tokens())?,
+        "token-penalty output IDs",
+    )?;
+    presence_penalties.require_len(spec.rows(), "presence penalties")?;
+    frequency_penalties.require_len(spec.rows(), "frequency penalties")?;
+    repetition_penalties.require_len(spec.rows(), "repetition penalties")?;
+    workspace.require_len(
+        workspace_layout.storage_elements(spec.rows(), spec.workspace_capacity())?,
+        "token-penalty workspace",
+    )?;
+
+    let convert_u32 = |value: usize, name: &str| {
+        u32::try_from(value).map_err(|_| {
+            CudaExecutorError::InvalidContract(format!("token-penalty {name} exceeds the CUDA ABI"))
+        })
+    };
+    let convert_u64 = |value: usize, name: &str| {
+        u64::try_from(value).map_err(|_| {
+            CudaExecutorError::InvalidContract(format!("token-penalty {name} exceeds the CUDA ABI"))
+        })
+    };
+    let rows = convert_u32(spec.rows(), "rows")?;
+    if rows > i32::MAX as u32 {
+        return Err(CudaExecutorError::InvalidContract(
+            "token-penalty rows exceed the CUDA grid".into(),
+        ));
+    }
+    let vocab_size = convert_u32(spec.vocab_size(), "vocabulary")?;
+    if vocab_size > i32::MAX as u32 {
+        return Err(CudaExecutorError::InvalidContract(
+            "token-penalty vocabulary exceeds int32 hash keys".into(),
+        ));
+    }
+    let output_tokens = convert_u32(spec.output_tokens(), "output width")?;
+    if output_tokens > i32::MAX as u32 {
+        return Err(CudaExecutorError::InvalidContract(
+            "token-penalty output count exceeds the packed hash state".into(),
+        ));
+    }
+
+    Ok(TokenPenaltiesLaunch {
+        rows,
+        vocab_size,
+        prompt_tokens: convert_u32(spec.prompt_tokens(), "prompt width")?,
+        output_tokens,
+        workspace_capacity: convert_u32(spec.workspace_capacity(), "workspace capacity")?,
+        logits_row_stride: convert_u64(logits_layout.row_stride(), "logits row stride")?,
+        prompt_row_stride: convert_u64(prompt_layout.row_stride(), "prompt row stride")?,
+        output_row_stride: convert_u64(output_layout.row_stride(), "output row stride")?,
+        workspace_row_stride: convert_u64(workspace_layout.row_stride(), "workspace row stride")?,
+    })
 }
 
 fn require_dtype(spec: GreedySampleLogprobsSpec, expected: DType) -> Result<(), CudaExecutorError> {
@@ -259,7 +404,8 @@ mod tests {
     use super::*;
     use crate::runtime::DeviceBuffer;
     use loom_kernels::{
-        greedy_sample_logprobs_f32_reference, selected_token_logprobs_f32_reference,
+        apply_token_penalties_f32_reference, greedy_sample_logprobs_f32_reference,
+        selected_token_logprobs_f32_reference,
     };
 
     #[test]
@@ -348,5 +494,58 @@ mod tests {
             assert!((actual - expected).abs() < 1.0e-5);
         }
         assert_eq!(ranks_device.copy_to_vec().unwrap(), expected_ranks);
+    }
+
+    #[test]
+    fn token_penalty_wrapper_matches_the_cpu_oracle() {
+        let spec = TokenPenaltiesSpec::new(2, 6, 5, 4, 32).unwrap();
+        let source = [
+            2.0_f32, -2.0, 0.0, 4.0, -4.0, 1.0, -1.0, 3.0, -3.0, 2.0, -2.0, 0.5,
+        ];
+        let prompt = [0_i64, 1, 1, -1, 6, 1, 2, 5, 8, -1];
+        let output = [1_i64, 1, 2, 6, 2, 2, 3, -1];
+        let presence = [0.4_f32, 0.25];
+        let frequency = [0.2_f32, -0.5];
+        let repetition = [2.0_f32, 1.25];
+        let mut expected = source;
+        apply_token_penalties_f32_reference(
+            &mut expected,
+            &prompt,
+            &output,
+            &presence,
+            &frequency,
+            &repetition,
+            spec,
+        )
+        .unwrap();
+
+        let backend = CudaBackend::new().unwrap();
+        let mut logits_device = DeviceBuffer::from_slice(&source).unwrap();
+        let prompt_device = DeviceBuffer::from_slice(&prompt).unwrap();
+        let output_device = DeviceBuffer::from_slice(&output).unwrap();
+        let presence_device = DeviceBuffer::from_slice(&presence).unwrap();
+        let frequency_device = DeviceBuffer::from_slice(&frequency).unwrap();
+        let repetition_device = DeviceBuffer::from_slice(&repetition).unwrap();
+        let mut workspace_device =
+            DeviceBuffer::from_slice(&vec![0_u64; spec.workspace_numel()]).unwrap();
+        backend
+            .apply_token_penalties_f32(
+                &mut logits_device,
+                &prompt_device,
+                &output_device,
+                &presence_device,
+                &frequency_device,
+                &repetition_device,
+                &mut workspace_device,
+                spec,
+                RowStridedLayout::contiguous(spec.vocab_size()),
+                RowStridedLayout::contiguous(spec.prompt_tokens()),
+                RowStridedLayout::contiguous(spec.output_tokens()),
+                RowStridedLayout::contiguous(spec.workspace_capacity()),
+            )
+            .unwrap();
+        backend.stream().synchronize().unwrap();
+
+        assert_eq!(logits_device.copy_to_vec().unwrap(), expected);
     }
 }

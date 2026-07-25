@@ -225,6 +225,26 @@ unsafe extern "C" {
         stream: *mut c_void,
     ) -> c_int;
 
+    pub fn loom_cuda_apply_token_penalties_f32(
+        logits: *mut f32,
+        prompt_token_ids: *const i64,
+        output_token_ids: *const i64,
+        presence_penalties: *const f32,
+        frequency_penalties: *const f32,
+        repetition_penalties: *const f32,
+        workspace: *mut u64,
+        rows: u32,
+        vocab_size: u32,
+        prompt_tokens: u32,
+        output_tokens: u32,
+        workspace_capacity: u32,
+        logits_row_stride: u64,
+        prompt_row_stride: u64,
+        output_row_stride: u64,
+        workspace_row_stride: u64,
+        stream: *mut c_void,
+    ) -> c_int;
+
     pub fn loom_cuda_greedy_speculative_verify(
         draft_token_ids: *const i32,
         target_token_ids: *const i64,

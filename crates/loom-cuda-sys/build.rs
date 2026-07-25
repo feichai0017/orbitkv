@@ -18,6 +18,7 @@ fn main() {
     let silu_and_mul_source = cuda_dir.join("src/silu_and_mul.cu");
     let silu_and_mul_quant_source = cuda_dir.join("src/silu_and_mul_quant.cu");
     let greedy_sample_source = cuda_dir.join("src/greedy_sample.cu");
+    let token_penalties_source = cuda_dir.join("src/token_penalties.cu");
     let greedy_speculative_verify_source = cuda_dir.join("src/greedy_speculative_verify.cu");
     let min_p_source = cuda_dir.join("src/min_p.cu");
     let paged_decode_attention_source = cuda_dir.join("src/paged_decode_attention.cu");
@@ -32,6 +33,10 @@ fn main() {
         silu_and_mul_quant_source.display()
     );
     println!("cargo:rerun-if-changed={}", greedy_sample_source.display());
+    println!(
+        "cargo:rerun-if-changed={}",
+        token_penalties_source.display()
+    );
     println!(
         "cargo:rerun-if-changed={}",
         greedy_speculative_verify_source.display()
@@ -72,6 +77,7 @@ fn main() {
         .file(&silu_and_mul_source)
         .file(&silu_and_mul_quant_source)
         .file(&greedy_sample_source)
+        .file(&token_penalties_source)
         .file(&greedy_speculative_verify_source)
         .file(&min_p_source)
         .file(&paged_decode_attention_source)

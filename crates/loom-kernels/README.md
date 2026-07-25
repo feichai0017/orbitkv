@@ -14,8 +14,8 @@ loom-kernels = "1.0.0-alpha.1"
 ```
 
 The alpha surface currently covers normalization and quantization, SwiGLU,
-RoPE plus paged-KV writes, decode-tail sampling/logprob operations, Min-P, and
-paged MQA/GQA decode attention.
+RoPE plus paged-KV writes, decode-tail sampling/logprob operations, Min-P,
+sparse token penalties, and paged MQA/GQA decode attention.
 
 See the [project documentation](https://feichai0017.github.io/loom-kernels/)
 for contracts, integration boundaries, and H20-qualified evidence.

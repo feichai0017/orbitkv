@@ -15,6 +15,10 @@ binary portability. A green row below applies only to the stated boundary.
 | vLLM | 0.24.0 | clean wheel install and all 225 registered-adapter/operator tests | [ABI2 native-wheel gate](results/h20-native-wheel-clean-install-abi2-20260724.json) |
 | vLLM | 0.25.1 | clean install from the official wheel and all 225 registered-adapter/operator tests | [ABI2 native-wheel gate](results/h20-native-wheel-clean-install-abi2-20260724.json) |
 
+These rows qualify the immutable K0.7 ABI2 artifact. Current source uses bridge
+ABI3 for sparse token penalties; a new clean-install wheel matrix must pass
+before that source state inherits the packaged-runtime claim.
+
 The current exact wheel includes greedy speculative verification and static
 FP8 E4M3 KV quantize-on-write through bridge ABI 2. Both vLLM minors pass the
 same expanded 225-test suite. The separate

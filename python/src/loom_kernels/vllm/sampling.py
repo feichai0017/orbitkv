@@ -11,6 +11,7 @@ from ._runtime import supports_installed_vllm
 
 GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY = "greedy_sample_logprobs"
 SELECTED_TOKEN_LOGPROBS_OVERRIDE_KEY = "selected_token_logprobs"
+TOKEN_PENALTIES_OVERRIDE_KEY = "token_penalties"
 
 _GREEDY_SAMPLE_LOGPROBS_REGISTERED = False
 _GREEDY_SAMPLE_LOGPROBS_ORIGINAL_FORWARD: Any | None = None
@@ -21,6 +22,168 @@ _SELECTED_TOKEN_LOGPROBS_REGISTERED = False
 _SELECTED_TOKEN_LOGPROBS_ORIGINAL_FORWARD: Any | None = None
 _SELECTED_TOKEN_LOGPROBS_FIRST_CONTRACT: dict[str, Any] | None = None
 _SELECTED_TOKEN_LOGPROBS_FIRST_REJECTION: dict[str, Any] | None = None
+_TOKEN_PENALTIES_REGISTERED = False
+_TOKEN_PENALTIES_ORIGINAL_APPLY: Any | None = None
+_TOKEN_PENALTIES_FIRST_CONTRACT: dict[str, Any] | None = None
+_TOKEN_PENALTIES_FIRST_REJECTION: dict[str, Any] | None = None
+_TOKEN_PENALTIES_WORKSPACES: dict[tuple[int, int], torch.Tensor] = {}
+
+
+def _token_penalties_workspace(
+    logits: torch.Tensor,
+    capacity: int,
+) -> torch.Tensor:
+    rows = logits.shape[0]
+    device_index = logits.device.index
+    if device_index is None:
+        device_index = torch.cuda.current_device()
+    stream_id = int(torch.cuda.current_stream(logits.device).cuda_stream)
+    key = (device_index, stream_id)
+    workspace = _TOKEN_PENALTIES_WORKSPACES.get(key)
+    if (
+        workspace is None
+        or workspace.shape[0] < rows
+        or workspace.shape[1] < capacity
+    ):
+        workspace = torch.empty(
+            (
+                max(rows, 0 if workspace is None else workspace.shape[0]),
+                max(capacity, 0 if workspace is None else workspace.shape[1]),
+            ),
+            dtype=torch.int64,
+            device=logits.device,
+        )
+        _TOKEN_PENALTIES_WORKSPACES[key] = workspace
+    return workspace[:rows, :capacity]
+
+
+def register_vllm_token_penalties() -> str | None:
+    """Replace full-vocabulary vLLM penalty temporaries with sparse history."""
+    global _TOKEN_PENALTIES_ORIGINAL_APPLY
+    global _TOKEN_PENALTIES_REGISTERED
+    if _TOKEN_PENALTIES_REGISTERED:
+        return TOKEN_PENALTIES_OVERRIDE_KEY
+    if not torch_extension_available() or not supports_installed_vllm():
+        return None
+
+    from vllm.v1.sample.ops.penalties import _convert_to_tensors
+    from vllm.v1.sample.sampler import Sampler
+
+    from ..torch_ops import (
+        supports_apply_token_penalties,
+        token_penalties_workspace_capacity,
+    )
+
+    implementation = torch.ops.loom_kernels.apply_token_penalties_.default
+    original_apply = Sampler.apply_penalties
+
+    def apply_penalties(
+        logits: torch.Tensor,
+        sampling_metadata: Any,
+        output_token_ids: list[list[int]],
+    ) -> torch.Tensor:
+        global _TOKEN_PENALTIES_FIRST_CONTRACT
+        global _TOKEN_PENALTIES_FIRST_REJECTION
+        if sampling_metadata.no_penalties:
+            return logits
+        prompt_token_ids = sampling_metadata.prompt_token_ids
+        output_width = max(
+            1,
+            max((len(tokens) for tokens in output_token_ids), default=0),
+        )
+        basic_contract = bool(
+            prompt_token_ids is not None
+            and logits.device.type == "cuda"
+            and logits.dtype == torch.float32
+            and logits.dim() == 2
+            and logits.shape[0] > 0
+            and logits.shape[1] > 0
+            and prompt_token_ids.device == logits.device
+            and prompt_token_ids.dtype == torch.int64
+            and prompt_token_ids.dim() == 2
+            and prompt_token_ids.shape[0] == logits.shape[0]
+            and prompt_token_ids.shape[1] > 0
+        )
+        if not basic_contract:
+            if _TOKEN_PENALTIES_FIRST_REJECTION is None:
+                _TOKEN_PENALTIES_FIRST_REJECTION = {
+                    "reason": "unsupported logits or prompt tensor contract",
+                    "shape": list(logits.shape),
+                    "dtype": str(logits.dtype),
+                }
+            return original_apply(logits, sampling_metadata, output_token_ids)
+
+        capacity = token_penalties_workspace_capacity(
+            prompt_token_ids.shape[1], output_width
+        )
+        # Hashing more slots than the vocabulary ceases to be a sparse path.
+        if capacity > logits.shape[1]:
+            if _TOKEN_PENALTIES_FIRST_REJECTION is None:
+                _TOKEN_PENALTIES_FIRST_REJECTION = {
+                    "reason": "history workspace is not sparse versus vocabulary",
+                    "shape": list(logits.shape),
+                    "prompt_tokens": prompt_token_ids.shape[1],
+                    "output_tokens": output_width,
+                    "workspace_capacity": capacity,
+                }
+            return original_apply(logits, sampling_metadata, output_token_ids)
+
+        if all(not tokens for tokens in output_token_ids):
+            output_tokens_t = torch.full(
+                (logits.shape[0], 1),
+                logits.shape[1],
+                dtype=torch.int64,
+                device=logits.device,
+            )
+        else:
+            output_tokens_t = _convert_to_tensors(
+                output_token_ids, logits.shape[1], logits.device
+            )
+        workspace = _token_penalties_workspace(logits, capacity)
+        supported = supports_apply_token_penalties(
+            logits,
+            prompt_token_ids,
+            output_tokens_t,
+            sampling_metadata.presence_penalties,
+            sampling_metadata.frequency_penalties,
+            sampling_metadata.repetition_penalties,
+            workspace,
+        )
+        if not supported:
+            if _TOKEN_PENALTIES_FIRST_REJECTION is None:
+                _TOKEN_PENALTIES_FIRST_REJECTION = {
+                    "reason": "expanded tensor contract is unsupported",
+                    "shape": list(logits.shape),
+                    "prompt_tokens": prompt_token_ids.shape[1],
+                    "output_tokens": output_tokens_t.shape[1],
+                    "workspace_capacity": capacity,
+                }
+            return original_apply(logits, sampling_metadata, output_token_ids)
+
+        if _TOKEN_PENALTIES_FIRST_CONTRACT is None:
+            _TOKEN_PENALTIES_FIRST_CONTRACT = {
+                "shape": list(logits.shape),
+                "prompt_tokens": prompt_token_ids.shape[1],
+                "output_tokens": output_tokens_t.shape[1],
+                "workspace_capacity": capacity,
+                "workspace_bytes": workspace.numel() * workspace.element_size(),
+            }
+        implementation(
+            logits,
+            prompt_token_ids,
+            output_tokens_t,
+            sampling_metadata.presence_penalties,
+            sampling_metadata.frequency_penalties,
+            sampling_metadata.repetition_penalties,
+            workspace,
+        )
+        return logits
+
+    apply_penalties.__module__ = __name__
+    _TOKEN_PENALTIES_ORIGINAL_APPLY = original_apply
+    Sampler.apply_penalties = staticmethod(apply_penalties)
+    _TOKEN_PENALTIES_REGISTERED = True
+    return TOKEN_PENALTIES_OVERRIDE_KEY
 
 
 def register_vllm_greedy_sample_logprobs() -> str | None:
@@ -355,4 +518,7 @@ def _metadata() -> dict[str, object]:
         "selected_token_logprobs_override": _SELECTED_TOKEN_LOGPROBS_REGISTERED,
         "selected_token_logprobs_first_contract": _SELECTED_TOKEN_LOGPROBS_FIRST_CONTRACT,
         "selected_token_logprobs_first_rejection": _SELECTED_TOKEN_LOGPROBS_FIRST_REJECTION,
+        "token_penalties_override": _TOKEN_PENALTIES_REGISTERED,
+        "token_penalties_first_contract": _TOKEN_PENALTIES_FIRST_CONTRACT,
+        "token_penalties_first_rejection": _TOKEN_PENALTIES_FIRST_REJECTION,
     }

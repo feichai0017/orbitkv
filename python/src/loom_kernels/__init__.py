@@ -21,6 +21,20 @@ def add_rms_norm_(*args: Any, **kwargs: Any) -> Any:
     return implementation(*args, **kwargs)
 
 
+def apply_token_penalties_(*args: Any, **kwargs: Any) -> Any:
+    """Lazily apply sparse repetition, frequency, and presence penalties."""
+    from .torch_ops import apply_token_penalties_ as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def token_penalties_workspace_capacity(*args: Any, **kwargs: Any) -> Any:
+    """Return the caller-owned hash capacity for sparse token penalties."""
+    from .torch_ops import token_penalties_workspace_capacity as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def rms_norm(*args: Any, **kwargs: Any) -> Any:
     """Lazily execute inference RMSNorm."""
     from .torch_ops import rms_norm as implementation
@@ -129,6 +143,7 @@ def silu_and_mul_dynamic_fp8_out(*args: Any, **kwargs: Any) -> Any:
 __all__ = [
     "__version__",
     "add_rms_norm_",
+    "apply_token_penalties_",
     "greedy_sample_logprobs",
     "greedy_speculative_verify",
     "min_p_filter_",
@@ -145,4 +160,5 @@ __all__ = [
     "silu_and_mul_dynamic_fp8",
     "silu_and_mul_dynamic_fp8_out",
     "silu_and_mul_out",
+    "token_penalties_workspace_capacity",
 ]

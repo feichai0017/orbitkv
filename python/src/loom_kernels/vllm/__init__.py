@@ -50,8 +50,10 @@ from .rope_kv import (
 from .sampling import (
     GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY,
     SELECTED_TOKEN_LOGPROBS_OVERRIDE_KEY,
+    TOKEN_PENALTIES_OVERRIDE_KEY,
     register_vllm_greedy_sample_logprobs,
     register_vllm_selected_token_logprobs,
+    register_vllm_token_penalties,
 )
 from .speculative import (
     GREEDY_SPECULATIVE_VERIFY_OVERRIDE_KEY,
@@ -161,6 +163,7 @@ __all__ = [
     "SILU_OVERRIDE_ENV",
     "SILU_OVERRIDE_KEY",
     "SUPPORTED_VLLM_SERIES",
+    "TOKEN_PENALTIES_OVERRIDE_KEY",
     "configure_vllm_rope_paged_kv",
     "installed_vllm_version",
     "provider_metadata",
@@ -171,6 +174,7 @@ __all__ = [
     "register_vllm_greedy_speculative_verify",
     "register_vllm_rope_paged_kv",
     "register_vllm_selected_token_logprobs",
+    "register_vllm_token_penalties",
     "register_vllm_silu_and_mul",
     "register_vllm_silu_and_mul_dynamic_fp8",
     "supports_installed_vllm",
