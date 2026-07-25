@@ -309,8 +309,12 @@ caches workspace per CUDA stream and uses Loom only while its power-of-two
 history capacity is no larger than the vocabulary; other contracts execute
 vLLM unchanged. The current H20
 [operator gate](../results/h20-token-penalties-20260725.json) is exact and
-measures `5.82–34.30x` ratios across rows 1–128, but a real-model
-order-reversed engine claim remains open.
+measures `5.82–34.30x` ratios across rows 1–128. The process-isolated
+Qwen2.5-0.5B [baseline-first](../results/h20-vllm-qwen25-token-penalties-baseline-first-20260725.json)
+and [Loom-first](../results/h20-vllm-qwen25-token-penalties-loom-first-20260725.json)
+vLLM 0.24 gates preserve every token and record `1440/0` Loom submissions in
+each order. Their batch-latency ratios are `1.056–1.123x` and TPOT ratios are
+`1.068–1.126x`; serving concurrency and goodput remain separate claims.
 
 To replace vLLM's deterministic speculative verifier, register it before
 constructing the engine:

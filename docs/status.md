@@ -96,8 +96,11 @@
   PyTorch 2.11.0+cu130 with vLLM 0.24.0, and the same PyTorch with the official
   vLLM 0.25.1 wheel; the native artifact is not published;
 - current source has advanced to bridge ABI 3 for sparse token penalties; its
-  replacement clean-install matrix wheel remains to be built after the
-  real-engine gate;
+  replacement clean-install matrix wheel remains to be built;
+- process-isolated Qwen2.5-0.5B vLLM 0.24 token-penalty A/B in both provider
+  orders preserves every generated token, records `1440/0` Loom submissions
+  per order, and measures `1.056–1.123x` batch-latency plus `1.068–1.126x`
+  TPOT ratios for batches 1/8/32;
 - CUDA-feature clippy on `forge-gas1`;
 - NVIDIA H20 correctness for six shapes from `1x1` through `16x8192` and a
   `64x4096` batch;
@@ -390,9 +393,9 @@ FA3 for the engine's 128-1,024-token path.
 - RoPE+paged-KV model-level TTFT/TPOT or throughput benefit beyond the current
   exact-token engine integration gate;
 - Min-P real-model invocation and end-to-end serving benefit;
-- token-penalty real-engine latency/TPOT benefit, Loom-owned logits
-  preprocessing, top-k/top-p, stochastic sampling, and general top-k logprob
-  integration;
+- token-penalty serving-scale concurrency/goodput beyond the pinned offline
+  Qwen gate, Loom-owned logits preprocessing, top-k/top-p, stochastic
+  sampling, and general top-k logprob integration;
 - an end-to-end speculative draft/target performance win; tree/branch
   metadata, stochastic residual-distribution rejection, and KV commit/remap
   remain profile-gated after the real-engine verifier share measured below

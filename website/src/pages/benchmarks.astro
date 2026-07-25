@@ -49,8 +49,11 @@ import { evidence, repositoryUrl } from "../data/site";
         rows and 1.89× at 128 rows, so its adapter routes smaller shapes back
         to vLLM instead of applying a blanket override. Sparse token penalties
         reach 5.82–34.30× against vLLM's vocabulary-sized counting path for
-        1–128 rows with exact output and zero operator temporary allocation;
-        this is an operator result, not yet an engine-throughput claim.
+        1–128 rows with exact output and zero operator temporary allocation.
+        Both Qwen2.5-0.5B provider orders preserve every token with 1440 Loom
+        submissions only on the candidate side; batch-latency ratios are
+        1.056–1.123× and TPOT ratios are 1.068–1.126× for the pinned offline
+        cases, not a general serving-throughput claim.
         Native-interleaved paged decode is similarly shape-gated: all 24
         routed Hq/Hkv 32/8, D128, context-at-most-32 backend cases win at
         1.154–2.374×, while the context-64 controls fall back to FA3. A broader
@@ -108,6 +111,12 @@ python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
 .venv-vllm/bin/python benchmarks/vllm_token_penalties.py \
   --rows 1,8,32,128 --vocab-size 151936 \
   --prompt-width 512 --output-width 128
+
+.venv-vllm/bin/python benchmarks/vllm_engine_token_penalties.py \
+  --tested-revision "$(git rev-parse HEAD)" \
+  --model /path/to/Qwen2.5-0.5B-Instruct \
+  --case 1x32x64 --case 8x32x64 --case 32x32x32 \
+  --warmup 2 --repeats 7 --provider-order baseline-first
 
 .venv-vllm/bin/python benchmarks/vllm_greedy_speculative_verify.py \
   --batches 1,8,32,128,256 --draft-lengths 1,4,8 \
@@ -173,6 +182,13 @@ python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
         matched every token and rank within 1.20e-6, with 1440 Loom launches
         only on the candidate side. Batch-latency ratios were 1.044–1.125× and
         TPOT ratios were 1.054–1.130×.
+      </p>
+      <p>
+        The sparse-penalty A/B keeps vLLM's parameters, output-history
+        collection, and greedy selection unchanged. Both provider orders match
+        every token, with 1440 Loom submissions only on the candidate side.
+        Batch-latency ratios are 1.056–1.123× and TPOT ratios are
+        1.068–1.126× across the pinned Qwen batches.
       </p>
       <p>
         The speculative Qwen2.5-1.5B target plus 0.5B draft A/B matches every

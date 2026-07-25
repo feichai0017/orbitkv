@@ -149,10 +149,10 @@ apply_token_penalties_(
         2.10 without recompilation. It includes speculative verification and
         static FP8 KV quantize-on-write but has not been published. Sparse
         token penalties are present only in current bridge-ABI-3 source until
-        its replacement wheel matrix closes. A pinned Qwen2.5 draft/target
-        engine gate proves exact native/Loom speculative invocation on vLLM
-        0.24; vLLM 0.25 has source-suite compatibility evidence but no
-        transferred model-level result.
+        its replacement wheel matrix closes. Pinned vLLM 0.24 Qwen gates prove
+        exact sparse-penalty acceleration and exact native/Loom speculative
+        invocation; vLLM 0.25 has compatibility evidence but no transferred
+        model-level result.
         Existing model-level performance artifacts remain tied to the version
         recorded in each result; compatibility does not transfer a speedup
         claim. Read the{" "}

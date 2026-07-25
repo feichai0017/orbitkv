@@ -28,7 +28,7 @@ feature. New feature work follows this order:
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
 | 1 | KV-cache compression | FP8 KV write/read boundary with explicit scale layout | lower cache bytes and higher admitted context or batch size without unacceptable quality or TPOT loss |
-| 2 | Complete sampling tail | fused penalties, top-k/top-p, renormalization, and deterministic RNG | seeded token parity or a declared statistical contract plus an order-reversed engine win |
+| 2 | Complete sampling tail | top-k/top-p, renormalization, deterministic RNG, and top-k logprobs; sparse penalties are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
 | 3 | KV-cache movement | block copy/gather/scatter/compact/remap for prefix reuse and preemption | fewer launches or less movement time in a real scheduler path |
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV boundaries only after profiling exposes material non-GEMM cost | a named draft/target model pair improves decode latency or throughput |
 | 5 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
@@ -232,7 +232,9 @@ Status: in progress.
   compile/graph coverage, and explicit vLLM 0.24/0.25 registration are
   complete; the H20 operator gate is `5.82–34.30x` faster for rows 1–128 and
   replaces up to `427.85 MB` of vLLM temporaries with a `2 MiB` caller
-  workspace; real-engine A/B remains open;
+  workspace; both vLLM 0.24 Qwen2.5-0.5B provider orders preserve every token,
+  record `1440/0` Loom submissions, and measure `1.056–1.123x` batch-latency
+  plus `1.068–1.126x` TPOT ratios;
 - fused logits bias, temperature, masking, and bad-word suppression;
 - top-k/top-p filtering, renormalization, and deterministic counter-based RNG
   sampling without a host round trip;
@@ -240,7 +242,8 @@ Status: in progress.
 
 Exit: fewer launches and temporary tensors with identical token results. The
 selected-logprob exit gates are closed for pure greedy and engine-owned general
-sampling requests with `logprobs=0`; owning the selection kernels remains open.
+sampling requests with `logprobs=0`; the sparse-penalty gate is also closed for
+the pinned deterministic Qwen workload. Owning selection and RNG remains open.
 
 ## K4.5: Speculative Decoding Support
 

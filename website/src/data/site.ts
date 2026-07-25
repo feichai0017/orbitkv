@@ -171,9 +171,9 @@ export const evidence = [
   },
   {
     operator: "Sparse token penalties",
-    shape: "F32 · 151,936 vocab · rows 1–128",
-    result: "5.82–34.30×",
-    detail: "Exact vLLM arithmetic; 0 operator temp, 16 KiB–2 MiB caller workspace",
+    shape: "Qwen2.5-0.5B · batches 1 / 8 / 32",
+    result: "1.056–1.123×",
+    detail: "Order-stable engine ratio; operator ratio 5.82–34.30×",
   },
   {
     operator: "Paged MQA/GQA decode",

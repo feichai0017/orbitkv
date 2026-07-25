@@ -31,10 +31,12 @@ The process-isolated Qwen2.5 draft/target engine benchmark is qualified on
 vLLM 0.24 only; its [native-first](results/h20-vllm-qwen25-speculative-native-first-20260723.json)
 and [Loom-first](results/h20-vllm-qwen25-speculative-loom-first-20260723.json)
 reports prove invocation and provider equivalence, not acceleration. The
-0.25.1 gate proves that the current adapters and CUDA paths execute against the
-official vLLM wheel. It does not retroactively transfer any 0.24 model-level
-latency result to 0.25.1. A new engine benchmark is required before making a
-0.25.1 performance claim.
+ABI3 sparse-penalty source has a separate vLLM 0.24 order-reversed Qwen gate:
+[baseline first](results/h20-vllm-qwen25-token-penalties-baseline-first-20260725.json)
+and [Loom first](results/h20-vllm-qwen25-token-penalties-loom-first-20260725.json).
+The 0.25.1 compatibility gate does not retroactively transfer either 0.24
+model-level latency result to 0.25.1. A new engine benchmark is required
+before making a 0.25.1 performance claim.
 
 Python package metadata therefore requires or accepts:
 
