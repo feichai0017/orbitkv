@@ -65,17 +65,16 @@ input = RMSNorm(residual, weight, epsilon)
 
 ## Compatibility
 
-The supported package interval is `vllm>=0.24,<0.26`. The K0.7 bridge-ABI-2
-native wheel passes 225 H20 tests with each official vLLM minor and includes
-greedy speculative verification plus static FP8 KV quantize-on-write. It is
-qualified but not published. Current source uses bridge ABI 4 for sparse token
-penalties and sampled-token plus top-k logprobs; its replacement wheel matrix
-remains open.
+The supported package interval is `vllm>=0.24,<0.26`. The K0.7 bridge-ABI-4
+native wheel passes 253 H20 tests with each official vLLM minor and includes
+greedy speculative verification, static FP8 KV quantize-on-write, sparse token
+penalties, and sampled-token plus top-k logprobs. It is qualified but not
+published.
 Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
 [compatibility matrix](../compatibility.md) and
-[native-wheel gate](../results/h20-native-wheel-clean-install-abi2-20260724.json).
+[native-wheel gate](../results/h20-native-wheel-clean-install-abi4-20260725.json).
 
 ## Build and install
 
@@ -108,8 +107,8 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-This command builds current ABI4 source; the clean-install-qualified artifact
-remains ABI2. Neither artifact is published to a package index. Editable
+This command builds the clean-install-qualified ABI4 artifact. It is not
+published to a package index. Editable
 source development remains documented in the
 [Python README](../../python/README.md#source-development), but it cannot
 produce a source-only wheel.
@@ -670,10 +669,11 @@ integration plus operator-level benefit, not model-level acceleration. See the
 [engine report](../results/h20-vllm-qwen25-rope-paged-kv-engine-20260722.json).
 Those artifacts cover native caches only. The
 [static FP8 E4M3 result](../results/h20-fp8-kv-cache-write-20260724.json)
-separately qualifies exact cache bytes, the ABI2 clean wheel, a
+separately qualifies exact cache bytes, the original ABI2 clean wheel, a
 `1.317-1.378x` named-operator range, and exact tokens plus Loom path hits in
 both engine orders. Its latency ratios are order-sensitive, and the
 native-versus-FP8 quality, admitted-capacity, TTFT, and TPOT gate remains open.
+The current ABI4 wheel matrix requalifies the same FP8 operator tests.
 See the [FP8 KV-cache contract](../design/fp8-kv-cache.md).
 
 For paged decode, the native-interleaved

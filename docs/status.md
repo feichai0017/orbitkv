@@ -92,17 +92,14 @@
 ## Validated
 
 - local formatting, clippy, tests, and release build;
-- the K0.7 bridge-ABI-2 `py3-none-linux_x86_64` native wheel built from a
+- the K0.7 bridge-ABI-4 `py3-none-linux_x86_64` native wheel built from a
   clean revision for CUDA 13.1 and SM90 passed archive/ELF/RPATH/symbol/
   auditwheel checks and retained identical packaged library hashes across all
   runtime gates;
 - fresh Python 3.11 venv installs passed `pip check`, package-local loading,
-  BF16 H20 smoke, and the applicable full suites on PyTorch 2.10.0+cu128,
+  H20 execution, and the applicable full suites on PyTorch 2.10.0+cu128,
   PyTorch 2.11.0+cu130 with vLLM 0.24.0, and the same PyTorch with the official
   vLLM 0.25.1 wheel; the native artifact is not published;
-- current source has advanced to bridge ABI 4 for sparse token penalties and
-  sampled-token plus top-k logprobs; its replacement clean-install matrix wheel
-  remains to be built;
 - current ABI4 source passes 253 H20 Python tests, 39 Rust contract/oracle
   tests, 11 safe CUDA-wrapper tests, and 4 checked-bridge tests;
 - process-isolated Qwen2.5-0.5B vLLM 0.24 token-penalty A/B in both provider
@@ -129,10 +126,10 @@
   large-shape execution passed at `16x8192`.
 - PyTorch external-stream, mutation-schema/FakeTensor, `torch.compile`, and
   CUDA Graph tests passed with the Stable ABI dispatcher;
-- one exact ABI2 wheel built with PyTorch 2.11.0+cu130 passed without
+- one exact ABI4 wheel built with PyTorch 2.11.0+cu130 passed without
   recompilation on PyTorch 2.10.0+cu128; the 2.11 vLLM 0.24 and 0.25.1
-  environments each passed 225 tests, while the vLLM-free 2.10 environment
-  passed 138 applicable tests with 63 vLLM-dependent skips;
+  environments each passed 253 tests, while the vLLM-free 2.10 environment
+  passed 164 applicable tests with 63 vLLM-dependent skips;
 - the dispatcher exposes only `aoti_torch_*`/`torch_*` PyTorch symbol families,
   has no ATen/c10 C++ or raw CUDA launch dependency, and is protected by a
   source-level CI boundary;
@@ -144,7 +141,7 @@
   for both contiguous and padded row-strided logits, rejects short/overlapping
   regions before submission, and passes external-stream, compile, graph, and
   vLLM adapter tests;
-- official vLLM 0.24.0 and 0.25.1 packages each passed the complete 225-test
+- official vLLM 0.24.0 and 0.25.1 packages each passed the complete 253-test
   H20 Python GPU suite on Torch 2.11.0+cu130; the 0.25.1 process loaded its own
   `vllm/_C_stable_libtorch.abi3.so`, and the focused greedy/vLLM gate passed
   40 tests;
@@ -223,7 +220,7 @@
   bytes across 16 FP16/BF16, NeoX/interleaved, NHD/HND cases, including untouched
   padding and negative slots; current-stream, FakeTensor, fullgraph compile,
   CUDA Graph, packed-cache, and bridge-telemetry gates pass;
-- one exact ABI2 wheel passed the vLLM 0.24/0.25 clean-install matrix, and the
+- one exact ABI4 wheel passed the vLLM 0.24/0.25 clean-install matrix, and the
   fused BF16 operator was `1.317-1.378x` faster than vLLM's separate RoPE plus
   cache-write submissions across all 32 per-tensor/per-head cases while using
   half the physical cache bytes at this boundary;
@@ -248,8 +245,8 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the qualified ABI2 wheel suite passes 225 tests on each of vLLM 0.24.0 and
-  0.25.1; current ABI4 source validation is recorded separately below;
+- the qualified ABI4 wheel suite passes 253 tests on each of vLLM 0.24.0 and
+  0.25.1, including sparse penalties and sampled-token plus top-k logprobs;
 - the current bridge exposes 19 versioned operator/runtime symbols and no
   raw CUDA launch symbols; the PyTorch shim depends only on those bridge
   symbols and no raw launch symbol;

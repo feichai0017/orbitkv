@@ -9,20 +9,18 @@ binary portability. A green row below applies only to the stated boundary.
 | --- | --- | --- | --- |
 | Rust | current stable toolchain | format, Clippy, tests, release checks, source crate archives | GitHub CI |
 | CUDA | 13.1, `sm_90` | `loom-cuda`, `loom-cuda-sys`, and `loom-cuda-bridge` build and execute | NVIDIA H20 gate |
-| Python | 3.11.2 | clean native-wheel install; the `py3-none` artifact does not use the CPython C API | [ABI2 native-wheel gate](results/h20-native-wheel-clean-install-abi2-20260724.json) |
-| PyTorch | 2.10.0+cu128 | the exact wheel built on 2.11 loads without recompilation; 138 applicable Loom tests pass | [ABI2 native-wheel gate](results/h20-native-wheel-clean-install-abi2-20260724.json) |
-| PyTorch | 2.11.0+cu130 | clean wheel install, current stream, `torch.compile`, FakeTensor/opcheck, and CUDA Graph replay | [ABI2 native-wheel gate](results/h20-native-wheel-clean-install-abi2-20260724.json) |
-| vLLM | 0.24.0 | clean wheel install and all 225 registered-adapter/operator tests | [ABI2 native-wheel gate](results/h20-native-wheel-clean-install-abi2-20260724.json) |
-| vLLM | 0.25.1 | clean install from the official wheel and all 225 registered-adapter/operator tests | [ABI2 native-wheel gate](results/h20-native-wheel-clean-install-abi2-20260724.json) |
+| Python | 3.11.2 | clean native-wheel install; the `py3-none` artifact does not use the CPython C API | [ABI4 native-wheel gate](results/h20-native-wheel-clean-install-abi4-20260725.json) |
+| PyTorch | 2.10.0+cu128 | the exact wheel built on 2.11 loads without recompilation; 164 applicable Loom tests pass | [ABI4 native-wheel gate](results/h20-native-wheel-clean-install-abi4-20260725.json) |
+| PyTorch | 2.11.0+cu130 | clean wheel install, current stream, `torch.compile`, FakeTensor/opcheck, and CUDA Graph replay | [ABI4 native-wheel gate](results/h20-native-wheel-clean-install-abi4-20260725.json) |
+| vLLM | 0.24.0 | clean wheel install and all 253 registered-adapter/operator tests | [ABI4 native-wheel gate](results/h20-native-wheel-clean-install-abi4-20260725.json) |
+| vLLM | 0.25.1 | clean install from the official wheel and all 253 registered-adapter/operator tests | [ABI4 native-wheel gate](results/h20-native-wheel-clean-install-abi4-20260725.json) |
 
-These rows qualify the immutable K0.7 ABI2 artifact. Current source uses bridge
-ABI4 for sparse token penalties and sampled-token plus top-k logprobs; a new
-clean-install wheel matrix must pass before that source state inherits the
-packaged-runtime claim.
+These rows qualify the immutable K0.7 ABI4 artifact, including sparse token
+penalties and sampled-token plus top-k logprobs.
 
 The current exact wheel includes greedy speculative verification and static
-FP8 E4M3 KV quantize-on-write through bridge ABI 2. Both vLLM minors pass the
-same expanded 225-test suite. The separate
+FP8 E4M3 KV quantize-on-write through bridge ABI 4. Both vLLM minors pass the
+same expanded 253-test suite. The separate
 [FP8 KV evidence](results/h20-fp8-kv-cache-write-20260724.json) closes the
 exact-byte, framework, operator, clean-wheel, and real-engine invocation gates;
 pretrained native-versus-FP8 quality, admitted capacity, TTFT, and TPOT remain
@@ -32,7 +30,8 @@ The process-isolated Qwen2.5 draft/target engine benchmark is qualified on
 vLLM 0.24 only; its [native-first](results/h20-vllm-qwen25-speculative-native-first-20260723.json)
 and [Loom-first](results/h20-vllm-qwen25-speculative-loom-first-20260723.json)
 reports prove invocation and provider equivalence, not acceleration. The
-post-ABI2 sparse-penalty source has a separate vLLM 0.24 order-reversed Qwen gate:
+sparse-penalty feature first landed after ABI2 and has a separate vLLM 0.24
+order-reversed Qwen gate:
 [baseline first](results/h20-vllm-qwen25-token-penalties-baseline-first-20260725.json)
 and [Loom first](results/h20-vllm-qwen25-token-penalties-loom-first-20260725.json).
 ABI4 top-k logprob source also has exact order-reversed Qwen gates:
@@ -59,7 +58,7 @@ or compiler tables.
 
 The published Rust crates remain self-contained source distributions. The
 current qualified Python artifact is
-`loom_kernels-1.0.0a1-2cu131torch210sm90-py3-none-linux_x86_64.whl`.
+`loom_kernels-1.0.0a1-4cu131torch210sm90-py3-none-linux_x86_64.whl`.
 It is built only through `python/build_wheel.py` from a clean Git revision and
 contains exactly:
 
@@ -72,9 +71,10 @@ target, bridge ABI, and PyTorch runtime range. Installed wheels load only this
 package-local pair. `PYTHONPATH`, `LD_LIBRARY_PATH`, and an external dispatcher
 override were absent from every clean gate.
 
-The earlier `1cu131torch210sm90` ABI-1 artifact remains historical evidence.
+The earlier `2cu131torch210sm90` ABI-2 and `1cu131torch210sm90` ABI-1 artifacts
+remain historical evidence.
 The ABI-specific build tag prevents incompatible bridge signatures from
-colliding; ABI 2 is now the only current artifact boundary.
+colliding; ABI 4 is now the only current artifact boundary.
 
 The wheel is Python-ABI-independent (`py3-none`) because neither native library
 uses the CPython C API. Its platform tag remains the conservative

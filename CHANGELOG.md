@@ -36,8 +36,9 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   `[blocks, 2, block, heads, head_size]` allocation; no legacy overload is
   retained.
 - advanced the checked framework bridge to ABI 4 for sampled-token plus top-k
-  logprobs; current source wheels use a distinct `4cu...` build tag and do not
-  claim the older ABI2 clean-install matrix.
+  logprobs; current wheels use a distinct `4cu...` build tag, and one exact ABI4
+  wheel now owns the clean-install matrix without inheriting the older ABI2
+  artifact's claim.
 
 ### Added
 
@@ -55,7 +56,8 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - a clean-revision native wheel builder that packages exactly the Rust CUDA
   bridge and Stable ABI dispatcher, emits and validates their matrix manifest
   and hashes, and rejects accidental source-only wheels;
-- fresh H20 wheel-install evidence for PyTorch 2.10/2.11 and vLLM 0.24/0.25.
+- fresh ABI4 H20 wheel-install evidence for PyTorch 2.10/2.11 and vLLM
+  0.24/0.25.
 - deterministic greedy speculative verification and accepted/bonus-token
   compaction over vLLM-compatible flattened ragged metadata, with Rust/CUDA/
   PyTorch coverage, explicit vLLM 0.24/0.25 registration, and H20 evidence.

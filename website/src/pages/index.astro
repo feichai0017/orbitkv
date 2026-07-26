@@ -188,10 +188,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <h2>Build where engines pay.</h2>
       </div>
       <p>
-        The K0.7 bridge-ABI-2 wheel remains the last clean-install-qualified
-        artifact; token penalties and top-k logprobs move current source to
-        ABI4, so its replacement wheel matrix is still open. The first K4
-        sampling slices are complete through their real-engine gates.
+        The K0.7 bridge-ABI-4 wheel is clean-install-qualified across PyTorch
+        2.10/2.11 and vLLM 0.24/0.25 on H20, including token penalties and
+        top-k logprobs; it remains unpublished. The first K4 sampling slices
+        are complete through their real-engine gates.
         Logits preprocessing, top-k/top-p selection, and deterministic RNG
         follow, while the next K3 proof remains a
         native-versus-FP8 capacity, quality, memory, TTFT, and TPOT study.

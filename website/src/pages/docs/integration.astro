@@ -64,10 +64,10 @@ python3 -m venv .venv-vllm
         <code>libloom_kernels_torch.so</code> Stable ABI dispatcher. Its
         manifest binds the Git revision, CUDA toolkit, SM targets, PyTorch
         range, bridge ABI, and library hashes. Installed packages load only
-        this package-local pair. The K0.7 bridge-ABI-2 wheel is the last
-        H20-qualified artifact and is not published to a package index. Current
-        source is bridge ABI4 after adding sparse token penalties and top-k
-        logprobs; its replacement matrix wheel is still pending.
+        this package-local pair. The K0.7 bridge-ABI-4 wheel is H20-qualified
+        across PyTorch 2.10/2.11 and vLLM 0.24/0.25 and is not published to a
+        package index. It includes sparse token penalties and sampled-token
+        plus top-k logprobs.
       </p>
 
       <h2>Call PyTorch directly</h2>
@@ -148,13 +148,12 @@ apply_token_penalties_(
 
       <h2>Compatibility is explicit</h2>
       <p>
-        Fresh installs of the K0.7 bridge-ABI-2 wheel with official vLLM 0.24.0
-        and 0.25.1 packages each pass the 225-test H20 suite on PyTorch 2.11.
-        The same exact artifact passes 138 applicable Loom gates on PyTorch
+        Fresh installs of the K0.7 bridge-ABI-4 wheel with official vLLM 0.24.0
+        and 0.25.1 packages each pass the 253-test H20 suite on PyTorch 2.11.
+        The same exact artifact passes 164 applicable Loom gates on PyTorch
         2.10 without recompilation. It includes speculative verification and
-        static FP8 KV quantize-on-write but has not been published. Sparse
-        token penalties and top-k logprobs are present only in current
-        bridge-ABI-4 source until its replacement wheel matrix closes. Pinned
+        static FP8 KV quantize-on-write, sparse token penalties, and top-k
+        logprobs, but has not been published. Pinned
         vLLM 0.24 Qwen gates prove exact sparse-penalty acceleration, exact
         top-k adapter invocation with order-sensitive latency, and exact
         native/Loom speculative invocation; vLLM 0.25 has compatibility

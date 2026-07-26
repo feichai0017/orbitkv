@@ -59,13 +59,12 @@ Catalog membership alone is never a performance claim.
 
 ## Next value program
 
-K0.7's bridge-ABI-2 native-wheel engineering gate is complete for
+K0.7's bridge-ABI-4 native-wheel engineering gate is complete for
 Linux x86_64, CUDA 13.1, SM90, Python 3.11, PyTorch 2.10/2.11, and vLLM
 0.24/0.25. The exact artifact is qualified but not published to a package
-index. Current source uses bridge ABI 4 for sparse token penalties and the
-sampled-token plus top-k logprob boundary; its replacement matrix wheel is not
-yet qualified. The first
-post-K0.7 slice is also complete: deterministic greedy speculative
+index. It contains sparse token penalties and sampled-token plus top-k
+logprobs on the same checked Rust-owned boundary. The first post-K0.7 slice is
+also complete: deterministic greedy speculative
 verification and token compaction now follow the same Rust-owned path, and a
 process-isolated Qwen2.5-1.5B/0.5B vLLM 0.24 gate proves exact native/Loom
 speculative output with complete measured path coverage. That gate also shows
@@ -85,7 +84,7 @@ is now:
 
 The first K3 slice extends the same fused RoPE+paged-KV operator to write
 vLLM-compatible FP8 E4M3 cache bytes with static per-tensor or per-head scales.
-One exact bridge-ABI-2 wheel now closes the H20 exact-byte, current-stream,
+One exact bridge-ABI-4 wheel now closes the H20 exact-byte, current-stream,
 compile/graph, named-operator, clean-install, and real-engine invocation gates.
 The physical cache allocation is `2x` smaller than BF16 at this operator
 boundary, and the fused path is `1.317-1.378x` faster than vLLM's separate RoPE
@@ -194,9 +193,9 @@ source-only wheel is rejected. The installed package validates that manifest
 and loads only its packaged libraries; no repository checkout or library-path
 override is used.
 
-That command builds the current ABI4 source artifact. The last
-clean-install-qualified matrix artifact remains ABI2; ABI4 has not yet
-completed the PyTorch/CUDA/Python/vLLM matrix and is not published.
+That command builds the current ABI4 artifact. The exact
+`4cu131torch210sm90` wheel has completed the repository-free
+PyTorch/CUDA/Python/vLLM H20 matrix and is not published.
 
 See the [Python README](python/README.md) for binary and editable development
 flows, direct calls, and the
@@ -224,7 +223,8 @@ opens the raw JSON artifact used for the claim.
 | [Short paged decode](docs/results/h20-vllm-paged-decode-backend-20260722.json) | `1.154–2.374×` across all 24 admitted backend cases | FP16/BF16, Hq/Hkv 32/8, D128, context ≤32; other shapes use FA3 |
 | [Local split-K paged decode](docs/results/h20-paged-decode-split-k-20260722.json) | `1.14–6.22×` versus legacy Loom | Improves the Rust/CUDA backend; FA3 remains the long-context engine fallback |
 | [LibTorch Stable ABI dispatcher](docs/results/h20-libtorch-stable-abi-20260723.json) | Same `.so`: 192 tests on PyTorch 2.11 with each vLLM minor; 123 applicable tests on PyTorch 2.10 | Historical source-built binary gate; the current packaged boundary is the next row |
-| [Native ABI2 matrix wheel](docs/results/h20-native-wheel-clean-install-abi2-20260724.json) | Same wheel: 225 tests with each vLLM minor; 138 applicable tests on PyTorch 2.10 | Linux x86_64, CUDA 13.1, SM90, Python 3.11; exact artifact is qualified but not published |
+| [Native ABI4 matrix wheel](docs/results/h20-native-wheel-clean-install-abi4-20260725.json) | Same wheel: 253 tests with each vLLM minor; 164 applicable tests on PyTorch 2.10 | Current Linux x86_64, CUDA 13.1, SM90, Python 3.11 artifact; qualified but not published |
+| [Historical ABI2 matrix wheel](docs/results/h20-native-wheel-clean-install-abi2-20260724.json) | Same wheel: 225 tests with each vLLM minor; 138 applicable tests on PyTorch 2.10 | Predecessor before sparse penalties and top-k logprobs entered the packaged ABI |
 
 > [!NOTE]
 > A fast kernel is not automatically a faster model. Loom records operator,
