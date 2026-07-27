@@ -1,5 +1,5 @@
 use crate::*;
-use half::bf16;
+use half::{bf16, f16};
 
 #[test]
 fn greedy_sample_logprobs_selects_first_tie_and_normalizes() {
@@ -89,6 +89,112 @@ fn selected_token_logprobs_validates_ids_and_low_precision_buffers() {
             token_id: 3,
             vocab_size: 3,
         })
+    );
+}
+
+#[test]
+fn top_k_filter_applies_per_row_thresholds_and_preserves_boundary_ties() {
+    let spec = TopKFilterSpec::new(3, 5, DType::F32).unwrap();
+    assert_eq!(spec.workspace_partitions(), 1);
+    assert_eq!(spec.workspace_elements(), 12_291);
+    assert_eq!(spec.workspace_bytes(), 49_164);
+    let mut logits = [
+        5.0_f32, 4.0, 4.0, 1.0, -1.0, //
+        -2.0, 3.0, 0.0, 1.0, 2.0, //
+        7.0, 7.0, 6.0, 5.0, 4.0,
+    ];
+
+    top_k_filter_f32_reference(&mut logits, &[2, 5, 1], spec).unwrap();
+
+    assert_eq!(
+        logits,
+        [
+            5.0_f32,
+            4.0,
+            4.0,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+            -2.0,
+            3.0,
+            0.0,
+            1.0,
+            2.0,
+            7.0,
+            7.0,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ]
+    );
+
+    let large_spec = TopKFilterSpec::new(7, 151_936, DType::F16).unwrap();
+    assert_eq!(large_spec.workspace_partitions(), 38);
+    assert_eq!(large_spec.workspace_elements(), 1_089_543);
+    assert_eq!(large_spec.workspace_bytes(), 4_358_172);
+}
+
+#[test]
+fn top_k_filter_supports_low_precision_and_validates_before_mutation() {
+    let f16_spec = TopKFilterSpec::new(1, 4, DType::F16).unwrap();
+    let mut f16_logits = [
+        f16::from_f32(-2.0),
+        f16::from_f32(0.0),
+        f16::from_f32(3.0),
+        f16::from_f32(1.0),
+    ];
+    top_k_filter_f16_reference(&mut f16_logits, &[2], f16_spec).unwrap();
+    assert_eq!(
+        f16_logits,
+        [
+            f16::NEG_INFINITY,
+            f16::NEG_INFINITY,
+            f16::from_f32(3.0),
+            f16::from_f32(1.0),
+        ]
+    );
+
+    let bf16_spec = TopKFilterSpec::new(2, 3, DType::Bf16).unwrap();
+    let original = [
+        bf16::from_f32(1.0),
+        bf16::from_f32(2.0),
+        bf16::from_f32(0.0),
+        bf16::from_f32(3.0),
+        bf16::from_f32(4.0),
+        bf16::from_f32(5.0),
+    ];
+    let mut bf16_logits = original;
+    assert_eq!(
+        top_k_filter_bf16_reference(&mut bf16_logits, &[2, 0], bf16_spec),
+        Err(ContractError::TopKFilterOutOfRange {
+            row: 1,
+            top_k: 0,
+            vocab_size: 3,
+        })
+    );
+    assert_eq!(bf16_logits, original);
+    assert_eq!(
+        top_k_filter_bf16_reference(&mut bf16_logits, &[2, 4], bf16_spec),
+        Err(ContractError::TopKFilterOutOfRange {
+            row: 1,
+            top_k: 4,
+            vocab_size: 3,
+        })
+    );
+    assert_eq!(
+        top_k_filter_bf16_reference(&mut bf16_logits, &[2], bf16_spec),
+        Err(ContractError::LengthMismatch {
+            buffer: "top_ks",
+            expected: 2,
+            actual: 1,
+        })
+    );
+    assert_eq!(
+        top_k_filter_f32_reference(
+            &mut [0.0_f32; 6],
+            &[1, 1],
+            TopKFilterSpec::new(2, 3, DType::Bf16).unwrap(),
+        ),
+        Err(ContractError::UnsupportedDType(DType::Bf16))
     );
 }
 

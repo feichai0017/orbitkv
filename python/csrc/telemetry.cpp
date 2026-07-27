@@ -8,7 +8,7 @@ int64_t bridge_abi_version() {
 
 int64_t bridge_launch_count(int64_t operation) {
   STD_TORCH_CHECK(operation >= 0 &&
-                  operation <= LOOM_CUDA_BRIDGE_TOPK_SAMPLED_LOGPROBS,
+                  operation <= LOOM_CUDA_BRIDGE_TOP_K_FILTER,
               "Loom bridge operator id is out of range");
   uint64_t count = 0;
   const int status = loom_cuda_bridge_launch_count(
@@ -22,7 +22,7 @@ int64_t bridge_launch_count(int64_t operation) {
 
 void reset_bridge_launch_count(int64_t operation) {
   STD_TORCH_CHECK(operation >= 0 &&
-                  operation <= LOOM_CUDA_BRIDGE_TOPK_SAMPLED_LOGPROBS,
+                  operation <= LOOM_CUDA_BRIDGE_TOP_K_FILTER,
               "Loom bridge operator id is out of range");
   const int status =
       loom_cuda_bridge_reset_launch_count(static_cast<uint32_t>(operation));

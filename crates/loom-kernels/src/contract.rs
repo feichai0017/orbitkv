@@ -119,6 +119,11 @@ pub enum ContractError {
         top_k: usize,
         maximum: usize,
     },
+    TopKFilterOutOfRange {
+        row: usize,
+        top_k: i32,
+        vocab_size: usize,
+    },
     TargetTokenIdOutOfI32Range {
         token: usize,
         token_id: i64,
@@ -235,6 +240,14 @@ impl fmt::Display for ContractError {
             Self::TopKLogprobsOutOfRange { top_k, maximum } => write!(
                 formatter,
                 "top-k logprobs must request between 1 and {maximum} entries, got {top_k}"
+            ),
+            Self::TopKFilterOutOfRange {
+                row,
+                top_k,
+                vocab_size,
+            } => write!(
+                formatter,
+                "top-k filter value {top_k} for row {row} is outside [1, {vocab_size}]"
             ),
             Self::TargetTokenIdOutOfI32Range { token, token_id } => write!(
                 formatter,

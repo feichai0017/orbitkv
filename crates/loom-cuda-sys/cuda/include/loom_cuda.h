@@ -173,6 +173,26 @@ int loom_cuda_topk_sampled_logprobs_bf16(
     uint32_t top_k, uint64_t row_stride, uint8_t* workspace,
     uint64_t workspace_bytes, uint32_t partitions, void* stream);
 
+// Apply an exact per-row top-k threshold to logits in place. top_ks is one
+// contiguous int32 value per row in [1, vocab_size]. Values strictly below
+// the kth largest value become negative infinity; threshold ties are retained.
+// Device metadata values are trusted and logits must not contain NaNs.
+// workspace contains partition-sorted uint32 radix keys and threshold keys.
+int loom_cuda_top_k_filter_f32(
+    float* logits, const int32_t* top_ks, uint32_t* workspace,
+    uint64_t workspace_elements, uint32_t rows, uint32_t vocab_size,
+    uint64_t row_stride, uint32_t partitions, void* stream);
+
+int loom_cuda_top_k_filter_f16(
+    uint16_t* logits, const int32_t* top_ks, uint32_t* workspace,
+    uint64_t workspace_elements, uint32_t rows, uint32_t vocab_size,
+    uint64_t row_stride, uint32_t partitions, void* stream);
+
+int loom_cuda_top_k_filter_bf16(
+    uint16_t* logits, const int32_t* top_ks, uint32_t* workspace,
+    uint64_t workspace_elements, uint32_t rows, uint32_t vocab_size,
+    uint64_t row_stride, uint32_t partitions, void* stream);
+
 // Apply repetition once to the prompt/output union, then frequency and
 // presence penalties from output counts. Token IDs outside [0, vocab_size)
 // are padding. workspace is [rows, workspace_capacity] packed uint64 hash

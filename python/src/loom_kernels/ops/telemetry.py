@@ -25,6 +25,7 @@ class Operator(IntEnum):
     GREEDY_SPECULATIVE_VERIFY = 10
     TOKEN_PENALTIES = 11
     TOPK_SAMPLED_LOGPROBS = 12
+    TOP_K_FILTER = 13
 
 
 def _operator_id(operator: Operator) -> int:

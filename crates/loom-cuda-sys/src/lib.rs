@@ -273,6 +273,42 @@ unsafe extern "C" {
         stream: *mut c_void,
     ) -> c_int;
 
+    pub fn loom_cuda_top_k_filter_f32(
+        logits: *mut f32,
+        top_ks: *const i32,
+        workspace: *mut u32,
+        workspace_elements: u64,
+        rows: u32,
+        vocab_size: u32,
+        row_stride: u64,
+        partitions: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_top_k_filter_f16(
+        logits: *mut u16,
+        top_ks: *const i32,
+        workspace: *mut u32,
+        workspace_elements: u64,
+        rows: u32,
+        vocab_size: u32,
+        row_stride: u64,
+        partitions: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_top_k_filter_bf16(
+        logits: *mut u16,
+        top_ks: *const i32,
+        workspace: *mut u32,
+        workspace_elements: u64,
+        rows: u32,
+        vocab_size: u32,
+        row_stride: u64,
+        partitions: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
     pub fn loom_cuda_apply_token_penalties_f32(
         logits: *mut f32,
         prompt_token_ids: *const i64,

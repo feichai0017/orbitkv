@@ -103,6 +103,51 @@ unsafe fn launch_selected_token_logprobs<T: Scalar>(
 }
 
 #[allow(clippy::too_many_arguments)]
+unsafe fn launch_top_k_filter<T: Scalar>(
+    logits: *mut T,
+    logits_elements: u64,
+    top_ks: *const i32,
+    top_k_elements: u64,
+    workspace: *mut u32,
+    workspace_elements: u64,
+    rows: u32,
+    vocab_size: u32,
+    row_stride: u64,
+    stream: *mut c_void,
+) -> Result<(), CudaExecutorError> {
+    let (mut logits, logits_range) =
+        unsafe { write_slice(logits, logits_elements, "top-k filter logits") }?;
+    let (top_ks, top_ks_range) =
+        unsafe { read_slice(top_ks, top_k_elements, "top-k filter values") }?;
+    let (mut workspace, workspace_range) =
+        unsafe { write_slice(workspace, workspace_elements, "top-k filter workspace") }?;
+    require_disjoint(
+        &[
+            ("logits", logits_range),
+            ("top-k values", top_ks_range),
+            ("workspace", workspace_range),
+        ],
+        "top-k filter",
+    )?;
+    let spec = TopKFilterSpec::new(rows as usize, vocab_size as usize, T::DTYPE)
+        .map_err(invalid_contract)?;
+    let layout = RowStridedLayout::new(
+        spec.vocab_size(),
+        element_count(row_stride, "top-k filter row stride")?,
+    )?;
+    T::top_k_filter(
+        &stream_backend(stream),
+        &mut logits,
+        &top_ks,
+        &mut workspace,
+        spec,
+        layout,
+    )?;
+    record_launch(OP_TOP_K_FILTER);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 unsafe fn launch_topk_sampled_logprobs<T: Scalar>(
     logits: *const T,
     logits_elements: u64,
@@ -422,6 +467,80 @@ pub unsafe extern "C" fn loom_cuda_bridge_selected_token_logprobs(
     })
 }
 
+/// Checked exact per-row in-place top-k filtering.
+///
+/// # Safety
+///
+/// Every pointer must identify the declared CUDA storage on the active
+/// context and remain alive until work on `stream` completes. `top_ks` must
+/// contain one trusted value in `[1, vocab_size]` per row.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn loom_cuda_bridge_top_k_filter(
+    dtype: u32,
+    logits: *mut c_void,
+    logits_elements: u64,
+    top_ks: *const i32,
+    top_k_elements: u64,
+    workspace: *mut u32,
+    workspace_elements: u64,
+    rows: u32,
+    vocab_size: u32,
+    row_stride: u64,
+    stream: *mut c_void,
+) -> c_int {
+    bridge_call(|| {
+        let kind = scalar_kind(dtype)?;
+        dispatch_scalar!(
+            kind,
+            launch_top_k_filter(
+                logits.cast(),
+                logits_elements,
+                top_ks,
+                top_k_elements,
+                workspace,
+                workspace_elements,
+                rows,
+                vocab_size,
+                row_stride,
+                stream,
+            )
+        )
+    })
+}
+
+/// Return the caller-owned uint32 workspace required by top-k filtering.
+///
+/// # Safety
+///
+/// `workspace_elements` must be a valid aligned writable host pointer.
+#[no_mangle]
+pub unsafe extern "C" fn loom_cuda_bridge_top_k_filter_workspace_elements(
+    rows: u32,
+    vocab_size: u32,
+    workspace_elements: *mut u64,
+) -> c_int {
+    bridge_call(|| {
+        if workspace_elements.is_null()
+            || !(workspace_elements as usize).is_multiple_of(align_of::<u64>())
+        {
+            return Err(CudaExecutorError::InvalidContract(
+                "top-k filter workspace-size output is null or misaligned".into(),
+            ));
+        }
+        let spec = TopKFilterSpec::new(rows as usize, vocab_size as usize, DType::F32)
+            .map_err(invalid_contract)?;
+        unsafe {
+            *workspace_elements = u64::try_from(spec.workspace_elements()).map_err(|_| {
+                CudaExecutorError::InvalidContract(
+                    "top-k filter workspace size exceeds the bridge ABI".into(),
+                )
+            })?;
+        }
+        Ok(())
+    })
+}
+
 /// Checked sampled-token plus deterministic top-k logprobs and rank.
 ///
 /// # Safety
@@ -583,7 +702,7 @@ pub unsafe extern "C" fn loom_cuda_bridge_apply_token_penalties(
 
 #[cfg(test)]
 mod tests {
-    use super::{launch_greedy_sample_logprobs, launch_token_penalties};
+    use super::{launch_greedy_sample_logprobs, launch_token_penalties, launch_top_k_filter};
     use loom_cuda::CudaExecutorError;
 
     #[test]
@@ -634,6 +753,25 @@ mod tests {
                 5,
                 4,
                 32,
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(matches!(result, Err(CudaExecutorError::InvalidContract(_))));
+    }
+
+    #[test]
+    fn top_k_filter_rejects_overlapping_metadata_before_submission() {
+        let result = unsafe {
+            launch_top_k_filter::<f32>(
+                0x1000_usize as *mut f32,
+                8,
+                0x1010_usize as *const i32,
+                2,
+                0x3000_usize as *mut u32,
+                8_194,
+                2,
+                4,
+                4,
                 std::ptr::null_mut(),
             )
         };

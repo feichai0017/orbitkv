@@ -1,11 +1,13 @@
 //! Token-selection and logprob contracts with CPU references.
 
 use half::{bf16, f16};
+use std::mem::size_of;
 
 use crate::contract::{require_len, ContractError, DType};
 
 /// Largest top-k logprob list admitted by the fused reduction.
 pub const MAX_TOPK_LOGPROBS: usize = 32;
+const TOP_K_FILTER_ITEMS_PER_PARTITION: usize = 4096;
 const TOPK_TARGET_PARTITIONS: usize = 128;
 const TOPK_SORT_CAPACITY_PER_PARTITION: usize = 4096;
 const TOPK_PARTIAL_STATE_BYTES: usize = 12;
@@ -36,6 +38,20 @@ pub struct GreedySampleLogprobsSpec {
 /// avoiding a materialized full-vocabulary F32 log-softmax tensor.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct SelectedTokenLogprobsSpec {
+    rows: usize,
+    vocab_size: usize,
+    dtype: DType,
+}
+
+/// Contract for vLLM-compatible per-row top-k logit filtering.
+///
+/// Logits are `[rows, vocab_size]`; `top_ks` contains one int32 value per row
+/// in `[1, vocab_size]`. Values strictly below the row's kth-largest logit are
+/// replaced by negative infinity in place. Every value equal to the threshold
+/// is retained, so boundary ties may leave more than `top_k` finite entries.
+/// Logits may contain infinities but must not contain NaNs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TopKFilterSpec {
     rows: usize,
     vocab_size: usize,
     dtype: DType,
@@ -134,6 +150,59 @@ impl SelectedTokenLogprobsSpec {
 
     pub const fn logits_numel(self) -> usize {
         self.rows * self.vocab_size
+    }
+}
+
+impl TopKFilterSpec {
+    /// Creates a validated per-row top-k filtering contract.
+    pub fn new(rows: usize, vocab_size: usize, dtype: DType) -> Result<Self, ContractError> {
+        if rows == 0 || vocab_size == 0 {
+            return Err(ContractError::ZeroDimension);
+        }
+        let workspace_partitions = vocab_size.div_ceil(TOP_K_FILTER_ITEMS_PER_PARTITION);
+        rows.checked_mul(vocab_size)
+            .and_then(|_| {
+                workspace_partitions
+                    .checked_mul(TOP_K_FILTER_ITEMS_PER_PARTITION)
+                    .and_then(|elements| elements.checked_add(1))
+                    .and_then(|elements| rows.checked_mul(elements))
+            })
+            .ok_or(ContractError::ElementCountOverflow)?;
+        Ok(Self {
+            rows,
+            vocab_size,
+            dtype,
+        })
+    }
+
+    pub const fn rows(self) -> usize {
+        self.rows
+    }
+
+    pub const fn vocab_size(self) -> usize {
+        self.vocab_size
+    }
+
+    pub const fn dtype(self) -> DType {
+        self.dtype
+    }
+
+    pub const fn logits_numel(self) -> usize {
+        self.rows * self.vocab_size
+    }
+
+    /// Number of independently sorted vocabulary partitions per row.
+    pub const fn workspace_partitions(self) -> usize {
+        self.vocab_size.div_ceil(TOP_K_FILTER_ITEMS_PER_PARTITION)
+    }
+
+    /// Caller-owned sorted uint32 keys plus one threshold key per row.
+    pub const fn workspace_elements(self) -> usize {
+        self.rows * (self.workspace_partitions() * TOP_K_FILTER_ITEMS_PER_PARTITION + 1)
+    }
+
+    pub const fn workspace_bytes(self) -> usize {
+        self.workspace_elements() * size_of::<u32>()
     }
 }
 
@@ -384,6 +453,33 @@ pub fn selected_token_logprobs_bf16_reference(
     selected_token_logprobs_reference(logits, token_ids, logprobs, ranks, spec, DType::Bf16)
 }
 
+/// Applies per-row top-k filtering to F32 logits in place.
+pub fn top_k_filter_f32_reference(
+    logits: &mut [f32],
+    top_ks: &[i32],
+    spec: TopKFilterSpec,
+) -> Result<(), ContractError> {
+    top_k_filter_reference(logits, top_ks, spec, DType::F32)
+}
+
+/// Applies per-row top-k filtering to FP16 logits in place.
+pub fn top_k_filter_f16_reference(
+    logits: &mut [f16],
+    top_ks: &[i32],
+    spec: TopKFilterSpec,
+) -> Result<(), ContractError> {
+    top_k_filter_reference(logits, top_ks, spec, DType::F16)
+}
+
+/// Applies per-row top-k filtering to BF16 logits in place.
+pub fn top_k_filter_bf16_reference(
+    logits: &mut [bf16],
+    top_ks: &[i32],
+    spec: TopKFilterSpec,
+) -> Result<(), ContractError> {
+    top_k_filter_reference(logits, top_ks, spec, DType::Bf16)
+}
+
 /// Returns sampled-token plus top-k F32 logprobs from F32 logits.
 pub fn topk_sampled_logprobs_f32_reference(
     logits: &[f32],
@@ -523,11 +619,16 @@ pub fn apply_token_penalties_f32_reference(
 
 trait LogitElement: Copy {
     fn to_f32(self) -> f32;
+    fn negative_infinity() -> Self;
 }
 
 impl LogitElement for f32 {
     fn to_f32(self) -> f32 {
         self
+    }
+
+    fn negative_infinity() -> Self {
+        Self::NEG_INFINITY
     }
 }
 
@@ -535,11 +636,19 @@ impl LogitElement for f16 {
     fn to_f32(self) -> f32 {
         self.to_f32()
     }
+
+    fn negative_infinity() -> Self {
+        Self::NEG_INFINITY
+    }
 }
 
 impl LogitElement for bf16 {
     fn to_f32(self) -> f32 {
         self.to_f32()
+    }
+
+    fn negative_infinity() -> Self {
+        Self::NEG_INFINITY
     }
 }
 
@@ -633,6 +742,48 @@ fn selected_token_logprobs_reference<T: LogitElement>(
             .iter()
             .filter(|&&value| value.to_f32() >= selected)
             .count() as i64;
+    }
+    Ok(())
+}
+
+fn top_k_filter_reference<T: LogitElement>(
+    logits: &mut [T],
+    top_ks: &[i32],
+    spec: TopKFilterSpec,
+    expected_dtype: DType,
+) -> Result<(), ContractError> {
+    if spec.dtype() != expected_dtype {
+        return Err(ContractError::UnsupportedDType(spec.dtype()));
+    }
+    require_len("logits", logits.len(), spec.logits_numel())?;
+    require_len("top_ks", top_ks.len(), spec.rows())?;
+    for (row, &top_k) in top_ks.iter().enumerate() {
+        if top_k < 1 || usize::try_from(top_k).map_or(true, |value| value > spec.vocab_size()) {
+            return Err(ContractError::TopKFilterOutOfRange {
+                row,
+                top_k,
+                vocab_size: spec.vocab_size(),
+            });
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(spec.vocab_size());
+    for (row, &top_k) in logits
+        .chunks_exact_mut(spec.vocab_size())
+        .zip(top_ks.iter())
+    {
+        if top_k as usize == spec.vocab_size() {
+            continue;
+        }
+        ordered.clear();
+        ordered.extend(row.iter().map(|&value| value.to_f32()));
+        ordered.select_nth_unstable_by(top_k as usize - 1, |left, right| right.total_cmp(left));
+        let threshold = ordered[top_k as usize - 1];
+        for value in row {
+            if value.to_f32() < threshold {
+                *value = T::negative_infinity();
+            }
+        }
     }
     Ok(())
 }

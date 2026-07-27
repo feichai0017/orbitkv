@@ -8,6 +8,7 @@ from .._torch_dispatch import (
     _apply_token_penalties,
     _greedy_sample_logprobs,
     _selected_token_logprobs,
+    _top_k_filter,
     _topk_sampled_logprobs,
 )
 from ._common import _DTYPE_NAMES
@@ -55,6 +56,22 @@ def supports_topk_sampled_logprobs(
         and isinstance(top_k, int)
         and not isinstance(top_k, bool)
         and 1 <= top_k <= min(logits.shape[1], 32)
+    )
+
+
+def supports_top_k_filter(
+    logits: torch.Tensor,
+    top_ks: torch.Tensor,
+) -> bool:
+    """Return whether tensors match the exact in-place top-k boundary."""
+    return bool(
+        supports_greedy_sample_logprobs(logits)
+        and top_ks.device == logits.device
+        and top_ks.dtype == torch.int32
+        and top_ks.dim() == 1
+        and top_ks.shape[0] == logits.shape[0]
+        and top_ks.is_contiguous()
+        and not top_ks.requires_grad
     )
 
 
@@ -176,6 +193,18 @@ def _validate_topk_sampled_logprobs(
         )
 
 
+def _validate_top_k_filter(
+    logits: torch.Tensor,
+    top_ks: torch.Tensor,
+) -> None:
+    if not supports_top_k_filter(logits, top_ks):
+        raise ValueError(
+            "Loom top-k filtering requires inference-only, non-empty rank-2 "
+            "F32/FP16/BF16 CUDA logits with unit vocabulary stride and one "
+            "same-device contiguous int32 top-k value per row"
+        )
+
+
 def _validate_apply_token_penalties(
     logits: torch.Tensor,
     prompt_token_ids: torch.Tensor,
@@ -218,6 +247,16 @@ def selected_token_logprobs(
     """Return normalized logprobs and ranks for one selected token per row."""
     _validate_selected_token_logprobs(logits, token_ids)
     return _selected_token_logprobs(logits, token_ids)
+
+
+def top_k_filter_(
+    logits: torch.Tensor,
+    top_ks: torch.Tensor,
+) -> torch.Tensor:
+    """Apply exact per-row top-k thresholds in place, preserving ties."""
+    _validate_top_k_filter(logits, top_ks)
+    _top_k_filter(logits, top_ks)
+    return logits
 
 
 def topk_sampled_logprobs(

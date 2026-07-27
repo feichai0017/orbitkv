@@ -12,6 +12,8 @@ from ._runtime import supports_installed_vllm
 GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY = "greedy_sample_logprobs"
 SELECTED_TOKEN_LOGPROBS_OVERRIDE_KEY = "selected_token_logprobs"
 TOKEN_PENALTIES_OVERRIDE_KEY = "token_penalties"
+TOP_K_FILTER_OVERRIDE_KEY = "top_k_filter"
+TOP_K_FILTER_MAX_ROWS = 7
 TOPK_SAMPLED_LOGPROBS_OVERRIDE_KEY = "topk_sampled_logprobs"
 TOPK_SAMPLED_LOGPROBS_MAX_ROWS = 32
 
@@ -29,6 +31,8 @@ _TOKEN_PENALTIES_ORIGINAL_APPLY: Any | None = None
 _TOKEN_PENALTIES_FIRST_CONTRACT: dict[str, Any] | None = None
 _TOKEN_PENALTIES_FIRST_REJECTION: dict[str, Any] | None = None
 _TOKEN_PENALTIES_WORKSPACES: dict[tuple[int, int], torch.Tensor] = {}
+_TOP_K_FILTER_REGISTERED = False
+_TOP_K_FILTER_ORIGINAL_APPLY: Any | None = None
 _TOPK_SAMPLED_LOGPROBS_REGISTERED = False
 _TOPK_SAMPLED_LOGPROBS_ORIGINAL_FORWARD: Any | None = None
 _TOPK_SAMPLED_LOGPROBS_FIRST_CONTRACT: dict[str, Any] | None = None
@@ -61,6 +65,49 @@ def _token_penalties_workspace(
         )
         _TOKEN_PENALTIES_WORKSPACES[key] = workspace
     return workspace[:rows, :capacity]
+
+
+def register_vllm_top_k_filter() -> str | None:
+    """Replace vLLM's native top-k-only sort with Loom's exact filter.
+
+    This registration deliberately leaves FlashInfer, top-p, softmax, random
+    sampling, per-request generators, and processed-logit return semantics
+    under vLLM's ownership. It changes only the top-k-only filtering step used
+    by the PyTorch-native fallback.
+    """
+    global _TOP_K_FILTER_ORIGINAL_APPLY
+    global _TOP_K_FILTER_REGISTERED
+    if _TOP_K_FILTER_REGISTERED:
+        return TOP_K_FILTER_OVERRIDE_KEY
+    if not torch_extension_available() or not supports_installed_vllm():
+        return None
+
+    from vllm.v1.sample.ops import topk_topp_sampler
+
+    from ..torch_ops import supports_top_k_filter
+
+    implementation = torch.ops.loom_kernels.top_k_filter_.default
+    original_apply = topk_topp_sampler.apply_top_k_top_p
+
+    def apply_top_k_top_p(
+        logits: torch.Tensor,
+        k: torch.Tensor | None,
+        p: torch.Tensor | None,
+    ) -> torch.Tensor:
+        if (
+            p is None
+            and k is not None
+            and logits.shape[0] <= TOP_K_FILTER_MAX_ROWS
+            and supports_top_k_filter(logits, k)
+        ):
+            implementation(logits, k)
+            return logits
+        return original_apply(logits, k, p)
+
+    _TOP_K_FILTER_ORIGINAL_APPLY = original_apply
+    topk_topp_sampler.apply_top_k_top_p = apply_top_k_top_p
+    _TOP_K_FILTER_REGISTERED = True
+    return TOP_K_FILTER_OVERRIDE_KEY
 
 
 def register_vllm_token_penalties() -> str | None:
@@ -694,6 +741,7 @@ def _metadata() -> dict[str, object]:
         "token_penalties_override": _TOKEN_PENALTIES_REGISTERED,
         "token_penalties_first_contract": _TOKEN_PENALTIES_FIRST_CONTRACT,
         "token_penalties_first_rejection": _TOKEN_PENALTIES_FIRST_REJECTION,
+        "top_k_filter_override": _TOP_K_FILTER_REGISTERED,
         "topk_sampled_logprobs_override": _TOPK_SAMPLED_LOGPROBS_REGISTERED,
         "topk_sampled_logprobs_first_contract": _TOPK_SAMPLED_LOGPROBS_FIRST_CONTRACT,
         "topk_sampled_logprobs_first_rejection": _TOPK_SAMPLED_LOGPROBS_FIRST_REJECTION,

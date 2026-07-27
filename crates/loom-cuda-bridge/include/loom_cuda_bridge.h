@@ -39,6 +39,7 @@ enum loom_cuda_bridge_operator {
   LOOM_CUDA_BRIDGE_GREEDY_SPECULATIVE_VERIFY = 10,
   LOOM_CUDA_BRIDGE_TOKEN_PENALTIES = 11,
   LOOM_CUDA_BRIDGE_TOPK_SAMPLED_LOGPROBS = 12,
+  LOOM_CUDA_BRIDGE_TOP_K_FILTER = 13,
 };
 
 uint32_t loom_cuda_bridge_abi_version(void);
@@ -85,6 +86,15 @@ int loom_cuda_bridge_selected_token_logprobs(
     const int64_t* token_ids, uint64_t token_id_elements, float* logprobs,
     uint64_t logprob_elements, int64_t* ranks, uint64_t rank_elements,
     uint32_t rows, uint32_t vocab_size, uint64_t row_stride, void* stream);
+
+int loom_cuda_bridge_top_k_filter(
+    uint32_t dtype, void* logits, uint64_t logits_elements,
+    const int32_t* top_ks, uint64_t top_k_elements, uint32_t* workspace,
+    uint64_t workspace_elements, uint32_t rows, uint32_t vocab_size,
+    uint64_t row_stride, void* stream);
+
+int loom_cuda_bridge_top_k_filter_workspace_elements(
+    uint32_t rows, uint32_t vocab_size, uint64_t* workspace_elements);
 
 int loom_cuda_bridge_topk_sampled_logprobs(
     uint32_t dtype, const void* logits, uint64_t logits_elements,

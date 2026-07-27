@@ -117,6 +117,60 @@ std::tuple<Tensor, Tensor> selected_token_logprobs_meta(
   };
 }
 
+void check_top_k_filter_shape(const Tensor& logits, const Tensor& top_ks) {
+  check_greedy_sample_logprobs_shape(logits);
+  STD_TORCH_CHECK(
+      top_ks.dim() == 1 && top_ks.size(0) == logits.size(0),
+      "Loom top-k filter values must contain one value per logits row");
+}
+
+void check_top_k_filter_contract(const Tensor& logits,
+                                 const Tensor& top_ks) {
+  check_greedy_sample_logprobs_contract(logits);
+  check_top_k_filter_shape(logits, top_ks);
+  STD_TORCH_CHECK(
+      top_ks.device() == logits.device(),
+      "Loom top-k filter values and logits must share a CUDA device");
+  STD_TORCH_CHECK(top_ks.scalar_type() == ScalarType::Int,
+                  "Loom top-k filter values must be int32");
+  STD_TORCH_CHECK(top_ks.is_contiguous(),
+                  "Loom top-k filter values must be contiguous");
+  STD_TORCH_CHECK(!byte_ranges_overlap(logits, top_ks),
+                  "Loom top-k filter logits and values must not overlap");
+}
+
+void top_k_filter(Tensor logits, const Tensor& top_ks) {
+  check_top_k_filter_contract(logits, top_ks);
+  const auto rows = static_cast<uint32_t>(logits.size(0));
+  const auto vocab_size = static_cast<uint32_t>(logits.size(1));
+  const auto row_stride = static_cast<uint64_t>(logits.stride(0));
+  uint64_t workspace_elements = 0;
+  const int workspace_status =
+      loom_cuda_bridge_top_k_filter_workspace_elements(
+          rows, vocab_size, &workspace_elements);
+  check_bridge_status(workspace_status, "top-k filter workspace query");
+  STD_TORCH_CHECK(
+      workspace_elements <=
+          static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+      "Loom top-k filter workspace exceeds the PyTorch shape ABI");
+  Tensor workspace = new_empty(
+      logits, {static_cast<int64_t>(workspace_elements)}, ScalarType::Int);
+  const CudaDeviceGuard device_guard(logits.device());
+  const auto stream = current_cuda_stream(logits.device().index());
+  const int status = loom_cuda_bridge_top_k_filter(
+      bridge_dtype(logits), logits.mutable_data_ptr(),
+      storage_span_elements(logits), top_ks.const_data_ptr<int32_t>(),
+      static_cast<uint64_t>(top_ks.numel()),
+      reinterpret_cast<uint32_t*>(workspace.mutable_data_ptr<int32_t>()),
+      static_cast<uint64_t>(workspace.numel()), rows, vocab_size, row_stride,
+      stream.stream());
+  check_bridge_status(status, "top-k filter");
+}
+
+void top_k_filter_meta(Tensor logits, const Tensor& top_ks) {
+  check_top_k_filter_shape(logits, top_ks);
+}
+
 void check_topk_sampled_logprobs_shape(
     const Tensor& logits, const Tensor& sampled_token_ids, int64_t top_k) {
   check_selected_token_logprobs_shape(logits, sampled_token_ids);
@@ -363,6 +417,9 @@ STABLE_TORCH_LIBRARY_IMPL(loom_kernels, CUDA, library) {
       "selected_token_logprobs",
       TORCH_BOX(&loom_kernels::torch_adapter::selected_token_logprobs));
   library.impl(
+      "top_k_filter_",
+      TORCH_BOX(&loom_kernels::torch_adapter::top_k_filter));
+  library.impl(
       "topk_sampled_logprobs",
       TORCH_BOX(&loom_kernels::torch_adapter::topk_sampled_logprobs));
   library.impl(
@@ -377,6 +434,9 @@ STABLE_TORCH_LIBRARY_IMPL(loom_kernels, Meta, library) {
   library.impl(
       "selected_token_logprobs",
       TORCH_BOX(&loom_kernels::torch_adapter::selected_token_logprobs_meta));
+  library.impl(
+      "top_k_filter_",
+      TORCH_BOX(&loom_kernels::torch_adapter::top_k_filter_meta));
   library.impl(
       "topk_sampled_logprobs",
       TORCH_BOX(&loom_kernels::torch_adapter::topk_sampled_logprobs_meta));

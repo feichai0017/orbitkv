@@ -5,7 +5,7 @@ use crate::runtime::{loom_status_result, CudaDeviceRead, CudaDeviceWrite, CudaSt
 use crate::{CudaExecutorError, RowStridedLayout};
 use half::{bf16, f16};
 use loom_kernels::{
-    DType, GreedySampleLogprobsSpec, SelectedTokenLogprobsSpec, TokenPenaltiesSpec,
+    DType, GreedySampleLogprobsSpec, SelectedTokenLogprobsSpec, TokenPenaltiesSpec, TopKFilterSpec,
     TopKSampledLogprobsSpec,
 };
 use std::mem::align_of;
@@ -168,6 +168,84 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
                 rows,
                 vocab_size,
                 row_stride,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Applies exact per-row top-k filtering to F32 logits in place.
+    pub fn top_k_filter_f32(
+        &self,
+        logits: &mut impl CudaDeviceWrite<f32>,
+        top_ks: &impl CudaDeviceRead<i32>,
+        workspace: &mut impl CudaDeviceWrite<u32>,
+        spec: TopKFilterSpec,
+        layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_top_k_filter_dtype(spec, DType::F32)?;
+        let launch = validate_top_k_filter_buffers(logits, top_ks, workspace, spec, layout)?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_top_k_filter_f32(
+                logits.as_mut_ptr(),
+                top_ks.as_ptr(),
+                workspace.as_mut_ptr(),
+                launch.workspace_elements,
+                launch.rows,
+                launch.vocab_size,
+                launch.row_stride,
+                launch.partitions,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Applies exact per-row top-k filtering to FP16 logits in place.
+    pub fn top_k_filter_f16(
+        &self,
+        logits: &mut impl CudaDeviceWrite<f16>,
+        top_ks: &impl CudaDeviceRead<i32>,
+        workspace: &mut impl CudaDeviceWrite<u32>,
+        spec: TopKFilterSpec,
+        layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_top_k_filter_dtype(spec, DType::F16)?;
+        let launch = validate_top_k_filter_buffers(logits, top_ks, workspace, spec, layout)?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_top_k_filter_f16(
+                logits.as_mut_ptr().cast::<u16>(),
+                top_ks.as_ptr(),
+                workspace.as_mut_ptr(),
+                launch.workspace_elements,
+                launch.rows,
+                launch.vocab_size,
+                launch.row_stride,
+                launch.partitions,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Applies exact per-row top-k filtering to BF16 logits in place.
+    pub fn top_k_filter_bf16(
+        &self,
+        logits: &mut impl CudaDeviceWrite<bf16>,
+        top_ks: &impl CudaDeviceRead<i32>,
+        workspace: &mut impl CudaDeviceWrite<u32>,
+        spec: TopKFilterSpec,
+        layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_top_k_filter_dtype(spec, DType::Bf16)?;
+        let launch = validate_top_k_filter_buffers(logits, top_ks, workspace, spec, layout)?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_top_k_filter_bf16(
+                logits.as_mut_ptr().cast::<u16>(),
+                top_ks.as_ptr(),
+                workspace.as_mut_ptr(),
+                launch.workspace_elements,
+                launch.rows,
+                launch.vocab_size,
+                launch.row_stride,
+                launch.partitions,
                 self.raw_stream(),
             )
         })
@@ -376,6 +454,77 @@ struct TopKSampledLogprobsLaunch {
     row_stride: u64,
     workspace_bytes: u64,
     partitions: u32,
+}
+
+struct TopKFilterLaunch {
+    rows: u32,
+    vocab_size: u32,
+    row_stride: u64,
+    workspace_elements: u64,
+    partitions: u32,
+}
+
+fn require_top_k_filter_dtype(
+    spec: TopKFilterSpec,
+    expected: DType,
+) -> Result<(), CudaExecutorError> {
+    if spec.dtype() == expected {
+        Ok(())
+    } else {
+        Err(CudaExecutorError::InvalidContract(format!(
+            "top-k filtering for {expected:?} cannot execute {:?}",
+            spec.dtype()
+        )))
+    }
+}
+
+fn validate_top_k_filter_buffers<T: Copy>(
+    logits: &impl CudaDeviceRead<T>,
+    top_ks: &impl CudaDeviceRead<i32>,
+    workspace: &impl CudaDeviceRead<u32>,
+    spec: TopKFilterSpec,
+    layout: RowStridedLayout,
+) -> Result<TopKFilterLaunch, CudaExecutorError> {
+    logits.require_len(
+        layout.storage_elements(spec.rows(), spec.vocab_size())?,
+        "top-k filter logits",
+    )?;
+    top_ks.require_len(spec.rows(), "top-k filter values")?;
+    workspace.require_len(spec.workspace_elements(), "top-k filter workspace")?;
+    let rows = u32::try_from(spec.rows()).map_err(|_| {
+        CudaExecutorError::InvalidContract("top-k filter rows exceed the CUDA ABI".into())
+    })?;
+    let partitions = u32::try_from(spec.workspace_partitions()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "top-k filter workspace partitions exceed the CUDA ABI".into(),
+        )
+    })?;
+    if rows > (i32::MAX as u32) / partitions {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-k filter launch grid exceeds the CUDA ABI".into(),
+        ));
+    }
+    let vocab_size = u32::try_from(spec.vocab_size()).map_err(|_| {
+        CudaExecutorError::InvalidContract("top-k filter vocabulary exceeds the CUDA ABI".into())
+    })?;
+    if vocab_size > i32::MAX as u32 {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-k filter vocabulary exceeds int32 metadata".into(),
+        ));
+    }
+    let row_stride = u64::try_from(layout.row_stride()).map_err(|_| {
+        CudaExecutorError::InvalidContract("top-k filter row stride exceeds the CUDA ABI".into())
+    })?;
+    let workspace_elements = u64::try_from(spec.workspace_elements()).map_err(|_| {
+        CudaExecutorError::InvalidContract("top-k filter workspace exceeds the CUDA ABI".into())
+    })?;
+    Ok(TopKFilterLaunch {
+        rows,
+        vocab_size,
+        row_stride,
+        workspace_elements,
+        partitions,
+    })
 }
 
 fn require_topk_dtype(
@@ -638,7 +787,8 @@ mod tests {
     use crate::runtime::{DeviceBuffer, DeviceSliceMut};
     use loom_kernels::{
         apply_token_penalties_f32_reference, greedy_sample_logprobs_f32_reference,
-        selected_token_logprobs_f32_reference, topk_sampled_logprobs_f32_reference,
+        selected_token_logprobs_f32_reference, top_k_filter_f32_reference,
+        topk_sampled_logprobs_f32_reference,
     };
 
     #[test]
@@ -727,6 +877,37 @@ mod tests {
             assert!((actual - expected).abs() < 1.0e-5);
         }
         assert_eq!(ranks_device.copy_to_vec().unwrap(), expected_ranks);
+    }
+
+    #[test]
+    fn top_k_filter_wrapper_matches_the_cpu_oracle() {
+        let spec = TopKFilterSpec::new(3, 5, DType::F32).unwrap();
+        let source = [
+            5.0_f32, 4.0, 4.0, 1.0, -1.0, //
+            -2.0, 3.0, 0.0, 1.0, 2.0, //
+            7.0, 7.0, 6.0, 5.0, 4.0,
+        ];
+        let top_ks = [2_i32, 5, 1];
+        let mut expected = source;
+        top_k_filter_f32_reference(&mut expected, &top_ks, spec).unwrap();
+
+        let backend = CudaBackend::new().unwrap();
+        let mut logits_device = DeviceBuffer::from_slice(&source).unwrap();
+        let top_ks_device = DeviceBuffer::from_slice(&top_ks).unwrap();
+        let mut workspace_device =
+            DeviceBuffer::from_slice(&vec![0_u32; spec.workspace_elements()]).unwrap();
+        backend
+            .top_k_filter_f32(
+                &mut logits_device,
+                &top_ks_device,
+                &mut workspace_device,
+                spec,
+                RowStridedLayout::contiguous(spec.vocab_size()),
+            )
+            .unwrap();
+        backend.stream().synchronize().unwrap();
+
+        assert_eq!(logits_device.copy_to_vec().unwrap(), expected);
     }
 
     #[test]

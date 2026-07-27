@@ -26,6 +26,8 @@ STABLE_TORCH_LIBRARY(loom_kernels, library) {
       "selected_token_logprobs(Tensor logits, Tensor token_ids) -> (Tensor "
       "logprobs, Tensor ranks)");
   library.def(
+      "top_k_filter_(Tensor(a!) logits, Tensor top_ks) -> ()");
+  library.def(
       "topk_sampled_logprobs(Tensor logits, Tensor sampled_token_ids, int "
       "top_k) -> (Tensor token_ids, Tensor logprobs, Tensor ranks)");
   library.def(

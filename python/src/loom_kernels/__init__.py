@@ -91,6 +91,13 @@ def selected_token_logprobs(*args: Any, **kwargs: Any) -> Any:
     return implementation(*args, **kwargs)
 
 
+def top_k_filter_(*args: Any, **kwargs: Any) -> Any:
+    """Lazily apply exact per-row top-k filtering in place."""
+    from .torch_ops import top_k_filter_ as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def topk_sampled_logprobs(*args: Any, **kwargs: Any) -> Any:
     """Lazily fuse sampled-token plus deterministic top-k logprobs."""
     from .torch_ops import topk_sampled_logprobs as implementation
@@ -168,5 +175,6 @@ __all__ = [
     "silu_and_mul_dynamic_fp8_out",
     "silu_and_mul_out",
     "token_penalties_workspace_capacity",
+    "top_k_filter_",
     "topk_sampled_logprobs",
 ]

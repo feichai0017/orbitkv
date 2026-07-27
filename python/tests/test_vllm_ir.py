@@ -23,6 +23,8 @@ from loom_kernels.vllm import (
     SILU_OVERRIDE_KEY,
     SUPPORTED_VLLM_SERIES,
     TOKEN_PENALTIES_OVERRIDE_KEY,
+    TOP_K_FILTER_MAX_ROWS,
+    TOP_K_FILTER_OVERRIDE_KEY,
     TOPK_SAMPLED_LOGPROBS_OVERRIDE_KEY,
     configure_vllm_rope_paged_kv,
     installed_vllm_version,
@@ -37,6 +39,7 @@ from loom_kernels.vllm import (
     register_vllm_silu_and_mul,
     register_vllm_silu_and_mul_dynamic_fp8,
     register_vllm_token_penalties,
+    register_vllm_top_k_filter,
     register_vllm_topk_sampled_logprobs,
     supports_installed_vllm,
     supports_vllm_paged_decode_shape,
@@ -401,6 +404,86 @@ def test_vllm_topk_sampled_logprobs_preserves_engine_selection(monkeypatch):
     assert launch_count(Operator.SELECTED_TOKEN_LOGPROBS) == 1
     assert launch_count(Operator.TOPK_SAMPLED_LOGPROBS) == 0
     assert provider_metadata()["topk_sampled_logprobs_override"] is True
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_vllm_top_k_filter_preserves_native_rng_and_top_p_fallback():
+    from vllm.v1.sample.ops import topk_topp_sampler
+    from vllm.v1.sample.ops.topk_topp_sampler import TopKTopPSampler
+
+    import loom_kernels.vllm.sampling as sampling_integration
+    from loom_kernels.torch_ops import (
+        Operator,
+        launch_count,
+        reset_launch_count,
+    )
+
+    assert register_vllm_top_k_filter() == TOP_K_FILTER_OVERRIDE_KEY
+    original_apply = sampling_integration._TOP_K_FILTER_ORIGINAL_APPLY
+    assert original_apply is not None
+
+    rows, vocab_size = 5, 4096
+    torch.manual_seed(401)
+    source = torch.randn((rows, vocab_size), device="cuda")
+    source[0, :4] = torch.tensor([5.0, 4.0, 4.0, 1.0], device="cuda")
+    top_ks = torch.tensor(
+        [2, 17, 64, 1024, vocab_size],
+        device="cuda",
+        dtype=torch.int32,
+    )
+
+    def generators() -> dict[int, torch.Generator]:
+        return {
+            row: torch.Generator(device="cuda").manual_seed(1000 + row)
+            for row in range(rows)
+        }
+
+    expected_processed = original_apply(
+        source.clone(), top_ks.clone(), None
+    )
+    expected = topk_topp_sampler.random_sample(
+        expected_processed.softmax(dim=-1, dtype=torch.float32),
+        generators(),
+    )
+    sampler = TopKTopPSampler(logprobs_mode="processed_logits")
+    reset_launch_count(Operator.TOP_K_FILTER)
+    actual, actual_processed = sampler.forward_native(
+        source.clone(), generators(), top_ks, None
+    )
+    torch.cuda.synchronize()
+
+    assert torch.equal(actual, expected)
+    assert actual_processed is not None
+    assert torch.equal(actual_processed, expected_processed)
+    assert torch.isfinite(actual_processed[0]).sum().item() == 3
+    assert launch_count(Operator.TOP_K_FILTER) == 1
+
+    top_p = torch.full((rows,), 0.9, device="cuda")
+    expected_top_p = original_apply(source.clone(), top_ks.clone(), top_p)
+    reset_launch_count(Operator.TOP_K_FILTER)
+    actual_top_p = topk_topp_sampler.apply_top_k_top_p(
+        source.clone(), top_ks, top_p
+    )
+    torch.cuda.synchronize()
+    assert torch.equal(actual_top_p, expected_top_p)
+    assert launch_count(Operator.TOP_K_FILTER) == 0
+    assert provider_metadata()["top_k_filter_override"] is True
+
+    triton_source = torch.randn((8, vocab_size), device="cuda")
+    triton_top_ks = torch.full(
+        (8,), 50, device="cuda", dtype=torch.int32
+    )
+    expected_triton = original_apply(
+        triton_source.clone(), triton_top_ks.clone(), None
+    )
+    reset_launch_count(Operator.TOP_K_FILTER)
+    actual_triton = topk_topp_sampler.apply_top_k_top_p(
+        triton_source.clone(), triton_top_ks, None
+    )
+    torch.cuda.synchronize()
+    assert TOP_K_FILTER_MAX_ROWS == 7
+    assert torch.equal(actual_triton, expected_triton)
+    assert launch_count(Operator.TOP_K_FILTER) == 0
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
