@@ -8,7 +8,10 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 > [!IMPORTANT]
 > The bridge-ABI-7 native wheel is H20-qualified but is not published to a
 > package index. It includes fused mixed-sampling logits preprocessing,
-> exact top-k filtering, and fused top-p renormalization. A source-only wheel is
+> exact top-k filtering, and fused top-p renormalization. Current source now
+> targets bridge ABI 8 and adds direct plus persistent-vLLM explicit-state
+> categorical sampling; an ABI8 matrix wheel is not yet qualified. A
+> source-only wheel is
 > intentionally unsupported:
 > `pip wheel ./python` fails unless `build_wheel.py` has staged both native
 > libraries and their manifest.
@@ -99,7 +102,9 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 bridge, builds the boxed LibTorch Stable ABI dispatcher, rejects ATen/c10 C++
 and raw CUDA-launch dependencies, verifies `$ORIGIN` loading, writes the
 revision/toolkit/SM/runtime manifest, and checks the final archive contains
-exactly the two Loom `.so` files.
+exactly the two Loom `.so` files. At current source it emits an
+`8cu131torch210sm90` tag; that artifact remains unqualified until the ABI8
+clean-install matrix is complete.
 
 ## Source development
 
@@ -120,7 +125,9 @@ Source checkouts discover the paired libraries only under repository
 `build/`. Installed wheels discover them only under `loom_kernels/lib/`.
 Every operator, including padded logits and strided paged-cache views, enters
 checked borrowed Rust dispatch. There is no ctypes, ATen dispatcher twin, or
-direct raw-CUDA framework path.
+direct raw-CUDA framework path. Both source libraries must be rebuilt together:
+the current dispatcher rejects an ABI7 bridge instead of retaining a
+compatibility shim.
 
 ## Direct PyTorch use
 
@@ -129,6 +136,7 @@ import torch
 
 from loom_kernels import (
     apply_token_penalties_,
+    categorical_sample,
     greedy_sample_logprobs,
     greedy_speculative_verify,
     logits_preprocess_,
@@ -165,6 +173,14 @@ topk_ids, topk_logprobs, sampled_ranks = topk_sampled_logprobs(
 top_k_filter_(sampling_logits_f32, per_row_top_k_i32)
 sampling_probabilities_f32 = top_p_renorm_(
     sampling_logits_f32, per_row_top_p_f32
+)
+rng_state_i64 = torch.stack(
+    (per_row_seed_i64, per_row_counter_i64),
+    dim=1,
+)
+sampled_ids_i64 = categorical_sample(
+    sampling_probabilities_f32,
+    rng_state_i64,
 )
 verified_ids, accepted_lengths, emitted_lengths = greedy_speculative_verify(
     flattened_draft_ids_i32,
@@ -216,6 +232,12 @@ All CUDA calls use PyTorch's current stream. Out variants accept caller-owned
 buffers for capture-safe reuse. Public APIs are inference-only and reject
 tensors that require gradients.
 
+`categorical_sample` requires normalized contiguous F32 probabilities and
+non-negative contiguous int64 `[rows, 2]` state. It mutates only the counter
+column, exactly once per successful row. Keep that tensor alive across decode
+steps and CUDA Graph replays. Its Philox/CDF stream is Loom-owned and does not
+reproduce vLLM's native token for the same integer seed.
+
 ## Exported operator families
 
 | Family | Python entry points |
@@ -251,6 +273,7 @@ into this contract.
 | RoPE+paged-KV compiler pass | `configure_vllm_rope_paged_kv(...)` |
 | Short paged decode | `LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1` |
 | Mixed-sampling logits preprocessing | `register_vllm_logits_preprocess()` |
+| Explicit-seed categorical sampling | `register_vllm_categorical_sample()` |
 | Greedy sampled logprob | `register_vllm_greedy_sample_logprobs()` |
 | Greedy speculative verify | `register_vllm_greedy_speculative_verify()` |
 | Selected-token logprob | `register_vllm_selected_token_logprobs()` |
@@ -258,9 +281,17 @@ into this contract.
 | Sparse token penalties | `register_vllm_token_penalties()` |
 | Min-P processor | `LOOM_KERNELS_ENABLE_MIN_P=1` |
 
-Every route checks its exact dtype, shape, layout, and semantic contract. An
-unsupported request runs the original vLLM path instead of being copied,
-cast, or reshaped into eligibility.
+Every route checks its exact dtype, shape, layout, and semantic contract.
+Shape-gated routes run the original vLLM path instead of copying, casting, or
+reshaping into eligibility.
+
+Categorical registration is instead an engine-lifetime semantic choice. Every
+random request must have an explicit non-negative signed-int64 seed and
+speculative decoding must be disabled; unsupported admission fails early
+instead of switching an active request between RNG streams. State lives on
+`CachedRequestState` and a contiguous active-batch tensor, survives
+remove/condense/resume/swap, and is not rebuilt in Python each decode step.
+Loom's seed-to-token stream intentionally differs from native vLLM.
 
 The [compatibility matrix](../docs/compatibility.md) records the qualified
 PyTorch/vLLM versions and binary distribution boundary. Build details and

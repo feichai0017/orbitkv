@@ -62,6 +62,17 @@
   safe Rust/oracle validation, checked ABI7 dispatch, current-stream PyTorch
   compile/graph coverage, and an explicit mixed greedy/random vLLM 0.24/0.25
   registration share the same contract;
+- deterministic categorical sampling over normalized contiguous F32 rows with
+  explicit caller-owned int64 `(seed, counter)` state; canonical Philox4x32-10,
+  one counter consumed per row, a fixed 1,024-logical-lane F32 CDF tree shared
+  by Rust and CUDA, one handwritten kernel without a probability-shaped
+  temporary, safe dispatch, checked ABI8, Stable ABI PyTorch mutation schema,
+  and public current-stream Python API;
+- an explicit vLLM 0.24/0.25 categorical registration with request-owned
+  device state, one contiguous active-batch state tensor, and device-side
+  add/remove/swap/condense lifecycle handling. Every random request must be
+  explicitly seeded, speculative engines and unseeded random admission fail
+  early, and stable decode steps rebuild no Python state;
 - in-place F32/FP16/BF16 Min-P contracts, CPU oracles, handwritten CUDA, C ABI,
   PyTorch mutation schemas, and an opt-in vLLM 0.24/0.25 processor override
   that cancels the softmax denominator instead of allocating probability and
@@ -91,9 +102,9 @@
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
-  using the current CUDA stream; all sixteen semantic operators route through
-  `loom-cuda-bridge` into borrowed safe Rust dispatch with explicit storage
-  spans and layouts;
+  using the current CUDA stream; the source ABI8 dispatcher routes all
+  seventeen semantic operators through `loom-cuda-bridge` into borrowed safe
+  Rust dispatch with explicit storage spans and layouts;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test
   extras, exactly two packaged `.so` files, a revision/toolkit/SM/hash manifest,
   runtime ABI/hash checks, and a CI guard that rejects source-only wheels;
@@ -135,9 +146,23 @@
 - a source-pinned vLLM 0.24 H20 seeded-sampling admission matrix covers rows
   1/2/4/7/8/32, two seeds, reversed shape order, and an isolated 32-row run.
   The all-seeded sampling-only path grows to 34 kernels and `19.45 MB` of peak
-  incremental storage at 32 rows; the conservative isolated median is
-  `265.79 us` versus `55.18 us` for the unseeded native control. ABI8-A is
-  admitted for implementation, but no Loom operator or speedup exists yet;
+  incremental storage at 32 rows, establishing the implementation target;
+- the ABI8 direct categorical gate passes exact replay, counter advancement,
+  zero-mass exclusion, a 65,536-draw distribution bound, non-default stream,
+  `torch.compile`, FakeTensor/opcheck, and generator-registration-free CUDA
+  Graph replay. On H20 it uses one kernel and `512 B` measured allocation;
+  rows 1–2 are measured losses, while rows 4/7/8/32 are
+  `1.15x/1.62x/1.80x/5.40x` faster than vLLM's all-seeded sampling boundary;
+- persistent categorical request lifecycle tests pass on vLLM 0.24.0 and
+  0.25.1 with PyTorch 2.11 and bridge ABI8, including middle-request removal,
+  condensation, resumption, slot swap, and final state recovery. A default
+  Linux EngineCore multiprocessing smoke reproduces the distinct in-process
+  Loom stream;
+- order-reversed Qwen2.5-0.5B vLLM 0.24 H20 A/B runs exactly replay every
+  provider stream and record 640 Loom calls, one per decode step, with no
+  initialization call or contract rejection. Batch 1–4 costs `1.5–2.4%`,
+  batch 8 is near crossover, and batch 32 has an order-stable
+  `1.057–1.081x` latency/throughput ratio;
 - the qualified ABI7 revision passes 45 local Rust contract/oracle tests, 14
   H20 safe CUDA-wrapper tests, 6 checked-bridge tests, and the complete
   286-test Python GPU suite on each supported vLLM minor. The vLLM-free
@@ -487,11 +512,14 @@ FA3 for the engine's 128-1,024-token path.
 - token-penalty serving-scale concurrency/goodput beyond the pinned offline
   Qwen gate; fused logits preprocessing has exact offline engine invocation
   and order-stable TPOT evidence but no serving-scale goodput result;
-- Loom-owned deterministic RNG and a stable seeded-sampling engine benefit;
-  the [H20 admission gate](results/h20-vllm-seeded-sampling-admission-20260727.json)
-  is closed, while Rust/CUDA/ABI8/PyTorch implementation, statistical
-  qualification, persistent request-slot state, and order-reversed engine
-  evidence remain open;
+- seeded-sampling serving-scale concurrency/goodput beyond the pinned offline
+  Qwen batch-32 win, and repository-free ABI8 matrix-wheel qualification. The
+  [direct](results/h20-categorical-sample-20260727.json),
+  [baseline-first engine](results/h20-vllm-engine-categorical-sample-20260727.json),
+  and
+  [Loom-first engine](results/h20-vllm-engine-categorical-sample-loom-first-20260727.json)
+  gates close source implementation, lifecycle, exact replay, and
+  order-reversed offline engine evidence;
 - an end-to-end speculative draft/target performance win; tree/branch
   metadata, stochastic residual-distribution rejection, and KV commit/remap
   remain profile-gated after the real-engine verifier share measured below

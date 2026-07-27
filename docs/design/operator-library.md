@@ -287,6 +287,22 @@ tail in a different parallel order, the cutoff can differ by one token when
 the threshold lands within rounding error; the qualified probability contract
 uses a per-row L1 tolerance of `1e-4` instead of claiming bitwise mask identity.
 
+## Deterministic Categorical-Sampling Contract
+
+`categorical_sample` consumes normalized contiguous F32 probabilities and
+caller-owned contiguous int64 `[rows, 2]` `(seed, counter)` state. One
+successful call emits one int64 token per row and advances every counter once.
+Canonical Philox4x32-10 and a fixed 1,024-logical-lane F32 CDF tree define the
+same stream in the Rust oracle and handwritten CUDA. There is one kernel, no
+probability-shaped noise tensor, no implicit generator, and no seedless
+variant.
+
+The direct ABI8 Rust/CUDA/PyTorch and H20 gates are complete. The vLLM adapter
+is not: it must attach state to persistent request slots and keep the native
+path for unsupported or measured-losing batches. The complete numerical,
+state-lifecycle, and evidence boundary is documented in
+[counter-based sampling](counter-based-sampling.md).
+
 ## Greedy Speculative-Verify Contract
 
 The deterministic speculative boundary consumes flattened int32 draft IDs,

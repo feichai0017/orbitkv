@@ -109,6 +109,15 @@ int loom_cuda_silu_and_mul_dynamic_fp8_bf16(
     uint32_t width, uint32_t group_size, const float* scale_ub,
     uint32_t scales_transposed, void* stream);
 
+// Deterministically sample one token from every contiguous normalized F32
+// probability row. rng_state is mutable int64 [rows, 2] `(seed, counter)`
+// state and token_ids is int64 [rows]. A valid row advances its counter once.
+// Device values must satisfy the public contract; the kernel defensively
+// leaves a row unchanged if its state or probabilities are invalid.
+int loom_cuda_categorical_sample_f32(
+    const float* probabilities, int64_t* rng_state, int64_t* token_ids,
+    uint32_t rows, uint32_t vocab_size, void* stream);
+
 // Fused greedy argmax and sampled-token logprob over logical
 // [rows, vocab_size] logits with a unit vocabulary stride and explicit row
 // stride. Token IDs use first-index tie breaking, logprobs are F32, and ranks

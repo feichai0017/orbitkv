@@ -9,6 +9,7 @@ import torch
 from .._torch_extension import torch_extension_available
 from . import activation as _activation
 from . import attention as _attention
+from . import categorical as _categorical
 from . import logits as _logits
 from . import rope_kv as _rope_kv
 from . import sampling as _sampling
@@ -34,6 +35,10 @@ from .attention import (
     PAGED_DECODE_OVERRIDE_KEY,
     register_vllm_paged_decode_attention,
     supports_vllm_paged_decode_shape,
+)
+from .categorical import (
+    CATEGORICAL_SAMPLE_OVERRIDE_KEY,
+    register_vllm_categorical_sample,
 )
 from .logits import (
     LOGITS_PREPROCESS_OVERRIDE_ENV,
@@ -151,6 +156,7 @@ def provider_metadata() -> dict[str, Any]:
     for domain in (
         _activation,
         _attention,
+        _categorical,
         _logits,
         _rope_kv,
         _sampling,
@@ -163,6 +169,7 @@ def provider_metadata() -> dict[str, Any]:
 __all__ = [
     "ACT_QUANT_OVERRIDE_ENV",
     "ACT_QUANT_OVERRIDE_KEY",
+    "CATEGORICAL_SAMPLE_OVERRIDE_KEY",
     "DEFAULT_PROVIDER",
     "GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY",
     "GREEDY_SPECULATIVE_VERIFY_OVERRIDE_KEY",
@@ -194,6 +201,7 @@ __all__ = [
     "installed_vllm_version",
     "provider_metadata",
     "register_vllm_ir",
+    "register_vllm_categorical_sample",
     "register_vllm_logits_preprocess",
     "register_vllm_min_p",
     "register_vllm_paged_decode_attention",

@@ -17,6 +17,7 @@ fn main() {
     let add_rms_norm_source = cuda_dir.join("src/add_rms_norm.cu");
     let silu_and_mul_source = cuda_dir.join("src/silu_and_mul.cu");
     let silu_and_mul_quant_source = cuda_dir.join("src/silu_and_mul_quant.cu");
+    let categorical_sample_source = cuda_dir.join("src/categorical_sample.cu");
     let sample_logprobs_source = cuda_dir.join("src/sample_logprobs.cu");
     let top_k_filter_source = cuda_dir.join("src/top_k_filter.cu");
     let top_p_renorm_source = cuda_dir.join("src/top_p_renorm.cu");
@@ -34,6 +35,10 @@ fn main() {
     println!(
         "cargo:rerun-if-changed={}",
         silu_and_mul_quant_source.display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        categorical_sample_source.display()
     );
     println!(
         "cargo:rerun-if-changed={}",
@@ -88,6 +93,7 @@ fn main() {
         .file(&add_rms_norm_source)
         .file(&silu_and_mul_source)
         .file(&silu_and_mul_quant_source)
+        .file(&categorical_sample_source)
         .file(&sample_logprobs_source)
         .file(&top_k_filter_source)
         .file(&top_p_renorm_source)

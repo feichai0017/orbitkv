@@ -2,6 +2,48 @@
 
 use super::*;
 
+unsafe fn launch_categorical_sample(
+    probabilities: *const f32,
+    probability_elements: u64,
+    rng_state: *mut i64,
+    rng_state_elements: u64,
+    token_ids: *mut i64,
+    token_id_elements: u64,
+    rows: u32,
+    vocab_size: u32,
+    stream: *mut c_void,
+) -> Result<(), CudaExecutorError> {
+    let (probabilities, probability_range) = unsafe {
+        read_slice(
+            probabilities,
+            probability_elements,
+            "categorical probabilities",
+        )
+    }?;
+    let (mut rng_state, rng_state_range) =
+        unsafe { write_slice(rng_state, rng_state_elements, "categorical RNG state") }?;
+    let (mut token_ids, token_id_range) =
+        unsafe { write_slice(token_ids, token_id_elements, "categorical token IDs") }?;
+    require_disjoint(
+        &[
+            ("probabilities", probability_range),
+            ("RNG state", rng_state_range),
+            ("token IDs", token_id_range),
+        ],
+        "categorical sampling",
+    )?;
+    let spec =
+        CategoricalSampleSpec::new(rows as usize, vocab_size as usize).map_err(invalid_contract)?;
+    stream_backend(stream).categorical_sample_f32(
+        &probabilities,
+        &mut rng_state,
+        &mut token_ids,
+        spec,
+    )?;
+    record_launch(OP_CATEGORICAL_SAMPLE);
+    Ok(())
+}
+
 #[allow(clippy::too_many_arguments)]
 unsafe fn launch_greedy_sample_logprobs<T: Scalar>(
     logits: *const T,
@@ -440,6 +482,40 @@ unsafe fn launch_token_penalties(
     )?;
     record_launch(OP_TOKEN_PENALTIES);
     Ok(())
+}
+
+/// Checked deterministic categorical sampling from explicit Philox state.
+///
+/// # Safety
+///
+/// Every pointer must identify the declared non-overlapping CUDA storage on
+/// the active context and remain alive until work on `stream` completes.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn loom_cuda_bridge_categorical_sample(
+    probabilities: *const f32,
+    probability_elements: u64,
+    rng_state: *mut i64,
+    rng_state_elements: u64,
+    token_ids: *mut i64,
+    token_id_elements: u64,
+    rows: u32,
+    vocab_size: u32,
+    stream: *mut c_void,
+) -> c_int {
+    bridge_call(|| unsafe {
+        launch_categorical_sample(
+            probabilities,
+            probability_elements,
+            rng_state,
+            rng_state_elements,
+            token_ids,
+            token_id_elements,
+            rows,
+            vocab_size,
+            stream,
+        )
+    })
 }
 
 /// Checked greedy selection, sampled-token logprob, and rank.

@@ -51,8 +51,8 @@ the evidence used to qualify them.
 - [FP8 KV-cache design](design/fp8-kv-cache.md) documents static per-tensor and
   per-head scales, fused quantize-on-write, and the vendor-attention handoff.
 - [Counter-based sampling design](design/counter-based-sampling.md) defines the
-  admitted explicit-state ABI8-A boundary and its remaining implementation and
-  engine gates.
+  implemented explicit-state ABI8-A boundary, persistent request-state
+  integration, direct and engine evidence, and remaining wheel gate.
 
 ## What a status means
 

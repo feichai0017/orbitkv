@@ -7,6 +7,12 @@ use crate::contract::{require_len, ContractError, DType};
 
 /// Largest top-k logprob list admitted by the fused reduction.
 pub const MAX_TOPK_LOGPROBS: usize = 32;
+/// Maximum absolute error admitted for a categorical probability-row sum.
+pub const CATEGORICAL_PROBABILITY_SUM_TOLERANCE: f64 = 1.0e-5;
+const CATEGORICAL_CDF_LOGICAL_WARPS: usize = 32;
+const CATEGORICAL_CDF_WARP_SIZE: usize = 32;
+const CATEGORICAL_CDF_LOGICAL_LANES: usize =
+    CATEGORICAL_CDF_LOGICAL_WARPS * CATEGORICAL_CDF_WARP_SIZE;
 const TOP_K_FILTER_ITEMS_PER_PARTITION: usize = 4096;
 const TOP_P_RENORM_ITEMS_PER_PARTITION: usize = 4096;
 const TOPK_TARGET_PARTITIONS: usize = 128;
@@ -105,6 +111,19 @@ pub struct TokenPenaltiesSpec {
     prompt_tokens: usize,
     output_tokens: usize,
     workspace_capacity: usize,
+}
+
+/// Contract for deterministic categorical sampling from normalized F32 rows.
+///
+/// Probabilities are contiguous `[rows, vocab_size]`. RNG state is contiguous
+/// int64 `[rows, 2]`, with each row storing a non-negative `(seed, counter)`.
+/// One successful call emits one int64 token per row and advances every
+/// counter exactly once. The reference validates the complete call before
+/// mutating either output so a rejected call consumes no RNG state.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CategoricalSampleSpec {
+    rows: usize,
+    vocab_size: usize,
 }
 
 impl GreedySampleLogprobsSpec {
@@ -457,6 +476,117 @@ impl TokenPenaltiesSpec {
     pub const fn workspace_numel(self) -> usize {
         self.rows * self.workspace_capacity
     }
+}
+
+impl CategoricalSampleSpec {
+    /// Creates a validated contiguous categorical-sampling contract.
+    pub fn new(rows: usize, vocab_size: usize) -> Result<Self, ContractError> {
+        if rows == 0 || vocab_size == 0 {
+            return Err(ContractError::ZeroDimension);
+        }
+        if vocab_size > i64::MAX as usize {
+            return Err(ContractError::ElementCountOverflow);
+        }
+        rows.checked_mul(vocab_size)
+            .and_then(|_| rows.checked_mul(2))
+            .ok_or(ContractError::ElementCountOverflow)?;
+        Ok(Self { rows, vocab_size })
+    }
+
+    pub const fn rows(self) -> usize {
+        self.rows
+    }
+
+    pub const fn vocab_size(self) -> usize {
+        self.vocab_size
+    }
+
+    pub const fn probabilities_numel(self) -> usize {
+        self.rows * self.vocab_size
+    }
+
+    pub const fn rng_state_numel(self) -> usize {
+        self.rows * 2
+    }
+}
+
+/// Samples one token per normalized F32 row from explicit Philox state.
+///
+/// The stream mapping is stable: Philox4x32-10 uses the seed as its two-word
+/// key and the counter as the low two words of its four-word counter. The first
+/// output word becomes `(word + 0.5) / 2^32`, and inverse CDF visits tokens in
+/// ascending token-ID order through a fixed 32-warp F32 reduction tree. This
+/// mapping is Loom-owned and does not reproduce PyTorch's exponential-race
+/// seed-to-token identity.
+pub fn categorical_sample_f32_reference(
+    probabilities: &[f32],
+    rng_state: &mut [i64],
+    token_ids: &mut [i64],
+    spec: CategoricalSampleSpec,
+) -> Result<(), ContractError> {
+    require_len(
+        "probabilities",
+        probabilities.len(),
+        spec.probabilities_numel(),
+    )?;
+    require_len("rng_state", rng_state.len(), spec.rng_state_numel())?;
+    require_len("token_ids", token_ids.len(), spec.rows())?;
+
+    for row in 0..spec.rows() {
+        let seed = rng_state[row * 2];
+        if seed < 0 {
+            return Err(ContractError::InvalidRngState {
+                row,
+                component: "seed",
+                value: seed,
+            });
+        }
+        let counter = rng_state[row * 2 + 1];
+        if counter < 0 {
+            return Err(ContractError::InvalidRngState {
+                row,
+                component: "counter",
+                value: counter,
+            });
+        }
+        if counter == i64::MAX {
+            return Err(ContractError::RngCounterExhausted { row });
+        }
+    }
+
+    for (row, values) in probabilities.chunks_exact(spec.vocab_size()).enumerate() {
+        let mut sum = 0.0_f64;
+        let mut has_positive = false;
+        for (column, &value) in values.iter().enumerate() {
+            if !value.is_finite() || value < 0.0 {
+                return Err(ContractError::InvalidCategoricalProbability { row, column, value });
+            }
+            has_positive |= value > 0.0;
+            sum += f64::from(value);
+        }
+        if !has_positive {
+            return Err(ContractError::NoPositiveCategoricalProbability { row });
+        }
+        if (sum - 1.0).abs() > CATEGORICAL_PROBABILITY_SUM_TOLERANCE {
+            return Err(ContractError::CategoricalProbabilitySumOutOfRange {
+                row,
+                sum,
+                tolerance: CATEGORICAL_PROBABILITY_SUM_TOLERANCE,
+            });
+        }
+    }
+
+    for (row, token_id) in token_ids.iter_mut().enumerate() {
+        let state_offset = row * 2;
+        let seed = rng_state[state_offset] as u64;
+        let counter = rng_state[state_offset + 1] as u64;
+        let uniform = categorical_uniform_f64(seed, counter);
+        let probability_offset = row * spec.vocab_size();
+        let values = &probabilities[probability_offset..probability_offset + spec.vocab_size()];
+        *token_id = categorical_inverse_cdf(values, uniform) as i64;
+        rng_state[state_offset + 1] += 1;
+    }
+    Ok(())
 }
 
 /// Selects the first maximum F32 logit per row and returns its log-softmax.
@@ -995,6 +1125,126 @@ fn top_p_renorm_workspace_bytes_checked(rows: usize, vocab_size: usize) -> Optio
     threshold_offset
         .checked_add(rows.checked_mul(8)?)?
         .checked_add(rows.checked_mul(4)?)
+}
+
+pub(crate) fn categorical_inverse_cdf(probabilities: &[f32], uniform: f64) -> usize {
+    let chunks_per_warp = probabilities.len().div_ceil(CATEGORICAL_CDF_LOGICAL_LANES);
+    let mut warp_sums = [0.0_f32; CATEGORICAL_CDF_LOGICAL_WARPS];
+    let mut last_positive = 0;
+
+    for (warp, warp_sum) in warp_sums.iter_mut().enumerate() {
+        let warp_start = warp * chunks_per_warp * CATEGORICAL_CDF_WARP_SIZE;
+        let warp_end = probabilities
+            .len()
+            .min(warp_start + chunks_per_warp * CATEGORICAL_CDF_WARP_SIZE);
+        let mut lane_sums = [0.0_f32; CATEGORICAL_CDF_WARP_SIZE];
+        for (lane, lane_sum) in lane_sums.iter_mut().enumerate() {
+            let mut token = warp_start + lane;
+            while token < warp_end {
+                let probability = probabilities[token];
+                *lane_sum += probability;
+                if probability > 0.0 {
+                    last_positive = last_positive.max(token);
+                }
+                token += CATEGORICAL_CDF_WARP_SIZE;
+            }
+        }
+        *warp_sum = categorical_warp_sum(lane_sums);
+    }
+
+    let mut warp_prefixes = [0.0_f32; CATEGORICAL_CDF_LOGICAL_WARPS];
+    let mut prefix = 0.0_f32;
+    let mut target_warp = None;
+    for (warp, &warp_sum) in warp_sums.iter().enumerate() {
+        warp_prefixes[warp] = prefix;
+        let next = prefix + warp_sum;
+        if target_warp.is_none() && f64::from(next) > uniform {
+            target_warp = Some(warp);
+        }
+        prefix = next;
+    }
+
+    if let Some(warp) = target_warp {
+        let warp_start = warp * chunks_per_warp * CATEGORICAL_CDF_WARP_SIZE;
+        let warp_end = probabilities
+            .len()
+            .min(warp_start + chunks_per_warp * CATEGORICAL_CDF_WARP_SIZE);
+        let mut prefix = warp_prefixes[warp];
+        for start in (warp_start..warp_end).step_by(CATEGORICAL_CDF_WARP_SIZE) {
+            let mut values = [0.0_f32; CATEGORICAL_CDF_WARP_SIZE];
+            for (lane, value) in values.iter_mut().enumerate() {
+                let token = start + lane;
+                if token < warp_end {
+                    *value = probabilities[token];
+                }
+            }
+            let inclusive = categorical_warp_inclusive_sum(values);
+            for (lane, &cumulative) in inclusive.iter().enumerate() {
+                let token = start + lane;
+                if token < warp_end && f64::from(prefix + cumulative) > uniform {
+                    return token;
+                }
+            }
+            prefix += inclusive[CATEGORICAL_CDF_WARP_SIZE - 1];
+        }
+    }
+
+    last_positive
+}
+
+fn categorical_warp_sum(mut values: [f32; CATEGORICAL_CDF_WARP_SIZE]) -> f32 {
+    for offset in [16, 8, 4, 2, 1] {
+        let previous = values;
+        for lane in 0..CATEGORICAL_CDF_WARP_SIZE - offset {
+            values[lane] = previous[lane] + previous[lane + offset];
+        }
+    }
+    values[0]
+}
+
+fn categorical_warp_inclusive_sum(
+    mut values: [f32; CATEGORICAL_CDF_WARP_SIZE],
+) -> [f32; CATEGORICAL_CDF_WARP_SIZE] {
+    for offset in [1, 2, 4, 8, 16] {
+        let previous = values;
+        for lane in offset..CATEGORICAL_CDF_WARP_SIZE {
+            values[lane] = previous[lane] + previous[lane - offset];
+        }
+    }
+    values
+}
+
+pub(crate) fn categorical_philox_word(seed: u64, counter: u64) -> u32 {
+    let counter = [counter as u32, (counter >> 32) as u32, 0_u32, 0_u32];
+    let key = [seed as u32, (seed >> 32) as u32];
+    philox4x32_10(counter, key)[0]
+}
+
+fn categorical_uniform_f64(seed: u64, counter: u64) -> f64 {
+    (f64::from(categorical_philox_word(seed, counter)) + 0.5) * (1.0 / 4_294_967_296.0)
+}
+
+fn philox4x32_10(mut counter: [u32; 4], mut key: [u32; 2]) -> [u32; 4] {
+    const MULTIPLIER_0: u32 = 0xD251_1F53;
+    const MULTIPLIER_1: u32 = 0xCD9E_8D57;
+    const WEYL_0: u32 = 0x9E37_79B9;
+    const WEYL_1: u32 = 0xBB67_AE85;
+
+    for round in 0..10 {
+        let product_0 = u64::from(MULTIPLIER_0) * u64::from(counter[0]);
+        let product_1 = u64::from(MULTIPLIER_1) * u64::from(counter[2]);
+        counter = [
+            (product_1 >> 32) as u32 ^ counter[1] ^ key[0],
+            product_1 as u32,
+            (product_0 >> 32) as u32 ^ counter[3] ^ key[1],
+            product_0 as u32,
+        ];
+        if round != 9 {
+            key[0] = key[0].wrapping_add(WEYL_0);
+            key[1] = key[1].wrapping_add(WEYL_1);
+        }
+    }
+    counter
 }
 
 #[allow(clippy::too_many_arguments)]

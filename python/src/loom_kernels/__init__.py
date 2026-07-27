@@ -28,6 +28,13 @@ def apply_token_penalties_(*args: Any, **kwargs: Any) -> Any:
     return implementation(*args, **kwargs)
 
 
+def categorical_sample(*args: Any, **kwargs: Any) -> Any:
+    """Lazily sample from normalized probabilities and advance RNG state."""
+    from .torch_ops import categorical_sample as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def token_penalties_workspace_capacity(*args: Any, **kwargs: Any) -> Any:
     """Return the caller-owned hash capacity for sparse token penalties."""
     from .torch_ops import token_penalties_workspace_capacity as implementation
@@ -172,6 +179,7 @@ __all__ = [
     "__version__",
     "add_rms_norm_",
     "apply_token_penalties_",
+    "categorical_sample",
     "greedy_sample_logprobs",
     "greedy_speculative_verify",
     "logits_preprocess_",

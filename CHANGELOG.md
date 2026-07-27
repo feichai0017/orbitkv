@@ -47,6 +47,9 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - advanced the checked framework bridge to ABI 7 for fused mixed-sampling
   logits preprocessing; no ABI6 compatibility entrypoint or decomposed
   mask/bias/suppression/temperature twin is retained.
+- advanced the checked framework bridge to ABI 8 for explicit-state
+  categorical sampling; source dispatchers require ABI8 and no ABI7
+  compatibility entrypoint is retained.
 
 ### Added
 
@@ -125,7 +128,22 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - a source-pinned vLLM 0.24 seeded-sampling admission profiler and H20 result.
   The all-seeded sampling-only path reaches 34 kernels and `19.45 MB` of peak
   incremental storage at 32 rows, so the explicit-state ABI8-A categorical
-  sampler is admitted for implementation without claiming an unbuilt speedup.
+  sampler was admitted for implementation without claiming an unbuilt
+  speedup.
+- the ABI8-A categorical sampler itself: canonical Philox4x32-10 with
+  caller-owned `(seed, counter)` state, a fixed Rust/CUDA F32 CDF tree, one
+  handwritten kernel, safe Rust and checked bridge dispatch, Stable ABI
+  PyTorch mutation schema, direct Python API, compile/FakeTensor/current-stream/
+  CUDA Graph coverage, and a 65,536-draw distribution gate. On H20 the direct
+  boundary is `1.15–5.40x` faster than vLLM's all-seeded fallback at
+  4–32-row cases with one kernel and no probability-shaped temporary.
+- an explicit vLLM 0.24/0.25 categorical adapter with state owned by
+  `CachedRequestState` and contiguous active `InputBatch` slots. State survives
+  removal, condensation, resumption, and swaps; unseeded random requests and
+  speculative engines fail before sampling. Order-reversed Qwen2.5-0.5B H20
+  runs exactly replay each provider stream, launch Loom once per decode step,
+  and measure an order-stable `1.057–1.081x` batch-32 engine ratio. Batch 1–4
+  retains a measured `1.5–2.4%` cost. The ABI8 matrix wheel remains open.
 
 ### Fixed
 

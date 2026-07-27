@@ -29,6 +29,14 @@ retained a non-Loom missing-`cubin` failure; fresh isolated
 test and the full suite. This exact refreshed wheel has not yet replaced the
 vLLM 0.25.1 or PyTorch 2.10 rows.
 
+Current source is a deliberate breaking move to bridge ABI 8. It adds
+explicit-state categorical sampling and passes the direct H20 Rust/CUDA/
+PyTorch gate. Its persistent request-state lifecycle test passes with both
+vLLM 0.24.0 and 0.25.1 on PyTorch 2.11, and the vLLM 0.24 Qwen engine gate
+passes in both provider orders. This does not extend the qualified wheel
+matrix: an ABI7 dispatcher cannot load the ABI8 bridge, no compatibility shim
+exists, and the ABI8 matrix wheel remains open.
+
 The ABI7 wheel includes greedy speculative verification and static FP8 E4M3
 KV quantize-on-write through bridge ABI 7. Both vLLM minors pass the same
 expanded 286-test suite. The separate
@@ -124,8 +132,10 @@ production dispatcher now uses that boundary:
 - all schemas use boxed Stable ABI registration;
 - tensor metadata, allocations, pointers, device guards, and the current CUDA
   stream use stable headers or AOTI C shims;
-- all sixteen semantic operators continue into `loom-cuda-bridge`. The dispatcher has
-  no ATen/c10 C++ symbol dependency and consumes no raw CUDA launch symbol;
+- all seventeen source-ABI8 semantic operators continue into
+  `loom-cuda-bridge`. The dispatcher has no ATen/c10 C++ symbol dependency and
+  consumes no raw CUDA launch symbol; the qualified ABI7 wheel contains the
+  preceding sixteen-operator surface;
 - the public Python APIs and vLLM admission predicates reject tensors requiring
   gradients. No autograd kernel is advertised;
 - the temporary Add+RMSNorm probe and the previous ATen dispatcher were deleted

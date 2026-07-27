@@ -81,6 +81,12 @@ export const supportedOperators = [
     status: "supported",
   },
   {
+    name: "Deterministic categorical sampling",
+    dtypes: "F32 probabilities · int64 state",
+    boundary: "Philox + fixed CDF tree + in-place counter advancement",
+    status: "supported",
+  },
+  {
     name: "Paged MQA/GQA decode",
     dtypes: "F32 · FP16 · BF16",
     boundary: "GQA packing + local split-K/LSE; short shapes route into vLLM",
@@ -96,9 +102,9 @@ export const supportedOperators = [
 
 export const nextOperators = [
   {
-    milestone: "K4 · ABI8-A",
-    name: "Counter-based sampling",
-    reason: "Admission passed; implement Rust Philox/inverse-CDF, one CUDA execution pattern, checked ABI8, and persistent request-slot state.",
+    milestone: "K0.7 · ABI8",
+    name: "ABI8 matrix wheel",
+    reason: "The seeded-sampling subsystem is complete in source; commit it and pass repository-free PyTorch/vLLM clean installs with both native libraries.",
   },
   {
     milestone: "K2.5 · P1",
@@ -176,10 +182,10 @@ export const evidence = [
     detail: "Prefix hit and three preemptions observed; reuse is logical and preemption recomputes",
   },
   {
-    operator: "Seeded categorical-sampling admission",
-    shape: "F32 · 151,936 vocab · 8 / 32 all-seeded rows",
-    result: "Admitted · 10 / 34 kernels",
-    detail: "3.00× at 8 rows; isolated 32-row path is 4.82× with 19.45 MB temporary storage",
+    operator: "Deterministic categorical sampling",
+    shape: "Qwen2.5-0.5B · 151,936 vocab · batch 32",
+    result: "1.057–1.081×",
+    detail: "Order-stable engine ratio; one launch per decode step and exact Loom replay",
   },
   {
     operator: "Greedy + sampled logprob",

@@ -10,11 +10,12 @@ allocating device memory, synchronizing, or taking ownership.
 
 The bridge exposes one dtype-generic entrypoint for each semantic operator:
 RMSNorm, Add+RMSNorm, RMSNorm+dynamic FP8, SiLU-and-Mul,
-SiLU-and-Mul+dynamic FP8, greedy sampled logprobs, selected-token logprobs,
-Min-P filtering, sparse token penalties, RoPE+paged-KV write, and paged decode
-attention. Explicit layout descriptors cover padded logits, strided Q/K/V
-tensors, native paged caches, and base or split-K decode. The split-K decision
-remains inside safe Rust dispatch.
+SiLU-and-Mul+dynamic FP8, RoPE+paged-KV write, paged decode attention, logits
+preprocessing, explicit-state categorical sampling, greedy/selected/top-k
+logprobs, top-k/top-p/Min-P filtering, sparse token penalties, and greedy
+speculative verification. Explicit layout descriptors cover padded logits,
+strided Q/K/V tensors, native paged caches, and base or split-K decode. The
+split-K decision remains inside safe Rust dispatch.
 
 Framework code has no alternate CUDA route. The PyTorch shim calls only this
 ABI; the bridge calls safe `loom-cuda`; and only `loom-cuda` reaches the

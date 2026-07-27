@@ -6,6 +6,7 @@ import torch
 
 from .._torch_dispatch import (
     _apply_token_penalties,
+    _categorical_sample,
     _greedy_sample_logprobs,
     _selected_token_logprobs,
     _top_k_filter,
@@ -13,6 +14,29 @@ from .._torch_dispatch import (
     _topk_sampled_logprobs,
 )
 from ._common import _DTYPE_NAMES
+
+
+def supports_categorical_sample(
+    probabilities: torch.Tensor,
+    rng_state: torch.Tensor,
+) -> bool:
+    """Return whether tensor metadata fits explicit-state sampling."""
+    return bool(
+        probabilities.device.type == "cuda"
+        and probabilities.dtype == torch.float32
+        and probabilities.dim() == 2
+        and probabilities.shape[0] > 0
+        and probabilities.shape[1] > 0
+        and probabilities.shape[0] <= 0x7FFF_FFFF
+        and probabilities.shape[1] <= 0x7FFF_FFFF
+        and probabilities.is_contiguous()
+        and not probabilities.requires_grad
+        and rng_state.device == probabilities.device
+        and rng_state.dtype == torch.int64
+        and rng_state.shape == (probabilities.shape[0], 2)
+        and rng_state.is_contiguous()
+        and not rng_state.requires_grad
+    )
 
 
 def supports_greedy_sample_logprobs(logits: torch.Tensor) -> bool:
@@ -182,6 +206,18 @@ def _validate_greedy_sample_logits(
         )
 
 
+def _validate_categorical_sample(
+    probabilities: torch.Tensor,
+    rng_state: torch.Tensor,
+) -> None:
+    if not supports_categorical_sample(probabilities, rng_state):
+        raise ValueError(
+            "Loom categorical sampling requires inference-only contiguous "
+            "rank-2 F32 CUDA probabilities and same-device contiguous int64 "
+            "RNG state shaped [rows, 2]"
+        )
+
+
 def _validate_selected_token_logprobs(
     logits: torch.Tensor,
     token_ids: torch.Tensor,
@@ -267,6 +303,21 @@ def greedy_sample_logprobs(
     """Return greedy IDs, sampled logprobs, and vLLM-compatible tie ranks."""
     _validate_greedy_sample_logits(logits)
     return _greedy_sample_logprobs(logits)
+
+
+def categorical_sample(
+    probabilities: torch.Tensor,
+    rng_state: torch.Tensor,
+) -> torch.Tensor:
+    """Sample one token per row and advance every explicit counter once.
+
+    Probability values are a device-side precondition: every row must be
+    finite, non-negative, contain positive mass, and sum to one within 1e-5.
+    Seeds and counters must be non-negative, and counters must be below the
+    int64 maximum.
+    """
+    _validate_categorical_sample(probabilities, rng_state)
+    return _categorical_sample(probabilities, rng_state)
 
 
 def selected_token_logprobs(

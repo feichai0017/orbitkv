@@ -27,7 +27,7 @@ feature. New feature work follows this order:
 
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
-| 1 | Seeded sampling tail | implement the admitted explicit-state ABI8-A categorical sampler without a rows-by-vocabulary noise tensor | deterministic replay plus a declared statistical contract and an order-reversed seeded-engine win |
+| 1 | ABI8 binary qualification | commit the completed sampling subsystem and build the two-library matrix wheel | repository-free PyTorch 2.10/2.11 and vLLM 0.24/0.25 clean installs |
 | 2 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
 | 3 | MoE routing and movement | top-k routing, histogram/prefix sum, permutation, and inverse permutation | lower model-level MoE latency while grouped GEMM remains vendor-owned |
 | 4 | Profile-gated KV movement | a named offload, beam, or compaction profile that exposes physical movement | fewer launches or less movement time without replacing an efficient driver/vendor path |
@@ -41,13 +41,24 @@ instrumented swap or batch-copy entrypoints ran. Prefix caching reuses logical
 blocks and default preemption frees blocks before recomputation. No public Loom
 movement operator will be added for that path.
 
-The seeded-sampling candidate passed admission. The
-[source-pinned H20 result](results/h20-vllm-seeded-sampling-admission-20260727.json)
-shows that vLLM 0.24's all-seeded sampling-only path scales from three kernels
-at one row to 34 at 32 rows while retaining a full probability-shaped F32
-noise tensor. The isolated 32-row median is `265.79 us` versus `55.18 us` for
-the unseeded native control. ABI8-A now enters implementation; no Loom
-performance or engine claim exists until the remaining K4 gates close.
+The seeded-sampling candidate passed admission, direct implementation, request
+lifecycle, and engine gates. The
+[source-pinned admission](results/h20-vllm-seeded-sampling-admission-20260727.json)
+showed one exponential kernel per seeded row and a full F32 noise tensor. The
+[ABI8 direct result](results/h20-categorical-sample-20260727.json) replaces
+that boundary with one kernel and `512 B` of measured output allocation. It is
+slower at 1–2 rows, then `1.15–5.40x` faster at 4–32 rows with exact Loom
+replay and a passing statistical contract.
+
+Persistent state now follows vLLM 0.24/0.25 cached requests through active
+slot removal, condensation, resumption, and swaps. In process-isolated
+[baseline-first](results/h20-vllm-engine-categorical-sample-20260727.json)
+and
+[Loom-first](results/h20-vllm-engine-categorical-sample-loom-first-20260727.json)
+Qwen2.5-0.5B runs, every case exactly replays, Loom launches once per decode
+step with no rejection, and batch 32 improves latency/throughput by
+`5.7–8.1%` in both orders. Batch 1–4 pays `1.5–2.4%`; the adapter reports that
+cost instead of switching an in-flight request to another RNG stream.
 
 Static FP8 KV-cache compression remains a K3 evidence track, not the next
 kernel implementation. Its first pinned Qwen2.5 candidate is rejected below;
@@ -311,16 +322,25 @@ Status: in progress.
   Loom submissions; TPOT ratios are `1.010–1.084x`, while batch latency
   crosses parity at batch 32, so no stable model-level batch-latency claim is
   made;
-- deterministic counter-based RNG sampling without a host round trip is
-  admitted and next. The source-pinned H20 gate records exact replay,
-  non-default-stream execution, generator-registration-dependent CUDA Graph
-  capture, one exponential kernel per seeded row, and `0.61–19.45 MB` of
-  probability-shaped temporary storage. ABI8-A `categorical_sample` consumes
-  normalized contiguous F32 probabilities plus caller-owned `(seed, counter)`
-  int64 state, emits one int64 token per row, and advances counters in place
-  on the current stream. It has no implicit global generator or seedless mode.
-  Implementation remains open. See the
-  [counter-based sampling design](design/counter-based-sampling.md) and
+- ~~deterministic counter-based RNG sampling without a host round trip~~ —
+  ABI8-A `categorical_sample` consumes normalized contiguous F32 probabilities
+  plus caller-owned `(seed, counter)` int64 state, emits one int64 token per
+  row, and advances counters in place on the current stream. Rust and CUDA use
+  the same fixed logical F32 CDF tree; checked bridge, Stable ABI PyTorch,
+  compile/FakeTensor/current-stream/CUDA Graph coverage, and the 65,536-draw
+  distribution gate pass. H20 direct sampling uses one kernel and is
+  `1.15–5.40x` faster for 4–32-row cases without a
+  probability-shaped temporary. It has no implicit global generator or
+  seedless mode. The explicit vLLM 0.24/0.25 registration stores state on
+  cached requests and contiguous batch slots, rejects unseeded random or
+  speculative engines, and passes remove/condense/resume/swap lifecycle
+  tests. Order-reversed Qwen2.5-0.5B evidence records exact replay, 640 Loom
+  calls per run, no rejection, and a stable `1.057–1.081x` batch-32 ratio.
+  See the [counter-based sampling design](design/counter-based-sampling.md),
+  [direct result](results/h20-categorical-sample-20260727.json),
+  [baseline-first engine result](results/h20-vllm-engine-categorical-sample-20260727.json),
+  [Loom-first engine result](results/h20-vllm-engine-categorical-sample-loom-first-20260727.json),
+  and
   [admission result](results/h20-vllm-seeded-sampling-admission-20260727.json).
 
 Exit: fewer launches and temporary tensors with exact token results where the
@@ -333,8 +353,9 @@ operator gate for the admitted small-row vLLM path; top-k raw-logprob
 correctness plus temporary reduction is closed without a stable engine-speedup
 claim. Fused top-p/renormalization and mixed-sampling logits preprocessing
 close their shape-gated operator and real-engine invocation exits. Loom-owned
-deterministic RNG implementation and engine qualification remain open; its
-admission gate is closed.
+deterministic RNG closes its direct, persistent-request-state, and
+order-reversed engine exits for explicitly seeded non-speculative requests.
+ABI8 clean-wheel qualification remains the separate distribution gate.
 
 ## K4.5: Speculative Decoding Support
 

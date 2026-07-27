@@ -6,11 +6,12 @@ use loom_cuda::{
     SiluAndMulDynamicFp8Options,
 };
 use loom_kernels::{
-    AddRmsNormSpec, DType, GreedySampleLogprobsSpec, GreedySpeculativeVerifySpec, KvCacheEncoding,
-    KvCacheScaleGranularity, LogitsPreprocessSpec, MinPFilterSpec, PagedDecodeAttentionSpec,
-    RmsNormDynamicFp8Spec, RmsNormSpec, RopePagedKvWriteSpec, RotaryEmbeddingSpec, RotaryStyle,
-    SelectedTokenLogprobsSpec, SiluAndMulDynamicFp8Spec, SiluAndMulSpec, TokenPenaltiesSpec,
-    TopKFilterSpec, TopKSampledLogprobsSpec, TopPRenormSpec,
+    AddRmsNormSpec, CategoricalSampleSpec, DType, GreedySampleLogprobsSpec,
+    GreedySpeculativeVerifySpec, KvCacheEncoding, KvCacheScaleGranularity, LogitsPreprocessSpec,
+    MinPFilterSpec, PagedDecodeAttentionSpec, RmsNormDynamicFp8Spec, RmsNormSpec,
+    RopePagedKvWriteSpec, RotaryEmbeddingSpec, RotaryStyle, SelectedTokenLogprobsSpec,
+    SiluAndMulDynamicFp8Spec, SiluAndMulSpec, TokenPenaltiesSpec, TopKFilterSpec,
+    TopKSampledLogprobsSpec, TopPRenormSpec,
 };
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void, CString};
@@ -46,7 +47,8 @@ const OP_TOPK_SAMPLED_LOGPROBS: usize = 12;
 const OP_TOP_K_FILTER: usize = 13;
 const OP_TOP_P_RENORM: usize = 14;
 const OP_LOGITS_PREPROCESS: usize = 15;
-const OPERATOR_COUNT: usize = 16;
+const OP_CATEGORICAL_SAMPLE: usize = 16;
+const OPERATOR_COUNT: usize = 17;
 
 static LAUNCH_COUNTS: [AtomicU64; OPERATOR_COUNT] = [const { AtomicU64::new(0) }; OPERATOR_COUNT];
 
@@ -836,7 +838,7 @@ macro_rules! dispatch_scalar {
 /// Return the bridge ABI version.
 #[no_mangle]
 pub extern "C" fn loom_cuda_bridge_abi_version() -> u32 {
-    7
+    8
 }
 
 /// Return the detailed error recorded by the most recent failed bridge call

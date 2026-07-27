@@ -1,5 +1,237 @@
+use crate::sampling::{categorical_inverse_cdf, categorical_philox_word};
 use crate::*;
 use half::{bf16, f16};
+
+#[test]
+fn categorical_sample_uses_canonical_philox_and_ascending_inverse_cdf() {
+    assert_eq!(categorical_philox_word(0, 0), 0x6627_e8d5);
+    assert_eq!(categorical_inverse_cdf(&[0.25, 0.25, 0.5], 0.0), 0);
+    assert_eq!(categorical_inverse_cdf(&[0.25, 0.25, 0.5], 0.25), 1);
+    assert_eq!(categorical_inverse_cdf(&[0.25, 0.25, 0.5], 0.5), 2);
+    assert_eq!(categorical_inverse_cdf(&[0.0, 0.5, 0.0, 0.5], 0.0), 1);
+    assert_eq!(
+        categorical_inverse_cdf(&[0.2, 0.3, 0.499_995], 0.999_999),
+        2
+    );
+}
+
+#[test]
+fn categorical_sample_replays_and_advances_each_counter_once() {
+    let spec = CategoricalSampleSpec::new(3, 4).unwrap();
+    let probabilities = [
+        0.1_f32, 0.2, 0.3, 0.4, //
+        1.0, 0.0, 0.0, 0.0, //
+        0.0, 0.25, 0.75, 0.0,
+    ];
+    let initial_state = [0_i64, 0, 17, 41, i64::MAX, i64::MAX - 1];
+    let mut first_state = initial_state;
+    let mut replay_state = initial_state;
+    let mut first_tokens = [-1_i64; 3];
+    let mut replay_tokens = [-1_i64; 3];
+
+    categorical_sample_f32_reference(&probabilities, &mut first_state, &mut first_tokens, spec)
+        .unwrap();
+    categorical_sample_f32_reference(&probabilities, &mut replay_state, &mut replay_tokens, spec)
+        .unwrap();
+
+    assert_eq!(first_tokens, replay_tokens);
+    assert_eq!(first_tokens[0], 2);
+    assert_eq!(first_tokens[1], 0);
+    assert!(matches!(first_tokens[2], 1 | 2));
+    assert_eq!(first_state, replay_state);
+    assert_eq!(first_state, [0, 1, 17, 42, i64::MAX, i64::MAX]);
+}
+
+#[test]
+fn categorical_sample_rejects_invalid_inputs_atomically() {
+    let spec = CategoricalSampleSpec::new(2, 3).unwrap();
+    let valid_probabilities = [0.2_f32, 0.3, 0.5, 0.0, 0.25, 0.75];
+
+    let cases = [
+        (
+            [0.2_f32, 0.3, 0.5, 0.0, -0.25, 1.25],
+            [7_i64, 3, 9, 4],
+            ContractError::InvalidCategoricalProbability {
+                row: 1,
+                column: 1,
+                value: -0.25,
+            },
+        ),
+        (
+            [0.2_f32, 0.3, 0.5, 0.0, 0.0, 0.0],
+            [7_i64, 3, 9, 4],
+            ContractError::NoPositiveCategoricalProbability { row: 1 },
+        ),
+        (
+            [0.2_f32, 0.3, 0.5, 0.1, 0.2, 0.3],
+            [7_i64, 3, 9, 4],
+            ContractError::CategoricalProbabilitySumOutOfRange {
+                row: 1,
+                sum: 0.6000000163912773,
+                tolerance: CATEGORICAL_PROBABILITY_SUM_TOLERANCE,
+            },
+        ),
+    ];
+    for (probabilities, initial_state, expected_error) in cases {
+        let mut state = initial_state;
+        let mut tokens = [91_i64, 92];
+        assert_eq!(
+            categorical_sample_f32_reference(&probabilities, &mut state, &mut tokens, spec,),
+            Err(expected_error)
+        );
+        assert_eq!(state, initial_state);
+        assert_eq!(tokens, [91, 92]);
+    }
+
+    for (initial_state, expected_error) in [
+        (
+            [7_i64, 3, -1, 4],
+            ContractError::InvalidRngState {
+                row: 1,
+                component: "seed",
+                value: -1,
+            },
+        ),
+        (
+            [7_i64, 3, 9, -1],
+            ContractError::InvalidRngState {
+                row: 1,
+                component: "counter",
+                value: -1,
+            },
+        ),
+        (
+            [7_i64, 3, 9, i64::MAX],
+            ContractError::RngCounterExhausted { row: 1 },
+        ),
+    ] {
+        let mut state = initial_state;
+        let mut tokens = [91_i64, 92];
+        assert_eq!(
+            categorical_sample_f32_reference(&valid_probabilities, &mut state, &mut tokens, spec,),
+            Err(expected_error)
+        );
+        assert_eq!(state, initial_state);
+        assert_eq!(tokens, [91, 92]);
+    }
+
+    let mut state = [7_i64, 3, 9, 4];
+    let initial_state = state;
+    let mut tokens = [91_i64, 92];
+    let mut non_finite = valid_probabilities;
+    non_finite[4] = f32::INFINITY;
+    assert_eq!(
+        categorical_sample_f32_reference(&non_finite, &mut state, &mut tokens, spec),
+        Err(ContractError::InvalidCategoricalProbability {
+            row: 1,
+            column: 1,
+            value: f32::INFINITY,
+        })
+    );
+    assert_eq!(state, initial_state);
+    assert_eq!(tokens, [91, 92]);
+
+    non_finite[4] = f32::NAN;
+    assert!(matches!(
+        categorical_sample_f32_reference(&non_finite, &mut state, &mut tokens, spec),
+        Err(ContractError::InvalidCategoricalProbability {
+            row: 1,
+            column: 1,
+            value,
+        }) if value.is_nan()
+    ));
+    assert_eq!(state, initial_state);
+    assert_eq!(tokens, [91, 92]);
+}
+
+#[test]
+fn categorical_sample_validates_exact_buffer_lengths_before_mutation() {
+    let spec = CategoricalSampleSpec::new(2, 3).unwrap();
+    let probabilities = [0.2_f32, 0.3, 0.5, 0.0, 0.25, 0.75];
+    let mut state = [7_i64, 3, 9, 4];
+    let initial_state = state;
+    let mut tokens = [91_i64, 92];
+
+    assert_eq!(
+        categorical_sample_f32_reference(&probabilities[..5], &mut state, &mut tokens, spec),
+        Err(ContractError::LengthMismatch {
+            buffer: "probabilities",
+            expected: 6,
+            actual: 5,
+        })
+    );
+    assert_eq!(state, initial_state);
+    assert_eq!(tokens, [91, 92]);
+    assert_eq!(
+        categorical_sample_f32_reference(&probabilities, &mut state[..3], &mut tokens, spec),
+        Err(ContractError::LengthMismatch {
+            buffer: "rng_state",
+            expected: 4,
+            actual: 3,
+        })
+    );
+    assert_eq!(state, initial_state);
+    assert_eq!(tokens, [91, 92]);
+    assert_eq!(
+        categorical_sample_f32_reference(&probabilities, &mut state, &mut tokens[..1], spec),
+        Err(ContractError::LengthMismatch {
+            buffer: "token_ids",
+            expected: 2,
+            actual: 1,
+        })
+    );
+    assert_eq!(state, initial_state);
+    assert_eq!(tokens, [91, 92]);
+}
+
+#[test]
+fn categorical_sample_matches_declared_distribution_and_never_selects_zero_mass() {
+    const SAMPLES: usize = 65_536;
+    let spec = CategoricalSampleSpec::new(SAMPLES, 4).unwrap();
+    let mut probabilities = Vec::with_capacity(spec.probabilities_numel());
+    let mut state = Vec::with_capacity(spec.rng_state_numel());
+    for counter in 0..SAMPLES {
+        probabilities.extend_from_slice(&[0.0_f32, 0.125, 0.375, 0.5]);
+        state.extend_from_slice(&[31_i64, counter as i64]);
+    }
+    let mut tokens = vec![-1_i64; SAMPLES];
+
+    categorical_sample_f32_reference(&probabilities, &mut state, &mut tokens, spec).unwrap();
+
+    let mut counts = [0_usize; 4];
+    for token in tokens {
+        counts[token as usize] += 1;
+    }
+    assert_eq!(counts[0], 0);
+    for (count, expected) in counts.into_iter().zip([0.0_f64, 0.125, 0.375, 0.5]) {
+        let observed = count as f64 / SAMPLES as f64;
+        assert!(
+            (observed - expected).abs() < 0.008,
+            "observed={observed}, expected={expected}, counts={counts:?}"
+        );
+    }
+    assert_eq!(&state[..4], &[31, 1, 31, 2]);
+    assert_eq!(
+        &state[state.len() - 4..],
+        &[31, SAMPLES as i64 - 1, 31, SAMPLES as i64]
+    );
+}
+
+#[test]
+fn categorical_sample_spec_rejects_zero_and_overflowing_shapes() {
+    assert_eq!(
+        CategoricalSampleSpec::new(0, 4),
+        Err(ContractError::ZeroDimension)
+    );
+    assert_eq!(
+        CategoricalSampleSpec::new(4, 0),
+        Err(ContractError::ZeroDimension)
+    );
+    assert_eq!(
+        CategoricalSampleSpec::new(usize::MAX, 2),
+        Err(ContractError::ElementCountOverflow)
+    );
+}
 
 #[test]
 fn greedy_sample_logprobs_selects_first_tie_and_normalizes() {

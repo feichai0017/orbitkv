@@ -74,6 +74,13 @@ per-row temperature in one F32 pass. Penalties, thinking-budget state, custom
 processors, overlapping min-token/bad-word policy, and all-greedy or all-random
 batches conservatively stay on vLLM.
 
+A thirteenth explicit registration owns deterministic categorical selection
+for an engine lifetime. vLLM still constructs sampling policy and normalized
+probabilities; Loom stores one `(seed, counter)` row per cached request, moves
+it with persistent batch slots, and replaces only the native `random_sample`
+call. The opt-in is deliberately strict: every random request is explicitly
+seeded and speculative decoding is disabled.
+
 The registered contract is:
 
 ```text
@@ -89,6 +96,10 @@ the complete cross-matrix gate. The `f98a931` refresh packages the final FP8 KV
 adapter and passes all 286 vLLM 0.24 tests; its other matrix rows remain open.
 Both include fused logits preprocessing, exact top-k filtering, and fused
 top-p renormalization, and neither is published.
+Current ABI8 source adds deterministic categorical sampling with persistent
+request-owned RNG state. Its lifecycle compatibility is validated on vLLM
+0.24.0 and 0.25.1, and its real-engine gate is validated on 0.24.0; the ABI8
+wheel matrix remains open and does not inherit ABI7 qualification.
 Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
@@ -127,11 +138,15 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-This command builds an ABI7 artifact from the checked-out revision.
-Clean-install qualification is tied to the exact manifest revision and wheel
-hash: `f98a931` passes the full vLLM 0.24 suite, while the earlier `d58ebf8`
-artifact owns the complete PyTorch/vLLM cross-matrix. Neither is published to
-a package index. Editable
+The install command above names the last qualified ABI7 artifact. Current
+source deliberately builds ABI8 for explicit-state categorical sampling; that
+new wheel has not completed the clean-install matrix. The source adapter and
+order-reversed vLLM 0.24 engine gate are complete, but do not inherit ABI7
+wheel qualification. Qualification remains
+tied to an exact manifest revision and wheel hash: `f98a931` passes the full
+vLLM 0.24 ABI7 suite, while the earlier `d58ebf8` ABI7 artifact owns the
+complete PyTorch/vLLM cross-matrix. Neither is published to a package index.
+Editable
 source development remains documented in the
 [Python README](../../python/README.md#source-development), but it cannot
 produce a source-only wheel.
@@ -308,6 +323,50 @@ context 1-32. Sliding windows, ALiBi, soft caps, sinks, cascade/common prefix,
 DCP, KV sharing, quantized cache, and multimodal prefix masks all execute the
 original `FlashAttentionImpl.forward`. FA3 AOT scheduler metadata is allowed
 because it affects only FA3's kernel scheduling, not attention semantics.
+
+To give Loom ownership of explicitly seeded categorical selection, register
+the adapter before constructing the engine:
+
+```python
+from vllm import LLM, SamplingParams
+from loom_kernels.vllm import register_vllm_categorical_sample
+
+assert register_vllm_categorical_sample() == "categorical_sample"
+engine = LLM(model="/path/to/model")
+
+sampling = SamplingParams(
+    temperature=1.0,
+    top_k=50,
+    top_p=0.9,
+    seed=461,
+)
+```
+
+This is an engine-wide semantic opt-in, not a shape fallback. Every random
+request must provide a non-negative signed-int64 seed; unseeded random
+admission raises. Constructing a speculative engine also raises. Greedy
+requests may share the batch because their random result is discarded. Loom
+does not advance vLLM's `torch.Generator`, and the same seed intentionally
+produces Loom's declared Philox/CDF stream rather than native vLLM tokens.
+Do not register or unregister the adapter mid-engine.
+
+The adapter leaves vLLM's temperature, processors, top-k/top-p filtering,
+softmax, and processed-logprob modes unchanged. It stores persistent state on
+`CachedRequestState`, copies it into a contiguous `InputBatch` tensor, moves
+the row on slot swaps or condensation, and copies it back during preemption or
+temporary unscheduling. Stable decode steps perform no host counter update or
+Python state reconstruction.
+
+Lifecycle coverage passes on vLLM 0.24 and 0.25.1. The process-isolated
+Qwen2.5-0.5B H20
+[baseline-first](../results/h20-vllm-engine-categorical-sample-20260727.json)
+and
+[Loom-first](../results/h20-vllm-engine-categorical-sample-loom-first-20260727.json)
+gates exactly replay each provider's stream and record one Loom launch per
+decode step. Batch 1–4 costs `1.5–2.4%`, batch 8 is near crossover, and batch
+32 improves latency/throughput by `5.7–8.1%` in both orders. The benchmark
+uses in-process EngineCore so launch telemetry is readable; a separate default
+Linux multiprocessing smoke reproduces the same Loom stream.
 
 To enable the pure-greedy sampled-logprob fast path, register it before engine
 construction:
@@ -934,18 +993,22 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
   activation-quant fusion-table replacement, plus a vLLM 0.24/0.25-specific
   RoPE+native/static-FP8-KV compiler-pass adapter, greedy/general selected-token
   and top-k sampled-logprob sampler overrides, shape-gated top-k and fused
-  top-p/renormalization overrides, a shape-gated Min-P override, and a
-  measured-shape FlashAttention paged-decode override;
+  top-p/renormalization overrides, an explicit-seed categorical adapter, a
+  shape-gated Min-P override, and a measured-shape FlashAttention paged-decode
+  override;
 - the activation-quant provider requires a graph-visible quantization boundary;
   it does not intercept vLLM's fused BF16-input FlashInfer/DeepGEMM path;
 - the isolated operator is faster on H20 and real-model invocation is proven,
   but no model-level speedup has been established for either FP8 activation
   fusion or RoPE+paged-KV;
 - vLLM-owned penalties, masks, and stochastic sampling can feed the
-  selected-token path; Loom now accelerates measured top-k-only and top-p-only
-  filtering shapes but leaves joint top-k/top-p and RNG native. Min-P remains
-  separately shape-gated, raw top-k logprob lists have an exact
-  rows-at-most-32 adapter, and non-raw modes still fall back;
+  selected-token path. Without categorical registration, Loom accelerates
+  measured top-k-only and top-p-only filtering shapes but leaves joint
+  top-k/top-p and RNG native. With categorical registration, Loom owns the
+  explicit-seed stream for the engine lifetime; unseeded and speculative
+  contracts fail early. Min-P remains separately shape-gated, raw top-k
+  logprob lists have an exact rows-at-most-32 adapter, and non-raw modes still
+  fall back;
 - paged decode is limited to the exact H20-qualified 32/8-head, D128,
   context-at-most-32 envelope; pretrained-model and serving-scale evidence plus
   competitive 128-1,024-token kernels remain open.

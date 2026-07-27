@@ -42,6 +42,8 @@ enum loom_cuda_bridge_operator {
   LOOM_CUDA_BRIDGE_TOP_K_FILTER = 13,
   LOOM_CUDA_BRIDGE_TOP_P_RENORM = 14,
   LOOM_CUDA_BRIDGE_LOGITS_PREPROCESS = 15,
+  LOOM_CUDA_BRIDGE_CATEGORICAL_SAMPLE = 16,
+  LOOM_CUDA_BRIDGE_OPERATOR_COUNT = 17,
 };
 
 uint32_t loom_cuda_bridge_abi_version(void);
@@ -76,6 +78,12 @@ int loom_cuda_bridge_silu_and_mul_dynamic_fp8(
     uint64_t scale_elements, const float* scale_upper_bound,
     uint64_t scale_upper_bound_elements, uint32_t rows, uint32_t width,
     uint32_t group_size, uint32_t scales_transposed, void* stream);
+
+int loom_cuda_bridge_categorical_sample(
+    const float* probabilities, uint64_t probability_elements,
+    int64_t* rng_state, uint64_t rng_state_elements, int64_t* token_ids,
+    uint64_t token_id_elements, uint32_t rows, uint32_t vocab_size,
+    void* stream);
 
 int loom_cuda_bridge_greedy_sample_logprobs(
     uint32_t dtype, const void* logits, uint64_t logits_elements,

@@ -57,6 +57,8 @@ jobs:
             /tmp/loom-cuda-sys-package-files
           grep -Eq '/cuda/src/logits_preprocess\.cu$' \
             /tmp/loom-cuda-sys-package-files
+          grep -Eq '/cuda/src/categorical_sample\.cu$' \
+            /tmp/loom-cuda-sys-package-files
 
   benchmark-tools:
     name: python package · benchmark syntax

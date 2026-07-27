@@ -2,6 +2,71 @@
 
 namespace loom_kernels::torch_adapter {
 
+void check_categorical_sample_shape(const Tensor& probabilities,
+                                    const Tensor& rng_state) {
+  STD_TORCH_CHECK(
+      probabilities.dim() == 2 && probabilities.size(0) > 0 &&
+          probabilities.size(1) > 0,
+      "Loom categorical probabilities must be non-empty rank-2");
+  STD_TORCH_CHECK(
+      probabilities.size(0) <= std::numeric_limits<int32_t>::max() &&
+          probabilities.size(1) <= std::numeric_limits<int32_t>::max(),
+      "Loom categorical-sampling shape exceeds the CUDA ABI");
+  STD_TORCH_CHECK(
+      rng_state.dim() == 2 && rng_state.size(0) == probabilities.size(0) &&
+          rng_state.size(1) == 2,
+      "Loom categorical RNG state must have shape [rows, 2]");
+}
+
+void check_categorical_sample_contract(const Tensor& probabilities,
+                                       const Tensor& rng_state) {
+  check_categorical_sample_shape(probabilities, rng_state);
+  STD_TORCH_CHECK(probabilities.is_cuda(),
+                  "Loom categorical probabilities must be CUDA");
+  STD_TORCH_CHECK(probabilities.scalar_type() == ScalarType::Float,
+                  "Loom categorical probabilities must be F32");
+  STD_TORCH_CHECK(probabilities.is_contiguous(),
+                  "Loom categorical probabilities must be contiguous");
+  STD_TORCH_CHECK(rng_state.device() == probabilities.device(),
+                  "Loom categorical RNG state and probabilities must share "
+                  "one CUDA device");
+  STD_TORCH_CHECK(rng_state.scalar_type() == ScalarType::Long,
+                  "Loom categorical RNG state must be int64");
+  STD_TORCH_CHECK(rng_state.is_contiguous(),
+                  "Loom categorical RNG state must be contiguous");
+  STD_TORCH_CHECK(!byte_ranges_overlap(probabilities, rng_state),
+                  "Loom categorical probabilities and RNG state must not "
+                  "overlap");
+}
+
+Tensor categorical_sample(const Tensor& probabilities, Tensor rng_state) {
+  check_categorical_sample_contract(probabilities, rng_state);
+  const auto rows = static_cast<uint32_t>(probabilities.size(0));
+  const auto vocab_size = static_cast<uint32_t>(probabilities.size(1));
+  Tensor token_ids =
+      new_empty(probabilities, {probabilities.size(0)}, ScalarType::Long);
+
+  const CudaDeviceGuard device_guard(probabilities.device());
+  const auto stream = current_cuda_stream(probabilities.device().index());
+  const int status = loom_cuda_bridge_categorical_sample(
+      probabilities.const_data_ptr<float>(),
+      static_cast<uint64_t>(probabilities.numel()),
+      rng_state.mutable_data_ptr<int64_t>(),
+      static_cast<uint64_t>(rng_state.numel()),
+      token_ids.mutable_data_ptr<int64_t>(),
+      static_cast<uint64_t>(token_ids.numel()), rows, vocab_size,
+      stream.stream());
+  check_bridge_status(status, "categorical sampling");
+  return token_ids;
+}
+
+Tensor categorical_sample_meta(const Tensor& probabilities,
+                               Tensor rng_state) {
+  check_categorical_sample_shape(probabilities, rng_state);
+  return new_empty(
+      probabilities, {probabilities.size(0)}, ScalarType::Long);
+}
+
 void check_greedy_sample_logprobs_shape(const Tensor& logits) {
   STD_TORCH_CHECK(logits.dim() == 2 && logits.size(0) > 0 && logits.size(1) > 0,
               "Loom greedy sampling logits must be non-empty rank-2");
@@ -474,6 +539,9 @@ void apply_token_penalties_meta(
 
 STABLE_TORCH_LIBRARY_IMPL(loom_kernels, CUDA, library) {
   library.impl(
+      "categorical_sample",
+      TORCH_BOX(&loom_kernels::torch_adapter::categorical_sample));
+  library.impl(
       "greedy_sample_logprobs",
       TORCH_BOX(&loom_kernels::torch_adapter::greedy_sample_logprobs));
   library.impl(
@@ -494,6 +562,9 @@ STABLE_TORCH_LIBRARY_IMPL(loom_kernels, CUDA, library) {
 }
 
 STABLE_TORCH_LIBRARY_IMPL(loom_kernels, Meta, library) {
+  library.impl(
+      "categorical_sample",
+      TORCH_BOX(&loom_kernels::torch_adapter::categorical_sample_meta));
   library.impl(
       "greedy_sample_logprobs",
       TORCH_BOX(&loom_kernels::torch_adapter::greedy_sample_logprobs_meta));

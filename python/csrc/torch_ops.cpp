@@ -20,6 +20,9 @@ STABLE_TORCH_LIBRARY(loom_kernels, library) {
       "Tensor(b!) scales, int group_size, Tensor? scale_ub=None, "
       "bool is_scale_transposed=False) -> ()");
   library.def(
+      "categorical_sample(Tensor probabilities, Tensor(a!) rng_state) -> "
+      "Tensor token_ids");
+  library.def(
       "greedy_sample_logprobs(Tensor logits) -> (Tensor token_ids, Tensor "
       "logprobs, Tensor ranks)");
   library.def(

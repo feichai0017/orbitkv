@@ -57,7 +57,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-7cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]'</code></pre>
+  'dist/loom_kernels-1.0.0a1-8cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]'</code></pre>
       <p>
         The artifact contains exactly the Rust-owned
         <code>libloom_cuda_bridge.so</code> and boxed
@@ -67,11 +67,14 @@ python3 -m venv .venv-vllm
         this package-local pair. The K0.7 bridge-ABI-7 wheel is H20-qualified
         across PyTorch 2.10/2.11 and vLLM 0.24/0.25 and is not published to a
         package index. It includes all sixteen checked operators, including
-        fused mixed-sampling logits preprocessing.
+        fused mixed-sampling logits preprocessing. Current source emits ABI8
+        with a seventeenth direct categorical sampler; that new wheel has not
+        completed the clean-install matrix.
       </p>
 
       <h2>Call PyTorch directly</h2>
       <pre><code>from loom_kernels import (
+    categorical_sample,
     greedy_sample_logprobs,
     greedy_speculative_verify,
     logits_preprocess_,
@@ -107,6 +110,10 @@ logprobs, ranks = selected_token_logprobs(logits, sampled_ids_i64)
 topk_ids, topk_logprobs, sampled_ranks = topk_sampled_logprobs(
     logits, sampled_ids_i64, 20
 )
+sampled_ids_i64 = categorical_sample(
+    sampling_probabilities_f32,
+    persistent_rng_state_i64,
+)
 min_p_filter_(sampling_logits_f32, min_p_f32)
 
 capacity = token_penalties_workspace_capacity(
@@ -140,6 +147,7 @@ apply_token_penalties_(
           <tr><td>RoPE+paged-KV</td><td><code>configure_vllm_rope_paged_kv(...)</code></td></tr>
           <tr><td>Short paged decode</td><td><code>LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1</code></td></tr>
           <tr><td>Mixed-sampling logits preprocessing</td><td><code>register_vllm_logits_preprocess()</code></td></tr>
+          <tr><td>Deterministic categorical sampling</td><td><code>register_vllm_categorical_sample()</code></td></tr>
           <tr><td>Greedy sampled logprob</td><td><code>register_vllm_greedy_sample_logprobs()</code></td></tr>
           <tr><td>Greedy speculative verify</td><td><code>register_vllm_greedy_speculative_verify()</code></td></tr>
           <tr><td>Selected-token logprob</td><td><code>register_vllm_selected_token_logprobs()</code></td></tr>
@@ -148,6 +156,16 @@ apply_token_penalties_(
           <tr><td>Sparse token penalties</td><td><code>register_vllm_token_penalties()</code></td></tr>
         </tbody>
       </table>
+
+      <p>
+        The categorical opt-in is an engine-lifetime semantic choice. Every
+        random request must carry an explicit nonnegative seed, speculative
+        decoding is rejected, and each cached request owns a persistent
+        <code>(seed, counter)</code> tensor that follows active-slot movement,
+        preemption, and resume. Loom replaces only vLLM's normalized
+        categorical draw, keeps its temperature/top-k/top-p policy, and uses a
+        deterministic stream that intentionally differs from native vLLM.
+      </p>
 
       <div class="doc-note">
         <strong>Admission happens before Loom dispatch.</strong>
@@ -168,7 +186,10 @@ apply_token_penalties_(
         vLLM 0.25/PyTorch 2.10 rows remain open. ABI7 includes speculative
         verification and static FP8 KV quantize-on-write, fused logits
         preprocessing, sparse token penalties, and top-k logprobs, but has not
-        been published. Pinned
+        been published. Source ABI8 adds the direct categorical sampler,
+        persistent request-state adapter, lifecycle H20 coverage on both
+        supported vLLM minors, and a real-engine gate on vLLM 0.24, but does
+        not inherit those wheel-matrix rows. Pinned
         vLLM 0.24 Qwen gates prove exact sparse-penalty acceleration, exact
         logits-preprocessing invocation with order-stable TPOT, exact top-k
         adapter invocation with order-sensitive latency, and exact native/Loom

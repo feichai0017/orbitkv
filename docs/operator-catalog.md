@@ -75,7 +75,7 @@ isolated microbenchmark is not sufficient.
 | sampled-token + top-k raw logprobs | P0 | supported | deterministic direct reduction without full-vocabulary probabilities; exact vLLM adapter preserves engine `torch.topk` order and replaces full raw log-softmax/rank |
 | exact in-place top-k filtering | P0 | supported | partition radix sort plus device-only exact threshold selection; vLLM rows 1–7 replace the full-vocabulary PyTorch sort while preserving threshold ties |
 | in-place min-p filtering | P0 | supported | row-max threshold without probability or mask tensors; vLLM route is H20 shape-gated |
-| deterministic counter-based categorical sampling | P0 | next | H20 admission passed; implement explicit caller-owned `(seed, counter)` state over normalized probabilities without a probability-shaped noise tensor |
+| deterministic counter-based categorical sampling | P0 | supported | direct ABI8 Rust/CUDA/PyTorch path plus persistent vLLM 0.24/0.25 request state; explicit `(seed, counter)`, one kernel, no probability-shaped noise tensor, exact replay, and an order-stable batch-32 engine win |
 | fused top-p filtering and renormalization | P0 | supported | deterministic retained prefix plus contiguous F32 probabilities; vLLM top-p-only route is H20 shape-gated and keeps engine RNG |
 | sharded-vocabulary top-k/logsumexp merge | P1 | planned | tensor-parallel token selection |
 | structured-output bitmask application | P1 | profile-gated | grammar mask plus logits processing |
@@ -133,10 +133,9 @@ the boundary or an isolated implementation is measurably useful.
 
 ## Implementation Order
 
-1. Implement the H20-admitted explicit-state ABI8-A categorical sampler in the
-   [counter-based design](design/counter-based-sampling.md): Rust
-   Philox/inverse-CDF oracle first, then one handwritten CUDA execution
-   pattern, safe dispatch, checked ABI8, and Stable ABI PyTorch.
+1. Commit the completed ABI8-A sampling subsystem, build the two-library ABI8
+   matrix wheel, and rerun repository-free PyTorch/vLLM clean-install gates.
+   See the [counter-based design](design/counter-based-sampling.md).
 2. Fill quantization scale/pack/layout gaps only around an unchanged vendor
    GEMM path.
 3. Add MoE routing, histogram/prefix sum, permutation, and combine; grouped

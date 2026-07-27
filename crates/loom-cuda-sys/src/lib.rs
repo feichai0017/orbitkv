@@ -159,6 +159,15 @@ unsafe extern "C" {
         stream: *mut c_void,
     ) -> c_int;
 
+    pub fn loom_cuda_categorical_sample_f32(
+        probabilities: *const f32,
+        rng_state: *mut i64,
+        token_ids: *mut i64,
+        rows: u32,
+        vocab_size: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
     pub fn loom_cuda_greedy_sample_logprobs_f32(
         logits: *const f32,
         token_ids: *mut i32,

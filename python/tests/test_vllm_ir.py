@@ -10,6 +10,7 @@ pytest.importorskip("vllm")
 from loom_kernels.vllm import (
     ACT_QUANT_OVERRIDE_ENV,
     ACT_QUANT_OVERRIDE_KEY,
+    CATEGORICAL_SAMPLE_OVERRIDE_KEY,
     DEFAULT_PROVIDER,
     GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY,
     GREEDY_SPECULATIVE_VERIFY_OVERRIDE_KEY,
@@ -34,6 +35,7 @@ from loom_kernels.vllm import (
     configure_vllm_rope_paged_kv,
     installed_vllm_version,
     provider_metadata,
+    register_vllm_categorical_sample,
     register_vllm_ir,
     register_vllm_logits_preprocess,
     register_vllm_min_p,
@@ -1391,3 +1393,133 @@ def test_loom_is_bitwise_equal_to_vllm_cuda_provider(shape):
     vllm_output, vllm_residual = outputs["vllm_c"]
     assert torch.equal(loom_output, vllm_output)
     assert torch.equal(loom_residual, vllm_residual)
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_vllm_categorical_state_survives_request_lifecycle():
+    from vllm.sampling_params import SamplingParams
+    from vllm.v1.sample.sampler import Sampler
+    from vllm.v1.worker.gpu_input_batch import CachedRequestState, InputBatch
+
+    from loom_kernels.torch_ops import (
+        Operator,
+        launch_count,
+        reset_launch_count,
+    )
+
+    assert (
+        register_vllm_categorical_sample()
+        == CATEGORICAL_SAMPLE_OVERRIDE_KEY
+    )
+
+    def request(req_id: str, seed: int | None) -> CachedRequestState:
+        sampling_params = SamplingParams(temperature=1.0, seed=seed)
+        generator = (
+            None
+            if seed is None
+            else torch.Generator(device="cuda").manual_seed(seed)
+        )
+        return CachedRequestState(
+            req_id=req_id,
+            prompt_token_ids=[1],
+            mm_features=[],
+            sampling_params=sampling_params,
+            generator=generator,
+            block_ids=([0],),
+            num_computed_tokens=0,
+            output_token_ids=[],
+        )
+
+    def make_batch(*, num_spec_tokens: int = 0) -> InputBatch:
+        return InputBatch(
+            max_num_reqs=4,
+            max_model_len=32,
+            max_num_batched_tokens=32,
+            device=torch.device("cuda"),
+            vocab_size=257,
+            block_sizes=[16],
+            kernel_block_sizes=[16],
+            max_num_blocks_per_req=[2],
+            num_spec_tokens=num_spec_tokens,
+        )
+
+    with pytest.raises(RuntimeError, match="non-speculative"):
+        make_batch(num_spec_tokens=1)
+
+    batch = make_batch()
+    with pytest.raises(ValueError, match="explicit seed"):
+        batch.add_request(request("unseeded", None))
+
+    requests = [request(f"req-{index}", 10 + index) for index in range(3)]
+    for item in requests:
+        batch.add_request(item)
+    batch.refresh_metadata()
+    sampler = Sampler()
+
+    def draw() -> list[int]:
+        logits = torch.zeros(
+            (batch.num_reqs, batch.vocab_size),
+            dtype=torch.float32,
+            device="cuda",
+        )
+        reset_launch_count(Operator.CATEGORICAL_SAMPLE)
+        token_ids, processed = sampler.sample(logits, batch.sampling_metadata)
+        torch.cuda.synchronize()
+        assert processed is None
+        assert launch_count(Operator.CATEGORICAL_SAMPLE) == 1
+        return token_ids.tolist()
+
+    assert len(draw()) == 3
+    assert batch.sampling_metadata._loom_categorical_rng_state.tolist() == [
+        [10, 1],
+        [11, 1],
+        [12, 1],
+    ]
+
+    batch.remove_request("req-1")
+    batch.condense()
+    batch.refresh_metadata()
+    assert batch.req_id_to_index == {"req-0": 0, "req-2": 1}
+    assert len(draw()) == 2
+    assert requests[1]._loom_categorical_rng_state.tolist() == [11, 1]
+
+    batch.add_request(requests[1])
+    batch.refresh_metadata()
+    assert len(draw()) == 3
+    assert batch.sampling_metadata._loom_categorical_rng_state.tolist() == [
+        [10, 3],
+        [12, 3],
+        [11, 2],
+    ]
+
+    batch.swap_states(0, 2)
+    batch.refresh_metadata()
+    assert batch.req_id_to_index == {
+        "req-0": 2,
+        "req-1": 0,
+        "req-2": 1,
+    }
+    assert len(draw()) == 3
+
+    for req_id in list(batch.req_id_to_index):
+        batch.remove_request(req_id)
+    batch.condense()
+    batch.refresh_metadata()
+    torch.cuda.synchronize()
+    assert [
+        item._loom_categorical_rng_state.tolist() for item in requests
+    ] == [
+        [10, 4],
+        [11, 3],
+        [12, 4],
+    ]
+
+    metadata = provider_metadata()
+    assert metadata["categorical_sample_override"] is True
+    assert metadata["categorical_sample_first_contract"] == {
+        "shape": [3, 257],
+        "dtype": "torch.float32",
+        "seeded_rows": 3,
+        "persistent_state": True,
+        "use_fp64_gumbel": False,
+    }

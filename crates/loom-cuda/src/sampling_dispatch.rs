@@ -5,12 +5,34 @@ use crate::runtime::{loom_status_result, CudaDeviceRead, CudaDeviceWrite, CudaSt
 use crate::{CudaExecutorError, RowStridedLayout};
 use half::{bf16, f16};
 use loom_kernels::{
-    DType, GreedySampleLogprobsSpec, SelectedTokenLogprobsSpec, TokenPenaltiesSpec, TopKFilterSpec,
-    TopKSampledLogprobsSpec, TopPRenormSpec,
+    CategoricalSampleSpec, DType, GreedySampleLogprobsSpec, SelectedTokenLogprobsSpec,
+    TokenPenaltiesSpec, TopKFilterSpec, TopKSampledLogprobsSpec, TopPRenormSpec,
 };
 use std::mem::align_of;
 
 impl<S: CudaStreamHandle> CudaBackend<S> {
+    /// Samples one token per normalized F32 row from explicit Philox state.
+    pub fn categorical_sample_f32(
+        &self,
+        probabilities: &impl CudaDeviceRead<f32>,
+        rng_state: &mut impl CudaDeviceWrite<i64>,
+        token_ids: &mut impl CudaDeviceWrite<i64>,
+        spec: CategoricalSampleSpec,
+    ) -> Result<(), CudaExecutorError> {
+        let (rows, vocab_size) =
+            validate_categorical_sample_buffers(probabilities, rng_state, token_ids, spec)?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_categorical_sample_f32(
+                probabilities.as_ptr(),
+                rng_state.as_mut_ptr(),
+                token_ids.as_mut_ptr(),
+                rows,
+                vocab_size,
+                self.raw_stream(),
+            )
+        })
+    }
+
     /// Fuses F32 greedy selection with the sampled token's logprob and rank.
     pub fn greedy_sample_logprobs_f32(
         &self,
@@ -559,6 +581,39 @@ struct TopPRenormLaunch {
     partitions: u32,
 }
 
+fn validate_categorical_sample_buffers(
+    probabilities: &impl CudaDeviceRead<f32>,
+    rng_state: &impl CudaDeviceRead<i64>,
+    token_ids: &impl CudaDeviceRead<i64>,
+    spec: CategoricalSampleSpec,
+) -> Result<(u32, u32), CudaExecutorError> {
+    probabilities.require_len(
+        spec.probabilities_numel(),
+        "categorical-sampling probabilities",
+    )?;
+    rng_state.require_len(spec.rng_state_numel(), "categorical-sampling RNG state")?;
+    token_ids.require_len(spec.rows(), "categorical-sampling token IDs")?;
+    let rows = u32::try_from(spec.rows()).map_err(|_| {
+        CudaExecutorError::InvalidContract("categorical-sampling rows exceed the CUDA ABI".into())
+    })?;
+    if rows > i32::MAX as u32 {
+        return Err(CudaExecutorError::InvalidContract(
+            "categorical-sampling rows exceed the CUDA grid".into(),
+        ));
+    }
+    let vocab_size = u32::try_from(spec.vocab_size()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "categorical-sampling vocabulary exceeds the CUDA ABI".into(),
+        )
+    })?;
+    if vocab_size > i32::MAX as u32 {
+        return Err(CudaExecutorError::InvalidContract(
+            "categorical-sampling vocabulary exceeds the CUDA execution range".into(),
+        ));
+    }
+    Ok((rows, vocab_size))
+}
+
 fn require_top_k_filter_dtype(
     spec: TopKFilterSpec,
     expected: DType,
@@ -960,10 +1015,86 @@ mod tests {
     use super::*;
     use crate::runtime::{DeviceBuffer, DeviceSliceMut};
     use loom_kernels::{
-        apply_token_penalties_f32_reference, greedy_sample_logprobs_f32_reference,
-        selected_token_logprobs_f32_reference, top_k_filter_f32_reference,
-        top_p_renorm_f32_reference, topk_sampled_logprobs_f32_reference,
+        apply_token_penalties_f32_reference, categorical_sample_f32_reference,
+        greedy_sample_logprobs_f32_reference, selected_token_logprobs_f32_reference,
+        top_k_filter_f32_reference, top_p_renorm_f32_reference,
+        topk_sampled_logprobs_f32_reference,
     };
+
+    #[test]
+    fn categorical_sample_wrapper_matches_the_cpu_oracle() {
+        let spec = CategoricalSampleSpec::new(3, 4).unwrap();
+        let probabilities = [
+            0.1_f32, 0.2, 0.3, 0.4, //
+            1.0, 0.0, 0.0, 0.0, //
+            0.0, 0.25, 0.75, 0.0,
+        ];
+        let initial_state = [0_i64, 0, 17, 41, i64::MAX, i64::MAX - 1];
+        let mut expected_state = initial_state;
+        let mut expected_tokens = [-1_i64; 3];
+        categorical_sample_f32_reference(
+            &probabilities,
+            &mut expected_state,
+            &mut expected_tokens,
+            spec,
+        )
+        .unwrap();
+
+        let backend = CudaBackend::new().unwrap();
+        let probabilities_device = DeviceBuffer::from_slice(&probabilities).unwrap();
+        let mut state_device = DeviceBuffer::from_slice(&initial_state).unwrap();
+        let mut tokens_device = DeviceBuffer::from_slice(&[-1_i64; 3]).unwrap();
+        backend
+            .categorical_sample_f32(
+                &probabilities_device,
+                &mut state_device,
+                &mut tokens_device,
+                spec,
+            )
+            .unwrap();
+        backend.stream().synchronize().unwrap();
+
+        assert_eq!(tokens_device.copy_to_vec().unwrap(), expected_tokens);
+        assert_eq!(state_device.copy_to_vec().unwrap(), expected_state);
+    }
+
+    #[test]
+    fn categorical_sample_large_vocab_matches_the_fixed_cdf_tree() {
+        let rows = 32;
+        let vocab_size = 151_936;
+        let spec = CategoricalSampleSpec::new(rows, vocab_size).unwrap();
+        let probability = 1.0_f32 / vocab_size as f32;
+        let probabilities = vec![probability; spec.probabilities_numel()];
+        let initial_state = (0..rows)
+            .flat_map(|row| [7_000 + row as i64, (row * 31) as i64])
+            .collect::<Vec<_>>();
+        let mut expected_state = initial_state.clone();
+        let mut expected_tokens = vec![-1_i64; rows];
+        categorical_sample_f32_reference(
+            &probabilities,
+            &mut expected_state,
+            &mut expected_tokens,
+            spec,
+        )
+        .unwrap();
+
+        let backend = CudaBackend::new().unwrap();
+        let probabilities_device = DeviceBuffer::from_slice(&probabilities).unwrap();
+        let mut state_device = DeviceBuffer::from_slice(&initial_state).unwrap();
+        let mut tokens_device = DeviceBuffer::from_slice(&vec![-1_i64; rows]).unwrap();
+        backend
+            .categorical_sample_f32(
+                &probabilities_device,
+                &mut state_device,
+                &mut tokens_device,
+                spec,
+            )
+            .unwrap();
+        backend.stream().synchronize().unwrap();
+
+        assert_eq!(tokens_device.copy_to_vec().unwrap(), expected_tokens);
+        assert_eq!(state_device.copy_to_vec().unwrap(), expected_state);
+    }
 
     #[test]
     fn safe_rust_wrapper_matches_the_cpu_oracle() {

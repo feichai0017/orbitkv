@@ -156,6 +156,27 @@ pub enum ContractError {
         row: usize,
         value: f32,
     },
+    InvalidCategoricalProbability {
+        row: usize,
+        column: usize,
+        value: f32,
+    },
+    NoPositiveCategoricalProbability {
+        row: usize,
+    },
+    CategoricalProbabilitySumOutOfRange {
+        row: usize,
+        sum: f64,
+        tolerance: f64,
+    },
+    InvalidRngState {
+        row: usize,
+        component: &'static str,
+        value: i64,
+    },
+    RngCounterExhausted {
+        row: usize,
+    },
     InvalidTemperature {
         row: usize,
         value: f32,
@@ -326,6 +347,34 @@ impl fmt::Display for ContractError {
             } => write!(
                 formatter,
                 "{parameter} for row {row} must be finite and in [0, 1], got {value}"
+            ),
+            Self::InvalidCategoricalProbability { row, column, value } => write!(
+                formatter,
+                "categorical probability at row {row}, column {column} must be finite and non-negative, got {value}"
+            ),
+            Self::NoPositiveCategoricalProbability { row } => write!(
+                formatter,
+                "categorical probability row {row} must contain a positive value"
+            ),
+            Self::CategoricalProbabilitySumOutOfRange {
+                row,
+                sum,
+                tolerance,
+            } => write!(
+                formatter,
+                "categorical probability row {row} must sum to 1 within {tolerance}, got {sum}"
+            ),
+            Self::InvalidRngState {
+                row,
+                component,
+                value,
+            } => write!(
+                formatter,
+                "categorical RNG {component} for row {row} must be non-negative, got {value}"
+            ),
+            Self::RngCounterExhausted { row } => write!(
+                formatter,
+                "categorical RNG counter for row {row} cannot advance beyond int64::MAX"
             ),
             Self::InvalidTemperature { row, value } => write!(
                 formatter,
