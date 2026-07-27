@@ -41,6 +41,7 @@ enum loom_cuda_bridge_operator {
   LOOM_CUDA_BRIDGE_TOPK_SAMPLED_LOGPROBS = 12,
   LOOM_CUDA_BRIDGE_TOP_K_FILTER = 13,
   LOOM_CUDA_BRIDGE_TOP_P_RENORM = 14,
+  LOOM_CUDA_BRIDGE_LOGITS_PREPROCESS = 15,
 };
 
 uint32_t loom_cuda_bridge_abi_version(void);
@@ -148,6 +149,18 @@ int loom_cuda_bridge_greedy_speculative_verify(
 int loom_cuda_bridge_min_p_filter(
     uint32_t dtype, void* logits, uint64_t logits_elements,
     const float* min_p, uint64_t min_p_elements, uint32_t rows,
+    uint32_t vocab_size, uint64_t row_stride, void* stream);
+
+int loom_cuda_bridge_logits_preprocess(
+    float* logits, uint64_t logits_elements, const float* temperatures,
+    uint64_t temperature_elements, const uint8_t* blocked_mask,
+    uint64_t blocked_mask_elements, const int32_t* bias_row_ids,
+    uint64_t bias_row_id_elements, const int32_t* bias_token_ids,
+    uint64_t bias_token_id_elements, const float* bias_values,
+    uint64_t bias_value_elements, const int32_t* suppressed_row_ids,
+    uint64_t suppressed_row_id_elements,
+    const int32_t* suppressed_token_ids,
+    uint64_t suppressed_token_id_elements, uint32_t rows,
     uint32_t vocab_size, uint64_t row_stride, void* stream);
 
 int loom_cuda_bridge_rope_paged_kv_write(

@@ -13,6 +13,7 @@ from loom_kernels.vllm import (
     DEFAULT_PROVIDER,
     GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY,
     GREEDY_SPECULATIVE_VERIFY_OVERRIDE_KEY,
+    LOGITS_PREPROCESS_OVERRIDE_KEY,
     MIN_P_OVERRIDE_ENV,
     MIN_P_OVERRIDE_KEY,
     PAGED_DECODE_OVERRIDE_ENV,
@@ -34,6 +35,7 @@ from loom_kernels.vllm import (
     installed_vllm_version,
     provider_metadata,
     register_vllm_ir,
+    register_vllm_logits_preprocess,
     register_vllm_min_p,
     register_vllm_paged_decode_attention,
     register_vllm_greedy_sample_logprobs,
@@ -49,6 +51,248 @@ from loom_kernels.vllm import (
     supports_installed_vllm,
     supports_vllm_paged_decode_shape,
 )
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_vllm_logits_preprocess_fuses_mixed_sampling_and_preserves_fallbacks():
+    from vllm.v1.sample.logits_processor import LogitsProcessors
+    from vllm.v1.sample.logits_processor.builtin import (
+        LogitBiasLogitsProcessor,
+        MinTokensLogitsProcessor,
+    )
+    from vllm.v1.sample.sampler import Sampler
+
+    import loom_kernels.vllm.logits as logits_integration
+    from loom_kernels.torch_ops import (
+        Operator,
+        launch_count,
+        reset_launch_count,
+    )
+
+    class CaptureSampler(torch.nn.Module):
+        def __init__(self):
+            super().__init__()
+            self.seen: torch.Tensor | None = None
+
+        def forward(self, logits, generators, top_k, top_p):
+            self.seen = logits.clone()
+            return logits.argmax(dim=-1), logits.clone()
+
+    assert (
+        register_vllm_logits_preprocess()
+        == LOGITS_PREPROCESS_OVERRIDE_KEY
+    )
+    original_apply = logits_integration._LOGITS_PREPROCESS_ORIGINAL_APPLY
+    original_sample = logits_integration._LOGITS_PREPROCESS_ORIGINAL_SAMPLE
+    assert original_apply is not None
+    assert original_sample is not None
+
+    rows, vocab_size = 3, 257
+    temperatures = torch.tensor([0.0, 0.7, 1.2], device="cuda")
+    all_random_temperatures = torch.tensor(
+        [0.6, 0.7, 1.2], device="cuda"
+    )
+    blocked_mask = torch.zeros(
+        (rows, vocab_size), device="cuda", dtype=torch.bool
+    )
+    blocked_mask[:, 13] = True
+    bias = LogitBiasLogitsProcessor.__new__(LogitBiasLogitsProcessor)
+    bias.biases = {0: {5: 0.5}, 2: {11: -0.25}}
+    bias.logits_slice = (
+        torch.tensor([0, 2], device="cuda", dtype=torch.int32),
+        torch.tensor([5, 11], device="cuda", dtype=torch.int32),
+    )
+    bias.bias_tensor = torch.tensor([0.5, -0.25], device="cuda")
+    min_tokens = MinTokensLogitsProcessor.__new__(MinTokensLogitsProcessor)
+    min_tokens.min_toks = {1: (4, [], {7, 9})}
+    min_tokens.logits_slice = (
+        torch.tensor([1, 1], device="cuda", dtype=torch.int32),
+        torch.tensor([7, 9], device="cuda", dtype=torch.int32),
+    )
+    min_tokens.neg_inf_tensor = torch.tensor(-float("inf"), device="cuda")
+
+    def metadata(*, all_random: bool = False):
+        return SimpleNamespace(
+            temperature=(
+                all_random_temperatures if all_random else temperatures
+            ),
+            all_greedy=False,
+            all_random=all_random,
+            top_p=None,
+            top_k=None,
+            generators={},
+            max_num_logprobs=None,
+            no_penalties=True,
+            prompt_token_ids=None,
+            frequency_penalties=torch.zeros(rows, device="cuda"),
+            presence_penalties=torch.zeros(rows, device="cuda"),
+            repetition_penalties=torch.ones(rows, device="cuda"),
+            output_token_ids=[[], [], []],
+            allowed_token_ids_mask=blocked_mask,
+            bad_words_token_ids={},
+            logitsprocs=LogitsProcessors([min_tokens, bias]),
+            logprob_token_ids=None,
+            spec_token_ids=None,
+            thinking_budget_state_holder=None,
+        )
+
+    torch.manual_seed(503)
+    source = torch.randn((rows, vocab_size), device="cuda")
+    expected_metadata = metadata()
+    expected_sampler = Sampler(logprobs_mode="processed_logits")
+    expected_sampler.topk_topp_sampler = CaptureSampler()
+    expected_logits = original_apply(
+        expected_sampler,
+        source.clone(),
+        expected_metadata,
+        False,
+    )
+    expected_ids, expected_processed = original_sample(
+        expected_sampler,
+        expected_logits,
+        expected_metadata,
+    )
+
+    actual_metadata = metadata()
+    actual_sampler = Sampler(logprobs_mode="processed_logits")
+    actual_sampler.topk_topp_sampler = CaptureSampler()
+    actual_logits = source.clone()
+    reset_launch_count(Operator.LOGITS_PREPROCESS)
+    deferred = actual_sampler.apply_logits_processors(
+        actual_logits, actual_metadata, False
+    )
+    assert deferred is actual_logits
+    assert torch.equal(actual_logits, source)
+    actual_ids, actual_processed = actual_sampler.sample(
+        actual_logits, actual_metadata
+    )
+    torch.cuda.synchronize()
+
+    assert launch_count(Operator.LOGITS_PREPROCESS) == 1
+    assert torch.equal(actual_ids, expected_ids)
+    assert actual_processed is not None
+    assert expected_processed is not None
+    torch.testing.assert_close(
+        actual_processed, expected_processed, rtol=1.0e-6, atol=1.0e-6
+    )
+    contract = provider_metadata()["logits_preprocess_first_contract"]
+    assert contract is not None
+    assert contract["mixed_sampling"] is True
+    assert contract["bias_count"] == 2
+    assert contract["suppression_count"] == 2
+    observed = provider_metadata()["logits_preprocess_observed"]
+    assert observed["accepted_contracts"] >= 1
+    assert observed["blocked_mask"] is True
+    assert observed["maximum_bias_count"] >= 2
+    assert observed["maximum_suppression_count"] >= 2
+    assert observed["min_tokens"] is True
+
+    fallback_metadata = metadata(all_random=True)
+    fallback_logits = source.clone()
+    reset_launch_count(Operator.LOGITS_PREPROCESS)
+    fallback_sampler = Sampler()
+    fallback_sampler.topk_topp_sampler = CaptureSampler()
+    fallback_sampler.apply_logits_processors(
+        fallback_logits, fallback_metadata, False
+    )
+    fallback_sampler.sample(fallback_logits, fallback_metadata)
+    torch.cuda.synchronize()
+    assert launch_count(Operator.LOGITS_PREPROCESS) == 0
+    assert provider_metadata()["logits_preprocess_override"] is True
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_vllm_logits_preprocess_matches_active_bad_word_suppression():
+    from vllm.v1.sample.logits_processor import LogitsProcessors
+    from vllm.v1.sample.sampler import Sampler
+
+    import loom_kernels.vllm.logits as logits_integration
+    from loom_kernels.torch_ops import (
+        Operator,
+        launch_count,
+        reset_launch_count,
+    )
+
+    assert (
+        register_vllm_logits_preprocess()
+        == LOGITS_PREPROCESS_OVERRIDE_KEY
+    )
+    original_apply = logits_integration._LOGITS_PREPROCESS_ORIGINAL_APPLY
+    assert original_apply is not None
+
+    rows, vocab_size = 2, 127
+    source = torch.randn((rows, vocab_size), device="cuda")
+
+    def metadata():
+        return SimpleNamespace(
+            temperature=torch.tensor([0.0, 0.8], device="cuda"),
+            all_greedy=False,
+            all_random=False,
+            top_p=None,
+            top_k=None,
+            generators={},
+            max_num_logprobs=None,
+            no_penalties=True,
+            prompt_token_ids=None,
+            frequency_penalties=torch.zeros(rows, device="cuda"),
+            presence_penalties=torch.zeros(rows, device="cuda"),
+            repetition_penalties=torch.ones(rows, device="cuda"),
+            output_token_ids=[[4, 10], [3]],
+            allowed_token_ids_mask=None,
+            bad_words_token_ids={0: [[10, 17], [99]], 1: [[8, 23]]},
+            logitsprocs=LogitsProcessors(),
+            logprob_token_ids=None,
+            spec_token_ids=None,
+            thinking_budget_state_holder=None,
+        )
+
+    expected_metadata = metadata()
+    expected_sampler = Sampler()
+    expected = original_apply(
+        expected_sampler, source.clone(), expected_metadata, False
+    )
+    expected.div_(
+        torch.where(
+            expected_metadata.temperature < 1.0e-5,
+            1.0,
+            expected_metadata.temperature,
+        ).unsqueeze(1)
+    )
+
+    actual_metadata = metadata()
+    actual_sampler = Sampler()
+    actual = source.clone()
+    reset_launch_count(Operator.LOGITS_PREPROCESS)
+    actual_sampler.apply_logits_processors(
+        actual, actual_metadata, False
+    )
+    state = getattr(
+        actual_metadata,
+        logits_integration._LOGITS_PREPROCESS_STATE_ATTRIBUTE,
+    )
+    torch.ops.loom_kernels.logits_preprocess_(
+        actual,
+        actual_metadata.temperature,
+        state.blocked_mask,
+        state.bias_row_ids,
+        state.bias_token_ids,
+        state.bias_values,
+        state.suppressed_row_ids,
+        state.suppressed_token_ids,
+    )
+    delattr(
+        actual_metadata,
+        logits_integration._LOGITS_PREPROCESS_STATE_ATTRIBUTE,
+    )
+    torch.cuda.synchronize()
+
+    assert launch_count(Operator.LOGITS_PREPROCESS) == 1
+    torch.testing.assert_close(actual, expected, rtol=1.0e-6, atol=1.0e-6)
+    assert torch.isneginf(actual[0, 17])
+    assert torch.isneginf(actual[0, 99])
+    assert provider_metadata()["logits_preprocess_observed"][
+        "bad_words"
+    ] is True
 
 
 def test_installed_vllm_series_is_supported():

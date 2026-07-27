@@ -156,6 +156,36 @@ pub enum ContractError {
         row: usize,
         value: f32,
     },
+    InvalidTemperature {
+        row: usize,
+        value: f32,
+    },
+    InvalidMaskValue {
+        index: usize,
+        value: u8,
+    },
+    SparseRowOutOfBounds {
+        parameter: &'static str,
+        entry: usize,
+        row_id: i32,
+        rows: usize,
+    },
+    SparseTokenOutOfBounds {
+        parameter: &'static str,
+        entry: usize,
+        token_id: i32,
+        vocab_size: usize,
+    },
+    InvalidLogitBias {
+        entry: usize,
+        value: f32,
+    },
+    DuplicateLogitBias {
+        first_entry: usize,
+        second_entry: usize,
+        row_id: i32,
+        token_id: i32,
+    },
     InvalidScale(f32),
     HeadCountNotDivisible {
         query_heads: usize,
@@ -296,6 +326,45 @@ impl fmt::Display for ContractError {
             } => write!(
                 formatter,
                 "{parameter} for row {row} must be finite and in [0, 1], got {value}"
+            ),
+            Self::InvalidTemperature { row, value } => write!(
+                formatter,
+                "temperature for row {row} must be finite and non-negative, got {value}"
+            ),
+            Self::InvalidMaskValue { index, value } => write!(
+                formatter,
+                "blocked-mask value at flattened index {index} must be 0 or 1, got {value}"
+            ),
+            Self::SparseRowOutOfBounds {
+                parameter,
+                entry,
+                row_id,
+                rows,
+            } => write!(
+                formatter,
+                "{parameter} row ID {row_id} at entry {entry} is outside [0, {rows})"
+            ),
+            Self::SparseTokenOutOfBounds {
+                parameter,
+                entry,
+                token_id,
+                vocab_size,
+            } => write!(
+                formatter,
+                "{parameter} token ID {token_id} at entry {entry} is outside [0, {vocab_size})"
+            ),
+            Self::InvalidLogitBias { entry, value } => write!(
+                formatter,
+                "logit bias at entry {entry} must be finite, got {value}"
+            ),
+            Self::DuplicateLogitBias {
+                first_entry,
+                second_entry,
+                row_id,
+                token_id,
+            } => write!(
+                formatter,
+                "logit bias entries {first_entry} and {second_entry} both target row {row_id}, token {token_id}"
             ),
             Self::InvalidScale(value) => write!(
                 formatter,

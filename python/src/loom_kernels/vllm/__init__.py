@@ -36,10 +36,13 @@ from .attention import (
     supports_vllm_paged_decode_shape,
 )
 from .logits import (
+    LOGITS_PREPROCESS_OVERRIDE_ENV,
+    LOGITS_PREPROCESS_OVERRIDE_KEY,
     MIN_P_FAST_PATH_MIN_ROWS,
     MIN_P_FAST_PATH_MIN_VOCAB_SIZE,
     MIN_P_OVERRIDE_ENV,
     MIN_P_OVERRIDE_KEY,
+    register_vllm_logits_preprocess,
     register_vllm_min_p,
 )
 from .rope_kv import (
@@ -88,6 +91,8 @@ def register_vllm_ir(provider: str = DEFAULT_PROVIDER) -> str | None:
         register_vllm_silu_and_mul_dynamic_fp8()
     if _logits._min_p_override_requested():
         register_vllm_min_p()
+    if _logits._logits_preprocess_override_requested():
+        register_vllm_logits_preprocess()
     if _attention._paged_decode_override_requested():
         register_vllm_paged_decode_attention()
 
@@ -161,6 +166,8 @@ __all__ = [
     "DEFAULT_PROVIDER",
     "GREEDY_SAMPLE_LOGPROBS_OVERRIDE_KEY",
     "GREEDY_SPECULATIVE_VERIFY_OVERRIDE_KEY",
+    "LOGITS_PREPROCESS_OVERRIDE_ENV",
+    "LOGITS_PREPROCESS_OVERRIDE_KEY",
     "MIN_P_FAST_PATH_MIN_ROWS",
     "MIN_P_FAST_PATH_MIN_VOCAB_SIZE",
     "MIN_P_OVERRIDE_ENV",
@@ -187,6 +194,7 @@ __all__ = [
     "installed_vllm_version",
     "provider_metadata",
     "register_vllm_ir",
+    "register_vllm_logits_preprocess",
     "register_vllm_min_p",
     "register_vllm_paged_decode_attention",
     "register_vllm_greedy_sample_logprobs",

@@ -84,6 +84,13 @@ def greedy_speculative_verify(*args: Any, **kwargs: Any) -> Any:
     return implementation(*args, **kwargs)
 
 
+def logits_preprocess_(*args: Any, **kwargs: Any) -> Any:
+    """Lazily fuse masking, sparse edits, and temperature in place."""
+    from .torch_ops import logits_preprocess_ as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def selected_token_logprobs(*args: Any, **kwargs: Any) -> Any:
     """Lazily normalize and rank one caller-selected token per logits row."""
     from .torch_ops import selected_token_logprobs as implementation
@@ -167,6 +174,7 @@ __all__ = [
     "apply_token_penalties_",
     "greedy_sample_logprobs",
     "greedy_speculative_verify",
+    "logits_preprocess_",
     "min_p_filter_",
     "native_build_info",
     "paged_decode_attention",

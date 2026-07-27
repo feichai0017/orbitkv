@@ -7,10 +7,10 @@ use loom_cuda::{
 };
 use loom_kernels::{
     AddRmsNormSpec, DType, GreedySampleLogprobsSpec, GreedySpeculativeVerifySpec, KvCacheEncoding,
-    KvCacheScaleGranularity, MinPFilterSpec, PagedDecodeAttentionSpec, RmsNormDynamicFp8Spec,
-    RmsNormSpec, RopePagedKvWriteSpec, RotaryEmbeddingSpec, RotaryStyle, SelectedTokenLogprobsSpec,
-    SiluAndMulDynamicFp8Spec, SiluAndMulSpec, TokenPenaltiesSpec, TopKFilterSpec,
-    TopKSampledLogprobsSpec, TopPRenormSpec,
+    KvCacheScaleGranularity, LogitsPreprocessSpec, MinPFilterSpec, PagedDecodeAttentionSpec,
+    RmsNormDynamicFp8Spec, RmsNormSpec, RopePagedKvWriteSpec, RotaryEmbeddingSpec, RotaryStyle,
+    SelectedTokenLogprobsSpec, SiluAndMulDynamicFp8Spec, SiluAndMulSpec, TokenPenaltiesSpec,
+    TopKFilterSpec, TopKSampledLogprobsSpec, TopPRenormSpec,
 };
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void, CString};
@@ -45,7 +45,8 @@ const OP_TOKEN_PENALTIES: usize = 11;
 const OP_TOPK_SAMPLED_LOGPROBS: usize = 12;
 const OP_TOP_K_FILTER: usize = 13;
 const OP_TOP_P_RENORM: usize = 14;
-const OPERATOR_COUNT: usize = 15;
+const OP_LOGITS_PREPROCESS: usize = 15;
+const OPERATOR_COUNT: usize = 16;
 
 static LAUNCH_COUNTS: [AtomicU64; OPERATOR_COUNT] = [const { AtomicU64::new(0) }; OPERATOR_COUNT];
 
@@ -246,6 +247,25 @@ unsafe fn read_slice<'a, T: Copy>(
     let range = checked_byte_range(pointer, elements, name)?;
     let slice = unsafe { DeviceSlice::from_raw_parts(pointer, elements) }?;
     Ok((slice, range))
+}
+
+unsafe fn read_optional_slice<'a, T: Copy>(
+    pointer: *const T,
+    elements: u64,
+    name: &str,
+) -> Result<(Option<DeviceSlice<'a, T>>, Option<ByteRange>), CudaExecutorError> {
+    let elements = element_count(elements, name)?;
+    if elements == 0 {
+        if !pointer.is_null() {
+            return Err(CudaExecutorError::InvalidContract(format!(
+                "{name} pointer must be null when the optional region is absent"
+            )));
+        }
+        return Ok((None, None));
+    }
+    let range = checked_byte_range(pointer, elements, name)?;
+    let slice = unsafe { DeviceSlice::from_raw_parts(pointer, elements) }?;
+    Ok((Some(slice), Some(range)))
 }
 
 unsafe fn write_slice<'a, T: Copy>(
@@ -816,7 +836,7 @@ macro_rules! dispatch_scalar {
 /// Return the bridge ABI version.
 #[no_mangle]
 pub extern "C" fn loom_cuda_bridge_abi_version() -> u32 {
-    6
+    7
 }
 
 /// Return the detailed error recorded by the most recent failed bridge call

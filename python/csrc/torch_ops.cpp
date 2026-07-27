@@ -44,6 +44,12 @@ STABLE_TORCH_LIBRARY(loom_kernels, library) {
       "cumulative_draft_lengths, Tensor(a!) output_token_ids, Tensor(b!) "
       "accepted_lengths, Tensor(c!) emitted_lengths, int "
       "max_draft_tokens) -> ()");
+  library.def(
+      "logits_preprocess_(Tensor(a!) logits, Tensor temperatures, "
+      "Tensor? blocked_mask=None, Tensor? bias_row_ids=None, "
+      "Tensor? bias_token_ids=None, Tensor? bias_values=None, "
+      "Tensor? suppressed_row_ids=None, Tensor? suppressed_token_ids=None) "
+      "-> ()");
   library.def("min_p_filter_(Tensor(a!) logits, Tensor min_p) -> ()");
   library.def(
       "paged_decode_attention(Tensor query, Tensor key_cache, Tensor "

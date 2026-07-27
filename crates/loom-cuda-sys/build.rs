@@ -22,6 +22,7 @@ fn main() {
     let top_p_renorm_source = cuda_dir.join("src/top_p_renorm.cu");
     let token_penalties_source = cuda_dir.join("src/token_penalties.cu");
     let greedy_speculative_verify_source = cuda_dir.join("src/greedy_speculative_verify.cu");
+    let logits_preprocess_source = cuda_dir.join("src/logits_preprocess.cu");
     let min_p_source = cuda_dir.join("src/min_p.cu");
     let paged_decode_attention_source = cuda_dir.join("src/paged_decode_attention.cu");
     let rope_paged_kv_source = cuda_dir.join("src/rope_paged_kv.cu");
@@ -47,6 +48,10 @@ fn main() {
     println!(
         "cargo:rerun-if-changed={}",
         greedy_speculative_verify_source.display()
+    );
+    println!(
+        "cargo:rerun-if-changed={}",
+        logits_preprocess_source.display()
     );
     println!("cargo:rerun-if-changed={}", min_p_source.display());
     println!(
@@ -88,6 +93,7 @@ fn main() {
         .file(&top_p_renorm_source)
         .file(&token_penalties_source)
         .file(&greedy_speculative_verify_source)
+        .file(&logits_preprocess_source)
         .file(&min_p_source)
         .file(&paged_decode_attention_source)
         .file(&rope_paged_kv_source)

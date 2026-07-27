@@ -27,6 +27,7 @@ class Operator(IntEnum):
     TOPK_SAMPLED_LOGPROBS = 12
     TOP_K_FILTER = 13
     TOP_P_RENORM = 14
+    LOGITS_PREPROCESS = 15
 
 
 def _operator_id(operator: Operator) -> int:

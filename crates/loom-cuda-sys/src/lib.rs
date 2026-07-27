@@ -382,6 +382,23 @@ unsafe extern "C" {
         stream: *mut c_void,
     ) -> c_int;
 
+    pub fn loom_cuda_logits_preprocess_f32(
+        logits: *mut f32,
+        temperatures: *const f32,
+        blocked_mask: *const u8,
+        bias_row_ids: *const i32,
+        bias_token_ids: *const i32,
+        bias_values: *const f32,
+        bias_count: u32,
+        suppressed_row_ids: *const i32,
+        suppressed_token_ids: *const i32,
+        suppression_count: u32,
+        rows: u32,
+        vocab_size: u32,
+        row_stride: u64,
+        stream: *mut c_void,
+    ) -> c_int;
+
     pub fn loom_cuda_min_p_filter_f32(
         logits: *mut f32,
         min_p: *const f32,

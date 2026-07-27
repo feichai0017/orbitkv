@@ -27,6 +27,7 @@ _apply_token_penalties = torch.ops.loom_kernels.apply_token_penalties_.default
 _greedy_speculative_verify = (
     torch.ops.loom_kernels.greedy_speculative_verify.default
 )
+_logits_preprocess = torch.ops.loom_kernels.logits_preprocess_.default
 _min_p_filter = torch.ops.loom_kernels.min_p_filter_.default
 _paged_decode_attention = torch.ops.loom_kernels.paged_decode_attention.default
 _rope_paged_kv_write = torch.ops.loom_kernels.rope_paged_kv_write_.default

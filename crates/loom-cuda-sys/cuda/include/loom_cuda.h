@@ -241,6 +241,19 @@ int loom_cuda_greedy_speculative_verify(
     int32_t* accepted_lengths, int32_t* emitted_lengths, uint32_t requests,
     uint32_t draft_tokens, uint32_t max_draft_tokens, void* stream);
 
+// Apply one F32 logits-preprocessing pass in place. blocked_mask is optional,
+// contiguous [rows, vocab_size] uint8 storage where nonzero means suppressed.
+// Sparse bias arrays are an optional equal-length triplet; sparse suppression
+// arrays are an optional equal-length pair. Sparse row/token values and unique
+// bias targets are trusted. Temperatures below 1e-5 use a divisor of one.
+int loom_cuda_logits_preprocess_f32(
+    float* logits, const float* temperatures, const uint8_t* blocked_mask,
+    const int32_t* bias_row_ids, const int32_t* bias_token_ids,
+    const float* bias_values, uint32_t bias_count,
+    const int32_t* suppressed_row_ids,
+    const int32_t* suppressed_token_ids, uint32_t suppression_count,
+    uint32_t rows, uint32_t vocab_size, uint64_t row_stride, void* stream);
+
 int loom_cuda_min_p_filter_f32(float* logits, const float* min_p,
                                uint32_t rows, uint32_t vocab_size,
                                uint64_t row_stride, void* stream);

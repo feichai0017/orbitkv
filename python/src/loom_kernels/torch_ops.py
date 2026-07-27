@@ -17,7 +17,9 @@ from .ops.attention import (
     supports_paged_decode_attention,
 )
 from .ops.logits import (
+    logits_preprocess_,
     min_p_filter_,
+    supports_logits_preprocess,
     supports_min_p_filter,
 )
 from .ops.norm import (
@@ -70,6 +72,7 @@ __all__ = [
     "greedy_sample_logprobs",
     "greedy_speculative_verify",
     "launch_count",
+    "logits_preprocess_",
     "min_p_filter_",
     "paged_decode_attention",
     "paged_decode_attention_out",
@@ -88,6 +91,7 @@ __all__ = [
     "supports_apply_token_penalties",
     "supports_greedy_sample_logprobs",
     "supports_greedy_speculative_verify",
+    "supports_logits_preprocess",
     "supports_min_p_filter",
     "supports_paged_decode_attention",
     "supports_rms_norm",
