@@ -90,11 +90,12 @@ input = RMSNorm(residual, weight, epsilon)
 
 ## Compatibility
 
-The supported package interval is `vllm>=0.24,<0.26`. The exact `e2c2982`
-bridge-ABI-8 wheel passes 293 H20 tests with each official vLLM minor and 199
-applicable tests on PyTorch 2.10. It includes deterministic categorical
-sampling with persistent request-owned RNG state, fused logits preprocessing,
-exact top-k filtering, and fused top-p renormalization. ABI7 and earlier
+The supported package interval is `vllm>=0.24,<0.26`. The exact `7df4133`
+bridge-ABI-9 wheel passes 305 H20 tests with each official vLLM minor and 201
+applicable tests on PyTorch 2.10. It includes optional-residual RMSNorm-to-FP8,
+deterministic categorical sampling with persistent request-owned RNG state,
+fused logits preprocessing, exact top-k filtering, and fused top-p
+renormalization. ABI8 and earlier
 wheels remain historical evidence, and no native wheel is published.
 The categorical lifecycle gate is validated on vLLM 0.24.0 and 0.25.1; its
 real-engine performance gate remains version-specific to 0.24.0.
@@ -102,7 +103,7 @@ Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
 [compatibility matrix](../compatibility.md) and
-[ABI8 cross-matrix gate](../results/h20-native-wheel-clean-install-abi8-20260727.json).
+[ABI9 cross-matrix gate](../results/h20-native-wheel-clean-install-abi9-20260727.json).
 
 ## Build and install
 
@@ -122,7 +123,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-8cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-9cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -135,8 +136,8 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-The install command above names the current qualified ABI8 artifact.
-Qualification is tied to the exact `e2c2982` manifest revision and wheel hash;
+The install command above names the current qualified ABI9 artifact.
+Qualification is tied to the exact `7df4133` manifest revision and wheel hash;
 the repository-free matrix covers PyTorch 2.10/2.11 and both supported vLLM
 minors. The artifact is not published to a package index.
 Editable

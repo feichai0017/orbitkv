@@ -24,7 +24,8 @@ otherwise.
 
 | Boundary | Result set | Current conclusion |
 | --- | --- | --- |
-| Native Python ABI8 cross-matrix wheel | [current clean-install H20 gate](h20-native-wheel-clean-install-abi8-20260727.json) | Revision `e2c2982` packages all seventeen operators and exactly two Loom `.so` files, then passes 293 tests with each vLLM minor plus 199 applicable tests on PyTorch 2.10 from fresh repository-free environments. It is qualified but not published. |
+| Native Python ABI9 cross-matrix wheel | [current clean-install H20 gate](h20-native-wheel-clean-install-abi9-20260727.json) | Revision `7df4133` packages all seventeen operators and exactly two Loom `.so` files, then passes 305 tests with each vLLM minor plus 201 applicable tests on PyTorch 2.10 from fresh repository-free environments. It is qualified but not published. |
+| Historical ABI8 cross-matrix wheel | [pre-residual clean-install H20 gate](h20-native-wheel-clean-install-abi8-20260727.json) | Revision `e2c2982` passed 293 tests with each vLLM minor plus 199 applicable tests on PyTorch 2.10 before the normalization schema advanced to ABI9. |
 | Historical ABI7 vLLM 0.24 refresh | [refresh clean-install H20 gate](h20-native-wheel-clean-install-abi7-refresh-20260727.json) | Revision `f98a931` packages the final FP8 KV adapter and exactly two Loom `.so` files, then passes 286/286 full and 22/22 focused tests from a fresh repository-free environment. |
 | Historical ABI7 cross-matrix wheel | [first complete clean-install H20 gate](h20-native-wheel-clean-install-abi7-20260727.json) | One exact `py3-none-linux_x86_64` wheel contains the two Loom `.so` files and passes 286 tests with each vLLM minor plus 193 applicable tests on PyTorch 2.10. |
 | Historical ABI6 matrix wheel | [predecessor clean-install H20 gate](h20-native-wheel-clean-install-abi6-20260727.json) | Preserved as the earlier 277/186-test artifact before fused mixed-sampling logits preprocessing entered the packaged ABI. |

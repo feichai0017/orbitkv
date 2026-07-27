@@ -105,8 +105,8 @@
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
   using the current CUDA stream; the source ABI9 dispatcher routes all
   seventeen semantic operators through `loom-cuda-bridge` into borrowed safe
-  Rust dispatch with explicit storage spans and layouts. ABI8 remains the
-  current qualified wheel until the ABI9 matrix closes;
+  Rust dispatch with explicit storage spans and layouts. The exact ABI9 wheel
+  is the current qualified binary boundary;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test
   extras, exactly two packaged `.so` files, a revision/toolkit/SM/hash manifest,
   runtime ABI/hash checks, and a CI guard that rejects source-only wheels;
@@ -125,7 +125,7 @@
 ## Validated
 
 - local formatting, clippy, tests, and release build;
-- the bridge-ABI-8 `py3-none-linux_x86_64` native wheel built from a
+- the bridge-ABI-9 `py3-none-linux_x86_64` native wheel built from a
   clean revision for CUDA 13.1 and SM90 passed archive/ELF/RPATH/symbol/
   auditwheel checks and retained identical packaged library hashes across all
   runtime gates;
@@ -166,7 +166,7 @@
   initialization call or contract rejection. Batch 1–4 costs `1.5–2.4%`,
   batch 8 is near crossover, and batch 32 has an order-stable
   `1.057–1.081x` latency/throughput ratio;
-- the qualified ABI8 revision passes 51 local Rust contract/oracle tests, 16
+- the historical ABI8 revision passed 51 local Rust contract/oracle tests, 16
   H20 safe CUDA-wrapper tests, 6 checked-bridge tests, and the complete
   293-test Python GPU suite on each supported vLLM minor. The vLLM-free
   PyTorch 2.10 row passes 199 applicable tests. Its focused logits, top-k, and
@@ -217,7 +217,7 @@
   large-shape execution passed at `16x8192`.
 - PyTorch external-stream, mutation-schema/FakeTensor, `torch.compile`, and
   CUDA Graph tests passed with the Stable ABI dispatcher;
-- one exact ABI8 wheel built with PyTorch 2.11.0+cu130 passed without
+- the exact predecessor ABI8 wheel built with PyTorch 2.11.0+cu130 passed without
   recompilation on PyTorch 2.10.0+cu128; the 2.11 vLLM 0.24 and 0.25.1
   environments each passed 293 tests, while the vLLM-free 2.10 environment
   passed 199 applicable tests with 63 vLLM-dependent skips;
@@ -351,11 +351,11 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the qualified ABI8 wheel suite passes 293 tests on each of vLLM 0.24.0 and
-  0.25.1, including deterministic categorical sampling, fused logits
-  preprocessing, sparse penalties,
-  sampled-token plus top-k logprobs, exact top-k filtering, and fused top-p
-  renormalization;
+- the current ABI9 wheel suite passes 305 tests on each of vLLM 0.24.0 and
+  0.25.1 plus 201 applicable tests on PyTorch 2.10, including
+  optional-residual RMSNorm-to-FP8, deterministic categorical sampling, fused
+  logits preprocessing, sparse penalties, sampled-token plus top-k logprobs,
+  exact top-k filtering, and fused top-p renormalization;
 - the current bridge exposes 25 versioned operator/runtime symbols and no
   raw CUDA launch symbols; the PyTorch shim depends only on those bridge
   symbols and no raw launch symbol;
@@ -541,7 +541,7 @@ FA3 for the engine's 128-1,024-token path.
   [Loom-first engine](results/h20-vllm-engine-categorical-sample-loom-first-20260727.json)
   gates close source implementation, lifecycle, exact replay, and
   order-reversed offline engine evidence; the
-  [ABI8 wheel gate](results/h20-native-wheel-clean-install-abi8-20260727.json)
+  [ABI9 wheel gate](results/h20-native-wheel-clean-install-abi9-20260727.json)
   closes binary distribution;
 - an end-to-end speculative draft/target performance win; tree/branch
   metadata, stochastic residual-distribution rejection, and KV commit/remap

@@ -6,11 +6,10 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 [Project README](../README.md) · [Integration guide](../docs/guides/vllm-ir-provider.md) · [Operator catalog](../docs/operator-catalog.md)
 
 > [!IMPORTANT]
-> The bridge-ABI-8 native wheel is H20-qualified but is not published to a
+> The bridge-ABI-9 native wheel is H20-qualified but is not published to a
 > package index. It includes all seventeen checked operators, including
-> direct plus persistent-vLLM explicit-state categorical sampling. Current
-> source is ABI9 and adds the exact optional-residual RMSNorm-to-FP8 schema;
-> it is not a qualified artifact until its clean-install matrix passes. A
+> direct plus persistent-vLLM explicit-state categorical sampling and the
+> exact optional-residual RMSNorm-to-FP8 schema. A
 > source-only wheel is intentionally unsupported:
 > `pip wheel ./python` fails unless `build_wheel.py` has staged both native
 > libraries and their manifest.
@@ -28,16 +27,17 @@ The current matrix row is:
 | vLLM extra | `>=0.24,<0.26` |
 | Native payload | `libloom_cuda_bridge.so`, `libloom_kernels_torch.so` |
 
-The qualified artifact's build tag encodes bridge ABI 8:
-`8cu131torch210sm90`. The exact H20 artifact, binary audit, and three
+The qualified artifact's build tag encodes bridge ABI 9:
+`9cu131torch210sm90`. The exact H20 artifact, binary audit, and three
 repository-free clean-install gates are recorded in the
-[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi8-20260727.json).
-The same wheel passes 293 tests with each supported vLLM minor and 199
+[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi9-20260727.json).
+The same wheel passes 305 tests with each supported vLLM minor and 201
 applicable tests in the vLLM-free PyTorch 2.10 environment. It includes static
 FP8 E4M3 KV quantize-on-write, sparse token penalties, sampled-token plus
 top-k logprobs, exact top-k/top-p paths, fused logits preprocessing, and
-deterministic categorical sampling with persistent request-owned state. It is
-bound to source revision `e2c2982de1faf7e2a43e153eb244a734b60039b1`.
+deterministic categorical sampling with persistent request-owned state, plus
+optional-residual RMSNorm-to-FP8. It is bound to source revision
+`7df4133e10295d77b5519f233bfdf08c54a2fb0b`.
 
 The preceding ABI7 refresh from revision
 `f98a9311c8b204c02fa77da10a768c54de3d08db` packages the final FP8 KV adapter
@@ -45,9 +45,10 @@ and passes the complete 286-test vLLM 0.24 H20 suite plus 22 focused adapter
 tests from a fresh environment. It is retained as historical evidence. See the
 [refresh evidence](../docs/results/h20-native-wheel-clean-install-abi7-refresh-20260727.json).
 
-The older `6cu131torch210sm90` ABI-6, `5cu131torch210sm90` ABI-5,
-`4cu131torch210sm90` ABI-4, `2cu131torch210sm90` ABI-2, and
-`1cu131torch210sm90` ABI-1 wheels remain historical evidence only.
+The older `8cu131torch210sm90` ABI-8, `6cu131torch210sm90` ABI-6,
+`5cu131torch210sm90` ABI-5, `4cu131torch210sm90` ABI-4,
+`2cu131torch210sm90` ABI-2, and `1cu131torch210sm90` ABI-1 wheels remain
+historical evidence only.
 `build_wheel.py` uses the ABI-specific tag so incompatible bridge signatures
 cannot overwrite or masquerade as one another. No native Python wheel has been
 published.
@@ -60,11 +61,11 @@ without PyTorch. vLLM and tests remain explicit extras:
 ```bash
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-8cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-9cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 
 # Add the supported vLLM integration when needed.
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-8cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-9cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -101,8 +102,8 @@ bridge, builds the boxed LibTorch Stable ABI dispatcher, rejects ATen/c10 C++
 and raw CUDA-launch dependencies, verifies `$ORIGIN` loading, writes the
 revision/toolkit/SM/runtime manifest, and checks the final archive contains
 exactly the two Loom `.so` files. Current source emits a
-`9cu131torch210sm90` tag. Until that matrix closes, the exact `e2c2982` ABI8
-artifact remains the qualified repository-free wheel and remains unpublished.
+`9cu131torch210sm90` tag. The exact `7df4133` ABI9 artifact passes the
+repository-free matrix and remains unpublished.
 
 ## Source development
 
@@ -124,7 +125,7 @@ Source checkouts discover the paired libraries only under repository
 Every operator, including padded logits and strided paged-cache views, enters
 checked borrowed Rust dispatch. There is no ctypes, ATen dispatcher twin, or
 direct raw-CUDA framework path. Both source libraries must be rebuilt together:
-the current dispatcher rejects an ABI7 bridge instead of retaining a
+the current dispatcher rejects an ABI8 bridge instead of retaining a
 compatibility shim.
 
 ## Direct PyTorch use

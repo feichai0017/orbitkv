@@ -76,8 +76,8 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - a clean-revision native wheel builder that packages exactly the Rust CUDA
   bridge and Stable ABI dispatcher, emits and validates their matrix manifest
   and hashes, and rejects accidental source-only wheels;
-- immutable ABI4/ABI5/ABI6/ABI7 history and current ABI8 H20 wheel-install
-  evidence for PyTorch 2.10/2.11 and vLLM 0.24/0.25.
+- immutable ABI4/ABI5/ABI6/ABI7/ABI8 history and current ABI9 H20
+  wheel-install evidence for PyTorch 2.10/2.11 and vLLM 0.24/0.25.
 - deterministic greedy speculative verification and accepted/bonus-token
   compaction over vLLM-compatible flattened ragged metadata, with Rust/CUDA/
   PyTorch coverage, explicit vLLM 0.24/0.25 registration, and H20 evidence.
@@ -155,6 +155,11 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   retains a measured `1.5–2.4%` cost.
 - the exact ABI8 `e2c2982` two-library wheel and repository-free H20 matrix:
   293 tests pass with each supported vLLM minor, 199 applicable tests pass on
+  PyTorch 2.10, every installed native hash matches the manifest, and no
+  repository or library-path override is present. The artifact is qualified
+  but not published.
+- the exact ABI9 `7df4133` two-library wheel and repository-free H20 matrix:
+  305 tests pass with each supported vLLM minor, 201 applicable tests pass on
   PyTorch 2.10, every installed native hash matches the manifest, and no
   repository or library-path override is present. The artifact is qualified
   but not published.
