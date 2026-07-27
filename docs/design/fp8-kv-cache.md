@@ -121,10 +121,11 @@ memory-bound gap that cannot be handled by its selected attention backend.
 
 The implementation is complete through Rust contracts and CPU oracles, safe
 CUDA dispatch, the checked bridge, the Stable ABI PyTorch operator, vLLM
-registration, and repository-free ABI2, ABI4, ABI5, ABI6, and ABI7 wheels.
-The refreshed `f98a931` ABI7 wheel packages the final adapter and passes all
-vLLM 0.24 tests; the earlier `d58ebf8` ABI7 artifact retains the full
-cross-matrix result. Revision
+registration, and repository-free ABI2, ABI4, ABI5, ABI6, ABI7, and ABI8
+wheels. The current `e2c2982` ABI8 artifact packages the final adapter and
+passes the full vLLM 0.24/0.25 plus PyTorch 2.10/2.11 matrix. The refreshed
+`f98a931` and cross-matrix `d58ebf8` artifacts remain historical ABI7
+evidence. Revision
 `a2f37666ed31aa8781a26e150980a75f9f569171` closed the first four H20 gates:
 
 1. exact FP8 bytes versus vLLM for FP16/BF16, per-tensor/per-head scales,
@@ -168,10 +169,10 @@ perplexity, versus the `1.02` limit. The formal dual-order TTFT/TPOT matrix was
 intentionally not run after that failure. The benchmark also accepts an
 explicit vLLM attention backend and records the resolved implementation so
 backend diagnostics cannot be mistaken for the default qualification path.
-This candidate used the existing ABI7 wheel's qualified native libraries plus
-the exact SHA-pinned Python adapter overlay recorded in the result; a rebuilt
-clean-install wheel containing that adapter fix remains a separate packaging
-gate.
+This candidate used the then-current ABI7 wheel's qualified native libraries
+plus the exact SHA-pinned Python adapter overlay recorded in the result. The
+later ABI7 refresh and current ABI8 matrix wheel package that adapter; this
+does not change the candidate's quality rejection.
 
 `benchmarks/calibrate_fp8_kv.py` and
 `benchmarks/prepare_quality_jsonl.py` make the two input artifacts

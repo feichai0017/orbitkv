@@ -27,12 +27,11 @@ feature. New feature work follows this order:
 
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
-| 1 | ABI8 binary qualification | commit the completed sampling subsystem and build the two-library matrix wheel | repository-free PyTorch 2.10/2.11 and vLLM 0.24/0.25 clean installs |
-| 2 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
-| 3 | MoE routing and movement | top-k routing, histogram/prefix sum, permutation, and inverse permutation | lower model-level MoE latency while grouped GEMM remains vendor-owned |
-| 4 | Profile-gated KV movement | a named offload, beam, or compaction profile that exposes physical movement | fewer launches or less movement time without replacing an efficient driver/vendor path |
-| 5 | Profile-gated speculative extensions | tree/stochastic/KV boundaries only after profiling exposes material non-GEMM cost | a named draft/target model pair improves decode latency or throughput |
-| 6 | Minimal Rust decode proof | zero-copy Rust orchestration over vendor-produced tensors and Loom operators | one deterministic decode step uses borrowed memory and stream ownership without becoming an inference engine |
+| 1 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
+| 2 | MoE routing and movement | top-k routing, histogram/prefix sum, permutation, and inverse permutation | lower model-level MoE latency while grouped GEMM remains vendor-owned |
+| 3 | Profile-gated KV movement | a named offload, beam, or compaction profile that exposes physical movement | fewer launches or less movement time without replacing an efficient driver/vendor path |
+| 4 | Profile-gated speculative extensions | tree/stochastic/KV boundaries only after profiling exposes material non-GEMM cost | a named draft/target model pair improves decode latency or throughput |
+| 5 | Minimal Rust decode proof | zero-copy Rust orchestration over vendor-produced tensors and Loom operators | one deterministic decode step uses borrowed memory and stream ownership without becoming an inference engine |
 
 The original default-prefix/preemption movement candidate failed admission.
 The [H20 vLLM V1 probe](results/h20-vllm-kv-movement-admission-rejected-20260727.json)
@@ -59,6 +58,10 @@ Qwen2.5-0.5B runs, every case exactly replays, Loom launches once per decode
 step with no rejection, and batch 32 improves latency/throughput by
 `5.7–8.1%` in both orders. Batch 1–4 pays `1.5–2.4%`; the adapter reports that
 cost instead of switching an in-flight request to another RNG stream.
+The exact
+[ABI8 matrix wheel](results/h20-native-wheel-clean-install-abi8-20260727.json)
+then passes 293 tests with each supported vLLM minor and 199 applicable tests
+on PyTorch 2.10 from repository-free fresh environments.
 
 Static FP8 KV-cache compression remains a K3 evidence track, not the next
 kernel implementation. Its first pinned Qwen2.5 candidate is rejected below;
@@ -127,7 +130,7 @@ transfer.
 Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
 
 - ~~qualify the next vLLM minor without weakening adapter gates~~ — official
-  vLLM 0.24.0 and 0.25.1 packages each pass the complete 286-test H20 GPU suite;
+  vLLM 0.24.0 and 0.25.1 packages each pass the complete 293-test H20 GPU suite;
 - ~~centralize runtime version admission and package metadata~~ — supported
   range is `vllm>=0.24,<0.26`, with registration-time series checks;
 - ~~document the current binary boundary and Stable ABI decision~~ — the
@@ -142,10 +145,11 @@ Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
   `python/build_wheel.py` builds from a clean revision, packages exactly the
   two native libraries, emits their manifest, audits ELF/RPATH/symbols, and
   refuses an accidental source-only wheel;
-- ~~prove repository-free H20 clean installs~~ — one exact ABI7
+- ~~prove repository-free H20 clean installs~~ — the current exact ABI8
   `py3-none-linux_x86_64` artifact passes fresh Python 3.11 venv gates on
   PyTorch 2.10/2.11 and vLLM 0.24/0.25, including `pip check`, package-local
-  library loading, GPU smoke, and the applicable 286/193-test suites.
+  library loading, GPU smoke, and the applicable 293/199-test suites. ABI7
+  and earlier artifacts remain historical evidence.
 
 Exit: a qualified binary artifact installs without a repository checkout, uses
 a declared PyTorch ABI boundary, and passes the same framework and H20 gates as
@@ -214,7 +218,7 @@ the family-level system-value exit remains open.
 - ~~FP8 E4M3 quantize-on-write with explicit static per-tensor or per-head
   scales~~ — Rust contract/oracle, safe CUDA backend, checked bridge, Stable ABI
   PyTorch operator, vLLM adapter, exact-byte H20 comparison, named operator
-  benchmark, current-stream/compile/graph checks, current ABI7 clean wheel, and
+  benchmark, current-stream/compile/graph checks, current ABI8 clean wheel, and
   order-reversed real-engine invocation are complete; the pinned Qwen2.5-7B
   candidate passes the operational and native-vLLM/Loom provider-equivalence
   gates but is rejected because both FP8 providers exceed the BF16 held-out
@@ -340,6 +344,7 @@ Status: in progress.
   [direct result](results/h20-categorical-sample-20260727.json),
   [baseline-first engine result](results/h20-vllm-engine-categorical-sample-20260727.json),
   [Loom-first engine result](results/h20-vllm-engine-categorical-sample-loom-first-20260727.json),
+  [ABI8 wheel result](results/h20-native-wheel-clean-install-abi8-20260727.json),
   and
   [admission result](results/h20-vllm-seeded-sampling-admission-20260727.json).
 
@@ -355,7 +360,7 @@ claim. Fused top-p/renormalization and mixed-sampling logits preprocessing
 close their shape-gated operator and real-engine invocation exits. Loom-owned
 deterministic RNG closes its direct, persistent-request-state, and
 order-reversed engine exits for explicitly seeded non-speculative requests.
-ABI8 clean-wheel qualification remains the separate distribution gate.
+Its repository-free ABI8 clean-wheel distribution exit is also closed.
 
 ## K4.5: Speculative Decoding Support
 

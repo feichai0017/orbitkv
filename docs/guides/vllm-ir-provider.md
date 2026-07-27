@@ -90,22 +90,19 @@ input = RMSNorm(residual, weight, epsilon)
 
 ## Compatibility
 
-The supported package interval is `vllm>=0.24,<0.26`. The `d58ebf8`
-bridge-ABI-7 wheel passes 286 H20 tests with each official vLLM minor and owns
-the complete cross-matrix gate. The `f98a931` refresh packages the final FP8 KV
-adapter and passes all 286 vLLM 0.24 tests; its other matrix rows remain open.
-Both include fused logits preprocessing, exact top-k filtering, and fused
-top-p renormalization, and neither is published.
-Current ABI8 source adds deterministic categorical sampling with persistent
-request-owned RNG state. Its lifecycle compatibility is validated on vLLM
-0.24.0 and 0.25.1, and its real-engine gate is validated on 0.24.0; the ABI8
-wheel matrix remains open and does not inherit ABI7 qualification.
+The supported package interval is `vllm>=0.24,<0.26`. The exact `e2c2982`
+bridge-ABI-8 wheel passes 293 H20 tests with each official vLLM minor and 199
+applicable tests on PyTorch 2.10. It includes deterministic categorical
+sampling with persistent request-owned RNG state, fused logits preprocessing,
+exact top-k filtering, and fused top-p renormalization. ABI7 and earlier
+wheels remain historical evidence, and no native wheel is published.
+The categorical lifecycle gate is validated on vLLM 0.24.0 and 0.25.1; its
+real-engine performance gate remains version-specific to 0.24.0.
 Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
 [compatibility matrix](../compatibility.md) and
-[cross-matrix gate](../results/h20-native-wheel-clean-install-abi7-20260727.json)
-and [refresh gate](../results/h20-native-wheel-clean-install-abi7-refresh-20260727.json).
+[ABI8 cross-matrix gate](../results/h20-native-wheel-clean-install-abi8-20260727.json).
 
 ## Build and install
 
@@ -125,7 +122,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-7cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-8cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -138,14 +135,10 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-The install command above names the last qualified ABI7 artifact. Current
-source deliberately builds ABI8 for explicit-state categorical sampling; that
-new wheel has not completed the clean-install matrix. The source adapter and
-order-reversed vLLM 0.24 engine gate are complete, but do not inherit ABI7
-wheel qualification. Qualification remains
-tied to an exact manifest revision and wheel hash: `f98a931` passes the full
-vLLM 0.24 ABI7 suite, while the earlier `d58ebf8` ABI7 artifact owns the
-complete PyTorch/vLLM cross-matrix. Neither is published to a package index.
+The install command above names the current qualified ABI8 artifact.
+Qualification is tied to the exact `e2c2982` manifest revision and wheel hash;
+the repository-free matrix covers PyTorch 2.10/2.11 and both supported vLLM
+minors. The artifact is not published to a package index.
 Editable
 source development remains documented in the
 [Python README](../../python/README.md#source-development), but it cannot

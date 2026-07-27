@@ -168,8 +168,8 @@ only as complete groups; partial groups are rejected before submission.
 The handwritten CUDA path assigns 256 threads and four vocabulary partitions
 to each row. It scans every token once and consults the sparse metadata without
 materializing another vocabulary-sized tensor. Safe Rust owns physical-span,
-aliasing, index, uniqueness, and optional-group validation. The checked ABI7
-bridge and boxed PyTorch mutation schema preserve the caller's current stream,
+aliasing, index, uniqueness, and optional-group validation. The checked bridge
+and boxed PyTorch mutation schema preserve the caller's current stream,
 padded rows, `torch.compile`, FakeTensor/opcheck, and CUDA Graph replay.
 
 The vLLM 0.24/0.25 registration is deliberately narrower than the public
@@ -297,11 +297,12 @@ same stream in the Rust oracle and handwritten CUDA. There is one kernel, no
 probability-shaped noise tensor, no implicit generator, and no seedless
 variant.
 
-The direct ABI8 Rust/CUDA/PyTorch and H20 gates are complete. The vLLM adapter
-is not: it must attach state to persistent request slots and keep the native
-path for unsupported or measured-losing batches. The complete numerical,
-state-lifecycle, and evidence boundary is documented in
-[counter-based sampling](counter-based-sampling.md).
+The direct ABI8 Rust/CUDA/PyTorch, persistent vLLM request-state, real-engine,
+and repository-free wheel gates are complete. The engine-lifetime opt-in
+requires an explicit seed on every random request and rejects speculative
+engines; it never changes an in-flight request's RNG stream based on batch
+size. The complete numerical, state-lifecycle, and evidence boundary is
+documented in [counter-based sampling](counter-based-sampling.md).
 
 ## Greedy Speculative-Verify Contract
 

@@ -102,11 +102,6 @@ export const supportedOperators = [
 
 export const nextOperators = [
   {
-    milestone: "K0.7 · ABI8",
-    name: "ABI8 matrix wheel",
-    reason: "The seeded-sampling subsystem is complete in source; commit it and pass repository-free PyTorch/vLLM clean installs with both native libraries.",
-  },
-  {
     milestone: "K2.5 · P1",
     name: "Quantization plumbing",
     reason: "Remove scale, pack/unpack, dequant/requant, and layout passes around an unchanged vendor GEMM.",

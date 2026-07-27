@@ -52,7 +52,7 @@ the evidence used to qualify them.
   per-head scales, fused quantize-on-write, and the vendor-attention handoff.
 - [Counter-based sampling design](design/counter-based-sampling.md) defines the
   implemented explicit-state ABI8-A boundary, persistent request-state
-  integration, direct and engine evidence, and remaining wheel gate.
+  integration, direct and engine evidence, and qualified matrix-wheel gate.
 
 ## What a status means
 

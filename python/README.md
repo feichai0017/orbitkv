@@ -6,11 +6,9 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 [Project README](../README.md) · [Integration guide](../docs/guides/vllm-ir-provider.md) · [Operator catalog](../docs/operator-catalog.md)
 
 > [!IMPORTANT]
-> The bridge-ABI-7 native wheel is H20-qualified but is not published to a
-> package index. It includes fused mixed-sampling logits preprocessing,
-> exact top-k filtering, and fused top-p renormalization. Current source now
-> targets bridge ABI 8 and adds direct plus persistent-vLLM explicit-state
-> categorical sampling; an ABI8 matrix wheel is not yet qualified. A
+> The bridge-ABI-8 native wheel is H20-qualified but is not published to a
+> package index. It includes all seventeen checked operators, including
+> direct plus persistent-vLLM explicit-state categorical sampling. A
 > source-only wheel is
 > intentionally unsupported:
 > `pip wheel ./python` fails unless `build_wheel.py` has staged both native
@@ -29,22 +27,21 @@ The current matrix row is:
 | vLLM extra | `>=0.24,<0.26` |
 | Native payload | `libloom_cuda_bridge.so`, `libloom_kernels_torch.so` |
 
-The qualified artifact's build tag encodes bridge ABI 7:
-`7cu131torch210sm90`. The exact H20 artifact, binary audit, and three
+The qualified artifact's build tag encodes bridge ABI 8:
+`8cu131torch210sm90`. The exact H20 artifact, binary audit, and three
 repository-free clean-install gates are recorded in the
-[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi7-20260727.json).
-The same wheel passes 286 tests with each supported vLLM minor and 193
+[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi8-20260727.json).
+The same wheel passes 293 tests with each supported vLLM minor and 199
 applicable tests in the vLLM-free PyTorch 2.10 environment. It includes static
-FP8 E4M3 KV quantize-on-write, sparse token penalties, and sampled-token plus
-top-k logprobs, exact top-k filtering, fused top-p renormalization, and fused
-mask/bias/suppression/temperature preprocessing. It is bound to source
-revision `d58ebf827243fc10efd306118910976fb8b681e5`.
+FP8 E4M3 KV quantize-on-write, sparse token penalties, sampled-token plus
+top-k logprobs, exact top-k/top-p paths, fused logits preprocessing, and
+deterministic categorical sampling with persistent request-owned state. It is
+bound to source revision `e2c2982de1faf7e2a43e153eb244a734b60039b1`.
 
-A refreshed wheel from revision
+The preceding ABI7 refresh from revision
 `f98a9311c8b204c02fa77da10a768c54de3d08db` packages the final FP8 KV adapter
 and passes the complete 286-test vLLM 0.24 H20 suite plus 22 focused adapter
-tests from a fresh environment. It does not replace the `d58ebf8` artifact's
-vLLM 0.25/PyTorch 2.10 matrix rows. See the
+tests from a fresh environment. It is retained as historical evidence. See the
 [refresh evidence](../docs/results/h20-native-wheel-clean-install-abi7-refresh-20260727.json).
 
 The older `6cu131torch210sm90` ABI-6, `5cu131torch210sm90` ABI-5,
@@ -62,11 +59,11 @@ without PyTorch. vLLM and tests remain explicit extras:
 ```bash
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-7cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-8cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 
 # Add the supported vLLM integration when needed.
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-7cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-8cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -103,8 +100,8 @@ bridge, builds the boxed LibTorch Stable ABI dispatcher, rejects ATen/c10 C++
 and raw CUDA-launch dependencies, verifies `$ORIGIN` loading, writes the
 revision/toolkit/SM/runtime manifest, and checks the final archive contains
 exactly the two Loom `.so` files. At current source it emits an
-`8cu131torch210sm90` tag; that artifact remains unqualified until the ABI8
-clean-install matrix is complete.
+`8cu131torch210sm90` tag; the exact `e2c2982` artifact passes the ABI8
+repository-free clean-install matrix and remains unpublished.
 
 ## Source development
 

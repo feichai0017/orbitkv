@@ -59,27 +59,20 @@ Catalog membership alone is never a performance claim.
 
 ## Next value program
 
-The bridge-ABI-7 native-wheel engineering gate is complete for one
+The bridge-ABI-8 native-wheel engineering gate is complete for one
 Linux x86_64, CUDA 13.1, SM90, Python 3.11, PyTorch 2.10/2.11, and vLLM
-0.24/0.25 cross-matrix artifact. It is qualified but not published to a
-package index. A refreshed wheel built from revision `f98a931` also packages
-the final FP8 KV adapter instead of relying on a source overlay and passes all
-286 vLLM 0.24 H20 tests from a repository-free environment; its vLLM 0.25 and
-PyTorch 2.10 rows remain to be rerun. ABI7 contains all sixteen checked
-operators, including sparse token penalties, sampled-token plus top-k
-logprobs, exact per-row top-k filtering,
-fused top-p renormalization, and fused mixed-sampling logits preprocessing.
-The source tree has moved to checked bridge ABI 8 with a seventeenth operator:
-explicit-state categorical sampling. Its direct Rust/CUDA/PyTorch gate is
-complete, and its persistent vLLM 0.24/0.25 request-state adapter plus
-order-reversed vLLM 0.24 engine gate are qualified in source. No ABI8 matrix
-wheel is qualified yet.
-The latter combines blocked-token masking, unique sparse bias, sparse
-suppression, and mixed-row temperature in one in-place F32 CUDA pass. The
-first post-K0.7 speculative slice is also complete: deterministic greedy
-verification and token compaction now follow the same Rust-owned
-path, and a process-isolated Qwen2.5-1.5B/0.5B vLLM 0.24 gate proves exact
-native/Loom speculative output with complete measured path coverage. That gate also shows
+0.24/0.25 cross-matrix artifact. The exact `e2c2982` wheel contains all
+seventeen checked operators, including persistent explicit-state categorical
+sampling, and passes 293 tests with each vLLM minor plus 199 applicable tests
+on PyTorch 2.10. It is qualified but not published to a package index. ABI7
+and earlier artifacts remain historical evidence only.
+
+Fused logits preprocessing combines blocked-token masking, unique sparse
+bias, sparse suppression, and mixed-row temperature in one in-place F32 CUDA
+pass. The first post-K0.7 speculative slice is also complete: deterministic greedy
+verification and token compaction now follow the same Rust-owned path, and a
+process-isolated Qwen2.5-1.5B/0.5B vLLM 0.24 gate proves exact native/Loom
+speculative output with complete measured path coverage. That gate also shows
 that the verifier is only `0.048-0.200%` of batch latency and that speculative
 decode is `3.18-4.97x` slower than target-only for this workload. Further
 speculative expansion is therefore profile-gated. The ordered feature program
@@ -87,14 +80,14 @@ is now:
 
 | Order | Direction | First proof |
 | --- | --- | --- |
-| 1 | ABI8 binary qualification | commit the completed seeded-sampling subsystem, build the two-library matrix wheel, and pass repository-free clean installs |
-| 2 | Quantization plumbing | measured scale/pack/layout work around unchanged vendor GEMM |
-| 3 | MoE routing and movement | routing, histogram/prefix sum, permutation, and combine around vendor grouped GEMM |
-| 4 | Profile-gated KV movement | revisit only for a named offload, beam, or compaction path with real physical movement |
-| 5 | Profile-gated speculative extensions | tree/stochastic/KV work only after a named workload exposes a material non-GEMM boundary |
-| 6 | Minimal Rust decode proof | one zero-copy decode step over borrowed tensors and streams, without becoming an inference engine |
+| 1 | Quantization plumbing | measured scale/pack/layout work around unchanged vendor GEMM |
+| 2 | MoE routing and movement | routing, histogram/prefix sum, permutation, and combine around vendor grouped GEMM |
+| 3 | Profile-gated KV movement | revisit only for a named offload, beam, or compaction path with real physical movement |
+| 4 | Profile-gated speculative extensions | tree/stochastic/KV work only after a named workload exposes a material non-GEMM boundary |
+| 5 | Minimal Rust decode proof | one zero-copy decode step over borrowed tensors and streams, without becoming an inference engine |
 
-The explicit-seed, non-speculative sampling subsystem is complete in source.
+The explicit-seed, non-speculative sampling subsystem is complete through
+binary distribution.
 ABI8 consumes normalized F32 probabilities plus caller-owned
 `(seed, counter)` state, advances every counter once, launches one CUDA kernel,
 and owns no probability-shaped temporary. Directly against vLLM 0.24's
@@ -115,6 +108,7 @@ does not reproduce native vLLM seed-to-token identity. See the
 [baseline-first engine evidence](docs/results/h20-vllm-engine-categorical-sample-20260727.json),
 [Loom-first engine evidence](docs/results/h20-vllm-engine-categorical-sample-loom-first-20260727.json),
 [admission evidence](docs/results/h20-vllm-seeded-sampling-admission-20260727.json),
+[ABI8 clean-install evidence](docs/results/h20-native-wheel-clean-install-abi8-20260727.json),
 and [contract](docs/design/counter-based-sampling.md).
 
 The former first item, default vLLM prefix/preemption KV movement, is now
@@ -245,10 +239,9 @@ source-only wheel is rejected. The installed package validates that manifest
 and loads only its packaged libraries; no repository checkout or library-path
 override is used.
 
-Current source builds an ABI8 artifact, which has not yet completed the
-clean-install matrix. The qualified ABI7 `f98a931` wheel passes the complete
-repository-free vLLM 0.24 H20 suite; the earlier ABI7 `d58ebf8` wheel completed
-the PyTorch 2.10/2.11 and vLLM 0.24/0.25 cross-matrix. None is published.
+The exact ABI8 `e2c2982` artifact passes repository-free PyTorch 2.10/2.11 and
+vLLM 0.24/0.25 H20 clean-install gates. ABI7 and earlier wheels are retained
+only as historical evidence. None is published.
 
 See the [Python README](python/README.md) for binary and editable development
 flows, direct calls, and the
@@ -272,7 +265,7 @@ opens the raw JSON artifact used for the claim.
 | Sampled-token + top-k logprobs: [operator](docs/results/h20-topk-sampled-logprobs-20260725.json) · [baseline first](docs/results/h20-vllm-qwen25-topk-logprobs-baseline-first-20260725.json) · [Loom first](docs/results/h20-vllm-qwen25-topk-logprobs-loom-first-20260725.json) | `3.25×`, `2.60×`, and `1.19×` operator ratios at 1/8/32 rows; exact engine tokens, returned IDs, and ranks | Direct Loom ties are deterministic; the exact vLLM adapter preserves `torch.topk` order. Engine latency crosses parity after provider-order reversal, so no model-level speedup is claimed |
 | [Min-P filtering](docs/results/h20-min-p-filter-20260722.json) | `1.885×` at 128 rows and no tensor-sized probability/mask temporaries | Smaller batches fall back to vLLM |
 | Sparse token penalties: [operator](docs/results/h20-token-penalties-20260725.json) · [baseline first](docs/results/h20-vllm-qwen25-token-penalties-baseline-first-20260725.json) · [Loom first](docs/results/h20-vllm-qwen25-token-penalties-loom-first-20260725.json) | Exact outputs; `5.82–34.30×` operator ratio; `1.056–1.123×` order-stable Qwen engine batch-latency ratio | F32 repetition/frequency/presence; `1440/0` Loom path hits per provider order; serving-scale goodput remains separate |
-| Deterministic categorical sampling: [direct](docs/results/h20-categorical-sample-20260727.json) · [baseline first](docs/results/h20-vllm-engine-categorical-sample-20260727.json) · [Loom first](docs/results/h20-vllm-engine-categorical-sample-loom-first-20260727.json) · [prior admission](docs/results/h20-vllm-seeded-sampling-admission-20260727.json) | Direct ABI8 is `1.15–5.40×` faster at 4–32 rows with one kernel and no probability-shaped temporary; Qwen batch-32 engine ratio is an order-stable `1.057–1.081×` | Explicit Loom Philox semantics; persistent vLLM 0.24/0.25 request state; unseeded random and speculative engines are rejected. Batch 1–4 engine cost is `1.5–2.4%`; no native seed-to-token parity or ABI8 matrix-wheel claim |
+| Deterministic categorical sampling: [direct](docs/results/h20-categorical-sample-20260727.json) · [baseline first](docs/results/h20-vllm-engine-categorical-sample-20260727.json) · [Loom first](docs/results/h20-vllm-engine-categorical-sample-loom-first-20260727.json) · [ABI8 wheel](docs/results/h20-native-wheel-clean-install-abi8-20260727.json) · [prior admission](docs/results/h20-vllm-seeded-sampling-admission-20260727.json) | Direct ABI8 is `1.15–5.40×` faster at 4–32 rows with one kernel and no probability-shaped temporary; Qwen batch-32 engine ratio is an order-stable `1.057–1.081×` | Explicit Loom Philox semantics; persistent vLLM 0.24/0.25 request state; unseeded random and speculative engines are rejected. Batch 1–4 engine cost is `1.5–2.4%`; no native seed-to-token parity claim. The matrix wheel is qualified but unpublished |
 | [Greedy speculative verify + compact](docs/results/h20-greedy-speculative-verify-20260723.json) | `1.101–1.128×` dispatcher ratio across 15 batch/draft shapes; bit-exact with vLLM | Deterministic all-greedy rejection only; the real-model gate is the next row |
 | Real-model speculative decode: [native first](docs/results/h20-vllm-qwen25-speculative-native-first-20260723.json) · [Loom first](docs/results/h20-vllm-qwen25-speculative-loom-first-20260723.json) | Exact native/Loom tokens, `714/714` measured Loom calls per order; verifier share `0.048–0.200%` | Engine path proven; native/Loom latency crosses parity and speculative decode loses to target-only on this model pair |
 | [RoPE + paged-KV write](docs/results/h20-rope-paged-kv-20260722.json) | `2.30–2.40×` dispatcher ratio for 1–512 tokens | Real-engine invocation is proven; end-to-end remains at parity |
@@ -280,7 +273,8 @@ opens the raw JSON artifact used for the claim.
 | [Short paged decode](docs/results/h20-vllm-paged-decode-backend-20260722.json) | `1.154–2.374×` across all 24 admitted backend cases | FP16/BF16, Hq/Hkv 32/8, D128, context ≤32; other shapes use FA3 |
 | [Local split-K paged decode](docs/results/h20-paged-decode-split-k-20260722.json) | `1.14–6.22×` versus legacy Loom | Improves the Rust/CUDA backend; FA3 remains the long-context engine fallback |
 | [LibTorch Stable ABI dispatcher](docs/results/h20-libtorch-stable-abi-20260723.json) | Same `.so`: 192 tests on PyTorch 2.11 with each vLLM minor; 123 applicable tests on PyTorch 2.10 | Historical source-built binary gate; the current packaged boundary is the next row |
-| [Refreshed ABI7 vLLM 0.24 wheel](docs/results/h20-native-wheel-clean-install-abi7-refresh-20260727.json) | Current revision: 286/286 full GPU tests plus 22/22 focused FP8 KV/adapter tests from a fresh repository-free environment | Packages the final FP8 KV adapter; this exact wheel has not replaced the remaining vLLM 0.25/PyTorch 2.10 matrix rows |
+| [Native ABI8 cross-matrix wheel](docs/results/h20-native-wheel-clean-install-abi8-20260727.json) | Same wheel: 293 tests with each vLLM minor; 199 applicable tests on PyTorch 2.10 | Current Linux x86_64, CUDA 13.1, SM90, Python 3.11 matrix artifact; qualified but not published |
+| [Historical refreshed ABI7 vLLM 0.24 wheel](docs/results/h20-native-wheel-clean-install-abi7-refresh-20260727.json) | 286/286 full GPU tests plus 22/22 focused FP8 KV/adapter tests from a fresh repository-free environment | Closed the FP8 KV adapter packaging gap before ABI8 superseded the matrix |
 | [Native ABI7 cross-matrix wheel](docs/results/h20-native-wheel-clean-install-abi7-20260727.json) | Same wheel: 286 tests with each vLLM minor; 193 applicable tests on PyTorch 2.10 | First complete Linux x86_64, CUDA 13.1, SM90, Python 3.11 matrix artifact; qualified but not published |
 | [Rejected default KV movement candidate](docs/results/h20-vllm-kv-movement-admission-rejected-20260727.json) | 1,024 cached prefix tokens and three real preemptions with zero physical movement calls/bytes | Default vLLM prefix caching is logical and preemption recomputes; optional offload/beam/compaction require separate profiling |
 | [Historical ABI6 matrix wheel](docs/results/h20-native-wheel-clean-install-abi6-20260727.json) | Same wheel: 277 tests with each vLLM minor; 186 applicable tests on PyTorch 2.10 | Predecessor before fused logits preprocessing entered the packaged ABI |

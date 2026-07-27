@@ -258,7 +258,9 @@ Implementation and integration gates:
 7. [x] provider-order-reversed Qwen2.5-0.5B engine evidence: exact replay, one
    Loom launch per decode step, no rejection, and an order-stable
    `1.057–1.081x` batch-32 latency/throughput ratio.
+8. [x] one exact two-library ABI8 wheel passes repository-free PyTorch
+   2.10/2.11 and vLLM 0.24/0.25 H20 clean-install gates.
 
 The declared explicit-seed, non-speculative sampling subsystem is complete in
-source. ABI8 matrix-wheel clean-install qualification remains a separate
-binary-distribution gate.
+source, engine integration, and binary distribution. See the
+[ABI8 clean-install evidence](../results/h20-native-wheel-clean-install-abi8-20260727.json).

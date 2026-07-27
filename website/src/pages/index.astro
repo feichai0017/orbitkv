@@ -193,20 +193,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <h2>Build where engines pay.</h2>
       </div>
       <p>
-        The K0.7 bridge-ABI-7 wheel is clean-install-qualified across PyTorch
-        2.10/2.11 and vLLM 0.24/0.25 on H20, including fused logits
-        preprocessing; it remains unpublished. The refreshed current-source
-        wheel also passes all 286 vLLM 0.24 tests with the final FP8 KV adapter.
+        The K0.7 bridge-ABI-8 wheel is clean-install-qualified across PyTorch
+        2.10/2.11 and vLLM 0.24/0.25 on H20. The same two-library artifact
+        passes 293 tests with each vLLM minor and 199 applicable tests on
+        PyTorch 2.10; it remains unpublished.
         Default prefix/preemption KV movement is rejected after a real prefix
-        hit and three preemptions produced zero physical copies. Source ABI8-A
+        hit and three preemptions produced zero physical copies. ABI8-A
         categorical sampling is complete through Rust, CUDA, checked bridge,
-        PyTorch, and an explicit vLLM engine-lifetime opt-in. Cached requests
-        own persistent <code>(seed, counter)</code> state across slot moves and
-        resume. One kernel is 1.15–5.40× faster than vLLM's all-seeded direct
-        boundary at admitted 4–32-row cases; real Qwen decode is order-stably
-        1.057–1.081× at batch 32, while batch 1–4 still costs 1.5–2.4%. The
-        ABI8 matrix wheel is next. FP8 KV, physical movement, tree, stochastic,
-        and speculative-KV work remain profile-gated.
+        PyTorch, an explicit vLLM engine-lifetime opt-in, and binary
+        distribution. Cached requests own persistent
+        <code>(seed, counter)</code> state across slot moves and resume. One
+        kernel is 1.15–5.40× faster than vLLM's all-seeded direct boundary at
+        admitted 4–32-row cases; real Qwen decode is order-stably 1.057–1.081×
+        at batch 32, while batch 1–4 still costs 1.5–2.4%. Quantization
+        plumbing and MoE routing are next. FP8 KV, physical movement, tree,
+        stochastic, and speculative-KV work remain profile-gated.
       </p>
     </header>
 
