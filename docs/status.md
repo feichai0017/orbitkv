@@ -104,7 +104,7 @@
 ## Validated
 
 - local formatting, clippy, tests, and release build;
-- the bridge-ABI-5 `py3-none-linux_x86_64` native wheel built from a
+- the bridge-ABI-6 `py3-none-linux_x86_64` native wheel built from a
   clean revision for CUDA 13.1 and SM90 passed archive/ELF/RPATH/symbol/
   auditwheel checks and retained identical packaged library hashes across all
   runtime gates;
@@ -112,19 +112,25 @@
   H20 execution, and the applicable full suites on PyTorch 2.10.0+cu128,
   PyTorch 2.11.0+cu130 with vLLM 0.24.0, and the same PyTorch with the official
   vLLM 0.25.1 wheel; the native artifact is not published;
-- the qualified ABI5 revision passes 41 local Rust contract/oracle tests, 12
-  H20 safe CUDA-wrapper tests, 5 checked-bridge tests, and the complete
-  268-test Python GPU suite on each supported vLLM minor. Its 15 new focused
-  cases span three dtypes,
+- the qualified ABI6 revision passes 43 local Rust contract/oracle tests, 13
+  H20 safe CUDA-wrapper tests, 6 checked-bridge tests, and the complete
+  277-test Python GPU suite on each supported vLLM minor. Its focused top-k
+  and top-p cases span three dtypes,
   a 151,936-token vocabulary, padded strides, non-default streams,
-  `torch.compile`, CUDA Graph replay, threshold ties, `top_k > 256`, and the
-  vLLM fallback boundary;
+  `torch.compile`, CUDA Graph replay, threshold ties, `top_k > 256`, and both
+  vLLM fallback boundaries;
 - against vLLM 0.24's exact small-row PyTorch full sort on H20, the ABI5
   `top_k=50`, 151,936-vocabulary path is `1.42–2.15x` faster for every row
   count 1–7 and reduces peak temporary allocation from `4.90–47.01 MB` to
   `0.62–4.36 MB`; spot checks at rows 1 and 7 cover
   `top_k=1/50/256/257/1024/4096/151936` without a host synchronization or a
   separate large-k algorithm;
+- against vLLM 0.24's exact small-row PyTorch full sort plus F32 softmax on
+  H20, the ABI6 fused top-p path is `1.72–1.77x` faster at a 151,936-token
+  vocabulary and `1.15–1.34x` faster at the 32,768-token admission boundary
+  for every measured 2/4/7-row case. Retained logits are exact; the two
+  parallel F32 scan orders may differ by one cutoff token per row, with
+  probability L1 below `1e-4`;
 - process-isolated Qwen2.5-0.5B vLLM 0.24 token-penalty A/B in both provider
   orders preserves every generated token, records `1440/0` Loom submissions
   per order, and measures `1.056–1.123x` batch-latency plus `1.068–1.126x`
@@ -149,10 +155,10 @@
   large-shape execution passed at `16x8192`.
 - PyTorch external-stream, mutation-schema/FakeTensor, `torch.compile`, and
   CUDA Graph tests passed with the Stable ABI dispatcher;
-- one exact ABI5 wheel built with PyTorch 2.11.0+cu130 passed without
+- one exact ABI6 wheel built with PyTorch 2.11.0+cu130 passed without
   recompilation on PyTorch 2.10.0+cu128; the 2.11 vLLM 0.24 and 0.25.1
-  environments each passed 268 tests, while the vLLM-free 2.10 environment
-  passed 178 applicable tests with 63 vLLM-dependent skips;
+  environments each passed 277 tests, while the vLLM-free 2.10 environment
+  passed 186 applicable tests with 63 vLLM-dependent skips;
 - the dispatcher exposes only `aoti_torch_*`/`torch_*` PyTorch symbol families,
   has no ATen/c10 C++ or raw CUDA launch dependency, and is protected by a
   source-level CI boundary;
@@ -164,7 +170,7 @@
   for both contiguous and padded row-strided logits, rejects short/overlapping
   regions before submission, and passes external-stream, compile, graph, and
   vLLM adapter tests;
-- official vLLM 0.24.0 and 0.25.1 packages each passed the complete 268-test
+- official vLLM 0.24.0 and 0.25.1 packages each passed the complete 277-test
   H20 Python GPU suite on Torch 2.11.0+cu130; the 0.25.1 process loaded its own
   `vllm/_C_stable_libtorch.abi3.so`, and the focused greedy/vLLM gate passed
   40 tests;
@@ -243,7 +249,7 @@
   bytes across 16 FP16/BF16, NeoX/interleaved, NHD/HND cases, including untouched
   padding and negative slots; current-stream, FakeTensor, fullgraph compile,
   CUDA Graph, packed-cache, and bridge-telemetry gates pass;
-- one exact ABI5 wheel passed the vLLM 0.24/0.25 clean-install matrix, and the
+- one exact ABI6 wheel passed the vLLM 0.24/0.25 clean-install matrix, and the
   fused BF16 operator was `1.317-1.378x` faster than vLLM's separate RoPE plus
   cache-write submissions across all 32 per-tensor/per-head cases while using
   half the physical cache bytes at this boundary;
@@ -268,9 +274,10 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the qualified ABI5 wheel suite passes 268 tests on each of vLLM 0.24.0 and
-  0.25.1, including sparse penalties and sampled-token plus top-k logprobs;
-- the current bridge exposes 21 versioned operator/runtime symbols and no
+- the qualified ABI6 wheel suite passes 277 tests on each of vLLM 0.24.0 and
+  0.25.1, including sparse penalties, sampled-token plus top-k logprobs, exact
+  top-k filtering, and fused top-p renormalization;
+- the current bridge exposes 23 versioned operator/runtime symbols and no
   raw CUDA launch symbols; the PyTorch shim depends only on those bridge
   symbols and no raw launch symbol;
 - against vLLM's exact `compute_logprobs + gather_logprobs(0)` path for the

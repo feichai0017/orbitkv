@@ -1,0 +1,171 @@
+{
+  "schema_version": 1,
+  "tested_revision": "d18ee521f60a59620d23a61123f89a148b67915b",
+  "timestamp_utc": "2026-07-27T02:56:02.329107+00:00",
+  "device": "NVIDIA H20",
+  "compute_capability": [
+    9,
+    0
+  ],
+  "torch_version": "2.11.0+cu130",
+  "vllm_version": "0.24.0",
+  "bridge_abi_version": 6,
+  "baseline": "vLLM apply_top_k_top_p PyTorch full-sort path plus F32 softmax",
+  "candidate": "Loom partition radix sort, device threshold selection, in-place filtering, and F32 retained-prefix renormalization",
+  "dtype": "f32 (vLLM sampling contract)",
+  "vocab_size": 32768,
+  "row_stride": 32768,
+  "top_p": 0.9,
+  "warmup": 10,
+  "iterations": 100,
+  "repeats": 7,
+  "seed": 439,
+  "vllm_fast_path_gate": {
+    "minimum_rows": 2,
+    "maximum_rows": 7,
+    "minimum_vocab_size": 32768,
+    "contract": "top-p only, F32 logits, F32 per-row top-p values",
+    "fallbacks": "row one, smaller vocabulary, eight or more rows, non-F32 logits, and joint top-k/top-p stay native"
+  },
+  "timing_method": "CUDA events over independent preallocated logits; input creation excluded; internal output/workspace allocation included; provider order alternated by repeat",
+  "acceptance": {
+    "passed": true,
+    "mask": "at most one F32 cutoff-boundary token per row versus vLLM",
+    "retained_logits": "exact",
+    "probabilities": "per-row L1 difference at most 1e-4",
+    "performance": "lower median latency for every registered shape"
+  },
+  "results": [
+    {
+      "rows": 2,
+      "vllm_path": "PyTorch full sort plus softmax",
+      "baseline_us": 166.81760787963867,
+      "loom_us": 145.5795192718506,
+      "speedup": 1.1458865142158408,
+      "latency_reduction_percent": 12.73132307658534,
+      "baseline_samples_us": [
+        169.23999786376953,
+        166.6080093383789,
+        175.84287643432617,
+        195.80223083496094,
+        166.81760787963867,
+        166.45727157592773,
+        166.68832778930664
+      ],
+      "loom_samples_us": [
+        145.55423736572266,
+        145.78271865844727,
+        145.53791999816895,
+        145.59040069580078,
+        145.5577564239502,
+        145.66431999206543,
+        145.5795192718506
+      ],
+      "baseline_p90_us": 195.80223083496094,
+      "loom_p90_us": 145.78271865844727,
+      "baseline_peak_temporary_bytes": 2905600,
+      "loom_peak_temporary_bytes": 1049088,
+      "boundary_mismatches_per_row": [
+        0,
+        0
+      ],
+      "finite_count_delta_per_row": [
+        0,
+        0
+      ],
+      "maximum_probability_l1": 8.80845618667081e-08
+    },
+    {
+      "rows": 4,
+      "vllm_path": "PyTorch full sort plus softmax",
+      "baseline_us": 178.9311981201172,
+      "loom_us": 150.2131175994873,
+      "speedup": 1.1911822414684234,
+      "latency_reduction_percent": 16.04978942875648,
+      "baseline_samples_us": [
+        189.66623306274414,
+        178.38367462158203,
+        179.7327995300293,
+        178.9311981201172,
+        175.44544219970703,
+        185.7472038269043,
+        177.6246452331543
+      ],
+      "loom_samples_us": [
+        150.2131175994873,
+        150.21696090698242,
+        150.22144317626953,
+        150.20159721374512,
+        150.14752388000488,
+        150.23903846740723,
+        150.18752098083496
+      ],
+      "baseline_p90_us": 189.66623306274414,
+      "loom_p90_us": 150.23903846740723,
+      "baseline_peak_temporary_bytes": 5801472,
+      "loom_peak_temporary_bytes": 2097664,
+      "boundary_mismatches_per_row": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "finite_count_delta_per_row": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "maximum_probability_l1": 1.1125666787847877e-07
+    },
+    {
+      "rows": 7,
+      "vllm_path": "PyTorch full sort plus softmax",
+      "baseline_us": 205.79072952270508,
+      "loom_us": 153.22784423828125,
+      "speedup": 1.3430374260352083,
+      "latency_reduction_percent": 25.541911147472035,
+      "baseline_samples_us": [
+        237.39839553833008,
+        205.2876853942871,
+        209.1859245300293,
+        209.0323257446289,
+        205.79072952270508,
+        204.80224609375,
+        204.81952667236328
+      ],
+      "loom_samples_us": [
+        153.22784423828125,
+        155.61375617980957,
+        155.42207717895508,
+        153.49760055541992,
+        151.58656120300293,
+        152.7999973297119,
+        152.97727584838867
+      ],
+      "baseline_p90_us": 237.39839553833008,
+      "loom_p90_us": 155.61375617980957,
+      "baseline_peak_temporary_bytes": 10145280,
+      "loom_peak_temporary_bytes": 3670528,
+      "boundary_mismatches_per_row": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "finite_count_delta_per_row": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "maximum_probability_l1": 9.483483154326677e-08
+    }
+  ]
+}

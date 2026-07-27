@@ -76,14 +76,15 @@ input = RMSNorm(residual, weight, epsilon)
 
 ## Compatibility
 
-The supported package interval is `vllm>=0.24,<0.26`. The bridge-ABI-5 native
-wheel passes 268 H20 tests with each official vLLM minor and is the current
-qualified artifact. It includes exact top-k filtering and is not published.
+The supported package interval is `vllm>=0.24,<0.26`. The bridge-ABI-6 native
+wheel passes 277 H20 tests with each official vLLM minor and is the current
+qualified artifact. It includes exact top-k filtering plus fused top-p
+renormalization and is not published.
 Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
 [compatibility matrix](../compatibility.md) and
-[native-wheel gate](../results/h20-native-wheel-clean-install-abi5-20260727.json).
+[native-wheel gate](../results/h20-native-wheel-clean-install-abi6-20260727.json).
 
 ## Build and install
 
@@ -103,7 +104,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-5cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-6cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -116,7 +117,7 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-This command builds the current ABI5 artifact. Its clean-install qualification
+This command builds the current ABI6 artifact. Its clean-install qualification
 is recorded for the exact source revision and wheel hash; it is not published
 to a package index. Editable
 source development remains documented in the
@@ -387,7 +388,7 @@ The H20 operator reports at
 [151,936 tokens](../results/h20-top-p-renorm-20260727.json) and the
 [32,768-token crossover](../results/h20-top-p-renorm-vocab32768-20260727.json)
 include internal allocations and hard-fail on a latency regression. They
-measure `1.72–1.77x` and `1.14–1.29x` ratios respectively. Long F32 cutoff
+measure `1.72–1.77x` and `1.15–1.34x` ratios respectively. Long F32 cutoff
 accumulation is not bitwise associative: versus vLLM the qualified boundary
 permits at most one cutoff token per row and probability L1 below `1e-4`.
 Deterministic ties within Loom use descending token ID. This is an operator and
@@ -738,7 +739,7 @@ separately qualifies exact cache bytes, the original ABI2 clean wheel, a
 `1.317-1.378x` named-operator range, and exact tokens plus Loom path hits in
 both engine orders. Its latency ratios are order-sensitive, and the
 native-versus-FP8 quality, admitted-capacity, TTFT, and TPOT gate remains open.
-The current ABI5 wheel matrix requalifies the same FP8 operator tests.
+The current ABI6 wheel matrix requalifies the same FP8 operator tests.
 See the [FP8 KV-cache contract](../design/fp8-kv-cache.md).
 
 For paged decode, the native-interleaved

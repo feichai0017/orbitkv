@@ -97,7 +97,7 @@ transfer.
 Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
 
 - ~~qualify the next vLLM minor without weakening adapter gates~~ — official
-  vLLM 0.24.0 and 0.25.1 packages each pass the complete 268-test H20 GPU suite;
+  vLLM 0.24.0 and 0.25.1 packages each pass the complete 277-test H20 GPU suite;
 - ~~centralize runtime version admission and package metadata~~ — supported
   range is `vllm>=0.24,<0.26`, with registration-time series checks;
 - ~~document the current binary boundary and Stable ABI decision~~ — the
@@ -112,10 +112,10 @@ Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
   `python/build_wheel.py` builds from a clean revision, packages exactly the
   two native libraries, emits their manifest, audits ELF/RPATH/symbols, and
   refuses an accidental source-only wheel;
-- ~~prove repository-free H20 clean installs~~ — one exact ABI5
+- ~~prove repository-free H20 clean installs~~ — one exact ABI6
   `py3-none-linux_x86_64` artifact passes fresh Python 3.11 venv gates on
   PyTorch 2.10/2.11 and vLLM 0.24/0.25, including `pip check`, package-local
-  library loading, BF16 smoke, and the applicable 268/178-test suites.
+  library loading, BF16 smoke, and the applicable 277/186-test suites.
 
 Exit: a qualified binary artifact installs without a repository checkout, uses
 a declared PyTorch ABI boundary, and passes the same framework and H20 gates as
@@ -182,7 +182,7 @@ Status: implementation and integration qualified; system-value exit open.
 - ~~FP8 E4M3 quantize-on-write with explicit static per-tensor or per-head
   scales~~ — Rust contract/oracle, safe CUDA backend, checked bridge, Stable ABI
   PyTorch operator, vLLM adapter, exact-byte H20 comparison, named operator
-  benchmark, current-stream/compile/graph checks, current ABI5 clean wheel, and
+  benchmark, current-stream/compile/graph checks, current ABI6 clean wheel, and
   order-reversed real-engine invocation are complete; the pretrained
   native-versus-FP8 quality, admitted-capacity, TTFT, and TPOT gate remains open;
 - ~~process-isolated native/FP8/Loom system measurement harness~~ — cache
@@ -259,7 +259,7 @@ Status: in progress.
   are complete. The explicit vLLM 0.24/0.25 route admits only F32 top-p-only
   requests with rows 2–7 and vocabulary at least 32,768; vLLM retains RNG,
   generators, token selection, joint top-k/top-p, and every unqualified shape.
-  At the 32,768-vocabulary crossover the H20 operator is `1.14–1.29x` faster;
+  At the 32,768-vocabulary crossover the H20 operator is `1.15–1.34x` faster;
   at 151,936 it is `1.72–1.77x` faster and uses roughly one third of vLLM's
   peak temporary storage. An F32 cutoff may move by one boundary token because
   the implementations use different parallel accumulation orders; the

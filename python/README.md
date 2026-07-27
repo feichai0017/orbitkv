@@ -6,8 +6,9 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 [Project README](../README.md) · [Integration guide](../docs/guides/vllm-ir-provider.md) · [Operator catalog](../docs/operator-catalog.md)
 
 > [!IMPORTANT]
-> The bridge-ABI-5 native wheel is H20-qualified but is not published to a
-> package index. It includes exact top-k filtering. A source-only wheel is
+> The bridge-ABI-6 native wheel is H20-qualified but is not published to a
+> package index. It includes exact top-k filtering and fused top-p
+> renormalization. A source-only wheel is
 > intentionally unsupported:
 > `pip wheel ./python` fails unless `build_wheel.py` has staged both native
 > libraries and their manifest.
@@ -25,18 +26,20 @@ The current matrix row is:
 | vLLM extra | `>=0.24,<0.26` |
 | Native payload | `libloom_cuda_bridge.so`, `libloom_kernels_torch.so` |
 
-The qualified artifact's build tag encodes bridge ABI 5:
-`5cu131torch210sm90`. The exact H20 artifact, binary audit, and three
+The qualified artifact's build tag encodes bridge ABI 6:
+`6cu131torch210sm90`. The exact H20 artifact, binary audit, and three
 repository-free clean-install gates are recorded in the
-[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi5-20260727.json).
-The same wheel passes 268 tests with each supported vLLM minor and 178
+[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi6-20260727.json).
+The same wheel passes 277 tests with each supported vLLM minor and 186
 applicable tests in the vLLM-free PyTorch 2.10 environment. It includes static
 FP8 E4M3 KV quantize-on-write, sparse token penalties, and sampled-token plus
-top-k logprobs, plus exact top-k filtering, and is bound to source revision
-`d95a7535a4a3d293f3b0dffdcc81fa50ad89cc0b`.
+top-k logprobs, exact top-k filtering, and fused top-p renormalization, and is
+bound to source revision
+`d18ee521f60a59620d23a61123f89a148b67915b`.
 
-The older `4cu131torch210sm90` ABI-4, `2cu131torch210sm90` ABI-2, and
-`1cu131torch210sm90` ABI-1 wheels remain historical evidence only.
+The older `5cu131torch210sm90` ABI-5, `4cu131torch210sm90` ABI-4,
+`2cu131torch210sm90` ABI-2, and `1cu131torch210sm90` ABI-1 wheels remain
+historical evidence only.
 `build_wheel.py` uses the ABI-specific tag so incompatible bridge signatures
 cannot overwrite or masquerade as one another. No native Python wheel has been
 published.
@@ -49,11 +52,11 @@ without PyTorch. vLLM and tests remain explicit extras:
 ```bash
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-5cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-6cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 
 # Add the supported vLLM integration when needed.
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-5cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-6cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 

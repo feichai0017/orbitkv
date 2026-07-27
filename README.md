@@ -59,7 +59,7 @@ Catalog membership alone is never a performance claim.
 
 ## Next value program
 
-The bridge-ABI-5 native-wheel engineering gate is complete for
+The bridge-ABI-6 native-wheel engineering gate is complete for
 Linux x86_64, CUDA 13.1, SM90, Python 3.11, PyTorch 2.10/2.11, and vLLM
 0.24/0.25. The exact artifact is qualified but not published to a package
 index. It contains all fifteen checked operators, including sparse token
@@ -85,7 +85,7 @@ is now:
 
 The first K3 slice extends the same fused RoPE+paged-KV operator to write
 vLLM-compatible FP8 E4M3 cache bytes with static per-tensor or per-head scales.
-The exact bridge-ABI-5 wheel closes the H20 exact-byte, current-stream,
+The exact bridge-ABI-6 wheel closes the H20 exact-byte, current-stream,
 compile/graph, named-operator, clean-install, and real-engine invocation gates.
 The physical cache allocation is `2x` smaller than BF16 at this operator
 boundary, and the fused path is `1.317-1.378x` faster than vLLM's separate RoPE
@@ -184,7 +184,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-5cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-6cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 ```
 
 The wheel contains exactly `libloom_cuda_bridge.so` and the boxed
@@ -194,8 +194,8 @@ source-only wheel is rejected. The installed package validates that manifest
 and loads only its packaged libraries; no repository checkout or library-path
 override is used.
 
-That command builds the current ABI5 artifact. The exact
-`5cu131torch210sm90` wheel completed the repository-free
+That command builds the current ABI6 artifact. The exact
+`6cu131torch210sm90` wheel completed the repository-free
 PyTorch/CUDA/Python/vLLM H20 matrix and is not published.
 
 See the [Python README](python/README.md) for binary and editable development
@@ -215,6 +215,7 @@ opens the raw JSON artifact used for the claim.
 | [Greedy + sampled logprob](docs/results/h20-greedy-sample-logprobs-20260722.json) | `3.16–4.35×` operator ratio; `1.129–1.250×` real-engine batch-latency ratio | Pure greedy requests with raw `logprobs=0` |
 | [Selected-token logprob + rank](docs/results/h20-selected-token-logprobs-20260722.json) | `2.77–3.78×` operator ratio; `1.044–1.125×` real-engine batch-latency ratio | vLLM still owns top-k/top-p, RNG, and selection |
 | [Exact in-place top-k filter](docs/results/h20-top-k-filter-20260727.json) | `1.42–2.15×` over vLLM's full sort for all admitted 1–7-row cases; `0.62–4.36 MB` versus `4.90–47.01 MB` peak temporaries | F32, 151,936-token vocabulary, `top_k=50`; threshold ties preserved and larger batches remain on vLLM Qrita Triton |
+| Fused top-p + renormalization: [151,936 vocabulary](docs/results/h20-top-p-renorm-20260727.json) · [32,768 boundary](docs/results/h20-top-p-renorm-vocab32768-20260727.json) | `1.72–1.77×` and `1.15–1.34×` over vLLM's full sort plus F32 softmax for all admitted 2/4/7-row cases | F32 top-p-only route; vLLM keeps RNG/selection; parallel F32 scans may differ by one cutoff token with probability L1 ≤ `1e-4` |
 | Sampled-token + top-k logprobs: [operator](docs/results/h20-topk-sampled-logprobs-20260725.json) · [baseline first](docs/results/h20-vllm-qwen25-topk-logprobs-baseline-first-20260725.json) · [Loom first](docs/results/h20-vllm-qwen25-topk-logprobs-loom-first-20260725.json) | `3.25×`, `2.60×`, and `1.19×` operator ratios at 1/8/32 rows; exact engine tokens, returned IDs, and ranks | Direct Loom ties are deterministic; the exact vLLM adapter preserves `torch.topk` order. Engine latency crosses parity after provider-order reversal, so no model-level speedup is claimed |
 | [Min-P filtering](docs/results/h20-min-p-filter-20260722.json) | `1.885×` at 128 rows and no tensor-sized probability/mask temporaries | Smaller batches fall back to vLLM |
 | Sparse token penalties: [operator](docs/results/h20-token-penalties-20260725.json) · [baseline first](docs/results/h20-vllm-qwen25-token-penalties-baseline-first-20260725.json) · [Loom first](docs/results/h20-vllm-qwen25-token-penalties-loom-first-20260725.json) | Exact outputs; `5.82–34.30×` operator ratio; `1.056–1.123×` order-stable Qwen engine batch-latency ratio | F32 repetition/frequency/presence; `1440/0` Loom path hits per provider order; serving-scale goodput remains separate |
@@ -225,7 +226,8 @@ opens the raw JSON artifact used for the claim.
 | [Short paged decode](docs/results/h20-vllm-paged-decode-backend-20260722.json) | `1.154–2.374×` across all 24 admitted backend cases | FP16/BF16, Hq/Hkv 32/8, D128, context ≤32; other shapes use FA3 |
 | [Local split-K paged decode](docs/results/h20-paged-decode-split-k-20260722.json) | `1.14–6.22×` versus legacy Loom | Improves the Rust/CUDA backend; FA3 remains the long-context engine fallback |
 | [LibTorch Stable ABI dispatcher](docs/results/h20-libtorch-stable-abi-20260723.json) | Same `.so`: 192 tests on PyTorch 2.11 with each vLLM minor; 123 applicable tests on PyTorch 2.10 | Historical source-built binary gate; the current packaged boundary is the next row |
-| [Native ABI5 matrix wheel](docs/results/h20-native-wheel-clean-install-abi5-20260727.json) | Same wheel: 268 tests with each vLLM minor; 178 applicable tests on PyTorch 2.10 | Current Linux x86_64, CUDA 13.1, SM90, Python 3.11 artifact; qualified but not published |
+| [Native ABI6 matrix wheel](docs/results/h20-native-wheel-clean-install-abi6-20260727.json) | Same wheel: 277 tests with each vLLM minor; 186 applicable tests on PyTorch 2.10 | Current Linux x86_64, CUDA 13.1, SM90, Python 3.11 artifact; qualified but not published |
+| [Historical ABI5 matrix wheel](docs/results/h20-native-wheel-clean-install-abi5-20260727.json) | Same wheel: 268 tests with each vLLM minor; 178 applicable tests on PyTorch 2.10 | Predecessor before fused top-p filtering and renormalization entered the packaged ABI |
 | [Historical ABI4 matrix wheel](docs/results/h20-native-wheel-clean-install-abi4-20260725.json) | Same wheel: 253 tests with each vLLM minor; 164 applicable tests on PyTorch 2.10 | Predecessor before exact top-k filtering entered the packaged ABI |
 | [Historical ABI2 matrix wheel](docs/results/h20-native-wheel-clean-install-abi2-20260724.json) | Same wheel: 225 tests with each vLLM minor; 138 applicable tests on PyTorch 2.10 | Predecessor before sparse penalties and top-k logprobs entered the packaged ABI |
 

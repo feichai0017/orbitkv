@@ -119,7 +119,7 @@ memory-bound gap that cannot be handled by its selected attention backend.
 
 The implementation is complete through Rust contracts and CPU oracles, safe
 CUDA dispatch, the checked bridge, the Stable ABI PyTorch operator, vLLM
-registration, and repository-free ABI2, ABI4, and current ABI5 wheels. Revision
+registration, and repository-free ABI2, ABI4, ABI5, and current ABI6 wheels. Revision
 `a2f37666ed31aa8781a26e150980a75f9f569171` closed the first four H20 gates:
 
 1. exact FP8 bytes versus vLLM for FP16/BF16, per-tensor/per-head scales,
