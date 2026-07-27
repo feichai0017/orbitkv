@@ -132,6 +132,12 @@
   prefix-cache hit and three scheduler preemptions under a `1.2366x`
   over-capacity workload, but zero physical swap/copy calls or bytes. Default
   prefix/preemption KV movement is rejected as a Loom operator target;
+- a source-pinned vLLM 0.24 H20 seeded-sampling admission matrix covers rows
+  1/2/4/7/8/32, two seeds, reversed shape order, and an isolated 32-row run.
+  The all-seeded sampling-only path grows to 34 kernels and `19.45 MB` of peak
+  incremental storage at 32 rows; the conservative isolated median is
+  `265.79 us` versus `55.18 us` for the unseeded native control. ABI8-A is
+  admitted for implementation, but no Loom operator or speedup exists yet;
 - the qualified ABI7 revision passes 45 local Rust contract/oracle tests, 14
   H20 safe CUDA-wrapper tests, 6 checked-bridge tests, and the complete
   286-test Python GPU suite on each supported vLLM minor. The vLLM-free
@@ -482,8 +488,10 @@ FA3 for the engine's 128-1,024-token path.
   Qwen gate; fused logits preprocessing has exact offline engine invocation
   and order-stable TPOT evidence but no serving-scale goodput result;
 - Loom-owned deterministic RNG and a stable seeded-sampling engine benefit;
-  the [ABI8-A design](design/counter-based-sampling.md) first requires an H20
-  profile of vLLM's per-request-generator fallback;
+  the [H20 admission gate](results/h20-vllm-seeded-sampling-admission-20260727.json)
+  is closed, while Rust/CUDA/ABI8/PyTorch implementation, statistical
+  qualification, persistent request-slot state, and order-reversed engine
+  evidence remain open;
 - an end-to-end speculative draft/target performance win; tree/branch
   metadata, stochastic residual-distribution rejection, and KV commit/remap
   remain profile-gated after the real-engine verifier share measured below

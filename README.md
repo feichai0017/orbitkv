@@ -82,12 +82,23 @@ is now:
 
 | Order | Direction | First proof |
 | --- | --- | --- |
-| 1 | Seeded sampling tail | profile vLLM's per-request-generator fallback, then admit one explicit-state counter-based categorical sampler only if the gap is material |
+| 1 | Seeded sampling tail | implement the admitted explicit-state ABI8-A categorical sampler without a rows-by-vocabulary noise tensor |
 | 2 | Quantization plumbing | measured scale/pack/layout work around unchanged vendor GEMM |
 | 3 | MoE routing and movement | routing, histogram/prefix sum, permutation, and combine around vendor grouped GEMM |
 | 4 | Profile-gated KV movement | revisit only for a named offload, beam, or compaction path with real physical movement |
 | 5 | Profile-gated speculative extensions | tree/stochastic/KV work only after a named workload exposes a material non-GEMM boundary |
 | 6 | Minimal Rust decode proof | one zero-copy decode step over borrowed tensors and streams, without becoming an inference engine |
+
+The seeded-sampling admission gate is closed. Two source-pinned vLLM 0.24 H20
+matrix runs plus an isolated 32-row confirmation show that the all-seeded
+sampling-only path launches one exponential-noise kernel per row and allocates
+one complete F32 noise matrix. At 8 rows it takes `131.13–132.95 us`, launches
+10 kernels, and peaks `4.87 MB` above its input; at 32 rows the conservative
+isolated result is `265.79 us`, 34 kernels, and `19.45 MB`, versus `55.18 us`
+and three kernels for the unseeded native control. This admits implementation,
+not a Loom speedup: no ABI8 operator exists yet. See the
+[admission evidence](docs/results/h20-vllm-seeded-sampling-admission-20260727.json)
+and [contract](docs/design/counter-based-sampling.md).
 
 The former first item, default vLLM prefix/preemption KV movement, is now
 explicitly rejected. A real Qwen2.5-0.5B vLLM V1 H20 run observed a
@@ -244,6 +255,7 @@ opens the raw JSON artifact used for the claim.
 | Sampled-token + top-k logprobs: [operator](docs/results/h20-topk-sampled-logprobs-20260725.json) · [baseline first](docs/results/h20-vllm-qwen25-topk-logprobs-baseline-first-20260725.json) · [Loom first](docs/results/h20-vllm-qwen25-topk-logprobs-loom-first-20260725.json) | `3.25×`, `2.60×`, and `1.19×` operator ratios at 1/8/32 rows; exact engine tokens, returned IDs, and ranks | Direct Loom ties are deterministic; the exact vLLM adapter preserves `torch.topk` order. Engine latency crosses parity after provider-order reversal, so no model-level speedup is claimed |
 | [Min-P filtering](docs/results/h20-min-p-filter-20260722.json) | `1.885×` at 128 rows and no tensor-sized probability/mask temporaries | Smaller batches fall back to vLLM |
 | Sparse token penalties: [operator](docs/results/h20-token-penalties-20260725.json) · [baseline first](docs/results/h20-vllm-qwen25-token-penalties-baseline-first-20260725.json) · [Loom first](docs/results/h20-vllm-qwen25-token-penalties-loom-first-20260725.json) | Exact outputs; `5.82–34.30×` operator ratio; `1.056–1.123×` order-stable Qwen engine batch-latency ratio | F32 repetition/frequency/presence; `1440/0` Loom path hits per provider order; serving-scale goodput remains separate |
+| [Seeded sampling admission](docs/results/h20-vllm-seeded-sampling-admission-20260727.json) | At 8 rows the native all-seeded sampling-only path is `3.00–3.01×` the unseeded control with 10 versus 3 kernels; isolated 32 rows is `4.82×`, 34 kernels, and `19.45 MB` temporary | ABI8-A is admitted for implementation only; no Loom operator, seed-to-token parity, adapter, or engine speedup is claimed |
 | [Greedy speculative verify + compact](docs/results/h20-greedy-speculative-verify-20260723.json) | `1.101–1.128×` dispatcher ratio across 15 batch/draft shapes; bit-exact with vLLM | Deterministic all-greedy rejection only; the real-model gate is the next row |
 | Real-model speculative decode: [native first](docs/results/h20-vllm-qwen25-speculative-native-first-20260723.json) · [Loom first](docs/results/h20-vllm-qwen25-speculative-loom-first-20260723.json) | Exact native/Loom tokens, `714/714` measured Loom calls per order; verifier share `0.048–0.200%` | Engine path proven; native/Loom latency crosses parity and speculative decode loses to target-only on this model pair |
 | [RoPE + paged-KV write](docs/results/h20-rope-paged-kv-20260722.json) | `2.30–2.40×` dispatcher ratio for 1–512 tokens | Real-engine invocation is proven; end-to-end remains at parity |
@@ -289,7 +301,7 @@ opens the raw JSON artifact used for the claim.
 | [Code layout](docs/design/code-layout.md) | Trace an operator across contracts, CUDA, bridge, PyTorch, and vLLM |
 | [Greedy speculative-verify design](docs/design/greedy-speculative-verify.md) | Read the ragged contract, ownership boundary, and deliberate exclusions |
 | [FP8 KV-cache design](docs/design/fp8-kv-cache.md) | Read the static-scale write contract, qualified implementation boundary, and remaining system-value gate |
-| [Counter-based sampling design](docs/design/counter-based-sampling.md) | Read the proposed explicit-state ABI8-A boundary and its admission gates |
+| [Counter-based sampling design](docs/design/counter-based-sampling.md) | Read the admitted explicit-state ABI8-A boundary and remaining implementation gates |
 | [Paged-decode design](docs/design/paged-decode-attention.md) | Read cache layouts, split-K semantics, and exclusions |
 | [vLLM provider guide](docs/guides/vllm-ir-provider.md) | Build, configure, validate, and benchmark engine adapters |
 | [Compatibility matrix](docs/compatibility.md) | Check Rust, CUDA, PyTorch, vLLM, and binary distribution boundaries |

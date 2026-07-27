@@ -27,7 +27,7 @@ feature. New feature work follows this order:
 
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
-| 1 | Seeded sampling tail | H20 admission profile of vLLM's per-request-generator fallback, followed by explicit-state categorical sampling only if material | deterministic replay plus a declared statistical contract and an order-reversed seeded-engine win |
+| 1 | Seeded sampling tail | implement the admitted explicit-state ABI8-A categorical sampler without a rows-by-vocabulary noise tensor | deterministic replay plus a declared statistical contract and an order-reversed seeded-engine win |
 | 2 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
 | 3 | MoE routing and movement | top-k routing, histogram/prefix sum, permutation, and inverse permutation | lower model-level MoE latency while grouped GEMM remains vendor-owned |
 | 4 | Profile-gated KV movement | a named offload, beam, or compaction profile that exposes physical movement | fewer launches or less movement time without replacing an efficient driver/vendor path |
@@ -40,6 +40,14 @@ observed a 1,024-token prefix hit and three real preemptions, but none of the
 instrumented swap or batch-copy entrypoints ran. Prefix caching reuses logical
 blocks and default preemption frees blocks before recomputation. No public Loom
 movement operator will be added for that path.
+
+The seeded-sampling candidate passed admission. The
+[source-pinned H20 result](results/h20-vllm-seeded-sampling-admission-20260727.json)
+shows that vLLM 0.24's all-seeded sampling-only path scales from three kernels
+at one row to 34 at 32 rows while retaining a full probability-shaped F32
+noise tensor. The isolated 32-row median is `265.79 us` versus `55.18 us` for
+the unseeded native control. ABI8-A now enters implementation; no Loom
+performance or engine claim exists until the remaining K4 gates close.
 
 Static FP8 KV-cache compression remains a K3 evidence track, not the next
 kernel implementation. Its first pinned Qwen2.5 candidate is rejected below;
@@ -303,13 +311,17 @@ Status: in progress.
   Loom submissions; TPOT ratios are `1.010–1.084x`, while batch latency
   crosses parity at batch 32, so no stable model-level batch-latency claim is
   made;
-- deterministic counter-based RNG sampling without a host round trip is next.
-  ABI8-A first profiles vLLM's seeded per-request-generator fallback. If
-  admitted, one `categorical_sample` contract consumes normalized contiguous
-  F32 probabilities plus caller-owned `(seed, counter)` int64 state, emits one
-  int64 token per row, and advances counters in place on the current stream.
-  It has no implicit global generator or seedless mode. See the
-  [counter-based sampling design](design/counter-based-sampling.md).
+- deterministic counter-based RNG sampling without a host round trip is
+  admitted and next. The source-pinned H20 gate records exact replay,
+  non-default-stream execution, generator-registration-dependent CUDA Graph
+  capture, one exponential kernel per seeded row, and `0.61–19.45 MB` of
+  probability-shaped temporary storage. ABI8-A `categorical_sample` consumes
+  normalized contiguous F32 probabilities plus caller-owned `(seed, counter)`
+  int64 state, emits one int64 token per row, and advances counters in place
+  on the current stream. It has no implicit global generator or seedless mode.
+  Implementation remains open. See the
+  [counter-based sampling design](design/counter-based-sampling.md) and
+  [admission result](results/h20-vllm-seeded-sampling-admission-20260727.json).
 
 Exit: fewer launches and temporary tensors with exact token results where the
 contract requires parity, or deterministic replay plus an explicitly declared
@@ -321,7 +333,8 @@ operator gate for the admitted small-row vLLM path; top-k raw-logprob
 correctness plus temporary reduction is closed without a stable engine-speedup
 claim. Fused top-p/renormalization and mixed-sampling logits preprocessing
 close their shape-gated operator and real-engine invocation exits. Loom-owned
-deterministic RNG remains open.
+deterministic RNG implementation and engine qualification remain open; its
+admission gate is closed.
 
 ## K4.5: Speculative Decoding Support
 

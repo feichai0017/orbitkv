@@ -122,6 +122,10 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   three preemptions produced zero physical copies, so default
   prefix/preemption movement is rejected and the next candidate is the
   explicit-state counter-based sampling boundary.
+- a source-pinned vLLM 0.24 seeded-sampling admission profiler and H20 result.
+  The all-seeded sampling-only path reaches 34 kernels and `19.45 MB` of peak
+  incremental storage at 32 rows, so the explicit-state ABI8-A categorical
+  sampler is admitted for implementation without claiming an unbuilt speedup.
 
 ### Fixed
 

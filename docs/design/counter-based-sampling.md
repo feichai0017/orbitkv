@@ -1,6 +1,6 @@
 # Counter-Based Sampling Design
 
-## Why This Is The Next Candidate
+## Admission Result
 
 vLLM 0.24's CUDA sampler delegates top-k/top-p requests without per-request
 generators to FlashInfer. Loom should not replace that path without evidence.
@@ -10,9 +10,26 @@ That path materializes an F32 probability matrix and an equally large
 exponential-noise matrix, then launches `exponential_` once per seeded row
 before division and argmax.
 
-The first deliverable is therefore an H20 admission profile of the real seeded
-sampler boundary. A new public operator proceeds only if that profile shows
-material memory, launch, or latency cost at an engine-relevant shape.
+That boundary passed its source-pinned H20 admission gate. Two full row-matrix
+runs and an isolated 32-row confirmation measured:
+
+| Rows | All-seeded sampling only | Unseeded control | CUDA kernels | Peak increment |
+| ---: | ---: | ---: | ---: | ---: |
+| 1 | `32.64–47.18 us` | `29.94–43.83 us` | `3 / 3` | `0.61 MB` |
+| 8 | `131.13–132.95 us` | `43.56–44.29 us` | `10 / 3` | `4.87 MB` |
+| 32 | `265.79–422.32 us` | `55.18–58.10 us` | `34 / 3` | `19.45 MB` |
+
+The kernel column is `all-seeded / unseeded`. Every seeded row contributes a
+separate exponential-noise kernel, and peak incremental bytes match one full
+F32 probability-shaped noise tensor plus the small output/allocation boundary.
+The 32-row latency is order-sensitive, so the range is retained; the lower,
+isolated endpoint is still `4.82x` the unseeded control.
+
+The candidate is therefore admitted for implementation. This is not a Loom
+performance result: no ABI8-A operator exists yet, and the larger complete
+native-fallback-versus-FlashInfer gap is not an entitlement for a standalone
+categorical sampler. See the
+[machine-readable admission evidence](../results/h20-vllm-seeded-sampling-admission-20260727.json).
 
 ## Product Boundary
 
@@ -29,7 +46,7 @@ It does not own:
 The engine supplies normalized probabilities and caller-owned state. Loom
 selects one token per admitted row on the current stream.
 
-## Proposed ABI8-A Contract
+## ABI8-A Contract
 
 The first operator is intentionally standalone:
 
@@ -90,18 +107,27 @@ engine's persistent request slots:
 4. delete state when the request leaves the batch;
 5. fall back before dispatch if any random row lacks a Loom state.
 
+The first adapter is therefore deliberately all-seeded only. A mixed batch
+containing an unseeded random row stays entirely on vLLM's native sampler; Loom
+does not splice two RNG streams into one batch or invent implicit state for the
+unseeded row.
+
 This lifecycle is part of the engine gate. A direct PyTorch microbenchmark or
 a monkeypatch that rebuilds state on the host does not qualify integration.
 
 ## Admission And Exit Gates
 
-ABI8-A enters implementation only after the source-pinned H20 baseline records:
+The admission gate is complete:
 
-- rows `1, 2, 4, 7, 8, 32` at a Qwen-size vocabulary;
-- unseeded and all-seeded native sampler latency;
-- CUDA launch count and peak temporary bytes;
-- current-stream and CUDA Graph behavior;
-- the exact vLLM version and sampler source hashes.
+- rows `1, 2, 4, 7, 8, 32` were measured at vocabulary 151,936;
+- unseeded, one-seeded, and all-seeded sampling-only and full-fallback paths
+  were timed in alternating provider order;
+- CUDA launch count and peak temporary bytes were captured per variant;
+- deterministic sequence replay and non-default current-stream execution
+  passed for every row count;
+- native capture failed until every per-request `torch.Generator` was
+  explicitly registered with the CUDA Graph, while registered capture passed;
+- vLLM 0.24 sampler and request-slot source hashes are recorded in the result.
 
 Implementation then requires:
 

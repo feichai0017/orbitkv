@@ -96,9 +96,9 @@ export const supportedOperators = [
 
 export const nextOperators = [
   {
-    milestone: "K4 · Next",
-    name: "Seeded sampling tail",
-    reason: "Profile vLLM's per-request-generator fallback, then admit one explicit-state counter-based sampler only if the gap is material.",
+    milestone: "K4 · ABI8-A",
+    name: "Counter-based sampling",
+    reason: "Admission passed; implement Rust Philox/inverse-CDF, one CUDA execution pattern, checked ABI8, and persistent request-slot state.",
   },
   {
     milestone: "K2.5 · P1",
@@ -174,6 +174,12 @@ export const evidence = [
     shape: "Qwen2.5-0.5B · 1,024-token prefix · 96-request pressure",
     result: "Rejected · 0 copy calls",
     detail: "Prefix hit and three preemptions observed; reuse is logical and preemption recomputes",
+  },
+  {
+    operator: "Seeded categorical-sampling admission",
+    shape: "F32 · 151,936 vocab · 8 / 32 all-seeded rows",
+    result: "Admitted · 10 / 34 kernels",
+    detail: "3.00× at 8 rows; isolated 32-row path is 4.82× with 19.45 MB temporary storage",
   },
   {
     operator: "Greedy + sampled logprob",

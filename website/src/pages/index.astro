@@ -198,11 +198,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         preprocessing; it remains unpublished. The refreshed current-source
         wheel also passes all 286 vLLM 0.24 tests with the final FP8 KV adapter.
         Default prefix/preemption KV movement is rejected after a real prefix
-        hit and three preemptions produced zero physical copies. The next gate
-        profiles vLLM's seeded per-request-generator fallback before admitting
-        an explicit-state categorical sampler. FP8 KV, physical movement, tree,
-        stochastic, and speculative-KV work all wait for a distinct named
-        workload that passes their admission condition.
+        hit and three preemptions produced zero physical copies. Seeded
+        categorical sampling passed admission: vLLM's 32-row all-seeded
+        sampling-only path uses 34 kernels and a 19.45 MB noise tensor. ABI8-A
+        now moves into Rust oracle, CUDA, checked bridge, and persistent
+        request-state implementation. FP8 KV, physical movement, tree,
+        stochastic, and speculative-KV work remain profile-gated.
       </p>
     </header>
 
