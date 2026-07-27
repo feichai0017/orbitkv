@@ -207,6 +207,29 @@ normalizer and rank without a full-vocabulary raw-logprob tensor. Thus the
 direct fused operator and the vLLM adapter share normalization semantics but
 do not pretend to share tie-order policy.
 
+The separate `top_k_filter_` contract mutates rank-2 F32, FP16, or BF16 logits
+in place from one contiguous int32 `top_k` value per row. Values strictly below
+the kth-largest threshold become negative infinity; every value equal to that
+threshold remains finite. This tie-preserving rule matches vLLM's PyTorch
+full-sort path and is intentionally distinct from positionally trimming to
+exactly `k` entries.
+
+CUDA first radix-sorts independent 4,096-value vocabulary partitions. A
+device-only selector then binary-searches the ordered float-key domain and
+counts each midpoint with parallel binary searches over those sorted
+partitions. The same algorithm handles every `top_k` in `[1, vocab_size]`;
+there is no `top_k > 256` fallback and no device-to-host decision. Safe Rust
+and the checked bridge require explicit uint32 workspace. The PyTorch operator
+keeps its two-tensor mutation schema and owns that temporary internally on the
+caller's current stream, including CUDA Graph capture.
+
+The opt-in vLLM 0.24/0.25 registration replaces only top-k-only filtering for
+one through seven rows, where vLLM otherwise performs a full vocabulary sort.
+Top-p stays native. Eight or more rows stay on vLLM's Qrita Triton path because
+that implementation exposes a different duplicate-threshold rule by selecting
+exactly `k` positions. The H20 operator gate uses that exact registered
+boundary rather than comparing unrelated semantics.
+
 ## Greedy Speculative-Verify Contract
 
 The deterministic speculative boundary consumes flattened int32 draft IDs,

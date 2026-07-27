@@ -28,7 +28,7 @@ feature. New feature work follows this order:
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
 | 1 | KV-cache compression | FP8 KV write/read boundary with explicit scale layout | lower cache bytes and higher admitted context or batch size without unacceptable quality or TPOT loss |
-| 2 | Complete sampling tail | top-k/top-p, renormalization, and deterministic RNG; sparse penalties and top-k logprobs are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
+| 2 | Complete sampling tail | top-p, renormalization, and deterministic RNG; exact top-k filtering, sparse penalties, and top-k logprobs are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
 | 3 | KV-cache movement | block copy/gather/scatter/compact/remap for prefix reuse and preemption | fewer launches or less movement time in a real scheduler path |
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV boundaries only after profiling exposes material non-GEMM cost | a named draft/target model pair improves decode latency or throughput |
 | 5 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
@@ -97,7 +97,7 @@ transfer.
 Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
 
 - ~~qualify the next vLLM minor without weakening adapter gates~~ — official
-  vLLM 0.24.0 and 0.25.1 packages each pass the complete 253-test H20 GPU suite;
+  vLLM 0.24.0 and 0.25.1 packages each pass the complete 268-test H20 GPU suite;
 - ~~centralize runtime version admission and package metadata~~ — supported
   range is `vllm>=0.24,<0.26`, with registration-time series checks;
 - ~~document the current binary boundary and Stable ABI decision~~ — the
@@ -112,10 +112,10 @@ Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
   `python/build_wheel.py` builds from a clean revision, packages exactly the
   two native libraries, emits their manifest, audits ELF/RPATH/symbols, and
   refuses an accidental source-only wheel;
-- ~~prove repository-free H20 clean installs~~ — one exact ABI4
+- ~~prove repository-free H20 clean installs~~ — one exact ABI5
   `py3-none-linux_x86_64` artifact passes fresh Python 3.11 venv gates on
   PyTorch 2.10/2.11 and vLLM 0.24/0.25, including `pip check`, package-local
-  library loading, BF16 smoke, and the applicable complete suites.
+  library loading, BF16 smoke, and the applicable 268/178-test suites.
 
 Exit: a qualified binary artifact installs without a repository checkout, uses
 a declared PyTorch ABI boundary, and passes the same framework and H20 gates as
@@ -182,7 +182,7 @@ Status: implementation and integration qualified; system-value exit open.
 - ~~FP8 E4M3 quantize-on-write with explicit static per-tensor or per-head
   scales~~ — Rust contract/oracle, safe CUDA backend, checked bridge, Stable ABI
   PyTorch operator, vLLM adapter, exact-byte H20 comparison, named operator
-  benchmark, current-stream/compile/graph checks, ABI4 clean wheel, and
+  benchmark, current-stream/compile/graph checks, current ABI5 clean wheel, and
   order-reversed real-engine invocation are complete; the pretrained
   native-versus-FP8 quality, admitted-capacity, TTFT, and TPOT gate remains open;
 - ~~process-isolated native/FP8/Loom system measurement harness~~ — cache
@@ -236,23 +236,33 @@ Status: in progress.
   record `1440/0` Loom submissions, and measure `1.056–1.123x` batch-latency
   plus `1.068–1.126x` TPOT ratios;
 - ~~sampled-token plus top-k raw logprobs~~ — Rust F32/FP16/BF16 oracles,
-  deterministic two-stage CUDA with caller-owned workspace, ABI4 PyTorch
+  deterministic two-stage CUDA with caller-owned workspace, checked PyTorch
   compile/graph coverage, and an exact vLLM 0.24 adapter are complete. The
   direct operator is `3.25x`, `2.60x`, and `1.19x` faster at 1/8/32
   Qwen-vocabulary rows and near parity at 128 rows. Both engine orders preserve
   tokens, returned top-k IDs/ranks, and values within `1.91e-6`, with
   `1440/0` Loom submissions; latency crosses parity under order reversal, so no
   model-level speedup is claimed;
+- ~~exact in-place top-k filtering~~ — Rust F32/FP16/BF16 contracts and
+  oracles, one device-only partition-sort/binary-count CUDA path for every
+  valid `top_k`, caller-owned workspace below the PyTorch boundary, checked
+  ABI5 dispatch, compile/graph coverage, and an opt-in vLLM 0.24/0.25 hook are
+  complete. On H20 with 151,936 F32 logits and `top_k=50`, every admitted
+  1–7-row case beats vLLM's full-sort path by `1.42–2.15x` while using
+  `0.62–4.36 MB` rather than `4.90–47.01 MB` of peak temporary storage.
+  Eight or more rows retain vLLM's Qrita Triton path because its duplicate-tie
+  semantics select exactly `k` positions rather than preserving the threshold;
 - fused logits bias, temperature, masking, and bad-word suppression;
-- top-k/top-p filtering, renormalization, and deterministic counter-based RNG
+- top-p filtering, renormalization, and deterministic counter-based RNG
   sampling without a host round trip.
 
 Exit: fewer launches and temporary tensors with identical token results. The
 selected-logprob exit gates are closed for pure greedy and engine-owned general
 sampling requests with `logprobs=0`; the sparse-penalty gate is also closed for
-the pinned deterministic Qwen workload, and top-k raw-logprob correctness plus
-temporary reduction is closed without a stable engine-speedup claim. Owning
-selection and RNG remains open.
+the pinned deterministic Qwen workload. Exact top-k filtering closes its
+operator gate for the admitted small-row vLLM path; top-k raw-logprob
+correctness plus temporary reduction is closed without a stable engine-speedup
+claim. Owning top-p and RNG remains open.
 
 ## K4.5: Speculative Decoding Support
 

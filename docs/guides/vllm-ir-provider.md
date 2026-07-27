@@ -56,6 +56,12 @@ A ninth registration handles raw top-k logprob lists without changing sampling
 or observable tie order. vLLM keeps `torch.topk`, processors, top-k/top-p, and
 RNG; Loom supplies the shared raw normalization and selected-token rank.
 
+A tenth explicit registration replaces top-k-only filtering for one through
+seven rows, where vLLM otherwise sorts the full vocabulary. Loom preserves
+vLLM's threshold ties, keeps every `top_k` value on device, and leaves top-p,
+softmax, random sampling, per-request generators, processed-logit return
+semantics, and the eight-row Qrita Triton boundary unchanged.
+
 The registered contract is:
 
 ```text
@@ -65,16 +71,14 @@ input = RMSNorm(residual, weight, epsilon)
 
 ## Compatibility
 
-The supported package interval is `vllm>=0.24,<0.26`. The K0.7 bridge-ABI-4
-native wheel passes 253 H20 tests with each official vLLM minor and includes
-greedy speculative verification, static FP8 KV quantize-on-write, sparse token
-penalties, and sampled-token plus top-k logprobs. It is qualified but not
-published.
+The supported package interval is `vllm>=0.24,<0.26`. The bridge-ABI-5 native
+wheel passes 268 H20 tests with each official vLLM minor and is the current
+qualified artifact. It includes exact top-k filtering and is not published.
 Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
 [compatibility matrix](../compatibility.md) and
-[native-wheel gate](../results/h20-native-wheel-clean-install-abi4-20260725.json).
+[native-wheel gate](../results/h20-native-wheel-clean-install-abi5-20260727.json).
 
 ## Build and install
 
@@ -94,7 +98,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-4cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-5cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -107,8 +111,9 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-This command builds the clean-install-qualified ABI4 artifact. It is not
-published to a package index. Editable
+This command builds the current ABI5 artifact. Its clean-install qualification
+is recorded for the exact source revision and wheel hash; it is not published
+to a package index. Editable
 source development remains documented in the
 [Python README](../../python/README.md#source-development), but it cannot
 produce a source-only wheel.
@@ -135,6 +140,7 @@ from loom_kernels import (
     silu_and_mul_dynamic_fp8_out,
     silu_and_mul_out,
     selected_token_logprobs,
+    top_k_filter_,
     topk_sampled_logprobs,
 )
 
@@ -151,6 +157,7 @@ sampled_logprobs, sampled_ranks = selected_token_logprobs(logits, token_ids_i64)
 topk_ids, topk_logprobs, sampled_ranks = topk_sampled_logprobs(
     logits, token_ids_i64, 20
 )
+top_k_filter_(sampling_logits_f32, per_row_top_k_i32)
 verified_ids, accepted_lengths, emitted_lengths = greedy_speculative_verify(
     flattened_draft_ids_i32,
     flattened_target_argmax_ids_i64,
@@ -327,6 +334,27 @@ and [Loom-first](../results/h20-vllm-qwen25-token-penalties-loom-first-20260725.
 vLLM 0.24 gates preserve every token and record `1440/0` Loom submissions in
 each order. Their batch-latency ratios are `1.056–1.123x` and TPOT ratios are
 `1.068–1.126x`; serving concurrency and goodput remain separate claims.
+
+To replace vLLM's top-k-only full sort for small decode batches, register the
+exact filter before engine construction:
+
+```python
+from vllm import LLM
+from loom_kernels.vllm import register_vllm_top_k_filter
+
+assert register_vllm_top_k_filter() == "top_k_filter"
+engine = LLM(model="/path/to/model")
+```
+
+The adapter admits F32 sampling logits with one contiguous same-device int32
+`top_k` per row, no top-p, and at most seven rows. Loom mutates the logits in
+place, preserving every value tied at the kth threshold, then vLLM performs
+its original softmax and RNG work. Every valid `top_k` remains on one
+device-only algorithm. Eight or more rows use vLLM's original Qrita Triton
+path because it exposes exact-position rather than threshold-tie semantics.
+The [H20 gate](../results/h20-top-k-filter-20260727.json) measures the complete
+PyTorch operator, including its internal workspace allocation, at
+`1.42–2.15x` over the corresponding vLLM full sort.
 
 To replace vLLM's deterministic speculative verifier, register it before
 constructing the engine:
@@ -673,7 +701,7 @@ separately qualifies exact cache bytes, the original ABI2 clean wheel, a
 `1.317-1.378x` named-operator range, and exact tokens plus Loom path hits in
 both engine orders. Its latency ratios are order-sensitive, and the
 native-versus-FP8 quality, admitted-capacity, TTFT, and TPOT gate remains open.
-The current ABI4 wheel matrix requalifies the same FP8 operator tests.
+The current ABI5 wheel matrix requalifies the same FP8 operator tests.
 See the [FP8 KV-cache contract](../design/fp8-kv-cache.md).
 
 For paged decode, the native-interleaved

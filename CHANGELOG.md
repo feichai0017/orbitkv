@@ -36,9 +36,11 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   `[blocks, 2, block, heads, head_size]` allocation; no legacy overload is
   retained.
 - advanced the checked framework bridge to ABI 4 for sampled-token plus top-k
-  logprobs; current wheels use a distinct `4cu...` build tag, and one exact ABI4
-  wheel now owns the clean-install matrix without inheriting the older ABI2
-  artifact's claim.
+  logprobs; its wheel used a distinct `4cu...` build tag and retained an
+  immutable clean-install record separate from the older ABI2 artifact.
+- advanced the checked framework bridge to ABI 5 for exact per-row in-place
+  top-k filtering and a caller-owned uint32 workspace; no ABI4 compatibility
+  entrypoint or legacy workspace-free launch is retained.
 
 ### Added
 
@@ -56,8 +58,8 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - a clean-revision native wheel builder that packages exactly the Rust CUDA
   bridge and Stable ABI dispatcher, emits and validates their matrix manifest
   and hashes, and rejects accidental source-only wheels;
-- fresh ABI4 H20 wheel-install evidence for PyTorch 2.10/2.11 and vLLM
-  0.24/0.25.
+- immutable ABI4 and current ABI5 H20 wheel-install evidence for PyTorch
+  2.10/2.11 and vLLM 0.24/0.25.
 - deterministic greedy speculative verification and accepted/bonus-token
   compaction over vLLM-compatible flattened ragged metadata, with Rust/CUDA/
   PyTorch coverage, explicit vLLM 0.24/0.25 registration, and H20 evidence.
@@ -80,6 +82,15 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   caller-owned workspace, safe Rust and checked bridge dispatch, PyTorch
   compile/graph coverage, direct H20 evidence, and an exact vLLM 0.24 adapter
   that preserves engine `torch.topk` tie order.
+- exact F32/FP16/BF16 in-place top-k filtering with threshold ties preserved,
+  a single partition-radix-sort plus parallel binary-count CUDA algorithm for
+  all valid `top_k` values, safe Rust and checked ABI5 dispatch, current-stream
+  PyTorch compile/graph coverage, an opt-in vLLM 0.24/0.25 small-row adapter,
+  and an H20 gate showing `1.42–2.15x` over the corresponding full-sort path.
+- one exact ABI5 `py3-none-linux_x86_64` matrix wheel containing both native
+  libraries; repository-free H20 installs pass 268 tests on each supported
+  vLLM minor and 178 applicable tests on PyTorch 2.10. The artifact is
+  qualified but not published.
 
 ### Fixed
 

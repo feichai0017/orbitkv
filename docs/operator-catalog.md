@@ -73,9 +73,10 @@ isolated microbenchmark is not sufficient.
 | greedy argmax+sampled-token raw logprob | P0 | supported | one-pass selection, normalization, gather, and tie-aware rank |
 | general selected-token raw logprob+rank | P0 | supported | engine-owned sampling followed by one-pass normalization and tie-aware rank |
 | sampled-token + top-k raw logprobs | P0 | supported | deterministic direct reduction without full-vocabulary probabilities; exact vLLM adapter preserves engine `torch.topk` order and replaces full raw log-softmax/rank |
+| exact in-place top-k filtering | P0 | supported | partition radix sort plus device-only exact threshold selection; vLLM rows 1–7 replace the full-vocabulary PyTorch sort while preserving threshold ties |
 | in-place min-p filtering | P0 | supported | row-max threshold without probability or mask tensors; vLLM route is H20 shape-gated |
 | deterministic counter-based RNG sampling | P0 | next | seeded token selection without host round trips |
-| top-k, top-p, and renormalization | P0 | next | fused candidate filtering and sampling |
+| top-p filtering and renormalization | P0 | next | complete probability-tail filtering before deterministic sampling |
 | sharded-vocabulary top-k/logsumexp merge | P1 | planned | tensor-parallel token selection |
 | structured-output bitmask application | P1 | profile-gated | grammar mask plus logits processing |
 
