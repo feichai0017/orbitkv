@@ -6,9 +6,9 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 [Project README](../README.md) · [Integration guide](../docs/guides/vllm-ir-provider.md) · [Operator catalog](../docs/operator-catalog.md)
 
 > [!IMPORTANT]
-> The bridge-ABI-6 native wheel is H20-qualified but is not published to a
-> package index. It includes exact top-k filtering and fused top-p
-> renormalization. A source-only wheel is
+> The bridge-ABI-7 native wheel is H20-qualified but is not published to a
+> package index. It includes fused mixed-sampling logits preprocessing,
+> exact top-k filtering, and fused top-p renormalization. A source-only wheel is
 > intentionally unsupported:
 > `pip wheel ./python` fails unless `build_wheel.py` has staged both native
 > libraries and their manifest.
@@ -26,20 +26,20 @@ The current matrix row is:
 | vLLM extra | `>=0.24,<0.26` |
 | Native payload | `libloom_cuda_bridge.so`, `libloom_kernels_torch.so` |
 
-The qualified artifact's build tag encodes bridge ABI 6:
-`6cu131torch210sm90`. The exact H20 artifact, binary audit, and three
+The qualified artifact's build tag encodes bridge ABI 7:
+`7cu131torch210sm90`. The exact H20 artifact, binary audit, and three
 repository-free clean-install gates are recorded in the
-[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi6-20260727.json).
-The same wheel passes 277 tests with each supported vLLM minor and 186
+[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi7-20260727.json).
+The same wheel passes 286 tests with each supported vLLM minor and 193
 applicable tests in the vLLM-free PyTorch 2.10 environment. It includes static
 FP8 E4M3 KV quantize-on-write, sparse token penalties, and sampled-token plus
-top-k logprobs, exact top-k filtering, and fused top-p renormalization, and is
-bound to source revision
-`d18ee521f60a59620d23a61123f89a148b67915b`.
+top-k logprobs, exact top-k filtering, fused top-p renormalization, and fused
+mask/bias/suppression/temperature preprocessing. It is bound to source
+revision `d58ebf827243fc10efd306118910976fb8b681e5`.
 
-The older `5cu131torch210sm90` ABI-5, `4cu131torch210sm90` ABI-4,
-`2cu131torch210sm90` ABI-2, and `1cu131torch210sm90` ABI-1 wheels remain
-historical evidence only.
+The older `6cu131torch210sm90` ABI-6, `5cu131torch210sm90` ABI-5,
+`4cu131torch210sm90` ABI-4, `2cu131torch210sm90` ABI-2, and
+`1cu131torch210sm90` ABI-1 wheels remain historical evidence only.
 `build_wheel.py` uses the ABI-specific tag so incompatible bridge signatures
 cannot overwrite or masquerade as one another. No native Python wheel has been
 published.
@@ -52,11 +52,11 @@ without PyTorch. vLLM and tests remain explicit extras:
 ```bash
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-6cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-7cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 
 # Add the supported vLLM integration when needed.
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-6cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-7cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -124,6 +124,7 @@ from loom_kernels import (
     apply_token_penalties_,
     greedy_sample_logprobs,
     greedy_speculative_verify,
+    logits_preprocess_,
     min_p_filter_,
     rope_paged_kv_write_,
     selected_token_logprobs,
@@ -140,6 +141,16 @@ fp8_output, block_scales = silu_and_mul_dynamic_fp8(
 )
 
 token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
+logits_preprocess_(
+    sampling_logits_f32,
+    temperatures_f32,
+    blocked_token_mask,
+    bias_row_ids_i32,
+    bias_token_ids_i32,
+    bias_values_f32,
+    suppressed_row_ids_i32,
+    suppressed_token_ids_i32,
+)
 logprobs, ranks = selected_token_logprobs(logits, sampled_ids_i64)
 topk_ids, topk_logprobs, sampled_ranks = topk_sampled_logprobs(
     logits, sampled_ids_i64, top_k=20
@@ -205,7 +216,7 @@ tensors that require gradients.
 | Normalization | `rms_norm`, `rms_norm_out`, `add_rms_norm_`, `rms_norm_dynamic_fp8`, `rms_norm_dynamic_fp8_out` |
 | Activation | `silu_and_mul`, `silu_and_mul_out`, `silu_and_mul_dynamic_fp8`, `silu_and_mul_dynamic_fp8_out` |
 | Position and KV | `rope_paged_kv_write_` for native or static FP8 E4M3 paged caches |
-| Decode tail | `greedy_sample_logprobs`, `selected_token_logprobs`, `topk_sampled_logprobs`, `min_p_filter_`, `apply_token_penalties_` |
+| Decode tail | `logits_preprocess_`, `greedy_sample_logprobs`, `selected_token_logprobs`, `top_k_filter_`, `top_p_renorm_`, `topk_sampled_logprobs`, `min_p_filter_`, `apply_token_penalties_` |
 | Speculative decode | `greedy_speculative_verify` |
 | Attention | `paged_decode_attention`, `paged_decode_attention_out` |
 
@@ -232,6 +243,7 @@ into this contract.
 | SiLU-and-Mul→block FP8 | `LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8=1` |
 | RoPE+paged-KV compiler pass | `configure_vllm_rope_paged_kv(...)` |
 | Short paged decode | `LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1` |
+| Mixed-sampling logits preprocessing | `register_vllm_logits_preprocess()` |
 | Greedy sampled logprob | `register_vllm_greedy_sample_logprobs()` |
 | Greedy speculative verify | `register_vllm_greedy_speculative_verify()` |
 | Selected-token logprob | `register_vllm_selected_token_logprobs()` |

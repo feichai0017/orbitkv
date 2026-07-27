@@ -68,7 +68,7 @@ isolated microbenchmark is not sufficient.
 
 | Operator | Priority | State | Intended fusion boundary |
 | --- | --- | --- | --- |
-| logits bias, temperature, masks, and bad-word suppression | P0 | next | one logits preprocessing pass |
+| fused logits preprocessing | P0 | supported | one F32 pass for dense blocked-token mask, unique sparse bias, sparse suppression, and mixed-row temperature; explicit mixed-sampling vLLM route |
 | repetition, presence, and frequency penalties | P0 | supported | one sparse history hash and in-place update instead of full-vocabulary count/mask tensors |
 | greedy argmax+sampled-token raw logprob | P0 | supported | one-pass selection, normalization, gather, and tie-aware rank |
 | general selected-token raw logprob+rank | P0 | supported | engine-owned sampling followed by one-pass normalization and tie-aware rank |
@@ -136,9 +136,9 @@ the boundary or an isolated implementation is measurably useful.
 1. Finish system-level qualification for the static FP8 E4M3 quantize-on-write
    path by proving cache bytes, admitted context/batch, quality, TTFT, and TPOT
    together; H20 operator and clean-wheel qualification are complete.
-2. Continue the sampling tail after the completed sparse-penalty, top-k, and
-   fused top-p/renormalization slices with logits preprocessing and
-   deterministic RNG.
+2. Continue the sampling tail after the completed logits-preprocessing,
+   sparse-penalty, top-k, and fused top-p/renormalization slices with
+   deterministic counter-based RNG.
 3. Add KV block movement for a real prefix-cache, preemption, or compaction
    call site.
 4. Return to tree metadata, stochastic speculative rejection, or KV

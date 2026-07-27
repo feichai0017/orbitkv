@@ -75,6 +75,12 @@ export const supportedOperators = [
     status: "supported",
   },
   {
+    name: "Fused logits preprocessing",
+    dtypes: "F32 sampler logits",
+    boundary: "Mask + sparse bias/suppression + mixed-row temperature",
+    status: "supported",
+  },
+  {
     name: "Paged MQA/GQA decode",
     dtypes: "F32 · FP16 · BF16",
     boundary: "GQA packing + local split-K/LSE; short shapes route into vLLM",
@@ -97,7 +103,7 @@ export const nextOperators = [
   {
     milestone: "K4 · P0",
     name: "Complete sampling tail",
-    reason: "Continue with fused logits preprocessing, top-k/top-p selection, and deterministic RNG without host round trips.",
+    reason: "Finish deterministic counter-based RNG after fused preprocessing, top-k/top-p, penalties, and logprobs.",
   },
   {
     milestone: "K3 · P0",
@@ -186,6 +192,12 @@ export const evidence = [
     shape: "Qwen2.5-0.5B · batches 1 / 8 / 32",
     result: "1.056–1.123×",
     detail: "Order-stable engine ratio; operator ratio 5.82–34.30×",
+  },
+  {
+    operator: "Fused logits preprocessing",
+    shape: "F32 · 151,936 vocab · 1–32 rows",
+    result: "3.26–7.30×",
+    detail: "Exact operator; order-stable 1.010–1.084× Qwen TPOT ratio",
   },
   {
     operator: "Paged MQA/GQA decode",

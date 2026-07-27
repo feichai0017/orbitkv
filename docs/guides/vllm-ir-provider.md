@@ -67,6 +67,13 @@ renormalization for measured large-vocabulary decode shapes. vLLM retains its
 per-request generators, random selection, processed-logit modes, joint
 top-k/top-p path, and every unqualified shape.
 
+A twelfth explicit registration fuses the preprocessing before selection for
+mixed greedy/random batches. It applies the engine's allowed-token mask,
+unique sparse logit bias, min-token or active bad-word suppression, and
+per-row temperature in one F32 pass. Penalties, thinking-budget state, custom
+processors, overlapping min-token/bad-word policy, and all-greedy or all-random
+batches conservatively stay on vLLM.
+
 The registered contract is:
 
 ```text
@@ -76,15 +83,15 @@ input = RMSNorm(residual, weight, epsilon)
 
 ## Compatibility
 
-The supported package interval is `vllm>=0.24,<0.26`. The bridge-ABI-6 native
-wheel passes 277 H20 tests with each official vLLM minor and is the current
-qualified artifact. It includes exact top-k filtering plus fused top-p
-renormalization and is not published.
+The supported package interval is `vllm>=0.24,<0.26`. The bridge-ABI-7 native
+wheel passes 286 H20 tests with each official vLLM minor and is the current
+qualified artifact. It includes fused logits preprocessing, exact top-k
+filtering, and fused top-p renormalization, and is not published.
 Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
 [compatibility matrix](../compatibility.md) and
-[native-wheel gate](../results/h20-native-wheel-clean-install-abi6-20260727.json).
+[native-wheel gate](../results/h20-native-wheel-clean-install-abi7-20260727.json).
 
 ## Build and install
 
@@ -104,7 +111,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-6cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-7cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -117,7 +124,7 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-This command builds the current ABI6 artifact. Its clean-install qualification
+This command builds the current ABI7 artifact. Its clean-install qualification
 is recorded for the exact source revision and wheel hash; it is not published
 to a package index. Editable
 source development remains documented in the
@@ -344,6 +351,40 @@ and [Loom-first](../results/h20-vllm-qwen25-token-penalties-loom-first-20260725.
 vLLM 0.24 gates preserve every token and record `1440/0` Loom submissions in
 each order. Their batch-latency ratios are `1.056–1.123x` and TPOT ratios are
 `1.068–1.126x`; serving concurrency and goodput remain separate claims.
+
+To fuse the mixed-sampling preprocessing pass, register it before constructing
+sampler or engine instances:
+
+```python
+from vllm import LLM
+from loom_kernels.vllm import register_vllm_logits_preprocess
+
+assert register_vllm_logits_preprocess() == "logits_preprocess"
+engine = LLM(model="/path/to/model")
+```
+
+The equivalent process-wide opt-in is
+`LOOM_KERNELS_ENABLE_LOGITS_PREPROCESS=1`. The route admits only mixed
+greedy/random batches with contiguous F32 sampler logits and a temperature
+tensor. It recognizes vLLM's allowed-token mask, one logit-bias processor, one
+min-tokens processor, or active bad-word targets. Min-tokens and active
+bad-word suppression cannot be combined in the same admitted call because
+their sparse metadata may overlap. Active penalties, thinking-budget state,
+custom non-argmax-invariant processors, unsupported metadata, and all-greedy
+or all-random batches execute the original vLLM path unchanged.
+
+The [direct H20 gate](../results/h20-logits-preprocess-20260727.json) measures
+the complete PyTorch operator against the composed mask, sparse bias,
+suppression, temperature-guard, and divide sequence. Outputs are exact and
+Loom is `3.26–7.30x` faster for 1–32 rows at a 151,936-token vocabulary with
+zero measured temporary bytes. The process-isolated
+[baseline-first](../results/h20-vllm-logits-preprocess-baseline-first-20260727.json)
+and [Loom-first](../results/h20-vllm-logits-preprocess-loom-first-20260727.json)
+Qwen2.5-0.5B gates preserve every token, record `720/0` Loom submissions per
+order, and exercise mask, bias, suppression, min-tokens, and mixed
+temperature. TPOT ratios are order-stable at `1.010–1.084x`; batch latency
+crosses parity at batch 32, so this is not a stable model-level batch-latency
+claim.
 
 To replace vLLM's top-k-only full sort for small decode batches, register the
 exact filter before engine construction:
@@ -739,7 +780,7 @@ separately qualifies exact cache bytes, the original ABI2 clean wheel, a
 `1.317-1.378x` named-operator range, and exact tokens plus Loom path hits in
 both engine orders. Its latency ratios are order-sensitive, and the
 native-versus-FP8 quality, admitted-capacity, TTFT, and TPOT gate remains open.
-The current ABI6 wheel matrix requalifies the same FP8 operator tests.
+The current ABI7 wheel matrix requalifies the same FP8 operator tests.
 See the [FP8 KV-cache contract](../design/fp8-kv-cache.md).
 
 For paged decode, the native-interleaved

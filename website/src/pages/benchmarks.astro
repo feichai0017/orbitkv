@@ -57,6 +57,11 @@ import { evidence, repositoryUrl } from "../data/site";
         submissions only on the candidate side; batch-latency ratios are
         1.056–1.123× and TPOT ratios are 1.068–1.126× for the pinned offline
         cases, not a general serving-throughput claim.
+        Fused logits preprocessing combines the allowed-token mask, sparse
+        bias, sparse suppression, and mixed-row temperature in one pass. It
+        reaches 3.26–7.30× for 1–32 rows, while order-reversed Qwen runs match
+        every token and retain 1.010–1.084× TPOT ratios. Batch-32 aggregate
+        latency crosses parity, so no stable model-level latency claim follows.
         Native-interleaved paged decode is similarly shape-gated: all 24
         routed Hq/Hkv 32/8, D128, context-at-most-32 backend cases win at
         1.154–2.374×, while the context-64 controls fall back to FA3. A broader
@@ -122,6 +127,16 @@ python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
   --tested-revision "$(git rev-parse HEAD)" \
   --model /path/to/Qwen2.5-0.5B-Instruct \
   --case 1x32x64 --case 8x32x64 --case 32x32x32 \
+  --warmup 2 --repeats 7 --provider-order baseline-first
+
+.venv-vllm/bin/python benchmarks/vllm_logits_preprocess.py \
+  --rows 1,2,4,8,16,32 --vocab-size 151936 \
+  --scenario full --warmup 10 --iterations 50 --repeats 7
+
+.venv-vllm/bin/python benchmarks/vllm_engine_logits_preprocess.py \
+  --tested-revision "$(git rev-parse HEAD)" \
+  --model /path/to/Qwen2.5-0.5B-Instruct \
+  --case 2x32x32 --case 8x32x32 --case 32x32x16 \
   --warmup 2 --repeats 7 --provider-order baseline-first
 
 .venv-vllm/bin/python benchmarks/vllm_greedy_speculative_verify.py \
@@ -204,6 +219,15 @@ python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
         every token, with 1440 Loom submissions only on the candidate side.
         Batch-latency ratios are 1.056–1.123× and TPOT ratios are
         1.068–1.126× across the pinned Qwen batches.
+      </p>
+      <p>
+        The mixed-sampling preprocessing A/B applies an allowed-token mask,
+        sparse logit bias, min-token suppression, and temperature while
+        alternating greedy and top-k/top-p requests. Both provider orders
+        match every token and record 720 Loom submissions only on the
+        candidate side. TPOT ratios are 1.010–1.084×; batch latency crosses
+        parity at batch 32, so the evidence does not claim a stable aggregate
+        latency win.
       </p>
       <p>
         The speculative Qwen2.5-1.5B target plus 0.5B draft A/B matches every

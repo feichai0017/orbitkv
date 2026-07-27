@@ -155,6 +155,34 @@ the composed path. Because the composed path rounds that temporary tensor, it
 is a useful performance comparison but not an exact semantic baseline; vLLM's
 own fused per-block operator is the compatibility baseline.
 
+## Fused Logits Preprocessing Contract
+
+`logits_preprocess_` mutates rank-2 F32 logits with unit vocabulary stride and
+an explicit, possibly padded row stride. It applies four stages in one fixed
+order: a dense bool or uint8 blocked-token mask, unique sparse additive bias,
+sparse token suppression to negative infinity, then division by one F32
+temperature per row. Temperatures below `1e-5` use divisor one so greedy and
+random rows can share one launch. Bias and suppression metadata are optional
+only as complete groups; partial groups are rejected before submission.
+
+The handwritten CUDA path assigns 256 threads and four vocabulary partitions
+to each row. It scans every token once and consults the sparse metadata without
+materializing another vocabulary-sized tensor. Safe Rust owns physical-span,
+aliasing, index, uniqueness, and optional-group validation. The checked ABI7
+bridge and boxed PyTorch mutation schema preserve the caller's current stream,
+padded rows, `torch.compile`, FakeTensor/opcheck, and CUDA Graph replay.
+
+The vLLM 0.24/0.25 registration is deliberately narrower than the public
+operator. It admits only mixed greedy/random sampler batches with known masks,
+biases, min-token or active bad-word suppression, and no penalties or thinking
+state. Min-token and active bad-word suppression do not share an admitted call;
+all other requests retain vLLM's original preprocessing. On H20 the fused pass
+is exact and `3.26–7.30x` faster for
+1–32 rows at a 151,936-token vocabulary. Order-reversed Qwen2.5-0.5B runs
+preserve every token and show order-stable `1.010–1.084x` TPOT ratios, while
+batch latency crosses parity at batch 32; the evidence therefore does not
+claim a stable model-level batch-latency win.
+
 ## Sampling And Selected-Logprob Contracts
 
 The decode-tail operator consumes finite rank-2 F32, FP16, or BF16 logits with

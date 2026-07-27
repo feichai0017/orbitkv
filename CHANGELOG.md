@@ -44,6 +44,9 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - advanced the checked framework bridge to ABI 6 for fused top-p filtering and
   F32 renormalization; no ABI5 compatibility entrypoint or filter/softmax twin
   is retained.
+- advanced the checked framework bridge to ABI 7 for fused mixed-sampling
+  logits preprocessing; no ABI6 compatibility entrypoint or decomposed
+  mask/bias/suppression/temperature twin is retained.
 
 ### Added
 
@@ -61,7 +64,7 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - a clean-revision native wheel builder that packages exactly the Rust CUDA
   bridge and Stable ABI dispatcher, emits and validates their matrix manifest
   and hashes, and rejects accidental source-only wheels;
-- immutable ABI4/ABI5 and current ABI6 H20 wheel-install evidence for PyTorch
+- immutable ABI4/ABI5/ABI6 and current ABI7 H20 wheel-install evidence for PyTorch
   2.10/2.11 and vLLM 0.24/0.25.
 - deterministic greedy speculative verification and accepted/bonus-token
   compaction over vLLM-compatible flattened ragged metadata, with Rust/CUDA/
@@ -101,6 +104,16 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - one exact ABI6 `py3-none-linux_x86_64` matrix wheel containing both native
   libraries; repository-free H20 installs pass 277 tests on each supported
   vLLM minor and 186 applicable tests on PyTorch 2.10. The artifact is
+  qualified but not published.
+- fused in-place F32 logits preprocessing for mixed greedy/random batches,
+  combining dense blocked-token masking, unique sparse additive bias, sparse
+  suppression, and per-row temperature in one handwritten CUDA pass. The
+  checked ABI7 path includes safe Rust/oracle coverage, Stable ABI PyTorch
+  compile/graph gates, conservative vLLM 0.24/0.25 registration, and exact
+  H20 operator plus order-reversed Qwen2.5 evidence.
+- one exact ABI7 `py3-none-linux_x86_64` matrix wheel containing both native
+  libraries; repository-free H20 installs pass 286 tests on each supported
+  vLLM minor and 193 applicable tests on PyTorch 2.10. The artifact is
   qualified but not published.
 
 ### Fixed

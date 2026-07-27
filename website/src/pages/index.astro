@@ -168,6 +168,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       32 rows and sharply reduces temporaries; real-engine latency crosses
       parity under provider-order reversal, so no model-level speedup is
       claimed.
+      Mixed-sampling logits preprocessing now fuses mask, sparse bias,
+      suppression, and temperature in one exact F32 pass. It is 3.26–7.30×
+      faster at the operator boundary and preserves every Qwen token with
+      order-stable 1.010–1.084× TPOT ratios; batch latency crosses parity at
+      batch 32, so the claim remains narrower than a blanket model speedup.
       Paged decode now has a native-cache, context-32 vLLM route,
       synthetic-engine path proof, and a local 128–1,024-token split-K path
       that is 1.14–6.22× faster than legacy Loom. FA3 still wins the long
@@ -188,12 +193,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <h2>Build where engines pay.</h2>
       </div>
       <p>
-        The K0.7 bridge-ABI-4 wheel is clean-install-qualified across PyTorch
-        2.10/2.11 and vLLM 0.24/0.25 on H20, including token penalties and
-        top-k logprobs; it remains unpublished. The first K4 sampling slices
-        are complete through their real-engine gates.
-        Logits preprocessing, top-k/top-p selection, and deterministic RNG
-        follow, while the next K3 proof remains a
+        The K0.7 bridge-ABI-7 wheel is clean-install-qualified across PyTorch
+        2.10/2.11 and vLLM 0.24/0.25 on H20, including fused logits
+        preprocessing; it remains unpublished. Sampling preprocessing,
+        top-k/top-p, penalties, and logprob slices are complete through their
+        qualified gates. Deterministic RNG remains, while the next K3 proof is a
         native-versus-FP8 capacity, quality, memory, TTFT, and TPOT study.
         Tree, stochastic, and speculative-KV work waits for a named profile
         that shows material cost.

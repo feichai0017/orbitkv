@@ -57,23 +57,24 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-4cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]'</code></pre>
+  'dist/loom_kernels-1.0.0a1-7cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]'</code></pre>
       <p>
         The artifact contains exactly the Rust-owned
         <code>libloom_cuda_bridge.so</code> and boxed
         <code>libloom_kernels_torch.so</code> Stable ABI dispatcher. Its
         manifest binds the Git revision, CUDA toolkit, SM targets, PyTorch
         range, bridge ABI, and library hashes. Installed packages load only
-        this package-local pair. The K0.7 bridge-ABI-4 wheel is H20-qualified
+        this package-local pair. The K0.7 bridge-ABI-7 wheel is H20-qualified
         across PyTorch 2.10/2.11 and vLLM 0.24/0.25 and is not published to a
-        package index. It includes sparse token penalties and sampled-token
-        plus top-k logprobs.
+        package index. It includes all sixteen checked operators, including
+        fused mixed-sampling logits preprocessing.
       </p>
 
       <h2>Call PyTorch directly</h2>
       <pre><code>from loom_kernels import (
     greedy_sample_logprobs,
     greedy_speculative_verify,
+    logits_preprocess_,
     min_p_filter_,
     selected_token_logprobs,
     silu_and_mul_dynamic_fp8,
@@ -88,6 +89,16 @@ fp8_output, block_scales = silu_and_mul_dynamic_fp8(
 )
 
 token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
+logits_preprocess_(
+    sampling_logits_f32,
+    temperatures_f32,
+    blocked_token_mask,
+    bias_row_ids_i32,
+    bias_token_ids_i32,
+    bias_values_f32,
+    suppressed_row_ids_i32,
+    suppressed_token_ids_i32,
+)
 verified_ids, accepted, emitted = greedy_speculative_verify(
     draft_ids_i32, target_argmax_ids_i64, bonus_ids_i32,
     cumulative_draft_lengths_i32, max_draft_tokens,
@@ -128,6 +139,7 @@ apply_token_penalties_(
           <tr><td>SiLU-and-Mul→block FP8</td><td><code>LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8=1</code></td></tr>
           <tr><td>RoPE+paged-KV</td><td><code>configure_vllm_rope_paged_kv(...)</code></td></tr>
           <tr><td>Short paged decode</td><td><code>LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1</code></td></tr>
+          <tr><td>Mixed-sampling logits preprocessing</td><td><code>register_vllm_logits_preprocess()</code></td></tr>
           <tr><td>Greedy sampled logprob</td><td><code>register_vllm_greedy_sample_logprobs()</code></td></tr>
           <tr><td>Greedy speculative verify</td><td><code>register_vllm_greedy_speculative_verify()</code></td></tr>
           <tr><td>Selected-token logprob</td><td><code>register_vllm_selected_token_logprobs()</code></td></tr>
@@ -148,16 +160,17 @@ apply_token_penalties_(
 
       <h2>Compatibility is explicit</h2>
       <p>
-        Fresh installs of the K0.7 bridge-ABI-4 wheel with official vLLM 0.24.0
-        and 0.25.1 packages each pass the 253-test H20 suite on PyTorch 2.11.
-        The same exact artifact passes 164 applicable Loom gates on PyTorch
+        Fresh installs of the K0.7 bridge-ABI-7 wheel with official vLLM 0.24.0
+        and 0.25.1 packages each pass the 286-test H20 suite on PyTorch 2.11.
+        The same exact artifact passes 193 applicable Loom gates on PyTorch
         2.10 without recompilation. It includes speculative verification and
-        static FP8 KV quantize-on-write, sparse token penalties, and top-k
-        logprobs, but has not been published. Pinned
+        static FP8 KV quantize-on-write, fused logits preprocessing, sparse
+        token penalties, and top-k logprobs, but has not been published. Pinned
         vLLM 0.24 Qwen gates prove exact sparse-penalty acceleration, exact
-        top-k adapter invocation with order-sensitive latency, and exact
-        native/Loom speculative invocation; vLLM 0.25 has compatibility
-        evidence but no transferred model-level result.
+        logits-preprocessing invocation with order-stable TPOT, exact top-k
+        adapter invocation with order-sensitive latency, and exact native/Loom
+        speculative invocation; vLLM 0.25 has compatibility evidence but no
+        transferred model-level result.
         Existing model-level performance artifacts remain tied to the version
         recorded in each result; compatibility does not transfer a speedup
         claim. Read the{" "}

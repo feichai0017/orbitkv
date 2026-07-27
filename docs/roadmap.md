@@ -28,7 +28,7 @@ feature. New feature work follows this order:
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
 | 1 | KV-cache compression | FP8 KV write/read boundary with explicit scale layout | lower cache bytes and higher admitted context or batch size without unacceptable quality or TPOT loss |
-| 2 | Complete sampling tail | logits preprocessing and deterministic RNG; exact top-k, fused top-p/renormalization, sparse penalties, and top-k logprobs are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
+| 2 | Complete sampling tail | deterministic RNG remains; fused logits preprocessing, exact top-k, fused top-p/renormalization, sparse penalties, and top-k logprobs are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
 | 3 | KV-cache movement | block copy/gather/scatter/compact/remap for prefix reuse and preemption | fewer launches or less movement time in a real scheduler path |
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV boundaries only after profiling exposes material non-GEMM cost | a named draft/target model pair improves decode latency or throughput |
 | 5 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
@@ -97,7 +97,7 @@ transfer.
 Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
 
 - ~~qualify the next vLLM minor without weakening adapter gates~~ — official
-  vLLM 0.24.0 and 0.25.1 packages each pass the complete 277-test H20 GPU suite;
+  vLLM 0.24.0 and 0.25.1 packages each pass the complete 286-test H20 GPU suite;
 - ~~centralize runtime version admission and package metadata~~ — supported
   range is `vllm>=0.24,<0.26`, with registration-time series checks;
 - ~~document the current binary boundary and Stable ABI decision~~ — the
@@ -112,10 +112,10 @@ Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
   `python/build_wheel.py` builds from a clean revision, packages exactly the
   two native libraries, emits their manifest, audits ELF/RPATH/symbols, and
   refuses an accidental source-only wheel;
-- ~~prove repository-free H20 clean installs~~ — one exact ABI6
+- ~~prove repository-free H20 clean installs~~ — one exact ABI7
   `py3-none-linux_x86_64` artifact passes fresh Python 3.11 venv gates on
   PyTorch 2.10/2.11 and vLLM 0.24/0.25, including `pip check`, package-local
-  library loading, BF16 smoke, and the applicable 277/186-test suites.
+  library loading, GPU smoke, and the applicable 286/193-test suites.
 
 Exit: a qualified binary artifact installs without a repository checkout, uses
 a declared PyTorch ABI boundary, and passes the same framework and H20 gates as
@@ -182,7 +182,7 @@ Status: implementation and integration qualified; system-value exit open.
 - ~~FP8 E4M3 quantize-on-write with explicit static per-tensor or per-head
   scales~~ — Rust contract/oracle, safe CUDA backend, checked bridge, Stable ABI
   PyTorch operator, vLLM adapter, exact-byte H20 comparison, named operator
-  benchmark, current-stream/compile/graph checks, current ABI6 clean wheel, and
+  benchmark, current-stream/compile/graph checks, current ABI7 clean wheel, and
   order-reversed real-engine invocation are complete; the pretrained
   native-versus-FP8 quality, admitted-capacity, TTFT, and TPOT gate remains open;
 - ~~process-isolated native/FP8/Loom system measurement harness~~ — cache
@@ -264,7 +264,16 @@ Status: in progress.
   peak temporary storage. An F32 cutoff may move by one boundary token because
   the implementations use different parallel accumulation orders; the
   qualified per-row probability L1 difference is below `1e-4`;
-- fused logits bias, temperature, masking, and bad-word suppression;
+- ~~fused logits preprocessing~~ — one in-place F32 pass applies dense
+  blocked-token masking, unique sparse additive bias, sparse suppression, and
+  mixed-row temperature in vLLM order. Rust oracle, handwritten CUDA, safe
+  dispatch, checked ABI7, Stable ABI PyTorch compile/graph coverage, and
+  explicit mixed-sampling vLLM 0.24/0.25 registration are complete. The H20
+  operator is exact and `3.26–7.30x` faster at 1–32 Qwen-vocabulary rows.
+  Both real-engine provider orders preserve every token and record `720/0`
+  Loom submissions; TPOT ratios are `1.010–1.084x`, while batch latency
+  crosses parity at batch 32, so no stable model-level batch-latency claim is
+  made;
 - deterministic counter-based RNG sampling without a host round trip.
 
 Exit: fewer launches and temporary tensors with identical token results. The
@@ -273,8 +282,9 @@ sampling requests with `logprobs=0`; the sparse-penalty gate is also closed for
 the pinned deterministic Qwen workload. Exact top-k filtering closes its
 operator gate for the admitted small-row vLLM path; top-k raw-logprob
 correctness plus temporary reduction is closed without a stable engine-speedup
-claim. Fused top-p/renormalization closes its shape-gated operator exit; a
-seeded end-to-end engine gate and Loom-owned deterministic RNG remain open.
+claim. Fused top-p/renormalization and mixed-sampling logits preprocessing
+close their shape-gated operator and real-engine invocation exits. Loom-owned
+deterministic RNG remains open.
 
 ## K4.5: Speculative Decoding Support
 

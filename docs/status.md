@@ -56,6 +56,12 @@
   safe Rust and checked ABI6 dispatch, current-stream PyTorch compile/graph
   coverage, and an explicit vLLM 0.24/0.25 route for F32 top-p-only rows 2–7
   at vocabularies of at least 32,768;
+- fused in-place F32 logits preprocessing with dense bool/uint8 blocked-token
+  masks, unique sparse additive bias, sparse suppression, and per-row
+  temperature in that exact order; one handwritten partitioned CUDA pass,
+  safe Rust/oracle validation, checked ABI7 dispatch, current-stream PyTorch
+  compile/graph coverage, and an explicit mixed greedy/random vLLM 0.24/0.25
+  registration share the same contract;
 - in-place F32/FP16/BF16 Min-P contracts, CPU oracles, handwritten CUDA, C ABI,
   PyTorch mutation schemas, and an opt-in vLLM 0.24/0.25 processor override
   that cancels the softmax denominator instead of allocating probability and
@@ -85,7 +91,7 @@
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
-  using the current CUDA stream; all fifteen semantic operators route through
+  using the current CUDA stream; all sixteen semantic operators route through
   `loom-cuda-bridge` into borrowed safe Rust dispatch with explicit storage
   spans and layouts;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test
@@ -95,8 +101,9 @@
   `SiluAndMul` out-of-tree layer replacement, plus an opt-in activation-quant
   fusion-table replacement, RoPE+KV compiler-pass adapter, and pure-greedy
   and general selected-token sampled-logprob fast paths, an exact top-k
-  raw-logprob adapter, a measured-shape Min-P override, sparse token-penalty
-  override, deterministic greedy speculative verifier, plus a
+  raw-logprob adapter, mixed-sampling logits-preprocessing registration, a
+  measured-shape Min-P override, sparse token-penalty override, deterministic
+  greedy speculative verifier, plus a
   native/FP8-cache RoPE+KV compiler adapter and native-cache short-context
   paged-decode override for vLLM 0.24 and 0.25;
 - per-operator JSON correctness/latency benchmarks and named vLLM baselines.
@@ -104,7 +111,7 @@
 ## Validated
 
 - local formatting, clippy, tests, and release build;
-- the bridge-ABI-6 `py3-none-linux_x86_64` native wheel built from a
+- the bridge-ABI-7 `py3-none-linux_x86_64` native wheel built from a
   clean revision for CUDA 13.1 and SM90 passed archive/ELF/RPATH/symbol/
   auditwheel checks and retained identical packaged library hashes across all
   runtime gates;
@@ -112,10 +119,11 @@
   H20 execution, and the applicable full suites on PyTorch 2.10.0+cu128,
   PyTorch 2.11.0+cu130 with vLLM 0.24.0, and the same PyTorch with the official
   vLLM 0.25.1 wheel; the native artifact is not published;
-- the qualified ABI6 revision passes 43 local Rust contract/oracle tests, 13
+- the qualified ABI7 revision passes 45 local Rust contract/oracle tests, 14
   H20 safe CUDA-wrapper tests, 6 checked-bridge tests, and the complete
-  277-test Python GPU suite on each supported vLLM minor. Its focused top-k
-  and top-p cases span three dtypes,
+  286-test Python GPU suite on each supported vLLM minor. The vLLM-free
+  PyTorch 2.10 row passes 193 applicable tests. Its focused logits, top-k, and
+  top-p cases span the admitted dtypes,
   a 151,936-token vocabulary, padded strides, non-default streams,
   `torch.compile`, CUDA Graph replay, threshold ties, `top_k > 256`, and both
   vLLM fallback boundaries;
@@ -131,6 +139,13 @@
   for every measured 2/4/7-row case. Retained logits are exact; the two
   parallel F32 scan orders may differ by one cutoff token per row, with
   probability L1 below `1e-4`;
+- the ABI7 fused logits-preprocessing pass matches the composed PyTorch
+  mask/bias/suppression/temperature sequence exactly and is `3.26–7.30x`
+  faster at 1–32 rows over 151,936-token F32 logits, with zero measured
+  temporary bytes. Order-reversed Qwen2.5-0.5B vLLM runs preserve every token
+  and record `720/0` Loom submissions per order. TPOT ratios remain
+  `1.010–1.084x`; batch latency crosses parity at batch 32, so no stable
+  model-level batch-latency claim is made;
 - process-isolated Qwen2.5-0.5B vLLM 0.24 token-penalty A/B in both provider
   orders preserves every generated token, records `1440/0` Loom submissions
   per order, and measures `1.056–1.123x` batch-latency plus `1.068–1.126x`
@@ -155,10 +170,10 @@
   large-shape execution passed at `16x8192`.
 - PyTorch external-stream, mutation-schema/FakeTensor, `torch.compile`, and
   CUDA Graph tests passed with the Stable ABI dispatcher;
-- one exact ABI6 wheel built with PyTorch 2.11.0+cu130 passed without
+- one exact ABI7 wheel built with PyTorch 2.11.0+cu130 passed without
   recompilation on PyTorch 2.10.0+cu128; the 2.11 vLLM 0.24 and 0.25.1
-  environments each passed 277 tests, while the vLLM-free 2.10 environment
-  passed 186 applicable tests with 63 vLLM-dependent skips;
+  environments each passed 286 tests, while the vLLM-free 2.10 environment
+  passed 193 applicable tests with 63 vLLM-dependent skips;
 - the dispatcher exposes only `aoti_torch_*`/`torch_*` PyTorch symbol families,
   has no ATen/c10 C++ or raw CUDA launch dependency, and is protected by a
   source-level CI boundary;
@@ -170,7 +185,7 @@
   for both contiguous and padded row-strided logits, rejects short/overlapping
   regions before submission, and passes external-stream, compile, graph, and
   vLLM adapter tests;
-- official vLLM 0.24.0 and 0.25.1 packages each passed the complete 277-test
+- official vLLM 0.24.0 and 0.25.1 packages each passed the complete 286-test
   H20 Python GPU suite on Torch 2.11.0+cu130; the 0.25.1 process loaded its own
   `vllm/_C_stable_libtorch.abi3.so`, and the focused greedy/vLLM gate passed
   40 tests;
@@ -249,7 +264,7 @@
   bytes across 16 FP16/BF16, NeoX/interleaved, NHD/HND cases, including untouched
   padding and negative slots; current-stream, FakeTensor, fullgraph compile,
   CUDA Graph, packed-cache, and bridge-telemetry gates pass;
-- one exact ABI6 wheel passed the vLLM 0.24/0.25 clean-install matrix, and the
+- one exact ABI7 wheel passed the vLLM 0.24/0.25 clean-install matrix, and the
   fused BF16 operator was `1.317-1.378x` faster than vLLM's separate RoPE plus
   cache-write submissions across all 32 per-tensor/per-head cases while using
   half the physical cache bytes at this boundary;
@@ -274,10 +289,11 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the qualified ABI6 wheel suite passes 277 tests on each of vLLM 0.24.0 and
-  0.25.1, including sparse penalties, sampled-token plus top-k logprobs, exact
-  top-k filtering, and fused top-p renormalization;
-- the current bridge exposes 23 versioned operator/runtime symbols and no
+- the qualified ABI7 wheel suite passes 286 tests on each of vLLM 0.24.0 and
+  0.25.1, including fused logits preprocessing, sparse penalties,
+  sampled-token plus top-k logprobs, exact top-k filtering, and fused top-p
+  renormalization;
+- the current bridge exposes 24 versioned operator/runtime symbols and no
   raw CUDA launch symbols; the PyTorch shim depends only on those bridge
   symbols and no raw launch symbol;
 - against vLLM's exact `compute_logprobs + gather_logprobs(0)` path for the
@@ -450,9 +466,10 @@ FA3 for the engine's 128-1,024-token path.
   exact-token engine integration gate;
 - Min-P real-model invocation and end-to-end serving benefit;
 - token-penalty serving-scale concurrency/goodput beyond the pinned offline
-  Qwen gate, Loom-owned logits preprocessing, top-k/top-p, and stochastic
-  sampling; top-k logprob integration is complete, but its stable end-to-end
-  and serving benefit is not;
+  Qwen gate; fused logits preprocessing has exact offline engine invocation
+  and order-stable TPOT evidence but no serving-scale goodput result;
+- Loom-owned deterministic RNG and a stable end-to-end benefit for top-k
+  logprob integration;
 - an end-to-end speculative draft/target performance win; tree/branch
   metadata, stochastic residual-distribution rejection, and KV commit/remap
   remain profile-gated after the real-engine verifier share measured below
