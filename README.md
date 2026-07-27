@@ -59,11 +59,15 @@ Catalog membership alone is never a performance claim.
 
 ## Next value program
 
-The bridge-ABI-7 native-wheel engineering gate is complete for
+The bridge-ABI-7 native-wheel engineering gate is complete for one
 Linux x86_64, CUDA 13.1, SM90, Python 3.11, PyTorch 2.10/2.11, and vLLM
-0.24/0.25. The exact artifact is qualified but not published to a package
-index. It contains all sixteen checked operators, including sparse token
-penalties, sampled-token plus top-k logprobs, exact per-row top-k filtering,
+0.24/0.25 cross-matrix artifact. It is qualified but not published to a
+package index. A refreshed wheel built from revision `f98a931` also packages
+the final FP8 KV adapter instead of relying on a source overlay and passes all
+286 vLLM 0.24 H20 tests from a repository-free environment; its vLLM 0.25 and
+PyTorch 2.10 rows remain to be rerun. ABI7 contains all sixteen checked
+operators, including sparse token penalties, sampled-token plus top-k
+logprobs, exact per-row top-k filtering,
 fused top-p renormalization, and fused mixed-sampling logits preprocessing.
 The latter combines blocked-token masking, unique sparse bias, sparse
 suppression, and mixed-row temperature in one in-place F32 CUDA pass. The
@@ -78,12 +82,20 @@ is now:
 
 | Order | Direction | First proof |
 | --- | --- | --- |
-| 1 | KV-cache movement | measured block copy/remap/compact work in a real prefix-cache or preemption path |
-| 2 | Complete sampling tail | deterministic RNG remains; fused logits preprocessing, exact top-k filtering, fused top-p/renormalization, sparse penalties, and top-k logprobs are complete |
-| 3 | Quantization plumbing | measured scale/pack/layout work around unchanged vendor GEMM |
-| 4 | Profile-gated speculative extensions | tree/stochastic/KV work only after a named workload exposes a material non-GEMM boundary |
-| 5 | MoE routing and movement | routing, histogram/prefix sum, permutation, and combine around vendor grouped GEMM |
+| 1 | Seeded sampling tail | profile vLLM's per-request-generator fallback, then admit one explicit-state counter-based categorical sampler only if the gap is material |
+| 2 | Quantization plumbing | measured scale/pack/layout work around unchanged vendor GEMM |
+| 3 | MoE routing and movement | routing, histogram/prefix sum, permutation, and combine around vendor grouped GEMM |
+| 4 | Profile-gated KV movement | revisit only for a named offload, beam, or compaction path with real physical movement |
+| 5 | Profile-gated speculative extensions | tree/stochastic/KV work only after a named workload exposes a material non-GEMM boundary |
 | 6 | Minimal Rust decode proof | one zero-copy decode step over borrowed tensors and streams, without becoming an inference engine |
+
+The former first item, default vLLM prefix/preemption KV movement, is now
+explicitly rejected. A real Qwen2.5-0.5B vLLM V1 H20 run observed a
+1,024-token prefix hit and three scheduler preemptions, but zero calls and zero
+bytes through the instrumented swap/batch-copy paths. Prefix reuse is logical;
+default preemption frees blocks and recomputes. Loom will not add an API or
+kernel for a movement boundary that does not exist. See the
+[admission result](docs/results/h20-vllm-kv-movement-admission-rejected-20260727.json).
 
 FP8 KV-cache compression is now an evidence track rather than the next kernel
 implementation: it resumes only with a distinct pinned model, backend, or
@@ -205,9 +217,10 @@ source-only wheel is rejected. The installed package validates that manifest
 and loads only its packaged libraries; no repository checkout or library-path
 override is used.
 
-That command builds the current ABI7 artifact. The exact
-`7cu131torch210sm90` wheel completed the repository-free
-PyTorch/CUDA/Python/vLLM H20 matrix and is not published.
+That command builds an ABI7 artifact from the checked-out revision. The
+`f98a931` wheel passes the complete repository-free vLLM 0.24 H20 suite; the
+earlier `d58ebf8` wheel completed the PyTorch 2.10/2.11 and vLLM 0.24/0.25
+cross-matrix. Neither artifact is published.
 
 See the [Python README](python/README.md) for binary and editable development
 flows, direct calls, and the
@@ -238,7 +251,9 @@ opens the raw JSON artifact used for the claim.
 | [Short paged decode](docs/results/h20-vllm-paged-decode-backend-20260722.json) | `1.154–2.374×` across all 24 admitted backend cases | FP16/BF16, Hq/Hkv 32/8, D128, context ≤32; other shapes use FA3 |
 | [Local split-K paged decode](docs/results/h20-paged-decode-split-k-20260722.json) | `1.14–6.22×` versus legacy Loom | Improves the Rust/CUDA backend; FA3 remains the long-context engine fallback |
 | [LibTorch Stable ABI dispatcher](docs/results/h20-libtorch-stable-abi-20260723.json) | Same `.so`: 192 tests on PyTorch 2.11 with each vLLM minor; 123 applicable tests on PyTorch 2.10 | Historical source-built binary gate; the current packaged boundary is the next row |
-| [Native ABI7 matrix wheel](docs/results/h20-native-wheel-clean-install-abi7-20260727.json) | Same wheel: 286 tests with each vLLM minor; 193 applicable tests on PyTorch 2.10 | Current Linux x86_64, CUDA 13.1, SM90, Python 3.11 artifact; qualified but not published |
+| [Refreshed ABI7 vLLM 0.24 wheel](docs/results/h20-native-wheel-clean-install-abi7-refresh-20260727.json) | Current revision: 286/286 full GPU tests plus 22/22 focused FP8 KV/adapter tests from a fresh repository-free environment | Packages the final FP8 KV adapter; this exact wheel has not replaced the remaining vLLM 0.25/PyTorch 2.10 matrix rows |
+| [Native ABI7 cross-matrix wheel](docs/results/h20-native-wheel-clean-install-abi7-20260727.json) | Same wheel: 286 tests with each vLLM minor; 193 applicable tests on PyTorch 2.10 | First complete Linux x86_64, CUDA 13.1, SM90, Python 3.11 matrix artifact; qualified but not published |
+| [Rejected default KV movement candidate](docs/results/h20-vllm-kv-movement-admission-rejected-20260727.json) | 1,024 cached prefix tokens and three real preemptions with zero physical movement calls/bytes | Default vLLM prefix caching is logical and preemption recomputes; optional offload/beam/compaction require separate profiling |
 | [Historical ABI6 matrix wheel](docs/results/h20-native-wheel-clean-install-abi6-20260727.json) | Same wheel: 277 tests with each vLLM minor; 186 applicable tests on PyTorch 2.10 | Predecessor before fused logits preprocessing entered the packaged ABI |
 | [Historical ABI5 matrix wheel](docs/results/h20-native-wheel-clean-install-abi5-20260727.json) | Same wheel: 268 tests with each vLLM minor; 178 applicable tests on PyTorch 2.10 | Predecessor before fused top-p filtering and renormalization entered the packaged ABI |
 | [Historical ABI4 matrix wheel](docs/results/h20-native-wheel-clean-install-abi4-20260725.json) | Same wheel: 253 tests with each vLLM minor; 164 applicable tests on PyTorch 2.10 | Predecessor before exact top-k filtering entered the packaged ABI |
@@ -274,6 +289,7 @@ opens the raw JSON artifact used for the claim.
 | [Code layout](docs/design/code-layout.md) | Trace an operator across contracts, CUDA, bridge, PyTorch, and vLLM |
 | [Greedy speculative-verify design](docs/design/greedy-speculative-verify.md) | Read the ragged contract, ownership boundary, and deliberate exclusions |
 | [FP8 KV-cache design](docs/design/fp8-kv-cache.md) | Read the static-scale write contract, qualified implementation boundary, and remaining system-value gate |
+| [Counter-based sampling design](docs/design/counter-based-sampling.md) | Read the proposed explicit-state ABI8-A boundary and its admission gates |
 | [Paged-decode design](docs/design/paged-decode-attention.md) | Read cache layouts, split-K semantics, and exclusions |
 | [vLLM provider guide](docs/guides/vllm-ir-provider.md) | Build, configure, validate, and benchmark engine adapters |
 | [Compatibility matrix](docs/compatibility.md) | Check Rust, CUDA, PyTorch, vLLM, and binary distribution boundaries |

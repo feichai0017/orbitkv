@@ -115,6 +115,13 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   libraries; repository-free H20 installs pass 286 tests on each supported
   vLLM minor and 193 applicable tests on PyTorch 2.10. The artifact is
   qualified but not published.
+- a refreshed ABI7 wheel from revision `f98a931` that packages the final FP8
+  KV adapter and passes the complete 286-test vLLM 0.24 H20 suite from a fresh
+  repository-free environment; the remaining refresh matrix rows stay open.
+- a source-pinned vLLM V1 KV-movement admission probe. A real prefix hit and
+  three preemptions produced zero physical copies, so default
+  prefix/preemption movement is rejected and the next candidate is the
+  explicit-state counter-based sampling boundary.
 
 ### Fixed
 

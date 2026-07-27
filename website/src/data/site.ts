@@ -96,24 +96,9 @@ export const supportedOperators = [
 
 export const nextOperators = [
   {
-    milestone: "K3 · P0",
-    name: "KV-cache movement",
-    reason: "Measure scheduler-facing block copy, gather, scatter, compact, and remap work for prefix reuse and preemption.",
-  },
-  {
-    milestone: "K4 · P0",
-    name: "Complete sampling tail",
-    reason: "Finish deterministic counter-based RNG after fused preprocessing, top-k/top-p, penalties, and logprobs.",
-  },
-  {
-    milestone: "K3 · Evidence",
-    name: "FP8 KV-cache qualification",
-    reason: "The first Qwen2.5 candidate was rejected on quality; retry only with a distinct pinned model, backend, or cache representation.",
-  },
-  {
-    milestone: "K4.5 · Gated",
-    name: "Speculative extensions",
-    reason: "Add tree, stochastic, or KV metadata only when a named profile exposes material non-GEMM cost.",
+    milestone: "K4 · Next",
+    name: "Seeded sampling tail",
+    reason: "Profile vLLM's per-request-generator fallback, then admit one explicit-state counter-based sampler only if the gap is material.",
   },
   {
     milestone: "K2.5 · P1",
@@ -124,6 +109,21 @@ export const nextOperators = [
     milestone: "K5 · P1",
     name: "MoE routing + movement",
     reason: "Own routing, histogram/prefix sum, permutation, and combine while grouped GEMM stays vendor-owned.",
+  },
+  {
+    milestone: "K3 · Gated",
+    name: "Physical KV movement",
+    reason: "Default vLLM prefix/preemption was rejected; revisit only for a measured offload, beam, or compaction path.",
+  },
+  {
+    milestone: "K3 · Evidence",
+    name: "FP8 KV-cache qualification",
+    reason: "The first Qwen2.5 candidate was rejected on quality; retry only with a distinct pinned model, backend, or cache representation.",
+  },
+  {
+    milestone: "K4.5 · Gated",
+    name: "Speculative extensions",
+    reason: "Add tree, stochastic, or KV metadata only when a named profile exposes material non-GEMM cost.",
   },
   {
     milestone: "K8 · Proof",
@@ -168,6 +168,12 @@ export const evidence = [
     shape: "Qwen2.5-7B · 8 held-out sequences · 1,016 scored tokens",
     result: "Rejected · 3.07× PPL",
     detail: "1.99879× cache capacity and 1.00064 provider ratio; quality fails before TTFT/TPOT",
+  },
+  {
+    operator: "Default vLLM KV movement candidate",
+    shape: "Qwen2.5-0.5B · 1,024-token prefix · 96-request pressure",
+    result: "Rejected · 0 copy calls",
+    detail: "Prefix hit and three preemptions observed; reuse is logical and preemption recomputes",
   },
   {
     operator: "Greedy + sampled logprob",

@@ -37,6 +37,13 @@ top-k logprobs, exact top-k filtering, fused top-p renormalization, and fused
 mask/bias/suppression/temperature preprocessing. It is bound to source
 revision `d58ebf827243fc10efd306118910976fb8b681e5`.
 
+A refreshed wheel from revision
+`f98a9311c8b204c02fa77da10a768c54de3d08db` packages the final FP8 KV adapter
+and passes the complete 286-test vLLM 0.24 H20 suite plus 22 focused adapter
+tests from a fresh environment. It does not replace the `d58ebf8` artifact's
+vLLM 0.25/PyTorch 2.10 matrix rows. See the
+[refresh evidence](../docs/results/h20-native-wheel-clean-install-abi7-refresh-20260727.json).
+
 The older `6cu131torch210sm90` ABI-6, `5cu131torch210sm90` ABI-5,
 `4cu131torch210sm90` ABI-4, `2cu131torch210sm90` ABI-2, and
 `1cu131torch210sm90` ABI-1 wheels remain historical evidence only.

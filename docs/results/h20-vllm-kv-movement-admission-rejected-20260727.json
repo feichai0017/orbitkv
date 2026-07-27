@@ -1,0 +1,123 @@
+{
+  "schema_version": 1,
+  "date": "2026-07-27",
+  "benchmark": "vllm_kv_movement_admission",
+  "decision": {
+    "status": "rejected",
+    "candidate": "A Loom KV block copy, gather, scatter, compact, or remap operator for vLLM V1 default prefix caching and preemption",
+    "prefix_hit_observed": true,
+    "preemption_observed": true,
+    "physical_movement_calls": 0,
+    "physical_movement_bytes": 0,
+    "reason": "vLLM 0.24 reuses prefix blocks logically and handles default preemption by freeing blocks and recomputing. The exercised scheduler path exposes no physical KV movement boundary for Loom to accelerate."
+  },
+  "claim_boundary": {
+    "accepted": [
+      "A real Qwen2.5-0.5B vLLM V1 run observed a 1,024-token prefix-cache hit.",
+      "A capacity-pressure run observed three real scheduler preemptions.",
+      "Neither path called the instrumented swap or batch-copy entrypoints."
+    ],
+    "excluded": [
+      "Optional CPU KV offload was not configured or benchmarked.",
+      "Distributed KV transfer, beam-search movement, and another engine's cache policy were not benchmarked.",
+      "The recorded latencies are workload diagnostics, not Loom or vLLM performance claims."
+    ]
+  },
+  "source": {
+    "repository_base_revision": "f98a9311c8b204c02fa77da10a768c54de3d08db",
+        "benchmark_path": "benchmarks/vllm_kv_movement_admission.py",
+        "benchmark_sha256": "503b4046c6acececa9788bead9b36eb59dd6681595d8f6ff023ca75426eebf0e",
+        "remote_tool_path": "/workspace/loom-kv-movement-admission-f98a931/tools/vllm_kv_movement_admission.py",
+        "remote_raw_result_path": "/workspace/loom-kv-movement-admission-f98a931/results/default-eager-v2.json",
+        "raw_result_sha256": "17f848ec53e34c3d890f439d2bbcd85e8a9275c8daf39cf89e62131f31acb003",
+        "remote_raw_log_path": "/workspace/loom-kv-movement-admission-f98a931/results/default-eager-v2.log",
+        "raw_log_sha256": "9e63615b5c1c5873a4b9daf4ab6f6f235b0170db70ac08e065ab644cbe5c795e"
+  },
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "driver": "535.161.08",
+    "python": "3.11.2",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "vllm": "0.24.0",
+    "engine_type": "vllm.v1.engine.llm_engine.LLMEngine",
+    "v1_multiprocessing": false,
+    "enforce_eager": true
+  },
+  "model": {
+    "path": "/workspace/models/qwen2.5-0.5b-instruct",
+    "config_sha256": "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45",
+    "weights_sha256": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe"
+  },
+  "scope": {
+    "engine_path": "vLLM V1 default local GPU KV cache",
+    "prefix_caching": true,
+    "kv_offload_configured": false,
+    "instrumented_calls": [
+      "vllm._custom_ops.swap_blocks",
+      "vllm._custom_ops.swap_blocks_batch",
+      "vllm.v1.simple_kv_offload.cuda_mem_ops.copy_blocks",
+      "vllm.v1.simple_kv_offload.copy_backend.copy_blocks",
+      "vllm.v1.core.kv_cache_manager.KVCacheManager.get_computed_blocks",
+      "vllm.v1.core.sched.scheduler.Scheduler._preempt_request"
+    ]
+  },
+  "workload": {
+    "cache": {
+      "dtype": "auto",
+      "block_size": 16,
+      "num_gpu_blocks": 7763,
+      "capacity_tokens": 124208,
+      "max_model_len": 2048,
+      "max_concurrency_at_max_model_len": 60.6484375,
+      "gpu_memory_utilization": 0.03
+    },
+    "prefix_cache": {
+      "first_prompt_tokens": 1040,
+      "second_prompt_tokens": 1040,
+      "aligned_shared_prefix_tokens": 1024,
+      "second_request_cache_hit_tokens": 1024,
+      "preemptions": 0,
+      "physical_movement_calls": 0
+    },
+    "preemption": {
+      "batch_size": 96,
+      "input_tokens_per_request": 1536,
+      "output_tokens_per_request": 64,
+      "maximum_live_tokens": 153600,
+      "maximum_live_tokens_over_cache_capacity": 1.2366353213963674,
+      "preemptions": 3,
+      "computed_tokens_before_preemption": [
+        1537,
+        1557,
+        1577
+      ],
+      "physical_movement_calls": 0
+    }
+  },
+  "vllm_source_provenance": {
+    "vllm/_custom_ops.py": "cbc7fec3a616e318870a2f117ed73cc17b779ef00460320df11e8a5a4dd8a5c8",
+    "vllm/v1/core/block_pool.py": "3fc5dfe0ab7ccc6206f6eb7886b2aad15384f92708e6b9f7e5ec7838b7379abe",
+    "vllm/v1/core/kv_cache_manager.py": "2e91e77f84dfd9d4bed79f50392be72559207f54e845a3d3402baf88dc529320",
+    "vllm/v1/core/sched/scheduler.py": "df78076164fe02a63876d7690cefac810f1ba4d8fb58afc15e786c1608064090",
+    "vllm/v1/simple_kv_offload/copy_backend.py": "68a40d32b39079846eb68540122c762c1385619c5913b3f64174404e1ee5ee1f",
+    "vllm/v1/simple_kv_offload/cuda_mem_ops.py": "f651a4b16285d9785918e8ef73d4310fb28610cf786f6d06d541f303154d5ba1"
+  },
+  "source_contract": {
+    "prefix_cache": "KVCacheManager.get_computed_blocks finds already-computed full blocks and returns their logical block references.",
+        "preemption": "Scheduler._preempt_request frees request blocks, sets num_computed_tokens to zero, increments num_preemptions, and returns the request to the waiting queue.",
+        "optional_offload": "The separate offload paths already select cuMemcpyBatchAsync or a tuned Triton small-copy path and require their own workload before Loom admission."
+    },
+    "post_validation_retention": {
+        "final_tool_result_and_log_preserved": true,
+        "isolated_compiler_and_vllm_caches_removed": true,
+        "superseded_probe_attempt_removed": true
+    },
+    "command": "CUDA_HOME=/usr/local/cuda-13.1 env -u PYTHONPATH -u LD_LIBRARY_PATH -u LOOM_KERNELS_TORCH_LIBRARY <fresh-python> benchmarks/vllm_kv_movement_admission.py --model /workspace/models/qwen2.5-0.5b-instruct --gpu-memory-utilization 0.03 --max-model-len 2048 --max-num-seqs 96 --max-num-batched-tokens 8192 --prefix-tokens 1024 --preemption-batch-size 96 --preemption-input-tokens 1536 --preemption-output-tokens 64 --enforce-eager --cache-root <isolated-cache> --result-json <result.json>",
+  "interpretation": {
+    "admission": "Do not add a default vLLM prefix/preemption KV-movement API or CUDA kernel to Loom.",
+    "roadmap": "Move deterministic counter-based sampling RNG to the next implementation slot.",
+    "revisit_condition": "Reopen KV movement only for a named offload, beam, compaction, or other engine path whose profile shows material physical movement not already owned efficiently by the CUDA driver or engine."
+  }
+}

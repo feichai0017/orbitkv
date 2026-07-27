@@ -17,6 +17,7 @@ the evidence used to qualify them.
 | Check supported versions | [Compatibility matrix](compatibility.md) | [Implementation status](status.md) |
 | Work on paged decode | [Paged-decode design](design/paged-decode-attention.md) | [Paged-decode evidence](results/README.md#paged-decode-attention) |
 | Work on FP8 KV cache | [FP8 KV-cache design](design/fp8-kv-cache.md) | [K3 roadmap](roadmap.md#k3-kv-cache-update-family) |
+| Work on seeded sampling | [Counter-based sampling design](design/counter-based-sampling.md) | [K4 roadmap](roadmap.md#k4-decode-tail) |
 | Work on speculative decode | [Greedy verifier design](design/greedy-speculative-verify.md) | [Speculative evidence](results/README.md#speculative-decoding) |
 | Evaluate performance | [Evidence index](results/README.md) | Raw JSON under [`results/`](results/) |
 | Pick the next operator | [Roadmap](roadmap.md) | [Catalog implementation order](operator-catalog.md#implementation-order) |
@@ -49,6 +50,8 @@ the evidence used to qualify them.
   layouts, GQA packing, local split-K/LSE, and routing exclusions.
 - [FP8 KV-cache design](design/fp8-kv-cache.md) documents static per-tensor and
   per-head scales, fused quantize-on-write, and the vendor-attention handoff.
+- [Counter-based sampling design](design/counter-based-sampling.md) defines the
+  proposed explicit-state ABI8-A boundary and its pre-implementation H20 gate.
 
 ## What a status means
 

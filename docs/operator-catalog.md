@@ -58,7 +58,7 @@ isolated microbenchmark is not sufficient.
 | NeoX and interleaved RoPE, partial rotary dimensions | P0 | next | in-place Q/K position encoding; currently exposed through the fused cache-write path |
 | RoPE+paged-KV write | P0 | supported | position encoding without materializing another K pass |
 | paged-KV reshape/store/append | P0 | next | engine tensor to cache layout |
-| KV block copy, swap, gather, scatter, compact, and remap | P0 | next | prefix reuse, preemption, beam movement, and cache compaction |
+| KV block copy, swap, gather, scatter, compact, and remap | P1 | profile-gated | default vLLM prefix/preemption was rejected because it performs no physical movement; reopen only for a named offload, beam, or compaction path |
 | RoPE+paged-KV write to static FP8 E4M3 | P0 | in progress | implementation, exact-byte, clean-wheel, operator, capacity, and provider-equivalence gates pass; the first Qwen2.5 candidate fails native-vs-FP8 quality, so family-level serving value remains open |
 | dynamic FP8 per-token-head scale/write | P1 | planned | separate engine scale-cache contract only when a named backend requires it |
 | INT8 KV quantize/dequantize with scale update | P1 | planned | admitted only by a named engine/model cache contract |
@@ -75,7 +75,7 @@ isolated microbenchmark is not sufficient.
 | sampled-token + top-k raw logprobs | P0 | supported | deterministic direct reduction without full-vocabulary probabilities; exact vLLM adapter preserves engine `torch.topk` order and replaces full raw log-softmax/rank |
 | exact in-place top-k filtering | P0 | supported | partition radix sort plus device-only exact threshold selection; vLLM rows 1–7 replace the full-vocabulary PyTorch sort while preserving threshold ties |
 | in-place min-p filtering | P0 | supported | row-max threshold without probability or mask tensors; vLLM route is H20 shape-gated |
-| deterministic counter-based RNG sampling | P0 | next | seeded token selection without host round trips |
+| deterministic counter-based categorical sampling | P0 | next | explicit caller-owned `(seed, counter)` state over normalized probabilities; first profile vLLM's per-request-generator fallback |
 | fused top-p filtering and renormalization | P0 | supported | deterministic retained prefix plus contiguous F32 probabilities; vLLM top-p-only route is H20 shape-gated and keeps engine RNG |
 | sharded-vocabulary top-k/logsumexp merge | P1 | planned | tensor-parallel token selection |
 | structured-output bitmask application | P1 | profile-gated | grammar mask plus logits processing |
@@ -133,21 +133,22 @@ the boundary or an isolated implementation is measurably useful.
 
 ## Implementation Order
 
-1. Finish system-level qualification for the static FP8 E4M3 quantize-on-write
-   path by proving cache bytes, admitted context/batch, quality, TTFT, and TPOT
-   together; H20 operator and clean-wheel qualification are complete.
-2. Continue the sampling tail after the completed logits-preprocessing,
-   sparse-penalty, top-k, and fused top-p/renormalization slices with
-   deterministic counter-based RNG.
-3. Add KV block movement for a real prefix-cache, preemption, or compaction
-   call site.
-4. Return to tree metadata, stochastic speculative rejection, or KV
+1. Profile vLLM's real seeded per-request-generator sampling fallback on H20.
+   If material, implement the explicit-state ABI8-A categorical sampler in the
+   [counter-based design](design/counter-based-sampling.md).
+2. Fill quantization scale/pack/layout gaps only around an unchanged vendor
+   GEMM path.
+3. Add MoE routing, histogram/prefix sum, permutation, and combine; grouped
+   GEMM remains entirely engine/vendor-owned.
+4. Revisit KV block movement only for a named offload, beam, or compaction
+   call site. Default vLLM prefix reuse and preemption are rejected because
+   the measured path performs no physical copy.
+5. Return to tree metadata, stochastic speculative rejection, or KV
    commit/remap only when a named engine profile shows material cost. The
    current real-model gate puts verification below `0.2%` of batch latency.
-5. Fill quantization scale/pack/layout gaps only around an unchanged vendor
-   GEMM path.
-6. Add MoE routing, histogram/prefix sum, permutation, and combine; grouped
-   GEMM remains entirely engine/vendor-owned.
+6. Reopen static FP8 KV-cache system qualification only for a distinct pinned
+   model, backend, or representation that first passes the held-out quality
+   gate.
 7. Build the engine-neutral Rust decode proof after one new feature reaches an
    engine.
 8. Broaden paged decode or communication-aware fusion only when profiling and

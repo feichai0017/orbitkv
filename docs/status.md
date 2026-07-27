@@ -119,6 +119,19 @@
   H20 execution, and the applicable full suites on PyTorch 2.10.0+cu128,
   PyTorch 2.11.0+cu130 with vLLM 0.24.0, and the same PyTorch with the official
   vLLM 0.25.1 wheel; the native artifact is not published;
+- a refreshed ABI7 wheel from revision `f98a931` packages the final FP8 KV
+  adapter and exactly two native libraries, then passes all 286 vLLM 0.24 GPU
+  tests plus 22 focused FP8 KV/adapter tests from a fresh repository-free
+  venv. This exact wheel has not rerun the vLLM 0.25/PyTorch 2.10 rows;
+- the refresh's first full-suite run retained a shared-Inductor-cache
+  missing-`cubin` failure after 285 passes. The isolated failing test and a
+  complete rerun passed with fresh `TORCHINDUCTOR_CACHE_DIR` and
+  `TRITON_CACHE_DIR`, so H20 qualification now treats compiler-cache isolation
+  as part of the command contract;
+- a real Qwen2.5-0.5B vLLM 0.24 V1 admission probe observed a 1,024-token
+  prefix-cache hit and three scheduler preemptions under a `1.2366x`
+  over-capacity workload, but zero physical swap/copy calls or bytes. Default
+  prefix/preemption KV movement is rejected as a Loom operator target;
 - the qualified ABI7 revision passes 45 local Rust contract/oracle tests, 14
   H20 safe CUDA-wrapper tests, 6 checked-bridge tests, and the complete
   286-test Python GPU suite on each supported vLLM minor. The vLLM-free
@@ -468,8 +481,9 @@ FA3 for the engine's 128-1,024-token path.
 - token-penalty serving-scale concurrency/goodput beyond the pinned offline
   Qwen gate; fused logits preprocessing has exact offline engine invocation
   and order-stable TPOT evidence but no serving-scale goodput result;
-- Loom-owned deterministic RNG and a stable end-to-end benefit for top-k
-  logprob integration;
+- Loom-owned deterministic RNG and a stable seeded-sampling engine benefit;
+  the [ABI8-A design](design/counter-based-sampling.md) first requires an H20
+  profile of vLLM's per-request-generator fallback;
 - an end-to-end speculative draft/target performance win; tree/branch
   metadata, stochastic residual-distribution rejection, and KV commit/remap
   remain profile-gated after the real-engine verifier share measured below
@@ -482,7 +496,10 @@ FA3 for the engine's 128-1,024-token path.
   it because both FP8 paths regress BF16 perplexity by about `3.07x`; the
   formal TTFT/TPOT matrix was not run, no accepted large-model artifact
   exists, and INT8 remains unimplemented;
-- prefix-cache/preemption KV movement and compaction in a real scheduler path;
+- physical KV movement benefit for an explicitly named offload, beam, or
+  compaction path; default vLLM 0.24 prefix caching and preemption are no
+  longer open because the [H20 admission probe](results/h20-vllm-kv-movement-admission-rejected-20260727.json)
+  showed logical reuse/recomputation rather than physical movement;
 - MoE routing/permutation/combine benefit around an unchanged vendor grouped
   GEMM;
 - an engine-neutral zero-copy Rust decode-step proof;

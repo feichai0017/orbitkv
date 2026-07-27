@@ -195,12 +195,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p>
         The K0.7 bridge-ABI-7 wheel is clean-install-qualified across PyTorch
         2.10/2.11 and vLLM 0.24/0.25 on H20, including fused logits
-        preprocessing; it remains unpublished. Sampling preprocessing,
-        top-k/top-p, penalties, and logprob slices are complete through their
-        qualified gates. Deterministic RNG remains, while the next K3 proof is a
-        native-versus-FP8 capacity, quality, memory, TTFT, and TPOT study.
-        Tree, stochastic, and speculative-KV work waits for a named profile
-        that shows material cost.
+        preprocessing; it remains unpublished. The refreshed current-source
+        wheel also passes all 286 vLLM 0.24 tests with the final FP8 KV adapter.
+        Default prefix/preemption KV movement is rejected after a real prefix
+        hit and three preemptions produced zero physical copies. The next gate
+        profiles vLLM's seeded per-request-generator fallback before admitting
+        an explicit-state categorical sampler. FP8 KV, physical movement, tree,
+        stochastic, and speculative-KV work all wait for a distinct named
+        workload that passes their admission condition.
       </p>
     </header>
 

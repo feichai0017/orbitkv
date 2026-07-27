@@ -27,12 +27,19 @@ feature. New feature work follows this order:
 
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
-| 1 | KV-cache movement | block copy/gather/scatter/compact/remap for prefix reuse and preemption | fewer launches or less movement time in a real scheduler path |
-| 2 | Complete sampling tail | deterministic RNG remains; fused logits preprocessing, exact top-k, fused top-p/renormalization, sparse penalties, and top-k logprobs are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
-| 3 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
-| 4 | Profile-gated speculative extensions | tree/stochastic/KV boundaries only after profiling exposes material non-GEMM cost | a named draft/target model pair improves decode latency or throughput |
-| 5 | MoE routing and movement | top-k routing, histogram/prefix sum, permutation, and inverse permutation | lower model-level MoE latency while grouped GEMM remains vendor-owned |
+| 1 | Seeded sampling tail | H20 admission profile of vLLM's per-request-generator fallback, followed by explicit-state categorical sampling only if material | deterministic replay plus a declared statistical contract and an order-reversed seeded-engine win |
+| 2 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
+| 3 | MoE routing and movement | top-k routing, histogram/prefix sum, permutation, and inverse permutation | lower model-level MoE latency while grouped GEMM remains vendor-owned |
+| 4 | Profile-gated KV movement | a named offload, beam, or compaction profile that exposes physical movement | fewer launches or less movement time without replacing an efficient driver/vendor path |
+| 5 | Profile-gated speculative extensions | tree/stochastic/KV boundaries only after profiling exposes material non-GEMM cost | a named draft/target model pair improves decode latency or throughput |
 | 6 | Minimal Rust decode proof | zero-copy Rust orchestration over vendor-produced tensors and Loom operators | one deterministic decode step uses borrowed memory and stream ownership without becoming an inference engine |
+
+The original default-prefix/preemption movement candidate failed admission.
+The [H20 vLLM V1 probe](results/h20-vllm-kv-movement-admission-rejected-20260727.json)
+observed a 1,024-token prefix hit and three real preemptions, but none of the
+instrumented swap or batch-copy entrypoints ran. Prefix caching reuses logical
+blocks and default preemption frees blocks before recomputation. No public Loom
+movement operator will be added for that path.
 
 Static FP8 KV-cache compression remains a K3 evidence track, not the next
 kernel implementation. Its first pinned Qwen2.5 candidate is rejected below;
@@ -177,8 +184,9 @@ latency, memory, or temporary-allocation metric.
 
 ## K3: KV-Cache Update Family
 
-Status: implementation and integration qualified; the first system candidate
-is rejected and the family-level system-value exit remains open.
+Status: implementation and integration qualified; the first compression
+system candidate and the default vLLM relocation candidate are rejected, while
+the family-level system-value exit remains open.
 
 - ~~RoPE plus paged-KV write~~ — Rust/CUDA/PyTorch, packed-QKV and NHD/HND
   layouts, vLLM compiler fusion, H20 named baseline, and exact-token Qwen2.5
@@ -210,13 +218,20 @@ is rejected and the family-level system-value exit remains open.
   gives native-vLLM/Loom FP8-to-BF16 perplexity ratios of `3.07370x` and
   `3.07173x`; quality fails before the dual-order TTFT/TPOT gate, so this
   result is not performance evidence;
+- [rejected default vLLM movement result](results/h20-vllm-kv-movement-admission-rejected-20260727.json)
+  — a real 0.24 V1 run records a 1,024-token logical prefix hit and three
+  preemptions under a `1.2366x` over-capacity workload, yet zero physical
+  swap/copy calls or bytes. Loom therefore exposes no default
+  prefix/preemption relocation API;
 - FlashAttention/FlashInfer consume the compressed cache directly, so Loom
   deliberately does not add a full-cache dequantize-on-read pass;
 - dynamic per-token-head scale caches and INT8 follow only when a named
   engine/model path requires those distinct contracts;
-- append/copy with layout conversion for engine-native paged caches;
-- block copy, swap, gather, scatter, compact, and remap for prefix caching,
-  preemptive scheduling, beam movement, and cache defragmentation;
+- append/copy with layout conversion remains profile-gated for a named
+  engine-native cache path;
+- block copy, swap, gather, scatter, compact, and remap reopen only for a named
+  offload, beam, or defragmentation workload that physically moves data and
+  does not already use an efficient CUDA-driver or engine implementation;
 - expose no private cache ownership: engine allocations, page tables, streams,
   and lifetime remain borrowed.
 
@@ -288,9 +303,17 @@ Status: in progress.
   Loom submissions; TPOT ratios are `1.010–1.084x`, while batch latency
   crosses parity at batch 32, so no stable model-level batch-latency claim is
   made;
-- deterministic counter-based RNG sampling without a host round trip.
+- deterministic counter-based RNG sampling without a host round trip is next.
+  ABI8-A first profiles vLLM's seeded per-request-generator fallback. If
+  admitted, one `categorical_sample` contract consumes normalized contiguous
+  F32 probabilities plus caller-owned `(seed, counter)` int64 state, emits one
+  int64 token per row, and advances counters in place on the current stream.
+  It has no implicit global generator or seedless mode. See the
+  [counter-based sampling design](design/counter-based-sampling.md).
 
-Exit: fewer launches and temporary tensors with identical token results. The
+Exit: fewer launches and temporary tensors with exact token results where the
+contract requires parity, or deterministic replay plus an explicitly declared
+statistical sampling contract. The
 selected-logprob exit gates are closed for pure greedy and engine-owned general
 sampling requests with `logprobs=0`; the sparse-penalty gate is also closed for
 the pinned deterministic Qwen workload. Exact top-k filtering closes its

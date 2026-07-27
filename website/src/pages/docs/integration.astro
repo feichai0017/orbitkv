@@ -163,9 +163,12 @@ apply_token_penalties_(
         Fresh installs of the K0.7 bridge-ABI-7 wheel with official vLLM 0.24.0
         and 0.25.1 packages each pass the 286-test H20 suite on PyTorch 2.11.
         The same exact artifact passes 193 applicable Loom gates on PyTorch
-        2.10 without recompilation. It includes speculative verification and
-        static FP8 KV quantize-on-write, fused logits preprocessing, sparse
-        token penalties, and top-k logprobs, but has not been published. Pinned
+        2.10 without recompilation. A current-source refresh packages the final
+        FP8 KV adapter and independently passes all 286 vLLM 0.24 tests; its
+        vLLM 0.25/PyTorch 2.10 rows remain open. ABI7 includes speculative
+        verification and static FP8 KV quantize-on-write, fused logits
+        preprocessing, sparse token penalties, and top-k logprobs, but has not
+        been published. Pinned
         vLLM 0.24 Qwen gates prove exact sparse-penalty acceleration, exact
         logits-preprocessing invocation with order-stable TPOT, exact top-k
         adapter invocation with order-sensitive latency, and exact native/Loom

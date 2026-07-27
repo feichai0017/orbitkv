@@ -24,7 +24,8 @@ otherwise.
 
 | Boundary | Result set | Current conclusion |
 | --- | --- | --- |
-| Native Python ABI7 matrix wheel | [current clean-install H20 gate](h20-native-wheel-clean-install-abi7-20260727.json) | One exact `py3-none-linux_x86_64` wheel contains the two Loom `.so` files and passes 286 tests with each vLLM minor plus 193 applicable tests on PyTorch 2.10. It is qualified but not published. |
+| Refreshed Python ABI7 vLLM 0.24 wheel | [current-source clean-install H20 gate](h20-native-wheel-clean-install-abi7-refresh-20260727.json) | Revision `f98a931` packages the final FP8 KV adapter and exactly two Loom `.so` files, then passes 286/286 full and 22/22 focused tests from a fresh repository-free environment. This exact wheel has not rerun the other matrix rows. |
+| Native Python ABI7 cross-matrix wheel | [first complete clean-install H20 gate](h20-native-wheel-clean-install-abi7-20260727.json) | One exact `py3-none-linux_x86_64` wheel contains the two Loom `.so` files and passes 286 tests with each vLLM minor plus 193 applicable tests on PyTorch 2.10. It is qualified but not published. |
 | Historical ABI6 matrix wheel | [predecessor clean-install H20 gate](h20-native-wheel-clean-install-abi6-20260727.json) | Preserved as the earlier 277/186-test artifact before fused mixed-sampling logits preprocessing entered the packaged ABI. |
 | Historical ABI5 matrix wheel | [predecessor clean-install H20 gate](h20-native-wheel-clean-install-abi5-20260727.json) | Preserved as the earlier 268/178-test artifact before fused top-p filtering and renormalization entered the packaged ABI. |
 | Historical ABI4 matrix wheel | [predecessor clean-install H20 gate](h20-native-wheel-clean-install-abi4-20260725.json) | Preserved as the earlier 253/164-test artifact before exact top-k filtering entered the packaged ABI. |
@@ -51,6 +52,7 @@ otherwise.
 | [Decode-sized operator sweep](h20-rope-paged-kv-20260722.json) · [large-token sweep](h20-rope-paged-kv-large-20260722.json) | Fusion wins most strongly at decode-sized token counts and narrows with larger batches |
 | [Baseline-first engine gate](h20-vllm-qwen25-rope-paged-kv-engine-20260722.json) · [Loom-first engine gate](h20-vllm-qwen25-rope-paged-kv-engine-loom-first-20260722.json) | Exact tokens and Loom path hits are proven; order reversal crosses parity, so no model-level speedup is claimed |
 | Static FP8 E4M3 cache: [cache-write gate](h20-fp8-kv-cache-write-20260724.json) · [rejected Qwen2.5 system candidate](h20-fp8-kv-system-rejected-20260727.json) | Exact bytes, framework/clean-wheel coverage, `1.317-1.378x` operator ratios, `1.99879x` cache-token capacity, and native-vLLM/Loom FP8 provider equivalence are qualified. An 8-sequence, 1,016-scored-token early-stop slice rejects the pinned Qwen2.5 candidate at about `3.07x` FP8/BF16 perplexity; the formal TTFT/TPOT matrix was not run. |
+| [Rejected default prefix/preemption movement candidate](h20-vllm-kv-movement-admission-rejected-20260727.json) | A real vLLM V1 run records a 1,024-token prefix hit and three preemptions, but zero physical swap/copy calls or bytes. Prefix reuse is logical and preemption recomputes, so Loom adds no operator for this default path. |
 
 ## Sampling and log probabilities
 
