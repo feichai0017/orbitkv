@@ -230,6 +230,35 @@ that implementation exposes a different duplicate-threshold rule by selecting
 exactly `k` positions. The H20 operator gate uses that exact registered
 boundary rather than comparing unrelated semantics.
 
+## Fused Top-P Renormalization Contract
+
+`top_p_renorm_` accepts rank-2 F32, FP16, or BF16 logits and one contiguous
+F32 `top_p` value in `(0, 1]` per row. It mutates every token outside the
+nucleus to negative infinity and returns a new contiguous F32 probability
+matrix already renormalized over the retained prefix. Equal logits are ordered
+by descending token ID, making the discrete boundary deterministic. Existing
+negative infinity is valid; NaN, positive infinity, and an all-masked row are
+outside the contract.
+
+CUDA radix-sorts 4,096-token partitions by a composite ordered-float/token key.
+A device-only 64-bit threshold search sums the low-probability tail in the same
+direction as vLLM's small-batch PyTorch implementation, then one final pass
+filters logits and emits probabilities. There is one public algorithm for
+every valid shape and `top_p`; no host readback, size-specific implementation,
+or separate filter/softmax API exists. Safe Rust owns validation and requires
+an eight-byte-aligned caller workspace. PyTorch owns that temporary below the
+public boundary and submits every launch to its current stream.
+
+The explicit vLLM 0.24/0.25 registration is narrower than the operator. It
+admits top-p-only F32 sampling logits for rows 2–7 and vocabulary at least
+32,768, where H20 measurements beat the native full sort plus softmax. Row one,
+smaller vocabularies, joint top-k/top-p, non-F32 logits, and eight or more rows
+remain native. vLLM still consumes the original per-request generators and
+performs random selection. Because each implementation accumulates a long F32
+tail in a different parallel order, the cutoff can differ by one token when
+the threshold lands within rounding error; the qualified probability contract
+uses a per-row L1 tolerance of `1e-4` instead of claiming bitwise mask identity.
+
 ## Greedy Speculative-Verify Contract
 
 The deterministic speculative boundary consumes flattened int32 draft IDs,

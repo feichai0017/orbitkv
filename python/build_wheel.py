@@ -24,7 +24,7 @@ import torch
 
 TORCH_TARGET_VERSION = "2.10"
 TORCH_MAX_VERSION = "2.12"
-BRIDGE_ABI_VERSION = 5
+BRIDGE_ABI_VERSION = 6
 LIBRARIES = (
     "libloom_cuda_bridge.so",
     "libloom_kernels_torch.so",

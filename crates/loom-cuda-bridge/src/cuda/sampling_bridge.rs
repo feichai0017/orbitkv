@@ -148,6 +148,71 @@ unsafe fn launch_top_k_filter<T: Scalar>(
 }
 
 #[allow(clippy::too_many_arguments)]
+unsafe fn launch_top_p_renorm<T: Scalar>(
+    logits: *mut T,
+    logits_elements: u64,
+    top_ps: *const f32,
+    top_p_elements: u64,
+    probabilities: *mut f32,
+    probability_elements: u64,
+    workspace: *mut u8,
+    workspace_bytes: u64,
+    rows: u32,
+    vocab_size: u32,
+    row_stride: u64,
+    stream: *mut c_void,
+) -> Result<(), CudaExecutorError> {
+    let (mut logits, logits_range) =
+        unsafe { write_slice(logits, logits_elements, "top-p renormalization logits") }?;
+    let (top_ps, top_ps_range) = unsafe { read_slice(top_ps, top_p_elements, "top-p values") }?;
+    let (mut probabilities, probabilities_range) = unsafe {
+        write_slice(
+            probabilities,
+            probability_elements,
+            "top-p renormalized probabilities",
+        )
+    }?;
+    if !(workspace as usize).is_multiple_of(align_of::<u64>()) {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-p renormalization workspace must be aligned to 8 bytes".into(),
+        ));
+    }
+    let (mut workspace, workspace_range) = unsafe {
+        write_slice(
+            workspace,
+            workspace_bytes,
+            "top-p renormalization workspace",
+        )
+    }?;
+    require_disjoint(
+        &[
+            ("logits", logits_range),
+            ("top-p values", top_ps_range),
+            ("probabilities", probabilities_range),
+            ("workspace", workspace_range),
+        ],
+        "top-p renormalization",
+    )?;
+    let spec = TopPRenormSpec::new(rows as usize, vocab_size as usize, T::DTYPE)
+        .map_err(invalid_contract)?;
+    let layout = RowStridedLayout::new(
+        spec.vocab_size(),
+        element_count(row_stride, "top-p renormalization row stride")?,
+    )?;
+    T::top_p_renorm(
+        &stream_backend(stream),
+        &mut logits,
+        &top_ps,
+        &mut probabilities,
+        &mut workspace,
+        spec,
+        layout,
+    )?;
+    record_launch(OP_TOP_P_RENORM);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 unsafe fn launch_topk_sampled_logprobs<T: Scalar>(
     logits: *const T,
     logits_elements: u64,
@@ -541,6 +606,85 @@ pub unsafe extern "C" fn loom_cuda_bridge_top_k_filter_workspace_elements(
     })
 }
 
+/// Checked fused per-row top-p filtering and F32 renormalization.
+///
+/// # Safety
+///
+/// Every pointer must identify the declared CUDA storage on the active
+/// context and remain alive until work on `stream` completes. `top_ps` must
+/// contain one trusted finite value in `(0, 1]` per row. `workspace` must be
+/// aligned to at least eight bytes.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn loom_cuda_bridge_top_p_renorm(
+    dtype: u32,
+    logits: *mut c_void,
+    logits_elements: u64,
+    top_ps: *const f32,
+    top_p_elements: u64,
+    probabilities: *mut f32,
+    probability_elements: u64,
+    workspace: *mut u8,
+    workspace_bytes: u64,
+    rows: u32,
+    vocab_size: u32,
+    row_stride: u64,
+    stream: *mut c_void,
+) -> c_int {
+    bridge_call(|| {
+        let kind = scalar_kind(dtype)?;
+        dispatch_scalar!(
+            kind,
+            launch_top_p_renorm(
+                logits.cast(),
+                logits_elements,
+                top_ps,
+                top_p_elements,
+                probabilities,
+                probability_elements,
+                workspace,
+                workspace_bytes,
+                rows,
+                vocab_size,
+                row_stride,
+                stream,
+            )
+        )
+    })
+}
+
+/// Return the caller-owned byte workspace required by top-p renormalization.
+///
+/// # Safety
+///
+/// `workspace_bytes` must be a valid aligned writable host pointer.
+#[no_mangle]
+pub unsafe extern "C" fn loom_cuda_bridge_top_p_renorm_workspace_size(
+    rows: u32,
+    vocab_size: u32,
+    workspace_bytes: *mut u64,
+) -> c_int {
+    bridge_call(|| {
+        if workspace_bytes.is_null()
+            || !(workspace_bytes as usize).is_multiple_of(align_of::<u64>())
+        {
+            return Err(CudaExecutorError::InvalidContract(
+                "top-p renormalization workspace-size output is null or misaligned".into(),
+            ));
+        }
+        let spec = TopPRenormSpec::new(rows as usize, vocab_size as usize, DType::F32)
+            .map_err(invalid_contract)?;
+        unsafe {
+            *workspace_bytes = u64::try_from(spec.workspace_bytes()).map_err(|_| {
+                CudaExecutorError::InvalidContract(
+                    "top-p renormalization workspace size exceeds the bridge ABI".into(),
+                )
+            })?;
+        }
+        Ok(())
+    })
+}
+
 /// Checked sampled-token plus deterministic top-k logprobs and rank.
 ///
 /// # Safety
@@ -702,7 +846,10 @@ pub unsafe extern "C" fn loom_cuda_bridge_apply_token_penalties(
 
 #[cfg(test)]
 mod tests {
-    use super::{launch_greedy_sample_logprobs, launch_token_penalties, launch_top_k_filter};
+    use super::{
+        launch_greedy_sample_logprobs, launch_token_penalties, launch_top_k_filter,
+        launch_top_p_renorm,
+    };
     use loom_cuda::CudaExecutorError;
 
     #[test]
@@ -769,6 +916,27 @@ mod tests {
                 2,
                 0x3000_usize as *mut u32,
                 8_194,
+                2,
+                4,
+                4,
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(matches!(result, Err(CudaExecutorError::InvalidContract(_))));
+    }
+
+    #[test]
+    fn top_p_renorm_rejects_overlapping_outputs_before_submission() {
+        let result = unsafe {
+            launch_top_p_renorm::<f32>(
+                0x1000_usize as *mut f32,
+                8,
+                0x2000_usize as *const f32,
+                2,
+                0x1010_usize as *mut f32,
+                8,
+                0x3000_usize as *mut u8,
+                98_336,
                 2,
                 4,
                 4,

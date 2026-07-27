@@ -98,6 +98,13 @@ def top_k_filter_(*args: Any, **kwargs: Any) -> Any:
     return implementation(*args, **kwargs)
 
 
+def top_p_renorm_(*args: Any, **kwargs: Any) -> Any:
+    """Lazily filter logits and return renormalized nucleus probabilities."""
+    from .torch_ops import top_p_renorm_ as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def topk_sampled_logprobs(*args: Any, **kwargs: Any) -> Any:
     """Lazily fuse sampled-token plus deterministic top-k logprobs."""
     from .torch_ops import topk_sampled_logprobs as implementation
@@ -176,5 +183,6 @@ __all__ = [
     "silu_and_mul_out",
     "token_penalties_workspace_capacity",
     "top_k_filter_",
+    "top_p_renorm_",
     "topk_sampled_logprobs",
 ]

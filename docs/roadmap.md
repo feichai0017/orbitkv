@@ -28,7 +28,7 @@ feature. New feature work follows this order:
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
 | 1 | KV-cache compression | FP8 KV write/read boundary with explicit scale layout | lower cache bytes and higher admitted context or batch size without unacceptable quality or TPOT loss |
-| 2 | Complete sampling tail | top-p, renormalization, and deterministic RNG; exact top-k filtering, sparse penalties, and top-k logprobs are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
+| 2 | Complete sampling tail | logits preprocessing and deterministic RNG; exact top-k, fused top-p/renormalization, sparse penalties, and top-k logprobs are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
 | 3 | KV-cache movement | block copy/gather/scatter/compact/remap for prefix reuse and preemption | fewer launches or less movement time in a real scheduler path |
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV boundaries only after profiling exposes material non-GEMM cost | a named draft/target model pair improves decode latency or throughput |
 | 5 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
@@ -252,9 +252,20 @@ Status: in progress.
   `0.62–4.36 MB` rather than `4.90–47.01 MB` of peak temporary storage.
   Eight or more rows retain vLLM's Qrita Triton path because its duplicate-tie
   semantics select exactly `k` positions rather than preserving the threshold;
+- ~~fused top-p filtering and renormalization~~ — Rust F32/FP16/BF16
+  contracts and oracles, deterministic descending-token-ID ties, one
+  partition-radix/device-threshold CUDA path, caller-owned workspace below the
+  framework boundary, checked ABI6 dispatch, and PyTorch compile/graph coverage
+  are complete. The explicit vLLM 0.24/0.25 route admits only F32 top-p-only
+  requests with rows 2–7 and vocabulary at least 32,768; vLLM retains RNG,
+  generators, token selection, joint top-k/top-p, and every unqualified shape.
+  At the 32,768-vocabulary crossover the H20 operator is `1.14–1.29x` faster;
+  at 151,936 it is `1.72–1.77x` faster and uses roughly one third of vLLM's
+  peak temporary storage. An F32 cutoff may move by one boundary token because
+  the implementations use different parallel accumulation orders; the
+  qualified per-row probability L1 difference is below `1e-4`;
 - fused logits bias, temperature, masking, and bad-word suppression;
-- top-p filtering, renormalization, and deterministic counter-based RNG
-  sampling without a host round trip.
+- deterministic counter-based RNG sampling without a host round trip.
 
 Exit: fewer launches and temporary tensors with identical token results. The
 selected-logprob exit gates are closed for pure greedy and engine-owned general
@@ -262,7 +273,8 @@ sampling requests with `logprobs=0`; the sparse-penalty gate is also closed for
 the pinned deterministic Qwen workload. Exact top-k filtering closes its
 operator gate for the admitted small-row vLLM path; top-k raw-logprob
 correctness plus temporary reduction is closed without a stable engine-speedup
-claim. Owning top-p and RNG remains open.
+claim. Fused top-p/renormalization closes its shape-gated operator exit; a
+seeded end-to-end engine gate and Loom-owned deterministic RNG remain open.
 
 ## K4.5: Speculative Decoding Support
 

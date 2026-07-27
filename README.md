@@ -49,7 +49,7 @@ core; it will not implement a competing GEMM.
 | Normalization | RMSNorm · Add+RMSNorm · RMSNorm→dynamic FP8 | F32, FP16, BF16; PyTorch and vLLM IR coverage |
 | MLP | split-half SiLU-and-Mul · SiLU-and-Mul→block FP8 | F32, FP16, BF16; opt-in vLLM activation paths |
 | Position and KV | NeoX/interleaved RoPE + native/static-FP8 paged-KV write | packed QKV, NHD/HND cache views, static per-tensor/per-head FP8 E4M3 scales, current-stream PyTorch |
-| Decode tail | greedy + sampled logprob · selected-token logprob + rank · exact in-place top-k filter · sampled-token + top-k logprobs · sparse penalties · Min-P | exact-token/rank gates and measured vLLM fallbacks |
+| Decode tail | greedy + sampled logprob · selected-token logprob + rank · exact in-place top-k filter · fused top-p + renormalization · sampled-token + top-k logprobs · sparse penalties · Min-P | exact-token/rank gates and measured vLLM fallbacks |
 | Speculative decode | greedy draft verify + accepted/bonus-token compaction | flattened ragged int32 metadata, exact vLLM 0.24/0.25 rejection semantics, real vLLM 0.24 draft/target invocation |
 | Attention | paged MQA/GQA decode · local split-K/LSE merge | native paged KV, GQA reuse, short shape-gated vLLM route |
 
@@ -62,9 +62,10 @@ Catalog membership alone is never a performance claim.
 The bridge-ABI-5 native-wheel engineering gate is complete for
 Linux x86_64, CUDA 13.1, SM90, Python 3.11, PyTorch 2.10/2.11, and vLLM
 0.24/0.25. The exact artifact is qualified but not published to a package
-index. It contains all fourteen checked operators, including sparse token
-penalties, sampled-token plus top-k logprobs, and exact per-row top-k
-filtering. The first post-K0.7 slice is also complete: deterministic greedy
+index. It contains all fifteen checked operators, including sparse token
+penalties, sampled-token plus top-k logprobs, exact per-row top-k filtering,
+and fused top-p renormalization. The first post-K0.7 slice is also complete:
+deterministic greedy
 speculative verification and token compaction now follow the same Rust-owned
 path, and a process-isolated Qwen2.5-1.5B/0.5B vLLM 0.24 gate proves exact
 native/Loom speculative output with complete measured path coverage. That gate also shows
@@ -76,7 +77,7 @@ is now:
 | Order | Direction | First proof |
 | --- | --- | --- |
 | 1 | FP8 KV-cache compression | lower cache bytes and a larger admitted context or batch size with quality and TPOT reported |
-| 2 | Complete sampling tail | logits preprocessing, top-p/renormalization, and deterministic RNG; exact top-k filtering, sparse penalties, and top-k logprobs are complete |
+| 2 | Complete sampling tail | logits preprocessing and deterministic RNG; exact top-k filtering, fused top-p/renormalization, sparse penalties, and top-k logprobs are complete |
 | 3 | KV-cache movement and quantization plumbing | measured prefix/preemption movement plus scale/pack/layout work around unchanged vendor GEMM |
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV work only after a named workload exposes a material non-GEMM boundary |
 | 5 | MoE routing and movement | routing, histogram/prefix sum, permutation, and combine around vendor grouped GEMM |

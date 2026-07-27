@@ -53,7 +53,7 @@ layer file also starts with a module comment that states its responsibility.
 | normalization | `norm.rs` | `norm_dispatch.rs` | `cuda/norm_bridge.rs` | `rms_norm.cu` · `add_rms_norm.cu` · `rms_norm_quant.cu` | `norm.cpp` | IR registration in `vllm/__init__.py` |
 | activation and output quantization | `activation.rs` | `activation_dispatch.rs` | `cuda/activation_bridge.rs` | `silu_and_mul.cu` · `silu_and_mul_quant.cu` | `activation.cpp` | `vllm/activation.py` |
 | logits processing | `logits.rs` | `logits_dispatch.rs` | `cuda/logits_bridge.rs` | `min_p.cu` | `logits.cpp` | `vllm/logits.py` |
-| sampling and log probabilities | `sampling.rs` | `sampling_dispatch.rs` | `cuda/sampling_bridge.rs` | `sample_logprobs.cu` · `top_k_filter.cu` · `token_penalties.cu` | `sampling.cpp` | `vllm/sampling.py` |
+| sampling and log probabilities | `sampling.rs` | `sampling_dispatch.rs` | `cuda/sampling_bridge.rs` | `sample_logprobs.cu` · `top_k_filter.cu` · `top_p_renorm.cu` · `token_penalties.cu` | `sampling.cpp` | `vllm/sampling.py` |
 | speculative decoding | `speculative.rs` | `speculative_dispatch.rs` | `cuda/speculative_bridge.rs` | `greedy_speculative_verify.cu` | `speculative.cpp` | `vllm/speculative.py` |
 | RoPE and KV write | `rope_kv.rs` | `rope_kv_dispatch.rs` | `cuda/rope_kv_bridge.rs` | `rope_paged_kv.cu` | `rope_kv.cpp` | `vllm/rope_kv.py` |
 | decode attention | `attention.rs` | `attention_dispatch.rs` | `cuda/attention_bridge.rs` | `paged_decode_attention.cu` | `attention.cpp` | `vllm/attention.py` |

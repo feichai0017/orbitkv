@@ -62,6 +62,11 @@ vLLM's threshold ties, keeps every `top_k` value on device, and leaves top-p,
 softmax, random sampling, per-request generators, processed-logit return
 semantics, and the eight-row Qrita Triton boundary unchanged.
 
+An eleventh explicit registration fuses top-p-only filtering with F32
+renormalization for measured large-vocabulary decode shapes. vLLM retains its
+per-request generators, random selection, processed-logit modes, joint
+top-k/top-p path, and every unqualified shape.
+
 The registered contract is:
 
 ```text
@@ -141,6 +146,7 @@ from loom_kernels import (
     silu_and_mul_out,
     selected_token_logprobs,
     top_k_filter_,
+    top_p_renorm_,
     topk_sampled_logprobs,
 )
 
@@ -158,6 +164,9 @@ topk_ids, topk_logprobs, sampled_ranks = topk_sampled_logprobs(
     logits, token_ids_i64, 20
 )
 top_k_filter_(sampling_logits_f32, per_row_top_k_i32)
+sampling_probabilities_f32 = top_p_renorm_(
+    sampling_logits_f32, per_row_top_p_f32
+)
 verified_ids, accepted_lengths, emitted_lengths = greedy_speculative_verify(
     flattened_draft_ids_i32,
     flattened_target_argmax_ids_i64,
@@ -355,6 +364,34 @@ path because it exposes exact-position rather than threshold-tie semantics.
 The [H20 gate](../results/h20-top-k-filter-20260727.json) measures the complete
 PyTorch operator, including its internal workspace allocation, at
 `1.42–2.15x` over the corresponding vLLM full sort.
+
+To fuse vLLM's top-p-only full sort and softmax, register the override before
+constructing sampler or engine instances:
+
+```python
+from vllm import LLM
+from loom_kernels.vllm import register_vllm_top_p_renorm
+
+assert register_vllm_top_p_renorm() == "top_p_renorm"
+engine = LLM(model="/path/to/model")
+```
+
+The adapter admits contiguous F32 top-p-only sampling logits with rows 2–7,
+vocabulary at least 32,768, and one contiguous same-device F32 `top_p` per
+row. Loom filters logits in place and returns the renormalized F32
+probabilities; vLLM then invokes its unchanged `random_sample` with the
+original generators. Joint top-k/top-p, row one, smaller vocabularies,
+non-F32 logits, and eight or more rows call the original native path.
+
+The H20 operator reports at
+[151,936 tokens](../results/h20-top-p-renorm-20260727.json) and the
+[32,768-token crossover](../results/h20-top-p-renorm-vocab32768-20260727.json)
+include internal allocations and hard-fail on a latency regression. They
+measure `1.72–1.77x` and `1.14–1.29x` ratios respectively. Long F32 cutoff
+accumulation is not bitwise associative: versus vLLM the qualified boundary
+permits at most one cutoff token per row and probability L1 below `1e-4`.
+Deterministic ties within Loom use descending token ID. This is an operator and
+adapter gate, not yet an end-to-end model speedup claim.
 
 To replace vLLM's deterministic speculative verifier, register it before
 constructing the engine:
@@ -833,17 +870,19 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
   layer replacement (`SiluAndMul`), and one vLLM-version-specific
   activation-quant fusion-table replacement, plus a vLLM 0.24/0.25-specific
   RoPE+native/static-FP8-KV compiler-pass adapter, greedy/general selected-token
-  and top-k sampled-logprob sampler overrides, a shape-gated Min-P override,
-  and a measured-shape FlashAttention paged-decode override;
+  and top-k sampled-logprob sampler overrides, shape-gated top-k and fused
+  top-p/renormalization overrides, a shape-gated Min-P override, and a
+  measured-shape FlashAttention paged-decode override;
 - the activation-quant provider requires a graph-visible quantization boundary;
   it does not intercept vLLM's fused BF16-input FlashInfer/DeepGEMM path;
 - the isolated operator is faster on H20 and real-model invocation is proven,
   but no model-level speedup has been established for either FP8 activation
   fusion or RoPE+paged-KV;
-- vLLM-owned penalties, masks, top-k/top-p, and stochastic sampling can feed
-  the selected-token path, but Loom does not accelerate those stages yet;
-  Min-P is the first separately qualified processor, raw top-k logprob lists
-  have an exact rows-at-most-32 adapter, and non-raw modes still fall back;
+- vLLM-owned penalties, masks, and stochastic sampling can feed the
+  selected-token path; Loom now accelerates measured top-k-only and top-p-only
+  filtering shapes but leaves joint top-k/top-p and RNG native. Min-P remains
+  separately shape-gated, raw top-k logprob lists have an exact
+  rows-at-most-32 adapter, and non-raw modes still fall back;
 - paged decode is limited to the exact H20-qualified 32/8-head, D128,
   context-at-most-32 envelope; pretrained-model and serving-scale evidence plus
   competitive 128-1,024-token kernels remain open.

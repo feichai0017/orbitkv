@@ -8,6 +8,7 @@ use crate::contract::{require_len, ContractError, DType};
 /// Largest top-k logprob list admitted by the fused reduction.
 pub const MAX_TOPK_LOGPROBS: usize = 32;
 const TOP_K_FILTER_ITEMS_PER_PARTITION: usize = 4096;
+const TOP_P_RENORM_ITEMS_PER_PARTITION: usize = 4096;
 const TOPK_TARGET_PARTITIONS: usize = 128;
 const TOPK_SORT_CAPACITY_PER_PARTITION: usize = 4096;
 const TOPK_PARTIAL_STATE_BYTES: usize = 12;
@@ -52,6 +53,23 @@ pub struct SelectedTokenLogprobsSpec {
 /// Logits may contain infinities but must not contain NaNs.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct TopKFilterSpec {
+    rows: usize,
+    vocab_size: usize,
+    dtype: DType,
+}
+
+/// Contract for fused per-row top-p filtering and probability renormalization.
+///
+/// Logits are `[rows, vocab_size]`; `top_ps` contains one F32 value per row in
+/// `(0, 1]`. Tokens are ordered by descending logit and descending token ID for
+/// deterministic ties. The shortest ordered prefix whose original softmax mass
+/// reaches `top_p` is retained. Other logits become negative infinity in place,
+/// and a separate contiguous F32 `[rows, vocab_size]` output contains
+/// probabilities renormalized over the retained prefix. Logits may contain
+/// negative infinity but not NaN or positive infinity, and every row must
+/// contain at least one finite value.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct TopPRenormSpec {
     rows: usize,
     vocab_size: usize,
     dtype: DType,
@@ -203,6 +221,57 @@ impl TopKFilterSpec {
 
     pub const fn workspace_bytes(self) -> usize {
         self.workspace_elements() * size_of::<u32>()
+    }
+}
+
+impl TopPRenormSpec {
+    /// Creates a validated top-p filtering and renormalization contract.
+    pub fn new(rows: usize, vocab_size: usize, dtype: DType) -> Result<Self, ContractError> {
+        if rows == 0 || vocab_size == 0 {
+            return Err(ContractError::ZeroDimension);
+        }
+        rows.checked_mul(vocab_size)
+            .and_then(|_| top_p_renorm_workspace_bytes_checked(rows, vocab_size))
+            .ok_or(ContractError::ElementCountOverflow)?;
+        Ok(Self {
+            rows,
+            vocab_size,
+            dtype,
+        })
+    }
+
+    pub const fn rows(self) -> usize {
+        self.rows
+    }
+
+    pub const fn vocab_size(self) -> usize {
+        self.vocab_size
+    }
+
+    pub const fn dtype(self) -> DType {
+        self.dtype
+    }
+
+    pub const fn logits_numel(self) -> usize {
+        self.rows * self.vocab_size
+    }
+
+    pub const fn probabilities_numel(self) -> usize {
+        self.logits_numel()
+    }
+
+    /// Number of independently sorted vocabulary partitions per row.
+    pub const fn workspace_partitions(self) -> usize {
+        self.vocab_size.div_ceil(TOP_P_RENORM_ITEMS_PER_PARTITION)
+    }
+
+    /// Caller-owned byte workspace for sorted keys, prefix masses, and state.
+    pub const fn workspace_bytes(self) -> usize {
+        let sorted_elements =
+            self.rows * self.workspace_partitions() * TOP_P_RENORM_ITEMS_PER_PARTITION;
+        let after_maxima = sorted_elements * 12 + self.rows * 4;
+        let threshold_offset = (after_maxima + 7) & !7;
+        threshold_offset + self.rows * 8 + self.rows * 4
     }
 }
 
@@ -478,6 +547,36 @@ pub fn top_k_filter_bf16_reference(
     spec: TopKFilterSpec,
 ) -> Result<(), ContractError> {
     top_k_filter_reference(logits, top_ks, spec, DType::Bf16)
+}
+
+/// Filters F32 logits by top-p and returns renormalized F32 probabilities.
+pub fn top_p_renorm_f32_reference(
+    logits: &mut [f32],
+    top_ps: &[f32],
+    probabilities: &mut [f32],
+    spec: TopPRenormSpec,
+) -> Result<(), ContractError> {
+    top_p_renorm_reference(logits, top_ps, probabilities, spec, DType::F32)
+}
+
+/// Filters FP16 logits by top-p and returns renormalized F32 probabilities.
+pub fn top_p_renorm_f16_reference(
+    logits: &mut [f16],
+    top_ps: &[f32],
+    probabilities: &mut [f32],
+    spec: TopPRenormSpec,
+) -> Result<(), ContractError> {
+    top_p_renorm_reference(logits, top_ps, probabilities, spec, DType::F16)
+}
+
+/// Filters BF16 logits by top-p and returns renormalized F32 probabilities.
+pub fn top_p_renorm_bf16_reference(
+    logits: &mut [bf16],
+    top_ps: &[f32],
+    probabilities: &mut [f32],
+    spec: TopPRenormSpec,
+) -> Result<(), ContractError> {
+    top_p_renorm_reference(logits, top_ps, probabilities, spec, DType::Bf16)
 }
 
 /// Returns sampled-token plus top-k F32 logprobs from F32 logits.
@@ -786,6 +885,116 @@ fn top_k_filter_reference<T: LogitElement>(
         }
     }
     Ok(())
+}
+
+fn top_p_renorm_reference<T: LogitElement>(
+    logits: &mut [T],
+    top_ps: &[f32],
+    probabilities: &mut [f32],
+    spec: TopPRenormSpec,
+    expected_dtype: DType,
+) -> Result<(), ContractError> {
+    if spec.dtype() != expected_dtype {
+        return Err(ContractError::UnsupportedDType(spec.dtype()));
+    }
+    require_len("logits", logits.len(), spec.logits_numel())?;
+    require_len("top_ps", top_ps.len(), spec.rows())?;
+    require_len(
+        "probabilities",
+        probabilities.len(),
+        spec.probabilities_numel(),
+    )?;
+    for (row, &top_p) in top_ps.iter().enumerate() {
+        if !top_p.is_finite() || !(top_p > 0.0 && top_p <= 1.0) {
+            return Err(ContractError::InvalidProbability {
+                parameter: "top_p",
+                row,
+                value: top_p,
+            });
+        }
+    }
+    for (row_index, row) in logits.chunks_exact(spec.vocab_size()).enumerate() {
+        let mut has_finite = false;
+        for (column, &value) in row.iter().enumerate() {
+            let value = value.to_f32();
+            if value.is_finite() {
+                has_finite = true;
+            } else if value != f32::NEG_INFINITY {
+                return Err(ContractError::InvalidLogit {
+                    row: row_index,
+                    column,
+                    value,
+                });
+            }
+        }
+        if !has_finite {
+            return Err(ContractError::NoFiniteLogit { row: row_index });
+        }
+    }
+
+    let mut ordered = Vec::with_capacity(spec.vocab_size());
+    let mut weights = vec![0.0_f64; spec.vocab_size()];
+    for (row_index, &top_p) in top_ps.iter().enumerate() {
+        let start = row_index * spec.vocab_size();
+        let row = &mut logits[start..start + spec.vocab_size()];
+        let output = &mut probabilities[start..start + spec.vocab_size()];
+        output.fill(0.0);
+        let maximum = row
+            .iter()
+            .map(|&value| value.to_f32())
+            .fold(f32::NEG_INFINITY, f32::max);
+        let mut total = 0.0_f64;
+        for (column, &value) in row.iter().enumerate() {
+            let weight = f64::from(value.to_f32() - maximum).exp();
+            weights[column] = weight;
+            total += weight;
+        }
+        ordered.clear();
+        ordered.extend(0..spec.vocab_size());
+        ordered.sort_unstable_by(|&left, &right| {
+            row[right]
+                .to_f32()
+                .total_cmp(&row[left].to_f32())
+                .then_with(|| right.cmp(&left))
+        });
+
+        let mut retained_sum = 0.0_f64;
+        let retained = if top_p == 1.0 {
+            retained_sum = total;
+            spec.vocab_size()
+        } else {
+            let target = f64::from(top_p) * total;
+            let mut retained = 0_usize;
+            for &column in &ordered {
+                retained_sum += weights[column];
+                retained += 1;
+                if retained_sum >= target {
+                    break;
+                }
+            }
+            retained
+        };
+        for &column in &ordered[..retained] {
+            output[column] = (weights[column] / retained_sum) as f32;
+        }
+        for &column in &ordered[retained..] {
+            row[column] = T::negative_infinity();
+        }
+    }
+    Ok(())
+}
+
+fn top_p_renorm_workspace_bytes_checked(rows: usize, vocab_size: usize) -> Option<usize> {
+    let partitions = vocab_size.div_ceil(TOP_P_RENORM_ITEMS_PER_PARTITION);
+    let sorted_elements = rows
+        .checked_mul(partitions)?
+        .checked_mul(TOP_P_RENORM_ITEMS_PER_PARTITION)?;
+    let after_prefix = sorted_elements.checked_mul(12)?;
+    let after_maxima = after_prefix.checked_add(rows.checked_mul(4)?)?;
+    let threshold_offset = after_maxima.checked_add(7)? & !7;
+    threshold_offset
+        .checked_add(rows.checked_mul(8)?)?
+        .checked_add(rows.checked_mul(4)?)
 }
 
 #[allow(clippy::too_many_arguments)]

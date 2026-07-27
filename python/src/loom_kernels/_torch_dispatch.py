@@ -21,6 +21,7 @@ _selected_token_logprobs = (
     torch.ops.loom_kernels.selected_token_logprobs.default
 )
 _top_k_filter = torch.ops.loom_kernels.top_k_filter_.default
+_top_p_renorm = torch.ops.loom_kernels.top_p_renorm_.default
 _topk_sampled_logprobs = torch.ops.loom_kernels.topk_sampled_logprobs.default
 _apply_token_penalties = torch.ops.loom_kernels.apply_token_penalties_.default
 _greedy_speculative_verify = (

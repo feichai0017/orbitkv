@@ -124,6 +124,14 @@ pub enum ContractError {
         top_k: i32,
         vocab_size: usize,
     },
+    InvalidLogit {
+        row: usize,
+        column: usize,
+        value: f32,
+    },
+    NoFiniteLogit {
+        row: usize,
+    },
     TargetTokenIdOutOfI32Range {
         token: usize,
         token_id: i64,
@@ -249,6 +257,13 @@ impl fmt::Display for ContractError {
                 formatter,
                 "top-k filter value {top_k} for row {row} is outside [1, {vocab_size}]"
             ),
+            Self::InvalidLogit { row, column, value } => write!(
+                formatter,
+                "logit at row {row}, column {column} must be finite or negative infinity, got {value}"
+            ),
+            Self::NoFiniteLogit { row } => {
+                write!(formatter, "logits row {row} must contain a finite value")
+            }
             Self::TargetTokenIdOutOfI32Range { token, token_id } => write!(
                 formatter,
                 "target token ID {token_id} at flattened position {token} does not fit int32"

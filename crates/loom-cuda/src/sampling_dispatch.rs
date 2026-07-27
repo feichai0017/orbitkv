@@ -6,7 +6,7 @@ use crate::{CudaExecutorError, RowStridedLayout};
 use half::{bf16, f16};
 use loom_kernels::{
     DType, GreedySampleLogprobsSpec, SelectedTokenLogprobsSpec, TokenPenaltiesSpec, TopKFilterSpec,
-    TopKSampledLogprobsSpec,
+    TopKSampledLogprobsSpec, TopPRenormSpec,
 };
 use std::mem::align_of;
 
@@ -251,6 +251,93 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
         })
     }
 
+    /// Filters F32 logits by top-p and emits renormalized F32 probabilities.
+    pub fn top_p_renorm_f32(
+        &self,
+        logits: &mut impl CudaDeviceWrite<f32>,
+        top_ps: &impl CudaDeviceRead<f32>,
+        probabilities: &mut impl CudaDeviceWrite<f32>,
+        workspace: &mut impl CudaDeviceWrite<u8>,
+        spec: TopPRenormSpec,
+        layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_top_p_renorm_dtype(spec, DType::F32)?;
+        let launch =
+            validate_top_p_renorm_buffers(logits, top_ps, probabilities, workspace, spec, layout)?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_top_p_renorm_f32(
+                logits.as_mut_ptr(),
+                top_ps.as_ptr(),
+                probabilities.as_mut_ptr(),
+                workspace.as_mut_ptr(),
+                launch.workspace_bytes,
+                launch.rows,
+                launch.vocab_size,
+                launch.row_stride,
+                launch.partitions,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Filters FP16 logits by top-p and emits renormalized F32 probabilities.
+    pub fn top_p_renorm_f16(
+        &self,
+        logits: &mut impl CudaDeviceWrite<f16>,
+        top_ps: &impl CudaDeviceRead<f32>,
+        probabilities: &mut impl CudaDeviceWrite<f32>,
+        workspace: &mut impl CudaDeviceWrite<u8>,
+        spec: TopPRenormSpec,
+        layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_top_p_renorm_dtype(spec, DType::F16)?;
+        let launch =
+            validate_top_p_renorm_buffers(logits, top_ps, probabilities, workspace, spec, layout)?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_top_p_renorm_f16(
+                logits.as_mut_ptr().cast::<u16>(),
+                top_ps.as_ptr(),
+                probabilities.as_mut_ptr(),
+                workspace.as_mut_ptr(),
+                launch.workspace_bytes,
+                launch.rows,
+                launch.vocab_size,
+                launch.row_stride,
+                launch.partitions,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Filters BF16 logits by top-p and emits renormalized F32 probabilities.
+    pub fn top_p_renorm_bf16(
+        &self,
+        logits: &mut impl CudaDeviceWrite<bf16>,
+        top_ps: &impl CudaDeviceRead<f32>,
+        probabilities: &mut impl CudaDeviceWrite<f32>,
+        workspace: &mut impl CudaDeviceWrite<u8>,
+        spec: TopPRenormSpec,
+        layout: RowStridedLayout,
+    ) -> Result<(), CudaExecutorError> {
+        require_top_p_renorm_dtype(spec, DType::Bf16)?;
+        let launch =
+            validate_top_p_renorm_buffers(logits, top_ps, probabilities, workspace, spec, layout)?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_top_p_renorm_bf16(
+                logits.as_mut_ptr().cast::<u16>(),
+                top_ps.as_ptr(),
+                probabilities.as_mut_ptr(),
+                workspace.as_mut_ptr(),
+                launch.workspace_bytes,
+                launch.rows,
+                launch.vocab_size,
+                launch.row_stride,
+                launch.partitions,
+                self.raw_stream(),
+            )
+        })
+    }
+
     /// Fuses F32 normalization, sampled-token rank, and deterministic top-k.
     #[allow(clippy::too_many_arguments)]
     pub fn topk_sampled_logprobs_f32(
@@ -464,6 +551,14 @@ struct TopKFilterLaunch {
     partitions: u32,
 }
 
+struct TopPRenormLaunch {
+    rows: u32,
+    vocab_size: u32,
+    row_stride: u64,
+    workspace_bytes: u64,
+    partitions: u32,
+}
+
 fn require_top_k_filter_dtype(
     spec: TopKFilterSpec,
     expected: DType,
@@ -523,6 +618,85 @@ fn validate_top_k_filter_buffers<T: Copy>(
         vocab_size,
         row_stride,
         workspace_elements,
+        partitions,
+    })
+}
+
+fn require_top_p_renorm_dtype(
+    spec: TopPRenormSpec,
+    expected: DType,
+) -> Result<(), CudaExecutorError> {
+    if spec.dtype() == expected {
+        Ok(())
+    } else {
+        Err(CudaExecutorError::InvalidContract(format!(
+            "top-p renormalization for {expected:?} cannot execute {:?}",
+            spec.dtype()
+        )))
+    }
+}
+
+fn validate_top_p_renorm_buffers<T: Copy>(
+    logits: &impl CudaDeviceRead<T>,
+    top_ps: &impl CudaDeviceRead<f32>,
+    probabilities: &impl CudaDeviceRead<f32>,
+    workspace: &impl CudaDeviceRead<u8>,
+    spec: TopPRenormSpec,
+    layout: RowStridedLayout,
+) -> Result<TopPRenormLaunch, CudaExecutorError> {
+    logits.require_len(
+        layout.storage_elements(spec.rows(), spec.vocab_size())?,
+        "top-p renormalization logits",
+    )?;
+    top_ps.require_len(spec.rows(), "top-p values")?;
+    probabilities.require_len(
+        spec.probabilities_numel(),
+        "top-p renormalized probabilities",
+    )?;
+    workspace.require_len(spec.workspace_bytes(), "top-p renormalization workspace")?;
+    if !(workspace.as_ptr() as usize).is_multiple_of(align_of::<u64>()) {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-p renormalization workspace must be aligned to 8 bytes".into(),
+        ));
+    }
+    let rows = u32::try_from(spec.rows()).map_err(|_| {
+        CudaExecutorError::InvalidContract("top-p renormalization rows exceed the CUDA ABI".into())
+    })?;
+    let vocab_size = u32::try_from(spec.vocab_size()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "top-p renormalization vocabulary exceeds the CUDA ABI".into(),
+        )
+    })?;
+    if vocab_size > i32::MAX as u32 {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-p renormalization vocabulary exceeds int32 token IDs".into(),
+        ));
+    }
+    let partitions = u32::try_from(spec.workspace_partitions()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "top-p renormalization partitions exceed the CUDA ABI".into(),
+        )
+    })?;
+    if rows > i32::MAX as u32 / partitions {
+        return Err(CudaExecutorError::InvalidContract(
+            "top-p renormalization partition grid exceeds CUDA grid.x".into(),
+        ));
+    }
+    let row_stride = u64::try_from(layout.row_stride()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "top-p renormalization row stride exceeds the CUDA ABI".into(),
+        )
+    })?;
+    let workspace_bytes = u64::try_from(spec.workspace_bytes()).map_err(|_| {
+        CudaExecutorError::InvalidContract(
+            "top-p renormalization workspace exceeds the CUDA ABI".into(),
+        )
+    })?;
+    Ok(TopPRenormLaunch {
+        rows,
+        vocab_size,
+        row_stride,
+        workspace_bytes,
         partitions,
     })
 }
@@ -788,7 +962,7 @@ mod tests {
     use loom_kernels::{
         apply_token_penalties_f32_reference, greedy_sample_logprobs_f32_reference,
         selected_token_logprobs_f32_reference, top_k_filter_f32_reference,
-        topk_sampled_logprobs_f32_reference,
+        top_p_renorm_f32_reference, topk_sampled_logprobs_f32_reference,
     };
 
     #[test]
@@ -908,6 +1082,64 @@ mod tests {
         backend.stream().synchronize().unwrap();
 
         assert_eq!(logits_device.copy_to_vec().unwrap(), expected);
+    }
+
+    #[test]
+    fn top_p_renorm_wrapper_matches_the_cpu_oracle() {
+        let spec = TopPRenormSpec::new(3, 5, DType::F32).unwrap();
+        let source = [
+            5.0_f32, 4.0, 4.0, 1.0, -1.0, //
+            -2.0, 3.0, 0.0, 1.0, 2.0, //
+            7.0, 7.0, 6.0, 5.0, 4.0,
+        ];
+        let top_ps = [0.5_f32, 0.75, 1.0];
+        let mut expected_logits = source;
+        let mut expected_probabilities = [0.0_f32; 15];
+        top_p_renorm_f32_reference(
+            &mut expected_logits,
+            &top_ps,
+            &mut expected_probabilities,
+            spec,
+        )
+        .unwrap();
+
+        let backend = CudaBackend::new().unwrap();
+        let mut logits_device = DeviceBuffer::from_slice(&source).unwrap();
+        let top_ps_device = DeviceBuffer::from_slice(&top_ps).unwrap();
+        let mut probabilities_device = DeviceBuffer::from_slice(&[0.0_f32; 15]).unwrap();
+        let mut workspace_device =
+            DeviceBuffer::from_slice(&vec![0_u8; spec.workspace_bytes()]).unwrap();
+        backend
+            .top_p_renorm_f32(
+                &mut logits_device,
+                &top_ps_device,
+                &mut probabilities_device,
+                &mut workspace_device,
+                spec,
+                RowStridedLayout::contiguous(spec.vocab_size()),
+            )
+            .unwrap();
+        backend.stream().synchronize().unwrap();
+
+        let actual_logits = logits_device.copy_to_vec().unwrap();
+        assert_eq!(
+            actual_logits
+                .iter()
+                .map(|value| value.is_infinite() && value.is_sign_negative())
+                .collect::<Vec<_>>(),
+            expected_logits
+                .iter()
+                .map(|value| value.is_infinite() && value.is_sign_negative())
+                .collect::<Vec<_>>(),
+        );
+        for (actual, expected) in probabilities_device
+            .copy_to_vec()
+            .unwrap()
+            .iter()
+            .zip(expected_probabilities)
+        {
+            assert!((actual - expected).abs() < 1.0e-5);
+        }
     }
 
     #[test]

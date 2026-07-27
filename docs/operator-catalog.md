@@ -76,7 +76,7 @@ isolated microbenchmark is not sufficient.
 | exact in-place top-k filtering | P0 | supported | partition radix sort plus device-only exact threshold selection; vLLM rows 1–7 replace the full-vocabulary PyTorch sort while preserving threshold ties |
 | in-place min-p filtering | P0 | supported | row-max threshold without probability or mask tensors; vLLM route is H20 shape-gated |
 | deterministic counter-based RNG sampling | P0 | next | seeded token selection without host round trips |
-| top-p filtering and renormalization | P0 | next | complete probability-tail filtering before deterministic sampling |
+| fused top-p filtering and renormalization | P0 | supported | deterministic retained prefix plus contiguous F32 probabilities; vLLM top-p-only route is H20 shape-gated and keeps engine RNG |
 | sharded-vocabulary top-k/logsumexp merge | P1 | planned | tensor-parallel token selection |
 | structured-output bitmask application | P1 | profile-gated | grammar mask plus logits processing |
 
@@ -136,8 +136,8 @@ the boundary or an isolated implementation is measurably useful.
 1. Finish system-level qualification for the static FP8 E4M3 quantize-on-write
    path by proving cache bytes, admitted context/batch, quality, TTFT, and TPOT
    together; H20 operator and clean-wheel qualification are complete.
-2. Continue the sampling tail after the completed sparse-penalty and top-k
-   logprob slices with fused preprocessing, top-k/top-p, renormalization, and
+2. Continue the sampling tail after the completed sparse-penalty, top-k, and
+   fused top-p/renormalization slices with logits preprocessing and
    deterministic RNG.
 3. Add KV block movement for a real prefix-cache, preemption, or compaction
    call site.

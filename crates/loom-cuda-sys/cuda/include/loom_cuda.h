@@ -193,6 +193,28 @@ int loom_cuda_top_k_filter_bf16(
     uint64_t workspace_elements, uint32_t rows, uint32_t vocab_size,
     uint64_t row_stride, uint32_t partitions, void* stream);
 
+// Apply exact per-row top-p filtering and return F32 probabilities
+// renormalized over the retained set. Ties use descending token IDs. top_ps
+// contains one trusted value in (0, 1] per row. Logits may contain -infinity,
+// but each row must contain a finite value and neither NaN nor +infinity.
+int loom_cuda_top_p_renorm_f32(
+    float* logits, const float* top_ps, float* probabilities,
+    uint8_t* workspace, uint64_t workspace_bytes, uint32_t rows,
+    uint32_t vocab_size, uint64_t row_stride, uint32_t partitions,
+    void* stream);
+
+int loom_cuda_top_p_renorm_f16(
+    uint16_t* logits, const float* top_ps, float* probabilities,
+    uint8_t* workspace, uint64_t workspace_bytes, uint32_t rows,
+    uint32_t vocab_size, uint64_t row_stride, uint32_t partitions,
+    void* stream);
+
+int loom_cuda_top_p_renorm_bf16(
+    uint16_t* logits, const float* top_ps, float* probabilities,
+    uint8_t* workspace, uint64_t workspace_bytes, uint32_t rows,
+    uint32_t vocab_size, uint64_t row_stride, uint32_t partitions,
+    void* stream);
+
 // Apply repetition once to the prompt/output union, then frequency and
 // presence penalties from output counts. Token IDs outside [0, vocab_size)
 // are padding. workspace is [rows, workspace_capacity] packed uint64 hash

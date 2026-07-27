@@ -14,6 +14,10 @@ SELECTED_TOKEN_LOGPROBS_OVERRIDE_KEY = "selected_token_logprobs"
 TOKEN_PENALTIES_OVERRIDE_KEY = "token_penalties"
 TOP_K_FILTER_OVERRIDE_KEY = "top_k_filter"
 TOP_K_FILTER_MAX_ROWS = 7
+TOP_P_RENORM_OVERRIDE_KEY = "top_p_renorm"
+TOP_P_RENORM_MIN_ROWS = 2
+TOP_P_RENORM_MAX_ROWS = 7
+TOP_P_RENORM_MIN_VOCAB_SIZE = 32768
 TOPK_SAMPLED_LOGPROBS_OVERRIDE_KEY = "topk_sampled_logprobs"
 TOPK_SAMPLED_LOGPROBS_MAX_ROWS = 32
 
@@ -33,6 +37,8 @@ _TOKEN_PENALTIES_FIRST_REJECTION: dict[str, Any] | None = None
 _TOKEN_PENALTIES_WORKSPACES: dict[tuple[int, int], torch.Tensor] = {}
 _TOP_K_FILTER_REGISTERED = False
 _TOP_K_FILTER_ORIGINAL_APPLY: Any | None = None
+_TOP_P_RENORM_REGISTERED = False
+_TOP_P_RENORM_ORIGINAL_FORWARD: Any | None = None
 _TOPK_SAMPLED_LOGPROBS_REGISTERED = False
 _TOPK_SAMPLED_LOGPROBS_ORIGINAL_FORWARD: Any | None = None
 _TOPK_SAMPLED_LOGPROBS_FIRST_CONTRACT: dict[str, Any] | None = None
@@ -108,6 +114,69 @@ def register_vllm_top_k_filter() -> str | None:
     topk_topp_sampler.apply_top_k_top_p = apply_top_k_top_p
     _TOP_K_FILTER_REGISTERED = True
     return TOP_K_FILTER_OVERRIDE_KEY
+
+
+def register_vllm_top_p_renorm() -> str | None:
+    """Fuse vLLM's small-batch top-p filter and probability normalization.
+
+    Loom owns only the top-p-only PyTorch-native filtering and softmax work.
+    vLLM continues to own RNG, per-request generators, sampling, logprob return
+    modes, FlashInfer, and joint top-k/top-p execution. Register this override
+    before constructing ``TopKTopPSampler`` instances.
+    """
+    global _TOP_P_RENORM_ORIGINAL_FORWARD
+    global _TOP_P_RENORM_REGISTERED
+    if _TOP_P_RENORM_REGISTERED:
+        return TOP_P_RENORM_OVERRIDE_KEY
+    if not torch_extension_available() or not supports_installed_vllm():
+        return None
+
+    from vllm.v1.sample.ops import topk_topp_sampler
+    from vllm.v1.sample.ops.topk_topp_sampler import TopKTopPSampler
+
+    from ..torch_ops import supports_top_p_renorm
+
+    implementation = torch.ops.loom_kernels.top_p_renorm_.default
+    original_forward = TopKTopPSampler.forward_native
+
+    def forward_native(
+        self: Any,
+        logits: torch.Tensor,
+        generators: dict[int, torch.Generator],
+        k: torch.Tensor | None,
+        p: torch.Tensor | None,
+    ) -> tuple[torch.Tensor, torch.Tensor | None]:
+        if (
+            k is None
+            and p is not None
+            and logits.dtype == torch.float32
+            and logits.shape[0] >= TOP_P_RENORM_MIN_ROWS
+            and logits.shape[0] <= TOP_P_RENORM_MAX_ROWS
+            and logits.shape[1] >= TOP_P_RENORM_MIN_VOCAB_SIZE
+            and supports_top_p_renorm(logits, p)
+        ):
+            probabilities = implementation(logits, p)
+            logits_to_return = None
+            if self.logprobs_mode == "processed_logits":
+                logits_to_return = logits
+            elif self.logprobs_mode == "processed_logprobs":
+                logits_to_return = logits.log_softmax(
+                    dim=-1, dtype=torch.float32
+                )
+            return (
+                topk_topp_sampler.random_sample(
+                    probabilities,
+                    generators,
+                    self.use_fp64_gumbel,
+                ),
+                logits_to_return,
+            )
+        return original_forward(self, logits, generators, k, p)
+
+    _TOP_P_RENORM_ORIGINAL_FORWARD = original_forward
+    TopKTopPSampler.forward_native = forward_native
+    _TOP_P_RENORM_REGISTERED = True
+    return TOP_P_RENORM_OVERRIDE_KEY
 
 
 def register_vllm_token_penalties() -> str | None:
@@ -742,6 +811,7 @@ def _metadata() -> dict[str, object]:
         "token_penalties_first_contract": _TOKEN_PENALTIES_FIRST_CONTRACT,
         "token_penalties_first_rejection": _TOKEN_PENALTIES_FIRST_REJECTION,
         "top_k_filter_override": _TOP_K_FILTER_REGISTERED,
+        "top_p_renorm_override": _TOP_P_RENORM_REGISTERED,
         "topk_sampled_logprobs_override": _TOPK_SAMPLED_LOGPROBS_REGISTERED,
         "topk_sampled_logprobs_first_contract": _TOPK_SAMPLED_LOGPROBS_FIRST_CONTRACT,
         "topk_sampled_logprobs_first_rejection": _TOPK_SAMPLED_LOGPROBS_FIRST_REJECTION,

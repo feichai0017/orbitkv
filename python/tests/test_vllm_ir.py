@@ -25,6 +25,10 @@ from loom_kernels.vllm import (
     TOKEN_PENALTIES_OVERRIDE_KEY,
     TOP_K_FILTER_MAX_ROWS,
     TOP_K_FILTER_OVERRIDE_KEY,
+    TOP_P_RENORM_MAX_ROWS,
+    TOP_P_RENORM_MIN_ROWS,
+    TOP_P_RENORM_MIN_VOCAB_SIZE,
+    TOP_P_RENORM_OVERRIDE_KEY,
     TOPK_SAMPLED_LOGPROBS_OVERRIDE_KEY,
     configure_vllm_rope_paged_kv,
     installed_vllm_version,
@@ -40,6 +44,7 @@ from loom_kernels.vllm import (
     register_vllm_silu_and_mul_dynamic_fp8,
     register_vllm_token_penalties,
     register_vllm_top_k_filter,
+    register_vllm_top_p_renorm,
     register_vllm_topk_sampled_logprobs,
     supports_installed_vllm,
     supports_vllm_paged_decode_shape,
@@ -484,6 +489,156 @@ def test_vllm_top_k_filter_preserves_native_rng_and_top_p_fallback():
     assert TOP_K_FILTER_MAX_ROWS == 7
     assert torch.equal(actual_triton, expected_triton)
     assert launch_count(Operator.TOP_K_FILTER) == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_vllm_top_p_renorm_preserves_native_rng_and_fallbacks():
+    from vllm.v1.sample.ops.topk_topp_sampler import TopKTopPSampler
+
+    import loom_kernels.vllm.sampling as sampling_integration
+    from loom_kernels.torch_ops import (
+        Operator,
+        launch_count,
+        reset_launch_count,
+    )
+
+    assert register_vllm_top_p_renorm() == TOP_P_RENORM_OVERRIDE_KEY
+    original_forward = sampling_integration._TOP_P_RENORM_ORIGINAL_FORWARD
+    assert original_forward is not None
+
+    rows, vocab_size = 5, TOP_P_RENORM_MIN_VOCAB_SIZE
+    torch.manual_seed(431)
+    source = torch.randn((rows, vocab_size), device="cuda")
+    source[0, :8] = 0.0
+    top_ps = torch.tensor(
+        [0.1, 0.5, 0.75, 0.9, 1.0],
+        device="cuda",
+        dtype=torch.float32,
+    )
+
+    def generators() -> dict[int, torch.Generator]:
+        return {
+            row: torch.Generator(device="cuda").manual_seed(3000 + row)
+            for row in range(rows)
+        }
+
+    expected_sampler = TopKTopPSampler(logprobs_mode="processed_logits")
+    expected, expected_processed = original_forward(
+        expected_sampler,
+        source.clone(),
+        generators(),
+        None,
+        top_ps,
+    )
+    actual_sampler = TopKTopPSampler(logprobs_mode="processed_logits")
+    reset_launch_count(Operator.TOP_P_RENORM)
+    actual, actual_processed = actual_sampler.forward(
+        source.clone(),
+        generators(),
+        None,
+        top_ps,
+    )
+    torch.cuda.synchronize()
+
+    assert torch.equal(actual, expected)
+    assert actual_processed is not None
+    assert expected_processed is not None
+    assert torch.equal(
+        torch.isneginf(actual_processed),
+        torch.isneginf(expected_processed),
+    )
+    assert launch_count(Operator.TOP_P_RENORM) == 1
+
+    expected_logprob_sampler = TopKTopPSampler(
+        logprobs_mode="processed_logprobs"
+    )
+    expected_logprob_ids, expected_logprobs = original_forward(
+        expected_logprob_sampler,
+        source.clone(),
+        generators(),
+        None,
+        top_ps,
+    )
+    actual_logprob_sampler = TopKTopPSampler(
+        logprobs_mode="processed_logprobs"
+    )
+    reset_launch_count(Operator.TOP_P_RENORM)
+    actual_logprob_ids, actual_logprobs = actual_logprob_sampler.forward(
+        source.clone(),
+        generators(),
+        None,
+        top_ps,
+    )
+    torch.cuda.synchronize()
+    assert torch.equal(actual_logprob_ids, expected_logprob_ids)
+    assert actual_logprobs is not None
+    assert expected_logprobs is not None
+    torch.testing.assert_close(
+        actual_logprobs,
+        expected_logprobs,
+        rtol=3.0e-5,
+        atol=3.0e-6,
+    )
+    assert launch_count(Operator.TOP_P_RENORM) == 1
+
+    top_ks = torch.full(
+        (rows,), 64, device="cuda", dtype=torch.int32
+    )
+    expected_joint, expected_joint_processed = original_forward(
+        expected_sampler,
+        source.clone(),
+        generators(),
+        top_ks,
+        top_ps,
+    )
+    reset_launch_count(Operator.TOP_P_RENORM)
+    actual_joint, actual_joint_processed = actual_sampler.forward_native(
+        source.clone(),
+        generators(),
+        top_ks,
+        top_ps,
+    )
+    torch.cuda.synchronize()
+    assert torch.equal(actual_joint, expected_joint)
+    assert torch.equal(actual_joint_processed, expected_joint_processed)
+    assert launch_count(Operator.TOP_P_RENORM) == 0
+
+    larger_source = torch.randn((8, vocab_size), device="cuda")
+    larger_top_ps = torch.full((8,), 0.9, device="cuda")
+    reset_launch_count(Operator.TOP_P_RENORM)
+    larger_sampler = TopKTopPSampler()
+    larger_sampler.forward_native(
+        larger_source,
+        {},
+        None,
+        larger_top_ps,
+    )
+    torch.cuda.synchronize()
+    assert TOP_P_RENORM_MAX_ROWS == 7
+    assert launch_count(Operator.TOP_P_RENORM) == 0
+
+    for fallback_source in (
+        torch.randn(
+            (TOP_P_RENORM_MIN_ROWS - 1, vocab_size), device="cuda"
+        ),
+        torch.randn(
+            (TOP_P_RENORM_MIN_ROWS, TOP_P_RENORM_MIN_VOCAB_SIZE - 1),
+            device="cuda",
+        ),
+    ):
+        fallback_top_ps = torch.full(
+            (fallback_source.shape[0],), 0.9, device="cuda"
+        )
+        reset_launch_count(Operator.TOP_P_RENORM)
+        TopKTopPSampler().forward_native(
+            fallback_source,
+            {},
+            None,
+            fallback_top_ps,
+        )
+        torch.cuda.synchronize()
+        assert launch_count(Operator.TOP_P_RENORM) == 0
+    assert provider_metadata()["top_p_renorm_override"] is True
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")

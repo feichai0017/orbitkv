@@ -171,6 +171,69 @@ void top_k_filter_meta(Tensor logits, const Tensor& top_ks) {
   check_top_k_filter_shape(logits, top_ks);
 }
 
+void check_top_p_renorm_shape(const Tensor& logits, const Tensor& top_ps) {
+  check_greedy_sample_logprobs_shape(logits);
+  STD_TORCH_CHECK(
+      top_ps.dim() == 1 && top_ps.size(0) == logits.size(0),
+      "Loom top-p values must contain one value per logits row");
+}
+
+void check_top_p_renorm_contract(const Tensor& logits,
+                                 const Tensor& top_ps) {
+  check_greedy_sample_logprobs_contract(logits);
+  check_top_p_renorm_shape(logits, top_ps);
+  STD_TORCH_CHECK(
+      top_ps.device() == logits.device(),
+      "Loom top-p values and logits must share a CUDA device");
+  STD_TORCH_CHECK(top_ps.scalar_type() == ScalarType::Float,
+                  "Loom top-p values must be F32");
+  STD_TORCH_CHECK(top_ps.is_contiguous(),
+                  "Loom top-p values must be contiguous");
+  STD_TORCH_CHECK(!byte_ranges_overlap(logits, top_ps),
+                  "Loom top-p logits and values must not overlap");
+}
+
+Tensor top_p_renorm(Tensor logits, const Tensor& top_ps) {
+  check_top_p_renorm_contract(logits, top_ps);
+  const auto rows = static_cast<uint32_t>(logits.size(0));
+  const auto vocab_size = static_cast<uint32_t>(logits.size(1));
+  const auto row_stride = static_cast<uint64_t>(logits.stride(0));
+  uint64_t workspace_bytes = 0;
+  const int workspace_status =
+      loom_cuda_bridge_top_p_renorm_workspace_size(
+          rows, vocab_size, &workspace_bytes);
+  check_bridge_status(
+      workspace_status, "top-p renormalization workspace query");
+  STD_TORCH_CHECK(
+      workspace_bytes <=
+          static_cast<uint64_t>(std::numeric_limits<int64_t>::max()),
+      "Loom top-p workspace exceeds the PyTorch shape ABI");
+  Tensor probabilities = new_empty(
+      logits, {logits.size(0), logits.size(1)}, ScalarType::Float);
+  Tensor workspace = new_empty(
+      logits, {static_cast<int64_t>(workspace_bytes)}, ScalarType::Byte);
+
+  const CudaDeviceGuard device_guard(logits.device());
+  const auto stream = current_cuda_stream(logits.device().index());
+  const int status = loom_cuda_bridge_top_p_renorm(
+      bridge_dtype(logits), logits.mutable_data_ptr(),
+      storage_span_elements(logits), top_ps.const_data_ptr<float>(),
+      static_cast<uint64_t>(top_ps.numel()),
+      probabilities.mutable_data_ptr<float>(),
+      static_cast<uint64_t>(probabilities.numel()),
+      workspace.mutable_data_ptr<uint8_t>(),
+      static_cast<uint64_t>(workspace.numel()), rows, vocab_size, row_stride,
+      stream.stream());
+  check_bridge_status(status, "top-p renormalization");
+  return probabilities;
+}
+
+Tensor top_p_renorm_meta(Tensor logits, const Tensor& top_ps) {
+  check_top_p_renorm_shape(logits, top_ps);
+  return new_empty(
+      logits, {logits.size(0), logits.size(1)}, ScalarType::Float);
+}
+
 void check_topk_sampled_logprobs_shape(
     const Tensor& logits, const Tensor& sampled_token_ids, int64_t top_k) {
   check_selected_token_logprobs_shape(logits, sampled_token_ids);
@@ -420,6 +483,9 @@ STABLE_TORCH_LIBRARY_IMPL(loom_kernels, CUDA, library) {
       "top_k_filter_",
       TORCH_BOX(&loom_kernels::torch_adapter::top_k_filter));
   library.impl(
+      "top_p_renorm_",
+      TORCH_BOX(&loom_kernels::torch_adapter::top_p_renorm));
+  library.impl(
       "topk_sampled_logprobs",
       TORCH_BOX(&loom_kernels::torch_adapter::topk_sampled_logprobs));
   library.impl(
@@ -437,6 +503,9 @@ STABLE_TORCH_LIBRARY_IMPL(loom_kernels, Meta, library) {
   library.impl(
       "top_k_filter_",
       TORCH_BOX(&loom_kernels::torch_adapter::top_k_filter_meta));
+  library.impl(
+      "top_p_renorm_",
+      TORCH_BOX(&loom_kernels::torch_adapter::top_p_renorm_meta));
   library.impl(
       "topk_sampled_logprobs",
       TORCH_BOX(&loom_kernels::torch_adapter::topk_sampled_logprobs_meta));

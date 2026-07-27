@@ -28,6 +28,9 @@ STABLE_TORCH_LIBRARY(loom_kernels, library) {
   library.def(
       "top_k_filter_(Tensor(a!) logits, Tensor top_ks) -> ()");
   library.def(
+      "top_p_renorm_(Tensor(a!) logits, Tensor top_ps) -> Tensor "
+      "probabilities");
+  library.def(
       "topk_sampled_logprobs(Tensor logits, Tensor sampled_token_ids, int "
       "top_k) -> (Tensor token_ids, Tensor logprobs, Tensor ranks)");
   library.def(

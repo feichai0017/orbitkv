@@ -9,6 +9,7 @@ from .._torch_dispatch import (
     _greedy_sample_logprobs,
     _selected_token_logprobs,
     _top_k_filter,
+    _top_p_renorm,
     _topk_sampled_logprobs,
 )
 from ._common import _DTYPE_NAMES
@@ -72,6 +73,22 @@ def supports_top_k_filter(
         and top_ks.shape[0] == logits.shape[0]
         and top_ks.is_contiguous()
         and not top_ks.requires_grad
+    )
+
+
+def supports_top_p_renorm(
+    logits: torch.Tensor,
+    top_ps: torch.Tensor,
+) -> bool:
+    """Return whether tensors match fused top-p filtering and renormalization."""
+    return bool(
+        supports_greedy_sample_logprobs(logits)
+        and top_ps.device == logits.device
+        and top_ps.dtype == torch.float32
+        and top_ps.dim() == 1
+        and top_ps.shape[0] == logits.shape[0]
+        and top_ps.is_contiguous()
+        and not top_ps.requires_grad
     )
 
 
@@ -205,6 +222,18 @@ def _validate_top_k_filter(
         )
 
 
+def _validate_top_p_renorm(
+    logits: torch.Tensor,
+    top_ps: torch.Tensor,
+) -> None:
+    if not supports_top_p_renorm(logits, top_ps):
+        raise ValueError(
+            "Loom top-p renormalization requires inference-only, non-empty "
+            "rank-2 F32/FP16/BF16 CUDA logits with unit vocabulary stride "
+            "and one same-device contiguous F32 top-p value in (0, 1] per row"
+        )
+
+
 def _validate_apply_token_penalties(
     logits: torch.Tensor,
     prompt_token_ids: torch.Tensor,
@@ -257,6 +286,15 @@ def top_k_filter_(
     _validate_top_k_filter(logits, top_ks)
     _top_k_filter(logits, top_ks)
     return logits
+
+
+def top_p_renorm_(
+    logits: torch.Tensor,
+    top_ps: torch.Tensor,
+) -> torch.Tensor:
+    """Filter logits in place and return F32 probabilities over the nucleus."""
+    _validate_top_p_renorm(logits, top_ps)
+    return _top_p_renorm(logits, top_ps)
 
 
 def topk_sampled_logprobs(

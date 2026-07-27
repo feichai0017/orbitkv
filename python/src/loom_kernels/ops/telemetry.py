@@ -26,6 +26,7 @@ class Operator(IntEnum):
     TOKEN_PENALTIES = 11
     TOPK_SAMPLED_LOGPROBS = 12
     TOP_K_FILTER = 13
+    TOP_P_RENORM = 14
 
 
 def _operator_id(operator: Operator) -> int:

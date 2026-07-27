@@ -41,6 +41,9 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - advanced the checked framework bridge to ABI 5 for exact per-row in-place
   top-k filtering and a caller-owned uint32 workspace; no ABI4 compatibility
   entrypoint or legacy workspace-free launch is retained.
+- advanced the checked framework bridge to ABI 6 for fused top-p filtering and
+  F32 renormalization; no ABI5 compatibility entrypoint or filter/softmax twin
+  is retained.
 
 ### Added
 
@@ -87,6 +90,12 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   all valid `top_k` values, safe Rust and checked ABI5 dispatch, current-stream
   PyTorch compile/graph coverage, an opt-in vLLM 0.24/0.25 small-row adapter,
   and an H20 gate showing `1.42–2.15x` over the corresponding full-sort path.
+- fused F32/FP16/BF16 top-p filtering plus contiguous F32 retained-prefix
+  renormalization, with deterministic descending-token-ID ties, one
+  partition-radix/device-selection CUDA algorithm, safe Rust and checked ABI6
+  dispatch, current-stream PyTorch compile/graph coverage, and a measured
+  vLLM 0.24/0.25 route for F32 top-p-only rows 2–7 at vocabularies of at least
+  32,768. vLLM keeps RNG, generators, token selection, and unsupported policy.
 - one exact ABI5 `py3-none-linux_x86_64` matrix wheel containing both native
   libraries; repository-free H20 installs pass 268 tests on each supported
   vLLM minor and 178 applicable tests on PyTorch 2.10. The artifact is

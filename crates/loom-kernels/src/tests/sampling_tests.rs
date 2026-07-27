@@ -199,6 +199,90 @@ fn top_k_filter_supports_low_precision_and_validates_before_mutation() {
 }
 
 #[test]
+fn top_p_renorm_filters_and_normalizes_with_deterministic_ties() {
+    let spec = TopPRenormSpec::new(2, 4, DType::F32).unwrap();
+    assert_eq!(spec.workspace_partitions(), 1);
+    assert_eq!(spec.workspace_bytes(), 98_336);
+    let mut logits = vec![
+        0.0,
+        0.0,
+        0.0,
+        0.0,
+        0.6_f32.ln(),
+        0.25_f32.ln(),
+        0.15_f32.ln(),
+        f32::NEG_INFINITY,
+    ];
+    let mut probabilities = vec![-1.0; 8];
+    top_p_renorm_f32_reference(&mut logits, &[0.5, 0.7], &mut probabilities, spec).unwrap();
+
+    assert_eq!(
+        logits,
+        vec![
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+            0.0,
+            0.0,
+            0.6_f32.ln(),
+            0.25_f32.ln(),
+            f32::NEG_INFINITY,
+            f32::NEG_INFINITY,
+        ]
+    );
+    assert_eq!(&probabilities[..4], &[0.0, 0.0, 0.5, 0.5]);
+    assert!((probabilities[4] - 0.6 / 0.85).abs() < 1.0e-6);
+    assert!((probabilities[5] - 0.25 / 0.85).abs() < 1.0e-6);
+    assert_eq!(&probabilities[6..], &[0.0, 0.0]);
+}
+
+#[test]
+fn top_p_renorm_supports_low_precision_and_validates_before_mutation() {
+    let spec = TopPRenormSpec::new(2, 3, DType::Bf16).unwrap();
+    let original = [
+        bf16::from_f32(3.0),
+        bf16::from_f32(2.0),
+        bf16::NEG_INFINITY,
+        bf16::from_f32(1.0),
+        bf16::from_f32(0.0),
+        bf16::from_f32(-1.0),
+    ];
+    let mut logits = original;
+    let mut probabilities = [7.0; 6];
+    assert_eq!(
+        top_p_renorm_bf16_reference(&mut logits, &[0.9, 0.0], &mut probabilities, spec),
+        Err(ContractError::InvalidProbability {
+            parameter: "top_p",
+            row: 1,
+            value: 0.0,
+        })
+    );
+    assert_eq!(logits, original);
+    assert_eq!(probabilities, [7.0; 6]);
+
+    let mut invalid = original;
+    invalid[4] = bf16::from_f32(f32::INFINITY);
+    assert_eq!(
+        top_p_renorm_bf16_reference(&mut invalid, &[0.9, 0.9], &mut probabilities, spec),
+        Err(ContractError::InvalidLogit {
+            row: 1,
+            column: 1,
+            value: f32::INFINITY,
+        })
+    );
+
+    let all_masked_spec = TopPRenormSpec::new(1, 2, DType::Bf16).unwrap();
+    assert_eq!(
+        top_p_renorm_bf16_reference(
+            &mut [bf16::NEG_INFINITY; 2],
+            &[0.9],
+            &mut [0.0; 2],
+            all_masked_spec,
+        ),
+        Err(ContractError::NoFiniteLogit { row: 0 })
+    );
+}
+
+#[test]
 fn topk_sampled_logprobs_normalize_rank_and_order_ties_by_token() {
     let spec = TopKSampledLogprobsSpec::new(2, 5, 3, DType::F32).unwrap();
     let logits = [3.0_f32, 1.0, 3.0, 2.0, -1.0, -2.0, 4.0, 0.0, 1.0, 3.0];

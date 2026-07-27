@@ -19,6 +19,7 @@ fn main() {
     let silu_and_mul_quant_source = cuda_dir.join("src/silu_and_mul_quant.cu");
     let sample_logprobs_source = cuda_dir.join("src/sample_logprobs.cu");
     let top_k_filter_source = cuda_dir.join("src/top_k_filter.cu");
+    let top_p_renorm_source = cuda_dir.join("src/top_p_renorm.cu");
     let token_penalties_source = cuda_dir.join("src/token_penalties.cu");
     let greedy_speculative_verify_source = cuda_dir.join("src/greedy_speculative_verify.cu");
     let min_p_source = cuda_dir.join("src/min_p.cu");
@@ -38,6 +39,7 @@ fn main() {
         sample_logprobs_source.display()
     );
     println!("cargo:rerun-if-changed={}", top_k_filter_source.display());
+    println!("cargo:rerun-if-changed={}", top_p_renorm_source.display());
     println!(
         "cargo:rerun-if-changed={}",
         token_penalties_source.display()
@@ -83,6 +85,7 @@ fn main() {
         .file(&silu_and_mul_quant_source)
         .file(&sample_logprobs_source)
         .file(&top_k_filter_source)
+        .file(&top_p_renorm_source)
         .file(&token_penalties_source)
         .file(&greedy_speculative_verify_source)
         .file(&min_p_source)

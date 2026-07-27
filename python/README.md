@@ -127,6 +127,7 @@ from loom_kernels import (
     silu_and_mul_dynamic_fp8,
     token_penalties_workspace_capacity,
     top_k_filter_,
+    top_p_renorm_,
     topk_sampled_logprobs,
 )
 
@@ -141,6 +142,9 @@ topk_ids, topk_logprobs, sampled_ranks = topk_sampled_logprobs(
     logits, sampled_ids_i64, top_k=20
 )
 top_k_filter_(sampling_logits_f32, per_row_top_k_i32)
+sampling_probabilities_f32 = top_p_renorm_(
+    sampling_logits_f32, per_row_top_p_f32
+)
 verified_ids, accepted_lengths, emitted_lengths = greedy_speculative_verify(
     flattened_draft_ids_i32,
     flattened_target_argmax_ids_i64,

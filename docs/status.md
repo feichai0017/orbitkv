@@ -50,6 +50,12 @@
   checked ABI5 bridge, internal current-stream PyTorch allocation, compile/
   graph coverage, and an opt-in vLLM 0.24/0.25 route for its 1–7-row full-sort
   fallback;
+- fused per-row F32/FP16/BF16 top-p filtering plus contiguous F32
+  renormalization, with deterministic descending-token-ID ties, partition
+  radix sorting, device-only threshold selection, caller workspace through
+  safe Rust and checked ABI6 dispatch, current-stream PyTorch compile/graph
+  coverage, and an explicit vLLM 0.24/0.25 route for F32 top-p-only rows 2–7
+  at vocabularies of at least 32,768;
 - in-place F32/FP16/BF16 Min-P contracts, CPU oracles, handwritten CUDA, C ABI,
   PyTorch mutation schemas, and an opt-in vLLM 0.24/0.25 processor override
   that cancels the softmax denominator instead of allocating probability and
@@ -79,7 +85,7 @@
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
-  using the current CUDA stream; all fourteen semantic operators route through
+  using the current CUDA stream; all fifteen semantic operators route through
   `loom-cuda-bridge` into borrowed safe Rust dispatch with explicit storage
   spans and layouts;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test

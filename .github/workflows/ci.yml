@@ -53,6 +53,8 @@ jobs:
             /tmp/loom-cuda-sys-package-files
           grep -Eq '/cuda/src/top_k_filter\.cu$' \
             /tmp/loom-cuda-sys-package-files
+          grep -Eq '/cuda/src/top_p_renorm\.cu$' \
+            /tmp/loom-cuda-sys-package-files
 
   benchmark-tools:
     name: python package · benchmark syntax
