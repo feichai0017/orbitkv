@@ -78,12 +78,16 @@ is now:
 
 | Order | Direction | First proof |
 | --- | --- | --- |
-| 1 | FP8 KV-cache compression | lower cache bytes and a larger admitted context or batch size with quality and TPOT reported |
+| 1 | KV-cache movement | measured block copy/remap/compact work in a real prefix-cache or preemption path |
 | 2 | Complete sampling tail | deterministic RNG remains; fused logits preprocessing, exact top-k filtering, fused top-p/renormalization, sparse penalties, and top-k logprobs are complete |
-| 3 | KV-cache movement and quantization plumbing | measured prefix/preemption movement plus scale/pack/layout work around unchanged vendor GEMM |
+| 3 | Quantization plumbing | measured scale/pack/layout work around unchanged vendor GEMM |
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV work only after a named workload exposes a material non-GEMM boundary |
 | 5 | MoE routing and movement | routing, histogram/prefix sum, permutation, and combine around vendor grouped GEMM |
 | 6 | Minimal Rust decode proof | one zero-copy decode step over borrowed tensors and streams, without becoming an inference engine |
+
+FP8 KV-cache compression is now an evidence track rather than the next kernel
+implementation: it resumes only with a distinct pinned model, backend, or
+cache representation that can pass the same quality precondition.
 
 The first K3 slice extends the same fused RoPE+paged-KV operator to write
 vLLM-compatible FP8 E4M3 cache bytes with static per-tensor or per-head scales.
@@ -91,12 +95,17 @@ The exact bridge-ABI-7 wheel requalifies the H20 exact-byte, current-stream,
 compile/graph, named-operator, clean-install, and real-engine invocation gates.
 The physical cache allocation is `2x` smaller than BF16 at this operator
 boundary, and the fused path is `1.317-1.378x` faster than vLLM's separate RoPE
-and cache-write submissions across the measured sweep. It remains `in progress`
-because the pretrained native-versus-FP8 quality, admitted-capacity, TTFT, and
-TPOT gate is still open. A process-isolated benchmark now captures that full
-contract with pinned model/corpus and package provenance, but no accepted
-large-model artifact exists yet; order-reversed engine latency does not
-support a stable model-level speedup claim. See the
+and cache-write submissions across the measured sweep. The first pinned
+system candidate is now explicitly rejected: on a held-out UltraChat early-stop
+slice of 8 sequences and 1,016 scored tokens, native vLLM FP8 and Loom FP8
+remain equivalent at a `1.00064` symmetric perplexity ratio, and FP8 capacity
+is `1.99879x` BF16, but both FP8 paths regress Qwen2.5-7B BF16 perplexity by
+about `3.07x`, far beyond the `1.02` limit.
+The formal TTFT/TPOT matrix was therefore not run. K3 remains `in progress`
+for a different pinned model, backend, or cache representation; this result
+proves the operational boundary, not system value. It used the qualified ABI7
+native libraries plus a SHA-pinned Python adapter overlay, so it is not a new
+clean-install wheel gate. See the
 [FP8 KV-cache design](docs/design/fp8-kv-cache.md).
 
 The detailed contracts and exit criteria live in the
@@ -225,7 +234,7 @@ opens the raw JSON artifact used for the claim.
 | [Greedy speculative verify + compact](docs/results/h20-greedy-speculative-verify-20260723.json) | `1.101–1.128×` dispatcher ratio across 15 batch/draft shapes; bit-exact with vLLM | Deterministic all-greedy rejection only; the real-model gate is the next row |
 | Real-model speculative decode: [native first](docs/results/h20-vllm-qwen25-speculative-native-first-20260723.json) · [Loom first](docs/results/h20-vllm-qwen25-speculative-loom-first-20260723.json) | Exact native/Loom tokens, `714/714` measured Loom calls per order; verifier share `0.048–0.200%` | Engine path proven; native/Loom latency crosses parity and speculative decode loses to target-only on this model pair |
 | [RoPE + paged-KV write](docs/results/h20-rope-paged-kv-20260722.json) | `2.30–2.40×` dispatcher ratio for 1–512 tokens | Real-engine invocation is proven; end-to-end remains at parity |
-| [Static FP8 KV-cache write](docs/results/h20-fp8-kv-cache-write-20260724.json) | Exact vLLM E4M3 bytes; `2×` BF16-to-FP8 cache storage ratio; `1.317–1.378×` operator ratio | Clean-wheel and real-engine invocation proven; native-vs-FP8 quality/capacity/serving gate remains open |
+| Static FP8 KV-cache: [operator](docs/results/h20-fp8-kv-cache-write-20260724.json) · [rejected Qwen2.5 system candidate](docs/results/h20-fp8-kv-system-rejected-20260727.json) | Exact vLLM E4M3 bytes; `1.317–1.378×` operator ratio; `1.99879×` system cache-token capacity; native-vLLM/Loom FP8 PPL ratio `1.00064` | Integration and provider equivalence proven; 8-sequence early-stop slice rejects Qwen2.5 because FP8/BF16 PPL is about `3.07×`; no TTFT/TPOT claim |
 | [Short paged decode](docs/results/h20-vllm-paged-decode-backend-20260722.json) | `1.154–2.374×` across all 24 admitted backend cases | FP16/BF16, Hq/Hkv 32/8, D128, context ≤32; other shapes use FA3 |
 | [Local split-K paged decode](docs/results/h20-paged-decode-split-k-20260722.json) | `1.14–6.22×` versus legacy Loom | Improves the Rust/CUDA backend; FA3 remains the long-context engine fallback |
 | [LibTorch Stable ABI dispatcher](docs/results/h20-libtorch-stable-abi-20260723.json) | Same `.so`: 192 tests on PyTorch 2.11 with each vLLM minor; 123 applicable tests on PyTorch 2.10 | Historical source-built binary gate; the current packaged boundary is the next row |

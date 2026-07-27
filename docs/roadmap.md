@@ -27,13 +27,17 @@ feature. New feature work follows this order:
 
 | Order | Track | First deliverable | Required system proof |
 | --- | --- | --- | --- |
-| 1 | KV-cache compression | FP8 KV write/read boundary with explicit scale layout | lower cache bytes and higher admitted context or batch size without unacceptable quality or TPOT loss |
+| 1 | KV-cache movement | block copy/gather/scatter/compact/remap for prefix reuse and preemption | fewer launches or less movement time in a real scheduler path |
 | 2 | Complete sampling tail | deterministic RNG remains; fused logits preprocessing, exact top-k, fused top-p/renormalization, sparse penalties, and top-k logprobs are complete | seeded token parity or a declared statistical contract plus an order-reversed engine win |
-| 3 | KV-cache movement | block copy/gather/scatter/compact/remap for prefix reuse and preemption | fewer launches or less movement time in a real scheduler path |
+| 3 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV boundaries only after profiling exposes material non-GEMM cost | a named draft/target model pair improves decode latency or throughput |
-| 5 | Quantization plumbing | scale, pack/unpack, dequant/requant, and layout transitions around vendor GEMM | one named quantized model removes an HBM pass or temporary tensor |
-| 6 | MoE routing and movement | top-k routing, histogram/prefix sum, permutation, and inverse permutation | lower model-level MoE latency while grouped GEMM remains vendor-owned |
-| 7 | Minimal Rust decode proof | zero-copy Rust orchestration over vendor-produced tensors and Loom operators | one deterministic decode step uses borrowed memory and stream ownership without becoming an inference engine |
+| 5 | MoE routing and movement | top-k routing, histogram/prefix sum, permutation, and inverse permutation | lower model-level MoE latency while grouped GEMM remains vendor-owned |
+| 6 | Minimal Rust decode proof | zero-copy Rust orchestration over vendor-produced tensors and Loom operators | one deterministic decode step uses borrowed memory and stream ownership without becoming an inference engine |
+
+Static FP8 KV-cache compression remains a K3 evidence track, not the next
+kernel implementation. Its first pinned Qwen2.5 candidate is rejected below;
+qualification resumes only for a distinct named model, backend, or cache
+representation that can pass the same held-out quality precondition.
 
 ## K0: Backend Foundation
 
@@ -173,7 +177,8 @@ latency, memory, or temporary-allocation metric.
 
 ## K3: KV-Cache Update Family
 
-Status: implementation and integration qualified; system-value exit open.
+Status: implementation and integration qualified; the first system candidate
+is rejected and the family-level system-value exit remains open.
 
 - ~~RoPE plus paged-KV write~~ — Rust/CUDA/PyTorch, packed-QKV and NHD/HND
   layouts, vLLM compiler fusion, H20 named baseline, and exact-token Qwen2.5
@@ -183,19 +188,28 @@ Status: implementation and integration qualified; system-value exit open.
   scales~~ — Rust contract/oracle, safe CUDA backend, checked bridge, Stable ABI
   PyTorch operator, vLLM adapter, exact-byte H20 comparison, named operator
   benchmark, current-stream/compile/graph checks, current ABI7 clean wheel, and
-  order-reversed real-engine invocation are complete; the pretrained
-  native-versus-FP8 quality, admitted-capacity, TTFT, and TPOT gate remains open;
+  order-reversed real-engine invocation are complete; the pinned Qwen2.5-7B
+  candidate passes the operational and native-vLLM/Loom provider-equivalence
+  gates but is rejected because both FP8 providers exceed the BF16 held-out
+  perplexity limit;
 - ~~process-isolated native/FP8/Loom system measurement harness~~ — cache
   capacity, CUDA memory, perplexity, TTFT, TPOT, throughput, token divergence,
   package provenance, calibrated checkpoint scale scheme, and path telemetry
-  are captured under a pinned model and corpus contract; an accepted
-  order-reversed large-model artifact remains open;
+  are captured under a pinned model and corpus contract; the first result
+  records `1.99879x` cache-token capacity and a `1.00064` symmetric
+  native-vLLM/Loom FP8 perplexity ratio, but an accepted order-reversed
+  large-model artifact remains open;
 - ~~reproducible calibration and quality-corpus preparation~~ —
   llm-compressor attention/KV calibration records source and output checkpoint
   digests, model config, tokenizer, stateful observer, scale layouts, packages,
   and corpus provenance; deterministic tokenizer-qualified JSONL selection
   verifies the same data/tokenizer and records its own source and output
   digests without adding calibration packages to the runtime wheel;
+- [rejected Qwen2.5-7B system result](results/h20-fp8-kv-system-rejected-20260727.json)
+  — on an 8-sequence, 1,016-scored-token early-stop slice, minmax per-head FP8
+  gives native-vLLM/Loom FP8-to-BF16 perplexity ratios of `3.07370x` and
+  `3.07173x`; quality fails before the dual-order TTFT/TPOT gate, so this
+  result is not performance evidence;
 - FlashAttention/FlashInfer consume the compressed cache directly, so Loom
   deliberately does not add a full-cache dequantize-on-read pass;
 - dynamic per-token-head scale caches and INT8 follow only when a named

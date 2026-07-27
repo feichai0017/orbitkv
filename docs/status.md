@@ -474,13 +474,14 @@ FA3 for the engine's 128-1,024-token path.
   metadata, stochastic residual-distribution rejection, and KV commit/remap
   remain profile-gated after the real-engine verifier share measured below
   `0.2%`;
-- FP8 KV-cache pretrained native-versus-FP8 system evidence for quality,
-  admitted context/batch, engine peak memory, TTFT, and TPOT; the
-  process-isolated measurement harness now records these fields plus model,
-  corpus, package, calibrated-scale, token-divergence, and path provenance, but
-  no accepted pinned large-model artifact exists yet; the exact-byte, operator,
-  clean-wheel, and engine-invocation gates are complete, while INT8 remains
-  unimplemented;
+- accepted FP8 KV-cache pretrained native-versus-FP8 system evidence for
+  quality, admitted context/batch, engine peak memory, TTFT, and TPOT; the
+  [first pinned Qwen2.5-7B candidate](results/h20-fp8-kv-system-rejected-20260727.json)
+  proves `1.99879x` cache-token capacity and native-vLLM/Loom FP8 provider
+  equivalence, but an 8-sequence, 1,016-scored-token early-stop slice rejects
+  it because both FP8 paths regress BF16 perplexity by about `3.07x`; the
+  formal TTFT/TPOT matrix was not run, no accepted large-model artifact
+  exists, and INT8 remains unimplemented;
 - prefix-cache/preemption KV movement and compaction in a real scheduler path;
 - MoE routing/permutation/combine benefit around an unchanged vendor grouped
   GEMM;

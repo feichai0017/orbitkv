@@ -97,8 +97,8 @@ export const supportedOperators = [
 export const nextOperators = [
   {
     milestone: "K3 · P0",
-    name: "FP8 KV-cache compression",
-    reason: "Reduce cache bytes and improve admitted context or batch size with quality and TPOT reported together.",
+    name: "KV-cache movement",
+    reason: "Measure scheduler-facing block copy, gather, scatter, compact, and remap work for prefix reuse and preemption.",
   },
   {
     milestone: "K4 · P0",
@@ -106,9 +106,9 @@ export const nextOperators = [
     reason: "Finish deterministic counter-based RNG after fused preprocessing, top-k/top-p, penalties, and logprobs.",
   },
   {
-    milestone: "K3 · P0",
-    name: "KV-cache movement",
-    reason: "Measure scheduler-facing block copy, gather, scatter, and compact work for prefix reuse and preemption.",
+    milestone: "K3 · Evidence",
+    name: "FP8 KV-cache qualification",
+    reason: "The first Qwen2.5 candidate was rejected on quality; retry only with a distinct pinned model, backend, or cache representation.",
   },
   {
     milestone: "K4.5 · Gated",
@@ -162,6 +162,12 @@ export const evidence = [
     shape: "BF16 · Qwen2.5-style · 1–512 tokens",
     result: "2.30–2.40×",
     detail: "Dispatcher ratio vs separate vLLM ops",
+  },
+  {
+    operator: "Static FP8 KV system candidate",
+    shape: "Qwen2.5-7B · 8 held-out sequences · 1,016 scored tokens",
+    result: "Rejected · 3.07× PPL",
+    detail: "1.99879× cache capacity and 1.00064 provider ratio; quality fails before TTFT/TPOT",
   },
   {
     operator: "Greedy + sampled logprob",

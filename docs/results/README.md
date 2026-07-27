@@ -50,7 +50,7 @@ otherwise.
 | --- | --- |
 | [Decode-sized operator sweep](h20-rope-paged-kv-20260722.json) · [large-token sweep](h20-rope-paged-kv-large-20260722.json) | Fusion wins most strongly at decode-sized token counts and narrows with larger batches |
 | [Baseline-first engine gate](h20-vllm-qwen25-rope-paged-kv-engine-20260722.json) · [Loom-first engine gate](h20-vllm-qwen25-rope-paged-kv-engine-loom-first-20260722.json) | Exact tokens and Loom path hits are proven; order reversal crosses parity, so no model-level speedup is claimed |
-| [Static FP8 E4M3 cache-write gate](h20-fp8-kv-cache-write-20260724.json) | Exact vLLM cache bytes, framework/clean-wheel coverage, `2x` BF16-to-FP8 physical storage ratio, and `1.317-1.378x` operator ratios are qualified. Both engine orders preserve tokens and hit Loom; latency is order-sensitive, so the native-vs-FP8 quality/capacity/serving gate remains open. |
+| Static FP8 E4M3 cache: [cache-write gate](h20-fp8-kv-cache-write-20260724.json) · [rejected Qwen2.5 system candidate](h20-fp8-kv-system-rejected-20260727.json) | Exact bytes, framework/clean-wheel coverage, `1.317-1.378x` operator ratios, `1.99879x` cache-token capacity, and native-vLLM/Loom FP8 provider equivalence are qualified. An 8-sequence, 1,016-scored-token early-stop slice rejects the pinned Qwen2.5 candidate at about `3.07x` FP8/BF16 perplexity; the formal TTFT/TPOT matrix was not run. |
 
 ## Sampling and log probabilities
 

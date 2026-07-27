@@ -11,12 +11,17 @@ _PER_HEAD_PATTERN_INSTALLED = False
 
 
 def install_per_head_rope_kv_pattern() -> None:
-    """Register the per-head static-Q form alongside vLLM's tensor form.
+    """Select the static-Q pattern that matches each attention layer.
 
-    vLLM 0.24/0.25 models per-head FP8 query quantization as one static
-    quantization group per KV head. Its built-in RoPE+KV pattern only provides
-    a scalar scale example, so that graph does not match. Loom retains the
-    built-in registration and adds the missing vector-scale pattern.
+    llm-compressor stores one Q scale per query head. vLLM reduces those values
+    to one scale per KV head before compiling the model, then quantizes each
+    corresponding query-head group together. Its built-in RoPE+KV pattern only
+    provides a scalar scale example, so that graph does not match.
+
+    Registering both structurally identical patterns does not work: PyTorch's
+    pattern matcher deduplicates them and retains the first example layout.
+    Loom therefore selects exactly one pattern from the loaded layer's Q-scale
+    tensor.
     """
 
     global _PER_HEAD_PATTERN_INSTALLED
@@ -26,7 +31,7 @@ def install_per_head_rope_kv_pattern() -> None:
     from vllm.compilation.passes.fusion import rope_kvcache_fusion as fusion
 
     original_pattern = fusion.RopeStaticQQuantKVCachePattern
-    if getattr(original_pattern, "_loom_registers_per_head", False):
+    if getattr(original_pattern, "_loom_selects_query_scale_layout", False):
         _PER_HEAD_PATTERN_INSTALLED = True
         return
 
@@ -175,23 +180,44 @@ def install_per_head_rope_kv_pattern() -> None:
 
             return pattern, replacement
 
-    class TensorAndPerHeadRopeStaticQQuantKVCachePattern(original_pattern):
-        _loom_registers_per_head = True
+    class ScaleAwareRopeStaticQQuantKVCachePattern(original_pattern):
+        _loom_selects_query_scale_layout = True
 
         def __init__(self, layer: Any, is_neox: bool) -> None:
             self._loom_layer = layer
             super().__init__(layer, is_neox)
 
-        def register(self, matcher_pass: Any) -> None:
-            original_pattern.register(self, matcher_pass)
-            per_head = PerHeadRopeStaticQQuantKVCachePattern(
+        @property
+        def _loom_query_scale_layout(self) -> str:
+            scale = getattr(
                 self._loom_layer,
-                self.is_neox,
+                "_q_scale",
+                getattr(self._loom_layer, "q_scale", None),
             )
-            original_pattern.register(per_head, matcher_pass)
+            if not isinstance(scale, torch.Tensor):
+                raise RuntimeError("attention layer does not expose a Q scale tensor")
+            scale_count = scale.numel()
+            if scale_count == 1:
+                return "tensor"
+            if scale_count == self.num_kv_heads:
+                return "per_kv_head"
+            raise RuntimeError(
+                "unsupported attention Q scale count: "
+                f"{scale_count}; expected 1 or {self.num_kv_heads}"
+            )
+
+        def register(self, matcher_pass: Any) -> None:
+            if self._loom_query_scale_layout == "tensor":
+                original_pattern.register(self, matcher_pass)
+            else:
+                per_head = PerHeadRopeStaticQQuantKVCachePattern(
+                    self._loom_layer,
+                    self.is_neox,
+                )
+                original_pattern.register(per_head, matcher_pass)
 
     fusion.RopeStaticQQuantKVCachePattern = (
-        TensorAndPerHeadRopeStaticQQuantKVCachePattern
+        ScaleAwareRopeStaticQQuantKVCachePattern
     )
     _PER_HEAD_PATTERN_INSTALLED = True
 

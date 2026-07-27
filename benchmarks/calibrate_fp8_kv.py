@@ -32,6 +32,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--dataset-parquet", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument(
+        "--device",
+        required=True,
+        help=(
+            "Explicit calibration device, for example cpu or cuda:0; recorded "
+            "in the checkpoint provenance."
+        ),
+    )
+    parser.add_argument(
         "--attention-target",
         required=True,
         help="Exact Transformers attention class, for example Qwen2Attention.",
@@ -199,6 +207,7 @@ def prepare_dataset(
 
 
 def run(args: argparse.Namespace) -> dict[str, Any]:
+    import torch
     from compressed_tensors.quantization import QuantizationArgs, QuantizationScheme
     from llmcompressor import oneshot
     from llmcompressor.modifiers.quantization import QuantizationModifier
@@ -215,6 +224,9 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     source_checkpoint = checkpoint_manifest(model_path)
     dataset_sha256 = sha256_file(dataset_path)
     started_at = time.time()
+    if args.device.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(f"CUDA calibration device is unavailable: {args.device}")
+    device_map = None if args.device == "cpu" else {"": args.device}
 
     tokenizer = AutoTokenizer.from_pretrained(
         model_path,
@@ -223,6 +235,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
     model = AutoModelForCausalLM.from_pretrained(
         model_path,
         dtype="auto",
+        device_map=device_map,
         local_files_only=True,
     )
     attention_modules = [
@@ -318,6 +331,7 @@ def run(args: argparse.Namespace) -> dict[str, Any]:
             "samples": args.samples,
             "max_seq_len": args.max_seq_len,
             "seed": args.seed,
+            "device": args.device,
             "messages_column": args.messages_column,
             "source_rows": source_rows,
             "elapsed_seconds": time.time() - started_at,

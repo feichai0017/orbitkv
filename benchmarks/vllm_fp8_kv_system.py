@@ -80,6 +80,13 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--max-num-seqs", type=int)
     parser.add_argument("--max-fused-tokens", type=int, default=256)
     parser.add_argument("--gpu-memory-utilization", type=float, default=0.8)
+    parser.add_argument(
+        "--attention-backend",
+        help=(
+            "Optional vLLM attention backend, for example FLASH_ATTN or "
+            "TRITON_ATTN. Omit it to use vLLM's platform default."
+        ),
+    )
     parser.add_argument("--seed", type=int, default=31)
     parser.add_argument(
         "--variant-order",
@@ -95,6 +102,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--quality-max-tokens", type=int, default=2048)
     parser.add_argument("--min-capacity-ratio", type=float, default=1.8)
     parser.add_argument("--max-perplexity-ratio", type=float, default=1.02)
+    parser.add_argument(
+        "--max-fp8-provider-perplexity-ratio",
+        type=float,
+        default=1.002,
+        help=(
+            "Maximum symmetric held-out perplexity ratio between vLLM's "
+            "native FP8 path and Loom's fused FP8 path."
+        ),
+    )
     parser.add_argument("--max-tpot-regression", type=float, default=1.05)
     parser.add_argument("--result-json", type=Path)
     parser.add_argument(
@@ -120,7 +136,11 @@ def parse_args() -> argparse.Namespace:
         parser.error("quality limits must be positive and include at least two tokens")
     if args.min_capacity_ratio <= 1.0:
         parser.error("min-capacity-ratio must be greater than one")
-    if args.max_perplexity_ratio < 1.0 or args.max_tpot_regression < 1.0:
+    if (
+        args.max_perplexity_ratio < 1.0
+        or args.max_fp8_provider_perplexity_ratio < 1.0
+        or args.max_tpot_regression < 1.0
+    ):
         parser.error("quality and TPOT limits must be at least one")
 
     required_model_len = max(
@@ -421,6 +441,26 @@ def prepare_environment(cache_root: Path) -> None:
     )
 
 
+def attention_backend_metadata(engine: Any) -> dict[str, Any]:
+    config = engine.llm_engine.vllm_config
+    configured = config.attention_config.backend
+    implementations = sorted(
+        {
+            f"{type(layer.impl).__module__}.{type(layer.impl).__qualname__}"
+            for layer in config.compilation_config.static_forward_context.values()
+            if hasattr(layer, "impl")
+        }
+    )
+    return {
+        "configured": (
+            getattr(configured, "value", str(configured))
+            if configured is not None
+            else None
+        ),
+        "implementations": implementations,
+    }
+
+
 def run_variant(args: argparse.Namespace) -> dict[str, Any]:
     variant = args.internal_variant
     assert variant is not None and args.internal_cache_root is not None
@@ -472,6 +512,8 @@ def run_variant(args: argparse.Namespace) -> dict[str, Any]:
         "enable_prefix_caching": False,
         "kv_cache_dtype": cache_dtype,
     }
+    if args.attention_backend is not None:
+        engine_arguments["attention_backend"] = args.attention_backend
     engine_arguments["compilation_config"] = compilation_config
     if args.model_revision is not None and not model_is_local:
         engine_arguments["revision"] = args.model_revision
@@ -484,6 +526,7 @@ def run_variant(args: argparse.Namespace) -> dict[str, Any]:
     memory_after_init = cuda_memory_snapshot(torch)
     capacity = cache_capacity(engine, args.max_model_len, args.max_num_seqs)
     geometry = model_kv_geometry(engine, str(capacity["cache_dtype"]))
+    attention_backend = attention_backend_metadata(engine)
     launches_after_init = launch_count(Operator.ROPE_PAGED_KV_WRITE)
 
     cases = [
@@ -524,6 +567,7 @@ def run_variant(args: argparse.Namespace) -> dict[str, Any]:
         "repeats": args.repeats,
         "cache_capacity": capacity,
         "model_kv_geometry": geometry,
+        "attention_backend": attention_backend,
         "memory_after_engine_init": memory_after_init,
         "cases": cases,
         "quality": quality,
@@ -590,6 +634,8 @@ def child_command(
         str(args.min_capacity_ratio),
         "--max-perplexity-ratio",
         str(args.max_perplexity_ratio),
+        "--max-fp8-provider-perplexity-ratio",
+        str(args.max_fp8_provider_perplexity_ratio),
         "--max-tpot-regression",
         str(args.max_tpot_regression),
         "--internal-variant",
@@ -599,6 +645,8 @@ def child_command(
         "--internal-cache-root",
         str(cache_root),
     ]
+    if args.attention_backend is not None:
+        command.extend(("--attention-backend", args.attention_backend))
     if args.model_revision is not None:
         command.extend(("--model-revision", args.model_revision))
     if args.quality_jsonl is not None:
@@ -729,10 +777,12 @@ def system_gate(
     args: argparse.Namespace,
     operational_passed: bool,
     native_vs_fp8_loom: dict[str, Any],
+    fp8_vllm_vs_loom: dict[str, Any],
     fp8_loom: dict[str, Any],
 ) -> dict[str, Any]:
     quality = native_vs_fp8_loom["quality"]
-    if quality is None:
+    provider_quality = fp8_vllm_vs_loom["quality"]
+    if quality is None or provider_quality is None:
         return {
             "status": "not_run",
             "passed": False,
@@ -763,12 +813,27 @@ def system_gate(
         if native_over_fp8 is not None:
             tpot_regressions.append(1.0 / native_over_fp8)
     worst_tpot_regression = max(tpot_regressions) if tpot_regressions else None
+    fp8_provider_perplexity_ratio = provider_quality[
+        "candidate_over_reference_perplexity"
+    ]
+    symmetric_fp8_provider_perplexity_ratio = (
+        None
+        if fp8_provider_perplexity_ratio is None
+        or fp8_provider_perplexity_ratio <= 0.0
+        else max(
+            fp8_provider_perplexity_ratio,
+            1.0 / fp8_provider_perplexity_ratio,
+        )
+    )
     passed = (
         operational_passed
         and capacity_ratio is not None
         and capacity_ratio >= args.min_capacity_ratio
         and perplexity_ratio is not None
         and perplexity_ratio <= args.max_perplexity_ratio
+        and symmetric_fp8_provider_perplexity_ratio is not None
+        and symmetric_fp8_provider_perplexity_ratio
+        <= args.max_fp8_provider_perplexity_ratio
         and worst_tpot_regression is not None
         and worst_tpot_regression <= args.max_tpot_regression
     )
@@ -778,11 +843,17 @@ def system_gate(
         "thresholds": {
             "minimum_cache_capacity_ratio": args.min_capacity_ratio,
             "maximum_perplexity_ratio": args.max_perplexity_ratio,
+            "maximum_symmetric_fp8_provider_perplexity_ratio": (
+                args.max_fp8_provider_perplexity_ratio
+            ),
             "maximum_tpot_regression": args.max_tpot_regression,
         },
         "observed": {
             "cache_capacity_ratio": capacity_ratio,
             "perplexity_ratio": perplexity_ratio,
+            "symmetric_fp8_provider_perplexity_ratio": (
+                symmetric_fp8_provider_perplexity_ratio
+            ),
             "worst_tpot_regression": worst_tpot_regression,
             "checkpoint_kv_cache_scheme": checkpoint_kv_cache_scheme,
         },
@@ -820,11 +891,31 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
         case["generated_token_agreement"]["exact_request_fraction"] == 1.0
         for case in fp8_vllm_vs_loom["cases"]
     )
+    fp8_cache_capacity_match = (
+        reports["fp8-vllm"]["cache_capacity"]["kv_cache_size_tokens"]
+        == reports["fp8-loom"]["cache_capacity"]["kv_cache_size_tokens"]
+    )
+    cache_dtype_contract = {
+        variant: reports[variant]["cache_capacity"]["cache_dtype"]
+        for variant in VARIANTS
+    } == {
+        "native-vllm": "bfloat16",
+        "fp8-vllm": "fp8",
+        "fp8-loom": "fp8",
+    }
+    loom_contract_observed = (
+        reports["fp8-loom"]["loom_path"]["provider_metadata"][
+            "rope_paged_kv_first_contract"
+        ]
+        is not None
+    )
     operational_passed = (
         launch_counts["native-vllm"] == 0
         and launch_counts["fp8-vllm"] == 0
         and launch_counts["fp8-loom"] > 0
-        and fp8_fusion_tokens_match
+        and fp8_cache_capacity_match
+        and cache_dtype_contract
+        and loom_contract_observed
     )
     report = {
         "benchmark": "vllm_fp8_kv_system",
@@ -839,12 +930,24 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
         "operational_acceptance": {
             "passed": operational_passed,
             "launch_counts": launch_counts,
-            "fp8_vllm_and_loom_generated_tokens_match": fp8_fusion_tokens_match,
+            "fp8_cache_capacity_match": fp8_cache_capacity_match,
+            "cache_dtype_contract": cache_dtype_contract,
+            "loom_first_contract_observed": loom_contract_observed,
+            "cross_process_generated_tokens": {
+                "exact": fp8_fusion_tokens_match,
+                "role": "diagnostic_only",
+                "reason": (
+                    "Greedy FP8 generation is not repeatable across fresh "
+                    "vLLM processes; fixed-target held-out perplexity is the "
+                    "provider-equivalence gate."
+                ),
+            },
         },
         "system_value_gate": system_gate(
             args,
             operational_passed,
             native_vs_fp8_loom,
+            fp8_vllm_vs_loom,
             reports["fp8-loom"],
         ),
         "comparisons": {

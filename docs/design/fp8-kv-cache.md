@@ -93,11 +93,13 @@ matchable; Loom still replaces only the fused RoPE+cache-write boundary.
 
 vLLM 0.24/0.25's built-in static-Q pattern registers a scalar query scale.
 Dataset-calibrated `attn_head` checkpoints instead expose one query group per
-KV head. Loom keeps the built-in tensor pattern and additively registers that
-vector-scale form, with the same grouping used by vLLM's `QuantFP8`. This is a
-compiler-adapter fix only: FlashAttention still owns query quantization and
-attention, while Loom receives the already-loaded per-head K/V scales at the
-fused cache-write boundary.
+KV head. Structurally identical scalar and vector examples are deduplicated by
+PyTorch's pattern matcher, so registering both silently retains only the first.
+Loom inspects the loaded attention layer and registers exactly one matching
+form, using the same grouping as vLLM's `QuantFP8`. This is a compiler-adapter
+fix only: FlashAttention still owns query quantization and attention, while
+Loom receives the already-loaded per-head K/V scales at the fused cache-write
+boundary.
 
 It deliberately rejects FP8 E5M2, FP8 per-token-head, INT8, NVFP4,
 TurboQuant, MLA-specific layouts, and dynamic scale production. Unsupported
@@ -129,8 +131,9 @@ registration, and repository-free ABI2, ABI4, ABI5, ABI6, and current ABI7 wheel
 3. an operator comparison against vLLM's separate RoPE plus
    `reshape_and_cache_flash`;
 4. clean-install wheel tests on vLLM 0.24 and 0.25;
-5. **Open:** a pretrained-model native-versus-FP8 gate reporting generated
-   quality, cache bytes, admitted context or batch size, TTFT, and TPOT.
+5. **Family exit open; first candidate rejected:** a pretrained-model
+   native-versus-FP8 gate reporting fixed-target held-out quality, cache bytes,
+   admitted context or batch size, TTFT, and TPOT.
 
 `benchmarks/vllm_fp8_kv_system.py` makes the fifth gate reproducible. It runs
 native vLLM, static-FP8 vLLM, and static-FP8 Loom in isolated processes while
@@ -139,11 +142,33 @@ revision or checkpoint digest, corpus SHA-256, native wheel manifest, cache
 capacity, CUDA memory, perplexity, TTFT, TPOT, throughput, token divergence,
 and Loom launch telemetry. The native baseline requests BF16 explicitly so a
 checkpoint-declared FP8 cache scheme cannot silently change it. The final gate
-requires dataset-calibrated checkpoint K/V scales; uncalibrated scale `1.0` and
-random-token warmup calibration remain diagnostic modes, not accepted
-evidence. Both variant orders must pass before an artifact is accepted.
+requires dataset-calibrated checkpoint K/V scales and a symmetric held-out
+perplexity ratio no greater than `1.002` between vLLM's native FP8 path and
+Loom's fused FP8 path. Cross-process greedy token equality remains diagnostic:
+fresh native-vLLM FP8 processes are not themselves token-repeatable, while
+fixed-target prompt log-probabilities provide a stable provider-equivalence
+comparison. Uncalibrated scale `1.0` and random-token warmup calibration remain
+diagnostic modes, not accepted evidence. Both variant orders must pass before
+an artifact is accepted.
 Omitting the quality corpus, model revision, or calibrated cache scheme leaves
 the system gate explicitly `not_run`.
+
+The first pinned H20 candidate is
+[recorded as rejected](../results/h20-fp8-kv-system-rejected-20260727.json).
+Qwen2.5-7B with per-attention-head minmax calibration passed launch isolation,
+the cache-dtype contract, Loom-first telemetry, `1.99879x` cache-token
+capacity, and native-vLLM/Loom FP8 provider equivalence at a `1.00064`
+symmetric perplexity ratio. It failed the representation-quality precondition:
+on an early-stop slice of 8 held-out sequences and 1,016 scored tokens, native
+vLLM FP8 and Loom FP8 were respectively `3.07370x` and `3.07173x` the BF16
+perplexity, versus the `1.02` limit. The formal dual-order TTFT/TPOT matrix was
+intentionally not run after that failure. The benchmark also accepts an
+explicit vLLM attention backend and records the resolved implementation so
+backend diagnostics cannot be mistaken for the default qualification path.
+This candidate used the existing ABI7 wheel's qualified native libraries plus
+the exact SHA-pinned Python adapter overlay recorded in the result; a rebuilt
+clean-install wheel containing that adapter fix remains a separate packaging
+gate.
 
 `benchmarks/calibrate_fp8_kv.py` and
 `benchmarks/prepare_quality_jsonl.py` make the two input artifacts
@@ -151,7 +176,9 @@ reproducible. The former follows the dataset-calibrated llm-compressor path and
 uses an attention/KV-only recipe with a stateful multi-sample observer. It
 calibrates the post-RoPE query and cache K/V scales required by vLLM without
 changing model weights, and records its own tool digest plus checkpoint, model
-config, tokenizer, observer, scale, package, and dataset provenance. The
+config, tokenizer, observer, scale, package, device, and dataset provenance.
+The calibration device is mandatory rather than inferred, so an H20 run cannot
+silently become a CPU calibration. The
 observer must be chosen explicitly and is accepted only through the held-out
 system-quality gate; stateless memoryless observers are excluded because they
 do not accumulate the pinned calibration set. The corpus helper verifies the
@@ -164,6 +191,7 @@ The first four gates prove implementation and integration; the raw result is
 [recorded here](../results/h20-fp8-kv-cache-write-20260724.json). They show
 exact vLLM E4M3 bytes, a `2x` BF16-to-FP8 physical cache-storage ratio at the
 operator boundary, faster fused submissions across the measured sweep, and
-exact real-engine tokens with Loom path hits. Only the fifth gate can support
-a system-level KV-compression value claim, so this family remains
-`in progress` rather than `supported`.
+exact real-engine tokens with Loom path hits. The rejected system candidate
+adds operational capacity and provider-equivalence evidence, but only an
+accepted fifth-gate result can support a system-level KV-compression value
+claim. This family therefore remains `in progress` rather than `supported`.

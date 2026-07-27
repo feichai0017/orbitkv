@@ -1011,9 +1011,27 @@ def test_configures_vllm_rope_paged_kv_fusion():
     assert not FlashAttentionImpl.fused_rope_kvcache_supported(encoder_attention)
     assert getattr(
         rope_kvcache_fusion.RopeStaticQQuantKVCachePattern,
-        "_loom_registers_per_head",
+        "_loom_selects_query_scale_layout",
         False,
     )
+    pattern_type = rope_kvcache_fusion.RopeStaticQQuantKVCachePattern
+    pattern_layer = SimpleNamespace(
+        layer_name="model.layers.0.self_attn",
+        num_heads=4,
+        num_kv_heads=2,
+        head_size=8,
+        head_size_v=8,
+        _q_scale=torch.ones(1),
+    )
+    pattern = object.__new__(pattern_type)
+    pattern._loom_layer = pattern_layer
+    pattern.num_kv_heads = pattern_layer.num_kv_heads
+    assert pattern._loom_query_scale_layout == "tensor"
+    pattern_layer._q_scale = torch.ones(2)
+    assert pattern._loom_query_scale_layout == "per_kv_head"
+    pattern_layer._q_scale = torch.ones(3)
+    with pytest.raises(RuntimeError, match="unsupported attention Q scale count"):
+        pattern._loom_query_scale_layout
     assert provider_metadata()["rope_paged_kv_override"] is True
     assert provider_metadata()["rope_paged_kv_per_head_pattern"] is True
 

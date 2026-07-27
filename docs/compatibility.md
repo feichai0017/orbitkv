@@ -25,8 +25,13 @@ KV quantize-on-write through bridge ABI 7. Both vLLM minors pass the same
 expanded 286-test suite. The separate
 [FP8 KV evidence](results/h20-fp8-kv-cache-write-20260724.json) closes the
 exact-byte, framework, operator, clean-wheel, and real-engine invocation gates;
-pretrained native-versus-FP8 quality, admitted capacity, TTFT, and TPOT remain
-an open system-value gate.
+the [first pinned Qwen2.5-7B system candidate](results/h20-fp8-kv-system-rejected-20260727.json)
+also proves operational capacity and native-vLLM/Loom FP8 equivalence, but an
+8-sequence early-stop slice rejects its FP8 representation before TTFT/TPOT
+measurement. That candidate used the qualified wheel's native libraries plus
+a SHA-pinned Python adapter overlay; it is not an additional clean-wheel gate.
+An accepted pretrained native-versus-FP8 quality, capacity, and serving
+artifact remains an open family-level system-value gate.
 
 The process-isolated Qwen2.5 draft/target engine benchmark is qualified on
 vLLM 0.24 only; its [native-first](results/h20-vllm-qwen25-speculative-native-first-20260723.json)

@@ -626,6 +626,7 @@ PY
   --model-revision <pinned-upstream-revision> \
   --dataset-parquet /path/to/ultrachat-200k-train-sft.parquet \
   --output /path/to/Qwen2.5-7B-Instruct-kvattn-fp8-attn-head \
+  --device cuda:0 \
   --attention-target Qwen2Attention \
   --strategy attn_head \
   --observer minmax \
@@ -649,6 +650,7 @@ PY
   --model-revision <pinned-revision-or-checkpoint-digest> \
   --quality-jsonl /path/to/ultrachat-qwen2.5-heldout-64x512.jsonl \
   --quality-max-tokens 512 \
+  --attention-backend FLASH_ATTN \
   --variant-order native-first \
   --result-json /tmp/fp8-kv-system-native-first.json
 
@@ -724,6 +726,15 @@ separately pinned WikiText JSONL remains useful as a cross-domain robustness
 diagnostic, but it is not a substitute for the representative held-out serving
 distribution.
 
+> [!WARNING]
+> These commands reproduce the qualification procedure, not an accepted
+> Qwen2.5 recipe. On H20, the pinned Qwen2.5-7B per-head minmax candidate
+> passed operational capacity and native-vLLM/Loom FP8 equivalence, but both
+> FP8 providers regressed BF16 perplexity by about `3.07x` on an early-stop
+> slice of 8 held-out sequences and 1,016 scored tokens. The candidate was
+> rejected before dual-order TTFT/TPOT measurement; see the
+> [rejected system result](../results/h20-fp8-kv-system-rejected-20260727.json).
+
 The microbenchmark compares `loom_cuda` and `vllm_c` through the same vLLM IR
 eager dispatcher and CUDA Graph replay. It warms the GPU before each provider
 to avoid clock-state order bias. The engine benchmark uses the normal Qwen2
@@ -779,8 +790,11 @@ Those artifacts cover native caches only. The
 separately qualifies exact cache bytes, the original ABI2 clean wheel, a
 `1.317-1.378x` named-operator range, and exact tokens plus Loom path hits in
 both engine orders. Its latency ratios are order-sensitive, and the
-native-versus-FP8 quality, admitted-capacity, TTFT, and TPOT gate remains open.
-The current ABI7 wheel matrix requalifies the same FP8 operator tests.
+current ABI7 wheel matrix requalifies the same FP8 operator tests. The
+[first Qwen2.5-7B system candidate](../results/h20-fp8-kv-system-rejected-20260727.json)
+then proves operational capacity and provider equivalence but fails the
+native-versus-FP8 quality precondition, so no TTFT/TPOT or system-value claim
+is made and the family gate remains open for another candidate.
 See the [FP8 KV-cache contract](../design/fp8-kv-cache.md).
 
 For paged decode, the native-interleaved
