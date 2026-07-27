@@ -106,20 +106,32 @@ fn main() -> BenchResult<()> {
         BenchDType::F32 => run_typed(
             &args,
             |value| value,
-            rms_norm_dynamic_fp8_f32_reference,
-            CudaBackend::rms_norm_dynamic_fp8_f32,
+            |input, weight, output, scales, spec| {
+                rms_norm_dynamic_fp8_f32_reference(input, weight, output, scales, None, spec)
+            },
+            |backend, input, weight, output, scales, spec| {
+                backend.rms_norm_dynamic_fp8_f32(input, weight, None, output, scales, spec)
+            },
         )?,
         BenchDType::F16 => run_typed(
             &args,
             f16::from_f32,
-            rms_norm_dynamic_fp8_f16_reference,
-            CudaBackend::rms_norm_dynamic_fp8_f16,
+            |input, weight, output, scales, spec| {
+                rms_norm_dynamic_fp8_f16_reference(input, weight, output, scales, None, spec)
+            },
+            |backend, input, weight, output, scales, spec| {
+                backend.rms_norm_dynamic_fp8_f16(input, weight, None, output, scales, spec)
+            },
         )?,
         BenchDType::Bf16 => run_typed(
             &args,
             bf16::from_f32,
-            rms_norm_dynamic_fp8_bf16_reference,
-            CudaBackend::rms_norm_dynamic_fp8_bf16,
+            |input, weight, output, scales, spec| {
+                rms_norm_dynamic_fp8_bf16_reference(input, weight, output, scales, None, spec)
+            },
+            |backend, input, weight, output, scales, spec| {
+                backend.rms_norm_dynamic_fp8_bf16(input, weight, None, output, scales, spec)
+            },
         )?,
     };
 

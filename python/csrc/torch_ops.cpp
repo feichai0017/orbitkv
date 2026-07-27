@@ -8,8 +8,9 @@ STABLE_TORCH_LIBRARY(loom_kernels, library) {
       "add_rms_norm_mut(Tensor(a!) input_tensor, Tensor(b!) residual, "
       "Tensor weight, float epsilon) -> ()");
   library.def(
-      "rms_norm_dynamic_fp8(Tensor input_tensor, Tensor weight, "
-      "Tensor(a!) output, Tensor(b!) scales, float epsilon) -> ()");
+      "rms_norm_dynamic_per_token_fp8(Tensor(a!) result, Tensor input, "
+      "Tensor weight, Tensor(b!) scale, float epsilon, "
+      "Tensor? scale_ub=None, Tensor(c!)? residual=None) -> ()");
   library.def(
       "silu_and_mul(Tensor input_tensor, Tensor(a!) output) -> ()");
   library.def(

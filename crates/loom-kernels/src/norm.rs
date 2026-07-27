@@ -20,7 +20,9 @@ pub struct RmsNormSpec {
 /// Inputs and weights are contiguous `[rows, hidden_size]` and
 /// `[hidden_size]` tensors. The output contains FP8 E4M3FN storage bytes with
 /// the same logical shape, and `rows` F32 scales satisfy approximately
-/// `normalized = fp8(output) * scale`.
+/// `normalized = fp8(output) * scale`. With a mutable residual, the F32
+/// `input + residual` sum drives RMSNorm and quantization while the mutable
+/// residual output stores that same sum rounded to the input dtype.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct RmsNormDynamicFp8Spec {
     rows: usize,
@@ -252,9 +254,10 @@ pub fn rms_norm_dynamic_fp8_f32_reference(
     weight: &[f32],
     output: &mut [u8],
     scales: &mut [f32],
+    residual: Option<&mut [f32]>,
     spec: RmsNormDynamicFp8Spec,
 ) -> Result<(), ContractError> {
-    rms_norm_dynamic_fp8_reference(input, weight, output, scales, spec, DType::F32)
+    rms_norm_dynamic_fp8_reference(input, weight, output, scales, residual, spec, DType::F32)
 }
 
 /// Computes FP16 RMSNorm followed by dynamic per-token FP8 E4M3FN quantization.
@@ -263,9 +266,10 @@ pub fn rms_norm_dynamic_fp8_f16_reference(
     weight: &[f16],
     output: &mut [u8],
     scales: &mut [f32],
+    residual: Option<&mut [f16]>,
     spec: RmsNormDynamicFp8Spec,
 ) -> Result<(), ContractError> {
-    rms_norm_dynamic_fp8_reference(input, weight, output, scales, spec, DType::F16)
+    rms_norm_dynamic_fp8_reference(input, weight, output, scales, residual, spec, DType::F16)
 }
 
 /// Computes BF16 RMSNorm followed by dynamic per-token FP8 E4M3FN quantization.
@@ -274,9 +278,10 @@ pub fn rms_norm_dynamic_fp8_bf16_reference(
     weight: &[bf16],
     output: &mut [u8],
     scales: &mut [f32],
+    residual: Option<&mut [bf16]>,
     spec: RmsNormDynamicFp8Spec,
 ) -> Result<(), ContractError> {
-    rms_norm_dynamic_fp8_reference(input, weight, output, scales, spec, DType::Bf16)
+    rms_norm_dynamic_fp8_reference(input, weight, output, scales, residual, spec, DType::Bf16)
 }
 
 /// Computes fused in-place F32 Add+RMSNorm with F64 accumulation.
@@ -388,6 +393,7 @@ fn rms_norm_dynamic_fp8_reference<T: DynamicFp8Input>(
     weight: &[T],
     output: &mut [u8],
     scales: &mut [f32],
+    mut residual: Option<&mut [T]>,
     spec: RmsNormDynamicFp8Spec,
     expected_dtype: DType,
 ) -> Result<(), ContractError> {
@@ -398,26 +404,43 @@ fn rms_norm_dynamic_fp8_reference<T: DynamicFp8Input>(
     require_len("weight", weight.len(), spec.hidden_size())?;
     require_len("output", output.len(), spec.numel())?;
     require_len("scales", scales.len(), spec.scale_count())?;
+    if let Some(values) = residual.as_deref() {
+        require_len("residual", values.len(), spec.numel())?;
+    }
 
+    let mut row_values = vec![0.0_f32; spec.hidden_size()];
     let mut normalized = vec![0.0_f32; spec.hidden_size()];
-    for ((input_row, output_row), scale) in input
-        .chunks_exact(spec.hidden_size())
-        .zip(output.chunks_exact_mut(spec.hidden_size()))
-        .zip(scales.iter_mut())
-    {
-        let mean_square = input_row
-            .iter()
-            .map(|&value| {
-                let value = f64::from(value.to_f32());
-                value * value
-            })
-            .sum::<f64>()
-            / spec.hidden_size() as f64;
+    for (row, scale) in scales.iter_mut().enumerate().take(spec.rows()) {
+        let row_start = row * spec.hidden_size();
+        let row_end = row_start + spec.hidden_size();
+        let input_row = &input[row_start..row_end];
+        let output_row = &mut output[row_start..row_end];
+
+        let mut square_sum = 0.0_f64;
+        if let Some(residual_values) = residual.as_deref_mut() {
+            let residual_row = &mut residual_values[row_start..row_end];
+            for (column, (&input_value, residual_value)) in
+                input_row.iter().zip(residual_row.iter_mut()).enumerate()
+            {
+                let sum = input_value.to_f32() + residual_value.to_f32();
+                let stored_sum = T::from_f32(sum);
+                *residual_value = stored_sum;
+                row_values[column] = sum;
+                square_sum += f64::from(sum) * f64::from(sum);
+            }
+        } else {
+            for (destination, &value) in row_values.iter_mut().zip(input_row) {
+                *destination = value.to_f32();
+                square_sum += f64::from(*destination) * f64::from(*destination);
+            }
+        }
+
+        let mean_square = square_sum / spec.hidden_size() as f64;
         let inverse_rms = (1.0 / (mean_square + f64::from(spec.epsilon())).sqrt()) as f32;
 
         let mut absolute_maximum = 0.0_f32;
-        for (column, (&value, &weight_value)) in input_row.iter().zip(weight).enumerate() {
-            let rounded_normalized = T::round_to_storage(value.to_f32() * inverse_rms);
+        for (column, (&value, &weight_value)) in row_values.iter().zip(weight).enumerate() {
+            let rounded_normalized = T::round_to_storage(value * inverse_rms);
             let weighted = T::round_to_storage(rounded_normalized * weight_value.to_f32());
             normalized[column] = weighted;
             absolute_maximum = absolute_maximum.max(weighted.abs());

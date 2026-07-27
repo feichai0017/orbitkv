@@ -99,6 +99,7 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
         &self,
         input: &impl CudaDeviceRead<f32>,
         weight: &impl CudaDeviceRead<f32>,
+        mut residual: Option<&mut dyn CudaDeviceWrite<f32>>,
         output: &mut impl CudaDeviceWrite<u8>,
         scales: &mut impl CudaDeviceWrite<f32>,
         spec: RmsNormDynamicFp8Spec,
@@ -109,13 +110,26 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
                 spec.input_dtype()
             )));
         }
-        let (rows, hidden_size) =
-            validate_rms_norm_dynamic_fp8_buffers(input, weight, output, scales, spec)?;
+        let residual_read = residual
+            .as_deref()
+            .map(|values| values as &dyn CudaDeviceRead<f32>);
+        let (rows, hidden_size) = validate_rms_norm_dynamic_fp8_buffers(
+            input,
+            weight,
+            residual_read,
+            output,
+            scales,
+            spec,
+        )?;
+        let residual_pointer = residual
+            .as_deref_mut()
+            .map_or(std::ptr::null_mut(), CudaDeviceWrite::as_mut_ptr);
 
         loom_status_result(unsafe {
             loom_cuda_sys::loom_cuda_rms_norm_dynamic_fp8_f32(
                 input.as_ptr(),
                 weight.as_ptr(),
+                residual_pointer,
                 output.as_mut_ptr(),
                 scales.as_mut_ptr(),
                 rows,
@@ -131,6 +145,7 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
         &self,
         input: &impl CudaDeviceRead<f16>,
         weight: &impl CudaDeviceRead<f16>,
+        mut residual: Option<&mut dyn CudaDeviceWrite<f16>>,
         output: &mut impl CudaDeviceWrite<u8>,
         scales: &mut impl CudaDeviceWrite<f32>,
         spec: RmsNormDynamicFp8Spec,
@@ -141,13 +156,26 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
                 spec.input_dtype()
             )));
         }
-        let (rows, hidden_size) =
-            validate_rms_norm_dynamic_fp8_buffers(input, weight, output, scales, spec)?;
+        let residual_read = residual
+            .as_deref()
+            .map(|values| values as &dyn CudaDeviceRead<f16>);
+        let (rows, hidden_size) = validate_rms_norm_dynamic_fp8_buffers(
+            input,
+            weight,
+            residual_read,
+            output,
+            scales,
+            spec,
+        )?;
+        let residual_pointer = residual
+            .as_deref_mut()
+            .map_or(std::ptr::null_mut(), CudaDeviceWrite::as_mut_ptr);
 
         loom_status_result(unsafe {
             loom_cuda_sys::loom_cuda_rms_norm_dynamic_fp8_f16(
                 input.as_ptr().cast::<u16>(),
                 weight.as_ptr().cast::<u16>(),
+                residual_pointer.cast::<u16>(),
                 output.as_mut_ptr(),
                 scales.as_mut_ptr(),
                 rows,
@@ -163,6 +191,7 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
         &self,
         input: &impl CudaDeviceRead<bf16>,
         weight: &impl CudaDeviceRead<bf16>,
+        mut residual: Option<&mut dyn CudaDeviceWrite<bf16>>,
         output: &mut impl CudaDeviceWrite<u8>,
         scales: &mut impl CudaDeviceWrite<f32>,
         spec: RmsNormDynamicFp8Spec,
@@ -173,13 +202,26 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
                 spec.input_dtype()
             )));
         }
-        let (rows, hidden_size) =
-            validate_rms_norm_dynamic_fp8_buffers(input, weight, output, scales, spec)?;
+        let residual_read = residual
+            .as_deref()
+            .map(|values| values as &dyn CudaDeviceRead<bf16>);
+        let (rows, hidden_size) = validate_rms_norm_dynamic_fp8_buffers(
+            input,
+            weight,
+            residual_read,
+            output,
+            scales,
+            spec,
+        )?;
+        let residual_pointer = residual
+            .as_deref_mut()
+            .map_or(std::ptr::null_mut(), CudaDeviceWrite::as_mut_ptr);
 
         loom_status_result(unsafe {
             loom_cuda_sys::loom_cuda_rms_norm_dynamic_fp8_bf16(
                 input.as_ptr().cast::<u16>(),
                 weight.as_ptr().cast::<u16>(),
+                residual_pointer.cast::<u16>(),
                 output.as_mut_ptr(),
                 scales.as_mut_ptr(),
                 rows,
@@ -317,12 +359,16 @@ fn validate_add_rms_norm_buffers<T: Copy>(
 fn validate_rms_norm_dynamic_fp8_buffers<T: Copy>(
     input: &impl CudaDeviceRead<T>,
     weight: &impl CudaDeviceRead<T>,
+    residual: Option<&dyn CudaDeviceRead<T>>,
     output: &impl CudaDeviceRead<u8>,
     scales: &impl CudaDeviceRead<f32>,
     spec: RmsNormDynamicFp8Spec,
 ) -> Result<(u32, u32), CudaExecutorError> {
     input.require_len(spec.numel(), "RMSNorm+FP8 input")?;
     weight.require_len(spec.hidden_size(), "RMSNorm+FP8 weight")?;
+    if let Some(values) = residual {
+        values.require_len(spec.numel(), "RMSNorm+FP8 residual")?;
+    }
     output.require_len(spec.numel(), "RMSNorm+FP8 output")?;
     scales.require_len(spec.scale_count(), "RMSNorm+FP8 scales")?;
     let rows = u32::try_from(spec.rows()).map_err(|_| {
@@ -332,4 +378,60 @@ fn validate_rms_norm_dynamic_fp8_buffers<T: Copy>(
         CudaExecutorError::InvalidContract("RMSNorm+FP8 hidden size exceeds the CUDA ABI".into())
     })?;
     Ok((rows, hidden_size))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::runtime::DeviceBuffer;
+    use loom_kernels::rms_norm_dynamic_fp8_f32_reference;
+
+    #[test]
+    fn residual_dynamic_fp8_wrapper_matches_the_cpu_oracle() {
+        let spec = RmsNormDynamicFp8Spec::new(2, 4, 1.0e-5, DType::F32).unwrap();
+        let input = vec![0.5, -1.0, 2.0, 0.25, -0.75, 1.5, 0.125, -2.0];
+        let residual = vec![1.0, 0.25, -0.5, 2.0, 0.5, -0.25, 1.0, 0.75];
+        let weight = vec![1.0, 0.75, 1.25, 0.5];
+        let mut expected_residual = residual.clone();
+        let mut expected_output = vec![0_u8; spec.numel()];
+        let mut expected_scales = vec![0.0_f32; spec.scale_count()];
+        rms_norm_dynamic_fp8_f32_reference(
+            &input,
+            &weight,
+            &mut expected_output,
+            &mut expected_scales,
+            Some(&mut expected_residual),
+            spec,
+        )
+        .unwrap();
+
+        let backend = CudaBackend::new().unwrap();
+        let device_input = DeviceBuffer::from_slice(&input).unwrap();
+        let device_weight = DeviceBuffer::from_slice(&weight).unwrap();
+        let mut device_residual = DeviceBuffer::from_slice(&residual).unwrap();
+        let mut device_output = DeviceBuffer::<u8>::uninitialized(spec.numel()).unwrap();
+        let mut device_scales = DeviceBuffer::<f32>::uninitialized(spec.scale_count()).unwrap();
+        backend
+            .rms_norm_dynamic_fp8_f32(
+                &device_input,
+                &device_weight,
+                Some(&mut device_residual),
+                &mut device_output,
+                &mut device_scales,
+                spec,
+            )
+            .unwrap();
+        backend.stream().synchronize().unwrap();
+
+        assert_eq!(device_residual.copy_to_vec().unwrap(), expected_residual);
+        assert_eq!(device_output.copy_to_vec().unwrap(), expected_output);
+        for (actual, expected) in device_scales
+            .copy_to_vec()
+            .unwrap()
+            .iter()
+            .zip(expected_scales)
+        {
+            assert!((actual - expected).abs() <= 1.0e-6);
+        }
+    }
 }

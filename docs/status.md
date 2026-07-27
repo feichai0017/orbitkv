@@ -13,8 +13,9 @@
 - checked handwritten F32 plus pair-vectorized FP16/BF16 RMSNorm dispatch;
 - double in-place Add+RMSNorm with Rust-exclusive mutable-buffer contracts;
 - aligned 128-bit pack8 Add+RMSNorm with pair and scalar fallbacks;
-- three-pass RMSNorm plus dynamic per-token FP8 E4M3FN quantization, with
-  pack4 output conversion and scalar fallback;
+- three-pass optional-residual Add+RMSNorm plus dynamic per-token FP8 E4M3FN
+  quantization, with exact vLLM arithmetic order, compile-time residual
+  specialization, pack4 output conversion, and scalar fallback;
 - checked safe-Rust, caller-allocated PyTorch out, and convenience allocating
   entrypoints for RMSNorm+FP8;
 - split-half SiLU-and-Mul contracts and CPU oracles for F32/FP16/BF16;
@@ -102,16 +103,18 @@
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
-  using the current CUDA stream; the current ABI8 dispatcher routes all
+  using the current CUDA stream; the source ABI9 dispatcher routes all
   seventeen semantic operators through `loom-cuda-bridge` into borrowed safe
-  Rust dispatch with explicit storage spans and layouts;
+  Rust dispatch with explicit storage spans and layouts. ABI8 remains the
+  current qualified wheel until the ABI9 matrix closes;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test
   extras, exactly two packaged `.so` files, a revision/toolkit/SM/hash manifest,
   runtime ABI/hash checks, and a CI guard that rejects source-only wheels;
 - a `loom_cuda` vLLM IR provider with exact-contract admission and an opt-in vLLM
   `SiluAndMul` out-of-tree layer replacement, plus an opt-in activation-quant
-  fusion-table replacement, RoPE+KV compiler-pass adapter, and pure-greedy
-  and general selected-token sampled-logprob fast paths, an exact top-k
+  fusion-table replacement, optional-residual RMSNorm-to-FP8 fusion-table
+  replacement, RoPE+KV compiler-pass adapter, and pure-greedy and general
+  selected-token sampled-logprob fast paths, an exact top-k
   raw-logprob adapter, mixed-sampling logits-preprocessing registration, a
   measured-shape Min-P override, sparse token-penalty override, deterministic
   greedy speculative verifier, plus a
@@ -249,6 +252,21 @@
 - order-reversed BF16 `8x4096` named-baseline runs measured Loom
   `5.311-5.430 us` versus vLLM `7.994-8.052 us` through eager C++ dispatch,
   and Loom `3.947-4.044 us` versus vLLM `4.246-4.274 us` under graph replay.
+- the ABI9 normalization schema now matches vLLM's optional-residual dynamic
+  per-token FP8 fusion exactly. F32/FP16/BF16 tests at `8x4096` and `3x127`
+  produce zero FP8-byte and residual-byte mismatches for both residual modes;
+  the optimized H20 gate passes 17 safe-CUDA tests, 7 checked-bridge tests,
+  35 focused normalization tests, and 305 full Python tests on each supported
+  vLLM minor;
+- at BF16 hidden size 896, order-reversed direct runs put Loom
+  `1.033-1.082x` ahead under CUDA Graph replay for plain rows 8 and residual
+  rows 1/8/32. Generated Qwen2.5-0.5B source swaps four native normalization
+  call sites for four Loom call sites while retaining eight Cutlass scaled-mm
+  call sites on both sides;
+- order-reversed 15-sample Qwen `fp8_per_tensor` prefill-only runs improve
+  batch latency by `1.023-1.051x` at batch 1, `1.011-1.019x` at batch 8, and
+  `1.0066-1.016x` at batch 32. The 64-token decode workload crosses parity,
+  so no TPOT or throughput acceleration is claimed;
 - SiLU-and-Mul F32, FP16, and BF16 kernels passed CPU-oracle checks at
   `8x11008`, and the BF16 scalar fallback passed at `3x127`; observed raw
   medians were `3.975 us`, `4.279 us`, `4.392 us`, and `2.932 us`
@@ -504,7 +522,9 @@ FA3 for the engine's 128-1,024-token path.
 
 ## Not Yet Proven
 
-- fused Add+RMSNorm or RMSNorm+FP8 model-level benefit;
+- fused standalone Add+RMSNorm model-level benefit, and RMSNorm+FP8 benefit
+  outside the qualified Qwen2.5-0.5B `fp8_per_tensor` Cutlass prefill
+  boundary; decode-heavy RMSNorm+FP8 latency crosses parity;
 - SiLU-and-Mul+FP8 model-level benefit on a workload where the exposed
   activation-quant boundary is material;
 - RoPE+paged-KV model-level TTFT/TPOT or throughput benefit beyond the current

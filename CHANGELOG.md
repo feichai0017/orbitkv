@@ -50,12 +50,21 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - advanced the checked framework bridge to ABI 8 for explicit-state
   categorical sampling; source dispatchers require ABI8 and no ABI7
   compatibility entrypoint is retained.
+- advanced the checked framework bridge to ABI 9 by replacing the former
+  RMSNorm-to-FP8 schema with vLLM's exact optional-residual mutation schema;
+  no ABI8 normalization overload, boxed-op alias, or bridge compatibility shim
+  is retained.
 
 ### Added
 
 - complete bridge coverage for RMSNorm, Add+RMSNorm, RMSNorm+FP8,
   SiLU-and-Mul, SiLU-and-Mul+FP8, RoPE+paged-KV, greedy/selected logprobs,
   Min-P, and base/split-K paged decode;
+- optional-residual Add+RMSNorm-to-dynamic-per-token-FP8 across the CPU oracle,
+  safe Rust, checked bridge, handwritten CUDA, Stable ABI dispatcher, and both
+  vLLM 0.24/0.25 fusion keys. H20 exact-byte, direct named-baseline,
+  generated-source, unchanged-Cutlass-GEMM, and order-reversed Qwen prefill
+  gates pass; decode-heavy latency crosses parity and carries no speedup claim;
 - explicit Rust physical-layout contracts for padded logits, packed QKV,
   NHD/HND caches, interleaved cache storage, scale layout, and FP8 scale upper
   bounds;

@@ -9,7 +9,7 @@ import torch
 from .._torch_dispatch import (
     _add_rms_norm_mut,
     _rms_norm,
-    _rms_norm_dynamic_fp8,
+    _rms_norm_dynamic_per_token_fp8,
 )
 from ._common import _DTYPE_NAMES, _require_inference_tensors
 
@@ -76,8 +76,9 @@ def supports_rms_norm_dynamic_fp8(
     input_tensor: torch.Tensor,
     weight: torch.Tensor | None,
     epsilon: float,
+    residual: torch.Tensor | None = None,
 ) -> bool:
-    """Return whether Loom can fuse RMSNorm with per-token FP8 quantization."""
+    """Return whether Loom can fuse optional residual Add+RMSNorm with FP8."""
     return bool(
         weight is not None
         and math.isfinite(epsilon)
@@ -94,6 +95,16 @@ def supports_rms_norm_dynamic_fp8(
         and weight.is_contiguous()
         and not input_tensor.requires_grad
         and not weight.requires_grad
+        and (
+            residual is None
+            or (
+                residual.device == input_tensor.device
+                and residual.dtype == input_tensor.dtype
+                and residual.shape == input_tensor.shape
+                and residual.is_contiguous()
+                and not residual.requires_grad
+            )
+        )
     )
 
 
@@ -118,11 +129,15 @@ def _validate_dynamic_fp8_inputs(
     input_tensor: torch.Tensor,
     weight: torch.Tensor,
     epsilon: float,
+    residual: torch.Tensor | None,
 ) -> int:
-    if not supports_rms_norm_dynamic_fp8(input_tensor, weight, epsilon):
+    if not supports_rms_norm_dynamic_fp8(
+        input_tensor, weight, epsilon, residual
+    ):
         raise ValueError(
             "Loom RMSNorm+FP8 requires same-device contiguous CUDA tensors, "
-            "matching F32/FP16/BF16 dtypes and a 1D hidden-size weight"
+            "matching F32/FP16/BF16 dtypes, a 1D hidden-size weight, and an "
+            "optional same-shape residual"
         )
     hidden_size = input_tensor.shape[-1]
     rows = input_tensor.numel() // hidden_size
@@ -172,10 +187,22 @@ def rms_norm_dynamic_fp8_out(
     output: torch.Tensor,
     scales: torch.Tensor,
     epsilon: float,
+    residual: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Write fused RMSNorm and per-token FP8 results into caller-owned buffers."""
-    _require_inference_tensors(input_tensor, weight, output, scales)
-    _rms_norm_dynamic_fp8(input_tensor, weight, output, scales, float(epsilon))
+    """Write optional Add+RMSNorm and per-token FP8 into caller buffers."""
+    inference_tensors = [input_tensor, weight, output, scales]
+    if residual is not None:
+        inference_tensors.append(residual)
+    _require_inference_tensors(*inference_tensors)
+    _rms_norm_dynamic_per_token_fp8(
+        output,
+        input_tensor,
+        weight,
+        scales,
+        float(epsilon),
+        None,
+        residual,
+    )
     return output, scales
 
 
@@ -183,11 +210,19 @@ def rms_norm_dynamic_fp8(
     input_tensor: torch.Tensor,
     weight: torch.Tensor,
     epsilon: float,
+    residual: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    """Return FP8 E4M3FN output and one F32 dequantization scale per row."""
-    rows = _validate_dynamic_fp8_inputs(input_tensor, weight, epsilon)
+    """Return optional Add+RMSNorm FP8 output and one F32 scale per row."""
+    rows = _validate_dynamic_fp8_inputs(
+        input_tensor, weight, epsilon, residual
+    )
     output = torch.empty_like(input_tensor, dtype=torch.float8_e4m3fn)
     scales = torch.empty((rows, 1), device=input_tensor.device, dtype=torch.float32)
     return rms_norm_dynamic_fp8_out(
-        input_tensor, weight, output, scales, float(epsilon)
+        input_tensor,
+        weight,
+        output,
+        scales,
+        float(epsilon),
+        residual,
     )

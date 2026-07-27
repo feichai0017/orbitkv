@@ -1,0 +1,223 @@
+{
+  "project": "loom-kernels",
+  "operator": "rms_norm_dynamic_per_token_fp8",
+  "date": "2026-07-27",
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "driver": "535.161.08",
+    "cuda_compiler": "13.1.115",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "vllm": "0.24.0",
+    "bridge_abi": 9
+  },
+  "contract": {
+    "schema": "rms_norm_dynamic_per_token_fp8(Tensor(a!) result, Tensor input, Tensor weight, Tensor(b!) scale, float epsilon, Tensor? scale_ub=None, Tensor(c!)? residual=None) -> ()",
+    "inputs": "contiguous F32, FP16, or BF16 input and weight; optional same-shape, same-dtype mutable residual",
+    "output": "caller-owned FP8 E4M3FN result plus one caller-owned F32 scale per flattened row",
+    "residual": "when present, raw F32 input+residual sums drive all three passes and the storage-dtype-rounded sums are written to residual during the final pass",
+    "scale_upper_bound": "rejected; the registered vLLM dynamic per-token FP8 fusion passes None",
+    "aliasing": "input, weight, output, scales, and optional residual must be pairwise disjoint at the checked bridge",
+    "gemm_boundary": "unchanged vLLM Cutlass FP8 scaled-mm; Loom owns only Add+RMSNorm+dynamic FP8 preparation"
+  },
+  "implementation": {
+    "path": "PyTorch -> boxed Stable ABI dispatcher -> checked ABI9 Rust bridge -> safe Rust dispatch -> handwritten CUDA",
+    "passes": 3,
+    "description": "RMS reduction, normalized weighted absmax reduction, then residual store plus FP8 quantization",
+    "specialization": "separate compile-time kernels for optional residual and vectorized/scalar storage",
+    "threads": "min(hidden_size, 1024) per flattened row",
+    "vectorization": "four input, weight, and residual elements plus four FP8 output bytes per aligned pack",
+    "vllm_registration": "both plain RMSNorm and fused Add+RMSNorm dynamic per-token FP8 fusion keys map to the exact Loom schema"
+  },
+  "validation": {
+    "local_rust_oracles": "52 passed",
+    "h20_safe_cuda": "17 passed",
+    "h20_checked_bridge": "7 passed",
+    "h20_focused_normalization": "35 passed",
+    "h20_full_python_vllm_0_24": "305 passed",
+    "h20_full_python_vllm_0_25_1": "305 passed",
+    "dtypes": ["f32", "f16", "bf16"],
+    "shapes": [[8, 4096], [3, 127]],
+    "optional_residual_modes": [false, true],
+    "output_byte_mismatches": 0,
+    "residual_byte_mismatches": 0,
+    "external_stream": "passed",
+    "torch_compile": "passed",
+    "cuda_graph_capture_replay": "passed",
+    "generated_source_audit": {
+      "baseline_vllm_operator_calls": 4,
+      "baseline_loom_operator_calls": 0,
+      "loom_vllm_operator_calls": 0,
+      "loom_operator_calls": 4,
+      "baseline_cutlass_scaled_mm_calls": 8,
+      "loom_cutlass_scaled_mm_calls": 8
+    }
+  },
+  "direct_named_baseline": {
+    "protocol": "BF16 hidden size 896, same preallocated Stable ABI operator boundary, 0.5 second GEMM warm-up per provider, 100 warm-ups, 10 samples, 2000 launches per sample, provider-order reversal",
+    "replay_stability": "residual cases use zero input and random residual so repeated in-place eager and CUDA Graph calls preserve the residual without timing a reset copy",
+    "runs": [
+      {
+        "mode": "plain",
+        "rows": 8,
+        "provider_order": "loom-first",
+        "loom_eager_median_us": 7.2028961181640625,
+        "vllm_eager_median_us": 7.955832004547119,
+        "eager_speedup": 1.1045323817018995,
+        "loom_graph_median_us": 3.203536033630371,
+        "vllm_graph_median_us": 3.467168092727661,
+        "graph_speedup": 1.0822940826417151
+      },
+      {
+        "mode": "plain",
+        "rows": 8,
+        "provider_order": "vllm-first",
+        "loom_eager_median_us": 7.1516640186309814,
+        "vllm_eager_median_us": 8.032191753387451,
+        "eager_speedup": 1.1231220779475357,
+        "loom_graph_median_us": 3.266528010368347,
+        "vllm_graph_median_us": 3.449895977973938,
+        "graph_speedup": 1.056135434021554
+      },
+      {
+        "mode": "residual",
+        "rows": 1,
+        "provider_order": "loom-first",
+        "eager_speedup": 1.0601597766447795,
+        "graph_speedup": 1.0360148907517743
+      },
+      {
+        "mode": "residual",
+        "rows": 1,
+        "provider_order": "vllm-first",
+        "eager_speedup": 1.0683973911280467,
+        "graph_speedup": 1.0494372328936505
+      },
+      {
+        "mode": "residual",
+        "rows": 8,
+        "provider_order": "loom-first",
+        "eager_speedup": 1.1032880545755117,
+        "graph_speedup": 1.0333967018061008
+      },
+      {
+        "mode": "residual",
+        "rows": 8,
+        "provider_order": "vllm-first",
+        "eager_speedup": 1.0285772020077788,
+        "graph_speedup": 1.0605422382177592
+      },
+      {
+        "mode": "residual",
+        "rows": 32,
+        "provider_order": "loom-first",
+        "eager_speedup": 1.06331194664131,
+        "graph_speedup": 1.0463757471026143
+      },
+      {
+        "mode": "residual",
+        "rows": 32,
+        "provider_order": "vllm-first",
+        "eager_speedup": 1.0700235220294207,
+        "graph_speedup": 1.0384884738256823
+      }
+    ],
+    "correctness": "every Loom FP8 byte, scale, and optional residual byte matches vLLM",
+    "interpretation": "The direct advantage is order-stable: 2.9-12.3% by eager dispatch and 3.3-8.2% under CUDA Graph replay across the measured cases."
+  },
+  "real_engine": {
+    "model": "Qwen/Qwen2.5-0.5B-Instruct",
+    "model_revision": "7ae557604adf67be50417f59c2c2f167def9a775",
+    "configuration": {
+      "source_dtype": "bf16",
+      "quantization": "fp8_per_tensor",
+      "linear_backend": "cutlass",
+      "custom_ops": ["+rms_norm", "+quant_fp8"],
+      "compiler_pass": "fuse_norm_quant=true",
+      "provider_isolation": "fresh process and distinct vLLM/TorchInductor cache root per provider",
+      "gpu_memory_utilization": 0.5
+    },
+    "prefill_only": {
+      "warmups": 3,
+      "samples": 15,
+      "runs": [
+        {
+          "provider_order": "baseline-first",
+          "cases": [
+            {
+              "case": "batch=1,input=128,output=1",
+              "vllm_batch_median_ms": 4.55840677022934,
+              "loom_batch_median_ms": 4.33870404958725,
+              "batch_speedup": 1.0506378674671277,
+              "ttft_speedup": 1.0515622332252006
+            },
+            {
+              "case": "batch=8,input=128,output=1",
+              "vllm_batch_median_ms": 11.486746370792389,
+              "loom_batch_median_ms": 11.356566101312637,
+              "batch_speedup": 1.0114629957963002,
+              "ttft_speedup": 1.0109813373579466
+            },
+            {
+              "case": "batch=32,input=128,output=1",
+              "vllm_batch_median_ms": 15.979863703250885,
+              "loom_batch_median_ms": 15.874449163675308,
+              "batch_speedup": 1.0066405163724856,
+              "ttft_speedup": 1.008282564934777
+            }
+          ]
+        },
+        {
+          "provider_order": "loom-first",
+          "cases": [
+            {
+              "case": "batch=1,input=128,output=1",
+              "vllm_batch_median_ms": 4.526495933532715,
+              "loom_batch_median_ms": 4.423879086971283,
+              "batch_speedup": 1.023196123705923,
+              "ttft_speedup": 1.0280284769325634
+            },
+            {
+              "case": "batch=8,input=128,output=1",
+              "vllm_batch_median_ms": 11.664476245641708,
+              "loom_batch_median_ms": 11.442765593528748,
+              "batch_speedup": 1.0193756177473692,
+              "ttft_speedup": 1.0211010097621525
+            },
+            {
+              "case": "batch=32,input=128,output=1",
+              "vllm_batch_median_ms": 16.14249125123024,
+              "loom_batch_median_ms": 15.887301415205002,
+              "batch_speedup": 1.0160625035905095,
+              "ttft_speedup": 1.0239145680020594
+            }
+          ]
+        }
+      ],
+      "interpretation": "All six order-reversed prefill cases improve. The narrow qualified batch-latency range is 1.0066-1.0506x."
+    },
+    "prefill_plus_decode": {
+      "workloads": ["batch=1,input=128,output=64", "batch=8,input=128,output=64", "batch=32,input=128,output=64"],
+      "warmups": 2,
+      "samples": 5,
+      "baseline_first_batch_speedups": [0.9881448012357779, 0.9947079631470205, 0.992486621644667],
+      "loom_first_batch_speedups": [0.9848634280007341, 1.0185200683320568, 1.008875558131567],
+      "interpretation": "Batch latency and TPOT cross parity after provider-order reversal. No decode, TPOT, or throughput acceleration is claimed."
+    },
+    "acceptance": {
+      "all_token_ids_match": true,
+      "baseline_uses_only_vllm_fusion": true,
+      "loom_uses_only_loom_fusion": true,
+      "baseline_loom_host_launches": 0,
+      "loom_host_launches_observed": true,
+      "cutlass_scaled_mm_unchanged": true
+    }
+  },
+  "reproducer": {
+    "direct": "benchmarks/vllm_rms_norm_dynamic_fp8.py",
+    "engine": "benchmarks/vllm_engine_fp8_ab.py --fusion rms-quant"
+  },
+  "decision": "Accept the first K2.5 quantization-plumbing slice for the exact optional-residual RMSNorm-to-dynamic-FP8 boundary. It has an order-stable direct advantage and a narrow order-stable Qwen2.5 prefill win while leaving Cutlass GEMM unchanged. Keep the adapter opt-in and make no decode-throughput claim."
+}

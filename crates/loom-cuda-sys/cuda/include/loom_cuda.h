@@ -39,24 +39,26 @@ int loom_cuda_rms_norm_bf16(const uint16_t* input, const uint16_t* weight,
                             uint16_t* output, uint32_t rows,
                             uint32_t hidden_size, float epsilon, void* stream);
 
-// RMSNorm followed by dynamic per-token FP8 E4M3FN quantization. Output holds
-// raw FP8 storage bytes and scales has one F32 value per row, with
-// approximately normalized_value = fp8(output) * scale. Low-precision inputs
-// follow the input scalar arithmetic boundaries for both normalization and
-// weight multiplication, matching vLLM's fused quantization contract.
+// RMSNorm followed by dynamic per-token FP8 E4M3FN quantization. A non-null
+// residual is updated with the storage-rounded input+residual sum before
+// normalization. Output holds raw FP8 storage bytes and scales has one F32
+// value per row, with approximately normalized_value = fp8(output) * scale.
+// Low-precision inputs follow the input scalar arithmetic boundaries for the
+// residual sum, normalization, and weight multiplication.
 int loom_cuda_rms_norm_dynamic_fp8_f32(
-    const float* input, const float* weight, uint8_t* output, float* scales,
-    uint32_t rows, uint32_t hidden_size, float epsilon, void* stream);
+    const float* input, const float* weight, float* residual, uint8_t* output,
+    float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
+    void* stream);
 
 int loom_cuda_rms_norm_dynamic_fp8_f16(
-    const uint16_t* input, const uint16_t* weight, uint8_t* output,
-    float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
-    void* stream);
+    const uint16_t* input, const uint16_t* weight, uint16_t* residual,
+    uint8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
+    float epsilon, void* stream);
 
 int loom_cuda_rms_norm_dynamic_fp8_bf16(
-    const uint16_t* input, const uint16_t* weight, uint8_t* output,
-    float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
-    void* stream);
+    const uint16_t* input, const uint16_t* weight, uint16_t* residual,
+    uint8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
+    float epsilon, void* stream);
 
 // Fused residual addition and RMSNorm over contiguous tensors. Both input and
 // residual are updated in place:

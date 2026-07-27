@@ -84,22 +84,43 @@ launch; latency uses zero-valued input/residual buffers, which are a stable
 fixed point and execute the same branch-free kernel path. Reset copies are not
 included in the kernel latency.
 
-## RMSNorm+Dynamic-FP8 Contract
+## Optional-Residual RMSNorm+Dynamic-FP8 Contract
 
-The quantized normalization path consumes contiguous F32, FP16, or BF16 input
-and a matching one-dimensional weight. It writes FP8 E4M3FN values with the
-same logical shape plus one F32 dequantization scale per flattened row. The
-scale is `max(absmax / 448, 1 / (448 * 512))`, so zero rows remain valid.
+The quantized normalization path consumes contiguous F32, FP16, or BF16 input,
+a matching one-dimensional weight, and an optional mutable residual with the
+same shape and dtype as the input. It writes FP8 E4M3FN values with the same
+logical shape plus one F32 dequantization scale per flattened row. The scale is
+`max(absmax / 448, 1 / (448 * 512))`, so zero rows remain valid.
 
-For FP16 and BF16, both the normalized intermediate and weighted value follow
-the input scalar arithmetic boundaries before FP8 conversion. This detail is
-part of the public compatibility contract, not an implementation accident.
-The CUDA kernel uses three passes—RMS reduction, weighted absmax reduction,
-and quantization—and follows the caller's stream without synchronizing.
+Without residual, all three passes read `input`. With residual, each pass
+independently forms the raw F32 sum `input + residual`; only the final
+normalization/quantization pass stores that sum rounded to the input dtype back
+to residual. FP16 and BF16 then round both the normalized intermediate and
+weighted value at the input scalar boundary before FP8 conversion. This exact
+ordering matches the vLLM dynamic per-token fusion and is part of Loom's public
+compatibility contract.
 
-Safe Rust and the PyTorch out variant require caller-owned output and scale
-buffers. The convenience Python API allocates those buffers once per call;
-engine and benchmark paths should use the out variant to reuse memory.
+The boxed PyTorch schema is intentionally identical to vLLM's fusion target:
+
+```text
+rms_norm_dynamic_per_token_fp8(
+    Tensor(a!) result,
+    Tensor input,
+    Tensor weight,
+    Tensor(b!) scale,
+    float epsilon,
+    Tensor? scale_ub=None,
+    Tensor(c!)? residual=None
+) -> ()
+```
+
+Loom rejects a non-null `scale_ub`; both registered vLLM FP8 fusion keys pass
+`None`. Result, scale, and optional residual are caller-owned, pairwise
+disjoint mutable buffers. The CUDA kernel uses three passes—RMS reduction,
+weighted absmax reduction, then residual store plus quantization—and follows
+the caller's stream without synchronizing. The convenience Python API
+allocates result and scale once per call; engine and benchmark paths use the
+out variant.
 
 ## SiLU-And-Mul Contract
 

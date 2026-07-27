@@ -20,6 +20,14 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--samples", type=int, default=15)
     parser.add_argument("--gpu-warmup-seconds", type=float, default=1.0)
     parser.add_argument(
+        "--with-residual",
+        action="store_true",
+        help=(
+            "Benchmark the fused Add+RMSNorm+FP8 path. The timed input is zero "
+            "so repeated eager and CUDA Graph calls leave residual unchanged."
+        ),
+    )
+    parser.add_argument(
         "--provider-order",
         choices=("loom-first", "vllm-first"),
         default="loom-first",
@@ -62,8 +70,10 @@ def benchmark_provider(
     operation: Callable[[], None],
     output,
     scales,
+    residual,
     expected_output,
     expected_scales,
+    expected_residual,
     args: argparse.Namespace,
 ) -> dict[str, object]:
     operation()
@@ -76,6 +86,13 @@ def benchmark_provider(
     max_scale_rel_error = (
         scale_difference / expected_scales.abs().clamp_min(1.0e-12)
     ).max().item()
+    residual_byte_mismatches = (
+        None
+        if residual is None
+        else (
+            residual.view(torch.uint8) != expected_residual.view(torch.uint8)
+        ).sum().item()
+    )
 
     warm_gpu(torch, args.gpu_warmup_seconds)
     for _ in range(args.warmup):
@@ -117,6 +134,7 @@ def benchmark_provider(
         "output_byte_mismatches_vs_vllm": output_byte_mismatches,
         "max_scale_abs_error_vs_vllm": max_scale_abs_error,
         "max_scale_rel_error_vs_vllm": max_scale_rel_error,
+        "residual_byte_mismatches_vs_vllm": residual_byte_mismatches,
     }
 
 
@@ -146,10 +164,22 @@ def main() -> None:
     }[args.dtype]
     shape = (args.rows, args.hidden_size)
     torch.manual_seed(41)
-    input_tensor = torch.randn(shape, device="cuda", dtype=dtype)
+    input_tensor = (
+        torch.zeros(shape, device="cuda", dtype=dtype)
+        if args.with_residual
+        else torch.randn(shape, device="cuda", dtype=dtype)
+    )
     weight = torch.randn(args.hidden_size, device="cuda", dtype=dtype)
+    initial_residual = (
+        torch.randn(shape, device="cuda", dtype=dtype)
+        if args.with_residual
+        else None
+    )
     expected_output = torch.empty_like(input_tensor, dtype=torch.float8_e4m3fn)
     expected_scales = torch.empty(args.rows, 1, device="cuda", dtype=torch.float32)
+    expected_residual = (
+        initial_residual.clone() if initial_residual is not None else None
+    )
     torch.ops._C.rms_norm_dynamic_per_token_quant(
         expected_output,
         input_tensor,
@@ -157,7 +187,7 @@ def main() -> None:
         expected_scales,
         args.epsilon,
         None,
-        None,
+        expected_residual,
     )
     torch.cuda.synchronize()
 
@@ -170,9 +200,20 @@ def main() -> None:
     for provider in provider_names:
         output = torch.empty_like(input_tensor, dtype=torch.float8_e4m3fn)
         scales = torch.empty(args.rows, 1, device="cuda", dtype=torch.float32)
+        residual = (
+            initial_residual.clone() if initial_residual is not None else None
+        )
         if provider == "loom_cuda":
-            operation = lambda: torch.ops.loom_kernels.rms_norm_dynamic_fp8(
-                input_tensor, weight, output, scales, args.epsilon
+            operation = (
+                lambda: torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8(
+                    output,
+                    input_tensor,
+                    weight,
+                    scales,
+                    args.epsilon,
+                    None,
+                    residual,
+                )
             )
         else:
             operation = lambda: torch.ops._C.rms_norm_dynamic_per_token_quant(
@@ -182,15 +223,17 @@ def main() -> None:
                 scales,
                 args.epsilon,
                 None,
-                None,
+                residual,
             )
         providers[provider] = benchmark_provider(
             torch,
             operation,
             output,
             scales,
+            residual,
             expected_output,
             expected_scales,
+            expected_residual,
             args,
         )
 
@@ -205,6 +248,8 @@ def main() -> None:
         "output_dtype": "fp8_e4m3fn",
         "scale_dtype": "f32",
         "scale_shape": [args.rows, 1],
+        "with_residual": args.with_residual,
+        "residual_replay_input": "zero" if args.with_residual else None,
         "rows": args.rows,
         "hidden_size": args.hidden_size,
         "epsilon": args.epsilon,

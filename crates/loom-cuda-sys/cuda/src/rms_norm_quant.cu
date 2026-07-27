@@ -68,10 +68,11 @@ struct alignas(4) Fp8Pack4 {
   __nv_fp8x4_storage_t bits;
 };
 
-template <typename Ops, bool Vectorized>
+template <typename Ops, bool Vectorized, bool HasResidual>
 __global__ __launch_bounds__(kRmsNormQuantThreads)
     void rms_norm_dynamic_fp8_kernel(const typename Ops::Scalar* input,
                                      const typename Ops::Scalar* weight,
+                                     typename Ops::Scalar* residual,
                                      uint8_t* output, float* scales,
                                      uint32_t hidden_size, float epsilon) {
   using Scalar = typename Ops::Scalar;
@@ -84,20 +85,38 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
   if constexpr (Vectorized) {
     using Pack = AlignedPack<Scalar, 4>;
     const auto* input_packs = reinterpret_cast<const Pack*>(row_input);
+    const Pack* residual_packs = nullptr;
+    if constexpr (HasResidual) {
+      residual_packs =
+          reinterpret_cast<const Pack*>(residual + row_offset);
+    }
     const uint32_t pack_count = hidden_size / 4U;
     for (uint32_t pack_column = threadIdx.x; pack_column < pack_count;
          pack_column += blockDim.x) {
       const Pack values = input_packs[pack_column];
+      if constexpr (HasResidual) {
+        const Pack residual_values = residual_packs[pack_column];
 #pragma unroll
-      for (int element = 0; element < 4; ++element) {
-        const float value = Ops::to_float(values.values[element]);
-        local_square_sum += value * value;
+        for (int element = 0; element < 4; ++element) {
+          const float sum = Ops::to_float(values.values[element]) +
+                            Ops::to_float(residual_values.values[element]);
+          local_square_sum += sum * sum;
+        }
+      } else {
+#pragma unroll
+        for (int element = 0; element < 4; ++element) {
+          const float value = Ops::to_float(values.values[element]);
+          local_square_sum += value * value;
+        }
       }
     }
   } else {
     for (uint32_t column = threadIdx.x; column < hidden_size;
          column += blockDim.x) {
-      const float value = Ops::to_float(row_input[column]);
+      float value = Ops::to_float(row_input[column]);
+      if constexpr (HasResidual) {
+        value += Ops::to_float(residual[row_offset + column]);
+      }
       local_square_sum += value * value;
     }
   }
@@ -119,17 +138,29 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
     using Pack = AlignedPack<Scalar, 4>;
     const auto* input_packs = reinterpret_cast<const Pack*>(row_input);
     const auto* weight_packs = reinterpret_cast<const Pack*>(weight);
+    const Pack* residual_packs = nullptr;
+    if constexpr (HasResidual) {
+      residual_packs =
+          reinterpret_cast<const Pack*>(residual + row_offset);
+    }
     const uint32_t pack_count = hidden_size / 4U;
     for (uint32_t pack_column = threadIdx.x; pack_column < pack_count;
          pack_column += blockDim.x) {
       const Pack values = input_packs[pack_column];
       const Pack weights = weight_packs[pack_column];
+      Pack residual_values{};
+      if constexpr (HasResidual) {
+        residual_values = residual_packs[pack_column];
+      }
 #pragma unroll
       for (int element = 0; element < 4; ++element) {
+        float value = Ops::to_float(values.values[element]);
+        if constexpr (HasResidual) {
+          value += Ops::to_float(residual_values.values[element]);
+        }
         // Match the vLLM fused quantization boundary: x * inverse_rms is
         // rounded to the input storage dtype before applying the weight.
-        const Scalar normalized = Ops::from_float(
-            Ops::to_float(values.values[element]) * inverse_rms);
+        const Scalar normalized = Ops::from_float(value * inverse_rms);
         const Scalar weighted_storage = Ops::from_float(
             Ops::to_float(normalized) *
             Ops::to_float(weights.values[element]));
@@ -141,8 +172,12 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
   } else {
     for (uint32_t column = threadIdx.x; column < hidden_size;
          column += blockDim.x) {
+      float value = Ops::to_float(row_input[column]);
+      if constexpr (HasResidual) {
+        value += Ops::to_float(residual[row_offset + column]);
+      }
       const Scalar normalized =
-          Ops::from_float(Ops::to_float(row_input[column]) * inverse_rms);
+          Ops::from_float(value * inverse_rms);
       const Scalar weighted_storage = Ops::from_float(
           Ops::to_float(normalized) * Ops::to_float(weight[column]));
       const float weighted = Ops::to_float(weighted_storage);
@@ -167,21 +202,36 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
     using Pack = AlignedPack<Scalar, 4>;
     const auto* input_packs = reinterpret_cast<const Pack*>(row_input);
     const auto* weight_packs = reinterpret_cast<const Pack*>(weight);
+    Pack* residual_packs = nullptr;
+    if constexpr (HasResidual) {
+      residual_packs = reinterpret_cast<Pack*>(residual + row_offset);
+    }
     auto* output_packs = reinterpret_cast<Fp8Pack4*>(row_output);
     const uint32_t pack_count = hidden_size / 4U;
     for (uint32_t pack_column = threadIdx.x; pack_column < pack_count;
          pack_column += blockDim.x) {
       const Pack values = input_packs[pack_column];
       const Pack weights = weight_packs[pack_column];
+      Pack residual_values{};
+      if constexpr (HasResidual) {
+        residual_values = residual_packs[pack_column];
+      }
       float quantized_values[4];
 #pragma unroll
       for (int element = 0; element < 4; ++element) {
-        const Scalar normalized = Ops::from_float(
-            Ops::to_float(values.values[element]) * inverse_rms);
+        float value = Ops::to_float(values.values[element]);
+        if constexpr (HasResidual) {
+          value += Ops::to_float(residual_values.values[element]);
+          residual_values.values[element] = Ops::from_float(value);
+        }
+        const Scalar normalized = Ops::from_float(value * inverse_rms);
         const Scalar weighted = Ops::from_float(
             Ops::to_float(normalized) *
             Ops::to_float(weights.values[element]));
         quantized_values[element] = Ops::to_float(weighted) / token_scale;
+      }
+      if constexpr (HasResidual) {
+        residual_packs[pack_column] = residual_values;
       }
       const __nv_fp8x4_e4m3 quantized(make_float4(
           quantized_values[0], quantized_values[1], quantized_values[2],
@@ -191,8 +241,12 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
   } else {
     for (uint32_t column = threadIdx.x; column < hidden_size;
          column += blockDim.x) {
-      const Scalar normalized =
-          Ops::from_float(Ops::to_float(row_input[column]) * inverse_rms);
+      float value = Ops::to_float(row_input[column]);
+      if constexpr (HasResidual) {
+        value += Ops::to_float(residual[row_offset + column]);
+        residual[row_offset + column] = Ops::from_float(value);
+      }
+      const Scalar normalized = Ops::from_float(value * inverse_rms);
       const Scalar weighted_storage = Ops::from_float(
           Ops::to_float(normalized) * Ops::to_float(weight[column]));
       const float weighted = Ops::to_float(weighted_storage);
@@ -204,7 +258,8 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
 
 template <typename Ops, typename Input>
 int launch_rms_norm_dynamic_fp8(const Input* input, const Input* weight,
-                                uint8_t* output, float* scales, uint32_t rows,
+                                Input* residual, uint8_t* output,
+                                float* scales, uint32_t rows,
                                 uint32_t hidden_size, float epsilon,
                                 void* stream) {
   if (input == nullptr || weight == nullptr || output == nullptr ||
@@ -213,14 +268,24 @@ int launch_rms_norm_dynamic_fp8(const Input* input, const Input* weight,
       reinterpret_cast<const void*>(input) ==
           reinterpret_cast<const void*>(output) ||
       reinterpret_cast<const void*>(weight) ==
-          reinterpret_cast<const void*>(output)) {
+          reinterpret_cast<const void*>(output) ||
+      (residual != nullptr &&
+       (reinterpret_cast<const void*>(residual) ==
+            reinterpret_cast<const void*>(input) ||
+        reinterpret_cast<const void*>(residual) ==
+            reinterpret_cast<const void*>(weight) ||
+        reinterpret_cast<const void*>(residual) ==
+            reinterpret_cast<const void*>(output) ||
+        reinterpret_cast<const void*>(residual) ==
+            reinterpret_cast<const void*>(scales)))) {
     return LOOM_CUDA_INVALID_ARGUMENT;
   }
 
   using Scalar = typename Ops::Scalar;
   const uintptr_t combined_input_address =
       reinterpret_cast<uintptr_t>(input) |
-      reinterpret_cast<uintptr_t>(weight);
+      reinterpret_cast<uintptr_t>(weight) |
+      reinterpret_cast<uintptr_t>(residual);
   const bool can_vectorize = hidden_size % 4U == 0U &&
                              combined_input_address % (sizeof(Scalar) * 4U) ==
                                  0U &&
@@ -230,19 +295,39 @@ int launch_rms_norm_dynamic_fp8(const Input* input, const Input* weight,
           ? hidden_size
           : static_cast<uint32_t>(kRmsNormQuantThreads);
   if (can_vectorize) {
-    rms_norm_dynamic_fp8_kernel<Ops, true>
-        <<<rows, threads, 0,
-           reinterpret_cast<cudaStream_t>(stream)>>>(
-            reinterpret_cast<const Scalar*>(input),
-            reinterpret_cast<const Scalar*>(weight), output, scales,
-            hidden_size, epsilon);
+    if (residual != nullptr) {
+      rms_norm_dynamic_fp8_kernel<Ops, true, true>
+          <<<rows, threads, 0,
+             reinterpret_cast<cudaStream_t>(stream)>>>(
+              reinterpret_cast<const Scalar*>(input),
+              reinterpret_cast<const Scalar*>(weight),
+              reinterpret_cast<Scalar*>(residual), output, scales,
+              hidden_size, epsilon);
+    } else {
+      rms_norm_dynamic_fp8_kernel<Ops, true, false>
+          <<<rows, threads, 0,
+             reinterpret_cast<cudaStream_t>(stream)>>>(
+              reinterpret_cast<const Scalar*>(input),
+              reinterpret_cast<const Scalar*>(weight), nullptr, output,
+              scales, hidden_size, epsilon);
+    }
   } else {
-    rms_norm_dynamic_fp8_kernel<Ops, false>
-        <<<rows, threads, 0,
-           reinterpret_cast<cudaStream_t>(stream)>>>(
-            reinterpret_cast<const Scalar*>(input),
-            reinterpret_cast<const Scalar*>(weight), output, scales,
-            hidden_size, epsilon);
+    if (residual != nullptr) {
+      rms_norm_dynamic_fp8_kernel<Ops, false, true>
+          <<<rows, threads, 0,
+             reinterpret_cast<cudaStream_t>(stream)>>>(
+              reinterpret_cast<const Scalar*>(input),
+              reinterpret_cast<const Scalar*>(weight),
+              reinterpret_cast<Scalar*>(residual), output, scales,
+              hidden_size, epsilon);
+    } else {
+      rms_norm_dynamic_fp8_kernel<Ops, false, false>
+          <<<rows, threads, 0,
+             reinterpret_cast<cudaStream_t>(stream)>>>(
+              reinterpret_cast<const Scalar*>(input),
+              reinterpret_cast<const Scalar*>(weight), nullptr, output,
+              scales, hidden_size, epsilon);
+    }
   }
   return cudaGetLastError() == cudaSuccess ? LOOM_CUDA_SUCCESS
                                            : LOOM_CUDA_LAUNCH_ERROR;
@@ -251,24 +336,28 @@ int launch_rms_norm_dynamic_fp8(const Input* input, const Input* weight,
 }  // namespace
 
 extern "C" int loom_cuda_rms_norm_dynamic_fp8_f32(
-    const float* input, const float* weight, uint8_t* output, float* scales,
-    uint32_t rows, uint32_t hidden_size, float epsilon, void* stream) {
+    const float* input, const float* weight, float* residual, uint8_t* output,
+    float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
+    void* stream) {
   return launch_rms_norm_dynamic_fp8<FloatOps>(
-      input, weight, output, scales, rows, hidden_size, epsilon, stream);
+      input, weight, residual, output, scales, rows, hidden_size, epsilon,
+      stream);
 }
 
 extern "C" int loom_cuda_rms_norm_dynamic_fp8_f16(
-    const uint16_t* input, const uint16_t* weight, uint8_t* output,
-    float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
-    void* stream) {
+    const uint16_t* input, const uint16_t* weight, uint16_t* residual,
+    uint8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
+    float epsilon, void* stream) {
   return launch_rms_norm_dynamic_fp8<HalfOps>(
-      input, weight, output, scales, rows, hidden_size, epsilon, stream);
+      input, weight, residual, output, scales, rows, hidden_size, epsilon,
+      stream);
 }
 
 extern "C" int loom_cuda_rms_norm_dynamic_fp8_bf16(
-    const uint16_t* input, const uint16_t* weight, uint8_t* output,
-    float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
-    void* stream) {
+    const uint16_t* input, const uint16_t* weight, uint16_t* residual,
+    uint8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
+    float epsilon, void* stream) {
   return launch_rms_norm_dynamic_fp8<Bfloat16Ops>(
-      input, weight, output, scales, rows, hidden_size, epsilon, stream);
+      input, weight, residual, output, scales, rows, hidden_size, epsilon,
+      stream);
 }

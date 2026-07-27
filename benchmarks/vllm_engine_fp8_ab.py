@@ -1,9 +1,9 @@
-"""Run a provider-isolated real-model vLLM FP8 A/B benchmark.
+"""Run a provider-isolated real-model vLLM FP8 fusion A/B benchmark.
 
 The controller starts the native vLLM baseline and Loom in separate Python
 processes so model teardown, CUDA Graph state, and fusion-table registration
 cannot leak across providers. Each child uses the same pretrained checkpoint,
-online FP8 block quantization, prompts, and generation settings.
+online FP8 quantization, vendor GEMM backend, prompts, and generation settings.
 """
 
 from __future__ import annotations
@@ -25,6 +25,7 @@ MODEL_DEFAULT = "Qwen/Qwen2.5-0.5B-Instruct"
 MODEL_REVISION_DEFAULT = "7ae557604adf67be50417f59c2c2f167def9a775"
 LINEAR_BACKEND_DEFAULT = "cutlass"
 PROVIDERS = ("vllm", "loom")
+FUSIONS = ("activation-quant", "rms-quant")
 
 
 @dataclass(frozen=True)
@@ -67,7 +68,14 @@ def parse_args() -> argparse.Namespace:
         default=MODEL_REVISION_DEFAULT,
         help="Pinned Hugging Face revision; recorded for local snapshots too.",
     )
-    parser.add_argument("--quantization", default="fp8_per_block")
+    parser.add_argument("--fusion", choices=FUSIONS, default="activation-quant")
+    parser.add_argument(
+        "--quantization",
+        help=(
+            "vLLM online quantization strategy. Defaults to fp8_per_block for "
+            "activation-quant and fp8_per_tensor for rms-quant."
+        ),
+    )
     parser.add_argument(
         "--linear-backend",
         default=LINEAR_BACKEND_DEFAULT,
@@ -99,6 +107,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--internal-result", type=Path, help=argparse.SUPPRESS)
     parser.add_argument("--internal-cache-root", type=Path, help=argparse.SUPPRESS)
     args = parser.parse_args()
+    if args.quantization is None:
+        args.quantization = (
+            "fp8_per_block"
+            if args.fusion == "activation-quant"
+            else "fp8_per_tensor"
+        )
     if args.cases is None:
         args.cases = [
             BenchmarkCase(1, 128, 128),
@@ -164,6 +178,52 @@ def request_metrics(outputs: list[Any]) -> tuple[list[float], list[float], list[
     return ttft_ms, tpot_ms, e2e_ms
 
 
+def audit_generated_sources(
+    cache_root: Path, fusion: str
+) -> dict[str, Any]:
+    operator_patterns = (
+        {
+            "loom": (
+                "torch.ops.loom_kernels."
+                "silu_and_mul_per_block_fp8.default"
+            ),
+            "vllm": "torch.ops._C.silu_and_mul",
+        }
+        if fusion == "activation-quant"
+        else {
+            "loom": (
+                "torch.ops.loom_kernels."
+                "rms_norm_dynamic_per_token_fp8.default"
+            ),
+            "vllm": (
+                "torch.ops._C."
+                "rms_norm_dynamic_per_token_quant.default"
+            ),
+        }
+    )
+    patterns = {
+        **operator_patterns,
+        "cutlass_scaled_mm": "torch.ops._C.cutlass_scaled_mm.default",
+    }
+    call_counts = {name: 0 for name in patterns}
+    matching_files = {name: [] for name in patterns}
+    python_files = 0
+    for source in sorted(cache_root.rglob("*.py")):
+        python_files += 1
+        contents = source.read_text(encoding="utf-8", errors="replace")
+        for name, pattern in patterns.items():
+            count = contents.count(pattern)
+            if count > 0:
+                call_counts[name] += count
+                matching_files[name].append(str(source.relative_to(cache_root)))
+    return {
+        "python_files": python_files,
+        "patterns": patterns,
+        "call_counts": call_counts,
+        "matching_files": matching_files,
+    }
+
+
 def run_case(
     engine: Any,
     sampling_type: Any,
@@ -224,7 +284,12 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
     assert provider is not None
     os.environ["LOOM_KERNELS_ENABLE_SILU_AND_MUL"] = "0"
     os.environ["LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8"] = (
-        "1" if provider == "loom" else "0"
+        "1"
+        if provider == "loom" and args.fusion == "activation-quant"
+        else "0"
+    )
+    os.environ["LOOM_KERNELS_ENABLE_RMS_NORM_FP8"] = (
+        "1" if provider == "loom" and args.fusion == "rms-quant" else "0"
     )
     os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
     os.environ.pop("VLLM_DISABLED_KERNELS", None)
@@ -264,30 +329,66 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
     )
     from loom_kernels.vllm import (
         provider_metadata,
+        register_vllm_rms_norm_dynamic_fp8,
         register_vllm_silu_and_mul_dynamic_fp8,
     )
-    from vllm.compilation.passes.fusion.act_quant_fusion import FUSED_OPS
+    from vllm.compilation.passes.fusion.act_quant_fusion import (
+        FUSED_OPS as ACT_FUSED_OPS,
+    )
+    from vllm.compilation.passes.fusion.rms_quant_fusion import (
+        FUSED_OPS as RMS_FUSED_OPS,
+        FusedRMSQuantKey,
+    )
     from vllm.compilation.passes.vllm_inductor_pass import get_match_table
     from vllm.model_executor.layers.quantization.utils.quant_utils import (
         kFp8Dynamic128Sym,
+        kFp8DynamicTokenSym,
     )
 
-    loom_operator = torch.ops.loom_kernels.silu_and_mul_per_block_fp8.default
-    fusion_table_uses_loom_before_registration = (
-        FUSED_OPS[kFp8Dynamic128Sym] == loom_operator
-    )
+    if args.fusion == "activation-quant":
+        loom_operator = (
+            torch.ops.loom_kernels.silu_and_mul_per_block_fp8.default
+        )
+        fusion_table = ACT_FUSED_OPS
+        fusion_keys = (kFp8Dynamic128Sym,)
+        register_fusion = register_vllm_silu_and_mul_dynamic_fp8
+        telemetry_operator = Operator.SILU_AND_MUL_DYNAMIC_FP8
+        custom_ops = ["+quant_fp8"]
+        pass_config = {
+            "fuse_act_quant": True,
+            "fuse_norm_quant": False,
+        }
+    else:
+        loom_operator = (
+            torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8.default
+        )
+        fusion_table = RMS_FUSED_OPS
+        fusion_keys = (
+            FusedRMSQuantKey(kFp8DynamicTokenSym, fused_add=False),
+            FusedRMSQuantKey(kFp8DynamicTokenSym, fused_add=True),
+        )
+        register_fusion = register_vllm_rms_norm_dynamic_fp8
+        telemetry_operator = Operator.RMS_NORM_DYNAMIC_FP8
+        custom_ops = ["+rms_norm", "+quant_fp8"]
+        pass_config = {
+            "fuse_act_quant": False,
+            "fuse_norm_quant": True,
+        }
+
+    def fusion_table_uses_loom() -> bool:
+        return all(fusion_table[key] == loom_operator for key in fusion_keys)
+
+    table_uses_loom_before_registration = fusion_table_uses_loom()
     explicit_registration = None
     if provider == "loom":
         # vLLM captures the selected replacement while constructing its fusion
         # pass. Install this process-local override before constructing LLM so
         # the benchmark does not depend on plugin-discovery timing.
-        explicit_registration = register_vllm_silu_and_mul_dynamic_fp8()
+        explicit_registration = register_fusion()
         if explicit_registration is None:
-            raise RuntimeError("Loom FP8 activation fusion registration failed")
-    fusion_table_uses_loom_before_engine = (
-        FUSED_OPS[kFp8Dynamic128Sym] == loom_operator
-    )
-    reset_launch_count(Operator.SILU_AND_MUL_DYNAMIC_FP8)
+            raise RuntimeError(f"Loom {args.fusion} registration failed")
+    table_uses_loom_before_engine = fusion_table_uses_loom()
+    reset_launch_count(telemetry_operator)
 
     model_path = Path(args.model).expanduser()
     model_is_local = model_path.exists()
@@ -306,22 +407,21 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
         "seed": args.seed,
         "disable_log_stats": False,
         "compilation_config": {
-            "custom_ops": ["+quant_fp8"],
-            "pass_config": {"fuse_act_quant": True},
+            "custom_ops": custom_ops,
+            "pass_config": pass_config,
         },
     }
     if args.model_revision and not model_is_local:
         engine_arguments["revision"] = args.model_revision
     engine = LLM(**engine_arguments)
-    launches_after_engine_init = launch_count(
-        Operator.SILU_AND_MUL_DYNAMIC_FP8
-    )
+    launches_after_engine_init = launch_count(telemetry_operator)
     fusion_matches_after_engine = get_match_table()
 
-    fusion_table_uses_loom = FUSED_OPS[kFp8Dynamic128Sym] == loom_operator
+    table_uses_loom = fusion_table_uses_loom()
     cases = [run_case(engine, SamplingParams, case, args) for case in args.cases]
-    host_launch_count = launch_count(Operator.SILU_AND_MUL_DYNAMIC_FP8)
+    host_launch_count = launch_count(telemetry_operator)
     fusion_matches_after_cases = get_match_table()
+    generated_sources = audit_generated_sources(cache_root, args.fusion)
     report = {
         "provider": provider,
         "model": model,
@@ -329,6 +429,7 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
         "model_revision": args.model_revision,
         "model_kind": "local-checkpoint" if model_is_local else "huggingface",
         "dtype": "bfloat16",
+        "fusion": args.fusion,
         "quantization": args.quantization,
         "linear_backend": args.linear_backend,
         "warmup": args.warmup,
@@ -337,17 +438,18 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
         "cases": cases,
         "loom_path": {
             "fusion_table_uses_loom_before_registration": (
-                fusion_table_uses_loom_before_registration
+                table_uses_loom_before_registration
             ),
             "explicit_registration": explicit_registration,
             "fusion_table_uses_loom_before_engine": (
-                fusion_table_uses_loom_before_engine
+                table_uses_loom_before_engine
             ),
-            "fusion_table_uses_loom": fusion_table_uses_loom,
+            "fusion_table_uses_loom": table_uses_loom,
             "launches_after_engine_init": launches_after_engine_init,
             "host_launch_count": host_launch_count,
             "fusion_matches_after_engine": fusion_matches_after_engine,
             "fusion_matches_after_cases": fusion_matches_after_cases,
+            "generated_sources": generated_sources,
             "counter_semantics": (
                 "host submissions during graph construction or eager execution; "
                 "CUDA Graph replays do not increment this counter"
@@ -370,8 +472,9 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
         json.dumps(report, indent=2) + "\n", encoding="utf-8"
     )
     print(
-        f"provider={provider} loom_table={fusion_table_uses_loom} "
-        f"loom_host_launches={launch_count}",
+        f"provider={provider} fusion={args.fusion} "
+        f"loom_table={table_uses_loom} "
+        f"loom_host_launches={host_launch_count}",
         file=sys.stderr,
     )
     return report
@@ -390,6 +493,8 @@ def child_command(
         args.model,
         "--model-revision",
         args.model_revision,
+        "--fusion",
+        args.fusion,
         "--quantization",
         args.quantization,
         "--linear-backend",
@@ -481,28 +586,69 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
 
     comparisons, tokens_match = compare_reports(reports)
     baseline_clean = not reports["vllm"]["loom_path"]["fusion_table_uses_loom"]
+    baseline_not_launched = (
+        reports["vllm"]["loom_path"]["host_launch_count"] == 0
+    )
     loom_registered = reports["loom"]["loom_path"]["fusion_table_uses_loom"]
     loom_launched = reports["loom"]["loom_path"]["host_launch_count"] > 0
+    pass_name = (
+        "activation_quant_fusion_pass"
+        if args.fusion == "activation-quant"
+        else "rmsnorm_quant_fusion_pass"
+    )
     baseline_matches = reports["vllm"]["loom_path"][
         "fusion_matches_after_engine"
-    ].get("activation_quant_fusion_pass", 0)
+    ].get(pass_name, 0)
     loom_matches = reports["loom"]["loom_path"][
         "fusion_matches_after_engine"
-    ].get("activation_quant_fusion_pass", 0)
-    providers_matched_same_graph = baseline_matches > 0 and (
-        baseline_matches == loom_matches
-    )
+    ].get(pass_name, 0)
+    baseline_source_counts = reports["vllm"]["loom_path"][
+        "generated_sources"
+    ]["call_counts"]
+    loom_source_counts = reports["loom"]["loom_path"]["generated_sources"][
+        "call_counts"
+    ]
+    if args.fusion == "activation-quant":
+        generated_source_evidence = None
+        providers_matched_same_graph = baseline_matches > 0 and (
+            baseline_matches == loom_matches
+        )
+        fusion_evidence_passed = providers_matched_same_graph
+    else:
+        generated_source_evidence = {
+            "baseline_vllm_operator_calls": baseline_source_counts["vllm"],
+            "baseline_loom_operator_calls": baseline_source_counts["loom"],
+            "loom_vllm_operator_calls": loom_source_counts["vllm"],
+            "loom_operator_calls": loom_source_counts["loom"],
+            "baseline_cutlass_scaled_mm_calls": baseline_source_counts[
+                "cutlass_scaled_mm"
+            ],
+            "loom_cutlass_scaled_mm_calls": loom_source_counts[
+                "cutlass_scaled_mm"
+            ],
+        }
+        providers_matched_same_graph = None
+        fusion_evidence_passed = (
+            baseline_source_counts["vllm"] > 0
+            and baseline_source_counts["loom"] == 0
+            and loom_source_counts["loom"] > 0
+            and loom_source_counts["vllm"] == 0
+            and baseline_source_counts["cutlass_scaled_mm"] > 0
+            and loom_source_counts["cutlass_scaled_mm"] > 0
+        )
     accepted = (
         tokens_match
         and baseline_clean
+        and baseline_not_launched
         and loom_registered
         and loom_launched
-        and providers_matched_same_graph
+        and fusion_evidence_passed
     )
     report = {
         "benchmark": "vllm_real_model_fp8_ab",
         "model": args.model,
         "model_revision": args.model_revision,
+        "fusion": args.fusion,
         "quantization": args.quantization,
         "linear_backend": args.linear_backend,
         "provider_order": order,
@@ -510,11 +656,15 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
             "passed": accepted,
             "token_ids_match": tokens_match,
             "baseline_uses_native_fusion": baseline_clean,
+            "baseline_loom_host_launches_zero": baseline_not_launched,
             "loom_fusion_registered": loom_registered,
             "loom_host_launch_observed": loom_launched,
-            "baseline_activation_quant_matches": baseline_matches,
-            "loom_activation_quant_matches": loom_matches,
+            "fusion_pass_name": pass_name,
+            "baseline_fusion_matches": baseline_matches,
+            "loom_fusion_matches": loom_matches,
             "providers_matched_same_graph": providers_matched_same_graph,
+            "generated_source_evidence": generated_source_evidence,
+            "fusion_evidence_passed": fusion_evidence_passed,
         },
         "comparisons": comparisons,
         "providers": reports,

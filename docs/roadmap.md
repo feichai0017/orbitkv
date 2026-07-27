@@ -192,8 +192,18 @@ improves a real model workload. Standalone SiLU parity alone does not close it.
 
 ## K2.5: Quantization Plumbing Around Vendor GEMM
 
-Status: planned.
+Status: in progress; the first optional-residual RMSNorm-to-FP8 slice is
+source-, integration-, and H20-qualified. Its ABI9 clean-wheel matrix remains
+the final binary gate.
 
+- ~~generalize RMSNorm-to-dynamic-per-token-FP8 to the exact optional-residual
+  vLLM fusion schema~~ — both plain and Add+RMSNorm fusion keys now use one
+  ABI9 Rust/CUDA path; all FP8 bytes, scales, and residual bytes match vLLM;
+- ~~prove the first real vendor-GEMM handoff~~ — generated-source audits show
+  native/Loom normalization calls swapping while both providers retain eight
+  Cutlass scaled-mm call sites. Order-reversed Qwen2.5-0.5B prefill improves
+  batch latency by `1.0066-1.0506x`; decode-heavy latency crosses parity and
+  carries no acceleration claim;
 - per-token, per-channel, and per-block scale reduction for FP8 and INT8;
 - pack/unpack and layout conversion for engine-selected quantized kernels;
 - dequantize, requantize, scale conversion, and scale-layout transpose;
@@ -204,6 +214,10 @@ Status: planned.
 Exit: a named quantized model path passes bitwise or declared-tolerance gates,
 records the vendor GEMM unchanged on both sides, and improves an engine-level
 latency, memory, or temporary-allocation metric.
+
+The first slice meets the source and engine exit on the exact Qwen prefill
+boundary. K2.5 remains open for its ABI9 clean-wheel matrix and for additional
+scale/pack/layout work admitted by another named vendor-kernel consumer.
 
 ## K3: KV-Cache Update Family
 

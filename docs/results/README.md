@@ -42,7 +42,7 @@ otherwise.
 | --- | --- | --- |
 | RMSNorm | [F32 bring-up](h20-rms-norm-f32-smoke-20260721.json) · [FP16/BF16 paths](h20-rms-norm-low-precision-20260721.json) | Handwritten CUDA correctness and low-precision vector paths are qualified |
 | Add+RMSNorm | [Operator gate](h20-add-rms-norm-20260721.json) · [vLLM IR gate](h20-vllm-ir-add-rms-norm-20260721.json) | Double in-place fusion and current-stream engine dispatch are supported |
-| RMSNorm→FP8 | [Operator gate](h20-rms-norm-dynamic-fp8-20260721.json) · [Qwen2.5 engine gate](h20-vllm-qwen25-05b-fp8-engine-20260722.json) | Exact path invocation is proven; real-model latency remains at parity |
+| Optional-residual RMSNorm→FP8 | [Original operator gate](h20-rms-norm-dynamic-fp8-20260721.json) · [ABI9 residual and Qwen prefill gate](h20-rms-norm-dynamic-fp8-residual-20260727.json) | Plain and fused-add schemas are exact; direct CUDA Graph ratios are `1.033-1.082x`, and order-reversed 128-token Qwen prefill improves `1.0066-1.0506x` with unchanged Cutlass GEMM. Decode-heavy latency crosses parity |
 | SiLU-and-Mul | [Operator and engine gate](h20-silu-and-mul-20260721.json) | Compatible and engine-valid; CUDA Graph latency is at parity |
 | SiLU-and-Mul→block FP8 | [Fused operator gate](h20-silu-and-mul-dynamic-fp8-20260721.json) · [Qwen2.5 engine gate](h20-vllm-qwen25-05b-fp8-engine-20260722.json) | Operator-level advantage; exact real-model invocation; end-to-end parity |
 

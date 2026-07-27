@@ -32,13 +32,14 @@ def vllm_dynamic_fp8_reference(
     input_tensor: torch.Tensor,
     weight: torch.Tensor,
     epsilon: float,
+    residual: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     pytest.importorskip("vllm")
     output = torch.empty_like(input_tensor, dtype=torch.float8_e4m3fn)
     rows = input_tensor.numel() // input_tensor.shape[-1]
     scales = torch.empty((rows, 1), device=input_tensor.device, dtype=torch.float32)
     torch.ops._C.rms_norm_dynamic_per_token_quant(
-        output, input_tensor, weight, scales, epsilon, None, None
+        output, input_tensor, weight, scales, epsilon, None, residual
     )
     return output, scales
 
@@ -162,19 +163,30 @@ def test_rms_norm_matches_reference(dtype):
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
 @pytest.mark.parametrize("shape", [(8, 4096), (3, 127)])
-def test_rms_norm_dynamic_fp8_matches_vllm_on_external_stream(dtype, shape):
+@pytest.mark.parametrize("with_residual", [False, True])
+def test_rms_norm_dynamic_fp8_matches_vllm_on_external_stream(
+    dtype, shape, with_residual
+):
     torch.manual_seed(29)
     epsilon = 1.0e-5
     input_tensor = torch.randn(shape, device="cuda", dtype=dtype)
     weight = torch.randn(shape[-1], device="cuda", dtype=dtype)
+    residual = (
+        torch.randn(shape, device="cuda", dtype=dtype)
+        if with_residual
+        else None
+    )
+    expected_residual = residual.clone() if residual is not None else None
     expected_output, expected_scales = vllm_dynamic_fp8_reference(
-        input_tensor, weight, epsilon
+        input_tensor, weight, epsilon, expected_residual
     )
 
     reset_launch_count(Operator.RMS_NORM_DYNAMIC_FP8)
     stream = torch.cuda.Stream()
     with torch.cuda.stream(stream):
-        output, scales = rms_norm_dynamic_fp8(input_tensor, weight, epsilon)
+        output, scales = rms_norm_dynamic_fp8(
+            input_tensor, weight, epsilon, residual
+        )
     stream.synchronize()
 
     assert launch_count(Operator.RMS_NORM_DYNAMIC_FP8) == 1
@@ -182,6 +194,9 @@ def test_rms_norm_dynamic_fp8_matches_vllm_on_external_stream(dtype, shape):
     assert scales.shape == (input_tensor.numel() // shape[-1], 1)
     assert torch.equal(output.view(torch.uint8), expected_output.view(torch.uint8))
     torch.testing.assert_close(scales, expected_scales, rtol=2.0e-6, atol=1.0e-8)
+    if residual is not None:
+        assert expected_residual is not None
+        assert torch.equal(residual, expected_residual)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -213,8 +228,8 @@ def test_dynamic_fp8_rejects_short_scales():
 
     reset_launch_count(Operator.RMS_NORM_DYNAMIC_FP8)
     with pytest.raises(RuntimeError, match=r"shape \[rows, 1\]"):
-        torch.ops.loom_kernels.rms_norm_dynamic_fp8(
-            input_tensor, weight, output, scales, 1.0e-5
+        torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8(
+            output, input_tensor, weight, scales, 1.0e-5, None, None
         )
     assert launch_count(Operator.RMS_NORM_DYNAMIC_FP8) == 0
 
@@ -233,27 +248,63 @@ def test_dynamic_fp8_rejects_output_alias():
 
     reset_launch_count(Operator.RMS_NORM_DYNAMIC_FP8)
     with pytest.raises(RuntimeError, match=r"must not overlap"):
-        torch.ops.loom_kernels.rms_norm_dynamic_fp8(
-            input_tensor, weight, output, scales, 1.0e-5
+        torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8(
+            output, input_tensor, weight, scales, 1.0e-5, None, None
+        )
+    assert launch_count(Operator.RMS_NORM_DYNAMIC_FP8) == 0
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_dynamic_fp8_rejects_scale_bound_and_residual_alias():
+    input_tensor = torch.randn(2, 128, device="cuda", dtype=torch.bfloat16)
+    weight = torch.ones(128, device="cuda", dtype=torch.bfloat16)
+    output = torch.empty_like(input_tensor, dtype=torch.float8_e4m3fn)
+    scales = torch.empty(2, 1, device="cuda", dtype=torch.float32)
+    scale_ub = torch.ones(1, device="cuda", dtype=torch.float32)
+
+    reset_launch_count(Operator.RMS_NORM_DYNAMIC_FP8)
+    with pytest.raises(RuntimeError, match=r"does not support a scale upper bound"):
+        torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8(
+            output,
+            input_tensor,
+            weight,
+            scales,
+            1.0e-5,
+            scale_ub,
+            None,
+        )
+    with pytest.raises(RuntimeError, match=r"must not overlap"):
+        torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8(
+            output,
+            input_tensor,
+            weight,
+            scales,
+            1.0e-5,
+            None,
+            input_tensor,
         )
     assert launch_count(Operator.RMS_NORM_DYNAMIC_FP8) == 0
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_dynamic_fp8_schema_declares_both_mutations():
-    schema = str(torch.ops.loom_kernels.rms_norm_dynamic_fp8.default._schema)
-    assert "Tensor(a!) output" in schema
-    assert "Tensor(b!) scales" in schema
+    schema = str(
+        torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8.default._schema
+    )
+    assert "Tensor(a!) result" in schema
+    assert "Tensor(b!) scale" in schema
+    assert "Tensor(c!)? residual=None" in schema
 
 
 def test_bridge_abi_is_current():
-    assert bridge_abi_version() == 8
+    assert bridge_abi_version() == 9
 
 
 @pytest.mark.parametrize(
     "operator",
     [
         "add_rms_norm_mut_unchecked",
+        "rms_norm_dynamic_fp8",
         "rms_norm_dynamic_fp8_unchecked",
         "silu_and_mul_unchecked",
         "silu_and_mul_dynamic_fp8_unchecked",
@@ -287,22 +338,32 @@ def test_add_rms_norm_op_survives_torch_compile():
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_dynamic_fp8_op_survives_torch_compile():
-    def compiled_target(input_tensor, weight, output, scales):
-        torch.ops.loom_kernels.rms_norm_dynamic_fp8(
-            input_tensor, weight, output, scales, 1.0e-5
+    def compiled_target(input_tensor, residual, weight, output, scales):
+        torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8(
+            output,
+            input_tensor,
+            weight,
+            scales,
+            1.0e-5,
+            None,
+            residual,
         )
-        return output, scales
+        return output, scales, residual
 
     compiled = torch.compile(compiled_target, fullgraph=True)
     input_tensor = torch.randn(2, 128, device="cuda", dtype=torch.bfloat16)
+    residual = torch.randn_like(input_tensor)
+    expected_residual = residual.clone()
     weight = torch.randn(128, device="cuda", dtype=torch.bfloat16)
     output = torch.empty_like(input_tensor, dtype=torch.float8_e4m3fn)
     scales = torch.empty(2, 1, device="cuda", dtype=torch.float32)
     expected_output, expected_scales = vllm_dynamic_fp8_reference(
-        input_tensor, weight, 1.0e-5
+        input_tensor, weight, 1.0e-5, expected_residual
     )
 
-    actual_output, actual_scales = compiled(input_tensor, weight, output, scales)
+    actual_output, actual_scales, actual_residual = compiled(
+        input_tensor, residual, weight, output, scales
+    )
     torch.cuda.synchronize()
 
     assert torch.equal(
@@ -311,6 +372,7 @@ def test_dynamic_fp8_op_survives_torch_compile():
     torch.testing.assert_close(
         actual_scales, expected_scales, rtol=2.0e-6, atol=1.0e-8
     )
+    assert torch.equal(actual_residual, expected_residual)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -348,8 +410,8 @@ def test_dynamic_fp8_checked_op_can_be_captured_and_replayed():
     reset_launch_count(Operator.RMS_NORM_DYNAMIC_FP8)
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
-        torch.ops.loom_kernels.rms_norm_dynamic_fp8(
-            input_tensor, weight, output, scales, 1.0e-5
+        torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8(
+            output, input_tensor, weight, scales, 1.0e-5, None, None
         )
     output.fill_(0)
     scales.zero_()

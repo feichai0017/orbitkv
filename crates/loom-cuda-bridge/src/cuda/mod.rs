@@ -1,5 +1,7 @@
 use half::{bf16, f16};
-use loom_cuda::runtime::{CudaStreamHandle, CudaStreamRef, DeviceSlice, DeviceSliceMut};
+use loom_cuda::runtime::{
+    CudaDeviceWrite, CudaStreamHandle, CudaStreamRef, DeviceSlice, DeviceSliceMut,
+};
 use loom_cuda::{
     paged_decode_attention_split_k_workspace_elements, CudaBackend, CudaExecutorError,
     Fp8ScaleLayout, PagedDecodeLayout, RopePagedKvLayout, RowStridedLayout,
@@ -281,6 +283,25 @@ unsafe fn write_slice<'a, T: Copy>(
     Ok((slice, range))
 }
 
+unsafe fn write_optional_slice<'a, T: Copy>(
+    pointer: *mut T,
+    elements: u64,
+    name: &str,
+) -> Result<(Option<DeviceSliceMut<'a, T>>, Option<ByteRange>), CudaExecutorError> {
+    let elements = element_count(elements, name)?;
+    if elements == 0 {
+        if !pointer.is_null() {
+            return Err(CudaExecutorError::InvalidContract(format!(
+                "{name} pointer must be null when the optional region is absent"
+            )));
+        }
+        return Ok((None, None));
+    }
+    let range = checked_byte_range(pointer.cast_const(), elements, name)?;
+    let slice = unsafe { DeviceSliceMut::from_raw_parts(pointer, elements) }?;
+    Ok((Some(slice), Some(range)))
+}
+
 fn stream_backend(stream: *mut c_void) -> CudaBackend<CudaStreamRef<'static>> {
     let stream = unsafe { CudaStreamRef::from_raw(stream) };
     CudaBackend::from_stream(stream)
@@ -309,6 +330,7 @@ trait Scalar: Copy {
         backend: &CudaBackend<S>,
         input: &DeviceSlice<'_, Self>,
         weight: &DeviceSlice<'_, Self>,
+        residual: Option<&mut DeviceSliceMut<'_, Self>>,
         output: &mut DeviceSliceMut<'_, u8>,
         scales: &mut DeviceSliceMut<'_, f32>,
         spec: RmsNormDynamicFp8Spec,
@@ -518,11 +540,13 @@ macro_rules! impl_scalar {
                 backend: &CudaBackend<S>,
                 input: &DeviceSlice<'_, Self>,
                 weight: &DeviceSlice<'_, Self>,
+                residual: Option<&mut DeviceSliceMut<'_, Self>>,
                 output: &mut DeviceSliceMut<'_, u8>,
                 scales: &mut DeviceSliceMut<'_, f32>,
                 spec: RmsNormDynamicFp8Spec,
             ) -> Result<(), CudaExecutorError> {
-                backend.$rms_norm_dynamic_fp8(input, weight, output, scales, spec)
+                let residual = residual.map(|values| values as &mut dyn CudaDeviceWrite<Self>);
+                backend.$rms_norm_dynamic_fp8(input, weight, residual, output, scales, spec)
             }
 
             fn silu_and_mul<S: CudaStreamHandle>(
@@ -838,7 +862,7 @@ macro_rules! dispatch_scalar {
 /// Return the bridge ABI version.
 #[no_mangle]
 pub extern "C" fn loom_cuda_bridge_abi_version() -> u32 {
-    8
+    9
 }
 
 /// Return the detailed error recorded by the most recent failed bridge call

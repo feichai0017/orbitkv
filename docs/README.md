@@ -15,6 +15,7 @@ the evidence used to qualify them.
 | Use Rust or CUDA | [Project quick start](../README.md#quick-start) | [Implementation status](status.md) |
 | Integrate PyTorch or vLLM | [Python README](../python/README.md) | [vLLM provider guide](guides/vllm-ir-provider.md) |
 | Check supported versions | [Compatibility matrix](compatibility.md) | [Implementation status](status.md) |
+| Work on quantization plumbing | [K2.5 roadmap](roadmap.md#k25-quantization-plumbing-around-vendor-gemm) | [Optional-residual RMSNorm→FP8 evidence](results/h20-rms-norm-dynamic-fp8-residual-20260727.json) |
 | Work on paged decode | [Paged-decode design](design/paged-decode-attention.md) | [Paged-decode evidence](results/README.md#paged-decode-attention) |
 | Work on FP8 KV cache | [FP8 KV-cache design](design/fp8-kv-cache.md) | [K3 roadmap](roadmap.md#k3-kv-cache-update-family) |
 | Work on seeded sampling | [Counter-based sampling design](design/counter-based-sampling.md) | [K4 roadmap](roadmap.md#k4-decode-tail) |

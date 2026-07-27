@@ -46,7 +46,7 @@ core; it will not implement a competing GEMM.
 
 | Family | Operators | Qualified boundary |
 | --- | --- | --- |
-| Normalization | RMSNorm · Add+RMSNorm · RMSNorm→dynamic FP8 | F32, FP16, BF16; PyTorch and vLLM IR coverage |
+| Normalization | RMSNorm · Add+RMSNorm · optional residual Add+RMSNorm→dynamic FP8 | F32, FP16, BF16; exact PyTorch/vLLM mutation schema and opt-in compiler fusion |
 | MLP | split-half SiLU-and-Mul · SiLU-and-Mul→block FP8 | F32, FP16, BF16; opt-in vLLM activation paths |
 | Position and KV | NeoX/interleaved RoPE + native/static-FP8 paged-KV write | packed QKV, NHD/HND cache views, static per-tensor/per-head FP8 E4M3 scales, current-stream PyTorch |
 | Decode tail | fused logits preprocessing · deterministic categorical sampling · greedy + sampled logprob · selected-token logprob + rank · exact in-place top-k filter · fused top-p + renormalization · sampled-token + top-k logprobs · sparse penalties · Min-P | mixed greedy/random preprocessing, explicit Philox state, exact-token/rank gates, and measured vLLM fallbacks |
@@ -85,6 +85,17 @@ is now:
 | 3 | Profile-gated KV movement | revisit only for a named offload, beam, or compaction path with real physical movement |
 | 4 | Profile-gated speculative extensions | tree/stochastic/KV work only after a named workload exposes a material non-GEMM boundary |
 | 5 | Minimal Rust decode proof | one zero-copy decode step over borrowed tensors and streams, without becoming an inference engine |
+
+The first quantization-plumbing slice is implemented through bridge ABI9.
+One exact operator now covers both vLLM RMSNorm-to-dynamic-FP8 fusion keys:
+plain normalization and residual Add+RMSNorm. On H20 it is bitwise identical
+to vLLM across F32/FP16/BF16, directly faster for the measured BF16
+hidden-size-896 cases, and preserves all Cutlass scaled-mm call sites in a real
+Qwen2.5-0.5B graph. Order-reversed, 15-sample prefill-only runs improve batch
+latency by `1.0066-1.0506x`; decode-heavy runs cross parity, so no TPOT or
+throughput win is claimed. ABI8 remains the current qualified wheel until the
+new ABI9 clean-install matrix closes. See the
+[K2.5 H20 evidence](docs/results/h20-rms-norm-dynamic-fp8-residual-20260727.json).
 
 The explicit-seed, non-speculative sampling subsystem is complete through
 binary distribution.
@@ -257,6 +268,7 @@ opens the raw JSON artifact used for the claim.
 
 | Path | Qualified result | Claim boundary |
 | --- | --- | --- |
+| [Optional-residual RMSNorm→dynamic FP8](docs/results/h20-rms-norm-dynamic-fp8-residual-20260727.json) | Exact FP8/scale/residual bytes; `1.033–1.082×` direct CUDA Graph ratio; order-stable `1.0066–1.0506×` Qwen prefill batch-latency ratio | vLLM 0.24 `fp8_per_tensor`, BF16 Qwen2.5-0.5B, Cutlass GEMM, 128-token prefill. Decode-heavy latency crosses parity; ABI9 wheel qualification remains open |
 | [Greedy + sampled logprob](docs/results/h20-greedy-sample-logprobs-20260722.json) | `3.16–4.35×` operator ratio; `1.129–1.250×` real-engine batch-latency ratio | Pure greedy requests with raw `logprobs=0` |
 | [Selected-token logprob + rank](docs/results/h20-selected-token-logprobs-20260722.json) | `2.77–3.78×` operator ratio; `1.044–1.125×` real-engine batch-latency ratio | vLLM still owns top-k/top-p, RNG, and selection |
 | [Exact in-place top-k filter](docs/results/h20-top-k-filter-20260727.json) | `1.42–2.15×` over vLLM's full sort for all admitted 1–7-row cases; `0.62–4.36 MB` versus `4.90–47.01 MB` peak temporaries | F32, 151,936-token vocabulary, `top_k=50`; threshold ties preserved and larger batches remain on vLLM Qrita Triton |

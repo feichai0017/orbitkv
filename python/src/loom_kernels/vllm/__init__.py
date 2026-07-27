@@ -11,6 +11,7 @@ from . import activation as _activation
 from . import attention as _attention
 from . import categorical as _categorical
 from . import logits as _logits
+from . import norm as _norm
 from . import rope_kv as _rope_kv
 from . import sampling as _sampling
 from . import speculative as _speculative
@@ -49,6 +50,11 @@ from .logits import (
     MIN_P_OVERRIDE_KEY,
     register_vllm_logits_preprocess,
     register_vllm_min_p,
+)
+from .norm import (
+    RMS_NORM_FP8_OVERRIDE_ENV,
+    RMS_NORM_FP8_OVERRIDE_KEY,
+    register_vllm_rms_norm_dynamic_fp8,
 )
 from .rope_kv import (
     ROPE_PAGED_KV_OVERRIDE_KEY,
@@ -94,6 +100,8 @@ def register_vllm_ir(provider: str = DEFAULT_PROVIDER) -> str | None:
         register_vllm_silu_and_mul()
     if _activation._act_quant_override_requested():
         register_vllm_silu_and_mul_dynamic_fp8()
+    if _norm._rms_norm_fp8_override_requested():
+        register_vllm_rms_norm_dynamic_fp8()
     if _logits._min_p_override_requested():
         register_vllm_min_p()
     if _logits._logits_preprocess_override_requested():
@@ -158,6 +166,7 @@ def provider_metadata() -> dict[str, Any]:
         _attention,
         _categorical,
         _logits,
+        _norm,
         _rope_kv,
         _sampling,
         _speculative,
@@ -184,6 +193,8 @@ __all__ = [
     "PAGED_DECODE_OVERRIDE_ENV",
     "PAGED_DECODE_OVERRIDE_KEY",
     "ROPE_PAGED_KV_OVERRIDE_KEY",
+    "RMS_NORM_FP8_OVERRIDE_ENV",
+    "RMS_NORM_FP8_OVERRIDE_KEY",
     "SELECTED_TOKEN_LOGPROBS_OVERRIDE_KEY",
     "SILU_OVERRIDE_ENV",
     "SILU_OVERRIDE_KEY",
@@ -208,6 +219,7 @@ __all__ = [
     "register_vllm_greedy_sample_logprobs",
     "register_vllm_greedy_speculative_verify",
     "register_vllm_rope_paged_kv",
+    "register_vllm_rms_norm_dynamic_fp8",
     "register_vllm_selected_token_logprobs",
     "register_vllm_token_penalties",
     "register_vllm_top_k_filter",

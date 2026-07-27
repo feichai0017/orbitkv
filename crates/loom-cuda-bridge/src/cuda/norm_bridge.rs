@@ -80,6 +80,8 @@ unsafe fn launch_rms_norm_dynamic_fp8<T: Scalar>(
     input_elements: u64,
     weight: *const T,
     weight_elements: u64,
+    residual: *mut T,
+    residual_elements: u64,
     output: *mut u8,
     output_elements: u64,
     scales: *mut f32,
@@ -92,25 +94,29 @@ unsafe fn launch_rms_norm_dynamic_fp8<T: Scalar>(
     let (input, input_range) = unsafe { read_slice(input, input_elements, "RMSNorm+FP8 input") }?;
     let (weight, weight_range) =
         unsafe { read_slice(weight, weight_elements, "RMSNorm+FP8 weight") }?;
+    let (mut residual, residual_range) =
+        unsafe { write_optional_slice(residual, residual_elements, "RMSNorm+FP8 residual") }?;
     let (mut output, output_range) =
         unsafe { write_slice(output, output_elements, "RMSNorm+FP8 output") }?;
     let (mut scales, scales_range) =
         unsafe { write_slice(scales, scale_elements, "RMSNorm+FP8 scales") }?;
-    require_disjoint(
-        &[
-            ("input", input_range),
-            ("weight", weight_range),
-            ("output", output_range),
-            ("scales", scales_range),
-        ],
-        "RMSNorm+FP8",
-    )?;
+    let mut regions = vec![
+        ("input", input_range),
+        ("weight", weight_range),
+        ("output", output_range),
+        ("scales", scales_range),
+    ];
+    if let Some(range) = residual_range {
+        regions.push(("residual", range));
+    }
+    require_disjoint(&regions, "RMSNorm+FP8")?;
     let spec = RmsNormDynamicFp8Spec::new(rows as usize, hidden_size as usize, epsilon, T::DTYPE)
         .map_err(invalid_contract)?;
     T::rms_norm_dynamic_fp8(
         &stream_backend(stream),
         &input,
         &weight,
+        residual.as_mut(),
         &mut output,
         &mut scales,
         spec,
@@ -214,6 +220,8 @@ pub unsafe extern "C" fn loom_cuda_bridge_rms_norm_dynamic_fp8(
     input_elements: u64,
     weight: *const c_void,
     weight_elements: u64,
+    residual: *mut c_void,
+    residual_elements: u64,
     output: *mut u8,
     output_elements: u64,
     scales: *mut f32,
@@ -232,6 +240,8 @@ pub unsafe extern "C" fn loom_cuda_bridge_rms_norm_dynamic_fp8(
                 input_elements,
                 weight.cast(),
                 weight_elements,
+                residual.cast(),
+                residual_elements,
                 output,
                 output_elements,
                 scales,
@@ -243,4 +253,36 @@ pub unsafe extern "C" fn loom_cuda_bridge_rms_norm_dynamic_fp8(
             )
         )
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn dynamic_fp8_rejects_non_null_absent_residual_before_submission() {
+        let result = unsafe {
+            launch_rms_norm_dynamic_fp8::<f32>(
+                0x1000_usize as *const f32,
+                8,
+                0x2000_usize as *const f32,
+                4,
+                0x3000_usize as *mut f32,
+                0,
+                0x4000_usize as *mut u8,
+                8,
+                0x5000_usize as *mut f32,
+                2,
+                2,
+                4,
+                1.0e-5,
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(matches!(
+            result,
+            Err(CudaExecutorError::InvalidContract(message))
+                if message.contains("pointer must be null")
+        ));
+    }
 }

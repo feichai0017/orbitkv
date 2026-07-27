@@ -51,6 +51,7 @@ unsafe extern "C" {
     pub fn loom_cuda_rms_norm_dynamic_fp8_f32(
         input: *const f32,
         weight: *const f32,
+        residual: *mut f32,
         output: *mut u8,
         scales: *mut f32,
         rows: u32,
@@ -62,6 +63,7 @@ unsafe extern "C" {
     pub fn loom_cuda_rms_norm_dynamic_fp8_f16(
         input: *const u16,
         weight: *const u16,
+        residual: *mut u16,
         output: *mut u8,
         scales: *mut f32,
         rows: u32,
@@ -73,6 +75,7 @@ unsafe extern "C" {
     pub fn loom_cuda_rms_norm_dynamic_fp8_bf16(
         input: *const u16,
         weight: *const u16,
+        residual: *mut u16,
         output: *mut u8,
         scales: *mut f32,
         rows: u32,

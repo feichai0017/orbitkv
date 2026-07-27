@@ -279,6 +279,36 @@ intentionally version-specific to the vLLM 0.24/0.25 activation-quant compiler
 pass;
 unsupported versions should leave the opt-in unset.
 
+To replace vLLM's plain and fused-add RMSNorm-to-dynamic-per-token-FP8
+compiler entries, enable the normalization opt-in before constructing the
+engine:
+
+```bash
+LOOM_KERNELS_ENABLE_RMS_NORM_FP8=1 python your_vllm_service.py
+```
+
+Embedding code can instead call:
+
+```python
+from loom_kernels.vllm import register_vllm_rms_norm_dynamic_fp8
+
+assert register_vllm_rms_norm_dynamic_fp8() == "rms_norm_dynamic_fp8"
+```
+
+The ABI9 operator uses vLLM's exact mutable schema, including an optional
+residual. It accepts contiguous CUDA F32/FP16/BF16 tensors, writes FP8 E4M3FN
+plus one F32 scale per flattened row, and rejects a non-null scale upper bound.
+The registration changes only the normalization/quantization fusion table.
+vLLM's configured Cutlass scaled-mm remains the GEMM provider.
+
+On H20, BF16 hidden-size-896 direct runs are bitwise identical and
+order-stably faster than vLLM for plain rows 8 and residual rows 1/8/32.
+Order-reversed Qwen2.5-0.5B, `fp8_per_tensor`, Cutlass runs improve the
+128-token prefill-only batch latency by `1.0066-1.0506x`. The corresponding
+64-token decode runs cross parity, so the adapter is opt-in and carries no
+decode, TPOT, or throughput claim. See the
+[qualified boundary](../results/h20-rms-norm-dynamic-fp8-residual-20260727.json).
+
 To enable fused RoPE+paged-KV on vLLM 0.24/0.25 CUDA, configure the compilation
 object before constructing the engine:
 
@@ -983,17 +1013,19 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
 - inference-only mutation, with no autograd implementation;
 - one selectable IR provider (`fused_add_rms_norm`), one opt-in out-of-tree
   layer replacement (`SiluAndMul`), and one vLLM-version-specific
-  activation-quant fusion-table replacement, plus a vLLM 0.24/0.25-specific
-  RoPE+native/static-FP8-KV compiler-pass adapter, greedy/general selected-token
-  and top-k sampled-logprob sampler overrides, shape-gated top-k and fused
-  top-p/renormalization overrides, an explicit-seed categorical adapter, a
-  shape-gated Min-P override, and a measured-shape FlashAttention paged-decode
-  override;
+  activation-quant fusion-table replacement, one optional-residual
+  RMSNorm-to-FP8 fusion-table replacement, plus a vLLM 0.24/0.25-specific
+  RoPE+native/static-FP8-KV compiler-pass adapter, greedy/general
+  selected-token and top-k sampled-logprob sampler overrides, shape-gated
+  top-k and fused top-p/renormalization overrides, an explicit-seed
+  categorical adapter, a shape-gated Min-P override, and a measured-shape
+  FlashAttention paged-decode override;
 - the activation-quant provider requires a graph-visible quantization boundary;
   it does not intercept vLLM's fused BF16-input FlashInfer/DeepGEMM path;
 - the isolated operator is faster on H20 and real-model invocation is proven,
   but no model-level speedup has been established for either FP8 activation
-  fusion or RoPE+paged-KV;
+  fusion or RoPE+paged-KV. RMSNorm-to-FP8 has a narrow Qwen prefill result but
+  no decode/TPOT/throughput claim;
 - vLLM-owned penalties, masks, and stochastic sampling can feed the
   selected-token path. Without categorical registration, Loom accelerates
   measured top-k-only and top-p-only filtering shapes but leaves joint

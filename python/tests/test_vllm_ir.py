@@ -19,6 +19,8 @@ from loom_kernels.vllm import (
     MIN_P_OVERRIDE_KEY,
     PAGED_DECODE_OVERRIDE_ENV,
     PAGED_DECODE_OVERRIDE_KEY,
+    RMS_NORM_FP8_OVERRIDE_ENV,
+    RMS_NORM_FP8_OVERRIDE_KEY,
     ROPE_PAGED_KV_OVERRIDE_KEY,
     SELECTED_TOKEN_LOGPROBS_OVERRIDE_KEY,
     SILU_OVERRIDE_ENV,
@@ -43,6 +45,7 @@ from loom_kernels.vllm import (
     register_vllm_greedy_sample_logprobs,
     register_vllm_greedy_speculative_verify,
     register_vllm_rope_paged_kv,
+    register_vllm_rms_norm_dynamic_fp8,
     register_vllm_selected_token_logprobs,
     register_vllm_silu_and_mul,
     register_vllm_silu_and_mul_dynamic_fp8,
@@ -1267,6 +1270,43 @@ def test_act_quant_override_metadata_tracks_opt_in(monkeypatch):
     assert provider_metadata()["silu_and_mul_fp8_override_requested"] is True
 
 
+def test_registers_vllm_rms_norm_dynamic_fp8_fusions():
+    from vllm.compilation.passes.fusion.rms_quant_fusion import (
+        FUSED_OPS,
+        FusedRMSQuantKey,
+    )
+    from vllm.model_executor.layers.quantization.utils.quant_utils import (
+        kFp8DynamicTokenSym,
+    )
+
+    assert (
+        register_vllm_rms_norm_dynamic_fp8()
+        == RMS_NORM_FP8_OVERRIDE_KEY
+    )
+    implementation = (
+        torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8.default
+    )
+    assert (
+        FUSED_OPS[
+            FusedRMSQuantKey(kFp8DynamicTokenSym, fused_add=False)
+        ]
+        == implementation
+    )
+    assert (
+        FUSED_OPS[
+            FusedRMSQuantKey(kFp8DynamicTokenSym, fused_add=True)
+        ]
+        == implementation
+    )
+
+
+def test_rms_norm_fp8_override_metadata_tracks_opt_in(monkeypatch):
+    monkeypatch.delenv(RMS_NORM_FP8_OVERRIDE_ENV, raising=False)
+    assert provider_metadata()["rms_norm_fp8_override_requested"] is False
+    monkeypatch.setenv(RMS_NORM_FP8_OVERRIDE_ENV, "on")
+    assert provider_metadata()["rms_norm_fp8_override_requested"] is True
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_vllm_activation_quant_pattern_rewrites_to_loom():
     from vllm.compilation.passes.fusion.act_quant_fusion import (
@@ -1306,6 +1346,29 @@ def test_vllm_activation_quant_pattern_rewrites_to_loom():
     )
     assert fusion_pass.matched_count == 1
     assert loom_target_present
+
+
+@pytest.mark.parametrize(
+    "pattern_name",
+    [
+        "RMSNormDynamicQuantPattern",
+        "FusedAddRMSNormDynamicQuantPattern",
+    ],
+)
+def test_vllm_rms_norm_dynamic_fp8_patterns_capture_loom(pattern_name):
+    from vllm.compilation.passes.fusion import rms_quant_fusion
+    from vllm.config import VllmConfig, set_current_vllm_config
+
+    config = VllmConfig()
+    with set_current_vllm_config(config):
+        register_vllm_rms_norm_dynamic_fp8()
+        pattern_class = getattr(rms_quant_fusion, pattern_name)
+        pattern = pattern_class(1.0e-5, torch.float8_e4m3fn)
+
+    loom_operator = (
+        torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8.default
+    )
+    assert pattern.FUSED_OP == loom_operator
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")

@@ -115,7 +115,9 @@ void add_rms_norm_mut(Tensor input, Tensor residual,
 void check_dynamic_fp8_contract(const Tensor& input,
                                 const Tensor& weight,
                                 const Tensor& output,
-                                const Tensor& scales, double epsilon) {
+                                const Tensor& scales, double epsilon,
+                                const std::optional<Tensor>& scale_ub,
+                                const std::optional<Tensor>& residual) {
   STD_TORCH_CHECK(input.is_cuda(), "Loom RMSNorm+FP8 input must be CUDA");
   STD_TORCH_CHECK(weight.device() == input.device() &&
                   output.device() == input.device() &&
@@ -131,6 +133,8 @@ void check_dynamic_fp8_contract(const Tensor& input,
               "Loom RMSNorm+FP8 output must use torch.float8_e4m3fn");
   STD_TORCH_CHECK(scales.scalar_type() == ScalarType::Float,
               "Loom RMSNorm+FP8 scales must use F32");
+  STD_TORCH_CHECK(!scale_ub.has_value(),
+              "Loom RMSNorm+FP8 does not support a scale upper bound");
   STD_TORCH_CHECK(input.is_contiguous() && weight.is_contiguous() &&
                   output.is_contiguous() && scales.is_contiguous(),
               "Loom RMSNorm+FP8 tensors must be contiguous");
@@ -152,11 +156,25 @@ void check_dynamic_fp8_contract(const Tensor& input,
                   !byte_ranges_overlap(scales, input) &&
                   !byte_ranges_overlap(scales, weight),
               "Loom RMSNorm+FP8 mutable tensor storage must not overlap");
+  if (residual.has_value()) {
+    STD_TORCH_CHECK(residual->device() == input.device() &&
+                    residual->scalar_type() == input.scalar_type(),
+                "Loom RMSNorm+FP8 residual must match the input device and dtype");
+    STD_TORCH_CHECK(residual->sizes().equals(input.sizes()) &&
+                    residual->is_contiguous(),
+                "Loom RMSNorm+FP8 residual must be contiguous and match input");
+    STD_TORCH_CHECK(!byte_ranges_overlap(*residual, input) &&
+                    !byte_ranges_overlap(*residual, weight) &&
+                    !byte_ranges_overlap(*residual, output) &&
+                    !byte_ranges_overlap(*residual, scales),
+                "Loom RMSNorm+FP8 residual storage must not overlap");
+  }
 }
 
 void launch_rms_norm_dynamic_fp8(const Tensor& input,
                                  const Tensor& weight, Tensor output,
-                                 Tensor scales, double epsilon) {
+                                 Tensor scales, double epsilon,
+                                 const std::optional<Tensor>& residual) {
   const int64_t hidden_size_i64 = input.size(-1);
   const int64_t rows_i64 = input.numel() / hidden_size_i64;
   STD_TORCH_CHECK(rows_i64 <= std::numeric_limits<uint32_t>::max() &&
@@ -175,19 +193,26 @@ void launch_rms_norm_dynamic_fp8(const Tensor& input,
   auto* output_bytes =
       reinterpret_cast<uint8_t*>(output.mutable_data_ptr());
   auto* scale_values = scales.mutable_data_ptr<float>();
+  void* residual_data =
+      residual.has_value() ? residual->mutable_data_ptr() : nullptr;
+  const uint64_t residual_elements =
+      residual.has_value() ? static_cast<uint64_t>(residual->numel()) : 0U;
   const int status = loom_cuda_bridge_rms_norm_dynamic_fp8(
       bridge_dtype(input), input.const_data_ptr(), input_elements,
-      weight.const_data_ptr(), weight_elements, output_bytes, output_elements,
-      scale_values, scale_elements, rows, hidden_size, epsilon_f32,
-      stream.stream());
+      weight.const_data_ptr(), weight_elements, residual_data,
+      residual_elements, output_bytes, output_elements, scale_values,
+      scale_elements, rows, hidden_size, epsilon_f32, stream.stream());
   check_bridge_status(status, "RMSNorm+FP8");
 }
 
-void rms_norm_dynamic_fp8(const Tensor& input, const Tensor& weight,
-                          Tensor output, Tensor scales,
-                          double epsilon) {
-  check_dynamic_fp8_contract(input, weight, output, scales, epsilon);
-  launch_rms_norm_dynamic_fp8(input, weight, output, scales, epsilon);
+void rms_norm_dynamic_per_token_fp8(
+    Tensor output, const Tensor& input, const Tensor& weight, Tensor scales,
+    double epsilon, const std::optional<Tensor>& scale_ub,
+    const std::optional<Tensor>& residual) {
+  check_dynamic_fp8_contract(
+      input, weight, output, scales, epsilon, scale_ub, residual);
+  launch_rms_norm_dynamic_fp8(
+      input, weight, output, scales, epsilon, residual);
 }
 
 }  // namespace loom_kernels::torch_adapter
@@ -200,6 +225,7 @@ STABLE_TORCH_LIBRARY_IMPL(loom_kernels, CUDA, library) {
       "add_rms_norm_mut",
       TORCH_BOX(&loom_kernels::torch_adapter::add_rms_norm_mut));
   library.impl(
-      "rms_norm_dynamic_fp8",
-      TORCH_BOX(&loom_kernels::torch_adapter::rms_norm_dynamic_fp8));
+      "rms_norm_dynamic_per_token_fp8",
+      TORCH_BOX(
+          &loom_kernels::torch_adapter::rms_norm_dynamic_per_token_fp8));
 }

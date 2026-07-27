@@ -64,9 +64,10 @@ int loom_cuda_bridge_add_rms_norm(
 
 int loom_cuda_bridge_rms_norm_dynamic_fp8(
     uint32_t dtype, const void* input, uint64_t input_elements,
-    const void* weight, uint64_t weight_elements, uint8_t* output,
-    uint64_t output_elements, float* scales, uint64_t scale_elements,
-    uint32_t rows, uint32_t hidden_size, float epsilon, void* stream);
+    const void* weight, uint64_t weight_elements, void* residual,
+    uint64_t residual_elements, uint8_t* output, uint64_t output_elements,
+    float* scales, uint64_t scale_elements, uint32_t rows,
+    uint32_t hidden_size, float epsilon, void* stream);
 
 int loom_cuda_bridge_silu_and_mul(
     uint32_t dtype, const void* input, uint64_t input_elements, void* output,

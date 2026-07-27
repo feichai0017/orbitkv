@@ -50,7 +50,7 @@ layer file also starts with a module comment that states its responsibility.
 
 | Domain | Contract and oracle | Safe CUDA dispatch | Checked Rust bridge | Raw CUDA | PyTorch dispatcher | vLLM adapter |
 | --- | --- | --- | --- | --- | --- | --- |
-| normalization | `norm.rs` | `norm_dispatch.rs` | `cuda/norm_bridge.rs` | `rms_norm.cu` · `add_rms_norm.cu` · `rms_norm_quant.cu` | `norm.cpp` | IR registration in `vllm/__init__.py` |
+| normalization | `norm.rs` | `norm_dispatch.rs` | `cuda/norm_bridge.rs` | `rms_norm.cu` · `add_rms_norm.cu` · `rms_norm_quant.cu` | `norm.cpp` | `vllm/norm.py` |
 | activation and output quantization | `activation.rs` | `activation_dispatch.rs` | `cuda/activation_bridge.rs` | `silu_and_mul.cu` · `silu_and_mul_quant.cu` | `activation.cpp` | `vllm/activation.py` |
 | logits processing | `logits.rs` | `logits_dispatch.rs` | `cuda/logits_bridge.rs` | `min_p.cu` · `logits_preprocess.cu` | `logits.cpp` | `vllm/logits.py` |
 | sampling and log probabilities | `sampling.rs` | `sampling_dispatch.rs` | `cuda/sampling_bridge.rs` | `categorical_sample.cu` · `sample_logprobs.cu` · `top_k_filter.cu` · `top_p_renorm.cu` · `token_penalties.cu` | `sampling.cpp` | `vllm/sampling.py` for stateless tails; `vllm/categorical.py` for persistent request RNG state |

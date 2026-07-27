@@ -21,6 +21,12 @@ mixed-sampling logits preprocessing, sparse token penalties, sampled-token
 plus top-k logprobs, exact in-place top-k filtering, and fused top-p filtering
 and renormalization.
 
+Current source has advanced to bridge ABI9. It replaces the former
+RMSNorm-to-FP8 schema with vLLM's exact optional-residual mutation schema and
+retains no ABI8 overload or bridge shim. Source-built H20 suites pass 305 tests
+on each supported vLLM minor, but ABI8 remains the current qualified artifact
+until one exact ABI9 two-library wheel passes every repository-free matrix row.
+
 The historical `f98a931` ABI7 refresh closed the earlier source-overlay
 packaging gap: its wheel contains the final FP8 KV adapter, loads only its
 package-local libraries, and passed the full 286-test vLLM 0.24 GPU suite plus
@@ -129,9 +135,10 @@ production dispatcher now uses that boundary:
 - tensor metadata, allocations, pointers, device guards, and the current CUDA
   stream use stable headers or AOTI C shims;
 - all seventeen ABI8 semantic operators continue into
-  `loom-cuda-bridge`. The dispatcher has no ATen/c10 C++ symbol dependency and
-  consumes no raw CUDA launch symbol; the qualified ABI8 wheel contains the
-  full seventeen-operator surface;
+  `loom-cuda-bridge`; source ABI9 retains the same semantic operator count and
+  replaces only the normalization-quantization schema. The dispatcher has no
+  ATen/c10 C++ symbol dependency and consumes no raw CUDA launch symbol; the
+  qualified ABI8 wheel contains the preceding full seventeen-operator surface;
 - the public Python APIs and vLLM admission predicates reject tensors requiring
   gradients. No autograd kernel is advertised;
 - the temporary Add+RMSNorm probe and the previous ATen dispatcher were deleted

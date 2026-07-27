@@ -474,8 +474,8 @@ def main() -> None:
     args = parse_args()
     if not torch.cuda.is_available():
         raise RuntimeError("CUDA is required")
-    if bridge_abi_version() != 8:
-        raise RuntimeError("categorical benchmark requires bridge ABI 8")
+    if bridge_abi_version() != 9:
+        raise RuntimeError("categorical benchmark requires bridge ABI 9")
 
     import vllm
     from vllm.v1.sample.ops.topk_topp_sampler import random_sample

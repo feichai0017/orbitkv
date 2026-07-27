@@ -8,9 +8,10 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 > [!IMPORTANT]
 > The bridge-ABI-8 native wheel is H20-qualified but is not published to a
 > package index. It includes all seventeen checked operators, including
-> direct plus persistent-vLLM explicit-state categorical sampling. A
-> source-only wheel is
-> intentionally unsupported:
+> direct plus persistent-vLLM explicit-state categorical sampling. Current
+> source is ABI9 and adds the exact optional-residual RMSNorm-to-FP8 schema;
+> it is not a qualified artifact until its clean-install matrix passes. A
+> source-only wheel is intentionally unsupported:
 > `pip wheel ./python` fails unless `build_wheel.py` has staged both native
 > libraries and their manifest.
 
@@ -99,9 +100,9 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 bridge, builds the boxed LibTorch Stable ABI dispatcher, rejects ATen/c10 C++
 and raw CUDA-launch dependencies, verifies `$ORIGIN` loading, writes the
 revision/toolkit/SM/runtime manifest, and checks the final archive contains
-exactly the two Loom `.so` files. At current source it emits an
-`8cu131torch210sm90` tag; the exact `e2c2982` artifact passes the ABI8
-repository-free clean-install matrix and remains unpublished.
+exactly the two Loom `.so` files. Current source emits a
+`9cu131torch210sm90` tag. Until that matrix closes, the exact `e2c2982` ABI8
+artifact remains the qualified repository-free wheel and remains unpublished.
 
 ## Source development
 
@@ -235,6 +236,12 @@ column, exactly once per successful row. Keep that tensor alive across decode
 steps and CUDA Graph replays. Its Philox/CDF stream is Loom-owned and does not
 reproduce vLLM's native token for the same integer seed.
 
+`rms_norm_dynamic_fp8` and its out variant accept an optional mutable
+same-shape residual. The residual is updated with the storage-dtype-rounded
+`input + residual` sum, while the FP8 result and F32 per-row scales match
+vLLM's dynamic per-token fusion. A scale upper bound is intentionally not
+supported.
+
 ## Exported operator families
 
 | Family | Python entry points |
@@ -267,6 +274,7 @@ into this contract.
 | Add+RMSNorm IR provider | `ir_op_priority={"fused_add_rms_norm": ["loom_cuda"]}` |
 | Standalone SiLU-and-Mul | `LOOM_KERNELS_ENABLE_SILU_AND_MUL=1` |
 | SiLU-and-Mul→block FP8 | `LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8=1` |
+| Optional-residual RMSNorm→dynamic FP8 | `LOOM_KERNELS_ENABLE_RMS_NORM_FP8=1` |
 | RoPE+paged-KV compiler pass | `configure_vllm_rope_paged_kv(...)` |
 | Short paged decode | `LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1` |
 | Mixed-sampling logits preprocessing | `register_vllm_logits_preprocess()` |

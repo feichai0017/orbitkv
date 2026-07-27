@@ -53,6 +53,7 @@ def main() -> None:
             for source in sorted(
                 (repository / "python" / "csrc").glob("*.cpp")
             )
+            if not source.name.startswith(".")
         ],
         extra_include_paths=[
             str(repository / "crates" / "loom-cuda-bridge" / "include"),

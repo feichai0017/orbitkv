@@ -151,7 +151,8 @@ fn dynamic_fp8_reference_emits_per_row_scale_and_zero_floor() {
     let mut output = [0_u8; 4];
     let mut scales = [0.0_f32; 2];
 
-    rms_norm_dynamic_fp8_bf16_reference(&input, &weight, &mut output, &mut scales, spec).unwrap();
+    rms_norm_dynamic_fp8_bf16_reference(&input, &weight, &mut output, &mut scales, None, spec)
+        .unwrap();
 
     assert_eq!(output[1], 0x7e);
     assert_eq!(&output[2..], &[0x00, 0x00]);
@@ -167,6 +168,7 @@ fn dynamic_fp8_reference_validates_output_and_scale_lengths() {
         &[f16::ONE; 4],
         &mut [0_u8; 7],
         &mut [0.0; 2],
+        None,
         spec,
     )
     .unwrap_err();
@@ -178,4 +180,28 @@ fn dynamic_fp8_reference_validates_output_and_scale_lengths() {
             actual: 7,
         }
     );
+}
+
+#[test]
+fn dynamic_fp8_reference_stores_the_optional_residual_sum() {
+    let spec = RmsNormDynamicFp8Spec::new(1, 2, 1.0e-6, DType::Bf16).unwrap();
+    let input = [bf16::from_f32(1.0), bf16::from_f32(2.0)];
+    let weight = [bf16::ONE, bf16::ONE];
+    let mut residual = [bf16::from_f32(2.0), bf16::from_f32(2.0)];
+    let mut output = [0_u8; 2];
+    let mut scales = [0.0_f32; 1];
+
+    rms_norm_dynamic_fp8_bf16_reference(
+        &input,
+        &weight,
+        &mut output,
+        &mut scales,
+        Some(&mut residual),
+        spec,
+    )
+    .unwrap();
+
+    assert_eq!(residual, [bf16::from_f32(3.0), bf16::from_f32(4.0)]);
+    assert_eq!(output[1], 0x7e);
+    assert!(scales[0] > DYNAMIC_FP8_MIN_SCALE);
 }
