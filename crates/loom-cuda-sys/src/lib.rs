@@ -84,6 +84,42 @@ unsafe extern "C" {
         stream: *mut c_void,
     ) -> c_int;
 
+    pub fn loom_cuda_rms_norm_dynamic_int8_f32(
+        input: *const f32,
+        weight: *const f32,
+        residual: *mut f32,
+        output: *mut i8,
+        scales: *mut f32,
+        rows: u32,
+        hidden_size: u32,
+        epsilon: f32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_rms_norm_dynamic_int8_f16(
+        input: *const u16,
+        weight: *const u16,
+        residual: *mut u16,
+        output: *mut i8,
+        scales: *mut f32,
+        rows: u32,
+        hidden_size: u32,
+        epsilon: f32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_rms_norm_dynamic_int8_bf16(
+        input: *const u16,
+        weight: *const u16,
+        residual: *mut u16,
+        output: *mut i8,
+        scales: *mut f32,
+        rows: u32,
+        hidden_size: u32,
+        epsilon: f32,
+        stream: *mut c_void,
+    ) -> c_int;
+
     pub fn loom_cuda_add_rms_norm_f32(
         input: *mut f32,
         residual: *mut f32,

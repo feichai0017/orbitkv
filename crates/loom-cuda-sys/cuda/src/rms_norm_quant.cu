@@ -68,13 +68,75 @@ struct alignas(4) Fp8Pack4 {
   __nv_fp8x4_storage_t bits;
 };
 
-template <typename Ops, bool Vectorized, bool HasResidual>
+struct alignas(4) BytePack4 {
+  uint8_t values[4];
+};
+
+static inline __device__ int8_t float_to_int8_rn(float value) {
+  uint32_t result;
+  asm volatile("cvt.rni.sat.s8.f32 %0, %1;" : "=r"(result) : "f"(value));
+  return reinterpret_cast<const int8_t&>(result);
+}
+
+struct Fp8QuantOps {
+  __device__ static float scale(float absolute_maximum) {
+    return fmaxf(absolute_maximum / kFp8E4M3Max, kDynamicFp8MinScale);
+  }
+
+  __device__ static uint8_t quantize(float value, float scale,
+                                     float absolute_maximum) {
+    (void)absolute_maximum;
+    return __nv_cvt_float_to_fp8(value / scale, __NV_SATFINITE, __NV_E4M3);
+  }
+
+  __device__ static void store_pack(uint8_t* output,
+                                    const float (&values)[4], float scale,
+                                    float absolute_maximum) {
+    (void)absolute_maximum;
+    const __nv_fp8x4_e4m3 quantized(
+        make_float4(values[0] / scale, values[1] / scale, values[2] / scale,
+                    values[3] / scale));
+    reinterpret_cast<Fp8Pack4*>(output)->bits = quantized.__x;
+  }
+};
+
+struct Int8QuantOps {
+  __device__ static float scale(float absolute_maximum) {
+    return absolute_maximum / 127.0F;
+  }
+
+  __device__ static uint8_t quantize(float value, float scale,
+                                     float absolute_maximum) {
+    (void)scale;
+    const float scaled = absolute_maximum == 0.0F
+                             ? 0.0F
+                             : value * (127.0F / absolute_maximum);
+    return static_cast<uint8_t>(float_to_int8_rn(scaled));
+  }
+
+  __device__ static void store_pack(uint8_t* output,
+                                    const float (&values)[4], float scale,
+                                    float absolute_maximum) {
+    BytePack4 quantized{};
+#pragma unroll
+    for (int element = 0; element < 4; ++element) {
+      quantized.values[element] =
+          quantize(values[element], scale, absolute_maximum);
+    }
+    *reinterpret_cast<BytePack4*>(output) = quantized;
+  }
+};
+
+template <typename Ops, typename QuantOps, bool Vectorized, bool HasResidual>
 __global__ __launch_bounds__(kRmsNormQuantThreads)
-    void rms_norm_dynamic_fp8_kernel(const typename Ops::Scalar* input,
-                                     const typename Ops::Scalar* weight,
-                                     typename Ops::Scalar* residual,
-                                     uint8_t* output, float* scales,
-                                     uint32_t hidden_size, float epsilon) {
+    void rms_norm_dynamic_quant_kernel(const typename Ops::Scalar* input,
+                                       const typename Ops::Scalar* weight,
+                                       typename Ops::Scalar* residual,
+                                       uint8_t* output, float* scales,
+                                       uint32_t hidden_size, float epsilon) {
+  // This is the vLLM native-IR boundary consumed by the compiler fusion:
+  // residual addition stays in F32 for RMS, and normalized values are rounded
+  // to the weight dtype before applying the weight.
   using Scalar = typename Ops::Scalar;
   using BlockReduce = cub::BlockReduce<float, kRmsNormQuantThreads>;
 
@@ -123,6 +185,7 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
 
   __shared__ typename BlockReduce::TempStorage reduce_storage;
   __shared__ float inverse_rms;
+  __shared__ float quantization_absolute_maximum;
   __shared__ float token_scale;
   const float square_sum = BlockReduce(reduce_storage)
                                .Reduce(local_square_sum, Addition{},
@@ -158,12 +221,10 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
         if constexpr (HasResidual) {
           value += Ops::to_float(residual_values.values[element]);
         }
-        // Match the vLLM fused quantization boundary: x * inverse_rms is
-        // rounded to the input storage dtype before applying the weight.
-        const Scalar normalized = Ops::from_float(value * inverse_rms);
+        const float normalized =
+            Ops::to_float(Ops::from_float(value * inverse_rms));
         const Scalar weighted_storage = Ops::from_float(
-            Ops::to_float(normalized) *
-            Ops::to_float(weights.values[element]));
+            normalized * Ops::to_float(weights.values[element]));
         const float weighted = Ops::to_float(weighted_storage);
         local_absolute_maximum =
             fmaxf(local_absolute_maximum, fabsf(weighted));
@@ -176,10 +237,10 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
       if constexpr (HasResidual) {
         value += Ops::to_float(residual[row_offset + column]);
       }
-      const Scalar normalized =
-          Ops::from_float(value * inverse_rms);
+      const float normalized =
+          Ops::to_float(Ops::from_float(value * inverse_rms));
       const Scalar weighted_storage = Ops::from_float(
-          Ops::to_float(normalized) * Ops::to_float(weight[column]));
+          normalized * Ops::to_float(weight[column]));
       const float weighted = Ops::to_float(weighted_storage);
       local_absolute_maximum =
           fmaxf(local_absolute_maximum, fabsf(weighted));
@@ -192,8 +253,8 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
           .Reduce(local_absolute_maximum, Maximum{},
                   static_cast<int>(blockDim.x));
   if (threadIdx.x == 0) {
-    token_scale =
-        fmaxf(absolute_maximum / kFp8E4M3Max, kDynamicFp8MinScale);
+    quantization_absolute_maximum = absolute_maximum;
+    token_scale = QuantOps::scale(absolute_maximum);
     scales[blockIdx.x] = token_scale;
   }
   __syncthreads();
@@ -206,7 +267,6 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
     if constexpr (HasResidual) {
       residual_packs = reinterpret_cast<Pack*>(residual + row_offset);
     }
-    auto* output_packs = reinterpret_cast<Fp8Pack4*>(row_output);
     const uint32_t pack_count = hidden_size / 4U;
     for (uint32_t pack_column = threadIdx.x; pack_column < pack_count;
          pack_column += blockDim.x) {
@@ -216,7 +276,7 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
       if constexpr (HasResidual) {
         residual_values = residual_packs[pack_column];
       }
-      float quantized_values[4];
+      float weighted_values[4];
 #pragma unroll
       for (int element = 0; element < 4; ++element) {
         float value = Ops::to_float(values.values[element]);
@@ -224,19 +284,17 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
           value += Ops::to_float(residual_values.values[element]);
           residual_values.values[element] = Ops::from_float(value);
         }
-        const Scalar normalized = Ops::from_float(value * inverse_rms);
+        const float normalized =
+            Ops::to_float(Ops::from_float(value * inverse_rms));
         const Scalar weighted = Ops::from_float(
-            Ops::to_float(normalized) *
-            Ops::to_float(weights.values[element]));
-        quantized_values[element] = Ops::to_float(weighted) / token_scale;
+            normalized * Ops::to_float(weights.values[element]));
+        weighted_values[element] = Ops::to_float(weighted);
       }
       if constexpr (HasResidual) {
         residual_packs[pack_column] = residual_values;
       }
-      const __nv_fp8x4_e4m3 quantized(make_float4(
-          quantized_values[0], quantized_values[1], quantized_values[2],
-          quantized_values[3]));
-      output_packs[pack_column].bits = quantized.__x;
+      QuantOps::store_pack(row_output + pack_column * 4U, weighted_values,
+                           token_scale, quantization_absolute_maximum);
     }
   } else {
     for (uint32_t column = threadIdx.x; column < hidden_size;
@@ -246,22 +304,23 @@ __global__ __launch_bounds__(kRmsNormQuantThreads)
         value += Ops::to_float(residual[row_offset + column]);
         residual[row_offset + column] = Ops::from_float(value);
       }
-      const Scalar normalized = Ops::from_float(value * inverse_rms);
+      const float normalized =
+          Ops::to_float(Ops::from_float(value * inverse_rms));
       const Scalar weighted_storage = Ops::from_float(
-          Ops::to_float(normalized) * Ops::to_float(weight[column]));
+          normalized * Ops::to_float(weight[column]));
       const float weighted = Ops::to_float(weighted_storage);
-      row_output[column] = __nv_cvt_float_to_fp8(
-          weighted / token_scale, __NV_SATFINITE, __NV_E4M3);
+      row_output[column] = QuantOps::quantize(
+          weighted, token_scale, quantization_absolute_maximum);
     }
   }
 }
 
-template <typename Ops, typename Input>
-int launch_rms_norm_dynamic_fp8(const Input* input, const Input* weight,
-                                Input* residual, uint8_t* output,
-                                float* scales, uint32_t rows,
-                                uint32_t hidden_size, float epsilon,
-                                void* stream) {
+template <typename Ops, typename QuantOps, typename Input>
+int launch_rms_norm_dynamic_quant(const Input* input, const Input* weight,
+                                  Input* residual, uint8_t* output,
+                                  float* scales, uint32_t rows,
+                                  uint32_t hidden_size, float epsilon,
+                                  void* stream) {
   if (input == nullptr || weight == nullptr || output == nullptr ||
       scales == nullptr || rows == 0 || hidden_size == 0 ||
       !std::isfinite(epsilon) || epsilon <= 0.0F ||
@@ -290,13 +349,19 @@ int launch_rms_norm_dynamic_fp8(const Input* input, const Input* weight,
                              combined_input_address % (sizeof(Scalar) * 4U) ==
                                  0U &&
                              reinterpret_cast<uintptr_t>(output) % 4U == 0U;
+  // Vectorized kernels assign one four-element pack to each work item. Size
+  // the block from that pack count instead of the scalar width; otherwise a
+  // hidden size such as 896 launches 896 threads for only 224 packs and makes
+  // 672 idle threads participate in both reductions.
+  const uint32_t work_items =
+      can_vectorize ? hidden_size / 4U : hidden_size;
   const uint32_t threads =
-      hidden_size < static_cast<uint32_t>(kRmsNormQuantThreads)
-          ? hidden_size
+      work_items < static_cast<uint32_t>(kRmsNormQuantThreads)
+          ? work_items
           : static_cast<uint32_t>(kRmsNormQuantThreads);
   if (can_vectorize) {
     if (residual != nullptr) {
-      rms_norm_dynamic_fp8_kernel<Ops, true, true>
+      rms_norm_dynamic_quant_kernel<Ops, QuantOps, true, true>
           <<<rows, threads, 0,
              reinterpret_cast<cudaStream_t>(stream)>>>(
               reinterpret_cast<const Scalar*>(input),
@@ -304,7 +369,7 @@ int launch_rms_norm_dynamic_fp8(const Input* input, const Input* weight,
               reinterpret_cast<Scalar*>(residual), output, scales,
               hidden_size, epsilon);
     } else {
-      rms_norm_dynamic_fp8_kernel<Ops, true, false>
+      rms_norm_dynamic_quant_kernel<Ops, QuantOps, true, false>
           <<<rows, threads, 0,
              reinterpret_cast<cudaStream_t>(stream)>>>(
               reinterpret_cast<const Scalar*>(input),
@@ -313,7 +378,7 @@ int launch_rms_norm_dynamic_fp8(const Input* input, const Input* weight,
     }
   } else {
     if (residual != nullptr) {
-      rms_norm_dynamic_fp8_kernel<Ops, false, true>
+      rms_norm_dynamic_quant_kernel<Ops, QuantOps, false, true>
           <<<rows, threads, 0,
              reinterpret_cast<cudaStream_t>(stream)>>>(
               reinterpret_cast<const Scalar*>(input),
@@ -321,7 +386,7 @@ int launch_rms_norm_dynamic_fp8(const Input* input, const Input* weight,
               reinterpret_cast<Scalar*>(residual), output, scales,
               hidden_size, epsilon);
     } else {
-      rms_norm_dynamic_fp8_kernel<Ops, false, false>
+      rms_norm_dynamic_quant_kernel<Ops, QuantOps, false, false>
           <<<rows, threads, 0,
              reinterpret_cast<cudaStream_t>(stream)>>>(
               reinterpret_cast<const Scalar*>(input),
@@ -339,7 +404,7 @@ extern "C" int loom_cuda_rms_norm_dynamic_fp8_f32(
     const float* input, const float* weight, float* residual, uint8_t* output,
     float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
     void* stream) {
-  return launch_rms_norm_dynamic_fp8<FloatOps>(
+  return launch_rms_norm_dynamic_quant<FloatOps, Fp8QuantOps>(
       input, weight, residual, output, scales, rows, hidden_size, epsilon,
       stream);
 }
@@ -348,7 +413,7 @@ extern "C" int loom_cuda_rms_norm_dynamic_fp8_f16(
     const uint16_t* input, const uint16_t* weight, uint16_t* residual,
     uint8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
     float epsilon, void* stream) {
-  return launch_rms_norm_dynamic_fp8<HalfOps>(
+  return launch_rms_norm_dynamic_quant<HalfOps, Fp8QuantOps>(
       input, weight, residual, output, scales, rows, hidden_size, epsilon,
       stream);
 }
@@ -357,7 +422,34 @@ extern "C" int loom_cuda_rms_norm_dynamic_fp8_bf16(
     const uint16_t* input, const uint16_t* weight, uint16_t* residual,
     uint8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
     float epsilon, void* stream) {
-  return launch_rms_norm_dynamic_fp8<Bfloat16Ops>(
+  return launch_rms_norm_dynamic_quant<Bfloat16Ops, Fp8QuantOps>(
       input, weight, residual, output, scales, rows, hidden_size, epsilon,
       stream);
+}
+
+extern "C" int loom_cuda_rms_norm_dynamic_int8_f32(
+    const float* input, const float* weight, float* residual, int8_t* output,
+    float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
+    void* stream) {
+  return launch_rms_norm_dynamic_quant<FloatOps, Int8QuantOps>(
+      input, weight, residual, reinterpret_cast<uint8_t*>(output), scales, rows,
+      hidden_size, epsilon, stream);
+}
+
+extern "C" int loom_cuda_rms_norm_dynamic_int8_f16(
+    const uint16_t* input, const uint16_t* weight, uint16_t* residual,
+    int8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
+    float epsilon, void* stream) {
+  return launch_rms_norm_dynamic_quant<HalfOps, Int8QuantOps>(
+      input, weight, residual, reinterpret_cast<uint8_t*>(output), scales, rows,
+      hidden_size, epsilon, stream);
+}
+
+extern "C" int loom_cuda_rms_norm_dynamic_int8_bf16(
+    const uint16_t* input, const uint16_t* weight, uint16_t* residual,
+    int8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
+    float epsilon, void* stream) {
+  return launch_rms_norm_dynamic_quant<Bfloat16Ops, Int8QuantOps>(
+      input, weight, residual, reinterpret_cast<uint8_t*>(output), scales, rows,
+      hidden_size, epsilon, stream);
 }

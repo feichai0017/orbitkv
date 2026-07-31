@@ -10,8 +10,8 @@ use loom_cuda::{
 use loom_kernels::{
     AddRmsNormSpec, CategoricalSampleSpec, DType, GreedySampleLogprobsSpec,
     GreedySpeculativeVerifySpec, KvCacheEncoding, KvCacheScaleGranularity, LogitsPreprocessSpec,
-    MinPFilterSpec, PagedDecodeAttentionSpec, RmsNormDynamicFp8Spec, RmsNormSpec,
-    RopePagedKvWriteSpec, RotaryEmbeddingSpec, RotaryStyle, SelectedTokenLogprobsSpec,
+    MinPFilterSpec, PagedDecodeAttentionSpec, RmsNormDynamicFp8Spec, RmsNormDynamicInt8Spec,
+    RmsNormSpec, RopePagedKvWriteSpec, RotaryEmbeddingSpec, RotaryStyle, SelectedTokenLogprobsSpec,
     SiluAndMulDynamicFp8Spec, SiluAndMulSpec, TokenPenaltiesSpec, TopKFilterSpec,
     TopKSampledLogprobsSpec, TopPRenormSpec,
 };
@@ -50,7 +50,8 @@ const OP_TOP_K_FILTER: usize = 13;
 const OP_TOP_P_RENORM: usize = 14;
 const OP_LOGITS_PREPROCESS: usize = 15;
 const OP_CATEGORICAL_SAMPLE: usize = 16;
-const OPERATOR_COUNT: usize = 17;
+const OP_RMS_NORM_DYNAMIC_INT8: usize = 17;
+const OPERATOR_COUNT: usize = 18;
 
 static LAUNCH_COUNTS: [AtomicU64; OPERATOR_COUNT] = [const { AtomicU64::new(0) }; OPERATOR_COUNT];
 
@@ -336,6 +337,16 @@ trait Scalar: Copy {
         spec: RmsNormDynamicFp8Spec,
     ) -> Result<(), CudaExecutorError>;
 
+    fn rms_norm_dynamic_int8<S: CudaStreamHandle>(
+        backend: &CudaBackend<S>,
+        input: &DeviceSlice<'_, Self>,
+        weight: &DeviceSlice<'_, Self>,
+        residual: Option<&mut DeviceSliceMut<'_, Self>>,
+        output: &mut DeviceSliceMut<'_, i8>,
+        scales: &mut DeviceSliceMut<'_, f32>,
+        spec: RmsNormDynamicInt8Spec,
+    ) -> Result<(), CudaExecutorError>;
+
     fn silu_and_mul<S: CudaStreamHandle>(
         backend: &CudaBackend<S>,
         input: &DeviceSlice<'_, Self>,
@@ -470,6 +481,7 @@ macro_rules! impl_scalar {
         $rms_norm:ident,
         $add_rms_norm:ident,
         $rms_norm_dynamic_fp8:ident,
+        $rms_norm_dynamic_int8:ident,
         $silu_and_mul:ident,
         $greedy:ident,
         $selected:ident,
@@ -547,6 +559,19 @@ macro_rules! impl_scalar {
             ) -> Result<(), CudaExecutorError> {
                 let residual = residual.map(|values| values as &mut dyn CudaDeviceWrite<Self>);
                 backend.$rms_norm_dynamic_fp8(input, weight, residual, output, scales, spec)
+            }
+
+            fn rms_norm_dynamic_int8<S: CudaStreamHandle>(
+                backend: &CudaBackend<S>,
+                input: &DeviceSlice<'_, Self>,
+                weight: &DeviceSlice<'_, Self>,
+                residual: Option<&mut DeviceSliceMut<'_, Self>>,
+                output: &mut DeviceSliceMut<'_, i8>,
+                scales: &mut DeviceSliceMut<'_, f32>,
+                spec: RmsNormDynamicInt8Spec,
+            ) -> Result<(), CudaExecutorError> {
+                let residual = residual.map(|values| values as &mut dyn CudaDeviceWrite<Self>);
+                backend.$rms_norm_dynamic_int8(input, weight, residual, output, scales, spec)
             }
 
             fn silu_and_mul<S: CudaStreamHandle>(
@@ -723,6 +748,7 @@ impl_scalar!(
     rms_norm_f32,
     add_rms_norm_f32,
     rms_norm_dynamic_fp8_f32,
+    rms_norm_dynamic_int8_f32,
     silu_and_mul_f32,
     greedy_sample_logprobs_f32,
     selected_token_logprobs_f32,
@@ -741,6 +767,7 @@ impl_scalar!(
     rms_norm_f16,
     add_rms_norm_f16,
     rms_norm_dynamic_fp8_f16,
+    rms_norm_dynamic_int8_f16,
     silu_and_mul_f16,
     greedy_sample_logprobs_f16,
     selected_token_logprobs_f16,
@@ -759,6 +786,7 @@ impl_scalar!(
     rms_norm_bf16,
     add_rms_norm_bf16,
     rms_norm_dynamic_fp8_bf16,
+    rms_norm_dynamic_int8_bf16,
     silu_and_mul_bf16,
     greedy_sample_logprobs_bf16,
     selected_token_logprobs_bf16,
@@ -862,7 +890,7 @@ macro_rules! dispatch_scalar {
 /// Return the bridge ABI version.
 #[no_mangle]
 pub extern "C" fn loom_cuda_bridge_abi_version() -> u32 {
-    9
+    10
 }
 
 /// Return the detailed error recorded by the most recent failed bridge call

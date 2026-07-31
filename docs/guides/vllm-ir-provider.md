@@ -17,6 +17,13 @@ advantage. It has also completed a pinned Qwen2.5 online-FP8 engine gate with
 direct compiler-match and launch evidence; that small-model end-to-end result
 is at parity rather than a demonstrated speedup.
 
+A source-ABI10 normalization opt-in adds plain and fused-add RMSNorm followed
+by symmetric dynamic per-token INT8 to vLLM's existing compiler pass. A real
+Qwen2.5 W8A8 graph reaches Loom and keeps Cutlass GEMM unchanged, but the
+held-out quality gate is not exact, dual-order engine latency crosses parity,
+and no ABI10 wheel is qualified. It remains experimental and disabled by
+default.
+
 A third opt-in uses the existing RoPE+KV compiler fusion pass in vLLM 0.24 and
 0.25 with Loom's CUDA implementation for FlashAttention and FlashInfer native
 or static FP8 E4M3 caches. It preserves packed-QKV token/head strides, NHD or
@@ -104,6 +111,8 @@ not automatically performance claims for 0.25.1.
 See the
 [compatibility matrix](../compatibility.md) and
 [ABI9 cross-matrix gate](../results/h20-native-wheel-clean-install-abi9-20260727.json).
+Current source has advanced to ABI10 for RMSNorm-to-INT8, but the qualified
+binary boundary remains the exact ABI9 artifact above.
 
 ## Build and install
 
@@ -123,7 +132,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-9cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-10cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -136,10 +145,12 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-The install command above names the current qualified ABI9 artifact.
-Qualification is tied to the exact `7df4133` manifest revision and wheel hash;
-the repository-free matrix covers PyTorch 2.10/2.11 and both supported vLLM
-minors. The artifact is not published to a package index.
+The build and install commands above name current source ABI10. That artifact
+is suitable for source validation but has not passed the repository-free
+matrix. The current qualified artifact remains ABI9, tied to the exact
+`7df4133` manifest revision and wheel hash; its matrix covers PyTorch
+2.10/2.11 and both supported vLLM minors. Neither artifact is published to a
+package index.
 Editable
 source development remains documented in the
 [Python README](../../python/README.md#source-development), but it cannot
@@ -161,6 +172,7 @@ from loom_kernels import (
     greedy_sample_logprobs,
     greedy_speculative_verify,
     paged_decode_attention_out,
+    rms_norm_dynamic_int8,
     rope_paged_kv_write_,
     silu_and_mul,
     silu_and_mul_dynamic_fp8,
@@ -178,6 +190,12 @@ silu_and_mul_out(gate_and_up, reusable_output)
 fp8_output, block_scales = silu_and_mul_dynamic_fp8(
     gate_and_up_bf16,
     group_size=128,
+)
+int8_output, token_scales = rms_norm_dynamic_int8(
+    hidden_bf16,
+    norm_weight_bf16,
+    epsilon=1.0e-6,
+    residual=residual_bf16,
 )
 
 token_ids, sampled_logprobs, sampled_ranks = greedy_sample_logprobs(logits)
@@ -309,6 +327,36 @@ Order-reversed Qwen2.5-0.5B, `fp8_per_tensor`, Cutlass runs improve the
 64-token decode runs cross parity, so the adapter is opt-in and carries no
 decode, TPOT, or throughput claim. See the
 [qualified boundary](../results/h20-rms-norm-dynamic-fp8-residual-20260727.json).
+
+To add Loom's plain and fused-add RMSNorm-to-dynamic-per-token-INT8 patterns
+to vLLM's normalization-quantization compiler pass, set the separate
+experimental opt-in before engine construction:
+
+```bash
+LOOM_KERNELS_ENABLE_RMS_NORM_INT8=1 python your_vllm_service.py
+```
+
+Embedding code can instead call:
+
+```python
+from loom_kernels.vllm import register_vllm_rms_norm_dynamic_int8
+
+assert register_vllm_rms_norm_dynamic_int8() == "rms_norm_dynamic_int8"
+```
+
+The source-ABI10 operator accepts contiguous CUDA F32/FP16/BF16 input and an
+optional matching residual, then writes signed INT8 plus one F32
+`absmax / 127` scale per flattened row. It extends vLLM's existing compiler
+pass only; the configured Cutlass scaled-mm remains the GEMM provider.
+
+On H20, a real Qwen2.5 W8A8 graph records `1440/0` Loom launches and preserves
+eight Cutlass scaled-mm sites in both providers. The real-layer shadow has one
+one-LSB INT8 difference across 688,128 elements with exact scales and
+residuals. However, a 32-prompt one-step gate matches only `29/32` top-1
+tokens, and order-reversed batch latency and TTFT do not establish a stable
+win. The route remains disabled by default, carries no engine-speedup claim,
+and is absent from the qualified ABI9 wheel. See the
+[admission result](../results/h20-vllm-int8-quant-admission-20260729.json).
 
 To enable fused RoPE+paged-KV on vLLM 0.24/0.25 CUDA, configure the compilation
 object before constructing the engine:
@@ -648,6 +696,21 @@ PY
   --dtype bf16 --rows 8 --width 11008 --group-size 128 \
   --warmup 100 --iterations 2000 --samples 15 \
   --provider-order forward
+
+.venv-vllm/bin/python benchmarks/vllm_rms_norm_dynamic_int8.py \
+  --dtype bf16 --rows 128 --hidden-size 896 --with-residual \
+  --warmup 100 --iterations 1000 --samples 9 \
+  --provider-order loom-first
+
+.venv-vllm/bin/python benchmarks/vllm_engine_int8_quant_ab.py \
+  --model /path/to/qwen25-w8a8 \
+  --model-revision <revision> \
+  --provider-order baseline-first
+
+.venv-vllm/bin/python benchmarks/vllm_engine_int8_quant_ab.py \
+  --model /path/to/qwen25-w8a8 \
+  --model-revision <revision> \
+  --provider-order loom-first
 
 .venv-vllm/bin/python benchmarks/vllm_engine_fp8_ab.py \
   --model /path/to/Qwen2.5-0.5B-Instruct \
@@ -1015,7 +1078,8 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
 - one selectable IR provider (`fused_add_rms_norm`), one opt-in out-of-tree
   layer replacement (`SiluAndMul`), and one vLLM-version-specific
   activation-quant fusion-table replacement, one optional-residual
-  RMSNorm-to-FP8 fusion-table replacement, plus a vLLM 0.24/0.25-specific
+  RMSNorm-to-FP8 fusion-table replacement, one experimental source-ABI10
+  RMSNorm-to-INT8 compiler extension, plus a vLLM 0.24/0.25-specific
   RoPE+native/static-FP8-KV compiler-pass adapter, greedy/general
   selected-token and top-k sampled-logprob sampler overrides, shape-gated
   top-k and fused top-p/renormalization overrides, an explicit-seed
@@ -1026,7 +1090,9 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
 - the isolated operator is faster on H20 and real-model invocation is proven,
   but no model-level speedup has been established for either FP8 activation
   fusion or RoPE+paged-KV. RMSNorm-to-FP8 has a narrow Qwen prefill result but
-  no decode/TPOT/throughput claim;
+  no decode/TPOT/throughput claim; RMSNorm-to-INT8 has real W8A8 invocation
+  but no exact-output, default-admission, stable-performance, or qualified-wheel
+  claim;
 - vLLM-owned penalties, masks, and stochastic sampling can feed the
   selected-token path. Without categorical registration, Loom accelerates
   measured top-k-only and top-p-only filtering shapes but leaves joint

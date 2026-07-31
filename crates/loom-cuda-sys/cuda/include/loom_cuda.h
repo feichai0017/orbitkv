@@ -60,6 +60,25 @@ int loom_cuda_rms_norm_dynamic_fp8_bf16(
     uint8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
     float epsilon, void* stream);
 
+// RMSNorm followed by symmetric dynamic per-token INT8 quantization. A
+// non-null residual follows the same update semantics as the FP8 path. Scales
+// has one F32 value per row and uses absmax / 127; an all-zero row has scale
+// zero and an all-zero output.
+int loom_cuda_rms_norm_dynamic_int8_f32(
+    const float* input, const float* weight, float* residual, int8_t* output,
+    float* scales, uint32_t rows, uint32_t hidden_size, float epsilon,
+    void* stream);
+
+int loom_cuda_rms_norm_dynamic_int8_f16(
+    const uint16_t* input, const uint16_t* weight, uint16_t* residual,
+    int8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
+    float epsilon, void* stream);
+
+int loom_cuda_rms_norm_dynamic_int8_bf16(
+    const uint16_t* input, const uint16_t* weight, uint16_t* residual,
+    int8_t* output, float* scales, uint32_t rows, uint32_t hidden_size,
+    float epsilon, void* stream);
+
 // Fused residual addition and RMSNorm over contiguous tensors. Both input and
 // residual are updated in place:
 //   residual = input + residual

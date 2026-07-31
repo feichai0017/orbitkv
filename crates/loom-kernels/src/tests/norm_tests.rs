@@ -205,3 +205,45 @@ fn dynamic_fp8_reference_stores_the_optional_residual_sum() {
     assert_eq!(output[1], 0x7e);
     assert!(scales[0] > DYNAMIC_FP8_MIN_SCALE);
 }
+
+#[test]
+fn dynamic_int8_reference_matches_vllm_scale_zero_and_rounding_contract() {
+    let spec = RmsNormDynamicInt8Spec::new(2, 4, 1.0e-6, DType::F32).unwrap();
+    let input = [3.0_f32, 4.0, -3.0, -4.0, 0.0, 0.0, 0.0, 0.0];
+    let weight = [1.0_f32, 1.0, 0.5, 0.5];
+    let mut output = [0_i8; 8];
+    let mut scales = [f32::NAN; 2];
+
+    rms_norm_dynamic_int8_f32_reference(&input, &weight, &mut output, &mut scales, None, spec)
+        .unwrap();
+
+    assert_eq!(output[1], 127);
+    assert_eq!(output[3], -64);
+    assert_eq!(&output[4..], &[0, 0, 0, 0]);
+    assert!(scales[0] > 0.0);
+    assert_eq!(scales[1], 0.0);
+}
+
+#[test]
+fn dynamic_int8_reference_stores_the_optional_low_precision_residual() {
+    let spec = RmsNormDynamicInt8Spec::new(1, 2, 1.0e-6, DType::Bf16).unwrap();
+    let input = [bf16::from_f32(1.0), bf16::from_f32(2.0)];
+    let weight = [bf16::ONE, bf16::ONE];
+    let mut residual = [bf16::from_f32(2.0), bf16::from_f32(2.0)];
+    let mut output = [0_i8; 2];
+    let mut scales = [0.0_f32; 1];
+
+    rms_norm_dynamic_int8_bf16_reference(
+        &input,
+        &weight,
+        &mut output,
+        &mut scales,
+        Some(&mut residual),
+        spec,
+    )
+    .unwrap();
+
+    assert_eq!(residual, [bf16::from_f32(3.0), bf16::from_f32(4.0)]);
+    assert_eq!(output[1], 127);
+    assert!(scales[0] > 0.0);
+}

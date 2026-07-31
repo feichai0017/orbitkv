@@ -124,6 +124,57 @@ unsafe fn launch_rms_norm_dynamic_fp8<T: Scalar>(
     record_launch(OP_RMS_NORM_DYNAMIC_FP8);
     Ok(())
 }
+
+#[allow(clippy::too_many_arguments)]
+unsafe fn launch_rms_norm_dynamic_int8<T: Scalar>(
+    input: *const T,
+    input_elements: u64,
+    weight: *const T,
+    weight_elements: u64,
+    residual: *mut T,
+    residual_elements: u64,
+    output: *mut i8,
+    output_elements: u64,
+    scales: *mut f32,
+    scale_elements: u64,
+    rows: u32,
+    hidden_size: u32,
+    epsilon: f32,
+    stream: *mut c_void,
+) -> Result<(), CudaExecutorError> {
+    let (input, input_range) = unsafe { read_slice(input, input_elements, "RMSNorm+INT8 input") }?;
+    let (weight, weight_range) =
+        unsafe { read_slice(weight, weight_elements, "RMSNorm+INT8 weight") }?;
+    let (mut residual, residual_range) =
+        unsafe { write_optional_slice(residual, residual_elements, "RMSNorm+INT8 residual") }?;
+    let (mut output, output_range) =
+        unsafe { write_slice(output, output_elements, "RMSNorm+INT8 output") }?;
+    let (mut scales, scales_range) =
+        unsafe { write_slice(scales, scale_elements, "RMSNorm+INT8 scales") }?;
+    let mut regions = vec![
+        ("input", input_range),
+        ("weight", weight_range),
+        ("output", output_range),
+        ("scales", scales_range),
+    ];
+    if let Some(range) = residual_range {
+        regions.push(("residual", range));
+    }
+    require_disjoint(&regions, "RMSNorm+INT8")?;
+    let spec = RmsNormDynamicInt8Spec::new(rows as usize, hidden_size as usize, epsilon, T::DTYPE)
+        .map_err(invalid_contract)?;
+    T::rms_norm_dynamic_int8(
+        &stream_backend(stream),
+        &input,
+        &weight,
+        residual.as_mut(),
+        &mut output,
+        &mut scales,
+        spec,
+    )?;
+    record_launch(OP_RMS_NORM_DYNAMIC_INT8);
+    Ok(())
+}
 /// Checked standalone RMSNorm.
 ///
 /// # Safety
@@ -255,6 +306,55 @@ pub unsafe extern "C" fn loom_cuda_bridge_rms_norm_dynamic_fp8(
     })
 }
 
+/// Checked RMSNorm followed by symmetric dynamic per-token INT8.
+///
+/// # Safety
+///
+/// Every pointer must identify the declared CUDA storage on the active
+/// context and remain alive until work on `stream` completes.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn loom_cuda_bridge_rms_norm_dynamic_int8(
+    dtype: u32,
+    input: *const c_void,
+    input_elements: u64,
+    weight: *const c_void,
+    weight_elements: u64,
+    residual: *mut c_void,
+    residual_elements: u64,
+    output: *mut i8,
+    output_elements: u64,
+    scales: *mut f32,
+    scale_elements: u64,
+    rows: u32,
+    hidden_size: u32,
+    epsilon: f32,
+    stream: *mut c_void,
+) -> c_int {
+    bridge_call(|| {
+        let kind = scalar_kind(dtype)?;
+        dispatch_scalar!(
+            kind,
+            launch_rms_norm_dynamic_int8(
+                input.cast(),
+                input_elements,
+                weight.cast(),
+                weight_elements,
+                residual.cast(),
+                residual_elements,
+                output,
+                output_elements,
+                scales,
+                scale_elements,
+                rows,
+                hidden_size,
+                epsilon,
+                stream,
+            )
+        )
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -270,6 +370,33 @@ mod tests {
                 0x3000_usize as *mut f32,
                 0,
                 0x4000_usize as *mut u8,
+                8,
+                0x5000_usize as *mut f32,
+                2,
+                2,
+                4,
+                1.0e-5,
+                std::ptr::null_mut(),
+            )
+        };
+        assert!(matches!(
+            result,
+            Err(CudaExecutorError::InvalidContract(message))
+                if message.contains("pointer must be null")
+        ));
+    }
+
+    #[test]
+    fn dynamic_int8_rejects_non_null_absent_residual_before_submission() {
+        let result = unsafe {
+            launch_rms_norm_dynamic_int8::<f32>(
+                0x1000_usize as *const f32,
+                8,
+                0x2000_usize as *const f32,
+                4,
+                0x3000_usize as *mut f32,
+                0,
+                0x4000_usize as *mut i8,
                 8,
                 0x5000_usize as *mut f32,
                 2,

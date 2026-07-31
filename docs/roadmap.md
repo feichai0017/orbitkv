@@ -164,10 +164,14 @@ Status: in progress.
 1. ~~vectorized FP16 and BF16 RMSNorm~~ — H20 correctness gate complete;
 2. ~~fused residual Add+RMSNorm~~ — double in-place H20 gate complete;
 3. ~~RMSNorm plus dynamic per-token FP8 output quantization~~ — H20 and named
-   vLLM bitwise/performance gates complete; INT8 remains planned;
-4. ~~named vLLM baseline and engine integration~~ — IR provider, compilation,
+   vLLM bitwise/performance gates complete;
+4. optional-residual RMSNorm plus symmetric dynamic per-token INT8 — source
+   ABI10, direct H20 correctness, a real Qwen2.5 W8A8 compiler route, and
+   unchanged Cutlass GEMM are complete. Exact model quality, an order-stable
+   engine benefit, default admission, and a matrix-wheel gate remain open;
+5. ~~named vLLM baseline and engine integration~~ — IR provider, compilation,
    CUDA Graph, and synthetic-Qwen2 generate-loop gates complete;
-5. ~~native CUDA/LibTorch wheel and clean-install matrix gate~~; a production
+6. ~~native CUDA/LibTorch wheel and clean-install matrix gate~~; a production
    model/workload gate remains.
 
 Exit: one fused path improves a real decode workload, not only a microbenchmark.
@@ -204,6 +208,16 @@ source-, integration-, H20-, and ABI9 clean-wheel-qualified.
   Cutlass scaled-mm call sites. Order-reversed Qwen2.5-0.5B prefill improves
   batch latency by `1.0066-1.0506x`; decode-heavy latency crosses parity and
   carries no acceleration claim;
+- ~~implement the matching optional-residual RMSNorm-to-dynamic-per-token-INT8
+  source path~~ — one ABI10 contract spans the CPU oracle, safe CUDA, checked
+  bridge, Stable ABI PyTorch, and vLLM 0.24/0.25 compiler adapter. A real
+  Qwen2.5 W8A8 graph records `1440/0` Loom launches while preserving eight
+  Cutlass scaled-mm sites on both providers;
+- close the INT8 admission gates — the real-layer shadow differs by one INT8
+  LSB across 688,128 elements with exact scales/residuals, but the 32-prompt
+  one-step gate matches only `29/32` top-1 tokens and dual-order engine latency
+  crosses parity. The route stays explicit opt-in and ABI10 has no qualified
+  matrix wheel;
 - per-token, per-channel, and per-block scale reduction for FP8 and INT8;
 - pack/unpack and layout conversion for engine-selected quantized kernels;
 - dequantize, requantize, scale conversion, and scale-layout transpose;
@@ -218,6 +232,9 @@ latency, memory, or temporary-allocation metric.
 The first slice meets the full source, engine, and distribution exit on the
 exact Qwen prefill boundary. K2.5 remains open only for additional
 scale/pack/layout work admitted by another named vendor-kernel consumer.
+The ABI10 INT8 candidate reaches implementation and real-engine invocation,
+but not the quality, stable-benefit, default-admission, or binary-distribution
+exit. It does not change the current qualified ABI9 wheel boundary.
 
 ## K3: KV-Cache Update Family
 

@@ -18,6 +18,13 @@
   specialization, pack4 output conversion, and scalar fallback;
 - checked safe-Rust, caller-allocated PyTorch out, and convenience allocating
   entrypoints for RMSNorm+FP8;
+- one-kernel optional-residual Add+RMSNorm plus symmetric dynamic per-token
+  INT8, sharing the normalization reduction and pack4/scalar scheduling with
+  FP8 while preserving vLLM's native-IR rounding, zero-row scale, and
+  ties-to-even saturated conversion contract;
+- checked safe-Rust, caller-allocated PyTorch out, convenience allocating
+  entrypoints, telemetry, and explicit vLLM compiler patterns for
+  RMSNorm+INT8;
 - split-half SiLU-and-Mul contracts and CPU oracles for F32/FP16/BF16;
 - handwritten SiLU-and-Mul with aligned 16-byte packs and scalar fallback;
 - FP16/BF16 SiLU-and-Mul fused directly into dynamic per-block FP8 E4M3FN,
@@ -103,18 +110,19 @@
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
-  using the current CUDA stream; the source ABI9 dispatcher routes all
-  seventeen semantic operators through `loom-cuda-bridge` into borrowed safe
+  using the current CUDA stream; the source ABI10 dispatcher routes all
+  eighteen semantic operators through `loom-cuda-bridge` into borrowed safe
   Rust dispatch with explicit storage spans and layouts. The exact ABI9 wheel
-  is the current qualified binary boundary;
+  remains the current qualified binary boundary;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test
   extras, exactly two packaged `.so` files, a revision/toolkit/SM/hash manifest,
   runtime ABI/hash checks, and a CI guard that rejects source-only wheels;
 - a `loom_cuda` vLLM IR provider with exact-contract admission and an opt-in vLLM
   `SiluAndMul` out-of-tree layer replacement, plus an opt-in activation-quant
   fusion-table replacement, optional-residual RMSNorm-to-FP8 fusion-table
-  replacement, RoPE+KV compiler-pass adapter, and pure-greedy and general
-  selected-token sampled-logprob fast paths, an exact top-k
+  replacement, explicit optional-residual RMSNorm-to-INT8 compiler patterns,
+  RoPE+KV compiler-pass adapter, and pure-greedy and general selected-token
+  sampled-logprob fast paths, an exact top-k
   raw-logprob adapter, mixed-sampling logits-preprocessing registration, a
   measured-shape Min-P override, sparse token-penalty override, deterministic
   greedy speculative verifier, plus a
@@ -267,6 +275,17 @@
   batch latency by `1.023-1.051x` at batch 1, `1.011-1.019x` at batch 8, and
   `1.0066-1.016x` at batch 32. The 64-token decode workload crosses parity,
   so no TPOT or throughput acceleration is claimed;
+- the source ABI10 RMSNorm-to-INT8 path passes 18 H20 safe-CUDA tests, 21
+  focused Python/operator/compiler tests, and the complete 326-test vLLM
+  0.25.1 GPU suite. A real Qwen2.5 W8A8 graph records `1440/0` Loom launches,
+  replaces four eligible normalization-quantization call sites, and retains
+  eight Cutlass scaled-mm sites on both providers;
+- across 48 eligible real-model RMSNorm boundaries, 688,128 INT8 elements
+  differ from the native IR shadow once by one LSB; every F32 scale and BF16
+  residual is bit-exact. The held-out 32-prompt one-step gate matches `29/32`
+  top-1 tokens, while batch latency and TTFT fail to show an order-stable
+  improvement. The adapter therefore remains explicit opt-in and carries no
+  default-enable or engine-speedup claim;
 - SiLU-and-Mul F32, FP16, and BF16 kernels passed CPU-oracle checks at
   `8x11008`, and the BF16 scalar fallback passed at `3x127`; observed raw
   medians were `3.975 us`, `4.279 us`, `4.392 us`, and `2.932 us`
@@ -356,7 +375,7 @@
   optional-residual RMSNorm-to-FP8, deterministic categorical sampling, fused
   logits preprocessing, sparse penalties, sampled-token plus top-k logprobs,
   exact top-k filtering, and fused top-p renormalization;
-- the current bridge exposes 25 versioned operator/runtime symbols and no
+- the current bridge exposes 26 versioned operator/runtime symbols and no
   raw CUDA launch symbols; the PyTorch shim depends only on those bridge
   symbols and no raw launch symbol;
 - against vLLM's exact `compute_logprobs + gather_logprobs(0)` path for the
@@ -522,6 +541,11 @@ FA3 for the engine's 128-1,024-token path.
 
 ## Not Yet Proven
 
+- exact model-output or declared task-quality acceptance, an order-stable
+  engine latency/memory/temporary-allocation benefit, default admission, and a
+  repository-free ABI10 matrix wheel for RMSNorm+dynamic INT8. The
+  [H20 admission result](results/h20-vllm-int8-quant-admission-20260729.json)
+  proves source implementation and real W8A8 invocation only;
 - fused standalone Add+RMSNorm model-level benefit, and RMSNorm+FP8 benefit
   outside the qualified Qwen2.5-0.5B `fp8_per_tensor` Cutlass prefill
   boundary; decode-heavy RMSNorm+FP8 latency crosses parity;
@@ -554,7 +578,7 @@ FA3 for the engine's 128-1,024-token path.
   equivalence, but an 8-sequence, 1,016-scored-token early-stop slice rejects
   it because both FP8 paths regress BF16 perplexity by about `3.07x`; the
   formal TTFT/TPOT matrix was not run, no accepted large-model artifact
-  exists, and INT8 remains unimplemented;
+  exists, and KV-cache INT8 remains unimplemented;
 - physical KV movement benefit for an explicitly named offload, beam, or
   compaction path; default vLLM 0.24 prefix caching and preemption are no
   longer open because the [H20 admission probe](results/h20-vllm-kv-movement-admission-rejected-20260727.json)

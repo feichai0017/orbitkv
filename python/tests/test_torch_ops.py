@@ -297,7 +297,7 @@ def test_dynamic_fp8_schema_declares_both_mutations():
 
 
 def test_bridge_abi_is_current():
-    assert bridge_abi_version() == 9
+    assert bridge_abi_version() == 10
 
 
 @pytest.mark.parametrize(

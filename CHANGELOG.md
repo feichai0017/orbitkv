@@ -54,6 +54,10 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   RMSNorm-to-FP8 schema with vLLM's exact optional-residual mutation schema;
   no ABI8 normalization overload, boxed-op alias, or bridge compatibility shim
   is retained.
+- advanced source to bridge ABI10 for optional-residual
+  RMSNorm-to-dynamic-INT8; the dispatcher requires the matching ABI10 bridge
+  and retains no ABI9 compatibility entrypoint. The current qualified binary
+  artifact remains ABI9 until ABI10 passes the clean-install matrix.
 
 ### Added
 
@@ -65,6 +69,14 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   vLLM 0.24/0.25 fusion keys. H20 exact-byte, direct named-baseline,
   generated-source, unchanged-Cutlass-GEMM, and order-reversed Qwen prefill
   gates pass; decode-heavy latency crosses parity and carries no speedup claim;
+- optional-residual Add+RMSNorm-to-symmetric-dynamic-per-token-INT8 across the
+  CPU oracle, safe Rust, checked ABI10 bridge, shared handwritten CUDA,
+  Stable ABI dispatcher, direct Python APIs, telemetry, and explicit vLLM
+  0.24/0.25 compiler patterns. H20 source tests and real Qwen2.5 W8A8
+  invocation pass with unchanged Cutlass GEMM. The real-layer shadow has one
+  one-LSB difference across 688,128 INT8 elements with exact scales/residuals,
+  while held-out one-step quality and dual-order latency keep the route
+  explicit opt-in with no default, speedup, or qualified-wheel claim;
 - explicit Rust physical-layout contracts for padded logits, packed QKV,
   NHD/HND caches, interleaved cache storage, scale layout, and FP8 scale upper
   bounds;
@@ -171,6 +183,8 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   directory;
 - constrained the wheel build backend to setuptools 80–81 to match PyTorch
   2.11's build dependency range.
+- sized vectorized RMSNorm-quantization blocks from four-element pack count,
+  avoiding hundreds of idle reduction threads at hidden size 896.
 - made fused RoPE+KV auto-functionalization preserve the complete packed cache
   on PyTorch 2.10 by exposing one real mutable cache allocation instead of two
   storage-aliasing views.

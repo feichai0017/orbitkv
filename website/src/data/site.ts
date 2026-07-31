@@ -104,7 +104,7 @@ export const nextOperators = [
   {
     milestone: "K2.5 · P1",
     name: "Quantization plumbing",
-    reason: "Remove scale, pack/unpack, dequant/requant, and layout passes around an unchanged vendor GEMM.",
+    reason: "RMSNorm→INT8 now reaches a real W8A8 graph; close quality, stable-benefit, and ABI10 wheel gates before expanding scale/layout work.",
   },
   {
     milestone: "K5 · P1",
@@ -145,6 +145,12 @@ export const evidence = [
     shape: "BF16 · 8 × 4096",
     result: "1.057–1.076×",
     detail: "CUDA Graph ratio vs vLLM",
+  },
+  {
+    operator: "RMSNorm + INT8 candidate",
+    shape: "Qwen2.5 W8A8 · 32 natural prompts",
+    result: "Opt-in · 29 / 32 top-1",
+    detail: "Real graph and unchanged Cutlass GEMM; latency crosses parity and ABI10 wheel is open",
   },
   {
     operator: "SiLU + Mul + FP8",

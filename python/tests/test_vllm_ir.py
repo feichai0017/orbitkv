@@ -21,6 +21,8 @@ from loom_kernels.vllm import (
     PAGED_DECODE_OVERRIDE_KEY,
     RMS_NORM_FP8_OVERRIDE_ENV,
     RMS_NORM_FP8_OVERRIDE_KEY,
+    RMS_NORM_INT8_OVERRIDE_ENV,
+    RMS_NORM_INT8_OVERRIDE_KEY,
     ROPE_PAGED_KV_OVERRIDE_KEY,
     SELECTED_TOKEN_LOGPROBS_OVERRIDE_KEY,
     SILU_OVERRIDE_ENV,
@@ -46,6 +48,7 @@ from loom_kernels.vllm import (
     register_vllm_greedy_speculative_verify,
     register_vllm_rope_paged_kv,
     register_vllm_rms_norm_dynamic_fp8,
+    register_vllm_rms_norm_dynamic_int8,
     register_vllm_selected_token_logprobs,
     register_vllm_silu_and_mul,
     register_vllm_silu_and_mul_dynamic_fp8,
@@ -1305,6 +1308,101 @@ def test_rms_norm_fp8_override_metadata_tracks_opt_in(monkeypatch):
     assert provider_metadata()["rms_norm_fp8_override_requested"] is False
     monkeypatch.setenv(RMS_NORM_FP8_OVERRIDE_ENV, "on")
     assert provider_metadata()["rms_norm_fp8_override_requested"] is True
+
+
+def test_registers_vllm_rms_norm_dynamic_int8_patterns():
+    from vllm.compilation.passes.fusion import rms_quant_fusion
+
+    assert (
+        register_vllm_rms_norm_dynamic_int8()
+        == RMS_NORM_INT8_OVERRIDE_KEY
+    )
+    assert getattr(
+        rms_quant_fusion.RMSNormQuantFusionPass,
+        "_loom_supports_dynamic_int8",
+        False,
+    )
+
+
+def test_rms_norm_int8_override_metadata_tracks_opt_in(monkeypatch):
+    monkeypatch.delenv(RMS_NORM_INT8_OVERRIDE_ENV, raising=False)
+    assert provider_metadata()["rms_norm_int8_override_requested"] is False
+    monkeypatch.setenv(RMS_NORM_INT8_OVERRIDE_ENV, "on")
+    assert provider_metadata()["rms_norm_int8_override_requested"] is True
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+@pytest.mark.parametrize(
+    "pattern_class_name",
+    [
+        "RMSNormDynamicInt8QuantPattern",
+        "FusedAddRMSNormDynamicInt8QuantPattern",
+    ],
+)
+def test_vllm_rms_norm_dynamic_int8_pattern_rewrites_to_loom(
+    pattern_class_name,
+):
+    from vllm.compilation.passes.vllm_inductor_pass import (
+        VllmFusionPatternMatcherPass,
+        enable_fake_mode,
+    )
+    from vllm.config import VllmConfig, set_current_vllm_config
+
+    from loom_kernels.vllm import _rms_int8_fusion
+
+    config = VllmConfig()
+    with set_current_vllm_config(config):
+        register_vllm_rms_norm_dynamic_int8()
+        pattern_class = getattr(_rms_int8_fusion, pattern_class_name)
+        pattern = pattern_class(1.0e-5)
+        fusion_pass = VllmFusionPatternMatcherPass(
+            config, "loom_rms_int8_quant_test"
+        )
+        fusion_pass.register(pattern)
+
+        @enable_fake_mode
+        def trace_official_pattern():
+            return fusion_pass._trace_fn(pattern.pattern, pattern.get_inputs())
+
+        reference_graph_module = trace_official_pattern()
+        graph_module = trace_official_pattern()
+        fusion_pass(graph_module.graph)
+
+    loom_operator = (
+        torch.ops.loom_kernels.rms_norm_dynamic_per_token_int8.default
+    )
+    loom_target_present = any(
+        node.op == "call_function"
+        and node.args
+        and node.args[0] == loom_operator
+        for node in graph_module.graph.nodes
+    )
+    assert fusion_pass.matched_count == 1
+    assert loom_target_present
+
+    inputs = [
+        torch.randn_like(input_tensor) for input_tensor in pattern.get_inputs()
+    ]
+    expected = reference_graph_module(
+        *[input_tensor.clone() for input_tensor in inputs]
+    )
+    actual = graph_module(*[input_tensor.clone() for input_tensor in inputs])
+    torch.cuda.synchronize()
+
+    integer_delta = (
+        actual[0].to(torch.int16) - expected[0].to(torch.int16)
+    ).abs()
+    assert integer_delta.max().item() <= 1
+    assert torch.count_nonzero(integer_delta).item() <= actual[0].shape[0]
+    scale_index = 2 if len(actual) == 3 else 1
+    torch.testing.assert_close(
+        actual[scale_index],
+        expected[scale_index],
+        rtol=2.0e-6,
+        atol=1.0e-8,
+    )
+    if len(actual) == 3:
+        assert torch.equal(actual[1], expected[1])
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")

@@ -43,7 +43,8 @@ enum loom_cuda_bridge_operator {
   LOOM_CUDA_BRIDGE_TOP_P_RENORM = 14,
   LOOM_CUDA_BRIDGE_LOGITS_PREPROCESS = 15,
   LOOM_CUDA_BRIDGE_CATEGORICAL_SAMPLE = 16,
-  LOOM_CUDA_BRIDGE_OPERATOR_COUNT = 17,
+  LOOM_CUDA_BRIDGE_RMS_NORM_DYNAMIC_INT8 = 17,
+  LOOM_CUDA_BRIDGE_OPERATOR_COUNT = 18,
 };
 
 uint32_t loom_cuda_bridge_abi_version(void);
@@ -66,6 +67,13 @@ int loom_cuda_bridge_rms_norm_dynamic_fp8(
     uint32_t dtype, const void* input, uint64_t input_elements,
     const void* weight, uint64_t weight_elements, void* residual,
     uint64_t residual_elements, uint8_t* output, uint64_t output_elements,
+    float* scales, uint64_t scale_elements, uint32_t rows,
+    uint32_t hidden_size, float epsilon, void* stream);
+
+int loom_cuda_bridge_rms_norm_dynamic_int8(
+    uint32_t dtype, const void* input, uint64_t input_elements,
+    const void* weight, uint64_t weight_elements, void* residual,
+    uint64_t residual_elements, int8_t* output, uint64_t output_elements,
     float* scales, uint64_t scale_elements, uint32_t rows,
     uint32_t hidden_size, float epsilon, void* stream);
 

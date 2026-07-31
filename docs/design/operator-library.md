@@ -122,6 +122,47 @@ the caller's stream without synchronizing. The convenience Python API
 allocates result and scale once per call; engine and benchmark paths use the
 out variant.
 
+## Optional-Residual RMSNorm+Dynamic-INT8 Contract
+
+The INT8 path keeps the same contiguous F32, FP16, or BF16 input, matching
+one-dimensional weight, and optional mutable residual contract. It produces
+signed INT8 values plus one F32 dequantization scale per flattened row. The
+scale is `absmax / 127`; an all-zero row writes scale zero and INT8 zeros.
+
+With residual, the raw F32 `input + residual` sum drives the RMS statistic,
+while the residual output stores that sum rounded to the input dtype. The
+normalized value is rounded to the input/weight dtype before multiplication,
+the weighted result is rounded again, and quantization uses
+round-to-nearest-even with signed saturation. These rounding points match the
+vLLM native W8A8 IR boundary and are part of the public contract.
+
+The boxed PyTorch schema is:
+
+```text
+rms_norm_dynamic_per_token_int8(
+    Tensor(a!) result,
+    Tensor input,
+    Tensor weight,
+    Tensor(b!) scale,
+    float epsilon,
+    Tensor(c!)? residual=None
+) -> ()
+```
+
+Result, scale, and optional residual are caller-owned, pairwise-disjoint
+mutable buffers. One CUDA kernel performs the RMS, weighted-absmax, and
+quantization passes; aligned shapes use four-element input/output packs and
+size the block from the pack count. The vLLM adapter adds plain and fused-add
+patterns to its existing normalization-quantization compiler pass while
+leaving Cutlass scaled GEMM unchanged.
+
+This is a source-ABI10, explicit-opt-in candidate rather than a qualified
+default path. H20 proves the operator and real W8A8 invocation, but held-out
+one-step output quality is not exact, dual-order engine latency crosses parity,
+and no ABI10 matrix wheel is qualified. The
+[admission result](../results/h20-vllm-int8-quant-admission-20260729.json)
+records those limits.
+
 ## SiLU-And-Mul Contract
 
 The SwiGLU activation consumes a contiguous tensor whose final dimension is

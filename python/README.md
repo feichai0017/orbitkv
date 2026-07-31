@@ -13,6 +13,11 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 > source-only wheel is intentionally unsupported:
 > `pip wheel ./python` fails unless `build_wheel.py` has staged both native
 > libraries and their manifest.
+>
+> Current source has advanced to bridge ABI10 with eighteen operators by
+> adding optional-residual RMSNorm-to-dynamic-INT8. ABI10 is an explicit
+> experimental source path and has not passed the matrix-wheel clean-install
+> gate; it does not supersede ABI9 as the qualified artifact.
 
 ## Qualified artifact
 
@@ -102,8 +107,9 @@ bridge, builds the boxed LibTorch Stable ABI dispatcher, rejects ATen/c10 C++
 and raw CUDA-launch dependencies, verifies `$ORIGIN` loading, writes the
 revision/toolkit/SM/runtime manifest, and checks the final archive contains
 exactly the two Loom `.so` files. Current source emits a
-`9cu131torch210sm90` tag. The exact `7df4133` ABI9 artifact passes the
-repository-free matrix and remains unpublished.
+`10cu131torch210sm90` tag. That ABI10 candidate is not yet matrix-qualified.
+The exact `7df4133` ABI9 artifact passes the repository-free matrix and
+remains unpublished.
 
 ## Source development
 
@@ -125,7 +131,7 @@ Source checkouts discover the paired libraries only under repository
 Every operator, including padded logits and strided paged-cache views, enters
 checked borrowed Rust dispatch. There is no ctypes, ATen dispatcher twin, or
 direct raw-CUDA framework path. Both source libraries must be rebuilt together:
-the current dispatcher rejects an ABI8 bridge instead of retaining a
+the current ABI10 dispatcher rejects an ABI9 bridge instead of retaining a
 compatibility shim.
 
 ## Direct PyTorch use
@@ -140,6 +146,8 @@ from loom_kernels import (
     greedy_speculative_verify,
     logits_preprocess_,
     min_p_filter_,
+    rms_norm_dynamic_fp8,
+    rms_norm_dynamic_int8,
     rope_paged_kv_write_,
     selected_token_logprobs,
     silu_and_mul_dynamic_fp8,
@@ -152,6 +160,12 @@ from loom_kernels import (
 fp8_output, block_scales = silu_and_mul_dynamic_fp8(
     gate_and_up_bf16,
     group_size=128,
+)
+int8_output, token_scales = rms_norm_dynamic_int8(
+    hidden_bf16,
+    norm_weight_bf16,
+    epsilon=1.0e-6,
+    residual=residual_bf16,
 )
 
 token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
@@ -243,11 +257,16 @@ same-shape residual. The residual is updated with the storage-dtype-rounded
 vLLM's dynamic per-token fusion. A scale upper bound is intentionally not
 supported.
 
+`rms_norm_dynamic_int8` and its out variant use the same optional-residual
+shape contract, return signed INT8 plus one F32 `absmax / 127` scale per row,
+and preserve the native W8A8 rounding boundary. They are available only from
+source ABI10 until a repository-free matrix wheel is qualified.
+
 ## Exported operator families
 
 | Family | Python entry points |
 | --- | --- |
-| Normalization | `rms_norm`, `rms_norm_out`, `add_rms_norm_`, `rms_norm_dynamic_fp8`, `rms_norm_dynamic_fp8_out` |
+| Normalization | `rms_norm`, `rms_norm_out`, `add_rms_norm_`, `rms_norm_dynamic_fp8`, `rms_norm_dynamic_fp8_out`, `rms_norm_dynamic_int8`, `rms_norm_dynamic_int8_out` |
 | Activation | `silu_and_mul`, `silu_and_mul_out`, `silu_and_mul_dynamic_fp8`, `silu_and_mul_dynamic_fp8_out` |
 | Position and KV | `rope_paged_kv_write_` for native or static FP8 E4M3 paged caches |
 | Decode tail | `logits_preprocess_`, `greedy_sample_logprobs`, `selected_token_logprobs`, `top_k_filter_`, `top_p_renorm_`, `topk_sampled_logprobs`, `min_p_filter_`, `apply_token_penalties_` |
@@ -276,6 +295,7 @@ into this contract.
 | Standalone SiLU-and-Mul | `LOOM_KERNELS_ENABLE_SILU_AND_MUL=1` |
 | SiLU-and-Mul→block FP8 | `LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8=1` |
 | Optional-residual RMSNorm→dynamic FP8 | `LOOM_KERNELS_ENABLE_RMS_NORM_FP8=1` |
+| Experimental optional-residual RMSNorm→dynamic INT8 | `LOOM_KERNELS_ENABLE_RMS_NORM_INT8=1` |
 | RoPE+paged-KV compiler pass | `configure_vllm_rope_paged_kv(...)` |
 | Short paged decode | `LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1` |
 | Mixed-sampling logits preprocessing | `register_vllm_logits_preprocess()` |

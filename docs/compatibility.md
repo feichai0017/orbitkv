@@ -27,6 +27,13 @@ RMSNorm-to-FP8 schema with vLLM's exact optional-residual mutation schema and
 retains no ABI8 overload or bridge shim. Its exact two-library wheel passes
 every repository-free matrix row.
 
+Current source is bridge ABI10 with eighteen semantic operators. ABI10 adds
+optional-residual RMSNorm-to-dynamic-INT8 across Rust, CUDA, PyTorch, and an
+explicit vLLM compiler route. Its H20 source and real-engine admission gate
+passes, but output quality is not exact, dual-order latency crosses parity,
+and no ABI10 two-library wheel has completed the repository-free matrix.
+Therefore every qualified row above still names ABI9.
+
 The preceding `e2c2982` ABI8 wheel is immutable historical evidence for the
 pre-residual normalization schema. It passed 293 tests on each vLLM minor and
 199 applicable PyTorch 2.10 tests.
@@ -42,6 +49,8 @@ qualifies the full vLLM 0.24/0.25 plus PyTorch 2.10/2.11 matrix.
 
 Bridge ABI9 is a deliberate breaking boundary. An ABI8 dispatcher cannot load
 the ABI9 bridge, and no compatibility shim exists.
+Bridge ABI10 continues that policy: its dispatcher rejects ABI9 rather than
+retaining an overload or fallback.
 
 The ABI7 wheel includes greedy speculative verification and static FP8 E4M3
 KV quantize-on-write through bridge ABI 7. Both vLLM minors pass the same
@@ -94,7 +103,7 @@ or compiler tables.
 ## Current native-wheel boundary
 
 The published Rust crates remain self-contained source distributions. The
-current ABI9 Python artifact name is
+current qualified ABI9 Python artifact name is
 `loom_kernels-1.0.0a1-9cu131torch210sm90-py3-none-linux_x86_64.whl`.
 Because the wheel is unpublished, its immutable manifest and SHA identify the
 build:
@@ -118,7 +127,8 @@ The earlier `8cu131torch210sm90` ABI-8, `6cu131torch210sm90` ABI-6,
 `4cu131torch210sm90` ABI-4, `2cu131torch210sm90` ABI-2, and
 `1cu131torch210sm90` ABI-1 artifacts remain historical evidence.
 The ABI-specific build tag prevents incompatible bridge signatures from
-colliding; ABI9 is the current qualified artifact boundary.
+colliding. Current source emits a distinct `10cu131torch210sm90` tag, while
+ABI9 remains the current qualified artifact boundary.
 
 The wheel is Python-ABI-independent (`py3-none`) because neither native library
 uses the CPython C API. Its platform tag remains the conservative
@@ -139,9 +149,10 @@ production dispatcher now uses that boundary:
 - all schemas use boxed Stable ABI registration;
 - tensor metadata, allocations, pointers, device guards, and the current CUDA
   stream use stable headers or AOTI C shims;
-- all seventeen ABI9 semantic operators continue into `loom-cuda-bridge`.
-  The dispatcher has no ATen/c10 C++ symbol dependency and consumes no raw
-  CUDA launch symbol;
+- all eighteen source-ABI10 semantic operators continue into
+  `loom-cuda-bridge`. The qualified ABI9 wheel contains the preceding
+  seventeen-operator boundary. Neither dispatcher has an ATen/c10 C++ symbol
+  dependency or consumes a raw CUDA launch symbol;
 - the public Python APIs and vLLM admission predicates reject tensors requiring
   gradients. No autograd kernel is advertised;
 - the temporary Add+RMSNorm probe and the previous ATen dispatcher were deleted

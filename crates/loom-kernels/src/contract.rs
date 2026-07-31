@@ -11,6 +11,8 @@ pub enum DType {
     F16,
     /// Brain floating point with an eight-bit exponent.
     Bf16,
+    /// Signed eight-bit integer.
+    I8,
     /// FP8 E4M3 finite-numbers encoding.
     Fp8E4M3Fn,
 }
@@ -21,7 +23,7 @@ impl DType {
         match self {
             Self::F32 => 4,
             Self::F16 | Self::Bf16 => 2,
-            Self::Fp8E4M3Fn => 1,
+            Self::I8 | Self::Fp8E4M3Fn => 1,
         }
     }
 }

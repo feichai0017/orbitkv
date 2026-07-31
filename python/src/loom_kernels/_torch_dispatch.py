@@ -14,6 +14,9 @@ _add_rms_norm_mut = torch.ops.loom_kernels.add_rms_norm_mut.default
 _rms_norm_dynamic_per_token_fp8 = (
     torch.ops.loom_kernels.rms_norm_dynamic_per_token_fp8.default
 )
+_rms_norm_dynamic_per_token_int8 = (
+    torch.ops.loom_kernels.rms_norm_dynamic_per_token_int8.default
+)
 _silu_and_mul = torch.ops.loom_kernels.silu_and_mul.default
 _silu_and_mul_dynamic_fp8 = (
     torch.ops.loom_kernels.silu_and_mul_dynamic_fp8.default

@@ -1,0 +1,200 @@
+{
+  "schema_version": 1,
+  "date": "2026-07-29",
+  "benchmark": "vllm_rms_norm_dynamic_int8_admission",
+  "decision": {
+    "status": "implemented_explicit_opt_in_not_default_admitted",
+    "candidate": "optional-residual RMSNorm fused with symmetric dynamic per-token INT8 quantization",
+    "reason": "The ABI10 Rust/CUDA/PyTorch path, compiler rewrite, real W8A8 invocation, unchanged Cutlass GEMM, and H20 source tests pass. The final natural-prompt gate matches 29 of 32 one-step top-1 tokens, while order-reversed engine latency crosses parity. The route therefore remains explicit opt-in and carries no default-enable or engine-speedup claim.",
+    "standalone_operator_complete": true,
+    "vllm_integration_complete": true,
+    "default_enable_ready": false,
+    "native_wheel_qualified": false
+  },
+  "claim_boundary": {
+    "accepted": [
+      "The fused boundary is implemented once across Rust contract/oracle, safe CUDA, checked bridge, Stable ABI PyTorch, and the vLLM compiler adapter.",
+      "The real Qwen2.5 W8A8 graph replaces eligible RMSNorm-to-INT8 boundaries with Loom while retaining Cutlass scaled-mm on both providers.",
+      "At 48 eligible real-model layer boundaries, 688128 INT8 elements contain one one-LSB difference; every F32 scale and BF16 residual output is bit-exact.",
+      "The pack4 launch uses 224 work items for hidden size 896 instead of launching 896 threads for 224 packs.",
+      "The provider remains disabled unless LOOM_KERNELS_ENABLE_RMS_NORM_INT8 is explicitly enabled."
+    ],
+    "excluded": [
+      "No stable end-to-end latency, TTFT, TPOT, throughput, or serving benefit is claimed.",
+      "No exact model-logit or generated-token equivalence is claimed.",
+      "The uncompiled direct-boundary ratio is diagnostic and is not an engine-performance result.",
+      "No GEMM implementation or GEMM speedup is claimed.",
+      "ABI10 has not passed a repository-free matrix-wheel clean-install gate."
+    ]
+  },
+  "source": {
+    "repository_base_revision": "a131685e7838b33779bbc5166642041b1773d244",
+    "engine_benchmark_path": "benchmarks/vllm_engine_int8_quant_ab.py",
+    "engine_benchmark_sha256": "6ab7c8e8261b2e0f8d4ceafab2be979fef58e58cc34fe1b4783d9a3e68777792",
+    "direct_benchmark_path": "benchmarks/vllm_rms_norm_dynamic_int8.py",
+    "direct_benchmark_sha256": "e1f35746c84384672f7f4a2b8b672edf5c90c49e51922147560b116298c2801f",
+    "bridge_abi_version": 10,
+    "bridge_sha256": "74e901dc45b4ec838b8c775fc641db0d6820ecb89e0469f7bc9fed7f0e478fe0",
+    "raw_runs": [
+      {
+        "name": "natural_prompts_baseline_first",
+        "result_path": "/workspace/loom-k25-int8-impl-20260729-run1/results/h20-vllm-int8-natural-full-baseline-first-20260729.json",
+        "result_sha256": "8d8d70d5b77cbdee7738c39b85edc409b140bf69df503aeaa0c367b8eee3056a",
+        "timestamp_utc": "2026-07-30T00:50:53.847265+00:00"
+      },
+      {
+        "name": "natural_prompts_loom_first",
+        "result_path": "/workspace/loom-k25-int8-impl-20260729-run1/results/h20-vllm-int8-natural-full-loom-first-20260729.json",
+        "result_sha256": "69cf4aba0229fc4840fcb86de4c9e5e00ba0f8bee828383f89514d083692a0df",
+        "timestamp_utc": "2026-07-30T00:53:11.671641+00:00"
+      },
+      {
+        "name": "direct_rows128_hidden896_residual",
+        "result_path": "/workspace/loom-k25-int8-impl-20260729-run1/results/h20-rms-norm-int8-packcount-loom-first-20260729.json",
+        "result_sha256": "cbc3a865da74de679b002de5789dd1544690ad92665e069410c597c271aca593"
+      },
+      {
+        "name": "real_layer_native_ir_shadow",
+        "result_path": "/workspace/loom-k25-int8-impl-20260729-run1/results/h20-vllm-int8-native-ir-shadow-packcount-20260729.json",
+        "result_sha256": "3f6b2f27d3a5892fe0447e4156320d6dda3ff0023c22dfb16fea5447b792ba9f"
+      }
+    ]
+  },
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "driver": "535.161.08",
+    "python": "3.11.2",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "vllm": "0.25.1",
+    "linear_backend": "cutlass",
+    "detected_quantization": "compressed-tensors",
+    "model": "RedHatAI/Qwen2.5-0.5B-quantized.w8a8",
+    "model_revision": "0d1951533baeec89dd257df86d4d10c3bd5429f5",
+    "model_config_sha256": "cecd930c9291952e38214ef39380b8d68a23d79ac6712b772fa7baf8ae08d02c",
+    "generation_config_sha256": "ec988af9cc2a8adae3bee65ee7b5e03bb766a7ee990d1b8836f4dfc7db25382d"
+  },
+  "correctness": {
+    "real_layer_shadow": {
+      "captured_rms_norm_boundaries": 49,
+      "eligible_boundaries": 48,
+      "eligible_elements": 688128,
+      "int8_mismatch_count": 1,
+      "maximum_absolute_int8_delta": 1,
+      "all_scales_bit_exact": true,
+      "all_residuals_bit_exact": true
+    },
+    "direct_rows128_hidden896_residual": {
+      "int8_mismatch_count": 0,
+      "maximum_absolute_int8_delta": 0,
+      "scales_bit_exact": true,
+      "residual_bit_exact": true
+    },
+    "natural_prompt_quality": {
+      "prompts": 32,
+      "max_tokens": 1,
+      "returned_logprobs": 20,
+      "top1_agreement_count": 29,
+      "top1_agreement_rate": 0.90625,
+      "returned_token_set_exact_count": 1,
+      "minimum_top20_jaccard": 0.5384615384615384,
+      "median_top20_jaccard": 0.8614718614718615,
+      "mean_top20_jaccard": 0.8485015889907195,
+      "maximum_common_logprob_error": 1.846764326095581,
+      "median_common_logprob_error": 0.16868281364440918,
+      "exact_quality_gate_passed": false
+    }
+  },
+  "path_evidence": {
+    "baseline_loom_host_launches": 0,
+    "loom_host_launches": 1440,
+    "baseline_generated_calls": {
+      "loom_rms_norm_int8": 0,
+      "vllm_dynamic_int8_quant": 20,
+      "cutlass_scaled_mm": 8
+    },
+    "loom_generated_calls": {
+      "loom_rms_norm_int8": 4,
+      "vllm_dynamic_int8_quant": 8,
+      "cutlass_scaled_mm": 8
+    },
+    "path_gate_passed": true
+  },
+  "direct_diagnostic": {
+    "shape": {
+      "rows": 128,
+      "hidden_size": 896,
+      "dtype": "bfloat16",
+      "with_residual": true
+    },
+    "protocol": {
+      "warmup": 100,
+      "iterations_per_sample": 1000,
+      "samples": 9
+    },
+    "loom_cuda_graph_median_us": 4.828800201416016,
+    "uncompiled_native_ir_cuda_graph_median_us": 23.662559509277344,
+    "diagnostic_ratio": 4.900297904713151,
+    "loom_cuda_device_events": 1,
+    "uncompiled_native_ir_cuda_device_events": 13,
+    "authoritative_for_engine_performance": false
+  },
+  "engine_performance": {
+    "protocol": {
+      "warmup": 2,
+      "samples": 7,
+      "provider_orders": [
+        "vllm_then_loom",
+        "loom_then_vllm"
+      ],
+      "cases": [
+        "b1-in128-out32",
+        "b8-in128-out32",
+        "b32-in128-out16"
+      ]
+    },
+    "baseline_over_loom_batch_latency": {
+      "b1-in128-out32": [
+        0.9995891546970762,
+        1.0036906207282892
+      ],
+      "b8-in128-out32": [
+        0.9951821374037717,
+        0.9980670914376325
+      ],
+      "b32-in128-out16": [
+        0.9833815830476891,
+        1.000070071899413
+      ]
+    },
+    "baseline_over_loom_ttft": {
+      "b1-in128-out32": [
+        0.9827884672781901,
+        0.9969535263430369
+      ],
+      "b8-in128-out32": [
+        0.9871518752320831,
+        0.9921459383414234
+      ],
+      "b32-in128-out16": [
+        0.9747282471165796,
+        0.9831802040471225
+      ]
+    },
+    "order_stable_speedup": false
+  },
+  "validation": {
+    "local_rust_workspace_tests": "54 passed",
+    "h20_safe_rust_cuda_tests": "18 passed",
+    "h20_focused_int8_python_ir_tests": "21 passed",
+    "h20_full_python_gpu_suite": "326 passed",
+    "source_diff_check": "passed",
+    "rust_format_check": "passed"
+  },
+  "next_gates": [
+    "Reduce model-level logit drift or pass a declared task-quality/perplexity budget on a representative corpus.",
+    "Produce an order-stable engine latency, memory, or temporary-allocation improvement.",
+    "Run the ABI10 two-library matrix-wheel and repository-free clean-install gate before calling the binary qualified."
+  ]
+}

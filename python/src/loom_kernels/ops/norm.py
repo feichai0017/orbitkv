@@ -10,6 +10,7 @@ from .._torch_dispatch import (
     _add_rms_norm_mut,
     _rms_norm,
     _rms_norm_dynamic_per_token_fp8,
+    _rms_norm_dynamic_per_token_int8,
 )
 from ._common import _DTYPE_NAMES, _require_inference_tensors
 
@@ -72,13 +73,12 @@ def supports_add_rms_norm(
     )
 
 
-def supports_rms_norm_dynamic_fp8(
+def _supports_rms_norm_dynamic_quant(
     input_tensor: torch.Tensor,
     weight: torch.Tensor | None,
     epsilon: float,
     residual: torch.Tensor | None = None,
 ) -> bool:
-    """Return whether Loom can fuse optional residual Add+RMSNorm with FP8."""
     return bool(
         weight is not None
         and math.isfinite(epsilon)
@@ -108,6 +108,30 @@ def supports_rms_norm_dynamic_fp8(
     )
 
 
+def supports_rms_norm_dynamic_fp8(
+    input_tensor: torch.Tensor,
+    weight: torch.Tensor | None,
+    epsilon: float,
+    residual: torch.Tensor | None = None,
+) -> bool:
+    """Return whether Loom can fuse optional residual Add+RMSNorm with FP8."""
+    return _supports_rms_norm_dynamic_quant(
+        input_tensor, weight, epsilon, residual
+    )
+
+
+def supports_rms_norm_dynamic_int8(
+    input_tensor: torch.Tensor,
+    weight: torch.Tensor | None,
+    epsilon: float,
+    residual: torch.Tensor | None = None,
+) -> bool:
+    """Return whether Loom can fuse optional residual Add+RMSNorm with INT8."""
+    return _supports_rms_norm_dynamic_quant(
+        input_tensor, weight, epsilon, residual
+    )
+
+
 def _validate_rms_norm_inputs(
     input_tensor: torch.Tensor,
     weight: torch.Tensor,
@@ -125,17 +149,18 @@ def _validate_rms_norm_inputs(
         raise ValueError("tensor shape exceeds the Loom CUDA ABI")
 
 
-def _validate_dynamic_fp8_inputs(
+def _validate_dynamic_quant_inputs(
     input_tensor: torch.Tensor,
     weight: torch.Tensor,
     epsilon: float,
     residual: torch.Tensor | None,
+    quantization: str,
 ) -> int:
-    if not supports_rms_norm_dynamic_fp8(
+    if not _supports_rms_norm_dynamic_quant(
         input_tensor, weight, epsilon, residual
     ):
         raise ValueError(
-            "Loom RMSNorm+FP8 requires same-device contiguous CUDA tensors, "
+            f"Loom RMSNorm+{quantization} requires same-device contiguous CUDA tensors, "
             "matching F32/FP16/BF16 dtypes, a 1D hidden-size weight, and an "
             "optional same-shape residual"
         )
@@ -213,12 +238,58 @@ def rms_norm_dynamic_fp8(
     residual: torch.Tensor | None = None,
 ) -> tuple[torch.Tensor, torch.Tensor]:
     """Return optional Add+RMSNorm FP8 output and one F32 scale per row."""
-    rows = _validate_dynamic_fp8_inputs(
-        input_tensor, weight, epsilon, residual
+    rows = _validate_dynamic_quant_inputs(
+        input_tensor, weight, epsilon, residual, "FP8"
     )
     output = torch.empty_like(input_tensor, dtype=torch.float8_e4m3fn)
     scales = torch.empty((rows, 1), device=input_tensor.device, dtype=torch.float32)
     return rms_norm_dynamic_fp8_out(
+        input_tensor,
+        weight,
+        output,
+        scales,
+        float(epsilon),
+        residual,
+    )
+
+
+def rms_norm_dynamic_int8_out(
+    input_tensor: torch.Tensor,
+    weight: torch.Tensor,
+    output: torch.Tensor,
+    scales: torch.Tensor,
+    epsilon: float,
+    residual: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Write optional Add+RMSNorm and per-token INT8 into caller buffers."""
+    inference_tensors = [input_tensor, weight, output, scales]
+    if residual is not None:
+        inference_tensors.append(residual)
+    _require_inference_tensors(*inference_tensors)
+    _rms_norm_dynamic_per_token_int8(
+        output,
+        input_tensor,
+        weight,
+        scales,
+        float(epsilon),
+        residual,
+    )
+    return output, scales
+
+
+def rms_norm_dynamic_int8(
+    input_tensor: torch.Tensor,
+    weight: torch.Tensor,
+    epsilon: float,
+    residual: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return optional Add+RMSNorm INT8 output and one F32 scale per row."""
+    rows = _validate_dynamic_quant_inputs(
+        input_tensor, weight, epsilon, residual, "INT8"
+    )
+    output = torch.empty_like(input_tensor, dtype=torch.int8)
+    scales = torch.empty((rows, 1), device=input_tensor.device, dtype=torch.float32)
+    return rms_norm_dynamic_int8_out(
         input_tensor,
         weight,
         output,

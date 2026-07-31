@@ -70,6 +70,20 @@ def rms_norm_dynamic_fp8_out(*args: Any, **kwargs: Any) -> Any:
     return implementation(*args, **kwargs)
 
 
+def rms_norm_dynamic_int8(*args: Any, **kwargs: Any) -> Any:
+    """Lazily execute fused RMSNorm and dynamic per-token INT8 quantization."""
+    from .torch_ops import rms_norm_dynamic_int8 as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def rms_norm_dynamic_int8_out(*args: Any, **kwargs: Any) -> Any:
+    """Lazily execute the caller-allocated RMSNorm plus INT8 out variant."""
+    from .torch_ops import rms_norm_dynamic_int8_out as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def rope_paged_kv_write_(*args: Any, **kwargs: Any) -> Any:
     """Lazily execute fused in-place RoPE plus paged K/V cache write."""
     from .torch_ops import rope_paged_kv_write_ as implementation
@@ -190,6 +204,8 @@ __all__ = [
     "rms_norm",
     "rms_norm_dynamic_fp8",
     "rms_norm_dynamic_fp8_out",
+    "rms_norm_dynamic_int8",
+    "rms_norm_dynamic_int8_out",
     "rms_norm_out",
     "rope_paged_kv_write_",
     "selected_token_logprobs",

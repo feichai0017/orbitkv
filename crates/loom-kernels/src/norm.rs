@@ -32,6 +32,79 @@ pub struct RmsNormDynamicFp8Spec {
     output_dtype: DType,
 }
 
+/// Contract for RMSNorm followed by symmetric dynamic per-token INT8.
+///
+/// Inputs and weights are contiguous `[rows, hidden_size]` and
+/// `[hidden_size]` tensors. The signed INT8 output has the same logical shape,
+/// and `rows` F32 scales satisfy approximately
+/// `normalized = int8(output) * scale`. An all-zero row has scale zero. With a
+/// mutable residual, the F32 `input + residual` sum drives RMSNorm and
+/// quantization while the residual output stores that sum rounded to the input
+/// dtype.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct RmsNormDynamicInt8Spec {
+    rows: usize,
+    hidden_size: usize,
+    epsilon: f32,
+    input_dtype: DType,
+    output_dtype: DType,
+}
+
+impl RmsNormDynamicInt8Spec {
+    /// Creates a validated shape and dtype contract.
+    pub fn new(
+        rows: usize,
+        hidden_size: usize,
+        epsilon: f32,
+        input_dtype: DType,
+    ) -> Result<Self, ContractError> {
+        if rows == 0 || hidden_size == 0 {
+            return Err(ContractError::ZeroDimension);
+        }
+        if !epsilon.is_finite() || epsilon <= 0.0 {
+            return Err(ContractError::InvalidEpsilon(epsilon));
+        }
+        rows.checked_mul(hidden_size)
+            .ok_or(ContractError::ElementCountOverflow)?;
+
+        Ok(Self {
+            rows,
+            hidden_size,
+            epsilon,
+            input_dtype,
+            output_dtype: DType::I8,
+        })
+    }
+
+    pub const fn rows(self) -> usize {
+        self.rows
+    }
+
+    pub const fn hidden_size(self) -> usize {
+        self.hidden_size
+    }
+
+    pub const fn epsilon(self) -> f32 {
+        self.epsilon
+    }
+
+    pub const fn input_dtype(self) -> DType {
+        self.input_dtype
+    }
+
+    pub const fn output_dtype(self) -> DType {
+        self.output_dtype
+    }
+
+    pub const fn numel(self) -> usize {
+        self.rows * self.hidden_size
+    }
+
+    pub const fn scale_count(self) -> usize {
+        self.rows
+    }
+}
+
 impl RmsNormDynamicFp8Spec {
     /// Creates a validated shape and dtype contract.
     pub fn new(
@@ -284,6 +357,42 @@ pub fn rms_norm_dynamic_fp8_bf16_reference(
     rms_norm_dynamic_fp8_reference(input, weight, output, scales, residual, spec, DType::Bf16)
 }
 
+/// Computes F32 RMSNorm followed by symmetric dynamic per-token INT8.
+pub fn rms_norm_dynamic_int8_f32_reference(
+    input: &[f32],
+    weight: &[f32],
+    output: &mut [i8],
+    scales: &mut [f32],
+    residual: Option<&mut [f32]>,
+    spec: RmsNormDynamicInt8Spec,
+) -> Result<(), ContractError> {
+    rms_norm_dynamic_int8_reference(input, weight, output, scales, residual, spec, DType::F32)
+}
+
+/// Computes FP16 RMSNorm followed by symmetric dynamic per-token INT8.
+pub fn rms_norm_dynamic_int8_f16_reference(
+    input: &[f16],
+    weight: &[f16],
+    output: &mut [i8],
+    scales: &mut [f32],
+    residual: Option<&mut [f16]>,
+    spec: RmsNormDynamicInt8Spec,
+) -> Result<(), ContractError> {
+    rms_norm_dynamic_int8_reference(input, weight, output, scales, residual, spec, DType::F16)
+}
+
+/// Computes BF16 RMSNorm followed by symmetric dynamic per-token INT8.
+pub fn rms_norm_dynamic_int8_bf16_reference(
+    input: &[bf16],
+    weight: &[bf16],
+    output: &mut [i8],
+    scales: &mut [f32],
+    residual: Option<&mut [bf16]>,
+    spec: RmsNormDynamicInt8Spec,
+) -> Result<(), ContractError> {
+    rms_norm_dynamic_int8_reference(input, weight, output, scales, residual, spec, DType::Bf16)
+}
+
 /// Computes fused in-place F32 Add+RMSNorm with F64 accumulation.
 ///
 /// On success `residual` contains the elementwise sum and `input` contains its
@@ -449,6 +558,82 @@ fn rms_norm_dynamic_fp8_reference<T: DynamicFp8Input>(
         *scale = (absolute_maximum / FP8_E4M3FN_MAX).max(DYNAMIC_FP8_MIN_SCALE);
         for (destination, &value) in output_row.iter_mut().zip(&normalized) {
             *destination = fp8_e4m3fn_from_f32(value / *scale);
+        }
+    }
+
+    Ok(())
+}
+
+fn rms_norm_dynamic_int8_reference<T: DynamicFp8Input>(
+    input: &[T],
+    weight: &[T],
+    output: &mut [i8],
+    scales: &mut [f32],
+    mut residual: Option<&mut [T]>,
+    spec: RmsNormDynamicInt8Spec,
+    expected_dtype: DType,
+) -> Result<(), ContractError> {
+    if spec.input_dtype() != expected_dtype || spec.output_dtype() != DType::I8 {
+        return Err(ContractError::UnsupportedDType(spec.input_dtype()));
+    }
+    require_len("input", input.len(), spec.numel())?;
+    require_len("weight", weight.len(), spec.hidden_size())?;
+    require_len("output", output.len(), spec.numel())?;
+    require_len("scales", scales.len(), spec.scale_count())?;
+    if let Some(values) = residual.as_deref() {
+        require_len("residual", values.len(), spec.numel())?;
+    }
+
+    let mut row_values = vec![0.0_f32; spec.hidden_size()];
+    let mut normalized = vec![0.0_f32; spec.hidden_size()];
+    for (row, scale) in scales.iter_mut().enumerate().take(spec.rows()) {
+        let row_start = row * spec.hidden_size();
+        let row_end = row_start + spec.hidden_size();
+        let input_row = &input[row_start..row_end];
+        let output_row = &mut output[row_start..row_end];
+
+        let mut square_sum = 0.0_f64;
+        if let Some(residual_values) = residual.as_deref_mut() {
+            let residual_row = &mut residual_values[row_start..row_end];
+            for (column, (&input_value, residual_value)) in
+                input_row.iter().zip(residual_row.iter_mut()).enumerate()
+            {
+                let sum = input_value.to_f32() + residual_value.to_f32();
+                let stored_sum = T::from_f32(sum);
+                *residual_value = stored_sum;
+                row_values[column] = sum;
+                square_sum += f64::from(row_values[column]) * f64::from(row_values[column]);
+            }
+        } else {
+            for (destination, &value) in row_values.iter_mut().zip(input_row) {
+                *destination = value.to_f32();
+                square_sum += f64::from(*destination) * f64::from(*destination);
+            }
+        }
+
+        let mean_square = square_sum / spec.hidden_size() as f64;
+        let inverse_rms = (1.0 / (mean_square + f64::from(spec.epsilon())).sqrt()) as f32;
+
+        let mut absolute_maximum = 0.0_f32;
+        for (column, (&value, &weight_value)) in row_values.iter().zip(weight).enumerate() {
+            // Match vLLM's native IR graph: normalization is materialized in
+            // the weight dtype before the weight multiplication.
+            let rounded_normalized = T::round_to_storage(value * inverse_rms);
+            let weighted = T::round_to_storage(rounded_normalized * weight_value.to_f32());
+            normalized[column] = weighted;
+            absolute_maximum = absolute_maximum.max(weighted.abs());
+        }
+
+        *scale = absolute_maximum / 127.0;
+        if *scale == 0.0 {
+            output_row.fill(0);
+        } else {
+            let inverse_scale = 127.0 / absolute_maximum;
+            for (destination, &value) in output_row.iter_mut().zip(&normalized) {
+                *destination = (value * inverse_scale)
+                    .round_ties_even()
+                    .clamp(-128.0, 127.0) as i8;
+            }
         }
     }
 

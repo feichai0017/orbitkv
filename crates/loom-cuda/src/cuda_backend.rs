@@ -67,6 +67,15 @@ impl<S: CudaStreamHandle> Backend for CudaBackend<S> {
             OperatorSpec::RmsNormDynamicFp8(_) => {
                 Support::Unsupported("CUDA dynamic FP8 RMSNorm supports F32, FP16, and BF16 inputs")
             }
+            OperatorSpec::RmsNormDynamicInt8(spec)
+                if matches!(spec.input_dtype(), DType::F32 | DType::F16 | DType::Bf16)
+                    && spec.output_dtype() == DType::I8 =>
+            {
+                Support::Supported
+            }
+            OperatorSpec::RmsNormDynamicInt8(_) => Support::Unsupported(
+                "CUDA dynamic INT8 RMSNorm supports F32, FP16, and BF16 inputs",
+            ),
             OperatorSpec::SiluAndMul(spec)
                 if matches!(spec.dtype(), DType::F32 | DType::F16 | DType::Bf16) =>
             {

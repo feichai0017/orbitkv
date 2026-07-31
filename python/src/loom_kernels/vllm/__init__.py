@@ -54,7 +54,10 @@ from .logits import (
 from .norm import (
     RMS_NORM_FP8_OVERRIDE_ENV,
     RMS_NORM_FP8_OVERRIDE_KEY,
+    RMS_NORM_INT8_OVERRIDE_ENV,
+    RMS_NORM_INT8_OVERRIDE_KEY,
     register_vllm_rms_norm_dynamic_fp8,
+    register_vllm_rms_norm_dynamic_int8,
 )
 from .rope_kv import (
     ROPE_PAGED_KV_OVERRIDE_KEY,
@@ -102,6 +105,8 @@ def register_vllm_ir(provider: str = DEFAULT_PROVIDER) -> str | None:
         register_vllm_silu_and_mul_dynamic_fp8()
     if _norm._rms_norm_fp8_override_requested():
         register_vllm_rms_norm_dynamic_fp8()
+    if _norm._rms_norm_int8_override_requested():
+        register_vllm_rms_norm_dynamic_int8()
     if _logits._min_p_override_requested():
         register_vllm_min_p()
     if _logits._logits_preprocess_override_requested():
@@ -195,6 +200,8 @@ __all__ = [
     "ROPE_PAGED_KV_OVERRIDE_KEY",
     "RMS_NORM_FP8_OVERRIDE_ENV",
     "RMS_NORM_FP8_OVERRIDE_KEY",
+    "RMS_NORM_INT8_OVERRIDE_ENV",
+    "RMS_NORM_INT8_OVERRIDE_KEY",
     "SELECTED_TOKEN_LOGPROBS_OVERRIDE_KEY",
     "SILU_OVERRIDE_ENV",
     "SILU_OVERRIDE_KEY",
@@ -220,6 +227,7 @@ __all__ = [
     "register_vllm_greedy_speculative_verify",
     "register_vllm_rope_paged_kv",
     "register_vllm_rms_norm_dynamic_fp8",
+    "register_vllm_rms_norm_dynamic_int8",
     "register_vllm_selected_token_logprobs",
     "register_vllm_token_penalties",
     "register_vllm_top_k_filter",
