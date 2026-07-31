@@ -110,10 +110,10 @@
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
-  using the current CUDA stream; the source ABI10 dispatcher routes all
+  using the current CUDA stream; the ABI10 dispatcher routes all
   eighteen semantic operators through `loom-cuda-bridge` into borrowed safe
-  Rust dispatch with explicit storage spans and layouts. The exact ABI9 wheel
-  remains the current qualified binary boundary;
+  Rust dispatch with explicit storage spans and layouts. The exact `de28ceb`
+  ABI10 wheel is the current qualified binary boundary;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test
   extras, exactly two packaged `.so` files, a revision/toolkit/SM/hash manifest,
   runtime ABI/hash checks, and a CI guard that rejects source-only wheels;
@@ -133,7 +133,7 @@
 ## Validated
 
 - local formatting, clippy, tests, and release build;
-- the bridge-ABI-9 `py3-none-linux_x86_64` native wheel built from a
+- the bridge-ABI-10 `py3-none-linux_x86_64` native wheel built from a
   clean revision for CUDA 13.1 and SM90 passed archive/ELF/RPATH/symbol/
   auditwheel checks and retained identical packaged library hashes across all
   runtime gates;
@@ -275,11 +275,13 @@
   batch latency by `1.023-1.051x` at batch 1, `1.011-1.019x` at batch 8, and
   `1.0066-1.016x` at batch 32. The 64-token decode workload crosses parity,
   so no TPOT or throughput acceleration is claimed;
-- the source ABI10 RMSNorm-to-INT8 path passes 18 H20 safe-CUDA tests, 21
+- the ABI10 RMSNorm-to-INT8 path passes 18 H20 safe-CUDA tests, 21
   focused Python/operator/compiler tests, and the complete 326-test vLLM
   0.25.1 GPU suite. A real Qwen2.5 W8A8 graph records `1440/0` Loom launches,
   replaces four eligible normalization-quantization call sites, and retains
-  eight Cutlass scaled-mm sites on both providers;
+  eight Cutlass scaled-mm sites on both providers. Its two-library wheel also
+  passes 326 tests on vLLM 0.24/0.25 and 218 applicable tests in a vLLM-free
+  PyTorch 2.10 environment;
 - across 48 eligible real-model RMSNorm boundaries, 688,128 INT8 elements
   differ from the native IR shadow once by one LSB; every F32 scale and BF16
   residual is bit-exact. The held-out 32-prompt one-step gate matches `29/32`
@@ -370,11 +372,12 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the current ABI9 wheel suite passes 305 tests on each of vLLM 0.24.0 and
-  0.25.1 plus 201 applicable tests on PyTorch 2.10, including
+- the current ABI10 wheel suite passes 326 tests on each of vLLM 0.24.0 and
+  0.25.1 plus 218 applicable tests on PyTorch 2.10, including
   optional-residual RMSNorm-to-FP8, deterministic categorical sampling, fused
   logits preprocessing, sparse penalties, sampled-token plus top-k logprobs,
-  exact top-k filtering, and fused top-p renormalization;
+  exact top-k filtering, fused top-p renormalization, and
+  optional-residual RMSNorm-to-INT8;
 - the current bridge exposes 26 versioned operator/runtime symbols and no
   raw CUDA launch symbols; the PyTorch shim depends only on those bridge
   symbols and no raw launch symbol;
@@ -542,10 +545,12 @@ FA3 for the engine's 128-1,024-token path.
 ## Not Yet Proven
 
 - exact model-output or declared task-quality acceptance, an order-stable
-  engine latency/memory/temporary-allocation benefit, default admission, and a
-  repository-free ABI10 matrix wheel for RMSNorm+dynamic INT8. The
+  engine latency/memory/temporary-allocation benefit, and default admission
+  for RMSNorm+dynamic INT8. The repository-free ABI10 matrix wheel is
+  qualified separately; the
   [H20 admission result](results/h20-vllm-int8-quant-admission-20260729.json)
-  proves source implementation and real W8A8 invocation only;
+  proves real W8A8 invocation while rejecting stronger quality/performance
+  claims;
 - fused standalone Add+RMSNorm model-level benefit, and RMSNorm+FP8 benefit
   outside the qualified Qwen2.5-0.5B `fp8_per_tensor` Cutlass prefill
   boundary; decode-heavy RMSNorm+FP8 latency crosses parity;
@@ -565,7 +570,7 @@ FA3 for the engine's 128-1,024-token path.
   [Loom-first engine](results/h20-vllm-engine-categorical-sample-loom-first-20260727.json)
   gates close source implementation, lifecycle, exact replay, and
   order-reversed offline engine evidence; the
-  [ABI9 wheel gate](results/h20-native-wheel-clean-install-abi9-20260727.json)
+  [ABI10 wheel gate](results/h20-native-wheel-clean-install-abi10-20260731.json)
   closes binary distribution;
 - an end-to-end speculative draft/target performance win; tree/branch
   metadata, stochastic residual-distribution rejection, and KV commit/remap

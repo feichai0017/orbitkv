@@ -193,9 +193,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <h2>Build where engines pay.</h2>
       </div>
       <p>
-        The K0.7 bridge-ABI-9 wheel is clean-install-qualified across PyTorch
+        The K0.7 bridge-ABI-10 wheel is clean-install-qualified across PyTorch
         2.10/2.11 and vLLM 0.24/0.25 on H20. The same two-library artifact
-        passes 305 tests with each vLLM minor and 201 applicable tests on
+        passes 326 tests with each vLLM minor and 218 applicable tests on
         PyTorch 2.10; it remains unpublished.
         Default prefix/preemption KV movement is rejected after a real prefix
         hit and three preemptions produced zero physical copies. ABI8-A
@@ -205,12 +205,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <code>(seed, counter)</code> state across slot moves and resume. One
         kernel is 1.15–5.40× faster than vLLM's all-seeded direct boundary at
         admitted 4–32-row cases; real Qwen decode is order-stably 1.057–1.081×
-        at batch 32, while batch 1–4 still costs 1.5–2.4%. Source ABI10 now
-        reaches a real W8A8 graph with optional-residual RMSNorm-to-INT8, but
-        exact quality, stable engine benefit, and matrix-wheel gates remain
-        open. Quantization plumbing and MoE routing stay next. FP8 KV, physical
-        movement, tree, stochastic, and speculative-KV work remain
-        profile-gated.
+        at batch 32, while batch 1–4 still costs 1.5–2.4%. ABI10 reaches a real
+        W8A8 graph with optional-residual RMSNorm-to-INT8 and is distributed in
+        the qualified wheel, but exact quality, stable engine benefit, and
+        default admission remain open. Quantization plumbing and MoE routing
+        stay next. FP8 KV, physical movement, tree, stochastic, and
+        speculative-KV work remain profile-gated.
       </p>
     </header>
 

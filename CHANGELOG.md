@@ -56,12 +56,12 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   is retained.
 - advanced source to bridge ABI10 for optional-residual
   RMSNorm-to-dynamic-INT8; the dispatcher requires the matching ABI10 bridge
-  and retains no ABI9 compatibility entrypoint. The current qualified binary
-  artifact remains ABI9 until ABI10 passes the clean-install matrix.
+  and retains no ABI9 compatibility entrypoint. The exact ABI10 artifact now
+  passes the repository-free clean-install matrix.
 
 ### Added
 
-- complete bridge coverage for RMSNorm, Add+RMSNorm, RMSNorm+FP8,
+- complete bridge coverage for RMSNorm, Add+RMSNorm, RMSNorm+FP8/INT8,
   SiLU-and-Mul, SiLU-and-Mul+FP8, RoPE+paged-KV, greedy/selected logprobs,
   Min-P, and base/split-K paged decode;
 - optional-residual Add+RMSNorm-to-dynamic-per-token-FP8 across the CPU oracle,
@@ -76,7 +76,8 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   invocation pass with unchanged Cutlass GEMM. The real-layer shadow has one
   one-LSB difference across 688,128 INT8 elements with exact scales/residuals,
   while held-out one-step quality and dual-order latency keep the route
-  explicit opt-in with no default, speedup, or qualified-wheel claim;
+  explicit opt-in with no default, exact-output, or speedup claim. Its ABI10
+  wheel distribution gate is qualified separately;
 - explicit Rust physical-layout contracts for padded logits, packed QKV,
   NHD/HND caches, interleaved cache storage, scale layout, and FP8 scale upper
   bounds;
@@ -88,7 +89,7 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - a clean-revision native wheel builder that packages exactly the Rust CUDA
   bridge and Stable ABI dispatcher, emits and validates their matrix manifest
   and hashes, and rejects accidental source-only wheels;
-- immutable ABI4/ABI5/ABI6/ABI7/ABI8 history and current ABI9 H20
+- immutable ABI4/ABI5/ABI6/ABI7/ABI8/ABI9 history and current ABI10 H20
   wheel-install evidence for PyTorch 2.10/2.11 and vLLM 0.24/0.25.
 - deterministic greedy speculative verification and accepted/bonus-token
   compaction over vLLM-compatible flattened ragged metadata, with Rust/CUDA/
@@ -175,9 +176,18 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   PyTorch 2.10, every installed native hash matches the manifest, and no
   repository or library-path override is present. The artifact is qualified
   but not published.
+- the exact ABI10 `de28ceb` two-library wheel and repository-free H20 matrix:
+  326 tests pass with each supported vLLM minor, 218 applicable tests pass on
+  PyTorch 2.10, both native libraries load from each fresh venv, and no
+  repository or library-path override is present. The artifact is qualified
+  but not published.
 
 ### Fixed
 
+- the RMSNorm-to-INT8 Python oracle no longer imports vLLM unconditionally;
+  vLLM-free PyTorch 2.10 now exercises direct, `torch.compile`, and CUDA Graph
+  paths against an engine-independent reference while vLLM environments retain
+  an additional IR-equivalence check;
 - source-checkout library discovery now follows the packaged
   `crates/loom-cuda-sys/cuda` layout after removal of the legacy root `cuda`
   directory;

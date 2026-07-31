@@ -34,7 +34,7 @@ isolated microbenchmark is not sufficient.
 | RMSNorm | P0 | supported | standalone normalization |
 | residual Add+RMSNorm | P0 | supported | residual update plus normalization |
 | optional residual Add+RMSNorm+dynamic per-token FP8 | P0 | supported | exact vLLM plain/fused-add schema; one normalization/quantization pass sequence feeding unchanged Cutlass GEMM, with an order-stable Qwen prefill win |
-| optional residual Add+RMSNorm+dynamic per-token INT8 | P0 | in progress | source ABI10 and explicit W8A8 vLLM compiler route feed unchanged Cutlass GEMM; quality, stable engine benefit, default admission, and matrix-wheel gates remain open |
+| optional residual Add+RMSNorm+dynamic per-token INT8 | P0 | in progress | ABI10 wheel and explicit W8A8 vLLM compiler route feed unchanged Cutlass GEMM; quality, stable engine benefit, and default admission remain open |
 | LayerNorm and Add+LayerNorm | P2 | profile-gated | models that actually use LayerNorm |
 | static/dynamic per-token, per-channel, and per-block quantization | P0/P1 | planned | FP8/INT8/INT4 scale production and packing around vendor GEMM |
 | dequantize, requantize, pack/unpack, and scale conversion | P1 | planned | layout-aware transitions between vendor kernels |

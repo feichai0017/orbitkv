@@ -104,7 +104,7 @@ export const nextOperators = [
   {
     milestone: "K2.5 · P1",
     name: "Quantization plumbing",
-    reason: "RMSNorm→INT8 now reaches a real W8A8 graph; close quality, stable-benefit, and ABI10 wheel gates before expanding scale/layout work.",
+    reason: "RMSNorm→INT8 now reaches a real W8A8 graph and the ABI10 wheel; close quality, stable-benefit, and default-admission gates before expanding scale/layout work.",
   },
   {
     milestone: "K5 · P1",
@@ -150,7 +150,7 @@ export const evidence = [
     operator: "RMSNorm + INT8 candidate",
     shape: "Qwen2.5 W8A8 · 32 natural prompts",
     result: "Opt-in · 29 / 32 top-1",
-    detail: "Real graph and unchanged Cutlass GEMM; latency crosses parity and ABI10 wheel is open",
+    detail: "Real graph, unchanged Cutlass GEMM, and qualified ABI10 wheel; latency crosses parity",
   },
   {
     operator: "SiLU + Mul + FP8",

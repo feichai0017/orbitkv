@@ -9,20 +9,20 @@ binary portability. A green row below applies only to the stated boundary.
 | --- | --- | --- | --- |
 | Rust | current stable toolchain | format, Clippy, tests, release checks, source crate archives | GitHub CI |
 | CUDA | 13.1, `sm_90` | `loom-cuda`, `loom-cuda-sys`, and `loom-cuda-bridge` build and execute | NVIDIA H20 gate |
-| Python | 3.11.2 | clean native-wheel install; the `py3-none` artifact does not use the CPython C API | [ABI9 native-wheel gate](results/h20-native-wheel-clean-install-abi9-20260727.json) |
-| PyTorch | 2.10.0+cu128 | the exact wheel built on 2.11 loads without recompilation; 201 applicable Loom tests pass | [ABI9 native-wheel gate](results/h20-native-wheel-clean-install-abi9-20260727.json) |
-| PyTorch | 2.11.0+cu130 | clean wheel install, current stream, `torch.compile`, FakeTensor/opcheck, and CUDA Graph replay | [ABI9 native-wheel gate](results/h20-native-wheel-clean-install-abi9-20260727.json) |
-| vLLM | 0.24.0 | repository-free install and all 305 registered-adapter/operator tests | [ABI9 native-wheel gate](results/h20-native-wheel-clean-install-abi9-20260727.json) |
-| vLLM | 0.25.1 | repository-free install from the official wheel and all 305 registered-adapter/operator tests | [ABI9 native-wheel gate](results/h20-native-wheel-clean-install-abi9-20260727.json) |
+| Python | 3.11.2 | clean native-wheel install; the `py3-none` artifact does not use the CPython C API | [ABI10 native-wheel gate](results/h20-native-wheel-clean-install-abi10-20260731.json) |
+| PyTorch | 2.10.0+cu128 | the exact wheel built on 2.11 loads without recompilation; 218 applicable Loom tests pass | [ABI10 native-wheel gate](results/h20-native-wheel-clean-install-abi10-20260731.json) |
+| PyTorch | 2.11.0+cu130 | clean wheel install, current stream, `torch.compile`, FakeTensor/opcheck, and CUDA Graph replay | [ABI10 native-wheel gate](results/h20-native-wheel-clean-install-abi10-20260731.json) |
+| vLLM | 0.24.0 | repository-free install and all 326 registered-adapter/operator tests | [ABI10 native-wheel gate](results/h20-native-wheel-clean-install-abi10-20260731.json) |
+| vLLM | 0.25.1 | repository-free install from the official wheel and all 326 registered-adapter/operator tests | [ABI10 native-wheel gate](results/h20-native-wheel-clean-install-abi10-20260731.json) |
 
-The current rows qualify the immutable `7df4133` ABI9 artifact, including
-optional-residual RMSNorm-to-dynamic-FP8,
+The current rows qualify the immutable `de28ceb` ABI10 artifact, including
+optional-residual RMSNorm-to-dynamic-FP8/INT8,
 deterministic categorical sampling, persistent request-owned RNG state, fused
 mixed-sampling logits preprocessing, sparse token penalties, sampled-token
 plus top-k logprobs, exact in-place top-k filtering, and fused top-p filtering
 and renormalization.
 
-Bridge ABI9 replaces the former
+Bridge ABI9 historically replaced the former
 RMSNorm-to-FP8 schema with vLLM's exact optional-residual mutation schema and
 retains no ABI8 overload or bridge shim. Its exact two-library wheel passes
 every repository-free matrix row.
@@ -30,9 +30,14 @@ every repository-free matrix row.
 Current source is bridge ABI10 with eighteen semantic operators. ABI10 adds
 optional-residual RMSNorm-to-dynamic-INT8 across Rust, CUDA, PyTorch, and an
 explicit vLLM compiler route. Its H20 source and real-engine admission gate
-passes, but output quality is not exact, dual-order latency crosses parity,
-and no ABI10 two-library wheel has completed the repository-free matrix.
-Therefore every qualified row above still names ABI9.
+passes, and its exact two-library wheel completes the repository-free matrix.
+Output quality is still not exact and dual-order latency crosses parity, so
+the compiler route remains disabled by default: binary qualification does not
+promote its quality or performance claim.
+
+The preceding `7df4133` ABI9 wheel is immutable historical evidence for the
+boundary before RMSNorm-to-dynamic-INT8. It passed 305 tests on each vLLM
+minor and 201 applicable PyTorch 2.10 tests.
 
 The preceding `e2c2982` ABI8 wheel is immutable historical evidence for the
 pre-residual normalization schema. It passed 293 tests on each vLLM minor and
@@ -44,7 +49,7 @@ package-local libraries, and passed the full 286-test vLLM 0.24 GPU suite plus
 a focused 22-test FP8 KV/adapter gate. Its first run against a shared Inductor
 cache retained a non-Loom missing-`cubin` failure; fresh isolated
 `TORCHINDUCTOR_CACHE_DIR` and `TRITON_CACHE_DIR` values passed both the failing
-test and the full suite. The current ABI9 artifact supersedes that refresh and
+test and the full suite. The current ABI10 artifact supersedes that refresh and
 qualifies the full vLLM 0.24/0.25 plus PyTorch 2.10/2.11 matrix.
 
 Bridge ABI9 is a deliberate breaking boundary. An ABI8 dispatcher cannot load
@@ -103,12 +108,13 @@ or compiler tables.
 ## Current native-wheel boundary
 
 The published Rust crates remain self-contained source distributions. The
-current qualified ABI9 Python artifact name is
-`loom_kernels-1.0.0a1-9cu131torch210sm90-py3-none-linux_x86_64.whl`.
+current qualified ABI10 Python artifact name is
+`loom_kernels-1.0.0a1-10cu131torch210sm90-py3-none-linux_x86_64.whl`.
 Because the wheel is unpublished, its immutable manifest and SHA identify the
 build:
-`7df4133`/`c47f482eb088d69c3286791dc131ff6f770c1ef609271f444c139ed64852bf29`.
-The `e2c2982` ABI8 artifact, `d58ebf8` ABI7 cross-matrix artifact, and
+`de28ceb`/`80878496e5909ded15ba310cd4885a53eef8a2c5d6675dd5581d83f0e2103e6f`.
+The `7df4133` ABI9 artifact, `e2c2982` ABI8 artifact, `d58ebf8` ABI7
+cross-matrix artifact, and
 `f98a931` vLLM 0.24 refresh are historical evidence. Every native artifact is
 built only through
 `python/build_wheel.py` from a clean Git revision and contains exactly:
@@ -122,13 +128,14 @@ target, bridge ABI, and PyTorch runtime range. Installed wheels load only this
 package-local pair. `PYTHONPATH`, `LD_LIBRARY_PATH`, and an external dispatcher
 override were absent from every clean gate.
 
-The earlier `8cu131torch210sm90` ABI-8, `6cu131torch210sm90` ABI-6,
+The earlier `9cu131torch210sm90` ABI-9, `8cu131torch210sm90` ABI-8,
+`6cu131torch210sm90` ABI-6,
 `5cu131torch210sm90` ABI-5,
 `4cu131torch210sm90` ABI-4, `2cu131torch210sm90` ABI-2, and
 `1cu131torch210sm90` ABI-1 artifacts remain historical evidence.
 The ABI-specific build tag prevents incompatible bridge signatures from
-colliding. Current source emits a distinct `10cu131torch210sm90` tag, while
-ABI9 remains the current qualified artifact boundary.
+colliding. Current source and the qualified artifact use the distinct
+`10cu131torch210sm90` tag.
 
 The wheel is Python-ABI-independent (`py3-none`) because neither native library
 uses the CPython C API. Its platform tag remains the conservative
@@ -149,9 +156,8 @@ production dispatcher now uses that boundary:
 - all schemas use boxed Stable ABI registration;
 - tensor metadata, allocations, pointers, device guards, and the current CUDA
   stream use stable headers or AOTI C shims;
-- all eighteen source-ABI10 semantic operators continue into
-  `loom-cuda-bridge`. The qualified ABI9 wheel contains the preceding
-  seventeen-operator boundary. Neither dispatcher has an ATen/c10 C++ symbol
+- all eighteen ABI10 semantic operators continue into `loom-cuda-bridge` and
+  the qualified ABI10 wheel. Neither native library has an ATen/c10 C++ symbol
   dependency or consumes a raw CUDA launch symbol;
 - the public Python APIs and vLLM admission predicates reject tensors requiring
   gradients. No autograd kernel is advertised;

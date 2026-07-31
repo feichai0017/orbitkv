@@ -59,16 +59,16 @@ python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
   'dist/loom_kernels-1.0.0a1-10cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]'</code></pre>
       <p>
-        Current source builds bridge ABI10 and contains exactly the Rust-owned
+        The qualified bridge ABI10 wheel contains exactly the Rust-owned
         <code>libloom_cuda_bridge.so</code> and boxed
         <code>libloom_kernels_torch.so</code> Stable ABI dispatcher. Its
         manifest binds the Git revision, CUDA toolkit, SM targets, PyTorch
         range, bridge ABI, and library hashes. Installed packages load only
         this package-local pair. ABI10 includes experimental
-        RMSNorm-to-dynamic-INT8 but is not yet matrix-qualified. The K0.7
-        bridge-ABI-9 wheel remains H20-qualified across PyTorch 2.10/2.11 and
-        vLLM 0.24/0.25; it includes all seventeen preceding operators and is
-        not published to a package index.
+        RMSNorm-to-dynamic-INT8 and is H20 matrix-qualified across PyTorch
+        2.10/2.11 and vLLM 0.24/0.25; it includes all eighteen operators and is
+        not published to a package index. INT8 quality/default/performance
+        admission remains separate.
       </p>
 
       <h2>Call PyTorch directly</h2>
@@ -186,16 +186,16 @@ apply_token_penalties_(
 
       <h2>Compatibility is explicit</h2>
       <p>
-        Fresh installs of the K0.7 bridge-ABI-9 wheel with official vLLM 0.24.0
-        and 0.25.1 packages each pass the 305-test H20 suite on PyTorch 2.11.
-        The same exact artifact passes 201 applicable Loom gates on PyTorch
+        Fresh installs of the K0.7 bridge-ABI-10 wheel with official vLLM 0.24.0
+        and 0.25.1 packages each pass the 326-test H20 suite on PyTorch 2.11.
+        The same exact artifact passes 218 applicable Loom gates on PyTorch
         2.10 without recompilation. It includes deterministic categorical
         sampling, persistent request-owned RNG state, speculative verification,
         static FP8 KV quantize-on-write, fused logits preprocessing, sparse
         token penalties, top-k logprobs, and optional-residual RMSNorm-to-FP8.
-        It is qualified but unpublished. Current source ABI10 adds an explicit
-        RMSNorm-to-INT8 route, but its quality, stable-performance, and
-        clean-wheel gates remain open.
+        It is qualified but unpublished. Its explicit RMSNorm-to-INT8 route is
+        distributed in that wheel, but quality, stable-performance, and
+        default-admission gates remain open.
         Pinned
         vLLM 0.24 Qwen gates prove exact sparse-penalty acceleration, exact
         logits-preprocessing invocation with order-stable TPOT, exact top-k

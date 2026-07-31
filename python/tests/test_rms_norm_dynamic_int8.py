@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -42,6 +44,39 @@ def assert_dynamic_int8_close(
     )
 
 
+def dynamic_int8_reference(
+    input_tensor: torch.Tensor,
+    weight: torch.Tensor,
+    epsilon: float,
+    residual: torch.Tensor | None = None,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    if residual is None:
+        summed = input_tensor.float()
+    else:
+        summed = input_tensor.float() + residual.float()
+        residual.copy_(summed.to(residual.dtype))
+
+    inverse_rms = torch.rsqrt(
+        summed.square().mean(dim=-1, keepdim=True) + epsilon
+    )
+    normalized = (summed * inverse_rms).to(input_tensor.dtype)
+    weighted = (normalized * weight).to(input_tensor.dtype)
+    absolute_maximum = weighted.float().abs().amax(dim=-1, keepdim=True)
+    scales = absolute_maximum / 127.0
+    inverse_scale = torch.where(
+        absolute_maximum == 0,
+        torch.zeros_like(absolute_maximum),
+        127.0 / absolute_maximum,
+    )
+    output = (
+        (weighted.float() * inverse_scale)
+        .round()
+        .clamp(-128.0, 127.0)
+        .to(torch.int8)
+    )
+    return output, scales
+
+
 def vllm_ir_dynamic_int8_reference(
     input_tensor: torch.Tensor,
     weight: torch.Tensor,
@@ -50,6 +85,11 @@ def vllm_ir_dynamic_int8_reference(
 ) -> tuple[torch.Tensor, torch.Tensor]:
     from vllm import ir
 
+    output = torch.empty_like(input_tensor, dtype=torch.int8)
+    rows = input_tensor.numel() // input_tensor.shape[-1]
+    scales = torch.empty(
+        (rows, 1), device=input_tensor.device, dtype=torch.float32
+    )
     if residual is None:
         normalized = ir.ops.rms_norm(input_tensor, weight, epsilon)
     else:
@@ -57,10 +97,6 @@ def vllm_ir_dynamic_int8_reference(
             input_tensor, residual, weight, epsilon
         )
         residual.copy_(updated_residual)
-
-    output = torch.empty_like(input_tensor, dtype=torch.int8)
-    rows = input_tensor.numel() // input_tensor.shape[-1]
-    scales = torch.empty((rows, 1), device=input_tensor.device, dtype=torch.float32)
     torch.ops._C.dynamic_scaled_int8_quant(
         output, normalized, scales, None
     )
@@ -71,7 +107,7 @@ def vllm_ir_dynamic_int8_reference(
 @pytest.mark.parametrize("dtype", [torch.float32, torch.float16, torch.bfloat16])
 @pytest.mark.parametrize("shape", [(8, 896), (3, 127)])
 @pytest.mark.parametrize("with_residual", [False, True])
-def test_rms_norm_dynamic_int8_matches_vllm(
+def test_rms_norm_dynamic_int8_matches_reference(
     dtype, shape, with_residual
 ):
     torch.manual_seed(43)
@@ -84,9 +120,20 @@ def test_rms_norm_dynamic_int8_matches_vllm(
         else None
     )
     expected_residual = residual.clone() if residual is not None else None
-    expected_output, expected_scales = vllm_ir_dynamic_int8_reference(
+    expected_output, expected_scales = dynamic_int8_reference(
         input_tensor, weight, epsilon, expected_residual
     )
+    if importlib.util.find_spec("vllm") is not None:
+        vllm_residual = residual.clone() if residual is not None else None
+        vllm_output, vllm_scales = vllm_ir_dynamic_int8_reference(
+            input_tensor, weight, epsilon, vllm_residual
+        )
+        assert_dynamic_int8_close(
+            expected_output, expected_scales, vllm_output, vllm_scales
+        )
+        if expected_residual is not None:
+            assert vllm_residual is not None
+            assert torch.equal(expected_residual, vllm_residual)
 
     reset_launch_count(Operator.RMS_NORM_DYNAMIC_INT8)
     stream = torch.cuda.Stream()
@@ -170,7 +217,7 @@ def test_rms_norm_dynamic_int8_survives_torch_compile():
     weight = torch.randn(896, device="cuda", dtype=torch.bfloat16)
     output = torch.empty_like(input_tensor, dtype=torch.int8)
     scales = torch.empty(2, 1, device="cuda", dtype=torch.float32)
-    expected_output, expected_scales = vllm_ir_dynamic_int8_reference(
+    expected_output, expected_scales = dynamic_int8_reference(
         input_tensor, weight, 1.0e-6, expected_residual
     )
 
@@ -192,7 +239,7 @@ def test_rms_norm_dynamic_int8_survives_torch_compile():
 def test_rms_norm_dynamic_int8_can_be_captured_and_replayed():
     input_tensor = torch.randn(2, 896, device="cuda", dtype=torch.bfloat16)
     weight = torch.randn(896, device="cuda", dtype=torch.bfloat16)
-    expected_output, expected_scales = vllm_ir_dynamic_int8_reference(
+    expected_output, expected_scales = dynamic_int8_reference(
         input_tensor, weight, 1.0e-6
     )
     output = torch.empty_like(input_tensor, dtype=torch.int8)

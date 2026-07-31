@@ -156,12 +156,14 @@ size the block from the pack count. The vLLM adapter adds plain and fused-add
 patterns to its existing normalization-quantization compiler pass while
 leaving Cutlass scaled GEMM unchanged.
 
-This is a source-ABI10, explicit-opt-in candidate rather than a qualified
-default path. H20 proves the operator and real W8A8 invocation, but held-out
-one-step output quality is not exact, dual-order engine latency crosses parity,
-and no ABI10 matrix wheel is qualified. The
+This is an ABI10, explicit-opt-in candidate rather than a qualified default
+path. H20 proves the operator and real W8A8 invocation, and the ABI10 matrix
+wheel is distribution-qualified. Held-out one-step output quality is still not
+exact and dual-order engine latency crosses parity. The
 [admission result](../results/h20-vllm-int8-quant-admission-20260729.json)
-records those limits.
+records those limits; the
+[wheel result](../results/h20-native-wheel-clean-install-abi10-20260731.json)
+records only the separate binary/framework boundary.
 
 ## SiLU-And-Mul Contract
 

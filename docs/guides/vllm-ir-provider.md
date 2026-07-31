@@ -17,12 +17,13 @@ advantage. It has also completed a pinned Qwen2.5 online-FP8 engine gate with
 direct compiler-match and launch evidence; that small-model end-to-end result
 is at parity rather than a demonstrated speedup.
 
-A source-ABI10 normalization opt-in adds plain and fused-add RMSNorm followed
+A bridge-ABI10 normalization opt-in adds plain and fused-add RMSNorm followed
 by symmetric dynamic per-token INT8 to vLLM's existing compiler pass. A real
 Qwen2.5 W8A8 graph reaches Loom and keeps Cutlass GEMM unchanged, but the
 held-out quality gate is not exact, dual-order engine latency crosses parity,
-and no ABI10 wheel is qualified. It remains experimental and disabled by
-default.
+so it remains experimental and disabled by default. The ABI10 wheel is
+distribution-qualified; that does not change the route's quality or
+performance admission.
 
 A third opt-in uses the existing RoPE+KV compiler fusion pass in vLLM 0.24 and
 0.25 with Loom's CUDA implementation for FlashAttention and FlashInfer native
@@ -97,9 +98,10 @@ input = RMSNorm(residual, weight, epsilon)
 
 ## Compatibility
 
-The supported package interval is `vllm>=0.24,<0.26`. The exact `7df4133`
-bridge-ABI-9 wheel passes 305 H20 tests with each official vLLM minor and 201
-applicable tests on PyTorch 2.10. It includes optional-residual RMSNorm-to-FP8,
+The supported package interval is `vllm>=0.24,<0.26`. The exact `de28ceb`
+bridge-ABI-10 wheel passes 326 H20 tests with each official vLLM minor and 218
+applicable tests on PyTorch 2.10. It includes optional-residual
+RMSNorm-to-FP8/INT8,
 deterministic categorical sampling with persistent request-owned RNG state,
 fused logits preprocessing, exact top-k filtering, and fused top-p
 renormalization. ABI8 and earlier
@@ -110,9 +112,8 @@ Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
 [compatibility matrix](../compatibility.md) and
-[ABI9 cross-matrix gate](../results/h20-native-wheel-clean-install-abi9-20260727.json).
-Current source has advanced to ABI10 for RMSNorm-to-INT8, but the qualified
-binary boundary remains the exact ABI9 artifact above.
+[ABI10 cross-matrix gate](../results/h20-native-wheel-clean-install-abi10-20260731.json).
+ABI9 and earlier wheels remain immutable historical evidence.
 
 ## Build and install
 
@@ -145,12 +146,11 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-The build and install commands above name current source ABI10. That artifact
-is suitable for source validation but has not passed the repository-free
-matrix. The current qualified artifact remains ABI9, tied to the exact
-`7df4133` manifest revision and wheel hash; its matrix covers PyTorch
-2.10/2.11 and both supported vLLM minors. Neither artifact is published to a
-package index.
+The build and install commands above name the qualified ABI10 shape. The exact
+artifact is tied to manifest revision `de28ceb` and SHA256
+`80878496e5909ded15ba310cd4885a53eef8a2c5d6675dd5581d83f0e2103e6f`; its
+repository-free matrix covers PyTorch 2.10/2.11 and both supported vLLM
+minors. It is not published to a package index.
 Editable
 source development remains documented in the
 [Python README](../../python/README.md#source-development), but it cannot
@@ -314,7 +314,7 @@ from loom_kernels.vllm import register_vllm_rms_norm_dynamic_fp8
 assert register_vllm_rms_norm_dynamic_fp8() == "rms_norm_dynamic_fp8"
 ```
 
-The ABI9 operator uses vLLM's exact mutable schema, including an optional
+The FP8 operator uses vLLM's exact mutable schema, including an optional
 residual. It accepts contiguous CUDA F32/FP16/BF16 tensors, writes FP8 E4M3FN
 plus one F32 scale per flattened row, and rejects a non-null scale upper bound.
 The registration changes only the normalization/quantization fusion table.
@@ -344,7 +344,7 @@ from loom_kernels.vllm import register_vllm_rms_norm_dynamic_int8
 assert register_vllm_rms_norm_dynamic_int8() == "rms_norm_dynamic_int8"
 ```
 
-The source-ABI10 operator accepts contiguous CUDA F32/FP16/BF16 input and an
+The ABI10 operator accepts contiguous CUDA F32/FP16/BF16 input and an
 optional matching residual, then writes signed INT8 plus one F32
 `absmax / 127` scale per flattened row. It extends vLLM's existing compiler
 pass only; the configured Cutlass scaled-mm remains the GEMM provider.
@@ -354,9 +354,10 @@ eight Cutlass scaled-mm sites in both providers. The real-layer shadow has one
 one-LSB INT8 difference across 688,128 elements with exact scales and
 residuals. However, a 32-prompt one-step gate matches only `29/32` top-1
 tokens, and order-reversed batch latency and TTFT do not establish a stable
-win. The route remains disabled by default, carries no engine-speedup claim,
-and is absent from the qualified ABI9 wheel. See the
-[admission result](../results/h20-vllm-int8-quant-admission-20260729.json).
+win. The route remains disabled by default and carries no engine-speedup claim,
+while its binary distribution is included in the qualified ABI10 wheel. See
+the [admission result](../results/h20-vllm-int8-quant-admission-20260729.json)
+and [wheel gate](../results/h20-native-wheel-clean-install-abi10-20260731.json).
 
 To enable fused RoPE+paged-KV on vLLM 0.24/0.25 CUDA, configure the compilation
 object before constructing the engine:
@@ -1078,7 +1079,7 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
 - one selectable IR provider (`fused_add_rms_norm`), one opt-in out-of-tree
   layer replacement (`SiluAndMul`), and one vLLM-version-specific
   activation-quant fusion-table replacement, one optional-residual
-  RMSNorm-to-FP8 fusion-table replacement, one experimental source-ABI10
+  RMSNorm-to-FP8 fusion-table replacement, one experimental ABI10
   RMSNorm-to-INT8 compiler extension, plus a vLLM 0.24/0.25-specific
   RoPE+native/static-FP8-KV compiler-pass adapter, greedy/general
   selected-token and top-k sampled-logprob sampler overrides, shape-gated
@@ -1091,8 +1092,8 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
   but no model-level speedup has been established for either FP8 activation
   fusion or RoPE+paged-KV. RMSNorm-to-FP8 has a narrow Qwen prefill result but
   no decode/TPOT/throughput claim; RMSNorm-to-INT8 has real W8A8 invocation
-  but no exact-output, default-admission, stable-performance, or qualified-wheel
-  claim;
+  but no exact-output, default-admission, or stable-performance claim; its
+  ABI10 wheel distribution gate is qualified separately;
 - vLLM-owned penalties, masks, and stochastic sampling can feed the
   selected-token path. Without categorical registration, Loom accelerates
   measured top-k-only and top-p-only filtering shapes but leaves joint

@@ -6,18 +6,17 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 [Project README](../README.md) · [Integration guide](../docs/guides/vllm-ir-provider.md) · [Operator catalog](../docs/operator-catalog.md)
 
 > [!IMPORTANT]
-> The bridge-ABI-9 native wheel is H20-qualified but is not published to a
-> package index. It includes all seventeen checked operators, including
+> The bridge-ABI-10 native wheel is H20-qualified but is not published to a
+> package index. It includes all eighteen checked operators, including
 > direct plus persistent-vLLM explicit-state categorical sampling and the
-> exact optional-residual RMSNorm-to-FP8 schema. A
+> optional-residual RMSNorm-to-FP8/INT8 schemas. A
 > source-only wheel is intentionally unsupported:
 > `pip wheel ./python` fails unless `build_wheel.py` has staged both native
 > libraries and their manifest.
 >
-> Current source has advanced to bridge ABI10 with eighteen operators by
-> adding optional-residual RMSNorm-to-dynamic-INT8. ABI10 is an explicit
-> experimental source path and has not passed the matrix-wheel clean-install
-> gate; it does not supersede ABI9 as the qualified artifact.
+> RMSNorm-to-dynamic-INT8 remains an explicit experimental engine route: wheel
+> qualification proves distribution and framework compatibility, not exact
+> model output, default admission, or a stable performance win.
 
 ## Qualified artifact
 
@@ -32,17 +31,17 @@ The current matrix row is:
 | vLLM extra | `>=0.24,<0.26` |
 | Native payload | `libloom_cuda_bridge.so`, `libloom_kernels_torch.so` |
 
-The qualified artifact's build tag encodes bridge ABI 9:
-`9cu131torch210sm90`. The exact H20 artifact, binary audit, and three
+The qualified artifact's build tag encodes bridge ABI 10:
+`10cu131torch210sm90`. The exact H20 artifact, binary audit, and three
 repository-free clean-install gates are recorded in the
-[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi9-20260727.json).
-The same wheel passes 305 tests with each supported vLLM minor and 201
+[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi10-20260731.json).
+The same wheel passes 326 tests with each supported vLLM minor and 218
 applicable tests in the vLLM-free PyTorch 2.10 environment. It includes static
 FP8 E4M3 KV quantize-on-write, sparse token penalties, sampled-token plus
 top-k logprobs, exact top-k/top-p paths, fused logits preprocessing, and
 deterministic categorical sampling with persistent request-owned state, plus
-optional-residual RMSNorm-to-FP8. It is bound to source revision
-`7df4133e10295d77b5519f233bfdf08c54a2fb0b`.
+optional-residual RMSNorm-to-FP8/INT8. It is bound to source revision
+`de28cebe965c54287127ba21d37845d6003074b5`.
 
 The preceding ABI7 refresh from revision
 `f98a9311c8b204c02fa77da10a768c54de3d08db` packages the final FP8 KV adapter
@@ -50,7 +49,8 @@ and passes the complete 286-test vLLM 0.24 H20 suite plus 22 focused adapter
 tests from a fresh environment. It is retained as historical evidence. See the
 [refresh evidence](../docs/results/h20-native-wheel-clean-install-abi7-refresh-20260727.json).
 
-The older `8cu131torch210sm90` ABI-8, `6cu131torch210sm90` ABI-6,
+The older `9cu131torch210sm90` ABI-9, `8cu131torch210sm90` ABI-8,
+`6cu131torch210sm90` ABI-6,
 `5cu131torch210sm90` ABI-5, `4cu131torch210sm90` ABI-4,
 `2cu131torch210sm90` ABI-2, and `1cu131torch210sm90` ABI-1 wheels remain
 historical evidence only.
@@ -66,11 +66,11 @@ without PyTorch. vLLM and tests remain explicit extras:
 ```bash
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-9cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-10cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 
 # Add the supported vLLM integration when needed.
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-9cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-10cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -107,8 +107,9 @@ bridge, builds the boxed LibTorch Stable ABI dispatcher, rejects ATen/c10 C++
 and raw CUDA-launch dependencies, verifies `$ORIGIN` loading, writes the
 revision/toolkit/SM/runtime manifest, and checks the final archive contains
 exactly the two Loom `.so` files. Current source emits a
-`10cu131torch210sm90` tag. That ABI10 candidate is not yet matrix-qualified.
-The exact `7df4133` ABI9 artifact passes the repository-free matrix and
+`10cu131torch210sm90` tag. The exact `de28ceb` ABI10 artifact passes the
+repository-free matrix, has SHA256
+`80878496e5909ded15ba310cd4885a53eef8a2c5d6675dd5581d83f0e2103e6f`, and
 remains unpublished.
 
 ## Source development
@@ -259,8 +260,9 @@ supported.
 
 `rms_norm_dynamic_int8` and its out variant use the same optional-residual
 shape contract, return signed INT8 plus one F32 `absmax / 127` scale per row,
-and preserve the native W8A8 rounding boundary. They are available only from
-source ABI10 until a repository-free matrix wheel is qualified.
+and preserve the native W8A8 rounding boundary. They are included in the
+qualified ABI10 wheel, while the vLLM compiler route remains disabled by
+default because its separate quality and stable-performance gates are open.
 
 ## Exported operator families
 
