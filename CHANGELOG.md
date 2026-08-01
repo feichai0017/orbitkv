@@ -64,8 +64,9 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   matrix-wheel gates pass; ABI10 remains immutable historical evidence.
 - advanced source to bridge ABI12 for stable MoE permutation and weighted
   combine; the dispatcher requires the matching ABI12 bridge and retains no
-  ABI11 compatibility entrypoint or MoE-free fallback. The ABI11 wheel remains
-  the latest qualified binary artifact until ABI12 clean-install gates close.
+  ABI11 compatibility entrypoint or MoE-free fallback. The exact ABI12 wheel
+  now passes the repository-free clean-install matrix; ABI11 remains immutable
+  historical evidence.
 
 ### Added
 
@@ -79,8 +80,8 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   explicit vLLM 0.25.1 Cutlass adapter reaches the same operators in an
   isolated synthetic Qwen2-MoE `LLM.generate` gate with exact tokens and
   unchanged vendor grouped GEMM. Direct movement and engine admission are
-  qualified; production-workload routing value and ABI12 wheel qualification
-  remain open;
+  qualified, and the ABI12 wheel passes the H20 cross-matrix gate;
+  production-workload routing value remains open;
 - complete bridge coverage for RMSNorm, Add+RMSNorm, RMSNorm+FP8/INT8,
   SiLU-and-Mul, SiLU-and-Mul+FP8/INT8, RoPE+paged-KV, greedy/selected logprobs,
   Min-P, and base/split-K paged decode;
@@ -118,8 +119,8 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - a clean-revision native wheel builder that packages exactly the Rust CUDA
   bridge and Stable ABI dispatcher, emits and validates their matrix manifest
   and hashes, and rejects accidental source-only wheels;
-- immutable ABI4/ABI5/ABI6/ABI7/ABI8/ABI9/ABI10 history and qualified ABI11 H20
-  wheel-install evidence for PyTorch 2.10/2.11 and vLLM 0.24/0.25.
+- immutable ABI4/ABI5/ABI6/ABI7/ABI8/ABI9/ABI10/ABI11 history and qualified
+  ABI12 H20 wheel-install evidence for PyTorch 2.10/2.11 and vLLM 0.24/0.25.
 - deterministic greedy speculative verification and accepted/bonus-token
   compaction over vLLM-compatible flattened ragged metadata, with Rust/CUDA/
   PyTorch coverage, explicit vLLM 0.24/0.25 registration, and H20 evidence.
@@ -215,6 +216,12 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   PyTorch 2.10, all twelve vLLM-free SiLU-and-Mul-to-INT8 tests execute, both
   native libraries load from each fresh venv, and no repository or
   library-path override is present. The artifact is qualified but not
+  published.
+- the exact ABI12 `d4c13e2` two-library wheel and repository-free H20 matrix:
+  359 tests pass with each supported vLLM minor, 245 applicable tests pass on
+  PyTorch 2.10, all fourteen applicable vLLM-free MoE tests execute, bridge
+  and dispatcher expose/import the same 30 checked symbols, and no repository
+  or library-path override is present. The artifact is qualified but not
   published.
 
 ### Fixed

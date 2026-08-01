@@ -41,7 +41,8 @@ adapter now reuses vLLM caller-owned scratch/output tensors in its
 Cutlass/Humming movement wrappers. An isolated vLLM 0.25.1
 `LLM.generate` gate records exact tokens and `48/48` Loom movement hits over a
 synthetic Qwen2-MoE checkpoint. That qualifies engine admission, not a
-production-model speedup.
+production-model speedup. The matching ABI12 wheel also passes the full fresh
+repository-free H20 matrix.
 
 A third opt-in uses the existing RoPE+KV compiler fusion pass in vLLM 0.24 and
 0.25 with Loom's CUDA implementation for FlashAttention and FlashInfer native
@@ -116,13 +117,14 @@ input = RMSNorm(residual, weight, epsilon)
 
 ## Compatibility
 
-The supported package interval is `vllm>=0.24,<0.26`. The exact `afc54c4`
-bridge-ABI-11 wheel passes 342 H20 tests with each official vLLM minor and 231
-applicable tests on PyTorch 2.10. It includes SiLU-and-Mul-to-INT8,
+The supported package interval is `vllm>=0.24,<0.26`. The exact `d4c13e2`
+bridge-ABI-12 wheel passes 359 H20 tests with each official vLLM minor and 245
+applicable tests on PyTorch 2.10. It includes MoE movement,
+SiLU-and-Mul-to-INT8,
 optional-residual RMSNorm-to-FP8/INT8,
 deterministic categorical sampling with persistent request-owned RNG state,
 fused logits preprocessing, exact top-k filtering, and fused top-p
-renormalization. ABI10 and earlier
+renormalization. ABI11 and earlier
 wheels remain historical evidence, and no native wheel is published.
 The categorical lifecycle gate is validated on vLLM 0.24.0 and 0.25.1; its
 real-engine performance gate remains version-specific to 0.24.0.
@@ -130,10 +132,10 @@ Existing model-level performance artifacts were captured on 0.24.0 and are
 not automatically performance claims for 0.25.1.
 See the
 [compatibility matrix](../compatibility.md) and
-[ABI11 cross-matrix gate](../results/h20-native-wheel-clean-install-abi11-20260801.json).
-ABI10 and earlier wheels remain immutable historical evidence.
-Current ABI12 source passes 359 tests with each supported vLLM minor plus 245
-applicable tests on PyTorch 2.10, but its clean-install matrix is still open.
+[ABI12 cross-matrix gate](../results/h20-native-wheel-clean-install-abi12-20260801.json).
+ABI11 and earlier wheels remain immutable historical evidence.
+Current ABI12 source and clean-installed wheel both pass 359 tests with each
+supported vLLM minor plus 245 applicable tests on PyTorch 2.10.
 
 ## Build and install
 
@@ -166,11 +168,10 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-The build and install commands above name the current ABI12 source shape; its
-clean-install matrix is not yet qualified. The latest qualified ABI11
-predecessor is tied to manifest revision `afc54c4` and SHA256
-`20402f02c44f17646c45b71ae279c702748458ad5de5b970570f0c3ce314f3c6`; its
-repository-free matrix covers PyTorch 2.10/2.11 and both supported vLLM
+The build and install commands above name the current qualified ABI12 artifact,
+tied to manifest revision `d4c13e2` and SHA256
+`f13445d8a286b2a1afb931d284ccaa40ddec241a4e228d673d8bc0d5b11a0107`.
+Its repository-free matrix covers PyTorch 2.10/2.11 and both supported vLLM
 minors. It is not published to a package index.
 Editable
 source development remains documented in the
@@ -412,9 +413,9 @@ one-LSB INT8 difference across 688,128 elements with exact scales and
 residuals. However, a 32-prompt one-step gate matches only `29/32` top-1
 tokens, and order-reversed batch latency and TTFT do not establish a stable
 win. The route remains disabled by default and carries no engine-speedup claim,
-while its binary distribution is included in the qualified ABI11 wheel. See
+while its binary distribution is included in the qualified ABI12 wheel. See
 the [admission result](../results/h20-vllm-int8-quant-admission-20260729.json)
-and [wheel gate](../results/h20-native-wheel-clean-install-abi11-20260801.json).
+and [wheel gate](../results/h20-native-wheel-clean-install-abi12-20260801.json).
 
 To add Loom's SiLU-and-Mul-to-dynamic-per-token-INT8 pattern to vLLM's
 activation-quantization pass, set the separate ABI11 opt-in before engine
@@ -440,9 +441,9 @@ provider orders reproduce all 32 one-step top-1 tokens, top-20 token sets, and
 common logprobs exactly, with Loom path hits and all eight Cutlass scaled-mm
 sites preserved. This remains an experimental route because compiled CUDA
 Graph ratios are `0.518-0.986x` and engine latency is not order-stable; no
-speedup/default claim is made. Its separate ABI11 wheel matrix is qualified.
+speedup/default claim is made. Its current ABI12 wheel matrix is qualified.
 See the [ABI11 admission result](../results/h20-vllm-silu-int8-admission-20260801.json)
-and [wheel result](../results/h20-native-wheel-clean-install-abi11-20260801.json).
+and [current wheel result](../results/h20-native-wheel-clean-install-abi12-20260801.json).
 
 To enable fused RoPE+paged-KV on vLLM 0.24/0.25 CUDA, configure the compilation
 object before constructing the engine:
@@ -1184,8 +1185,8 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
   SM90, and H20 Python 3.11; it is not published;
 - inference-only mutation, with no autograd implementation;
 - ABI12 MoE permutation/combine has direct and explicit vLLM/Cutlass engine
-  gates. Routing replacement, production-model/serving qualification, and an
-  ABI12 clean-install wheel remain open;
+  gates plus a qualified clean-install wheel. Routing replacement and
+  production-model/serving qualification remain open;
 - one selectable IR provider (`fused_add_rms_norm`), one opt-in out-of-tree
   layer replacement (`SiluAndMul`), and one vLLM-version-specific
   activation-quant fusion-table replacement, one optional-residual
@@ -1203,7 +1204,7 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
   fusion or RoPE+paged-KV. RMSNorm-to-FP8 has a narrow Qwen prefill result but
   no decode/TPOT/throughput claim; RMSNorm-to-INT8 has real W8A8 invocation
   but no exact-output, default-admission, or stable-performance claim; its
-  current ABI11 wheel distribution gate is qualified separately;
+  current ABI12 wheel distribution gate is qualified separately;
 - vLLM-owned penalties, masks, and stochastic sampling can feed the
   selected-token path. Without categorical registration, Loom accelerates
   measured top-k-only and top-p-only filtering shapes but leaves joint

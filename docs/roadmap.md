@@ -59,8 +59,8 @@ step with no rejection, and batch 32 improves latency/throughput by
 `5.7–8.1%` in both orders. Batch 1–4 pays `1.5–2.4%`; the adapter reports that
 cost instead of switching an in-flight request to another RNG stream.
 The current
-[ABI11 matrix wheel](results/h20-native-wheel-clean-install-abi11-20260801.json)
-passes 342 tests with each supported vLLM minor and 231 applicable tests on
+[ABI12 matrix wheel](results/h20-native-wheel-clean-install-abi12-20260801.json)
+passes 359 tests with each supported vLLM minor and 245 applicable tests on
 PyTorch 2.10 from repository-free fresh environments, including the same
 categorical subsystem.
 
@@ -146,10 +146,10 @@ Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
   `python/build_wheel.py` builds from a clean revision, packages exactly the
   two native libraries, emits their manifest, audits ELF/RPATH/symbols, and
   refuses an accidental source-only wheel;
-- ~~prove repository-free H20 clean installs~~ — the current exact ABI11
+- ~~prove repository-free H20 clean installs~~ — the current exact ABI12
   `py3-none-linux_x86_64` artifact passes fresh Python 3.11 venv gates on
   PyTorch 2.10/2.11 and vLLM 0.24/0.25, including `pip check`, package-local
-  library loading, GPU smoke, and the applicable 342/231-test suites. ABI10
+  library loading, GPU smoke, and the applicable 359/245-test suites. ABI11
   and earlier artifacts remain historical evidence.
 
 Exit: a qualified binary artifact installs without a repository checkout, uses
@@ -205,7 +205,7 @@ improves a real model workload. Standalone SiLU parity alone does not close it.
 ## K2.5: Quantization Plumbing Around Vendor GEMM
 
 Status: in progress; optional-residual RMSNorm-to-FP8 is source-, integration-,
-H20-, and clean-wheel-qualified, and the current ABI11 matrix also distributes
+H20-, and clean-wheel-qualified, and the current ABI12 matrix also distributes
 INT8.
 
 - ~~generalize RMSNorm-to-dynamic-per-token-FP8 to the exact optional-residual
@@ -221,13 +221,14 @@ INT8.
   oracle, safe CUDA, checked bridge, Stable ABI PyTorch, and vLLM 0.24/0.25
   compiler adapter. A real
   Qwen2.5 W8A8 graph records `1440/0` Loom launches while preserving eight
-  Cutlass scaled-mm sites on both providers; the same two-library wheel passes
-  342 tests with each vLLM minor and 231 applicable PyTorch 2.10 tests;
+  Cutlass scaled-mm sites on both providers; the current two-library ABI12
+  wheel passes 359 tests with each vLLM minor and 245 applicable PyTorch 2.10
+  tests;
 - close the INT8 quality/default/performance admission gates — the real-layer
   shadow differs by one INT8 LSB across 688,128 elements with exact
   scales/residuals, but the 32-prompt
   one-step gate matches only `29/32` top-1 tokens and dual-order engine latency
-  crosses parity. The route stays explicit opt-in despite its qualified ABI11
+  crosses parity. The route stays explicit opt-in despite its qualified ABI12
   distribution;
 - per-token, per-channel, and per-block scale reduction for FP8 and INT8;
 - pack/unpack and layout conversion for engine-selected quantized kernels;
@@ -260,7 +261,7 @@ the family-level system-value exit remains open.
 - ~~FP8 E4M3 quantize-on-write with explicit static per-tensor or per-head
   scales~~ — Rust contract/oracle, safe CUDA backend, checked bridge, Stable ABI
   PyTorch operator, vLLM adapter, exact-byte H20 comparison, named operator
-  benchmark, current-stream/compile/graph checks, current ABI11 clean wheel, and
+  benchmark, current-stream/compile/graph checks, current ABI12 clean wheel, and
   order-reversed real-engine invocation are complete; the pinned Qwen2.5-7B
   candidate passes the operational and native-vLLM/Loom provider-equivalence
   gates but is rejected because both FP8 providers exceed the BF16 held-out
@@ -464,14 +465,19 @@ engine route are qualified, while a production-workload exit remains open.
   opt-in adapter reuses vLLM caller-owned scratch/output tensors, routes only
   supported Cutlass/Humming contracts, records hits/rejections, and fails
   closed after an admitted Loom launch.
+- ~~ABI12 native-wheel distribution~~ — one exact two-library artifact passes
+  359 tests with each supported vLLM minor plus 245 applicable PyTorch 2.10
+  tests from fresh repository-free environments; it remains unpublished. See
+  the [ABI12 wheel result](results/h20-native-wheel-clean-install-abi12-20260801.json).
 
 The [all-local](results/h20-moe-movement-20260801.json) and
 [expert-parallel](results/h20-moe-movement-ep-20260801.json) H20 gates compare
 the complete permute-plus-combine pipeline with vLLM 0.25.1 while keeping
 grouped GEMM absent from both sides. CUDA Graph ratios span `0.962-1.163x` for
 the all-local 1-2,048-token sweep and `1.013-1.191x` for the 64-global/32-local
-32-2,048-token sweep. Source matrices pass vLLM 0.24/0.25 and PyTorch 2.10/2.11.
-This is operator-boundary evidence, not a model claim.
+32-2,048-token sweep. Source and clean-wheel matrices pass vLLM 0.24/0.25 and
+PyTorch 2.10/2.11. This is operator-boundary and distribution evidence, not a
+model claim.
 
 The [vLLM engine gate](results/h20-vllm-engine-moe-movement-20260801.json)
 runs isolated baseline and Loom `LLM.generate` processes over a synthetic

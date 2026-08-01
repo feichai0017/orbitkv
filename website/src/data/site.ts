@@ -116,7 +116,7 @@ export const nextOperators = [
   {
     milestone: "K2.5 · P1",
     name: "Quantization plumbing",
-    reason: "The ABI11 wheel closes distribution; admit new scale, pack, and layout boundaries only for a named vendor-kernel consumer.",
+    reason: "The ABI12 wheel closes distribution; admit new scale, pack, and layout boundaries only for a named vendor-kernel consumer.",
   },
   {
     milestone: "K5 · P1",
@@ -162,7 +162,7 @@ export const evidence = [
     operator: "RMSNorm + INT8 candidate",
     shape: "Qwen2.5 W8A8 · 32 natural prompts",
     result: "Opt-in · 29 / 32 top-1",
-    detail: "Real graph, unchanged Cutlass GEMM, and qualified ABI11 wheel; latency crosses parity",
+    detail: "Real graph, unchanged Cutlass GEMM, and qualified ABI12 wheel; latency crosses parity",
   },
   {
     operator: "SiLU + Mul + FP8",

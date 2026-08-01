@@ -109,9 +109,10 @@ With 64 global and 32 local experts, CUDA Graph pipeline ratios at
 `1.58-1.59x`. All valid local activations and all metadata match vLLM, Loom's
 remote tail is zero, and the measured combine maximum error is zero.
 
-The source matrix passes on PyTorch 2.11 with vLLM 0.24 and 0.25, and the same
-Stable ABI libraries pass on PyTorch 2.10 without vLLM. These results qualify
-the direct movement boundary, not an end-to-end MoE model speedup.
+Source-built and fresh clean-wheel matrices pass on PyTorch 2.11 with vLLM
+0.24 and 0.25, and the same Stable ABI libraries pass on PyTorch 2.10 without
+vLLM. These results qualify the direct movement and binary-distribution
+boundaries, not an end-to-end MoE model speedup.
 
 The explicit vLLM adapter is enabled with
 `LOOM_KERNELS_ENABLE_MOE_MOVEMENT=1`. It patches the production movement
@@ -134,3 +135,4 @@ Raw evidence:
 - [all-local H20 result](../results/h20-moe-movement-20260801.json)
 - [expert-parallel H20 result](../results/h20-moe-movement-ep-20260801.json)
 - [vLLM engine result](../results/h20-vllm-engine-moe-movement-20260801.json)
+- [ABI12 clean-install wheel result](../results/h20-native-wheel-clean-install-abi12-20260801.json)

@@ -34,7 +34,7 @@ isolated microbenchmark is not sufficient.
 | RMSNorm | P0 | supported | standalone normalization |
 | residual Add+RMSNorm | P0 | supported | residual update plus normalization |
 | optional residual Add+RMSNorm+dynamic per-token FP8 | P0 | supported | exact vLLM plain/fused-add schema; one normalization/quantization pass sequence feeding unchanged Cutlass GEMM, with an order-stable Qwen prefill win |
-| optional residual Add+RMSNorm+dynamic per-token INT8 | P0 | in progress | current ABI11 wheel and explicit W8A8 vLLM compiler route feed unchanged Cutlass GEMM; quality, stable engine benefit, and default admission remain open |
+| optional residual Add+RMSNorm+dynamic per-token INT8 | P0 | in progress | current ABI12 wheel and explicit W8A8 vLLM compiler route feed unchanged Cutlass GEMM; quality, stable engine benefit, and default admission remain open |
 | LayerNorm and Add+LayerNorm | P2 | profile-gated | models that actually use LayerNorm |
 | static/dynamic per-token, per-channel, and per-block quantization | P0/P1 | planned | FP8/INT8/INT4 scale production and packing around vendor GEMM |
 | dequantize, requantize, pack/unpack, and scale conversion | P1 | planned | layout-aware transitions between vendor kernels |
@@ -45,7 +45,7 @@ isolated microbenchmark is not sufficient.
 | --- | --- | --- | --- |
 | split-half SiLU-and-Mul (SwiGLU) | P0 | supported | standard Llama/Qwen MLP activation |
 | SiLU-and-Mul+dynamic per-block FP8 | P0 | supported | activation directly into FP8 down projection |
-| SiLU-and-Mul+dynamic per-token INT8 | P0 | profile-gated | qualified ABI11 wheel, exact real W8A8 path, 32-prompt quality, and clean-wheel gates pass before unchanged vendor INT8 GEMM; compiled/engine performance rejects default admission and any speedup claim |
+| SiLU-and-Mul+dynamic per-token INT8 | P0 | profile-gated | qualified ABI12 wheel, exact real W8A8 path, 32-prompt quality, and clean-wheel gates pass before unchanged vendor INT8 GEMM; compiled/engine performance rejects default admission and any speedup claim |
 | GELU, GELU-tanh, GELU-and-Mul, GeGLU, ReGLU | P1 | planned | model-specific gated MLPs |
 | bias+activation and bias+gated activation | P1 | planned | GEMM output epilogues |
 | vendor GEMM handoff+bias+activation/quantization | P0 | vendor-backed | unchanged cuBLASLt/CUTLASS matrix core with a measured Loom pre/post boundary |

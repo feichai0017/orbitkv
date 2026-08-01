@@ -128,9 +128,9 @@
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
   using the current CUDA stream; current ABI12 source routes all twenty-one
   semantic operators through `loom-cuda-bridge` into borrowed safe Rust
-  dispatch with explicit storage spans and layouts. The exact `afc54c4` ABI11
-  wheel remains the current qualified binary boundary and does not contain the
-  two new MoE operators;
+  dispatch with explicit storage spans and layouts. The exact `d4c13e2` ABI12
+  wheel is the current qualified binary boundary and contains the two MoE
+  operators without retaining ABI11 entrypoints;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test
   extras, exactly two packaged `.so` files, a revision/toolkit/SM/hash manifest,
   runtime ABI/hash checks, and a CI guard that rejects source-only wheels;
@@ -155,7 +155,8 @@
   CUDA tests, 8 checked-bridge tests, and 17 focused MoE PyTorch/vLLM tests;
 - the same ABI12 bridge and boxed dispatcher pass 359 full Python GPU tests on
   each PyTorch 2.11 + vLLM 0.24/0.25 environment and 245 applicable tests with
-  72 expected vLLM skips on PyTorch 2.10; no ABI12 wheel is qualified yet;
+  72 expected vLLM skips on PyTorch 2.10; fresh repository-free installs of
+  the exact ABI12 wheel pass the same matrix;
 - the direct BF16 MoE movement pipeline matches every valid vLLM activation
   row and all offsets/inverse/assignment metadata exactly, defines a zero
   remote tail, and has zero measured combine error. Against vLLM 0.25.1 on
@@ -169,10 +170,11 @@
   caller-owned tensors with no rejection. Baseline/Loom median batch latency
   is `17.453/17.103 ms` (`1.0205x`). Grouped GEMM remains vLLM-owned; this is
   engine-admission evidence, not a production-model or serving-speedup claim;
-- the bridge-ABI-11 `py3-none-linux_x86_64` native wheel built from a
+- the bridge-ABI-12 `py3-none-linux_x86_64` native wheel built from a
   clean revision for CUDA 13.1 and SM90 passed archive/ELF/RPATH/symbol/
   auditwheel checks and retained identical packaged library hashes across all
-  runtime gates;
+  runtime gates; see the
+  [ABI12 clean-install result](results/h20-native-wheel-clean-install-abi12-20260801.json);
 - fresh Python 3.11 venv installs passed `pip check`, package-local loading,
   H20 execution, and the applicable full suites on PyTorch 2.10.0+cu128,
   PyTorch 2.11.0+cu130 with vLLM 0.24.0, and the same PyTorch with the official
@@ -315,8 +317,8 @@
   focused Python/operator/compiler tests, and the complete source GPU suite.
   A real Qwen2.5 W8A8 graph records `1440/0` Loom launches,
   replaces four eligible normalization-quantization call sites, and retains
-  eight Cutlass scaled-mm sites on both providers. Its two-library wheel also
-  passes the current ABI11 matrix: 342 tests on vLLM 0.24/0.25 and 231
+  eight Cutlass scaled-mm sites on both providers. The current two-library
+  ABI12 wheel preserves it and passes 359 tests on vLLM 0.24/0.25 plus 245
   applicable tests in a vLLM-free PyTorch 2.10 environment;
 - across 48 eligible real-model RMSNorm boundaries, 688,128 INT8 elements
   differ from the native IR shadow once by one LSB; every F32 scale and BF16
@@ -408,14 +410,14 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the current ABI11 wheel suite passes 342 tests on each of vLLM 0.24.0 and
-  0.25.1 plus 231 applicable tests on PyTorch 2.10, including
+- the current ABI12 wheel suite passes 359 tests on each of vLLM 0.24.0 and
+  0.25.1 plus 245 applicable tests on PyTorch 2.10, including
   optional-residual RMSNorm-to-FP8, deterministic categorical sampling, fused
   logits preprocessing, sparse penalties, sampled-token plus top-k logprobs,
   exact top-k filtering, fused top-p renormalization, and
-  optional-residual RMSNorm-to-INT8 plus SiLU-and-Mul-to-INT8. The vLLM-free
-  row executes all twelve focused tests for the new operator;
-- the qualified ABI11 bridge and dispatcher expose/import the same 27
+  optional-residual RMSNorm-to-INT8, SiLU-and-Mul-to-INT8, and MoE movement.
+  The vLLM-free row executes all fourteen applicable focused MoE tests;
+- the qualified ABI12 bridge and dispatcher expose/import the same 30
   versioned operator/runtime symbols. Neither library exports a raw CUDA
   launch dependency, and the PyTorch shim depends only on bridge symbols;
 - ABI11 SiLU-and-Mul-to-dynamic-INT8 passes the H20 Rust/CUDA/bridge suites and
@@ -592,7 +594,7 @@ FA3 for the engine's 128-1,024-token path.
 
 - exact model-output or declared task-quality acceptance, an order-stable
   engine latency/memory/temporary-allocation benefit, and default admission
-  for RMSNorm+dynamic INT8. The repository-free ABI11 matrix wheel is
+  for RMSNorm+dynamic INT8. The repository-free ABI12 matrix wheel is
   qualified separately; the
   [H20 admission result](results/h20-vllm-int8-quant-admission-20260729.json)
   proves real W8A8 invocation while rejecting stronger quality/performance
@@ -616,7 +618,7 @@ FA3 for the engine's 128-1,024-token path.
   [Loom-first engine](results/h20-vllm-engine-categorical-sample-loom-first-20260727.json)
   gates close source implementation, lifecycle, exact replay, and
   order-reversed offline engine evidence; the
-  [ABI11 wheel gate](results/h20-native-wheel-clean-install-abi11-20260801.json)
+  [ABI12 wheel gate](results/h20-native-wheel-clean-install-abi12-20260801.json)
   closes binary distribution;
 - an end-to-end speculative draft/target performance win; tree/branch
   metadata, stochastic residual-distribution rejection, and KV commit/remap
@@ -634,9 +636,9 @@ FA3 for the engine's 128-1,024-token path.
   compaction path; default vLLM 0.24 prefix caching and preemption are no
   longer open because the [H20 admission probe](results/h20-vllm-kv-movement-admission-rejected-20260727.json)
   showed logical reuse/recomputation rather than physical movement;
-- MoE top-k routing benefit on a profile that proves it material,
-  production-representative pretrained-model/serving latency, and ABI12
-  clean-wheel distribution. Direct permutation/combine benefit, vLLM
+- MoE top-k routing benefit on a profile that proves it material and
+  production-representative pretrained-model/serving latency. Direct
+  permutation/combine benefit, ABI12 clean-wheel distribution, vLLM
   production-scratch metadata equivalence, and explicit Cutlass engine path
   hits are qualified while grouped GEMM remains unchanged and outside Loom;
 - an engine-neutral zero-copy Rust decode-step proof;

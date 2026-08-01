@@ -66,11 +66,11 @@ python3 -m venv .venv-vllm
         range, bridge ABI, and library hashes. Installed packages load only
         this package-local pair. ABI12 includes twenty-one operators, adding
         MoE permutation and combine around vendor grouped GEMM. Its source
-        matrix and explicit vLLM/Cutlass engine-admission gate pass; its
-        clean-install wheel matrix remains open.
+        matrix, explicit vLLM/Cutlass engine-admission gate, and fresh
+        clean-install wheel matrix pass.
       </p>
       <p>
-        The latest qualified wheel is the ABI11 nineteen-operator predecessor.
+        The latest qualified wheel is the ABI12 twenty-one-operator artifact.
         It is H20 matrix-qualified across PyTorch 2.10/2.11 and vLLM
         0.24/0.25 but remains unpublished. ABI12 intentionally has no ABI11
         compatibility shim; INT8 and production-workload MoE performance
@@ -215,13 +215,14 @@ apply_token_penalties_(
 
       <h2>Compatibility is explicit</h2>
       <p>
-        Fresh installs of the K0.7 bridge-ABI-11 wheel with official vLLM 0.24.0
-        and 0.25.1 packages each pass the 342-test H20 suite on PyTorch 2.11.
-        The same exact artifact passes 231 applicable Loom gates on PyTorch
+        Fresh installs of the K0.7 bridge-ABI-12 wheel with official vLLM 0.24.0
+        and 0.25.1 packages each pass the 359-test H20 suite on PyTorch 2.11.
+        The same exact artifact passes 245 applicable Loom gates on PyTorch
         2.10 without recompilation. It includes deterministic categorical
         sampling, persistent request-owned RNG state, speculative verification,
         static FP8 KV quantize-on-write, fused logits preprocessing, sparse
-        token penalties, top-k logprobs, and optional-residual RMSNorm-to-FP8.
+        token penalties, top-k logprobs, optional-residual RMSNorm-to-FP8, and
+        MoE movement.
         It is qualified but unpublished. Its explicit RMSNorm- and
         SiLU-and-Mul-to-INT8 routes are distributed in that wheel, but their
         independent performance/default-admission decisions remain unchanged.

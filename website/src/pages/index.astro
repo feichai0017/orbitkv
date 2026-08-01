@@ -193,9 +193,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <h2>Build where engines pay.</h2>
       </div>
       <p>
-        The K0.7 bridge-ABI-11 wheel is clean-install-qualified across PyTorch
+        The K0.7 bridge-ABI-12 wheel is clean-install-qualified across PyTorch
         2.10/2.11 and vLLM 0.24/0.25 on H20. The same two-library artifact
-        passes 342 tests with each vLLM minor and 231 applicable tests on
+        passes 359 tests with each vLLM minor and 245 applicable tests on
         PyTorch 2.10; it remains unpublished.
         Default prefix/preemption KV movement is rejected after a real prefix
         hit and three preemptions produced zero physical copies. ABI8-A
@@ -216,7 +216,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         isolated vLLM/Cutlass gate records exact tokens plus 48/48 movement
         hits while leaving grouped GEMM unchanged. Its synthetic 1.0205× ratio
         is engine-admission evidence, not a production-model speedup. The
-        ABI12 clean wheel stays open. FP8 KV, physical movement, routing, tree,
+        matching ABI12 clean wheel is qualified but unpublished. FP8 KV,
+        physical movement, routing, tree,
         stochastic, and speculative-KV work remain profile-gated.
       </p>
     </header>

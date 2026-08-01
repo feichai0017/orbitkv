@@ -158,11 +158,11 @@ leaving Cutlass scaled GEMM unchanged.
 
 This explicit-opt-in candidate was introduced at ABI10 rather than admitted as
 a qualified default path. H20 proves the operator and real W8A8 invocation,
-and the current ABI11 matrix wheel distributes it. Held-out one-step output
+and the current ABI12 matrix wheel distributes it. Held-out one-step output
 quality is still not exact and dual-order engine latency crosses parity. The
 [admission result](../results/h20-vllm-int8-quant-admission-20260729.json)
 records those limits; the
-[current wheel result](../results/h20-native-wheel-clean-install-abi11-20260801.json)
+[current wheel result](../results/h20-native-wheel-clean-install-abi12-20260801.json)
 records only the separate binary/framework boundary.
 
 ## SiLU-And-Mul Contract
@@ -245,7 +245,7 @@ only when `LOOM_KERNELS_ENABLE_SILU_AND_MUL_INT8=1`. Vendor Cutlass GEMM remains
 unchanged. H20 direct, compiled-engine, quality, dual-order latency, and
 clean-wheel gates are recorded in the
 [admission result](../results/h20-vllm-silu-int8-admission-20260801.json) and
-[ABI11 wheel result](../results/h20-native-wheel-clean-install-abi11-20260801.json).
+[current ABI12 wheel result](../results/h20-native-wheel-clean-install-abi12-20260801.json).
 The exact path and distribution gates pass, but the compiled boundary is slower
 and engine latency is not order-stable, so the route remains explicit-only with
 no default or speedup claim.

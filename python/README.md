@@ -6,9 +6,9 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 [Project README](../README.md) · [Integration guide](../docs/guides/vllm-ir-provider.md) · [Operator catalog](../docs/operator-catalog.md)
 
 > [!IMPORTANT]
-> The bridge-ABI-11 native wheel is H20-qualified but is not published to a
-> package index. It includes all nineteen semantic operators, including
-> SiLU-and-Mul-to-dynamic-INT8,
+> The bridge-ABI-12 native wheel is H20-qualified but is not published to a
+> package index. It includes all twenty-one semantic operators, including
+> stable MoE permutation/combine and SiLU-and-Mul-to-dynamic-INT8,
 > direct plus persistent-vLLM explicit-state categorical sampling and the
 > optional-residual RMSNorm-to-FP8/INT8 schemas. A
 > source-only wheel is intentionally unsupported:
@@ -19,12 +19,11 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 > qualification proves distribution and framework compatibility, not exact
 > model output, default admission, or a stable performance win.
 >
-> Current source is bridge ABI12 with twenty-one operators and no ABI11
-> compatibility shim. It adds `moe_permute` and `moe_combine` around vendor
-> grouped GEMM. H20 source matrices, direct movement gates, and an explicit
-> vLLM 0.25.1 Cutlass engine-admission gate pass; an ABI12 clean-wheel matrix
-> and production-workload MoE performance gate remain open. The qualified
-> distributable artifact is still the ABI11 predecessor above.
+> Source and wheel are bridge ABI12 with no ABI11 compatibility shim.
+> `moe_permute` and `moe_combine` wrap vendor grouped GEMM. H20 source,
+> direct movement, explicit vLLM 0.25.1 Cutlass engine-admission, and fresh
+> clean-wheel matrix gates pass; only production-workload MoE value remains
+> open.
 
 ## Qualified artifact
 
@@ -39,18 +38,18 @@ The current matrix row is:
 | vLLM extra | `>=0.24,<0.26` |
 | Native payload | `libloom_cuda_bridge.so`, `libloom_kernels_torch.so` |
 
-The qualified artifact's build tag encodes bridge ABI 11:
-`11cu131torch210sm90`. The exact H20 artifact, binary audit, and three
+The qualified artifact's build tag encodes bridge ABI 12:
+`12cu131torch210sm90`. The exact H20 artifact, binary audit, and three
 repository-free clean-install gates are recorded in the
-[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi11-20260801.json).
-The same wheel passes 342 tests with each supported vLLM minor and 231
+[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi12-20260801.json).
+The same wheel passes 359 tests with each supported vLLM minor and 245
 applicable tests in the vLLM-free PyTorch 2.10 environment. It includes static
 FP8 E4M3 KV quantize-on-write, sparse token penalties, sampled-token plus
 top-k logprobs, exact top-k/top-p paths, fused logits preprocessing, and
 deterministic categorical sampling with persistent request-owned state, plus
-optional-residual RMSNorm-to-FP8/INT8. It is bound to source revision
-`afc54c46e3607d0d09f2860e0805f02dead88915` and adds the exact
-SiLU-and-Mul-to-INT8 API plus explicit compiler route.
+optional-residual RMSNorm-to-FP8/INT8, SiLU-and-Mul-to-INT8, and MoE movement.
+It is bound to source revision
+`d4c13e23f286a0416464ac6da5cdcca804d8b57a`.
 
 The preceding ABI7 refresh from revision
 `f98a9311c8b204c02fa77da10a768c54de3d08db` packages the final FP8 KV adapter
@@ -58,7 +57,8 @@ and passes the complete 286-test vLLM 0.24 H20 suite plus 22 focused adapter
 tests from a fresh environment. It is retained as historical evidence. See the
 [refresh evidence](../docs/results/h20-native-wheel-clean-install-abi7-refresh-20260727.json).
 
-The older `10cu131torch210sm90` ABI-10, `9cu131torch210sm90` ABI-9,
+The older `11cu131torch210sm90` ABI-11,
+`10cu131torch210sm90` ABI-10, `9cu131torch210sm90` ABI-9,
 `8cu131torch210sm90` ABI-8,
 `6cu131torch210sm90` ABI-6,
 `5cu131torch210sm90` ABI-5, `4cu131torch210sm90` ABI-4,
@@ -76,11 +76,11 @@ without PyTorch. vLLM and tests remain explicit extras:
 ```bash
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-11cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-12cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 
 # Add the supported vLLM integration when needed.
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-11cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-12cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -116,10 +116,9 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 bridge, builds the boxed LibTorch Stable ABI dispatcher, rejects ATen/c10 C++
 and raw CUDA-launch dependencies, verifies `$ORIGIN` loading, writes the
 revision/toolkit/SM/runtime manifest, and checks the final archive contains
-exactly the two Loom `.so` files. The current checkout emits an ABI12-tagged
-artifact that has not completed clean-install qualification. The exact
-`afc54c4` ABI11 predecessor passes the repository-free matrix, has SHA256
-`20402f02c44f17646c45b71ae279c702748458ad5de5b970570f0c3ce314f3c6`, and
+exactly the two Loom `.so` files. The exact `d4c13e2` ABI12 artifact passes the
+repository-free matrix, has SHA256
+`f13445d8a286b2a1afb931d284ccaa40ddec241a4e228d673d8bc0d5b11a0107`, and
 remains unpublished.
 
 ## Source development
@@ -290,7 +289,7 @@ supported.
 `rms_norm_dynamic_int8` and its out variant use the same optional-residual
 shape contract, return signed INT8 plus one F32 `absmax / 127` scale per row,
 and preserve the native W8A8 rounding boundary. They are included in the
-qualified ABI11 wheel, while the vLLM compiler route remains disabled by
+qualified ABI12 wheel, while the vLLM compiler route remains disabled by
 default because its separate quality and stable-performance gates are open.
 
 `silu_and_mul_dynamic_int8` and its out variant accept contiguous FP16/BF16
@@ -299,10 +298,11 @@ row, and preserve the vLLM compiled-native rounding boundary: F32 SiLU and
 multiplication followed by one storage-dtype product rounding before dynamic
 INT8 quantization. The H20 source and real W8A8 engine gates are exact, but
 compiled CUDA Graph ratios are below parity and engine latency is not
-order-stable. The ABI11 route is therefore explicit-only with no speedup or
-default claim; its repository-free wheel matrix is qualified separately. See
+order-stable. The route introduced with ABI11 is therefore explicit-only with
+no speedup or default claim; its repository-free wheel matrix is qualified
+separately. See
 the [admission evidence](../docs/results/h20-vllm-silu-int8-admission-20260801.json)
-and [wheel evidence](../docs/results/h20-native-wheel-clean-install-abi11-20260801.json).
+and [current wheel evidence](../docs/results/h20-native-wheel-clean-install-abi12-20260801.json).
 
 ## Exported operator families
 
