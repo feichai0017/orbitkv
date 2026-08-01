@@ -193,9 +193,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <h2>Build where engines pay.</h2>
       </div>
       <p>
-        The K0.7 bridge-ABI-10 wheel is clean-install-qualified across PyTorch
+        The K0.7 bridge-ABI-11 wheel is clean-install-qualified across PyTorch
         2.10/2.11 and vLLM 0.24/0.25 on H20. The same two-library artifact
-        passes 326 tests with each vLLM minor and 218 applicable tests on
+        passes 342 tests with each vLLM minor and 231 applicable tests on
         PyTorch 2.10; it remains unpublished.
         Default prefix/preemption KV movement is rejected after a real prefix
         hit and three preemptions produced zero physical copies. ABI8-A
@@ -208,8 +208,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         at batch 32, while batch 1–4 still costs 1.5–2.4%. ABI10 reaches a real
         W8A8 graph with optional-residual RMSNorm-to-INT8 and is distributed in
         the qualified wheel, but exact quality, stable engine benefit, and
-        default admission remain open. Quantization plumbing and MoE routing
-        stay next. FP8 KV, physical movement, tree, stochastic, and
+        default admission remain open. ABI11 adds exact compiled
+        SiLU-and-Mul-to-INT8 execution and clean-wheel coverage, while measured
+        performance rejects default admission. Quantization plumbing and MoE
+        routing stay next. FP8 KV, physical movement, tree, stochastic, and
         speculative-KV work remain profile-gated.
       </p>
     </header>

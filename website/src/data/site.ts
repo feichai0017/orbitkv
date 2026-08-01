@@ -39,6 +39,12 @@ export const supportedOperators = [
     status: "supported",
   },
   {
+    name: "SiLU-and-Mul + dynamic INT8",
+    dtypes: "FP16 · BF16 → INT8 + F32 scale",
+    boundary: "Activation + per-token quantization before vendor GEMM",
+    status: "profile-gated",
+  },
+  {
     name: "RoPE + paged-KV write",
     dtypes: "F32 · FP16 · BF16",
     boundary: "Packed Q/K rotation + native cache write",
@@ -104,7 +110,7 @@ export const nextOperators = [
   {
     milestone: "K2.5 · P1",
     name: "Quantization plumbing",
-    reason: "RMSNorm→INT8 now reaches a real W8A8 graph and the ABI10 wheel; close quality, stable-benefit, and default-admission gates before expanding scale/layout work.",
+    reason: "The ABI11 wheel closes distribution; admit new scale, pack, and layout boundaries only for a named vendor-kernel consumer.",
   },
   {
     milestone: "K5 · P1",
@@ -150,13 +156,19 @@ export const evidence = [
     operator: "RMSNorm + INT8 candidate",
     shape: "Qwen2.5 W8A8 · 32 natural prompts",
     result: "Opt-in · 29 / 32 top-1",
-    detail: "Real graph, unchanged Cutlass GEMM, and qualified ABI10 wheel; latency crosses parity",
+    detail: "Real graph, unchanged Cutlass GEMM, and qualified ABI11 wheel; latency crosses parity",
   },
   {
     operator: "SiLU + Mul + FP8",
     shape: "BF16 · 8 × 11008 · G128",
     result: "1.037–1.082×",
     detail: "CUDA Graph ratio vs vLLM fused",
+  },
+  {
+    operator: "SiLU + Mul + INT8 candidate",
+    shape: "Qwen2.5 W8A8 · 32 natural prompts",
+    result: "Exact · explicit-only",
+    detail: "Cutlass unchanged; CUDA Graph ratio 0.518–0.986×, so no speedup/default claim",
   },
   {
     operator: "Qwen2.5 FP8 engine",

@@ -6,8 +6,9 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 [Project README](../README.md) · [Integration guide](../docs/guides/vllm-ir-provider.md) · [Operator catalog](../docs/operator-catalog.md)
 
 > [!IMPORTANT]
-> The bridge-ABI-10 native wheel is H20-qualified but is not published to a
-> package index. It includes all eighteen checked operators, including
+> The bridge-ABI-11 native wheel is H20-qualified but is not published to a
+> package index. It includes all nineteen semantic operators, including
+> SiLU-and-Mul-to-dynamic-INT8,
 > direct plus persistent-vLLM explicit-state categorical sampling and the
 > optional-residual RMSNorm-to-FP8/INT8 schemas. A
 > source-only wheel is intentionally unsupported:
@@ -17,6 +18,11 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 > RMSNorm-to-dynamic-INT8 remains an explicit experimental engine route: wheel
 > qualification proves distribution and framework compatibility, not exact
 > model output, default admission, or a stable performance win.
+>
+> Current source is bridge ABI11 with nineteen operators and adds experimental
+> SiLU-and-Mul-to-dynamic-INT8. It has no ABI10 compatibility shim. H20 source,
+> real W8A8 path, and exact-quality gates pass, but measured performance rejects
+> default admission. Its separate ABI11 clean-wheel matrix passes.
 
 ## Qualified artifact
 
@@ -31,17 +37,18 @@ The current matrix row is:
 | vLLM extra | `>=0.24,<0.26` |
 | Native payload | `libloom_cuda_bridge.so`, `libloom_kernels_torch.so` |
 
-The qualified artifact's build tag encodes bridge ABI 10:
-`10cu131torch210sm90`. The exact H20 artifact, binary audit, and three
+The qualified artifact's build tag encodes bridge ABI 11:
+`11cu131torch210sm90`. The exact H20 artifact, binary audit, and three
 repository-free clean-install gates are recorded in the
-[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi10-20260731.json).
-The same wheel passes 326 tests with each supported vLLM minor and 218
+[native-wheel evidence](../docs/results/h20-native-wheel-clean-install-abi11-20260801.json).
+The same wheel passes 342 tests with each supported vLLM minor and 231
 applicable tests in the vLLM-free PyTorch 2.10 environment. It includes static
 FP8 E4M3 KV quantize-on-write, sparse token penalties, sampled-token plus
 top-k logprobs, exact top-k/top-p paths, fused logits preprocessing, and
 deterministic categorical sampling with persistent request-owned state, plus
 optional-residual RMSNorm-to-FP8/INT8. It is bound to source revision
-`de28cebe965c54287127ba21d37845d6003074b5`.
+`afc54c46e3607d0d09f2860e0805f02dead88915` and adds the exact
+SiLU-and-Mul-to-INT8 API plus explicit compiler route.
 
 The preceding ABI7 refresh from revision
 `f98a9311c8b204c02fa77da10a768c54de3d08db` packages the final FP8 KV adapter
@@ -49,7 +56,8 @@ and passes the complete 286-test vLLM 0.24 H20 suite plus 22 focused adapter
 tests from a fresh environment. It is retained as historical evidence. See the
 [refresh evidence](../docs/results/h20-native-wheel-clean-install-abi7-refresh-20260727.json).
 
-The older `9cu131torch210sm90` ABI-9, `8cu131torch210sm90` ABI-8,
+The older `10cu131torch210sm90` ABI-10, `9cu131torch210sm90` ABI-9,
+`8cu131torch210sm90` ABI-8,
 `6cu131torch210sm90` ABI-6,
 `5cu131torch210sm90` ABI-5, `4cu131torch210sm90` ABI-4,
 `2cu131torch210sm90` ABI-2, and `1cu131torch210sm90` ABI-1 wheels remain
@@ -66,11 +74,11 @@ without PyTorch. vLLM and tests remain explicit extras:
 ```bash
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-10cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-11cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 
 # Add the supported vLLM integration when needed.
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-10cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-11cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -106,10 +114,9 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 bridge, builds the boxed LibTorch Stable ABI dispatcher, rejects ATen/c10 C++
 and raw CUDA-launch dependencies, verifies `$ORIGIN` loading, writes the
 revision/toolkit/SM/runtime manifest, and checks the final archive contains
-exactly the two Loom `.so` files. Current source emits a
-`10cu131torch210sm90` tag. The exact `de28ceb` ABI10 artifact passes the
+exactly the two Loom `.so` files. The exact `afc54c4` ABI11 artifact passes the
 repository-free matrix, has SHA256
-`80878496e5909ded15ba310cd4885a53eef8a2c5d6675dd5581d83f0e2103e6f`, and
+`20402f02c44f17646c45b71ae279c702748458ad5de5b970570f0c3ce314f3c6`, and
 remains unpublished.
 
 ## Source development
@@ -132,7 +139,7 @@ Source checkouts discover the paired libraries only under repository
 Every operator, including padded logits and strided paged-cache views, enters
 checked borrowed Rust dispatch. There is no ctypes, ATen dispatcher twin, or
 direct raw-CUDA framework path. Both source libraries must be rebuilt together:
-the current ABI10 dispatcher rejects an ABI9 bridge instead of retaining a
+the current ABI11 dispatcher rejects an ABI10 bridge instead of retaining a
 compatibility shim.
 
 ## Direct PyTorch use
@@ -152,6 +159,7 @@ from loom_kernels import (
     rope_paged_kv_write_,
     selected_token_logprobs,
     silu_and_mul_dynamic_fp8,
+    silu_and_mul_dynamic_int8,
     token_penalties_workspace_capacity,
     top_k_filter_,
     top_p_renorm_,
@@ -167,6 +175,9 @@ int8_output, token_scales = rms_norm_dynamic_int8(
     norm_weight_bf16,
     epsilon=1.0e-6,
     residual=residual_bf16,
+)
+mlp_int8_output, mlp_token_scales = silu_and_mul_dynamic_int8(
+    gate_and_up_bf16,
 )
 
 token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
@@ -261,15 +272,26 @@ supported.
 `rms_norm_dynamic_int8` and its out variant use the same optional-residual
 shape contract, return signed INT8 plus one F32 `absmax / 127` scale per row,
 and preserve the native W8A8 rounding boundary. They are included in the
-qualified ABI10 wheel, while the vLLM compiler route remains disabled by
+qualified ABI11 wheel, while the vLLM compiler route remains disabled by
 default because its separate quality and stable-performance gates are open.
+
+`silu_and_mul_dynamic_int8` and its out variant accept contiguous FP16/BF16
+split-half gate/up input, return signed INT8 plus one F32 scale per flattened
+row, and preserve the vLLM compiled-native rounding boundary: F32 SiLU and
+multiplication followed by one storage-dtype product rounding before dynamic
+INT8 quantization. The H20 source and real W8A8 engine gates are exact, but
+compiled CUDA Graph ratios are below parity and engine latency is not
+order-stable. The ABI11 route is therefore explicit-only with no speedup or
+default claim; its repository-free wheel matrix is qualified separately. See
+the [admission evidence](../docs/results/h20-vllm-silu-int8-admission-20260801.json)
+and [wheel evidence](../docs/results/h20-native-wheel-clean-install-abi11-20260801.json).
 
 ## Exported operator families
 
 | Family | Python entry points |
 | --- | --- |
 | Normalization | `rms_norm`, `rms_norm_out`, `add_rms_norm_`, `rms_norm_dynamic_fp8`, `rms_norm_dynamic_fp8_out`, `rms_norm_dynamic_int8`, `rms_norm_dynamic_int8_out` |
-| Activation | `silu_and_mul`, `silu_and_mul_out`, `silu_and_mul_dynamic_fp8`, `silu_and_mul_dynamic_fp8_out` |
+| Activation | `silu_and_mul`, `silu_and_mul_out`, `silu_and_mul_dynamic_fp8`, `silu_and_mul_dynamic_fp8_out`, `silu_and_mul_dynamic_int8`, `silu_and_mul_dynamic_int8_out` |
 | Position and KV | `rope_paged_kv_write_` for native or static FP8 E4M3 paged caches |
 | Decode tail | `logits_preprocess_`, `greedy_sample_logprobs`, `selected_token_logprobs`, `top_k_filter_`, `top_p_renorm_`, `topk_sampled_logprobs`, `min_p_filter_`, `apply_token_penalties_` |
 | Speculative decode | `greedy_speculative_verify` |
@@ -296,6 +318,7 @@ into this contract.
 | Add+RMSNorm IR provider | `ir_op_priority={"fused_add_rms_norm": ["loom_cuda"]}` |
 | Standalone SiLU-and-Mul | `LOOM_KERNELS_ENABLE_SILU_AND_MUL=1` |
 | SiLU-and-Mul→block FP8 | `LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8=1` |
+| Experimental SiLU-and-Mul→dynamic INT8 | `LOOM_KERNELS_ENABLE_SILU_AND_MUL_INT8=1` |
 | Optional-residual RMSNorm→dynamic FP8 | `LOOM_KERNELS_ENABLE_RMS_NORM_FP8=1` |
 | Experimental optional-residual RMSNorm→dynamic INT8 | `LOOM_KERNELS_ENABLE_RMS_NORM_INT8=1` |
 | RoPE+paged-KV compiler pass | `configure_vllm_rope_paged_kv(...)` |

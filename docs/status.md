@@ -110,10 +110,10 @@
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
-  using the current CUDA stream; the ABI10 dispatcher routes all
-  eighteen semantic operators through `loom-cuda-bridge` into borrowed safe
-  Rust dispatch with explicit storage spans and layouts. The exact `de28ceb`
-  ABI10 wheel is the current qualified binary boundary;
+  using the current CUDA stream; current ABI11 source routes all nineteen
+  semantic operators through `loom-cuda-bridge` into borrowed safe Rust
+  dispatch with explicit storage spans and layouts. The exact `afc54c4` ABI11
+  wheel is the current qualified binary boundary;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test
   extras, exactly two packaged `.so` files, a revision/toolkit/SM/hash manifest,
   runtime ABI/hash checks, and a CI guard that rejects source-only wheels;
@@ -121,6 +121,7 @@
   `SiluAndMul` out-of-tree layer replacement, plus an opt-in activation-quant
   fusion-table replacement, optional-residual RMSNorm-to-FP8 fusion-table
   replacement, explicit optional-residual RMSNorm-to-INT8 compiler patterns,
+  an explicit SiLU-and-Mul-to-dynamic-INT8 compiler pattern,
   RoPE+KV compiler-pass adapter, and pure-greedy and general selected-token
   sampled-logprob fast paths, an exact top-k
   raw-logprob adapter, mixed-sampling logits-preprocessing registration, a
@@ -133,7 +134,7 @@
 ## Validated
 
 - local formatting, clippy, tests, and release build;
-- the bridge-ABI-10 `py3-none-linux_x86_64` native wheel built from a
+- the bridge-ABI-11 `py3-none-linux_x86_64` native wheel built from a
   clean revision for CUDA 13.1 and SM90 passed archive/ELF/RPATH/symbol/
   auditwheel checks and retained identical packaged library hashes across all
   runtime gates;
@@ -276,12 +277,12 @@
   `1.0066-1.016x` at batch 32. The 64-token decode workload crosses parity,
   so no TPOT or throughput acceleration is claimed;
 - the ABI10 RMSNorm-to-INT8 path passes 18 H20 safe-CUDA tests, 21
-  focused Python/operator/compiler tests, and the complete 326-test vLLM
-  0.25.1 GPU suite. A real Qwen2.5 W8A8 graph records `1440/0` Loom launches,
+  focused Python/operator/compiler tests, and the complete source GPU suite.
+  A real Qwen2.5 W8A8 graph records `1440/0` Loom launches,
   replaces four eligible normalization-quantization call sites, and retains
   eight Cutlass scaled-mm sites on both providers. Its two-library wheel also
-  passes 326 tests on vLLM 0.24/0.25 and 218 applicable tests in a vLLM-free
-  PyTorch 2.10 environment;
+  passes the current ABI11 matrix: 342 tests on vLLM 0.24/0.25 and 231
+  applicable tests in a vLLM-free PyTorch 2.10 environment;
 - across 48 eligible real-model RMSNorm boundaries, 688,128 INT8 elements
   differ from the native IR shadow once by one LSB; every F32 scale and BF16
   residual is bit-exact. The held-out 32-prompt one-step gate matches `29/32`
@@ -372,15 +373,25 @@
 - selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
   Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
   FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the current ABI10 wheel suite passes 326 tests on each of vLLM 0.24.0 and
-  0.25.1 plus 218 applicable tests on PyTorch 2.10, including
+- the current ABI11 wheel suite passes 342 tests on each of vLLM 0.24.0 and
+  0.25.1 plus 231 applicable tests on PyTorch 2.10, including
   optional-residual RMSNorm-to-FP8, deterministic categorical sampling, fused
   logits preprocessing, sparse penalties, sampled-token plus top-k logprobs,
   exact top-k filtering, fused top-p renormalization, and
-  optional-residual RMSNorm-to-INT8;
-- the current bridge exposes 26 versioned operator/runtime symbols and no
-  raw CUDA launch symbols; the PyTorch shim depends only on those bridge
-  symbols and no raw launch symbol;
+  optional-residual RMSNorm-to-INT8 plus SiLU-and-Mul-to-INT8. The vLLM-free
+  row executes all twelve focused tests for the new operator;
+- the qualified ABI11 bridge and dispatcher expose/import the same 27
+  versioned operator/runtime symbols. Neither library exports a raw CUDA
+  launch dependency, and the PyTorch shim depends only on bridge symbols;
+- ABI11 SiLU-and-Mul-to-dynamic-INT8 passes the H20 Rust/CUDA/bridge suites and
+  both 342-test vLLM 0.24/0.25 source suites. Its compiled boundary is exact
+  over rows 1-4096, and a real Qwen2.5 W8A8 graph preserves all eight Cutlass
+  scaled-mm sites while both provider orders match all 32 top-1 tokens,
+  top-20 token sets, and common logprobs exactly. CUDA Graph ratios are
+  `0.518-0.986x` and engine latency is not order-stable, so the route remains
+  explicit with no speedup/default claim. See the
+  [ABI11 admission result](results/h20-vllm-silu-int8-admission-20260801.json)
+  and [ABI11 wheel result](results/h20-native-wheel-clean-install-abi11-20260801.json);
 - against vLLM's exact `compute_logprobs + gather_logprobs(0)` path for the
   same caller-selected BF16 IDs, ranks were exact and maximum logprob error was
   `9.54e-7`; 1-128 row H20 speedup ratios were `2.77-3.78x`;
@@ -546,7 +557,7 @@ FA3 for the engine's 128-1,024-token path.
 
 - exact model-output or declared task-quality acceptance, an order-stable
   engine latency/memory/temporary-allocation benefit, and default admission
-  for RMSNorm+dynamic INT8. The repository-free ABI10 matrix wheel is
+  for RMSNorm+dynamic INT8. The repository-free ABI11 matrix wheel is
   qualified separately; the
   [H20 admission result](results/h20-vllm-int8-quant-admission-20260729.json)
   proves real W8A8 invocation while rejecting stronger quality/performance
@@ -570,7 +581,7 @@ FA3 for the engine's 128-1,024-token path.
   [Loom-first engine](results/h20-vllm-engine-categorical-sample-loom-first-20260727.json)
   gates close source implementation, lifecycle, exact replay, and
   order-reversed offline engine evidence; the
-  [ABI10 wheel gate](results/h20-native-wheel-clean-install-abi10-20260731.json)
+  [ABI11 wheel gate](results/h20-native-wheel-clean-install-abi11-20260801.json)
   closes binary distribution;
 - an end-to-end speculative draft/target performance win; tree/branch
   metadata, stochastic residual-distribution rejection, and KV commit/remap

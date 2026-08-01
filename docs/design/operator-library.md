@@ -156,13 +156,13 @@ size the block from the pack count. The vLLM adapter adds plain and fused-add
 patterns to its existing normalization-quantization compiler pass while
 leaving Cutlass scaled GEMM unchanged.
 
-This is an ABI10, explicit-opt-in candidate rather than a qualified default
-path. H20 proves the operator and real W8A8 invocation, and the ABI10 matrix
-wheel is distribution-qualified. Held-out one-step output quality is still not
-exact and dual-order engine latency crosses parity. The
+This explicit-opt-in candidate was introduced at ABI10 rather than admitted as
+a qualified default path. H20 proves the operator and real W8A8 invocation,
+and the current ABI11 matrix wheel distributes it. Held-out one-step output
+quality is still not exact and dual-order engine latency crosses parity. The
 [admission result](../results/h20-vllm-int8-quant-admission-20260729.json)
 records those limits; the
-[wheel result](../results/h20-native-wheel-clean-install-abi10-20260731.json)
+[current wheel result](../results/h20-native-wheel-clean-install-abi11-20260801.json)
 records only the separate binary/framework boundary.
 
 ## SiLU-And-Mul Contract
@@ -218,6 +218,37 @@ the temporary low-precision activation tensor and the second kernel launch of
 the composed path. Because the composed path rounds that temporary tensor, it
 is a useful performance comparison but not an exact semantic baseline; vLLM's
 own fused per-block operator is the compatibility baseline.
+
+## SiLU-And-Mul+Dynamic-Per-Token-INT8 Contract
+
+The W8A8 activation boundary accepts contiguous FP16 or BF16 split-half input
+with shape `[rows, 2 * width]`. It emits signed INT8 `[rows, width]` and one
+contiguous F32 `absmax / 127` scale per flattened row. An all-zero row writes a
+zero scale and zero output. Input, output, and scales must be pairwise
+disjoint, and the caller owns both output buffers.
+
+Unlike the block-FP8 fusion, this operator deliberately preserves vLLM's
+compiled native graph: SiLU and multiplication stay in F32, then the product is
+rounded once to the input dtype before the F32 absmax reduction and ties-to-even
+saturated INT8 conversion. This is the actual Inductor lowering reached by the
+W8A8 engine route; eager `_C.silu_and_mul` is not used as a semantic proxy.
+
+One CUDA block owns each row. Decode-sized widths keep the rounded product
+values in dynamic shared memory across the reduction; wider rows use the same
+public kernel contract and recompute the activation during quantization rather
+than selecting an alternate API. The checked ABI11 bridge, safe Rust backend,
+Stable ABI PyTorch mutation schema, and allocating Python wrapper all launch on
+the caller's current stream without synchronization.
+
+The vLLM 0.24/0.25 adapter extends the existing activation-quant compiler pass
+only when `LOOM_KERNELS_ENABLE_SILU_AND_MUL_INT8=1`. Vendor Cutlass GEMM remains
+unchanged. H20 direct, compiled-engine, quality, dual-order latency, and
+clean-wheel gates are recorded in the
+[admission result](../results/h20-vllm-silu-int8-admission-20260801.json) and
+[ABI11 wheel result](../results/h20-native-wheel-clean-install-abi11-20260801.json).
+The exact path and distribution gates pass, but the compiled boundary is slower
+and engine latency is not order-stable, so the route remains explicit-only with
+no default or speedup claim.
 
 ## Fused Logits Preprocessing Contract
 

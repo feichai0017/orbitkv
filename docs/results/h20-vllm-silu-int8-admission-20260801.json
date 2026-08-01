@@ -1,0 +1,234 @@
+{
+  "schema_version": 1,
+  "date": "2026-08-01",
+  "benchmark": "vllm_silu_and_mul_dynamic_int8_admission",
+  "decision": {
+    "status": "implemented_distribution_qualified_explicit_opt_in_not_default_admitted",
+    "candidate": "split-half SiLU-and-Mul fused with symmetric dynamic per-token INT8 quantization",
+    "reason": "The ABI11 Rust/CUDA/PyTorch path, compiler rewrite, exact compiled-native semantics, real W8A8 invocation, unchanged Cutlass GEMM, and 32-prompt quality gate pass. CUDA Graph boundary ratios remain below parity at every measured shape, and the order-reversed engine results are not stable improvements. The route therefore remains explicit opt-in with no default-enable or engine-speedup claim.",
+    "standalone_operator_complete": true,
+    "vllm_integration_complete": true,
+    "exact_quality_gate_passed": true,
+    "default_enable_ready": false,
+    "native_wheel_qualified": true
+  },
+  "claim_boundary": {
+    "accepted": [
+      "The fused boundary is implemented once across the Rust contract and CPU oracle, safe CUDA backend, checked bridge, handwritten CUDA, Stable ABI PyTorch dispatcher, and vLLM compiler adapter.",
+      "The operator matches vLLM's compiled-native rounding boundary: SiLU and multiplication remain F32, then the product is rounded once to the input dtype before dynamic INT8 quantization.",
+      "The real Qwen2.5 W8A8 graph replaces eligible SiLU-and-Mul-to-INT8 boundaries with Loom while both providers retain eight Cutlass scaled-mm call sites.",
+      "Both provider orders match all 32 one-step top-1 tokens, all returned top-20 token sets, and every common logprob exactly.",
+      "One ABI11 wheel containing exactly the Rust CUDA bridge and Stable ABI dispatcher passes fresh repository-free PyTorch 2.10/2.11 and vLLM 0.24/0.25 H20 gates.",
+      "The provider remains disabled unless LOOM_KERNELS_ENABLE_SILU_AND_MUL_INT8 is explicitly enabled."
+    ],
+    "excluded": [
+      "No stable end-to-end latency, TTFT, TPOT, throughput, or serving benefit is claimed.",
+      "No CUDA Graph operator-boundary speedup is claimed; every measured rows-1-through-4096 ratio is below parity.",
+      "Eager timing crosses unequal Python dispatcher boundaries and is diagnostic only.",
+      "No GEMM implementation or GEMM speedup is claimed.",
+      "The qualified ABI11 wheel is not published to a package index."
+    ]
+  },
+  "source": {
+    "repository_base_revision": "c275661fe3a589b97cc144fadd6209cc75765dea",
+    "candidate_revision": "afc54c46e3607d0d09f2860e0805f02dead88915",
+    "engine_benchmark_path": "benchmarks/vllm_engine_int8_quant_ab.py",
+    "engine_benchmark_sha256": "0631e61d5a720870b4bc03ff06f9037bdfd3282001dce4083808b1b3421844f3",
+    "direct_benchmark_path": "benchmarks/vllm_silu_and_mul_dynamic_int8.py",
+    "direct_benchmark_sha256": "e9ee7e620fd39c92498c9d400d2162e7f97795ac265c19683302860dd4068618",
+    "bridge_abi_version": 11,
+    "bridge_sha256": "b6d7c41fd1eb8bcfcbe7430432281fff08458d0ec4192bcd1c86ef8afc59de2b",
+    "raw_runs": [
+      {
+        "name": "compiled_boundary_forward",
+        "result_path": "/workspace/loom-abi11-silu-int8-RvRtccl6/evidence/results/h20-silu-int8-compiled-forward.json",
+        "result_sha256": "3c8de7b1fa9586d6c8391a5a91eab147cad92daad8f10368071814402c4fa974"
+      },
+      {
+        "name": "compiled_boundary_reverse",
+        "result_path": "/workspace/loom-abi11-silu-int8-RvRtccl6/evidence/results/h20-silu-int8-compiled-reverse.json",
+        "result_sha256": "49aff15f919d1ba22b16ae71ae00b2e43a1af73531940aaeb085be4ad9cfcbbe"
+      },
+      {
+        "name": "engine_baseline_first",
+        "result_path": "/workspace/loom-abi11-silu-int8-RvRtccl6/evidence/results/h20-vllm-silu-int8-ab-baseline-first.json",
+        "result_sha256": "09a2203035ea87efd1fd94c79a6a93e9bc38a46382317cd422e6d0cf2a9093d3",
+        "timestamp_utc": "2026-08-01T04:20:18.715583+00:00"
+      },
+      {
+        "name": "engine_loom_first",
+        "result_path": "/workspace/loom-abi11-silu-int8-RvRtccl6/evidence/results/h20-vllm-silu-int8-ab-loom-first.json",
+        "result_sha256": "bfe3da882430f39f2953b3bbff5f58422a419ccc9c48e9803a1da17a0309361a",
+        "timestamp_utc": "2026-08-01T04:22:38.205972+00:00"
+      }
+    ]
+  },
+  "distribution": {
+    "evidence_path": "docs/results/h20-native-wheel-clean-install-abi11-20260801.json",
+    "artifact": "loom_kernels-1.0.0a1-11cu131torch210sm90-py3-none-linux_x86_64.whl",
+    "artifact_sha256": "20402f02c44f17646c45b71ae279c702748458ad5de5b970570f0c3ce314f3c6",
+    "native_library_count": 2,
+    "vllm_0_25_tests_passed": 342,
+    "vllm_0_24_tests_passed": 342,
+    "torch_2_10_vllm_free_tests_passed": 231,
+    "matrix_gate_passed": true,
+    "published": false
+  },
+  "environment": {
+    "host": "forge-gas1",
+    "gpu": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "driver": "535.161.08",
+    "python": "3.11.2",
+    "torch": "2.11.0+cu130",
+    "torch_cuda": "13.0",
+    "vllm": "0.25.1",
+    "cuda_home": "/usr/local/cuda-13.1",
+    "linear_backend": "cutlass",
+    "detected_quantization": "compressed-tensors",
+    "model": "RedHatAI/Qwen2.5-0.5B-quantized.w8a8",
+    "model_revision": "0d1951533baeec89dd257df86d4d10c3bd5429f5"
+  },
+  "correctness": {
+    "compiled_boundary": {
+      "dtype": "bfloat16",
+      "width": 4864,
+      "rows": [
+        1,
+        4,
+        16,
+        32,
+        128,
+        256,
+        512,
+        4096
+      ],
+      "provider_orders": [
+        "forward",
+        "reverse"
+      ],
+      "all_int8_outputs_exact": true,
+      "all_f32_scales_bit_exact": true
+    },
+    "natural_prompt_quality": {
+      "prompts": 32,
+      "max_tokens": 1,
+      "returned_logprobs": 20,
+      "top1_agreement_count": 32,
+      "top1_agreement_rate": 1.0,
+      "all_returned_token_sets_equal": true,
+      "minimum_top20_jaccard": 1.0,
+      "maximum_common_logprob_error": 0.0,
+      "exact_quality_gate_passed": true
+    }
+  },
+  "path_evidence": {
+    "baseline_loom_host_launches_per_order": 0,
+    "loom_host_launches_per_order": 720,
+    "baseline_generated_calls": {
+      "loom_silu_and_mul_int8": 0,
+      "vllm_dynamic_int8_quant": 20,
+      "cutlass_scaled_mm": 8
+    },
+    "loom_generated_calls": {
+      "loom_silu_and_mul_int8": 2,
+      "vllm_dynamic_int8_quant": 14,
+      "cutlass_scaled_mm": 8
+    },
+    "path_gate_passed": true
+  },
+  "compiled_boundary_performance": {
+    "protocol": {
+      "warmup": 100,
+      "iterations_per_sample": 2000,
+      "samples": 15,
+      "provider_orders": [
+        "forward",
+        "reverse"
+      ]
+    },
+    "baseline_over_loom_cuda_graph_ratio": {
+      "rows1": [
+        0.8568983466262768,
+        0.8434229446441825
+      ],
+      "rows4": [
+        0.867692939529038,
+        0.9192834173395839
+      ],
+      "rows16": [
+        0.9162321301253157,
+        0.9515110341825189
+      ],
+      "rows32": [
+        0.9569622470591873,
+        0.9621366134291321
+      ],
+      "rows128": [
+        0.974805352471651,
+        0.9864052248577855
+      ],
+      "rows256": [
+        0.8372185714122058,
+        0.8392279520217591
+      ],
+      "rows512": [
+        0.798389448843442,
+        0.7965407222514453
+      ],
+      "rows4096": [
+        0.5193214739875647,
+        0.5181389892559782
+      ]
+    },
+    "order_stable_speedup": false
+  },
+  "engine_performance": {
+    "protocol": {
+      "warmup": 2,
+      "samples": 7,
+      "provider_orders": [
+        "vllm_then_loom",
+        "loom_then_vllm"
+      ],
+      "cases": [
+        "b1-in128-out32",
+        "b8-in128-out32",
+        "b32-in128-out16"
+      ]
+    },
+    "baseline_over_loom_batch_latency": {
+      "b1-in128-out32": [
+        1.0044749235149608,
+        0.9947275474960817
+      ],
+      "b8-in128-out32": [
+        1.002946505448162,
+        0.9314765647082698
+      ],
+      "b32-in128-out16": [
+        0.9777370681037257,
+        0.8354649542539563
+      ]
+    },
+    "order_stable_speedup": false
+  },
+  "validation": {
+    "local_rust_workspace_tests": "56 passed",
+    "h20_safe_rust_cuda_tests": "18 passed",
+    "h20_checked_bridge_tests": "8 passed",
+    "h20_core_rust_tests": "56 passed",
+    "h20_vllm_0_25_python_gpu_suite": "342 passed",
+    "h20_vllm_0_24_python_gpu_suite": "342 passed",
+    "h20_vllm_0_25_clean_wheel_suite": "342 passed",
+    "h20_vllm_0_24_clean_wheel_suite": "342 passed",
+    "h20_torch_2_10_vllm_free_clean_wheel_suite": "231 passed, 69 skipped",
+    "website_build": "passed",
+    "python_compileall": "passed",
+    "rust_format_clippy_release_checks": "passed",
+    "source_diff_check": "passed"
+  },
+  "next_gates": [
+    "Do not reconsider default vLLM admission without a different kernel decomposition that beats the compiled native CUDA Graph boundary and an order-stable engine rerun."
+  ]
+}

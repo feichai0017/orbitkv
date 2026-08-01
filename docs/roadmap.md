@@ -59,8 +59,8 @@ step with no rejection, and batch 32 improves latency/throughput by
 `5.7–8.1%` in both orders. Batch 1–4 pays `1.5–2.4%`; the adapter reports that
 cost instead of switching an in-flight request to another RNG stream.
 The current
-[ABI10 matrix wheel](results/h20-native-wheel-clean-install-abi10-20260731.json)
-passes 326 tests with each supported vLLM minor and 218 applicable tests on
+[ABI11 matrix wheel](results/h20-native-wheel-clean-install-abi11-20260801.json)
+passes 342 tests with each supported vLLM minor and 231 applicable tests on
 PyTorch 2.10 from repository-free fresh environments, including the same
 categorical subsystem.
 
@@ -146,10 +146,10 @@ Status: complete for the first Linux x86_64, CUDA 13.1, SM90 matrix row.
   `python/build_wheel.py` builds from a clean revision, packages exactly the
   two native libraries, emits their manifest, audits ELF/RPATH/symbols, and
   refuses an accidental source-only wheel;
-- ~~prove repository-free H20 clean installs~~ — the current exact ABI10
+- ~~prove repository-free H20 clean installs~~ — the current exact ABI11
   `py3-none-linux_x86_64` artifact passes fresh Python 3.11 venv gates on
   PyTorch 2.10/2.11 and vLLM 0.24/0.25, including `pip check`, package-local
-  library loading, GPU smoke, and the applicable 326/218-test suites. ABI9
+  library loading, GPU smoke, and the applicable 342/231-test suites. ABI10
   and earlier artifacts remain historical evidence.
 
 Exit: a qualified binary artifact installs without a repository checkout, uses
@@ -187,7 +187,14 @@ Status: in progress.
    named-baseline gates complete; pinned Qwen2.5 online-FP8 compilation,
    path-hit, CUDA Graph, exact-token, and order-reversed engine gates are also
    complete, while the measured 0.5B end-to-end result remains at parity;
-3. dynamic INT8 output quantization when a named model path requires it;
+3. ~~dynamic per-token INT8 output quantization~~ — ABI11 spans the CPU
+   oracle, safe Rust, checked bridge, handwritten CUDA, Stable ABI PyTorch,
+   direct benchmarks, and an explicit vLLM compiler pattern for the observed
+   W8A8 `SiLU-and-Mul -> dynamic_scaled_int8_quant -> Cutlass` path. H20 source,
+   exact compiled semantics, real-engine path, unchanged Cutlass GEMM, and
+   32-prompt exact-quality gates pass. CUDA Graph ratios remain below parity
+   and engine latency is not order-stable, so it is explicit-only; the ABI11
+   matrix-wheel gate passes but does not overrule that performance rejection;
 4. GELU/GELU-tanh and gated variants admitted by model coverage;
 5. explicit handoff to engine-selected vendor GEMM, with Loom limited to
    memory-bound bias, activation, and quantization boundaries around it.
@@ -198,7 +205,8 @@ improves a real model workload. Standalone SiLU parity alone does not close it.
 ## K2.5: Quantization Plumbing Around Vendor GEMM
 
 Status: in progress; optional-residual RMSNorm-to-FP8 is source-, integration-,
-H20-, and clean-wheel-qualified, and the ABI10 matrix also distributes INT8.
+H20-, and clean-wheel-qualified, and the current ABI11 matrix also distributes
+INT8.
 
 - ~~generalize RMSNorm-to-dynamic-per-token-FP8 to the exact optional-residual
   vLLM fusion schema~~ — both plain and Add+RMSNorm fusion keys now use one
@@ -214,12 +222,12 @@ H20-, and clean-wheel-qualified, and the ABI10 matrix also distributes INT8.
   compiler adapter. A real
   Qwen2.5 W8A8 graph records `1440/0` Loom launches while preserving eight
   Cutlass scaled-mm sites on both providers; the same two-library wheel passes
-  326 tests with each vLLM minor and 218 applicable PyTorch 2.10 tests;
+  342 tests with each vLLM minor and 231 applicable PyTorch 2.10 tests;
 - close the INT8 quality/default/performance admission gates — the real-layer
   shadow differs by one INT8 LSB across 688,128 elements with exact
   scales/residuals, but the 32-prompt
   one-step gate matches only `29/32` top-1 tokens and dual-order engine latency
-  crosses parity. The route stays explicit opt-in despite its qualified ABI10
+  crosses parity. The route stays explicit opt-in despite its qualified ABI11
   distribution;
 - per-token, per-channel, and per-block scale reduction for FP8 and INT8;
 - pack/unpack and layout conversion for engine-selected quantized kernels;
@@ -252,7 +260,7 @@ the family-level system-value exit remains open.
 - ~~FP8 E4M3 quantize-on-write with explicit static per-tensor or per-head
   scales~~ — Rust contract/oracle, safe CUDA backend, checked bridge, Stable ABI
   PyTorch operator, vLLM adapter, exact-byte H20 comparison, named operator
-  benchmark, current-stream/compile/graph checks, current ABI10 clean wheel, and
+  benchmark, current-stream/compile/graph checks, current ABI11 clean wheel, and
   order-reversed real-engine invocation are complete; the pinned Qwen2.5-7B
   candidate passes the operational and native-vLLM/Loom provider-equivalence
   gates but is rejected because both FP8 providers exceed the BF16 held-out

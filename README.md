@@ -46,8 +46,8 @@ core; it will not implement a competing GEMM.
 
 | Family | Operators | Qualified boundary |
 | --- | --- | --- |
-| Normalization | RMSNorm · Add+RMSNorm · optional residual Add+RMSNorm→dynamic FP8 · experimental Add+RMSNorm→dynamic INT8 | F32, FP16, BF16; both quantized paths are ABI10 wheel-qualified, while INT8 remains an explicit opt-in with quality/default/performance gates open |
-| MLP | split-half SiLU-and-Mul · SiLU-and-Mul→block FP8 | F32, FP16, BF16; opt-in vLLM activation paths |
+| Normalization | RMSNorm · Add+RMSNorm · optional residual Add+RMSNorm→dynamic FP8 · experimental Add+RMSNorm→dynamic INT8 | F32, FP16, BF16; both quantized paths are present in the qualified ABI11 wheel, while INT8 remains an explicit opt-in with quality/default/performance gates open |
+| MLP | split-half SiLU-and-Mul · SiLU-and-Mul→block FP8 · experimental SiLU-and-Mul→dynamic INT8 | F32, FP16, BF16; ABI11 proves the exact real W8A8 compiler path while leaving GEMM vendor-owned, but remains explicit because performance is below admission |
 | Position and KV | NeoX/interleaved RoPE + native/static-FP8 paged-KV write | packed QKV, NHD/HND cache views, static per-tensor/per-head FP8 E4M3 scales, current-stream PyTorch |
 | Decode tail | fused logits preprocessing · deterministic categorical sampling · greedy + sampled logprob · selected-token logprob + rank · exact in-place top-k filter · fused top-p + renormalization · sampled-token + top-k logprobs · sparse penalties · Min-P | mixed greedy/random preprocessing, explicit Philox state, exact-token/rank gates, and measured vLLM fallbacks |
 | Speculative decode | greedy draft verify + accepted/bonus-token compaction | flattened ragged int32 metadata, exact vLLM 0.24/0.25 rejection semantics, real vLLM 0.24 draft/target invocation |
@@ -59,14 +59,28 @@ Catalog membership alone is never a performance claim.
 
 ## Next value program
 
-The bridge-ABI-10 native-wheel engineering gate is complete for one
+The bridge-ABI-11 native-wheel engineering gate is complete for one
 Linux x86_64, CUDA 13.1, SM90, Python 3.11, PyTorch 2.10/2.11, and vLLM
-0.24/0.25 cross-matrix artifact. The exact `de28ceb` wheel contains all
-eighteen checked operators, including optional-residual RMSNorm-to-FP8/INT8
-and persistent explicit-state categorical sampling, and passes 326 tests with
-each vLLM minor plus 218 applicable tests on PyTorch 2.10. It is qualified but
-not published to a package index. ABI9 and earlier artifacts remain immutable
-historical evidence.
+0.24/0.25 cross-matrix artifact. The exact `afc54c4` wheel contains all
+nineteen semantic operators, including SiLU-and-Mul-to-dynamic-INT8,
+optional-residual RMSNorm-to-FP8/INT8, and persistent explicit-state
+categorical sampling. It passes 342 tests with each vLLM minor plus 231
+applicable tests on PyTorch 2.10. It is qualified but not published to a
+package index. ABI10 and earlier artifacts remain immutable historical
+evidence.
+
+Current source has advanced, without a compatibility shim, to bridge ABI11
+and nineteen semantic operators for the experimental
+SiLU-and-Mul-to-dynamic-per-token-INT8 boundary. H20 source and compiler gates
+pass, a real Qwen2.5 W8A8 graph preserves all eight Cutlass scaled-mm sites,
+and both provider orders reproduce all 32 top-1 tokens, top-20 token sets, and
+common logprobs exactly. Every measured compiled-boundary CUDA Graph ratio is
+below parity (`0.518-0.986x`) and engine latency is not order-stable, so the
+route remains explicit opt-in with no speedup or default-admission claim.
+Its repository-free ABI11 wheel matrix is qualified separately; that closes
+distribution compatibility without changing the performance rejection. See
+the [ABI11 admission evidence](docs/results/h20-vllm-silu-int8-admission-20260801.json)
+and [ABI11 wheel evidence](docs/results/h20-native-wheel-clean-install-abi11-20260801.json).
 
 Fused logits preprocessing combines blocked-token masking, unique sparse
 bias, sparse suppression, and mixed-row temperature in one in-place F32 CUDA
@@ -94,10 +108,10 @@ to vLLM across F32/FP16/BF16, directly faster for the measured BF16
 hidden-size-896 cases, and preserves all Cutlass scaled-mm call sites in a real
 Qwen2.5-0.5B graph. Order-reversed, 15-sample prefill-only runs improve batch
 latency by `1.0066-1.0506x`; decode-heavy runs cross parity, so no TPOT or
-throughput win is claimed. The later ABI10 wheel preserves this path and passes
+throughput win is claimed. The current ABI11 wheel preserves this path and passes
 the repository-free PyTorch/vLLM matrix. See the
 [K2.5 H20 evidence](docs/results/h20-rms-norm-dynamic-fp8-residual-20260727.json)
-and [ABI10 clean-install evidence](docs/results/h20-native-wheel-clean-install-abi10-20260731.json).
+and [ABI11 clean-install evidence](docs/results/h20-native-wheel-clean-install-abi11-20260801.json).
 
 The second K2.5 slice extends the same boundary to symmetric dynamic
 per-token INT8 without touching GEMM. ABI10 spans the Rust oracle,
@@ -108,10 +122,10 @@ has one one-LSB INT8 difference across 688,128 elements with exact scales and
 residuals, but the held-out one-step gate matches only `29/32` top-1 tokens and
 dual-order engine latency crosses parity. It is therefore not default-enabled
 and has no speedup claim. Its binary distribution and compatibility gate is
-now complete in the qualified ABI10 wheel; that does not change the failed
+now complete in the qualified ABI11 wheel; that does not change the failed
 quality/default/performance admission. See the
 [INT8 admission evidence](docs/results/h20-vllm-int8-quant-admission-20260729.json)
-and [ABI10 clean-install evidence](docs/results/h20-native-wheel-clean-install-abi10-20260731.json).
+and [ABI11 clean-install evidence](docs/results/h20-native-wheel-clean-install-abi11-20260801.json).
 
 The explicit-seed, non-speculative sampling subsystem is complete through
 binary distribution.
@@ -256,22 +270,21 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-loom
 .venv-loom/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-10cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
+  'dist/loom_kernels-1.0.0a1-11cu131torch210sm90-py3-none-linux_x86_64.whl[test]'
 ```
 
-Current source builds bridge ABI10 and the `10cu...` filename above. That
+Current source builds bridge ABI11 and the `11cu...` filename above. That
 artifact contains exactly `libloom_cuda_bridge.so` and the boxed
 `libloom_kernels_torch.so` Stable ABI dispatcher, plus a manifest binding the
 Git revision, CUDA toolkit, SM targets, runtime range, and library hashes. A
 source-only wheel is rejected. The installed package validates that manifest
 and loads only its packaged libraries; no repository checkout or library-path
-override is used. The exact `de28ceb` ABI10 artifact is matrix-qualified on
-H20.
-
-The exact ABI10 artifact has SHA256
-`80878496e5909ded15ba310cd4885a53eef8a2c5d6675dd5581d83f0e2103e6f`
-and passes repository-free PyTorch 2.10/2.11 plus vLLM 0.24/0.25 H20
-clean-install gates. ABI9 and earlier wheels are retained only as historical
+override is used. The exact `afc54c4` ABI11 artifact is matrix-qualified on
+H20, has SHA256
+`20402f02c44f17646c45b71ae279c702748458ad5de5b970570f0c3ce314f3c6`,
+and passes repository-free PyTorch 2.10/2.11 plus vLLM 0.24/0.25 gates. See
+the [ABI11 clean-install evidence](docs/results/h20-native-wheel-clean-install-abi11-20260801.json).
+ABI10 and earlier wheels are retained only as historical
 evidence. None is published.
 
 See the [Python README](python/README.md) for binary and editable development
@@ -288,8 +301,9 @@ opens the raw JSON artifact used for the claim.
 
 | Path | Qualified result | Claim boundary |
 | --- | --- | --- |
-| [Optional-residual RMSNorm→dynamic FP8](docs/results/h20-rms-norm-dynamic-fp8-residual-20260727.json) | Exact FP8/scale/residual bytes; `1.033–1.082×` direct CUDA Graph ratio; order-stable `1.0066–1.0506×` Qwen prefill batch-latency ratio | vLLM 0.24 `fp8_per_tensor`, BF16 Qwen2.5-0.5B, Cutlass GEMM, 128-token prefill. Decode-heavy latency crosses parity; the current ABI10 wheel preserves this qualified path |
-| [Optional-residual RMSNorm→dynamic INT8](docs/results/h20-vllm-int8-quant-admission-20260729.json) | ABI10 path and real W8A8 compiler invocation; one one-LSB shadow difference across 688,128 INT8 elements with exact scales/residuals; `29/32` top-1 one-step agreement | Explicit opt-in only. Cutlass GEMM is unchanged and the ABI10 wheel is distribution-qualified, but dual-order engine latency crosses parity, so no default, exact-output, or speedup claim |
+| [Optional-residual RMSNorm→dynamic FP8](docs/results/h20-rms-norm-dynamic-fp8-residual-20260727.json) | Exact FP8/scale/residual bytes; `1.033–1.082×` direct CUDA Graph ratio; order-stable `1.0066–1.0506×` Qwen prefill batch-latency ratio | vLLM 0.24 `fp8_per_tensor`, BF16 Qwen2.5-0.5B, Cutlass GEMM, 128-token prefill. Decode-heavy latency crosses parity; the current ABI11 wheel preserves this qualified path |
+| [Optional-residual RMSNorm→dynamic INT8](docs/results/h20-vllm-int8-quant-admission-20260729.json) | ABI10 path and real W8A8 compiler invocation; one one-LSB shadow difference across 688,128 INT8 elements with exact scales/residuals; `29/32` top-1 one-step agreement | Explicit opt-in only. Cutlass GEMM is unchanged and the current ABI11 wheel is distribution-qualified, but dual-order engine latency crosses parity, so no default, exact-output, or speedup claim |
+| [SiLU-and-Mul→dynamic INT8](docs/results/h20-vllm-silu-int8-admission-20260801.json) | Exact compiled-boundary INT8/scales and real W8A8 invocation; both provider orders match `32/32` top-1 tokens, all top-20 token sets, and common logprobs | Explicit opt-in only. All compiled CUDA Graph ratios are `0.518-0.986x`, engine latency is not order-stable, and Cutlass GEMM is unchanged; the ABI11 wheel matrix is qualified but unpublished |
 | [Greedy + sampled logprob](docs/results/h20-greedy-sample-logprobs-20260722.json) | `3.16–4.35×` operator ratio; `1.129–1.250×` real-engine batch-latency ratio | Pure greedy requests with raw `logprobs=0` |
 | [Selected-token logprob + rank](docs/results/h20-selected-token-logprobs-20260722.json) | `2.77–3.78×` operator ratio; `1.044–1.125×` real-engine batch-latency ratio | vLLM still owns top-k/top-p, RNG, and selection |
 | [Exact in-place top-k filter](docs/results/h20-top-k-filter-20260727.json) | `1.42–2.15×` over vLLM's full sort for all admitted 1–7-row cases; `0.62–4.36 MB` versus `4.90–47.01 MB` peak temporaries | F32, 151,936-token vocabulary, `top_k=50`; threshold ties preserved and larger batches remain on vLLM Qrita Triton |
@@ -306,7 +320,8 @@ opens the raw JSON artifact used for the claim.
 | [Short paged decode](docs/results/h20-vllm-paged-decode-backend-20260722.json) | `1.154–2.374×` across all 24 admitted backend cases | FP16/BF16, Hq/Hkv 32/8, D128, context ≤32; other shapes use FA3 |
 | [Local split-K paged decode](docs/results/h20-paged-decode-split-k-20260722.json) | `1.14–6.22×` versus legacy Loom | Improves the Rust/CUDA backend; FA3 remains the long-context engine fallback |
 | [LibTorch Stable ABI dispatcher](docs/results/h20-libtorch-stable-abi-20260723.json) | Same `.so`: 192 tests on PyTorch 2.11 with each vLLM minor; 123 applicable tests on PyTorch 2.10 | Historical source-built binary gate; the current packaged boundary is the next row |
-| [Native ABI10 cross-matrix wheel](docs/results/h20-native-wheel-clean-install-abi10-20260731.json) | Same wheel: 326 tests with each vLLM minor; 218 applicable tests on PyTorch 2.10 | Current Linux x86_64, CUDA 13.1, SM90, Python 3.11 matrix artifact; qualified but not published |
+| [Native ABI11 cross-matrix wheel](docs/results/h20-native-wheel-clean-install-abi11-20260801.json) | Same wheel: 342 tests with each vLLM minor; 231 applicable tests on PyTorch 2.10, including 12/12 focused SiLU-and-Mul-to-INT8 tests without vLLM | Current Linux x86_64, CUDA 13.1, SM90, Python 3.11 matrix artifact; exactly two `.so` files, qualified but not published |
+| [Historical ABI10 cross-matrix wheel](docs/results/h20-native-wheel-clean-install-abi10-20260731.json) | Same wheel: 326 tests with each vLLM minor; 218 applicable tests on PyTorch 2.10 | Predecessor before SiLU-and-Mul-to-dynamic-INT8 entered ABI11 |
 | [Historical ABI9 cross-matrix wheel](docs/results/h20-native-wheel-clean-install-abi9-20260727.json) | Same wheel: 305 tests with each vLLM minor; 201 applicable tests on PyTorch 2.10 | Predecessor before optional-residual RMSNorm-to-INT8 entered ABI10 |
 | [Historical ABI8 cross-matrix wheel](docs/results/h20-native-wheel-clean-install-abi8-20260727.json) | Same wheel: 293 tests with each vLLM minor; 199 applicable tests on PyTorch 2.10 | Predecessor before optional-residual RMSNorm-to-FP8 entered ABI9 |
 | [Historical refreshed ABI7 vLLM 0.24 wheel](docs/results/h20-native-wheel-clean-install-abi7-refresh-20260727.json) | 286/286 full GPU tests plus 22/22 focused FP8 KV/adapter tests from a fresh repository-free environment | Closed the FP8 KV adapter packaging gap before ABI8 superseded the matrix |

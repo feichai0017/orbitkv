@@ -58,11 +58,15 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   RMSNorm-to-dynamic-INT8; the dispatcher requires the matching ABI10 bridge
   and retains no ABI9 compatibility entrypoint. The exact ABI10 artifact now
   passes the repository-free clean-install matrix.
+- advanced source to bridge ABI11 for fused SiLU-and-Mul-to-dynamic-INT8;
+  the dispatcher requires the matching ABI11 bridge and retains no ABI10
+  compatibility entrypoint. H20 source, real-engine, and repository-free
+  matrix-wheel gates pass; ABI10 remains immutable historical evidence.
 
 ### Added
 
 - complete bridge coverage for RMSNorm, Add+RMSNorm, RMSNorm+FP8/INT8,
-  SiLU-and-Mul, SiLU-and-Mul+FP8, RoPE+paged-KV, greedy/selected logprobs,
+  SiLU-and-Mul, SiLU-and-Mul+FP8/INT8, RoPE+paged-KV, greedy/selected logprobs,
   Min-P, and base/split-K paged decode;
 - optional-residual Add+RMSNorm-to-dynamic-per-token-FP8 across the CPU oracle,
   safe Rust, checked bridge, handwritten CUDA, Stable ABI dispatcher, and both
@@ -78,6 +82,15 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   while held-out one-step quality and dual-order latency keep the route
   explicit opt-in with no default, exact-output, or speedup claim. Its ABI10
   wheel distribution gate is qualified separately;
+- split-half SwiGLU followed by symmetric dynamic per-token INT8 across the
+  CPU oracle, safe Rust, checked ABI11 bridge, handwritten CUDA, Stable ABI
+  PyTorch API, telemetry, benchmark, and an explicit vLLM 0.24/0.25 compiler
+  pattern. H20 source suites pass, and a real Qwen2.5 W8A8 graph preserves all
+  eight Cutlass scaled-mm sites while both provider orders exactly match 32/32
+  top-1 tokens, top-20 sets, and common logprobs. Compiled CUDA Graph ratios
+  remain below parity and engine latency is not order-stable, so the route is
+  explicit-only with no speedup claim. Its ABI11 wheel distribution gate is
+  qualified separately;
 - explicit Rust physical-layout contracts for padded logits, packed QKV,
   NHD/HND caches, interleaved cache storage, scale layout, and FP8 scale upper
   bounds;
@@ -89,7 +102,7 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - a clean-revision native wheel builder that packages exactly the Rust CUDA
   bridge and Stable ABI dispatcher, emits and validates their matrix manifest
   and hashes, and rejects accidental source-only wheels;
-- immutable ABI4/ABI5/ABI6/ABI7/ABI8/ABI9 history and current ABI10 H20
+- immutable ABI4/ABI5/ABI6/ABI7/ABI8/ABI9/ABI10 history and current ABI11 H20
   wheel-install evidence for PyTorch 2.10/2.11 and vLLM 0.24/0.25.
 - deterministic greedy speculative verification and accepted/bonus-token
   compaction over vLLM-compatible flattened ragged metadata, with Rust/CUDA/
@@ -181,6 +194,12 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   PyTorch 2.10, both native libraries load from each fresh venv, and no
   repository or library-path override is present. The artifact is qualified
   but not published.
+- the exact ABI11 `afc54c4` two-library wheel and repository-free H20 matrix:
+  342 tests pass with each supported vLLM minor, 231 applicable tests pass on
+  PyTorch 2.10, all twelve vLLM-free SiLU-and-Mul-to-INT8 tests execute, both
+  native libraries load from each fresh venv, and no repository or
+  library-path override is present. The artifact is qualified but not
+  published.
 
 ### Fixed
 
