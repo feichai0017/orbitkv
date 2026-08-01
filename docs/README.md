@@ -1,90 +1,53 @@
 # Loom Kernels documentation
 
-A guided map of the Rust contracts, CUDA backend, framework integrations, and
-the evidence used to qualify them.
+Loom documents contracts, integration boundaries, and measured results. Start
+with the page that answers your current question.
 
-[Project overview](../README.md) · [Website](https://feichai0017.github.io/loom-kernels/) · [Operator catalog](operator-catalog.md) · [Compatibility](compatibility.md) · [Evidence index](results/README.md)
-
----
+[Project overview](../README.md) · [Website](https://feichai0017.github.io/loom-kernels/) · [Operators](operator-catalog.md) · [Evidence](results/README.md)
 
 ## Choose a path
 
-| Goal | Start here | Then read |
-| --- | --- | --- |
-| Understand the project | [Operator-library design](design/operator-library.md) | [Code layout](design/code-layout.md) |
-| Use Rust or CUDA | [Project quick start](../README.md#quick-start) | [Implementation status](status.md) |
-| Integrate PyTorch or vLLM | [Python README](../python/README.md) | [vLLM provider guide](guides/vllm-ir-provider.md) |
-| Check supported versions | [Compatibility matrix](compatibility.md) | [Implementation status](status.md) |
-| Work on quantization plumbing | [K2.5 roadmap](roadmap.md#k25-quantization-plumbing-around-vendor-gemm) | [FP8 evidence](results/h20-rms-norm-dynamic-fp8-residual-20260727.json) · [INT8 admission](results/h20-vllm-int8-quant-admission-20260729.json) |
-| Work on paged decode | [Paged-decode design](design/paged-decode-attention.md) | [Paged-decode evidence](results/README.md#paged-decode-attention) |
-| Work on FP8 KV cache | [FP8 KV-cache design](design/fp8-kv-cache.md) | [K3 roadmap](roadmap.md#k3-kv-cache-update-family) |
-| Work on seeded sampling | [Counter-based sampling design](design/counter-based-sampling.md) | [K4 roadmap](roadmap.md#k4-decode-tail) |
-| Work on speculative decode | [Greedy verifier design](design/greedy-speculative-verify.md) | [Speculative evidence](results/README.md#speculative-decoding) |
-| Evaluate performance | [Evidence index](results/README.md) | Raw JSON under [`results/`](results/) |
-| Pick the next operator | [Roadmap](roadmap.md) | [Catalog implementation order](operator-catalog.md#implementation-order) |
+| Goal | Read |
+| --- | --- |
+| Understand the product boundary | [Operator-library design](design/operator-library.md) |
+| Trace an operator through the repository | [Code layout](design/code-layout.md) |
+| Check implemented and open work | [Implementation status](status.md) |
+| Check versions and the native wheel | [Compatibility and distribution](compatibility.md) |
+| Integrate PyTorch or vLLM | [Python guide](../python/README.md) and [vLLM guide](guides/vllm-ir-provider.md) |
+| Inspect measurements | [H20 evidence index](results/README.md) |
+| Choose the next operator | [Roadmap](roadmap.md) and [operator catalog](operator-catalog.md) |
 
-## Core reference
+## Design references
 
-### Product and architecture
+| Topic | Document |
+| --- | --- |
+| Operator admission and vendor boundaries | [Operator library](design/operator-library.md) |
+| Paged decode and split-K/LSE | [Paged decode attention](design/paged-decode-attention.md) |
+| Static FP8 KV write and rejected system gate | [FP8 KV cache](design/fp8-kv-cache.md) |
+| Stable MoE permutation and combine | [MoE movement](design/moe-movement.md) |
+| Explicit-state Philox sampling | [Counter-based sampling](design/counter-based-sampling.md) |
+| Greedy draft verification | [Speculative verification](design/greedy-speculative-verify.md) |
 
-- [Operator-library design](design/operator-library.md) defines what Loom owns,
-  what remains vendor-backed, and the six admission gates.
-- [Code layout](design/code-layout.md) defines the vertical operator trace,
-  domain module names, dependency direction, and file-splitting rules.
-- [Operator catalog](operator-catalog.md) is the complete intended inference
-  surface with explicit status and priority.
-- [Implementation status](status.md) separates implemented code, validation,
-  and unresolved work.
-- [Compatibility matrix](compatibility.md) separates qualified source,
-  framework, GPU, and binary distribution boundaries.
-- [Roadmap](roadmap.md) orders work by engine value rather than operator count.
-- [Contributing guide](../CONTRIBUTING.md) defines proposal and acceptance
-  requirements for new operators.
+## Evidence levels
 
-### Integration
+Loom keeps six claims separate:
 
-- [Python README](../python/README.md) covers native-wheel build/install,
-  editable development, matrix inspection, and direct PyTorch use.
-- [vLLM provider guide](guides/vllm-ir-provider.md) contains the complete vLLM
-  0.24/0.25 build, opt-in, fallback, test, and benchmark contracts.
-- [Paged-decode design](design/paged-decode-attention.md) documents native KV
-  layouts, GQA packing, local split-K/LSE, and routing exclusions.
-- [FP8 KV-cache design](design/fp8-kv-cache.md) documents static per-tensor and
-  per-head scales, fused quantize-on-write, and the vendor-attention handoff.
-- [MoE movement design](design/moe-movement.md) fixes stable local/remote
-  permutation metadata, weighted combine, the unchanged grouped-GEMM boundary,
-  and the explicit vLLM/Cutlass engine-admission gate.
-- [Counter-based sampling design](design/counter-based-sampling.md) defines the
-  implemented explicit-state ABI8-A boundary, persistent request-state
-  integration, direct and engine evidence, and qualified matrix-wheel gate.
+1. The contract rejects invalid inputs.
+2. CUDA matches the CPU or high-precision oracle.
+3. A warmed operator beats a named baseline.
+4. Framework dispatch and CUDA Graph replay work.
+5. A real engine reaches the operator.
+6. A model or serving workload improves.
 
-## What a status means
+Passing one level does not imply the next. Only JSON files under
+[`docs/results`](results/) support performance claims. The evidence index also
+keeps parity, fallback, and rejected results.
+
+## Status terms
 
 | State | Meaning |
 | --- | --- |
 | `supported` | Contract, oracle, CUDA, framework adapter, and H20 evidence exist |
-| `in progress` | Source path exists, but one or more required hardware or engine gates remain open |
-| `next` | Admitted to the immediate implementation queue |
-| `planned` | Has a named engine consumer but is ordered later |
-| `profile-gated` | Becomes public only after a real workload shows material cost |
-| `vendor-backed` | Loom owns dispatch or fusion around a qualified vendor primitive |
-
-## How evidence is read
-
-Loom keeps these claims separate:
-
-1. contract and CPU-oracle correctness;
-2. accelerator correctness across edge and representative shapes;
-3. warmed measurement against a named operator baseline;
-4. framework dispatch and CUDA Graph behavior;
-5. invocation from a real engine path;
-6. model or serving benefit such as TTFT, TPOT, throughput, memory, or goodput.
-
-Passing one level never implies the next. The [evidence index](results/README.md)
-groups accepted, parity, fallback, and rejected experiments without hiding
-negative results.
-
-> [!NOTE]
-> Only JSON artifacts under [`docs/results`](results/) count as performance
-> evidence. A CPU test, successful CUDA launch, or isolated number without a
-> named baseline is not a speedup claim.
+| `in progress` | Source exists, but a required engine or system gate remains open |
+| `profile-gated` | Loom adds the path only after a real workload shows material cost |
+| `vendor-backed` | Loom owns adjacent work while the engine keeps the base primitive |

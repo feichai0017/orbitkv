@@ -1,653 +1,82 @@
-# Implementation Status
+# Implementation status
 
-## Implemented
+Current source uses bridge ABI12. The latest qualified native wheel contains
+21 semantic operators and two native libraries. It is not publicly released.
 
-- Rust workspace split into public contracts, safe CUDA backend, one checked
-  framework bridge, and an internal kernel-launch FFI;
-- `DType`, contiguous `TensorSpec`, normalization operator specs,
-  `OperatorSpec`, and backend capability query;
-- F64-accumulation F32/FP16/BF16 RMSNorm and fused Add+RMSNorm CPU oracles;
-- owned CUDA streams, device buffers, and events, plus non-owning external
-  stream handles and typed read-only/exclusive device-memory views shared by
-  every safe operator entrypoint;
-- checked handwritten F32 plus pair-vectorized FP16/BF16 RMSNorm dispatch;
-- double in-place Add+RMSNorm with Rust-exclusive mutable-buffer contracts;
-- aligned 128-bit pack8 Add+RMSNorm with pair and scalar fallbacks;
-- three-pass optional-residual Add+RMSNorm plus dynamic per-token FP8 E4M3FN
-  quantization, with exact vLLM arithmetic order, compile-time residual
-  specialization, pack4 output conversion, and scalar fallback;
-- checked safe-Rust, caller-allocated PyTorch out, and convenience allocating
-  entrypoints for RMSNorm+FP8;
-- one-kernel optional-residual Add+RMSNorm plus symmetric dynamic per-token
-  INT8, sharing the normalization reduction and pack4/scalar scheduling with
-  FP8 while preserving vLLM's native-IR rounding, zero-row scale, and
-  ties-to-even saturated conversion contract;
-- checked safe-Rust, caller-allocated PyTorch out, convenience allocating
-  entrypoints, telemetry, and explicit vLLM compiler patterns for
-  RMSNorm+INT8;
-- split-half SiLU-and-Mul contracts and CPU oracles for F32/FP16/BF16;
-- handwritten SiLU-and-Mul with aligned 16-byte packs and scalar fallback;
-- FP16/BF16 SiLU-and-Mul fused directly into dynamic per-block FP8 E4M3FN,
-  with groups 64/128, optional scale upper bound, and row/group-major scales;
-- NeoX and interleaved RoPE contracts, partial rotary dimensions, and a fused
-  RoPE+paged-KV write oracle for native NHD/HND cache layouts;
-- F32/FP16/BF16 fused CUDA with explicit packed-QKV token/head strides,
-  independent rotation/cache token counts, and strided paged-cache writes;
-- static per-tensor/per-head FP8 E4M3 KV encoding in that same fused
-  RoPE+paged-write contract, with byte-typed cache views, explicit F32 scales,
-  CPU oracles, safe Rust dispatch, checked Rust bridge, Stable ABI PyTorch,
-  and vLLM 0.24/0.25 adapter support;
-- greedy-sampling contract and CPU oracles with first-index tie breaking,
-  sampled-token log-softmax, and explicit finite-logit precondition;
-- one-block-per-row F32/FP16/BF16 CUDA fusion of argmax, online logsumexp,
-  selected logprob, and vLLM-compatible maximum-tie rank, including padded
-  vocabulary row strides;
-- arbitrary selected-token contracts and CPU oracles with int64 IDs, F32 raw
-  logprobs, and vLLM-compatible tie-aware ranks;
-- one-block-per-row F32/FP16/BF16 CUDA selected-token normalization and rank,
-  preserving caller-owned sampling policy without a full-vocabulary F32
-  logprob tensor;
-- sampled-token plus deterministic top-k raw-logprob contracts and
-  F32/FP16/BF16 CPU oracles, with a two-stage radix/merge CUDA reduction,
-  caller-owned byte workspace, safe Rust dispatch, checked bridge,
-  current-stream PyTorch compile/graph coverage, and an exact vLLM adapter that
-  preserves engine `torch.topk` tie order;
-- exact in-place per-row F32/FP16/BF16 top-k filtering with boundary ties
-  preserved, a partition radix sort plus parallel binary-count selector for
-  every valid `top_k`, caller-owned uint32 workspace through safe Rust and the
-  checked ABI5 bridge, internal current-stream PyTorch allocation, compile/
-  graph coverage, and an opt-in vLLM 0.24/0.25 route for its 1–7-row full-sort
-  fallback;
-- fused per-row F32/FP16/BF16 top-p filtering plus contiguous F32
-  renormalization, with deterministic descending-token-ID ties, partition
-  radix sorting, device-only threshold selection, caller workspace through
-  safe Rust and checked ABI6 dispatch, current-stream PyTorch compile/graph
-  coverage, and an explicit vLLM 0.24/0.25 route for F32 top-p-only rows 2–7
-  at vocabularies of at least 32,768;
-- fused in-place F32 logits preprocessing with dense bool/uint8 blocked-token
-  masks, unique sparse additive bias, sparse suppression, and per-row
-  temperature in that exact order; one handwritten partitioned CUDA pass,
-  safe Rust/oracle validation, checked Rust dispatch, current-stream PyTorch
-  compile/graph coverage, and an explicit mixed greedy/random vLLM 0.24/0.25
-  registration share the same contract;
-- deterministic categorical sampling over normalized contiguous F32 rows with
-  explicit caller-owned int64 `(seed, counter)` state; canonical Philox4x32-10,
-  one counter consumed per row, a fixed 1,024-logical-lane F32 CDF tree shared
-  by Rust and CUDA, one handwritten kernel without a probability-shaped
-  temporary, safe dispatch, checked ABI8, Stable ABI PyTorch mutation schema,
-  and public current-stream Python API;
-- an explicit vLLM 0.24/0.25 categorical registration with request-owned
-  device state, one contiguous active-batch state tensor, and device-side
-  add/remove/swap/condense lifecycle handling. Every random request must be
-  explicitly seeded, speculative engines and unseeded random admission fail
-  early, and stable decode steps rebuild no Python state;
-- in-place F32/FP16/BF16 Min-P contracts, CPU oracles, handwritten CUDA, C ABI,
-  PyTorch mutation schemas, and an opt-in vLLM 0.24/0.25 processor override
-  that cancels the softmax denominator instead of allocating probability and
-  mask tensors;
-- sparse F32 repetition, frequency, and presence penalties with padding-aware
-  prompt/output contracts, a Rust CPU oracle, one handwritten CUDA hash
-  kernel, caller-owned O(history) workspace, checked bridge, PyTorch
-  compile/graph coverage, and explicit vLLM 0.24/0.25 registration; the H20
-  operator gate is exact and `5.82–34.30x` faster across rows 1–128 while
-  replacing `3.34–427.85 MB` of vLLM temporaries with `16 KiB–2 MiB` of
-  caller storage;
-- deterministic greedy speculative verification over flattened ragged int32
-  draft metadata, with a validating Rust CPU oracle, one-warp handwritten
-  CUDA, accepted/bonus-token compaction, accepted/emitted length outputs,
-  caller-current-stream PyTorch dispatch, and an explicit all-greedy vLLM
-  0.24/0.25 rejection-sampler registration;
-- stable F32/FP16/BF16 plus byte-exact FP8 E4M3FN MoE expert-major
-  permutation with CPU oracles, int64
-  local-expert offsets, int32 inverse/assignment metadata, vLLM-compatible
-  expert-parallel remote ordering, and an explicitly zero-filled remote
-  activation tail around an unchanged vendor grouped GEMM;
-- stable unsigned CUB radix dispatch over only the required expert-key bits,
-  fused metadata/gather emission, aligned 16-byte activation movement with a
-  scalar fallback, and F32 weighted route accumulation for inverse combine;
-- caller-owned workspace/output contracts through safe Rust and checked ABI12,
-  plus allocating and standard caller-owned `.out` current-stream Stable ABI
-  PyTorch `moe_permute` and `moe_combine` APIs with FakeTensor, compile, graph,
-  and telemetry support;
-- an explicit vLLM 0.24/0.25 MoE movement adapter that reuses engine scratch
-  and output tensors, preserves per-token FP8 scale ordering, patches the
-  Cutlass/Humming movement consumers without modifying grouped GEMM, records
-  accepted contracts and rejections, and fails closed after Loom admission;
-- base paged MQA/GQA decode attention for one query per request: Rust contract
-  and stable CPU oracle, F32/FP16/BF16 handwritten CUDA/C ABI, safe Rust
-  entrypoints, dense-inner NHD cache indirection with explicit outer block
-  strides, distinct K/V widths, a two/four-query-head GQA specialization that
-  reuses paged K/V loads, compile-time full/partial tail groups for odd GQA
-  ratios, D64 decode-Q register caching, and a current-stream caller-allocated
-  PyTorch operator capped at 1,024 tokens;
-- a D128 long-context split-K implementation with caller-owned F32
-  `(max, denominator, numerator)` workspace, stable LSE merge, explicit safe
-  Rust sizing/execution APIs, two/four-head GQA packing, and CUDA Graph-safe
-  PyTorch temporary ownership while preserving the original allocation-free
-  C ABI;
-- a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
-  using the current CUDA stream; current ABI12 source routes all twenty-one
-  semantic operators through `loom-cuda-bridge` into borrowed safe Rust
-  dispatch with explicit storage spans and layouts. The exact `d4c13e2` ABI12
-  wheel is the current qualified binary boundary and contains the two MoE
-  operators without retaining ABI11 entrypoints;
-- one native Python wheel path with a hard PyTorch range, optional vLLM/test
-  extras, exactly two packaged `.so` files, a revision/toolkit/SM/hash manifest,
-  runtime ABI/hash checks, and a CI guard that rejects source-only wheels;
-- a `loom_cuda` vLLM IR provider with exact-contract admission and an opt-in vLLM
-  `SiluAndMul` out-of-tree layer replacement, plus an opt-in activation-quant
-  fusion-table replacement, optional-residual RMSNorm-to-FP8 fusion-table
-  replacement, explicit optional-residual RMSNorm-to-INT8 compiler patterns,
-  an explicit SiLU-and-Mul-to-dynamic-INT8 compiler pattern,
-  RoPE+KV compiler-pass adapter, and pure-greedy and general selected-token
-  sampled-logprob fast paths, an exact top-k
-  raw-logprob adapter, mixed-sampling logits-preprocessing registration, a
-  measured-shape Min-P override, sparse token-penalty override, deterministic
-  greedy speculative verifier, plus a
-  native/FP8-cache RoPE+KV compiler adapter and native-cache short-context
-  paged-decode override for vLLM 0.24 and 0.25;
-- per-operator JSON correctness/latency benchmarks and named vLLM baselines.
+## Execution path
 
-## Validated
+Every framework operator follows one path:
 
-- local formatting, clippy, tests, and release build;
-- bridge-ABI-12 H20 source validation passes 62 contract/oracle tests, 19 safe
-  CUDA tests, 8 checked-bridge tests, and 17 focused MoE PyTorch/vLLM tests;
-- the same ABI12 bridge and boxed dispatcher pass 359 full Python GPU tests on
-  each PyTorch 2.11 + vLLM 0.24/0.25 environment and 245 applicable tests with
-  72 expected vLLM skips on PyTorch 2.10; fresh repository-free installs of
-  the exact ABI12 wheel pass the same matrix;
-- the direct BF16 MoE movement pipeline matches every valid vLLM activation
-  row and all offsets/inverse/assignment metadata exactly, defines a zero
-  remote tail, and has zero measured combine error. Against vLLM 0.25.1 on
-  H20, all-local CUDA Graph ratios are `1.032/0.962/1.014/1.077/1.163/1.124x`
-  at 1/8/32/128/512/2,048 tokens; 64-global/32-local expert-parallel ratios are
-  `1.138/1.190/1.191/1.013x` at 32/128/512/2,048 tokens. This is a direct
-  movement-boundary claim, not an engine/model result;
-- an isolated vLLM 0.25.1 `LLM.generate` gate selects `VLLM_CUTLASS` over a
-  synthetic two-layer Qwen2-MoE checkpoint, preserves every generated token,
-  and records 48 FP8 permutation plus 48 BF16 combine hits through
-  caller-owned tensors with no rejection. Baseline/Loom median batch latency
-  is `17.453/17.103 ms` (`1.0205x`). Grouped GEMM remains vLLM-owned; this is
-  engine-admission evidence, not a production-model or serving-speedup claim;
-- the bridge-ABI-12 `py3-none-linux_x86_64` native wheel built from a
-  clean revision for CUDA 13.1 and SM90 passed archive/ELF/RPATH/symbol/
-  auditwheel checks and retained identical packaged library hashes across all
-  runtime gates; see the
-  [ABI12 clean-install result](results/h20-native-wheel-clean-install-abi12-20260801.json);
-- fresh Python 3.11 venv installs passed `pip check`, package-local loading,
-  H20 execution, and the applicable full suites on PyTorch 2.10.0+cu128,
-  PyTorch 2.11.0+cu130 with vLLM 0.24.0, and the same PyTorch with the official
-  vLLM 0.25.1 wheel; the native artifact is not published;
-- the preceding ABI7 refresh from revision `f98a931` packages the final FP8 KV
-  adapter and exactly two native libraries, then passes all 286 vLLM 0.24 GPU
-  tests plus 22 focused FP8 KV/adapter tests from a fresh repository-free
-  venv and remains historical evidence;
-- the refresh's first full-suite run retained a shared-Inductor-cache
-  missing-`cubin` failure after 285 passes. The isolated failing test and a
-  complete rerun passed with fresh `TORCHINDUCTOR_CACHE_DIR` and
-  `TRITON_CACHE_DIR`, so H20 qualification now treats compiler-cache isolation
-  as part of the command contract;
-- a real Qwen2.5-0.5B vLLM 0.24 V1 admission probe observed a 1,024-token
-  prefix-cache hit and three scheduler preemptions under a `1.2366x`
-  over-capacity workload, but zero physical swap/copy calls or bytes. Default
-  prefix/preemption KV movement is rejected as a Loom operator target;
-- a source-pinned vLLM 0.24 H20 seeded-sampling admission matrix covers rows
-  1/2/4/7/8/32, two seeds, reversed shape order, and an isolated 32-row run.
-  The all-seeded sampling-only path grows to 34 kernels and `19.45 MB` of peak
-  incremental storage at 32 rows, establishing the implementation target;
-- the ABI8 direct categorical gate passes exact replay, counter advancement,
-  zero-mass exclusion, a 65,536-draw distribution bound, non-default stream,
-  `torch.compile`, FakeTensor/opcheck, and generator-registration-free CUDA
-  Graph replay. On H20 it uses one kernel and `512 B` measured allocation;
-  rows 1–2 are measured losses, while rows 4/7/8/32 are
-  `1.15x/1.62x/1.80x/5.40x` faster than vLLM's all-seeded sampling boundary;
-- persistent categorical request lifecycle tests pass on vLLM 0.24.0 and
-  0.25.1 with PyTorch 2.11 and bridge ABI8, including middle-request removal,
-  condensation, resumption, slot swap, and final state recovery. A default
-  Linux EngineCore multiprocessing smoke reproduces the distinct in-process
-  Loom stream;
-- order-reversed Qwen2.5-0.5B vLLM 0.24 H20 A/B runs exactly replay every
-  provider stream and record 640 Loom calls, one per decode step, with no
-  initialization call or contract rejection. Batch 1–4 costs `1.5–2.4%`,
-  batch 8 is near crossover, and batch 32 has an order-stable
-  `1.057–1.081x` latency/throughput ratio;
-- the historical ABI8 revision passed 51 local Rust contract/oracle tests, 16
-  H20 safe CUDA-wrapper tests, 6 checked-bridge tests, and the complete
-  293-test Python GPU suite on each supported vLLM minor. The vLLM-free
-  PyTorch 2.10 row passes 199 applicable tests. Its focused logits, top-k, and
-  top-p cases span the admitted dtypes,
-  a 151,936-token vocabulary, padded strides, non-default streams,
-  `torch.compile`, CUDA Graph replay, threshold ties, `top_k > 256`, and both
-  vLLM fallback boundaries;
-- against vLLM 0.24's exact small-row PyTorch full sort on H20, the ABI5
-  `top_k=50`, 151,936-vocabulary path is `1.42–2.15x` faster for every row
-  count 1–7 and reduces peak temporary allocation from `4.90–47.01 MB` to
-  `0.62–4.36 MB`; spot checks at rows 1 and 7 cover
-  `top_k=1/50/256/257/1024/4096/151936` without a host synchronization or a
-  separate large-k algorithm;
-- against vLLM 0.24's exact small-row PyTorch full sort plus F32 softmax on
-  H20, the ABI6 fused top-p path is `1.72–1.77x` faster at a 151,936-token
-  vocabulary and `1.15–1.34x` faster at the 32,768-token admission boundary
-  for every measured 2/4/7-row case. Retained logits are exact; the two
-  parallel F32 scan orders may differ by one cutoff token per row, with
-  probability L1 below `1e-4`;
-- the fused logits-preprocessing pass matches the composed PyTorch
-  mask/bias/suppression/temperature sequence exactly and is `3.26–7.30x`
-  faster at 1–32 rows over 151,936-token F32 logits, with zero measured
-  temporary bytes. Order-reversed Qwen2.5-0.5B vLLM runs preserve every token
-  and record `720/0` Loom submissions per order. TPOT ratios remain
-  `1.010–1.084x`; batch latency crosses parity at batch 32, so no stable
-  model-level batch-latency claim is made;
-- process-isolated Qwen2.5-0.5B vLLM 0.24 token-penalty A/B in both provider
-  orders preserves every generated token, records `1440/0` Loom submissions
-  per order, and measures `1.056–1.123x` batch-latency plus `1.068–1.126x`
-  TPOT ratios for batches 1/8/32;
-- CUDA-feature clippy on `forge-gas1`;
-- NVIDIA H20 correctness for six shapes from `1x1` through `16x8192` and a
-  `64x4096` batch;
-- maximum absolute error `4.77e-7` against the CPU oracle;
-- `8x4096` post-cleanup seven-sample isolated median `7.27 us`.
-- FP16 and BF16 pair paths plus odd-size scalar fallbacks validated on H20;
-- `8x4096` seven-sample medians: FP16 `4.75 us`, BF16 `4.71 us`;
-- maximum FP16 absolute error `0.001953125`; BF16 cases were exact against the
-  quantized-output oracle for the tested deterministic inputs.
-- fused Add+RMSNorm CUDA-feature Clippy, release build, and all tests passed;
-- fused `8x4096` H20 medians after pack8 optimization: FP16 `3.061 us` and
-  BF16 `2.914 us` over 15 samples and 2000 launches per sample; the F32 path
-  remains `9.062 us` in its earlier gate;
-- fused residual outputs were exact against the oracle in every tested dtype
-  and shape; maximum normalized-output error was `4.77e-7` for F32,
-  `4.88e-4` for FP16, and zero for the tested BF16 cases;
-- fused FP16/BF16 scalar fallbacks passed at `3x127`, and low-precision
-  large-shape execution passed at `16x8192`.
-- PyTorch external-stream, mutation-schema/FakeTensor, `torch.compile`, and
-  CUDA Graph tests passed with the Stable ABI dispatcher;
-- the exact predecessor ABI8 wheel built with PyTorch 2.11.0+cu130 passed without
-  recompilation on PyTorch 2.10.0+cu128; the 2.11 vLLM 0.24 and 0.25.1
-  environments each passed 293 tests, while the vLLM-free 2.10 environment
-  passed 199 applicable tests with 63 vLLM-dependent skips;
-- the dispatcher exposes only `aoti_torch_*`/`torch_*` PyTorch symbol families,
-  has no ATen/c10 C++ or raw CUDA launch dependency, and is protected by a
-  source-level CI boundary;
-- the checked normalization Rust bridge built and linked on H20, passed
-  CUDA-feature Clippy and its address-range unit test, rejected short and
-  overlapping buffers before launch, and recorded Add+RMSNorm path hits from
-  direct PyTorch and vLLM IR plus RMSNorm+FP8 path hits from direct PyTorch;
-- greedy+sampled-logprob now builds and links through the checked Rust bridge
-  for both contiguous and padded row-strided logits, rejects short/overlapping
-  regions before submission, and passes external-stream, compile, graph, and
-  vLLM adapter tests;
-- official vLLM 0.24.0 and 0.25.1 packages each passed the complete 293-test
-  H20 Python GPU suite on Torch 2.11.0+cu130; the 0.25.1 process loaded its own
-  `vllm/_C_stable_libtorch.abi3.so`, and the focused greedy/vLLM gate passed
-  40 tests;
-- Loom and vLLM's CUDA provider were bitwise identical for BF16 at `1x4096`,
-  `8x4096`, `128x4096`, and `8x8192`;
-- through the same vLLM IR dispatch, order-reversed H20 runs measured Loom
-  `8.260-8.261 us` versus `vllm_c` `9.133-9.202 us` in eager execution, and
-  Loom `2.769-2.779 us` versus `vllm_c` `2.866-2.877 us` in CUDA Graph replay;
-- the provider completed vLLM 0.24 compilation, graph capture, and repeated
-  generation with the normal Qwen2 model runner and a synthetic random model.
-- RMSNorm+FP8 F32/FP16/BF16 outputs and F32 row scales were bitwise identical
-  to vLLM 0.24 at `8x4096`, `3x127`, and `2x128` on H20;
-- the 24-test normalization dispatcher suite passed with RMSNorm+FP8 coverage
-  for external streams,
-  dispatcher mutation, out-buffer reuse, fullgraph compilation, and CUDA Graph
-  capture/replay;
-- order-reversed BF16 `8x4096` named-baseline runs measured Loom
-  `5.311-5.430 us` versus vLLM `7.994-8.052 us` through eager C++ dispatch,
-  and Loom `3.947-4.044 us` versus vLLM `4.246-4.274 us` under graph replay.
-- the ABI9 normalization schema now matches vLLM's optional-residual dynamic
-  per-token FP8 fusion exactly. F32/FP16/BF16 tests at `8x4096` and `3x127`
-  produce zero FP8-byte and residual-byte mismatches for both residual modes;
-  the optimized H20 gate passes 17 safe-CUDA tests, 7 checked-bridge tests,
-  35 focused normalization tests, and 305 full Python tests on each supported
-  vLLM minor;
-- at BF16 hidden size 896, order-reversed direct runs put Loom
-  `1.033-1.082x` ahead under CUDA Graph replay for plain rows 8 and residual
-  rows 1/8/32. Generated Qwen2.5-0.5B source swaps four native normalization
-  call sites for four Loom call sites while retaining eight Cutlass scaled-mm
-  call sites on both sides;
-- order-reversed 15-sample Qwen `fp8_per_tensor` prefill-only runs improve
-  batch latency by `1.023-1.051x` at batch 1, `1.011-1.019x` at batch 8, and
-  `1.0066-1.016x` at batch 32. The 64-token decode workload crosses parity,
-  so no TPOT or throughput acceleration is claimed;
-- the ABI10 RMSNorm-to-INT8 path passes 18 H20 safe-CUDA tests, 21
-  focused Python/operator/compiler tests, and the complete source GPU suite.
-  A real Qwen2.5 W8A8 graph records `1440/0` Loom launches,
-  replaces four eligible normalization-quantization call sites, and retains
-  eight Cutlass scaled-mm sites on both providers. The current two-library
-  ABI12 wheel preserves it and passes 359 tests on vLLM 0.24/0.25 plus 245
-  applicable tests in a vLLM-free PyTorch 2.10 environment;
-- across 48 eligible real-model RMSNorm boundaries, 688,128 INT8 elements
-  differ from the native IR shadow once by one LSB; every F32 scale and BF16
-  residual is bit-exact. The held-out 32-prompt one-step gate matches `29/32`
-  top-1 tokens, while batch latency and TTFT fail to show an order-stable
-  improvement. The adapter therefore remains explicit opt-in and carries no
-  default-enable or engine-speedup claim;
-- SiLU-and-Mul F32, FP16, and BF16 kernels passed CPU-oracle checks at
-  `8x11008`, and the BF16 scalar fallback passed at `3x127`; observed raw
-  medians were `3.975 us`, `4.279 us`, `4.392 us`, and `2.932 us`
-  respectively;
-- SiLU-and-Mul matched vLLM bitwise for F32/FP16/BF16 over representative,
-  odd-width, and higher-rank inputs; the full Python suite passed 43 tests,
-  including external streams, schema/FakeTensor checks, fullgraph compilation,
-  CUDA Graph capture/replay, and vLLM layer dispatch;
-- order-reversed BF16 `8x11008` named-baseline runs put Loom and vLLM within
-  `0.1%` under CUDA Graph replay (`3.932-4.060 us` versus
-  `3.935-4.061 us`). Eager dispatch changed materially with run order, so no
-  standalone SiLU speedup is claimed;
-- with the opt-in vLLM layer override, a synthetic Qwen2 engine completed
-  model compilation, CUDA Graph capture, and generation on H20;
-- SiLU-and-Mul+block-FP8 matched vLLM's fused operator exactly for FP16/BF16,
-  groups 64/128, representative and higher-rank inputs, row/group-major scale
-  layouts, and optional scale upper bounds;
-- the complete H20 Python suite passed 62 tests; the 27 focused activation and
-  vLLM tests also covered external streams, mutation schema/FakeTensor,
-  `torch.compile`, auto-functionalization, CUDA Graph replay, and fusion-table
-  registration; vLLM's official activation-quant pattern matcher rewrote the
-  composed graph to Loom with one match;
-- raw `8x11008` medians were `3.268 us`/`3.060 us` for FP16 group 64/128 and
-  `3.262 us`/`2.952 us` for BF16 group 64/128, with zero byte or scale errors;
-- order-reversed BF16 group-128 named-baseline runs measured
-  `1.216-1.231x` eager speedup ratios (`17.7-18.8%` lower latency) and
-  `1.037-1.082x` CUDA Graph ratios (`3.6-7.5%` lower latency) against vLLM's
-  semantically identical fused operator.
-- a pinned Qwen2.5-0.5B-Instruct checkpoint completed vLLM 0.24 online
-  `fp8_per_block` loading, compilation, activation-quant rewriting, CUDA Graph
-  capture, and repeated generation through Loom on H20;
-- baseline-first and Loom-first runs matched every generated token ID across
-  `1x128x128`, `8x128x128`, and `32x128x64` request shapes; both providers
-  recorded two compiler-pattern matches, while the process-local path probe
-  recorded zero Loom launches for the baseline and 1584 for Loom;
-- order-reversed end-to-end batch-latency ratios ranged from `0.9991x` to
-  `1.0043x`. This closes real-model invocation and correctness, but is parity
-  rather than evidence of model-level TTFT, TPOT, or throughput improvement.
-- fused RoPE+paged-KV matched vLLM's separate rotary and
-  `reshape_and_cache_flash` operations across F32/FP16/BF16, NeoX/interleaved,
-  NHD/HND cache layouts, partial RoPE, negative slots, external streams,
-  packed-QKV views, and padded tensors with a shorter slot mapping;
-- the complete H20 Python suite passed 94 tests; the Rust core passed 23
-  contract/oracle tests, and the CUDA-feature workspace passed formatting,
-  Clippy, release checking, plus two safe-wrapper tests against CPU oracles;
-- on H20 BF16 Qwen2.5-style shapes, the fused dispatcher path measured roughly
-  `2.30-2.40x` faster than vLLM's two-op path for 1-512 tokens. Ratios narrowed
-  to `1.686x`, `1.240x`, `1.145x`, and `1.088x` at 1024, 2048, 4096, and 8192
-  tokens respectively, confirming that this is a decode-oriented fusion;
-- isolated baseline-first and Loom-first Qwen2.5-0.5B engine runs matched every
-  generated token for `1x32x64` and `8x32x64`. The launch probe recorded zero
-  Loom submissions in baseline processes and 552 in Loom processes;
-- order-reversed engine batch-latency ratios ranged from `0.9957x` to
-  `1.0180x`. Invocation and correctness are proven, but the end-to-end result
-  crosses parity with provider order and does not establish a speedup.
-- static per-tensor/per-head FP8 E4M3 cache writes matched vLLM's exact packed
-  bytes across 16 FP16/BF16, NeoX/interleaved, NHD/HND cases, including untouched
-  padding and negative slots; current-stream, FakeTensor, fullgraph compile,
-  CUDA Graph, packed-cache, and bridge-telemetry gates pass;
-- one exact ABI7 wheel passed the vLLM 0.24/0.25 clean-install matrix, and the
-  fused BF16 operator was `1.317-1.378x` faster than vLLM's separate RoPE plus
-  cache-write submissions across all 32 per-tensor/per-head cases while using
-  half the physical cache bytes at this boundary;
-- both provider orders produced exact Qwen2.5-0.5B FP8-cache tokens and recorded
-  864 Loom submissions versus zero in each baseline. Latency ratios were
-  order-sensitive, so no stable model-level speedup is claimed;
-- greedy argmax+sampled-logprob PyTorch tests cover F32/FP16/BF16, Qwen's
-  151,936-token vocabulary, explicit ties, padded rows, external streams,
-  FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay; the 30
-  focused operator/vLLM tests pass;
-- against vLLM's exact `compute_logprobs + greedy_sample + gather_logprobs(0)`
-  BF16 path on H20, token IDs and tie-aware ranks were exact and maximum
-  logprob error was `9.54e-7`; 1-128 row speedup ratios were `3.16-4.35x`;
-- baseline-first and Loom-first Qwen2.5-0.5B runs for `1x32x64`, `8x32x64`,
-  and `32x32x32` matched every generated token, sampled-token rank, and
-  sampled logprob within `1.32e-6`. Each baseline recorded zero Loom launches
-  and each fused process recorded 1120;
-- across both provider orders, real-engine batch-latency ratios were
-  `1.129-1.250x` and TPOT ratios were `1.147-1.257x`. This establishes a
-  model-level win for the deliberately narrow pure-greedy `logprobs=0` path,
-  not for general sampling.
-- selected-token PyTorch tests cover arbitrary IDs/ranks, F32/FP16/BF16,
-  Qwen's 151,936-token vocabulary, ties, padded rows, external streams,
-  FakeTensor/schema validation, `torch.compile`, and CUDA Graph replay;
-- the current ABI12 wheel suite passes 359 tests on each of vLLM 0.24.0 and
-  0.25.1 plus 245 applicable tests on PyTorch 2.10, including
-  optional-residual RMSNorm-to-FP8, deterministic categorical sampling, fused
-  logits preprocessing, sparse penalties, sampled-token plus top-k logprobs,
-  exact top-k filtering, fused top-p renormalization, and
-  optional-residual RMSNorm-to-INT8, SiLU-and-Mul-to-INT8, and MoE movement.
-  The vLLM-free row executes all fourteen applicable focused MoE tests;
-- the qualified ABI12 bridge and dispatcher expose/import the same 30
-  versioned operator/runtime symbols. Neither library exports a raw CUDA
-  launch dependency, and the PyTorch shim depends only on bridge symbols;
-- ABI11 SiLU-and-Mul-to-dynamic-INT8 passes the H20 Rust/CUDA/bridge suites and
-  both 342-test vLLM 0.24/0.25 source suites. Its compiled boundary is exact
-  over rows 1-4096, and a real Qwen2.5 W8A8 graph preserves all eight Cutlass
-  scaled-mm sites while both provider orders match all 32 top-1 tokens,
-  top-20 token sets, and common logprobs exactly. CUDA Graph ratios are
-  `0.518-0.986x` and engine latency is not order-stable, so the route remains
-  explicit with no speedup/default claim. See the
-  [ABI11 admission result](results/h20-vllm-silu-int8-admission-20260801.json)
-  and [ABI11 wheel result](results/h20-native-wheel-clean-install-abi11-20260801.json);
-- against vLLM's exact `compute_logprobs + gather_logprobs(0)` path for the
-  same caller-selected BF16 IDs, ranks were exact and maximum logprob error was
-  `9.54e-7`; 1-128 row H20 speedup ratios were `2.77-3.78x`;
-- order-reversed Qwen2.5-0.5B top-k/top-p runs matched every sampled token,
-  rank, and raw logprob within `1.20e-6`. Baseline processes recorded zero
-  Loom launches and Loom processes recorded 1440 selected-token launches;
-- across both provider orders, top-k/top-p batch-latency ratios were
-  `1.044-1.125x` and TPOT ratios were `1.054-1.130x`. vLLM still owns masks,
-  penalties, top-k/top-p, RNG, and selection; Loom accelerates only the raw
-  sampled-token logprob/rank tail.
-- sampled-token plus top-k PyTorch tests cover F32/FP16/BF16, deterministic
-  tie ordering, Qwen's 151,936-token vocabulary, a 524,289-token/129-partition
-  boundary, padded rows, external streams, FakeTensor/opcheck, `torch.compile`,
-  CUDA Graph replay, and telemetry;
-- against vLLM's full F32 `log_softmax + topk + gather + rank` composition, the
-  direct BF16 operator has exact sampled ranks and top-k values within
-  `9.54e-7`; H20 ratios are `3.25x`, `2.60x`, `1.19x`, and `0.998x` at
-  1/8/32/128 rows, while peak temporary bytes fall from
-  `1.22/9.72/38.90/155.58 MB` to `23.6/55.3/216.1/859.1 kB`;
-- the exact vLLM adapter retains `torch.topk` IDs/order and uses Loom's
-  selected-token reduction for normalization/rank. Both Qwen2.5-0.5B provider
-  orders match every token, returned top-k ID/rank, and logprob within
-  `1.91e-6`, with `1440/0` Loom submissions. Baseline-first ratios are
-  `1.037-1.053x`, but Loom-first ratios are `0.969-0.982x`; this proves
-  invocation and temporary reduction, not stable end-to-end acceleration.
-- Min-P F32 masks and retained logits matched vLLM 0.24 exactly for 1, 8, 32,
-  and 128 rows over a 151,936-token vocabulary. Loom used no tensor-sized
-  temporary allocation versus `0.76-97.24 MB` for the composed baseline;
-- Min-P latency ratios were `0.714x`, `0.771x`, `1.104x`, and `1.885x` for
-  1, 8, 32, and 128 rows. The vLLM adapter therefore requires at least 32 rows
-  and a 65,536-token vocabulary, falling back below either threshold. A second
-  65,536-vocabulary sweep measured `1.35x` and `2.35x` at 32 and 128 rows;
-- greedy speculative verification matches vLLM's all-greedy rejection output
-  exactly for ragged rows, zero-draft requests inside a nonempty batch,
-  mismatch/full-accept cases, external streams, FakeTensor/opcheck,
-  `torch.compile`, and CUDA Graph replay; the safe Rust CUDA wrapper matches
-  the CPU oracle on H20;
-- the same source revision passes 202/202 H20 tests on both vLLM 0.24.0 and
-  0.25.1 through the real `rejection_sample` hook. Across batches 1-256 and
-  draft lengths 1/4/8, all 15 vLLM 0.24 baseline cases are bit-exact and the
-  dispatcher-level ratio is `1.101-1.128x` (`9.2-11.3%` lower latency);
-- process-isolated vLLM 0.24 runs with a pinned Qwen2.5-1.5B target and
-  Qwen2.5-0.5B draft preserve exact native/Loom speculative tokens and
-  acceptance statistics across both provider orders. Each Loom process records
-  `714/714` measured verifier launches; target and native processes record
-  zero;
-- the post-timing verifier profile measures `1.026-1.133x` native/Loom CUDA
-  boundary ratios, but the boundary is only `0.048-0.200%` of batch latency.
-  Native/Loom end-to-end ratios cross parity, and the tested speculative
-  configuration is `3.18-4.97x` slower than target-only, so no model-level
-  acceleration is claimed;
-- paged-decode focused tests pass 46/46 across F32/FP16/BF16, MQA/GQA,
-  odd GQA tail groups, shuffled physical blocks, partial pages, odd head sizes,
-  distinct value widths, native vLLM-interleaved cache strides, external
-  streams, schema/FakeTensor, `torch.compile`, long-context split-K/LSE, and
-  launch telemetry; the
-  paged-decode/vLLM gate passes 34 focused tests and the safe Rust F32 wrapper
-  plus its caller-owned split-K workspace path match the CPU oracle on H20;
-- a 156-case native-interleaved layout sweep spans 13 dtype/head/block shapes,
-  three batches, and four contexts with maximum absolute error `0.015625`;
-  only 82 cases beat FA3 and 74 lose, confirming shape-dependent routing;
-- a focused 132-case Hq/Hkv `32/8`, head-size-128 sweep qualifies FP16/BF16,
-  block 16/32, and batches 1-128. All 44 context-16 cases are at least `1.42x`
-  and all 44 context-32 cases at least `1.15x` under CUDA Graph replay;
-  context 64 remains mixed;
-- the opt-in vLLM 0.24 route admits only that context-32-and-below envelope.
-  Against `FlashAttentionImpl.forward`, all 24 admitted cases win
-  (`1.154-2.374x`, median `1.478x`, CUDA Graph); all 12 context-64 cases execute
-  FA3 with a `1.001x` median graph ratio. Eager fallback retains about `3.7%`
-  Python wrapper overhead in this isolated method benchmark;
-- the 16-case BF16/block-16 long-context split-K gate spans batches 1/2/4/8
-  and contexts 128/256/512/1,024. Every CUDA Graph case beats Loom's legacy
-  single-CTA path (`1.140-6.223x`, median `2.497x`) with maximum FA3 absolute
-  error `0.00390625`; FP16 and block-32 cross-checks also win every legacy
-  comparison. FA3 remains faster overall, so no long-context vLLM route was
-  added;
-- a 72-case odd-GQA `14/2`, D64 sweep passes at maximum absolute error
-  `0.015625`. All 36 context-16 cases win under CUDA Graph replay and 31/36
-  context-32 cases win; block-16 batches 24/32 remain below FA3;
-- an experimental pretrained Qwen2.5-0.5B route recorded `0/408` baseline/Loom
-  host submissions, but only two of five cases preserved every generated token
-  and Loom was about 3-5% slower end to end. The adapter change was rejected;
-- order-reversed one-layer stable-output synthetic Qwen2 engine gates match
-  every token, record zero Loom launches in baseline processes and 18 only in
-  Loom processes, and exercise actual FA3 scheduler metadata plus native
-  interleaved cache strides. End-to-end ratios remain process-order sensitive,
-  so this proves engine invocation but not model-level acceleration;
+```text
+PyTorch or vLLM
+  -> LibTorch Stable ABI dispatcher
+  -> checked Rust bridge
+  -> safe Rust dispatch
+  -> internal CUDA launch ABI
+  -> handwritten CUDA
+```
 
-See the [F32 report](results/h20-rms-norm-f32-smoke-20260721.json) and
-[low-precision report](results/h20-rms-norm-low-precision-20260721.json), plus
-the [fused Add+RMSNorm report](results/h20-add-rms-norm-20260721.json) and
-[vLLM IR integration report](results/h20-vllm-ir-add-rms-norm-20260721.json).
-The [RMSNorm+dynamic-FP8 report](results/h20-rms-norm-dynamic-fp8-20260721.json)
-contains its exact contract, raw CUDA results, and order-reversed vLLM
-comparison. The [SiLU-and-Mul report](results/h20-silu-and-mul-20260721.json)
-records exact vLLM compatibility, graph parity, eager instability, and the
-engine smoke gate. The
-[SiLU-and-Mul+dynamic-block-FP8 report](results/h20-silu-and-mul-dynamic-fp8-20260721.json)
-records the fused contract, exact vLLM comparison, raw CUDA results, and
-order-reversed named baseline. The
-[Qwen2.5 FP8 engine report](results/h20-vllm-qwen25-05b-fp8-engine-20260722.json)
-records the pinned checkpoint, path-hit evidence, exact-token gates, and
-order-reversed end-to-end parity result.
-The [RoPE+paged-KV report](results/h20-rope-paged-kv-20260722.json),
-[large-token sweep](results/h20-rope-paged-kv-large-20260722.json), and
-[Qwen2.5 engine gate](results/h20-vllm-qwen25-rope-paged-kv-engine-20260722.json)
-separate operator-level benefit from real-engine invocation and end-to-end
-parity.
-The [greedy sampled-logprob operator report](results/h20-greedy-sample-logprobs-20260722.json)
-and order-reversed
-[baseline-first](results/h20-vllm-greedy-logprobs-baseline-first-20260722.json)
-and [Loom-first](results/h20-vllm-greedy-logprobs-loom-first-20260722.json)
-engine reports record the first qualified end-to-end acceleration.
-The [selected-token operator report](results/h20-selected-token-logprobs-20260722.json)
-and top-k/top-p order-reversed
-[baseline-first](results/h20-vllm-selected-logprobs-baseline-first-20260722.json)
-and [Loom-first](results/h20-vllm-selected-logprobs-loom-first-20260722.json)
-engine reports extend that result without moving sampling policy into Loom.
-The [sampled-token plus top-k operator report](results/h20-topk-sampled-logprobs-20260725.json)
-and exact-adapter
-[baseline-first](results/h20-vllm-qwen25-topk-logprobs-baseline-first-20260725.json)
-and [Loom-first](results/h20-vllm-qwen25-topk-logprobs-loom-first-20260725.json)
-engine reports preserve deterministic direct-operator semantics separately
-from vLLM's observable `torch.topk` order and retain the order-sensitive
-end-to-end result.
-The [Min-P operator report](results/h20-min-p-filter-20260722.json) records the
-exact-mask gate, memory reduction, small-batch regression, and crossover point;
-the [65,536-token sweep](results/h20-min-p-filter-vocab65536-20260722.json)
-records the lower vocabulary boundary behind the vLLM routing threshold.
-The [greedy speculative-verifier report](results/h20-greedy-speculative-verify-20260723.json)
-records the flattened ragged contract, complete source-suite matrix, exact
-vLLM output gate, and operator-level latency boundary.
-The order-reversed real-model
-[native-first](results/h20-vllm-qwen25-speculative-native-first-20260723.json)
-and [Loom-first](results/h20-vllm-qwen25-speculative-loom-first-20260723.json)
-reports record pinned model revisions, prompt fingerprints, exact
-native/Loom speculative output, measured path coverage, draft acceptance,
-target-only numerical divergence, end-to-end latency, and the isolated
-verifier-boundary share.
-The original
-[paged decode-attention report](results/h20-paged-decode-attention-20260722.json)
-records separate-cache bring-up. The
-[native-interleaved shape sweep](results/h20-paged-decode-interleaved-shape-sweep-20260722.json),
-[focused Qwen-shape batch sweep](results/h20-paged-decode-qwen-batch-sweep-20260722.json),
-and [vLLM backend report](results/h20-vllm-paged-decode-backend-20260722.json)
-define the routing boundary. The synthetic-Qwen
-[baseline-first](results/h20-vllm-paged-decode-engine-baseline-first-20260722.json)
-and [Loom-first](results/h20-vllm-paged-decode-engine-loom-first-20260722.json)
-reports prove isolated real-engine invocation and preserve the neutral
-end-to-end conclusion.
-The [odd-GQA operator sweep](results/h20-paged-decode-odd-gqa-20260722.json),
-[non-regression backend gate](results/h20-vllm-paged-decode-tail-gqa-backend-20260722.json),
-and [rejected pretrained-Qwen experiment](results/h20-vllm-qwen25-paged-decode-rejected-20260722.json)
-record the partial-tail extension, preservation of the existing route, and the
-reason `14/2`, D64 is not exposed through vLLM.
-The long-context [BF16/block-16 split-K report](results/h20-paged-decode-split-k-20260722.json),
-[FP16 cross-check](results/h20-paged-decode-split-k-f16-20260722.json), and
-[block-32 cross-check](results/h20-paged-decode-split-k-block32-20260722.json)
-record the stable LSE merge, legacy speedup, and explicit decision to retain
-FA3 for the engine's 128-1,024-token path.
+The public Rust contracts and CPU oracles define the semantics for every layer.
+The repository contains no ctypes path, unchecked dispatcher twin, direct
+C++-to-CUDA path, or bridge compatibility shim.
 
-## Not Yet Proven
+## Operator families
 
-- exact model-output or declared task-quality acceptance, an order-stable
-  engine latency/memory/temporary-allocation benefit, and default admission
-  for RMSNorm+dynamic INT8. The repository-free ABI12 matrix wheel is
-  qualified separately; the
-  [H20 admission result](results/h20-vllm-int8-quant-admission-20260729.json)
-  proves real W8A8 invocation while rejecting stronger quality/performance
-  claims;
-- fused standalone Add+RMSNorm model-level benefit, and RMSNorm+FP8 benefit
-  outside the qualified Qwen2.5-0.5B `fp8_per_tensor` Cutlass prefill
-  boundary; decode-heavy RMSNorm+FP8 latency crosses parity;
-- SiLU-and-Mul+FP8 model-level benefit on a workload where the exposed
-  activation-quant boundary is material;
-- RoPE+paged-KV model-level TTFT/TPOT or throughput benefit beyond the current
-  exact-token engine integration gate;
-- Min-P real-model invocation and end-to-end serving benefit;
-- token-penalty serving-scale concurrency/goodput beyond the pinned offline
-  Qwen gate; fused logits preprocessing has exact offline engine invocation
-  and order-stable TPOT evidence but no serving-scale goodput result;
-- seeded-sampling serving-scale concurrency/goodput beyond the pinned offline
-  Qwen batch-32 win. The
-  [direct](results/h20-categorical-sample-20260727.json),
-  [baseline-first engine](results/h20-vllm-engine-categorical-sample-20260727.json),
-  and
-  [Loom-first engine](results/h20-vllm-engine-categorical-sample-loom-first-20260727.json)
-  gates close source implementation, lifecycle, exact replay, and
-  order-reversed offline engine evidence; the
-  [ABI12 wheel gate](results/h20-native-wheel-clean-install-abi12-20260801.json)
-  closes binary distribution;
-- an end-to-end speculative draft/target performance win; tree/branch
-  metadata, stochastic residual-distribution rejection, and KV commit/remap
-  remain profile-gated after the real-engine verifier share measured below
-  `0.2%`;
-- accepted FP8 KV-cache pretrained native-versus-FP8 system evidence for
-  quality, admitted context/batch, engine peak memory, TTFT, and TPOT; the
-  [first pinned Qwen2.5-7B candidate](results/h20-fp8-kv-system-rejected-20260727.json)
-  proves `1.99879x` cache-token capacity and native-vLLM/Loom FP8 provider
-  equivalence, but an 8-sequence, 1,016-scored-token early-stop slice rejects
-  it because both FP8 paths regress BF16 perplexity by about `3.07x`; the
-  formal TTFT/TPOT matrix was not run, no accepted large-model artifact
-  exists, and KV-cache INT8 remains unimplemented;
-- physical KV movement benefit for an explicitly named offload, beam, or
-  compaction path; default vLLM 0.24 prefix caching and preemption are no
-  longer open because the [H20 admission probe](results/h20-vllm-kv-movement-admission-rejected-20260727.json)
-  showed logical reuse/recomputation rather than physical movement;
-- MoE top-k routing benefit on a profile that proves it material and
-  production-representative pretrained-model/serving latency. Direct
-  permutation/combine benefit, ABI12 clean-wheel distribution, vLLM
-  production-scratch metadata equivalence, and explicit Cutlass engine path
-  hits are qualified while grouped GEMM remains unchanged and outside Loom;
-- an engine-neutral zero-copy Rust decode-step proof;
-- a paged decode-attention pretrained-model route that passes token/quality and
-  end-to-end gates; the attempted Qwen2.5 `14/2`, D64 route was rejected;
-- an FA3-competitive paged-decode kernel at 1,024 tokens and batches above one;
-- integration into SGLang or a Rust-native engine path;
-- larger production-model and serving-workload validation;
-- publication of the qualified native wheel, H20 runtime validation on Python
-  versions other than 3.11, GPU architectures other than SM90, or binary
-  compatibility beyond the tested PyTorch 2.10/2.11 runtimes;
-- serving-scale concurrency, goodput, and memory improvement.
+| Family | Current state | Open boundary |
+| --- | --- | --- |
+| RMSNorm and Add+RMSNorm | Supported for F32, FP16, and BF16 | Broader model-level benefit remains shape-specific |
+| RMSNorm to dynamic FP8 | Supported, including optional residual | Decode-heavy engine latency crosses parity |
+| RMSNorm to dynamic INT8 | Implemented and distributed | Quality, stable engine benefit, and default admission remain open |
+| SiLU-and-Mul | Supported for F32, FP16, and BF16 | None for the standalone contract |
+| SiLU-and-Mul to block FP8 | Supported | Model-level benefit remains workload-specific |
+| SiLU-and-Mul to dynamic INT8 | Implemented and distributed | Measured performance rejects default admission |
+| RoPE and paged-KV write | Supported for native and static FP8 cache storage | The first FP8 system candidate failed quality |
+| Logits and sampling tail | Supported across preprocessing, penalties, filters, logprobs, and explicit-state categorical sampling | Each adapter keeps its measured shape gate |
+| Greedy speculative verification | Supported | Further tree, stochastic, and KV work is profile-gated |
+| MoE permutation and combine | Supported around unchanged vendor grouped GEMM | A pretrained production workload has not closed the system gate |
+| Paged MQA/GQA decode | Supported through the Rust and PyTorch layers | vLLM admits only short H20-qualified shapes. FA3 owns the rest |
+
+The [operator catalog](operator-catalog.md) lists every operator and its exact
+status.
+
+## Distribution
+
+| Gate | Result |
+| --- | --- |
+| Artifact | ABI12 Linux x86_64 wheel for CUDA 13.1 and SM90 |
+| Contents | `libloom_cuda_bridge.so`, `libloom_kernels_torch.so`, and `native.json` |
+| PyTorch 2.10 | 245 applicable tests pass |
+| PyTorch 2.11 with vLLM 0.24 | 359 tests pass |
+| PyTorch 2.11 with vLLM 0.25 | 359 tests pass |
+| Installation | Fresh environments load only package-local libraries |
+| Publication | Not published |
+
+See [compatibility and distribution](compatibility.md) for the artifact hash
+and ABI rules.
+
+## Representative H20 results
+
+| Boundary | Result | Interpretation |
+| --- | --- | --- |
+| [RMSNorm to FP8](results/h20-rms-norm-dynamic-fp8-residual-20260727.json) | Exact output and `1.0066-1.0506x` Qwen prefill ratio | Qualified for the measured prefill path |
+| [Sparse penalties](results/h20-token-penalties-20260725.json) | Exact output and `5.82-34.30x` operator ratio | Order-stable pinned Qwen benefit. Serving goodput remains open |
+| [Categorical sampling](results/h20-categorical-sample-20260727.json) | One kernel and `1.15-5.40x` at 4-32 rows | Persistent request-state engine gate also passes |
+| [Short paged decode](results/h20-vllm-paged-decode-backend-20260722.json) | `1.154-2.374x` over 24 admitted cases | Context 64 and unqualified shapes use FA3 |
+| [MoE movement](results/h20-moe-movement-20260801.json) | Exact metadata and up to `1.163x` all-local graph ratio | Direct movement claim only |
+| [MoE engine admission](results/h20-vllm-engine-moe-movement-20260801.json) | Exact tokens and `48/48` movement hits | Synthetic model. Production benefit remains open |
+
+The [evidence index](results/README.md) contains every accepted, parity,
+fallback, and rejected result.
+
+## Open gates
+
+- Run the production MoE benchmark with a pinned pretrained model and prompts.
+- Admit new quantization pack, scale, or layout work from a measured engine
+  consumer.
+- Find a model or cache format whose FP8 KV path passes the quality gate.
+- Add physical KV movement only for a measured offload, beam, or compaction path.
+- Build one engine-neutral zero-copy Rust decode step.
+- Validate serving-scale concurrency, goodput, and memory on larger workloads.
+
+SGLang, other Rust-native engines, non-SM90 GPUs, and Python versions other
+than 3.11 do not have qualified runtime evidence.

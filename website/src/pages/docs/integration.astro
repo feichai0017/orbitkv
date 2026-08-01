@@ -5,246 +5,89 @@ import { repositoryUrl } from "../../data/site";
 ---
 
 <SiteLayout
-  title="Integration — Loom Kernels"
-  description="Use Loom Kernels through Rust contracts, current-stream PyTorch operators, or narrow vLLM 0.24/0.25 routes."
+  title="Integration | Loom Kernels"
+  description="Build the native wheel and connect Loom Kernels to PyTorch or vLLM."
   active="Integration"
 >
   <header class="page-hero">
-    <p class="eyebrow">Documentation / Integration</p>
+    <p class="eyebrow">Integration</p>
     <h1>Adapters translate. Engines decide.</h1>
     <p>
-      Loom preserves engine-owned tensors, mutation schemas, layouts, and the
-      current CUDA stream. Eligibility is decided before dispatch; every
-      admitted operator then follows the same Rust-owned execution path.
+      Loom borrows framework tensors and the current CUDA stream. The adapter
+      rejects unsupported contracts before dispatch.
     </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Integration" />
     <article class="prose">
-      <h2>Pick an integration surface</h2>
-      <div class="doc-grid">
-        <div class="doc-card">
-          <span class="card-index">01 / Rust</span>
-          <h3>Contracts and dispatch</h3>
-          <p>Use backend-independent specs and CPU oracles without linking CUDA.</p>
-        </div>
-        <div class="doc-card">
-          <span class="card-index">02 / PyTorch</span>
-          <h3>Current-stream operators</h3>
-          <p>Call allocating or caller-owned out variants with capture-safe mutation schemas.</p>
-        </div>
-        <div class="doc-card">
-          <span class="card-index">03 / vLLM</span>
-          <h3>Measured opt-ins</h3>
-          <p>Enable only the routes whose exact shapes and semantics passed H20 gates.</p>
-        </div>
-        <div class="doc-card">
-          <span class="card-index">04 / Admission</span>
-          <h3>Exact contracts only</h3>
-          <p>Unsupported dtypes, layouts, shapes, or policies never enter Loom.</p>
-        </div>
-      </div>
-
-      <h2>Build and install the native wheel</h2>
+      <h2>Build the native wheel</h2>
       <pre><code>python3 -m venv .venv-wheel
 .venv-wheel/bin/pip install \
   'setuptools&gt;=80,&lt;82' 'wheel&gt;=0.45' build 'torch&gt;=2.10,&lt;2.12'
 
 CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
   .venv-wheel/bin/python python/build_wheel.py \
-  --cuda-home /usr/local/cuda-13.1 --archs 90 --wheel-dir dist
-
-python3 -m venv .venv-vllm
-.venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-12cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]'</code></pre>
+  --cuda-home /usr/local/cuda-13.1 --archs 90 --wheel-dir dist</code></pre>
       <p>
-        The current bridge ABI12 build contains exactly the Rust-owned
-        <code>libloom_cuda_bridge.so</code> and boxed
-        <code>libloom_kernels_torch.so</code> Stable ABI dispatcher. Its
-        manifest binds the Git revision, CUDA toolkit, SM targets, PyTorch
-        range, bridge ABI, and library hashes. Installed packages load only
-        this package-local pair. ABI12 includes twenty-one operators, adding
-        MoE permutation and combine around vendor grouped GEMM. Its source
-        matrix, explicit vLLM/Cutlass engine-admission gate, and fresh
-        clean-install wheel matrix pass.
-      </p>
-      <p>
-        The latest qualified wheel is the ABI12 twenty-one-operator artifact.
-        It is H20 matrix-qualified across PyTorch 2.10/2.11 and vLLM
-        0.24/0.25 but remains unpublished. ABI12 intentionally has no ABI11
-        compatibility shim; INT8 and production-workload MoE performance
-        remain separate from binary compatibility.
+        The ABI12 wheel packages two native libraries and a build manifest. The
+        H20 matrix qualifies it, but no package index publishes it.
       </p>
 
-      <h2>Call PyTorch directly</h2>
-      <pre><code>from loom_kernels import (
-    categorical_sample,
-    greedy_sample_logprobs,
-    greedy_speculative_verify,
-    logits_preprocess_,
-    min_p_filter_,
-    moe_combine,
-    moe_permute,
-    rms_norm_dynamic_int8,
-    selected_token_logprobs,
-    silu_and_mul_dynamic_fp8,
-    silu_and_mul_dynamic_int8,
-    token_penalties_workspace_capacity,
-    topk_sampled_logprobs,
-)
-from loom_kernels.ops.sampling import apply_token_penalties_
+      <h2>Call PyTorch</h2>
+      <pre><code>from loom_kernels import categorical_sample, moe_combine, moe_permute
 
-fp8_output, block_scales = silu_and_mul_dynamic_fp8(
-    gate_and_up_bf16,
-    group_size=128,
+permuted, offsets, inverse, assignments = moe_permute(
+    hidden, expert_ids, num_experts=64,
 )
-int8_output, token_scales = rms_norm_dynamic_int8(
-    hidden_bf16,
-    norm_weight_bf16,
-    epsilon=1.0e-6,
-    residual=residual_bf16,
+expert_output = engine_grouped_gemm(permuted, offsets)
+output = moe_combine(expert_output, weights, inverse, offsets)
+
+token_ids = categorical_sample(probabilities, rng_state)</code></pre>
+      <p>
+        The engine still owns grouped GEMM, probability policy, allocations,
+        and request lifecycle. Loom owns the admitted movement or sampling call.
+      </p>
+
+      <h2>Enable vLLM routes</h2>
+      <pre><code>from loom_kernels.vllm import (
+    register_vllm_categorical_sample,
+    register_vllm_moe_movement,
 )
 
-permuted, offsets, inverse, assignment_ids = moe_permute(
-    hidden_bf16, topk_expert_ids_i32, num_experts=64,
-)
-expert_outputs = engine_grouped_gemm(permuted, offsets)
-moe_output = moe_combine(
-    expert_outputs, routing_weights_f32, inverse, offsets,
-)
+register_vllm_categorical_sample()
+register_vllm_moe_movement()</code></pre>
+      <p>
+        Registration is explicit. Each route checks vLLM version, shape,
+        dtype, layout, and semantics. Rejected calls stay on vLLM's native path.
+      </p>
 
-token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
-logits_preprocess_(
-    sampling_logits_f32,
-    temperatures_f32,
-    blocked_token_mask,
-    bias_row_ids_i32,
-    bias_token_ids_i32,
-    bias_values_f32,
-    suppressed_row_ids_i32,
-    suppressed_token_ids_i32,
-)
-verified_ids, accepted, emitted = greedy_speculative_verify(
-    draft_ids_i32, target_argmax_ids_i64, bonus_ids_i32,
-    cumulative_draft_lengths_i32, max_draft_tokens,
-)
-logprobs, ranks = selected_token_logprobs(logits, sampled_ids_i64)
-topk_ids, topk_logprobs, sampled_ranks = topk_sampled_logprobs(
-    logits, sampled_ids_i64, 20
-)
-sampled_ids_i64 = categorical_sample(
-    sampling_probabilities_f32,
-    persistent_rng_state_i64,
-)
-min_p_filter_(sampling_logits_f32, min_p_f32)
+      <div class="doc-note">
+        <strong>No hidden conversion.</strong>
+        <p>
+          Loom does not copy, cast, reshape, or change sampling policy to make a
+          call eligible.
+        </p>
+      </div>
 
-capacity = token_penalties_workspace_capacity(
-    prompt_width=prompt_ids_i64.shape[1],
-    output_width=output_ids_i64.shape[1],
-)
-workspace = torch.empty(
-    (sampling_logits_f32.shape[0], capacity),
-    dtype=torch.int64,
-    device=sampling_logits_f32.device,
-)
-apply_token_penalties_(
-    sampling_logits_f32,
-    prompt_ids_i64,
-    output_ids_i64,
-    repetition_penalties_f32,
-    frequency_penalties_f32,
-    presence_penalties_f32,
-    workspace,
-)</code></pre>
-
-      <h2>vLLM 0.24/0.25 opt-ins</h2>
+      <h2>Qualified versions</h2>
       <table class="operator-table">
         <thead>
-          <tr><th>Route</th><th>Enable</th></tr>
+          <tr><th>Component</th><th>Range</th></tr>
         </thead>
         <tbody>
-          <tr><td>Add+RMSNorm IR</td><td><code>ir_op_priority=&#123;"fused_add_rms_norm": ["loom_cuda"]&#125;</code></td></tr>
-          <tr><td>SiLU-and-Mul</td><td><code>LOOM_KERNELS_ENABLE_SILU_AND_MUL=1</code></td></tr>
-          <tr><td>SiLU-and-Mul→block FP8</td><td><code>LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8=1</code></td></tr>
-          <tr><td>Experimental SiLU-and-Mul→dynamic INT8</td><td><code>LOOM_KERNELS_ENABLE_SILU_AND_MUL_INT8=1</code></td></tr>
-          <tr><td>Optional-residual RMSNorm→FP8</td><td><code>LOOM_KERNELS_ENABLE_RMS_NORM_FP8=1</code></td></tr>
-          <tr><td>Experimental RMSNorm→INT8</td><td><code>LOOM_KERNELS_ENABLE_RMS_NORM_INT8=1</code></td></tr>
-          <tr><td>RoPE+paged-KV</td><td><code>configure_vllm_rope_paged_kv(...)</code></td></tr>
-          <tr><td>Short paged decode</td><td><code>LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1</code></td></tr>
-          <tr><td>MoE movement around vendor GEMM</td><td><code>LOOM_KERNELS_ENABLE_MOE_MOVEMENT=1</code></td></tr>
-          <tr><td>Mixed-sampling logits preprocessing</td><td><code>register_vllm_logits_preprocess()</code></td></tr>
-          <tr><td>Deterministic categorical sampling</td><td><code>register_vllm_categorical_sample()</code></td></tr>
-          <tr><td>Greedy sampled logprob</td><td><code>register_vllm_greedy_sample_logprobs()</code></td></tr>
-          <tr><td>Greedy speculative verify</td><td><code>register_vllm_greedy_speculative_verify()</code></td></tr>
-          <tr><td>Selected-token logprob</td><td><code>register_vllm_selected_token_logprobs()</code></td></tr>
-          <tr><td>Top-k sampled logprobs</td><td><code>register_vllm_topk_sampled_logprobs()</code></td></tr>
-          <tr><td>Min-P</td><td><code>LOOM_KERNELS_ENABLE_MIN_P=1</code></td></tr>
-          <tr><td>Sparse token penalties</td><td><code>register_vllm_token_penalties()</code></td></tr>
+          <tr><td>CUDA and GPU</td><td>CUDA 13.1, SM90, NVIDIA H20</td></tr>
+          <tr><td>Python</td><td>3.11</td></tr>
+          <tr><td>PyTorch</td><td>2.10 to 2.11</td></tr>
+          <tr><td>vLLM</td><td>0.24 to 0.25</td></tr>
         </tbody>
       </table>
 
       <p>
-        The MoE opt-in reuses vLLM caller-owned scratch and output tensors for
-        admitted FP8 permutation and BF16/FP16/F32 combine contracts. It
-        preserves scale ordering and patches only movement wrappers; Cutlass
-        or Humming grouped GEMM, expert weights, and routing remain vLLM-owned.
-        The H20 synthetic Qwen2-MoE gate preserves exact tokens and records
-        48/48 movement hits. Its 1.0205× median ratio proves admission, not a
-        production-model speedup.
-      </p>
-
-      <p>
-        The categorical opt-in is an engine-lifetime semantic choice. Every
-        random request must carry an explicit nonnegative seed, speculative
-        decoding is rejected, and each cached request owns a persistent
-        <code>(seed, counter)</code> tensor that follows active-slot movement,
-        preemption, and resume. Loom replaces only vLLM's normalized
-        categorical draw, keeps its temperature/top-k/top-p policy, and uses a
-        deterministic stream that intentionally differs from native vLLM.
-      </p>
-
-      <div class="doc-note">
-        <strong>Admission happens before Loom dispatch.</strong>
-        <p>
-          Loom does not copy, cast, reshape, or alter sampling policy to force
-          eligibility. The adapter calls Loom only for an exact contract;
-          otherwise vLLM keeps ownership of the operation.
-        </p>
-      </div>
-
-      <h2>Compatibility is explicit</h2>
-      <p>
-        Fresh installs of the K0.7 bridge-ABI-12 wheel with official vLLM 0.24.0
-        and 0.25.1 packages each pass the 359-test H20 suite on PyTorch 2.11.
-        The same exact artifact passes 245 applicable Loom gates on PyTorch
-        2.10 without recompilation. It includes deterministic categorical
-        sampling, persistent request-owned RNG state, speculative verification,
-        static FP8 KV quantize-on-write, fused logits preprocessing, sparse
-        token penalties, top-k logprobs, optional-residual RMSNorm-to-FP8, and
-        MoE movement.
-        It is qualified but unpublished. Its explicit RMSNorm- and
-        SiLU-and-Mul-to-INT8 routes are distributed in that wheel, but their
-        independent performance/default-admission decisions remain unchanged.
-        Pinned
-        vLLM 0.24 Qwen gates prove exact sparse-penalty acceleration, exact
-        logits-preprocessing invocation with order-stable TPOT, exact top-k
-        adapter invocation with order-sensitive latency, and exact native/Loom
-        speculative invocation; vLLM 0.25 has compatibility evidence but no
-        transferred model-level result.
-        Existing model-level performance artifacts remain tied to the version
-        recorded in each result; compatibility does not transfer a speedup
-        claim. Read the{" "}
-        <a href={`${repositoryUrl}/blob/main/docs/compatibility.md`}>compatibility matrix</a>.
-      </p>
-
-      <h2>Read the exact contracts</h2>
-      <p>
-        Route-specific shapes, dtypes, environment variables, build details,
-        and validation commands live in the{" "}
-        <a href={`${repositoryUrl}/blob/main/docs/guides/vllm-ir-provider.md`}>complete vLLM provider guide</a>.
-        The{" "}<a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>evidence index</a>{" "}
-        records accepted, parity, fallback, and rejected experiments.
+        Read the <a href={`${repositoryUrl}/blob/main/python/README.md`}>Python guide</a>
+        for install details and the
+        <a href={`${repositoryUrl}/blob/main/docs/guides/vllm-ir-provider.md`}>vLLM provider guide</a>
+        for every route and fallback contract.
       </p>
     </article>
   </div>

@@ -2,268 +2,60 @@
 import DocsNav from "../components/DocsNav.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
 import { evidence, repositoryUrl } from "../data/site";
+
+const resultUrl = (file: string) => `${repositoryUrl}/blob/main/docs/results/${file}`;
 ---
 
 <SiteLayout
-  title="Evidence — Loom Kernels"
-  description="Hardware-qualified correctness and performance evidence for Loom Kernels on NVIDIA H20."
+  title="Evidence | Loom Kernels"
+  description="Qualified H20 results and claim boundaries for Loom Kernels."
   active="Evidence"
 >
   <header class="page-hero">
-    <p class="eyebrow">Evidence / NVIDIA H20</p>
-    <h1>Claims with a measurement boundary.</h1>
+    <p class="eyebrow">NVIDIA H20 evidence</p>
+    <h1>Measurements with explicit limits</h1>
     <p>
-      Every reported latency names the shape, dtype, GPU, baseline, dispatcher,
-      warm-up, sample count, and correctness gate. Microbenchmarks never stand in
-      for model-level TTFT or TPOT.
+      Each result names its shape, dtype, baseline, warm-up, sample count, and
+      correctness gate. Operator speed does not imply model speed.
     </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
-      <h2>Current qualified results</h2>
+      <h2>Representative results</h2>
       <div class="evidence-grid">
         {evidence.map((item) => (
-          <article class="evidence-card">
+          <a class="evidence-card" href={resultUrl(item.file)}>
             <h3>{item.operator}</h3>
             <span class="result">{item.result}</span>
             <p>{item.detail}</p>
             <small>{item.shape}</small>
-          </article>
+          </a>
         ))}
       </div>
 
-      <h2>What the ratios mean</h2>
+      <h2>Read a ratio</h2>
       <p>
-        A ratio above 1.0 is baseline latency divided by Loom latency. For
-        SiLU-and-Mul plus block FP8, the order-reversed CUDA Graph ratio of
-        1.037–1.082 corresponds to 3.6–7.5% lower operator latency. Loom and the
-        fused vLLM baseline had zero output-byte, scale, or dequantized mismatch.
-        RoPE+paged-KV reaches 2.30–2.40× against vLLM's two separate dispatcher
-        calls at 1–512 tokens, then narrows toward parity for long prefill. The
-        greedy sampled-logprob fusion reaches 3.16–4.35× against vLLM's exact
-        full decode-tail sequence for 1–128 Qwen-vocabulary rows. The general
-        selected-token path reaches 2.77–3.78× while leaving sampling policy
-        with vLLM. The deterministic top-k logprob operator reaches
-        3.25×/2.60×/1.19× at 1/8/32 rows and near parity at 128; its exact
-        vLLM adapter preserves engine tie order but crosses parity after
-        provider-order reversal. Min-P crosses from a small-batch regression to 1.10× at 32
-        rows and 1.89× at 128 rows, so its adapter routes smaller shapes back
-        to vLLM instead of applying a blanket override. Sparse token penalties
-        reach 5.82–34.30× against vLLM's vocabulary-sized counting path for
-        1–128 rows with exact output and zero operator temporary allocation.
-        Both Qwen2.5-0.5B provider orders preserve every token with 1440 Loom
-        submissions only on the candidate side; batch-latency ratios are
-        1.056–1.123× and TPOT ratios are 1.068–1.126× for the pinned offline
-        cases, not a general serving-throughput claim.
-        Fused logits preprocessing combines the allowed-token mask, sparse
-        bias, sparse suppression, and mixed-row temperature in one pass. It
-        reaches 3.26–7.30× for 1–32 rows, while order-reversed Qwen runs match
-        every token and retain 1.010–1.084× TPOT ratios. Batch-32 aggregate
-        latency crosses parity, so no stable model-level latency claim follows.
-        Native-interleaved paged decode is similarly shape-gated: all 24
-        routed Hq/Hkv 32/8, D128, context-at-most-32 backend cases win at
-        1.154–2.374×, while the context-64 controls fall back to FA3. A broader
-        156-case sweep still contains 74 losses, so this is not a blanket
-        attention replacement. The D128 long-context split-K/LSE path beats
-        legacy Loom in all 16 BF16 cases by 1.14–6.22× (2.50× median). At
-        batch one it reaches 90–95% of FA3 through 512 tokens, but FA3 remains
-        faster overall and continues to own the engine's long-context route.
-        Greedy speculative verification is bit-exact across 15 ragged batch
-        shapes and reaches 1.101–1.128× against vLLM's exact greedy verifier;
-        the real Qwen2.5 draft/target gate reaches the same boundary from vLLM
-        but measures it at only 0.048–0.200% of batch latency. Native/Loom
-        end-to-end ratios cross parity, so no model-level speedup is claimed.
+        A ratio is baseline latency divided by Loom latency. A value above 1.0
+        favors Loom for that exact boundary. It says nothing about another
+        shape, model, framework version, or end-to-end workload.
       </p>
 
-      <h2>Validation ladder</h2>
+      <h2>Validation order</h2>
       <ol>
-        <li>Rust contract checks and CPU oracle.</li>
-        <li>Raw CUDA correctness before event timing.</li>
-        <li>PyTorch current-stream, mutation schema, and buffer-reuse tests.</li>
-        <li><code>torch.compile</code> and CUDA Graph capture/replay.</li>
-        <li>Named vLLM comparison with forward and reverse provider order.</li>
-        <li>Pinned real-model invocation and exact-token generation.</li>
-        <li>Serving-scale TTFT, TPOT, memory, and goodput, tracked separately.</li>
+        <li>Validate the contract and CPU oracle.</li>
+        <li>Compare CUDA output across edge and representative shapes.</li>
+        <li>Measure against a named warmed baseline.</li>
+        <li>Check current-stream dispatch, compilation, and CUDA Graph replay.</li>
+        <li>Prove invocation from a real engine.</li>
+        <li>Measure model or serving value separately.</li>
       </ol>
 
-      <h2>Reproduce</h2>
-      <pre><code>PYTHONPATH=python/src \
-python benchmarks/vllm_silu_and_mul_dynamic_fp8.py \
-  --dtype bf16 --rows 8 --width 11008 --group-size 128 \
-  --warmup 100 --iterations 2000 --samples 15 \
-  --provider-order forward
-
-.venv-vllm/bin/python benchmarks/vllm_engine_fp8_ab.py \
-  --model /path/to/Qwen2.5-0.5B-Instruct \
-  --case 1x128x128 --case 8x128x128 --case 32x128x64 \
-  --provider-order baseline-first
-
-.venv-vllm/bin/python benchmarks/vllm_engine_rope_paged_kv.py \
-  --model /path/to/Qwen2.5-0.5B-Instruct \
-  --case 1x32x64 --case 8x32x64 \
-  --provider-order baseline-first
-
-.venv-vllm/bin/python benchmarks/vllm_engine_greedy_logprobs.py \
-  --model /path/to/Qwen2.5-0.5B-Instruct \
-  --case 1x32x64 --case 8x32x64 --case 32x32x32 \
-  --provider-order baseline-first
-
-.venv-vllm/bin/python benchmarks/vllm_selected_token_logprobs.py \
-  --rows 1,2,4,8,16,32,64,128 --vocab-size 151936 --dtype bf16
-
-.venv-vllm/bin/python benchmarks/vllm_topk_sampled_logprobs.py \
-  --rows 1,8,32,128 --vocab-size 151936 --top-k 20 --dtype bf16
-
-.venv-vllm/bin/python benchmarks/vllm_min_p_filter.py \
-  --rows 1,8,32,128 --vocab-size 151936
-
-.venv-vllm/bin/python benchmarks/vllm_token_penalties.py \
-  --rows 1,8,32,128 --vocab-size 151936 \
-  --prompt-width 512 --output-width 128
-
-.venv-vllm/bin/python benchmarks/vllm_engine_token_penalties.py \
-  --tested-revision "$(git rev-parse HEAD)" \
-  --model /path/to/Qwen2.5-0.5B-Instruct \
-  --case 1x32x64 --case 8x32x64 --case 32x32x32 \
-  --warmup 2 --repeats 7 --provider-order baseline-first
-
-.venv-vllm/bin/python benchmarks/vllm_logits_preprocess.py \
-  --rows 1,2,4,8,16,32 --vocab-size 151936 \
-  --scenario full --warmup 10 --iterations 50 --repeats 7
-
-.venv-vllm/bin/python benchmarks/vllm_engine_logits_preprocess.py \
-  --tested-revision "$(git rev-parse HEAD)" \
-  --model /path/to/Qwen2.5-0.5B-Instruct \
-  --case 2x32x32 --case 8x32x32 --case 32x32x16 \
-  --warmup 2 --repeats 7 --provider-order baseline-first
-
-.venv-vllm/bin/python benchmarks/vllm_greedy_speculative_verify.py \
-  --batches 1,8,32,128,256 --draft-lengths 1,4,8 \
-  --warmup 30 --iterations 300 --samples 9
-
-.venv-vllm/bin/python benchmarks/vllm_engine_speculative_decode.py \
-  --tested-revision "$(git rev-parse HEAD)" \
-  --target-model /path/to/Qwen2.5-1.5B-Instruct \
-  --draft-model /path/to/Qwen2.5-0.5B-Instruct \
-  --spec-tokens 4 --prompt-mode natural \
-  --case 1x128x128 --case 8x128x128 --case 32x128x64 \
-  --warmup 2 --repeats 7 --boundary-profile-repeats 3 \
-  --gpu-memory-utilization 0.6 --provider-order native-first \
-  --result-json /tmp/speculative-native-first.json
-
-.venv-vllm/bin/python benchmarks/vllm_paged_decode_attention.py \
-  --batches 1,2,4,8 --contexts 128,256,512,1024 \
-  --dtype bf16 --query-heads 32 --kv-heads 8 --head-size 128 \
-  --cache-storage vllm-interleaved --compare-legacy \
-  --warmup 30 --iterations 200 --samples 7
-
-.venv-vllm/bin/python benchmarks/vllm_paged_decode_backend.py \
-  --batches 1,8,32 --contexts 16,32,64 \
-  --dtypes bf16,f16 --block-sizes 16,32
-
-.venv-vllm/bin/python benchmarks/create_synthetic_qwen2.py \
-  --output build/synthetic-qwen2-h4096-l1-stable --layers 1 \
-  --hidden-size 4096 --intermediate-size 4096 \
-  --attention-heads 32 --kv-heads 8 --max-position-embeddings 64 \
-  --stable-token-zero
-
-.venv-vllm/bin/python benchmarks/vllm_engine_paged_decode.py \
-  --model build/synthetic-qwen2-h4096-l1-stable \
-  --case 1x16x16 --case 8x16x16 --case 32x16x16 \
-  --provider-order baseline-first
-
-.venv-vllm/bin/python benchmarks/vllm_engine_greedy_logprobs.py \
-  --model /path/to/Qwen2.5-0.5B-Instruct --sampling-mode top-k-top-p \
-  --num-logprobs 20 \
-  --case 1x32x64 --case 8x32x64 --case 32x32x32 \
-  --provider-order baseline-first</code></pre>
       <p>
-        The pinned Qwen2.5 runs matched every generated token and recorded
-        direct Loom launches. Order-reversed batch-latency ratios were
-        0.999–1.004×, which is a neutral result rather than an acceleration
-        claim.
-      </p>
-      <p>
-        The RoPE+KV real-model A/B also matched every token and recorded 552
-        Loom host launches only on the fused side. Its order-reversed ratios
-        span 0.996–1.018×, so the current value is a proven engine boundary and
-        decode-sized operator win—not a model-level acceleration claim.
-      </p>
-      <p>
-        The greedy-logprob A/B matched every token, tie-aware rank, and sampled
-        logprob within 1.32e-6. Both provider orders recorded 1120 Loom path
-        hits only on the fused side; batch-latency ratios were 1.129–1.250× and
-        TPOT ratios were 1.147–1.257×. This is a real-engine win for pure greedy
-        requests with <code>logprobs=0</code>, not a general sampler claim.
-      </p>
-      <p>
-        The selected-token top-k/top-p A/B keeps vLLM's sampler and RNG intact,
-        then replaces only its full raw-logprob tail. Both provider orders
-        matched every token and rank within 1.20e-6, with 1440 Loom launches
-        only on the candidate side. Batch-latency ratios were 1.044–1.125× and
-        TPOT ratios were 1.054–1.130×.
-      </p>
-      <p>
-        The top-k logprob A/B additionally requests 20 returned candidates.
-        Both orders match every generated token, returned ID/rank, and logprob
-        within 1.91e-6, with 1440 Loom selected-token launches only on the
-        candidate side. Baseline-first latency ratios are 1.037–1.053×, while
-        Loom-first ratios are 0.969–0.982×. This proves exact engine integration
-        and smaller raw-logprob intermediates—not stable end-to-end acceleration.
-      </p>
-      <p>
-        The sparse-penalty A/B keeps vLLM's parameters, output-history
-        collection, and greedy selection unchanged. Both provider orders match
-        every token, with 1440 Loom submissions only on the candidate side.
-        Batch-latency ratios are 1.056–1.123× and TPOT ratios are
-        1.068–1.126× across the pinned Qwen batches.
-      </p>
-      <p>
-        The mixed-sampling preprocessing A/B applies an allowed-token mask,
-        sparse logit bias, min-token suppression, and temperature while
-        alternating greedy and top-k/top-p requests. Both provider orders
-        match every token and record 720 Loom submissions only on the
-        candidate side. TPOT ratios are 1.010–1.084×; batch latency crosses
-        parity at batch 32, so the evidence does not claim a stable aggregate
-        latency win.
-      </p>
-      <p>
-        The speculative Qwen2.5-1.5B target plus 0.5B draft A/B matches every
-        native/Loom token and acceptance counter in both provider orders, with
-        714 measured Loom launches only on the candidate side. The verifier
-        boundary is 1.026–1.133× faster, but occupies just 0.048–0.200% of
-        batch latency. Native/Loom batch ratios cross parity and the
-        speculative providers are 3.18–4.97× slower than target-only for these
-        cases. This closes real-engine invocation, not acceleration.
-      </p>
-      <p>
-        Target-only and speculative decoding use different target execution
-        shapes. At batch 32, two target-only requests diverge after token 51 or
-        53 while native and Loom speculative providers remain mutually exact.
-        The machine-readable reports preserve those differences and gate the
-        actual verifier replacement A/B.
-      </p>
-      <p>
-        The paged-decode synthetic-Qwen gate uses a stable-output, one-layer
-        32/8-head fixture. Both provider orders match tokens; baseline
-        processes record zero Loom submissions and Loom processes record 18.
-        Its nonzero Q/K/V work is masked by a zero downstream projection and a
-        stable token-zero LM head. End-to-end ratios remain process-order
-        sensitive, so this proves the real engine and CUDA Graph path—not
-        pretrained-model numerics or acceleration.
-      </p>
-      <p>
-        Odd GQA tails are now correct and separately compiled: a 72-case
-        Qwen2.5-style 14/2, D64 sweep passes, with 31/36 context-32 graph wins.
-        Its experimental pretrained-model route was still rejected: only two
-        of five cases preserved every token and end-to-end latency was 3–5%
-        worse. Loom keeps FA3 for that geometry.
-      </p>
-      <p>
-        Machine-readable reports are versioned in{" "}
-        <a href={`${repositoryUrl}/tree/main/docs/results`}>docs/results</a>.
+        The <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>evidence index</a>
+        links every raw JSON result and its reproduction command. It keeps
+        accepted, parity, fallback, and rejected experiments.
       </p>
     </article>
   </div>

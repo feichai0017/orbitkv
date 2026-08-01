@@ -9,8 +9,8 @@ interface Props {
 }
 
 const {
-  title = "Loom Kernels — Rust-first GPU operators for LLM inference",
-  description = "Backend-independent Rust contracts, handwritten CUDA kernels, and engine-qualified evidence for LLM inference.",
+  title = "Loom Kernels | Rust-first CUDA operators",
+  description = "Checked Rust contracts and handwritten CUDA for memory-bound LLM inference operators.",
   active = "",
 } = Astro.props;
 
@@ -77,14 +77,14 @@ const socialImage = new URL(`${base}/og.png`, Astro.site);
         <div>
           <span class="footer-mark" aria-hidden="true">//</span>
           <strong>Loom Kernels</strong>
-          <p>Own the inference operator boundary.</p>
+          <p>Rust-first CUDA operators for LLM inference.</p>
         </div>
         <div class="footer-links">
           <a href={local("/docs/")}>Get started</a>
           <a href={local("/benchmarks/")}>Evidence</a>
           <a href={`${repositoryUrl}/blob/main/LICENSE`}>MIT License</a>
         </div>
-        <p class="footer-note">Rust contracts. CUDA execution. Measured claims.</p>
+        <p class="footer-note">Alpha software. Engine routes are opt-in.</p>
       </footer>
     </div>
   </body>

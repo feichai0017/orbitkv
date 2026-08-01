@@ -65,8 +65,7 @@ a {
 }
 
 code,
-pre,
-.mono {
+pre {
   font-family: var(--mono);
 }
 
@@ -331,37 +330,7 @@ main {
 
 .token-keyword { color: var(--orange); }
 .token-type { color: var(--cyan); }
-.token-value { color: var(--acid); }
 .token-comment { color: #64766a; }
-
-.pipeline {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  border-top: 1px solid var(--line);
-}
-
-.pipeline div {
-  position: relative;
-  padding: 1rem 0.8rem;
-  border-right: 1px solid var(--line);
-}
-
-.pipeline div:last-child {
-  border-right: 0;
-}
-
-.pipeline span {
-  display: block;
-  color: var(--dim);
-  font: 600 0.58rem/1 var(--mono);
-  letter-spacing: 0.1em;
-}
-
-.pipeline strong {
-  display: block;
-  margin-top: 0.45rem;
-  font-size: 0.72rem;
-}
 
 .metrics-strip {
   display: grid;
@@ -449,6 +418,7 @@ main {
 }
 
 .operator-card:hover,
+.evidence-card:hover,
 .doc-card:hover {
   border-color: #55705e;
   background: var(--panel);
@@ -475,33 +445,6 @@ main {
   margin: 0;
   color: var(--muted);
   font-size: 0.84rem;
-}
-
-.operator-card footer {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-top: auto;
-  padding-top: 1.4rem;
-  color: var(--dim);
-  font: 600 0.62rem/1.35 var(--mono);
-}
-
-.status-dot {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  color: var(--acid);
-  text-transform: uppercase;
-}
-
-.status-dot::before {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: currentColor;
-  box-shadow: 0 0 12px currentColor;
-  content: "";
 }
 
 .architecture-card,
@@ -541,13 +484,10 @@ main {
   margin-top: 0.45rem;
 }
 
-.caveat {
-  margin-top: 1rem;
-  padding: 1rem 1.1rem;
-  border-left: 2px solid var(--orange);
-  background: rgba(255, 139, 82, 0.06);
-  color: var(--muted);
-  font-size: 0.78rem;
+.section-link {
+  margin: 1.4rem 0 0;
+  color: var(--acid);
+  font: 600 0.76rem/1.4 var(--mono);
 }
 
 .cta-band {
@@ -887,18 +827,6 @@ main {
 
   .hero h1 {
     font-size: clamp(3.1rem, 16vw, 4.7rem);
-  }
-
-  .pipeline {
-    grid-template-columns: repeat(2, 1fr);
-  }
-
-  .pipeline div:nth-child(2) {
-    border-right: 0;
-  }
-
-  .pipeline div:nth-child(-n + 2) {
-    border-bottom: 1px solid var(--line);
   }
 
   .metrics-strip,

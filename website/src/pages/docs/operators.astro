@@ -1,31 +1,30 @@
 ---
 import DocsNav from "../../components/DocsNav.astro";
 import SiteLayout from "../../layouts/SiteLayout.astro";
-import { nextOperators, supportedOperators } from "../../data/site";
+import { nextOperators, repositoryUrl, supportedOperators } from "../../data/site";
 ---
 
 <SiteLayout
-  title="Operators — Loom Kernels"
-  description="The supported and planned LLM inference operator surface in Loom Kernels."
+  title="Operators | Loom Kernels"
+  description="The implemented and profile-gated operator paths in Loom Kernels."
   active="Operators"
 >
   <header class="page-hero">
-    <p class="eyebrow">Documentation / Operators</p>
-    <h1>A deliberately narrow surface.</h1>
+    <p class="eyebrow">Operators</p>
+    <h1>A narrow, measured surface</h1>
     <p>
-      An operator becomes supported only after contract, oracle, accelerator,
-      named-baseline, and framework boundaries exist. Engine and end-to-end gates
-      remain explicit even after the kernel is fast.
+      Loom admits memory-bound work that a real engine can reach without copies.
+      GEMM stays with the engine or vendor library.
     </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Operators" />
     <article class="prose">
-      <h2>Supported</h2>
+      <h2>Current paths</h2>
       <table class="operator-table">
         <thead>
-          <tr><th>Operator</th><th>Dtypes</th><th>Fusion boundary</th></tr>
+          <tr><th>Operator</th><th>Dtypes</th><th>Boundary</th><th>Status</th></tr>
         </thead>
         <tbody>
           {supportedOperators.map((operator) => (
@@ -33,46 +32,34 @@ import { nextOperators, supportedOperators } from "../../data/site";
               <td>{operator.name}</td>
               <td>{operator.dtypes}</td>
               <td>{operator.boundary}</td>
+              <td>{operator.status}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      <h2>Next families</h2>
+      <h2>Admission</h2>
+      <ol>
+        <li>A named engine profile shows memory, launch, layout, or scheduling cost.</li>
+        <li>Loom can enter the path without copying tensors into private storage.</li>
+        <li>A model or serving workload can prove the final value.</li>
+      </ol>
+      <p>
+        Every admitted path still passes contract, oracle, CUDA, named-baseline,
+        framework, engine, and system gates. Read the full
+        <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>operator catalog</a>.
+      </p>
+
+      <h2>Next work</h2>
       <div class="doc-grid">
-        {nextOperators.map((operator) => (
+        {nextOperators.map((item) => (
           <div class="doc-card">
-            <h3>{operator.name}</h3>
-            <p>{operator.reason}</p>
+            <span class="card-index">{item.milestone}</span>
+            <h3>{item.name}</h3>
+            <p>{item.reason}</p>
           </div>
         ))}
       </div>
-
-      <h2>Implementation policy</h2>
-      <ul>
-        <li>Handwrite memory-bound and fusion-sensitive kernels.</li>
-        <li>Never implement dense, quantized, sparse, or grouped GEMM; keep the matrix core engine/vendor-owned.</li>
-        <li>Key tuning by device, dtype, shape, layout, and alignment.</li>
-        <li>Expose one stable Rust contract across backend implementations.</li>
-        <li>Do not turn incidental layout helpers into public APIs without a consumer.</li>
-      </ul>
-
-      <h2>Three admission questions</h2>
-      <ol>
-        <li>Is the cost memory traffic, launch overhead, layout conversion, or scheduling metadata?</li>
-        <li>Does a named inference-engine path leave a real boundary Loom can enter without copies?</li>
-        <li>Can a real model or serving workload prove latency, memory, throughput, or goodput value?</li>
-      </ol>
-
-      <h2>Six independent gates</h2>
-      <ol>
-        <li>Validated contract and invalid-input tests.</li>
-        <li>Deterministic CPU or high-precision oracle.</li>
-        <li>Accelerator correctness over edge and representative shapes.</li>
-        <li>Warmed repeated measurement against a named baseline.</li>
-        <li>Invocation from a real inference-engine execution path.</li>
-        <li>TTFT, TPOT, throughput, memory, or goodput benefit.</li>
-      </ol>
     </article>
   </div>
 </SiteLayout>

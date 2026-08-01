@@ -3,130 +3,108 @@ import SiteLayout from "../layouts/SiteLayout.astro";
 import {
   evidence,
   nextOperators,
+  operatorFamilies,
   repositoryUrl,
   supportedOperators,
 } from "../data/site";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const resultUrl = (file: string) => `${repositoryUrl}/blob/main/docs/results/${file}`;
 ---
 
 <SiteLayout active="Overview">
   <section class="hero">
     <div class="hero-copy">
-      <p class="eyebrow">Rust-first · CUDA-backed · Engine-ready</p>
-      <h1>Own the<br /><span>operator boundary.</span></h1>
+      <p class="eyebrow">Rust and CUDA</p>
+      <h1>Operators for the memory-bound parts of LLM inference.</h1>
       <p>
-        Loom Kernels turns inference-critical fusion points into explicit Rust
-        contracts, handwritten CUDA, and reproducible engine evidence. No
-        framework reinvention. No benchmark-free claims.
+        Loom defines checked Rust contracts, runs handwritten CUDA, and records
+        the engine evidence for each admitted path. Vendor libraries keep GEMM.
       </p>
       <div class="hero-actions">
-        <a class="button primary" href={`${base}/docs/operators/`}>
-          Explore operators&nbsp; →
-        </a>
-        <a class="button" href={repositoryUrl} target="_blank" rel="noreferrer">
-          Read the source&nbsp; ↗
-        </a>
+        <a class="button primary" href={`${base}/docs/operators/`}>Operators</a>
+        <a class="button" href={repositoryUrl} target="_blank" rel="noreferrer">GitHub</a>
       </div>
     </div>
 
-    <div class="kernel-window" aria-label="Operator contract example">
+    <div class="kernel-window" aria-label="Operator execution path">
       <div class="window-bar">
-        <span>crates/loom-kernels/src/lib.rs</span>
+        <span>one execution path</span>
         <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
       </div>
-      <pre class="kernel-code"><code><span class="token-keyword">pub struct</span> <span class="token-type">SiluAndMulDynamicFp8Spec</span> &#123;
-  rows: usize,
-  width: usize,
-  group_size: <span class="token-value">64 | 128</span>,
-  input_dtype: <span class="token-type">F16 | Bf16</span>,
-  output_dtype: <span class="token-type">Fp8E4M3Fn</span>,
-&#125;
+      <pre class="kernel-code"><code><span class="token-keyword">engine</span>
+  → Stable ABI dispatcher
+  → checked Rust bridge
+  → safe Rust dispatch
+  → <span class="token-type">handwritten CUDA</span>
 
-<span class="token-comment">// Contract → oracle → CUDA → engine gate</span></code></pre>
-      <div class="pipeline" aria-label="Execution path">
-        <div><span>01</span><strong>Contract</strong></div>
-        <div><span>02</span><strong>Bridge</strong></div>
-        <div><span>03</span><strong>Safe Rust</strong></div>
-        <div><span>04</span><strong>CUDA</strong></div>
-      </div>
+<span class="token-comment">unsupported contracts stay in the engine</span></code></pre>
     </div>
   </section>
 
   <section class="metrics-strip" aria-label="Project status">
-    <div class="metric"><strong>{supportedOperators.length}</strong><span>qualified operator paths</span></div>
-    <div class="metric"><strong>Native</strong><span>clean-install wheel gate</span></div>
-    <div class="metric"><strong>SM90</strong><span>NVIDIA H20 evidence</span></div>
-    <div class="metric"><strong>0.24–0.25</strong><span>qualified vLLM range</span></div>
+    <div class="metric"><strong>{supportedOperators.length}</strong><span>documented operator paths</span></div>
+    <div class="metric"><strong>21</strong><span>ABI12 semantic operators</span></div>
+    <div class="metric"><strong>SM90</strong><span>H20 evidence</span></div>
+    <div class="metric"><strong>0.24-0.25</strong><span>qualified vLLM range</span></div>
   </section>
 
   <section class="section" id="operators">
     <header class="section-header">
       <div>
-        <p class="eyebrow">Supported now</p>
-        <h2>Small surface.<br />Real fusion value.</h2>
+        <p class="eyebrow">Scope</p>
+        <h2>Measured work around the matrix core</h2>
       </div>
       <p>
-        Loom admits operators where layout knowledge, quantization, or launch
-        reduction matters to an inference engine. Dense, quantized, sparse, and
-        grouped GEMM always stay with vendor libraries; Loom owns only the
-        measured memory-bound work around them.
+        Loom targets fusion, quantization support, layout conversion, sampling,
+        and movement. cuBLASLt, CUTLASS, FlashInfer, or the engine owns GEMM.
       </p>
     </header>
 
     <div class="operator-grid">
-      {supportedOperators.map((operator, index) => (
+      {operatorFamilies.map((family, index) => (
         <article class="operator-card">
-          <span class="card-index">OP::{String(index + 1).padStart(2, "0")}</span>
-          <h3>{operator.name}</h3>
-          <p>{operator.boundary}</p>
-          <footer>
-            <span>{operator.dtypes}</span>
-            <span class="status-dot">{operator.status}</span>
-          </footer>
+          <span class="card-index">{String(index + 1).padStart(2, "0")}</span>
+          <h3>{family.name}</h3>
+          <p>{family.boundary}</p>
         </article>
       ))}
     </div>
+    <p class="section-link"><a href={`${base}/docs/operators/`}>View all operators and gates</a></p>
   </section>
 
   <section class="section">
     <header class="section-header">
       <div>
         <p class="eyebrow">Architecture</p>
-        <h2>One contract.<br />One execution path.</h2>
+        <h2>Contracts stay separate from execution</h2>
       </div>
       <p>
-        Every framework operator crosses the same versioned bridge into safe
-        borrowed Rust dispatch. Adapters admit exact contracts before entering
-        Loom; they never select an alternate implementation inside the library.
+        CPU oracles define behavior. Safe Rust validates borrowed memory and
+        streams. Adapters only translate framework objects and apply admission policy.
       </p>
     </header>
 
     <div class="architecture-grid">
       <article class="architecture-card">
-        <span class="card-index">01 / loom-kernels</span>
-        <h3>Backend-independent truth</h3>
-        <p>Dtypes, shapes, layouts, aliasing rules, capabilities, and CPU oracles.</p>
+        <span class="card-index">loom-kernels</span>
+        <h3>Contracts</h3>
+        <p>Shapes, dtypes, layouts, capabilities, errors, and CPU references.</p>
       </article>
       <article class="architecture-card">
-        <span class="card-index">02 / loom-cuda-sys</span>
-        <h3>Internal launch boundary</h3>
-        <p>Packaged handwritten CUDA and a private ABI used only by the safe Rust backend.</p>
+        <span class="card-index">loom-cuda</span>
+        <h3>Safe dispatch</h3>
+        <p>Borrowed or owned streams, memory views, layouts, and benchmarks.</p>
       </article>
       <article class="architecture-card">
-        <span class="card-index">03 / loom-cuda</span>
-        <h3>Safe execution</h3>
-        <p>Owned or borrowed streams and memory, explicit layouts, checked dispatch, and benches.</p>
+        <span class="card-index">loom-cuda-bridge</span>
+        <h3>Checked boundary</h3>
+        <p>Storage spans, alias checks, status mapping, and panic containment.</p>
       </article>
       <article class="architecture-card">
-        <span class="card-index">04 / loom-cuda-bridge</span>
-        <h3>Only framework boundary</h3>
-        <p>Versioned, panic-contained entrypoints from engine tensors into safe borrowed Rust.</p>
-      </article>
-      <article class="architecture-card">
-        <span class="card-index">05 / adapters</span>
-        <h3>Translation only</h3>
-        <p>PyTorch current-stream operators and narrow vLLM admission points without CUDA launches.</p>
+        <span class="card-index">loom-cuda-sys</span>
+        <h3>CUDA</h3>
+        <p>Internal launch declarations, build logic, and handwritten kernels.</p>
       </article>
     </div>
   </section>
@@ -134,100 +112,46 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="section" id="evidence">
     <header class="section-header">
       <div>
-        <p class="eyebrow">Measured on H20</p>
-        <h2>Evidence before adjectives.</h2>
+        <p class="eyebrow">Evidence</p>
+        <h2>Each claim has a boundary</h2>
       </div>
       <p>
-        Correctness is checked before timing. Named baselines share the same
-        dispatcher boundary, GPU warm-up, sample count, and provider-order reversal.
+        Loom keeps operator speed, engine invocation, and model or serving
+        benefit separate. Rejected results remain visible.
       </p>
     </header>
 
     <div class="evidence-grid">
       {evidence.map((item) => (
-        <article class="evidence-card">
+        <a class="evidence-card" href={resultUrl(item.file)}>
           <h3>{item.operator}</h3>
           <span class="result">{item.result}</span>
           <p>{item.detail}</p>
           <small>{item.shape}</small>
-        </article>
+        </a>
       ))}
     </div>
-    <p class="caveat">
-      The pinned Qwen2.5 greedy and top-k/top-p selected-logprob gates show
-      order-stable real-engine latency and TPOT wins. FP8 and RoPE+KV prove
-      exact invocation but remain near parity. Min-P is shape-gated from its
-      measured crossover. Sparse token penalties preserve exact vLLM
-      repetition, frequency, and presence arithmetic while replacing
-      vocabulary-sized temporary tensors with an O(history) caller workspace.
-      Both Qwen provider orders preserve every token and show
-      1.056–1.123× batch-latency ratios for the pinned offline workload;
-      serving-scale concurrency and goodput remain separate.
-      Sampled-token plus top-k logprobs now have a deterministic direct
-      operator and an exact vLLM-order adapter. The direct path wins at up to
-      32 rows and sharply reduces temporaries; real-engine latency crosses
-      parity under provider-order reversal, so no model-level speedup is
-      claimed.
-      Mixed-sampling logits preprocessing now fuses mask, sparse bias,
-      suppression, and temperature in one exact F32 pass. It is 3.26–7.30×
-      faster at the operator boundary and preserves every Qwen token with
-      order-stable 1.010–1.084× TPOT ratios; batch latency crosses parity at
-      batch 32, so the claim remains narrower than a blanket model speedup.
-      Paged decode now has a native-cache, context-32 vLLM route,
-      synthetic-engine path proof, and a local 128–1,024-token split-K path
-      that is 1.14–6.22× faster than legacy Loom. FA3 still wins the long
-      engine envelope, and a broader Qwen2.5 geometry failed token and latency
-      gates, so neither route was widened; serving-scale concurrency, memory,
-      and goodput stay separate. Greedy speculative verification is bit-exact
-      and faster at the operator boundary. Its real Qwen2.5 draft/target gate
-      now proves exact native/Loom invocation, but the verifier is below 0.2%
-      of batch latency, end-to-end ratios cross parity, and speculative decode
-      loses to target-only for that workload.
-    </p>
+    <p class="section-link"><a href={`${base}/benchmarks/`}>Read the evidence rules</a></p>
   </section>
 
   <section class="section">
     <header class="section-header">
       <div>
-        <p class="eyebrow">Next boundaries</p>
-        <h2>Build where engines pay.</h2>
+        <p class="eyebrow">Next</p>
+        <h2>Work starts from an engine measurement</h2>
       </div>
       <p>
-        The K0.7 bridge-ABI-12 wheel is clean-install-qualified across PyTorch
-        2.10/2.11 and vLLM 0.24/0.25 on H20. The same two-library artifact
-        passes 359 tests with each vLLM minor and 245 applicable tests on
-        PyTorch 2.10; it remains unpublished.
-        Default prefix/preemption KV movement is rejected after a real prefix
-        hit and three preemptions produced zero physical copies. ABI8-A
-        categorical sampling is complete through Rust, CUDA, checked bridge,
-        PyTorch, an explicit vLLM engine-lifetime opt-in, and binary
-        distribution. Cached requests own persistent
-        <code>(seed, counter)</code> state across slot moves and resume. One
-        kernel is 1.15–5.40× faster than vLLM's all-seeded direct boundary at
-        admitted 4–32-row cases; real Qwen decode is order-stably 1.057–1.081×
-        at batch 32, while batch 1–4 still costs 1.5–2.4%. ABI10 reaches a real
-        W8A8 graph with optional-residual RMSNorm-to-INT8 and is distributed in
-        the qualified wheel, but exact quality, stable engine benefit, and
-        default admission remain open. ABI11 adds exact compiled
-        SiLU-and-Mul-to-INT8 execution and clean-wheel coverage, while measured
-        performance rejects default admission. Current ABI12 adds stable MoE
-        permutation and combine: source matrices pass, direct H20 CUDA Graph
-        ratios reach 1.163× all-local and 1.191× expert-parallel, and an
-        isolated vLLM/Cutlass gate records exact tokens plus 48/48 movement
-        hits while leaving grouped GEMM unchanged. Its synthetic 1.0205× ratio
-        is engine-admission evidence, not a production-model speedup. The
-        matching ABI12 clean wheel is qualified but unpublished. FP8 KV,
-        physical movement, routing, tree,
-        stochastic, and speculative-KV work remain profile-gated.
+        The H20 matrix qualifies the ABI12 wheel. No package index publishes
+        it. New kernels require a named consumer and a system-level exit gate.
       </p>
     </header>
 
     <div class="roadmap-grid">
-      {nextOperators.map((operator) => (
+      {nextOperators.map((item) => (
         <article class="roadmap-card">
-          <span class="card-index">{operator.milestone}</span>
-          <h3>{operator.name}</h3>
-          <p>{operator.reason}</p>
+          <span class="card-index">{item.milestone}</span>
+          <h3>{item.name}</h3>
+          <p>{item.reason}</p>
         </article>
       ))}
     </div>
@@ -235,9 +159,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="cta-band">
     <div>
-      <h2>Start at the contract.</h2>
-      <p>Inspect the operator surface, run the CPU gates, then qualify CUDA.</p>
+      <h2>Start with the contract</h2>
+      <p>Check the operator boundary before building or enabling CUDA.</p>
     </div>
-    <a class="button primary" href={`${base}/docs/`}>Open the guide&nbsp; →</a>
+    <a class="button primary" href={`${base}/docs/`}>Documentation</a>
   </section>
 </SiteLayout>

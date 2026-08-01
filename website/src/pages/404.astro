@@ -4,13 +4,13 @@ import SiteLayout from "../layouts/SiteLayout.astro";
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
 
-<SiteLayout title="Not found — Loom Kernels">
+<SiteLayout title="Page not found | Loom Kernels">
   <section class="page-hero">
-    <p class="eyebrow">Status / 404</p>
-    <h1>This boundary is unsupported.</h1>
-    <p>The requested page is outside the current contract.</p>
+    <p class="eyebrow">404</p>
+    <h1>Page not found</h1>
+    <p>The requested page does not exist.</p>
     <div class="hero-actions">
-      <a class="button primary" href={`${base}/`}>Return home&nbsp; →</a>
+      <a class="button primary" href={`${base}/`}>Home</a>
     </div>
   </section>
 </SiteLayout>

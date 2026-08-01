@@ -1,4 +1,4 @@
-# LLM Inference Operator Catalog
+# LLM inference operator catalog
 
 Loom Kernels aims to cover the common operator surface of production LLM
 inference, but it is not a general tensor framework. An operator belongs here
@@ -16,7 +16,7 @@ Catalog admission requires a memory/layout/scheduling bottleneck, a named
 engine gap, and a real model or serving exit gate. A plausible CUDA kernel or
 isolated microbenchmark is not sufficient.
 
-## Status Legend
+## Status legend
 
 | State | Meaning |
 | --- | --- |
@@ -27,7 +27,7 @@ isolated microbenchmark is not sufficient.
 | profile-gated | implemented only when a real workload shows material cost |
 | vendor-backed | the engine/vendor owns the base primitive; Loom may expose only an adjacent memory-bound boundary |
 
-## Normalization And Quantization
+## Normalization and quantization
 
 | Operator | Priority | State | Intended fusion boundary |
 | --- | --- | --- | --- |
@@ -39,7 +39,7 @@ isolated microbenchmark is not sufficient.
 | static/dynamic per-token, per-channel, and per-block quantization | P0/P1 | planned | FP8/INT8/INT4 scale production and packing around vendor GEMM |
 | dequantize, requantize, pack/unpack, and scale conversion | P1 | planned | layout-aware transitions between vendor kernels |
 
-## MLP Activations And Linear Epilogues
+## MLP activations and linear epilogues
 
 | Operator | Priority | State | Intended fusion boundary |
 | --- | --- | --- | --- |
@@ -51,7 +51,7 @@ isolated microbenchmark is not sufficient.
 | vendor GEMM handoff+bias+activation/quantization | P0 | vendor-backed | unchanged cuBLASLt/CUTLASS matrix core with a measured Loom pre/post boundary |
 | quantized linear and grouped linear | — | vendor-backed | explicitly engine-owned FP8/INT8/INT4 matrix core; Loom does not implement it |
 
-## Embedding, Position, And KV Cache
+## Embedding, position, and KV cache
 
 | Operator | Priority | State | Intended fusion boundary |
 | --- | --- | --- | --- |
@@ -64,7 +64,7 @@ isolated microbenchmark is not sufficient.
 | INT8 KV quantize/dequantize with scale update | P1 | planned | admitted only by a named engine/model cache contract |
 | embedding gather and parallel-vocabulary embedding | P1 | profile-gated | lookup plus dtype/layout conversion |
 
-## Logits, Sampling, And Log Probabilities
+## Logits, sampling, and log probabilities
 
 | Operator | Priority | State | Intended fusion boundary |
 | --- | --- | --- | --- |
@@ -80,7 +80,7 @@ isolated microbenchmark is not sufficient.
 | sharded-vocabulary top-k/logsumexp merge | P1 | planned | tensor-parallel token selection |
 | structured-output bitmask application | P1 | profile-gated | grammar mask plus logits processing |
 
-## Speculative Decoding Support
+## Speculative decoding support
 
 | Operator | Priority | State | Intended fusion boundary |
 | --- | --- | --- | --- |
@@ -90,7 +90,7 @@ isolated microbenchmark is not sufficient.
 | speculative KV slot commit, rollback, and remap | P0 | profile-gated | caller-owned cache metadata movement when an engine exposes the boundary |
 | draft/target model GEMM and verification attention | — | vendor-backed | engine-selected matrix and attention backends; never reimplemented by Loom |
 
-## Mixture Of Experts
+## Mixture of experts
 
 | Operator | Priority | State | Intended fusion boundary |
 | --- | --- | --- | --- |
@@ -112,7 +112,7 @@ isolated microbenchmark is not sufficient.
 | MLA paged decode and latent-cache transforms | P1 | planned | DeepSeek-style inference path |
 | speculative verification attention | — | vendor-backed | engine-selected attention consumes Loom-prepared verification metadata |
 
-## Communication-Aware Operators
+## Communication-aware operators
 
 | Operator | Priority | State | Intended fusion boundary |
 | --- | --- | --- | --- |
@@ -124,21 +124,21 @@ isolated microbenchmark is not sufficient.
 Collectives will wrap NCCL or another qualified transport. Loom will not claim
 a distributed speedup from a same-process adapter or from a local kernel alone.
 
-## Layout And Internal Primitives
+## Layout and internal primitives
 
 Cast, transpose, concatenate/split, pad/unpad, gather/scatter, reductions,
-prefix sums, packing, and block copies are profile-gated. They may be shared
-internal building blocks, but become public operators only when an engine needs
-the boundary or an isolated implementation is measurably useful.
+prefix sums, packing, and block copies are profile-gated. Multiple domains may
+use them internally. They become public operators only when an engine needs the
+boundary or an isolated implementation is measurably useful.
 
-## Implementation Order
+## Implementation order
 
-1. Profile the now-qualified vLLM/Cutlass MoE movement route on a pinned,
-   production-representative workload; add routing only when that profile
-   shows it is material. Grouped GEMM remains entirely engine/vendor-owned.
+1. Profile the qualified vLLM/Cutlass MoE movement route on a pinned,
+   production-representative workload. Add routing only when that profile shows
+   material cost. Grouped GEMM remains entirely engine/vendor-owned.
 2. Revisit KV block movement only for a named offload, beam, or compaction
-   call site. Default vLLM prefix reuse and preemption are rejected because
-   the measured path performs no physical copy.
+   call site. The measured default vLLM prefix and preemption path copies no
+   data, so Loom exposes no operator for it.
 3. Return to tree metadata, stochastic speculative rejection, or KV
    commit/remap only when a named engine profile shows material cost. The
    current real-model gate puts verification below `0.2%` of batch latency.
