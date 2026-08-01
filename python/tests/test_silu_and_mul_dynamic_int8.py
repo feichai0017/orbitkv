@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import importlib.util
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -13,10 +15,33 @@ from loom_kernels.torch_ops import (
 )
 
 
-def compiled_native_reference(
+def dynamic_int8_reference(
     input_tensor: torch.Tensor,
 ) -> tuple[torch.Tensor, torch.Tensor]:
-    pytest.importorskip("vllm")
+    rows = input_tensor.numel() // input_tensor.shape[-1]
+    width = input_tensor.shape[-1] // 2
+    gate = input_tensor[..., :width].float()
+    up = input_tensor[..., width:].float()
+    activated = (gate / (1.0 + torch.exp(-gate)) * up).to(input_tensor.dtype)
+    absolute_maximum = activated.float().abs().amax(dim=-1, keepdim=True)
+    scales = (absolute_maximum / 127.0).reshape(rows, 1)
+    inverse_scale = torch.where(
+        absolute_maximum == 0,
+        torch.zeros_like(absolute_maximum),
+        127.0 / absolute_maximum,
+    )
+    output = (
+        (activated.float() * inverse_scale)
+        .round()
+        .clamp(-128.0, 127.0)
+        .to(torch.int8)
+    )
+    return output, scales
+
+
+def vllm_dynamic_int8_reference(
+    input_tensor: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
     import vllm._custom_ops  # noqa: F401 - registers vLLM dispatcher ops
 
     width = input_tensor.shape[-1] // 2
@@ -32,6 +57,58 @@ def compiled_native_reference(
     return output, scales
 
 
+def assert_dynamic_int8_close(
+    actual_output: torch.Tensor,
+    actual_scales: torch.Tensor,
+    expected_output: torch.Tensor,
+    expected_scales: torch.Tensor,
+) -> None:
+    torch.testing.assert_close(
+        actual_scales, expected_scales, rtol=2.0e-6, atol=1.0e-8
+    )
+    integer_delta = (
+        actual_output.to(torch.int16) - expected_output.to(torch.int16)
+    ).abs()
+    assert integer_delta.max().item() <= 1
+    assert torch.count_nonzero(integer_delta).item() <= actual_output.shape[0]
+
+
+def declared_reference(
+    input_tensor: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor, bool]:
+    independent_output, independent_scales = dynamic_int8_reference(input_tensor)
+    if importlib.util.find_spec("vllm") is None:
+        return independent_output, independent_scales, False
+
+    vllm_output, vllm_scales = vllm_dynamic_int8_reference(input_tensor)
+    assert_dynamic_int8_close(
+        independent_output,
+        independent_scales,
+        vllm_output,
+        vllm_scales,
+    )
+    return vllm_output, vllm_scales, True
+
+
+def assert_declared_match(
+    actual_output: torch.Tensor,
+    actual_scales: torch.Tensor,
+    expected_output: torch.Tensor,
+    expected_scales: torch.Tensor,
+    exact: bool,
+) -> None:
+    if exact:
+        assert torch.equal(actual_output, expected_output)
+        assert torch.equal(actual_scales, expected_scales)
+    else:
+        assert_dynamic_int8_close(
+            actual_output,
+            actual_scales,
+            expected_output,
+            expected_scales,
+        )
+
+
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 @pytest.mark.parametrize("dtype", [torch.float16, torch.bfloat16])
 @pytest.mark.parametrize("rows,width", [(1, 4864), (32, 4864), (3, 127)])
@@ -40,7 +117,7 @@ def test_silu_and_mul_dynamic_int8_matches_compiled_native_on_external_stream(
 ):
     torch.manual_seed(83)
     input_tensor = torch.randn(rows, width * 2, device="cuda", dtype=dtype)
-    expected_output, expected_scales = compiled_native_reference(input_tensor)
+    expected_output, expected_scales, exact = declared_reference(input_tensor)
 
     reset_launch_count(Operator.SILU_AND_MUL_DYNAMIC_INT8)
     stream = torch.cuda.Stream()
@@ -52,8 +129,7 @@ def test_silu_and_mul_dynamic_int8_matches_compiled_native_on_external_stream(
     assert output.shape == (rows, width)
     assert output.dtype == torch.int8
     assert scales.shape == (rows, 1)
-    assert torch.equal(output, expected_output)
-    assert torch.equal(scales, expected_scales)
+    assert_declared_match(output, scales, expected_output, expected_scales, exact)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -63,7 +139,7 @@ def test_silu_and_mul_dynamic_int8_preserves_prefix_and_reuses_buffers():
     scales = torch.empty(6, 1, device="cuda", dtype=torch.float32)
     output_pointer = output.data_ptr()
     scales_pointer = scales.data_ptr()
-    expected_output, expected_scales = compiled_native_reference(input_tensor)
+    expected_output, expected_scales, exact = declared_reference(input_tensor)
 
     returned_output, returned_scales = silu_and_mul_dynamic_int8_out(
         input_tensor, output, scales
@@ -74,21 +150,19 @@ def test_silu_and_mul_dynamic_int8_preserves_prefix_and_reuses_buffers():
     assert returned_scales is scales
     assert output.data_ptr() == output_pointer
     assert scales.data_ptr() == scales_pointer
-    assert torch.equal(output, expected_output)
-    assert torch.equal(scales, expected_scales)
+    assert_declared_match(output, scales, expected_output, expected_scales, exact)
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
 def test_silu_and_mul_dynamic_int8_preserves_zero_row_contract():
     input_tensor = torch.zeros(2, 256, device="cuda", dtype=torch.bfloat16)
     input_tensor[0] = torch.randn_like(input_tensor[0])
-    expected_output, expected_scales = compiled_native_reference(input_tensor)
+    expected_output, expected_scales, exact = declared_reference(input_tensor)
 
     output, scales = silu_and_mul_dynamic_int8(input_tensor)
     torch.cuda.synchronize()
 
-    assert torch.equal(output, expected_output)
-    assert torch.equal(scales, expected_scales)
+    assert_declared_match(output, scales, expected_output, expected_scales, exact)
     assert scales[1].item() == 0.0
     assert torch.count_nonzero(output[1]).item() == 0
 
@@ -141,15 +215,20 @@ def test_silu_and_mul_dynamic_int8_survives_torch_compile():
     input_tensor = torch.randn(4, 512, device="cuda", dtype=torch.bfloat16)
     output = torch.empty(4, 256, device="cuda", dtype=torch.int8)
     scales = torch.empty(4, 1, device="cuda", dtype=torch.float32)
-    expected_output, expected_scales = compiled_native_reference(input_tensor)
+    expected_output, expected_scales, exact = declared_reference(input_tensor)
 
     actual_output, actual_scales = torch.compile(target, fullgraph=True)(
         input_tensor, output, scales
     )
     torch.cuda.synchronize()
 
-    assert torch.equal(actual_output, expected_output)
-    assert torch.equal(actual_scales, expected_scales)
+    assert_declared_match(
+        actual_output,
+        actual_scales,
+        expected_output,
+        expected_scales,
+        exact,
+    )
 
 
 @pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
@@ -157,7 +236,7 @@ def test_silu_and_mul_dynamic_int8_can_be_captured_and_replayed():
     input_tensor = torch.randn(4, 512, device="cuda", dtype=torch.float16)
     output = torch.empty(4, 256, device="cuda", dtype=torch.int8)
     scales = torch.empty(4, 1, device="cuda", dtype=torch.float32)
-    expected_output, expected_scales = compiled_native_reference(input_tensor)
+    expected_output, expected_scales, exact = declared_reference(input_tensor)
 
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
@@ -169,5 +248,4 @@ def test_silu_and_mul_dynamic_int8_can_be_captured_and_replayed():
     graph.replay()
     torch.cuda.synchronize()
 
-    assert torch.equal(output, expected_output)
-    assert torch.equal(scales, expected_scales)
+    assert_declared_match(output, scales, expected_output, expected_scales, exact)
