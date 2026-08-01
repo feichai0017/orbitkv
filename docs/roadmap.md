@@ -488,6 +488,14 @@ rejection, while grouped GEMM remains vLLM-owned. The median ratio is
 `1.0205x`. This closes explicit engine admission only: a random tiny checkpoint
 does not establish production-model, serving, or routing value.
 
+The formal production gate is now encoded in
+`benchmarks/vllm_engine_moe_movement.py`: it rejects the synthetic fixture in
+production mode, fingerprints the pinned checkpoint and prompts, runs native
+vLLM and Loom in ABBA process order, records TTFT/TPOT/throughput/peak memory,
+and verifies exact tokens, measured movement hits, and the unchanged Cutlass
+grouped-GEMM callable. The harness is complete; no pretrained H20 result has
+yet closed the exit below.
+
 Exit: a pinned production-representative MoE workload shows that movement, and
 routing only if profiling admits it, reduce model-level latency on a named
 engine. The vendor grouped GEMM is identical on both sides of the comparison.

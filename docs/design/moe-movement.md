@@ -130,6 +130,36 @@ and `17.103 ms`, a `1.0205x` ratio. This closes engine admission, not a
 production-model or serving-speedup claim; K5 remains open for a pinned
 production-representative MoE workload and profile-driven routing decision.
 
+## Production Workload Gate
+
+`benchmarks/vllm_engine_moe_movement.py` is the single formal K5 engine gate.
+It requires a clean checkout at an exact Git SHA and either a local checkpoint
+manifest or a Hugging Face model pinned to a 40-character revision. Production
+mode rejects the repository's synthetic fixture and uses deterministic natural
+prompts. The default run executes isolated providers in ABBA order with fresh
+compiler caches. Prefix caching is disabled so repeated samples execute the
+same complete prefill and decode work:
+
+```bash
+python benchmarks/vllm_engine_moe_movement.py \
+  --model <pinned-pretrained-moe-model> \
+  --model-revision <hugging-face-commit-sha> \
+  --tested-revision <loom-git-sha> \
+  --result-json docs/results/<h20-production-result>.json
+```
+
+Each process records native vLLM request metrics for TTFT and TPOT, batch and
+token throughput, CUDA peak memory, prompt/checkpoint fingerprints, exact
+generated tokens, and measured Loom permutation/combine launches. It also
+captures the Cutlass grouped-GEMM callable before registration and requires the
+same object afterward; the benchmark does not wrap it for instrumentation.
+
+Semantic/path admission and performance are deliberately separate. A
+production speedup is qualified only when every declared workload case
+preserves exact output and reduces model latency in both provider orders.
+Until an H20 result from this gate is committed, the production clause remains
+open.
+
 Raw evidence:
 
 - [all-local H20 result](../results/h20-moe-movement-20260801.json)
