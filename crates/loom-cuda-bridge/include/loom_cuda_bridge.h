@@ -18,6 +18,7 @@ enum loom_cuda_bridge_dtype {
   LOOM_CUDA_BRIDGE_F32 = 0,
   LOOM_CUDA_BRIDGE_F16 = 1,
   LOOM_CUDA_BRIDGE_BF16 = 2,
+  LOOM_CUDA_BRIDGE_FP8_E4M3FN = 3,
 };
 
 enum loom_cuda_bridge_kv_cache_encoding {
@@ -45,7 +46,9 @@ enum loom_cuda_bridge_operator {
   LOOM_CUDA_BRIDGE_CATEGORICAL_SAMPLE = 16,
   LOOM_CUDA_BRIDGE_RMS_NORM_DYNAMIC_INT8 = 17,
   LOOM_CUDA_BRIDGE_SILU_AND_MUL_DYNAMIC_INT8 = 18,
-  LOOM_CUDA_BRIDGE_OPERATOR_COUNT = 19,
+  LOOM_CUDA_BRIDGE_MOE_PERMUTE = 19,
+  LOOM_CUDA_BRIDGE_MOE_COMBINE = 20,
+  LOOM_CUDA_BRIDGE_OPERATOR_COUNT = 21,
 };
 
 uint32_t loom_cuda_bridge_abi_version(void);
@@ -93,6 +96,33 @@ int loom_cuda_bridge_silu_and_mul_dynamic_int8(
     uint32_t dtype, const void* input, uint64_t input_elements,
     int8_t* output, uint64_t output_elements, float* scales,
     uint64_t scale_elements, uint32_t rows, uint32_t width, void* stream);
+
+int loom_cuda_bridge_moe_permute_workspace_size(
+    uint32_t dtype, uint32_t tokens, uint32_t hidden_size, uint32_t top_k,
+    uint32_t num_experts, uint32_t num_local_experts,
+    uint32_t has_expert_map, uint64_t* workspace_bytes);
+
+int loom_cuda_bridge_moe_permute(
+    uint32_t dtype, const void* hidden_states,
+    uint64_t hidden_state_elements, const int32_t* topk_ids,
+    uint64_t topk_id_elements, const int32_t* expert_map,
+    uint64_t expert_map_elements, void* permuted_hidden_states,
+    uint64_t permuted_hidden_state_elements, int64_t* expert_offsets,
+    uint64_t expert_offset_elements, int32_t* inverse_permutation,
+    uint64_t inverse_permutation_elements, int32_t* permuted_assignment_ids,
+    uint64_t permuted_assignment_id_elements, uint8_t* workspace,
+    uint64_t workspace_bytes, uint32_t tokens, uint32_t hidden_size,
+    uint32_t top_k, uint32_t num_experts, uint32_t num_local_experts,
+    void* stream);
+
+int loom_cuda_bridge_moe_combine(
+    uint32_t dtype, const void* expert_outputs,
+    uint64_t expert_output_elements, const float* routing_weights,
+    uint64_t routing_weight_elements, const int32_t* inverse_permutation,
+    uint64_t inverse_permutation_elements, const int64_t* expert_offsets,
+    uint64_t expert_offset_elements, void* output, uint64_t output_elements,
+    uint32_t tokens, uint32_t hidden_size, uint32_t top_k,
+    uint32_t num_local_experts, void* stream);
 
 int loom_cuda_bridge_categorical_sample(
     const float* probabilities, uint64_t probability_elements,

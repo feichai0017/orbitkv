@@ -142,6 +142,77 @@ int loom_cuda_silu_and_mul_dynamic_int8_bf16(
     const uint16_t* input, int8_t* output, float* scales, uint32_t rows,
     uint32_t width, void* stream);
 
+// Stable expert-major activation permutation around vendor grouped GEMM.
+// topk_ids is contiguous int32 [tokens, top_k]. expert_map is either null
+// (all experts local) or int32 [num_experts], where -1 marks a remote expert.
+// Valid assignments are grouped by local expert while preserving flattened
+// token/route order. Remote assignments follow local assignments, are grouped
+// by global expert, and preserve flattened order within that expert. Their
+// activation rows are zero-filled at the output tail.
+// expert_offsets is int64 [num_local_experts + 1], inverse_permutation and
+// permuted_assignment_ids are int32 [tokens * top_k]. The latter uses
+// tokens * top_k as its invalid sentinel. Workspace is caller-owned bytes.
+int loom_cuda_moe_permute_workspace_size(uint32_t assignments,
+                                         uint32_t num_experts,
+                                         uint64_t* workspace_bytes);
+
+int loom_cuda_moe_permute_f32(
+    const float* hidden_states, const int32_t* topk_ids,
+    const int32_t* expert_map, float* permuted_hidden_states,
+    int64_t* expert_offsets, int32_t* inverse_permutation,
+    int32_t* permuted_assignment_ids, uint8_t* workspace,
+    uint64_t workspace_bytes, uint32_t tokens, uint32_t hidden_size,
+    uint32_t top_k, uint32_t num_experts, uint32_t num_local_experts,
+    void* stream);
+
+int loom_cuda_moe_permute_f16(
+    const uint16_t* hidden_states, const int32_t* topk_ids,
+    const int32_t* expert_map, uint16_t* permuted_hidden_states,
+    int64_t* expert_offsets, int32_t* inverse_permutation,
+    int32_t* permuted_assignment_ids, uint8_t* workspace,
+    uint64_t workspace_bytes, uint32_t tokens, uint32_t hidden_size,
+    uint32_t top_k, uint32_t num_experts, uint32_t num_local_experts,
+    void* stream);
+
+int loom_cuda_moe_permute_bf16(
+    const uint16_t* hidden_states, const int32_t* topk_ids,
+    const int32_t* expert_map, uint16_t* permuted_hidden_states,
+    int64_t* expert_offsets, int32_t* inverse_permutation,
+    int32_t* permuted_assignment_ids, uint8_t* workspace,
+    uint64_t workspace_bytes, uint32_t tokens, uint32_t hidden_size,
+    uint32_t top_k, uint32_t num_experts, uint32_t num_local_experts,
+    void* stream);
+
+int loom_cuda_moe_permute_fp8_e4m3fn(
+    const uint8_t* hidden_states, const int32_t* topk_ids,
+    const int32_t* expert_map, uint8_t* permuted_hidden_states,
+    int64_t* expert_offsets, int32_t* inverse_permutation,
+    int32_t* permuted_assignment_ids, uint8_t* workspace,
+    uint64_t workspace_bytes, uint32_t tokens, uint32_t hidden_size,
+    uint32_t top_k, uint32_t num_experts, uint32_t num_local_experts,
+    void* stream);
+
+// Weighted inverse permutation after vendor grouped GEMM. routing_weights is
+// contiguous F32 [tokens, top_k]. expert_offsets[-1] supplies the valid local
+// assignment count so expert-parallel remote routes contribute zero.
+int loom_cuda_moe_combine_f32(
+    const float* expert_outputs, const float* routing_weights,
+    const int32_t* inverse_permutation, const int64_t* expert_offsets,
+    float* output, uint32_t tokens, uint32_t hidden_size, uint32_t top_k,
+    uint32_t num_local_experts, void* stream);
+
+int loom_cuda_moe_combine_f16(
+    const uint16_t* expert_outputs, const float* routing_weights,
+    const int32_t* inverse_permutation, const int64_t* expert_offsets,
+    uint16_t* output, uint32_t tokens, uint32_t hidden_size, uint32_t top_k,
+    uint32_t num_local_experts, void* stream);
+
+int loom_cuda_moe_combine_bf16(
+    const uint16_t* expert_outputs, const float* routing_weights,
+    const int32_t* inverse_permutation, const int64_t* expert_offsets,
+    uint16_t* output, uint32_t tokens, uint32_t hidden_size, uint32_t top_k,
+    uint32_t num_local_experts, void* stream);
+
 // Deterministically sample one token from every contiguous normalized F32
 // probability row. rng_state is mutable int64 [rows, 2] `(seed, counter)`
 // state and token_ids is int64 [rows]. A valid row advances its counter once.

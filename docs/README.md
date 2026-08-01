@@ -51,6 +51,9 @@ the evidence used to qualify them.
   layouts, GQA packing, local split-K/LSE, and routing exclusions.
 - [FP8 KV-cache design](design/fp8-kv-cache.md) documents static per-tensor and
   per-head scales, fused quantize-on-write, and the vendor-attention handoff.
+- [MoE movement design](design/moe-movement.md) fixes stable local/remote
+  permutation metadata, weighted combine, the unchanged grouped-GEMM boundary,
+  and the explicit vLLM/Cutlass engine-admission gate.
 - [Counter-based sampling design](design/counter-based-sampling.md) defines the
   implemented explicit-state ABI8-A boundary, persistent request-state
   integration, direct and engine evidence, and qualified matrix-wheel gate.

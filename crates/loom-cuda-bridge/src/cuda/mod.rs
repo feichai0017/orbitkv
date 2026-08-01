@@ -1,19 +1,20 @@
 use half::{bf16, f16};
 use loom_cuda::runtime::{
-    CudaDeviceWrite, CudaStreamHandle, CudaStreamRef, DeviceSlice, DeviceSliceMut,
+    CudaDeviceRead, CudaDeviceWrite, CudaStreamHandle, CudaStreamRef, DeviceSlice, DeviceSliceMut,
 };
 use loom_cuda::{
-    paged_decode_attention_split_k_workspace_elements, CudaBackend, CudaExecutorError,
-    Fp8ScaleLayout, PagedDecodeLayout, RopePagedKvLayout, RowStridedLayout,
+    moe_permute_workspace_bytes, paged_decode_attention_split_k_workspace_elements, CudaBackend,
+    CudaExecutorError, Fp8ScaleLayout, PagedDecodeLayout, RopePagedKvLayout, RowStridedLayout,
     SiluAndMulDynamicFp8Options,
 };
 use loom_kernels::{
     AddRmsNormSpec, CategoricalSampleSpec, DType, GreedySampleLogprobsSpec,
     GreedySpeculativeVerifySpec, KvCacheEncoding, KvCacheScaleGranularity, LogitsPreprocessSpec,
-    MinPFilterSpec, PagedDecodeAttentionSpec, RmsNormDynamicFp8Spec, RmsNormDynamicInt8Spec,
-    RmsNormSpec, RopePagedKvWriteSpec, RotaryEmbeddingSpec, RotaryStyle, SelectedTokenLogprobsSpec,
-    SiluAndMulDynamicFp8Spec, SiluAndMulDynamicInt8Spec, SiluAndMulSpec, TokenPenaltiesSpec,
-    TopKFilterSpec, TopKSampledLogprobsSpec, TopPRenormSpec,
+    MinPFilterSpec, MoeCombineSpec, MoePermuteSpec, PagedDecodeAttentionSpec,
+    RmsNormDynamicFp8Spec, RmsNormDynamicInt8Spec, RmsNormSpec, RopePagedKvWriteSpec,
+    RotaryEmbeddingSpec, RotaryStyle, SelectedTokenLogprobsSpec, SiluAndMulDynamicFp8Spec,
+    SiluAndMulDynamicInt8Spec, SiluAndMulSpec, TokenPenaltiesSpec, TopKFilterSpec,
+    TopKSampledLogprobsSpec, TopPRenormSpec,
 };
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void, CString};
@@ -29,6 +30,7 @@ const UNAVAILABLE: c_int = 3;
 const DTYPE_F32: u32 = 0;
 const DTYPE_F16: u32 = 1;
 const DTYPE_BF16: u32 = 2;
+const DTYPE_FP8_E4M3FN: u32 = 3;
 
 const KV_CACHE_NATIVE: u32 = 0;
 const KV_CACHE_FP8_E4M3: u32 = 1;
@@ -52,7 +54,9 @@ const OP_LOGITS_PREPROCESS: usize = 15;
 const OP_CATEGORICAL_SAMPLE: usize = 16;
 const OP_RMS_NORM_DYNAMIC_INT8: usize = 17;
 const OP_SILU_AND_MUL_DYNAMIC_INT8: usize = 18;
-const OPERATOR_COUNT: usize = 19;
+const OP_MOE_PERMUTE: usize = 19;
+const OP_MOE_COMBINE: usize = 20;
+const OPERATOR_COUNT: usize = 21;
 
 static LAUNCH_COUNTS: [AtomicU64; OPERATOR_COUNT] = [const { AtomicU64::new(0) }; OPERATOR_COUNT];
 
@@ -931,7 +935,7 @@ macro_rules! dispatch_scalar {
 /// Return the bridge ABI version.
 #[no_mangle]
 pub extern "C" fn loom_cuda_bridge_abi_version() -> u32 {
-    11
+    12
 }
 
 /// Return the detailed error recorded by the most recent failed bridge call
@@ -987,6 +991,7 @@ pub extern "C" fn loom_cuda_bridge_reset_launch_count(operation: u32) -> c_int {
 mod activation_bridge;
 mod attention_bridge;
 mod logits_bridge;
+mod moe_bridge;
 mod norm_bridge;
 mod rope_kv_bridge;
 mod sampling_bridge;
@@ -997,6 +1002,7 @@ mod tests;
 pub use activation_bridge::*;
 pub use attention_bridge::*;
 pub use logits_bridge::*;
+pub use moe_bridge::*;
 pub use norm_bridge::*;
 pub use rope_kv_bridge::*;
 pub use sampling_bridge::*;

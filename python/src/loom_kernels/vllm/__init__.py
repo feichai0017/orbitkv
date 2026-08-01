@@ -11,6 +11,7 @@ from . import activation as _activation
 from . import attention as _attention
 from . import categorical as _categorical
 from . import logits as _logits
+from . import moe as _moe
 from . import norm as _norm
 from . import rope_kv as _rope_kv
 from . import sampling as _sampling
@@ -53,6 +54,11 @@ from .logits import (
     MIN_P_OVERRIDE_KEY,
     register_vllm_logits_preprocess,
     register_vllm_min_p,
+)
+from .moe import (
+    MOE_MOVEMENT_OVERRIDE_ENV,
+    MOE_MOVEMENT_OVERRIDE_KEY,
+    register_vllm_moe_movement,
 )
 from .norm import (
     RMS_NORM_FP8_OVERRIDE_ENV,
@@ -118,6 +124,8 @@ def register_vllm_ir(provider: str = DEFAULT_PROVIDER) -> str | None:
         register_vllm_logits_preprocess()
     if _attention._paged_decode_override_requested():
         register_vllm_paged_decode_attention()
+    if _moe._moe_movement_override_requested():
+        register_vllm_moe_movement()
 
     operation = ir.ops.fused_add_rms_norm
     implementations = getattr(operation, "impls", {})
@@ -176,6 +184,7 @@ def provider_metadata() -> dict[str, Any]:
         _attention,
         _categorical,
         _logits,
+        _moe,
         _norm,
         _rope_kv,
         _sampling,
@@ -200,6 +209,8 @@ __all__ = [
     "MIN_P_FAST_PATH_MIN_VOCAB_SIZE",
     "MIN_P_OVERRIDE_ENV",
     "MIN_P_OVERRIDE_KEY",
+    "MOE_MOVEMENT_OVERRIDE_ENV",
+    "MOE_MOVEMENT_OVERRIDE_KEY",
     "PAGED_DECODE_FAST_PATH_MAX_BATCH",
     "PAGED_DECODE_FAST_PATH_MAX_CONTEXT",
     "PAGED_DECODE_OVERRIDE_ENV",
@@ -229,6 +240,7 @@ __all__ = [
     "register_vllm_categorical_sample",
     "register_vllm_logits_preprocess",
     "register_vllm_min_p",
+    "register_vllm_moe_movement",
     "register_vllm_paged_decode_attention",
     "register_vllm_greedy_sample_logprobs",
     "register_vllm_greedy_speculative_verify",

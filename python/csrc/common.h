@@ -83,6 +83,9 @@ inline uint32_t bridge_dtype(const Tensor& tensor) {
   if (tensor.scalar_type() == ScalarType::BFloat16) {
     return LOOM_CUDA_BRIDGE_BF16;
   }
+  if (tensor.scalar_type() == ScalarType::Float8_e4m3fn) {
+    return LOOM_CUDA_BRIDGE_FP8_E4M3FN;
+  }
   STD_TORCH_CHECK(false, "unsupported Loom bridge dtype");
 }
 

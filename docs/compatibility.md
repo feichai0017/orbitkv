@@ -28,13 +28,18 @@ RMSNorm-to-FP8 schema with vLLM's exact optional-residual mutation schema and
 retains no ABI8 overload or bridge shim. Its exact two-library wheel passes
 every repository-free matrix row.
 
-Current source is bridge ABI11 with nineteen semantic operators. ABI11 adds
-SiLU-and-Mul-to-dynamic-per-token-INT8 across Rust, CUDA, PyTorch, and an
-explicit vLLM compiler route, without retaining ABI10 entrypoints. Its H20
-source, exact compiled-boundary, real-engine path, and exact-quality gates pass;
-performance rejects default admission, while its clean-wheel matrix passes.
-See the [ABI11 admission result](results/h20-vllm-silu-int8-admission-20260801.json)
-and [ABI11 wheel result](results/h20-native-wheel-clean-install-abi11-20260801.json).
+Current source is bridge ABI12 with twenty-one semantic operators. ABI12 adds
+stable MoE permutation and weighted combine around vendor grouped GEMM without
+retaining ABI11 entrypoints. The same source-built libraries pass 359 tests on
+each PyTorch 2.11 + vLLM 0.24/0.25 row and 245 applicable tests with 72
+expected vLLM skips on PyTorch 2.10. Direct
+[all-local](results/h20-moe-movement-20260801.json) and
+[expert-parallel](results/h20-moe-movement-ep-20260801.json) H20 movement gates
+pass. An isolated [vLLM 0.25.1 Cutlass engine gate](results/h20-vllm-engine-moe-movement-20260801.json)
+records exact tokens and `48/48` Loom movement hits over a synthetic Qwen2-MoE
+checkpoint while keeping grouped GEMM unchanged. This qualifies engine
+admission, not production-model performance. No ABI12 clean-install wheel
+exists yet; the qualified binary boundary remains ABI11.
 
 The preceding `de28ceb` ABI10 wheel is immutable historical evidence for the
 boundary before SiLU-and-Mul-to-dynamic-INT8. It passed 326 tests on each vLLM
@@ -54,7 +59,7 @@ package-local libraries, and passed the full 286-test vLLM 0.24 GPU suite plus
 a focused 22-test FP8 KV/adapter gate. Its first run against a shared Inductor
 cache retained a non-Loom missing-`cubin` failure; fresh isolated
 `TORCHINDUCTOR_CACHE_DIR` and `TRITON_CACHE_DIR` values passed both the failing
-test and the full suite. The current ABI11 artifact supersedes that refresh and
+test and the full suite. The qualified ABI11 artifact supersedes that refresh and
 qualifies the full vLLM 0.24/0.25 plus PyTorch 2.10/2.11 matrix.
 
 Bridge ABI9 is a deliberate breaking boundary. An ABI8 dispatcher cannot load
@@ -63,6 +68,8 @@ Bridge ABI10 continues that policy: its dispatcher rejects ABI9 rather than
 retaining an overload or fallback.
 Bridge ABI11 continues it again: its dispatcher rejects ABI10 rather than
 retaining an overload or fallback.
+Bridge ABI12 continues the same policy: its dispatcher rejects ABI11 rather
+than retaining old MoE-free schemas or a fallback.
 
 The ABI7 wheel includes greedy speculative verification and static FP8 E4M3
 KV quantize-on-write through bridge ABI 7. Both vLLM minors pass the same
@@ -143,8 +150,8 @@ The earlier `10cu131torch210sm90` ABI-10, `9cu131torch210sm90` ABI-9,
 `4cu131torch210sm90` ABI-4, `2cu131torch210sm90` ABI-2, and
 `1cu131torch210sm90` ABI-1 artifacts remain historical evidence.
 The ABI-specific build tag prevents incompatible bridge signatures from
-colliding. Current source and the latest qualified artifact use the distinct
-`11cu131torch210sm90` tag.
+colliding. Current source emits `12cu131torch210sm90`; the latest qualified
+artifact remains the distinct `11cu131torch210sm90` predecessor.
 
 The wheel is Python-ABI-independent (`py3-none`) because neither native library
 uses the CPython C API. Its platform tag remains the conservative
@@ -165,9 +172,10 @@ production dispatcher now uses that boundary:
 - all schemas use boxed Stable ABI registration;
 - tensor metadata, allocations, pointers, device guards, and the current CUDA
   stream use stable headers or AOTI C shims;
-- all nineteen ABI11 source operators continue into `loom-cuda-bridge` and are
-  present in the qualified ABI11 wheel. Neither native library has an ATen/c10
-  C++ symbol dependency or consumes a raw CUDA launch symbol;
+- all twenty-one ABI12 source operators continue into `loom-cuda-bridge`; the
+  qualified ABI11 wheel contains its nineteen-operator predecessor. Neither
+  native library has an ATen/c10 C++ symbol dependency or consumes a raw CUDA
+  launch symbol;
 - the public Python APIs and vLLM admission predicates reject tensors requiring
   gradients. No autograd kernel is advertised;
 - the temporary Add+RMSNorm probe and the previous ATen dispatcher were deleted

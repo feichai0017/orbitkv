@@ -418,6 +418,19 @@ KV-cache policy, attention, and GEMM remain engine/vendor-owned.
 The complete contract and evidence boundary are documented in
 [greedy speculative verification](greedy-speculative-verify.md).
 
+## MoE Movement Contract
+
+The K5 movement pair begins after engine-owned top-k routing and ends before
+and after an unchanged vendor grouped GEMM. Stable local/remote expert
+ordering, int64 local offsets, int32 inverse metadata, a zero-filled remote
+activation tail, and F32 weighted combine are public semantics. Routing
+softmax, collectives, shared-expert policy, and grouped GEMM remain outside the
+operator.
+
+The complete tensor contract, expert-parallel ordering rule, vertical code
+path, direct H20 results, and explicit vLLM/Cutlass engine gate are documented in
+[MoE movement around vendor grouped GEMM](moe-movement.md).
+
 ## Operator Contract
 
 Every operator contract must make these properties explicit:

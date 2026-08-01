@@ -38,6 +38,12 @@ from .ops.norm import (
     supports_rms_norm_dynamic_fp8,
     supports_rms_norm_dynamic_int8,
 )
+from .ops.moe import (
+    moe_combine,
+    moe_permute,
+    supports_moe_combine,
+    supports_moe_permute,
+)
 from .ops.rope_kv import (
     rope_paged_kv_write_,
     supports_rope_paged_kv_write,
@@ -83,6 +89,8 @@ __all__ = [
     "launch_count",
     "logits_preprocess_",
     "min_p_filter_",
+    "moe_combine",
+    "moe_permute",
     "paged_decode_attention",
     "paged_decode_attention_out",
     "reset_launch_count",
@@ -107,6 +115,8 @@ __all__ = [
     "supports_greedy_speculative_verify",
     "supports_logits_preprocess",
     "supports_min_p_filter",
+    "supports_moe_combine",
+    "supports_moe_permute",
     "supports_paged_decode_attention",
     "supports_rms_norm",
     "supports_rms_norm_dynamic_fp8",

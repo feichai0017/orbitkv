@@ -28,6 +28,22 @@ STABLE_TORCH_LIBRARY(loom_kernels, library) {
       "silu_and_mul_dynamic_per_token_int8(Tensor(a!) result, Tensor input, "
       "Tensor(b!) scale) -> ()");
   library.def(
+      "moe_permute(Tensor hidden_states, Tensor topk_ids, int num_experts, "
+      "int num_local_experts, Tensor? expert_map=None) -> (Tensor "
+      "permuted_hidden_states, Tensor expert_offsets, Tensor "
+      "inverse_permutation, Tensor permuted_assignment_ids)");
+  library.def(
+      "moe_permute.out(Tensor hidden_states, Tensor topk_ids, int "
+      "num_experts, int num_local_experts, Tensor? expert_map, Tensor(a!) "
+      "permuted_hidden_states, Tensor(b!) expert_offsets, Tensor(c!) "
+      "inverse_permutation, Tensor(d!) permuted_assignment_ids) -> ()");
+  library.def(
+      "moe_combine(Tensor expert_outputs, Tensor routing_weights, Tensor "
+      "inverse_permutation, Tensor expert_offsets) -> Tensor output");
+  library.def(
+      "moe_combine.out(Tensor expert_outputs, Tensor routing_weights, Tensor "
+      "inverse_permutation, Tensor expert_offsets, Tensor(a!) output) -> ()");
+  library.def(
       "categorical_sample(Tensor probabilities, Tensor(a!) rng_state) -> "
       "Tensor token_ids");
   library.def(

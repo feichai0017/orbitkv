@@ -24,6 +24,8 @@ _silu_and_mul_dynamic_fp8 = (
 _silu_and_mul_dynamic_int8 = (
     torch.ops.loom_kernels.silu_and_mul_dynamic_per_token_int8.default
 )
+_moe_permute = torch.ops.loom_kernels.moe_permute.default
+_moe_combine = torch.ops.loom_kernels.moe_combine.default
 _categorical_sample = torch.ops.loom_kernels.categorical_sample.default
 _greedy_sample_logprobs = torch.ops.loom_kernels.greedy_sample_logprobs.default
 _selected_token_logprobs = (

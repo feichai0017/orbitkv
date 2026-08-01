@@ -147,6 +147,20 @@ def min_p_filter_(*args: Any, **kwargs: Any) -> Any:
     return implementation(*args, **kwargs)
 
 
+def moe_permute(*args: Any, **kwargs: Any) -> Any:
+    """Lazily group MoE assignments for vendor grouped GEMM."""
+    from .torch_ops import moe_permute as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def moe_combine(*args: Any, **kwargs: Any) -> Any:
+    """Lazily invert and weight MoE expert-major outputs."""
+    from .torch_ops import moe_combine as implementation
+
+    return implementation(*args, **kwargs)
+
+
 def paged_decode_attention(*args: Any, **kwargs: Any) -> Any:
     """Lazily execute base paged MQA/GQA decode attention."""
     from .torch_ops import paged_decode_attention as implementation
@@ -212,6 +226,8 @@ __all__ = [
     "greedy_speculative_verify",
     "logits_preprocess_",
     "min_p_filter_",
+    "moe_combine",
+    "moe_permute",
     "native_build_info",
     "paged_decode_attention",
     "paged_decode_attention_out",

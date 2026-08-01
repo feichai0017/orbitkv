@@ -104,6 +104,12 @@ export const supportedOperators = [
     boundary: "Ragged acceptance + mismatch/bonus-token compaction",
     status: "supported",
   },
+  {
+    name: "MoE permutation + combine",
+    dtypes: "Permute F32/FP16/BF16/FP8 · combine F32/FP16/BF16",
+    boundary: "Caller-owned expert-major movement around unchanged vendor grouped GEMM",
+    status: "supported",
+  },
 ];
 
 export const nextOperators = [
@@ -114,8 +120,8 @@ export const nextOperators = [
   },
   {
     milestone: "K5 · P1",
-    name: "MoE routing + movement",
-    reason: "Own routing, histogram/prefix sum, permutation, and combine while grouped GEMM stays vendor-owned.",
+    name: "MoE production profile",
+    reason: "The vLLM/Cutlass path is admitted; profile a pinned production workload before adding routing. Grouped GEMM stays vendor-owned.",
   },
   {
     milestone: "K3 · Gated",
@@ -259,5 +265,23 @@ export const evidence = [
     shape: "Qwen2.5 1.5B target + 0.5B draft · batch 1 / 8 / 32",
     result: "0.048–0.200%",
     detail: "Verifier share of batch latency; exact native/Loom path, no end-to-end win",
+  },
+  {
+    operator: "MoE movement",
+    shape: "BF16 H4096 · top-k 2 · 64 experts · 1–2,048 tokens",
+    result: "0.962–1.163× graph",
+    detail: "Exact vLLM movement metadata; direct boundary only, grouped GEMM excluded",
+  },
+  {
+    operator: "MoE expert-parallel movement",
+    shape: "64 global / 32 local experts · 32–2,048 tokens",
+    result: "1.013–1.191× graph",
+    detail: "Exact local rows/metadata plus a Loom-defined zero remote tail",
+  },
+  {
+    operator: "vLLM MoE engine admission",
+    shape: "Synthetic Qwen2-MoE · Cutlass FP8 · batch 8",
+    result: "Exact · 48 / 48 hits",
+    detail: "1.0205× median ratio; grouped GEMM unchanged, no production-model claim",
   },
 ];

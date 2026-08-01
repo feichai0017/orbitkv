@@ -19,10 +19,12 @@ integration for [Loom Kernels](https://github.com/feichai0017/loom-kernels).
 > qualification proves distribution and framework compatibility, not exact
 > model output, default admission, or a stable performance win.
 >
-> Current source is bridge ABI11 with nineteen operators and adds experimental
-> SiLU-and-Mul-to-dynamic-INT8. It has no ABI10 compatibility shim. H20 source,
-> real W8A8 path, and exact-quality gates pass, but measured performance rejects
-> default admission. Its separate ABI11 clean-wheel matrix passes.
+> Current source is bridge ABI12 with twenty-one operators and no ABI11
+> compatibility shim. It adds `moe_permute` and `moe_combine` around vendor
+> grouped GEMM. H20 source matrices, direct movement gates, and an explicit
+> vLLM 0.25.1 Cutlass engine-admission gate pass; an ABI12 clean-wheel matrix
+> and production-workload MoE performance gate remain open. The qualified
+> distributable artifact is still the ABI11 predecessor above.
 
 ## Qualified artifact
 
@@ -114,8 +116,9 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 bridge, builds the boxed LibTorch Stable ABI dispatcher, rejects ATen/c10 C++
 and raw CUDA-launch dependencies, verifies `$ORIGIN` loading, writes the
 revision/toolkit/SM/runtime manifest, and checks the final archive contains
-exactly the two Loom `.so` files. The exact `afc54c4` ABI11 artifact passes the
-repository-free matrix, has SHA256
+exactly the two Loom `.so` files. The current checkout emits an ABI12-tagged
+artifact that has not completed clean-install qualification. The exact
+`afc54c4` ABI11 predecessor passes the repository-free matrix, has SHA256
 `20402f02c44f17646c45b71ae279c702748458ad5de5b970570f0c3ce314f3c6`, and
 remains unpublished.
 
@@ -139,7 +142,7 @@ Source checkouts discover the paired libraries only under repository
 Every operator, including padded logits and strided paged-cache views, enters
 checked borrowed Rust dispatch. There is no ctypes, ATen dispatcher twin, or
 direct raw-CUDA framework path. Both source libraries must be rebuilt together:
-the current ABI11 dispatcher rejects an ABI10 bridge instead of retaining a
+the current ABI12 dispatcher rejects an ABI11 bridge instead of retaining a
 compatibility shim.
 
 ## Direct PyTorch use
@@ -154,6 +157,8 @@ from loom_kernels import (
     greedy_speculative_verify,
     logits_preprocess_,
     min_p_filter_,
+    moe_combine,
+    moe_permute,
     rms_norm_dynamic_fp8,
     rms_norm_dynamic_int8,
     rope_paged_kv_write_,
@@ -178,6 +183,19 @@ int8_output, token_scales = rms_norm_dynamic_int8(
 )
 mlp_int8_output, mlp_token_scales = silu_and_mul_dynamic_int8(
     gate_and_up_bf16,
+)
+
+permuted, expert_offsets, inverse, assignment_ids = moe_permute(
+    hidden_bf16,
+    topk_expert_ids_i32,
+    num_experts=64,
+)
+expert_outputs = engine_grouped_gemm(permuted, expert_offsets)
+moe_output = moe_combine(
+    expert_outputs,
+    routing_weights_f32,
+    inverse,
+    expert_offsets,
 )
 
 token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
@@ -295,7 +313,18 @@ and [wheel evidence](../docs/results/h20-native-wheel-clean-install-abi11-202608
 | Position and KV | `rope_paged_kv_write_` for native or static FP8 E4M3 paged caches |
 | Decode tail | `logits_preprocess_`, `greedy_sample_logprobs`, `selected_token_logprobs`, `top_k_filter_`, `top_p_renorm_`, `topk_sampled_logprobs`, `min_p_filter_`, `apply_token_penalties_` |
 | Speculative decode | `greedy_speculative_verify` |
+| MoE movement | `moe_permute`, `moe_combine` |
 | Attention | `paged_decode_attention`, `paged_decode_attention_out` |
+
+MoE permutation accepts F32/FP16/BF16/FP8 E4M3FN activations, while weighted
+combine accepts F32/FP16/BF16 expert outputs, int32 top-k IDs and optional
+expert maps, and F32 routing weights. It emits vLLM-compatible grouped-GEMM
+offset/inverse metadata while leaving grouped GEMM to the engine. Allocating
+Python entry points and standard caller-owned `torch.ops.loom_kernels.*.out`
+overloads share one implementation. Direct H20 evidence and an explicit
+vLLM/Cutlass engine-admission gate are qualified; the synthetic checkpoint does
+not establish production-model speedup. See the
+[MoE movement design](../docs/design/moe-movement.md).
 
 The base paged-decode API accepts one contiguous `[B, Hq, D]` query,
 dense-inner NHD paged K/V views, and contiguous int32 block tables and sequence
@@ -323,6 +352,7 @@ into this contract.
 | Experimental optional-residual RMSNorm→dynamic INT8 | `LOOM_KERNELS_ENABLE_RMS_NORM_INT8=1` |
 | RoPE+paged-KV compiler pass | `configure_vllm_rope_paged_kv(...)` |
 | Short paged decode | `LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1` |
+| MoE permutation/combine around vendor GEMM | `LOOM_KERNELS_ENABLE_MOE_MOVEMENT=1` |
 | Mixed-sampling logits preprocessing | `register_vllm_logits_preprocess()` |
 | Explicit-seed categorical sampling | `register_vllm_categorical_sample()` |
 | Greedy sampled logprob | `register_vllm_greedy_sample_logprobs()` |
@@ -335,6 +365,13 @@ into this contract.
 Every route checks its exact dtype, shape, layout, and semantic contract.
 Shape-gated routes run the original vLLM path instead of copying, casting, or
 reshaping into eligibility.
+
+The MoE opt-in replaces only vLLM's production `moe_permute` and
+`moe_unpermute` wrappers for admitted contracts. It reuses vLLM caller-owned
+scratch/output tensors, preserves per-token FP8 scale reordering, and patches
+already-imported Cutlass/Humming consumers without changing their grouped-GEMM
+functions or weights. Unsupported contracts use the original vLLM wrapper
+before admission; an admitted Loom launch is fail-closed.
 
 Categorical registration is instead an engine-lifetime semantic choice. Every
 random request must have an explicit non-negative signed-int64 seed and

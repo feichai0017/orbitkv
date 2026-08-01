@@ -13,7 +13,9 @@ RMSNorm, Add+RMSNorm, optional-residual RMSNorm+dynamic FP8/INT8,
 SiLU-and-Mul, SiLU-and-Mul+dynamic block FP8/per-token INT8, RoPE+paged-KV
 write, paged decode attention, logits preprocessing, explicit-state
 categorical sampling, greedy/selected/top-k logprobs, top-k/top-p/Min-P
-filtering, sparse token penalties, and greedy speculative verification.
+filtering, sparse token penalties, greedy speculative verification, and
+FP8-capable MoE permutation plus F32/FP16/BF16 combine around vendor grouped
+GEMM.
 Explicit layout descriptors cover padded logits, strided Q/K/V tensors,
 native paged caches, and base or split-K decode. The split-K decision remains
 inside safe Rust dispatch.

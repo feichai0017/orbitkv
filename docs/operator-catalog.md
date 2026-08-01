@@ -45,7 +45,7 @@ isolated microbenchmark is not sufficient.
 | --- | --- | --- | --- |
 | split-half SiLU-and-Mul (SwiGLU) | P0 | supported | standard Llama/Qwen MLP activation |
 | SiLU-and-Mul+dynamic per-block FP8 | P0 | supported | activation directly into FP8 down projection |
-| SiLU-and-Mul+dynamic per-token INT8 | P0 | profile-gated | ABI11 source, exact real W8A8 path, 32-prompt quality, and clean-wheel gates pass before unchanged vendor INT8 GEMM; compiled/engine performance rejects default admission and any speedup claim |
+| SiLU-and-Mul+dynamic per-token INT8 | P0 | profile-gated | qualified ABI11 wheel, exact real W8A8 path, 32-prompt quality, and clean-wheel gates pass before unchanged vendor INT8 GEMM; compiled/engine performance rejects default admission and any speedup claim |
 | GELU, GELU-tanh, GELU-and-Mul, GeGLU, ReGLU | P1 | planned | model-specific gated MLPs |
 | bias+activation and bias+gated activation | P1 | planned | GEMM output epilogues |
 | vendor GEMM handoff+bias+activation/quantization | P0 | vendor-backed | unchanged cuBLASLt/CUTLASS matrix core with a measured Loom pre/post boundary |
@@ -95,8 +95,8 @@ isolated microbenchmark is not sufficient.
 | Operator | Priority | State | Intended fusion boundary |
 | --- | --- | --- | --- |
 | softmax/sigmoid top-k routing and grouped top-k | P1 | planned | score, select, renormalize, and expert map |
-| expert histogram, prefix sum, token permutation, and alignment | P1 | planned | dispatch preparation without host work |
-| inverse permutation and weighted expert reduction | P1 | planned | combine routed expert outputs |
+| stable expert-major permutation, local offsets, and inverse metadata | P1 | supported | vLLM-compatible grouped-GEMM input with zero-filled expert-parallel remote tail |
+| inverse permutation and weighted expert reduction | P1 | supported | F32 route accumulation after unchanged vendor grouped GEMM |
 | grouped GEMM and quantized grouped GEMM | — | vendor-backed | explicitly engine-owned vendor matrix core fed by Loom-permuted buffers |
 | shared-expert gate and routed/shared output fusion | P1 | planned | reduce temporary expert tensors |
 
@@ -133,8 +133,9 @@ the boundary or an isolated implementation is measurably useful.
 
 ## Implementation Order
 
-1. Add MoE routing, histogram/prefix sum, permutation, and combine; grouped
-   GEMM remains entirely engine/vendor-owned.
+1. Profile the now-qualified vLLM/Cutlass MoE movement route on a pinned,
+   production-representative workload; add routing only when that profile
+   shows it is material. Grouped GEMM remains entirely engine/vendor-owned.
 2. Revisit KV block movement only for a named offload, beam, or compaction
    call site. Default vLLM prefix reuse and preemption are rejected because
    the measured path performs no physical copy.
@@ -144,9 +145,9 @@ the boundary or an isolated implementation is measurably useful.
 4. Reopen static FP8 KV-cache system qualification only for a distinct pinned
    model, backend, or representation that first passes the held-out quality
    gate.
-6. Build the engine-neutral Rust decode proof after one new feature reaches an
+5. Build the engine-neutral Rust decode proof after one new feature reaches an
    engine.
-7. Broaden paged decode or communication-aware fusion only when profiling and
+6. Broaden paged decode or communication-aware fusion only when profiling and
    reproducible engine workloads justify it.
 
 Every item advances independently through the admission gates in the

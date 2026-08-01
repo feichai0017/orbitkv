@@ -31,6 +31,8 @@ class Operator(IntEnum):
     CATEGORICAL_SAMPLE = 16
     RMS_NORM_DYNAMIC_INT8 = 17
     SILU_AND_MUL_DYNAMIC_INT8 = 18
+    MOE_PERMUTE = 19
+    MOE_COMBINE = 20
 
 
 def _operator_id(operator: Operator) -> int:

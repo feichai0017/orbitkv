@@ -210,9 +210,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         the qualified wheel, but exact quality, stable engine benefit, and
         default admission remain open. ABI11 adds exact compiled
         SiLU-and-Mul-to-INT8 execution and clean-wheel coverage, while measured
-        performance rejects default admission. Quantization plumbing and MoE
-        routing stay next. FP8 KV, physical movement, tree, stochastic, and
-        speculative-KV work remain profile-gated.
+        performance rejects default admission. Current ABI12 adds stable MoE
+        permutation and combine: source matrices pass, direct H20 CUDA Graph
+        ratios reach 1.163× all-local and 1.191× expert-parallel, and an
+        isolated vLLM/Cutlass gate records exact tokens plus 48/48 movement
+        hits while leaving grouped GEMM unchanged. Its synthetic 1.0205× ratio
+        is engine-admission evidence, not a production-model speedup. The
+        ABI12 clean wheel stays open. FP8 KV, physical movement, routing, tree,
+        stochastic, and speculative-KV work remain profile-gated.
       </p>
     </header>
 

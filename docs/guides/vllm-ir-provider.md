@@ -34,6 +34,15 @@ Every measured CUDA Graph boundary ratio is below parity and engine latency is
 not order-stable, so the route stays disabled by default with no speedup claim;
 the separate ABI11 clean-wheel matrix passes.
 
+Bridge ABI12 adds stable MoE permutation and weighted combine around vLLM's
+unchanged vendor grouped GEMM boundary. Source matrices and direct H20 movement
+comparisons pass, including expert-parallel remote metadata. An explicit
+adapter now reuses vLLM caller-owned scratch/output tensors in its
+Cutlass/Humming movement wrappers. An isolated vLLM 0.25.1
+`LLM.generate` gate records exact tokens and `48/48` Loom movement hits over a
+synthetic Qwen2-MoE checkpoint. That qualifies engine admission, not a
+production-model speedup.
+
 A third opt-in uses the existing RoPE+KV compiler fusion pass in vLLM 0.24 and
 0.25 with Loom's CUDA implementation for FlashAttention and FlashInfer native
 or static FP8 E4M3 caches. It preserves packed-QKV token/head strides, NHD or
@@ -123,6 +132,8 @@ See the
 [compatibility matrix](../compatibility.md) and
 [ABI11 cross-matrix gate](../results/h20-native-wheel-clean-install-abi11-20260801.json).
 ABI10 and earlier wheels remain immutable historical evidence.
+Current ABI12 source passes 359 tests with each supported vLLM minor plus 245
+applicable tests on PyTorch 2.10, but its clean-install matrix is still open.
 
 ## Build and install
 
@@ -142,7 +153,7 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-11cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
+  'dist/loom_kernels-1.0.0a1-12cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]' \
   'vllm>=0.24,<0.26'
 ```
 
@@ -155,8 +166,9 @@ into safe borrowed dispatch. There is no Python/ctypes fallback, ATen
 dispatcher twin, unchecked twin, direct C++-to-CUDA route, or external
 dispatcher override.
 
-The build and install commands above name the qualified ABI11 shape. The exact
-artifact is tied to manifest revision `afc54c4` and SHA256
+The build and install commands above name the current ABI12 source shape; its
+clean-install matrix is not yet qualified. The latest qualified ABI11
+predecessor is tied to manifest revision `afc54c4` and SHA256
 `20402f02c44f17646c45b71ae279c702748458ad5de5b970570f0c3ce314f3c6`; its
 repository-free matrix covers PyTorch 2.10/2.11 and both supported vLLM
 minors. It is not published to a package index.
@@ -180,6 +192,8 @@ output, updated_residual = add_rms_norm_(
 from loom_kernels import (
     greedy_sample_logprobs,
     greedy_speculative_verify,
+    moe_combine,
+    moe_permute,
     paged_decode_attention_out,
     rms_norm_dynamic_int8,
     rope_paged_kv_write_,
@@ -205,6 +219,14 @@ int8_output, token_scales = rms_norm_dynamic_int8(
     norm_weight_bf16,
     epsilon=1.0e-6,
     residual=residual_bf16,
+)
+
+permuted, expert_offsets, inverse, assignment_ids = moe_permute(
+    hidden_bf16, topk_expert_ids_i32, num_experts=64
+)
+expert_outputs = engine_grouped_gemm(permuted, expert_offsets)
+moe_output = moe_combine(
+    expert_outputs, routing_weights_f32, inverse, expert_offsets
 )
 
 token_ids, sampled_logprobs, sampled_ranks = greedy_sample_logprobs(logits)
@@ -279,6 +301,32 @@ engine = LLM(
 vLLM appends its native fallback to the priority list. Loom declines tensors
 outside its contiguous same-dtype contract, weighted RMSNorm calls without a
 normal variance size, and unsupported devices.
+
+To replace only the memory-bound movement around vLLM's selected vendor MoE
+backend, opt in before model import or construction:
+
+```bash
+LOOM_KERNELS_ENABLE_MOE_MOVEMENT=1 python your_vllm_service.py
+```
+
+Embedding code can instead call
+`loom_kernels.vllm.register_vllm_moe_movement()` before model construction.
+The admitted permutation inputs are contiguous CUDA F32/FP16/BF16/FP8 E4M3FN
+activations with int32 top-k IDs; weighted combine accepts F32/FP16/BF16 expert
+outputs and F32 route weights. The adapter preserves per-token FP8 scale
+reordering, reuses vLLM `MoEPermuteScratch` and output tensors through standard
+`.out` overloads, and updates already-imported Cutlass/Humming movement
+consumers. It never replaces their grouped-GEMM functions, expert weights, or
+routing policy. Unsupported contracts use the original vLLM wrappers before
+admission; launch failure after admission is not silently hidden by fallback.
+
+The [H20 engine gate](../results/h20-vllm-engine-moe-movement-20260801.json)
+uses isolated baseline/Loom processes, vLLM 0.25.1 `fp8_per_channel`, and
+`VLLM_CUTLASS` over a synthetic two-layer Qwen2-MoE checkpoint. It preserves
+all generated token IDs, records 48 permute and 48 combine hits with no
+rejection, and measures a `1.0205x` median batch-latency ratio. Treat this as
+path and semantic qualification only; a random tiny model does not prove
+production workload or serving value.
 
 To replace vLLM's standard SwiGLU layer as well, opt in before the engine
 process starts:
@@ -1135,6 +1183,9 @@ and [custom-operator contract](https://docs.pytorch.org/docs/stable/library.html
 - the first native artifact is qualified only for Linux x86_64, CUDA 13.1,
   SM90, and H20 Python 3.11; it is not published;
 - inference-only mutation, with no autograd implementation;
+- ABI12 MoE permutation/combine has direct and explicit vLLM/Cutlass engine
+  gates. Routing replacement, production-model/serving qualification, and an
+  ABI12 clean-install wheel remain open;
 - one selectable IR provider (`fused_add_rms_norm`), one opt-in out-of-tree
   layer replacement (`SiluAndMul`), and one vLLM-version-specific
   activation-quant fusion-table replacement, one optional-residual

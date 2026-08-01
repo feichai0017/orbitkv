@@ -126,6 +126,25 @@ impl<S: CudaStreamHandle> Backend for CudaBackend<S> {
             OperatorSpec::MinPFilter(_) => {
                 Support::Unsupported("CUDA min-p filtering supports F32, FP16, and BF16 logits")
             }
+            OperatorSpec::MoePermute(spec)
+                if matches!(
+                    spec.dtype(),
+                    DType::F32 | DType::F16 | DType::Bf16 | DType::Fp8E4M3Fn
+                ) =>
+            {
+                Support::Supported
+            }
+            OperatorSpec::MoePermute(_) => Support::Unsupported(
+                "CUDA MoE permutation supports F32, FP16, BF16, and FP8 E4M3FN",
+            ),
+            OperatorSpec::MoeCombine(spec)
+                if matches!(spec.dtype(), DType::F32 | DType::F16 | DType::Bf16) =>
+            {
+                Support::Supported
+            }
+            OperatorSpec::MoeCombine(_) => {
+                Support::Unsupported("CUDA MoE combine supports F32, FP16, and BF16")
+            }
             OperatorSpec::GreedySpeculativeVerify(_) => Support::Supported,
             OperatorSpec::PagedDecodeAttention(spec)
                 if crate::attention_dispatch::supports_spec(*spec) =>

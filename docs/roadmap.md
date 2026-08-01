@@ -445,17 +445,46 @@ explicitly does not close the performance clause.
 
 ## K5: MoE Routing And Movement
 
-Status: planned.
+Status: in progress; the direct movement boundary and an explicit vLLM/Cutlass
+engine route are qualified, while a production-workload exit remains open.
 
-- top-k routing, renormalization, and expert mapping;
-- token histogram, prefix sum, permutation, and inverse permutation;
-- caller-owned metadata and buffer handoff into the engine-selected grouped
-  GEMM, with no Loom matrix implementation;
-- weighted expert-output reduction and shared/routed output fusion when they
-  remove measured memory traffic.
+- top-k routing and renormalization remain a separate profile-driven slice;
+- ~~stable expert-major permutation, local offsets, inverse permutation, and
+  expert mapping~~ — Rust oracles, F32/FP16/BF16 plus byte-exact FP8 E4M3FN
+  permutation, expert-parallel remote ordering, and exact vLLM
+  production-scratch metadata are complete;
+- ~~caller-owned metadata/workspace handoff into the engine-selected grouped
+  GEMM, with no Loom matrix implementation~~ — safe Rust and ABI12 expose this
+  boundary; the PyTorch convenience API owns only its explicit outputs and
+  byte workspace;
+- ~~weighted expert-output reduction~~ — F32 route accumulation with one final
+  dtype conversion is complete; shared/routed output fusion remains planned
+  only if a real engine profile shows removable traffic.
+- ~~explicit vLLM movement admission without replacing grouped GEMM~~ — the
+  opt-in adapter reuses vLLM caller-owned scratch/output tensors, routes only
+  supported Cutlass/Humming contracts, records hits/rejections, and fails
+  closed after an admitted Loom launch.
 
-Exit: routing and movement reduce model-level MoE latency on a named engine.
-The vendor grouped GEMM is identical on both sides of the comparison.
+The [all-local](results/h20-moe-movement-20260801.json) and
+[expert-parallel](results/h20-moe-movement-ep-20260801.json) H20 gates compare
+the complete permute-plus-combine pipeline with vLLM 0.25.1 while keeping
+grouped GEMM absent from both sides. CUDA Graph ratios span `0.962-1.163x` for
+the all-local 1-2,048-token sweep and `1.013-1.191x` for the 64-global/32-local
+32-2,048-token sweep. Source matrices pass vLLM 0.24/0.25 and PyTorch 2.10/2.11.
+This is operator-boundary evidence, not a model claim.
+
+The [vLLM engine gate](results/h20-vllm-engine-moe-movement-20260801.json)
+runs isolated baseline and Loom `LLM.generate` processes over a synthetic
+two-layer Qwen2-MoE checkpoint with vLLM 0.25.1 `fp8_per_channel` and the
+Cutlass backend. Generated token IDs are exact; the Loom process records 48
+FP8 permutation and 48 BF16 combine hits through caller-owned tensors with no
+rejection, while grouped GEMM remains vLLM-owned. The median ratio is
+`1.0205x`. This closes explicit engine admission only: a random tiny checkpoint
+does not establish production-model, serving, or routing value.
+
+Exit: a pinned production-representative MoE workload shows that movement, and
+routing only if profiling admits it, reduce model-level latency on a named
+engine. The vendor grouped GEMM is identical on both sides of the comparison.
 
 ## K6: Attention
 

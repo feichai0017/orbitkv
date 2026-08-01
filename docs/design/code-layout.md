@@ -55,6 +55,7 @@ layer file also starts with a module comment that states its responsibility.
 | logits processing | `logits.rs` | `logits_dispatch.rs` | `cuda/logits_bridge.rs` | `min_p.cu` · `logits_preprocess.cu` | `logits.cpp` | `vllm/logits.py` |
 | sampling and log probabilities | `sampling.rs` | `sampling_dispatch.rs` | `cuda/sampling_bridge.rs` | `categorical_sample.cu` · `sample_logprobs.cu` · `top_k_filter.cu` · `top_p_renorm.cu` · `token_penalties.cu` | `sampling.cpp` | `vllm/sampling.py` for stateless tails; `vllm/categorical.py` for persistent request RNG state |
 | speculative decoding | `speculative.rs` | `speculative_dispatch.rs` | `cuda/speculative_bridge.rs` | `greedy_speculative_verify.cu` | `speculative.cpp` | `vllm/speculative.py` |
+| MoE movement | `moe.rs` | `moe_dispatch.rs` | `cuda/moe_bridge.rs` | `moe.cu` | `moe.cpp` | `vllm/moe.py` |
 | RoPE and KV write | `rope_kv.rs` | `rope_kv_dispatch.rs` | `cuda/rope_kv_bridge.rs` | `rope_paged_kv.cu` | `rope_kv.cpp` | `vllm/rope_kv.py` |
 | decode attention | `attention.rs` | `attention_dispatch.rs` | `cuda/attention_bridge.rs` | `paged_decode_attention.cu` | `attention.cpp` | `vllm/attention.py` |
 

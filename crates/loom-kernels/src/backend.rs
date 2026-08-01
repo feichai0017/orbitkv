@@ -3,6 +3,7 @@
 use crate::activation::{SiluAndMulDynamicFp8Spec, SiluAndMulDynamicInt8Spec, SiluAndMulSpec};
 use crate::attention::PagedDecodeAttentionSpec;
 use crate::logits::MinPFilterSpec;
+use crate::moe::{MoeCombineSpec, MoePermuteSpec};
 use crate::norm::{AddRmsNormSpec, RmsNormDynamicFp8Spec, RmsNormDynamicInt8Spec, RmsNormSpec};
 use crate::rope_kv::{RopePagedKvWriteSpec, RotaryEmbeddingSpec};
 use crate::sampling::{GreedySampleLogprobsSpec, SelectedTokenLogprobsSpec};
@@ -21,6 +22,8 @@ pub enum OperatorSpec {
     GreedySampleLogprobs(GreedySampleLogprobsSpec),
     SelectedTokenLogprobs(SelectedTokenLogprobsSpec),
     MinPFilter(MinPFilterSpec),
+    MoePermute(MoePermuteSpec),
+    MoeCombine(MoeCombineSpec),
     GreedySpeculativeVerify(GreedySpeculativeVerifySpec),
     PagedDecodeAttention(PagedDecodeAttentionSpec),
     RotaryEmbedding(RotaryEmbeddingSpec),

@@ -209,6 +209,57 @@ pub enum ContractError {
         row_id: i32,
         token_id: i32,
     },
+    MoeTopKOutOfRange {
+        top_k: usize,
+        num_experts: usize,
+    },
+    MoeExpertCountOutOfRange {
+        num_experts: usize,
+    },
+    MoeLocalExpertCountOutOfRange {
+        num_local_experts: usize,
+        num_experts: usize,
+    },
+    MoeExpertMapRequired {
+        num_local_experts: usize,
+        num_experts: usize,
+    },
+    MoeExpertMapPresenceMismatch {
+        expected: bool,
+    },
+    MoeAssignmentCountOutOfRange {
+        assignments: usize,
+    },
+    MoeExpertIdOutOfRange {
+        assignment: usize,
+        expert_id: i32,
+        num_experts: usize,
+    },
+    MoeExpertMapOutOfRange {
+        global_expert: usize,
+        local_expert: i32,
+        num_local_experts: usize,
+    },
+    MoeRoutingWeightNotFinite {
+        assignment: usize,
+        weight: f32,
+    },
+    MoeExpertOffsetOutOfRange {
+        expert: usize,
+        previous: i64,
+        current: i64,
+        assignments: usize,
+    },
+    MoePermutationIndexOutOfRange {
+        assignment: usize,
+        permuted_row: i32,
+        assignments: usize,
+    },
+    MoeDuplicatePermutationIndex {
+        first_assignment: usize,
+        second_assignment: usize,
+        permuted_row: usize,
+    },
     InvalidScale(f32),
     HeadCountNotDivisible {
         query_heads: usize,
@@ -416,6 +467,81 @@ impl fmt::Display for ContractError {
             } => write!(
                 formatter,
                 "logit bias entries {first_entry} and {second_entry} both target row {row_id}, token {token_id}"
+            ),
+            Self::MoeTopKOutOfRange { top_k, num_experts } => write!(
+                formatter,
+                "MoE top-k must be in [1, {num_experts}], got {top_k}"
+            ),
+            Self::MoeExpertCountOutOfRange { num_experts } => write!(
+                formatter,
+                "MoE global expert count {num_experts} does not fit int32 expert IDs"
+            ),
+            Self::MoeLocalExpertCountOutOfRange {
+                num_local_experts,
+                num_experts,
+            } => write!(
+                formatter,
+                "MoE local expert count {num_local_experts} exceeds global expert count {num_experts}"
+            ),
+            Self::MoeExpertMapRequired {
+                num_local_experts,
+                num_experts,
+            } => write!(
+                formatter,
+                "MoE expert map is required when local expert count {num_local_experts} differs from global expert count {num_experts}"
+            ),
+            Self::MoeExpertMapPresenceMismatch { expected } => write!(
+                formatter,
+                "MoE expert-map presence does not match the contract; expected={expected}"
+            ),
+            Self::MoeAssignmentCountOutOfRange { assignments } => write!(
+                formatter,
+                "MoE flattened assignment count {assignments} does not fit int32"
+            ),
+            Self::MoeExpertIdOutOfRange {
+                assignment,
+                expert_id,
+                num_experts,
+            } => write!(
+                formatter,
+                "MoE expert ID {expert_id} at assignment {assignment} is outside [0, {num_experts})"
+            ),
+            Self::MoeExpertMapOutOfRange {
+                global_expert,
+                local_expert,
+                num_local_experts,
+            } => write!(
+                formatter,
+                "MoE expert-map value {local_expert} for global expert {global_expert} is outside [-1, {num_local_experts})"
+            ),
+            Self::MoeRoutingWeightNotFinite { assignment, weight } => write!(
+                formatter,
+                "MoE routing weight {weight} at assignment {assignment} must be finite"
+            ),
+            Self::MoeExpertOffsetOutOfRange {
+                expert,
+                previous,
+                current,
+                assignments,
+            } => write!(
+                formatter,
+                "MoE expert offset {current} at boundary {expert} is invalid after {previous}; assignment capacity is {assignments}"
+            ),
+            Self::MoePermutationIndexOutOfRange {
+                assignment,
+                permuted_row,
+                assignments,
+            } => write!(
+                formatter,
+                "MoE inverse permutation row {permuted_row} at assignment {assignment} is outside [0, {assignments})"
+            ),
+            Self::MoeDuplicatePermutationIndex {
+                first_assignment,
+                second_assignment,
+                permuted_row,
+            } => write!(
+                formatter,
+                "MoE assignments {first_assignment} and {second_assignment} both map to permuted row {permuted_row}"
             ),
             Self::InvalidScale(value) => write!(
                 formatter,

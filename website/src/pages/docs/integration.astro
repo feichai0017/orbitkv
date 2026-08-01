@@ -57,26 +57,24 @@ CUDA_HOME=/usr/local/cuda-13.1 LOOM_CUDA_ARCHS=90 \
 
 python3 -m venv .venv-vllm
 .venv-vllm/bin/pip install \
-  'dist/loom_kernels-1.0.0a1-11cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]'</code></pre>
+  'dist/loom_kernels-1.0.0a1-12cu131torch210sm90-py3-none-linux_x86_64.whl[vllm,test]'</code></pre>
       <p>
-        The qualified bridge ABI11 wheel contains exactly the Rust-owned
+        The current bridge ABI12 build contains exactly the Rust-owned
         <code>libloom_cuda_bridge.so</code> and boxed
         <code>libloom_kernels_torch.so</code> Stable ABI dispatcher. Its
         manifest binds the Git revision, CUDA toolkit, SM targets, PyTorch
         range, bridge ABI, and library hashes. Installed packages load only
-        this package-local pair. ABI11 includes experimental RMSNorm- and
-        SiLU-and-Mul-to-dynamic-INT8 paths and is H20 matrix-qualified across
-        PyTorch 2.10/2.11 and vLLM 0.24/0.25; it includes all nineteen
-        semantic operators and is
-        not published to a package index. INT8 quality/default/performance
-        admission remains separate.
+        this package-local pair. ABI12 includes twenty-one operators, adding
+        MoE permutation and combine around vendor grouped GEMM. Its source
+        matrix and explicit vLLM/Cutlass engine-admission gate pass; its
+        clean-install wheel matrix remains open.
       </p>
       <p>
-        Current source is bridge ABI11 with nineteen operators and adds the
-        experimental SiLU-and-Mul-to-dynamic-INT8 boundary. ABI11 intentionally
-        has no ABI10 compatibility shim. Its H20 source, exact real W8A8 path,
-        and quality gates pass, but performance rejects default admission and
-        its separate clean-wheel qualification passes.
+        The latest qualified wheel is the ABI11 nineteen-operator predecessor.
+        It is H20 matrix-qualified across PyTorch 2.10/2.11 and vLLM
+        0.24/0.25 but remains unpublished. ABI12 intentionally has no ABI11
+        compatibility shim; INT8 and production-workload MoE performance
+        remain separate from binary compatibility.
       </p>
 
       <h2>Call PyTorch directly</h2>
@@ -86,6 +84,8 @@ python3 -m venv .venv-vllm
     greedy_speculative_verify,
     logits_preprocess_,
     min_p_filter_,
+    moe_combine,
+    moe_permute,
     rms_norm_dynamic_int8,
     selected_token_logprobs,
     silu_and_mul_dynamic_fp8,
@@ -104,6 +104,14 @@ int8_output, token_scales = rms_norm_dynamic_int8(
     norm_weight_bf16,
     epsilon=1.0e-6,
     residual=residual_bf16,
+)
+
+permuted, offsets, inverse, assignment_ids = moe_permute(
+    hidden_bf16, topk_expert_ids_i32, num_experts=64,
+)
+expert_outputs = engine_grouped_gemm(permuted, offsets)
+moe_output = moe_combine(
+    expert_outputs, routing_weights_f32, inverse, offsets,
 )
 
 token_ids, logprobs, ranks = greedy_sample_logprobs(logits)
@@ -164,6 +172,7 @@ apply_token_penalties_(
           <tr><td>Experimental RMSNorm→INT8</td><td><code>LOOM_KERNELS_ENABLE_RMS_NORM_INT8=1</code></td></tr>
           <tr><td>RoPE+paged-KV</td><td><code>configure_vllm_rope_paged_kv(...)</code></td></tr>
           <tr><td>Short paged decode</td><td><code>LOOM_KERNELS_ENABLE_PAGED_DECODE_ATTENTION=1</code></td></tr>
+          <tr><td>MoE movement around vendor GEMM</td><td><code>LOOM_KERNELS_ENABLE_MOE_MOVEMENT=1</code></td></tr>
           <tr><td>Mixed-sampling logits preprocessing</td><td><code>register_vllm_logits_preprocess()</code></td></tr>
           <tr><td>Deterministic categorical sampling</td><td><code>register_vllm_categorical_sample()</code></td></tr>
           <tr><td>Greedy sampled logprob</td><td><code>register_vllm_greedy_sample_logprobs()</code></td></tr>
@@ -174,6 +183,16 @@ apply_token_penalties_(
           <tr><td>Sparse token penalties</td><td><code>register_vllm_token_penalties()</code></td></tr>
         </tbody>
       </table>
+
+      <p>
+        The MoE opt-in reuses vLLM caller-owned scratch and output tensors for
+        admitted FP8 permutation and BF16/FP16/F32 combine contracts. It
+        preserves scale ordering and patches only movement wrappers; Cutlass
+        or Humming grouped GEMM, expert weights, and routing remain vLLM-owned.
+        The H20 synthetic Qwen2-MoE gate preserves exact tokens and records
+        48/48 movement hits. Its 1.0205× median ratio proves admission, not a
+        production-model speedup.
+      </p>
 
       <p>
         The categorical opt-in is an engine-lifetime semantic choice. Every

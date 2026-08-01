@@ -20,6 +20,8 @@ pub use layout::{PagedDecodeLayout, RopePagedKvLayout, RowStridedLayout};
 #[cfg(feature = "cuda")]
 mod logits_dispatch;
 #[cfg(feature = "cuda")]
+mod moe_dispatch;
+#[cfg(feature = "cuda")]
 mod norm_dispatch;
 #[cfg(feature = "cuda")]
 mod rope_kv_dispatch;
@@ -35,6 +37,8 @@ pub use activation_dispatch::{Fp8ScaleLayout, SiluAndMulDynamicFp8Options};
 pub use attention_dispatch::paged_decode_attention_split_k_workspace_elements;
 #[cfg(feature = "cuda")]
 pub use cuda_backend::CudaBackend;
+#[cfg(feature = "cuda")]
+pub use moe_dispatch::moe_permute_workspace_bytes;
 
 /// Validation, availability, or CUDA launch failure.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]

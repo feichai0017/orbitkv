@@ -24,6 +24,7 @@ otherwise.
 
 | Boundary | Result set | Current conclusion |
 | --- | --- | --- |
+| Current ABI12 source boundary | [all-local MoE movement](h20-moe-movement-20260801.json) · [expert-parallel movement](h20-moe-movement-ep-20260801.json) · [vLLM engine admission](h20-vllm-engine-moe-movement-20260801.json) | Current source adds two MoE movement operators for 21 total and passes 359 tests with each vLLM minor plus 245 applicable tests on PyTorch 2.10. Direct BF16 movement passes all-local and expert-parallel gates; an isolated vLLM 0.25.1 Cutlass run over a synthetic Qwen2-MoE checkpoint records `48/48` Loom movement hits and exact tokens while leaving grouped GEMM unchanged. No ABI12 matrix wheel exists yet, and the synthetic `1.0205x` ratio is not a production-model speedup claim. |
 | Native Python ABI11 cross-matrix wheel | [current clean-install H20 gate](h20-native-wheel-clean-install-abi11-20260801.json) | Revision `afc54c4` packages all nineteen semantic operators and exactly two Loom `.so` files, then passes 342 tests with each vLLM minor plus 231 applicable tests on PyTorch 2.10 from fresh repository-free environments. It is qualified but not published. |
 | Historical ABI10 cross-matrix wheel | [pre-SiLU-INT8 clean-install H20 gate](h20-native-wheel-clean-install-abi10-20260731.json) | Revision `de28ceb` packages all eighteen operators and exactly two Loom `.so` files, then passes 326 tests with each vLLM minor plus 218 applicable tests on PyTorch 2.10. |
 | Historical ABI9 cross-matrix wheel | [pre-INT8-normalization clean-install H20 gate](h20-native-wheel-clean-install-abi9-20260727.json) | Revision `7df4133` packages all seventeen operators and exactly two Loom `.so` files, then passes 305 tests with each vLLM minor plus 201 applicable tests on PyTorch 2.10. |
@@ -87,6 +88,17 @@ trajectory while two of 32 target-only requests diverge after generated token
 51 or 53; batch 1 and 8 match fully. The reports retain those mismatches and
 make target-only equality informational. Exact native-vLLM versus Loom
 speculative output is the correctness gate.
+
+## MoE movement
+
+| Boundary | Result set | Current conclusion |
+| --- | --- | --- |
+| All experts local | [1-2,048-token H20 sweep](h20-moe-movement-20260801.json) | BF16 H4096, top-k 2, 64 experts: valid activations and all metadata match vLLM 0.25.1 exactly, combine error is zero, eager pipeline ratios are `1.24-1.37x`, and CUDA Graph ratios are `0.962-1.163x`. The 8-token case remains below parity. |
+| Expert-parallel remote tail | [64-global/32-local H20 sweep](h20-moe-movement-ep-20260801.json) | Exact local activations and full vLLM production-scratch metadata, plus Loom-defined zero remote rows. Eager ratios are `1.58-1.59x`; CUDA Graph ratios are `1.013-1.191x` at 32-2,048 tokens. Grouped GEMM is absent from both timings and remains vendor-owned. |
+
+These artifacts qualify the direct permutation/combine boundary. They do not
+prove vLLM model path hits, unchanged real-model grouped GEMM calls, or an
+end-to-end MoE latency improvement.
 
 ## Paged-decode attention
 

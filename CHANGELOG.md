@@ -62,9 +62,25 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
   the dispatcher requires the matching ABI11 bridge and retains no ABI10
   compatibility entrypoint. H20 source, real-engine, and repository-free
   matrix-wheel gates pass; ABI10 remains immutable historical evidence.
+- advanced source to bridge ABI12 for stable MoE permutation and weighted
+  combine; the dispatcher requires the matching ABI12 bridge and retains no
+  ABI11 compatibility entrypoint or MoE-free fallback. The ABI11 wheel remains
+  the latest qualified binary artifact until ABI12 clean-install gates close.
 
 ### Added
 
+- stable F32/FP16/BF16 plus byte-exact FP8 E4M3FN MoE expert-major
+  permutation and F32/FP16/BF16 weighted combine
+  around unchanged vendor grouped GEMM, including Rust contracts/oracles,
+  vLLM-compatible expert-parallel remote ordering, caller-owned safe CUDA and
+  checked bridge paths, 16-byte vectorized handwritten CUDA with scalar
+  fallback, allocating and caller-owned Stable ABI PyTorch APIs, compile/graph
+  tests, and all-local plus expert-parallel H20 named-baseline evidence. An
+  explicit vLLM 0.25.1 Cutlass adapter reaches the same operators in an
+  isolated synthetic Qwen2-MoE `LLM.generate` gate with exact tokens and
+  unchanged vendor grouped GEMM. Direct movement and engine admission are
+  qualified; production-workload routing value and ABI12 wheel qualification
+  remain open;
 - complete bridge coverage for RMSNorm, Add+RMSNorm, RMSNorm+FP8/INT8,
   SiLU-and-Mul, SiLU-and-Mul+FP8/INT8, RoPE+paged-KV, greedy/selected logprobs,
   Min-P, and base/split-K paged decode;
@@ -102,7 +118,7 @@ spelling; Python package metadata uses the equivalent PEP 440 spelling.
 - a clean-revision native wheel builder that packages exactly the Rust CUDA
   bridge and Stable ABI dispatcher, emits and validates their matrix manifest
   and hashes, and rejects accidental source-only wheels;
-- immutable ABI4/ABI5/ABI6/ABI7/ABI8/ABI9/ABI10 history and current ABI11 H20
+- immutable ABI4/ABI5/ABI6/ABI7/ABI8/ABI9/ABI10 history and qualified ABI11 H20
   wheel-install evidence for PyTorch 2.10/2.11 and vLLM 0.24/0.25.
 - deterministic greedy speculative verification and accepted/bonus-token
   compaction over vLLM-compatible flattened ragged metadata, with Rust/CUDA/

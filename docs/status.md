@@ -97,6 +97,22 @@
   CUDA, accepted/bonus-token compaction, accepted/emitted length outputs,
   caller-current-stream PyTorch dispatch, and an explicit all-greedy vLLM
   0.24/0.25 rejection-sampler registration;
+- stable F32/FP16/BF16 plus byte-exact FP8 E4M3FN MoE expert-major
+  permutation with CPU oracles, int64
+  local-expert offsets, int32 inverse/assignment metadata, vLLM-compatible
+  expert-parallel remote ordering, and an explicitly zero-filled remote
+  activation tail around an unchanged vendor grouped GEMM;
+- stable unsigned CUB radix dispatch over only the required expert-key bits,
+  fused metadata/gather emission, aligned 16-byte activation movement with a
+  scalar fallback, and F32 weighted route accumulation for inverse combine;
+- caller-owned workspace/output contracts through safe Rust and checked ABI12,
+  plus allocating and standard caller-owned `.out` current-stream Stable ABI
+  PyTorch `moe_permute` and `moe_combine` APIs with FakeTensor, compile, graph,
+  and telemetry support;
+- an explicit vLLM 0.24/0.25 MoE movement adapter that reuses engine scratch
+  and output tensors, preserves per-token FP8 scale ordering, patches the
+  Cutlass/Humming movement consumers without modifying grouped GEMM, records
+  accepted contracts and rejections, and fails closed after Loom admission;
 - base paged MQA/GQA decode attention for one query per request: Rust contract
   and stable CPU oracle, F32/FP16/BF16 handwritten CUDA/C ABI, safe Rust
   entrypoints, dense-inner NHD cache indirection with explicit outer block
@@ -110,10 +126,11 @@
   PyTorch temporary ownership while preserving the original allocation-free
   C ABI;
 - a single boxed LibTorch Stable ABI dispatcher targeting PyTorch 2.10 and
-  using the current CUDA stream; current ABI11 source routes all nineteen
+  using the current CUDA stream; current ABI12 source routes all twenty-one
   semantic operators through `loom-cuda-bridge` into borrowed safe Rust
   dispatch with explicit storage spans and layouts. The exact `afc54c4` ABI11
-  wheel is the current qualified binary boundary;
+  wheel remains the current qualified binary boundary and does not contain the
+  two new MoE operators;
 - one native Python wheel path with a hard PyTorch range, optional vLLM/test
   extras, exactly two packaged `.so` files, a revision/toolkit/SM/hash manifest,
   runtime ABI/hash checks, and a CI guard that rejects source-only wheels;
@@ -134,6 +151,24 @@
 ## Validated
 
 - local formatting, clippy, tests, and release build;
+- bridge-ABI-12 H20 source validation passes 62 contract/oracle tests, 19 safe
+  CUDA tests, 8 checked-bridge tests, and 17 focused MoE PyTorch/vLLM tests;
+- the same ABI12 bridge and boxed dispatcher pass 359 full Python GPU tests on
+  each PyTorch 2.11 + vLLM 0.24/0.25 environment and 245 applicable tests with
+  72 expected vLLM skips on PyTorch 2.10; no ABI12 wheel is qualified yet;
+- the direct BF16 MoE movement pipeline matches every valid vLLM activation
+  row and all offsets/inverse/assignment metadata exactly, defines a zero
+  remote tail, and has zero measured combine error. Against vLLM 0.25.1 on
+  H20, all-local CUDA Graph ratios are `1.032/0.962/1.014/1.077/1.163/1.124x`
+  at 1/8/32/128/512/2,048 tokens; 64-global/32-local expert-parallel ratios are
+  `1.138/1.190/1.191/1.013x` at 32/128/512/2,048 tokens. This is a direct
+  movement-boundary claim, not an engine/model result;
+- an isolated vLLM 0.25.1 `LLM.generate` gate selects `VLLM_CUTLASS` over a
+  synthetic two-layer Qwen2-MoE checkpoint, preserves every generated token,
+  and records 48 FP8 permutation plus 48 BF16 combine hits through
+  caller-owned tensors with no rejection. Baseline/Loom median batch latency
+  is `17.453/17.103 ms` (`1.0205x`). Grouped GEMM remains vLLM-owned; this is
+  engine-admission evidence, not a production-model or serving-speedup claim;
 - the bridge-ABI-11 `py3-none-linux_x86_64` native wheel built from a
   clean revision for CUDA 13.1 and SM90 passed archive/ELF/RPATH/symbol/
   auditwheel checks and retained identical packaged library hashes across all
@@ -599,8 +634,11 @@ FA3 for the engine's 128-1,024-token path.
   compaction path; default vLLM 0.24 prefix caching and preemption are no
   longer open because the [H20 admission probe](results/h20-vllm-kv-movement-admission-rejected-20260727.json)
   showed logical reuse/recomputation rather than physical movement;
-- MoE routing/permutation/combine benefit around an unchanged vendor grouped
-  GEMM;
+- MoE top-k routing benefit on a profile that proves it material,
+  production-representative pretrained-model/serving latency, and ABI12
+  clean-wheel distribution. Direct permutation/combine benefit, vLLM
+  production-scratch metadata equivalence, and explicit Cutlass engine path
+  hits are qualified while grouped GEMM remains unchanged and outside Loom;
 - an engine-neutral zero-copy Rust decode-step proof;
 - a paged decode-attention pretrained-model route that passes token/quality and
   end-to-end gates; the attempted Qwen2.5 `14/2`, D64 route was rejected;

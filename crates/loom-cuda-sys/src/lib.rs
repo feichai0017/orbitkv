@@ -216,6 +216,123 @@ unsafe extern "C" {
         stream: *mut c_void,
     ) -> c_int;
 
+    pub fn loom_cuda_moe_permute_workspace_size(
+        assignments: u32,
+        num_experts: u32,
+        workspace_bytes: *mut u64,
+    ) -> c_int;
+
+    pub fn loom_cuda_moe_permute_f32(
+        hidden_states: *const f32,
+        topk_ids: *const i32,
+        expert_map: *const i32,
+        permuted_hidden_states: *mut f32,
+        expert_offsets: *mut i64,
+        inverse_permutation: *mut i32,
+        permuted_assignment_ids: *mut i32,
+        workspace: *mut u8,
+        workspace_bytes: u64,
+        tokens: u32,
+        hidden_size: u32,
+        top_k: u32,
+        num_experts: u32,
+        num_local_experts: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_moe_permute_f16(
+        hidden_states: *const u16,
+        topk_ids: *const i32,
+        expert_map: *const i32,
+        permuted_hidden_states: *mut u16,
+        expert_offsets: *mut i64,
+        inverse_permutation: *mut i32,
+        permuted_assignment_ids: *mut i32,
+        workspace: *mut u8,
+        workspace_bytes: u64,
+        tokens: u32,
+        hidden_size: u32,
+        top_k: u32,
+        num_experts: u32,
+        num_local_experts: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_moe_permute_bf16(
+        hidden_states: *const u16,
+        topk_ids: *const i32,
+        expert_map: *const i32,
+        permuted_hidden_states: *mut u16,
+        expert_offsets: *mut i64,
+        inverse_permutation: *mut i32,
+        permuted_assignment_ids: *mut i32,
+        workspace: *mut u8,
+        workspace_bytes: u64,
+        tokens: u32,
+        hidden_size: u32,
+        top_k: u32,
+        num_experts: u32,
+        num_local_experts: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_moe_permute_fp8_e4m3fn(
+        hidden_states: *const u8,
+        topk_ids: *const i32,
+        expert_map: *const i32,
+        permuted_hidden_states: *mut u8,
+        expert_offsets: *mut i64,
+        inverse_permutation: *mut i32,
+        permuted_assignment_ids: *mut i32,
+        workspace: *mut u8,
+        workspace_bytes: u64,
+        tokens: u32,
+        hidden_size: u32,
+        top_k: u32,
+        num_experts: u32,
+        num_local_experts: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_moe_combine_f32(
+        expert_outputs: *const f32,
+        routing_weights: *const f32,
+        inverse_permutation: *const i32,
+        expert_offsets: *const i64,
+        output: *mut f32,
+        tokens: u32,
+        hidden_size: u32,
+        top_k: u32,
+        num_local_experts: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_moe_combine_f16(
+        expert_outputs: *const u16,
+        routing_weights: *const f32,
+        inverse_permutation: *const i32,
+        expert_offsets: *const i64,
+        output: *mut u16,
+        tokens: u32,
+        hidden_size: u32,
+        top_k: u32,
+        num_local_experts: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_moe_combine_bf16(
+        expert_outputs: *const u16,
+        routing_weights: *const f32,
+        inverse_permutation: *const i32,
+        expert_offsets: *const i64,
+        output: *mut u16,
+        tokens: u32,
+        hidden_size: u32,
+        top_k: u32,
+        num_local_experts: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
     pub fn loom_cuda_categorical_sample_f32(
         probabilities: *const f32,
         rng_state: *mut i64,

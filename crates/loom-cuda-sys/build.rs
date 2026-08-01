@@ -25,6 +25,7 @@ fn main() {
     let greedy_speculative_verify_source = cuda_dir.join("src/greedy_speculative_verify.cu");
     let logits_preprocess_source = cuda_dir.join("src/logits_preprocess.cu");
     let min_p_source = cuda_dir.join("src/min_p.cu");
+    let moe_source = cuda_dir.join("src/moe.cu");
     let paged_decode_attention_source = cuda_dir.join("src/paged_decode_attention.cu");
     let rope_paged_kv_source = cuda_dir.join("src/rope_paged_kv.cu");
     println!("cargo:rerun-if-changed={}", header.display());
@@ -59,6 +60,7 @@ fn main() {
         logits_preprocess_source.display()
     );
     println!("cargo:rerun-if-changed={}", min_p_source.display());
+    println!("cargo:rerun-if-changed={}", moe_source.display());
     println!(
         "cargo:rerun-if-changed={}",
         paged_decode_attention_source.display()
@@ -101,6 +103,7 @@ fn main() {
         .file(&greedy_speculative_verify_source)
         .file(&logits_preprocess_source)
         .file(&min_p_source)
+        .file(&moe_source)
         .file(&paged_decode_attention_source)
         .file(&rope_paged_kv_source)
         .flag("-O3")
