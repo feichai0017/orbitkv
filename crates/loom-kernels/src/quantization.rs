@@ -9,6 +9,24 @@ pub const FP8_E4M3FN_MAX: f32 = 448.0;
 /// zero. It matches `1 / (FP8_E4M3FN_MAX * 512)`.
 pub const DYNAMIC_FP8_MIN_SCALE: f32 = 1.0 / (FP8_E4M3FN_MAX * 512.0);
 
+/// Returns the symmetric per-token INT8 scale used by vLLM dynamic
+/// quantization. A zero row deliberately keeps a zero scale.
+pub fn dynamic_int8_scale(absolute_maximum: f32) -> f32 {
+    absolute_maximum / 127.0
+}
+
+/// Quantizes one value with vLLM-compatible round-to-nearest-even and signed
+/// saturation. A zero row maps to zero without dividing by its zero scale.
+pub fn quantize_dynamic_int8(value: f32, absolute_maximum: f32) -> i8 {
+    if absolute_maximum == 0.0 {
+        0
+    } else {
+        (value * (127.0 / absolute_maximum))
+            .round_ties_even()
+            .clamp(-128.0, 127.0) as i8
+    }
+}
+
 /// Decodes one OCP FP8 E4M3FN storage byte into F32.
 pub fn fp8_e4m3fn_to_f32(bits: u8) -> f32 {
     let magnitude = bits & 0x7f;

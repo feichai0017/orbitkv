@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run provider-isolated vLLM W8A8 RMSNorm-to-INT8 A/B evidence."""
+"""Run provider-isolated vLLM W8A8 fused-boundary A/B evidence."""
 
 from __future__ import annotations
 
@@ -22,6 +22,27 @@ MODEL_DEFAULT = "RedHatAI/Qwen2.5-0.5B-quantized.w8a8"
 MODEL_REVISION_DEFAULT = "0d1951533baeec89dd257df86d4d10c3bd5429f5"
 LINEAR_BACKEND_DEFAULT = "cutlass"
 PROVIDERS = ("vllm", "loom")
+FUSIONS = ("rms-norm", "silu-and-mul")
+FUSION_ENVIRONMENTS = {
+    "rms-norm": "LOOM_KERNELS_ENABLE_RMS_NORM_INT8",
+    "silu-and-mul": "LOOM_KERNELS_ENABLE_SILU_AND_MUL_INT8",
+}
+FUSION_METADATA_KEYS = {
+    "rms-norm": "rms_norm_int8_override",
+    "silu-and-mul": "silu_and_mul_int8_override",
+}
+FUSION_OPERATOR_NAMES = {
+    "rms-norm": "RMS_NORM_DYNAMIC_INT8",
+    "silu-and-mul": "SILU_AND_MUL_DYNAMIC_INT8",
+}
+FUSION_SOURCE_KEYS = {
+    "rms-norm": "loom_rms_norm_int8",
+    "silu-and-mul": "loom_silu_and_mul_int8",
+}
+FUSION_BOUNDARIES = {
+    "rms-norm": "RMSNorm-to-INT8",
+    "silu-and-mul": "SiLU-and-Mul-to-INT8",
+}
 QUALITY_PROMPTS = (
     ("english_fact", "The capital of France is"),
     ("english_science", "Water freezes at a temperature of"),
@@ -103,6 +124,7 @@ def parse_args() -> argparse.Namespace:
         help="Full repository base SHA for an uncommitted candidate.",
     )
     parser.add_argument("--linear-backend", default=LINEAR_BACKEND_DEFAULT)
+    parser.add_argument("--fusion", choices=FUSIONS, default="rms-norm")
     parser.add_argument(
         "--case",
         action="append",
@@ -380,6 +402,11 @@ def audit_generated_sources(cache_root: Path) -> dict[str, Any]:
             "torch.ops.loom_kernels."
             "rms_norm_dynamic_per_token_int8.default"
         ),
+        "loom_silu_and_mul_int8": (
+            "torch.ops.loom_kernels."
+            "silu_and_mul_dynamic_per_token_int8.default"
+        ),
+        "vllm_silu_and_mul": "torch.ops._C.silu_and_mul.default",
         "vllm_dynamic_int8_quant": (
             "torch.ops._C.dynamic_scaled_int8_quant.default"
         ),
@@ -421,10 +448,12 @@ def driver_version() -> str:
 def prepare_environment(
     provider: str,
     cache_root: Path,
+    fusion: str,
 ) -> None:
-    os.environ["LOOM_KERNELS_ENABLE_RMS_NORM_INT8"] = (
-        "1" if provider == "loom" else "0"
-    )
+    for environment in FUSION_ENVIRONMENTS.values():
+        os.environ[environment] = "0"
+    if provider == "loom":
+        os.environ[FUSION_ENVIRONMENTS[fusion]] = "1"
     os.environ["LOOM_KERNELS_ENABLE_RMS_NORM_FP8"] = "0"
     os.environ["LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8"] = "0"
     os.environ["VLLM_ENABLE_V1_MULTIPROCESSING"] = "0"
@@ -455,7 +484,7 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
     assert provider is not None
     assert args.internal_cache_root is not None
     cache_root = args.internal_cache_root.resolve()
-    prepare_environment(provider, cache_root)
+    prepare_environment(provider, cache_root, args.fusion)
 
     import torch
     import vllm
@@ -473,9 +502,8 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
     if registered_provider is None:
         raise RuntimeError("Loom's vLLM IR provider did not register")
     metadata_before_engine = provider_metadata()
-    int8_registered = bool(
-        metadata_before_engine["rms_norm_int8_override"]
-    )
+    metadata_key = FUSION_METADATA_KEYS[args.fusion]
+    int8_registered = bool(metadata_before_engine[metadata_key])
     if int8_registered != (provider == "loom"):
         raise RuntimeError(
             "INT8 fusion registration does not match selected provider"
@@ -515,7 +543,8 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
         "enforce_eager": False,
         "compilation_config": {
             "pass_config": {
-                "fuse_norm_quant": True,
+                "fuse_norm_quant": args.fusion == "rms-norm",
+                "fuse_act_quant": args.fusion == "silu-and-mul",
             }
         },
         "disable_log_stats": False,
@@ -528,7 +557,8 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
     detected_quantization = getattr(model_config, "quantization", None)
     if detected_quantization is None:
         raise RuntimeError("checkpoint did not resolve to a quantized vLLM model")
-    reset_launch_count(Operator.RMS_NORM_DYNAMIC_INT8)
+    operator = getattr(Operator, FUSION_OPERATOR_NAMES[args.fusion])
+    reset_launch_count(operator)
     matches_after_engine = get_match_table()
     try:
         quality = run_quality(engine, SamplingParams, args)
@@ -537,7 +567,7 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
             for case in args.cases
         ]
         torch.cuda.synchronize()
-        host_launch_count = launch_count(Operator.RMS_NORM_DYNAMIC_INT8)
+        host_launch_count = launch_count(operator)
         matches_after_workloads = get_match_table()
         generated_sources = audit_generated_sources(cache_root)
         local_model_files: dict[str, str] = {}
@@ -565,6 +595,8 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
             "weight_activation_quantization": "W8A8 checkpoint metadata",
             "detected_vllm_quantization": detected_quantization,
             "linear_backend": args.linear_backend,
+            "fusion": args.fusion,
+            "fusion_boundary": FUSION_BOUNDARIES[args.fusion],
             "seed": args.seed,
             "warmup": args.warmup,
             "repeats": args.repeats,
@@ -606,7 +638,7 @@ def run_provider(args: argparse.Namespace) -> dict[str, Any]:
     )
     print(
         f"provider={provider} int8_registered={int8_registered} "
-        f"loom_host_launches={host_launch_count}",
+        f"fusion={args.fusion} loom_host_launches={host_launch_count}",
         file=sys.stderr,
     )
     return report
@@ -627,6 +659,8 @@ def child_command(
         args.model_revision,
         "--linear-backend",
         args.linear_backend,
+        "--fusion",
+        args.fusion,
         "--quality-prompts",
         str(args.quality_prompts),
         "--quality-logprobs",
@@ -854,20 +888,23 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
     loom_sources = reports["loom"]["loom_path"]["generated_sources"][
         "call_counts"
     ]
+    metadata_key = FUSION_METADATA_KEYS[args.fusion]
+    source_key = FUSION_SOURCE_KEYS[args.fusion]
     path_evidence = {
-        "baseline_int8_override_disabled": (
-            not baseline_metadata["rms_norm_int8_override"]
+        "selected_fusion": args.fusion,
+        "selected_metadata_key": metadata_key,
+        "selected_generated_source_key": source_key,
+        "baseline_selected_override_disabled": (
+            not baseline_metadata[metadata_key]
         ),
-        "loom_int8_override_enabled": bool(
-            loom_metadata["rms_norm_int8_override"]
-        ),
+        "loom_selected_override_enabled": bool(loom_metadata[metadata_key]),
         "baseline_loom_host_launches_zero": baseline_launches == 0,
         "loom_host_launch_observed": loom_launches > 0,
-        "baseline_generated_source_has_no_loom_int8": (
-            baseline_sources["loom_rms_norm_int8"] == 0
+        "baseline_generated_source_has_no_selected_loom_op": (
+            baseline_sources[source_key] == 0
         ),
-        "loom_generated_source_has_loom_int8": (
-            loom_sources["loom_rms_norm_int8"] > 0
+        "loom_generated_source_has_selected_loom_op": (
+            loom_sources[source_key] > 0
         ),
         "baseline_generated_source_has_cutlass_gemm": (
             baseline_sources["cutlass_scaled_mm"] > 0
@@ -887,7 +924,14 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
     path_gate_passed = all(
         value
         for key, value in path_evidence.items()
-        if key not in {"source_call_counts", "host_launch_counts"}
+        if key
+        not in {
+            "selected_fusion",
+            "selected_metadata_key",
+            "selected_generated_source_key",
+            "source_call_counts",
+            "host_launch_counts",
+        }
     )
     maximum_common_error = quality["maximum_common_logprob_error"]
     exact_quality_gate = (
@@ -898,13 +942,15 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
     )
     report = {
         "schema_version": 1,
-        "benchmark": "vllm_engine_rms_norm_dynamic_int8_ab",
+        "benchmark": f"vllm_engine_{args.fusion.replace('-', '_')}_dynamic_int8_ab",
         "timestamp_utc": datetime.now(timezone.utc).isoformat(),
         "repository_base_revision": args.repository_revision,
         "tool_sha256": sha256_file(Path(__file__).resolve()),
         "model": args.model,
         "model_revision": args.model_revision,
         "linear_backend": args.linear_backend,
+        "fusion": args.fusion,
+        "fusion_boundary": FUSION_BOUNDARIES[args.fusion],
         "provider_order": list(order),
         "decision": {
             "path_gate_passed": path_gate_passed,
@@ -926,7 +972,10 @@ def run_controller(args: argparse.Namespace) -> dict[str, Any]:
         "claim_boundary": {
             "accepted": [
                 "Both providers use the same W8A8 checkpoint and Cutlass GEMM.",
-                "Only the RMSNorm-to-INT8 memory-bound boundary changes.",
+                (
+                    "Only the "
+                    f"{FUSION_BOUNDARIES[args.fusion]} memory-bound boundary changes."
+                ),
                 "One-step top-logprob evidence compares identical prompt states.",
             ],
             "excluded": [

@@ -25,6 +25,9 @@ STABLE_TORCH_LIBRARY(loom_kernels, library) {
       "Tensor(b!) scales, int group_size, Tensor? scale_ub=None, "
       "bool is_scale_transposed=False) -> ()");
   library.def(
+      "silu_and_mul_dynamic_per_token_int8(Tensor(a!) result, Tensor input, "
+      "Tensor(b!) scale) -> ()");
+  library.def(
       "categorical_sample(Tensor probabilities, Tensor(a!) rng_state) -> "
       "Tensor token_ids");
   library.def(

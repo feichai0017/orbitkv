@@ -12,8 +12,8 @@ use loom_kernels::{
     GreedySpeculativeVerifySpec, KvCacheEncoding, KvCacheScaleGranularity, LogitsPreprocessSpec,
     MinPFilterSpec, PagedDecodeAttentionSpec, RmsNormDynamicFp8Spec, RmsNormDynamicInt8Spec,
     RmsNormSpec, RopePagedKvWriteSpec, RotaryEmbeddingSpec, RotaryStyle, SelectedTokenLogprobsSpec,
-    SiluAndMulDynamicFp8Spec, SiluAndMulSpec, TokenPenaltiesSpec, TopKFilterSpec,
-    TopKSampledLogprobsSpec, TopPRenormSpec,
+    SiluAndMulDynamicFp8Spec, SiluAndMulDynamicInt8Spec, SiluAndMulSpec, TokenPenaltiesSpec,
+    TopKFilterSpec, TopKSampledLogprobsSpec, TopPRenormSpec,
 };
 use std::cell::RefCell;
 use std::ffi::{c_char, c_int, c_void, CString};
@@ -51,7 +51,8 @@ const OP_TOP_P_RENORM: usize = 14;
 const OP_LOGITS_PREPROCESS: usize = 15;
 const OP_CATEGORICAL_SAMPLE: usize = 16;
 const OP_RMS_NORM_DYNAMIC_INT8: usize = 17;
-const OPERATOR_COUNT: usize = 18;
+const OP_SILU_AND_MUL_DYNAMIC_INT8: usize = 18;
+const OPERATOR_COUNT: usize = 19;
 
 static LAUNCH_COUNTS: [AtomicU64; OPERATOR_COUNT] = [const { AtomicU64::new(0) }; OPERATOR_COUNT];
 
@@ -813,6 +814,18 @@ trait Fp8Scalar: Copy {
     ) -> Result<(), CudaExecutorError>;
 }
 
+trait Int8Scalar: Copy {
+    const DTYPE: DType;
+
+    fn silu_and_mul_dynamic_int8<S: CudaStreamHandle>(
+        backend: &CudaBackend<S>,
+        input: &DeviceSlice<'_, Self>,
+        output: &mut DeviceSliceMut<'_, i8>,
+        scales: &mut DeviceSliceMut<'_, f32>,
+        spec: SiluAndMulDynamicInt8Spec,
+    ) -> Result<(), CudaExecutorError>;
+}
+
 impl Fp8Scalar for f16 {
     const DTYPE: DType = DType::F16;
 
@@ -840,6 +853,34 @@ impl Fp8Scalar for bf16 {
         options: SiluAndMulDynamicFp8Options<'_>,
     ) -> Result<(), CudaExecutorError> {
         backend.silu_and_mul_dynamic_fp8_bf16(input, output, scales, spec, options)
+    }
+}
+
+impl Int8Scalar for f16 {
+    const DTYPE: DType = DType::F16;
+
+    fn silu_and_mul_dynamic_int8<S: CudaStreamHandle>(
+        backend: &CudaBackend<S>,
+        input: &DeviceSlice<'_, Self>,
+        output: &mut DeviceSliceMut<'_, i8>,
+        scales: &mut DeviceSliceMut<'_, f32>,
+        spec: SiluAndMulDynamicInt8Spec,
+    ) -> Result<(), CudaExecutorError> {
+        backend.silu_and_mul_dynamic_int8_f16(input, output, scales, spec)
+    }
+}
+
+impl Int8Scalar for bf16 {
+    const DTYPE: DType = DType::Bf16;
+
+    fn silu_and_mul_dynamic_int8<S: CudaStreamHandle>(
+        backend: &CudaBackend<S>,
+        input: &DeviceSlice<'_, Self>,
+        output: &mut DeviceSliceMut<'_, i8>,
+        scales: &mut DeviceSliceMut<'_, f32>,
+        spec: SiluAndMulDynamicInt8Spec,
+    ) -> Result<(), CudaExecutorError> {
+        backend.silu_and_mul_dynamic_int8_bf16(input, output, scales, spec)
     }
 }
 
@@ -890,7 +931,7 @@ macro_rules! dispatch_scalar {
 /// Return the bridge ABI version.
 #[no_mangle]
 pub extern "C" fn loom_cuda_bridge_abi_version() -> u32 {
-    10
+    11
 }
 
 /// Return the detailed error recorded by the most recent failed bridge call

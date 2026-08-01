@@ -8,6 +8,8 @@ torch = pytest.importorskip("torch")
 pytest.importorskip("vllm")
 
 from loom_kernels.vllm import (
+    ACT_INT8_OVERRIDE_ENV,
+    ACT_INT8_OVERRIDE_KEY,
     ACT_QUANT_OVERRIDE_ENV,
     ACT_QUANT_OVERRIDE_KEY,
     CATEGORICAL_SAMPLE_OVERRIDE_KEY,
@@ -52,6 +54,7 @@ from loom_kernels.vllm import (
     register_vllm_selected_token_logprobs,
     register_vllm_silu_and_mul,
     register_vllm_silu_and_mul_dynamic_fp8,
+    register_vllm_silu_and_mul_dynamic_int8,
     register_vllm_token_penalties,
     register_vllm_top_k_filter,
     register_vllm_top_p_renorm,
@@ -1273,6 +1276,27 @@ def test_act_quant_override_metadata_tracks_opt_in(monkeypatch):
     assert provider_metadata()["silu_and_mul_fp8_override_requested"] is True
 
 
+def test_registers_vllm_silu_and_mul_dynamic_int8_pattern():
+    from vllm.compilation.passes.fusion import act_quant_fusion
+
+    assert (
+        register_vllm_silu_and_mul_dynamic_int8()
+        == ACT_INT8_OVERRIDE_KEY
+    )
+    assert getattr(
+        act_quant_fusion.ActivationQuantFusionPass,
+        "_loom_supports_dynamic_int8",
+        False,
+    )
+
+
+def test_act_int8_override_metadata_tracks_opt_in(monkeypatch):
+    monkeypatch.delenv(ACT_INT8_OVERRIDE_ENV, raising=False)
+    assert provider_metadata()["silu_and_mul_int8_override_requested"] is False
+    monkeypatch.setenv(ACT_INT8_OVERRIDE_ENV, "on")
+    assert provider_metadata()["silu_and_mul_int8_override_requested"] is True
+
+
 def test_registers_vllm_rms_norm_dynamic_fp8_fusions():
     from vllm.compilation.passes.fusion.rms_quant_fusion import (
         FUSED_OPS,
@@ -1444,6 +1468,79 @@ def test_vllm_activation_quant_pattern_rewrites_to_loom():
     )
     assert fusion_pass.matched_count == 1
     assert loom_target_present
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="CUDA is required")
+def test_vllm_activation_int8_pattern_rewrites_to_loom():
+    from vllm.compilation.passes.vllm_inductor_pass import (
+        VllmFusionPatternMatcherPass,
+        enable_fake_mode,
+    )
+    from vllm.config import VllmConfig, set_current_vllm_config
+
+    from loom_kernels.vllm._silu_int8_fusion import (
+        SiluMulDynamicInt8QuantPattern,
+    )
+
+    config = VllmConfig()
+    with set_current_vllm_config(config):
+        register_vllm_silu_and_mul_dynamic_int8()
+        pattern = SiluMulDynamicInt8QuantPattern()
+        fusion_pass = VllmFusionPatternMatcherPass(
+            config, "loom_activation_int8_quant_test"
+        )
+        fusion_pass.register(pattern)
+
+        @enable_fake_mode
+        def trace_official_pattern():
+            return fusion_pass._trace_fn(pattern.pattern, pattern.get_inputs())
+
+        reference_graph_module = trace_official_pattern()
+        graph_module = trace_official_pattern()
+        fusion_pass(graph_module.graph)
+        graph_module.recompile()
+
+    loom_operator = (
+        torch.ops.loom_kernels.silu_and_mul_dynamic_per_token_int8.default
+    )
+    loom_target_present = any(
+        node.op == "call_function"
+        and node.args
+        and node.args[0] == loom_operator
+        for node in graph_module.graph.nodes
+    )
+    native_quant_target = torch.ops._C.dynamic_scaled_int8_quant.default
+    native_quant_present = any(
+        node.op == "call_function"
+        and (
+            node.target == native_quant_target
+            or (node.args and node.args[0] == native_quant_target)
+        )
+        for node in graph_module.graph.nodes
+    )
+    assert fusion_pass.matched_count == 1
+    assert loom_target_present
+    assert not native_quant_present, graph_module.code
+
+    torch.manual_seed(83)
+    inputs = [
+        torch.randn_like(value, dtype=torch.bfloat16)
+        for value in pattern.get_inputs()
+    ]
+    expected_output, expected_scales = torch.compile(
+        reference_graph_module, fullgraph=True
+    )(*inputs)
+    actual_output, actual_scales = graph_module(*inputs)
+    torch.cuda.synchronize()
+
+    assert torch.equal(actual_output, expected_output)
+    assert torch.equal(actual_scales, expected_scales), {
+        "maximum_absolute_delta": float(
+            (actual_scales - expected_scales).abs().max().item()
+        ),
+        "actual_bits": actual_scales.view(torch.int32).cpu().tolist(),
+        "expected_bits": expected_scales.view(torch.int32).cpu().tolist(),
+    }
 
 
 @pytest.mark.parametrize(

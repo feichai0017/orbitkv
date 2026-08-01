@@ -624,15 +624,12 @@ fn rms_norm_dynamic_int8_reference<T: DynamicFp8Input>(
             absolute_maximum = absolute_maximum.max(weighted.abs());
         }
 
-        *scale = absolute_maximum / 127.0;
+        *scale = crate::quantization::dynamic_int8_scale(absolute_maximum);
         if *scale == 0.0 {
             output_row.fill(0);
         } else {
-            let inverse_scale = 127.0 / absolute_maximum;
             for (destination, &value) in output_row.iter_mut().zip(&normalized) {
-                *destination = (value * inverse_scale)
-                    .round_ties_even()
-                    .clamp(-128.0, 127.0) as i8;
+                *destination = crate::quantization::quantize_dynamic_int8(value, absolute_maximum);
             }
         }
     }

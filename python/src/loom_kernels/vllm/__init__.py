@@ -22,12 +22,15 @@ from ._runtime import (
     supports_installed_vllm,
 )
 from .activation import (
+    ACT_INT8_OVERRIDE_ENV,
+    ACT_INT8_OVERRIDE_KEY,
     ACT_QUANT_OVERRIDE_ENV,
     ACT_QUANT_OVERRIDE_KEY,
     SILU_OVERRIDE_ENV,
     SILU_OVERRIDE_KEY,
     register_vllm_silu_and_mul,
     register_vllm_silu_and_mul_dynamic_fp8,
+    register_vllm_silu_and_mul_dynamic_int8,
 )
 from .attention import (
     PAGED_DECODE_FAST_PATH_MAX_BATCH,
@@ -103,6 +106,8 @@ def register_vllm_ir(provider: str = DEFAULT_PROVIDER) -> str | None:
         register_vllm_silu_and_mul()
     if _activation._act_quant_override_requested():
         register_vllm_silu_and_mul_dynamic_fp8()
+    if _activation._act_int8_override_requested():
+        register_vllm_silu_and_mul_dynamic_int8()
     if _norm._rms_norm_fp8_override_requested():
         register_vllm_rms_norm_dynamic_fp8()
     if _norm._rms_norm_int8_override_requested():
@@ -181,6 +186,8 @@ def provider_metadata() -> dict[str, Any]:
 
 
 __all__ = [
+    "ACT_INT8_OVERRIDE_ENV",
+    "ACT_INT8_OVERRIDE_KEY",
     "ACT_QUANT_OVERRIDE_ENV",
     "ACT_QUANT_OVERRIDE_KEY",
     "CATEGORICAL_SAMPLE_OVERRIDE_KEY",
@@ -235,6 +242,7 @@ __all__ = [
     "register_vllm_topk_sampled_logprobs",
     "register_vllm_silu_and_mul",
     "register_vllm_silu_and_mul_dynamic_fp8",
+    "register_vllm_silu_and_mul_dynamic_int8",
     "supports_installed_vllm",
     "supports_vllm_paged_decode_shape",
 ]

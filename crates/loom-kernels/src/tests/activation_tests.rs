@@ -116,3 +116,87 @@ fn silu_and_mul_dynamic_fp8_validates_buffers_and_dtype() {
         Err(ContractError::UnsupportedDType(DType::F32))
     );
 }
+
+#[test]
+fn silu_and_mul_dynamic_int8_matches_compiled_bf16_path() {
+    let spec = SiluAndMulDynamicInt8Spec::new(2, 4, DType::Bf16).unwrap();
+    let input = [
+        bf16::from_f32(0.3333),
+        bf16::from_f32(-0.75),
+        bf16::ZERO,
+        bf16::from_f32(2.0),
+        bf16::from_f32(1.7777),
+        bf16::from_f32(0.5),
+        bf16::from_f32(3.0),
+        bf16::from_f32(-1.0),
+        bf16::ZERO,
+        bf16::ZERO,
+        bf16::ZERO,
+        bf16::ZERO,
+        bf16::from_f32(1.0),
+        bf16::from_f32(-1.0),
+        bf16::from_f32(2.0),
+        bf16::from_f32(-2.0),
+    ];
+    let mut output = [0_i8; 8];
+    let mut scales = [f32::NAN; 2];
+
+    silu_and_mul_dynamic_int8_bf16_reference(&input, &mut output, &mut scales, spec).unwrap();
+
+    let mut materialized = [bf16::ZERO; 8];
+    for row in 0..2 {
+        let input_offset = row * 8;
+        for column in 0..4 {
+            let gate = input[input_offset + column].to_f32();
+            let up = input[input_offset + 4 + column].to_f32();
+            materialized[row * 4 + column] = bf16::from_f32(gate / (1.0 + (-gate).exp()) * up);
+        }
+    }
+    for row in 0..2 {
+        let values = &materialized[row * 4..row * 4 + 4];
+        let absolute_maximum = values
+            .iter()
+            .map(|value| value.to_f32().abs())
+            .fold(0.0_f32, f32::max);
+        assert_eq!(scales[row], dynamic_int8_scale(absolute_maximum));
+        for (column, value) in values.iter().enumerate() {
+            assert_eq!(
+                output[row * 4 + column],
+                quantize_dynamic_int8(value.to_f32(), absolute_maximum)
+            );
+        }
+    }
+    assert_eq!(scales[1], 0.0);
+    assert!(output[4..].iter().all(|&value| value == 0));
+}
+
+#[test]
+fn silu_and_mul_dynamic_int8_validates_buffers_and_dtype() {
+    let spec = SiluAndMulDynamicInt8Spec::new(2, 4, DType::F16).unwrap();
+    let error = silu_and_mul_dynamic_int8_f16_reference(
+        &[f16::ZERO; 16],
+        &mut [0_i8; 7],
+        &mut [0.0_f32; 2],
+        spec,
+    )
+    .unwrap_err();
+    assert_eq!(
+        error,
+        ContractError::LengthMismatch {
+            buffer: "output",
+            expected: 8,
+            actual: 7,
+        }
+    );
+
+    let wrong_dtype = SiluAndMulDynamicInt8Spec::new(1, 4, DType::F32).unwrap();
+    assert_eq!(
+        silu_and_mul_dynamic_int8_f16_reference(
+            &[f16::ZERO; 8],
+            &mut [0_i8; 4],
+            &mut [0.0_f32; 1],
+            wrong_dtype,
+        ),
+        Err(ContractError::UnsupportedDType(DType::F32))
+    );
+}

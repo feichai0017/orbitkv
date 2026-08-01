@@ -115,6 +115,45 @@ unsafe fn launch_silu_and_mul_dynamic_fp8<T: Fp8Scalar>(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
+unsafe fn launch_silu_and_mul_dynamic_int8<T: Int8Scalar>(
+    input: *const T,
+    input_elements: u64,
+    output: *mut i8,
+    output_elements: u64,
+    scales: *mut f32,
+    scale_elements: u64,
+    rows: u32,
+    width: u32,
+    stream: *mut c_void,
+) -> Result<(), CudaExecutorError> {
+    let (input, input_range) =
+        unsafe { read_slice(input, input_elements, "SiLU-and-Mul+INT8 input") }?;
+    let (mut output, output_range) =
+        unsafe { write_slice(output, output_elements, "SiLU-and-Mul+INT8 output") }?;
+    let (mut scales, scales_range) =
+        unsafe { write_slice(scales, scale_elements, "SiLU-and-Mul+INT8 scales") }?;
+    require_disjoint(
+        &[
+            ("input", input_range),
+            ("output", output_range),
+            ("scales", scales_range),
+        ],
+        "SiLU-and-Mul+INT8",
+    )?;
+    let spec = SiluAndMulDynamicInt8Spec::new(rows as usize, width as usize, T::DTYPE)
+        .map_err(invalid_contract)?;
+    T::silu_and_mul_dynamic_int8(
+        &stream_backend(stream),
+        &input,
+        &mut output,
+        &mut scales,
+        spec,
+    )?;
+    record_launch(OP_SILU_AND_MUL_DYNAMIC_INT8);
+    Ok(())
+}
+
 /// Checked split-half SiLU-and-Mul.
 ///
 /// # Safety
@@ -211,6 +250,59 @@ pub unsafe extern "C" fn loom_cuda_bridge_silu_and_mul_dynamic_fp8(
         },
         ScalarKind::F32 => Err(CudaExecutorError::InvalidContract(
             "SiLU-and-Mul+FP8 supports FP16 and BF16 input".into(),
+        )),
+    })
+}
+
+/// Checked SiLU-and-Mul followed by symmetric dynamic per-token INT8.
+///
+/// # Safety
+///
+/// Every pointer must identify the declared CUDA storage on the active
+/// context and remain alive until work on `stream` completes.
+#[no_mangle]
+#[allow(clippy::too_many_arguments)]
+pub unsafe extern "C" fn loom_cuda_bridge_silu_and_mul_dynamic_int8(
+    dtype: u32,
+    input: *const c_void,
+    input_elements: u64,
+    output: *mut i8,
+    output_elements: u64,
+    scales: *mut f32,
+    scale_elements: u64,
+    rows: u32,
+    width: u32,
+    stream: *mut c_void,
+) -> c_int {
+    bridge_call(|| match scalar_kind(dtype)? {
+        ScalarKind::F16 => unsafe {
+            launch_silu_and_mul_dynamic_int8::<f16>(
+                input.cast(),
+                input_elements,
+                output,
+                output_elements,
+                scales,
+                scale_elements,
+                rows,
+                width,
+                stream,
+            )
+        },
+        ScalarKind::Bf16 => unsafe {
+            launch_silu_and_mul_dynamic_int8::<bf16>(
+                input.cast(),
+                input_elements,
+                output,
+                output_elements,
+                scales,
+                scale_elements,
+                rows,
+                width,
+                stream,
+            )
+        },
+        ScalarKind::F32 => Err(CudaExecutorError::InvalidContract(
+            "SiLU-and-Mul+INT8 supports FP16 and BF16 input".into(),
         )),
     })
 }

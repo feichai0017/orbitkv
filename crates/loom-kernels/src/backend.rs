@@ -1,6 +1,6 @@
 //! Backend capability discovery shared by accelerator providers.
 
-use crate::activation::{SiluAndMulDynamicFp8Spec, SiluAndMulSpec};
+use crate::activation::{SiluAndMulDynamicFp8Spec, SiluAndMulDynamicInt8Spec, SiluAndMulSpec};
 use crate::attention::PagedDecodeAttentionSpec;
 use crate::logits::MinPFilterSpec;
 use crate::norm::{AddRmsNormSpec, RmsNormDynamicFp8Spec, RmsNormDynamicInt8Spec, RmsNormSpec};
@@ -17,6 +17,7 @@ pub enum OperatorSpec {
     RmsNormDynamicInt8(RmsNormDynamicInt8Spec),
     SiluAndMul(SiluAndMulSpec),
     SiluAndMulDynamicFp8(SiluAndMulDynamicFp8Spec),
+    SiluAndMulDynamicInt8(SiluAndMulDynamicInt8Spec),
     GreedySampleLogprobs(GreedySampleLogprobsSpec),
     SelectedTokenLogprobs(SelectedTokenLogprobsSpec),
     MinPFilter(MinPFilterSpec),

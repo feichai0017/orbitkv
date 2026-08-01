@@ -6,7 +6,7 @@ use crate::runtime::{
 };
 use crate::CudaExecutorError;
 use half::{bf16, f16};
-use loom_kernels::{DType, SiluAndMulDynamicFp8Spec, SiluAndMulSpec};
+use loom_kernels::{DType, SiluAndMulDynamicFp8Spec, SiluAndMulDynamicInt8Spec, SiluAndMulSpec};
 
 /// Physical ordering of per-block FP8 scales.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -137,6 +137,50 @@ impl<S: CudaStreamHandle> CudaBackend<S> {
             )
         })
     }
+
+    /// Launches fused FP16 SwiGLU and dynamic per-token INT8 asynchronously.
+    pub fn silu_and_mul_dynamic_int8_f16(
+        &self,
+        input: &impl CudaDeviceRead<f16>,
+        output: &mut impl CudaDeviceWrite<i8>,
+        scales: &mut impl CudaDeviceWrite<f32>,
+        spec: SiluAndMulDynamicInt8Spec,
+    ) -> Result<(), CudaExecutorError> {
+        require_int8_dtype(spec, DType::F16)?;
+        let (rows, width) = validate_int8_buffers(input, output, scales, spec)?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_silu_and_mul_dynamic_int8_f16(
+                input.as_ptr().cast::<u16>(),
+                output.as_mut_ptr(),
+                scales.as_mut_ptr(),
+                rows,
+                width,
+                self.raw_stream(),
+            )
+        })
+    }
+
+    /// Launches fused BF16 SwiGLU and dynamic per-token INT8 asynchronously.
+    pub fn silu_and_mul_dynamic_int8_bf16(
+        &self,
+        input: &impl CudaDeviceRead<bf16>,
+        output: &mut impl CudaDeviceWrite<i8>,
+        scales: &mut impl CudaDeviceWrite<f32>,
+        spec: SiluAndMulDynamicInt8Spec,
+    ) -> Result<(), CudaExecutorError> {
+        require_int8_dtype(spec, DType::Bf16)?;
+        let (rows, width) = validate_int8_buffers(input, output, scales, spec)?;
+        loom_status_result(unsafe {
+            loom_cuda_sys::loom_cuda_silu_and_mul_dynamic_int8_bf16(
+                input.as_ptr().cast::<u16>(),
+                output.as_mut_ptr(),
+                scales.as_mut_ptr(),
+                rows,
+                width,
+                self.raw_stream(),
+            )
+        })
+    }
 }
 
 fn validate_options(
@@ -214,4 +258,37 @@ fn validate_quant_buffers<T: Copy>(
         )
     })?;
     Ok((rows, width, group_size))
+}
+
+fn require_int8_dtype(
+    spec: SiluAndMulDynamicInt8Spec,
+    expected: DType,
+) -> Result<(), CudaExecutorError> {
+    if spec.input_dtype() == expected && spec.output_dtype() == DType::I8 {
+        Ok(())
+    } else {
+        Err(CudaExecutorError::InvalidContract(format!(
+            "{expected:?} SiLU-and-Mul+INT8 cannot execute {:?} -> {:?}",
+            spec.input_dtype(),
+            spec.output_dtype()
+        )))
+    }
+}
+
+fn validate_int8_buffers<T: Copy>(
+    input: &impl CudaDeviceRead<T>,
+    output: &impl CudaDeviceRead<i8>,
+    scales: &impl CudaDeviceRead<f32>,
+    spec: SiluAndMulDynamicInt8Spec,
+) -> Result<(u32, u32), CudaExecutorError> {
+    input.require_len(spec.input_numel(), "SiLU-and-Mul+INT8 input")?;
+    output.require_len(spec.output_numel(), "SiLU-and-Mul+INT8 output")?;
+    scales.require_len(spec.scale_count(), "SiLU-and-Mul+INT8 scales")?;
+    let rows = u32::try_from(spec.rows()).map_err(|_| {
+        CudaExecutorError::InvalidContract("SiLU-and-Mul+INT8 rows exceed the CUDA ABI".into())
+    })?;
+    let width = u32::try_from(spec.width()).map_err(|_| {
+        CudaExecutorError::InvalidContract("SiLU-and-Mul+INT8 width exceeds the CUDA ABI".into())
+    })?;
+    Ok((rows, width))
 }

@@ -4,7 +4,11 @@ from __future__ import annotations
 
 import torch
 
-from .._torch_dispatch import _silu_and_mul, _silu_and_mul_dynamic_fp8
+from .._torch_dispatch import (
+    _silu_and_mul,
+    _silu_and_mul_dynamic_fp8,
+    _silu_and_mul_dynamic_int8,
+)
 from ._common import _DTYPE_NAMES, _require_inference_tensors
 
 
@@ -34,6 +38,19 @@ def supports_silu_and_mul_dynamic_fp8(
         and input_tensor.numel() > 0
         and group_size in (64, 128)
         and width % group_size == 0
+        and input_tensor.is_contiguous()
+        and not input_tensor.requires_grad
+    )
+
+
+def supports_silu_and_mul_dynamic_int8(input_tensor: torch.Tensor) -> bool:
+    """Return whether Loom supports fused SwiGLU and per-token INT8."""
+    return bool(
+        input_tensor.device.type == "cuda"
+        and input_tensor.dtype in (torch.float16, torch.bfloat16)
+        and input_tensor.dim() >= 1
+        and input_tensor.numel() > 0
+        and input_tensor.shape[-1] % 2 == 0
         and input_tensor.is_contiguous()
         and not input_tensor.requires_grad
     )
@@ -69,6 +86,21 @@ def _validate_silu_and_mul_dynamic_fp8_input(
     if rows > 0xFFFF_FFFF or width > 0xFFFF_FFFF:
         raise ValueError("tensor shape exceeds the Loom CUDA ABI")
     return rows, width, group_count
+
+
+def _validate_silu_and_mul_dynamic_int8_input(
+    input_tensor: torch.Tensor,
+) -> tuple[int, int]:
+    if not supports_silu_and_mul_dynamic_int8(input_tensor):
+        raise ValueError(
+            "Loom SiLU-and-Mul+INT8 requires a non-empty contiguous FP16/BF16 "
+            "CUDA tensor with an even last dimension"
+        )
+    width = input_tensor.shape[-1] // 2
+    rows = input_tensor.numel() // input_tensor.shape[-1]
+    if rows > 0xFFFF_FFFF or width > 0xFFFF_FFFF:
+        raise ValueError("tensor shape exceeds the Loom CUDA ABI")
+    return rows, width
 
 
 def silu_and_mul_out(
@@ -123,3 +155,30 @@ def silu_and_mul_dynamic_fp8(
     return silu_and_mul_dynamic_fp8_out(
         input_tensor, output, scales, int(group_size)
     )
+
+
+def silu_and_mul_dynamic_int8_out(
+    input_tensor: torch.Tensor,
+    output: torch.Tensor,
+    scales: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Write fused SwiGLU and dynamic per-token INT8 into caller buffers."""
+    _require_inference_tensors(input_tensor, output, scales)
+    _silu_and_mul_dynamic_int8(output, input_tensor, scales)
+    return output, scales
+
+
+def silu_and_mul_dynamic_int8(
+    input_tensor: torch.Tensor,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Return signed INT8 SwiGLU output and one F32 scale per token row."""
+    rows, width = _validate_silu_and_mul_dynamic_int8_input(input_tensor)
+    output = torch.empty(
+        (*input_tensor.shape[:-1], width),
+        device=input_tensor.device,
+        dtype=torch.int8,
+    )
+    scales = torch.empty(
+        (rows, 1), device=input_tensor.device, dtype=torch.float32
+    )
+    return silu_and_mul_dynamic_int8_out(input_tensor, output, scales)

@@ -54,3 +54,8 @@ required-features = ["cuda"]
 name = "silu_and_mul_dynamic_fp8"
 harness = false
 required-features = ["cuda"]
+
+[[bench]]
+name = "silu_and_mul_dynamic_int8"
+harness = false
+required-features = ["cuda"]

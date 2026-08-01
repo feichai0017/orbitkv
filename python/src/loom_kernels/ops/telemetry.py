@@ -30,6 +30,7 @@ class Operator(IntEnum):
     LOGITS_PREPROCESS = 15
     CATEGORICAL_SAMPLE = 16
     RMS_NORM_DYNAMIC_INT8 = 17
+    SILU_AND_MUL_DYNAMIC_INT8 = 18
 
 
 def _operator_id(operator: Operator) -> int:

@@ -4,7 +4,10 @@ use half::{bf16, f16};
 
 use crate::contract::{require_len, ContractError, DType};
 use crate::element::LowPrecisionElement;
-use crate::quantization::{fp8_e4m3fn_from_f32, DYNAMIC_FP8_MIN_SCALE, FP8_E4M3FN_MAX};
+use crate::quantization::{
+    dynamic_int8_scale, fp8_e4m3fn_from_f32, quantize_dynamic_int8, DYNAMIC_FP8_MIN_SCALE,
+    FP8_E4M3FN_MAX,
+};
 
 /// Contract for the fused SwiGLU activation `silu(gate) * up`.
 ///
@@ -29,6 +32,70 @@ pub struct SiluAndMulDynamicFp8Spec {
     group_size: usize,
     input_dtype: DType,
     output_dtype: DType,
+}
+
+/// Contract for SwiGLU followed by symmetric dynamic per-token INT8.
+///
+/// Input rows use the split-half `[gate, up]` layout from [`SiluAndMulSpec`].
+/// Output is contiguous signed INT8 `[rows, width]`, and F32 scales contain one
+/// value per row. This is the activation-side contract consumed by INT8 GEMM;
+/// GEMM itself remains outside Loom.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct SiluAndMulDynamicInt8Spec {
+    rows: usize,
+    width: usize,
+    input_dtype: DType,
+    output_dtype: DType,
+}
+
+impl SiluAndMulDynamicInt8Spec {
+    /// Creates a contiguous per-token INT8 activation-quantization contract.
+    pub fn new(rows: usize, width: usize, input_dtype: DType) -> Result<Self, ContractError> {
+        if rows == 0 || width == 0 {
+            return Err(ContractError::ZeroDimension);
+        }
+        let output_elements = rows
+            .checked_mul(width)
+            .ok_or(ContractError::ElementCountOverflow)?;
+        output_elements
+            .checked_mul(2)
+            .ok_or(ContractError::ElementCountOverflow)?;
+
+        Ok(Self {
+            rows,
+            width,
+            input_dtype,
+            output_dtype: DType::I8,
+        })
+    }
+
+    pub const fn rows(self) -> usize {
+        self.rows
+    }
+
+    pub const fn width(self) -> usize {
+        self.width
+    }
+
+    pub const fn input_dtype(self) -> DType {
+        self.input_dtype
+    }
+
+    pub const fn output_dtype(self) -> DType {
+        self.output_dtype
+    }
+
+    pub const fn input_numel(self) -> usize {
+        self.rows * self.width * 2
+    }
+
+    pub const fn output_numel(self) -> usize {
+        self.rows * self.width
+    }
+
+    pub const fn scale_count(self) -> usize {
+        self.rows
+    }
 }
 
 impl SiluAndMulDynamicFp8Spec {
@@ -203,6 +270,26 @@ pub fn silu_and_mul_dynamic_fp8_bf16_reference(
     silu_and_mul_dynamic_fp8_reference(input, output, scales, spec, DType::Bf16)
 }
 
+/// Computes FP16 SwiGLU followed by symmetric dynamic per-token INT8.
+pub fn silu_and_mul_dynamic_int8_f16_reference(
+    input: &[f16],
+    output: &mut [i8],
+    scales: &mut [f32],
+    spec: SiluAndMulDynamicInt8Spec,
+) -> Result<(), ContractError> {
+    silu_and_mul_dynamic_int8_reference(input, output, scales, spec, DType::F16)
+}
+
+/// Computes BF16 SwiGLU followed by symmetric dynamic per-token INT8.
+pub fn silu_and_mul_dynamic_int8_bf16_reference(
+    input: &[bf16],
+    output: &mut [i8],
+    scales: &mut [f32],
+    spec: SiluAndMulDynamicInt8Spec,
+) -> Result<(), ContractError> {
+    silu_and_mul_dynamic_int8_reference(input, output, scales, spec, DType::Bf16)
+}
+
 fn silu_and_mul_low_precision_reference<T: LowPrecisionElement>(
     input: &[T],
     output: &mut [T],
@@ -279,6 +366,48 @@ fn silu_and_mul_dynamic_fp8_reference<T: LowPrecisionElement>(
                 let activated = gate_value * sigmoid_gate;
                 *destination = fp8_e4m3fn_from_f32(activated * up_value.to_f32() / scale);
             }
+        }
+    }
+    Ok(())
+}
+
+fn silu_and_mul_dynamic_int8_reference<T: LowPrecisionElement>(
+    input: &[T],
+    output: &mut [i8],
+    scales: &mut [f32],
+    spec: SiluAndMulDynamicInt8Spec,
+    expected_dtype: DType,
+) -> Result<(), ContractError> {
+    if spec.input_dtype() != expected_dtype || spec.output_dtype() != DType::I8 {
+        return Err(ContractError::UnsupportedDType(spec.input_dtype()));
+    }
+    require_len("input", input.len(), spec.input_numel())?;
+    require_len("output", output.len(), spec.output_numel())?;
+    require_len("scales", scales.len(), spec.scale_count())?;
+
+    let mut row_values = vec![0.0_f32; spec.width()];
+    for (row, scale) in scales.iter_mut().enumerate().take(spec.rows()) {
+        let input_offset = row * spec.width() * 2;
+        let output_offset = row * spec.width();
+        let gate = &input[input_offset..input_offset + spec.width()];
+        let up = &input[input_offset + spec.width()..input_offset + spec.width() * 2];
+        let output_row = &mut output[output_offset..output_offset + spec.width()];
+
+        let mut absolute_maximum = 0.0_f32;
+        for (column, (&gate_value, &up_value)) in gate.iter().zip(up).enumerate() {
+            // Match vLLM's compiled native graph: Inductor keeps SiLU and the
+            // multiplication in F32, then stores the product once in the
+            // input dtype before dynamic INT8 quantization reads it.
+            let gate_f32 = gate_value.to_f32();
+            let value =
+                T::from_f32(gate_f32 / (1.0 + (-gate_f32).exp()) * up_value.to_f32()).to_f32();
+            row_values[column] = value;
+            absolute_maximum = absolute_maximum.max(value.abs());
+        }
+
+        *scale = dynamic_int8_scale(absolute_maximum);
+        for (destination, &value) in output_row.iter_mut().zip(&row_values) {
+            *destination = quantize_dynamic_int8(value, absolute_maximum);
         }
     }
     Ok(())

@@ -297,7 +297,7 @@ def test_dynamic_fp8_schema_declares_both_mutations():
 
 
 def test_bridge_abi_is_current():
-    assert bridge_abi_version() == 10
+    assert bridge_abi_version() == 11
 
 
 @pytest.mark.parametrize(
@@ -308,6 +308,7 @@ def test_bridge_abi_is_current():
         "rms_norm_dynamic_fp8_unchecked",
         "silu_and_mul_unchecked",
         "silu_and_mul_dynamic_fp8_unchecked",
+        "silu_and_mul_dynamic_per_token_int8_unchecked",
         "min_p_filter_unchecked_",
         "paged_decode_attention_unchecked",
         "rope_paged_kv_write_unchecked_",

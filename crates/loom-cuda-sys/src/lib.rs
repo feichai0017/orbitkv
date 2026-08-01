@@ -198,6 +198,24 @@ unsafe extern "C" {
         stream: *mut c_void,
     ) -> c_int;
 
+    pub fn loom_cuda_silu_and_mul_dynamic_int8_f16(
+        input: *const u16,
+        output: *mut i8,
+        scales: *mut f32,
+        rows: u32,
+        width: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
+    pub fn loom_cuda_silu_and_mul_dynamic_int8_bf16(
+        input: *const u16,
+        output: *mut i8,
+        scales: *mut f32,
+        rows: u32,
+        width: u32,
+        stream: *mut c_void,
+    ) -> c_int;
+
     pub fn loom_cuda_categorical_sample_f32(
         probabilities: *const f32,
         rng_state: *mut i64,

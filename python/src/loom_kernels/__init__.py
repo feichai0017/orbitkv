@@ -189,6 +189,20 @@ def silu_and_mul_dynamic_fp8_out(*args: Any, **kwargs: Any) -> Any:
     return implementation(*args, **kwargs)
 
 
+def silu_and_mul_dynamic_int8(*args: Any, **kwargs: Any) -> Any:
+    """Lazily execute fused SwiGLU and dynamic per-token INT8."""
+    from .torch_ops import silu_and_mul_dynamic_int8 as implementation
+
+    return implementation(*args, **kwargs)
+
+
+def silu_and_mul_dynamic_int8_out(*args: Any, **kwargs: Any) -> Any:
+    """Lazily execute the caller-allocated activation plus INT8 variant."""
+    from .torch_ops import silu_and_mul_dynamic_int8_out as implementation
+
+    return implementation(*args, **kwargs)
+
+
 __all__ = [
     "__version__",
     "add_rms_norm_",
@@ -212,6 +226,8 @@ __all__ = [
     "silu_and_mul",
     "silu_and_mul_dynamic_fp8",
     "silu_and_mul_dynamic_fp8_out",
+    "silu_and_mul_dynamic_int8",
+    "silu_and_mul_dynamic_int8_out",
     "silu_and_mul_out",
     "token_penalties_workspace_capacity",
     "top_k_filter_",

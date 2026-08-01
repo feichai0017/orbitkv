@@ -5,15 +5,19 @@ from __future__ import annotations
 import torch
 
 from .._torch_extension import load_torch_extension, torch_extension_available
+from ._silu_int8_fusion import install_silu_and_mul_dynamic_int8_pattern
 from ._runtime import _env_enabled, supports_installed_vllm
 
 SILU_OVERRIDE_KEY = "SiluAndMul"
 SILU_OVERRIDE_ENV = "LOOM_KERNELS_ENABLE_SILU_AND_MUL"
 ACT_QUANT_OVERRIDE_KEY = "silu_and_mul_dynamic_fp8"
 ACT_QUANT_OVERRIDE_ENV = "LOOM_KERNELS_ENABLE_SILU_AND_MUL_FP8"
+ACT_INT8_OVERRIDE_KEY = "silu_and_mul_dynamic_int8"
+ACT_INT8_OVERRIDE_ENV = "LOOM_KERNELS_ENABLE_SILU_AND_MUL_INT8"
 
 _SILU_OVERRIDE_CLASS: type | None = None
 _ACT_QUANT_OVERRIDE_REGISTERED = False
+_ACT_INT8_OVERRIDE_REGISTERED = False
 
 
 def _silu_override_requested() -> bool:
@@ -22,6 +26,10 @@ def _silu_override_requested() -> bool:
 
 def _act_quant_override_requested() -> bool:
     return _env_enabled(ACT_QUANT_OVERRIDE_ENV)
+
+
+def _act_int8_override_requested() -> bool:
+    return _env_enabled(ACT_INT8_OVERRIDE_ENV)
 
 
 def register_vllm_silu_and_mul() -> str | None:
@@ -85,10 +93,28 @@ def register_vllm_silu_and_mul_dynamic_fp8() -> str | None:
     return ACT_QUANT_OVERRIDE_KEY
 
 
+def register_vllm_silu_and_mul_dynamic_int8() -> str | None:
+    """Install the explicit SwiGLU-to-dynamic-INT8 compiler fusion."""
+    global _ACT_INT8_OVERRIDE_REGISTERED
+    if _ACT_INT8_OVERRIDE_REGISTERED:
+        return ACT_INT8_OVERRIDE_KEY
+    if not torch_extension_available():
+        return None
+    if not supports_installed_vllm():
+        return None
+
+    load_torch_extension()
+    install_silu_and_mul_dynamic_int8_pattern()
+    _ACT_INT8_OVERRIDE_REGISTERED = True
+    return ACT_INT8_OVERRIDE_KEY
+
+
 def _metadata() -> dict[str, object]:
     return {
         "silu_and_mul_override_requested": _silu_override_requested(),
         "silu_and_mul_override": _SILU_OVERRIDE_CLASS is not None,
         "silu_and_mul_fp8_override_requested": _act_quant_override_requested(),
         "silu_and_mul_fp8_override": _ACT_QUANT_OVERRIDE_REGISTERED,
+        "silu_and_mul_int8_override_requested": _act_int8_override_requested(),
+        "silu_and_mul_int8_override": _ACT_INT8_OVERRIDE_REGISTERED,
     }

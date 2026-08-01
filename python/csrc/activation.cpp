@@ -167,6 +167,65 @@ void vllm_silu_and_mul_per_block_fp8(
                                          scale_ub, scales_transposed);
 }
 
+void check_silu_and_mul_dynamic_int8_contract(
+    const Tensor& input, const Tensor& output, const Tensor& scales) {
+  STD_TORCH_CHECK(input.is_cuda(),
+                  "Loom SiLU-and-Mul+INT8 input must be CUDA");
+  STD_TORCH_CHECK(output.device() == input.device() &&
+                      scales.device() == input.device(),
+                  "Loom SiLU-and-Mul+INT8 tensors must be on the same CUDA device");
+  STD_TORCH_CHECK(input.scalar_type() == ScalarType::Half ||
+                      input.scalar_type() == ScalarType::BFloat16,
+                  "Loom SiLU-and-Mul+INT8 supports FP16 and BF16 input");
+  STD_TORCH_CHECK(output.scalar_type() == ScalarType::Char,
+                  "Loom SiLU-and-Mul+INT8 output must use signed INT8");
+  STD_TORCH_CHECK(scales.scalar_type() == ScalarType::Float,
+                  "Loom SiLU-and-Mul+INT8 scales must use F32");
+  STD_TORCH_CHECK(input.is_contiguous() && output.is_contiguous() &&
+                      scales.is_contiguous(),
+                  "Loom SiLU-and-Mul+INT8 tensors must be contiguous");
+  STD_TORCH_CHECK(input.dim() >= 1 && input.numel() > 0,
+                  "Loom SiLU-and-Mul+INT8 input must be non-empty");
+  STD_TORCH_CHECK(input.size(-1) % 2 == 0,
+                  "Loom SiLU-and-Mul+INT8 input last dimension must be even");
+  const int64_t width = input.size(-1) / 2;
+  const int64_t rows = input.numel() / input.size(-1);
+  STD_TORCH_CHECK(output.dim() == input.dim(),
+                  "Loom SiLU-and-Mul+INT8 output rank must match input");
+  for (int64_t dimension = 0; dimension + 1 < input.dim(); ++dimension) {
+    STD_TORCH_CHECK(output.size(dimension) == input.size(dimension),
+                    "Loom SiLU-and-Mul+INT8 output prefix shape must match input");
+  }
+  STD_TORCH_CHECK(output.size(-1) == width,
+                  "Loom SiLU-and-Mul+INT8 output last dimension must be half input");
+  STD_TORCH_CHECK(scales.dim() == 2 && scales.size(0) == rows &&
+                      scales.size(1) == 1,
+                  "Loom SiLU-and-Mul+INT8 scales must have shape [rows, 1]");
+  STD_TORCH_CHECK(!byte_ranges_overlap(input, output) &&
+                      !byte_ranges_overlap(input, scales) &&
+                      !byte_ranges_overlap(output, scales),
+                  "Loom SiLU-and-Mul+INT8 mutable tensor storage must not overlap");
+}
+
+void silu_and_mul_dynamic_per_token_int8(
+    Tensor output, const Tensor& input, Tensor scales) {
+  check_silu_and_mul_dynamic_int8_contract(input, output, scales);
+  const int64_t width_i64 = input.size(-1) / 2;
+  const int64_t rows_i64 = input.numel() / input.size(-1);
+  STD_TORCH_CHECK(rows_i64 <= std::numeric_limits<uint32_t>::max() &&
+                      width_i64 <= std::numeric_limits<uint32_t>::max(),
+                  "Loom SiLU-and-Mul+INT8 shape exceeds the CUDA ABI");
+
+  const CudaDeviceGuard device_guard(input.device());
+  const auto stream = current_cuda_stream(input.device().index());
+  const int status = loom_cuda_bridge_silu_and_mul_dynamic_int8(
+      bridge_dtype(input), input.const_data_ptr(),
+      static_cast<uint64_t>(input.numel()), output.mutable_data_ptr<int8_t>(),
+      static_cast<uint64_t>(output.numel()), scales.mutable_data_ptr<float>(),
+      static_cast<uint64_t>(scales.numel()), static_cast<uint32_t>(rows_i64),
+      static_cast<uint32_t>(width_i64), stream.stream());
+  check_bridge_status(status, "SiLU-and-Mul+INT8");
+}
 
 }  // namespace loom_kernels::torch_adapter
 
@@ -180,4 +239,8 @@ STABLE_TORCH_LIBRARY_IMPL(loom_kernels, CUDA, library) {
   library.impl(
       "silu_and_mul_per_block_fp8",
       TORCH_BOX(&loom_kernels::torch_adapter::vllm_silu_and_mul_per_block_fp8));
+  library.impl(
+      "silu_and_mul_dynamic_per_token_int8",
+      TORCH_BOX(
+          &loom_kernels::torch_adapter::silu_and_mul_dynamic_per_token_int8));
 }
