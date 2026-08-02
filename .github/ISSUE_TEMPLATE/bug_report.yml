@@ -19,7 +19,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Include OS, Rust, CUDA toolkit, driver, GPU, Python, PyTorch, and engine versions.
+      description: Include OS, Rust, CUDA toolkit, driver, GPU, and engine versions.
     validations:
       required: true
   - type: textarea
@@ -45,6 +45,6 @@ body:
   - type: textarea
     id: expected
     attributes:
-      label: Expected result or fallback
+      label: Expected result
     validations:
       required: true

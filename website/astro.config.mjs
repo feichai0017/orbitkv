@@ -2,7 +2,7 @@ import { defineConfig } from "astro/config";
 
 export default defineConfig({
   site: "https://feichai0017.github.io",
-  base: "/loom-kernels",
+  base: "/loom-infer",
   output: "static",
   trailingSlash: "always",
 });

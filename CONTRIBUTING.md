@@ -1,78 +1,57 @@
-# Contributing to Loom Kernels
+# Contributing to Loom Infer
 
-Loom accepts changes that make a real inference boundary clearer, safer, or
-faster. A kernel is not considered complete because it compiles or wins one
-microbenchmark.
+Each change must implement or improve one measurable inference path.
 
-## Choose work
+## Before implementation
 
-Start with the [operator catalog](docs/operator-catalog.md) and
-[roadmap](docs/roadmap.md). For a new operator, open an operator proposal before
-writing a large implementation. Name:
+Record:
 
-- the inference engine and call site;
-- the exact tensor, layout, aliasing, and stream contract;
-- the current named baseline;
-- the workload where the boundary is material;
-- the correctness and performance exit gates.
+- the model or engine call site
+- shapes, dtypes, layouts, alignment, aliasing, and stream behavior
+- the exact baseline
+- the numerical contract
+- the acceptance and stop conditions.
 
-Dense, quantized, sparse, and grouped GEMM implementations are out of scope and
-must remain engine/vendor-owned. Loom is for memory-bound operators, layout and
-scheduling transitions, quantization plumbing, decode-tail work, and measured
-fusions around an unchanged vendor matrix kernel.
+Vendor libraries should own plain GEMM and collectives. Loom Infer may own
+their Rust plans, layouts, epilogues, and measured fusion boundaries.
 
-## Development loop
+## Source rules
 
-The dependency-light workspace must stay healthy on a machine without CUDA:
+- Product source is Rust.
+- Do not add Python APIs, CUDA C++, compatibility aliases, duplicate execution
+  paths, or silent fallback.
+- Keep `loom-infer` independent from CUDA and FFI.
+- Keep unsafe code inside the device or vendor boundary that requires it.
+- Add a crate only when a complete vertical slice needs that boundary.
+- Keep measurement tools outside library binaries.
+
+Every operator follows one execution pattern:
+
+```text
+validated spec -> immutable plan -> checked buffers -> enqueue
+```
+
+## Required checks
 
 ```bash
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
 cargo check --workspace --release
-python3 -m compileall -q benchmarks python
+cargo package -p loom-infer
 ```
 
-On an NVIDIA host, build the checked Rust path and PyTorch adapter:
-
-```bash
-CUDA_HOME=/usr/local/cuda LOOM_CUDA_ARCHS=90 \
-  cargo test -p loom-cuda --features cuda --release
-
-CUDA_HOME=/usr/local/cuda LOOM_CUDA_ARCHS=90 \
-  cargo test -p loom-cuda-bridge --features cuda --release
-
-CUDA_HOME=/usr/local/cuda LOOM_CUDA_ARCHS=90 \
-  python python/build_native.py
-CUDA_HOME=/usr/local/cuda \
-  python python/build_torch_extension.py
-python -m pytest -q python/tests
-```
-
-## Operator checklist
-
-1. Define the Rust contract and deterministic CPU oracle.
-2. Reject zero sizes, overflow, invalid layouts, invalid dtypes, and forbidden
-   aliasing before launch.
-3. Add a safe `loom-cuda` entrypoint over owned and borrowed memory.
-4. Add the smallest framework adapter that preserves the caller's current
-   stream and allocation ownership.
-5. Cover scalar tails, representative production shapes, external streams,
-   FakeTensor/opcheck, `torch.compile`, and CUDA Graph capture where applicable.
-6. Benchmark against the exact engine or framework operation being replaced.
-7. Record negative, parity, fallback, and accepted results without changing the
-   baseline after seeing the numbers.
+A device change must also pass its documented GPU correctness matrix on a
+non-default stream. Add graph, lifetime, and matched performance gates when the
+operator exposes those capabilities. Report unavailable tools instead of
+claiming their coverage.
 
 ## Pull requests
 
-Keep each pull request to one contract or one migration slice. Include:
+Keep a pull request to one operator or runtime slice. Include exact commands,
+tolerances, failures, and machine-readable evidence for performance claims.
+State whether each result applies to an operator, graph, engine, or serving
+workload.
 
-- what engine path changes;
-- which contracts still fall back;
-- exact local and GPU test commands;
-- correctness tolerances and any token/rank parity result;
-- raw JSON evidence for a performance claim;
-- documentation updates when support or compatibility changes.
-
-Generated build outputs, virtual environments, model weights, and profiler
-captures do not belong in the repository.
+Do not commit toolchains, virtual environments, build output, model weights,
+or profiler captures.

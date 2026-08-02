@@ -9,15 +9,14 @@ interface Props {
 }
 
 const {
-  title = "Loom Kernels | Rust-first CUDA operators",
-  description = "Checked Rust contracts and handwritten CUDA for memory-bound LLM inference operators.",
+  title = "Loom Infer | Rust-native LLM inference kernels",
+  description = "Rust-native GPU kernels, checked execution, and reproducible evidence for LLM inference.",
   active = "",
 } = Astro.props;
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 const local = (href: string) => `${base}${href}`;
 const canonical = new URL(Astro.url.pathname, Astro.site);
-const socialImage = new URL(`${base}/og.png`, Astro.site);
 ---
 
 <!doctype html>
@@ -30,26 +29,24 @@ const socialImage = new URL(`${base}/og.png`, Astro.site);
     <meta name="theme-color" content="#08110d" />
     <link rel="canonical" href={canonical} />
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Loom Kernels" />
+    <meta property="og:site_name" content="Loom Infer" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
-    <meta property="og:image" content={socialImage} />
     <meta name="twitter:card" content="summary_large_image" />
     <meta name="twitter:title" content={title} />
     <meta name="twitter:description" content={description} />
-    <meta name="twitter:image" content={socialImage} />
     <title>{title}</title>
   </head>
   <body>
     <a class="skip-link" href="#content">Skip to content</a>
     <div class="site-shell">
       <header class="site-header">
-        <a class="brand" href={local("/")} aria-label="Loom Kernels home">
-          <span class="brand-mark" aria-hidden="true">LK</span>
+        <a class="brand" href={local("/")} aria-label="Loom Infer home">
+          <span class="brand-mark" aria-hidden="true">LI</span>
           <span class="brand-copy">
-            <strong>Loom Kernels</strong>
-            <small>Rust × CUDA</small>
+            <strong>Loom Infer</strong>
+            <small>Rust × GPU</small>
           </span>
         </a>
 
@@ -76,15 +73,15 @@ const socialImage = new URL(`${base}/og.png`, Astro.site);
       <footer class="site-footer">
         <div>
           <span class="footer-mark" aria-hidden="true">//</span>
-          <strong>Loom Kernels</strong>
-          <p>Rust-first CUDA operators for LLM inference.</p>
+          <strong>Loom Infer</strong>
+          <p>Rust-native kernels for LLM inference.</p>
         </div>
         <div class="footer-links">
           <a href={local("/docs/")}>Get started</a>
-          <a href={local("/benchmarks/")}>Evidence</a>
+          <a href={local("/evidence/")}>Evidence</a>
           <a href={`${repositoryUrl}/blob/main/LICENSE`}>MIT License</a>
         </div>
-        <p class="footer-note">Alpha software. Engine routes are opt-in.</p>
+        <p class="footer-note">Performance claims require matched evidence.</p>
       </footer>
     </div>
   </body>

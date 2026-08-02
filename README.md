@@ -1,162 +1,100 @@
 <div align="center">
-  <h1>Loom Kernels</h1>
-  <p>Rust-first CUDA operators for LLM inference.</p>
+  <h1>Loom Infer</h1>
+  <p>Rust-native GPU kernels for LLM inference.</p>
   <p>
     <a href="docs/README.md">Docs</a> ·
     <a href="docs/operator-catalog.md">Operators</a> ·
-    <a href="docs/compatibility.md">Compatibility</a> ·
-    <a href="docs/results/README.md">Evidence</a> ·
-    <a href="https://feichai0017.github.io/loom-kernels/">Website</a>
-  </p>
-  <p>
-    <a href="https://github.com/feichai0017/loom-kernels/actions/workflows/ci.yml"><img alt="CI status" src="https://github.com/feichai0017/loom-kernels/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="docs/roadmap.md">Roadmap</a> ·
+    <a href="docs/results/README.md">Evidence</a>
   </p>
 </div>
 
-Loom implements memory-bound fusion, layout conversion, quantization support,
-sampling, and data movement around the matrix core. It does not implement an
-inference engine, tensor framework, or GEMM library.
+Loom Infer is a high-performance inference kernel library written in Rust. It
+provides checked operator contracts, CPU references, and Rust CUDA kernels
+compiled with [cuda-oxide](https://github.com/NVlabs/cuda-oxide).
 
-> [!IMPORTANT]
-> Loom is alpha software. Engine routes are explicit opt-ins. Unsupported
-> contracts stay on the engine's native path.
+The project is not a model server. An inference engine owns requests, models,
+scheduling, and distributed execution. Loom Infer owns operator contracts,
+launch planning, GPU execution, and reproducible evidence.
 
-## Scope
+## Current scope
 
-Loom owns five parts of an operator path:
+The repository contains two crates:
 
-| Part | Responsibility |
+| Crate | Responsibility |
 | --- | --- |
-| Contract | Dtypes, shapes, layouts, aliasing, and invalid-input behavior |
-| Reference | Deterministic CPU oracles for correctness |
-| Execution | Safe Rust dispatch and handwritten CUDA |
-| Integration | Current-stream PyTorch operators and narrow vLLM routes |
-| Evidence | Correctness, CUDA Graph, engine, and clean-install results |
+| `loom-infer` | Safe operator contracts and CPU reference implementations |
+| `loom-infer-cuda` | Rust host code and Rust CUDA kernels built with cuda-oxide |
 
-cuBLASLt, CUTLASS, FlashInfer, or the engine keeps every dense, quantized,
-sparse, and grouped GEMM. Loom only owns measured work around those kernels.
-
-## Operator surface
-
-Bridge ABI12 exposes 21 semantic operators through one checked execution path.
-
-| Family | Public paths | Boundary |
-| --- | --- | --- |
-| Normalization | RMSNorm, Add+RMSNorm, dynamic FP8 and INT8 output | INT8 remains explicit while quality and stable engine benefit are open |
-| MLP | SiLU-and-Mul, block FP8 output, dynamic INT8 output | GEMM remains vendor-owned. The INT8 route is profile-gated |
-| Position and KV | RoPE with paged-KV write, static FP8 E4M3 cache write | The engine owns cache storage, page tables, and attention |
-| Decode tail | Logits preprocessing, penalties, top-k, top-p, Min-P, logprobs, categorical sampling | Each vLLM route has an exact shape and semantic gate |
-| Speculative decode | Greedy draft verification and token compaction | Tree, stochastic, and KV extensions need a new engine profile |
-| MoE movement | Stable expert-major permutation and weighted combine | Grouped GEMM and routing remain engine-owned |
-| Attention | Paged MQA/GQA decode and local split-K/LSE merge | Only short qualified shapes enter the vLLM route. FA3 handles the rest |
-
-The [operator catalog](docs/operator-catalog.md) records each status and
-admission rule.
-
-## Architecture
+The first device path is contiguous RMSNorm for F32, FP16, and BF16. Its public
+flow is:
 
 ```text
-engine adapter
-  -> LibTorch Stable ABI dispatcher
-  -> checked Rust bridge
-  -> safe Rust CUDA backend
-  -> internal launch ABI
-  -> handwritten CUDA
+RmsNormSpec::new
+  -> RmsNormProvider::load
+  -> RmsNormProvider::plan_{f32,f16,bf16}
+  -> CommandQueue::bindings
+  -> CommandQueue::begin
+  -> prepared plan::enqueue_into
+  -> CommandScope::finish
+  -> CommandCompletion::wait
 ```
 
-| Path | Owns |
-| --- | --- |
-| `crates/loom-kernels` | Public contracts, capabilities, and CPU oracles |
-| `crates/loom-cuda` | Safe streams, memory views, layouts, dispatch, and benchmarks |
-| `crates/loom-cuda-bridge` | Checked C entrypoints, spans, aliasing, and panic containment |
-| `crates/loom-cuda-sys` | Internal launch declarations, CUDA build logic, and kernels |
-| `python` | Stable ABI PyTorch operators and vLLM admission policy |
+All three dtypes have passed permanent-provider H20 correctness gates. FP16 and
+BF16 use scalar access for odd widths and packed 32-bit access for even widths.
+Attention, sampling, KV-cache, MoE, quantization, and vendor GEMM remain roadmap
+work.
 
-Framework adapters translate tensors and streams. They do not launch CUDA or
-duplicate Rust validation. See the [code layout](docs/design/code-layout.md).
+### Execution
 
-## Install
+The command scope chains operators on one caller-owned stream and holds mixed
+F32, FP16, BF16, and byte buffers. Typed handles prevent dtype confusion, and
+one preallocated event completes the scope. The cuda-oxide launcher still
+allocates its argument vector during enqueue.
 
-Use the backend-independent contracts from Rust:
+## Source boundary
+
+- Loom-owned product code is Rust.
+- Custom device kernels are Rust compiled with cuda-oxide.
+- The repository has no Python product API, CUDA C++, compatibility layer, or
+  silent fallback.
+- CUDA drivers and established GEMM or collective libraries remain vendor
+  dependencies when Loom adds those paths.
+- The caller owns streams and device buffers. Checked bindings retain borrowed
+  resources while the GPU uses them.
+
+## Local checks
+
+The default workspace build does not require CUDA:
 
 ```bash
-cargo add loom-kernels@1.0.0-alpha.1
-```
-
-Enable the CUDA backend on a CUDA build host:
-
-```bash
-cargo add loom-cuda@1.0.0-alpha.1 --features cuda
-```
-
-Validate a source checkout without CUDA:
-
-```bash
-git clone https://github.com/feichai0017/loom-kernels.git
-cd loom-kernels
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets
+cargo check --workspace --release
+cargo package -p loom-infer
 ```
 
-A qualified native Python wheel exists, but no package index publishes it.
-Build and install it from a clean Linux x86_64 checkout by following the
-[Python guide](python/README.md).
+H20 device validation uses the pinned nightly and cuda-oxide revision:
 
-## Qualified boundary
+```bash
+cd crates/loom-infer-cuda
+cargo oxide doctor
+cargo oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch sm_90
+```
 
-The current artifact is
-`loom_kernels-1.0.0a1-12cu131torch210sm90-py3-none-linux_x86_64.whl`.
-It contains exactly `libloom_cuda_bridge.so` and
-`libloom_kernels_torch.so`.
-
-| Component | Qualified boundary |
-| --- | --- |
-| GPU | NVIDIA H20, SM90, CUDA 13.1 |
-| Python | 3.11 |
-| PyTorch | 2.10 and 2.11 |
-| vLLM | 0.24 and 0.25 |
-| Clean install | 359 tests on each vLLM row and 245 applicable tests on PyTorch 2.10 |
-
-The [compatibility matrix](docs/compatibility.md) records the exact revisions,
-hashes, and revalidation rules.
+See the [H20 validation contract](docs/development/h20-validation.md) before
+reporting a device result.
 
 ## Evidence
 
-These results show the range of current claims. Each result links to its raw
-H20 record.
+Operator correctness, kernel latency, graph execution, engine integration, and
+serving performance are separate claims. A microbenchmark does not establish
+an engine or serving speedup.
 
-| Path | Result | Limit |
-| --- | --- | --- |
-| [RMSNorm to dynamic FP8](docs/results/h20-rms-norm-dynamic-fp8-residual-20260727.json) | `1.0066-1.0506x` Qwen prefill batch-latency ratio | Decode-heavy runs cross parity |
-| [Sparse token penalties](docs/results/h20-token-penalties-20260725.json) | `5.82-34.30x` operator ratio and exact output | Serving-scale goodput remains open |
-| [Deterministic categorical sampling](docs/results/h20-categorical-sample-20260727.json) | One kernel and `1.15-5.40x` at 4-32 rows | Batch 1-4 pays an engine cost |
-| [Short paged decode](docs/results/h20-vllm-paged-decode-backend-20260722.json) | `1.154-2.374x` across 24 admitted cases | Other shapes use FA3 |
-| [MoE engine admission](docs/results/h20-vllm-engine-moe-movement-20260801.json) | Exact tokens and `48/48` movement hits | Synthetic model. No production speedup claim |
-| [FP8 KV system candidate](docs/results/h20-fp8-kv-system-rejected-20260727.json) | `1.99879x` cache capacity | Rejected because perplexity regressed by about `3.07x` |
-
-A fast kernel does not imply a faster model. Loom records operator, graph,
-engine, and serving results as separate gates. The
-[evidence index](docs/results/README.md) includes accepted, parity, fallback,
-and rejected experiments.
-
-## Next work
-
-1. Run the production MoE movement gate on a pinned pretrained workload.
-2. Add quantization plumbing only for a measured vendor-kernel consumer.
-3. Build one zero-copy Rust decode step over borrowed tensors and streams.
-
-KV movement and speculative extensions remain profile-gated. The
-[roadmap](docs/roadmap.md) defines their entry and exit conditions.
-
-## Documentation
-
-- [Documentation index](docs/README.md)
-- [Operator catalog](docs/operator-catalog.md)
-- [vLLM integration guide](docs/guides/vllm-ir-provider.md)
-- [Implementation status](docs/status.md)
-- [Compatibility and distribution](docs/compatibility.md)
-- [Contributing](CONTRIBUTING.md)
+See the [architecture](docs/design/loom-infer-architecture.md),
+[operator catalog](docs/operator-catalog.md), [roadmap](docs/roadmap.md), and
+[low-precision RMSNorm result](docs/results/h20-rms-norm-low-precision-20260802.json).
 
 ## License
 

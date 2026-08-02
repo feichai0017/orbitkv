@@ -1,0 +1,64 @@
+---
+import DocsNav from "../components/DocsNav.astro";
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { repositoryUrl } from "../data/site";
+---
+
+<SiteLayout
+  title="Evidence | Loom Infer"
+  description="Correctness and performance evidence for permanent Loom Infer providers."
+  active="Evidence"
+>
+  <header class="page-hero">
+    <p class="eyebrow">Evidence</p>
+    <h1>Each claim has a fixed boundary.</h1>
+    <p>Each result fixes the source, contract, hardware, baseline, and method.</p>
+  </header>
+
+  <div class="docs-layout">
+    <DocsNav active="Evidence" />
+    <article class="prose">
+      <h2>Current state</h2>
+      <div class="doc-note">
+        <strong>F32 RMSNorm passes its H20 correctness gate.</strong>
+        <p>
+          Four shapes match the CPU reference, and an invalid buffer is
+          rejected. Checked bindings chain two launches on a non-default
+          stream with one completion record. The chained maximum absolute
+          error is <code>7.152557373e-7</code>. Performance is not measured.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-rms-norm-f32-command-scope-20260802.json`}>
+          Machine-readable result
+        </a>
+      </div>
+      <div class="doc-note">
+        <strong>FP16 and BF16 RMSNorm pass their H20 correctness gates.</strong>
+        <p>
+          Scalar and packed paths match the storage-rounded CPU references.
+          Three short-buffer positions are rejected. Two launches share one
+          completion record without an intermediate host wait. The FP16 chain
+          reaches two ULPs, and the BF16 chain reaches one ULP. Performance is
+          not measured.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-rms-norm-low-precision-20260802.json`}>
+          Low-precision result
+        </a>
+      </div>
+
+      <h2>Evidence levels</h2>
+      <ol>
+        <li>Correctness fixes the contract, oracle, limits, and edge cases.</li>
+        <li>Kernel evidence uses matched buffers, streams, and provider order.</li>
+        <li>Graph evidence covers capture and replay with fixed plans.</li>
+        <li>Engine evidence proves invocation and model output.</li>
+        <li>Serving evidence reports latency, throughput, memory, and workload.</li>
+      </ol>
+
+      <p>
+        Read the
+        <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>result format</a>
+        and <a href={`${repositoryUrl}/blob/main/docs/development/h20-validation.md`}>H20 validation guide</a>.
+      </p>
+    </article>
+  </div>
+</SiteLayout>

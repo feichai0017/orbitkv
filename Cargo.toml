@@ -1,24 +1,21 @@
 [workspace]
 members = [
-    "crates/loom-cuda",
-    "crates/loom-cuda-bridge",
-    "crates/loom-cuda-sys",
-    "crates/loom-kernels",
+    "crates/loom-infer-cuda",
+    "crates/loom-infer",
 ]
-default-members = ["crates/loom-kernels", "crates/loom-cuda"]
+default-members = [
+    "crates/loom-infer",
+    "crates/loom-infer-cuda",
+]
 resolver = "2"
 
 [workspace.package]
 version = "1.0.0-alpha.1"
-edition = "2021"
+edition = "2024"
 license = "MIT"
-repository = "https://github.com/feichai0017/loom-kernels"
-homepage = "https://feichai0017.github.io/loom-kernels/"
+repository = "https://github.com/feichai0017/loom-infer"
+homepage = "https://feichai0017.github.io/loom-infer/"
 
 [workspace.dependencies]
-clap = { version = "4.5.23", features = ["derive"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-thiserror = "2.0.12"
-cc = "1.2"
 half = "2.7"
+thiserror = "2.0"

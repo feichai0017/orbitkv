@@ -1,4 +1,4 @@
-name: Typos Check
+name: typos
 
 on:
   push:

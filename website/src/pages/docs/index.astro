@@ -5,16 +5,13 @@ import { repositoryUrl } from "../../data/site";
 ---
 
 <SiteLayout
-  title="Documentation | Loom Kernels"
-  description="Contracts, integration, compatibility, and evidence for Loom Kernels."
+  title="Documentation | Loom Infer"
+  description="Architecture, roadmap, operator contracts, and evidence for Loom Infer."
 >
   <header class="page-hero">
     <p class="eyebrow">Documentation</p>
-    <h1>Choose the boundary you need</h1>
-    <p>
-      Loom is an operator backend. The engine keeps tensors, streams, scheduling,
-      GEMM, model state, and fallback policy.
-    </p>
+    <h1>Start from the boundary.</h1>
+    <p>Loom Infer is an operator library. The engine keeps model and serving policy.</p>
   </header>
 
   <div class="docs-layout">
@@ -23,55 +20,37 @@ import { repositoryUrl } from "../../data/site";
       <h2>Start here</h2>
       <div class="doc-grid">
         <div class="doc-card">
-          <h3>Understand the design</h3>
-          <p>Read the product boundary, execution path, and admission gates.</p>
-          <a href={`${repositoryUrl}/blob/main/docs/design/operator-library.md`}>Operator-library design</a>
+          <h3>Architecture</h3>
+          <p>Read the Rust source boundary and one operator lifecycle.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/design/loom-infer-architecture.md`}>Architecture</a>
         </div>
         <div class="doc-card">
-          <h3>Integrate an engine</h3>
-          <p>Build the native wheel and enable only measured PyTorch or vLLM routes.</p>
-          <a href={`${import.meta.env.BASE_URL}docs/integration/`}>Integration guide</a>
+          <h3>Roadmap</h3>
+          <p>Follow the RMSNorm, attention, decode, and vendor-provider phases.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/roadmap.md`}>Roadmap</a>
         </div>
         <div class="doc-card">
-          <h3>Check compatibility</h3>
-          <p>Confirm the CUDA, PyTorch, vLLM, Python, and bridge ABI boundary.</p>
-          <a href={`${repositoryUrl}/blob/main/docs/compatibility.md`}>Compatibility matrix</a>
+          <h3>Operators</h3>
+          <p>Check the current slice and target operator surface.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>Operator catalog</a>
         </div>
         <div class="doc-card">
-          <h3>Inspect results</h3>
-          <p>Read accepted, parity, fallback, and rejected H20 evidence.</p>
-          <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>Evidence index</a>
+          <h3>H20 validation</h3>
+          <p>Run each correctness, stream, graph, sanitizer, and performance gate separately.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/development/h20-validation.md`}>Validation guide</a>
         </div>
       </div>
 
-      <h2>Validate the Rust workspace</h2>
-      <pre><code>git clone https://github.com/feichai0017/loom-kernels.git
-cd loom-kernels
+      <h2>Validate the current workspace</h2>
+      <pre><code>git clone https://github.com/feichai0017/loom-infer.git
+cd loom-infer
 cargo fmt --all -- --check
 cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets</code></pre>
-
-      <h2>Repository layers</h2>
-      <table class="operator-table">
-        <thead>
-          <tr><th>Path</th><th>Responsibility</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>loom-kernels</td><td>Contracts, capabilities, and CPU oracles.</td></tr>
-          <tr><td>loom-cuda</td><td>Safe memory, stream, layout, and dispatch APIs.</td></tr>
-          <tr><td>loom-cuda-bridge</td><td>Checked framework boundary.</td></tr>
-          <tr><td>loom-cuda-sys</td><td>Internal CUDA ABI and kernels.</td></tr>
-          <tr><td>python</td><td>Stable ABI PyTorch operators and vLLM policy.</td></tr>
-        </tbody>
-      </table>
-
-      <div class="doc-note">
-        <strong>Evidence is cumulative.</strong>
-        <p>
-          Contract, CUDA, benchmark, framework, engine, and system gates are
-          separate. Passing one does not imply the next.
-        </p>
-      </div>
+      <p>
+        The <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>evidence index</a>
+        contains the permanent F32, FP16, and BF16 RMSNorm correctness results.
+      </p>
     </article>
   </div>
 </SiteLayout>

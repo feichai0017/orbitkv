@@ -1,155 +1,58 @@
-# LLM inference operator catalog
+# Operator catalog
 
-Loom Kernels aims to cover the common operator surface of production LLM
-inference, but it is not a general tensor framework. An operator belongs here
-when an inference engine needs a stable backend boundary, or when fusion,
-layout knowledge, quantization, or launch reduction can improve a measured
-workload.
+This catalog defines the target Loom Infer surface. It does not claim
+FlashInfer or FlashAttention parity.
 
-The catalog deliberately does not promise handwritten replacements for every
-pointwise expression. Dense, quantized, sparse, and grouped GEMM always use
-cuBLASLt, CUTLASS, FlashInfer, or an engine-selected vendor implementation.
-Loom owns only memory-bound preparation, movement, fusion, and epilogues around
-that matrix core.
-
-Catalog admission requires a memory/layout/scheduling bottleneck, a named
-engine gap, and a real model or serving exit gate. A plausible CUDA kernel or
-isolated microbenchmark is not sufficient.
-
-## Status legend
+## States
 
 | State | Meaning |
 | --- | --- |
-| supported | contract, oracle, CUDA, framework adapter, and H20 evidence exist |
-| in progress | source path exists, but required hardware or engine evidence is still open |
-| next | admitted to the immediate implementation queue |
-| planned | useful surface with a named engine consumer, ordered after `next` |
-| profile-gated | implemented only when a real workload shows material cost |
-| vendor-backed | the engine/vendor owns the base primitive; Loom may expose only an adjacent memory-bound boundary |
+| `contract` | A public Rust specification and CPU reference exist |
+| `in progress` | A permanent Rust device provider is under implementation |
+| `device correct` | The permanent provider passed its declared device correctness gate |
+| `planned` | The operator is in the roadmap |
+| `vendor` | Loom plans and calls a qualified vendor implementation |
 
-## Normalization and quantization
+## Current work
 
-| Operator | Priority | State | Intended fusion boundary |
-| --- | --- | --- | --- |
-| RMSNorm | P0 | supported | standalone normalization |
-| residual Add+RMSNorm | P0 | supported | residual update plus normalization |
-| optional residual Add+RMSNorm+dynamic per-token FP8 | P0 | supported | exact vLLM plain/fused-add schema; one normalization/quantization pass sequence feeding unchanged Cutlass GEMM, with an order-stable Qwen prefill win |
-| optional residual Add+RMSNorm+dynamic per-token INT8 | P0 | in progress | current ABI12 wheel and explicit W8A8 vLLM compiler route feed unchanged Cutlass GEMM; quality, stable engine benefit, and default admission remain open |
-| LayerNorm and Add+LayerNorm | P2 | profile-gated | models that actually use LayerNorm |
-| static/dynamic per-token, per-channel, and per-block quantization | P0/P1 | planned | FP8/INT8/INT4 scale production and packing around vendor GEMM |
-| dequantize, requantize, pack/unpack, and scale conversion | P1 | planned | layout-aware transitions between vendor kernels |
+| Operator | State | Current boundary |
+| --- | --- | --- |
+| RMSNorm F32 | device correct | Four shapes, checked bindings, reusable scopes, two-launch chaining, and partial-scope rejection pass on H20 |
+| RMSNorm FP16 and BF16 | device correct | Scalar and packed paths, eight shapes per dtype, three short-buffer checks, signed zero, and two-launch chaining pass on H20 |
 
-## MLP activations and linear epilogues
+No permanent GPU provider has a published performance result yet. The
+[low-precision correctness record](results/h20-rms-norm-low-precision-20260802.json)
+contains the accepted and excluded claims.
 
-| Operator | Priority | State | Intended fusion boundary |
-| --- | --- | --- | --- |
-| split-half SiLU-and-Mul (SwiGLU) | P0 | supported | standard Llama/Qwen MLP activation |
-| SiLU-and-Mul+dynamic per-block FP8 | P0 | supported | activation directly into FP8 down projection |
-| SiLU-and-Mul+dynamic per-token INT8 | P0 | profile-gated | qualified ABI12 wheel, exact real W8A8 path, 32-prompt quality, and clean-wheel gates pass before unchanged vendor INT8 GEMM; compiled/engine performance rejects default admission and any speedup claim |
-| GELU, GELU-tanh, GELU-and-Mul, GeGLU, ReGLU | P1 | planned | model-specific gated MLPs |
-| bias+activation and bias+gated activation | P1 | planned | GEMM output epilogues |
-| vendor GEMM handoff+bias+activation/quantization | P0 | vendor-backed | unchanged cuBLASLt/CUTLASS matrix core with a measured Loom pre/post boundary |
-| quantized linear and grouped linear | — | vendor-backed | explicitly engine-owned FP8/INT8/INT4 matrix core; Loom does not implement it |
+## Target surface
 
-## Embedding, position, and KV cache
+| Family | Operators | State |
+| --- | --- | --- |
+| Normalization | RMSNorm, Add+RMSNorm, quantized output | planned |
+| Attention | Ragged prefill, paged decode, split-K, state merge | planned |
+| KV cache | RoPE append, gather, scatter, compaction, quantized storage | planned |
+| Decode tail | Logits processing, penalties, top-k, top-p, Min-P, logprobs, sampling | planned |
+| Speculation | Greedy, stochastic, and tree verification | planned |
+| MoE | Routing support, permutation, grouped-GEMM input, combine | planned |
+| Quantization | Scale, pack, unpack, dequantize, layout conversion | planned |
+| Matrix work | Dense, quantized, and grouped GEMM | vendor |
+| Communication | Tensor-parallel and expert-parallel collectives | vendor |
 
-| Operator | Priority | State | Intended fusion boundary |
-| --- | --- | --- | --- |
-| NeoX and interleaved RoPE, partial rotary dimensions | P0 | next | in-place Q/K position encoding; currently exposed through the fused cache-write path |
-| RoPE+paged-KV write | P0 | supported | position encoding without materializing another K pass |
-| paged-KV reshape/store/append | P0 | next | engine tensor to cache layout |
-| KV block copy, swap, gather, scatter, compact, and remap | P1 | profile-gated | default vLLM prefix/preemption was rejected because it performs no physical movement; reopen only for a named offload, beam, or compaction path |
-| RoPE+paged-KV write to static FP8 E4M3 | P0 | in progress | implementation, exact-byte, clean-wheel, operator, capacity, and provider-equivalence gates pass; the first Qwen2.5 candidate fails native-vs-FP8 quality, so family-level serving value remains open |
-| dynamic FP8 per-token-head scale/write | P1 | planned | separate engine scale-cache contract only when a named backend requires it |
-| INT8 KV quantize/dequantize with scale update | P1 | planned | admitted only by a named engine/model cache contract |
-| embedding gather and parallel-vocabulary embedding | P1 | profile-gated | lookup plus dtype/layout conversion |
+## Attention baseline
 
-## Logits, sampling, and log probabilities
+Attention implementations compare against pinned FlashAttention, FlashInfer,
+and engine providers when contracts match. The comparison must keep shapes,
+dtypes, layouts, masks, workspaces, streams, and graph mode equal.
 
-| Operator | Priority | State | Intended fusion boundary |
-| --- | --- | --- | --- |
-| fused logits preprocessing | P0 | supported | one F32 pass for dense blocked-token mask, unique sparse bias, sparse suppression, and mixed-row temperature; explicit mixed-sampling vLLM route |
-| repetition, presence, and frequency penalties | P0 | supported | one sparse history hash and in-place update instead of full-vocabulary count/mask tensors |
-| greedy argmax+sampled-token raw logprob | P0 | supported | one-pass selection, normalization, gather, and tie-aware rank |
-| general selected-token raw logprob+rank | P0 | supported | engine-owned sampling followed by one-pass normalization and tie-aware rank |
-| sampled-token + top-k raw logprobs | P0 | supported | deterministic direct reduction without full-vocabulary probabilities; exact vLLM adapter preserves engine `torch.topk` order and replaces full raw log-softmax/rank |
-| exact in-place top-k filtering | P0 | supported | partition radix sort plus device-only exact threshold selection; vLLM rows 1–7 replace the full-vocabulary PyTorch sort while preserving threshold ties |
-| in-place min-p filtering | P0 | supported | row-max threshold without probability or mask tensors; vLLM route is H20 shape-gated |
-| deterministic counter-based categorical sampling | P0 | supported | direct ABI8 Rust/CUDA/PyTorch path, persistent vLLM 0.24/0.25 request state, and qualified matrix wheel; explicit `(seed, counter)`, one kernel, no probability-shaped noise tensor, exact replay, and an order-stable batch-32 engine win |
-| fused top-p filtering and renormalization | P0 | supported | deterministic retained prefix plus contiguous F32 probabilities; vLLM top-p-only route is H20 shape-gated and keeps engine RNG |
-| sharded-vocabulary top-k/logsumexp merge | P1 | planned | tensor-parallel token selection |
-| structured-output bitmask application | P1 | profile-gated | grammar mask plus logits processing |
+## Admission
 
-## Speculative decoding support
+Before implementation, each operator records:
 
-| Operator | Priority | State | Intended fusion boundary |
-| --- | --- | --- | --- |
-| batched draft-verification metadata and tree/branch mask construction | P0 | profile-gated | prepare one vendor-attention verification call without host metadata loops |
-| greedy draft verification+accepted/bonus-token compaction | P0 | supported | flattened ragged comparison and compact emission without device-to-host control flow |
-| stochastic rejection sampling | P0 | profile-gated | residual-distribution acceptance/rejection with explicit counter-based RNG state |
-| speculative KV slot commit, rollback, and remap | P0 | profile-gated | caller-owned cache metadata movement when an engine exposes the boundary |
-| draft/target model GEMM and verification attention | — | vendor-backed | engine-selected matrix and attention backends; never reimplemented by Loom |
+- the model or engine call site.
+- shapes, dtypes, layouts, alignment, and aliasing.
+- the numerical or quality limit.
+- the named baseline and target hardware.
+- the target metric and stop condition.
 
-## Mixture of experts
-
-| Operator | Priority | State | Intended fusion boundary |
-| --- | --- | --- | --- |
-| softmax/sigmoid top-k routing and grouped top-k | P1 | planned | score, select, renormalize, and expert map |
-| stable expert-major permutation, local offsets, and inverse metadata | P1 | supported | vLLM-compatible grouped-GEMM input with zero-filled expert-parallel remote tail |
-| inverse permutation and weighted expert reduction | P1 | supported | F32 route accumulation after unchanged vendor grouped GEMM |
-| grouped GEMM and quantized grouped GEMM | — | vendor-backed | explicitly engine-owned vendor matrix core fed by Loom-permuted buffers |
-| shared-expert gate and routed/shared output fusion | P1 | planned | reduce temporary expert tensors |
-
-## Attention
-
-| Operator | Priority | State | Intended fusion boundary |
-| --- | --- | --- | --- |
-| paged MQA/GQA decode attention | P1 | supported | GQA-packed Rust/CUDA/PyTorch path, D128 caller-owned split-K workspace for 128-1,024 tokens at batch <=8, plus an opt-in H20-qualified vLLM route for native interleaved FP16/BF16 Hq/Hkv 32/8, D128, block 16/32, batch <=128, context <=32 |
-| ragged prefill attention | P1 | vendor-backed | FlashAttention/FlashInfer selected by evidence |
-| local split-KV state and numerically stable LSE merge | P1 | supported | D128 long-context decode with explicit F32 workspace |
-| distributed split-KV/LSE merge | P1 | planned | context-parallel attention after transport qualification |
-| sliding-window, ALiBi, soft-cap, and causal variants | P1 | planned | standard attention contract options |
-| MLA paged decode and latent-cache transforms | P1 | planned | DeepSeek-style inference path |
-| speculative verification attention | — | vendor-backed | engine-selected attention consumes Loom-prepared verification metadata |
-
-## Communication-aware operators
-
-| Operator | Priority | State | Intended fusion boundary |
-| --- | --- | --- | --- |
-| all-reduce+residual+RMSNorm | P2 | planned | tensor-parallel post-attention/MLP path |
-| reduce-scatter/all-gather+quantization epilogues | P2 | planned | communication payload reduction |
-| tensor-parallel logits top-k merge | P1 | planned | distributed sampling without full gather |
-| expert-parallel dispatch/combine | P2 | planned | token movement plus permutation metadata |
-
-Collectives will wrap NCCL or another qualified transport. Loom will not claim
-a distributed speedup from a same-process adapter or from a local kernel alone.
-
-## Layout and internal primitives
-
-Cast, transpose, concatenate/split, pad/unpad, gather/scatter, reductions,
-prefix sums, packing, and block copies are profile-gated. Multiple domains may
-use them internally. They become public operators only when an engine needs the
-boundary or an isolated implementation is measurably useful.
-
-## Implementation order
-
-1. Profile the qualified vLLM/Cutlass MoE movement route on a pinned,
-   production-representative workload. Add routing only when that profile shows
-   material cost. Grouped GEMM remains entirely engine/vendor-owned.
-2. Revisit KV block movement only for a named offload, beam, or compaction
-   call site. The measured default vLLM prefix and preemption path copies no
-   data, so Loom exposes no operator for it.
-3. Return to tree metadata, stochastic speculative rejection, or KV
-   commit/remap only when a named engine profile shows material cost. The
-   current real-model gate puts verification below `0.2%` of batch latency.
-4. Reopen static FP8 KV-cache system qualification only for a distinct pinned
-   model, backend, or representation that first passes the held-out quality
-   gate.
-5. Build the engine-neutral Rust decode proof after one new feature reaches an
-   engine.
-6. Broaden paged decode or communication-aware fusion only when profiling and
-   reproducible engine workloads justify it.
-
-Every item advances independently through the admission gates in the
-[operator-library design](design/operator-library.md). Catalog membership is a
-product direction, not a performance or production-readiness claim.
+The provider then passes contract, device, performance, graph, engine, and
+serving gates independently. Unsupported contracts return an error.

@@ -1,27 +1,19 @@
-# Rust build output and rustfmt backups
-/target/
+target/
 **/*.rs.bk
 *.pdb
+loom_infer_cuda.ptx
+*.cubin
+*.fatbin
+*.nsys-rep
+*.ncu-rep
 
-# Local editor and agent configuration
 .vscode
 .history
 .claude/
 AGENTS.md
 GEMINI.md
 
-# Python benchmark artifacts
-__pycache__/
-*.pyc
-*.egg-info/
-.venv/
-.venv-*/
-/build/
-/dist/
-python/build/
-python/src/loom_kernels/lib/
-
-# Astro website artifacts
 website/node_modules/
 website/dist/
 website/.astro/
+.DS_Store

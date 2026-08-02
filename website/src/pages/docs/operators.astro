@@ -1,38 +1,34 @@
 ---
 import DocsNav from "../../components/DocsNav.astro";
 import SiteLayout from "../../layouts/SiteLayout.astro";
-import { nextOperators, repositoryUrl, supportedOperators } from "../../data/site";
+import { milestones, operatorFamilies, repositoryUrl } from "../../data/site";
 ---
 
 <SiteLayout
-  title="Operators | Loom Kernels"
-  description="The implemented and profile-gated operator paths in Loom Kernels."
+  title="Operators | Loom Infer"
+  description="The current and planned operator surface for Loom Infer."
   active="Operators"
 >
   <header class="page-hero">
     <p class="eyebrow">Operators</p>
-    <h1>A narrow, measured surface</h1>
-    <p>
-      Loom admits memory-bound work that a real engine can reach without copies.
-      GEMM stays with the engine or vendor library.
-    </p>
+    <h1>One lifecycle for every operator.</h1>
+    <p>Current work starts with a permanent Rust RMSNorm provider on H20.</p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Operators" />
     <article class="prose">
-      <h2>Current paths</h2>
+      <h2>Operator families</h2>
       <table class="operator-table">
         <thead>
-          <tr><th>Operator</th><th>Dtypes</th><th>Boundary</th><th>Status</th></tr>
+          <tr><th>Family</th><th>Boundary</th><th>State</th></tr>
         </thead>
         <tbody>
-          {supportedOperators.map((operator) => (
+          {operatorFamilies.map((operator) => (
             <tr>
               <td>{operator.name}</td>
-              <td>{operator.dtypes}</td>
               <td>{operator.boundary}</td>
-              <td>{operator.status}</td>
+              <td>{operator.state}</td>
             </tr>
           ))}
         </tbody>
@@ -45,14 +41,14 @@ import { nextOperators, repositoryUrl, supportedOperators } from "../../data/sit
         <li>A model or serving workload can prove the final value.</li>
       </ol>
       <p>
-        Every admitted path still passes contract, oracle, CUDA, named-baseline,
-        framework, engine, and system gates. Read the full
+        A Rust provider passes contract, device, named-baseline, graph, engine,
+        and serving gates independently. Read the full
         <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>operator catalog</a>.
       </p>
 
       <h2>Next work</h2>
       <div class="doc-grid">
-        {nextOperators.map((item) => (
+        {milestones.map((item) => (
           <div class="doc-card">
             <span class="card-index">{item.milestone}</span>
             <h3>{item.name}</h3>
