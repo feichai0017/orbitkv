@@ -10,7 +10,7 @@ export const operatorFamilies = [
   {
     name: "Normalization",
     boundary: "RMSNorm, residual fusion, and quantized output.",
-    state: "In progress",
+    state: "Device-correct",
   },
   {
     name: "Attention",
@@ -35,7 +35,7 @@ export const operatorFamilies = [
   {
     name: "Matrix work",
     boundary: "Fixed Rust plans for qualified vendor GEMM providers.",
-    state: "Vendor",
+    state: "Device-correct",
   },
 ]
 
@@ -48,7 +48,7 @@ export const milestones = [
   {
     milestone: "02",
     name: "Vendor GEMM",
-    reason: "Add one fixed BF16 cuBLASLt plan through the common command scope.",
+    reason: "The fixed BF16 cuBLASLt plan passes correctness. Graph, baseline, and engine gates remain open.",
   },
   {
     milestone: "03",

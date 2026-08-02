@@ -23,7 +23,7 @@ import { repositoryUrl } from "../data/site";
         <strong>F32 RMSNorm passes its H20 correctness gate.</strong>
         <p>
           Four shapes match the CPU reference, and an invalid buffer is
-          rejected. Checked bindings chain two launches on a non-default
+          rejected. Checked bindings chain two commands on a non-default
           stream with one completion record. The chained maximum absolute
           error is <code>7.152557373e-7</code>. Performance is not measured.
         </p>
@@ -42,6 +42,18 @@ import { repositoryUrl } from "../data/site";
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-rms-norm-low-precision-20260802.json`}>
           Low-precision result
+        </a>
+      </div>
+      <div class="doc-note">
+        <strong>One fixed BF16 cuBLASLt GEMM plan passes its H20 correctness gate.</strong>
+        <p>
+          Standalone and transpose-sensitive cases match the CPU reference.
+          Short A, W, and D buffers are rejected. BF16 RMSNorm feeds GEMM under
+          one completion without an intermediate host wait. The selected H20
+          algorithm requires no workspace. Performance is not measured.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-cublaslt-correctness-20260802.json`}>
+          BF16 GEMM result
         </a>
       </div>
 

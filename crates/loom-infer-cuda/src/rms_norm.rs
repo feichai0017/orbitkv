@@ -1,6 +1,6 @@
 //! cuda-oxide implementation and prepared launch for RMSNorm.
 
-use crate::command::{BindingElement, CommandError, CommandScope, Read, Write};
+use crate::command::{BindingElement, CommandError, CommandPermit, CommandScope, Read, Write};
 use cuda_core::{CudaContext, CudaFunction, LaunchConfig1D, LaunchContractError, PreparedLaunch};
 use cuda_device::{
     DisjointSlice, SharedArray, convert, cuda_module, float, kernel, launch_bounds,
@@ -492,21 +492,21 @@ impl RmsNormF32Plan {
         scope: &mut CommandScope<'_, '_>,
         args: RmsNormArgs<f32>,
     ) -> Result<(), RmsNormEnqueueError> {
-        scope.ensure_launch_capacity()?;
+        let permit = scope.prepare_command()?;
         let launch_result = {
-            let resolved = scope.resolve_triplet(args.input, args.weight, args.output)?;
+            let resolved = scope.resolve_rrw(args.input, args.weight, args.output)?;
             self.module.rms_norm_f32(
                 resolved.stream,
                 &self.launch,
                 self.spec.rows(),
                 self.spec.hidden_size(),
                 self.spec.epsilon(),
-                resolved.input,
-                resolved.weight,
-                resolved.output,
+                resolved.first,
+                resolved.second,
+                resolved.third,
             )
         };
-        record_launch(scope, self.launch.function().clone(), launch_result)
+        record_launch(scope, permit, self.launch.function().clone(), launch_result)
     }
 }
 
@@ -551,45 +551,45 @@ impl RmsNormF16Plan {
         scope: &mut CommandScope<'_, '_>,
         args: RmsNormArgs<f16>,
     ) -> Result<(), RmsNormEnqueueError> {
-        scope.ensure_launch_capacity()?;
+        let permit = scope.prepare_command()?;
         let (function, launch_result) = match &self.launch {
             RmsNormF16Launch::Scalar(launch) => {
                 let result = {
-                    let resolved = scope.resolve_triplet(args.input, args.weight, args.output)?;
+                    let resolved = scope.resolve_rrw(args.input, args.weight, args.output)?;
                     self.module.rms_norm_f16_scalar(
                         resolved.stream,
                         launch,
                         self.spec.rows(),
                         self.spec.hidden_size(),
                         self.spec.epsilon(),
-                        resolved.input,
-                        resolved.weight,
-                        resolved.output,
+                        resolved.first,
+                        resolved.second,
+                        resolved.third,
                     )
                 };
                 (launch.function().clone(), result)
             }
             RmsNormF16Launch::Packed2(launch) => {
                 let result = {
-                    let resolved = scope.resolve_triplet(args.input, args.weight, args.output)?;
-                    require_packed_alignment("input", resolved.input.cu_deviceptr())?;
-                    require_packed_alignment("weight", resolved.weight.cu_deviceptr())?;
-                    require_packed_alignment("output", resolved.output.cu_deviceptr())?;
+                    let resolved = scope.resolve_rrw(args.input, args.weight, args.output)?;
+                    require_packed_alignment("input", resolved.first.cu_deviceptr())?;
+                    require_packed_alignment("weight", resolved.second.cu_deviceptr())?;
+                    require_packed_alignment("output", resolved.third.cu_deviceptr())?;
                     self.module.rms_norm_f16_packed2(
                         resolved.stream,
                         launch,
                         self.spec.rows(),
                         self.spec.hidden_size(),
                         self.spec.epsilon(),
-                        resolved.input,
-                        resolved.weight,
-                        resolved.output,
+                        resolved.first,
+                        resolved.second,
+                        resolved.third,
                     )
                 };
                 (launch.function().clone(), result)
             }
         };
-        record_launch(scope, function, launch_result)
+        record_launch(scope, permit, function, launch_result)
     }
 }
 
@@ -625,45 +625,45 @@ impl RmsNormBf16Plan {
         scope: &mut CommandScope<'_, '_>,
         args: RmsNormArgs<bf16>,
     ) -> Result<(), RmsNormEnqueueError> {
-        scope.ensure_launch_capacity()?;
+        let permit = scope.prepare_command()?;
         let (function, launch_result) = match &self.launch {
             RmsNormBf16Launch::Scalar(launch) => {
                 let result = {
-                    let resolved = scope.resolve_triplet(args.input, args.weight, args.output)?;
+                    let resolved = scope.resolve_rrw(args.input, args.weight, args.output)?;
                     self.module.rms_norm_bf16_scalar(
                         resolved.stream,
                         launch,
                         self.spec.rows(),
                         self.spec.hidden_size(),
                         self.spec.epsilon(),
-                        resolved.input,
-                        resolved.weight,
-                        resolved.output,
+                        resolved.first,
+                        resolved.second,
+                        resolved.third,
                     )
                 };
                 (launch.function().clone(), result)
             }
             RmsNormBf16Launch::Packed2(launch) => {
                 let result = {
-                    let resolved = scope.resolve_triplet(args.input, args.weight, args.output)?;
-                    require_packed_alignment("input", resolved.input.cu_deviceptr())?;
-                    require_packed_alignment("weight", resolved.weight.cu_deviceptr())?;
-                    require_packed_alignment("output", resolved.output.cu_deviceptr())?;
+                    let resolved = scope.resolve_rrw(args.input, args.weight, args.output)?;
+                    require_packed_alignment("input", resolved.first.cu_deviceptr())?;
+                    require_packed_alignment("weight", resolved.second.cu_deviceptr())?;
+                    require_packed_alignment("output", resolved.third.cu_deviceptr())?;
                     self.module.rms_norm_bf16_packed2(
                         resolved.stream,
                         launch,
                         self.spec.rows(),
                         self.spec.hidden_size(),
                         self.spec.epsilon(),
-                        resolved.input,
-                        resolved.weight,
-                        resolved.output,
+                        resolved.first,
+                        resolved.second,
+                        resolved.third,
                     )
                 };
                 (launch.function().clone(), result)
             }
         };
-        record_launch(scope, function, launch_result)
+        record_launch(scope, permit, function, launch_result)
     }
 }
 
@@ -731,17 +731,18 @@ fn require_packed_alignment(
 
 fn record_launch(
     scope: &mut CommandScope<'_, '_>,
+    permit: CommandPermit,
     function: CudaFunction,
     result: Result<(), LaunchContractError>,
 ) -> Result<(), RmsNormEnqueueError> {
     match result {
         Ok(()) => {
-            scope.retain_launch(function);
+            scope.record_cuda_submission(permit, function);
             Ok(())
         }
         Err(error) => {
             if let LaunchContractError::Driver(driver_error) = &error {
-                scope.retain_failed_launch(function, *driver_error);
+                scope.record_failed_cuda_submission(permit, function, *driver_error);
             }
             Err(error.into())
         }

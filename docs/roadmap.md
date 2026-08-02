@@ -11,7 +11,7 @@ attention-kernel comparison surface.
 - keep the H20-qualified F32 path in `loom-infer-cuda`.
 - support F32, FP16, and BF16 with scalar and packed paths.
 - bind caller-owned memory and non-default streams.
-- keep one stream-ordered command scope for every provider.
+- keep one stream-ordered command scope for Rust and vendor providers.
 - replace generated argument vectors with reusable fixed argument packs.
 - pass correctness, CUDA Graph, sanitizer, and matched H20 performance gates.
 
@@ -25,7 +25,7 @@ H20 correctness and performance records.
 
 ## 2. First vendor GEMM provider
 
-**State:** next.
+**State:** active. Device correctness passed.
 
 - define contiguous BF16 `D[M,N] = A[M,K] * W[N,K]^T` with F32 accumulation.
 - plan one explicit cuBLASLt algorithm before enqueue.
@@ -35,6 +35,10 @@ H20 correctness and performance records.
 
 Exit: a fixed BF16 GEMM plan passes correctness, graph, and matched-provider
 gates without a tensor copy.
+
+The fixed BF16 cuBLASLt plan passes its H20 correctness and command-lifecycle
+gates. CUDA Graph, matched-provider performance, real-model shapes, and engine
+invocation remain open.
 
 ## 3. Attention core
 

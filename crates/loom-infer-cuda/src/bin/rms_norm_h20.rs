@@ -236,7 +236,7 @@ fn check_low_precision_case<T: LowPrecision>(
     )?;
     let completion = scope.finish();
     if completion.submitted() != 1 {
-        return Err(format!("{} single scope retained the wrong launch count", T::NAME).into());
+        return Err(format!("{} single scope retained the wrong command count", T::NAME).into());
     }
     drop(completion.wait()?);
 
@@ -441,7 +441,7 @@ fn check_f32_chained_scope(
 
     println!(
         "rms_norm_f32 chained rows=8 hidden=4096 stream=non_default scopes=2 \
-         launches_per_scope=2 completion_records_per_scope=1 intermediate_waits=0 \
+         commands_per_scope=2 completion_records_per_scope=1 intermediate_waits=0 \
          queue_reused=true bindings_reused=true max_abs_error={max_abs_error:.9e}"
     );
     Ok(())
@@ -643,7 +643,7 @@ fn check_low_precision_chained_scope<T: LowPrecision>(
         let completion = scope.finish();
         if completion.submitted() != 2 {
             return Err(
-                format!("{} chained scope retained the wrong launch count", T::NAME).into(),
+                format!("{} chained scope retained the wrong command count", T::NAME).into(),
             );
         }
         bindings = completion.wait()?;
@@ -663,7 +663,7 @@ fn check_low_precision_chained_scope<T: LowPrecision>(
     }
     println!(
         "rms_norm_{} chained rows=8 hidden=4096 path={:?} scopes=2 \
-         launches_per_scope=2 completion_records_per_scope=1 intermediate_waits=0 \
+         commands_per_scope=2 completion_records_per_scope=1 intermediate_waits=0 \
          queue_reused=true bindings_reused=true heterogeneous_bindings=f32+u8+{} \
          max_abs_error={:.9e} max_ulp_error={}",
         T::NAME,

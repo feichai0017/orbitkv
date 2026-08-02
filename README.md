@@ -9,7 +9,7 @@
   </p>
 </div>
 
-Loom Infer is a high-performance inference kernel library written in Rust. It
+Loom Infer is an inference GPU operator library written in Rust. It
 provides checked operator contracts, CPU references, and Rust CUDA kernels
 compiled with [cuda-oxide](https://github.com/NVlabs/cuda-oxide).
 
@@ -26,31 +26,39 @@ The repository contains two crates:
 | `loom-infer` | Safe operator contracts and CPU reference implementations |
 | `loom-infer-cuda` | Rust host code and Rust CUDA kernels built with cuda-oxide |
 
-The first device path is contiguous RMSNorm for F32, FP16, and BF16. Its public
-flow is:
+The current device paths are:
+
+| Operator | Provider | H20 state |
+| --- | --- | --- |
+| Contiguous RMSNorm F32, FP16, BF16 | Rust device kernels compiled with cuda-oxide | Device correct |
+| Contiguous BF16 GEMM with F32 accumulation | One fixed cuBLASLt algorithm | Device correct |
+
+Both use the same public flow:
 
 ```text
-RmsNormSpec::new
-  -> RmsNormProvider::load
-  -> RmsNormProvider::plan_{f32,f16,bf16}
+validated spec
+  -> provider::load
+  -> immutable plan
   -> CommandQueue::bindings
   -> CommandQueue::begin
-  -> prepared plan::enqueue_into
+  -> plan::enqueue_into
   -> CommandScope::finish
   -> CommandCompletion::wait
 ```
 
-All three dtypes have passed permanent-provider H20 correctness gates. FP16 and
-BF16 use scalar access for odd widths and packed 32-bit access for even widths.
-Attention, sampling, KV-cache, MoE, quantization, and vendor GEMM remain roadmap
-work.
+The GEMM contract is `D[M,N] = A[M,K] * W[N,K]^T` over contiguous row-major
+BF16 tensors. Algorithm selection happens during planning. Enqueue does not
+tune or fall back.
+
+Attention, sampling, KV-cache, MoE, quantization, graph
+replay, and performance qualification remain roadmap work.
 
 ### Execution
 
-The command scope chains operators on one caller-owned stream and holds mixed
-F32, FP16, BF16, and byte buffers. Typed handles prevent dtype confusion, and
-one preallocated event completes the scope. The cuda-oxide launcher still
-allocates its argument vector during enqueue.
+The command scope chains Rust kernels and vendor calls on one caller-owned
+stream. It retains typed buffers, loaded kernel functions, and external plans
+until one completion event settles the scope. The cuda-oxide launcher still
+allocates its argument vector during Rust-kernel enqueue.
 
 ## Source boundary
 
@@ -58,8 +66,8 @@ allocates its argument vector during enqueue.
 - Custom device kernels are Rust compiled with cuda-oxide.
 - The repository has no Python product API, CUDA C++, compatibility layer, or
   silent fallback.
-- CUDA drivers and established GEMM or collective libraries remain vendor
-  dependencies when Loom adds those paths.
+- CUDA drivers and cuBLASLt are current vendor dependencies. Other established
+  GEMM and collective libraries may enter through explicit providers.
 - The caller owns streams and device buffers. Checked bindings retain borrowed
   resources while the GPU uses them.
 
@@ -81,6 +89,8 @@ H20 device validation uses the pinned nightly and cuda-oxide revision:
 cd crates/loom-infer-cuda
 cargo oxide doctor
 cargo oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch sm_90
+cargo oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch sm_90
+cargo oxide test --arch sm_90 -- --workspace --features cuda --release
 ```
 
 See the [H20 validation contract](docs/development/h20-validation.md) before
@@ -92,9 +102,12 @@ Operator correctness, kernel latency, graph execution, engine integration, and
 serving performance are separate claims. A microbenchmark does not establish
 an engine or serving speedup.
 
+The current GEMM record makes no performance, CUDA Graph, Compute Sanitizer,
+engine, or serving claim.
+
 See the [architecture](docs/design/loom-infer-architecture.md),
 [operator catalog](docs/operator-catalog.md), [roadmap](docs/roadmap.md), and
-[low-precision RMSNorm result](docs/results/h20-rms-norm-low-precision-20260802.json).
+[BF16 cuBLASLt result](docs/results/h20-bf16-cublaslt-correctness-20260802.json).
 
 ## License
 

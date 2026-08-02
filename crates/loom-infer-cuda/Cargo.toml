@@ -11,7 +11,7 @@ publish = false
 
 [features]
 default = []
-cuda = ["dep:cuda-core", "dep:cuda-device", "dep:cuda-host"]
+cuda = ["dep:cuda-core", "dep:cuda-device", "dep:cuda-host", "dep:cudarc"]
 
 [dependencies]
 half.workspace = true
@@ -20,8 +20,14 @@ thiserror.workspace = true
 cuda-core = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "868f8ec4ef900bae7e67e7f9508b2da66eee5472", optional = true }
 cuda-device = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "868f8ec4ef900bae7e67e7f9508b2da66eee5472", optional = true }
 cuda-host = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "868f8ec4ef900bae7e67e7f9508b2da66eee5472", optional = true }
+cudarc = { version = "=0.19.8", default-features = false, features = ["std", "cublaslt", "cuda-13010", "dynamic-linking"], optional = true }
 
 [[bin]]
 name = "rms_norm_h20"
 path = "src/bin/rms_norm_h20.rs"
+required-features = ["cuda"]
+
+[[bin]]
+name = "bf16_gemm_h20"
+path = "src/bin/bf16_gemm_h20.rs"
 required-features = ["cuda"]
