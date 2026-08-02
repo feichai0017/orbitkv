@@ -4,6 +4,7 @@
 
 use cuda_core::{CudaEvent, CudaFunction, CudaStream, DeviceBuffer, DeviceCopy, DriverError};
 use half::{bf16, f16};
+use std::any::Any;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,24 +14,24 @@ static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A reusable submission queue for one exact CUDA stream.
 ///
-/// The queue preallocates its completion event and function-retention storage.
+/// The queue preallocates its completion event and resource-retention storage.
 /// Rust's mutable borrow rules prevent a second scope from re-recording the
 /// event while an earlier completion is still alive.
 pub struct CommandQueue {
     id: u64,
     stream: Arc<CudaStream>,
     completion_event: CudaEvent,
-    retained_functions: Vec<CudaFunction>,
-    max_launches: usize,
+    retained_resources: Vec<RetainedResource>,
+    max_commands: usize,
     poisoned: bool,
 }
 
 impl CommandQueue {
-    /// Creates a queue for `stream` with storage for at most `max_launches`
+    /// Creates a queue for `stream` with storage for at most `max_commands`
     /// commands per scope.
-    pub fn new(stream: Arc<CudaStream>, max_launches: usize) -> Result<Self, CommandError> {
-        if max_launches == 0 {
-            return Err(CommandError::ZeroLaunchCapacity);
+    pub fn new(stream: Arc<CudaStream>, max_commands: usize) -> Result<Self, CommandError> {
+        if max_commands == 0 {
+            return Err(CommandError::ZeroCommandCapacity);
         }
 
         let id = fresh_id()?;
@@ -39,8 +40,8 @@ impl CommandQueue {
             id,
             stream,
             completion_event,
-            retained_functions: Vec::with_capacity(max_launches),
-            max_launches,
+            retained_resources: Vec::with_capacity(max_commands),
+            max_commands,
             poisoned: false,
         })
     }
@@ -50,8 +51,8 @@ impl CommandQueue {
         &self.stream
     }
 
-    pub const fn max_launches(&self) -> usize {
-        self.max_launches
+    pub const fn max_commands(&self) -> usize {
+        self.max_commands
     }
 
     /// Creates reusable checked binding storage outside the enqueue path.
@@ -86,7 +87,7 @@ impl CommandQueue {
         {
             return Err(CommandError::BindingsQueueMismatch);
         }
-        if !self.retained_functions.is_empty() {
+        if !self.retained_resources.is_empty() {
             self.poisoned = true;
             return Err(CommandError::QueuePoisoned);
         }
@@ -94,10 +95,28 @@ impl CommandQueue {
         Ok(CommandScope {
             queue: Some(self),
             bindings: Some(bindings),
+            scope_id: fresh_id()?,
             submitted: 0,
             submission_error: None,
             finished: false,
         })
+    }
+}
+
+impl Drop for CommandQueue {
+    fn drop(&mut self) {
+        if self.retained_resources.is_empty() {
+            return;
+        }
+
+        let synchronize_error = synchronize_stream_or_abort(self);
+        self.retained_resources.clear();
+        if let Some(error) = synchronize_error {
+            eprintln!(
+                "loom-infer-cuda command queue synchronized after a stream error during drop: \
+                 {error}"
+            );
+        }
     }
 }
 
@@ -325,8 +344,9 @@ pub struct Write<T: BindingElement> {
 pub struct CommandScope<'queue, 'buffer> {
     queue: Option<&'queue mut CommandQueue>,
     bindings: Option<CheckedBindings<'buffer>>,
+    scope_id: u64,
     submitted: usize,
-    submission_error: Option<DriverError>,
+    submission_error: Option<SubmissionError>,
     finished: bool,
 }
 
@@ -356,39 +376,48 @@ impl<'queue, 'buffer> CommandScope<'queue, 'buffer> {
         }
     }
 
-    pub(crate) fn ensure_launch_capacity(&self) -> Result<(), CommandError> {
+    pub(crate) fn prepare_command(&self) -> Result<CommandPermit, CommandError> {
         if self.submission_error.is_some() {
             return Err(CommandError::ScopePoisoned);
         }
         let queue = self.queue.as_ref().expect("live command scope has a queue");
-        if self.submitted == queue.max_launches {
-            Err(CommandError::LaunchCapacityExceeded {
-                capacity: queue.max_launches,
+        if self.submitted >= queue.max_commands {
+            Err(CommandError::CommandCapacityExceeded {
+                capacity: queue.max_commands,
             })
         } else {
-            Ok(())
+            Ok(CommandPermit {
+                queue_id: queue.id,
+                scope_id: self.scope_id,
+                submission_index: self.submitted,
+            })
         }
     }
 
-    pub(crate) fn resolve_triplet<T: ResolveElement>(
+    pub(crate) fn resolve_rrw<A, B, C>(
         &mut self,
-        input: Read<T>,
-        weight: Read<T>,
-        output: Write<T>,
-    ) -> Result<ResolvedTriplet<'_, T>, CommandError> {
+        first: Read<A>,
+        second: Read<B>,
+        third: Write<C>,
+    ) -> Result<ResolvedRrw<'_, A, B, C>, CommandError>
+    where
+        A: ResolveElement,
+        B: ResolveElement,
+        C: ResolveElement,
+    {
         let bindings = self
             .bindings
             .as_mut()
             .expect("live command scope has bindings");
-        for handle in [input.set_id, weight.set_id, output.set_id] {
+        for handle in [first.set_id, second.set_id, third.set_id] {
             if handle != bindings.set_id {
                 return Err(CommandError::BindingSetMismatch);
             }
         }
-        if input.slot == weight.slot || input.slot == output.slot || weight.slot == output.slot {
-            return Err(CommandError::AliasedOperands);
+        if first.slot == second.slot || first.slot == third.slot || second.slot == third.slot {
+            return Err(CommandError::DuplicateBindingSlot);
         }
-        for slot in [input.slot, weight.slot, output.slot] {
+        for slot in [first.slot, second.slot, third.slot] {
             if slot >= bindings.leases.len() {
                 return Err(CommandError::BindingSlotOutOfRange {
                     slot,
@@ -397,40 +426,170 @@ impl<'queue, 'buffer> CommandScope<'queue, 'buffer> {
             }
         }
 
-        let [input_lease, weight_lease, output_lease] = bindings
+        let [first_lease, second_lease, third_lease] = bindings
             .leases
-            .get_disjoint_mut([input.slot, weight.slot, output.slot])
+            .get_disjoint_mut([first.slot, second.slot, third.slot])
             .expect("validated binding slots are pairwise disjoint");
-        let input_buffer =
-            T::read(input_lease).map_err(|error| map_lease_error(error, input.slot))?;
-        let weight_buffer =
-            T::read(weight_lease).map_err(|error| map_lease_error(error, weight.slot))?;
-        let output_buffer =
-            T::write(output_lease).map_err(|error| map_lease_error(error, output.slot))?;
+        let first_buffer =
+            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
+        let second_buffer =
+            B::read(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
+        let third_buffer =
+            C::write(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
-        Ok(ResolvedTriplet {
+        Ok(ResolvedRrw {
             stream: &queue.stream,
-            input: input_buffer,
-            weight: weight_buffer,
-            output: output_buffer,
+            first: first_buffer,
+            second: second_buffer,
+            third: third_buffer,
         })
     }
 
-    pub(crate) fn retain_launch(&mut self, function: CudaFunction) {
-        let queue = self.queue.as_mut().expect("live command scope has a queue");
-        debug_assert!(queue.retained_functions.len() < queue.max_launches);
-        queue.retained_functions.push(function);
-        self.submitted += 1;
+    pub(crate) fn resolve_rrww<A, B, C, D>(
+        &mut self,
+        first: Read<A>,
+        second: Read<B>,
+        third: Write<C>,
+        fourth: Write<D>,
+    ) -> Result<ResolvedRrww<'_, A, B, C, D>, CommandError>
+    where
+        A: ResolveElement,
+        B: ResolveElement,
+        C: ResolveElement,
+        D: ResolveElement,
+    {
+        let bindings = self
+            .bindings
+            .as_mut()
+            .expect("live command scope has bindings");
+        for handle in [first.set_id, second.set_id, third.set_id, fourth.set_id] {
+            if handle != bindings.set_id {
+                return Err(CommandError::BindingSetMismatch);
+            }
+        }
+        let slots = [first.slot, second.slot, third.slot, fourth.slot];
+        for (index, slot) in slots.iter().enumerate() {
+            if slots[..index].contains(slot) {
+                return Err(CommandError::DuplicateBindingSlot);
+            }
+            if *slot >= bindings.leases.len() {
+                return Err(CommandError::BindingSlotOutOfRange {
+                    slot: *slot,
+                    bindings: bindings.leases.len(),
+                });
+            }
+        }
+
+        let [first_lease, second_lease, third_lease, fourth_lease] = bindings
+            .leases
+            .get_disjoint_mut(slots)
+            .expect("validated binding slots are pairwise disjoint");
+        let first_buffer =
+            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
+        let second_buffer =
+            B::read(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
+        let third_buffer =
+            C::write(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
+        let fourth_buffer =
+            D::write(fourth_lease).map_err(|error| map_lease_error(error, fourth.slot))?;
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
+
+        Ok(ResolvedRrww {
+            stream: &queue.stream,
+            first: first_buffer,
+            second: second_buffer,
+            third: third_buffer,
+            fourth: fourth_buffer,
+        })
     }
 
-    pub(crate) fn retain_failed_launch(&mut self, function: CudaFunction, error: DriverError) {
-        let queue = self.queue.as_mut().expect("live command scope has a queue");
-        debug_assert!(queue.retained_functions.len() < queue.max_launches);
-        queue.retained_functions.push(function);
-        self.submitted += 1;
-        self.submission_error = Some(error);
+    pub(crate) fn record_cuda_submission(&mut self, permit: CommandPermit, function: CudaFunction) {
+        self.record_submission(
+            permit,
+            RetainedResource::Kernel {
+                _function: function,
+            },
+        );
     }
+
+    pub(crate) fn record_failed_cuda_submission(
+        &mut self,
+        permit: CommandPermit,
+        function: CudaFunction,
+        error: DriverError,
+    ) {
+        self.record_submission(
+            permit,
+            RetainedResource::Kernel {
+                _function: function,
+            },
+        );
+        self.submission_error = Some(SubmissionError::Driver(error));
+    }
+
+    pub(crate) fn record_external_submission<T>(&mut self, permit: CommandPermit, resource: Arc<T>)
+    where
+        T: Any + Send + Sync,
+    {
+        self.record_submission(
+            permit,
+            RetainedResource::External {
+                _resource: resource,
+            },
+        );
+    }
+
+    pub(crate) fn record_failed_external_submission<T>(
+        &mut self,
+        permit: CommandPermit,
+        resource: Arc<T>,
+        error: ExternalCommandError,
+    ) where
+        T: Any + Send + Sync,
+    {
+        self.record_submission(
+            permit,
+            RetainedResource::External {
+                _resource: resource,
+            },
+        );
+        self.submission_error = Some(SubmissionError::External(error));
+    }
+
+    pub(crate) fn record_preflight_driver_failure(&mut self, error: DriverError) {
+        self.submission_error = Some(SubmissionError::Driver(error));
+    }
+
+    fn record_submission(&mut self, permit: CommandPermit, resource: RetainedResource) {
+        let queue = self.queue.as_mut().expect("live command scope has a queue");
+        if permit.queue_id != queue.id
+            || permit.scope_id != self.scope_id
+            || permit.submission_index != self.submitted
+            || queue.retained_resources.len() != self.submitted
+            || self.submitted >= queue.max_commands
+        {
+            abort_after_bookkeeping_invariant();
+        }
+        queue.retained_resources.push(resource);
+        self.submitted += 1;
+    }
+}
+
+/// A single-use proof that one command fits in the preallocated queue.
+pub(crate) struct CommandPermit {
+    queue_id: u64,
+    scope_id: u64,
+    submission_index: usize,
+}
+
+enum RetainedResource {
+    Kernel {
+        _function: CudaFunction,
+    },
+    External {
+        _resource: Arc<dyn Any + Send + Sync>,
+    },
 }
 
 impl Drop for CommandScope<'_, '_> {
@@ -447,19 +606,47 @@ impl Drop for CommandScope<'_, '_> {
             if self.submission_error.is_some() || synchronize_error.is_some() {
                 queue.poisoned = true;
             }
-            if let Some(error) = self.submission_error.or(synchronize_error) {
+            let submission_driver_error = self
+                .submission_error
+                .and_then(SubmissionError::driver_error);
+            queue.retained_resources.clear();
+            if let Some(error) = submission_driver_error {
                 queue.stream.context().record_err::<()>(Err(error));
             }
+            if let Some(error) = synchronize_error {
+                queue.stream.context().record_err::<()>(Err(error));
+            }
+        } else {
+            queue.retained_resources.clear();
+            if let Some(error) = self.submission_error {
+                queue.poisoned = true;
+                if let Some(error) = error.driver_error() {
+                    queue.stream.context().record_err::<()>(Err(error));
+                }
+            }
         }
-        queue.retained_functions.clear();
     }
 }
 
-pub(crate) struct ResolvedTriplet<'scope, T: BindingElement> {
+pub(crate) struct ResolvedRrw<'scope, A: BindingElement, B: BindingElement, C: BindingElement> {
     pub(crate) stream: &'scope CudaStream,
-    pub(crate) input: &'scope DeviceBuffer<T>,
-    pub(crate) weight: &'scope DeviceBuffer<T>,
-    pub(crate) output: &'scope mut DeviceBuffer<T>,
+    pub(crate) first: &'scope DeviceBuffer<A>,
+    pub(crate) second: &'scope DeviceBuffer<B>,
+    pub(crate) third: &'scope mut DeviceBuffer<C>,
+}
+
+pub(crate) struct ResolvedRrww<
+    'scope,
+    A: BindingElement,
+    B: BindingElement,
+    C: BindingElement,
+    D: BindingElement,
+> {
+    pub(crate) stream: &'scope CudaStream,
+    pub(crate) first: &'scope DeviceBuffer<A>,
+    pub(crate) second: &'scope DeviceBuffer<B>,
+    pub(crate) third: &'scope mut DeviceBuffer<C>,
+    pub(crate) fourth: &'scope mut DeviceBuffer<D>,
 }
 
 /// The final fence and all leases retained by a completed command scope.
@@ -468,7 +655,7 @@ pub struct CommandCompletion<'queue, 'buffer> {
     queue: Option<&'queue mut CommandQueue>,
     bindings: Option<CheckedBindings<'buffer>>,
     submitted: usize,
-    submission_error: Option<DriverError>,
+    submission_error: Option<SubmissionError>,
     record_error: Option<DriverError>,
     poll_error: Option<DriverError>,
     complete: bool,
@@ -477,9 +664,6 @@ pub struct CommandCompletion<'queue, 'buffer> {
 impl<'queue, 'buffer> CommandCompletion<'queue, 'buffer> {
     /// Returns whether all submitted commands have completed without blocking.
     pub fn is_complete(&mut self) -> Result<bool, CommandError> {
-        if self.submitted == 0 {
-            return Ok(true);
-        }
         if let Some(error) = self.submission_error {
             return Err(error.into());
         }
@@ -488,6 +672,9 @@ impl<'queue, 'buffer> CommandCompletion<'queue, 'buffer> {
         }
         if let Some(error) = self.poll_error {
             return Err(error.into());
+        }
+        if self.submitted == 0 {
+            return Ok(true);
         }
         let queue = self.queue.as_ref().expect("live completion has a queue");
         match queue.completion_event.query() {
@@ -507,18 +694,18 @@ impl<'queue, 'buffer> CommandCompletion<'queue, 'buffer> {
                 self.queue
                     .as_mut()
                     .expect("live completion has a queue")
-                    .retained_functions
+                    .retained_resources
                     .clear();
                 Ok(self.bindings.take().expect("live completion has bindings"))
             }
-            Some(error) => {
+            Some(failure) => {
                 self.complete = true;
                 let queue = self.queue.as_mut().expect("live completion has a queue");
                 queue.poisoned = true;
-                queue.retained_functions.clear();
-                queue.stream.context().record_err::<()>(Err(error));
+                queue.retained_resources.clear();
+                record_settlement_errors(queue, failure);
                 self.bindings.take();
-                Err(error.into())
+                Err(failure.command_error())
             }
         }
     }
@@ -528,29 +715,38 @@ impl<'queue, 'buffer> CommandCompletion<'queue, 'buffer> {
         self.submitted
     }
 
-    fn settle(&self) -> Option<DriverError> {
+    fn settle(&self) -> Option<SettlementFailure> {
         if self.submitted == 0 {
-            return self.submission_error;
+            return self.submission_error.map(|reported| SettlementFailure {
+                reported,
+                synchronize_error: None,
+            });
         }
         let queue = self.queue.as_ref().expect("live completion has a queue");
         if let Some(submission_error) = self.submission_error {
-            let _ = synchronize_stream_or_abort(queue);
-            return Some(submission_error);
+            return Some(SettlementFailure {
+                reported: submission_error,
+                synchronize_error: synchronize_stream_or_abort(queue),
+            });
         }
         if let Some(record_error) = self.record_error {
-            let _ = synchronize_stream_or_abort(queue);
-            return Some(record_error);
+            return Some(SettlementFailure {
+                reported: SubmissionError::Driver(record_error),
+                synchronize_error: synchronize_stream_or_abort(queue),
+            });
         }
         if let Some(poll_error) = self.poll_error {
-            let _ = synchronize_stream_or_abort(queue);
-            return Some(poll_error);
+            return Some(SettlementFailure {
+                reported: SubmissionError::Driver(poll_error),
+                synchronize_error: synchronize_stream_or_abort(queue),
+            });
         }
         match queue.completion_event.synchronize() {
             Ok(()) => None,
-            Err(event_error) => {
-                let _ = synchronize_stream_or_abort(queue);
-                Some(event_error)
-            }
+            Err(event_error) => Some(SettlementFailure {
+                reported: SubmissionError::Driver(event_error),
+                synchronize_error: synchronize_stream_or_abort(queue),
+            }),
         }
     }
 }
@@ -562,11 +758,13 @@ impl Drop for CommandCompletion<'_, '_> {
         }
         let result = self.settle();
         let queue = self.queue.as_mut().expect("live completion has a queue");
-        if let Some(error) = result {
+        if let Some(failure) = result {
             queue.poisoned = true;
-            queue.stream.context().record_err::<()>(Err(error));
+            queue.retained_resources.clear();
+            record_settlement_errors(queue, failure);
+        } else {
+            queue.retained_resources.clear();
         }
-        queue.retained_functions.clear();
         self.complete = true;
     }
 }
@@ -603,10 +801,87 @@ fn abort_after_sync_failure(stream_error: DriverError, context_error: DriverErro
     std::process::abort()
 }
 
+fn abort_after_bookkeeping_invariant() -> ! {
+    eprintln!(
+        "loom-infer-cuda detected an internal command-accounting violation after GPU submission; \
+         aborting to preserve resource safety"
+    );
+    std::process::abort()
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+#[error("{provider} command submission failed with status {status}")]
+pub struct ExternalCommandError {
+    provider: &'static str,
+    status: i32,
+}
+
+impl ExternalCommandError {
+    pub const fn new(provider: &'static str, status: i32) -> Self {
+        Self { provider, status }
+    }
+
+    pub const fn provider(self) -> &'static str {
+        self.provider
+    }
+
+    pub const fn status(self) -> i32 {
+        self.status
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SubmissionError {
+    Driver(DriverError),
+    External(ExternalCommandError),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct SettlementFailure {
+    reported: SubmissionError,
+    synchronize_error: Option<DriverError>,
+}
+
+impl SettlementFailure {
+    fn command_error(self) -> CommandError {
+        match self.synchronize_error {
+            Some(error) => CommandError::Driver(error),
+            None => self.reported.into(),
+        }
+    }
+}
+
+fn record_settlement_errors(queue: &CommandQueue, failure: SettlementFailure) {
+    if let Some(error) = failure.reported.driver_error() {
+        queue.stream.context().record_err::<()>(Err(error));
+    }
+    if let Some(error) = failure.synchronize_error {
+        queue.stream.context().record_err::<()>(Err(error));
+    }
+}
+
+impl SubmissionError {
+    const fn driver_error(self) -> Option<DriverError> {
+        match self {
+            Self::Driver(error) => Some(error),
+            Self::External(_) => None,
+        }
+    }
+}
+
+impl From<SubmissionError> for CommandError {
+    fn from(error: SubmissionError) -> Self {
+        match error {
+            SubmissionError::Driver(error) => Self::Driver(error),
+            SubmissionError::External(error) => Self::External(error),
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum CommandError {
-    #[error("command queues require capacity for at least one launch")]
-    ZeroLaunchCapacity,
+    #[error("command queues require capacity for at least one command")]
+    ZeroCommandCapacity,
     #[error("checked bindings require capacity for at least one resource")]
     ZeroBindingCapacity,
     #[error("command queue identifier space is exhausted")]
@@ -615,7 +890,7 @@ pub enum CommandError {
     BindingsQueueMismatch,
     #[error("the command queue is poisoned by an earlier completion failure")]
     QueuePoisoned,
-    #[error("the command scope is poisoned by a CUDA launch failure")]
+    #[error("the command scope is poisoned by an earlier submission failure")]
     ScopePoisoned,
     #[error("checked binding capacity {capacity} is exhausted")]
     BindingCapacityExceeded { capacity: usize },
@@ -634,10 +909,12 @@ pub enum CommandError {
     BindingIsReadOnly { slot: usize },
     #[error("binding slot {slot} has a different element type than its resource handle")]
     BindingTypeMismatch { slot: usize },
-    #[error("one operator cannot alias its input, weight, or output bindings")]
-    AliasedOperands,
-    #[error("command scope launch capacity {capacity} is exhausted")]
-    LaunchCapacityExceeded { capacity: usize },
+    #[error("one command cannot use the same binding slot for multiple operands")]
+    DuplicateBindingSlot,
+    #[error("command scope capacity {capacity} is exhausted")]
+    CommandCapacityExceeded { capacity: usize },
+    #[error(transparent)]
+    External(#[from] ExternalCommandError),
     #[error(transparent)]
     Driver(#[from] DriverError),
 }

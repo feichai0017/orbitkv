@@ -41,7 +41,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   </section>
 
   <section class="metrics-strip" aria-label="Project status">
-    <div class="metric"><strong>1</strong><span>active operator slice</span></div>
+    <div class="metric"><strong>2</strong><span>device-correct slices</span></div>
     <div class="metric"><strong>SM90</strong><span>first target</span></div>
     <div class="metric"><strong>Rust</strong><span>host and device source</span></div>
     <div class="metric"><strong>Pending</strong><span>performance evidence</span></div>
@@ -95,7 +95,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       </article>
       <article class="architecture-card">
         <span class="card-index">04</span><h3>Execution</h3>
-        <p>Rust device artifacts today; explicit vendor calls are next.</p>
+        <p>Rust device artifacts and fixed vendor calls share one checked command scope.</p>
       </article>
     </div>
   </section>
@@ -110,12 +110,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p>F32, FP16, and BF16 pass their declared correctness gates.</p>
       <small>Scalar and packed low-precision paths pass. Performance is not measured.</small>
     </article>
+    <article class="evidence-card">
+      <h3>BF16 cuBLASLt GEMM on H20</h3><span class="result">Correct</span>
+      <p>Fixed-plan standalone, transpose-sensitive, and RMSNorm-to-GEMM cases pass.</p>
+      <small>Command lifecycle and rejection gates pass. Performance is not measured.</small>
+    </article>
   </section>
 
   <section class="section">
     <header class="section-header">
-      <div><p class="eyebrow">Next</p><h2>Add the first vendor provider</h2></div>
-      <p>Plan one fixed BF16 cuBLASLt GEMM on the same checked command scope.</p>
+      <div><p class="eyebrow">Next</p><h2>Qualify the current providers</h2></div>
+      <p>Add graph and matched performance evidence, then enter the attention core.</p>
     </header>
     <div class="roadmap-grid">
       {milestones.map((item) => (

@@ -5,4 +5,6 @@
 #[cfg(feature = "cuda")]
 pub mod command;
 #[cfg(feature = "cuda")]
+pub mod gemm;
+#[cfg(feature = "cuda")]
 pub mod rms_norm;

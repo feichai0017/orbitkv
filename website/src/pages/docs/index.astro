@@ -26,7 +26,7 @@ import { repositoryUrl } from "../../data/site";
         </div>
         <div class="doc-card">
           <h3>Roadmap</h3>
-          <p>Follow the RMSNorm, attention, decode, and vendor-provider phases.</p>
+          <p>Follow the RMSNorm, vendor GEMM, attention, and decode phases.</p>
           <a href={`${repositoryUrl}/blob/main/docs/roadmap.md`}>Roadmap</a>
         </div>
         <div class="doc-card">
@@ -49,7 +49,7 @@ cargo clippy --workspace --all-targets -- -D warnings
 cargo test --workspace --all-targets</code></pre>
       <p>
         The <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>evidence index</a>
-        contains the permanent F32, FP16, and BF16 RMSNorm correctness results.
+        contains the RMSNorm and fixed BF16 cuBLASLt correctness results.
       </p>
     </article>
   </div>

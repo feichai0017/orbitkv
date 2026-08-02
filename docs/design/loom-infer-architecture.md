@@ -25,14 +25,14 @@ consumer engine
 | Crate | Responsibility |
 | --- | --- |
 | `loom-infer` | Public specifications, errors, capabilities, and CPU references |
-| `loom-infer-cuda` | Plans, CUDA execution, Rust device kernels, and future vendor calls |
+| `loom-infer-cuda` | Plans, CUDA execution, Rust device kernels, and explicit vendor calls |
 
 The workspace adds another crate only when a working vertical slice needs a
 separate ownership or safety boundary.
 
 ## Operator lifecycle
 
-The current RMSNorm slice implements this lifecycle:
+The current RMSNorm and BF16 GEMM slices implement this lifecycle:
 
 ```text
 validated specification
@@ -51,21 +51,25 @@ contract validates buffer spans before enqueue.
 ### Command resources
 
 `CommandQueue` owns one exact caller stream, one preallocated event, and fixed
-function-retention storage. One heterogeneous binding arena holds F32, FP16,
+resource-retention storage. One heterogeneous binding arena holds F32, FP16,
 BF16, and byte buffers. Typed handles preserve each element type. Opaque access
 handles cannot move between binding sets.
 
 One command scope submits several plans to the same stream. CUDA stream order
-makes each output available to the next launch without a host wait. `finish()`
-records the queue event once. The completion retains bindings and loaded
-functions until `wait()` or destruction confirms completion.
+makes each output available to the next launch without a host wait.
+
+`finish()` records the queue event once. The completion retains bindings, loaded kernel
+functions, and external provider plans until `wait()` or destruction confirms
+completion.
 
 ### Failure handling
 
-Contract errors are recoverable, while a CUDA driver launch error poisons the
-scope and queue. Cleanup tries stream synchronization, then context
-synchronization. If neither can prove quiescence, the process aborts before
-Rust releases any borrowed GPU resource.
+Contract errors are recoverable. CUDA driver failures and external provider
+submission failures poison the scope and queue.
+
+Cleanup tries stream
+synchronization, then context synchronization. If neither can prove
+quiescence, the process aborts before Rust releases any borrowed GPU resource.
 
 ### Enqueue admission
 
@@ -90,23 +94,31 @@ use F32 arithmetic and round the stored result to nearest-even.
 
 ## Vendor providers
 
-Loom Infer includes GEMM and communication in its planning surface. Planned
-vendor providers will use a qualified library implementation unless a measured
-Loom implementation wins on the same contract.
+Loom Infer includes GEMM and communication in its planning surface. Vendor
+providers use qualified library implementations unless a measured Loom
+implementation wins on the same contract.
 
 A vendor plan fixes the library, algorithm, layouts, packed weights, scales,
 epilogue, workspace, and graph policy. Provider selection never changes during
 enqueue.
+
+The first provider fixes one cuBLASLt algorithm for contiguous row-major BF16
+`D[M,N] = A[M,K] * W[N,K]^T` with F32 accumulation. It checks exact spans,
+16-byte tensor alignment, 256-byte workspace alignment, CUDA context, and the
+algorithm's actual workspace requirement. Planning allows up to 32 MiB.
+Enqueue has no tuning or fallback.
 
 ## Evidence boundary
 
 An operator advances through independent gates:
 
 1. Contract and CPU reference.
-2. Device correctness and memory safety.
-3. Matched kernel performance in both provider orders.
-4. Non-default stream and CUDA Graph behavior.
-5. Real engine invocation and model output.
-6. Serving latency, throughput, and memory.
+2. Device correctness.
+3. Command lifecycle and non-default-stream behavior.
+4. Compute Sanitizer.
+5. Matched kernel performance in both provider orders.
+6. CUDA Graph capture and replay.
+7. Real engine invocation and model output.
+8. Serving latency, throughput, and memory.
 
 Passing one gate does not imply that a later gate passes.

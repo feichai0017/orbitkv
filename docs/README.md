@@ -10,7 +10,9 @@ Loom Infer is a Rust-native GPU operator library for LLM inference.
   process.
 - [Evidence](results/README.md) indexes results from permanent providers.
 
-The root [README](../README.md) gives the short project overview.
+The root [README](../README.md) gives the short project overview. Current
+correctness evidence covers Rust RMSNorm kernels and one fixed BF16 cuBLASLt
+GEMM plan on H20.
 
 ## Documentation rules
 
