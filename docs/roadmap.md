@@ -1,90 +1,85 @@
-# Roadmap
+# Loom Infer roadmap
 
-## Product boundary
+Loom Infer targets the operator surface required by production LLM inference.
+FlashInfer defines the broad comparison surface. FlashAttention defines the
+attention-kernel comparison surface.
 
-Loom does not implement matrix multiplication. cuBLASLt, CUTLASS, FlashInfer,
-or the engine owns dense, quantized, sparse, and grouped GEMM.
+## 1. Permanent RMSNorm provider
 
-A new Loom operator must satisfy three conditions:
+**State:** active.
 
-1. Memory traffic, launch overhead, layout conversion, or scheduling metadata
-   causes the cost.
-2. A named engine exposes a zero-copy boundary that Loom can enter.
-3. A real model or serving workload can prove latency, memory, throughput, or
-   goodput value.
+- keep the H20-qualified F32 path in `loom-infer-cuda`.
+- support F32, FP16, and BF16 with scalar and packed paths.
+- bind caller-owned memory and non-default streams.
+- keep one stream-ordered command scope for every provider.
+- replace generated argument vectors with reusable fixed argument packs.
+- pass correctness, CUDA Graph, sanitizer, and matched H20 performance gates.
 
-A microbenchmark alone does not admit an operator.
+F32, FP16, and BF16 correctness gates pass across scalar, packed, exact-length,
+non-default-stream, and chained cases. Typed heterogeneous bindings hold mixed
+tensor and workspace types in one scope. Fixed argument packs, CUDA Graph,
+sanitizer, and matched performance gates remain open.
 
-## Current order
+Exit: all three dtypes use the common operator lifecycle and have reproducible
+H20 correctness and performance records.
 
-| Order | Work | Exit |
-| --- | --- | --- |
-| 1 | Run the production MoE movement gate | A pinned pretrained workload preserves output and improves latency with the same vendor grouped GEMM |
-| 2 | Add measured quantization plumbing | A named vendor-kernel consumer removes an HBM pass, launch, or large temporary |
-| 3 | Build a Rust decode proof | One deterministic step uses borrowed tensors and a borrowed stream without private engine state |
-| 4 | Revisit profile-gated work | A named workload first shows material KV movement, speculative metadata, or communication cost |
+## 2. First vendor GEMM provider
 
-## Milestones
+**State:** next.
 
-| Milestone | State | Result or remaining exit |
-| --- | --- | --- |
-| K0: backend foundation | Complete | Contracts, CPU oracles, safe CUDA resources, and result format |
-| K0.5: Rust distribution | Complete | Self-contained source crates at `1.0.0-alpha.1` |
-| K0.6: runtime interop | Complete | One checked path over borrowed tensors and current streams |
-| K0.7: native wheel | Complete, unpublished | ABI12 passes the PyTorch 2.10/2.11 and vLLM 0.24/0.25 H20 matrix |
-| K1: normalization | In progress | FP8 is qualified. INT8 still needs quality and stable engine benefit |
-| K2: MLP fusion | In progress | Base and FP8 paths are qualified. INT8 remains explicit and profile-gated |
-| K2.5: quantization plumbing | In progress | Add scale, pack, and layout paths only for measured consumers |
-| K3: KV cache | In progress | Static FP8 write works, but the first system candidate failed quality |
-| K4: decode tail | In progress | Current sampling and logits paths are qualified. Serving-scale proof remains open |
-| K4.5: speculative decode | Profile-gated | Greedy verification works, but it is below `0.2%` of the measured batch latency |
-| K5: MoE movement | In progress | Direct and synthetic-engine gates pass. Production-model evidence is next |
-| K6: attention | In progress | Short paged decode is admitted. FA3 remains the long-context backend |
-| K7: communication fusion | Planned | Requires reproducible multi-GPU engine baselines |
-| K8: Rust decode proof | Planned | Starts after the next engine-level result |
+- define contiguous BF16 `D[M,N] = A[M,K] * W[N,K]^T` with F32 accumulation.
+- plan one explicit cuBLASLt algorithm before enqueue.
+- require caller-owned output and workspace with checked alignment and spans.
+- run GEMM through the same command scope without tuning or fallback.
+- verify real model shapes before any performance or default-provider claim.
 
-## Active tracks
+Exit: a fixed BF16 GEMM plan passes correctness, graph, and matched-provider
+gates without a tensor copy.
 
-### Production MoE gate
+## 3. Attention core
 
-The benchmark must pin the checkpoint, prompts, engine version, provider order,
-and grouped-GEMM implementation. It must record TTFT, TPOT, throughput, memory,
-token equality, Loom path hits, and the unchanged vendor GEMM call.
+- implement ragged prefill and paged MQA/GQA decode.
+- add split-K execution and stable state merge.
+- support common causal and sliding-window contracts.
+- integrate RoPE, KV append, and page-table access.
+- replay fixed plans through CUDA Graphs.
 
-Routing enters Loom only if the same profile shows that routing is material.
-The current synthetic Qwen2-MoE result proves integration, not production value.
+Exit: a real model invokes Loom attention without tensor copies and preserves
+tokens or declared numerical quality.
 
-### Quantization plumbing
+## 4. Decode and KV operations
 
-Candidate work includes scale reduction, pack and unpack, dequantization,
-requantization, and scale-layout conversion. Each path must sit next to a named
-vendor GEMM and remove measured traffic or temporary storage.
+- add logits processing, penalties, filtering, logprobs, and deterministic
+  sampling.
+- add speculative verification and token compaction.
+- add KV gather, scatter, compaction, and remapping.
+- add FP8 and INT8 KV storage with an explicit quality gate.
 
-Loom will not add a generic quantization checklist or a second matrix core.
+Exit: decode-tail and KV operations use the same lifecycle and show value in a
+real engine workload.
 
-### Rust decode proof
+## 5. Quantization, MoE, and matrix work
 
-The example will borrow engine-produced CUDA memory and a non-owning stream. It
-will chain a small cache, logits, sampling, and token-output slice while every
-GEMM and model-owned attention call remains external.
+- add scale, pack, unpack, dequantize, and layout conversion.
+- add expert routing support, permutation, and weighted combine.
+- call vendor dense, quantized, and grouped GEMM through fixed plans.
+- fuse adjacent work only when the complete matched path improves.
 
-The example will own no scheduler, model weights, tokenizer, or KV-cache
-lifetime.
+Exit: dense and MoE workloads record separate operator, engine, and serving
+results.
 
-## Profile-gated backlog
+## 6. Integration and hardware coverage
 
-- KV copy, gather, scatter, compaction, or remap for a named physical-movement
-  path. Default vLLM prefix reuse and preemption did not copy data.
-- Tree masks, stochastic speculative rejection, or speculative KV updates when
-  a named draft and target pair exposes material overhead.
-- FP8 or INT8 KV variants after a pinned model passes the quality precondition.
-- Tensor-parallel or expert-parallel fusion after an equivalent NCCL or
-  transport baseline exists.
-- Broader paged attention only where it beats the engine's selected backend.
+- expose a stable Rust API after the first provider passes admission.
+- add a checked C ABI only when an external engine requires it.
+- publish hashed device artifacts for supported architectures.
+- qualify Hopper first, then add Blackwell as a separate matrix row.
+- add collectives only for measured distributed workloads.
 
-## Completion rule
+Exit: each supported hardware row has reproducible correctness, performance,
+and integration evidence.
 
-Each operator advances through contract, oracle, CUDA correctness, named
-baseline, framework dispatch, engine invocation, and system-value gates.
-Passing one gate never closes the next. The [operator catalog](operator-catalog.md)
-tracks the full candidate surface.
+## Admission rule
+
+A faster microbenchmark does not prove a faster model or server. Each result
+must state whether it covers a kernel, graph, engine, or serving boundary.

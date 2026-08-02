@@ -1,1 +1,0 @@
-"""Operator-domain PyTorch adapters."""

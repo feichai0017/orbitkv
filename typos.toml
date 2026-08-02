@@ -1,7 +1,0 @@
-[default.extend-identifiers]
-# Benchmark cases use literal `x` separators: BATCHxINPUTxOUTPUT.
-BATCHxINPUTxOUTPUT = "BATCHxINPUTxOUTPUT"
-
-[default.extend-words]
-Hbm = "Hbm"
-Slo = "Slo"

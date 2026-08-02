@@ -1,25 +1,23 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
 import {
-  evidence,
-  nextOperators,
+  milestones,
   operatorFamilies,
   repositoryUrl,
-  supportedOperators,
 } from "../data/site";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
-const resultUrl = (file: string) => `${repositoryUrl}/blob/main/docs/results/${file}`;
 ---
 
 <SiteLayout active="Overview">
   <section class="hero">
     <div class="hero-copy">
-      <p class="eyebrow">Rust and CUDA</p>
-      <h1>Operators for the memory-bound parts of LLM inference.</h1>
+      <p class="eyebrow">Rust-native GPU kernels</p>
+      <h1>The operator layer for LLM inference.</h1>
       <p>
-        Loom defines checked Rust contracts, runs handwritten CUDA, and records
-        the engine evidence for each admitted path. Vendor libraries keep GEMM.
+        Loom Infer defines checked Rust contracts, compiles Rust device kernels,
+        and is building one execution model for Rust kernels and vendor
+        libraries.
       </p>
       <div class="hero-actions">
         <a class="button primary" href={`${base}/docs/operators/`}>Operators</a>
@@ -27,40 +25,39 @@ const resultUrl = (file: string) => `${repositoryUrl}/blob/main/docs/results/${f
       </div>
     </div>
 
-    <div class="kernel-window" aria-label="Operator execution path">
+    <div class="kernel-window" aria-label="Target operator execution path">
       <div class="window-bar">
-        <span>one execution path</span>
+        <span>one operator lifecycle</span>
         <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
       </div>
-      <pre class="kernel-code"><code><span class="token-keyword">engine</span>
-  → Stable ABI dispatcher
-  → checked Rust bridge
-  → safe Rust dispatch
-  → <span class="token-type">handwritten CUDA</span>
+      <pre class="kernel-code"><code><span class="token-keyword">validated spec</span>
+  → immutable plan
+  → checked bindings
+  → enqueue
+  → <span class="token-type">Rust kernel | vendor provider</span>
 
-<span class="token-comment">unsupported contracts stay in the engine</span></code></pre>
+<span class="token-comment">admission target: no tuning, allocation, or fallback in enqueue</span></code></pre>
     </div>
   </section>
 
   <section class="metrics-strip" aria-label="Project status">
-    <div class="metric"><strong>{supportedOperators.length}</strong><span>documented operator paths</span></div>
-    <div class="metric"><strong>21</strong><span>ABI12 semantic operators</span></div>
-    <div class="metric"><strong>SM90</strong><span>H20 evidence</span></div>
-    <div class="metric"><strong>0.24-0.25</strong><span>qualified vLLM range</span></div>
+    <div class="metric"><strong>1</strong><span>active operator slice</span></div>
+    <div class="metric"><strong>SM90</strong><span>first target</span></div>
+    <div class="metric"><strong>Rust</strong><span>host and device source</span></div>
+    <div class="metric"><strong>Pending</strong><span>performance evidence</span></div>
   </section>
 
   <section class="section" id="operators">
     <header class="section-header">
       <div>
         <p class="eyebrow">Scope</p>
-        <h2>Measured work around the matrix core</h2>
+        <h2>The inference operator surface</h2>
       </div>
       <p>
-        Loom targets fusion, quantization support, layout conversion, sampling,
-        and movement. cuBLASLt, CUTLASS, FlashInfer, or the engine owns GEMM.
+        Attention is central. Decode, KV, MoE, quantization, and vendor GEMM
+        integration complete the inference path.
       </p>
     </header>
-
     <div class="operator-grid">
       {operatorFamilies.map((family, index) => (
         <article class="operator-card">
@@ -70,98 +67,68 @@ const resultUrl = (file: string) => `${repositoryUrl}/blob/main/docs/results/${f
         </article>
       ))}
     </div>
-    <p class="section-link"><a href={`${base}/docs/operators/`}>View all operators and gates</a></p>
   </section>
 
   <section class="section">
     <header class="section-header">
       <div>
         <p class="eyebrow">Architecture</p>
-        <h2>Contracts stay separate from execution</h2>
+        <h2>Rust owns the path</h2>
       </div>
       <p>
-        CPU oracles define behavior. Safe Rust validates borrowed memory and
-        streams. Adapters only translate framework objects and apply admission policy.
+        CPU references define behavior. Plans fix algorithms and launch
+        configurations. Command scopes retain borrowed resources.
       </p>
     </header>
-
     <div class="architecture-grid">
       <article class="architecture-card">
-        <span class="card-index">loom-kernels</span>
-        <h3>Contracts</h3>
-        <p>Shapes, dtypes, layouts, capabilities, errors, and CPU references.</p>
+        <span class="card-index">01</span><h3>Contract</h3>
+        <p>Shapes, dtypes, layouts, aliasing, and numerical rules.</p>
       </article>
       <article class="architecture-card">
-        <span class="card-index">loom-cuda</span>
-        <h3>Safe dispatch</h3>
-        <p>Borrowed or owned streams, memory views, layouts, and benchmarks.</p>
+        <span class="card-index">02</span><h3>Plan</h3>
+        <p>Provider, tactic, artifact, launch, workspace, and graph policy.</p>
       </article>
       <article class="architecture-card">
-        <span class="card-index">loom-cuda-bridge</span>
-        <h3>Checked boundary</h3>
-        <p>Storage spans, alias checks, status mapping, and panic containment.</p>
+        <span class="card-index">03</span><h3>Binding</h3>
+        <p>Exact spans, device, context, stream, and access mode.</p>
       </article>
       <article class="architecture-card">
-        <span class="card-index">loom-cuda-sys</span>
-        <h3>CUDA</h3>
-        <p>Internal launch declarations, build logic, and handwritten kernels.</p>
+        <span class="card-index">04</span><h3>Execution</h3>
+        <p>Rust device artifacts today; explicit vendor calls are next.</p>
       </article>
     </div>
   </section>
 
   <section class="section" id="evidence">
     <header class="section-header">
-      <div>
-        <p class="eyebrow">Evidence</p>
-        <h2>Each claim has a boundary</h2>
-      </div>
-      <p>
-        Loom keeps operator speed, engine invocation, and model or serving
-        benefit separate. Rejected results remain visible.
-      </p>
+      <div><p class="eyebrow">Evidence</p><h2>Permanent providers only</h2></div>
+      <p>Every claim identifies its source, hardware, boundary, and artifact.</p>
     </header>
-
-    <div class="evidence-grid">
-      {evidence.map((item) => (
-        <a class="evidence-card" href={resultUrl(item.file)}>
-          <h3>{item.operator}</h3>
-          <span class="result">{item.result}</span>
-          <p>{item.detail}</p>
-          <small>{item.shape}</small>
-        </a>
-      ))}
-    </div>
-    <p class="section-link"><a href={`${base}/benchmarks/`}>Read the evidence rules</a></p>
+    <article class="evidence-card">
+      <h3>RMSNorm on H20</h3><span class="result">Correct</span>
+      <p>F32, FP16, and BF16 pass their declared correctness gates.</p>
+      <small>Scalar and packed low-precision paths pass. Performance is not measured.</small>
+    </article>
   </section>
 
   <section class="section">
     <header class="section-header">
-      <div>
-        <p class="eyebrow">Next</p>
-        <h2>Work starts from an engine measurement</h2>
-      </div>
-      <p>
-        The H20 matrix qualifies the ABI12 wheel. No package index publishes
-        it. New kernels require a named consumer and a system-level exit gate.
-      </p>
+      <div><p class="eyebrow">Next</p><h2>Add the first vendor provider</h2></div>
+      <p>Plan one fixed BF16 cuBLASLt GEMM on the same checked command scope.</p>
     </header>
-
     <div class="roadmap-grid">
-      {nextOperators.map((item) => (
+      {milestones.map((item) => (
         <article class="roadmap-card">
           <span class="card-index">{item.milestone}</span>
-          <h3>{item.name}</h3>
-          <p>{item.reason}</p>
+          <h3>{item.name}</h3><p>{item.reason}</p>
         </article>
       ))}
     </div>
   </section>
 
   <section class="cta-band">
-    <div>
-      <h2>Start with the contract</h2>
-      <p>Check the operator boundary before building or enabling CUDA.</p>
-    </div>
+    <div><h2>Start with the boundary</h2><p>Read the architecture before adding a kernel.</p></div>
     <a class="button primary" href={`${base}/docs/`}>Documentation</a>
   </section>
 </SiteLayout>

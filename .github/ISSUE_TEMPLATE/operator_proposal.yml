@@ -8,7 +8,7 @@ body:
     id: consumer
     attributes:
       label: Engine and call site
-      placeholder: vLLM Sampler.forward, SGLang radix-cache update, Rust engine module
+      placeholder: vLLM attention layer, SGLang KV-cache update, Rust engine module
     validations:
       required: true
   - type: textarea
@@ -44,7 +44,7 @@ body:
     attributes:
       label: Scope
       options:
-        - label: I have identified who owns fallback behavior.
+        - label: I have identified the caller, buffer owner, and stream owner.
           required: true
         - label: I am not treating an isolated microbenchmark as an engine speedup.
           required: true

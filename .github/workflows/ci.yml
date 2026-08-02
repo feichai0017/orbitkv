@@ -10,7 +10,7 @@ env:
 
 jobs:
   rust:
-    name: fmt · clippy · test
+    name: rust
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
@@ -21,6 +21,35 @@ jobs:
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
+
+      - name: Reject removed product paths
+        shell: bash
+        run: |
+          for path in \
+            benchmarks \
+            python \
+            spikes \
+            crates/loom-cuda \
+            crates/loom-cuda-bridge \
+            crates/loom-cuda-sys \
+            crates/loom-kernels \
+            crates/loom-infer-cuda-bridge \
+            crates/loom-infer-cuda-sys
+          do
+            if [[ -e "$path" ]]; then
+              echo "removed product path exists: $path"
+              exit 1
+            fi
+          done
+
+          forbidden_sources="$(find crates -type f \
+            \( -name '*.cu' -o -name '*.cuh' -o -name '*.cpp' -o -name '*.py' \) \
+            -print)"
+          if [[ -n "$forbidden_sources" ]]; then
+            echo "$forbidden_sources"
+            echo "non-Rust product source exists under crates"
+            exit 1
+          fi
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -34,101 +63,11 @@ jobs:
       - name: Release check
         run: cargo check --workspace --release
 
-      - name: Validate publishable crate archives
-        run: |
-          cargo package -p loom-kernels
-          cargo package -p loom-cuda-sys
-          cargo package -p loom-cuda --list > /tmp/loom-cuda-package-files
-          cargo package -p loom-cuda-bridge --list > /tmp/loom-cuda-bridge-package-files
-          grep -Fx 'README.md' /tmp/loom-cuda-package-files
-          grep -Fx 'examples/rust_cuda_smoke.rs' /tmp/loom-cuda-package-files
-          grep -Fx 'README.md' /tmp/loom-cuda-bridge-package-files
-          grep -Fx 'include/loom_cuda_bridge.h' /tmp/loom-cuda-bridge-package-files
-          tar -tf target/package/loom-cuda-sys-*.crate > /tmp/loom-cuda-sys-package-files
-          grep -Eq '/cuda/src/paged_decode_attention\.cu$' \
-            /tmp/loom-cuda-sys-package-files
-          grep -Eq '/cuda/src/greedy_speculative_verify\.cu$' \
-            /tmp/loom-cuda-sys-package-files
-          grep -Eq '/cuda/src/token_penalties\.cu$' \
-            /tmp/loom-cuda-sys-package-files
-          grep -Eq '/cuda/src/top_k_filter\.cu$' \
-            /tmp/loom-cuda-sys-package-files
-          grep -Eq '/cuda/src/top_p_renorm\.cu$' \
-            /tmp/loom-cuda-sys-package-files
-          grep -Eq '/cuda/src/logits_preprocess\.cu$' \
-            /tmp/loom-cuda-sys-package-files
-          grep -Eq '/cuda/src/categorical_sample\.cu$' \
-            /tmp/loom-cuda-sys-package-files
-          grep -Eq '/cuda/src/moe\.cu$' \
-            /tmp/loom-cuda-sys-package-files
-
-  benchmark-tools:
-    name: python package · benchmark syntax
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-python@v6
-        with:
-          python-version: "3.11"
-
-      - name: Compile baseline tools
-        run: python -m compileall -q benchmarks python
-
-      - name: Enforce the LibTorch Stable ABI source boundary
-        run: |
-          grep -F 'STABLE_TORCH_LIBRARY(loom_kernels' python/csrc/torch_ops.cpp
-          grep -F 'TORCH_TARGET_VERSION' python/csrc/common.h
-          if grep -REq --include='*.cpp' --include='*.h' \
-            '#include <(ATen|c10|torch/library\.h)' python/csrc; then
-            echo "unstable LibTorch header included by the dispatcher"
-            exit 1
-          fi
-          if grep -REq --include='*.cpp' --include='*.h' \
-            '(^|[^[:alnum:]_])(at|c10)::' python/csrc; then
-            echo "unstable LibTorch C++ namespace used by the dispatcher"
-            exit 1
-          fi
-
-      - name: Install and inspect Python package metadata
-        run: |
-          python -m pip install --no-deps --editable ./python
-          python - <<'PY'
-          from importlib.metadata import entry_points, requires, version
-
-          import loom_kernels
-
-          assert version("loom-kernels") == loom_kernels.__version__
-          assert loom_kernels.native_build_info() is None
-          dependencies = [
-              requirement.replace(" ", "")
-              for requirement in (requires("loom-kernels") or [])
-          ]
-          assert "torch<2.12,>=2.10" in dependencies
-          assert not any('extra=="torch"' in requirement for requirement in dependencies)
-          assert any(
-              requirement.startswith("vllm<0.26,>=0.24;")
-              and 'extra=="vllm"' in requirement
-              for requirement in dependencies
-          )
-          plugins = entry_points(group="vllm.general_plugins")
-          assert any(plugin.name == "loom_kernels" for plugin in plugins)
-          print(f"loom-kernels {loom_kernels.__version__}")
-          PY
-
-      - name: Reject an accidental source-only wheel
-        run: |
-          if python -m pip wheel --no-deps --wheel-dir /tmp/loom-kernels-wheel \
-            ./python > /tmp/loom-source-wheel.log 2>&1; then
-            cat /tmp/loom-source-wheel.log
-            echo "source checkout unexpectedly produced a wheel without native libraries"
-            exit 1
-          fi
-          grep -F "Loom native wheel requires both compiled libraries" \
-            /tmp/loom-source-wheel.log
+      - name: Package contracts crate
+        run: cargo package -p loom-infer
 
   website:
-    name: astro website
+    name: website
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -136,7 +75,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
 
-      - uses: actions/setup-node@v6
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -145,5 +84,5 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
-      - name: Check and build
+      - name: Build
         run: npm run build
