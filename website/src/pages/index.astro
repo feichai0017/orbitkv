@@ -41,7 +41,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   </section>
 
   <section class="metrics-strip" aria-label="Project status">
-    <div class="metric"><strong>2</strong><span>device-correct slices</span></div>
+    <div class="metric"><strong>2</strong><span>qualified device slices</span></div>
     <div class="metric"><strong>SM90</strong><span>first target</span></div>
     <div class="metric"><strong>Rust</strong><span>host and device source</span></div>
     <div class="metric"><strong>Pending</strong><span>performance evidence</span></div>
@@ -77,7 +77,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       </div>
       <p>
         CPU references define behavior. Plans fix algorithms and launch
-        configurations. Command scopes retain borrowed resources.
+        configurations. Bindings share reads and own writable buffers.
       </p>
     </header>
     <div class="architecture-grid">
@@ -106,21 +106,21 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p>Every claim identifies its source, hardware, boundary, and artifact.</p>
     </header>
     <article class="evidence-card">
-      <h3>RMSNorm on H20</h3><span class="result">Correct</span>
-      <p>F32, FP16, and BF16 pass their declared correctness gates.</p>
-      <small>Scalar and packed low-precision paths pass. Performance is not measured.</small>
+      <h3>RMSNorm on H20</h3><span class="result">Qualified</span>
+      <p>The owned-binding F32, FP16, and BF16 paths pass correctness.</p>
+      <small>Memcheck, racecheck, and synccheck report no errors.</small>
     </article>
     <article class="evidence-card">
-      <h3>BF16 cuBLASLt GEMM on H20</h3><span class="result">Correct</span>
-      <p>Fixed-plan standalone, transpose-sensitive, and RMSNorm-to-GEMM cases pass.</p>
-      <small>Command lifecycle and rejection gates pass. Performance is not measured.</small>
+      <h3>BF16 cuBLASLt GEMM on H20</h3><span class="result">Qualified</span>
+      <p>The fixed plan and RMSNorm-to-GEMM Graph pass correctness.</p>
+      <small>The final output after two replays is bit-exact. Memcheck reports no errors or leaks.</small>
     </article>
   </section>
 
   <section class="section">
     <header class="section-header">
-      <div><p class="eyebrow">Next</p><h2>Qualify the current providers</h2></div>
-      <p>Add graph and matched performance evidence, then enter the attention core.</p>
+      <div><p class="eyebrow">Next</p><h2>Build the attention core</h2></div>
+      <p>Use the qualified lifecycle for single decode, then add paged batch decode.</p>
     </header>
     <div class="roadmap-grid">
       {milestones.map((item) => (

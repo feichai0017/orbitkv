@@ -10,37 +10,64 @@ attention-kernel comparison surface.
 
 - keep the H20-qualified F32 path in `loom-infer-cuda`.
 - support F32, FP16, and BF16 with scalar and packed paths.
-- bind caller-owned memory and non-default streams.
+- bind caller-supplied memory and non-default streams.
+- share read-only inputs through `Arc` and transfer writable buffers until
+  completion.
 - keep one stream-ordered command scope for Rust and vendor providers.
 - replace generated argument vectors with reusable fixed argument packs.
 - pass correctness, CUDA Graph, sanitizer, and matched H20 performance gates.
 
-F32, FP16, and BF16 correctness gates pass across scalar, packed, exact-length,
-non-default-stream, and chained cases. Typed heterogeneous bindings hold mixed
-tensor and workspace types in one scope. Fixed argument packs, CUDA Graph,
-sanitizer, and matched performance gates remain open.
+The current owned-binding revision passes F32, FP16, and BF16 correctness across
+scalar, packed, exact-length, non-default-stream, and chained cases. Memcheck,
+racecheck, and synccheck report no errors. Fixed argument packs and matched
+performance gates remain open.
 
 Exit: all three dtypes use the common operator lifecycle and have reproducible
 H20 correctness and performance records.
 
 ## 2. First vendor GEMM provider
 
-**State:** active. Device correctness passed.
+**State:** active. The owned-binding and Graph revision passed its H20
+correctness and sanitizer gates.
 
 - define contiguous BF16 `D[M,N] = A[M,K] * W[N,K]^T` with F32 accumulation.
 - plan one explicit cuBLASLt algorithm before enqueue.
-- require caller-owned output and workspace with checked alignment and spans.
+- take caller-supplied output and workspace into checked ownership with validated
+  alignment and spans, then return them after completion.
 - run GEMM through the same command scope without tuning or fallback.
 - verify real model shapes before any performance or default-provider claim.
 
 Exit: a fixed BF16 GEMM plan passes correctness, graph, and matched-provider
 gates without a tensor copy.
 
-The fixed BF16 cuBLASLt plan passes its H20 correctness and command-lifecycle
-gates. CUDA Graph, matched-provider performance, real-model shapes, and engine
-invocation remain open.
+The fixed BF16 cuBLASLt plan passes H20 correctness and command-lifecycle gates.
+Its RMSNorm-to-GEMM Graph replays twice with a bit-exact final output.
+Matched-provider performance, real-model shapes, and engine invocation remain
+open.
 
-## 3. Attention core
+## 3. Fixed-address CUDA Graph execution
+
+**State:** complete for the first fixed-address contract.
+
+- consume a one-shot `GraphQueue` to capture one checked command scope on its
+  private non-default stream.
+- retain fixed buffer ownership, CUDA functions, and vendor plans across replay.
+- instantiate and launch through owned `CapturedGraph` and `GraphExec` values.
+- retain one external completion event and record it once per replay.
+- reject rebinding, node updates, cross-stream launch, and concurrent replay in
+  the first contract.
+- validate RMSNorm to BF16 GEMM capture, replay, cleanup, and sanitizer paths.
+
+Result: the final output after two fixed-address replays matches the CPU oracle.
+The runner drops its external resource owners before replay.
+
+The Loom replay path has no planning or explicit allocation. Compute Sanitizer
+reports no errors or device leaks on H20. See the
+[machine-readable record](results/h20-owned-bindings-cuda-graph-correctness-20260803.json).
+
+## 4. Attention core
+
+**State:** next.
 
 - implement ragged prefill and paged MQA/GQA decode.
 - add split-K execution and stable state merge.
@@ -51,7 +78,7 @@ invocation remain open.
 Exit: a real model invokes Loom attention without tensor copies and preserves
 tokens or declared numerical quality.
 
-## 4. Decode and KV operations
+## 5. Decode and KV operations
 
 - add logits processing, penalties, filtering, logprobs, and deterministic
   sampling.
@@ -62,7 +89,7 @@ tokens or declared numerical quality.
 Exit: decode-tail and KV operations use the same lifecycle and show value in a
 real engine workload.
 
-## 5. Quantization, MoE, and matrix work
+## 6. Quantization, MoE, and matrix work
 
 - add scale, pack, unpack, dequantize, and layout conversion.
 - add expert routing support, permutation, and weighted combine.
@@ -72,7 +99,7 @@ real engine workload.
 Exit: dense and MoE workloads record separate operator, engine, and serving
 results.
 
-## 6. Integration and hardware coverage
+## 7. Integration and hardware coverage
 
 - expose a stable Rust API after the first provider passes admission.
 - add a checked C ABI only when an external engine requires it.

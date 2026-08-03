@@ -8,6 +8,7 @@ use loom_infer_cuda::rms_norm::{
     RmsNormArgs, RmsNormBf16Plan, RmsNormEnqueueError, RmsNormF16Plan, RmsNormKernelPath,
     RmsNormPlanError, RmsNormProvider,
 };
+use std::sync::Arc;
 
 const F32_MAX_ABS_ERROR: f32 = 5.0e-5;
 const F16_MAX_ABS_ERROR: f32 = 4.0e-3;
@@ -29,7 +30,7 @@ trait LowPrecisionPlan<T: LowPrecision> {
 
     fn enqueue(
         &self,
-        scope: &mut CommandScope<'_, '_>,
+        scope: &mut CommandScope<'_>,
         args: RmsNormArgs<T>,
     ) -> Result<(), RmsNormEnqueueError>;
 }
@@ -60,7 +61,7 @@ impl LowPrecisionPlan<f16> for RmsNormF16Plan {
 
     fn enqueue(
         &self,
-        scope: &mut CommandScope<'_, '_>,
+        scope: &mut CommandScope<'_>,
         args: RmsNormArgs<f16>,
     ) -> Result<(), RmsNormEnqueueError> {
         self.enqueue_into(scope, args)
@@ -107,7 +108,7 @@ impl LowPrecisionPlan<bf16> for RmsNormBf16Plan {
 
     fn enqueue(
         &self,
-        scope: &mut CommandScope<'_, '_>,
+        scope: &mut CommandScope<'_>,
         args: RmsNormArgs<bf16>,
     ) -> Result<(), RmsNormEnqueueError> {
         self.enqueue_into(scope, args)
@@ -222,13 +223,13 @@ fn check_low_precision_case<T: LowPrecision>(
     let mut expected = vec![T::from_f32(0.0); spec.numel()];
     T::reference(&input_host, &weight_host, &mut expected, spec)?;
 
-    let input = DeviceBuffer::from_host(&stream, &input_host)?;
-    let weight = DeviceBuffer::from_host(&stream, &weight_host)?;
-    let mut output = DeviceBuffer::<T>::zeroed(&stream, spec.numel())?;
+    let input = Arc::new(DeviceBuffer::from_host(&stream, &input_host)?);
+    let weight = Arc::new(DeviceBuffer::from_host(&stream, &weight_host)?);
+    let output = DeviceBuffer::<T>::zeroed(&stream, spec.numel())?;
     let mut bindings = queue.bindings(3)?;
-    let input_handle = bindings.bind_read(&input)?;
-    let weight_handle = bindings.bind_read(&weight)?;
-    let output_handle = bindings.bind_read_write(&mut output)?;
+    let input_handle = bindings.bind_read(Arc::clone(&input))?;
+    let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
+    let output_handle = bindings.bind_read_write(output)?;
     let mut scope = queue.begin(bindings)?;
     plan.enqueue(
         &mut scope,
@@ -238,7 +239,8 @@ fn check_low_precision_case<T: LowPrecision>(
     if completion.submitted() != 1 {
         return Err(format!("{} single scope retained the wrong command count", T::NAME).into());
     }
-    drop(completion.wait()?);
+    let mut bindings = completion.wait()?;
+    let output = bindings.take_read_write(output_handle)?;
 
     let actual = output.to_host_vec(&stream)?;
     let stats = compare_low_precision(&actual, &expected)?;
@@ -280,13 +282,13 @@ fn check_f32_case(
     let mut expected = vec![0.0_f32; spec.numel()];
     rms_norm_f32_reference(&input_host, &weight_host, &mut expected, spec)?;
 
-    let input = DeviceBuffer::from_host(&stream, &input_host)?;
-    let weight = DeviceBuffer::from_host(&stream, &weight_host)?;
-    let mut output = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
+    let input = Arc::new(DeviceBuffer::from_host(&stream, &input_host)?);
+    let weight = Arc::new(DeviceBuffer::from_host(&stream, &weight_host)?);
+    let output = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
     let mut bindings = queue.bindings(3)?;
-    let input_handle = bindings.bind_read(&input)?;
-    let weight_handle = bindings.bind_read(&weight)?;
-    let output_handle = bindings.bind_read_write(&mut output)?;
+    let input_handle = bindings.bind_read(Arc::clone(&input))?;
+    let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
+    let output_handle = bindings.bind_read_write(output)?;
     let mut scope = queue.begin(bindings)?;
     plan.enqueue_into(
         &mut scope,
@@ -296,8 +298,8 @@ fn check_f32_case(
     if completion.submitted() != 1 {
         return Err("single RMSNorm scope did not retain exactly one launch".into());
     }
-    let bindings = completion.wait()?;
-    drop(bindings);
+    let mut bindings = completion.wait()?;
+    let output = bindings.take_read_write(output_handle)?;
 
     let actual = output.to_host_vec(&stream)?;
     let mut max_abs_error = 0.0_f32;
@@ -342,14 +344,14 @@ fn check_f32_rejected_input_length(
     let stream = queue.stream().clone();
     let spec = RmsNormSpec::new(1, 4, 1.0e-5, DType::F32)?;
     let plan = provider.plan_f32(spec)?;
-    let input = DeviceBuffer::from_host(&stream, &[1.0_f32; 3])?;
-    let weight = DeviceBuffer::from_host(&stream, &[1.0_f32; 4])?;
-    let mut output = DeviceBuffer::<f32>::zeroed(&stream, 4)?;
+    let input = Arc::new(DeviceBuffer::from_host(&stream, &[1.0_f32; 3])?);
+    let weight = Arc::new(DeviceBuffer::from_host(&stream, &[1.0_f32; 4])?);
+    let output = DeviceBuffer::<f32>::zeroed(&stream, 4)?;
 
     let mut bindings = queue.bindings(3)?;
-    let input_handle = bindings.bind_read(&input)?;
-    let weight_handle = bindings.bind_read(&weight)?;
-    let output_handle = bindings.bind_read_write(&mut output)?;
+    let input_handle = bindings.bind_read(Arc::clone(&input))?;
+    let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
+    let output_handle = bindings.bind_read_write(output)?;
     let mut scope = queue.begin(bindings)?;
     if plan
         .enqueue_into(
@@ -392,18 +394,18 @@ fn check_f32_chained_scope(
         spec,
     )?;
 
-    let input = DeviceBuffer::from_host(&stream, &input_host)?;
-    let weight_one = DeviceBuffer::from_host(&stream, &weight_one_host)?;
-    let weight_two = DeviceBuffer::from_host(&stream, &weight_two_host)?;
-    let mut intermediate = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
-    let mut output = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
+    let input = Arc::new(DeviceBuffer::from_host(&stream, &input_host)?);
+    let weight_one = Arc::new(DeviceBuffer::from_host(&stream, &weight_one_host)?);
+    let weight_two = Arc::new(DeviceBuffer::from_host(&stream, &weight_two_host)?);
+    let intermediate = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
+    let output = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
 
     let mut bindings = queue.bindings(5)?;
-    let input_handle = bindings.bind_read(&input)?;
-    let weight_one_handle = bindings.bind_read(&weight_one)?;
-    let intermediate_handle = bindings.bind_read_write(&mut intermediate)?;
-    let weight_two_handle = bindings.bind_read(&weight_two)?;
-    let output_handle = bindings.bind_read_write(&mut output)?;
+    let input_handle = bindings.bind_read(Arc::clone(&input))?;
+    let weight_one_handle = bindings.bind_read(Arc::clone(&weight_one))?;
+    let intermediate_handle = bindings.bind_read_write(intermediate)?;
+    let weight_two_handle = bindings.bind_read(Arc::clone(&weight_two))?;
+    let output_handle = bindings.bind_read_write(output)?;
     for _ in 0..2 {
         let mut scope = queue.begin(bindings)?;
         plan.enqueue_into(
@@ -424,7 +426,7 @@ fn check_f32_chained_scope(
         }
         bindings = completion.wait()?;
     }
-    drop(bindings);
+    let output = bindings.take_read_write(output_handle)?;
 
     let actual = output.to_host_vec(&stream)?;
     let max_abs_error = actual
@@ -459,17 +461,17 @@ fn check_f32_partial_scope_rejection(
     let mut expected = [0.0_f32; 4];
     rms_norm_f32_reference(&input_host, &weight_host, &mut expected, spec)?;
 
-    let input = DeviceBuffer::from_host(&stream, &input_host)?;
-    let short_input = DeviceBuffer::from_host(&stream, &[1.0_f32; 3])?;
-    let weight = DeviceBuffer::from_host(&stream, &weight_host)?;
-    let mut intermediate = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
-    let mut output = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
+    let input = Arc::new(DeviceBuffer::from_host(&stream, &input_host)?);
+    let short_input = Arc::new(DeviceBuffer::from_host(&stream, &[1.0_f32; 3])?);
+    let weight = Arc::new(DeviceBuffer::from_host(&stream, &weight_host)?);
+    let intermediate = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
+    let output = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
     let mut bindings = queue.bindings(5)?;
-    let input_handle = bindings.bind_read(&input)?;
-    let short_input_handle = bindings.bind_read(&short_input)?;
-    let weight_handle = bindings.bind_read(&weight)?;
-    let intermediate_handle = bindings.bind_read_write(&mut intermediate)?;
-    let output_handle = bindings.bind_read_write(&mut output)?;
+    let input_handle = bindings.bind_read(Arc::clone(&input))?;
+    let short_input_handle = bindings.bind_read(Arc::clone(&short_input))?;
+    let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
+    let intermediate_handle = bindings.bind_read_write(intermediate)?;
+    let output_handle = bindings.bind_read_write(output)?;
     let mut scope = queue.begin(bindings)?;
     plan.enqueue_into(
         &mut scope,
@@ -484,7 +486,8 @@ fn check_f32_partial_scope_rejection(
     {
         return Err("partial scope accepted a short second input".into());
     }
-    drop(scope);
+    let mut bindings = scope.finish().wait()?;
+    let intermediate = bindings.take_read_write(intermediate_handle)?;
 
     let actual = intermediate.to_host_vec(&stream)?;
     let max_abs_error = actual
@@ -499,6 +502,38 @@ fn check_f32_partial_scope_rejection(
         .into());
     }
 
+    let drop_intermediate = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
+    let drop_output = DeviceBuffer::<f32>::zeroed(&stream, spec.numel())?;
+    let mut drop_bindings = queue.bindings(5)?;
+    let drop_input_handle = drop_bindings.bind_read(Arc::clone(&input))?;
+    let drop_short_input_handle = drop_bindings.bind_read(Arc::clone(&short_input))?;
+    let drop_weight_handle = drop_bindings.bind_read(Arc::clone(&weight))?;
+    let drop_intermediate_handle = drop_bindings.bind_read_write(drop_intermediate)?;
+    let drop_output_handle = drop_bindings.bind_read_write(drop_output)?;
+    let mut drop_scope = queue.begin(drop_bindings)?;
+    plan.enqueue_into(
+        &mut drop_scope,
+        RmsNormArgs::new(
+            drop_input_handle,
+            drop_weight_handle,
+            drop_intermediate_handle.write(),
+        ),
+    )?;
+    if plan
+        .enqueue_into(
+            &mut drop_scope,
+            RmsNormArgs::new(
+                drop_short_input_handle,
+                drop_weight_handle,
+                drop_output_handle.write(),
+            ),
+        )
+        .is_ok()
+    {
+        return Err("drop-guard scope accepted a short second input".into());
+    }
+    drop(drop_scope);
+
     println!(
         "rms_norm_f32 partial_scope submitted_before_error=1 second_launch_rejected=true \
          drop_guard_exercised=true first_launch_max_abs_error={max_abs_error:.9e}"
@@ -509,14 +544,24 @@ fn check_f32_partial_scope_rejection(
 fn expect_low_precision_rejection<T: LowPrecision>(
     queue: &mut CommandQueue,
     plan: &T::Plan,
-    input: &DeviceBuffer<T>,
-    weight: &DeviceBuffer<T>,
-    output: &mut DeviceBuffer<T>,
+    input_len: usize,
+    weight_len: usize,
+    output_len: usize,
     operand: &'static str,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let stream = queue.stream().clone();
+    let input = Arc::new(DeviceBuffer::from_host(
+        &stream,
+        &vec![T::from_f32(1.0); input_len],
+    )?);
+    let weight = Arc::new(DeviceBuffer::from_host(
+        &stream,
+        &vec![T::from_f32(1.0); weight_len],
+    )?);
+    let output = DeviceBuffer::<T>::zeroed(&stream, output_len)?;
     let mut bindings = queue.bindings(3)?;
-    let input_handle = bindings.bind_read(input)?;
-    let weight_handle = bindings.bind_read(weight)?;
+    let input_handle = bindings.bind_read(Arc::clone(&input))?;
+    let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
     let output_handle = bindings.bind_read_write(output)?;
     let mut scope = queue.begin(bindings)?;
     if plan
@@ -536,40 +581,12 @@ fn check_low_precision_rejections<T: LowPrecision>(
     queue: &mut CommandQueue,
     provider: &RmsNormProvider,
 ) -> Result<(), Box<dyn std::error::Error>> {
-    let stream = queue.stream().clone();
     let spec = RmsNormSpec::new(1, 4, 1.0e-5, T::DTYPE)?;
     let plan = T::plan(provider, spec)?;
-    let valid_input = DeviceBuffer::from_host(&stream, &[T::from_f32(1.0); 4])?;
-    let short_input = DeviceBuffer::from_host(&stream, &[T::from_f32(1.0); 3])?;
-    let valid_weight = DeviceBuffer::from_host(&stream, &[T::from_f32(1.0); 4])?;
-    let short_weight = DeviceBuffer::from_host(&stream, &[T::from_f32(1.0); 3])?;
-    let mut valid_output = DeviceBuffer::<T>::zeroed(&stream, 4)?;
-    let mut short_output = DeviceBuffer::<T>::zeroed(&stream, 3)?;
 
-    expect_low_precision_rejection(
-        queue,
-        &plan,
-        &short_input,
-        &valid_weight,
-        &mut valid_output,
-        "input",
-    )?;
-    expect_low_precision_rejection(
-        queue,
-        &plan,
-        &valid_input,
-        &short_weight,
-        &mut valid_output,
-        "weight",
-    )?;
-    expect_low_precision_rejection(
-        queue,
-        &plan,
-        &valid_input,
-        &valid_weight,
-        &mut short_output,
-        "output",
-    )?;
+    expect_low_precision_rejection::<T>(queue, &plan, 3, 4, 4, "input")?;
+    expect_low_precision_rejection::<T>(queue, &plan, 4, 3, 4, "weight")?;
+    expect_low_precision_rejection::<T>(queue, &plan, 4, 4, 3, "output")?;
 
     println!(
         "rms_norm_{} short_buffers input_rejected=true weight_rejected=true \
@@ -610,22 +627,22 @@ fn check_low_precision_chained_scope<T: LowPrecision>(
         spec,
     )?;
 
-    let input = DeviceBuffer::from_host(&stream, &input_host)?;
-    let weight_one = DeviceBuffer::from_host(&stream, &weight_one_host)?;
-    let weight_two = DeviceBuffer::from_host(&stream, &weight_two_host)?;
-    let mut intermediate = DeviceBuffer::<T>::zeroed(&stream, spec.numel())?;
-    let mut output = DeviceBuffer::<T>::zeroed(&stream, spec.numel())?;
-    let metadata = DeviceBuffer::from_host(&stream, &[1.0_f32])?;
-    let mut workspace = DeviceBuffer::<u8>::zeroed(&stream, 256)?;
+    let input = Arc::new(DeviceBuffer::from_host(&stream, &input_host)?);
+    let weight_one = Arc::new(DeviceBuffer::from_host(&stream, &weight_one_host)?);
+    let weight_two = Arc::new(DeviceBuffer::from_host(&stream, &weight_two_host)?);
+    let intermediate = DeviceBuffer::<T>::zeroed(&stream, spec.numel())?;
+    let output = DeviceBuffer::<T>::zeroed(&stream, spec.numel())?;
+    let metadata = Arc::new(DeviceBuffer::from_host(&stream, &[1.0_f32])?);
+    let workspace = DeviceBuffer::<u8>::zeroed(&stream, 256)?;
 
     let mut bindings = queue.bindings(7)?;
-    let input_handle = bindings.bind_read(&input)?;
-    let weight_one_handle = bindings.bind_read(&weight_one)?;
-    let intermediate_handle = bindings.bind_read_write(&mut intermediate)?;
-    let weight_two_handle = bindings.bind_read(&weight_two)?;
-    let output_handle = bindings.bind_read_write(&mut output)?;
-    let _metadata_handle = bindings.bind_read(&metadata)?;
-    let _workspace_handle = bindings.bind_read_write(&mut workspace)?;
+    let input_handle = bindings.bind_read(Arc::clone(&input))?;
+    let weight_one_handle = bindings.bind_read(Arc::clone(&weight_one))?;
+    let intermediate_handle = bindings.bind_read_write(intermediate)?;
+    let weight_two_handle = bindings.bind_read(Arc::clone(&weight_two))?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let _metadata_handle = bindings.bind_read(Arc::clone(&metadata))?;
+    let _workspace_handle = bindings.bind_read_write(workspace)?;
     for _ in 0..2 {
         let mut scope = queue.begin(bindings)?;
         plan.enqueue(
@@ -648,7 +665,7 @@ fn check_low_precision_chained_scope<T: LowPrecision>(
         }
         bindings = completion.wait()?;
     }
-    drop(bindings);
+    let output = bindings.take_read_write(output_handle)?;
 
     let actual = output.to_host_vec(&stream)?;
     let stats = compare_low_precision(&actual, &expected)?;
@@ -689,19 +706,20 @@ fn check_low_precision_signed_zero<T: LowPrecision>(
         let weight_host = vec![T::from_f32(1.0); hidden_size];
         let mut expected = vec![T::from_f32(0.0); hidden_size];
         T::reference(&input_host, &weight_host, &mut expected, spec)?;
-        let input = DeviceBuffer::from_host(&stream, &input_host)?;
-        let weight = DeviceBuffer::from_host(&stream, &weight_host)?;
-        let mut output = DeviceBuffer::<T>::zeroed(&stream, hidden_size)?;
+        let input = Arc::new(DeviceBuffer::from_host(&stream, &input_host)?);
+        let weight = Arc::new(DeviceBuffer::from_host(&stream, &weight_host)?);
+        let output = DeviceBuffer::<T>::zeroed(&stream, hidden_size)?;
         let mut bindings = queue.bindings(3)?;
-        let input_handle = bindings.bind_read(&input)?;
-        let weight_handle = bindings.bind_read(&weight)?;
-        let output_handle = bindings.bind_read_write(&mut output)?;
+        let input_handle = bindings.bind_read(Arc::clone(&input))?;
+        let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
+        let output_handle = bindings.bind_read_write(output)?;
         let mut scope = queue.begin(bindings)?;
         plan.enqueue(
             &mut scope,
             RmsNormArgs::new(input_handle, weight_handle, output_handle.write()),
         )?;
-        drop(scope.finish().wait()?);
+        let mut bindings = scope.finish().wait()?;
+        let output = bindings.take_read_write(output_handle)?;
         let actual = output.to_host_vec(&stream)?;
         let actual_bits = actual.iter().map(|value| value.bits()).collect::<Vec<_>>();
         let expected_bits = expected

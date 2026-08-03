@@ -5,6 +5,7 @@
 use cuda_core::{CudaEvent, CudaFunction, CudaStream, DeviceBuffer, DeviceCopy, DriverError};
 use half::{bf16, f16};
 use std::any::Any;
+use std::fmt::{self, Display, Formatter};
 use std::marker::PhantomData;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -56,10 +57,7 @@ impl CommandQueue {
     }
 
     /// Creates reusable checked binding storage outside the enqueue path.
-    pub fn bindings<'buffer>(
-        &self,
-        capacity: usize,
-    ) -> Result<CheckedBindings<'buffer>, CommandError> {
+    pub fn bindings(&self, capacity: usize) -> Result<CheckedBindings, CommandError> {
         if capacity == 0 {
             return Err(CommandError::ZeroBindingCapacity);
         }
@@ -74,10 +72,10 @@ impl CommandQueue {
     }
 
     /// Begins one stream-ordered command scope.
-    pub fn begin<'queue, 'buffer>(
+    pub fn begin<'queue>(
         &'queue mut self,
-        bindings: CheckedBindings<'buffer>,
-    ) -> Result<CommandScope<'queue, 'buffer>, CommandError> {
+        bindings: CheckedBindings,
+    ) -> Result<CommandScope<'queue>, CommandError> {
         if self.poisoned {
             return Err(CommandError::QueuePoisoned);
         }
@@ -109,7 +107,7 @@ impl Drop for CommandQueue {
             return;
         }
 
-        let synchronize_error = synchronize_stream_or_abort(self);
+        let synchronize_error = synchronize_stream_or_abort(&self.stream);
         self.retained_resources.clear();
         if let Some(error) = synchronize_error {
             eprintln!(
@@ -122,17 +120,19 @@ impl Drop for CommandQueue {
 
 /// A reusable set of checked, heterogeneous buffer leases.
 ///
-/// Moving this value into a [`CommandScope`] keeps every buffer borrowed until
-/// the returned completion is settled.
-pub struct CheckedBindings<'buffer> {
+/// Moving this value into a [`CommandScope`] retains shared read allocations and
+/// transfers writable allocations until the returned completion is settled.
+/// Owning every writable allocation makes the asynchronous contract safe even
+/// if a scope or completion is leaked.
+pub struct CheckedBindings {
     queue_id: u64,
     set_id: u64,
     stream: Arc<CudaStream>,
-    leases: Vec<Lease<'buffer>>,
+    leases: Vec<Lease>,
     capacity: usize,
 }
 
-impl<'buffer> CheckedBindings<'buffer> {
+impl CheckedBindings {
     pub const fn capacity(&self) -> usize {
         self.capacity
     }
@@ -148,10 +148,20 @@ impl<'buffer> CheckedBindings<'buffer> {
     /// Adds a read-only buffer and returns its opaque handle.
     pub fn bind_read<T: BindingElement>(
         &mut self,
-        buffer: &'buffer DeviceBuffer<T>,
-    ) -> Result<Read<T>, CommandError> {
-        self.check_buffer(buffer)?;
-        let slot = self.reserve_slot()?;
+        buffer: Arc<DeviceBuffer<T>>,
+    ) -> Result<Read<T>, BindError<Arc<DeviceBuffer<T>>>> {
+        let slot = match self
+            .check_buffer(&buffer)
+            .and_then(|()| self.reserve_slot())
+        {
+            Ok(slot) => slot,
+            Err(error) => {
+                return Err(BindError {
+                    error,
+                    resource: buffer,
+                });
+            }
+        };
         let ErasedLease(lease) = T::__erase_read(buffer);
         self.leases.push(lease);
         Ok(Read {
@@ -161,13 +171,23 @@ impl<'buffer> CheckedBindings<'buffer> {
         })
     }
 
-    /// Adds a uniquely borrowed buffer that may be read and written.
+    /// Transfers one buffer that may be read and written.
     pub fn bind_read_write<T: BindingElement>(
         &mut self,
-        buffer: &'buffer mut DeviceBuffer<T>,
-    ) -> Result<ReadWrite<T>, CommandError> {
-        self.check_buffer(buffer)?;
-        let slot = self.reserve_slot()?;
+        buffer: DeviceBuffer<T>,
+    ) -> Result<ReadWrite<T>, BindError<DeviceBuffer<T>>> {
+        let slot = match self
+            .check_buffer(&buffer)
+            .and_then(|()| self.reserve_slot())
+        {
+            Ok(slot) => slot,
+            Err(error) => {
+                return Err(BindError {
+                    error,
+                    resource: buffer,
+                });
+            }
+        };
         let ErasedLease(lease) = T::__erase_read_write(buffer);
         self.leases.push(lease);
         Ok(ReadWrite {
@@ -175,6 +195,26 @@ impl<'buffer> CheckedBindings<'buffer> {
             slot,
             element: PhantomData,
         })
+    }
+
+    /// Removes one completed allocation from the binding arena.
+    ///
+    /// This is intended after [`CommandCompletion::wait`] or
+    /// [`crate::graph::GraphExec::into_bindings`] returns ownership.
+    pub fn take_read_write<T: BindingElement>(
+        &mut self,
+        handle: ReadWrite<T>,
+    ) -> Result<DeviceBuffer<T>, CommandError> {
+        if handle.set_id != self.set_id {
+            return Err(CommandError::BindingSetMismatch);
+        }
+        if handle.slot >= self.leases.len() {
+            return Err(CommandError::BindingSlotOutOfRange {
+                slot: handle.slot,
+                bindings: self.leases.len(),
+            });
+        }
+        T::__take_read_write(self, handle.slot)
     }
 
     fn check_buffer<T: BindingElement>(
@@ -204,16 +244,57 @@ impl<'buffer> CheckedBindings<'buffer> {
     }
 }
 
-pub(crate) enum Access<'buffer, T: DeviceCopy> {
-    Read(&'buffer DeviceBuffer<T>),
-    ReadWrite(&'buffer mut DeviceBuffer<T>),
+/// A failed ownership transfer into a checked binding arena.
+///
+/// The original allocation is returned so a recoverable capacity or context
+/// error never destroys caller data.
+pub struct BindError<R> {
+    error: CommandError,
+    resource: R,
 }
 
-pub(crate) enum Lease<'buffer> {
-    F32(Access<'buffer, f32>),
-    F16(Access<'buffer, f16>),
-    Bf16(Access<'buffer, bf16>),
-    U8(Access<'buffer, u8>),
+impl<R> BindError<R> {
+    pub const fn error(&self) -> &CommandError {
+        &self.error
+    }
+
+    pub fn into_parts(self) -> (CommandError, R) {
+        (self.error, self.resource)
+    }
+}
+
+impl<R> fmt::Debug for BindError<R> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("BindError")
+            .field("error", &self.error)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<R> Display for BindError<R> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.error, formatter)
+    }
+}
+
+impl<R: 'static> std::error::Error for BindError<R> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+pub(crate) enum Access<T: DeviceCopy> {
+    Read(Arc<DeviceBuffer<T>>),
+    ReadWrite(DeviceBuffer<T>),
+}
+
+pub(crate) enum Lease {
+    F32(Access<f32>),
+    F16(Access<f16>),
+    Bf16(Access<bf16>),
+    U8(Access<u8>),
+    Vacant,
 }
 
 mod sealed {
@@ -224,13 +305,18 @@ mod sealed {
 ///
 /// The trait is sealed so every handle can be resolved without type erasure,
 /// downcasts, or unsafe pointer casts.
-pub trait BindingElement: DeviceCopy + sealed::Sealed + Sized {
+pub trait BindingElement: DeviceCopy + sealed::Sealed + Sized + 'static {
     #[doc(hidden)]
-    fn __erase_read<'buffer>(buffer: &'buffer DeviceBuffer<Self>) -> ErasedLease<'buffer>;
+    fn __erase_read(buffer: Arc<DeviceBuffer<Self>>) -> ErasedLease;
 
     #[doc(hidden)]
-    fn __erase_read_write<'buffer>(buffer: &'buffer mut DeviceBuffer<Self>)
-    -> ErasedLease<'buffer>;
+    fn __erase_read_write(buffer: DeviceBuffer<Self>) -> ErasedLease;
+
+    #[doc(hidden)]
+    fn __take_read_write(
+        bindings: &mut CheckedBindings,
+        slot: usize,
+    ) -> Result<DeviceBuffer<Self>, CommandError>;
 }
 
 /// Opaque erased storage for one binding.
@@ -238,19 +324,18 @@ pub trait BindingElement: DeviceCopy + sealed::Sealed + Sized {
 /// This type exists only to keep the sealed [`BindingElement`] interface
 /// visibility-correct. Its payload is private and cannot be forged downstream.
 #[doc(hidden)]
-pub struct ErasedLease<'buffer>(Lease<'buffer>);
+pub struct ErasedLease(Lease);
 
 pub(crate) trait ResolveElement: BindingElement {
-    fn read<'lease>(lease: &'lease Lease<'_>) -> Result<&'lease DeviceBuffer<Self>, LeaseError>;
+    fn read(lease: &Lease) -> Result<&DeviceBuffer<Self>, LeaseError>;
 
-    fn write<'lease>(
-        lease: &'lease mut Lease<'_>,
-    ) -> Result<&'lease mut DeviceBuffer<Self>, LeaseError>;
+    fn write(lease: &mut Lease) -> Result<&mut DeviceBuffer<Self>, LeaseError>;
 }
 
 pub(crate) enum LeaseError {
     ElementMismatch,
     ReadOnly,
+    Vacant,
 }
 
 macro_rules! impl_binding_element {
@@ -258,34 +343,53 @@ macro_rules! impl_binding_element {
         impl sealed::Sealed for $ty {}
 
         impl BindingElement for $ty {
-            fn __erase_read<'buffer>(buffer: &'buffer DeviceBuffer<Self>) -> ErasedLease<'buffer> {
+            fn __erase_read(buffer: Arc<DeviceBuffer<Self>>) -> ErasedLease {
                 ErasedLease(Lease::$variant(Access::Read(buffer)))
             }
 
-            fn __erase_read_write<'buffer>(
-                buffer: &'buffer mut DeviceBuffer<Self>,
-            ) -> ErasedLease<'buffer> {
+            fn __erase_read_write(buffer: DeviceBuffer<Self>) -> ErasedLease {
                 ErasedLease(Lease::$variant(Access::ReadWrite(buffer)))
+            }
+
+            fn __take_read_write(
+                bindings: &mut CheckedBindings,
+                slot: usize,
+            ) -> Result<DeviceBuffer<Self>, CommandError> {
+                let lease = bindings
+                    .leases
+                    .get_mut(slot)
+                    .expect("binding slot was validated before removal");
+                let owned = std::mem::replace(lease, Lease::Vacant);
+                match owned {
+                    Lease::$variant(Access::ReadWrite(buffer)) => Ok(buffer),
+                    Lease::$variant(Access::Read(buffer)) => {
+                        *lease = Lease::$variant(Access::Read(buffer));
+                        Err(CommandError::BindingIsReadOnly { slot })
+                    }
+                    Lease::Vacant => Err(CommandError::BindingSlotVacant { slot }),
+                    other => {
+                        *lease = other;
+                        Err(CommandError::BindingTypeMismatch { slot })
+                    }
+                }
             }
         }
 
         impl ResolveElement for $ty {
-            fn read<'lease>(
-                lease: &'lease Lease<'_>,
-            ) -> Result<&'lease DeviceBuffer<Self>, LeaseError> {
+            fn read(lease: &Lease) -> Result<&DeviceBuffer<Self>, LeaseError> {
                 match lease {
-                    Lease::$variant(Access::Read(buffer)) => Ok(*buffer),
-                    Lease::$variant(Access::ReadWrite(buffer)) => Ok(&**buffer),
+                    Lease::$variant(Access::Read(buffer)) => Ok(buffer.as_ref()),
+                    Lease::$variant(Access::ReadWrite(buffer)) => Ok(buffer),
+                    Lease::Vacant => Err(LeaseError::Vacant),
                     _ => Err(LeaseError::ElementMismatch),
                 }
             }
 
-            fn write<'lease>(
-                lease: &'lease mut Lease<'_>,
-            ) -> Result<&'lease mut DeviceBuffer<Self>, LeaseError> {
+            fn write(lease: &mut Lease) -> Result<&mut DeviceBuffer<Self>, LeaseError> {
                 match lease {
-                    Lease::$variant(Access::ReadWrite(buffer)) => Ok(&mut **buffer),
+                    Lease::$variant(Access::ReadWrite(buffer)) => Ok(buffer),
                     Lease::$variant(Access::Read(_)) => Err(LeaseError::ReadOnly),
+                    Lease::Vacant => Err(LeaseError::Vacant),
                     _ => Err(LeaseError::ElementMismatch),
                 }
             }
@@ -341,18 +445,18 @@ pub struct Write<T: BindingElement> {
 }
 
 /// A stream-ordered sequence of commands with one final completion fence.
-pub struct CommandScope<'queue, 'buffer> {
+pub struct CommandScope<'queue> {
     queue: Option<&'queue mut CommandQueue>,
-    bindings: Option<CheckedBindings<'buffer>>,
+    bindings: Option<CheckedBindings>,
     scope_id: u64,
     submitted: usize,
     submission_error: Option<SubmissionError>,
     finished: bool,
 }
 
-impl<'queue, 'buffer> CommandScope<'queue, 'buffer> {
-    /// Records one final fence and transfers all leases to the completion.
-    pub fn finish(mut self) -> CommandCompletion<'queue, 'buffer> {
+impl<'queue> CommandScope<'queue> {
+    /// Records one final fence and transfers all bindings to the completion.
+    pub fn finish(mut self) -> CommandCompletion<'queue> {
         let queue = self.queue.take().expect("live command scope has a queue");
         let bindings = self
             .bindings
@@ -391,6 +495,37 @@ impl<'queue, 'buffer> CommandScope<'queue, 'buffer> {
                 scope_id: self.scope_id,
                 submission_index: self.submitted,
             })
+        }
+    }
+
+    pub(crate) const fn submitted_commands(&self) -> usize {
+        self.submitted
+    }
+
+    pub(crate) fn capture_error(&self) -> Option<CommandError> {
+        self.submission_error.map(Into::into)
+    }
+
+    pub(crate) fn finish_capture(mut self) -> CapturedCommandSet {
+        assert!(
+            self.submission_error.is_none() && self.submitted > 0,
+            "only a non-empty healthy command scope may become a captured graph"
+        );
+        let queue = self.queue.take().expect("live command scope has a queue");
+        let bindings = self
+            .bindings
+            .take()
+            .expect("live command scope has bindings");
+        let resources = std::mem::replace(
+            &mut queue.retained_resources,
+            Vec::with_capacity(queue.max_commands),
+        );
+        self.finished = true;
+        CapturedCommandSet {
+            stream: queue.stream.clone(),
+            bindings,
+            resources,
+            submitted: self.submitted,
         }
     }
 
@@ -525,6 +660,10 @@ impl<'queue, 'buffer> CommandScope<'queue, 'buffer> {
                 _function: function,
             },
         );
+        self.queue
+            .as_mut()
+            .expect("live command scope has a queue")
+            .poisoned = true;
         self.submission_error = Some(SubmissionError::Driver(error));
     }
 
@@ -554,10 +693,18 @@ impl<'queue, 'buffer> CommandScope<'queue, 'buffer> {
                 _resource: resource,
             },
         );
+        self.queue
+            .as_mut()
+            .expect("live command scope has a queue")
+            .poisoned = true;
         self.submission_error = Some(SubmissionError::External(error));
     }
 
     pub(crate) fn record_preflight_driver_failure(&mut self, error: DriverError) {
+        self.queue
+            .as_mut()
+            .expect("live command scope has a queue")
+            .poisoned = true;
         self.submission_error = Some(SubmissionError::Driver(error));
     }
 
@@ -583,7 +730,7 @@ pub(crate) struct CommandPermit {
     submission_index: usize,
 }
 
-enum RetainedResource {
+pub(crate) enum RetainedResource {
     Kernel {
         _function: CudaFunction,
     },
@@ -592,7 +739,14 @@ enum RetainedResource {
     },
 }
 
-impl Drop for CommandScope<'_, '_> {
+pub(crate) struct CapturedCommandSet {
+    pub(crate) stream: Arc<CudaStream>,
+    pub(crate) bindings: CheckedBindings,
+    pub(crate) resources: Vec<RetainedResource>,
+    pub(crate) submitted: usize,
+}
+
+impl Drop for CommandScope<'_> {
     fn drop(&mut self) {
         if self.finished {
             return;
@@ -602,7 +756,7 @@ impl Drop for CommandScope<'_, '_> {
         };
 
         if self.submitted > 0 {
-            let synchronize_error = synchronize_stream_or_abort(queue);
+            let synchronize_error = synchronize_stream_or_abort(&queue.stream);
             if self.submission_error.is_some() || synchronize_error.is_some() {
                 queue.poisoned = true;
             }
@@ -649,11 +803,11 @@ pub(crate) struct ResolvedRrww<
     pub(crate) fourth: &'scope mut DeviceBuffer<D>,
 }
 
-/// The final fence and all leases retained by a completed command scope.
+/// The final fence and all bindings retained by a completed command scope.
 #[must_use = "dropping the completion waits before releasing CUDA resources"]
-pub struct CommandCompletion<'queue, 'buffer> {
+pub struct CommandCompletion<'queue> {
     queue: Option<&'queue mut CommandQueue>,
-    bindings: Option<CheckedBindings<'buffer>>,
+    bindings: Option<CheckedBindings>,
     submitted: usize,
     submission_error: Option<SubmissionError>,
     record_error: Option<DriverError>,
@@ -661,7 +815,7 @@ pub struct CommandCompletion<'queue, 'buffer> {
     complete: bool,
 }
 
-impl<'queue, 'buffer> CommandCompletion<'queue, 'buffer> {
+impl<'queue> CommandCompletion<'queue> {
     /// Returns whether all submitted commands have completed without blocking.
     pub fn is_complete(&mut self) -> Result<bool, CommandError> {
         if let Some(error) = self.submission_error {
@@ -687,7 +841,7 @@ impl<'queue, 'buffer> CommandCompletion<'queue, 'buffer> {
     }
 
     /// Waits once and returns the reusable checked bindings.
-    pub fn wait(mut self) -> Result<CheckedBindings<'buffer>, CommandError> {
+    pub fn wait(mut self) -> Result<CheckedBindings, CommandError> {
         match self.settle() {
             None => {
                 self.complete = true;
@@ -726,32 +880,32 @@ impl<'queue, 'buffer> CommandCompletion<'queue, 'buffer> {
         if let Some(submission_error) = self.submission_error {
             return Some(SettlementFailure {
                 reported: submission_error,
-                synchronize_error: synchronize_stream_or_abort(queue),
+                synchronize_error: synchronize_stream_or_abort(&queue.stream),
             });
         }
         if let Some(record_error) = self.record_error {
             return Some(SettlementFailure {
                 reported: SubmissionError::Driver(record_error),
-                synchronize_error: synchronize_stream_or_abort(queue),
+                synchronize_error: synchronize_stream_or_abort(&queue.stream),
             });
         }
         if let Some(poll_error) = self.poll_error {
             return Some(SettlementFailure {
                 reported: SubmissionError::Driver(poll_error),
-                synchronize_error: synchronize_stream_or_abort(queue),
+                synchronize_error: synchronize_stream_or_abort(&queue.stream),
             });
         }
         match queue.completion_event.synchronize() {
             Ok(()) => None,
             Err(event_error) => Some(SettlementFailure {
                 reported: SubmissionError::Driver(event_error),
-                synchronize_error: synchronize_stream_or_abort(queue),
+                synchronize_error: synchronize_stream_or_abort(&queue.stream),
             }),
         }
     }
 }
 
-impl Drop for CommandCompletion<'_, '_> {
+impl Drop for CommandCompletion<'_> {
     fn drop(&mut self) {
         if self.complete {
             return;
@@ -773,6 +927,7 @@ fn map_lease_error(error: LeaseError, slot: usize) -> CommandError {
     match error {
         LeaseError::ElementMismatch => CommandError::BindingTypeMismatch { slot },
         LeaseError::ReadOnly => CommandError::BindingIsReadOnly { slot },
+        LeaseError::Vacant => CommandError::BindingSlotVacant { slot },
     }
 }
 
@@ -782,10 +937,10 @@ fn fresh_id() -> Result<u64, CommandError> {
         .map_err(|_| CommandError::IdentifierSpaceExhausted)
 }
 
-fn synchronize_stream_or_abort(queue: &CommandQueue) -> Option<DriverError> {
-    match queue.stream.synchronize() {
+pub(crate) fn synchronize_stream_or_abort(stream: &CudaStream) -> Option<DriverError> {
+    match stream.synchronize() {
         Ok(()) => None,
-        Err(stream_error) => match queue.stream.context().synchronize() {
+        Err(stream_error) => match stream.context().synchronize() {
             Ok(()) => Some(stream_error),
             Err(context_error) => abort_after_sync_failure(stream_error, context_error),
         },
@@ -844,18 +999,15 @@ struct SettlementFailure {
 
 impl SettlementFailure {
     fn command_error(self) -> CommandError {
-        match self.synchronize_error {
-            Some(error) => CommandError::Driver(error),
-            None => self.reported.into(),
-        }
+        self.reported.into()
     }
 }
 
 fn record_settlement_errors(queue: &CommandQueue, failure: SettlementFailure) {
-    if let Some(error) = failure.reported.driver_error() {
+    if let Some(error) = failure.synchronize_error {
         queue.stream.context().record_err::<()>(Err(error));
     }
-    if let Some(error) = failure.synchronize_error {
+    if let Some(error) = failure.reported.driver_error() {
         queue.stream.context().record_err::<()>(Err(error));
     }
 }
@@ -907,6 +1059,8 @@ pub enum CommandError {
     BindingSlotOutOfRange { slot: usize, bindings: usize },
     #[error("binding slot {slot} is read-only")]
     BindingIsReadOnly { slot: usize },
+    #[error("binding slot {slot} has already been removed")]
+    BindingSlotVacant { slot: usize },
     #[error("binding slot {slot} has a different element type than its resource handle")]
     BindingTypeMismatch { slot: usize },
     #[error("one command cannot use the same binding slot for multiple operands")]

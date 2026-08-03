@@ -80,6 +80,33 @@ Record the selected algorithm's actual workspace requirement. Test a short
 workspace only when that requirement is nonzero. The current H20 selection
 requires zero workspace, so that rejection case is not applicable.
 
+## Fixed-address CUDA Graph
+
+The BF16 GEMM runner also captures this exact chain:
+
+```text
+BF16 RMSNorm (1,4096)
+  -> fixed BF16 cuBLASLt GEMM (1,4096,4096)
+```
+
+The graph gate prepares buffers on the ordinary validation stream, establishes
+input readiness, then consumes a one-shot `GraphQueue` to capture on its private
+stream. It requires two accepted replays with the same device addresses and one
+retained external completion event recorded after each replay.
+
+RMSNorm and GEMM must execute without a host wait between the two graph nodes.
+The first replay waits before the second starts. The final output must match the
+CPU oracle bit for bit.
+
+One replay must settle through `wait()` and one through completion Drop.
+Capture and replay must retain the kernel module, cuBLASLt plan, workspace, and
+all bound allocations. The runner drops its external kernel-plan and read-buffer
+owners after capture and before graph instantiation.
+
+Run Compute Sanitizer over capture, both replays, and graph destruction before
+changing the graph state from open. A successful compiler check alone is not a
+device or graph result.
+
 ### Open checks
 
 The pinned compiler fails the debug-profile `DisjointSlice` MIR check but passes
@@ -108,15 +135,20 @@ identical.
 
 The correctness runner is not a benchmark. No GEMM performance gate has passed.
 
-## Current state
+## Current device state
 
-The permanent F32, FP16, and BF16 RMSNorm providers and the fixed BF16
-cuBLASLt GEMM provider pass their declared H20 correctness gates. The maximum
-F32 RMSNorm absolute error is `4.768371582e-7`.
+The [2026-08-03 record](../results/h20-owned-bindings-cuda-graph-correctness-20260803.json)
+qualifies the current owned-binding and fixed-address Graph source projection.
+The maximum F32 RMSNorm absolute error is `4.768371582e-7`.
 
 The F32 two-command chain reaches `7.152557373e-7` maximum absolute error. The
 FP16 chain reaches two ULPs, and the BF16 chain reaches one ULP. Generated PTX
 uses scalar and packed instructions, targets `sm_90`, and assembles with CUDA
 13.1. The GEMM correctness cases are BF16 bit-exact against their declared CPU
-fixtures. Compute Sanitizer, CUDA Graph, fixed Rust-kernel argument packs, and
-performance gates remain open.
+fixtures. The fixed Graph replays twice and produces a bit-exact final output.
+
+Compute Sanitizer memcheck reports no errors or leaked device allocations for
+both runners. RMSNorm racecheck and synccheck report no errors. Graph-runner
+initcheck also reports no errors.
+
+Fixed Rust-kernel argument packs and performance gates remain open.

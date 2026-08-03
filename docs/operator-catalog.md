@@ -1,7 +1,8 @@
 # Operator catalog
 
 This catalog defines the target Loom Infer surface. It does not claim
-FlashInfer or FlashAttention parity.
+FlashInfer or FlashAttention parity. The [FlashInfer parity matrix](flashinfer-parity.md)
+tracks the pinned upstream comparison.
 
 ## States
 
@@ -16,12 +17,12 @@ FlashInfer or FlashAttention parity.
 
 | Operator | Provider | State | Current boundary |
 | --- | --- | --- | --- |
-| RMSNorm F32 | Rust / cuda-oxide | device correct | Four shapes, checked bindings, reusable scopes, two-command chaining, and partial-scope rejection pass on H20 |
-| RMSNorm FP16 and BF16 | Rust / cuda-oxide | device correct | Scalar and packed paths, eight shapes per dtype, three short-buffer checks, signed zero, and two-command chaining pass on H20 |
-| BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan, two declared shapes, exact spans, capacity rejection, reuse, and RMSNorm-to-GEMM chaining pass on H20 |
+| RMSNorm F32 | Rust / cuda-oxide | device correct | Owned bindings pass H20 correctness and sanitizer gates |
+| RMSNorm FP16 and BF16 | Rust / cuda-oxide | device correct | Scalar and packed paths pass H20 correctness and sanitizer gates |
+| BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
 
 No permanent GPU provider has a published performance result yet. The
-[BF16 GEMM correctness record](results/h20-bf16-cublaslt-correctness-20260802.json)
+[owned-binding and Graph record](results/h20-owned-bindings-cuda-graph-correctness-20260803.json)
 contains its accepted and excluded claims.
 
 ## Target surface

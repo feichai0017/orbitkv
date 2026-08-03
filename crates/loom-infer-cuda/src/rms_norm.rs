@@ -489,7 +489,7 @@ impl RmsNormF32Plan {
     /// Enqueues this prepared launch into a checked command scope.
     pub fn enqueue_into(
         &self,
-        scope: &mut CommandScope<'_, '_>,
+        scope: &mut CommandScope<'_>,
         args: RmsNormArgs<f32>,
     ) -> Result<(), RmsNormEnqueueError> {
         let permit = scope.prepare_command()?;
@@ -548,7 +548,7 @@ impl RmsNormF16Plan {
     /// Enqueues this prepared launch into a checked command scope.
     pub fn enqueue_into(
         &self,
-        scope: &mut CommandScope<'_, '_>,
+        scope: &mut CommandScope<'_>,
         args: RmsNormArgs<f16>,
     ) -> Result<(), RmsNormEnqueueError> {
         let permit = scope.prepare_command()?;
@@ -622,7 +622,7 @@ impl RmsNormBf16Plan {
     /// Enqueues this prepared launch into a checked command scope.
     pub fn enqueue_into(
         &self,
-        scope: &mut CommandScope<'_, '_>,
+        scope: &mut CommandScope<'_>,
         args: RmsNormArgs<bf16>,
     ) -> Result<(), RmsNormEnqueueError> {
         let permit = scope.prepare_command()?;
@@ -730,7 +730,7 @@ fn require_packed_alignment(
 }
 
 fn record_launch(
-    scope: &mut CommandScope<'_, '_>,
+    scope: &mut CommandScope<'_>,
     permit: CommandPermit,
     function: CudaFunction,
     result: Result<(), LaunchContractError>,
