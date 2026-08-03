@@ -31,3 +31,8 @@ required-features = ["cuda"]
 name = "bf16_gemm_h20"
 path = "src/bin/bf16_gemm_h20.rs"
 required-features = ["cuda"]
+
+[[bin]]
+name = "single_decode_h20"
+path = "src/bin/single_decode_h20.rs"
+required-features = ["cuda"]

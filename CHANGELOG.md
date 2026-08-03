@@ -9,6 +9,10 @@
   workspace, context, and caller-owned stream.
 - Added H20 correctness coverage for standalone GEMM, row-major transpose,
   capacity and buffer rejection, plan reuse, and an RMSNorm-to-GEMM chain.
+- Added a BF16 NHD D128 single-decode contract, CPU reference, and Rust CUDA
+  provider for MHA, MQA, and GQA.
+- Added H20 attention correctness, exact-span rejection, duplicate-binding checks,
+  Compute Sanitizer, and SM90 artifact evidence.
 
 ### Changed
 
@@ -17,6 +21,7 @@
 - Renamed launch-specific command capacity APIs to provider-neutral command
   terminology.
 - Separated external provider submission errors from CUDA driver errors.
+- Added checked three-read, two-write resolution to the shared binding path.
 
 ## 1.0.0-alpha.1
 

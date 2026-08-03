@@ -11,14 +11,16 @@ Enable `cuda` only inside the pinned CUDA build environment.
 ```bash
 cargo oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch sm_90
 cargo oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch sm_90
+cargo oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch sm_90
 ```
 
 ## Current providers
 
-The Rust provider implements contiguous F32, FP16, and BF16 RMSNorm. The first
-vendor provider freezes one contiguous BF16 cuBLASLt GEMM algorithm during
-planning. Both use typed heterogeneous bindings and one completion event.
+The Rust providers implement contiguous RMSNorm and BF16 single-request decode
+attention. The vendor provider freezes one contiguous BF16 cuBLASLt GEMM
+algorithm during planning. All use typed bindings and one completion event.
 
 The current owned-binding revision passed its H20 correctness gates. The fixed
-RMSNorm-to-GEMM Graph also passed replay and Compute Sanitizer gates. Fixed
-Rust-kernel argument packs and performance gates remain open.
+RMSNorm-to-GEMM Graph also passed replay and Compute Sanitizer gates. The
+single-decode attention slice passed its H20 correctness and sanitizer gates.
+Fixed Rust-kernel argument packs and performance gates remain open.

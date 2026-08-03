@@ -41,7 +41,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   </section>
 
   <section class="metrics-strip" aria-label="Project status">
-    <div class="metric"><strong>2</strong><span>qualified device slices</span></div>
+    <div class="metric"><strong>3</strong><span>qualified device slices</span></div>
     <div class="metric"><strong>SM90</strong><span>first target</span></div>
     <div class="metric"><strong>Rust</strong><span>host and device source</span></div>
     <div class="metric"><strong>Pending</strong><span>performance evidence</span></div>
@@ -115,12 +115,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p>The fixed plan and RMSNorm-to-GEMM Graph pass correctness.</p>
       <small>The final output after two replays is bit-exact. Memcheck reports no errors or leaks.</small>
     </article>
+    <article class="evidence-card">
+      <h3>BF16 single decode on H20</h3><span class="result">Qualified</span>
+      <p>The NHD D128 MHA, MQA, and GQA cases pass the CPU-oracle gate.</p>
+      <small>Four sanitizer tools report no errors. Performance is not measured.</small>
+    </article>
   </section>
 
   <section class="section">
     <header class="section-header">
-      <div><p class="eyebrow">Next</p><h2>Build the attention core</h2></div>
-      <p>Use the qualified lifecycle for single decode, then add paged batch decode.</p>
+      <div><p class="eyebrow">Next</p><h2>Measure and extend attention</h2></div>
+      <p>Compare single decode with FlashInfer, then add paged batch decode.</p>
     </header>
     <div class="roadmap-grid">
       {milestones.map((item) => (

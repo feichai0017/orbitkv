@@ -33,8 +33,9 @@ The current device paths are:
 | --- | --- | --- |
 | Contiguous RMSNorm F32, FP16, BF16 | Rust device kernels compiled with cuda-oxide | Owned-binding revision device-correct and sanitizer-clean |
 | Contiguous BF16 GEMM with F32 accumulation | One fixed cuBLASLt algorithm | Device-correct with fixed-address Graph replay and sanitizer coverage |
+| BF16 single-request decode attention | Rust device kernel compiled with cuda-oxide | Narrow NHD D128 contract device-correct and sanitizer-clean |
 
-Both use the same public flow:
+All providers use the same public flow:
 
 ```text
 validated spec
@@ -55,10 +56,12 @@ The GEMM contract is `D[M,N] = A[M,K] * W[N,K]^T` over contiguous row-major
 BF16 tensors. Algorithm selection happens during planning. Enqueue does not
 tune or fall back.
 
-Attention, sampling, KV-cache, MoE, quantization, and performance qualification
-remain roadmap work. The fixed-address Graph path passed its declared H20
-correctness and sanitizer gates. See the
-[2026-08-03 result](docs/results/h20-owned-bindings-cuda-graph-correctness-20260803.json).
+Paged attention, sampling, KV-cache, MoE, quantization, and performance
+qualification remain roadmap work.
+
+The first single-decode slice covers BF16 MHA, MQA, and GQA with NHD caches and
+head dimension 128. It does not establish FlashInfer performance parity. See the
+[single-decode result](docs/results/h20-bf16-single-decode-correctness-20260803.json).
 
 ### Execution
 
@@ -97,6 +100,7 @@ cd crates/loom-infer-cuda
 cargo oxide doctor
 cargo oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch sm_90
 cargo oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch sm_90
+cargo oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch sm_90
 cargo oxide test --arch sm_90 -- --workspace --features cuda --release
 ```
 
@@ -109,12 +113,13 @@ Operator correctness, kernel latency, graph execution, engine integration, and
 serving performance are separate claims. A microbenchmark does not establish
 an engine or serving speedup.
 
-The current Graph record covers correctness and Compute Sanitizer results. It
-makes no performance, engine, or serving claim.
+The current attention and shared-command regression records cover correctness,
+Graph replay, and Compute Sanitizer results. They make no performance, engine,
+or serving claim.
 
 See the [architecture](docs/design/loom-infer-architecture.md),
 [operator catalog](docs/operator-catalog.md), [roadmap](docs/roadmap.md), and
-[owned-binding Graph result](docs/results/h20-owned-bindings-cuda-graph-correctness-20260803.json).
+[evidence index](docs/results/README.md).
 
 ## License
 

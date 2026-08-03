@@ -20,17 +20,18 @@ tracks the pinned upstream comparison.
 | RMSNorm F32 | Rust / cuda-oxide | device correct | Owned bindings pass H20 correctness and sanitizer gates |
 | RMSNorm FP16 and BF16 | Rust / cuda-oxide | device correct | Scalar and packed paths pass H20 correctness and sanitizer gates |
 | BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
+| BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 MHA/MQA/GQA slice passes H20 correctness and sanitizer gates |
 
 No permanent GPU provider has a published performance result yet. The
-[owned-binding and Graph record](results/h20-owned-bindings-cuda-graph-correctness-20260803.json)
-contains its accepted and excluded claims.
+[attention record](results/h20-bf16-single-decode-correctness-20260803.json)
+contains the latest accepted and excluded claims.
 
 ## Target surface
 
 | Family | Operators | Provider | State |
 | --- | --- | --- | --- |
 | Normalization | RMSNorm, Add+RMSNorm, quantized output | Rust / cuda-oxide | planned |
-| Attention | Ragged prefill, paged decode, split-K, state merge | Rust / cuda-oxide | planned |
+| Attention | Single decode, ragged prefill, paged decode, split-K, state merge | Rust / cuda-oxide | in progress |
 | KV cache | RoPE append, gather, scatter, compaction, quantized storage | Rust / cuda-oxide | planned |
 | Decode tail | Logits processing, penalties, top-k, top-p, Min-P, logprobs, sampling | Rust / cuda-oxide | planned |
 | Speculation | Greedy, stochastic, and tree verification | Rust / cuda-oxide | planned |
@@ -44,6 +45,9 @@ contains its accepted and excluded claims.
 Attention implementations compare against pinned FlashAttention, FlashInfer,
 and engine providers when contracts match. The comparison must keep shapes,
 dtypes, layouts, masks, workspaces, streams, and graph mode equal.
+
+The current single-decode record is a Loom GPU versus CPU-oracle correctness
+gate. It contains no matched FlashInfer performance result.
 
 ## Admission
 

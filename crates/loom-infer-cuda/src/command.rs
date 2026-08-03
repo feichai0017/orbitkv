@@ -540,27 +540,14 @@ impl<'queue> CommandScope<'queue> {
         B: ResolveElement,
         C: ResolveElement,
     {
+        self.validate_resolve_request(
+            &[first.set_id, second.set_id, third.set_id],
+            &[first.slot, second.slot, third.slot],
+        )?;
         let bindings = self
             .bindings
             .as_mut()
             .expect("live command scope has bindings");
-        for handle in [first.set_id, second.set_id, third.set_id] {
-            if handle != bindings.set_id {
-                return Err(CommandError::BindingSetMismatch);
-            }
-        }
-        if first.slot == second.slot || first.slot == third.slot || second.slot == third.slot {
-            return Err(CommandError::DuplicateBindingSlot);
-        }
-        for slot in [first.slot, second.slot, third.slot] {
-            if slot >= bindings.leases.len() {
-                return Err(CommandError::BindingSlotOutOfRange {
-                    slot,
-                    bindings: bindings.leases.len(),
-                });
-            }
-        }
-
         let [first_lease, second_lease, third_lease] = bindings
             .leases
             .get_disjoint_mut([first.slot, second.slot, third.slot])
@@ -594,28 +581,15 @@ impl<'queue> CommandScope<'queue> {
         C: ResolveElement,
         D: ResolveElement,
     {
+        let slots = [first.slot, second.slot, third.slot, fourth.slot];
+        self.validate_resolve_request(
+            &[first.set_id, second.set_id, third.set_id, fourth.set_id],
+            &slots,
+        )?;
         let bindings = self
             .bindings
             .as_mut()
             .expect("live command scope has bindings");
-        for handle in [first.set_id, second.set_id, third.set_id, fourth.set_id] {
-            if handle != bindings.set_id {
-                return Err(CommandError::BindingSetMismatch);
-            }
-        }
-        let slots = [first.slot, second.slot, third.slot, fourth.slot];
-        for (index, slot) in slots.iter().enumerate() {
-            if slots[..index].contains(slot) {
-                return Err(CommandError::DuplicateBindingSlot);
-            }
-            if *slot >= bindings.leases.len() {
-                return Err(CommandError::BindingSlotOutOfRange {
-                    slot: *slot,
-                    bindings: bindings.leases.len(),
-                });
-            }
-        }
-
         let [first_lease, second_lease, third_lease, fourth_lease] = bindings
             .leases
             .get_disjoint_mut(slots)
@@ -637,6 +611,94 @@ impl<'queue> CommandScope<'queue> {
             third: third_buffer,
             fourth: fourth_buffer,
         })
+    }
+
+    pub(crate) fn resolve_rrrww<A, B, C, D, E>(
+        &mut self,
+        first: Read<A>,
+        second: Read<B>,
+        third: Read<C>,
+        fourth: Write<D>,
+        fifth: Write<E>,
+    ) -> Result<ResolvedRrrww<'_, A, B, C, D, E>, CommandError>
+    where
+        A: ResolveElement,
+        B: ResolveElement,
+        C: ResolveElement,
+        D: ResolveElement,
+        E: ResolveElement,
+    {
+        let slots = [first.slot, second.slot, third.slot, fourth.slot, fifth.slot];
+        self.validate_resolve_request(
+            &[
+                first.set_id,
+                second.set_id,
+                third.set_id,
+                fourth.set_id,
+                fifth.set_id,
+            ],
+            &slots,
+        )?;
+        let bindings = self
+            .bindings
+            .as_mut()
+            .expect("live command scope has bindings");
+        let [
+            first_lease,
+            second_lease,
+            third_lease,
+            fourth_lease,
+            fifth_lease,
+        ] = bindings
+            .leases
+            .get_disjoint_mut(slots)
+            .expect("validated binding slots are pairwise disjoint");
+        let first_buffer =
+            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
+        let second_buffer =
+            B::read(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
+        let third_buffer =
+            C::read(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
+        let fourth_buffer =
+            D::write(fourth_lease).map_err(|error| map_lease_error(error, fourth.slot))?;
+        let fifth_buffer =
+            E::write(fifth_lease).map_err(|error| map_lease_error(error, fifth.slot))?;
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
+
+        Ok(ResolvedRrrww {
+            stream: &queue.stream,
+            first: first_buffer,
+            second: second_buffer,
+            third: third_buffer,
+            fourth: fourth_buffer,
+            fifth: fifth_buffer,
+        })
+    }
+
+    fn validate_resolve_request(
+        &self,
+        set_ids: &[u64],
+        slots: &[usize],
+    ) -> Result<(), CommandError> {
+        let bindings = self
+            .bindings
+            .as_ref()
+            .expect("live command scope has bindings");
+        if set_ids.iter().any(|&set_id| set_id != bindings.set_id) {
+            return Err(CommandError::BindingSetMismatch);
+        }
+        for (index, &slot) in slots.iter().enumerate() {
+            if slots[..index].contains(&slot) {
+                return Err(CommandError::DuplicateBindingSlot);
+            }
+            if slot >= bindings.leases.len() {
+                return Err(CommandError::BindingSlotOutOfRange {
+                    slot,
+                    bindings: bindings.leases.len(),
+                });
+            }
+        }
+        Ok(())
     }
 
     pub(crate) fn record_cuda_submission(&mut self, permit: CommandPermit, function: CudaFunction) {
@@ -801,6 +863,22 @@ pub(crate) struct ResolvedRrww<
     pub(crate) second: &'scope DeviceBuffer<B>,
     pub(crate) third: &'scope mut DeviceBuffer<C>,
     pub(crate) fourth: &'scope mut DeviceBuffer<D>,
+}
+
+pub(crate) struct ResolvedRrrww<
+    'scope,
+    A: BindingElement,
+    B: BindingElement,
+    C: BindingElement,
+    D: BindingElement,
+    E: BindingElement,
+> {
+    pub(crate) stream: &'scope CudaStream,
+    pub(crate) first: &'scope DeviceBuffer<A>,
+    pub(crate) second: &'scope DeviceBuffer<B>,
+    pub(crate) third: &'scope DeviceBuffer<C>,
+    pub(crate) fourth: &'scope mut DeviceBuffer<D>,
+    pub(crate) fifth: &'scope mut DeviceBuffer<E>,
 }
 
 /// The final fence and all bindings retained by a completed command scope.
