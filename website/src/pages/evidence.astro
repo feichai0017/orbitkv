@@ -18,9 +18,27 @@ import { repositoryUrl } from "../data/site";
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
-      <h2>Current state</h2>
+      <h2>Current source projection</h2>
+      <p>
+        The 2026-08-03 record qualifies the owned-binding and fixed-address
+        CUDA Graph source projection.
+      </p>
       <div class="doc-note">
-        <strong>F32 RMSNorm passes its H20 correctness gate.</strong>
+        <strong>Owned bindings and fixed-address Graph replay passed on H20.</strong>
+        <p>
+          The graph captures BF16 RMSNorm and one fixed BF16 cuBLASLt GEMM.
+          It replays twice and produces a bit-exact final output. Compute
+          Sanitizer reports no errors or device leaks. Performance is not
+          measured.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-owned-bindings-cuda-graph-correctness-20260803.json`}>
+          Current machine-readable result
+        </a>
+      </div>
+
+      <h2>Earlier operator records</h2>
+      <div class="doc-note">
+        <strong>F32 RMSNorm passed its recorded H20 correctness gate.</strong>
         <p>
           Four shapes match the CPU reference, and an invalid buffer is
           rejected. Checked bindings chain two commands on a non-default
@@ -32,7 +50,7 @@ import { repositoryUrl } from "../data/site";
         </a>
       </div>
       <div class="doc-note">
-        <strong>FP16 and BF16 RMSNorm pass their H20 correctness gates.</strong>
+        <strong>FP16 and BF16 RMSNorm passed their recorded H20 correctness gates.</strong>
         <p>
           Scalar and packed paths match the storage-rounded CPU references.
           Three short-buffer positions are rejected. Two launches share one
@@ -45,7 +63,7 @@ import { repositoryUrl } from "../data/site";
         </a>
       </div>
       <div class="doc-note">
-        <strong>One fixed BF16 cuBLASLt GEMM plan passes its H20 correctness gate.</strong>
+        <strong>One fixed BF16 cuBLASLt GEMM plan passed its recorded H20 gate.</strong>
         <p>
           Standalone and transpose-sensitive cases match the CPU reference.
           Short A, W, and D buffers are rejected. BF16 RMSNorm feeds GEMM under

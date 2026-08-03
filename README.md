@@ -4,6 +4,7 @@
   <p>
     <a href="docs/README.md">Docs</a> ·
     <a href="docs/operator-catalog.md">Operators</a> ·
+    <a href="docs/flashinfer-parity.md">Parity</a> ·
     <a href="docs/roadmap.md">Roadmap</a> ·
     <a href="docs/results/README.md">Evidence</a>
   </p>
@@ -30,8 +31,8 @@ The current device paths are:
 
 | Operator | Provider | H20 state |
 | --- | --- | --- |
-| Contiguous RMSNorm F32, FP16, BF16 | Rust device kernels compiled with cuda-oxide | Device correct |
-| Contiguous BF16 GEMM with F32 accumulation | One fixed cuBLASLt algorithm | Device correct |
+| Contiguous RMSNorm F32, FP16, BF16 | Rust device kernels compiled with cuda-oxide | Owned-binding revision device-correct and sanitizer-clean |
+| Contiguous BF16 GEMM with F32 accumulation | One fixed cuBLASLt algorithm | Device-correct with fixed-address Graph replay and sanitizer coverage |
 
 Both use the same public flow:
 
@@ -44,14 +45,20 @@ validated spec
   -> plan::enqueue_into
   -> CommandScope::finish
   -> CommandCompletion::wait
+  -> CheckedBindings::take_read_write
 ```
+
+The Graph path consumes a one-shot `GraphQueue` with a private stream and
+returns the same bindings through `GraphExec::into_bindings`.
 
 The GEMM contract is `D[M,N] = A[M,K] * W[N,K]^T` over contiguous row-major
 BF16 tensors. Algorithm selection happens during planning. Enqueue does not
 tune or fall back.
 
-Attention, sampling, KV-cache, MoE, quantization, graph
-replay, and performance qualification remain roadmap work.
+Attention, sampling, KV-cache, MoE, quantization, and performance qualification
+remain roadmap work. The fixed-address Graph path passed its declared H20
+correctness and sanitizer gates. See the
+[2026-08-03 result](docs/results/h20-owned-bindings-cuda-graph-correctness-20260803.json).
 
 ### Execution
 
@@ -68,8 +75,8 @@ allocates its argument vector during Rust-kernel enqueue.
   silent fallback.
 - CUDA drivers and cuBLASLt are current vendor dependencies. Other established
   GEMM and collective libraries may enter through explicit providers.
-- The caller owns streams and device buffers. Checked bindings retain borrowed
-  resources while the GPU uses them.
+- The caller owns streams. Checked bindings share read-only buffers through
+  `Arc` and take exclusive ownership of writable buffers until completion.
 
 ## Local checks
 
@@ -102,12 +109,12 @@ Operator correctness, kernel latency, graph execution, engine integration, and
 serving performance are separate claims. A microbenchmark does not establish
 an engine or serving speedup.
 
-The current GEMM record makes no performance, CUDA Graph, Compute Sanitizer,
-engine, or serving claim.
+The current Graph record covers correctness and Compute Sanitizer results. It
+makes no performance, engine, or serving claim.
 
 See the [architecture](docs/design/loom-infer-architecture.md),
 [operator catalog](docs/operator-catalog.md), [roadmap](docs/roadmap.md), and
-[BF16 cuBLASLt result](docs/results/h20-bf16-cublaslt-correctness-20260802.json).
+[owned-binding Graph result](docs/results/h20-owned-bindings-cuda-graph-correctness-20260803.json).
 
 ## License
 

@@ -3,6 +3,7 @@ use half::bf16;
 use loom_infer::{Bf16GemmSpec, DType, RmsNormSpec, bf16_gemm_reference, rms_norm_bf16_reference};
 use loom_infer_cuda::command::{CommandError, CommandQueue};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmEnqueueError, Bf16GemmPlan, CublasLtProvider};
+use loom_infer_cuda::graph::GraphQueue;
 use loom_infer_cuda::rms_norm::{RmsNormArgs, RmsNormProvider};
 use std::error::Error;
 use std::sync::Arc;
@@ -89,17 +90,17 @@ fn check_standalone(queue: &mut CommandQueue, plan: &Bf16GemmPlan) -> Result<(),
     let mut expected = vec![bf16::ZERO; spec.output_numel()];
     bf16_gemm_reference(&activation_host, &weight_host, &mut expected, spec)?;
 
-    let activation = DeviceBuffer::from_host(&stream, &activation_host)?;
-    let weight = DeviceBuffer::from_host(&stream, &weight_host)?;
-    let mut first_output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
-    let mut second_output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
-    let mut workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(plan))?;
+    let activation = Arc::new(DeviceBuffer::from_host(&stream, &activation_host)?);
+    let weight = Arc::new(DeviceBuffer::from_host(&stream, &weight_host)?);
+    let first_output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
+    let second_output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
+    let workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(plan))?;
     let mut bindings = queue.bindings(5)?;
-    let activation_handle = bindings.bind_read(&activation)?;
-    let weight_handle = bindings.bind_read(&weight)?;
-    let first_output_handle = bindings.bind_read_write(&mut first_output)?;
-    let second_output_handle = bindings.bind_read_write(&mut second_output)?;
-    let workspace_handle = bindings.bind_read_write(&mut workspace)?;
+    let activation_handle = bindings.bind_read(Arc::clone(&activation))?;
+    let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
+    let first_output_handle = bindings.bind_read_write(first_output)?;
+    let second_output_handle = bindings.bind_read_write(second_output)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
 
     for output_handle in [first_output_handle.write(), second_output_handle.write()] {
         let mut scope = queue.begin(bindings)?;
@@ -118,6 +119,8 @@ fn check_standalone(queue: &mut CommandQueue, plan: &Bf16GemmPlan) -> Result<(),
         }
         bindings = completion.wait()?;
     }
+    let first_output = bindings.take_read_write(first_output_handle)?;
+    let second_output = bindings.take_read_write(second_output_handle)?;
     drop(bindings);
 
     let first_actual = first_output.to_host_vec(&stream)?;
@@ -176,15 +179,15 @@ fn check_row_major_transpose(
     let mut expected = vec![bf16::ZERO; spec.output_numel()];
     bf16_gemm_reference(&activation_host, &weight_host, &mut expected, spec)?;
 
-    let activation = DeviceBuffer::from_host(&stream, &activation_host)?;
-    let weight = DeviceBuffer::from_host(&stream, &weight_host)?;
-    let mut output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
-    let mut workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(plan))?;
+    let activation = Arc::new(DeviceBuffer::from_host(&stream, &activation_host)?);
+    let weight = Arc::new(DeviceBuffer::from_host(&stream, &weight_host)?);
+    let output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
+    let workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(plan))?;
     let mut bindings = queue.bindings(4)?;
-    let activation_handle = bindings.bind_read(&activation)?;
-    let weight_handle = bindings.bind_read(&weight)?;
-    let output_handle = bindings.bind_read_write(&mut output)?;
-    let workspace_handle = bindings.bind_read_write(&mut workspace)?;
+    let activation_handle = bindings.bind_read(Arc::clone(&activation))?;
+    let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
     let mut scope = queue.begin(bindings)?;
     plan.enqueue_into(
         &mut scope,
@@ -199,7 +202,9 @@ fn check_row_major_transpose(
     if completion.submitted() != 1 {
         return Err("transpose-sensitive GEMM completion covered the wrong command count".into());
     }
-    drop(completion.wait()?);
+    let mut bindings = completion.wait()?;
+    let output = bindings.take_read_write(output_handle)?;
+    drop(bindings);
 
     let actual = output.to_host_vec(&stream)?;
     let comparison = compare(&actual, &expected)?;
@@ -226,15 +231,15 @@ fn expect_length_rejection(
     output_len: usize,
 ) -> Result<(), Box<dyn Error>> {
     let stream = queue.stream().clone();
-    let activation = DeviceBuffer::<bf16>::zeroed(&stream, activation_len)?;
-    let weight = DeviceBuffer::<bf16>::zeroed(&stream, weight_len)?;
-    let mut output = DeviceBuffer::<bf16>::zeroed(&stream, output_len)?;
-    let mut workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(plan))?;
+    let activation = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, activation_len)?);
+    let weight = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, weight_len)?);
+    let output = DeviceBuffer::<bf16>::zeroed(&stream, output_len)?;
+    let workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(plan))?;
     let mut bindings = queue.bindings(4)?;
-    let activation_handle = bindings.bind_read(&activation)?;
-    let weight_handle = bindings.bind_read(&weight)?;
-    let output_handle = bindings.bind_read_write(&mut output)?;
-    let workspace_handle = bindings.bind_read_write(&mut workspace)?;
+    let activation_handle = bindings.bind_read(Arc::clone(&activation))?;
+    let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
     let mut scope = queue.begin(bindings)?;
     let result = plan.enqueue_into(
         &mut scope,
@@ -294,16 +299,15 @@ fn check_short_buffers(
         "not_applicable_zero_required"
     } else {
         let stream = queue.stream().clone();
-        let activation = DeviceBuffer::<bf16>::zeroed(&stream, spec.a_numel())?;
-        let weight = DeviceBuffer::<bf16>::zeroed(&stream, spec.weight_numel())?;
-        let mut output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
-        let mut workspace =
-            DeviceBuffer::<u8>::zeroed(&stream, workspace_required.saturating_sub(1))?;
+        let activation = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.a_numel())?);
+        let weight = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.weight_numel())?);
+        let output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
+        let workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_required.saturating_sub(1))?;
         let mut bindings = queue.bindings(4)?;
-        let activation_handle = bindings.bind_read(&activation)?;
-        let weight_handle = bindings.bind_read(&weight)?;
-        let output_handle = bindings.bind_read_write(&mut output)?;
-        let workspace_handle = bindings.bind_read_write(&mut workspace)?;
+        let activation_handle = bindings.bind_read(Arc::clone(&activation))?;
+        let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
+        let output_handle = bindings.bind_read_write(output)?;
+        let workspace_handle = bindings.bind_read_write(workspace)?;
         let mut scope = queue.begin(bindings)?;
         let result = plan.enqueue_into(
             &mut scope,
@@ -339,15 +343,15 @@ fn check_command_capacity(
 ) -> Result<(), Box<dyn Error>> {
     let spec = plan.spec();
     let mut queue = CommandQueue::new(stream.clone(), 1)?;
-    let activation = DeviceBuffer::<bf16>::zeroed(stream, spec.a_numel())?;
-    let weight = DeviceBuffer::<bf16>::zeroed(stream, spec.weight_numel())?;
-    let mut output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
-    let mut workspace = DeviceBuffer::<u8>::zeroed(stream, workspace_len(plan))?;
+    let activation = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, spec.a_numel())?);
+    let weight = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, spec.weight_numel())?);
+    let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
+    let workspace = DeviceBuffer::<u8>::zeroed(stream, workspace_len(plan))?;
     let mut bindings = queue.bindings(4)?;
-    let activation_handle = bindings.bind_read(&activation)?;
-    let weight_handle = bindings.bind_read(&weight)?;
-    let output_handle = bindings.bind_read_write(&mut output)?;
-    let workspace_handle = bindings.bind_read_write(&mut workspace)?;
+    let activation_handle = bindings.bind_read(Arc::clone(&activation))?;
+    let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
     let args = Bf16GemmArgs::new(
         activation_handle,
         weight_handle,
@@ -402,19 +406,19 @@ fn check_rms_norm_gemm_chain(
         gemm_spec,
     )?;
 
-    let input = DeviceBuffer::from_host(&stream, &input_host)?;
-    let norm_weight = DeviceBuffer::from_host(&stream, &norm_weight_host)?;
-    let mut intermediate = DeviceBuffer::<bf16>::zeroed(&stream, rms_spec.numel())?;
-    let gemm_weight = DeviceBuffer::from_host(&stream, &gemm_weight_host)?;
-    let mut output = DeviceBuffer::<bf16>::zeroed(&stream, gemm_spec.output_numel())?;
-    let mut workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(gemm_plan))?;
+    let input = Arc::new(DeviceBuffer::from_host(&stream, &input_host)?);
+    let norm_weight = Arc::new(DeviceBuffer::from_host(&stream, &norm_weight_host)?);
+    let intermediate = DeviceBuffer::<bf16>::zeroed(&stream, rms_spec.numel())?;
+    let gemm_weight = Arc::new(DeviceBuffer::from_host(&stream, &gemm_weight_host)?);
+    let output = DeviceBuffer::<bf16>::zeroed(&stream, gemm_spec.output_numel())?;
+    let workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(gemm_plan))?;
     let mut bindings = queue.bindings(6)?;
-    let input_handle = bindings.bind_read(&input)?;
-    let norm_weight_handle = bindings.bind_read(&norm_weight)?;
-    let intermediate_handle = bindings.bind_read_write(&mut intermediate)?;
-    let gemm_weight_handle = bindings.bind_read(&gemm_weight)?;
-    let output_handle = bindings.bind_read_write(&mut output)?;
-    let workspace_handle = bindings.bind_read_write(&mut workspace)?;
+    let input_handle = bindings.bind_read(Arc::clone(&input))?;
+    let norm_weight_handle = bindings.bind_read(Arc::clone(&norm_weight))?;
+    let intermediate_handle = bindings.bind_read_write(intermediate)?;
+    let gemm_weight_handle = bindings.bind_read(Arc::clone(&gemm_weight))?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
     let mut scope = queue.begin(bindings)?;
     rms_plan.enqueue_into(
         &mut scope,
@@ -437,7 +441,9 @@ fn check_rms_norm_gemm_chain(
     if completion.submitted() != 2 {
         return Err("RMSNorm to GEMM completion covered the wrong command count".into());
     }
-    drop(completion.wait()?);
+    let mut bindings = completion.wait()?;
+    let output = bindings.take_read_write(output_handle)?;
+    drop(bindings);
 
     let actual = output.to_host_vec(&stream)?;
     let comparison = compare(&actual, &expected)?;
@@ -446,6 +452,118 @@ fn check_rms_norm_gemm_chain(
         "gate=bf16_gemm_h20 case=rms_norm_gemm_chain status=pass rows=1 hidden=4096 \
          m={} n={} k={} commands=2 completion_records=1 intermediate_waits=0 \
          gemm_plan_reused=true bit_mismatches={} max_abs={:.9e} digest={:016x}",
+        gemm_spec.m(),
+        gemm_spec.n(),
+        gemm_spec.k(),
+        comparison.bit_mismatches,
+        comparison.max_abs,
+        comparison.digest,
+    );
+    Ok(())
+}
+
+fn check_rms_norm_gemm_graph(
+    queue: &mut CommandQueue,
+    rms_provider: RmsNormProvider,
+    gemm_plan: Bf16GemmPlan,
+) -> Result<(), Box<dyn Error>> {
+    let stream = queue.stream().clone();
+    let gemm_spec = gemm_plan.spec();
+    let rms_spec = RmsNormSpec::new(1, LARGE_K, 1.0e-5, DType::Bf16)?;
+    let rms_plan = rms_provider.plan_bf16(rms_spec)?;
+    drop(rms_provider);
+    let input_host = vec![bf16::ONE; rms_spec.numel()];
+    let norm_weight_host = vec![bf16::ONE; rms_spec.hidden_size()];
+    let (_, gemm_weight_host) = large_fixture(gemm_spec);
+    let mut intermediate_expected = vec![bf16::ZERO; rms_spec.numel()];
+    let mut expected = vec![bf16::ZERO; gemm_spec.output_numel()];
+    rms_norm_bf16_reference(
+        &input_host,
+        &norm_weight_host,
+        &mut intermediate_expected,
+        rms_spec,
+    )?;
+    bf16_gemm_reference(
+        &intermediate_expected,
+        &gemm_weight_host,
+        &mut expected,
+        gemm_spec,
+    )?;
+
+    let input = Arc::new(DeviceBuffer::from_host(&stream, &input_host)?);
+    let norm_weight = Arc::new(DeviceBuffer::from_host(&stream, &norm_weight_host)?);
+    let intermediate = DeviceBuffer::<bf16>::zeroed(&stream, rms_spec.numel())?;
+    let gemm_weight = Arc::new(DeviceBuffer::from_host(&stream, &gemm_weight_host)?);
+    let output = DeviceBuffer::<bf16>::zeroed(&stream, gemm_spec.output_numel())?;
+    let workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(&gemm_plan))?;
+    let graph_queue = GraphQueue::new(stream.context(), 2)?;
+    let mut bindings = graph_queue.bindings(6)?;
+    let input_handle = bindings.bind_read(Arc::clone(&input))?;
+    let norm_weight_handle = bindings.bind_read(Arc::clone(&norm_weight))?;
+    let intermediate_handle = bindings.bind_read_write(intermediate)?;
+    let gemm_weight_handle = bindings.bind_read(Arc::clone(&gemm_weight))?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
+
+    let captured = graph_queue.capture(bindings, |scope| -> Result<(), Box<dyn Error>> {
+        rms_plan.enqueue_into(
+            scope,
+            RmsNormArgs::new(
+                input_handle,
+                norm_weight_handle,
+                intermediate_handle.write(),
+            ),
+        )?;
+        gemm_plan.enqueue_into(
+            scope,
+            Bf16GemmArgs::new(
+                intermediate_handle.read(),
+                gemm_weight_handle,
+                output_handle.write(),
+                workspace_handle.write(),
+            ),
+        )?;
+        Ok(())
+    })?;
+    if captured.commands() != 2 {
+        return Err("captured graph covered the wrong command count".into());
+    }
+    drop(rms_plan);
+    drop(gemm_plan);
+    drop(input);
+    drop(norm_weight);
+    drop(gemm_weight);
+
+    let mut exec = captured.instantiate()?;
+    for expected_launch in 1..=2 {
+        let mut completion = exec.launch()?;
+        if completion.launch_index() != expected_launch {
+            return Err("graph completion reported the wrong replay index".into());
+        }
+        let _ = completion.is_complete()?;
+        if expected_launch == 1 {
+            completion.wait()?;
+        } else {
+            drop(completion);
+        }
+    }
+    if exec.launches() != 2 || exec.commands() != 2 {
+        return Err("graph exec accounting changed across replay".into());
+    }
+    let mut bindings = exec.into_bindings()?;
+    let output = bindings.take_read_write(output_handle)?;
+    drop(bindings);
+
+    let actual = output.to_host_vec(&stream)?;
+    let comparison = compare(&actual, &expected)?;
+    require_bit_exact("RMSNorm to GEMM graph", comparison)?;
+    println!(
+        "gate=bf16_gemm_h20 case=rms_norm_gemm_graph status=pass rows=1 hidden=4096 \
+         m={} n={} k={} commands=2 replays=2 fixed_bindings=true cross_stream=false \
+         external_owners_dropped_before_replay=true \
+         completion_queries=2 completion_waits=1 completion_drops=1 \
+         intra_graph_host_waits=0 inter_replay_host_waits=1 \
+         bit_mismatches={} max_abs={:.9e} digest={:016x}",
         gemm_spec.m(),
         gemm_spec.n(),
         gemm_spec.k(),
@@ -483,6 +601,9 @@ fn main() -> Result<(), Box<dyn Error>> {
     check_short_buffers(&mut queue, &small_plan)?;
     check_command_capacity(queue.stream(), &small_plan)?;
     check_rms_norm_gemm_chain(&mut queue, &rms_provider, &large_plan)?;
+    drop(small_plan);
+    drop(gemm_provider);
+    check_rms_norm_gemm_graph(&mut queue, rms_provider, large_plan)?;
     println!("gate=bf16_gemm_h20 suite=all status=pass");
     Ok(())
 }

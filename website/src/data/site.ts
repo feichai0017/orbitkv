@@ -10,7 +10,7 @@ export const operatorFamilies = [
   {
     name: "Normalization",
     boundary: "RMSNorm, residual fusion, and quantized output.",
-    state: "Device-correct",
+    state: "Device correct",
   },
   {
     name: "Attention",
@@ -35,7 +35,7 @@ export const operatorFamilies = [
   {
     name: "Matrix work",
     boundary: "Fixed Rust plans for qualified vendor GEMM providers.",
-    state: "Device-correct",
+    state: "Device correct",
   },
 ]
 
@@ -43,12 +43,12 @@ export const milestones = [
   {
     milestone: "01",
     name: "Permanent RMSNorm",
-    reason: "F32, FP16, and BF16 correctness passes. Fixed argument packs and later gates remain open.",
+    reason: "Owned bindings pass H20 correctness and sanitizer gates. Performance remains open.",
   },
   {
     milestone: "02",
     name: "Vendor GEMM",
-    reason: "The fixed BF16 cuBLASLt plan passes correctness. Graph, baseline, and engine gates remain open.",
+    reason: "The fixed plan and Graph chain pass H20 gates. Baseline and engine gates remain open.",
   },
   {
     milestone: "03",

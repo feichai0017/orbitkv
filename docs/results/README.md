@@ -5,6 +5,14 @@ providers.
 
 ## Results
 
+The 2026-08-03 record qualifies the current owned-binding and fixed-address
+Graph source projection. Earlier records remain immutable historical results.
+
+- [Owned bindings and CUDA Graph H20 result](h20-owned-bindings-cuda-graph-correctness-20260803.json):
+  RMSNorm and BF16 GEMM correctness pass. The final output after two fixed-address
+  Graph replays matches the CPU fixture. Compute Sanitizer reports no errors or
+  device leaks.
+
 - [F32 RMSNorm H20 correctness](h20-rms-norm-f32-correctness-20260802.json):
   four shapes and exact buffer rejection pass on a non-default stream.
 - [F32 RMSNorm H20 command scope](h20-rms-norm-f32-command-scope-20260802.json):
@@ -26,7 +34,7 @@ providers.
 | Correctness | Declared contract, oracle, error limit, and edge cases |
 | Lifecycle | Stream order, resource retention, capacity, reuse, and completion behavior |
 | Kernel | Matched buffers, streams, provider order, and raw device timings |
-| Graph | Capture and replay behavior with fixed plans and dynamic bindings |
+| Graph | Capture and replay behavior with fixed plans and declared binding policy |
 | Engine | Real invocation, provider hit count, and model output |
 | Serving | TTFT, TPOT, throughput, memory, and workload definition |
 

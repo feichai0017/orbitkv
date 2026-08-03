@@ -1,12 +1,13 @@
 //! Fixed cuBLASLt plans for contiguous inference GEMM.
 
 use crate::command::{CommandError, CommandScope, ExternalCommandError, Read, ResolvedRrww, Write};
-use cuda_core::{CudaContext, DeviceBuffer, DriverError, IntoResult, sys as cuda_sys};
+use crate::driver::bind_context_for_cleanup;
+use cuda_core::{CudaContext, DeviceBuffer, DriverError};
 use cudarc::cublaslt::{result, sys};
 use half::bf16;
 use loom_infer::Bf16GemmSpec;
 use std::ffi::c_void;
-use std::mem::{MaybeUninit, size_of};
+use std::mem::size_of;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicI32, Ordering};
 use thiserror::Error;
@@ -349,7 +350,7 @@ impl Bf16GemmPlan {
     /// Enqueues the frozen algorithm on the scope's caller-owned stream.
     pub fn enqueue_into(
         &self,
-        scope: &mut CommandScope<'_, '_>,
+        scope: &mut CommandScope<'_>,
         args: Bf16GemmArgs,
     ) -> Result<(), Bf16GemmEnqueueError> {
         let permit = scope.prepare_command()?;
@@ -562,22 +563,6 @@ fn mutable_device_ptr<T>(buffer: &mut DeviceBuffer<T>) -> *mut c_void {
 
 fn cublas_status(error: result::CublasError) -> i32 {
     error.0 as i32
-}
-
-fn bind_context_for_cleanup(context: &CudaContext) -> Result<(), DriverError> {
-    let mut current = MaybeUninit::uninit();
-    // SAFETY: CUDA writes one context handle to `current`. Setting the exact
-    // live context is required before destroying cuBLASLt resources. These raw
-    // driver calls deliberately bypass cuda-oxide's sticky-error check so a
-    // prior asynchronous error cannot prevent resource cleanup.
-    unsafe {
-        cuda_sys::cuCtxGetCurrent(current.as_mut_ptr()).result()?;
-        let current = current.assume_init();
-        if current.is_null() || current != context.cu_ctx() {
-            cuda_sys::cuCtxSetCurrent(context.cu_ctx()).result()?;
-        }
-    }
-    Ok(())
 }
 
 #[derive(Debug, Error)]

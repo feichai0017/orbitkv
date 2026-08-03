@@ -52,8 +52,11 @@ contract validates buffer spans before enqueue.
 
 `CommandQueue` owns one exact caller stream, one preallocated event, and fixed
 resource-retention storage. One heterogeneous binding arena holds F32, FP16,
-BF16, and byte buffers. Typed handles preserve each element type. Opaque access
-handles cannot move between binding sets.
+BF16, and byte buffers. Read-only bindings retain `Arc<DeviceBuffer<T>>`.
+Read-write bindings own `DeviceBuffer<T>` until completion returns or destroys
+the buffer after quiescence.
+
+Typed handles preserve each element type and cannot move between binding sets.
 
 One command scope submits several plans to the same stream. CUDA stream order
 makes each output available to the next launch without a host wait.
@@ -62,6 +65,32 @@ makes each output available to the next launch without a host wait.
 functions, and external provider plans until `wait()` or destruction confirms
 completion.
 
+### Graph resources
+
+Loom implements the graph path on the host. The first fixed-address contract
+passed H20 correctness and sanitizer gates on 2026-08-03. `GraphQueue` owns a
+private non-default stream and synchronizes the context once to establish input
+readiness. It then begins thread-local capture.
+
+Capture consumes the one-shot queue. The private handle and consuming API stop
+safe caller code from injecting untracked nodes. They also prevent recapture of
+a stream retained by an earlier graph.
+
+Capture transfers fixed bindings, loaded CUDA functions, and vendor plans into
+`CapturedGraph`.
+Instantiation transfers them again into one non-`Send`, non-`Sync` `GraphExec`.
+
+Each replay takes unique mutable access to `GraphExec` and records one event
+outside the graph. `GraphExec` also stores persistent in-flight state, so a
+forgotten completion cannot permit another launch or release allocations.
+
+Leaking the graph also leaks retained `Arc` reads and owned writes. The GPU does
+not lose its resources or expose writable access while work is in flight.
+
+Drop settles any replay before it destroys graph handles, provider resources,
+and bindings. The first contract rejects rebinding, graph updates, cross-stream
+launch, and default-stream capture.
+
 ### Failure handling
 
 Contract errors are recoverable. CUDA driver failures and external provider
@@ -69,7 +98,7 @@ submission failures poison the scope and queue.
 
 Cleanup tries stream
 synchronization, then context synchronization. If neither can prove
-quiescence, the process aborts before Rust releases any borrowed GPU resource.
+quiescence, the process aborts before Rust releases any retained GPU resource.
 
 ### Enqueue admission
 

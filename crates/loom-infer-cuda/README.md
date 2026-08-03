@@ -19,5 +19,6 @@ The Rust provider implements contiguous F32, FP16, and BF16 RMSNorm. The first
 vendor provider freezes one contiguous BF16 cuBLASLt GEMM algorithm during
 planning. Both use typed heterogeneous bindings and one completion event.
 
-Their declared H20 correctness gates pass. Fixed Rust-kernel argument packs,
-graph, sanitizer, and performance gates remain open.
+The current owned-binding revision passed its H20 correctness gates. The fixed
+RMSNorm-to-GEMM Graph also passed replay and Compute Sanitizer gates. Fixed
+Rust-kernel argument packs and performance gates remain open.

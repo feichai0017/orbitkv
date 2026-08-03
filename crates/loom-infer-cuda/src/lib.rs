@@ -5,6 +5,10 @@
 #[cfg(feature = "cuda")]
 pub mod command;
 #[cfg(feature = "cuda")]
+mod driver;
+#[cfg(feature = "cuda")]
 pub mod gemm;
+#[cfg(feature = "cuda")]
+pub mod graph;
 #[cfg(feature = "cuda")]
 pub mod rms_norm;
