@@ -7,6 +7,14 @@ pub enum ContractError {
     ZeroDimension,
     ElementCountOverflow,
     InvalidEpsilon(f32),
+    UnsupportedHeadDimension {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidHeadMapping {
+        query_heads: usize,
+        kv_heads: usize,
+    },
     UnsupportedDType(DType),
     LengthMismatch {
         buffer: &'static str,
@@ -26,6 +34,17 @@ impl fmt::Display for ContractError {
                     "RMSNorm epsilon must be finite and positive, got {value}"
                 )
             }
+            Self::UnsupportedHeadDimension { expected, actual } => write!(
+                formatter,
+                "unsupported attention head dimension: expected {expected}, got {actual}"
+            ),
+            Self::InvalidHeadMapping {
+                query_heads,
+                kv_heads,
+            } => write!(
+                formatter,
+                "query heads must be divisible by KV heads: query={query_heads}, KV={kv_heads}"
+            ),
             Self::UnsupportedDType(dtype) => write!(formatter, "unsupported dtype {dtype:?}"),
             Self::LengthMismatch {
                 buffer,

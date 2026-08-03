@@ -32,7 +32,8 @@ separate ownership or safety boundary.
 
 ## Operator lifecycle
 
-The current RMSNorm and BF16 GEMM slices implement this lifecycle:
+The current RMSNorm, BF16 GEMM, and single-decode attention slices implement
+this lifecycle:
 
 ```text
 validated specification
@@ -120,6 +121,12 @@ device access.
 The FP16 and BF16 RMSNorm plans select scalar access for odd widths. Even widths
 use two-element loads and stores after a four-byte alignment check. Both paths
 use F32 arithmetic and round the stored result to nearest-even.
+
+The first attention plan fixes BF16, NHD caches, head dimension 128, and one
+warp per query head. It computes scores and online softmax state in F32. The
+kernel writes BF16 output and F32 log2-LSE.
+
+This is a correctness baseline. Matched performance remains open.
 
 ## Vendor providers
 

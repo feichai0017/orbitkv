@@ -20,9 +20,30 @@ import { repositoryUrl } from "../data/site";
     <article class="prose">
       <h2>Current source projection</h2>
       <p>
-        The 2026-08-03 record qualifies the owned-binding and fixed-address
-        CUDA Graph source projection.
+        The latest 2026-08-03 record qualifies the BF16 single-decode
+        attention source projection.
       </p>
+      <div class="doc-note">
+        <strong>BF16 single decode passed its declared H20 correctness gate.</strong>
+        <p>
+          NHD D128 MHA, MQA, and GQA cases match the CPU reference within the
+          declared limits. Invalid spans and duplicate bindings fail before
+          submission. Four sanitizer tools report no errors. Performance is
+          not measured.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-single-decode-correctness-20260803.json`}>
+          Attention machine-readable result
+        </a>
+        <p>
+          The shared command regression reruns RMSNorm, BF16 GEMM, their
+          fixed-address Graph, and single decode on the same source projection.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-shared-command-regression-20260803.json`}>
+          Shared command regression
+        </a>
+      </div>
+
+      <h2>Earlier operator records</h2>
       <div class="doc-note">
         <strong>Owned bindings and fixed-address Graph replay passed on H20.</strong>
         <p>
@@ -32,11 +53,9 @@ import { repositoryUrl } from "../data/site";
           measured.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-owned-bindings-cuda-graph-correctness-20260803.json`}>
-          Current machine-readable result
+          Graph machine-readable result
         </a>
       </div>
-
-      <h2>Earlier operator records</h2>
       <div class="doc-note">
         <strong>F32 RMSNorm passed its recorded H20 correctness gate.</strong>
         <p>

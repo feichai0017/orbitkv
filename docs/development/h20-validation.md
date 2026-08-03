@@ -27,6 +27,7 @@ cd <loom-infer-checkout>/crates/loom-infer-cuda
 cargo oxide doctor
 cargo oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch sm_90
 cargo oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch sm_90
+cargo oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch sm_90
 cargo oxide test --arch sm_90 -- --workspace --features cuda --release
 ```
 
@@ -79,6 +80,29 @@ second command when queue capacity is one. It also chains BF16 RMSNorm
 Record the selected algorithm's actual workspace requirement. Test a short
 workspace only when that requirement is nonzero. The current H20 selection
 requires zero workspace, so that rejection case is not applicable.
+
+## BF16 single-decode correctness
+
+Validate the first fixed attention contract:
+
+```text
+Q, O: [query_heads, 128] BF16
+K, V: [kv_len, kv_heads, 128] BF16 NHD
+LSE:   [query_heads] F32 log2-domain
+scale: 1 / sqrt(128)
+```
+
+The gate covers MHA `(1,8,8)`, MQA `(33,8,1)`, GQA `(127,16,4)` and
+`(4096,32,4)`, plus one large-logit stability case. Tuples use
+`(kv_len, query_heads, kv_heads)`.
+
+Compare against the `loom-infer` CPU reference. BF16 output maximum absolute
+error must not exceed `0.015625`. Log2-LSE maximum absolute error must not
+exceed `0.01`. Initialize output buffers with NaN sentinels.
+
+Reject Q, K, V, O, or LSE that is one element short. Reject duplicate operand
+bindings before CUDA submission. Run memcheck, racecheck, synccheck, and
+initcheck over the complete runner.
 
 ## Fixed-address CUDA Graph
 
@@ -137,9 +161,10 @@ The correctness runner is not a benchmark. No GEMM performance gate has passed.
 
 ## Current device state
 
-The [2026-08-03 record](../results/h20-owned-bindings-cuda-graph-correctness-20260803.json)
-qualifies the current owned-binding and fixed-address Graph source projection.
-The maximum F32 RMSNorm absolute error is `4.768371582e-7`.
+The [shared-command regression](../results/h20-shared-command-regression-20260803.json)
+qualifies the current source projection. It reruns RMSNorm, BF16 GEMM, the
+fixed-address Graph, and BF16 single decode. The maximum F32 RMSNorm absolute
+error is `4.768371582e-7`.
 
 The F32 two-command chain reaches `7.152557373e-7` maximum absolute error. The
 FP16 chain reaches two ULPs, and the BF16 chain reaches one ULP. Generated PTX
@@ -148,7 +173,12 @@ uses scalar and packed instructions, targets `sm_90`, and assembles with CUDA
 fixtures. The fixed Graph replays twice and produces a bit-exact final output.
 
 Compute Sanitizer memcheck reports no errors or leaked device allocations for
-both runners. RMSNorm racecheck and synccheck report no errors. Graph-runner
-initcheck also reports no errors.
+the RMSNorm and Graph runners. RMSNorm racecheck and synccheck report no errors.
+Graph-runner initcheck also reports no errors.
+
+The [single-decode record](../results/h20-bf16-single-decode-correctness-20260803.json)
+qualifies the narrow attention slice. Its largest output absolute error is
+`7.629394531e-6`; its largest log2-LSE error is `1.907348633e-6`. All four
+Compute Sanitizer tools report zero errors.
 
 Fixed Rust-kernel argument packs and performance gates remain open.

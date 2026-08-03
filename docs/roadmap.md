@@ -67,8 +67,11 @@ reports no errors or device leaks on H20. See the
 
 ## 4. Attention core
 
-**State:** next.
+**State:** active. The first narrow single-decode contract passed its H20
+correctness and sanitizer gates.
 
+- retain the BF16 NHD D128 single-request MHA/MQA/GQA correctness baseline.
+- measure the baseline against the pinned FlashInfer contract.
 - implement ragged prefill and paged MQA/GQA decode.
 - add split-K execution and stable state merge.
 - support common causal and sliding-window contracts.
@@ -77,6 +80,10 @@ reports no errors or device leaks on H20. See the
 
 Exit: a real model invokes Loom attention without tensor copies and preserves
 tokens or declared numerical quality.
+
+The first slice also rejects five short buffers and duplicate bindings before
+CUDA submission. Performance, Graph replay, paged batching, split-K, and real
+model invocation remain open.
 
 ## 5. Decode and KV operations
 

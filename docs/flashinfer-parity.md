@@ -31,7 +31,7 @@ No complete domain-level parity is currently claimed.
 
 | Domain | Representative v0.6.16 surface | Loom state |
 | --- | --- | --- |
-| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/attention.rst) | `planned`; no attention provider |
+| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/attention.rst) | `partial device correct`; BF16 single-request NHD D128 MHA/MQA/GQA only |
 | Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/attention.rst) | `planned`; no attention provider |
 | Mixed-batch attention | [`BatchAttention`, attention-sink wrapper](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/attention.rst) | `unscoped` |
 | MLA attention | [`BatchMLAPagedAttentionWrapper`, XQA and TRT-LLM MLA decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/attention.rst) | `unscoped` |
@@ -69,8 +69,13 @@ No complete domain-level parity is currently claimed.
 
 The first admitted attention contract is a BF16 SM90 single-request decode
 slice: NHD layout, head dimension 128, MHA/GQA, full window, no positional
-encoding or soft cap, F32 score/softmax accumulation, BF16 output, and F32 LSE.
-It isolates head mapping, online softmax, numerical stability, and tail handling.
+encoding or soft cap, F32 score/softmax accumulation, BF16 output, and F32
+log2-LSE. It covers head mapping, online softmax, numerical stability, and
+non-power-of-two KV lengths.
+
+The
+[H20 result](results/h20-bf16-single-decode-correctness-20260803.json) is a
+Loom GPU versus CPU-oracle gate. It contains no matched FlashInfer run.
 
 The next contract adds BF16 paged batch decode with head dimension 128, page
 size 16, GQA, split-K state merge, and fixed-address CUDA Graph replay. Only

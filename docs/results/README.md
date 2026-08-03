@@ -5,8 +5,20 @@ providers.
 
 ## Results
 
-The 2026-08-03 record qualifies the current owned-binding and fixed-address
-Graph source projection. Earlier records remain immutable historical results.
+Two 2026-08-03 records qualify the current source projection. One records the
+new attention contract. The other reruns every provider affected by the shared
+command resolver change. Earlier records remain immutable historical results.
+
+- [Shared command-resolution H20 regression](h20-shared-command-regression-20260803.json):
+  RMSNorm, BF16 GEMM, the fixed-address Graph, and BF16 single decode pass on
+  one source projection. The declared Compute Sanitizer matrix reports no
+  errors or device leaks.
+
+- [BF16 single-decode attention H20 correctness](h20-bf16-single-decode-correctness-20260803.json):
+  BF16 NHD D128 MHA, MQA, and GQA cases pass against the CPU reference.
+  Exact-span and duplicate-binding checks reject invalid launches. Compute
+  Sanitizer reports no errors or device leaks. The record contains no
+  performance measurement.
 
 - [Owned bindings and CUDA Graph H20 result](h20-owned-bindings-cuda-graph-correctness-20260803.json):
   RMSNorm and BF16 GEMM correctness pass. The final output after two fixed-address

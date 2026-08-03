@@ -14,8 +14,8 @@ export const operatorFamilies = [
   },
   {
     name: "Attention",
-    boundary: "Ragged prefill, paged decode, split-K, and state merge.",
-    state: "Planned",
+    boundary: "Single decode baseline, then paged decode, split-K, and state merge.",
+    state: "Partial device correct",
   },
   {
     name: "Decode tail",
@@ -53,6 +53,6 @@ export const milestones = [
   {
     milestone: "03",
     name: "Attention core",
-    reason: "Implement ragged prefill and paged decode against matched providers.",
+    reason: "Single decode passes H20 correctness. Matched performance and paged decode remain open.",
   },
 ]
