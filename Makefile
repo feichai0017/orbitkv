@@ -18,7 +18,7 @@ NPM := $(RUN) npm --prefix website
 
 .PHONY: help check check-rust check-website install-website cuda-doctor \
 	cuda-check cuda-test h20-rms-norm h20-gemm h20-attention h20-paged-attention \
-	h20 bench-loom bench-split-k
+	h20 bench-loom bench-paged-loom bench-split-k
 
 help:
 	@printf '%s\n' \
@@ -29,6 +29,7 @@ help:
 		'make h20            Run all H20 correctness programs sequentially' \
 		'make h20-paged-attention  Run paged batch-decode H20 correctness' \
 		'make bench-loom     Run the Loom side of the matched H20 benchmark' \
+		'make bench-paged-loom  Run Loom matched paged-decode cases only' \
 		'make bench-split-k  Sweep Loom split-K choices on H20'
 
 check: check-rust check-website
@@ -74,6 +75,9 @@ h20: h20-rms-norm h20-gemm h20-attention h20-paged-attention
 
 bench-loom:
 	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+
+bench-paged-loom:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_BENCH_OPERATORS=paged_batch_decode LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
 bench-split-k:
 	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" LOOM_SOURCE_STATE=working_tree $(CARGO) +nightly-2026-04-03 oxide run split_k_sweep_h20 --bin split_k_sweep_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'

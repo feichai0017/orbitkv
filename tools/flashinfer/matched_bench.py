@@ -23,6 +23,7 @@ from flashinfer.utils import SINGLE_KERNEL_TMP_SIZE
 PROVIDER_COMMIT = "5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57"
 MEASUREMENT = "eager_stream_batch_cuda_event"
 FIXTURE_ID = "xorshift64_mod2001_bf16_v1"
+PAGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_page_table_v1"
 FNV_OFFSET_BASIS = 0xCBF29CE484222325
 FNV_PRIME = 0x00000100000001B3
 MASK64 = (1 << 64) - 1
@@ -81,6 +82,14 @@ def digest_bf16(values: torch.Tensor) -> str:
     return f"{digest:016x}"
 
 
+def digest_i32(values: torch.Tensor) -> str:
+    digest = FNV_OFFSET_BASIS
+    for value in values.contiguous().view(-1).tolist():
+        digest ^= value & 0xFFFFFFFF
+        digest = (digest * FNV_PRIME) & MASK64
+    return f"{digest:016x}"
+
+
 def write_record(
     operator: str,
     case: str,
@@ -90,6 +99,7 @@ def write_record(
     shape: dict[str, int],
     fixture_digests: dict[str, str],
     samples_us: list[float],
+    fixture_id: str = FIXTURE_ID,
 ) -> None:
     print(
         json.dumps(
@@ -107,7 +117,7 @@ def write_record(
                 "execution": execution,
                 "kernels_per_call": kernels_per_call,
                 "shape": shape,
-                "fixture_id": FIXTURE_ID,
+                "fixture_id": fixture_id,
                 "fixture_digests": fixture_digests,
                 "warmup_launches": WARMUP,
                 "launches_per_sample": LAUNCHES,
@@ -250,9 +260,131 @@ def benchmark_decode(
     )
 
 
+def benchmark_paged_decode(
+    case: str,
+    batch_size: int,
+    max_num_pages: int,
+    query_heads: int,
+    kv_heads: int,
+    page_indptr_values: tuple[int, ...],
+    page_indices_values: tuple[int, ...],
+    last_page_len_values: tuple[int, ...],
+    salt: int,
+) -> None:
+    head_dim = 128
+    page_size = 16
+    query_host = deterministic_bf16(
+        batch_size * query_heads * head_dim, salt
+    )
+    key_host = deterministic_bf16(
+        max_num_pages * page_size * kv_heads * head_dim,
+        salt ^ 0x4B455900,
+    )
+    value_host = deterministic_bf16(
+        max_num_pages * page_size * kv_heads * head_dim,
+        salt ^ 0x56414C554500,
+    )
+    page_indptr_host = torch.tensor(page_indptr_values, dtype=torch.int32)
+    page_indices_host = torch.tensor(page_indices_values, dtype=torch.int32)
+    last_page_len_host = torch.tensor(last_page_len_values, dtype=torch.int32)
+    query = query_host.reshape(batch_size, query_heads, head_dim).to("cuda")
+    key_pages = key_host.reshape(
+        max_num_pages, page_size, kv_heads, head_dim
+    ).to("cuda")
+    value_pages = value_host.reshape(
+        max_num_pages, page_size, kv_heads, head_dim
+    ).to("cuda")
+    page_indptr = page_indptr_host.to("cuda")
+    page_indices = page_indices_host.to("cuda")
+    last_page_len = last_page_len_host.to("cuda")
+    output = torch.empty_like(query)
+    lse = torch.empty(
+        (batch_size, query_heads), device="cuda", dtype=torch.float32
+    )
+    workspace = torch.zeros(
+        128 * 1024 * 1024, device="cuda", dtype=torch.uint8
+    )
+    wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
+        workspace,
+        "NHD",
+        use_cuda_graph=False,
+        use_tensor_cores=False,
+        backend="fa2",
+    )
+    wrapper.plan(
+        page_indptr,
+        page_indices,
+        last_page_len,
+        query_heads,
+        kv_heads,
+        head_dim,
+        page_size,
+        pos_encoding_mode="NONE",
+        window_left=-1,
+        q_data_type=torch.bfloat16,
+        kv_data_type=torch.bfloat16,
+        o_data_type=torch.bfloat16,
+        sm_scale=1.0 / math.sqrt(head_dim),
+        disable_split_kv=False,
+    )
+    torch.cuda.synchronize()
+
+    def run() -> None:
+        wrapper.run(
+            query,
+            (key_pages, value_pages),
+            out=output,
+            lse=lse,
+            return_lse=True,
+            enable_pdl=False,
+        )
+
+    samples_us = benchmark(run)
+    request_kv_lens = [
+        (page_indptr_values[index + 1] - page_indptr_values[index] - 1)
+        * page_size
+        + last_page_len_values[index]
+        for index in range(batch_size)
+    ]
+    write_record(
+        "paged_batch_decode",
+        case,
+        "NHD_D128_page16",
+        {
+            "algorithm": "flashinfer_batch_decode_wrapper",
+            "backend": "fa2",
+            "use_tensor_cores": False,
+            "disable_split_kv": False,
+            "page_table_location": "device",
+        },
+        1,
+        {
+            "batch_size": batch_size,
+            "max_num_pages": max_num_pages,
+            "referenced_pages": len(page_indices_values),
+            "request_kv_lens": request_kv_lens,
+            "query_heads": query_heads,
+            "kv_heads": kv_heads,
+            "head_dim": head_dim,
+            "page_size": page_size,
+        },
+        {
+            "query": digest_bf16(query_host),
+            "key_pages": digest_bf16(key_host),
+            "value_pages": digest_bf16(value_host),
+            "page_indptr": digest_i32(page_indptr_host),
+            "page_indices": digest_i32(page_indices_host),
+            "last_page_len": digest_i32(last_page_len_host),
+        },
+        samples_us,
+        PAGED_FIXTURE_ID,
+    )
+
+
 def main() -> None:
     requested = os.environ.get(
-        "LOOM_BENCH_OPERATORS", "rms_norm,gemm,single_decode"
+        "LOOM_BENCH_OPERATORS",
+        "rms_norm,gemm,single_decode,paged_batch_decode",
     ).split(",")
     if "rms_norm" in requested:
         for rows, hidden_size in ((1, 4096), (8, 4096), (64, 4096), (16, 8192)):
@@ -274,6 +406,43 @@ def main() -> None:
             ("bf16_gqa_l4096_qh32_kvh4_d128", 4096, 32, 4),
         ):
             benchmark_decode(*args)
+    if "paged_batch_decode" in requested:
+        for args in (
+            (
+                "bf16_paged_mha_b1_l1_qh8_kvh8_d128_p16",
+                1,
+                2,
+                8,
+                8,
+                (0, 1),
+                (1,),
+                (1,),
+                0x1001,
+            ),
+            (
+                "bf16_paged_mqa_b3_l16_23_48_qh8_kvh1_d128_p16",
+                3,
+                7,
+                8,
+                1,
+                (0, 1, 3, 6),
+                (4, 6, 1, 5, 0, 3),
+                (16, 7, 16),
+                0x2001,
+            ),
+            (
+                "bf16_paged_gqa4_b4_l3_32_17_41_qh16_kvh4_d128_p16",
+                4,
+                8,
+                16,
+                4,
+                (0, 1, 3, 5, 8),
+                (7, 2, 6, 5, 1, 7, 0, 4),
+                (3, 16, 1, 9),
+                0x4001,
+            ),
+        ):
+            benchmark_paged_decode(*args)
 
 
 if __name__ == "__main__":

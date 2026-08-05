@@ -1,10 +1,12 @@
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer, sys};
 use half::bf16;
 use loom_infer::{
-    Bf16GemmSpec, Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, DType, RmsNormSpec,
+    Bf16GemmSpec, Bf16PagedBatchDecodeSpec, Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec,
+    DType, RmsNormSpec,
 };
 use loom_infer_cuda::attention::{
-    AttentionProvider, Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,
+    AttentionProvider, Bf16PagedBatchDecodeArgs, Bf16SingleDecodeArgs, Bf16SingleDecodePlan,
+    Bf16SingleDecodeSplitKArgs,
 };
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
@@ -19,6 +21,9 @@ use std::sync::Arc;
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MEASUREMENT: &str = "eager_stream_batch_cuda_event";
 const FIXTURE_ID: &str = "xorshift64_mod2001_bf16_v1";
+const PAGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_page_table_v1";
+const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
+const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
 struct RunIdentity {
     provider_commit: String,
@@ -54,6 +59,19 @@ struct DecodeCase {
     query_heads: usize,
     kv_heads: usize,
     partitions: usize,
+}
+
+#[derive(Clone, Copy)]
+struct PagedDecodeCase {
+    name: &'static str,
+    batch_size: usize,
+    max_num_pages: usize,
+    query_heads: usize,
+    kv_heads: usize,
+    page_indptr: &'static [i32],
+    page_indices: &'static [i32],
+    last_page_len: &'static [i32],
+    salt: u64,
 }
 
 impl BenchConfig {
@@ -126,6 +144,12 @@ fn deterministic_bf16(len: usize, salt: u64) -> Vec<bf16> {
         values.push(bf16::from_f32(signed as f32 / 2048.0));
     }
     values
+}
+
+fn digest_i32(values: &[i32]) -> u64 {
+    values.iter().fold(FNV_OFFSET_BASIS, |digest, &value| {
+        (digest ^ u64::from(value as u32)).wrapping_mul(FNV_PRIME)
+    })
 }
 
 fn benchmark_rms_norm(
@@ -366,65 +390,229 @@ fn benchmark_decode_case(
     Ok(())
 }
 
+fn benchmark_paged_decode_case(
+    context: &Arc<CudaContext>,
+    stream: &Arc<CudaStream>,
+    provider: &AttentionProvider,
+    case: PagedDecodeCase,
+    config: BenchConfig,
+    identity: &RunIdentity,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16PagedBatchDecodeSpec::new(
+        case.batch_size,
+        case.max_num_pages,
+        case.query_heads,
+        case.kv_heads,
+        128,
+        16,
+    )?;
+    let table =
+        spec.validate_page_table(case.page_indptr, case.page_indices, case.last_page_len)?;
+    let plan = provider.plan_bf16_paged_batch(spec)?;
+    let query_host = deterministic_bf16(spec.query_numel(), case.salt);
+    let key_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x4b45_5900);
+    let value_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x5641_4c55_4500);
+    let query = Arc::new(DeviceBuffer::from_host(stream, &query_host)?);
+    let key_pages = Arc::new(DeviceBuffer::from_host(stream, &key_host)?);
+    let value_pages = Arc::new(DeviceBuffer::from_host(stream, &value_host)?);
+    let page_indptr = Arc::new(DeviceBuffer::from_host(stream, case.page_indptr)?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(stream, case.page_indices)?);
+    let last_page_len = Arc::new(DeviceBuffer::from_host(stream, case.last_page_len)?);
+    let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
+    let lse = DeviceBuffer::<f32>::zeroed(stream, spec.lse_numel())?;
+    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
+    let mut bindings = queue.bindings(8)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key_pages)?;
+    let value_handle = bindings.bind_read(value_pages)?;
+    let indptr_handle = bindings.bind_read(page_indptr)?;
+    let indices_handle = bindings.bind_read(page_indices)?;
+    let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+
+    let (_bindings, samples_us) =
+        benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
+            plan.enqueue_into(
+                scope,
+                Bf16PagedBatchDecodeArgs::new(
+                    query_handle,
+                    key_handle,
+                    value_handle,
+                    indptr_handle,
+                    indices_handle,
+                    last_page_len_handle,
+                    output_handle.write(),
+                    lse_handle.write(),
+                ),
+            )?;
+            Ok(())
+        })?;
+    let request_kv_lens = (0..spec.batch_size())
+        .map(|request| {
+            table
+                .request_kv_len(request)
+                .expect("validated request has a KV length")
+        })
+        .collect::<Vec<_>>();
+
+    BenchmarkRecord {
+        schema_version: 1,
+        provider: "loom-infer",
+        provider_version: PROVIDER_VERSION,
+        provider_commit: &identity.provider_commit,
+        run_label: &identity.run_label,
+        measurement: MEASUREMENT,
+        operator: "paged_batch_decode",
+        case: case.name,
+        dtype: "bf16",
+        layout: "NHD_D128_page16",
+        execution: json!({
+            "algorithm": "direct_one_warp_per_request_head",
+            "page_table_location": "device"
+        }),
+        kernels_per_call: 1,
+        shape: json!({
+            "batch_size": spec.batch_size(),
+            "max_num_pages": spec.max_num_pages(),
+            "referenced_pages": case.page_indices.len(),
+            "request_kv_lens": request_kv_lens,
+            "query_heads": spec.num_query_heads(),
+            "kv_heads": spec.num_kv_heads(),
+            "head_dim": spec.head_dim(),
+            "page_size": spec.page_size()
+        }),
+        fixture_id: PAGED_FIXTURE_ID,
+        fixture_digests: json!({
+            "query": format!("{:016x}", digest_bf16(&query_host)),
+            "key_pages": format!("{:016x}", digest_bf16(&key_host)),
+            "value_pages": format!("{:016x}", digest_bf16(&value_host)),
+            "page_indptr": format!("{:016x}", digest_i32(case.page_indptr)),
+            "page_indices": format!("{:016x}", digest_i32(case.page_indices)),
+            "last_page_len": format!("{:016x}", digest_i32(case.last_page_len))
+        }),
+        warmup_launches: config.warmup_launches,
+        launches_per_sample: config.launches_per_sample,
+        samples_us,
+    }
+    .write_json_line()?;
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let config = BenchConfig::from_env()?;
     let identity = RunIdentity::from_env()?;
+    let requested = env::var("LOOM_BENCH_OPERATORS")
+        .unwrap_or_else(|_| "rms_norm,gemm,single_decode,paged_batch_decode".to_string());
+    let requested = requested.split(',').collect::<Vec<_>>();
     let context = CudaContext::new(0)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
     let rms_provider = RmsNormProvider::load(&context)?;
     let gemm_provider = CublasLtProvider::load(&context)?;
     let attention_provider = AttentionProvider::load(&context)?;
 
-    for (rows, hidden_size) in [(1, 4096), (8, 4096), (64, 4096), (16, 8192)] {
-        benchmark_rms_norm(
-            &context,
-            &stream,
-            &rms_provider,
-            rows,
-            hidden_size,
-            config,
-            &identity,
-        )?;
+    if requested.contains(&"rms_norm") {
+        for (rows, hidden_size) in [(1, 4096), (8, 4096), (64, 4096), (16, 8192)] {
+            benchmark_rms_norm(
+                &context,
+                &stream,
+                &rms_provider,
+                rows,
+                hidden_size,
+                config,
+                &identity,
+            )?;
+        }
     }
-    benchmark_gemm(&context, &stream, &gemm_provider, config, &identity)?;
-    for case in [
-        DecodeCase {
-            name: "bf16_mha_l1_qh8_kvh8_d128",
-            kv_len: 1,
-            query_heads: 8,
-            kv_heads: 8,
-            partitions: 1,
-        },
-        DecodeCase {
-            name: "bf16_mqa_l33_qh8_kvh1_d128",
-            kv_len: 33,
-            query_heads: 8,
-            kv_heads: 1,
-            partitions: 12,
-        },
-        DecodeCase {
-            name: "bf16_gqa_l127_qh16_kvh4_d128",
-            kv_len: 127,
-            query_heads: 16,
-            kv_heads: 4,
-            partitions: 16,
-        },
-        DecodeCase {
-            name: "bf16_gqa_l4096_qh32_kvh4_d128",
-            kv_len: 4096,
-            query_heads: 32,
-            kv_heads: 4,
-            partitions: 64,
-        },
-    ] {
-        benchmark_decode_case(
-            &context,
-            &stream,
-            &attention_provider,
-            case,
-            config,
-            &identity,
-        )?;
+    if requested.contains(&"gemm") {
+        benchmark_gemm(&context, &stream, &gemm_provider, config, &identity)?;
+    }
+    if requested.contains(&"single_decode") {
+        for case in [
+            DecodeCase {
+                name: "bf16_mha_l1_qh8_kvh8_d128",
+                kv_len: 1,
+                query_heads: 8,
+                kv_heads: 8,
+                partitions: 1,
+            },
+            DecodeCase {
+                name: "bf16_mqa_l33_qh8_kvh1_d128",
+                kv_len: 33,
+                query_heads: 8,
+                kv_heads: 1,
+                partitions: 12,
+            },
+            DecodeCase {
+                name: "bf16_gqa_l127_qh16_kvh4_d128",
+                kv_len: 127,
+                query_heads: 16,
+                kv_heads: 4,
+                partitions: 16,
+            },
+            DecodeCase {
+                name: "bf16_gqa_l4096_qh32_kvh4_d128",
+                kv_len: 4096,
+                query_heads: 32,
+                kv_heads: 4,
+                partitions: 64,
+            },
+        ] {
+            benchmark_decode_case(
+                &context,
+                &stream,
+                &attention_provider,
+                case,
+                config,
+                &identity,
+            )?;
+        }
+    }
+    if requested.contains(&"paged_batch_decode") {
+        for case in [
+            PagedDecodeCase {
+                name: "bf16_paged_mha_b1_l1_qh8_kvh8_d128_p16",
+                batch_size: 1,
+                max_num_pages: 2,
+                query_heads: 8,
+                kv_heads: 8,
+                page_indptr: &[0, 1],
+                page_indices: &[1],
+                last_page_len: &[1],
+                salt: 0x1001,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_mqa_b3_l16_23_48_qh8_kvh1_d128_p16",
+                batch_size: 3,
+                max_num_pages: 7,
+                query_heads: 8,
+                kv_heads: 1,
+                page_indptr: &[0, 1, 3, 6],
+                page_indices: &[4, 6, 1, 5, 0, 3],
+                last_page_len: &[16, 7, 16],
+                salt: 0x2001,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_gqa4_b4_l3_32_17_41_qh16_kvh4_d128_p16",
+                batch_size: 4,
+                max_num_pages: 8,
+                query_heads: 16,
+                kv_heads: 4,
+                page_indptr: &[0, 1, 3, 5, 8],
+                page_indices: &[7, 2, 6, 5, 1, 7, 0, 4],
+                last_page_len: &[3, 16, 1, 9],
+                salt: 0x4001,
+            },
+        ] {
+            benchmark_paged_decode_case(
+                &context,
+                &stream,
+                &attention_provider,
+                case,
+                config,
+                &identity,
+            )?;
+        }
     }
     Ok(())
 }

@@ -12,9 +12,11 @@ commit:     5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57
 ```
 
 The harness measures the admitted BF16 contracts with preallocated tensors and
-CUDA events. Decode calls the precompiled low-level module directly so temporary
-and output allocation stay outside the timed region. GEMM fixes the cuBLASLt
-backend and tactic zero after preparation.
+CUDA events. Single decode calls the precompiled low-level module directly so
+temporary and output allocation stay outside the timed region. Paged decode
+plans one `BatchDecodeWithPagedKVCacheWrapper` before measurement, fixes the FA2
+CUDA-core backend, and passes caller-owned output and LSE tensors on every run.
+GEMM fixes the cuBLASLt backend and tactic zero after preparation.
 
 ## Environment
 
