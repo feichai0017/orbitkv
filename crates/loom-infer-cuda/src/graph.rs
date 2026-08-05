@@ -268,11 +268,12 @@ impl GraphExec {
         self.in_flight = true;
         self.record_error = None;
         self.poll_error = None;
-        // SAFETY: `exec` is live, belongs to the stream context, and fixed
-        // bindings plus retained resources remain owned by `self`.
-        if let Err(error) =
-            unsafe { sys::cuGraphLaunch(exec.handle, self.stream.cu_stream()).result() }
-        {
+        let launch_result = unsafe {
+            // SAFETY: `exec` is live, belongs to the stream context, and fixed
+            // bindings plus retained resources remain owned by `self`.
+            sys::cuGraphLaunch(exec.handle, self.stream.cu_stream()).result()
+        };
+        if let Err(error) = launch_result {
             let failure = GraphSettlementFailure {
                 reported: error,
                 synchronize_error: synchronize_stream_or_abort(&self.stream),

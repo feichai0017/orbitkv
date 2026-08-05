@@ -36,3 +36,6 @@ required-features = ["cuda"]
 name = "single_decode_h20"
 path = "src/bin/single_decode_h20.rs"
 required-features = ["cuda"]
+
+[lints]
+workspace = true

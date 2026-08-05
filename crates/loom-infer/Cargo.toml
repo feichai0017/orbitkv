@@ -13,3 +13,6 @@ categories = ["science"]
 
 [dependencies]
 half.workspace = true
+
+[lints]
+workspace = true

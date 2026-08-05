@@ -3,6 +3,17 @@
 Loom Infer provides Rust-native GPU operators for LLM inference. Model engines
 keep model graphs, request scheduling, KV-cache policy, and serving APIs.
 
+## Parity target
+
+FlashInfer defines the pinned functional comparison surface. Loom implements
+matching operator contracts where they fit the project boundary, but it does
+not copy FlashInfer's Python API, source tree, or implementation language.
+
+Parity is evaluated contract by contract. A matching contract includes tensor
+shapes, dtypes, layouts, numerical behavior, aliasing, streams, workspaces, and
+CUDA Graph semantics. A domain is not complete while Loom supports only a
+narrower contract or has not passed its declared evidence gates.
+
 ## Source boundary
 
 Loom-owned product code is Rust. Custom GPU kernels compile with
@@ -16,16 +27,20 @@ silent fallback path.
 
 ```text
 consumer engine
-  -> loom-infer
   -> loom-infer-cuda
-  -> Rust device kernel | explicit vendor provider
-  -> caller-owned CUDA stream
+       -> loom-infer
+       -> Rust device kernel | explicit vendor provider
+       -> caller-owned CUDA stream
 ```
 
 | Crate | Responsibility |
 | --- | --- |
 | `loom-infer` | Public specifications, errors, capabilities, and CPU references |
 | `loom-infer-cuda` | Plans, CUDA execution, Rust device kernels, and explicit vendor calls |
+
+Consumers may use `loom-infer` alone for contracts and references.
+`loom-infer-cuda` depends on those contracts and exposes the CUDA execution
+path. The contract crate never depends on a device backend.
 
 The workspace adds another crate only when a working vertical slice needs a
 separate ownership or safety boundary.

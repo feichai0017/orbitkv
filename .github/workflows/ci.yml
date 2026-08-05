@@ -18,6 +18,7 @@ jobs:
       - name: Install Rust
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.97.1
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@v2
@@ -51,24 +52,14 @@ jobs:
             exit 1
           fi
 
-      - name: Format
-        run: cargo fmt --all -- --check
-
-      - name: Clippy
-        run: cargo clippy --workspace --all-targets -- -D warnings
-
-      - name: Test
-        run: cargo test --workspace --all-targets
-
-      - name: Release check
-        run: cargo check --workspace --release
-
-      - name: Package contracts crate
-        run: cargo package -p loom-infer
+      - name: Check
+        run: make check-rust PACKAGE_FLAGS=
 
   website:
     name: website
     runs-on: ubuntu-latest
+    env:
+      NODE_ENV: development
     defaults:
       run:
         working-directory: website
@@ -77,12 +68,18 @@ jobs:
 
       - uses: actions/setup-node@v7
         with:
-          node-version: 24
+          node-version: 24.19.0
           cache: npm
           cache-dependency-path: website/package-lock.json
 
       - name: Install dependencies
-        run: npm ci
+        run: npm ci --include=dev
+
+      - name: Check
+        run: npm run check
 
       - name: Build
         run: npm run build
+
+      - name: Audit
+        run: npm audit

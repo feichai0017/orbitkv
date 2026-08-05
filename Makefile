@@ -1,0 +1,64 @@
+SHELL := /bin/bash
+.DEFAULT_GOAL := help
+
+CUDA_CRATE := crates/loom-infer-cuda
+CUDA_ARCH ?= sm_90
+PACKAGE_FLAGS ?= --allow-dirty
+MISE := $(shell command -v mise 2>/dev/null)
+ifneq ($(MISE),)
+RUN := $(MISE) exec --
+endif
+ifneq ($(LOOM_CARGO_HOME),)
+CARGO_ENV := CARGO_HOME=$(LOOM_CARGO_HOME)
+endif
+CARGO := $(CARGO_ENV) $(RUN) cargo
+NPM := $(RUN) npm --prefix website
+
+.PHONY: help check check-rust check-website install-website cuda-doctor \
+	cuda-check cuda-test h20-rms-norm h20-gemm h20-attention h20
+
+help:
+	@printf '%s\n' \
+		'make check          Run CPU-only Rust and website gates' \
+		'make cuda-doctor    Check the pinned cuda-oxide environment' \
+		'make cuda-check     Run CUDA-feature Clippy' \
+		'make cuda-test      Run release tests through cuda-oxide' \
+		'make h20            Run all H20 correctness programs sequentially'
+
+check: check-rust check-website
+
+check-rust:
+	$(CARGO) fmt --all -- --check
+	$(CARGO) clippy --workspace --all-targets -- -D warnings
+	$(CARGO) test --workspace --all-targets
+	$(CARGO) check --workspace --release
+	$(CARGO) package -p loom-infer $(PACKAGE_FLAGS)
+
+install-website:
+	NODE_ENV=development $(NPM) ci --include=dev
+
+check-website:
+	@test -d website/node_modules || { echo 'website dependencies missing; run make install-website'; exit 1; }
+	NODE_ENV=development $(NPM) run check
+	NODE_ENV=development $(NPM) run build
+	NODE_ENV=development $(NPM) audit
+
+cuda-doctor:
+	cd $(CUDA_CRATE) && $(CARGO) +nightly-2026-04-03 oxide doctor
+
+cuda-check:
+	$(CARGO) +nightly-2026-04-03 clippy --workspace --all-targets --features cuda -- -D warnings
+
+cuda-test:
+	cd $(CUDA_CRATE) && $(CARGO) +nightly-2026-04-03 oxide test --arch $(CUDA_ARCH) -- --workspace --features cuda --release
+
+h20-rms-norm:
+	cd $(CUDA_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch $(CUDA_ARCH)
+
+h20-gemm:
+	cd $(CUDA_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch $(CUDA_ARCH)
+
+h20-attention:
+	cd $(CUDA_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch $(CUDA_ARCH)
+
+h20: h20-rms-norm h20-gemm h20-attention

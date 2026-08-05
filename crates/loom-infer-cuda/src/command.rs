@@ -684,21 +684,7 @@ impl<'queue> CommandScope<'queue> {
             .bindings
             .as_ref()
             .expect("live command scope has bindings");
-        if set_ids.iter().any(|&set_id| set_id != bindings.set_id) {
-            return Err(CommandError::BindingSetMismatch);
-        }
-        for (index, &slot) in slots.iter().enumerate() {
-            if slots[..index].contains(&slot) {
-                return Err(CommandError::DuplicateBindingSlot);
-            }
-            if slot >= bindings.leases.len() {
-                return Err(CommandError::BindingSlotOutOfRange {
-                    slot,
-                    bindings: bindings.leases.len(),
-                });
-            }
-        }
-        Ok(())
+        validate_binding_request(bindings.set_id, bindings.leases.len(), set_ids, slots)
     }
 
     pub(crate) fn record_cuda_submission(&mut self, permit: CommandPermit, function: CudaFunction) {
@@ -783,6 +769,29 @@ impl<'queue> CommandScope<'queue> {
         queue.retained_resources.push(resource);
         self.submitted += 1;
     }
+}
+
+fn validate_binding_request(
+    expected_set_id: u64,
+    binding_count: usize,
+    set_ids: &[u64],
+    slots: &[usize],
+) -> Result<(), CommandError> {
+    if set_ids.iter().any(|&set_id| set_id != expected_set_id) {
+        return Err(CommandError::BindingSetMismatch);
+    }
+    for (index, &slot) in slots.iter().enumerate() {
+        if slots[..index].contains(&slot) {
+            return Err(CommandError::DuplicateBindingSlot);
+        }
+        if slot >= binding_count {
+            return Err(CommandError::BindingSlotOutOfRange {
+                slot,
+                bindings: binding_count,
+            });
+        }
+    }
+    Ok(())
 }
 
 /// A single-use proof that one command fits in the preallocated queue.
@@ -1149,4 +1158,41 @@ pub enum CommandError {
     External(#[from] ExternalCommandError),
     #[error(transparent)]
     Driver(#[from] DriverError),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn binding_request_accepts_matching_distinct_slots() {
+        assert!(validate_binding_request(7, 3, &[7, 7, 7], &[0, 1, 2]).is_ok());
+    }
+
+    #[test]
+    fn binding_request_rejects_a_handle_from_another_set() {
+        assert!(matches!(
+            validate_binding_request(7, 3, &[7, 8, 7], &[0, 1, 2]),
+            Err(CommandError::BindingSetMismatch)
+        ));
+    }
+
+    #[test]
+    fn binding_request_rejects_duplicate_slots_before_resolution() {
+        assert!(matches!(
+            validate_binding_request(7, 3, &[7, 7, 7], &[0, 1, 1]),
+            Err(CommandError::DuplicateBindingSlot)
+        ));
+    }
+
+    #[test]
+    fn binding_request_reports_the_first_out_of_range_slot() {
+        assert!(matches!(
+            validate_binding_request(7, 3, &[7, 7], &[0, 3]),
+            Err(CommandError::BindingSlotOutOfRange {
+                slot: 3,
+                bindings: 3,
+            })
+        ));
+    }
 }

@@ -2,6 +2,8 @@ target/
 **/*.rs.bk
 *.pdb
 loom_infer_cuda.ptx
+loom_infer_cuda.ll
+loom_infer_cuda.opt.ll
 *.cubin
 *.fatbin
 *.nsys-rep

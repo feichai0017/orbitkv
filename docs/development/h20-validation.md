@@ -23,13 +23,16 @@ Run the permanent crate from the H20 validation checkout:
 
 ```bash
 ssh <h20-validation-host>
-cd <loom-infer-checkout>/crates/loom-infer-cuda
-cargo oxide doctor
-cargo oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch sm_90
-cargo oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch sm_90
-cargo oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch sm_90
-cargo oxide test --arch sm_90 -- --workspace --features cuda --release
+cd <loom-infer-checkout>
+make cuda-doctor
+make cuda-check
+make cuda-test
+make h20
 ```
+
+The Make targets are the canonical local entry points. Evidence records still
+list the expanded commands so each compiler and runner invocation remains
+auditable.
 
 The run writes `loom_infer_cuda.ptx` at the workspace root with the pinned
 cargo-oxide revision. The PTX must target `sm_90`. Assemble it with the recorded

@@ -19,3 +19,12 @@ homepage = "https://feichai0017.github.io/loom-infer/"
 [workspace.dependencies]
 half = "2.7"
 thiserror = "2.0"
+
+[workspace.lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
+unused_must_use = "deny"
+
+[workspace.lints.clippy]
+dbg_macro = "deny"
+todo = "deny"
+undocumented_unsafe_blocks = "deny"

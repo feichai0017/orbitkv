@@ -18,6 +18,26 @@ The project is not a model server. An inference engine owns requests, models,
 scheduling, and distributed execution. Loom Infer owns operator contracts,
 launch planning, GPU execution, and reproducible evidence.
 
+## Project direction
+
+Loom Infer targets functional parity with the operator contracts required from
+FlashInfer while keeping Loom-owned product code in Rust. Parity is measured by
+behavior, not by copying FlashInfer's Python API, source layout, or
+implementation choices.
+
+- FlashInfer defines the pinned comparison surface for operator functionality.
+- Each admitted contract fixes shapes, dtypes, layouts, numerical behavior,
+  stream semantics, workspace policy, and CUDA Graph behavior.
+- Loom-owned custom GPU kernels are Rust compiled with cuda-oxide.
+- Qualified vendor libraries remain explicit providers for operations such as
+  GEMM and collectives where a custom kernel has no measured advantage.
+- Correctness, performance, Graph, engine, and serving claims pass independent
+  evidence gates.
+
+The current implementation is a partial foundation toward that target, not a
+claim of complete FlashInfer parity. See the
+[parity matrix](docs/flashinfer-parity.md) for the exact admitted surface.
+
 ## Current scope
 
 The repository contains two crates:
@@ -83,25 +103,23 @@ allocates its argument vector during Rust-kernel enqueue.
 
 ## Local checks
 
-The default workspace build does not require CUDA:
+Install the pinned toolchains described in the
+[development environment](docs/development/environment.md). The common
+CPU-only and website gate does not require CUDA:
 
 ```bash
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets
-cargo check --workspace --release
-cargo package -p loom-infer
+make install-website
+make check
 ```
 
-H20 device validation uses the pinned nightly and cuda-oxide revision:
+CUDA host compilation and release tests use the pinned nightly and cuda-oxide
+revision:
 
 ```bash
-cd crates/loom-infer-cuda
-cargo oxide doctor
-cargo oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch sm_90
-cargo oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch sm_90
-cargo oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch sm_90
-cargo oxide test --arch sm_90 -- --workspace --features cuda --release
+make cuda-doctor
+make cuda-check
+make cuda-test
+make h20
 ```
 
 See the [H20 validation contract](docs/development/h20-validation.md) before
@@ -118,6 +136,7 @@ Graph replay, and Compute Sanitizer results. They make no performance, engine,
 or serving claim.
 
 See the [architecture](docs/design/loom-infer-architecture.md),
+[repository layout](docs/design/repository-layout.md),
 [operator catalog](docs/operator-catalog.md), [roadmap](docs/roadmap.md), and
 [evidence index](docs/results/README.md).
 

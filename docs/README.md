@@ -4,10 +4,14 @@ Loom Infer is a Rust-native GPU operator library for LLM inference.
 
 - [Architecture](design/loom-infer-architecture.md) defines ownership and the
   operator lifecycle.
+- [Repository layout](design/repository-layout.md) maps source directories to
+  architectural responsibilities and defines when they should split.
 - [Operator catalog](operator-catalog.md) lists current and planned work.
 - [FlashInfer parity](flashinfer-parity.md) pins the comparison surface and
   records every upstream operator domain.
 - [Roadmap](roadmap.md) gives the implementation order and exit gates.
+- [Development environment](development/environment.md) pins host, website,
+  and CUDA toolchains and defines the common validation commands.
 - [H20 validation](development/h20-validation.md) defines the device test
   process.
 - [Evidence](results/README.md) indexes results from permanent providers.

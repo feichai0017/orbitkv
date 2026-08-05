@@ -26,10 +26,12 @@ jobs:
 
       - name: Build and upload Astro site
         uses: withastro/action@v6
+        env:
+          NODE_ENV: development
         with:
           path: website
-          node-version: 24
-          package-manager: npm@latest
+          node-version: 24.19.0
+          package-manager: npm@11.17.0
 
   deploy:
     environment:

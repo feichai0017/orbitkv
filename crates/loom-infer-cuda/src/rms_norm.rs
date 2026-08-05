@@ -45,8 +45,8 @@ mod kernels {
         thread::sync_threads();
 
         if warp_id == 0 {
-            // SAFETY: the first barrier initialized all eight shared slots.
             let partial = if thread_id < WARP_COUNT {
+                // SAFETY: the first barrier initialized all eight shared slots.
                 unsafe { warp_sums.add(thread_id).read() }
             } else {
                 0.0
@@ -97,6 +97,8 @@ mod kernels {
 
         let thread_id = thread::threadIdx_x() as usize;
         let row_offset = row * hidden_size;
+        // SAFETY: each CUDA block owns this static shared allocation. The
+        // reduction partitions writes by warp and synchronizes every reuse.
         let warp_sums = unsafe { SharedArray::as_raw_mut_ptr(&raw mut WARP_SUMS) };
 
         let mut square_sum = 0.0_f32;
@@ -151,6 +153,8 @@ mod kernels {
 
         let thread_id = thread::threadIdx_x() as usize;
         let row_offset = row * hidden_size;
+        // SAFETY: each CUDA block owns this static shared allocation. The
+        // reduction partitions writes by warp and synchronizes every reuse.
         let warp_sums = unsafe { SharedArray::as_raw_mut_ptr(&raw mut WARP_SUMS) };
         let input_bits = input.as_ptr().cast::<u16>();
         let weight_bits = weight.as_ptr().cast::<u16>();
@@ -217,6 +221,8 @@ mod kernels {
         let thread_id = thread::threadIdx_x() as usize;
         let pairs_per_row = hidden_size / 2;
         let row_pair_offset = row * pairs_per_row;
+        // SAFETY: each CUDA block owns this static shared allocation. The
+        // reduction partitions writes by warp and synchronizes every reuse.
         let warp_sums = unsafe { SharedArray::as_raw_mut_ptr(&raw mut WARP_SUMS) };
         let input_pairs = input.as_ptr().cast::<u32>();
         let weight_pairs = weight.as_ptr().cast::<u32>();
@@ -287,6 +293,8 @@ mod kernels {
 
         let thread_id = thread::threadIdx_x() as usize;
         let row_offset = row * hidden_size;
+        // SAFETY: each CUDA block owns this static shared allocation. The
+        // reduction partitions writes by warp and synchronizes every reuse.
         let warp_sums = unsafe { SharedArray::as_raw_mut_ptr(&raw mut WARP_SUMS) };
         let input_bits = input.as_ptr().cast::<u16>();
         let weight_bits = weight.as_ptr().cast::<u16>();
@@ -353,6 +361,8 @@ mod kernels {
         let thread_id = thread::threadIdx_x() as usize;
         let pairs_per_row = hidden_size / 2;
         let row_pair_offset = row * pairs_per_row;
+        // SAFETY: each CUDA block owns this static shared allocation. The
+        // reduction partitions writes by warp and synchronizes every reuse.
         let warp_sums = unsafe { SharedArray::as_raw_mut_ptr(&raw mut WARP_SUMS) };
         let input_pairs = input.as_ptr().cast::<u32>();
         let weight_pairs = weight.as_ptr().cast::<u32>();
