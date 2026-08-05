@@ -40,12 +40,13 @@ claim of complete FlashInfer parity. See the
 
 ## Current scope
 
-The repository contains two crates:
+The repository contains three crates:
 
 | Crate | Responsibility |
 | --- | --- |
 | `loom-infer` | Safe operator contracts and CPU reference implementations |
 | `loom-infer-cuda` | Rust host code and Rust CUDA kernels built with cuda-oxide |
+| `loom-infer-validation` | Non-published H20 runners and shared validation support |
 
 The current device paths are:
 

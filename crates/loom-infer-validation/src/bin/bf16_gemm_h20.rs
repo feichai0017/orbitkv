@@ -5,49 +5,14 @@ use loom_infer_cuda::command::{CommandError, CommandQueue};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmEnqueueError, Bf16GemmPlan, CublasLtProvider};
 use loom_infer_cuda::graph::GraphQueue;
 use loom_infer_cuda::rms_norm::{RmsNormArgs, RmsNormProvider};
+use loom_infer_validation::comparison::{Comparison, compare_bf16};
+use loom_infer_validation::reporting::GateCase;
 use std::error::Error;
 use std::sync::Arc;
 
 const LARGE_M: usize = 1;
 const LARGE_N: usize = 4096;
 const LARGE_K: usize = 4096;
-
-#[derive(Clone, Copy, Debug)]
-struct Comparison {
-    max_abs: f32,
-    bit_mismatches: usize,
-    digest: u64,
-}
-
-fn compare(actual: &[bf16], expected: &[bf16]) -> Result<Comparison, Box<dyn Error>> {
-    if actual.len() != expected.len() {
-        return Err(format!(
-            "comparison length mismatch: actual={}, expected={}",
-            actual.len(),
-            expected.len()
-        )
-        .into());
-    }
-
-    let mut max_abs = 0.0_f32;
-    let mut bit_mismatches = 0_usize;
-    let mut digest = 0xcbf2_9ce4_8422_2325_u64;
-    for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
-        if !actual.to_f32().is_finite() {
-            return Err(format!("non-finite output at index {index}").into());
-        }
-        max_abs = max_abs.max((actual.to_f32() - expected.to_f32()).abs());
-        bit_mismatches += usize::from(actual.to_bits() != expected.to_bits());
-        digest ^= u64::from(actual.to_bits());
-        digest = digest.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-
-    Ok(Comparison {
-        max_abs,
-        bit_mismatches,
-        digest,
-    })
-}
 
 fn require_bit_exact(case: &str, comparison: Comparison) -> Result<(), Box<dyn Error>> {
     if comparison.bit_mismatches == 0 {
@@ -125,15 +90,16 @@ fn check_standalone(queue: &mut CommandQueue, plan: &Bf16GemmPlan) -> Result<(),
 
     let first_actual = first_output.to_host_vec(&stream)?;
     let second_actual = second_output.to_host_vec(&stream)?;
-    let first_comparison = compare(&first_actual, &expected)?;
-    let second_comparison = compare(&second_actual, &expected)?;
+    let first_comparison = compare_bf16(&first_actual, &expected, "BF16")?;
+    let second_comparison = compare_bf16(&second_actual, &expected, "BF16")?;
     require_bit_exact("first standalone GEMM scope", first_comparison)?;
     require_bit_exact("second standalone GEMM scope", second_comparison)?;
     println!(
-        "gate=bf16_gemm_h20 case=standalone status=pass m={} n={} k={} scopes=2 \
+        "{} m={} n={} k={} scopes=2 \
          commands_per_scope=1 queue_reused=true bindings_reused=true plan_reused=true \
          first_bit_mismatches={} second_bit_mismatches={} max_abs={:.9e} \
          first_digest={:016x} second_digest={:016x}",
+        GateCase::new("bf16_gemm_h20", "standalone"),
         spec.m(),
         spec.n(),
         spec.k(),
@@ -207,11 +173,12 @@ fn check_row_major_transpose(
     drop(bindings);
 
     let actual = output.to_host_vec(&stream)?;
-    let comparison = compare(&actual, &expected)?;
+    let comparison = compare_bf16(&actual, &expected, "BF16")?;
     require_bit_exact("transpose-sensitive GEMM", comparison)?;
     println!(
-        "gate=bf16_gemm_h20 case=row_major_transpose status=pass m={} n={} k={} \
+        "{} m={} n={} k={} \
          bit_mismatches={} max_abs={:.9e} digest={:016x}",
+        GateCase::new("bf16_gemm_h20", "row_major_transpose"),
         spec.m(),
         spec.n(),
         spec.k(),
@@ -330,9 +297,11 @@ fn check_short_buffers(
     };
 
     println!(
-        "gate=bf16_gemm_h20 case=short_buffers status=pass a=rejected w=rejected d=rejected \
+        "{} a=rejected w=rejected d=rejected \
          workspace={} workspace_required={}",
-        workspace_gate, workspace_required,
+        GateCase::new("bf16_gemm_h20", "short_buffers"),
+        workspace_gate,
+        workspace_required,
     );
     Ok(())
 }
@@ -373,8 +342,8 @@ fn check_command_capacity(
     drop(completion.wait()?);
 
     println!(
-        "gate=bf16_gemm_h20 case=command_capacity status=pass capacity=1 \
-         first_submitted=true second_rejected_before_ffi=true submitted=1"
+        "{} capacity=1 first_submitted=true second_rejected_before_ffi=true submitted=1",
+        GateCase::new("bf16_gemm_h20", "command_capacity"),
     );
     Ok(())
 }
@@ -446,12 +415,13 @@ fn check_rms_norm_gemm_chain(
     drop(bindings);
 
     let actual = output.to_host_vec(&stream)?;
-    let comparison = compare(&actual, &expected)?;
+    let comparison = compare_bf16(&actual, &expected, "BF16")?;
     require_bit_exact("RMSNorm to GEMM chain", comparison)?;
     println!(
-        "gate=bf16_gemm_h20 case=rms_norm_gemm_chain status=pass rows=1 hidden=4096 \
+        "{} rows=1 hidden=4096 \
          m={} n={} k={} commands=2 completion_records=1 intermediate_waits=0 \
          gemm_plan_reused=true bit_mismatches={} max_abs={:.9e} digest={:016x}",
+        GateCase::new("bf16_gemm_h20", "rms_norm_gemm_chain"),
         gemm_spec.m(),
         gemm_spec.n(),
         gemm_spec.k(),
@@ -555,15 +525,16 @@ fn check_rms_norm_gemm_graph(
     drop(bindings);
 
     let actual = output.to_host_vec(&stream)?;
-    let comparison = compare(&actual, &expected)?;
+    let comparison = compare_bf16(&actual, &expected, "BF16")?;
     require_bit_exact("RMSNorm to GEMM graph", comparison)?;
     println!(
-        "gate=bf16_gemm_h20 case=rms_norm_gemm_graph status=pass rows=1 hidden=4096 \
+        "{} rows=1 hidden=4096 \
          m={} n={} k={} commands=2 replays=2 fixed_bindings=true cross_stream=false \
          external_owners_dropped_before_replay=true \
          completion_queries=2 completion_waits=1 completion_drops=1 \
          intra_graph_host_waits=0 inter_replay_host_waits=1 \
          bit_mismatches={} max_abs={:.9e} digest={:016x}",
+        GateCase::new("bf16_gemm_h20", "rms_norm_gemm_graph"),
         gemm_spec.m(),
         gemm_spec.n(),
         gemm_spec.k(),
@@ -585,9 +556,10 @@ fn main() -> Result<(), Box<dyn Error>> {
     let large_plan = gemm_provider.plan_bf16(large_spec)?;
     let small_plan = gemm_provider.plan_bf16(Bf16GemmSpec::new(2, 3, 4)?)?;
     println!(
-        "gate=bf16_gemm_h20 case=plan status=pass library_version={} \
+        "{} library_version={} \
          workspace_limit={} large_workspace_required={} large_waves={:.6} \
          small_workspace_required={} small_waves={:.6}",
+        GateCase::new("bf16_gemm_h20", "plan"),
         gemm_provider.library_version(),
         gemm_provider.workspace_limit_bytes(),
         large_plan.workspace_required_bytes(),

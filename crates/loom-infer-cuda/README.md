@@ -8,11 +8,8 @@ bindings.
 The default feature set keeps CPU-only workspace checks platform independent.
 Enable `cuda` only inside the pinned CUDA build environment.
 
-```bash
-cargo oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch sm_90
-cargo oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch sm_90
-cargo oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch sm_90
-```
+Hardware runners live in the sibling `loom-infer-validation` crate. Use
+`make cuda-test` and `make h20` from the repository root.
 
 ## Current providers
 

@@ -1,0 +1,42 @@
+[package]
+name = "loom-infer-validation"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Hardware validation programs for Loom Infer providers"
+readme = "README.md"
+publish = false
+
+[features]
+default = []
+cuda = [
+    "loom-infer-cuda/cuda",
+    "dep:cuda-core",
+    "dep:half",
+]
+
+[dependencies]
+cuda-core = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "868f8ec4ef900bae7e67e7f9508b2da66eee5472", optional = true }
+half = { workspace = true, optional = true }
+loom-infer = { path = "../loom-infer" }
+loom-infer-cuda = { path = "../loom-infer-cuda" }
+
+[[bin]]
+name = "rms_norm_h20"
+path = "src/bin/rms_norm_h20.rs"
+required-features = ["cuda"]
+
+[[bin]]
+name = "bf16_gemm_h20"
+path = "src/bin/bf16_gemm_h20.rs"
+required-features = ["cuda"]
+
+[[bin]]
+name = "single_decode_h20"
+path = "src/bin/single_decode_h20.rs"
+required-features = ["cuda"]
+
+[lints]
+workspace = true

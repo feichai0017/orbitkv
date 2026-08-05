@@ -9,8 +9,10 @@ not a one-module-per-concept template.
 ```text
 loom-infer/
 |-- crates/
-|   |-- loom-infer/          backend-independent contracts and references
-|   `-- loom-infer-cuda/     CUDA runtime, plans, providers, and Rust kernels
+|   |-- loom-infer/             backend-independent contracts and references
+|   |-- loom-infer-cuda/        CUDA runtime, plans, providers, and Rust kernels
+|   `-- loom-infer-validation/
+|                               non-published hardware validation programs
 |-- docs/
 |   |-- design/              architecture and repository decisions
 |   |-- development/         hardware validation procedures
@@ -27,10 +29,15 @@ consumer engine
        -> loom-infer
        -> cuda-oxide runtime and Rust device artifacts
        -> explicit vendor providers
+
+loom-infer-validation
+  -> loom-infer-cuda
+  -> loom-infer
 ```
 
-`loom-infer` remains usable without CUDA. Neither crate depends on the website,
-validation binaries, or result records.
+`loom-infer` remains usable without CUDA. Product crates do not depend on the
+validation crate, website, or result records. The validation crate is a
+workspace member but not a default member.
 
 ## Contract crate
 
@@ -61,13 +68,16 @@ example, paged decode, prefill, and state merge can become
 
 | Path | Responsibility |
 | --- | --- |
-| `src/command.rs` | Typed bindings, ownership transfer, submission, completion, and poisoning |
+| `src/command/mod.rs` | Stable command API facade and shared errors |
+| `src/command/binding.rs` | Typed ownership, leases, and opaque handles |
+| `src/command/resolve.rs` | Disjoint operand resolution and alias rejection |
+| `src/command/submission.rs` | Queue admission, command retention, and capture transfer |
+| `src/command/completion.rs` | Completion fencing, settlement, and quiescence fallback |
 | `src/graph.rs` | Fixed-address CUDA Graph capture, replay, and retained resources |
 | `src/driver.rs` | Small raw-driver cleanup helpers |
 | `src/rms_norm.rs` | Rust device kernels plus immutable RMSNorm plans |
 | `src/attention.rs` | Rust device kernel plus immutable single-decode plan |
 | `src/gemm.rs` | Explicit fixed-algorithm cuBLASLt provider |
-| `src/bin/*_h20.rs` | Device correctness and lifecycle validation programs |
 
 Operator files currently keep their kernel and host plan together because each
 implemented slice is narrow. Split an operator into private `kernels`, `plan`,
@@ -75,17 +85,26 @@ and `args` modules when it has multiple independently planned algorithms or the
 single file obscures the host/device safety proof. Preserve the existing public
 provider and plan paths unless a deliberate API revision requires otherwise.
 
-`command.rs` is the shared runtime seam. Split it into private
-`binding`, `submission`, and `completion` modules when a new access pattern
-cannot be reviewed locally or when independent tests need those boundaries.
+The command facade preserves `loom_infer_cuda::command::*` while implementation
+details stay in private modules. Add operand resolution patterns in
+`resolve.rs`; keep queue poisoning and resource retention in `submission.rs`;
+keep synchronization fallback and completion settlement in `completion.rs`.
 Do not create a generic runtime abstraction before a second device backend
 exists.
 
 ## Validation and evidence
 
-The `src/bin/*_h20.rs` programs are validation executables, not benchmark or
-serving APIs. They exercise permanent providers against CPU references and
-error contracts on real hardware.
+`crates/loom-infer-validation` owns hardware correctness executables, shared
+finite comparisons, stable digests, and machine-readable gate prefixes:
+
+| Path | Responsibility |
+| --- | --- |
+| `src/bin/*_h20.rs` | Operator-specific H20 cases and acceptance limits |
+| `src/comparison.rs` | Shared finite comparisons, bit mismatches, and digests |
+| `src/reporting.rs` | Stable `gate/case/status` output prefixes |
+
+Validation binaries exercise permanent providers against CPU references and
+error contracts on real hardware. They are not benchmark or serving APIs.
 
 `docs/results` contains immutable evidence tied to a source projection,
 toolchain, artifact, device, and exact command matrix. Correctness records do

@@ -35,7 +35,8 @@ jobs:
             crates/loom-cuda-sys \
             crates/loom-kernels \
             crates/loom-infer-cuda-bridge \
-            crates/loom-infer-cuda-sys
+            crates/loom-infer-cuda-sys \
+            crates/loom-infer-cuda/src/bin
           do
             if [[ -e "$path" ]]; then
               echo "removed product path exists: $path"

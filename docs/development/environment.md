@@ -9,7 +9,7 @@ same thing as CI or an H20 validation run.
 | Tool | Version | Source of truth |
 | --- | --- | --- |
 | Rust host toolchain | `1.97.1` | `/rust-toolchain.toml` |
-| Rust CUDA toolchain | `nightly-2026-04-03` | `/crates/loom-infer-cuda/rust-toolchain.toml` |
+| Rust CUDA toolchain | `nightly-2026-04-03` | CUDA and validation crate toolchain files |
 | cuda-oxide | revision `868f8ec4ef900bae7e67e7f9508b2da66eee5472` | `Cargo.toml` and `Cargo.lock` |
 | cargo-oxide | `0.2.1` from the same cuda-oxide revision | installation command below |
 | Node.js | `24.19.0` | `/mise.toml` and `/website/package.json` |
@@ -19,8 +19,8 @@ same thing as CI or an H20 validation run.
 | Device target | `sm_90` for H20 | H20 validation contract |
 
 The root Rust toolchain applies to CPU-only workspace commands. Entering
-`crates/loom-infer-cuda` selects the pinned nightly for cargo-oxide. Do not
-replace one with the other globally.
+`crates/loom-infer-cuda` or `crates/loom-infer-validation` selects the pinned
+nightly for cargo-oxide. Do not replace one with the other globally.
 
 ## Host setup
 

@@ -1,6 +1,7 @@
 [workspace]
 members = [
     "crates/loom-infer-cuda",
+    "crates/loom-infer-validation",
     "crates/loom-infer",
 ]
 default-members = [

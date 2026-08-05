@@ -31,16 +31,23 @@ consumer engine
        -> loom-infer
        -> Rust device kernel | explicit vendor provider
        -> caller-owned CUDA stream
+
+loom-infer-validation
+  -> loom-infer-cuda
+  -> loom-infer
 ```
 
 | Crate | Responsibility |
 | --- | --- |
 | `loom-infer` | Public specifications, errors, capabilities, and CPU references |
 | `loom-infer-cuda` | Plans, CUDA execution, Rust device kernels, and explicit vendor calls |
+| `loom-infer-validation` | Non-published hardware runners, fixtures, comparisons, and reporting |
 
 Consumers may use `loom-infer` alone for contracts and references.
 `loom-infer-cuda` depends on those contracts and exposes the CUDA execution
-path. The contract crate never depends on a device backend.
+path. The validation crate depends on both product crates, but neither product
+crate depends on validation. The contract crate never depends on a device
+backend.
 
 The workspace adds another crate only when a working vertical slice needs a
 separate ownership or safety boundary.

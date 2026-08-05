@@ -5,18 +5,13 @@ use loom_infer_cuda::attention::{
     AttentionProvider, Bf16SingleDecodeArgs, Bf16SingleDecodePlan, SingleDecodeEnqueueError,
 };
 use loom_infer_cuda::command::{CommandError, CommandQueue};
+use loom_infer_validation::comparison::{compare_bf16, compare_f32};
+use loom_infer_validation::reporting::GateCase;
 use std::error::Error;
 use std::sync::Arc;
 
 const OUTPUT_MAX_ABS_LIMIT: f32 = 0.015_625;
 const LSE_MAX_ABS_LIMIT: f32 = 0.01;
-
-#[derive(Clone, Copy, Debug)]
-struct Comparison {
-    max_abs: f32,
-    mismatches: usize,
-    digest: u64,
-}
 
 #[derive(Clone, Copy, Debug)]
 enum ShortBuffer {
@@ -38,63 +33,6 @@ fn deterministic_bf16(len: usize, salt: u64) -> Vec<bf16> {
         values.push(bf16::from_f32(signed as f32 / 2048.0));
     }
     values
-}
-
-fn compare_bf16(actual: &[bf16], expected: &[bf16]) -> Result<Comparison, Box<dyn Error>> {
-    if actual.len() != expected.len() {
-        return Err(format!(
-            "BF16 comparison length mismatch: actual={}, expected={}",
-            actual.len(),
-            expected.len()
-        )
-        .into());
-    }
-    let mut max_abs = 0.0_f32;
-    let mut mismatches = 0_usize;
-    let mut digest = 0xcbf2_9ce4_8422_2325_u64;
-    for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
-        let actual_f32 = actual.to_f32();
-        if !actual_f32.is_finite() {
-            return Err(format!("non-finite BF16 output at index {index}").into());
-        }
-        max_abs = max_abs.max((actual_f32 - expected.to_f32()).abs());
-        mismatches += usize::from(actual.to_bits() != expected.to_bits());
-        digest ^= u64::from(actual.to_bits());
-        digest = digest.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    Ok(Comparison {
-        max_abs,
-        mismatches,
-        digest,
-    })
-}
-
-fn compare_f32(actual: &[f32], expected: &[f32]) -> Result<Comparison, Box<dyn Error>> {
-    if actual.len() != expected.len() {
-        return Err(format!(
-            "F32 comparison length mismatch: actual={}, expected={}",
-            actual.len(),
-            expected.len()
-        )
-        .into());
-    }
-    let mut max_abs = 0.0_f32;
-    let mut mismatches = 0_usize;
-    let mut digest = 0xcbf2_9ce4_8422_2325_u64;
-    for (index, (&actual, &expected)) in actual.iter().zip(expected).enumerate() {
-        if !actual.is_finite() {
-            return Err(format!("non-finite F32 LSE at index {index}").into());
-        }
-        max_abs = max_abs.max((actual - expected).abs());
-        mismatches += usize::from(actual.to_bits() != expected.to_bits());
-        digest ^= u64::from(actual.to_bits());
-        digest = digest.wrapping_mul(0x0000_0100_0000_01b3);
-    }
-    Ok(Comparison {
-        max_abs,
-        mismatches,
-        digest,
-    })
 }
 
 fn run_case(
@@ -176,8 +114,8 @@ fn run_case_with_inputs(
 
     let actual_output = output.to_host_vec(&stream)?;
     let actual_lse = lse.to_host_vec(&stream)?;
-    let output_comparison = compare_bf16(&actual_output, &expected_output)?;
-    let lse_comparison = compare_f32(&actual_lse, &expected_lse)?;
+    let output_comparison = compare_bf16(&actual_output, &expected_output, "BF16")?;
+    let lse_comparison = compare_f32(&actual_lse, &expected_lse, "F32 LSE")?;
     if output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT {
         return Err(format!(
             "{name} output max abs {:.9e} exceeds {:.9e}",
@@ -194,21 +132,21 @@ fn run_case_with_inputs(
     }
 
     println!(
-        "gate=single_decode_h20 case={} status=pass kv_len={} query_heads={} kv_heads={} \
+        "{} kv_len={} query_heads={} kv_heads={} \
          group_size={} head_dim={} layout=NHD dtype=BF16 accumulation=F32 lse_domain=log2 \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
          lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
-        name,
+        GateCase::new("single_decode_h20", name),
         spec.kv_len(),
         spec.num_query_heads(),
         spec.num_kv_heads(),
         spec.gqa_group_size(),
         spec.head_dim(),
         output_comparison.max_abs,
-        output_comparison.mismatches,
+        output_comparison.bit_mismatches,
         output_comparison.digest,
         lse_comparison.max_abs,
-        lse_comparison.mismatches,
+        lse_comparison.bit_mismatches,
         lse_comparison.digest,
     );
     Ok(())
@@ -322,8 +260,9 @@ fn check_short_buffers(
         run_short_buffer_case(queue, &plan, short)?;
     }
     println!(
-        "gate=single_decode_h20 case=short_buffers status=pass \
-         query=rejected key=rejected value=rejected output=rejected lse=rejected before_ffi=true"
+        "{} \
+         query=rejected key=rejected value=rejected output=rejected lse=rejected before_ffi=true",
+        GateCase::new("single_decode_h20", "short_buffers"),
     );
     Ok(())
 }
@@ -369,7 +308,10 @@ fn check_duplicate_binding(
         return Err("duplicate binding reached CUDA submission".into());
     }
     drop(completion.wait()?);
-    println!("gate=single_decode_h20 case=duplicate_binding status=pass rejected_before_ffi=true");
+    println!(
+        "{} rejected_before_ffi=true",
+        GateCase::new("single_decode_h20", "duplicate_binding")
+    );
     Ok(())
 }
 

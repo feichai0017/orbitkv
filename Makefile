@@ -2,6 +2,7 @@ SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
 CUDA_CRATE := crates/loom-infer-cuda
+VALIDATION_CRATE := crates/loom-infer-validation
 CUDA_ARCH ?= sm_90
 PACKAGE_FLAGS ?= --allow-dirty
 MISE := $(shell command -v mise 2>/dev/null)
@@ -50,15 +51,15 @@ cuda-check:
 	$(CARGO) +nightly-2026-04-03 clippy --workspace --all-targets --features cuda -- -D warnings
 
 cuda-test:
-	cd $(CUDA_CRATE) && $(CARGO) +nightly-2026-04-03 oxide test --arch $(CUDA_ARCH) -- --workspace --features cuda --release
+	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide test --arch $(CUDA_ARCH) -- --workspace --features cuda --release
 
 h20-rms-norm:
-	cd $(CUDA_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch $(CUDA_ARCH)
+	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch $(CUDA_ARCH)
 
 h20-gemm:
-	cd $(CUDA_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch $(CUDA_ARCH)
+	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch $(CUDA_ARCH)
 
 h20-attention:
-	cd $(CUDA_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch $(CUDA_ARCH)
+	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch $(CUDA_ARCH)
 
 h20: h20-rms-norm h20-gemm h20-attention

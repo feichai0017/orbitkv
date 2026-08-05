@@ -1,7 +1,8 @@
 # H20 validation
 
-NVIDIA H20 is the first Loom Infer device target. The permanent device source
-lives in `crates/loom-infer-cuda`.
+NVIDIA H20 is the first Loom Infer device target. Permanent providers live in
+`crates/loom-infer-cuda`; hardware runners live in
+`crates/loom-infer-validation`.
 
 ## Repository identity
 

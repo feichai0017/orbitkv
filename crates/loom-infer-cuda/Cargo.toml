@@ -22,20 +22,5 @@ cuda-device = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "868f8ec
 cuda-host = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "868f8ec4ef900bae7e67e7f9508b2da66eee5472", optional = true }
 cudarc = { version = "=0.19.8", default-features = false, features = ["std", "cublaslt", "cuda-13010", "dynamic-linking"], optional = true }
 
-[[bin]]
-name = "rms_norm_h20"
-path = "src/bin/rms_norm_h20.rs"
-required-features = ["cuda"]
-
-[[bin]]
-name = "bf16_gemm_h20"
-path = "src/bin/bf16_gemm_h20.rs"
-required-features = ["cuda"]
-
-[[bin]]
-name = "single_decode_h20"
-path = "src/bin/single_decode_h20.rs"
-required-features = ["cuda"]
-
 [lints]
 workspace = true
