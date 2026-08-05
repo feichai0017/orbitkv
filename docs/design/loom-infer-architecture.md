@@ -154,11 +154,15 @@ head and partition. A second kernel merges those states and writes the same
 BF16 output and F32 log2-LSE contract. Both kernels enter one checked command
 scope with caller-owned workspace.
 
-The first matched eager-provider result measured the pre-split-K baseline:
-FlashInfer recorded 6.29x lower median latency at GQA KV length 127 and 80.08x
-at KV length 4096. The matched split-K result lowers Loom latency by 3.79x and
-26.79x at those shapes. FlashInfer remains 1.69x and 3.00x lower-latency.
-Isolated-kernel and Graph performance remain separate open gates.
+The merge kernel uses eight warps to merge contiguous partition ranges into
+block-local shared states, then warp zero merges those eight states. CUPTI
+activity timing records a KV-length-4096 merge reduction from `20.192` to
+`5.056` microseconds.
+
+Relative to the recorded direct baseline, the current matched result lowers
+Loom latency by 5.39x at GQA KV length 127 and 38.19x at KV length 4096.
+FlashInfer remains 1.17x and 2.09x lower-latency. Hardware-counter metrics and
+Graph performance remain separate open gates.
 
 ## Vendor providers
 

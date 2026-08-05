@@ -88,9 +88,10 @@ tokens or declared numerical quality.
 The first slice also rejects five short buffers and duplicate bindings before
 CUDA submission. Split-K partial and merge kernels pass H20 correctness and
 sanitizer gates with checked workspace and two-command admission. They lower
-Loom median eager latency by 3.79x at GQA KV length 127 and 26.79x at KV length
-4096 relative to the recorded direct baseline. FlashInfer remains 1.69x and
-3.00x lower-latency. Isolated-kernel timing, Graph replay, paged batching, and
+Loom median eager latency by 5.39x at GQA KV length 127 and 38.19x at KV length
+4096 relative to the recorded direct baseline. FlashInfer remains 1.17x and
+2.09x lower-latency. CUPTI activity timing now separates partial and merge
+kernel duration; hardware-counter profiling, Graph replay, paged batching, and
 real model invocation remain open.
 
 ## 5. Decode and KV operations

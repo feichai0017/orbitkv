@@ -134,10 +134,11 @@ an engine or serving speedup.
 
 The current records cover correctness, Graph replay, Compute Sanitizer, and
 shape-specific matched eager-provider comparisons with FlashInfer
-v0.6.16.post1. Split-K reduces Loom latency by 3.79x at GQA KV length 127 and
-26.79x at KV length 4096 relative to the recorded direct baseline; FlashInfer
-remains 1.69x and 3.00x lower-latency at those shapes. These records make no
-isolated-kernel, engine, or serving claim.
+v0.6.16.post1. Split-K plus parallel state merge reduces Loom latency by 5.39x
+at GQA KV length 127 and 38.19x at KV length 4096 relative to the recorded
+direct baseline; FlashInfer remains 1.17x and 2.09x lower-latency at those
+shapes. CUPTI activity records isolated kernel decomposition, but these records
+make no hardware-counter, Graph-performance, engine, or serving claim.
 
 See the [architecture](docs/design/loom-infer-architecture.md),
 [repository layout](docs/design/repository-layout.md),

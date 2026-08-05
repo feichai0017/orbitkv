@@ -53,6 +53,6 @@ export const milestones = [
   {
     milestone: "03",
     name: "Attention core",
-    reason: "Split-K cuts Loom KV4096 latency 26.79x; FlashInfer remains 3.00x lower-latency.",
+    reason: "Parallel merge cuts Loom KV4096 latency 38.19x from baseline; FlashInfer remains 2.09x lower-latency.",
   },
 ]

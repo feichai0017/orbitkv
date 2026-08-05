@@ -20,44 +20,47 @@ import { repositoryUrl } from "../data/site";
     <article class="prose">
       <h2>Matched eager performance</h2>
       <p>
-        The current 2026-08-05 record compares split-K Loom Infer with the
-        latest stable FlashInfer release, <code>v0.6.16.post1</code>, on one H20.
+        The current 2026-08-05 record compares parallel-merge Loom Infer with
+        the latest stable FlashInfer release, <code>v0.6.16.post1</code>, on one H20.
       </p>
       <div class="doc-note">
-        <strong>Split-K closes most of the recorded long-context gap.</strong>
+        <strong>Parallel merge closes more of the long-context gap.</strong>
         <p>
           Identical BF16 operand bits, preallocated buffers, CUDA events, and
-          both provider orders were used. Split-K lowers Loom median latency by
-          3.79x at GQA KV length 127 and 26.79x at KV length 4096 relative to
-          the recorded direct baseline. FlashInfer remains 1.69x and 3.00x
-          lower-latency at those shapes.
+          both provider orders were used. The complete path lowers Loom median
+          latency by 5.39x at GQA KV length 127 and 38.19x at KV length 4096
+          relative to the recorded direct baseline. FlashInfer remains 1.17x
+          and 2.09x lower-latency at those shapes.
         </p>
         <p>
-          The record retains 1,400 raw samples and excludes isolated-kernel,
-          CUDA Graph, engine, and serving claims. Matched RMSNorm is excluded
-          because the unmodified FlashInfer release did not compile on the
-          declared CUDA 13.1 host.
+          The record retains 1,400 raw samples. Separate CUPTI activity timing
+          records a 3.99x merge-kernel improvement. Hardware counters, CUDA
+          Graph, engine, and serving claims remain excluded.
         </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-split-k-eager-performance-20260805.json`}>
-          Split-K matched performance result
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-parallel-merge-eager-performance-20260805.json`}>
+          Parallel-merge matched performance result
+        </a>
+        <br />
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-single-decode-parallel-merge-profiling-20260805.json`}>
+          Isolated kernel profiling result
         </a>
       </div>
 
       <h2>Current source projection</h2>
       <p>
-        The split-K correctness record independently qualifies its partial and
-        merge kernels.
+        The parallel-merge correctness record independently qualifies its
+        shared-memory reduction.
       </p>
       <div class="doc-note">
-        <strong>BF16 split-K single decode passed its H20 gate.</strong>
+        <strong>BF16 parallel merge passed its H20 gate.</strong>
         <p>
-          Balanced MQA and GQA partitions match the CPU reference within the
-          declared limits. Short workspace and command capacity fail before
-          submission. Four sanitizer tools report no errors, and both kernels
-          assemble without stack or spills.
+          Tuned MQA and GQA partitions match the CPU reference within the
+          declared limits. Four sanitizer tools report no errors. The merge
+          uses 4,160 bytes of shared memory and assembles without stack or
+          spills.
         </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-single-decode-split-k-correctness-20260805.json`}>
-          Split-K correctness result
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-single-decode-parallel-merge-correctness-20260805.json`}>
+          Parallel-merge correctness result
         </a>
         <p>
           The earlier direct-decode and shared-command records remain immutable

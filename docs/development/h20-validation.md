@@ -112,7 +112,7 @@ Validate split-K with a non-divisible KV range and the tuned H20 configurations:
 
 ```text
 (kv_len, query_heads, kv_heads, partitions)
-  = (7,8,1,3), (33,8,1,6), (127,16,4,10), (4096,32,4,64)
+  = (7,8,1,3), (33,8,1,12), (127,16,4,16), (4096,32,4,64)
 ```
 
 Each partial state is F32
@@ -237,5 +237,17 @@ Loom median latency by 3.79x at GQA KV length 127 and 26.79x at KV length 4096
 relative to the recorded direct baseline. FlashInfer remains 1.69x and 3.00x
 lower-latency under the declared eager metric.
 
-Fixed Rust-kernel argument packs, matched RMSNorm, isolated kernel timings, and
-Graph performance gates remain open.
+The [parallel-merge profiling record](../results/h20-bf16-single-decode-parallel-merge-profiling-20260805.json)
+uses Nsight Systems CUPTI activity timing. At KV length 4096, the partial kernel
+records `31.104` microseconds and the parallel merge records `5.056`
+microseconds, down from `20.192` for the serial merge. Nsight Compute
+hardware-counter metrics remain unavailable because the host sets
+`RmProfilingAdminOnly=1`.
+
+The [parallel-merge matched record](../results/h20-flashinfer-v0.6.16.post1-parallel-merge-eager-performance-20260805.json)
+raises the complete Loom speedup over the direct baseline to 5.39x at GQA KV
+length 127 and 38.19x at KV length 4096. FlashInfer remains 1.17x and 2.09x
+lower-latency.
+
+Fixed Rust-kernel argument packs, matched RMSNorm, hardware-counter profiling,
+and Graph performance gates remain open.

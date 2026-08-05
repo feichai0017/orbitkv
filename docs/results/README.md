@@ -5,8 +5,27 @@ providers.
 
 ## Results
 
-Two 2026-08-05 records qualify split-K correctness and its matched eager
-performance. They do not replace the immutable pre-split-K history below.
+Three current 2026-08-05 records qualify the parallel merge, isolated kernel
+decomposition, and matched eager performance. They do not replace the immutable
+serial-merge and pre-split-K history below.
+
+- [BF16 single-decode parallel-merge H20 correctness](h20-bf16-single-decode-parallel-merge-correctness-20260805.json):
+  an eight-warp block-local F32 merge passes the tuned split 12, 16, and 64
+  cases. Four Compute Sanitizer tools report no errors. The merge uses 4,160
+  bytes of shared memory and assembles without stack or spills.
+
+- [BF16 single-decode parallel-merge isolated profiling](h20-bf16-single-decode-parallel-merge-profiling-20260805.json):
+  Nsight Systems CUPTI activity timing records the KV-length-4096 partial
+  kernel at `31.104` microseconds and the parallel merge at `5.056`
+  microseconds. The merge is 3.99x lower-duration than the recorded serial
+  merge. Nsight Compute hardware counters are excluded because the host sets
+  `RmProfilingAdminOnly=1`.
+
+- [FlashInfer v0.6.16.post1 parallel-merge matched eager performance](h20-flashinfer-v0.6.16.post1-parallel-merge-eager-performance-20260805.json):
+  parallel merge raises the complete Loom speedup over the direct baseline to
+  5.39x at GQA KV length 127 and 38.19x at KV length 4096. FlashInfer remains
+  1.17x and 2.09x lower-latency. MQA KV length 33 is approximately tied, but
+  its FlashInfer provider-order delta exceeds five percent.
 
 - [BF16 single-decode split-K H20 correctness](h20-bf16-single-decode-split-k-correctness-20260805.json):
   balanced partial states and stable F32 merge pass MQA and GQA cases, including

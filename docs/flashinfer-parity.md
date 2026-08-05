@@ -63,7 +63,7 @@ No complete domain-level parity is currently claimed.
 | cuDNN attention backend | [cuDNN batch decode and prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cudnn.rst) | `unscoped`; current vendor work is cuBLASLt GEMM only |
 | CuTe DSL backend | [CuTe DSL operators and wrappers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cute_dsl.rst) | Outside the custom-kernel source boundary; Loom kernels use cuda-oxide |
 | CUDA green contexts | [device green-context partitioning](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/green_ctx.rst) | `unscoped` |
-| Testing and benchmarks | [FLOP, bandwidth, GPU-time, and Graph helpers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/testing.rst) | Infrastructure partial; one reusable matched eager benchmark exists, while isolated kernel and Graph benchmarks remain open |
+| Testing and benchmarks | [FLOP, bandwidth, GPU-time, and Graph helpers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/testing.rst) | Infrastructure partial; matched eager and CUPTI kernel-duration records exist, while hardware-counter and Graph benchmarks remain open |
 
 ## First attention sequence
 
@@ -90,6 +90,11 @@ retains the same semantic shapes and fixtures while recording both providers'
 execution metadata. Split-K lowers Loom median latency by 3.79x at GQA KV
 length 127 and 26.79x at KV length 4096. FlashInfer remains 1.69x and 3.00x
 lower-latency under the declared eager metric.
+
+The current [parallel-merge result](results/h20-flashinfer-v0.6.16.post1-parallel-merge-eager-performance-20260805.json)
+uses an eight-warp block-local merge and retuned partition counts. Relative to
+the direct baseline, Loom reaches 5.39x and 38.19x lower latency at GQA KV
+lengths 127 and 4096. FlashInfer remains 1.17x and 2.09x lower-latency.
 
 The next contract adds BF16 paged batch decode with head dimension 128, page
 size 16, GQA, and fixed-address CUDA Graph replay. Only that second slice begins

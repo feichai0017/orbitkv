@@ -22,7 +22,8 @@ RMSNorm-to-GEMM Graph also passed replay and Compute Sanitizer gates. The
 single-decode attention slice passed its H20 correctness and sanitizer gates.
 Its split-K partial and F32 state-merge kernels pass H20 correctness and
 sanitizer gates with caller-owned workspace and two-command preflight. The
-matched split-K result lowers Loom latency by 3.79x at GQA KV length 127 and
-26.79x at KV length 4096 relative to the recorded direct baseline. FlashInfer
-remains 1.69x and 3.00x lower-latency at those shapes. Isolated kernel timings
-and Graph performance gates remain open.
+eight-warp block-local merge lowers its isolated KV4096 duration from `20.192`
+to `5.056` microseconds. The matched result records 5.39x and 38.19x total Loom
+speedups at GQA KV lengths 127 and 4096 relative to the direct baseline;
+FlashInfer remains 1.17x and 2.09x lower-latency. Hardware-counter metrics and
+Graph performance gates remain open.
