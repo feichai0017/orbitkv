@@ -53,6 +53,6 @@ export const milestones = [
   {
     milestone: "03",
     name: "Attention core",
-    reason: "Single and paged decode pass H20 gates; matched paged performance and Graph replay remain open.",
+    reason: "Paged decode passes H20; MQA is kernel-bound and remains 1.62x behind the matched FlashInfer path.",
   },
 ]

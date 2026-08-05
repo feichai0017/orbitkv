@@ -5,9 +5,16 @@ providers.
 
 ## Results
 
-The first 2026-08-06 record qualifies paged batch decode at the device
-correctness and sanitizer gates. It contains no matched performance, Graph,
-engine, or serving claim.
+Two 2026-08-06 records qualify paged batch decode at the device and matched
+eager gates. They contain no Graph, engine, or serving claim.
+
+- [FlashInfer v0.6.16.post1 paged batch-decode matched eager performance](h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json):
+  identical BF16 page-pool bits, `i32` page tables, preallocated buffers, CUDA
+  events, 200 warm-up calls, 100 calls per sample, 50 samples per provider
+  order, and both provider orders. Loom is 4.21x lower-latency for batch-1
+  MHA; FlashInfer is 1.62x lower-latency for mixed-length batch-3 MQA. The
+  batch-4 GQA ranking is excluded because FlashInfer's order delta is 52.49%.
+  All 600 official raw samples and CUPTI diagnostic hashes are retained.
 
 - [BF16 paged batch-decode H20 correctness](h20-bf16-paged-batch-decode-correctness-20260806.json):
   BF16 NHD D128 page-size-16 MHA, MQA, and GQA batches pass against the CPU

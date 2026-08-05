@@ -20,9 +20,26 @@ import { repositoryUrl } from "../data/site";
     <article class="prose">
       <h2>Matched eager performance</h2>
       <p>
-        The current 2026-08-05 record compares parallel-merge Loom Infer with
-        the latest stable FlashInfer release, <code>v0.6.16.post1</code>, on one H20.
+        Current records compare single and paged decode with the latest stable
+        FlashInfer release, <code>v0.6.16.post1</code>, on one H20.
       </p>
+      <div class="doc-note">
+        <strong>Paged decode has shape-specific winners.</strong>
+        <p>
+          Identical BF16 page-pool bits, I32 page tables, preallocated buffers,
+          CUDA events, and both provider orders were used. Loom is 4.21x
+          lower-latency for batch-1 MHA. FlashInfer is 1.62x lower-latency for
+          mixed-length batch-3 MQA.
+        </p>
+        <p>
+          The batch-4 GQA ranking is excluded because FlashInfer's order delta
+          is 52.49%. All 600 raw samples are retained. CUPTI diagnostics show
+          Loom MQA/GQA eager latency is kernel-bound.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json`}>
+          Paged batch-decode matched performance result
+        </a>
+      </div>
       <div class="doc-note">
         <strong>Parallel merge closes more of the long-context gap.</strong>
         <p>

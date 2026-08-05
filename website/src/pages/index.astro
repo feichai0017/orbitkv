@@ -123,14 +123,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <article class="evidence-card">
       <h3>BF16 paged decode on H20</h3><span class="result">Qualified</span>
       <p>NHD D128 page-size-16 MHA, MQA, and GQA batches pass.</p>
-      <small>BF16 output is bit-exact against the CPU oracle. Four sanitizer tools report no errors.</small>
+      <small>MHA is 4.21x lower-latency than FlashInfer; MQA remains 1.62x higher-latency. GQA eager ranking is order-sensitive.</small>
     </article>
   </section>
 
   <section class="section">
     <header class="section-header">
       <div><p class="eyebrow">Next</p><h2>Extend and profile attention</h2></div>
-      <p>Measure paged decode against FlashInfer, add Graph replay, then implement ragged prefill.</p>
+      <p>Parallelize paged MQA/GQA page traversal, add Graph replay, then implement ragged prefill.</p>
     </header>
     <div class="roadmap-grid">
       {milestones.map((item) => (

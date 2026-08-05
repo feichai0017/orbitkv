@@ -78,7 +78,9 @@ correctness and sanitizer gates.
 - retain the backend-independent BF16 NHD D128 page-size-16 batch-decode
   contract and CPU oracle.
 - retain its checked cuda-oxide MHA/MQA/GQA provider and H20 correctness and
-  sanitizer gate, then add matched FlashInfer and fixed-address Graph gates.
+  sanitizer gate.
+- optimize paged MQA/GQA page traversal and token parallelism against the
+  matched eager and CUPTI records, then add fixed-address Graph gates.
 - implement ragged prefill.
 - retain split-K execution, stable F32 state merge, and its H20 correctness
   gate.
@@ -101,8 +103,12 @@ The paged batch-decode contract validates FlashInfer-compatible `i32`
 `indptr`, page indices, and last-page lengths before mapping logical KV tokens
 to NHD physical pages. Its direct one-warp-per-request-head cuda-oxide provider
 passes MHA/MQA/GQA H20 correctness and all four Compute Sanitizer tools. A
-matched FlashInfer eager result, fixed-address Graph replay and performance,
-ragged prefill, and real model invocation remain open.
+matched FlashInfer eager result now covers three shapes: Loom is 4.21x
+lower-latency for batch-1 MHA, FlashInfer is 1.62x lower-latency for
+mixed-length batch-3 MQA, and batch-4 GQA has no stable ranking because
+FlashInfer's order delta is 52.49%. CUPTI shows Loom MQA/GQA latency is kernel
+dominated. Fixed-address Graph replay and performance, ragged prefill, and real
+model invocation remain open.
 
 ## 5. Decode and KV operations
 

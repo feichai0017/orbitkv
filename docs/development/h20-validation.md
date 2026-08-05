@@ -279,5 +279,18 @@ log2-LSE error `4.768371582e-7`. It covers mixed request lengths, page
 reordering and reuse, exact metadata spans, and a device-side invalid-page
 guard. All four Compute Sanitizer tools report zero errors.
 
+The [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
+retains both provider orders and all 600 raw samples. Loom is 4.21x
+lower-latency for batch-1 MHA at KV length 1. FlashInfer is 1.62x
+lower-latency for the mixed-length batch-3 MQA case. The batch-4 GQA shape is
+excluded from stable ranking because FlashInfer's order delta is 52.49%.
+
+CUPTI diagnostics separate that order effect from device work. FlashInfer's
+GQA kernel median is `3.712` microseconds across 400 instances, despite
+process-level eager medians ranging from `13.844` to `22.946` microseconds.
+Loom kernel medians are `2.176`, `20.928`, and `18.304` microseconds for the
+MHA, MQA, and GQA shapes. These diagnostics guide optimization but are not a
+provider-ordered isolated-kernel gate.
+
 Fixed Rust-kernel argument packs, matched RMSNorm, hardware-counter profiling,
-matched paged decode, and Graph performance gates remain open.
+provider-ordered paged kernel timing, and Graph performance gates remain open.

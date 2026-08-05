@@ -43,9 +43,10 @@ Use the same parameters for both providers:
 export LOOM_BENCH_WARMUP=200
 export LOOM_BENCH_LAUNCHES=100
 export LOOM_BENCH_SAMPLES=50
+export LOOM_BENCH_OPERATORS=paged_batch_decode
 
 LOOM_BENCH_RUN_LABEL=loom_first \
-make bench-loom > /tmp/loom-first.jsonl
+make bench-paged-loom > /tmp/loom-first.jsonl
 
 FLASHINFER_WORKSPACE_BASE=/path/to/jit-cache \
 LOOM_BENCH_RUN_LABEL=flashinfer_second \
@@ -56,6 +57,10 @@ LOOM_BENCH_RUN_LABEL=flashinfer_second \
 `make bench-loom` records the current full Git commit automatically. Set
 `LOOM_SOURCE_COMMIT` only when deliberately identifying an equivalent external
 source projection, and record that mapping separately.
+
+On hosts where PyTorch links NVSHMEM outside the default loader path, add its
+installed library directory to `LD_LIBRARY_PATH` for the external Python
+baseline. This does not affect Loom product dependencies.
 
 Repeat in the reverse provider order. The measurement
 `eager_stream_batch_cuda_event` records one CUDA-event interval around several

@@ -108,7 +108,19 @@ metadata spans, and a device-side invalid-page guard. All valid cases produce
 bit-exact BF16 output against the CPU oracle, maximum log2-LSE error is
 `4.768371582e-7`, and four Compute Sanitizer tools report no errors.
 
-The paged provider has no matched FlashInfer differential or performance
-measurement, fixed-address CUDA Graph replay, engine invocation, or serving
-result yet. Those remain independent gates before a continuous-batching parity
-claim.
+The first [matched paged eager result](results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
+uses identical BF16 page-pool bits, `i32` page tables, preallocated buffers,
+CUDA events, and both provider orders. Loom has 4.21x lower combined median
+latency for batch-1 MHA at KV length 1. FlashInfer has 1.62x lower combined
+median latency for the mixed-length batch-3 MQA case.
+
+The batch-4 GQA eager ranking is excluded: FlashInfer's two provider-order
+medians are `15.048` and `22.946` microseconds, a 52.49% delta. Independent
+process and CPU-affinity diagnostics reproduce the bistability, while CUPTI
+activity records a stable `3.712` microsecond FlashInfer kernel median. The
+eager interval therefore contains process-state-sensitive host gaps for that
+shape.
+
+Fixed-address CUDA Graph replay, a provider-ordered isolated-kernel gate,
+engine invocation, and serving results remain open before a
+continuous-batching parity claim.

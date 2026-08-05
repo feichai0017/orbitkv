@@ -175,6 +175,14 @@ numerical precondition and request-local device guards prevent invalid dynamic
 values from producing out-of-bounds K/V access. The provider does not yet
 report asynchronous metadata-content errors.
 
+The first matched paged-decode run shows different bottlenecks by shape. The
+batch-1 MHA path has lower eager latency than the pinned FlashInfer path. The
+mixed-length MQA path remains 1.62x higher-latency. CUPTI activity records
+Loom kernel medians of `2.176`, `20.928`, and `18.304` microseconds for the
+MHA, MQA, and GQA cases, while eager medians add only about one microsecond.
+The next optimization therefore belongs in page traversal and batch/token
+parallelism, not the command-scope lifecycle.
+
 Relative to the recorded direct baseline, the current matched result lowers
 Loom latency by 5.39x at GQA KV length 127 and 38.19x at KV length 4096.
 FlashInfer remains 1.17x and 2.09x lower-latency. Hardware-counter metrics and
