@@ -132,9 +132,9 @@ Operator correctness, kernel latency, graph execution, engine integration, and
 serving performance are separate claims. A microbenchmark does not establish
 an engine or serving speedup.
 
-The current attention and shared-command regression records cover correctness,
-Graph replay, and Compute Sanitizer results. They make no performance, engine,
-or serving claim.
+The current records cover correctness, Graph replay, Compute Sanitizer, and one
+shape-specific matched eager-provider comparison with FlashInfer v0.6.16.post1.
+They make no isolated-kernel, engine, or serving claim.
 
 See the [architecture](docs/design/loom-infer-architecture.md),
 [repository layout](docs/design/repository-layout.md),

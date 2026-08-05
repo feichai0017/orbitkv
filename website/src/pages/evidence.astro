@@ -18,18 +18,43 @@ import { repositoryUrl } from "../data/site";
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
+      <h2>Matched eager performance</h2>
+      <p>
+        The 2026-08-05 record compares Loom Infer with the latest stable
+        FlashInfer release, <code>v0.6.16.post1</code>, on one H20.
+      </p>
+      <div class="doc-note">
+        <strong>The first shape-specific matched eager-provider gate passed.</strong>
+        <p>
+          Identical BF16 operand bits, preallocated buffers, CUDA events, and
+          both provider orders were used. FlashInfer records 6.29x lower median
+          latency at GQA KV length 127 and 80.08x lower median latency at KV
+          length 4096. Loom records 1.33x lower median latency for the fixed
+          M=1 cuBLASLt GEMM case.
+        </p>
+        <p>
+          The record retains 1,400 raw samples and excludes isolated-kernel,
+          CUDA Graph, engine, and serving claims. Matched RMSNorm is excluded
+          because the unmodified FlashInfer release did not compile on the
+          declared CUDA 13.1 host.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json`}>
+          Matched performance result
+        </a>
+      </div>
+
       <h2>Current source projection</h2>
       <p>
-        The latest 2026-08-03 record qualifies the BF16 single-decode
-        attention source projection.
+        The 2026-08-03 correctness record qualifies the BF16 single-decode
+        attention source projection independently of the performance record.
       </p>
       <div class="doc-note">
         <strong>BF16 single decode passed its declared H20 correctness gate.</strong>
         <p>
           NHD D128 MHA, MQA, and GQA cases match the CPU reference within the
           declared limits. Invalid spans and duplicate bindings fail before
-          submission. Four sanitizer tools report no errors. Performance is
-          not measured.
+          submission. Four sanitizer tools report no errors. This correctness
+          record does not measure performance.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-single-decode-correctness-20260803.json`}>
           Attention machine-readable result

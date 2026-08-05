@@ -43,16 +43,16 @@ export const milestones = [
   {
     milestone: "01",
     name: "Permanent RMSNorm",
-    reason: "Owned bindings pass H20 correctness and sanitizer gates. Performance remains open.",
+    reason: "Owned bindings pass H20 correctness; the pinned FlashInfer RMSNorm baseline did not compile on CUDA 13.1.",
   },
   {
     milestone: "02",
     name: "Vendor GEMM",
-    reason: "The fixed plan and Graph chain pass H20 gates. Baseline and engine gates remain open.",
+    reason: "The fixed M=1 cuBLASLt eager path is 1.33x lower-latency than the matched FlashInfer path.",
   },
   {
     milestone: "03",
     name: "Attention core",
-    reason: "Single decode passes H20 correctness. Matched performance and paged decode remain open.",
+    reason: "FlashInfer is 6.29x lower-latency at KV 127 and 80.08x at KV 4096; split-K and paged decode are next.",
   },
 ]

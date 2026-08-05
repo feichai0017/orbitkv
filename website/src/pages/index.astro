@@ -44,7 +44,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <div class="metric"><strong>3</strong><span>qualified device slices</span></div>
     <div class="metric"><strong>SM90</strong><span>first target</span></div>
     <div class="metric"><strong>Rust</strong><span>host and device source</span></div>
-    <div class="metric"><strong>Pending</strong><span>performance evidence</span></div>
+    <div class="metric"><strong>Matched</strong><span>first eager performance evidence</span></div>
   </section>
 
   <section class="section" id="operators">
@@ -118,14 +118,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <article class="evidence-card">
       <h3>BF16 single decode on H20</h3><span class="result">Qualified</span>
       <p>The NHD D128 MHA, MQA, and GQA cases pass the CPU-oracle gate.</p>
-      <small>Four sanitizer tools report no errors. Performance is not measured.</small>
+      <small>Four sanitizer tools report no errors. Performance is recorded separately against FlashInfer.</small>
     </article>
   </section>
 
   <section class="section">
     <header class="section-header">
-      <div><p class="eyebrow">Next</p><h2>Measure and extend attention</h2></div>
-      <p>Compare single decode with FlashInfer, then add paged batch decode.</p>
+      <div><p class="eyebrow">Next</p><h2>Parallelize and extend attention</h2></div>
+      <p>The first matched result exposes the long-context gap. Add split-K and paged batch decode.</p>
     </header>
     <div class="roadmap-grid">
       {milestones.map((item) => (

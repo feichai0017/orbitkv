@@ -1,9 +1,9 @@
 # FlashInfer parity matrix
 
 Loom Infer targets the inference-operator surface of
-[FlashInfer v0.6.16](https://github.com/flashinfer-ai/flashinfer/releases/tag/v0.6.16),
+[FlashInfer v0.6.16.post1](https://github.com/flashinfer-ai/flashinfer/releases/tag/v0.6.16.post1),
 pinned to source commit
-[`8da13a29c85f7e5b1c81878d933f84ae9fc4afa9`](https://github.com/flashinfer-ai/flashinfer/commit/8da13a29c85f7e5b1c81878d933f84ae9fc4afa9).
+[`5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57`](https://github.com/flashinfer-ai/flashinfer/commit/5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57).
 
 Release candidates, nightly builds, and rolling online documentation do not
 change this acceptance baseline. They enter an upstream watch list before the
@@ -29,41 +29,41 @@ No complete domain-level parity is currently claimed.
 
 ## Operator domains
 
-| Domain | Representative v0.6.16 surface | Loom state |
+| Domain | Representative v0.6.16.post1 surface | Loom state |
 | --- | --- | --- |
-| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/attention.rst) | `partial device correct`; BF16 single-request NHD D128 MHA/MQA/GQA only |
-| Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/attention.rst) | `planned`; no attention provider |
-| Mixed-batch attention | [`BatchAttention`, attention-sink wrapper](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/attention.rst) | `unscoped` |
-| MLA attention | [`BatchMLAPagedAttentionWrapper`, XQA and TRT-LLM MLA decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/attention.rst) | `unscoped` |
-| Attention state and cascade | [`merge_state`, `merge_states`, `MultiLevelCascadeAttentionWrapper`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/cascade.rst) | `planned` at state-merge level |
-| Sparse and MSA attention | [`BlockSparseAttentionWrapper`, variable block sparse, MSA](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/sparse.rst) | `unscoped` |
-| POD attention | [`PODWithPagedKVCacheWrapper`, batch POD](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/pod.rst) | `unscoped` |
-| Paged KV operations | [`append_paged_kv_cache`, MLA append, index/position generation](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/page.rst) | `planned`; none implemented |
-| Dense and quantized GEMM | [`mm_bf16`, `mm_fp8`, `mm_fp4`, `tinygemm_bf16`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/gemm.rst) | `partial device correct`; one fixed contiguous BF16 cuBLASLt plan only |
-| Grouped GEMM | [`grouped_mm_bf16`, `grouped_mm_fp8`, `grouped_mm_fp4`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/grouped_mm.rst) | `planned` through vendor providers |
-| Fused MoE | [routing and fused MoE providers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/fused_moe.rst) | `planned`; none implemented |
-| Sampling and speculation | [logits/probability sampling and chain speculative sampling](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/sampling.rst) | `planned`; none implemented |
-| Logits processing | [`LogitsPipe`, temperature, Top-K, Top-P, Min-P, sample](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/logits_processor.rst) | `planned`; no pipeline API |
-| Standalone Top-K | [`top_k` and page-table/ragged transforms](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/topk.rst) | `planned`; none implemented |
-| Normalization | [RMSNorm, fused add RMSNorm, LayerNorm, fused QK RMSNorm/RoPE](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/norm.rst) | `partial device correct`; contiguous RMSNorm F32/FP16/BF16 only |
-| RoPE | [standard and Llama 3.1 RoPE, fused FP8 KV append](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/rope.rst) | `planned`; none implemented |
-| Activation and gated MLP tail | [`silu_and_mul`, GELU tanh/exact variants](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/activation.rst) | `unscoped` |
-| Quantization | [`packbits`, FP4, NVFP4 KV, MXFP8](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/quantization.rst) | `planned`; none implemented |
-| Communication | [AllReduce fusion, quantized AllReduce, MoE and decode A2A](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/comm.rst) | `planned` only after a measured distributed workload |
-| GDN prefill/decode | [chunk GDN](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/gdn_prefill.rst), [recurrent GDN decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/gdn_decode.rst) | `unscoped` |
-| KDA decode | [`recurrent_kda`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/kda_decode.rst) | `unscoped` |
-| Mamba and SSM | [`selective_state_update`, checkpointing SSU](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/mamba.rst) | `unscoped` |
-| mHC | [post and pre-fusion operators](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/mhc.rst) | `unscoped` |
-| MLA packing | [`concat_mla_k`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/concat_ops.rst) | `unscoped` |
+| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 single-request NHD D128 MHA/MQA/GQA only |
+| Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `planned`; no attention provider |
+| Mixed-batch attention | [`BatchAttention`, attention-sink wrapper](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
+| MLA attention | [`BatchMLAPagedAttentionWrapper`, XQA and TRT-LLM MLA decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
+| Attention state and cascade | [`merge_state`, `merge_states`, `MultiLevelCascadeAttentionWrapper`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cascade.rst) | `planned` at state-merge level |
+| Sparse and MSA attention | [`BlockSparseAttentionWrapper`, variable block sparse, MSA](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/sparse.rst) | `unscoped` |
+| POD attention | [`PODWithPagedKVCacheWrapper`, batch POD](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/pod.rst) | `unscoped` |
+| Paged KV operations | [`append_paged_kv_cache`, MLA append, index/position generation](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/page.rst) | `planned`; none implemented |
+| Dense and quantized GEMM | [`mm_bf16`, `mm_fp8`, `mm_fp4`, `tinygemm_bf16`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/gemm.rst) | `partial device correct`; one fixed contiguous BF16 cuBLASLt plan only |
+| Grouped GEMM | [`grouped_mm_bf16`, `grouped_mm_fp8`, `grouped_mm_fp4`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/grouped_mm.rst) | `planned` through vendor providers |
+| Fused MoE | [routing and fused MoE providers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/fused_moe.rst) | `planned`; none implemented |
+| Sampling and speculation | [logits/probability sampling and chain speculative sampling](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/sampling.rst) | `planned`; none implemented |
+| Logits processing | [`LogitsPipe`, temperature, Top-K, Top-P, Min-P, sample](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/logits_processor.rst) | `planned`; no pipeline API |
+| Standalone Top-K | [`top_k` and page-table/ragged transforms](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/topk.rst) | `planned`; none implemented |
+| Normalization | [RMSNorm, fused add RMSNorm, LayerNorm, fused QK RMSNorm/RoPE](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/norm.rst) | `partial device correct`; contiguous RMSNorm F32/FP16/BF16 only |
+| RoPE | [standard and Llama 3.1 RoPE, fused FP8 KV append](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/rope.rst) | `planned`; none implemented |
+| Activation and gated MLP tail | [`silu_and_mul`, GELU tanh/exact variants](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/activation.rst) | `unscoped` |
+| Quantization | [`packbits`, FP4, NVFP4 KV, MXFP8](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/quantization.rst) | `planned`; none implemented |
+| Communication | [AllReduce fusion, quantized AllReduce, MoE and decode A2A](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/comm.rst) | `planned` only after a measured distributed workload |
+| GDN prefill/decode | [chunk GDN](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/gdn_prefill.rst), [recurrent GDN decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/gdn_decode.rst) | `unscoped` |
+| KDA decode | [`recurrent_kda`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/kda_decode.rst) | `unscoped` |
+| Mamba and SSM | [`selective_state_update`, checkpointing SSU](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/mamba.rst) | `unscoped` |
+| mHC | [post and pre-fusion operators](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/mhc.rst) | `unscoped` |
+| MLA packing | [`concat_mla_k`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/concat_ops.rst) | `unscoped` |
 
 ## Supporting surfaces
 
-| Surface | Representative v0.6.16 surface | Loom state |
+| Surface | Representative v0.6.16.post1 surface | Loom state |
 | --- | --- | --- |
-| cuDNN attention backend | [cuDNN batch decode and prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/cudnn.rst) | `unscoped`; current vendor work is cuBLASLt GEMM only |
-| CuTe DSL backend | [CuTe DSL operators and wrappers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/cute_dsl.rst) | Outside the custom-kernel source boundary; Loom kernels use cuda-oxide |
-| CUDA green contexts | [device green-context partitioning](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/green_ctx.rst) | `unscoped` |
-| Testing and benchmarks | [FLOP, bandwidth, GPU-time, and Graph helpers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16/docs/api/testing.rst) | Infrastructure partial; reusable matched benchmarks remain open |
+| cuDNN attention backend | [cuDNN batch decode and prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cudnn.rst) | `unscoped`; current vendor work is cuBLASLt GEMM only |
+| CuTe DSL backend | [CuTe DSL operators and wrappers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cute_dsl.rst) | Outside the custom-kernel source boundary; Loom kernels use cuda-oxide |
+| CUDA green contexts | [device green-context partitioning](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/green_ctx.rst) | `unscoped` |
+| Testing and benchmarks | [FLOP, bandwidth, GPU-time, and Graph helpers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/testing.rst) | Infrastructure partial; one reusable matched eager benchmark exists, while isolated kernel and Graph benchmarks remain open |
 
 ## First attention sequence
 
@@ -76,6 +76,13 @@ non-power-of-two KV lengths.
 The
 [H20 result](results/h20-bf16-single-decode-correctness-20260803.json) is a
 Loom GPU versus CPU-oracle gate. It contains no matched FlashInfer run.
+
+The first [matched eager-provider result](results/h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json)
+uses identical BF16 operand bit patterns and both provider orders. FlashInfer
+has 6.29x lower median latency at GQA KV length 127 and 80.08x lower median
+latency at GQA KV length 4096 under that declared metric. Loom has lower median
+latency for the KV-length-1 MHA case, but short eager paths show larger
+cross-process order variance and are not an isolated kernel-duration claim.
 
 The next contract adds BF16 paged batch decode with head dimension 128, page
 size 16, GQA, split-K state merge, and fixed-address CUDA Graph replay. Only

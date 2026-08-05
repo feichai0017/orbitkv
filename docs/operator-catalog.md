@@ -22,9 +22,12 @@ tracks the pinned upstream comparison.
 | BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
 | BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 MHA/MQA/GQA slice passes H20 correctness and sanitizer gates |
 
-No permanent GPU provider has a published performance result yet. The
-[attention record](results/h20-bf16-single-decode-correctness-20260803.json)
-contains the latest accepted and excluded claims.
+The first matched H20 eager-provider result is shape-specific. Loom records
+lower median latency for the fixed M=1 cuBLASLt GEMM case and KV-length-1 MHA.
+FlashInfer records lower median latency for MQA KV length 33 and GQA KV lengths
+127 and 4096, reaching 80.08x lower median latency at the longest declared
+case. See the [performance record](results/h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json)
+for raw samples, order variance, and excluded claims.
 
 ## Target surface
 
@@ -46,8 +49,9 @@ Attention implementations compare against pinned FlashAttention, FlashInfer,
 and engine providers when contracts match. The comparison must keep shapes,
 dtypes, layouts, masks, workspaces, streams, and graph mode equal.
 
-The current single-decode record is a Loom GPU versus CPU-oracle correctness
-gate. It contains no matched FlashInfer performance result.
+The current single-decode correctness record remains a Loom GPU versus
+CPU-oracle gate. Performance is tracked separately because eager-provider,
+kernel, Graph, engine, and serving measurements have different timed regions.
 
 ## Admission
 

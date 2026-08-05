@@ -5,6 +5,7 @@ CUDA_CRATE := crates/loom-infer-cuda
 VALIDATION_CRATE := crates/loom-infer-validation
 CUDA_ARCH ?= sm_90
 PACKAGE_FLAGS ?= --allow-dirty
+LOOM_SOURCE_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 MISE := $(shell command -v mise 2>/dev/null)
 ifneq ($(MISE),)
 RUN := $(MISE) exec --
@@ -66,4 +67,4 @@ h20-attention:
 h20: h20-rms-norm h20-gemm h20-attention
 
 bench-loom:
-	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH)
+	cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH)

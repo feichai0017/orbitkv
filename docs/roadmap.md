@@ -42,8 +42,10 @@ gates without a tensor copy.
 
 The fixed BF16 cuBLASLt plan passes H20 correctness and command-lifecycle gates.
 Its RMSNorm-to-GEMM Graph replays twice with a bit-exact final output.
-Matched-provider performance, real-model shapes, and engine invocation remain
-open.
+The first matched eager-provider result covers the fixed M=1 shape and records
+1.33x lower median latency than the matched FlashInfer path. Other shapes,
+isolated kernel and Graph timings, real-model shapes, and engine invocation
+remain open.
 
 ## 3. Fixed-address CUDA Graph execution
 
@@ -71,7 +73,8 @@ reports no errors or device leaks on H20. See the
 correctness and sanitizer gates.
 
 - retain the BF16 NHD D128 single-request MHA/MQA/GQA correctness baseline.
-- measure the baseline against the pinned FlashInfer contract.
+- retain the matched eager-provider benchmark against the pinned FlashInfer
+  release and add an isolated Graph/kernel timing gate.
 - implement ragged prefill and paged MQA/GQA decode.
 - add split-K execution and stable state merge.
 - support common causal and sliding-window contracts.
@@ -82,8 +85,10 @@ Exit: a real model invokes Loom attention without tensor copies and preserves
 tokens or declared numerical quality.
 
 The first slice also rejects five short buffers and duplicate bindings before
-CUDA submission. Performance, Graph replay, paged batching, split-K, and real
-model invocation remain open.
+CUDA submission. The first matched eager result shows that the one-warp-per-head
+baseline falls behind FlashInfer by 6.29x at GQA KV length 127 and 80.08x at KV
+length 4096. Long-context parallelism, Graph replay, paged batching, split-K,
+and real model invocation remain open.
 
 ## 5. Decode and KV operations
 

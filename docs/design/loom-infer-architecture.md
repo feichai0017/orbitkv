@@ -148,7 +148,10 @@ The first attention plan fixes BF16, NHD caches, head dimension 128, and one
 warp per query head. It computes scores and online softmax state in F32. The
 kernel writes BF16 output and F32 log2-LSE.
 
-This is a correctness baseline. Matched performance remains open.
+The first matched eager-provider result confirms this remains a correctness
+baseline for long contexts. FlashInfer records 6.29x lower median latency at
+GQA KV length 127 and 80.08x at KV length 4096. Isolated kernel and Graph
+performance remain separate open gates.
 
 ## Vendor providers
 

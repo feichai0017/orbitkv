@@ -22,12 +22,17 @@ struct RunIdentity {
 }
 
 impl RunIdentity {
-    fn from_env() -> Self {
-        Self {
-            provider_commit: env::var("LOOM_SOURCE_COMMIT")
-                .unwrap_or_else(|_| "unrecorded".to_string()),
-            run_label: env::var("LOOM_BENCH_RUN_LABEL").unwrap_or_else(|_| "unlabeled".to_string()),
+    fn from_env() -> Result<Self, Box<dyn Error>> {
+        let provider_commit = env::var("LOOM_SOURCE_COMMIT")?;
+        if provider_commit.len() != 40
+            || !provider_commit.bytes().all(|byte| byte.is_ascii_hexdigit())
+        {
+            return Err("LOOM_SOURCE_COMMIT must be a full 40-character Git commit SHA".into());
         }
+        Ok(Self {
+            provider_commit,
+            run_label: env::var("LOOM_BENCH_RUN_LABEL").unwrap_or_else(|_| "unlabeled".to_string()),
+        })
     }
 }
 
@@ -309,7 +314,7 @@ fn benchmark_decode_case(
 
 fn main() -> Result<(), Box<dyn Error>> {
     let config = BenchConfig::from_env()?;
-    let identity = RunIdentity::from_env();
+    let identity = RunIdentity::from_env()?;
     let context = CudaContext::new(0)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
     let rms_provider = RmsNormProvider::load(&context)?;

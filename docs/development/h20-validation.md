@@ -155,13 +155,33 @@ must not allocate, copy, compile, tune, or synchronize the host.
 Compare against the current named provider on the same revision and device.
 Do not reuse timings from a deleted implementation.
 
+The current FlashInfer `v0.6.16.post1` RMSNorm source fails to compile
+unmodified on the declared CUDA 13.1 host, so no matched RMSNorm performance
+gate has passed. Loom-only timings in the eager record are diagnostic, not a
+provider comparison.
+
 ## GEMM performance
 
 Benchmark the fixed BF16 contract against the same cuBLASLt contract through a
 named baseline. Keep algorithm, layouts, workspace, stream, and timing region
 identical.
 
-The correctness runner is not a benchmark. No GEMM performance gate has passed.
+The correctness runner is not a benchmark. The first matched eager-provider
+gate covers only `(M,N,K) = (1,4096,4096)` with fixed tactic 0, preallocated
+buffers, CUDA events, and both provider orders. It does not establish isolated
+kernel, Graph, engine, serving, or other-shape performance.
+
+## Single-decode performance
+
+The first matched eager-provider gate covers BF16 NHD D128 MHA, MQA, and GQA
+with identical operand bit patterns. It records 200 warm-up launches, 100
+launches per sample, 50 samples per provider order, and both provider orders.
+
+The CUDA event interval contains 100 sequential eager provider calls and is
+divided by 100. Host-submission gaps can leave the GPU idle inside that
+interval, so the result is not isolated kernel duration or CUDA Graph
+performance. Preserve that measurement name and boundary when comparing future
+runs.
 
 ## Current device state
 
@@ -185,4 +205,12 @@ qualifies the narrow attention slice. Its largest output absolute error is
 `7.629394531e-6`; its largest log2-LSE error is `1.907348633e-6`. All four
 Compute Sanitizer tools report zero errors.
 
-Fixed Rust-kernel argument packs and performance gates remain open.
+The [matched eager-provider record](../results/h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json)
+compares the same BF16 fixtures against FlashInfer `v0.6.16.post1`. FlashInfer
+has 6.29x lower median latency at GQA KV length 127 and 80.08x lower median
+latency at KV length 4096 under the declared eager metric. Loom has 1.33x lower
+median latency for the fixed M=1 cuBLASLt GEMM case. The record retains both
+provider orders and all 1,400 raw samples.
+
+Fixed Rust-kernel argument packs, matched RMSNorm, isolated kernel timings, and
+Graph performance gates remain open.

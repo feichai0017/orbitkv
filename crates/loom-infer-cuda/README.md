@@ -20,4 +20,7 @@ algorithm during planning. All use typed bindings and one completion event.
 The current owned-binding revision passed its H20 correctness gates. The fixed
 RMSNorm-to-GEMM Graph also passed replay and Compute Sanitizer gates. The
 single-decode attention slice passed its H20 correctness and sanitizer gates.
-Fixed Rust-kernel argument packs and performance gates remain open.
+The first matched eager-provider result is shape-specific: Loom is lower-latency
+for the declared M=1 cuBLASLt GEMM case, while FlashInfer is substantially
+lower-latency for medium and long-context GQA. Fixed Rust-kernel argument packs,
+isolated kernel timings, and Graph performance gates remain open.

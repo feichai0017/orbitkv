@@ -38,11 +38,10 @@ The benchmark records the FlashInfer package version and source commit.
 Use the same parameters for both providers:
 
 ```bash
-export LOOM_BENCH_WARMUP=20
+export LOOM_BENCH_WARMUP=200
 export LOOM_BENCH_LAUNCHES=100
-export LOOM_BENCH_SAMPLES=30
+export LOOM_BENCH_SAMPLES=50
 
-LOOM_SOURCE_COMMIT="$(git rev-parse HEAD)" \
 LOOM_BENCH_RUN_LABEL=loom_first \
 make bench-loom > /tmp/loom-first.jsonl
 
@@ -51,6 +50,10 @@ LOOM_BENCH_RUN_LABEL=flashinfer_second \
 <venv>/bin/python tools/flashinfer/matched_bench.py \
   > /tmp/flashinfer-second.jsonl
 ```
+
+`make bench-loom` records the current full Git commit automatically. Set
+`LOOM_SOURCE_COMMIT` only when deliberately identifying an equivalent external
+source projection, and record that mapping separately.
 
 Repeat in the reverse provider order. The measurement
 `eager_stream_batch_cuda_event` records one CUDA-event interval around several
