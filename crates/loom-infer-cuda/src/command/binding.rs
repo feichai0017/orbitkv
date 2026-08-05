@@ -182,6 +182,7 @@ pub(crate) enum Lease {
     F32(Access<f32>),
     F16(Access<f16>),
     Bf16(Access<bf16>),
+    I32(Access<i32>),
     U8(Access<u8>),
     Vacant,
 }
@@ -289,6 +290,7 @@ macro_rules! impl_binding_element {
 impl_binding_element!(f32, F32);
 impl_binding_element!(f16, F16);
 impl_binding_element!(bf16, Bf16);
+impl_binding_element!(i32, I32);
 impl_binding_element!(u8, U8);
 
 /// Opaque read access to one checked binding.

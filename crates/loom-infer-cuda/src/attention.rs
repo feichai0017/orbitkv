@@ -8,8 +8,8 @@ use cuda_device::{
 };
 use half::bf16;
 use loom_infer::{
-    Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, SINGLE_DECODE_HEAD_DIM,
-    SINGLE_DECODE_PARTIAL_STATE_WIDTH,
+    Bf16PagedBatchDecodeSpec, Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec,
+    PAGED_BATCH_DECODE_PAGE_SIZE, SINGLE_DECODE_HEAD_DIM, SINGLE_DECODE_PARTIAL_STATE_WIDTH,
 };
 use std::mem::size_of;
 use std::sync::Arc;
@@ -25,6 +25,7 @@ const BF16_PAIRS_PER_LANE: usize = BF16_PAIRS_PER_HEAD / WARP_THREADS as usize;
 
 const _: () = {
     assert!(SINGLE_DECODE_HEAD_DIM == 128);
+    assert!(PAGED_BATCH_DECODE_PAGE_SIZE == 16);
     assert!(SPLIT_K_MERGE_BLOCK_THREADS == 256);
     assert!(BF16_PAIRS_PER_LANE == 2);
     assert!(core::mem::size_of::<bf16>() == core::mem::size_of::<u16>());
@@ -162,6 +163,191 @@ mod kernels {
 
         // SAFETY: each lane owns two packed output pairs. The output base is
         // four-byte aligned and the launch contract proves the exact span.
+        unsafe {
+            output_pairs
+                .add(first_pair)
+                .write(tcgen05::cvt_f32x2_bf16x2(
+                    output_0 * inverse_normalizer,
+                    output_1 * inverse_normalizer,
+                ));
+            output_pairs
+                .add(second_pair)
+                .write(tcgen05::cvt_f32x2_bf16x2(
+                    output_2 * inverse_normalizer,
+                    output_3 * inverse_normalizer,
+                ));
+        }
+    }
+
+    #[kernel]
+    #[launch_bounds(32)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (32, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            max_num_pages >= 1,
+            num_query_heads >= 1,
+            num_kv_heads >= 1,
+            query.len() == batch_size * num_query_heads * 128,
+            key_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            value_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            output.len() == batch_size * num_query_heads * 128,
+            lse.len() == batch_size * num_query_heads,
+        ),
+    )]
+    pub fn paged_batch_decode_bf16_nhd(
+        batch_size: usize,
+        max_num_pages: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key_pages: &[bf16],
+        value_pages: &[bf16],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        mut output: DisjointSlice<bf16>,
+        mut lse: DisjointSlice<f32>,
+    ) {
+        let state_index = thread::blockIdx_x() as usize;
+        let lane = thread::threadIdx_x() as usize;
+        let state_count = batch_size * num_query_heads;
+        if state_index >= state_count || lane >= WARP_THREADS as usize {
+            return;
+        }
+
+        let request = state_index / num_query_heads;
+        let query_head = state_index % num_query_heads;
+        let global_page_end = page_indptr[batch_size];
+        let page_start = page_indptr[request];
+        let page_end = page_indptr[request + 1];
+        let tail_len = last_page_len[request];
+        if page_indptr[0] != 0
+            || global_page_end < 0
+            || global_page_end as usize != page_indices.len()
+            || page_start < 0
+            || page_end <= page_start
+            || page_end > global_page_end
+            || tail_len < 1
+            || tail_len > PAGED_BATCH_DECODE_PAGE_SIZE as i32
+        {
+            return;
+        }
+
+        let num_pages = (page_end - page_start) as usize;
+        let kv_len = (num_pages - 1) * PAGED_BATCH_DECODE_PAGE_SIZE + tail_len as usize;
+        let group_size = num_query_heads / num_kv_heads;
+        let kv_head = query_head / group_size;
+        let query_pairs = query.as_ptr().cast::<u32>();
+        let key_pairs = key_pages.as_ptr().cast::<u32>();
+        let value_pairs = value_pages.as_ptr().cast::<u32>();
+        let output_pairs = output.as_mut_ptr().cast::<u32>();
+        let first_pair = state_index * BF16_PAIRS_PER_HEAD + lane;
+        let second_pair = first_pair + WARP_THREADS as usize;
+
+        // SAFETY: the host plan validates four-byte alignment. The launch
+        // contract proves both packed query reads are inside the exact span.
+        let (query_0, query_1, query_2, query_3) = unsafe {
+            let (query_0, query_1) = convert::cvt_f32x2_bf16x2(query_pairs.add(first_pair).read());
+            let (query_2, query_3) = convert::cvt_f32x2_bf16x2(query_pairs.add(second_pair).read());
+            (query_0, query_1, query_2, query_3)
+        };
+
+        let mut output_0 = 0.0_f32;
+        let mut output_1 = 0.0_f32;
+        let mut output_2 = 0.0_f32;
+        let mut output_3 = 0.0_f32;
+        let mut max_score_log2 = 0.0_f32;
+        let mut normalizer = 0.0_f32;
+        let mut token = 0_usize;
+
+        while token < kv_len {
+            let page_slot = token / PAGED_BATCH_DECODE_PAGE_SIZE;
+            let page_offset = token % PAGED_BATCH_DECODE_PAGE_SIZE;
+            let physical_page = page_indices[page_start as usize + page_slot];
+            if physical_page < 0 || physical_page as usize >= max_num_pages {
+                return;
+            }
+            let kv_pair_offset = (((physical_page as usize * PAGED_BATCH_DECODE_PAGE_SIZE
+                + page_offset)
+                * num_kv_heads
+                + kv_head)
+                * BF16_PAIRS_PER_HEAD)
+                + lane;
+
+            // SAFETY: the dynamic physical page is checked before pointer
+            // arithmetic. Each lane then reads two disjoint packed pairs from
+            // the exact NHD page-pool span established by the launch contract.
+            let (key_0, key_1, key_2, key_3, value_0, value_1, value_2, value_3) = unsafe {
+                let (key_0, key_1) =
+                    convert::cvt_f32x2_bf16x2(key_pairs.add(kv_pair_offset).read());
+                let (key_2, key_3) = convert::cvt_f32x2_bf16x2(
+                    key_pairs.add(kv_pair_offset + WARP_THREADS as usize).read(),
+                );
+                let (value_0, value_1) =
+                    convert::cvt_f32x2_bf16x2(value_pairs.add(kv_pair_offset).read());
+                let (value_2, value_3) = convert::cvt_f32x2_bf16x2(
+                    value_pairs
+                        .add(kv_pair_offset + WARP_THREADS as usize)
+                        .read(),
+                );
+                (
+                    key_0, key_1, key_2, key_3, value_0, value_1, value_2, value_3,
+                )
+            };
+
+            let mut dot = 0.0_f32;
+            dot = float::fma_rn_f32(query_0, key_0, dot);
+            dot = float::fma_rn_f32(query_1, key_1, dot);
+            dot = float::fma_rn_f32(query_2, key_2, dot);
+            dot = float::fma_rn_f32(query_3, key_3, dot);
+            let score_log2 = warp::reduce_sum_f32(dot) * softmax_scale_log2;
+
+            let mut previous_weight = 0.0_f32;
+            let mut current_weight = 0.0_f32;
+            if lane == 0 {
+                if token == 0 {
+                    max_score_log2 = score_log2;
+                    normalizer = 1.0;
+                    current_weight = 1.0;
+                } else {
+                    let next_max = f32::max(max_score_log2, score_log2);
+                    previous_weight = float::ex2_approx_f32(max_score_log2 - next_max);
+                    current_weight = float::ex2_approx_f32(score_log2 - next_max);
+                    normalizer = normalizer * previous_weight + current_weight;
+                    max_score_log2 = next_max;
+                }
+            }
+            previous_weight = warp::shuffle_f32(previous_weight, 0);
+            current_weight = warp::shuffle_f32(current_weight, 0);
+
+            output_0 = float::fma_rn_f32(value_0, current_weight, output_0 * previous_weight);
+            output_1 = float::fma_rn_f32(value_1, current_weight, output_1 * previous_weight);
+            output_2 = float::fma_rn_f32(value_2, current_weight, output_2 * previous_weight);
+            output_3 = float::fma_rn_f32(value_3, current_weight, output_3 * previous_weight);
+            token += 1;
+        }
+
+        let mut inverse_normalizer = 0.0_f32;
+        if lane == 0 {
+            inverse_normalizer = float::div_rn_f32(1.0, normalizer);
+            // SAFETY: only lane zero writes this request and query-head slot.
+            unsafe {
+                *lse.get_unchecked_mut(state_index) =
+                    max_score_log2 + float::lg2_approx_f32(normalizer);
+            }
+        }
+        inverse_normalizer = warp::shuffle_f32(inverse_normalizer, 0);
+
+        // SAFETY: each lane owns two packed output pairs. The host validates
+        // four-byte alignment and the launch contract proves the exact span.
         unsafe {
             output_pairs
                 .add(first_pair)
@@ -563,6 +749,27 @@ impl AttentionProvider {
             merge_launch,
         })
     }
+
+    /// Creates one immutable BF16 paged NHD batch-decode launch plan.
+    pub fn plan_bf16_paged_batch(
+        &self,
+        spec: Bf16PagedBatchDecodeSpec,
+    ) -> Result<Bf16PagedBatchDecodePlan, PagedBatchDecodePlanError> {
+        let states = spec
+            .batch_size()
+            .checked_mul(spec.num_query_heads())
+            .ok_or(PagedBatchDecodePlanError::StateCountOutOfRange(usize::MAX))?;
+        let states = u32::try_from(states)
+            .map_err(|_| PagedBatchDecodePlanError::StateCountOutOfRange(states))?;
+        let launch = self
+            .module
+            .prepare_paged_batch_decode_bf16_nhd(LaunchConfig1D::new(states, WARP_THREADS, 0))?;
+        Ok(Bf16PagedBatchDecodePlan {
+            spec,
+            module: self.module.clone(),
+            launch,
+        })
+    }
 }
 
 /// Immutable launch plan for the first single-decode contract.
@@ -612,6 +819,89 @@ impl Bf16SingleDecodePlan {
             (self.launch.function().clone(), result)
         };
         record_launch(scope, permit, function, launch_result)
+    }
+}
+
+/// Immutable launch plan for BF16 paged NHD batch decode.
+#[derive(Clone)]
+pub struct Bf16PagedBatchDecodePlan {
+    spec: Bf16PagedBatchDecodeSpec,
+    module: kernels::LoadedModule,
+    launch: PreparedLaunch<kernels::__paged_batch_decode_bf16_nhd_CudaKernel>,
+}
+
+impl Bf16PagedBatchDecodePlan {
+    pub const fn spec(&self) -> Bf16PagedBatchDecodeSpec {
+        self.spec
+    }
+
+    /// Enqueues the fixed plan into a checked command scope.
+    pub fn enqueue_into(
+        &self,
+        scope: &mut CommandScope<'_>,
+        args: Bf16PagedBatchDecodeArgs,
+    ) -> Result<(), PagedBatchDecodeEnqueueError> {
+        let permit = scope.prepare_command()?;
+        let (function, launch_result) = {
+            let resolved = scope.resolve_rrrrrrww(
+                args.query,
+                args.key_pages,
+                args.value_pages,
+                args.page_indptr,
+                args.page_indices,
+                args.last_page_len,
+                args.output,
+                args.lse,
+            )?;
+            require_paged_exact_len("Q", resolved.first.len(), self.spec.query_numel())?;
+            require_paged_exact_len("K_pages", resolved.second.len(), self.spec.kv_pages_numel())?;
+            require_paged_exact_len("V_pages", resolved.third.len(), self.spec.kv_pages_numel())?;
+            require_paged_exact_len(
+                "page_indptr",
+                resolved.fourth.len(),
+                self.spec.page_indptr_numel(),
+            )?;
+            if resolved.fifth.len() < self.spec.batch_size() {
+                return Err(PagedBatchDecodeEnqueueError::PageIndicesTooShort {
+                    minimum: self.spec.batch_size(),
+                    actual: resolved.fifth.len(),
+                });
+            }
+            require_paged_exact_len(
+                "last_page_len",
+                resolved.sixth.len(),
+                self.spec.last_page_len_numel(),
+            )?;
+            require_paged_exact_len("O", resolved.seventh.len(), self.spec.output_numel())?;
+            require_paged_exact_len("LSE", resolved.eighth.len(), self.spec.lse_numel())?;
+            for (operand, address) in [
+                ("Q", resolved.first.cu_deviceptr()),
+                ("K_pages", resolved.second.cu_deviceptr()),
+                ("V_pages", resolved.third.cu_deviceptr()),
+                ("O", resolved.seventh.cu_deviceptr()),
+            ] {
+                require_paged_packed_alignment(operand, address)?;
+            }
+            let result = self.module.paged_batch_decode_bf16_nhd(
+                resolved.stream,
+                &self.launch,
+                self.spec.batch_size(),
+                self.spec.max_num_pages(),
+                self.spec.num_query_heads(),
+                self.spec.num_kv_heads(),
+                self.spec.softmax_scale() * core::f32::consts::LOG2_E,
+                resolved.first,
+                resolved.second,
+                resolved.third,
+                resolved.fourth,
+                resolved.fifth,
+                resolved.sixth,
+                resolved.seventh,
+                resolved.eighth,
+            );
+            (self.launch.function().clone(), result)
+        };
+        record_paged_launch(scope, permit, function, launch_result)
     }
 }
 
@@ -767,12 +1057,58 @@ impl Bf16SingleDecodeSplitKArgs {
     }
 }
 
+/// Checked handles for one paged batch-decode launch.
+#[derive(Clone, Copy, Debug)]
+pub struct Bf16PagedBatchDecodeArgs {
+    query: Read<bf16>,
+    key_pages: Read<bf16>,
+    value_pages: Read<bf16>,
+    page_indptr: Read<i32>,
+    page_indices: Read<i32>,
+    last_page_len: Read<i32>,
+    output: Write<bf16>,
+    lse: Write<f32>,
+}
+
+impl Bf16PagedBatchDecodeArgs {
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        query: Read<bf16>,
+        key_pages: Read<bf16>,
+        value_pages: Read<bf16>,
+        page_indptr: Read<i32>,
+        page_indices: Read<i32>,
+        last_page_len: Read<i32>,
+        output: Write<bf16>,
+        lse: Write<f32>,
+    ) -> Self {
+        Self {
+            query,
+            key_pages,
+            value_pages,
+            page_indptr,
+            page_indices,
+            last_page_len,
+            output,
+            lse,
+        }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum SingleDecodePlanError {
     #[error("single-decode query-head count {0} exceeds the CUDA grid range")]
     QueryHeadCountOutOfRange(usize),
     #[error("single-decode partial-state count {0} exceeds the CUDA grid range")]
     PartialStateCountOutOfRange(usize),
+    #[error(transparent)]
+    Launch(#[from] LaunchContractError),
+}
+
+#[derive(Debug, Error)]
+pub enum PagedBatchDecodePlanError {
+    #[error("paged batch-decode state count {0} exceeds the CUDA grid range")]
+    StateCountOutOfRange(usize),
     #[error(transparent)]
     Launch(#[from] LaunchContractError),
 }
@@ -791,6 +1127,30 @@ pub enum SingleDecodeEnqueueError {
     Launch(#[from] LaunchContractError),
     #[error(
         "packed single decode requires {operand} to be {alignment}-byte aligned, got {address:#x}"
+    )]
+    MisalignedBuffer {
+        operand: &'static str,
+        address: u64,
+        alignment: u64,
+    },
+}
+
+#[derive(Debug, Error)]
+pub enum PagedBatchDecodeEnqueueError {
+    #[error("{operand} length mismatch: expected {expected}, got {actual}")]
+    LengthMismatch {
+        operand: &'static str,
+        expected: usize,
+        actual: usize,
+    },
+    #[error("page_indices requires at least {minimum} entries, got {actual}")]
+    PageIndicesTooShort { minimum: usize, actual: usize },
+    #[error(transparent)]
+    Command(#[from] CommandError),
+    #[error(transparent)]
+    Launch(#[from] LaunchContractError),
+    #[error(
+        "packed paged batch decode requires {operand} to be {alignment}-byte aligned, got {address:#x}"
     )]
     MisalignedBuffer {
         operand: &'static str,
@@ -831,12 +1191,64 @@ fn require_exact_len(
     }
 }
 
+fn require_paged_packed_alignment(
+    operand: &'static str,
+    address: u64,
+) -> Result<(), PagedBatchDecodeEnqueueError> {
+    const ALIGNMENT: u64 = size_of::<u32>() as u64;
+    if address.is_multiple_of(ALIGNMENT) {
+        Ok(())
+    } else {
+        Err(PagedBatchDecodeEnqueueError::MisalignedBuffer {
+            operand,
+            address,
+            alignment: ALIGNMENT,
+        })
+    }
+}
+
+fn require_paged_exact_len(
+    operand: &'static str,
+    actual: usize,
+    expected: usize,
+) -> Result<(), PagedBatchDecodeEnqueueError> {
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(PagedBatchDecodeEnqueueError::LengthMismatch {
+            operand,
+            expected,
+            actual,
+        })
+    }
+}
+
 fn record_launch(
     scope: &mut CommandScope<'_>,
     permit: CommandPermit,
     function: CudaFunction,
     result: Result<(), LaunchContractError>,
 ) -> Result<(), SingleDecodeEnqueueError> {
+    match result {
+        Ok(()) => {
+            scope.record_cuda_submission(permit, function);
+            Ok(())
+        }
+        Err(error) => {
+            if let LaunchContractError::Driver(driver_error) = &error {
+                scope.record_failed_cuda_submission(permit, function, *driver_error);
+            }
+            Err(error.into())
+        }
+    }
+}
+
+fn record_paged_launch(
+    scope: &mut CommandScope<'_>,
+    permit: CommandPermit,
+    function: CudaFunction,
+    result: Result<(), LaunchContractError>,
+) -> Result<(), PagedBatchDecodeEnqueueError> {
     match result {
         Ok(()) => {
             scope.record_cuda_submission(permit, function);
