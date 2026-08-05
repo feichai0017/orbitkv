@@ -400,14 +400,14 @@ fn main() -> Result<(), Box<dyn Error>> {
             kv_len: 33,
             query_heads: 8,
             kv_heads: 1,
-            partitions: 6,
+            partitions: 12,
         },
         DecodeCase {
             name: "bf16_gqa_l127_qh16_kvh4_d128",
             kv_len: 127,
             query_heads: 16,
             kv_heads: 4,
-            partitions: 10,
+            partitions: 16,
         },
         DecodeCase {
             name: "bf16_gqa_l4096_qh32_kvh4_d128",

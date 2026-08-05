@@ -3,8 +3,8 @@
 use crate::command::{CommandError, CommandPermit, CommandScope, Read, ReadWrite, Write};
 use cuda_core::{CudaContext, CudaFunction, LaunchConfig1D, LaunchContractError, PreparedLaunch};
 use cuda_device::{
-    DisjointSlice, convert, cuda_module, float, kernel, launch_bounds, launch_contract, tcgen05,
-    thread, warp,
+    DisjointSlice, SharedArray, convert, cuda_module, float, kernel, launch_bounds,
+    launch_contract, tcgen05, thread, warp,
 };
 use half::bf16;
 use loom_infer::{
@@ -16,11 +16,16 @@ use std::sync::Arc;
 use thiserror::Error;
 
 const WARP_THREADS: u32 = 32;
+const SPLIT_K_MERGE_WARPS_PER_BLOCK: usize = 8;
+const SPLIT_K_MERGE_BLOCK_THREADS: u32 = WARP_THREADS * SPLIT_K_MERGE_WARPS_PER_BLOCK as u32;
+const SPLIT_K_MERGE_SHARED_NUMEL: usize =
+    SPLIT_K_MERGE_WARPS_PER_BLOCK * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
 const BF16_PAIRS_PER_HEAD: usize = SINGLE_DECODE_HEAD_DIM / 2;
 const BF16_PAIRS_PER_LANE: usize = BF16_PAIRS_PER_HEAD / WARP_THREADS as usize;
 
 const _: () = {
     assert!(SINGLE_DECODE_HEAD_DIM == 128);
+    assert!(SPLIT_K_MERGE_BLOCK_THREADS == 256);
     assert!(BF16_PAIRS_PER_LANE == 2);
     assert!(core::mem::size_of::<bf16>() == core::mem::size_of::<u16>());
     assert!(core::mem::align_of::<bf16>() == core::mem::align_of::<u16>());
@@ -318,11 +323,11 @@ mod kernels {
     }
 
     #[kernel]
-    #[launch_bounds(32)]
+    #[launch_bounds(256)]
     #[allow(clippy::too_many_arguments)]
     #[launch_contract(
         domain = 1,
-        block = (32, 1, 1),
+        block = (256, 1, 1),
         min_compute_capability = (9, 0),
         requires = (
             num_query_heads >= 1,
@@ -339,9 +344,13 @@ mod kernels {
         mut output: DisjointSlice<bf16>,
         mut lse: DisjointSlice<f32>,
     ) {
+        static mut MERGE_STATES: SharedArray<f32, SPLIT_K_MERGE_SHARED_NUMEL> = SharedArray::UNINIT;
+
         let query_head = thread::blockIdx_x() as usize;
-        let lane = thread::threadIdx_x() as usize;
-        if query_head >= num_query_heads || lane >= WARP_THREADS as usize {
+        let thread_in_block = thread::threadIdx_x() as usize;
+        let warp_in_block = thread_in_block / WARP_THREADS as usize;
+        let lane = thread_in_block % WARP_THREADS as usize;
+        if query_head >= num_query_heads {
             return;
         }
 
@@ -353,8 +362,11 @@ mod kernels {
         let mut output_3 = 0.0_f32;
         let mut merged_max_log2 = 0.0_f32;
         let mut merged_normalizer = 0.0_f32;
-        let mut partition = 0_usize;
-        while partition < partitions {
+        let active_warps = usize::min(partitions, SPLIT_K_MERGE_WARPS_PER_BLOCK);
+        let partition_start = warp_in_block * partitions / active_warps;
+        let partition_end = (warp_in_block + 1) * partitions / active_warps;
+        let mut partition = partition_start;
+        while warp_in_block < active_warps && partition < partition_end {
             let state_offset =
                 (query_head * partitions + partition) * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
             let partition_max_log2 = workspace[state_offset];
@@ -364,7 +376,7 @@ mod kernels {
             let value_2 = workspace[state_offset + 2 + second_component];
             let value_3 = workspace[state_offset + 3 + second_component];
 
-            if partition == 0 {
+            if partition == partition_start {
                 merged_max_log2 = partition_max_log2;
                 merged_normalizer = partition_normalizer;
                 output_0 = value_0;
@@ -384,6 +396,76 @@ mod kernels {
                 merged_max_log2 = next_max;
             }
             partition += 1;
+        }
+
+        // SAFETY: every active warp owns one disjoint 130-float state. Lane
+        // zero writes its header and every lane writes four distinct values.
+        let merge_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut MERGE_STATES) };
+        if warp_in_block < active_warps {
+            let state_offset = warp_in_block * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+            // SAFETY: this active warp owns the state at `state_offset`.
+            // Lane zero writes its header and every lane writes four distinct
+            // weighted-value elements.
+            unsafe {
+                if lane == 0 {
+                    merge_states.add(state_offset).write(merged_max_log2);
+                    merge_states.add(state_offset + 1).write(merged_normalizer);
+                }
+                merge_states
+                    .add(state_offset + 2 + first_component)
+                    .write(output_0);
+                merge_states
+                    .add(state_offset + 3 + first_component)
+                    .write(output_1);
+                merge_states
+                    .add(state_offset + 2 + second_component)
+                    .write(output_2);
+                merge_states
+                    .add(state_offset + 3 + second_component)
+                    .write(output_3);
+            }
+        }
+        thread::sync_threads();
+
+        if warp_in_block != 0 {
+            return;
+        }
+
+        let mut warp_state = 0_usize;
+        while warp_state < active_warps {
+            let state_offset = warp_state * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+            // SAFETY: all active warps initialized their complete states
+            // before the block barrier, and warp zero only reads afterward.
+            let (partition_max_log2, partition_normalizer, value_0, value_1, value_2, value_3) = unsafe {
+                (
+                    merge_states.add(state_offset).read(),
+                    merge_states.add(state_offset + 1).read(),
+                    merge_states.add(state_offset + 2 + first_component).read(),
+                    merge_states.add(state_offset + 3 + first_component).read(),
+                    merge_states.add(state_offset + 2 + second_component).read(),
+                    merge_states.add(state_offset + 3 + second_component).read(),
+                )
+            };
+            if warp_state == 0 {
+                merged_max_log2 = partition_max_log2;
+                merged_normalizer = partition_normalizer;
+                output_0 = value_0;
+                output_1 = value_1;
+                output_2 = value_2;
+                output_3 = value_3;
+            } else {
+                let next_max = f32::max(merged_max_log2, partition_max_log2);
+                let merged_weight = float::ex2_approx_f32(merged_max_log2 - next_max);
+                let partition_weight = float::ex2_approx_f32(partition_max_log2 - next_max);
+                merged_normalizer =
+                    merged_normalizer * merged_weight + partition_normalizer * partition_weight;
+                output_0 = float::fma_rn_f32(value_0, partition_weight, output_0 * merged_weight);
+                output_1 = float::fma_rn_f32(value_1, partition_weight, output_1 * merged_weight);
+                output_2 = float::fma_rn_f32(value_2, partition_weight, output_2 * merged_weight);
+                output_3 = float::fma_rn_f32(value_3, partition_weight, output_3 * merged_weight);
+                merged_max_log2 = next_max;
+            }
+            warp_state += 1;
         }
 
         let inverse_normalizer = float::div_rn_f32(1.0, merged_normalizer);
@@ -471,7 +553,7 @@ impl AttentionProvider {
             self.module
                 .prepare_single_decode_bf16_nhd_split_k_merge(LaunchConfig1D::new(
                     query_heads,
-                    WARP_THREADS,
+                    SPLIT_K_MERGE_BLOCK_THREADS,
                     0,
                 ))?;
         Ok(Bf16SingleDecodeSplitKPlan {

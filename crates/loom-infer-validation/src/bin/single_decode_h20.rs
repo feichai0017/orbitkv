@@ -569,17 +569,17 @@ fn main() -> Result<(), Box<dyn Error>> {
     run_split_k_case(
         &mut queue,
         &provider,
-        "split_k_mqa_l33_p6",
+        "split_k_mqa_l33_p12",
         Bf16SingleDecodeSpec::new(33, 8, 1, SINGLE_DECODE_HEAD_DIM)?,
-        6,
+        12,
         0xa001,
     )?;
     run_split_k_case(
         &mut queue,
         &provider,
-        "split_k_gqa4_l127_p10",
+        "split_k_gqa4_l127_p16",
         Bf16SingleDecodeSpec::new(127, 16, 4, SINGLE_DECODE_HEAD_DIM)?,
-        10,
+        16,
         0xb001,
     )?;
     run_split_k_case(
