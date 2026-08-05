@@ -3,5 +3,7 @@
 #![forbid(unsafe_code)]
 
 #[cfg(feature = "cuda")]
+pub mod benchmark;
+#[cfg(feature = "cuda")]
 pub mod comparison;
 pub mod reporting;

@@ -16,7 +16,7 @@ CARGO := $(CARGO_ENV) $(RUN) cargo
 NPM := $(RUN) npm --prefix website
 
 .PHONY: help check check-rust check-website install-website cuda-doctor \
-	cuda-check cuda-test h20-rms-norm h20-gemm h20-attention h20
+	cuda-check cuda-test h20-rms-norm h20-gemm h20-attention h20 bench-loom
 
 help:
 	@printf '%s\n' \
@@ -24,7 +24,8 @@ help:
 		'make cuda-doctor    Check the pinned cuda-oxide environment' \
 		'make cuda-check     Run CUDA-feature Clippy' \
 		'make cuda-test      Run release tests through cuda-oxide' \
-		'make h20            Run all H20 correctness programs sequentially'
+		'make h20            Run all H20 correctness programs sequentially' \
+		'make bench-loom     Run the Loom side of the matched H20 benchmark'
 
 check: check-rust check-website
 
@@ -63,3 +64,6 @@ h20-attention:
 	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch $(CUDA_ARCH)
 
 h20: h20-rms-norm h20-gemm h20-attention
+
+bench-loom:
+	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH)

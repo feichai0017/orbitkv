@@ -1,6 +1,8 @@
 target/
 **/*.rs.bk
 *.pdb
+__pycache__/
+*.py[cod]
 loom_infer_cuda.ptx
 loom_infer_cuda.ll
 loom_infer_cuda.opt.ll

@@ -15,6 +15,8 @@ cuda = [
     "loom-infer-cuda/cuda",
     "dep:cuda-core",
     "dep:half",
+    "dep:serde",
+    "dep:serde_json",
 ]
 
 [dependencies]
@@ -22,6 +24,8 @@ cuda-core = { git = "https://github.com/NVlabs/cuda-oxide.git", rev = "868f8ec4e
 half = { workspace = true, optional = true }
 loom-infer = { path = "../loom-infer" }
 loom-infer-cuda = { path = "../loom-infer-cuda" }
+serde = { workspace = true, optional = true }
+serde_json = { workspace = true, optional = true }
 
 [[bin]]
 name = "rms_norm_h20"
@@ -36,6 +40,11 @@ required-features = ["cuda"]
 [[bin]]
 name = "single_decode_h20"
 path = "src/bin/single_decode_h20.rs"
+required-features = ["cuda"]
+
+[[bin]]
+name = "loom_matched_bench_h20"
+path = "src/bin/loom_matched_bench_h20.rs"
 required-features = ["cuda"]
 
 [lints]
