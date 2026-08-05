@@ -151,20 +151,30 @@ impl<'queue> CommandScope<'queue> {
     }
 
     pub(crate) fn prepare_command(&self) -> Result<CommandPermit, CommandError> {
+        self.require_command_capacity(1)?;
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
+        Ok(CommandPermit {
+            queue_id: queue.id,
+            scope_id: self.scope_id,
+            submission_index: self.submitted,
+        })
+    }
+
+    pub(crate) fn require_command_capacity(
+        &self,
+        additional_commands: usize,
+    ) -> Result<(), CommandError> {
         if self.submission_error.is_some() {
             return Err(CommandError::ScopePoisoned);
         }
         let queue = self.queue.as_ref().expect("live command scope has a queue");
-        if self.submitted >= queue.max_commands {
+        let required = self.submitted.saturating_add(additional_commands);
+        if required > queue.max_commands {
             Err(CommandError::CommandCapacityExceeded {
                 capacity: queue.max_commands,
             })
         } else {
-            Ok(CommandPermit {
-                queue_id: queue.id,
-                scope_id: self.scope_id,
-                submission_index: self.submitted,
-            })
+            Ok(())
         }
     }
 

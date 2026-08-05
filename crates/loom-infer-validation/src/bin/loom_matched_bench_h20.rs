@@ -1,7 +1,11 @@
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer, sys};
 use half::bf16;
-use loom_infer::{Bf16GemmSpec, Bf16SingleDecodeSpec, DType, RmsNormSpec};
-use loom_infer_cuda::attention::{AttentionProvider, Bf16SingleDecodeArgs, Bf16SingleDecodePlan};
+use loom_infer::{
+    Bf16GemmSpec, Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, DType, RmsNormSpec,
+};
+use loom_infer_cuda::attention::{
+    AttentionProvider, Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,
+};
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
 use loom_infer_cuda::rms_norm::{RmsNormArgs, RmsNormBf16Plan, RmsNormProvider};
@@ -49,6 +53,7 @@ struct DecodeCase {
     kv_len: usize,
     query_heads: usize,
     kv_heads: usize,
+    partitions: usize,
 }
 
 impl BenchConfig {
@@ -165,6 +170,8 @@ fn benchmark_rms_norm(
         case: &format!("bf16_r{rows}_h{hidden_size}"),
         dtype: "bf16",
         layout: "contiguous_rows_hidden",
+        execution: json!({"algorithm": "packed_or_scalar_by_alignment"}),
+        kernels_per_call: 1,
         shape: json!({"rows": rows, "hidden_size": hidden_size}),
         fixture_id: FIXTURE_ID,
         fixture_digests: json!({
@@ -226,6 +233,8 @@ fn benchmark_gemm(
         case: "bf16_m1_n4096_k4096_cublaslt",
         dtype: "bf16",
         layout: "A_row_major_W_row_major_transposed",
+        execution: json!({"algorithm": "cublaslt", "tactic": 0}),
+        kernels_per_call: 1,
         shape: json!({"m": 1, "n": 4096, "k": 4096}),
         fixture_id: FIXTURE_ID,
         fixture_digests: json!({
@@ -249,7 +258,6 @@ fn benchmark_decode_case(
     identity: &RunIdentity,
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16SingleDecodeSpec::new(case.kv_len, case.query_heads, case.kv_heads, 128)?;
-    let plan: Bf16SingleDecodePlan = provider.plan_bf16(spec)?;
     let query_host = deterministic_bf16(spec.query_numel(), 0x5155_4552);
     let key_host = deterministic_bf16(spec.kv_numel(), 0x4b45_5900);
     let value_host = deterministic_bf16(spec.kv_numel(), 0x5641_4c55);
@@ -258,28 +266,72 @@ fn benchmark_decode_case(
     let value = Arc::new(DeviceBuffer::from_host(stream, &value_host)?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
     let lse = DeviceBuffer::<f32>::zeroed(stream, spec.lse_numel())?;
-    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
-    let mut bindings = queue.bindings(5)?;
-    let query_handle = bindings.bind_read(query)?;
-    let key_handle = bindings.bind_read(key)?;
-    let value_handle = bindings.bind_read(value)?;
-    let output_handle = bindings.bind_read_write(output)?;
-    let lse_handle = bindings.bind_read_write(lse)?;
-
-    let (_bindings, samples_us) =
-        benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
-            plan.enqueue_into(
-                scope,
-                Bf16SingleDecodeArgs::new(
-                    query_handle,
-                    key_handle,
-                    value_handle,
-                    output_handle.write(),
-                    lse_handle.write(),
-                ),
-            )?;
-            Ok(())
-        })?;
+    let (samples_us, execution, kernels_per_call) = if case.partitions == 1 {
+        let plan: Bf16SingleDecodePlan = provider.plan_bf16(spec)?;
+        let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
+        let mut bindings = queue.bindings(5)?;
+        let query_handle = bindings.bind_read(query)?;
+        let key_handle = bindings.bind_read(key)?;
+        let value_handle = bindings.bind_read(value)?;
+        let output_handle = bindings.bind_read_write(output)?;
+        let lse_handle = bindings.bind_read_write(lse)?;
+        let (_bindings, samples_us) =
+            benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
+                plan.enqueue_into(
+                    scope,
+                    Bf16SingleDecodeArgs::new(
+                        query_handle,
+                        key_handle,
+                        value_handle,
+                        output_handle.write(),
+                        lse_handle.write(),
+                    ),
+                )?;
+                Ok(())
+            })?;
+        (samples_us, json!({"algorithm": "direct"}), 1)
+    } else {
+        let split_spec = Bf16SingleDecodeSplitKSpec::new(spec, case.partitions)?;
+        let plan = provider.plan_bf16_split_k(split_spec)?;
+        let workspace = DeviceBuffer::<f32>::zeroed(stream, split_spec.workspace_numel())?;
+        let command_capacity = config
+            .launches_per_sample
+            .checked_mul(2)
+            .ok_or("split-K command capacity overflow")?;
+        let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+        let mut bindings = queue.bindings(6)?;
+        let query_handle = bindings.bind_read(query)?;
+        let key_handle = bindings.bind_read(key)?;
+        let value_handle = bindings.bind_read(value)?;
+        let workspace_handle = bindings.bind_read_write(workspace)?;
+        let output_handle = bindings.bind_read_write(output)?;
+        let lse_handle = bindings.bind_read_write(lse)?;
+        let (_bindings, samples_us) =
+            benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
+                plan.enqueue_into(
+                    scope,
+                    Bf16SingleDecodeSplitKArgs::new(
+                        query_handle,
+                        key_handle,
+                        value_handle,
+                        workspace_handle,
+                        output_handle.write(),
+                        lse_handle.write(),
+                    ),
+                )?;
+                Ok(())
+            })?;
+        (
+            samples_us,
+            json!({
+                "algorithm": "split_k",
+                "partitions": case.partitions,
+                "workspace_numel": split_spec.workspace_numel(),
+                "workspace_bytes": split_spec.workspace_bytes()
+            }),
+            2,
+        )
+    };
 
     BenchmarkRecord {
         schema_version: 1,
@@ -292,6 +344,8 @@ fn benchmark_decode_case(
         case: case.name,
         dtype: "bf16",
         layout: "NHD_D128",
+        execution,
+        kernels_per_call,
         shape: json!({
             "kv_len": case.kv_len,
             "query_heads": case.query_heads,
@@ -339,24 +393,28 @@ fn main() -> Result<(), Box<dyn Error>> {
             kv_len: 1,
             query_heads: 8,
             kv_heads: 8,
+            partitions: 1,
         },
         DecodeCase {
             name: "bf16_mqa_l33_qh8_kvh1_d128",
             kv_len: 33,
             query_heads: 8,
             kv_heads: 1,
+            partitions: 6,
         },
         DecodeCase {
             name: "bf16_gqa_l127_qh16_kvh4_d128",
             kv_len: 127,
             query_heads: 16,
             kv_heads: 4,
+            partitions: 10,
         },
         DecodeCase {
             name: "bf16_gqa_l4096_qh32_kvh4_d128",
             kv_len: 4096,
             query_heads: 32,
             kv_heads: 4,
+            partitions: 64,
         },
     ] {
         benchmark_decode_case(

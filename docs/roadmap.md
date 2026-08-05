@@ -76,7 +76,8 @@ correctness and sanitizer gates.
 - retain the matched eager-provider benchmark against the pinned FlashInfer
   release and add an isolated Graph/kernel timing gate.
 - implement ragged prefill and paged MQA/GQA decode.
-- add split-K execution and stable state merge.
+- retain split-K execution, stable F32 state merge, and its H20 correctness
+  gate.
 - support common causal and sliding-window contracts.
 - integrate RoPE, KV append, and page-table access.
 - replay fixed plans through CUDA Graphs.
@@ -85,10 +86,12 @@ Exit: a real model invokes Loom attention without tensor copies and preserves
 tokens or declared numerical quality.
 
 The first slice also rejects five short buffers and duplicate bindings before
-CUDA submission. The first matched eager result shows that the one-warp-per-head
-baseline falls behind FlashInfer by 6.29x at GQA KV length 127 and 80.08x at KV
-length 4096. Long-context parallelism, Graph replay, paged batching, split-K,
-and real model invocation remain open.
+CUDA submission. The first matched eager result shows that the pre-split-K
+one-warp-per-head baseline falls behind FlashInfer by 6.29x at GQA KV length
+127 and 80.08x at KV length 4096. Split-K partial and merge kernels now pass H20
+correctness with checked workspace and two-command admission. Matched split-K
+performance, Graph replay, paged batching, and real model invocation remain
+open.
 
 ## 5. Decode and KV operations
 

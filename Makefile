@@ -17,7 +17,8 @@ CARGO := $(CARGO_ENV) $(RUN) cargo
 NPM := $(RUN) npm --prefix website
 
 .PHONY: help check check-rust check-website install-website cuda-doctor \
-	cuda-check cuda-test h20-rms-norm h20-gemm h20-attention h20 bench-loom
+	cuda-check cuda-test h20-rms-norm h20-gemm h20-attention h20 bench-loom \
+	bench-split-k
 
 help:
 	@printf '%s\n' \
@@ -26,7 +27,8 @@ help:
 		'make cuda-check     Run CUDA-feature Clippy' \
 		'make cuda-test      Run release tests through cuda-oxide' \
 		'make h20            Run all H20 correctness programs sequentially' \
-		'make bench-loom     Run the Loom side of the matched H20 benchmark'
+		'make bench-loom     Run the Loom side of the matched H20 benchmark' \
+		'make bench-split-k  Sweep Loom split-K choices on H20'
 
 check: check-rust check-website
 
@@ -53,7 +55,7 @@ cuda-check:
 	$(CARGO) +nightly-2026-04-03 clippy --workspace --all-targets --features cuda -- -D warnings
 
 cuda-test:
-	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide test --arch $(CUDA_ARCH) -- --workspace --features cuda --release
+	cd $(VALIDATION_CRATE) && CARGO_BUILD_JOBS=1 $(CARGO) +nightly-2026-04-03 oxide test --arch $(CUDA_ARCH) -- --workspace --features cuda --release
 
 h20-rms-norm:
 	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run rms_norm_h20 --bin rms_norm_h20 --features cuda --arch $(CUDA_ARCH)
@@ -67,4 +69,7 @@ h20-attention:
 h20: h20-rms-norm h20-gemm h20-attention
 
 bench-loom:
-	cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH)
+	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+
+bench-split-k:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" LOOM_SOURCE_STATE=working_tree $(CARGO) +nightly-2026-04-03 oxide run split_k_sweep_h20 --bin split_k_sweep_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'

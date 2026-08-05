@@ -5,6 +5,45 @@ use super::{BindingElement, CommandError, CommandScope, Read, Write};
 use cuda_core::{CudaStream, DeviceBuffer};
 
 impl CommandScope<'_> {
+    pub(crate) fn resolve_rww<A, B, C>(
+        &mut self,
+        first: Read<A>,
+        second: Write<B>,
+        third: Write<C>,
+    ) -> Result<ResolvedRww<'_, A, B, C>, CommandError>
+    where
+        A: ResolveElement,
+        B: ResolveElement,
+        C: ResolveElement,
+    {
+        self.validate_resolve_request(
+            &[first.set_id, second.set_id, third.set_id],
+            &[first.slot, second.slot, third.slot],
+        )?;
+        let bindings = self
+            .bindings
+            .as_mut()
+            .expect("live command scope has bindings");
+        let [first_lease, second_lease, third_lease] = bindings
+            .leases
+            .get_disjoint_mut([first.slot, second.slot, third.slot])
+            .expect("validated binding slots are pairwise disjoint");
+        let first_buffer =
+            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
+        let second_buffer =
+            B::write(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
+        let third_buffer =
+            C::write(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
+
+        Ok(ResolvedRww {
+            stream: &queue.stream,
+            first: first_buffer,
+            second: second_buffer,
+            third: third_buffer,
+        })
+    }
+
     pub(crate) fn resolve_rrw<A, B, C>(
         &mut self,
         first: Read<A>,
@@ -151,6 +190,82 @@ impl CommandScope<'_> {
         })
     }
 
+    pub(crate) fn resolve_rrrwww<A, B, C, D, E, F>(
+        &mut self,
+        first: Read<A>,
+        second: Read<B>,
+        third: Read<C>,
+        fourth: Write<D>,
+        fifth: Write<E>,
+        sixth: Write<F>,
+    ) -> Result<ResolvedRrrwww<'_, A, B, C, D, E, F>, CommandError>
+    where
+        A: ResolveElement,
+        B: ResolveElement,
+        C: ResolveElement,
+        D: ResolveElement,
+        E: ResolveElement,
+        F: ResolveElement,
+    {
+        let slots = [
+            first.slot,
+            second.slot,
+            third.slot,
+            fourth.slot,
+            fifth.slot,
+            sixth.slot,
+        ];
+        self.validate_resolve_request(
+            &[
+                first.set_id,
+                second.set_id,
+                third.set_id,
+                fourth.set_id,
+                fifth.set_id,
+                sixth.set_id,
+            ],
+            &slots,
+        )?;
+        let bindings = self
+            .bindings
+            .as_mut()
+            .expect("live command scope has bindings");
+        let [
+            first_lease,
+            second_lease,
+            third_lease,
+            fourth_lease,
+            fifth_lease,
+            sixth_lease,
+        ] = bindings
+            .leases
+            .get_disjoint_mut(slots)
+            .expect("validated binding slots are pairwise disjoint");
+        let first_buffer =
+            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
+        let second_buffer =
+            B::read(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
+        let third_buffer =
+            C::read(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
+        let fourth_buffer =
+            D::write(fourth_lease).map_err(|error| map_lease_error(error, fourth.slot))?;
+        let fifth_buffer =
+            E::write(fifth_lease).map_err(|error| map_lease_error(error, fifth.slot))?;
+        let sixth_buffer =
+            F::write(sixth_lease).map_err(|error| map_lease_error(error, sixth.slot))?;
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
+
+        Ok(ResolvedRrrwww {
+            stream: &queue.stream,
+            first: first_buffer,
+            second: second_buffer,
+            third: third_buffer,
+            fourth: fourth_buffer,
+            fifth: fifth_buffer,
+            sixth: sixth_buffer,
+        })
+    }
+
     fn validate_resolve_request(
         &self,
         set_ids: &[u64],
@@ -195,6 +310,13 @@ fn map_lease_error(error: LeaseError, slot: usize) -> CommandError {
     }
 }
 
+pub(crate) struct ResolvedRww<'scope, A: BindingElement, B: BindingElement, C: BindingElement> {
+    pub(crate) stream: &'scope CudaStream,
+    pub(crate) first: &'scope DeviceBuffer<A>,
+    pub(crate) second: &'scope mut DeviceBuffer<B>,
+    pub(crate) third: &'scope mut DeviceBuffer<C>,
+}
+
 pub(crate) struct ResolvedRrw<'scope, A: BindingElement, B: BindingElement, C: BindingElement> {
     pub(crate) stream: &'scope CudaStream,
     pub(crate) first: &'scope DeviceBuffer<A>,
@@ -230,6 +352,24 @@ pub(crate) struct ResolvedRrrww<
     pub(crate) third: &'scope DeviceBuffer<C>,
     pub(crate) fourth: &'scope mut DeviceBuffer<D>,
     pub(crate) fifth: &'scope mut DeviceBuffer<E>,
+}
+
+pub(crate) struct ResolvedRrrwww<
+    'scope,
+    A: BindingElement,
+    B: BindingElement,
+    C: BindingElement,
+    D: BindingElement,
+    E: BindingElement,
+    F: BindingElement,
+> {
+    pub(crate) stream: &'scope CudaStream,
+    pub(crate) first: &'scope DeviceBuffer<A>,
+    pub(crate) second: &'scope DeviceBuffer<B>,
+    pub(crate) third: &'scope DeviceBuffer<C>,
+    pub(crate) fourth: &'scope mut DeviceBuffer<D>,
+    pub(crate) fifth: &'scope mut DeviceBuffer<E>,
+    pub(crate) sixth: &'scope mut DeviceBuffer<F>,
 }
 
 #[cfg(test)]

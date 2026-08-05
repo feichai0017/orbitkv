@@ -9,7 +9,12 @@ pub mod attention;
 pub mod gemm;
 pub mod rms_norm;
 
-pub use attention::{Bf16SingleDecodeSpec, SINGLE_DECODE_HEAD_DIM, single_decode_bf16_reference};
+pub use attention::{
+    Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, SINGLE_DECODE_HEAD_DIM,
+    SINGLE_DECODE_PARTIAL_STATE_WIDTH, single_decode_bf16_reference,
+    single_decode_bf16_split_k_merge_reference, single_decode_bf16_split_k_partials_reference,
+    single_decode_bf16_split_k_reference,
+};
 pub use dtype::DType;
 pub use error::ContractError;
 pub use gemm::{Bf16GemmSpec, bf16_gemm_reference};

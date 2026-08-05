@@ -53,6 +53,6 @@ export const milestones = [
   {
     milestone: "03",
     name: "Attention core",
-    reason: "FlashInfer is 6.29x lower-latency at KV 127 and 80.08x at KV 4096; split-K and paged decode are next.",
+    reason: "Split-K correctness passes on H20; matched performance, Graph replay, and paged decode are next.",
   },
 ]

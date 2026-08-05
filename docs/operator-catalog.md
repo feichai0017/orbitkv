@@ -20,9 +20,10 @@ tracks the pinned upstream comparison.
 | RMSNorm F32 | Rust / cuda-oxide | device correct | Owned bindings pass H20 correctness and sanitizer gates |
 | RMSNorm FP16 and BF16 | Rust / cuda-oxide | device correct | Scalar and packed paths pass H20 correctness and sanitizer gates |
 | BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
-| BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 MHA/MQA/GQA slice passes H20 correctness and sanitizer gates |
+| BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 direct and split-K MHA/MQA/GQA paths pass H20 correctness; the pre-split-K slice passed sanitizer gates |
 
-The first matched H20 eager-provider result is shape-specific. Loom records
+The first matched H20 eager-provider result predates split-K and is
+shape-specific. Loom records
 lower median latency for the fixed M=1 cuBLASLt GEMM case and KV-length-1 MHA.
 FlashInfer records lower median latency for MQA KV length 33 and GQA KV lengths
 127 and 4096, reaching 80.08x lower median latency at the longest declared

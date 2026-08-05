@@ -47,5 +47,10 @@ name = "loom_matched_bench_h20"
 path = "src/bin/loom_matched_bench_h20.rs"
 required-features = ["cuda"]
 
+[[bin]]
+name = "split_k_sweep_h20"
+path = "src/bin/split_k_sweep_h20.rs"
+required-features = ["cuda"]
+
 [lints]
 workspace = true

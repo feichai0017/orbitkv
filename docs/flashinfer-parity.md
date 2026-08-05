@@ -31,7 +31,7 @@ No complete domain-level parity is currently claimed.
 
 | Domain | Representative v0.6.16.post1 surface | Loom state |
 | --- | --- | --- |
-| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 single-request NHD D128 MHA/MQA/GQA only |
+| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 single-request NHD D128 direct and split-K MHA/MQA/GQA only |
 | Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `planned`; no attention provider |
 | Mixed-batch attention | [`BatchAttention`, attention-sink wrapper](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
 | MLA attention | [`BatchMLAPagedAttentionWrapper`, XQA and TRT-LLM MLA decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
@@ -78,11 +78,12 @@ The
 Loom GPU versus CPU-oracle gate. It contains no matched FlashInfer run.
 
 The first [matched eager-provider result](results/h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json)
-uses identical BF16 operand bit patterns and both provider orders. FlashInfer
-has 6.29x lower median latency at GQA KV length 127 and 80.08x lower median
-latency at GQA KV length 4096 under that declared metric. Loom has lower median
-latency for the KV-length-1 MHA case, but short eager paths show larger
-cross-process order variance and are not an isolated kernel-duration claim.
+uses identical BF16 operand bit patterns and both provider orders. It measures
+the pre-split-K Loom source: FlashInfer has 6.29x lower median latency at GQA KV
+length 127 and 80.08x lower median latency at GQA KV length 4096 under that
+declared metric. Loom has lower median latency for the KV-length-1 MHA case, but
+short eager paths show larger cross-process order variance and are not an
+isolated kernel-duration claim.
 
 The next contract adds BF16 paged batch decode with head dimension 128, page
 size 16, GQA, split-K state merge, and fixed-address CUDA Graph replay. Only

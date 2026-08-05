@@ -108,6 +108,19 @@ Reject Q, K, V, O, or LSE that is one element short. Reject duplicate operand
 bindings before CUDA submission. Run memcheck, racecheck, synccheck, and
 initcheck over the complete runner.
 
+Validate split-K with a non-divisible KV range and the tuned H20 configurations:
+
+```text
+(kv_len, query_heads, kv_heads, partitions)
+  = (7,8,1,3), (33,8,1,6), (127,16,4,10), (4096,32,4,64)
+```
+
+Each partial state is F32
+`[max_score_log2, normalizer, weighted_value[128]]`. The merge kernel must
+produce the same final BF16 output and F32 log2-LSE contract. Require one
+completion over both kernel submissions. Reject a one-command queue and a
+workspace that is one F32 element short before either kernel reaches CUDA.
+
 ## Fixed-address CUDA Graph
 
 The BF16 GEMM runner also captures this exact chain:
@@ -205,12 +218,18 @@ qualifies the narrow attention slice. Its largest output absolute error is
 `7.629394531e-6`; its largest log2-LSE error is `1.907348633e-6`. All four
 Compute Sanitizer tools report zero errors.
 
+The current split-K source projection passes the same H20 numerical limits for
+the declared partition choices. Its tuned KV-length-4096 case has
+`9.536743164e-7` output maximum absolute error and `3.814697266e-6` log2-LSE
+maximum absolute error. A new immutable correctness and sanitizer record
+remains open.
+
 The [matched eager-provider record](../results/h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json)
-compares the same BF16 fixtures against FlashInfer `v0.6.16.post1`. FlashInfer
-has 6.29x lower median latency at GQA KV length 127 and 80.08x lower median
-latency at KV length 4096 under the declared eager metric. Loom has 1.33x lower
-median latency for the fixed M=1 cuBLASLt GEMM case. The record retains both
-provider orders and all 1,400 raw samples.
+compares the pre-split-K Loom source against FlashInfer `v0.6.16.post1`.
+FlashInfer has 6.29x lower median latency at GQA KV length 127 and 80.08x lower
+median latency at KV length 4096 under the declared eager metric. Loom has
+1.33x lower median latency for the fixed M=1 cuBLASLt GEMM case. The record
+retains both provider orders and all 1,400 raw samples.
 
 Fixed Rust-kernel argument packs, matched RMSNorm, isolated kernel timings, and
 Graph performance gates remain open.

@@ -148,10 +148,16 @@ The first attention plan fixes BF16, NHD caches, head dimension 128, and one
 warp per query head. It computes scores and online softmax state in F32. The
 kernel writes BF16 output and F32 log2-LSE.
 
-The first matched eager-provider result confirms this remains a correctness
-baseline for long contexts. FlashInfer records 6.29x lower median latency at
-GQA KV length 127 and 80.08x at KV length 4096. Isolated kernel and Graph
-performance remain separate open gates.
+The split-K plan divides KV into balanced, non-empty ranges. Its partial kernel
+writes one F32 `[max_log2, normalizer, weighted_value[128]]` state per query
+head and partition. A second kernel merges those states and writes the same
+BF16 output and F32 log2-LSE contract. Both kernels enter one checked command
+scope with caller-owned workspace.
+
+The first matched eager-provider result measured the pre-split-K baseline:
+FlashInfer recorded 6.29x lower median latency at GQA KV length 127 and 80.08x
+at KV length 4096. Split-K correctness now passes on H20, but its matched
+performance, isolated-kernel, and Graph gates remain separate open claims.
 
 ## Vendor providers
 

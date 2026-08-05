@@ -15,6 +15,10 @@ pub enum ContractError {
         query_heads: usize,
         kv_heads: usize,
     },
+    InvalidPartitionCount {
+        partitions: usize,
+        kv_len: usize,
+    },
     UnsupportedDType(DType),
     LengthMismatch {
         buffer: &'static str,
@@ -44,6 +48,10 @@ impl fmt::Display for ContractError {
             } => write!(
                 formatter,
                 "query heads must be divisible by KV heads: query={query_heads}, KV={kv_heads}"
+            ),
+            Self::InvalidPartitionCount { partitions, kv_len } => write!(
+                formatter,
+                "attention partition count must be in 1..={kv_len}, got {partitions}"
             ),
             Self::UnsupportedDType(dtype) => write!(formatter, "unsupported dtype {dtype:?}"),
             Self::LengthMismatch {
