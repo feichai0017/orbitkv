@@ -5,10 +5,23 @@ providers.
 
 ## Results
 
-The 2026-08-05 matched record is the first performance result. It does not
-replace the correctness and sanitizer records below.
+Two 2026-08-05 records qualify split-K correctness and its matched eager
+performance. They do not replace the immutable pre-split-K history below.
 
-- [FlashInfer v0.6.16.post1 matched eager performance](h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json):
+- [BF16 single-decode split-K H20 correctness](h20-bf16-single-decode-split-k-correctness-20260805.json):
+  balanced partial states and stable F32 merge pass MQA and GQA cases, including
+  KV length 4096 with 64 partitions. A one-command queue and short workspace
+  fail before submission. Four Compute Sanitizer tools report no errors, and
+  both SM90 kernels assemble without stack or spills.
+
+- [FlashInfer v0.6.16.post1 split-K matched eager performance](h20-flashinfer-v0.6.16.post1-split-k-eager-performance-20260805.json):
+  identical BF16 operand bits, preallocated buffers, CUDA events, 200 warm-up
+  calls, 100 provider calls per sample, 50 samples per provider order, and both
+  provider orders. Split-K lowers Loom median latency by 3.79x at GQA KV length
+  127 and 26.79x at KV length 4096 relative to the recorded pre-split-K source.
+  FlashInfer remains 1.69x and 3.00x lower-latency at those shapes.
+
+- [Pre-split-K FlashInfer v0.6.16.post1 matched eager performance](h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json):
   identical BF16 operand bit patterns, preallocated buffers, CUDA events, 200
   warm-up launches, 100 launches per sample, 50 samples per provider order,
   and both provider orders. FlashInfer is 6.29x lower-latency at GQA KV length

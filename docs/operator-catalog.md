@@ -20,15 +20,14 @@ tracks the pinned upstream comparison.
 | RMSNorm F32 | Rust / cuda-oxide | device correct | Owned bindings pass H20 correctness and sanitizer gates |
 | RMSNorm FP16 and BF16 | Rust / cuda-oxide | device correct | Scalar and packed paths pass H20 correctness and sanitizer gates |
 | BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
-| BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 direct and split-K MHA/MQA/GQA paths pass H20 correctness; the pre-split-K slice passed sanitizer gates |
+| BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 direct and split-K MHA/MQA/GQA paths pass H20 correctness and sanitizer gates |
 
-The first matched H20 eager-provider result predates split-K and is
-shape-specific. Loom records
-lower median latency for the fixed M=1 cuBLASLt GEMM case and KV-length-1 MHA.
-FlashInfer records lower median latency for MQA KV length 33 and GQA KV lengths
-127 and 4096, reaching 80.08x lower median latency at the longest declared
-case. See the [performance record](results/h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json)
-for raw samples, order variance, and excluded claims.
+The matched split-K H20 eager-provider result is shape-specific. Split-K lowers
+Loom median latency by 3.79x at GQA KV length 127 and 26.79x at KV length 4096
+relative to the recorded direct baseline. FlashInfer remains 1.69x and 3.00x
+lower-latency at those shapes. See the
+[performance record](results/h20-flashinfer-v0.6.16.post1-split-k-eager-performance-20260805.json)
+for raw samples, execution metadata, order variance, and excluded claims.
 
 ## Target surface
 

@@ -53,6 +53,6 @@ export const milestones = [
   {
     milestone: "03",
     name: "Attention core",
-    reason: "Split-K correctness passes on H20; matched performance, Graph replay, and paged decode are next.",
+    reason: "Split-K cuts Loom KV4096 latency 26.79x; FlashInfer remains 3.00x lower-latency.",
   },
 ]

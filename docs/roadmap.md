@@ -86,12 +86,12 @@ Exit: a real model invokes Loom attention without tensor copies and preserves
 tokens or declared numerical quality.
 
 The first slice also rejects five short buffers and duplicate bindings before
-CUDA submission. The first matched eager result shows that the pre-split-K
-one-warp-per-head baseline falls behind FlashInfer by 6.29x at GQA KV length
-127 and 80.08x at KV length 4096. Split-K partial and merge kernels now pass H20
-correctness with checked workspace and two-command admission. Matched split-K
-performance, Graph replay, paged batching, and real model invocation remain
-open.
+CUDA submission. Split-K partial and merge kernels pass H20 correctness and
+sanitizer gates with checked workspace and two-command admission. They lower
+Loom median eager latency by 3.79x at GQA KV length 127 and 26.79x at KV length
+4096 relative to the recorded direct baseline. FlashInfer remains 1.69x and
+3.00x lower-latency. Isolated-kernel timing, Graph replay, paged batching, and
+real model invocation remain open.
 
 ## 5. Decode and KV operations
 

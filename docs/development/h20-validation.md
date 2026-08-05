@@ -218,11 +218,11 @@ qualifies the narrow attention slice. Its largest output absolute error is
 `7.629394531e-6`; its largest log2-LSE error is `1.907348633e-6`. All four
 Compute Sanitizer tools report zero errors.
 
-The current split-K source projection passes the same H20 numerical limits for
-the declared partition choices. Its tuned KV-length-4096 case has
-`9.536743164e-7` output maximum absolute error and `3.814697266e-6` log2-LSE
-maximum absolute error. A new immutable correctness and sanitizer record
-remains open.
+The [split-K correctness record](../results/h20-bf16-single-decode-split-k-correctness-20260805.json)
+passes the same H20 numerical limits for the declared partition choices. Its
+tuned KV-length-4096 case has `9.536743164e-7` output maximum absolute error and
+`3.814697266e-6` log2-LSE maximum absolute error. All four Compute Sanitizer
+tools report zero errors, and both kernels assemble without stack or spills.
 
 The [matched eager-provider record](../results/h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json)
 compares the pre-split-K Loom source against FlashInfer `v0.6.16.post1`.
@@ -230,6 +230,12 @@ FlashInfer has 6.29x lower median latency at GQA KV length 127 and 80.08x lower
 median latency at KV length 4096 under the declared eager metric. Loom has
 1.33x lower median latency for the fixed M=1 cuBLASLt GEMM case. The record
 retains both provider orders and all 1,400 raw samples.
+
+The [matched split-K record](../results/h20-flashinfer-v0.6.16.post1-split-k-eager-performance-20260805.json)
+retains the same semantic fixtures and adds execution metadata. Split-K lowers
+Loom median latency by 3.79x at GQA KV length 127 and 26.79x at KV length 4096
+relative to the recorded direct baseline. FlashInfer remains 1.69x and 3.00x
+lower-latency under the declared eager metric.
 
 Fixed Rust-kernel argument packs, matched RMSNorm, isolated kernel timings, and
 Graph performance gates remain open.

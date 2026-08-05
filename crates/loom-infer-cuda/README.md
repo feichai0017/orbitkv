@@ -20,9 +20,9 @@ algorithm during planning. All use typed bindings and one completion event.
 The current owned-binding revision passed its H20 correctness gates. The fixed
 RMSNorm-to-GEMM Graph also passed replay and Compute Sanitizer gates. The
 single-decode attention slice passed its H20 correctness and sanitizer gates.
-Its split-K partial and F32 state-merge kernels also pass H20 correctness with
-caller-owned workspace and two-command preflight. The first matched
-eager-provider result predates split-K: Loom is lower-latency for the declared
-M=1 cuBLASLt GEMM case, while FlashInfer is substantially lower-latency for
-medium and long-context GQA. Matched split-K performance, isolated kernel
-timings, and Graph performance gates remain open.
+Its split-K partial and F32 state-merge kernels pass H20 correctness and
+sanitizer gates with caller-owned workspace and two-command preflight. The
+matched split-K result lowers Loom latency by 3.79x at GQA KV length 127 and
+26.79x at KV length 4096 relative to the recorded direct baseline. FlashInfer
+remains 1.69x and 3.00x lower-latency at those shapes. Isolated kernel timings
+and Graph performance gates remain open.

@@ -156,8 +156,9 @@ scope with caller-owned workspace.
 
 The first matched eager-provider result measured the pre-split-K baseline:
 FlashInfer recorded 6.29x lower median latency at GQA KV length 127 and 80.08x
-at KV length 4096. Split-K correctness now passes on H20, but its matched
-performance, isolated-kernel, and Graph gates remain separate open claims.
+at KV length 4096. The matched split-K result lowers Loom latency by 3.79x and
+26.79x at those shapes. FlashInfer remains 1.69x and 3.00x lower-latency.
+Isolated-kernel and Graph performance remain separate open gates.
 
 ## Vendor providers
 

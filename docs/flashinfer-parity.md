@@ -85,6 +85,12 @@ declared metric. Loom has lower median latency for the KV-length-1 MHA case, but
 short eager paths show larger cross-process order variance and are not an
 isolated kernel-duration claim.
 
+The current [matched split-K result](results/h20-flashinfer-v0.6.16.post1-split-k-eager-performance-20260805.json)
+retains the same semantic shapes and fixtures while recording both providers'
+execution metadata. Split-K lowers Loom median latency by 3.79x at GQA KV
+length 127 and 26.79x at KV length 4096. FlashInfer remains 1.69x and 3.00x
+lower-latency under the declared eager metric.
+
 The next contract adds BF16 paged batch decode with head dimension 128, page
-size 16, GQA, split-K state merge, and fixed-address CUDA Graph replay. Only
-that second slice begins to cover continuous-batching serving behavior.
+size 16, GQA, and fixed-address CUDA Graph replay. Only that second slice begins
+to cover continuous-batching serving behavior.

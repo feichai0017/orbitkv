@@ -117,15 +117,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </article>
     <article class="evidence-card">
       <h3>BF16 single decode on H20</h3><span class="result">Qualified</span>
-      <p>The NHD D128 MHA, MQA, and GQA cases pass the CPU-oracle gate.</p>
-      <small>Four sanitizer tools report no errors. Performance is recorded separately against FlashInfer.</small>
+      <p>Direct and split-K NHD D128 MHA, MQA, and GQA cases pass.</p>
+      <small>Four sanitizer tools report no errors. Split-K reduces the recorded KV4096 gap from 80.08x to 3.00x.</small>
     </article>
   </section>
 
   <section class="section">
     <header class="section-header">
-      <div><p class="eyebrow">Next</p><h2>Measure and extend attention</h2></div>
-      <p>Split-K passes H20 correctness. Rerun the matched gate, then add paged batch decode.</p>
+      <div><p class="eyebrow">Next</p><h2>Extend and profile attention</h2></div>
+      <p>Add paged batch decode and Graph replay, then profile the remaining 3.00x long-context gap.</p>
     </header>
     <div class="roadmap-grid">
       {milestones.map((item) => (
