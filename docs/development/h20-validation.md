@@ -108,6 +108,30 @@ Reject Q, K, V, O, or LSE that is one element short. Reject duplicate operand
 bindings before CUDA submission. Run memcheck, racecheck, synccheck, and
 initcheck over the complete runner.
 
+## BF16 paged batch-decode correctness
+
+Validate the fixed FlashInfer-compatible paged contract:
+
+```text
+Q, O:          [batch_size, query_heads, 128] BF16
+K/V pages:     [max_num_pages, 16, kv_heads, 128] BF16 NHD
+page_indptr:   [batch_size + 1] I32
+page_indices:  [page_indptr[batch_size]] I32
+last_page_len: [batch_size] I32
+LSE:           [batch_size, query_heads] F32 log2-domain
+```
+
+Cover MHA, MQA, and GQA with mixed request lengths, partial and full tail
+pages, non-sequential physical pages, and physical-page reuse. Compare against
+the paged CPU reference with the same `0.015625` BF16 output and `0.01`
+log2-LSE absolute limits.
+
+Reject short fixed metadata spans before submission. Since page-table contents
+remain device-resident, exercise an out-of-range physical page under Compute
+Sanitizer and require the invalid request to preserve NaN output sentinels
+without preventing a valid request in the same batch from completing. This
+guard is a memory-safety behavior, not asynchronous metadata error reporting.
+
 Validate split-K with a non-divisible KV range and the tuned H20 configurations:
 
 ```text
@@ -249,5 +273,11 @@ raises the complete Loom speedup over the direct baseline to 5.39x at GQA KV
 length 127 and 38.19x at KV length 4096. FlashInfer remains 1.17x and 2.09x
 lower-latency.
 
+The [paged batch-decode record](../results/h20-bf16-paged-batch-decode-correctness-20260806.json)
+passes MHA, MQA, and GQA batches with bit-exact BF16 output and maximum
+log2-LSE error `4.768371582e-7`. It covers mixed request lengths, page
+reordering and reuse, exact metadata spans, and a device-side invalid-page
+guard. All four Compute Sanitizer tools report zero errors.
+
 Fixed Rust-kernel argument packs, matched RMSNorm, hardware-counter profiling,
-and Graph performance gates remain open.
+matched paged decode, and Graph performance gates remain open.

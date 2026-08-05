@@ -76,7 +76,7 @@ example, paged decode, prefill, and state merge can become
 | `src/graph.rs` | Fixed-address CUDA Graph capture, replay, and retained resources |
 | `src/driver.rs` | Small raw-driver cleanup helpers |
 | `src/rms_norm.rs` | Rust device kernels plus immutable RMSNorm plans |
-| `src/attention.rs` | Rust device kernel plus immutable single-decode plan |
+| `src/attention.rs` | Rust device kernels plus immutable single and paged decode plans |
 | `src/gemm.rs` | Explicit fixed-algorithm cuBLASLt provider |
 
 Operator files currently keep their kernel and host plan together because each

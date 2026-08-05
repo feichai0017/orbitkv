@@ -31,7 +31,7 @@ No complete domain-level parity is currently claimed.
 
 | Domain | Representative v0.6.16.post1 surface | Loom state |
 | --- | --- | --- |
-| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 single-request NHD D128 has direct and split-K GPU paths, while paged batch decode has a CPU contract only |
+| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 NHD D128 has single-request direct/split-K and page-size-16 batch-decode GPU paths |
 | Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `planned`; no attention provider |
 | Mixed-batch attention | [`BatchAttention`, attention-sink wrapper](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
 | MLA attention | [`BatchMLAPagedAttentionWrapper`, XQA and TRT-LLM MLA decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
@@ -96,14 +96,19 @@ uses an eight-warp block-local merge and retuned partition counts. Relative to
 the direct baseline, Loom reaches 5.39x and 38.19x lower latency at GQA KV
 lengths 127 and 4096. FlashInfer remains 1.17x and 2.09x lower-latency.
 
-The next contract now exists at the backend-independent layer: BF16 paged batch
-decode with NHD pages, head dimension 128, page size 16, MHA/MQA/GQA, one query
-token per request, full window, and no positional encoding or soft cap. Its
-`i32` page table uses `indptr`, physical page indices, and per-request
-last-page lengths compatible with the pinned FlashInfer wrapper. CPU tests
-cover malformed metadata, arbitrary physical page order, tail truncation, and
-numerical equivalence to contiguous decode.
+The second contract adds BF16 paged batch decode with NHD pages, head dimension
+128, page size 16, MHA/MQA/GQA, one query token per request, full window, and no
+positional encoding or soft cap. Its `i32` page table uses `indptr`, physical
+page indices, and per-request last-page lengths compatible with the pinned
+FlashInfer wrapper.
 
-The paged contract does not yet have a permanent CUDA provider, H20 evidence,
-matched FlashInfer measurement, or fixed-address CUDA Graph replay. Those gates
-are required before it begins to establish continuous-batching device behavior.
+The [paged H20 result](results/h20-bf16-paged-batch-decode-correctness-20260806.json)
+covers mixed request lengths, arbitrary physical page order and reuse, exact
+metadata spans, and a device-side invalid-page guard. All valid cases produce
+bit-exact BF16 output against the CPU oracle, maximum log2-LSE error is
+`4.768371582e-7`, and four Compute Sanitizer tools report no errors.
+
+The paged provider has no matched FlashInfer differential or performance
+measurement, fixed-address CUDA Graph replay, engine invocation, or serving
+result yet. Those remain independent gates before a continuous-batching parity
+claim.

@@ -5,6 +5,17 @@ providers.
 
 ## Results
 
+The first 2026-08-06 record qualifies paged batch decode at the device
+correctness and sanitizer gates. It contains no matched performance, Graph,
+engine, or serving claim.
+
+- [BF16 paged batch-decode H20 correctness](h20-bf16-paged-batch-decode-correctness-20260806.json):
+  BF16 NHD D128 page-size-16 MHA, MQA, and GQA batches pass against the CPU
+  oracle with bit-exact BF16 output and maximum log2-LSE error
+  `4.768371582e-7`. Mixed lengths, partial and full tail pages, physical-page
+  reordering and reuse, short metadata, and an invalid-page device guard are
+  covered. Four Compute Sanitizer tools report no errors.
+
 Three current 2026-08-05 records qualify the parallel merge, isolated kernel
 decomposition, and matched eager performance. They do not replace the immutable
 serial-merge and pre-split-K history below.

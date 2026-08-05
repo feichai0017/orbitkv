@@ -48,9 +48,21 @@ import { repositoryUrl } from "../data/site";
 
       <h2>Current source projection</h2>
       <p>
-        The parallel-merge correctness record independently qualifies its
-        shared-memory reduction.
+        The paged batch-decode and parallel-merge records independently qualify
+        their declared device paths.
       </p>
+      <div class="doc-note">
+        <strong>BF16 paged batch decode passed its H20 gate.</strong>
+        <p>
+          NHD D128 page-size-16 MHA, MQA, and GQA batches produce bit-exact
+          BF16 output against the CPU oracle. Mixed request lengths, physical
+          page reordering and reuse, and an invalid-page guard are covered.
+          Four sanitizer tools report no errors.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-batch-decode-correctness-20260806.json`}>
+          Paged batch-decode correctness result
+        </a>
+      </div>
       <div class="doc-note">
         <strong>BF16 parallel merge passed its H20 gate.</strong>
         <p>

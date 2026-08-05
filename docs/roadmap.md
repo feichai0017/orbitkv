@@ -77,8 +77,9 @@ correctness and sanitizer gates.
   release and add an isolated Graph/kernel timing gate.
 - retain the backend-independent BF16 NHD D128 page-size-16 batch-decode
   contract and CPU oracle.
-- implement its checked cuda-oxide plan and permanent MHA/MQA/GQA provider,
-  then implement ragged prefill.
+- retain its checked cuda-oxide MHA/MQA/GQA provider and H20 correctness and
+  sanitizer gate, then add matched FlashInfer and fixed-address Graph gates.
+- implement ragged prefill.
 - retain split-K execution, stable F32 state merge, and its H20 correctness
   gate.
 - support common causal and sliding-window contracts.
@@ -98,9 +99,10 @@ kernel duration.
 
 The paged batch-decode contract validates FlashInfer-compatible `i32`
 `indptr`, page indices, and last-page lengths before mapping logical KV tokens
-to NHD physical pages. CPU tests establish numerical equivalence to contiguous
-decode. A CUDA plan, H20 correctness and sanitizer evidence, matched eager and
-Graph performance, and real model invocation remain open.
+to NHD physical pages. Its direct one-warp-per-request-head cuda-oxide provider
+passes MHA/MQA/GQA H20 correctness and all four Compute Sanitizer tools. A
+matched FlashInfer eager result, fixed-address Graph replay and performance,
+ragged prefill, and real model invocation remain open.
 
 ## 5. Decode and KV operations
 

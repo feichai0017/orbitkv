@@ -163,9 +163,17 @@ The backend-independent paged batch-decode contract separates immutable tensor
 shape from per-invocation page metadata. The specification fixes BF16, NHD,
 D128, page size 16, batch size, head mapping, and page-pool capacity. A
 validated view checks `i32` `indptr`, physical page indices, and last-page
-lengths before exposing logical-token mapping. This lets a future immutable
-CUDA plan retain fixed page-pool addresses while each decode step updates only
-the page-table buffers. No paged CUDA provider is admitted yet.
+lengths before exposing logical-token mapping. This lets immutable CUDA plans
+retain fixed page-pool addresses while each decode step updates only
+the page-table buffers.
+
+The first paged CUDA plan is now admitted on H20. One warp handles one request
+and query-head pair with packed BF16x2 access and F32 online softmax. Host
+preflight checks every fixed buffer span. Device-resident page-table content
+cannot be synchronously inspected without a copy, so valid metadata is the
+numerical precondition and request-local device guards prevent invalid dynamic
+values from producing out-of-bounds K/V access. The provider does not yet
+report asynchronous metadata-content errors.
 
 Relative to the recorded direct baseline, the current matched result lowers
 Loom latency by 5.39x at GQA KV length 127 and 38.19x at KV length 4096.

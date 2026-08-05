@@ -21,7 +21,7 @@ tracks the pinned upstream comparison.
 | RMSNorm FP16 and BF16 | Rust / cuda-oxide | device correct | Scalar and packed paths pass H20 correctness and sanitizer gates |
 | BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
 | BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 direct and split-K MHA/MQA/GQA paths pass H20 correctness and sanitizer gates |
-| BF16 paged batch decode | Rust contract and CPU reference | contract | NHD D128, page size 16, MHA/MQA/GQA, validated `i32` page tables, full window |
+| BF16 paged batch decode | Rust / cuda-oxide | device correct | NHD D128 page-size-16 MHA/MQA/GQA passes H20 correctness and sanitizer gates |
 
 The matched parallel-merge H20 result is shape-specific. The complete split-K
 path lowers Loom median latency by 5.39x at GQA KV length 127 and 38.19x at KV
@@ -56,9 +56,11 @@ kernel, Graph, engine, and serving measurements have different timed regions.
 
 The paged batch-decode contract matches FlashInfer's `indptr`, physical page
 index, and last-page-length semantics for one query token per request. Its
-current tests cover exact spans, malformed metadata, logical-to-physical token
-mapping, and numerical equivalence to contiguous decode. It has no CUDA,
-Graph, H20 correctness, or performance claim yet.
+CPU tests cover malformed metadata, logical-to-physical token mapping, and
+numerical equivalence to contiguous decode. The permanent direct CUDA provider
+passes H20 MHA/MQA/GQA cases, exact-span preflight, an invalid-page device
+guard, and four Compute Sanitizer tools. Matched FlashInfer performance, Graph,
+engine, and serving gates remain open.
 
 ## Admission
 

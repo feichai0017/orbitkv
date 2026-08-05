@@ -14,7 +14,7 @@ export const operatorFamilies = [
   },
   {
     name: "Attention",
-    boundary: "Single decode baseline, then paged decode, split-K, and state merge.",
+    boundary: "Single and paged decode, split-K, state merge, then ragged prefill.",
     state: "Partial device correct",
   },
   {
@@ -53,6 +53,6 @@ export const milestones = [
   {
     milestone: "03",
     name: "Attention core",
-    reason: "Parallel merge cuts Loom KV4096 latency 38.19x from baseline; FlashInfer remains 2.09x lower-latency.",
+    reason: "Single and paged decode pass H20 gates; matched paged performance and Graph replay remain open.",
   },
 ]

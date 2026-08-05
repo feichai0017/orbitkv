@@ -55,6 +55,7 @@ The current device paths are:
 | Contiguous RMSNorm F32, FP16, BF16 | Rust device kernels compiled with cuda-oxide | Owned-binding revision device-correct and sanitizer-clean |
 | Contiguous BF16 GEMM with F32 accumulation | One fixed cuBLASLt algorithm | Device-correct with fixed-address Graph replay and sanitizer coverage |
 | BF16 single-request decode attention | Rust device kernel compiled with cuda-oxide | Narrow NHD D128 contract device-correct and sanitizer-clean |
+| BF16 paged batch decode attention | Rust device kernel compiled with cuda-oxide | NHD D128 page-size-16 contract device-correct and sanitizer-clean |
 
 All providers use the same public flow:
 
@@ -79,9 +80,10 @@ tune or fall back.
 
 The backend-independent crate now includes a BF16 NHD D128 page-size-16 batch
 decode contract and CPU reference with FlashInfer-compatible page-table
-semantics. Its CUDA provider, H20 qualification, Graph replay, and performance
-evidence remain roadmap work, as do sampling, KV-cache mutation, MoE, and
-quantization.
+semantics. Its direct CUDA provider passes the declared H20 correctness and
+sanitizer gates. Matched FlashInfer performance, Graph replay, engine
+integration, and serving evidence remain roadmap work, as do sampling,
+KV-cache mutation, MoE, and quantization.
 
 The first single-decode slice covers BF16 MHA, MQA, and GQA with NHD caches and
 head dimension 128. It does not establish FlashInfer performance parity. See the
