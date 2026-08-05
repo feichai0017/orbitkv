@@ -54,8 +54,8 @@ separate ownership or safety boundary.
 
 ## Operator lifecycle
 
-The current RMSNorm, BF16 GEMM, and single-decode attention slices implement
-this lifecycle:
+The current RMSNorm, BF16 GEMM, and single-decode attention device slices
+implement this lifecycle:
 
 ```text
 validated specification
@@ -158,6 +158,14 @@ The merge kernel uses eight warps to merge contiguous partition ranges into
 block-local shared states, then warp zero merges those eight states. CUPTI
 activity timing records a KV-length-4096 merge reduction from `20.192` to
 `5.056` microseconds.
+
+The backend-independent paged batch-decode contract separates immutable tensor
+shape from per-invocation page metadata. The specification fixes BF16, NHD,
+D128, page size 16, batch size, head mapping, and page-pool capacity. A
+validated view checks `i32` `indptr`, physical page indices, and last-page
+lengths before exposing logical-token mapping. This lets a future immutable
+CUDA plan retain fixed page-pool addresses while each decode step updates only
+the page-table buffers. No paged CUDA provider is admitted yet.
 
 Relative to the recorded direct baseline, the current matched result lowers
 Loom latency by 5.39x at GQA KV length 127 and 38.19x at KV length 4096.

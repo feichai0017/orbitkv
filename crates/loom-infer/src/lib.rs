@@ -10,10 +10,11 @@ pub mod gemm;
 pub mod rms_norm;
 
 pub use attention::{
-    Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, SINGLE_DECODE_HEAD_DIM,
-    SINGLE_DECODE_PARTIAL_STATE_WIDTH, single_decode_bf16_reference,
-    single_decode_bf16_split_k_merge_reference, single_decode_bf16_split_k_partials_reference,
-    single_decode_bf16_split_k_reference,
+    Bf16PagedBatchDecodePageTable, Bf16PagedBatchDecodeSpec, Bf16SingleDecodeSpec,
+    Bf16SingleDecodeSplitKSpec, PAGED_BATCH_DECODE_PAGE_SIZE, SINGLE_DECODE_HEAD_DIM,
+    SINGLE_DECODE_PARTIAL_STATE_WIDTH, paged_batch_decode_bf16_reference,
+    single_decode_bf16_reference, single_decode_bf16_split_k_merge_reference,
+    single_decode_bf16_split_k_partials_reference, single_decode_bf16_split_k_reference,
 };
 pub use dtype::DType;
 pub use error::ContractError;

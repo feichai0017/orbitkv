@@ -31,7 +31,7 @@ No complete domain-level parity is currently claimed.
 
 | Domain | Representative v0.6.16.post1 surface | Loom state |
 | --- | --- | --- |
-| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 single-request NHD D128 direct and split-K MHA/MQA/GQA only |
+| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 single-request NHD D128 has direct and split-K GPU paths, while paged batch decode has a CPU contract only |
 | Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `planned`; no attention provider |
 | Mixed-batch attention | [`BatchAttention`, attention-sink wrapper](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
 | MLA attention | [`BatchMLAPagedAttentionWrapper`, XQA and TRT-LLM MLA decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
@@ -96,6 +96,14 @@ uses an eight-warp block-local merge and retuned partition counts. Relative to
 the direct baseline, Loom reaches 5.39x and 38.19x lower latency at GQA KV
 lengths 127 and 4096. FlashInfer remains 1.17x and 2.09x lower-latency.
 
-The next contract adds BF16 paged batch decode with head dimension 128, page
-size 16, GQA, and fixed-address CUDA Graph replay. Only that second slice begins
-to cover continuous-batching serving behavior.
+The next contract now exists at the backend-independent layer: BF16 paged batch
+decode with NHD pages, head dimension 128, page size 16, MHA/MQA/GQA, one query
+token per request, full window, and no positional encoding or soft cap. Its
+`i32` page table uses `indptr`, physical page indices, and per-request
+last-page lengths compatible with the pinned FlashInfer wrapper. CPU tests
+cover malformed metadata, arbitrary physical page order, tail truncation, and
+numerical equivalence to contiguous decode.
+
+The paged contract does not yet have a permanent CUDA provider, H20 evidence,
+matched FlashInfer measurement, or fixed-address CUDA Graph replay. Those gates
+are required before it begins to establish continuous-batching device behavior.

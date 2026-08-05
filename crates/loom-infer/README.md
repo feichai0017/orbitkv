@@ -4,5 +4,7 @@
 implementations. The crate has no CUDA, FFI, runtime, or framework dependency.
 
 The current contracts cover RMSNorm for F32, FP16, and BF16, contiguous BF16
-GEMM, and BF16 single-request decode attention. The attention contract fixes
-NHD caches, head dimension 128, F32 accumulation, BF16 output, and F32 log2-LSE.
+GEMM, BF16 single-request decode attention, and BF16 paged batch decode. The
+paged contract fixes NHD pages, head dimension 128, page size 16, validated
+FlashInfer-compatible page tables, F32 accumulation, BF16 output, and F32
+log2-LSE. Its CUDA provider remains future work.

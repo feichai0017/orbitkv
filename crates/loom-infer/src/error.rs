@@ -11,6 +11,10 @@ pub enum ContractError {
         expected: usize,
         actual: usize,
     },
+    UnsupportedPageSize {
+        expected: usize,
+        actual: usize,
+    },
     InvalidHeadMapping {
         query_heads: usize,
         kv_heads: usize,
@@ -18,6 +22,27 @@ pub enum ContractError {
     InvalidPartitionCount {
         partitions: usize,
         kv_len: usize,
+    },
+    InvalidPageIndptrStart {
+        actual: i32,
+    },
+    NonMonotonicPageIndptr {
+        request: usize,
+        start: i32,
+        end: i32,
+    },
+    EmptyPagedRequest {
+        request: usize,
+    },
+    PageIndexOutOfRange {
+        position: usize,
+        index: i32,
+        max_num_pages: usize,
+    },
+    InvalidLastPageLength {
+        request: usize,
+        length: i32,
+        page_size: usize,
     },
     UnsupportedDType(DType),
     LengthMismatch {
@@ -42,6 +67,10 @@ impl fmt::Display for ContractError {
                 formatter,
                 "unsupported attention head dimension: expected {expected}, got {actual}"
             ),
+            Self::UnsupportedPageSize { expected, actual } => write!(
+                formatter,
+                "unsupported KV page size: expected {expected}, got {actual}"
+            ),
             Self::InvalidHeadMapping {
                 query_heads,
                 kv_heads,
@@ -52,6 +81,36 @@ impl fmt::Display for ContractError {
             Self::InvalidPartitionCount { partitions, kv_len } => write!(
                 formatter,
                 "attention partition count must be in 1..={kv_len}, got {partitions}"
+            ),
+            Self::InvalidPageIndptrStart { actual } => {
+                write!(formatter, "page indptr must start at zero, got {actual}")
+            }
+            Self::NonMonotonicPageIndptr {
+                request,
+                start,
+                end,
+            } => write!(
+                formatter,
+                "page indptr must be nondecreasing at request {request}, got {start} then {end}"
+            ),
+            Self::EmptyPagedRequest { request } => {
+                write!(formatter, "paged decode request {request} has no KV pages")
+            }
+            Self::PageIndexOutOfRange {
+                position,
+                index,
+                max_num_pages,
+            } => write!(
+                formatter,
+                "page index at position {position} must be in 0..{max_num_pages}, got {index}"
+            ),
+            Self::InvalidLastPageLength {
+                request,
+                length,
+                page_size,
+            } => write!(
+                formatter,
+                "last page length for request {request} must be in 1..={page_size}, got {length}"
             ),
             Self::UnsupportedDType(dtype) => write!(formatter, "unsupported dtype {dtype:?}"),
             Self::LengthMismatch {

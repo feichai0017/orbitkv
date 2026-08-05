@@ -75,7 +75,10 @@ correctness and sanitizer gates.
 - retain the BF16 NHD D128 single-request MHA/MQA/GQA correctness baseline.
 - retain the matched eager-provider benchmark against the pinned FlashInfer
   release and add an isolated Graph/kernel timing gate.
-- implement ragged prefill and paged MQA/GQA decode.
+- retain the backend-independent BF16 NHD D128 page-size-16 batch-decode
+  contract and CPU oracle.
+- implement its checked cuda-oxide plan and permanent MHA/MQA/GQA provider,
+  then implement ragged prefill.
 - retain split-K execution, stable F32 state merge, and its H20 correctness
   gate.
 - support common causal and sliding-window contracts.
@@ -91,8 +94,13 @@ sanitizer gates with checked workspace and two-command admission. They lower
 Loom median eager latency by 5.39x at GQA KV length 127 and 38.19x at KV length
 4096 relative to the recorded direct baseline. FlashInfer remains 1.17x and
 2.09x lower-latency. CUPTI activity timing now separates partial and merge
-kernel duration; hardware-counter profiling, Graph replay, paged batching, and
-real model invocation remain open.
+kernel duration.
+
+The paged batch-decode contract validates FlashInfer-compatible `i32`
+`indptr`, page indices, and last-page lengths before mapping logical KV tokens
+to NHD physical pages. CPU tests establish numerical equivalence to contiguous
+decode. A CUDA plan, H20 correctness and sanitizer evidence, matched eager and
+Graph performance, and real model invocation remain open.
 
 ## 5. Decode and KV operations
 

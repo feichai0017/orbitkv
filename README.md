@@ -77,8 +77,11 @@ The GEMM contract is `D[M,N] = A[M,K] * W[N,K]^T` over contiguous row-major
 BF16 tensors. Algorithm selection happens during planning. Enqueue does not
 tune or fall back.
 
-Paged attention, sampling, KV-cache, MoE, quantization, and performance
-qualification remain roadmap work.
+The backend-independent crate now includes a BF16 NHD D128 page-size-16 batch
+decode contract and CPU reference with FlashInfer-compatible page-table
+semantics. Its CUDA provider, H20 qualification, Graph replay, and performance
+evidence remain roadmap work, as do sampling, KV-cache mutation, MoE, and
+quantization.
 
 The first single-decode slice covers BF16 MHA, MQA, and GQA with NHD caches and
 head dimension 128. It does not establish FlashInfer performance parity. See the
