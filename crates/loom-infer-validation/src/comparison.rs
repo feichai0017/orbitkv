@@ -13,6 +13,12 @@ pub struct Comparison {
     pub digest: u64,
 }
 
+pub fn digest_bf16(values: &[bf16]) -> u64 {
+    values.iter().fold(FNV_OFFSET_BASIS, |digest, value| {
+        (digest ^ u64::from(value.to_bits())).wrapping_mul(FNV_PRIME)
+    })
+}
+
 pub fn compare_bf16(
     actual: &[bf16],
     expected: &[bf16],
@@ -88,6 +94,7 @@ mod tests {
         assert_eq!(comparison.max_abs, 1.0);
         assert_eq!(comparison.bit_mismatches, 1);
         assert_eq!(comparison.digest, 0xf25b_8807_a293_a56d);
+        assert_eq!(comparison.digest, digest_bf16(&actual));
     }
 
     #[test]

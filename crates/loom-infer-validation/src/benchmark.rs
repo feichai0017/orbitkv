@@ -15,6 +15,8 @@ pub struct BenchmarkRecord<'a> {
     pub dtype: &'a str,
     pub layout: &'a str,
     pub shape: serde_json::Value,
+    pub fixture_id: &'a str,
+    pub fixture_digests: serde_json::Value,
     pub warmup_launches: usize,
     pub launches_per_sample: usize,
     pub samples_us: Vec<f64>,

@@ -6,6 +6,7 @@ use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
 use loom_infer_cuda::rms_norm::{RmsNormArgs, RmsNormBf16Plan, RmsNormProvider};
 use loom_infer_validation::benchmark::BenchmarkRecord;
+use loom_infer_validation::comparison::digest_bf16;
 use serde_json::json;
 use std::env;
 use std::error::Error;
@@ -13,6 +14,7 @@ use std::sync::Arc;
 
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MEASUREMENT: &str = "eager_stream_batch_cuda_event";
+const FIXTURE_ID: &str = "xorshift64_mod2001_bf16_v1";
 
 struct RunIdentity {
     provider_commit: String,
@@ -127,14 +129,10 @@ fn benchmark_rms_norm(
 ) -> Result<(), Box<dyn Error>> {
     let spec = RmsNormSpec::new(rows, hidden_size, 1.0e-5, DType::Bf16)?;
     let plan: RmsNormBf16Plan = provider.plan_bf16(spec)?;
-    let input = Arc::new(DeviceBuffer::from_host(
-        stream,
-        &deterministic_bf16(spec.numel(), 0x524d_534e),
-    )?);
-    let weight = Arc::new(DeviceBuffer::from_host(
-        stream,
-        &deterministic_bf16(spec.hidden_size(), 0x5745_4947),
-    )?);
+    let input_host = deterministic_bf16(spec.numel(), 0x524d_534e);
+    let weight_host = deterministic_bf16(spec.hidden_size(), 0x5745_4947);
+    let input = Arc::new(DeviceBuffer::from_host(stream, &input_host)?);
+    let weight = Arc::new(DeviceBuffer::from_host(stream, &weight_host)?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.numel())?;
     let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
     let mut bindings = queue.bindings(3)?;
@@ -163,6 +161,11 @@ fn benchmark_rms_norm(
         dtype: "bf16",
         layout: "contiguous_rows_hidden",
         shape: json!({"rows": rows, "hidden_size": hidden_size}),
+        fixture_id: FIXTURE_ID,
+        fixture_digests: json!({
+            "input": format!("{:016x}", digest_bf16(&input_host)),
+            "weight": format!("{:016x}", digest_bf16(&weight_host))
+        }),
         warmup_launches: config.warmup_launches,
         launches_per_sample: config.launches_per_sample,
         samples_us,
@@ -180,14 +183,10 @@ fn benchmark_gemm(
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16GemmSpec::new(1, 4096, 4096)?;
     let plan: Bf16GemmPlan = provider.plan_bf16(spec)?;
-    let activation = Arc::new(DeviceBuffer::from_host(
-        stream,
-        &deterministic_bf16(spec.a_numel(), 0x4143_5449),
-    )?);
-    let weight = Arc::new(DeviceBuffer::from_host(
-        stream,
-        &deterministic_bf16(spec.weight_numel(), 0x4745_4d4d),
-    )?);
+    let activation_host = deterministic_bf16(spec.a_numel(), 0x4143_5449);
+    let weight_host = deterministic_bf16(spec.weight_numel(), 0x4745_4d4d);
+    let activation = Arc::new(DeviceBuffer::from_host(stream, &activation_host)?);
+    let weight = Arc::new(DeviceBuffer::from_host(stream, &weight_host)?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
     let workspace = DeviceBuffer::<u8>::zeroed(stream, plan.workspace_required_bytes())?;
     let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
@@ -223,6 +222,11 @@ fn benchmark_gemm(
         dtype: "bf16",
         layout: "A_row_major_W_row_major_transposed",
         shape: json!({"m": 1, "n": 4096, "k": 4096}),
+        fixture_id: FIXTURE_ID,
+        fixture_digests: json!({
+            "activation": format!("{:016x}", digest_bf16(&activation_host)),
+            "weight_storage": format!("{:016x}", digest_bf16(&weight_host))
+        }),
         warmup_launches: config.warmup_launches,
         launches_per_sample: config.launches_per_sample,
         samples_us,
@@ -241,18 +245,12 @@ fn benchmark_decode_case(
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16SingleDecodeSpec::new(case.kv_len, case.query_heads, case.kv_heads, 128)?;
     let plan: Bf16SingleDecodePlan = provider.plan_bf16(spec)?;
-    let query = Arc::new(DeviceBuffer::from_host(
-        stream,
-        &deterministic_bf16(spec.query_numel(), 0x5155_4552),
-    )?);
-    let key = Arc::new(DeviceBuffer::from_host(
-        stream,
-        &deterministic_bf16(spec.kv_numel(), 0x4b45_5900),
-    )?);
-    let value = Arc::new(DeviceBuffer::from_host(
-        stream,
-        &deterministic_bf16(spec.kv_numel(), 0x5641_4c55),
-    )?);
+    let query_host = deterministic_bf16(spec.query_numel(), 0x5155_4552);
+    let key_host = deterministic_bf16(spec.kv_numel(), 0x4b45_5900);
+    let value_host = deterministic_bf16(spec.kv_numel(), 0x5641_4c55);
+    let query = Arc::new(DeviceBuffer::from_host(stream, &query_host)?);
+    let key = Arc::new(DeviceBuffer::from_host(stream, &key_host)?);
+    let value = Arc::new(DeviceBuffer::from_host(stream, &value_host)?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
     let lse = DeviceBuffer::<f32>::zeroed(stream, spec.lse_numel())?;
     let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
@@ -294,6 +292,12 @@ fn benchmark_decode_case(
             "query_heads": case.query_heads,
             "kv_heads": case.kv_heads,
             "head_dim": 128
+        }),
+        fixture_id: FIXTURE_ID,
+        fixture_digests: json!({
+            "query": format!("{:016x}", digest_bf16(&query_host)),
+            "key": format!("{:016x}", digest_bf16(&key_host)),
+            "value": format!("{:016x}", digest_bf16(&value_host))
         }),
         warmup_launches: config.warmup_launches,
         launches_per_sample: config.launches_per_sample,

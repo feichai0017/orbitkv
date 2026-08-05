@@ -22,6 +22,10 @@ from flashinfer.utils import SINGLE_KERNEL_TMP_SIZE
 
 PROVIDER_COMMIT = "5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57"
 MEASUREMENT = "eager_stream_batch_cuda_event"
+FIXTURE_ID = "xorshift64_mod2001_bf16_v1"
+FNV_OFFSET_BASIS = 0xCBF29CE484222325
+FNV_PRIME = 0x00000100000001B3
+MASK64 = (1 << 64) - 1
 
 
 def env_positive_int(name: str, default: int) -> int:
@@ -55,11 +59,34 @@ def benchmark(fn: Callable[[], None]) -> list[float]:
     return samples_us
 
 
+def deterministic_bf16(length: int, salt: int) -> torch.Tensor:
+    state = 0x9E3779B97F4A7C15 ^ salt
+    values: list[float] = []
+    for _ in range(length):
+        state ^= (state << 13) & MASK64
+        state ^= state >> 7
+        state ^= (state << 17) & MASK64
+        state &= MASK64
+        signed = state % 2001 - 1000
+        values.append(signed / 2048.0)
+    return torch.tensor(values, dtype=torch.float32).to(torch.bfloat16)
+
+
+def digest_bf16(values: torch.Tensor) -> str:
+    bits = values.contiguous().view(torch.int16).view(-1).tolist()
+    digest = FNV_OFFSET_BASIS
+    for value in bits:
+        digest ^= value & 0xFFFF
+        digest = (digest * FNV_PRIME) & MASK64
+    return f"{digest:016x}"
+
+
 def write_record(
     operator: str,
     case: str,
     layout: str,
     shape: dict[str, int],
+    fixture_digests: dict[str, str],
     samples_us: list[float],
 ) -> None:
     print(
@@ -76,6 +103,8 @@ def write_record(
                 "dtype": "bf16",
                 "layout": layout,
                 "shape": shape,
+                "fixture_id": FIXTURE_ID,
+                "fixture_digests": fixture_digests,
                 "warmup_launches": WARMUP,
                 "launches_per_sample": LAUNCHES,
                 "samples_us": samples_us,
@@ -87,10 +116,10 @@ def write_record(
 
 
 def benchmark_rmsnorm(rows: int, hidden_size: int) -> None:
-    input_tensor = torch.randn(
-        (rows, hidden_size), device="cuda", dtype=torch.bfloat16
-    )
-    weight = torch.randn((hidden_size,), device="cuda", dtype=torch.bfloat16)
+    input_host = deterministic_bf16(rows * hidden_size, 0x524D534E)
+    weight_host = deterministic_bf16(hidden_size, 0x57454947)
+    input_tensor = input_host.reshape(rows, hidden_size).to("cuda")
+    weight = weight_host.to("cuda")
     output = torch.empty_like(input_tensor)
 
     def run() -> None:
@@ -108,16 +137,19 @@ def benchmark_rmsnorm(rows: int, hidden_size: int) -> None:
         f"bf16_r{rows}_h{hidden_size}",
         "contiguous_rows_hidden",
         {"rows": rows, "hidden_size": hidden_size},
+        {"input": digest_bf16(input_host), "weight": digest_bf16(weight_host)},
         samples_us,
     )
 
 
 def benchmark_gemm() -> None:
     m, n, k = 1, 4096, 4096
-    activation = torch.randn((m, k), device="cuda", dtype=torch.bfloat16)
+    activation_host = deterministic_bf16(m * k, 0x41435449)
+    activation = activation_host.reshape(m, k).to("cuda")
     # Setup transposes once. The timed API sees the FlashInfer contract's
     # column-major [K,N] weight view without a timed tensor copy.
-    weight_storage = torch.randn((n, k), device="cuda", dtype=torch.bfloat16)
+    weight_host = deterministic_bf16(n * k, 0x47454D4D)
+    weight_storage = weight_host.reshape(n, k).to("cuda")
     weight = weight_storage.transpose(0, 1)
     output = torch.empty((m, n), device="cuda", dtype=torch.bfloat16)
     workspace = torch.empty(
@@ -138,6 +170,10 @@ def benchmark_gemm() -> None:
         "bf16_m1_n4096_k4096_cublaslt",
         "A_row_major_W_row_major_transposed",
         {"m": m, "n": n, "k": k},
+        {
+            "activation": digest_bf16(activation_host),
+            "weight_storage": digest_bf16(weight_host),
+        },
         samples_us,
     )
 
@@ -146,13 +182,12 @@ def benchmark_decode(
     case: str, kv_len: int, query_heads: int, kv_heads: int
 ) -> None:
     head_dim = 128
-    query = torch.randn(
-        (query_heads, head_dim), device="cuda", dtype=torch.bfloat16
-    )
-    key = torch.randn(
-        (kv_len, kv_heads, head_dim), device="cuda", dtype=torch.bfloat16
-    )
-    value = torch.randn_like(key)
+    query_host = deterministic_bf16(query_heads * head_dim, 0x51554552)
+    key_host = deterministic_bf16(kv_len * kv_heads * head_dim, 0x4B455900)
+    value_host = deterministic_bf16(kv_len * kv_heads * head_dim, 0x56414C55)
+    query = query_host.reshape(query_heads, head_dim).to("cuda")
+    key = key_host.reshape(kv_len, kv_heads, head_dim).to("cuda")
+    value = value_host.reshape(kv_len, kv_heads, head_dim).to("cuda")
     output = torch.empty_like(query)
     lse = torch.empty((query_heads,), device="cuda", dtype=torch.float32)
     tmp = torch.empty(SINGLE_KERNEL_TMP_SIZE, device="cuda", dtype=torch.uint8)
@@ -195,6 +230,11 @@ def benchmark_decode(
             "query_heads": query_heads,
             "kv_heads": kv_heads,
             "head_dim": head_dim,
+        },
+        {
+            "query": digest_bf16(query_host),
+            "key": digest_bf16(key_host),
+            "value": digest_bf16(value_host),
         },
         samples_us,
     )
