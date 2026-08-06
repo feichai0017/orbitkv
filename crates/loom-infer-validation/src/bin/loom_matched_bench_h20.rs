@@ -6,8 +6,8 @@ use loom_infer::{
 };
 use loom_infer_cuda::attention::{
     AttentionProvider, Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs,
-    Bf16RaggedPrefillArgs, Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,
-    PrefillProvider,
+    Bf16RaggedPrefillAlgorithm, Bf16RaggedPrefillArgs, Bf16SingleDecodeArgs, Bf16SingleDecodePlan,
+    Bf16SingleDecodeSplitKArgs, PrefillProvider,
 };
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
@@ -536,6 +536,10 @@ fn benchmark_ragged_prefill_case(
     )?;
     let metadata = spec.validate_metadata(case.qo_indptr, case.kv_indptr)?;
     let plan = provider.plan_bf16_ragged(spec)?;
+    let algorithm = match plan.algorithm() {
+        Bf16RaggedPrefillAlgorithm::Direct => "direct_one_warp_per_query_row_head",
+        Bf16RaggedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
+    };
     let query_host = deterministic_bf16(spec.query_numel(), case.salt);
     let key_host = deterministic_bf16(spec.kv_numel(), case.salt ^ 0x4b45_5900);
     let value_host = deterministic_bf16(spec.kv_numel(), case.salt ^ 0x5641_4c55_4500);
@@ -594,7 +598,7 @@ fn benchmark_ragged_prefill_case(
         dtype: "bf16",
         layout: "NHD_D128_ragged",
         execution: json!({
-            "algorithm": "direct_one_warp_per_query_row_head",
+            "algorithm": algorithm,
             "causal": "bottom_right",
             "indptr_location": "device"
         }),

@@ -2,7 +2,7 @@ use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use half::bf16;
 use loom_infer::{Bf16RaggedPrefillSpec, ragged_prefill_bf16_reference};
 use loom_infer_cuda::attention::{
-    Bf16RaggedPrefillArgs, PrefillProvider, RaggedPrefillEnqueueError,
+    Bf16RaggedPrefillAlgorithm, Bf16RaggedPrefillArgs, PrefillProvider, RaggedPrefillEnqueueError,
 };
 use loom_infer_cuda::command::CommandQueue;
 use loom_infer_validation::comparison::{compare_bf16, compare_f32};
@@ -38,6 +38,10 @@ fn run_case(
     spec.validate_metadata(qo_indptr, kv_indptr)?;
     let stream = queue.stream().clone();
     let plan = provider.plan_bf16_ragged(spec)?;
+    let algorithm = match plan.algorithm() {
+        Bf16RaggedPrefillAlgorithm::Direct => "direct",
+        Bf16RaggedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp",
+    };
     let query_host = deterministic_bf16(spec.query_numel(), salt);
     let key_host = deterministic_bf16(spec.kv_numel(), salt ^ 0x4b45_5900);
     let value_host = deterministic_bf16(spec.kv_numel(), salt ^ 0x5641_4c55_4500);
@@ -114,7 +118,7 @@ fn run_case(
     println!(
         "{} batch_size={} nnz_qo={} nnz_kv={} query_heads={} kv_heads={} \
          group_size={} head_dim={} layout=NHD causal=bottom_right dtype=BF16 \
-         accumulation=F32 lse_domain=log2 commands=1 stream=non_default \
+         accumulation=F32 lse_domain=log2 algorithm={} commands=1 stream=non_default \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
          lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
         GateCase::new("ragged_prefill_h20", name),
@@ -125,6 +129,7 @@ fn run_case(
         spec.num_kv_heads(),
         spec.gqa_group_size(),
         spec.head_dim(),
+        algorithm,
         output_comparison.max_abs,
         output_comparison.bit_mismatches,
         output_comparison.digest,
@@ -198,14 +203,14 @@ fn run_invalid_metadata_guard(
     queue: &mut CommandQueue,
     provider: &PrefillProvider,
 ) -> Result<(), Box<dyn Error>> {
-    let spec = Bf16RaggedPrefillSpec::new(1, 1, 1, 1, 1, 128)?;
+    let spec = Bf16RaggedPrefillSpec::new(2, 1, 2, 1, 1, 128)?;
     let plan = provider.plan_bf16_ragged(spec)?;
     let stream = queue.stream().clone();
     let query = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.query_numel())?);
     let key = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.kv_numel())?);
     let value = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.kv_numel())?);
-    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[1_i32, 1])?);
-    let kv_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1])?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 2, 1])?);
+    let kv_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2])?);
     let output_sentinel = vec![bf16::NAN; spec.output_numel()];
     let lse_sentinel = vec![f32::NAN; spec.lse_numel()];
     let output = DeviceBuffer::from_host(&stream, &output_sentinel)?;
@@ -247,7 +252,7 @@ fn run_invalid_metadata_guard(
         return Err("invalid metadata did not preserve output sentinels".into());
     }
     println!(
-        "{} invalid_indptr=guarded sentinel_preserved=true",
+        "{} nonmonotonic_indptr=guarded sentinel_preserved=true",
         GateCase::new("ragged_prefill_h20", "invalid_metadata_guard")
     );
     Ok(())
@@ -284,6 +289,24 @@ fn main() -> Result<(), Box<dyn Error>> {
         Bf16RaggedPrefillSpec::new(2, 6, 11, 16, 4, 128)?,
         &[0, 4, 6],
         &[0, 7, 11],
+        0x4001,
+    )?;
+    run_case(
+        &mut queue,
+        &provider,
+        "mqa_token_parallel",
+        Bf16RaggedPrefillSpec::new(3, 21, 896, 8, 1, 128)?,
+        &[0, 1, 5, 21],
+        &[0, 128, 384, 896],
+        0x2001,
+    )?;
+    run_case(
+        &mut queue,
+        &provider,
+        "gqa4_token_parallel",
+        Bf16RaggedPrefillSpec::new(2, 96, 1280, 16, 4, 128)?,
+        &[0, 32, 96],
+        &[0, 256, 1280],
         0x4001,
     )?;
     run_short_indptr_case(&mut queue, &provider)?;
