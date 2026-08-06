@@ -90,7 +90,9 @@ correctness and sanitizer gates.
 - retain split-K execution, stable F32 state merge, and its H20 correctness
   gate.
 - support common causal and sliding-window contracts.
-- integrate RoPE, KV append, and page-table access.
+- retain the standard BF16 D128 NeoX RoPE explicit-position provider and its
+  correctness, sanitizer, and matched eager gates.
+- integrate RoPE variants, KV append, and page-table access.
 - replay fixed plans through CUDA Graphs.
 
 Exit: a real model invokes Loom attention without tensor copies and preserves
@@ -131,6 +133,14 @@ now passes for the tiled partial-plus-merge path after two replays and external
 owner teardown. The matched single-replay Graph result records Loom at `50.480`
 microseconds and FlashInfer at `32.640` microseconds, with FlashInfer `1.547x`
 lower-latency on the admitted long-GQA shape. Engine invocation remains open.
+
+The first standalone RoPE slice accepts explicit I32 position IDs for BF16
+NHD D128 Q/K tensors, rotates all 128 dimensions in NeoX split-half style, and
+uses CUDA libdevice full-range math. It passes positions through 32,767 and all
+four sanitizer tools. On the admitted 96-token Q16/K4 suffix shape, Loom records
+`3.997` microseconds versus FlashInfer's `5.077` microseconds, or `1.270x`
+lower latency. Interleaved, ragged-offset, Llama 3.1, cached, quantized, and
+fused KV-append variants remain open.
 
 ## 5. Decode and KV operations
 

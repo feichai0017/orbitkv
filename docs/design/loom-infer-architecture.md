@@ -247,6 +247,16 @@ Loom latency by 5.39x at GQA KV length 127 and 38.19x at KV length 4096.
 FlashInfer remains 1.17x and 2.09x lower-latency. Hardware-counter metrics and
 single-decode Graph performance remain separate open gates.
 
+The first standard RoPE contract is a separate pure-Rust operator boundary.
+It consumes BF16 NHD Q/K tensors plus explicit I32 positions and writes
+caller-owned outputs. The first cuda-oxide plan fixes D128, full-dimension
+NeoX split-half rotation, scale one, and theta 10,000. One 64-thread CTA owns
+one token/head state, and each thread rotates one split-half pair using CUDA
+libdevice `powf`, `sinf`, and `cosf`. This full-math path and FlashInfer's
+`__powf`/`__sincosf` fast-math path satisfy independent standard references
+within the shared BF16 error limit but are not bitwise equal. Loom is `1.270x`
+lower-latency on the admitted 96-token Q16/K4 matched eager shape.
+
 ## Vendor providers
 
 Loom Infer includes GEMM and communication in its planning surface. Vendor

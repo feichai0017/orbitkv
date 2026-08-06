@@ -50,6 +50,7 @@ workspace member but not a default member.
 | `src/error.rs` | Recoverable contract and host-buffer errors |
 | `src/rms_norm/mod.rs` | RMSNorm specification and CPU references |
 | `src/gemm/mod.rs` | Contiguous BF16 GEMM specification and CPU reference |
+| `src/rope/mod.rs` | Standard RoPE specification and CPU reference |
 | `src/attention/mod.rs` | Stable attention facade and public re-exports |
 | `src/attention/single_decode/mod.rs` | Contiguous decode, split-K state, and CPU references |
 | `src/attention/paged_decode/mod.rs` | Paged decode, page-table validation, and CPU reference |
@@ -152,6 +153,7 @@ FlashInfer defines the feature domains, not Loom's language-level layout:
 | Ragged prefill and indptr semantics | `loom-infer/attention/ragged_prefill/mod.rs` |
 | CUDA decode providers and dispatch | `loom-infer-cuda/attention/decode.rs` |
 | CUDA ragged prefill provider | `loom-infer-cuda/attention/prefill.rs` |
+| Standard RoPE contract and CUDA provider | `loom-infer/rope/mod.rs`, `loom-infer-cuda/rope/mod.rs` |
 | Wrapper planning lifecycle | Immutable Rust plan types, not Python wrapper classes |
 | Workspace and stream ownership | Shared `command` and `graph` modules |
 | Hardware tests and benchmarks | `loom-infer-validation`, never product modules |

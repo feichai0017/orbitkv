@@ -374,3 +374,16 @@ provider-ordered isolated-kernel gate.
 Fixed Rust-kernel argument packs, matched RMSNorm, hardware-counter profiling,
 provider-ordered paged kernel timing, and non-ragged Graph performance gates
 remain open.
+
+The [standard RoPE correctness record](../results/h20-bf16-rope-pos-ids-correctness-20260806.json)
+qualifies BF16 NHD D128 NeoX split-half rotation with explicit I32 positions
+through 32,767. The query/key maximum absolute errors are `0.00390625` and
+`0.001953125`; memcheck, racecheck, initcheck, and synccheck report no errors
+or leaks.
+
+The [matched RoPE eager record](../results/h20-flashinfer-v0.6.16.post1-bf16-rope-pos-ids-eager-performance-20260806.json)
+uses the same Q/K bits and positions for both providers. Loom records `3.997`
+microseconds and FlashInfer records `5.077` microseconds, making Loom `1.270x`
+lower-latency. Both provider-order deltas are below five percent. Output bits
+differ because Loom uses full CUDA libdevice math while FlashInfer uses
+fast-math intrinsics; both remain within the shared BF16 reference limit.

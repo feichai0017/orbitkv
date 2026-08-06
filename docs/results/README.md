@@ -5,6 +5,20 @@ providers.
 
 ## Results
 
+The first [BF16 standard RoPE matched eager record](h20-flashinfer-v0.6.16.post1-bf16-rope-pos-ids-eager-performance-20260806.json)
+uses explicit I32 positions matching two ragged prefill suffixes. Loom records
+`3.997` microseconds and FlashInfer records `5.077` microseconds, making Loom
+`1.270x` lower-latency. Provider-order deltas are `0.048%` and `2.872%`; all
+200 raw samples are embedded. Both providers pass independent standard RoPE
+references within the shared BF16 error limit, but their fast-math output bits
+are not equal.
+
+The [BF16 standard RoPE H20 correctness record](h20-bf16-rope-pos-ids-correctness-20260806.json)
+qualifies the first narrow NeoX split-half, D128, explicit-position provider
+through position 32,767. Four Compute Sanitizer tools report no errors or
+leaks. The kernel uses 26 registers, no spills or barriers, and CUDA libdevice
+`powf`, `sinf`, and `cosf`.
+
 The current [matched ragged fixed-address Graph performance record](h20-flashinfer-v0.6.16.post1-ragged-prefill-graph-performance-20260806.json)
 measures one replay per CUDA-event sample with one matched completion event
 inside both timed paths. Loom records `50.480` microseconds and FlashInfer
