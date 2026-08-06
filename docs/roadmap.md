@@ -79,8 +79,8 @@ correctness and sanitizer gates.
   contract and CPU oracle.
 - retain its checked cuda-oxide MHA/MQA/GQA provider and H20 correctness and
   sanitizer gate.
-- optimize paged MQA/GQA page traversal and token parallelism against the
-  matched eager and CUPTI records, then add fixed-address Graph gates.
+- retain eight-warp paged MQA/GQA token parallelism and its matched eager and
+  CUPTI gates, then add fixed-address Graph gates.
 - implement ragged prefill.
 - retain split-K execution, stable F32 state merge, and its H20 correctness
   gate.
@@ -103,12 +103,12 @@ The paged batch-decode contract validates FlashInfer-compatible `i32`
 `indptr`, page indices, and last-page lengths before mapping logical KV tokens
 to NHD physical pages. Its direct one-warp-per-request-head cuda-oxide provider
 passes MHA/MQA/GQA H20 correctness and all four Compute Sanitizer tools. A
-matched FlashInfer eager result now covers three shapes: Loom is 4.21x
-lower-latency for batch-1 MHA, FlashInfer is 1.62x lower-latency for
-mixed-length batch-3 MQA, and batch-4 GQA has no stable ranking because
-FlashInfer's order delta is 52.49%. CUPTI shows Loom MQA/GQA latency is kernel
-dominated. Fixed-address Graph replay and performance, ragged prefill, and real
-model invocation remain open.
+eight-warp block-local token parallelism lowers Loom MQA/GQA eager latency by
+3.78x and 3.32x relative to the direct record. Loom is now 4.41x lower-latency
+for MHA and 2.35x lower-latency for MQA than FlashInfer. Batch-4 GQA still has
+no stable ranking because FlashInfer's order delta is 60.62%. Fixed-address
+Graph replay and performance, ragged prefill, and real model invocation remain
+open.
 
 ## 5. Decode and KV operations
 

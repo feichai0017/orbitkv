@@ -53,6 +53,6 @@ export const milestones = [
   {
     milestone: "03",
     name: "Attention core",
-    reason: "Paged decode passes H20; MQA is kernel-bound and remains 1.62x behind the matched FlashInfer path.",
+    reason: "Eight-warp paged decode is 4.41x ahead on MHA and 2.35x ahead on matched MQA.",
   },
 ]

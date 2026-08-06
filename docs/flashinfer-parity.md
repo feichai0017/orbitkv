@@ -114,12 +114,17 @@ CUDA events, and both provider orders. Loom has 4.21x lower combined median
 latency for batch-1 MHA at KV length 1. FlashInfer has 1.62x lower combined
 median latency for the mixed-length batch-3 MQA case.
 
-The batch-4 GQA eager ranking is excluded: FlashInfer's two provider-order
-medians are `15.048` and `22.946` microseconds, a 52.49% delta. Independent
-process and CPU-affinity diagnostics reproduce the bistability, while CUPTI
-activity records a stable `3.712` microsecond FlashInfer kernel median. The
-eager interval therefore contains process-state-sensitive host gaps for that
-shape.
+The current [token-parallel result](results/h20-flashinfer-v0.6.16.post1-paged-token-parallel-eager-performance-20260806.json)
+preserves the same fixtures and measurement. Eight warps partition each
+MQA/GQA request-head KV range and merge stable F32 state inside one block.
+Loom MQA and GQA eager latency falls by 3.78x and 3.32x relative to the direct
+record. Loom is now 4.41x lower-latency for MHA and 2.35x lower-latency for
+MQA than FlashInfer.
+
+The batch-4 GQA eager ranking remains excluded: FlashInfer's provider-order
+delta is 60.62%. CUPTI records Loom kernel medians of `2.176`, `4.864`, and
+`4.928` microseconds for MHA, MQA, and GQA, versus direct medians of `2.176`,
+`20.928`, and `18.304` microseconds.
 
 Fixed-address CUDA Graph replay, a provider-ordered isolated-kernel gate,
 engine invocation, and serving results remain open before a

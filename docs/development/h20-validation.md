@@ -279,17 +279,20 @@ log2-LSE error `4.768371582e-7`. It covers mixed request lengths, page
 reordering and reuse, exact metadata spans, and a device-side invalid-page
 guard. All four Compute Sanitizer tools report zero errors.
 
-The [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
+The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
 retains both provider orders and all 600 raw samples. Loom is 4.21x
 lower-latency for batch-1 MHA at KV length 1. FlashInfer is 1.62x
 lower-latency for the mixed-length batch-3 MQA case. The batch-4 GQA shape is
 excluded from stable ranking because FlashInfer's order delta is 52.49%.
 
-CUPTI diagnostics separate that order effect from device work. FlashInfer's
-GQA kernel median is `3.712` microseconds across 400 instances, despite
-process-level eager medians ranging from `13.844` to `22.946` microseconds.
-Loom kernel medians are `2.176`, `20.928`, and `18.304` microseconds for the
-MHA, MQA, and GQA shapes. These diagnostics guide optimization but are not a
+The current [token-parallel record](../results/h20-flashinfer-v0.6.16.post1-paged-token-parallel-eager-performance-20260806.json)
+uses the same fixtures and protocol. Eight-warp block-local state merge lowers
+Loom MQA/GQA eager latency by 3.78x and 3.32x. Loom is now 4.41x
+lower-latency for MHA and 2.35x lower-latency for MQA than FlashInfer. GQA
+remains excluded because FlashInfer's order delta is 60.62%.
+
+CUPTI records current Loom MHA/MQA/GQA kernel medians of `2.176`, `4.864`,
+and `4.928` microseconds. These diagnostics guide optimization but are not a
 provider-ordered isolated-kernel gate.
 
 Fixed Rust-kernel argument packs, matched RMSNorm, hardware-counter profiling,

@@ -145,12 +145,12 @@ direct baseline; FlashInfer remains 1.17x and 2.09x lower-latency at those
 shapes. CUPTI activity records isolated kernel decomposition, but these records
 make no hardware-counter, Graph-performance, engine, or serving claim.
 
-The first matched paged batch-decode result is also shape-specific. Loom has
-4.21x lower median eager latency for batch-1 MHA at KV length 1, while
-FlashInfer has 1.62x lower median eager latency for the mixed-length batch-3
-MQA case. The batch-4 GQA comparison is excluded from stable ranking because
-FlashInfer's provider-order median delta is 52.49%. CUPTI diagnostics show
-Loom's MQA and GQA paths are kernel-duration bound.
+The current paged batch-decode result is also shape-specific. Eight-warp
+token parallelism lowers Loom MQA and GQA eager latency by 3.78x and 3.32x
+relative to the immutable direct record. Loom now has 4.41x lower stable-shape
+median latency for batch-1 MHA and 2.35x lower latency for mixed-length
+batch-3 MQA than FlashInfer. The batch-4 GQA comparison remains excluded from
+stable ranking because FlashInfer's provider-order delta is 60.62%.
 
 See the [architecture](docs/design/loom-infer-architecture.md),
 [repository layout](docs/design/repository-layout.md),

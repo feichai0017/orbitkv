@@ -5,8 +5,22 @@ providers.
 
 ## Results
 
-Two 2026-08-06 records qualify paged batch decode at the device and matched
-eager gates. They contain no Graph, engine, or serving claim.
+Four 2026-08-06 records preserve the direct paged baseline and qualify the
+current token-parallel provider at device and matched eager gates. They contain
+no Graph, engine, or serving claim.
+
+- [FlashInfer v0.6.16.post1 paged token-parallel matched eager performance](h20-flashinfer-v0.6.16.post1-paged-token-parallel-eager-performance-20260806.json):
+  eight-warp block-local merge lowers Loom MQA/GQA eager latency by 3.78x and
+  3.32x versus the immutable direct record. Loom is 4.41x lower-latency for
+  MHA and 2.35x lower-latency for MQA than FlashInfer. GQA remains excluded
+  from stable ranking because FlashInfer's order delta is 60.62%. All 600 raw
+  samples are retained.
+
+- [BF16 paged token-parallel H20 correctness](h20-bf16-paged-batch-decode-token-parallel-correctness-20260806.json):
+  direct MHA and eight-warp MQA/GQA produce BF16 output bit-exact with the CPU
+  oracle. Four Compute Sanitizer tools report no errors. The token-parallel
+  kernel uses 39 registers and 4,192 bytes shared memory with no stack or
+  spills.
 
 - [FlashInfer v0.6.16.post1 paged batch-decode matched eager performance](h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json):
   identical BF16 page-pool bits, `i32` page tables, preallocated buffers, CUDA

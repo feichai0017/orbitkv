@@ -26,18 +26,18 @@ import { repositoryUrl } from "../data/site";
       <div class="doc-note">
         <strong>Paged decode has shape-specific winners.</strong>
         <p>
-          Identical BF16 page-pool bits, I32 page tables, preallocated buffers,
-          CUDA events, and both provider orders were used. Loom is 4.21x
-          lower-latency for batch-1 MHA. FlashInfer is 1.62x lower-latency for
-          mixed-length batch-3 MQA.
+          Eight-warp block-local token parallelism lowers Loom MQA and GQA
+          eager latency by 3.78x and 3.32x relative to the direct record. Loom
+          is now 4.41x lower-latency for batch-1 MHA and 2.35x lower-latency
+          for mixed-length batch-3 MQA than FlashInfer.
         </p>
         <p>
           The batch-4 GQA ranking is excluded because FlashInfer's order delta
-          is 52.49%. All 600 raw samples are retained. CUPTI diagnostics show
-          Loom MQA/GQA eager latency is kernel-bound.
+          is 60.62%. All 600 current raw samples are retained. CUPTI records
+          Loom MQA/GQA kernel medians of 4.864 and 4.928 microseconds.
         </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json`}>
-          Paged batch-decode matched performance result
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-token-parallel-eager-performance-20260806.json`}>
+          Paged token-parallel matched performance result
         </a>
       </div>
       <div class="doc-note">

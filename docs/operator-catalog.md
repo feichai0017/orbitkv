@@ -61,13 +61,13 @@ numerical equivalence to contiguous decode. The permanent direct CUDA provider
 passes H20 MHA/MQA/GQA cases, exact-span preflight, an invalid-page device
 guard, and four Compute Sanitizer tools.
 
-The first matched paged result retains 600 raw eager samples and both provider
-orders. Loom is 4.21x lower-latency for the batch-1 MHA KV-length-1 case;
-FlashInfer is 1.62x lower-latency for the mixed-length batch-3 MQA case. The
-batch-4 GQA ranking is excluded because FlashInfer's order delta is 52.49%.
-CUPTI diagnostics identify Loom's MQA/GQA direct kernels, rather than command
-submission, as the next optimization target. Graph, engine, and serving gates
-remain open.
+The current matched paged result retains 600 raw eager samples and both
+provider orders. Eight-warp block-local token parallelism lowers Loom MQA and
+GQA latency by 3.78x and 3.32x relative to the immutable direct record. Loom
+is now 4.41x lower-latency for batch-1 MHA and 2.35x lower-latency for
+mixed-length batch-3 MQA than FlashInfer. The batch-4 GQA ranking remains
+excluded because FlashInfer's order delta is 60.62%. Graph, engine, and serving
+gates remain open.
 
 ## Admission
 
