@@ -8,6 +8,7 @@ use loom_infer_cuda::attention::{
     Bf16RaggedPrefillAlgorithm, Bf16RaggedPrefillArgs, PrefillProvider, RaggedPrefillEnqueueError,
 };
 use loom_infer_cuda::command::CommandQueue;
+use loom_infer_cuda::graph::GraphQueue;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -313,6 +314,143 @@ fn run_missing_workspace_case(
     Ok(())
 }
 
+fn run_tiled_graph_case(
+    queue: &mut CommandQueue,
+    provider: PrefillProvider,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16RaggedPrefillSpec::new(2, 96, 1280, 16, 4, 128)?;
+    let qo_indptr_host = [0_i32, 32, 96];
+    let kv_indptr_host = [0_i32, 256, 1280];
+    spec.validate_metadata(&qo_indptr_host, &kv_indptr_host)?;
+    let plan = provider.plan_bf16_ragged(spec)?;
+    if plan.algorithm() != Bf16RaggedPrefillAlgorithm::TiledGqa4
+        || plan.workspace_required_numel() == 0
+    {
+        return Err("ragged graph gate did not select tiled GQA4".into());
+    }
+
+    let stream = queue.stream().clone();
+    let query_host = deterministic_bf16(spec.query_numel(), 0x4001);
+    let key_host = deterministic_bf16(spec.kv_numel(), 0x4001 ^ 0x4b45_5900);
+    let value_host = deterministic_bf16(spec.kv_numel(), 0x4001 ^ 0x5641_4c55_4500);
+    let mut expected_output = vec![bf16::NAN; spec.output_numel()];
+    let mut expected_lse = vec![f32::NAN; spec.lse_numel()];
+    ragged_prefill_bf16_reference(
+        &query_host,
+        &key_host,
+        &value_host,
+        &qo_indptr_host,
+        &kv_indptr_host,
+        &mut expected_output,
+        &mut expected_lse,
+        spec,
+    )?;
+
+    let query = Arc::new(DeviceBuffer::from_host(&stream, &query_host)?);
+    let key = Arc::new(DeviceBuffer::from_host(&stream, &key_host)?);
+    let value = Arc::new(DeviceBuffer::from_host(&stream, &value_host)?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &qo_indptr_host)?);
+    let kv_indptr = Arc::new(DeviceBuffer::from_host(&stream, &kv_indptr_host)?);
+    let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
+    let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
+    let workspace = DeviceBuffer::<f32>::zeroed(&stream, plan.workspace_required_numel())?;
+
+    let graph_queue = GraphQueue::new(stream.context(), 2)?;
+    let mut bindings = graph_queue.bindings(8)?;
+    let query_handle = bindings.bind_read(Arc::clone(&query))?;
+    let key_handle = bindings.bind_read(Arc::clone(&key))?;
+    let value_handle = bindings.bind_read(Arc::clone(&value))?;
+    let qo_indptr_handle = bindings.bind_read(Arc::clone(&qo_indptr))?;
+    let kv_indptr_handle = bindings.bind_read(Arc::clone(&kv_indptr))?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
+
+    let captured = graph_queue.capture(bindings, |scope| {
+        plan.enqueue_into(
+            scope,
+            Bf16RaggedPrefillArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                qo_indptr_handle,
+                kv_indptr_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            )
+            .with_workspace(workspace_handle),
+        )
+    })?;
+    if captured.commands() != 2 {
+        return Err("ragged graph captured the wrong command count".into());
+    }
+
+    drop(plan);
+    drop(provider);
+    drop(query);
+    drop(key);
+    drop(value);
+    drop(qo_indptr);
+    drop(kv_indptr);
+
+    let mut exec = captured.instantiate()?;
+    for expected_launch in 1..=2 {
+        let mut completion = exec.launch()?;
+        if completion.launch_index() != expected_launch {
+            return Err("ragged graph completion reported the wrong replay index".into());
+        }
+        let _ = completion.is_complete()?;
+        if expected_launch == 1 {
+            completion.wait()?;
+        } else {
+            drop(completion);
+        }
+    }
+    if exec.launches() != 2 || exec.commands() != 2 {
+        return Err("ragged graph accounting changed across replay".into());
+    }
+
+    let mut bindings = exec.into_bindings()?;
+    let output = bindings.take_read_write(output_handle)?;
+    let lse = bindings.take_read_write(lse_handle)?;
+    drop(bindings);
+    let actual_output = output.to_host_vec(&stream)?;
+    let actual_lse = lse.to_host_vec(&stream)?;
+    let output_comparison = compare_bf16(&actual_output, &expected_output, "graph prefill BF16")?;
+    let lse_comparison = compare_f32(&actual_lse, &expected_lse, "graph prefill F32 LSE")?;
+    if output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT {
+        return Err(format!(
+            "ragged graph output max abs {:.9e} exceeds {:.9e}",
+            output_comparison.max_abs, OUTPUT_MAX_ABS_LIMIT
+        )
+        .into());
+    }
+    if lse_comparison.max_abs > LSE_MAX_ABS_LIMIT {
+        return Err(format!(
+            "ragged graph LSE max abs {:.9e} exceeds {:.9e}",
+            lse_comparison.max_abs, LSE_MAX_ABS_LIMIT
+        )
+        .into());
+    }
+
+    println!(
+        "{} batch_size=2 nnz_qo=96 nnz_kv=1280 query_heads=16 kv_heads=4 \
+         head_dim=128 algorithm=tiled_gqa4_mma commands=2 replays=2 \
+         fixed_bindings=true cross_stream=false external_owners_dropped_before_replay=true \
+         completion_queries=2 completion_waits=1 completion_drops=1 \
+         output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
+         lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
+        GateCase::new("ragged_prefill_h20", "gqa4_graph"),
+        output_comparison.max_abs,
+        output_comparison.bit_mismatches,
+        output_comparison.digest,
+        lse_comparison.max_abs,
+        lse_comparison.bit_mismatches,
+        lse_comparison.digest,
+    );
+    Ok(())
+}
+
 pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let provider = PrefillProvider::load(&context)?;
@@ -367,6 +505,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     run_short_indptr_case(&mut queue, &provider)?;
     run_invalid_metadata_guard(&mut queue, &provider)?;
     run_missing_workspace_case(&mut queue, &provider)?;
+    run_tiled_graph_case(&mut queue, provider)?;
     println!(
         "gate=ragged_prefill_h20 suite=all status=pass output_max_abs_limit={:.9e} \
          lse_max_abs_limit={:.9e}",
