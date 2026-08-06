@@ -342,6 +342,12 @@ FlashInfer remains `2.206x` lower-latency on stable long GQA. Short-MHA and
 mixed-MQA rankings are excluded because FlashInfer's provider-order deltas are
 `10.643%` and `14.097%`.
 
+The [ragged Graph correctness record](../results/h20-bf16-ragged-prefill-cuda-graph-correctness-20260806.json)
+captures the tiled partial and merge kernels on one private stream. Two
+fixed-address replays preserve the standalone output and log2-LSE digests after
+external owner teardown. Memcheck, racecheck, initcheck, and synccheck report
+no errors or leaks. Graph performance remains a separate open gate.
+
 The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
 retains both provider orders and all 600 raw samples. Loom is 4.21x
 lower-latency for batch-1 MHA at KV length 1. FlashInfer is 1.62x

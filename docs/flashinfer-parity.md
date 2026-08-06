@@ -147,6 +147,10 @@ the previous tiled split-K result and `7.729x` below direct. FlashInfer remains
 excluded because FlashInfer's provider-order median deltas are `10.643%` and
 `14.097%`.
 
-Fixed-address CUDA Graph replay, a provider-ordered isolated-kernel gate,
-engine invocation, and serving results remain open before a
-continuous-batching parity claim.
+The [ragged fixed-address Graph result](results/h20-bf16-ragged-prefill-cuda-graph-correctness-20260806.json)
+captures the tiled partial and merge kernels and replays them twice after
+external provider, plan, and read-buffer owners are dropped. Output and
+log2-LSE preserve the standalone digests, and four Compute Sanitizer tools
+report no errors or leaks. Graph performance, a provider-ordered
+isolated-kernel gate, engine invocation, and serving results remain open before
+a continuous-batching parity claim.

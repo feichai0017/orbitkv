@@ -225,6 +225,12 @@ is `7.729x` faster than direct. Stable long GQA still trails FlashInfer by
 `2.206x`. Expanding query tiling beyond the admitted GQA4 shape and reducing
 the remaining kernel gap are the next kernel-level work.
 
+The same two-kernel tiled plan now passes fixed-address Graph correctness. One
+private-stream graph retains its checked Q/K/V, metadata, output, LSE, and
+workspace bindings plus both kernel functions, then replays twice after the
+runner drops external provider, plan, and read-buffer owners. Graph performance
+and mutable graph contracts remain separate open boundaries.
+
 CUPTI activity records Loom kernel medians of `2.176`, `4.864`, and `4.928`
 microseconds for MHA, MQA, and GQA, versus direct medians of `2.176`,
 `20.928`, and `18.304` microseconds. The current stable-shape eager result puts

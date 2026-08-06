@@ -22,7 +22,7 @@ tracks the pinned upstream comparison.
 | BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
 | BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 direct and split-K MHA/MQA/GQA paths pass H20 correctness and sanitizer gates |
 | BF16 paged batch decode | Rust / cuda-oxide | device correct | NHD D128 page-size-16 MHA/MQA/GQA passes H20 correctness and sanitizer gates |
-| BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 direct, eight/sixteen-warp, and tiled eight-partition bottom-right causal MHA/MQA/GQA passes H20 correctness and sanitizer gates |
+| BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 direct, eight/sixteen-warp, and tiled eight-partition bottom-right causal MHA/MQA/GQA passes H20 correctness, sanitizer, and fixed-address Graph gates |
 
 The matched parallel-merge H20 result is shape-specific. The complete split-K
 path lowers Loom median latency by 5.39x at GQA KV length 127 and 38.19x at KV
@@ -86,8 +86,11 @@ microseconds. Unrolled 16-byte `cp.async` K/V staging is `1.148x` faster than
 the previous tiled split-K result and the complete path is `7.729x` faster than
 direct. FlashInfer remains `2.206x` lower-latency on stable long GQA.
 Short-MHA and mixed-MQA rankings are excluded because FlashInfer's
-provider-order deltas are `10.643%` and `14.097%`. Graph, engine, and serving
-gates remain open.
+provider-order deltas are `10.643%` and `14.097%`. The tiled
+partial-plus-merge plan passes fixed-address Graph correctness after two
+replays and external owner teardown, with four Compute Sanitizer tools
+reporting no errors or leaks. Graph performance, engine, and serving gates
+remain open.
 
 ## Admission
 

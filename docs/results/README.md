@@ -5,10 +5,17 @@ providers.
 
 ## Results
 
+The current [BF16 ragged prefill CUDA Graph correctness record](h20-bf16-ragged-prefill-cuda-graph-correctness-20260806.json)
+captures the tiled long-GQA partial and merge kernels in one fixed-address
+graph. Two replays preserve the standalone output and log2-LSE digests after
+external provider, plan, and read-buffer owners are dropped. Four Compute
+Sanitizer tools report no errors or leaks. This record contains no Graph
+performance claim.
+
 Two current 2026-08-06 records qualify unrolled 16-byte `cp.async` staging for
 tiled eight-partition ragged GQA4 at correctness, sanitizer, and matched eager
 gates. Earlier tiled, direct, and token-parallel records remain immutable
-below. None contains a Graph, engine, or serving claim.
+below. They contain no Graph performance, engine, or serving claim.
 
 - [FlashInfer v0.6.16.post1 ragged cp.async matched eager performance](h20-flashinfer-v0.6.16.post1-ragged-prefill-cp-async-eager-performance-20260806.json):
   asynchronous K/V staging lowers Loom long-GQA latency to `48.232`

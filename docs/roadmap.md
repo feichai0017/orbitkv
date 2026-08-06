@@ -126,7 +126,9 @@ The matched eager result lowers Loom long-GQA latency to `48.232`
 microseconds. Unrolled 16-byte `cp.async` staging is `1.148x` faster than the
 previous tiled path and the complete path is `7.729x` faster than direct.
 FlashInfer remains `2.206x` lower-latency on stable long GQA. Broader query
-tiling, fixed-address Graph replay, and real model invocation remain open.
+tiling and real model invocation remain open. Fixed-address Graph correctness
+now passes for the tiled partial-plus-merge path after two replays and external
+owner teardown; matched Graph performance remains open.
 
 ## 5. Decode and KV operations
 
