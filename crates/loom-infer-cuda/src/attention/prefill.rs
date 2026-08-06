@@ -3,7 +3,7 @@
 use crate::command::{CommandError, CommandPermit, CommandScope, Read, ReadWrite, Write};
 use cuda_core::{CudaContext, CudaFunction, LaunchConfig1D, LaunchContractError, PreparedLaunch};
 use cuda_device::{
-    DisjointSlice, SharedArray, convert, cuda_module, float, kernel, launch_bounds,
+    DisjointSlice, SharedArray, async_copy, convert, cuda_module, float, kernel, launch_bounds,
     launch_contract, tcgen05, thread, warp, wmma,
 };
 use half::bf16;
@@ -33,6 +33,9 @@ const TILED_THREADS: u32 = WARP_THREADS * TILED_WARPS as u32;
 const TILED_KV_ROWS: usize = 64;
 const TILED_KV_SUBTILES: usize = TILED_KV_ROWS / 16;
 const TILED_KV_SHARED_PAIRS: usize = TILED_KV_ROWS * BF16_PAIRS_PER_HEAD;
+const TILED_KV_COPY_BYTES: usize = 16;
+const TILED_KV_COPY_PAIRS: usize = TILED_KV_COPY_BYTES / size_of::<u32>();
+const TILED_KV_COPIES: usize = TILED_KV_SHARED_PAIRS / TILED_KV_COPY_PAIRS;
 const TILED_PARTITIONS: usize = 8;
 const TILED_MIN_AVERAGE_KV_LEN: usize = 256;
 
@@ -42,6 +45,7 @@ const _: () = {
     assert!(TILED_PACKED_QUERY_ROWS == TILED_WARPS * 16);
     assert!(TILED_THREADS == 128);
     assert!(TILED_KV_SUBTILES == 4);
+    assert!(TILED_KV_COPIES == TILED_THREADS as usize * 8);
     assert!(TILED_PARTITIONS == 8);
     assert!(SINGLE_DECODE_HEAD_DIM == 128);
 };
@@ -636,6 +640,60 @@ mod kernels {
         unsafe { wmma::mma_m16n8k16_f32_bf16(accumulator, query_fragment, key_fragment) }
     }
 
+    macro_rules! load_tiled_kv_async {
+        (
+            $shared_tile:expr,
+            $global_pairs:expr,
+            $thread_in_block:expr,
+            $kv_start:expr,
+            $kv_tile_start:expr,
+            $partition_token_end:expr,
+            $num_kv_heads:expr,
+            $kv_head:expr $(,)?
+        ) => {{
+            let token_lane = $thread_in_block / 16;
+            let pair_in_head = ($thread_in_block % 16) * TILED_KV_COPY_PAIRS;
+            macro_rules! issue_copy {
+                ($iteration:literal) => {{
+                    let token = $kv_tile_start + token_lane + $iteration * 8;
+                    let source_token = usize::min(token, $partition_token_end - 1);
+                    let source_pair = (($kv_start + source_token) * $num_kv_heads + $kv_head)
+                        * BF16_PAIRS_PER_HEAD
+                        + pair_in_head;
+                    let destination_pair = ($thread_in_block + $iteration * TILED_THREADS as usize)
+                        * TILED_KV_COPY_PAIRS;
+                    let src_size = if token < $partition_token_end {
+                        TILED_KV_COPY_BYTES as u32
+                    } else {
+                        0
+                    };
+                    // SAFETY: shared destinations are disjoint 16-byte regions.
+                    // Valid sources are inside K/V; padded rows use zero-fill.
+                    unsafe {
+                        async_copy::cp_async_cg_zfill_16(
+                            $shared_tile.add(destination_pair),
+                            $global_pairs.add(source_pair).cast(),
+                            src_size,
+                        );
+                    }
+                }};
+            }
+            issue_copy!(0);
+            issue_copy!(1);
+            issue_copy!(2);
+            issue_copy!(3);
+            issue_copy!(4);
+            issue_copy!(5);
+            issue_copy!(6);
+            issue_copy!(7);
+            // SAFETY: all copies issued by this thread belong to this group.
+            unsafe {
+                async_copy::cp_async_commit_group();
+                async_copy::cp_async_wait_all();
+            }
+        }};
+    }
+
     #[inline(always)]
     fn tiled_mask_score(
         score: [f32; 4],
@@ -937,27 +995,18 @@ mod kernels {
         let partition_token_end = (partition + 1) * causal_token_end / TILED_PARTITIONS;
         let mut kv_tile_start = partition_token_start;
         while kv_tile_start < partition_token_end {
-            let mut load_index = thread_in_block;
-            while load_index < TILED_KV_SHARED_PAIRS {
-                let token_in_tile = load_index / BF16_PAIRS_PER_HEAD;
-                let pair_in_head = load_index % BF16_PAIRS_PER_HEAD;
-                let token = kv_tile_start + token_in_tile;
-                let packed = if token < partition_token_end {
-                    let pair_index = ((kv_start + token) * num_kv_heads + kv_head)
-                        * BF16_PAIRS_PER_HEAD
-                        + pair_in_head;
-                    // SAFETY: the validated request range and token predicate
-                    // prove this packed K pair lies inside the exact key span.
-                    unsafe { key_pairs.add(pair_index).read() }
-                } else {
-                    0
-                };
-                // SAFETY: threads cover disjoint shared pair indices.
-                unsafe {
-                    kv_tile.add(load_index).write(packed);
-                }
-                load_index += TILED_THREADS as usize;
-            }
+            // SAFETY: metadata validation proves the request range, and the
+            // helper zfills the final partial tile without reading past K.
+            load_tiled_kv_async!(
+                kv_tile,
+                key_pairs,
+                thread_in_block,
+                kv_start,
+                kv_tile_start,
+                partition_token_end,
+                num_kv_heads,
+                kv_head,
+            );
             thread::sync_threads();
 
             let mut score_0 = [0.0_f32; 4];
@@ -1277,26 +1326,17 @@ mod kernels {
             row_sum_1 += tile_sum_1;
 
             thread::sync_threads();
-            load_index = thread_in_block;
-            while load_index < TILED_KV_SHARED_PAIRS {
-                let token_in_tile = load_index / BF16_PAIRS_PER_HEAD;
-                let pair_in_head = load_index % BF16_PAIRS_PER_HEAD;
-                let token = kv_tile_start + token_in_tile;
-                let packed = if token < partition_token_end {
-                    let pair_index = ((kv_start + token) * num_kv_heads + kv_head)
-                        * BF16_PAIRS_PER_HEAD
-                        + pair_in_head;
-                    // SAFETY: the same validated request range proves this V pair.
-                    unsafe { value_pairs.add(pair_index).read() }
-                } else {
-                    0
-                };
-                // SAFETY: threads again cover disjoint shared pair indices.
-                unsafe {
-                    kv_tile.add(load_index).write(packed);
-                }
-                load_index += TILED_THREADS as usize;
-            }
+            // SAFETY: as above, for the matching V tile.
+            load_tiled_kv_async!(
+                kv_tile,
+                value_pairs,
+                thread_in_block,
+                kv_start,
+                kv_tile_start,
+                partition_token_end,
+                num_kv_heads,
+                kv_head,
+            );
             thread::sync_threads();
 
             let shared_values = kv_tile.cast::<u16>();
