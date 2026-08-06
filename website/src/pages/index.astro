@@ -128,7 +128,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <article class="evidence-card">
       <h3>BF16 ragged prefill on H20</h3><span class="result">Qualified</span>
       <p>Direct, token-parallel, and tiled eight-partition causal MHA, MQA, and GQA pass.</p>
-      <small>Tiled split-K is 3.986x faster than the previous long-GQA path. FlashInfer remains 2.538x ahead on that stable shape.</small>
+      <small>16-byte cp.async staging is 1.148x faster than the previous tiled path. FlashInfer remains 2.206x ahead on stable long GQA.</small>
     </article>
   </section>
 

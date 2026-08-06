@@ -5,10 +5,26 @@ providers.
 
 ## Results
 
-Two current 2026-08-06 records qualify tiled eight-partition ragged GQA4 at
-correctness, sanitizer, and matched eager gates. Earlier direct and
-token-parallel records remain immutable below. None contains a Graph, engine,
-or serving claim.
+Two current 2026-08-06 records qualify unrolled 16-byte `cp.async` staging for
+tiled eight-partition ragged GQA4 at correctness, sanitizer, and matched eager
+gates. Earlier tiled, direct, and token-parallel records remain immutable
+below. None contains a Graph, engine, or serving claim.
+
+- [FlashInfer v0.6.16.post1 ragged cp.async matched eager performance](h20-flashinfer-v0.6.16.post1-ragged-prefill-cp-async-eager-performance-20260806.json):
+  asynchronous K/V staging lowers Loom long-GQA latency to `48.232`
+  microseconds, 1.148x below the previous tiled split-K result and 7.729x below
+  direct. FlashInfer remains 2.206x lower-latency on stable long GQA.
+  Short-MHA and mixed-MQA rankings are excluded because FlashInfer's order
+  deltas are 10.643% and 14.097%. Both provider orders and all 600 raw samples
+  are retained.
+
+- [BF16 ragged cp.async H20 correctness](h20-bf16-ragged-prefill-cp-async-correctness-20260806.json):
+  direct, token-parallel, and tiled two-kernel MHA/MQA/GQA cases pass the CPU
+  oracle. Four Compute Sanitizer tools report no errors. The tiled partial uses
+  226 registers, 16,384 bytes shared memory, unrolled 16-byte `cp.async.cg`
+  copies, and no stack or spills.
+
+The previous tiled split-K result remains immutable history:
 
 - [FlashInfer v0.6.16.post1 ragged tiled split-K matched eager performance](h20-flashinfer-v0.6.16.post1-ragged-prefill-tiled-split-k-eager-performance-20260806.json):
   fused tensor-core tiling and eight-way split-K lower Loom long-GQA latency

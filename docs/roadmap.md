@@ -122,11 +122,11 @@ and a caller-owned F32 merge workspace. Other declared long requests use eight
 warps. All paths pass MHA/MQA/GQA H20 correctness plus all four Compute
 Sanitizer tools.
 
-The matched eager result lowers Loom long-GQA latency by `3.986x` versus the
-previous specialized path and `6.734x` versus direct. FlashInfer remains
-`2.538x` lower-latency on stable long GQA and `1.349x` lower-latency on stable
-mixed MQA. Broader query tiling, fixed-address Graph replay, and real model
-invocation remain open.
+The matched eager result lowers Loom long-GQA latency to `48.232`
+microseconds. Unrolled 16-byte `cp.async` staging is `1.148x` faster than the
+previous tiled path and the complete path is `7.729x` faster than direct.
+FlashInfer remains `2.206x` lower-latency on stable long GQA. Broader query
+tiling, fixed-address Graph replay, and real model invocation remain open.
 
 ## 5. Decode and KV operations
 

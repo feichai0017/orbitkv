@@ -334,12 +334,13 @@ bottom-right causal alignment, exact metadata spans, missing tiled workspace,
 and a device-side nonmonotonic-indptr guard. All four Compute Sanitizer tools
 report zero errors.
 
-The [ragged matched eager record](../results/h20-flashinfer-v0.6.16.post1-ragged-prefill-tiled-split-k-eager-performance-20260806.json)
-retains both provider orders and all 600 raw samples. Tiled eight-way split-K
-lowers Loom long-GQA latency by `3.986x` versus the previous specialized result
-and `6.734x` versus direct. FlashInfer remains `2.538x` and `1.349x`
-lower-latency on stable long GQA and mixed MQA. Short-MHA ranking is excluded
-because FlashInfer's provider-order delta is `54.709%`.
+The [ragged matched eager record](../results/h20-flashinfer-v0.6.16.post1-ragged-prefill-cp-async-eager-performance-20260806.json)
+retains both provider orders and all 600 raw samples. Unrolled 16-byte
+`cp.async` K/V staging lowers Loom long-GQA latency to `48.232` microseconds,
+`1.148x` below the previous tiled split-K result and `7.729x` below direct.
+FlashInfer remains `2.206x` lower-latency on stable long GQA. Short-MHA and
+mixed-MQA rankings are excluded because FlashInfer's provider-order deltas are
+`10.643%` and `14.097%`.
 
 The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
 retains both provider orders and all 600 raw samples. Loom is 4.21x

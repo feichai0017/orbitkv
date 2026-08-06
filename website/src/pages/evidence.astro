@@ -76,15 +76,15 @@ import { repositoryUrl } from "../data/site";
           arrays, explicit tiled workspace, bottom-right causal alignment, and
           metadata guards are covered. Four sanitizer tools report no errors.
         </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-ragged-prefill-tiled-split-k-correctness-20260806.json`}>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-ragged-prefill-cp-async-correctness-20260806.json`}>
           Ragged prefill correctness result
         </a>
         <p>
-          Fused tensor-core tiling and eight-way split-K lower long-GQA latency
-          by 3.986x versus the previous specialized path and 6.734x versus
-          direct. FlashInfer remains 2.538x ahead on stable long GQA.
+          Unrolled 16-byte cp.async K/V staging lowers long-GQA latency to
+          48.232 microseconds, 1.148x below the previous tiled path and 7.729x
+          below direct. FlashInfer remains 2.206x ahead on stable long GQA.
         </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-ragged-prefill-tiled-split-k-eager-performance-20260806.json`}>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-ragged-prefill-cp-async-eager-performance-20260806.json`}>
           Ragged prefill matched performance result
         </a>
       </div>

@@ -81,12 +81,13 @@ All paths pass H20 correctness, exact-span preflight, a missing-workspace
 preflight gate, a nonmonotonic-metadata device guard, and all four Compute
 Sanitizer tools.
 
-The matched eager result lowers Loom long-GQA latency to `55.355`
-microseconds, `3.986x` below the previous specialized result and `6.734x`
-below direct. FlashInfer remains `2.538x` and `1.349x` lower-latency on stable
-long GQA and mixed MQA. Short-MHA ranking is excluded because FlashInfer's
-provider-order delta is `54.709%`. Graph, engine, and serving gates remain
-open.
+The matched eager result lowers Loom long-GQA latency to `48.232`
+microseconds. Unrolled 16-byte `cp.async` K/V staging is `1.148x` faster than
+the previous tiled split-K result and the complete path is `7.729x` faster than
+direct. FlashInfer remains `2.206x` lower-latency on stable long GQA.
+Short-MHA and mixed-MQA rankings are excluded because FlashInfer's
+provider-order deltas are `10.643%` and `14.097%`. Graph, engine, and serving
+gates remain open.
 
 ## Admission
 

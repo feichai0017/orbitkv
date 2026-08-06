@@ -218,11 +218,12 @@ A second kernel merges caller-owned F32
 `[max_log2, normalizer, weighted_value[128]]` states. Other declared long
 plans use eight warps. All kernels scan query `indptr` to identify the request.
 
-Fused tiling and split-K lower matched long-GQA latency by `3.986x` versus the
-previous specialized path and `6.734x` versus direct. Stable mixed MQA and
-long GQA still trail FlashInfer by `1.349x` and `2.538x`. Expanding query
-tiling beyond the admitted GQA4 shape and reducing the remaining kernel gap are
-the next kernel-level work.
+Fused tiling, split-K, and unrolled 16-byte `cp.async` K/V staging lower
+matched long-GQA latency to `48.232` microseconds. The asynchronous staging
+revision is `1.148x` faster than the previous tiled path and the complete path
+is `7.729x` faster than direct. Stable long GQA still trails FlashInfer by
+`2.206x`. Expanding query tiling beyond the admitted GQA4 shape and reducing
+the remaining kernel gap are the next kernel-level work.
 
 CUPTI activity records Loom kernel medians of `2.176`, `4.864`, and `4.928`
 microseconds for MHA, MQA, and GQA, versus direct medians of `2.176`,

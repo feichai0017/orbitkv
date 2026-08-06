@@ -139,13 +139,13 @@ explicit tiled workspace, and a device-side nonmonotonic-indptr guard. Maximum
 BF16 output error is `4.8828125e-4`, maximum log2-LSE error is
 `2.861022949e-6`, and four Compute Sanitizer tools report no errors.
 
-The [matched ragged eager result](results/h20-flashinfer-v0.6.16.post1-ragged-prefill-tiled-split-k-eager-performance-20260806.json)
-retains 600 samples and both provider orders. Fused tensor-core tiling and
-eight-way split-K lower Loom long-GQA latency by `3.986x` versus the previous
-specialized result and `6.734x` versus direct. FlashInfer remains `2.538x`
-lower-latency on stable long GQA and `1.349x` lower-latency on stable mixed
-MQA. Short-MHA ranking is excluded because FlashInfer's provider-order median
-delta is `54.709%`.
+The [matched ragged eager result](results/h20-flashinfer-v0.6.16.post1-ragged-prefill-cp-async-eager-performance-20260806.json)
+retains 600 samples and both provider orders. Unrolled 16-byte `cp.async` K/V
+staging lowers Loom long-GQA latency to `48.232` microseconds, `1.148x` below
+the previous tiled split-K result and `7.729x` below direct. FlashInfer remains
+`2.206x` lower-latency on stable long GQA. Short-MHA and mixed-MQA rankings are
+excluded because FlashInfer's provider-order median deltas are `10.643%` and
+`14.097%`.
 
 Fixed-address CUDA Graph replay, a provider-ordered isolated-kernel gate,
 engine invocation, and serving results remain open before a
