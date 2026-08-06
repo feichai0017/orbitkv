@@ -404,3 +404,19 @@ and `11.735` microseconds, making Loom `2.942x` lower-latency on the admitted
 batch-4 Q16/K4 D128, page-size-16 case. Provider-order deltas are `0.128%` and
 `3.159%`. Unrestricted-affinity diagnostic samples are excluded because CPU
 migration produced non-admissible eager host-path drift.
+
+The [explicit multi-token correctness record](../results/h20-bf16-rope-paged-kv-append-tokens-correctness-20260806.json)
+extends fused append to 1 through 64 tokens with explicit batch indices and
+positions. The six-token case appends each request's final two tokens in
+shuffled order; the 64-token case exercises both validation warps. Short
+metadata fails before CUDA submission, four invalid device metadata classes
+preserve all output sentinels, and memcheck, racecheck, initcheck, and
+synccheck report no errors or leaks. The kernel uses 28 registers, 8 bytes
+shared memory, and no stack or spills.
+
+The [matched explicit multi-token eager record](../results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-eager-performance-20260806.json)
+uses the same fixed CPU40/NUMA0 protocol. Loom and FlashInfer combined medians
+are `5.510` and `11.732` microseconds, making Loom `2.129x` lower-latency on
+the admitted six-token suffix case. Provider-order deltas are `2.689%` and
+`4.164%`. Both paths satisfy independent references within the shared BF16
+limit; Q/K output and reference bits are not claimed equal across providers.

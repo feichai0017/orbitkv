@@ -34,9 +34,10 @@ domains become sibling private modules without changing
 
 The Rust providers implement contiguous RMSNorm, BF16 single-request decode,
 BF16 paged batch decode, BF16 ragged causal prefill attention, standard RoPE,
-and one-token/request fused RoPE plus paged KV append. The vendor provider
-freezes one contiguous BF16 cuBLASLt GEMM algorithm during planning. All use
-typed bindings and one completion event.
+and fused RoPE plus paged KV append for one-token/request and explicit
+1-through-64-token contracts. The vendor provider freezes one contiguous BF16
+cuBLASLt GEMM algorithm during planning. All use typed bindings and one
+completion event.
 
 The current owned-binding revision passed its H20 correctness gates. The fixed
 RMSNorm-to-GEMM Graph also passed replay and Compute Sanitizer gates. The
@@ -60,6 +61,13 @@ slot. Full Q and K/V page pools pass the H20 CPU oracle bit-exactly, and all
 four Compute Sanitizer tools report no errors. Its admitted fixed-affinity
 eager median is `3.989` microseconds versus FlashInfer's `11.735` microsecond
 two-kernel composition.
+
+The explicit extension accepts 1 through 64 tokens with caller-supplied batch
+indices and positions. Two validation warps establish page-table and
+physical-slot safety before Q/K/V writes. The 64-token boundary and four
+invalid-metadata guards pass H20 and all four Compute Sanitizer tools. Its
+admitted six-token fixed-affinity eager median is `5.510` microseconds versus
+FlashInfer's `11.732` microsecond two-kernel composition.
 
 Ragged prefill keeps short requests on one direct warp per query-row/head,
 uses sixteen-warp token partitioning for long single-KV-head MQA, and keeps

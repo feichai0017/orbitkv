@@ -94,8 +94,9 @@ correctness and sanitizer gates.
   correctness, sanitizer, and matched eager gates.
 - retain the first one-token/request standard RoPE plus paged KV append
   contract and its correctness, sanitizer, and matched eager gates.
-- expand KV append to arbitrary batch indices, multi-token updates, and
-  additional RoPE/storage variants.
+- retain explicit 1..=64-token append with caller-supplied batch indices and
+  positions plus its correctness, sanitizer, and matched eager gates.
+- expand KV append beyond 64 tokens and add additional RoPE/storage variants.
 - replay fixed plans through CUDA Graphs.
 
 Exit: a real model invokes Loom attention without tensor copies and preserves
@@ -152,8 +153,17 @@ and all four sanitizer tools. On the admitted batch-4 Q16/K4 D128,
 page-size-16 case, its one-kernel eager path records `3.989` microseconds
 versus `11.735` microseconds for FlashInfer's two-kernel composition, or
 `2.942x` lower latency under fixed host affinity. Interleaved, ragged-offset,
-Llama 3.1, arbitrary-index, multi-token, cached, and quantized variants remain
-open.
+Llama 3.1, cached, and quantized variants remain open.
+
+The explicit extension accepts 1 through 64 shuffled tokens and validates the
+full page table, token mappings, and physical-slot uniqueness with two warps
+before any output write. The six-token H20 and matched case appends each
+request's final two tokens, including page crossings and safe physical-page
+reuse at different offsets. Loom records `5.510` microseconds versus
+FlashInfer's `11.732` microsecond two-kernel composition, or `2.129x` lower
+latency. The 64-token boundary and four device metadata guards pass all four
+sanitizer tools. Larger token counts, Graph replay, and real model invocation
+remain open.
 
 ## 5. Decode and KV operations
 

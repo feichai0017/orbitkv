@@ -24,6 +24,23 @@ import { repositoryUrl } from "../data/site";
         stable FlashInfer release, <code>v0.6.16.post1</code>, on one H20.
       </p>
       <div class="doc-note">
+        <strong>Explicit multi-token append keeps one fused launch.</strong>
+        <p>
+          Loom accepts 1 through 64 caller-indexed tokens. On the admitted
+          six-token shuffled suffix case, its one cuda-oxide kernel records
+          5.510 microseconds versus 11.732 microseconds for FlashInfer's
+          two-kernel composition, or 2.129x lower latency. Both provider-order
+          deltas are below five percent, and all 200 raw samples are retained.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-eager-performance-20260806.json`}>
+          Multi-token fused append matched performance result
+        </a>
+        <br />
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-rope-paged-kv-append-tokens-correctness-20260806.json`}>
+          Multi-token fused append correctness result
+        </a>
+      </div>
+      <div class="doc-note">
         <strong>Fused RoPE plus paged KV append removes one launch.</strong>
         <p>
           On the admitted batch-4 Q16/K4 D128, page-size-16 case, Loom's one

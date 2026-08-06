@@ -24,7 +24,7 @@ tracks the pinned upstream comparison.
 | BF16 paged batch decode | Rust / cuda-oxide | device correct | NHD D128 page-size-16 MHA/MQA/GQA passes H20 correctness and sanitizer gates |
 | BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 direct, eight/sixteen-warp, and tiled eight-partition bottom-right causal MHA/MQA/GQA passes H20 correctness, sanitizer, and fixed-address Graph gates |
 | BF16 standard RoPE | Rust / cuda-oxide | device correct | NHD D128 NeoX split-half with explicit I32 positions passes H20 correctness, sanitizer, and matched eager gates |
-| BF16 fused RoPE paged KV append | Rust / cuda-oxide | device correct | One token/request, NHD D128, page-size-16 NeoX path passes H20 correctness, sanitizer, and matched eager gates |
+| BF16 fused RoPE paged KV append | Rust / cuda-oxide | device correct | Explicit 1..=64 token, NHD D128, page-size-16 NeoX paths pass H20 correctness, sanitizer, and matched eager gates |
 
 The matched parallel-merge H20 result is shape-specific. The complete split-K
 path lowers Loom median latency by 5.39x at GQA KV length 127 and 38.19x at KV
@@ -81,8 +81,20 @@ any write. The admitted batch-4 Q16/K4 D128 case is bit-exact with the CPU
 reference and passes all four Compute Sanitizer tools. Its one-kernel eager
 combined median is `3.989` microseconds versus `11.735` microseconds for
 FlashInfer's two-kernel standard RoPE plus paged append composition, or
-`2.942x` lower latency under the fixed-affinity matched metric. Arbitrary batch
-indices, multi-token append, Graph, engine, and serving gates remain open.
+`2.942x` lower latency under the fixed-affinity matched metric. That immutable
+first record is limited to one token per request.
+
+The explicit extension accepts 1 through 64 tokens with caller-supplied
+`batch_indices` and `positions`. The admitted performance case shuffles six
+tokens covering each request's final two positions, including page-boundary
+crossings and shared physical pages at different offsets. A two-warp
+device-side guard validates the full page table, token mappings, and physical
+slot uniqueness before any output write. The 64-token limit and four invalid
+metadata classes pass H20 and sanitizer gates. Under the fixed-affinity eager
+metric, Loom's one-kernel combined median is `5.510` microseconds versus
+`11.732` microseconds for FlashInfer's two-kernel composition, or `2.129x`
+lower latency. Larger token batches, other layouts/dtypes, Graph, engine, and
+serving gates remain open.
 
 The ragged prefill contract uses contiguous NHD query/KV storage with separate
 `i32` query and KV `indptr` arrays. Its causal mask is bottom-right aligned:

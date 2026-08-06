@@ -5,6 +5,23 @@ providers.
 
 ## Results
 
+The [BF16 explicit multi-token fused RoPE paged KV append matched eager record](h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-eager-performance-20260806.json)
+uses six shuffled tokens covering the final two positions of three requests.
+Loom's one-kernel path records `5.510` microseconds and FlashInfer's two-kernel
+composition records `11.732` microseconds, making Loom `2.129x`
+lower-latency. Fixed-affinity provider-order deltas are `2.689%` and `4.164%`,
+and all 200 raw samples are embedded. Both providers satisfy independent
+references within the shared BF16 error limit; Q/K output and reference bits
+are not claimed equal across providers.
+
+The [BF16 explicit multi-token fused append H20 correctness record](h20-bf16-rope-paged-kv-append-tokens-correctness-20260806.json)
+qualifies 1 through 64 caller-indexed tokens. It covers shuffled request order,
+two-token suffixes crossing page boundaries, safe physical-page reuse at
+different offsets, the 64-token/two-warp limit, short-metadata preflight, and
+four invalid-metadata sentinel guards. Four Compute Sanitizer tools report no
+errors or leaks. The kernel uses 28 registers and 8 bytes shared memory with no
+stack or spills.
+
 The first [BF16 fused RoPE paged KV append matched eager record](h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-eager-performance-20260806.json)
 compares one Loom cuda-oxide kernel with FlashInfer's two-kernel standard RoPE
 plus paged append composition. On the admitted batch-4 Q16/K4 D128,

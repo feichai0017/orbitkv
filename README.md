@@ -163,8 +163,17 @@ unmodified V for one token per request. On the admitted batch-4 Q16/K4 D128,
 page-size-16 case, Loom records a `3.989` microsecond fixed-affinity eager
 median versus `11.735` microseconds for FlashInfer's two-kernel composition,
 or `2.942x` lower latency. The full Q output and K/V page pools pass the
-declared references; arbitrary-index, multi-token, Graph, engine, and serving
-gates remain open.
+declared references. That immutable first record is limited to one token per
+request.
+
+The explicit fused append extension supports 1 through 64 caller-indexed
+tokens. Its two-warp guard validates page metadata, token mappings, and
+physical-slot uniqueness before any output write. On the admitted six-token
+shuffled suffix case, Loom records `5.510` microseconds versus FlashInfer's
+`11.732` microsecond two-kernel composition, or `2.129x` lower latency. The
+64-token boundary and four invalid-metadata guards pass H20 and all four
+Compute Sanitizer tools. Q/K results are tolerance-correct rather than claimed
+bitwise equal across providers.
 
 The current paged batch-decode result is also shape-specific. Eight-warp
 token parallelism lowers Loom MQA and GQA eager latency by 3.78x and 3.32x
