@@ -41,7 +41,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   </section>
 
   <section class="metrics-strip" aria-label="Project status">
-    <div class="metric"><strong>3</strong><span>qualified device slices</span></div>
+    <div class="metric"><strong>5</strong><span>qualified device slices</span></div>
     <div class="metric"><strong>SM90</strong><span>first target</span></div>
     <div class="metric"><strong>Rust</strong><span>host and device source</span></div>
     <div class="metric"><strong>Matched</strong><span>first eager performance evidence</span></div>
@@ -125,12 +125,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p>NHD D128 page-size-16 MHA, MQA, and GQA batches pass.</p>
       <small>Eight-warp token parallelism puts Loom 4.41x ahead on MHA and 2.35x ahead on matched MQA. GQA ranking remains order-sensitive.</small>
     </article>
+    <article class="evidence-card">
+      <h3>BF16 ragged prefill on H20</h3><span class="result">Qualified</span>
+      <p>NHD D128 bottom-right causal MHA, MQA, and GQA batches pass.</p>
+      <small>BF16 output is bit-exact against the CPU oracle. Four sanitizer tools report no errors; performance remains unclaimed.</small>
+    </article>
   </section>
 
   <section class="section">
     <header class="section-header">
       <div><p class="eyebrow">Next</p><h2>Extend and profile attention</h2></div>
-      <p>Add paged Graph replay and broader serving shapes, then implement ragged prefill.</p>
+      <p>Optimize ragged scheduling, run matched FlashInfer measurements, and add fixed-address Graph replay.</p>
     </header>
     <div class="roadmap-grid">
       {milestones.map((item) => (

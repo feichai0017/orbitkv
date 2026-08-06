@@ -145,6 +145,30 @@ produce the same final BF16 output and F32 log2-LSE contract. Require one
 completion over both kernel submissions. Reject a one-command queue and a
 workspace that is one F32 element short before either kernel reaches CUDA.
 
+## BF16 ragged prefill correctness
+
+Validate the first fixed ragged causal contract:
+
+```text
+Q, O:        [nnz_qo, query_heads, 128] BF16
+K, V:        [nnz_kv, kv_heads, 128] BF16 NHD
+qo_indptr:   [batch_size + 1] I32
+kv_indptr:   [batch_size + 1] I32
+LSE:         [nnz_qo, query_heads] F32 log2-domain
+causal mask: kv_index <= kv_len - qo_len + query_index
+```
+
+Cover MHA, MQA, and GQA with equal and mixed query/KV lengths. The first
+contract requires every request to satisfy `1 <= qo_len <= kv_len`. Compare
+against the ragged CPU reference with the same `0.015625` BF16 output and
+`0.01` log2-LSE absolute limits.
+
+Reject short fixed metadata spans before submission. Since indptr contents
+remain device-resident, exercise invalid endpoints under Compute Sanitizer and
+require output NaN sentinels to remain unchanged. This guard is a memory-safety
+behavior, not asynchronous metadata error reporting. Run memcheck, racecheck,
+synccheck, and initcheck over the complete runner.
+
 ## Fixed-address CUDA Graph
 
 The BF16 GEMM runner also captures this exact chain:
@@ -278,6 +302,12 @@ passes MHA, MQA, and GQA batches with bit-exact BF16 output and maximum
 log2-LSE error `4.768371582e-7`. It covers mixed request lengths, page
 reordering and reuse, exact metadata spans, and a device-side invalid-page
 guard. All four Compute Sanitizer tools report zero errors.
+
+The [ragged prefill record](../results/h20-bf16-ragged-prefill-correctness-20260806.json)
+passes MHA, MQA, and GQA batches with bit-exact BF16 output and maximum
+log2-LSE error `4.768371582e-7`. It covers equal and mixed query/KV lengths,
+bottom-right causal alignment, exact metadata spans, and a device-side
+invalid-indptr guard. All four Compute Sanitizer tools report zero errors.
 
 The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
 retains both provider orders and all 600 raw samples. Loom is 4.21x

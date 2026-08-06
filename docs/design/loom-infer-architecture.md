@@ -62,9 +62,11 @@ private files follow complete operator domains:
 loom-infer::attention
   -> single_decode     contiguous decode and split-K reference state
   -> paged_decode      page-table contract and paged CPU reference
+  -> ragged_prefill    indptr contract and ragged causal CPU reference
 
 loom-infer-cuda::attention
   -> decode            one decode provider domain and cuda-oxide artifact bundle
+  -> prefill           one prefill provider domain and cuda-oxide artifact bundle
 ```
 
 FlashInfer still defines the semantic domains and acceptance surface. Loom maps
@@ -73,14 +75,14 @@ utilities to a validated borrowed page-table view, and execution resources to
 the shared command/graph ownership layer. Python wrapper state is not copied
 into product architecture.
 
-Future prefill, MLA, and KV-cache mutation become sibling private modules while
-the public `attention::*` paths remain stable. A new crate requires a real
+Future MLA and KV-cache mutation become sibling private modules while the
+public `attention::*` paths remain stable. A new crate requires a real
 dependency or ownership boundary, not merely another attention algorithm.
 
 ## Operator lifecycle
 
-The current RMSNorm, BF16 GEMM, and single-decode attention device slices
-implement this lifecycle:
+The current RMSNorm, BF16 GEMM, decode, and ragged prefill attention device
+slices implement this lifecycle:
 
 ```text
 validated specification
@@ -204,6 +206,14 @@ The grouped-head plan now partitions each request-head KV range across eight
 warps. Every warp writes one F32 `[max_log2, normalizer, weighted_value]`
 state to 4,192 bytes of block-local shared memory, then warp zero performs the
 stable merge. MHA retains the lower-overhead direct warp.
+
+The backend-independent ragged prefill contract fixes BF16, NHD, D128,
+separate query/KV `indptr` arrays, and bottom-right causal alignment. Its first
+CUDA plan assigns one warp to each query-row and query-head pair. The warp
+scans query `indptr` to identify the request, then scans the causal KV prefix
+with packed BF16x2 access and F32 online softmax. This direct schedule is
+admitted for correctness and memory safety only; row-to-request preprocessing,
+tiling, and matched performance remain open.
 
 CUPTI activity records Loom kernel medians of `2.176`, `4.864`, and `4.928`
 microseconds for MHA, MQA, and GQA, versus direct medians of `2.176`,

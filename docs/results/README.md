@@ -5,9 +5,20 @@ providers.
 
 ## Results
 
-Four 2026-08-06 records preserve the direct paged baseline and qualify the
-current token-parallel provider at device and matched eager gates. They contain
-no Graph, engine, or serving claim.
+One 2026-08-06 record qualifies the first ragged prefill provider at the
+correctness and sanitizer gates. It contains no matched FlashInfer,
+performance, Graph, engine, or serving claim.
+
+- [BF16 ragged prefill H20 correctness](h20-bf16-ragged-prefill-correctness-20260806.json):
+  BF16 NHD D128 MHA, MQA, and GQA batches pass against the CPU oracle with
+  bit-exact BF16 output and maximum log2-LSE error `4.768371582e-7`.
+  Separate query and KV `indptr` arrays, mixed lengths, bottom-right causal
+  alignment, short metadata, and an invalid-metadata device guard are covered.
+  Four Compute Sanitizer tools report no errors.
+
+Four additional 2026-08-06 records preserve the direct paged baseline and
+qualify the current token-parallel provider at device and matched eager gates.
+They contain no Graph, engine, or serving claim.
 
 - [FlashInfer v0.6.16.post1 paged token-parallel matched eager performance](h20-flashinfer-v0.6.16.post1-paged-token-parallel-eager-performance-20260806.json):
   eight-warp block-local merge lowers Loom MQA/GQA eager latency by 3.78x and

@@ -53,6 +53,7 @@ workspace member but not a default member.
 | `src/attention.rs` | Stable attention facade and public re-exports |
 | `src/attention/single_decode.rs` | Contiguous decode, split-K state, and CPU references |
 | `src/attention/paged_decode.rs` | Paged decode, page-table validation, and CPU reference |
+| `src/attention/ragged_prefill.rs` | Ragged prefill, indptr validation, and CPU reference |
 | `src/*/tests.rs` | Contract, exact-span, mapping, and numerical tests |
 
 This crate contains no CUDA types, FFI, provider selection, launch
@@ -60,9 +61,9 @@ configuration, or engine policy. A new GPU provider starts with a contract and
 reference here unless an established independent oracle is explicitly recorded.
 
 Attention is the first family converted to a facade plus private domain
-modules. Future prefill, MLA, and KV mutation contracts extend
-`attention/{prefill,mla,kv}.rs`; they do not create another crate or expose the
-private directory structure as API.
+modules. Future MLA and KV mutation contracts extend `attention/{mla,kv}.rs`;
+they do not create another crate or expose the private directory structure as
+API.
 
 ## CUDA crate
 
@@ -80,6 +81,7 @@ private directory structure as API.
 | `src/rms_norm.rs` | Rust device kernels plus immutable RMSNorm plans |
 | `src/attention.rs` | Stable CUDA attention facade |
 | `src/attention/decode.rs` | Single and paged decode vertical slice and cuda-oxide artifact bundle |
+| `src/attention/prefill.rs` | Ragged prefill vertical slice and cuda-oxide artifact bundle |
 | `src/gemm.rs` | Explicit fixed-algorithm cuBLASLt provider |
 
 The cuda-oxide `#[cuda_module]` macro must discover one inline kernel bundle.
@@ -144,7 +146,9 @@ FlashInfer defines the feature domains, not Loom's language-level layout:
 | --- | --- |
 | Single decode and state merge | `loom-infer/attention/single_decode.rs` |
 | Paged decode and page-table semantics | `loom-infer/attention/paged_decode.rs` |
+| Ragged prefill and indptr semantics | `loom-infer/attention/ragged_prefill.rs` |
 | CUDA decode providers and dispatch | `loom-infer-cuda/attention/decode.rs` |
+| CUDA ragged prefill provider | `loom-infer-cuda/attention/prefill.rs` |
 | Wrapper planning lifecycle | Immutable Rust plan types, not Python wrapper classes |
 | Workspace and stream ownership | Shared `command` and `graph` modules |
 | Hardware tests and benchmarks | `loom-infer-validation`, never product modules |

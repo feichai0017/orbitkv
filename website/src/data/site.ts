@@ -14,7 +14,7 @@ export const operatorFamilies = [
   },
   {
     name: "Attention",
-    boundary: "Single and paged decode, split-K, state merge, then ragged prefill.",
+    boundary: "Single and paged decode, split-K, state merge, and ragged causal prefill.",
     state: "Partial device correct",
   },
   {
@@ -53,6 +53,6 @@ export const milestones = [
   {
     milestone: "03",
     name: "Attention core",
-    reason: "Eight-warp paged decode is 4.41x ahead on MHA and 2.35x ahead on matched MQA.",
+    reason: "Ragged causal prefill is H20-correct; matched performance and Graph replay remain open.",
   },
 ]

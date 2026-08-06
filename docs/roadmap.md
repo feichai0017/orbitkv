@@ -81,7 +81,10 @@ correctness and sanitizer gates.
   sanitizer gate.
 - retain eight-warp paged MQA/GQA token parallelism and its matched eager and
   CUPTI gates, then add fixed-address Graph gates.
-- implement ragged prefill.
+- retain the BF16 NHD D128 ragged prefill contract, CPU oracle, checked
+  cuda-oxide provider, and H20 correctness/sanitizer gate.
+- add a row-to-request or tile schedule before claiming ragged prefill
+  performance.
 - retain split-K execution, stable F32 state merge, and its H20 correctness
   gate.
 - support common causal and sliding-window contracts.
@@ -107,7 +110,13 @@ eight-warp block-local token parallelism lowers Loom MQA/GQA eager latency by
 3.78x and 3.32x relative to the direct record. Loom is now 4.41x lower-latency
 for MHA and 2.35x lower-latency for MQA than FlashInfer. Batch-4 GQA still has
 no stable ranking because FlashInfer's order delta is 60.62%. Fixed-address
-Graph replay and performance, ragged prefill, and real model invocation remain
+Graph replay and real model invocation remain open.
+
+The first ragged prefill slice uses separate query/KV `indptr` arrays and
+FlashInfer-compatible bottom-right causal alignment. Its correctness-first
+one-warp-per-query-row-head kernel passes MHA/MQA/GQA H20 correctness and all
+four Compute Sanitizer tools. Matched FlashInfer performance, a row-to-request
+or tile schedule, fixed-address Graph replay, and real model invocation remain
 open.
 
 ## 5. Decode and KV operations

@@ -65,9 +65,22 @@ import { repositoryUrl } from "../data/site";
 
       <h2>Current source projection</h2>
       <p>
-        The paged batch-decode and parallel-merge records independently qualify
-        their declared device paths.
+        The ragged prefill, paged batch-decode, and parallel-merge records
+        independently qualify their declared device paths.
       </p>
+      <div class="doc-note">
+        <strong>BF16 ragged causal prefill passed its H20 gate.</strong>
+        <p>
+          NHD D128 MHA, MQA, and GQA batches produce bit-exact BF16 output
+          against the CPU oracle. Separate query/KV indptr arrays, mixed
+          lengths, bottom-right causal alignment, and an invalid-metadata guard
+          are covered. Four sanitizer tools report no errors. Performance is
+          not measured.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-ragged-prefill-correctness-20260806.json`}>
+          Ragged prefill correctness result
+        </a>
+      </div>
       <div class="doc-note">
         <strong>BF16 paged batch decode passed its H20 gate.</strong>
         <p>

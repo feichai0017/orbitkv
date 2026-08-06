@@ -50,7 +50,8 @@ The repository contains three crates:
 
 Operator families use stable facade modules with private domain
 implementations. Attention currently separates contiguous/split-K contracts,
-paged contracts, and the CUDA decode vertical slice while preserving
+paged contracts, ragged prefill contracts, and CUDA decode/prefill vertical
+slices while preserving
 `loom_infer::attention::*` and `loom_infer_cuda::attention::*`.
 
 The current device paths are:
@@ -61,6 +62,7 @@ The current device paths are:
 | Contiguous BF16 GEMM with F32 accumulation | One fixed cuBLASLt algorithm | Device-correct with fixed-address Graph replay and sanitizer coverage |
 | BF16 single-request decode attention | Rust device kernel compiled with cuda-oxide | Narrow NHD D128 contract device-correct and sanitizer-clean |
 | BF16 paged batch decode attention | Rust device kernel compiled with cuda-oxide | NHD D128 page-size-16 contract device-correct and sanitizer-clean |
+| BF16 ragged causal prefill attention | Rust device kernel compiled with cuda-oxide | NHD D128 bottom-right causal contract device-correct and sanitizer-clean |
 
 All providers use the same public flow:
 
@@ -83,12 +85,14 @@ The GEMM contract is `D[M,N] = A[M,K] * W[N,K]^T` over contiguous row-major
 BF16 tensors. Algorithm selection happens during planning. Enqueue does not
 tune or fall back.
 
-The backend-independent crate now includes a BF16 NHD D128 page-size-16 batch
-decode contract and CPU reference with FlashInfer-compatible page-table
-semantics. Its CUDA provider uses direct MHA and eight-warp MQA/GQA paths and
-passes the declared H20 correctness and sanitizer gates. Graph replay, engine
-integration, and serving evidence remain roadmap work, as do sampling,
-KV-cache mutation, MoE, and quantization.
+The backend-independent crate includes BF16 NHD D128 batch-decode and ragged
+prefill contracts with CPU references. Batch decode uses FlashInfer-compatible
+page-table semantics; ragged prefill uses bottom-right causal alignment and
+separate query/KV `indptr` arrays. Their CUDA providers pass the declared H20
+correctness and sanitizer gates. Ragged prefill remains a correctness-first
+direct kernel with no performance claim. Graph replay, engine integration, and
+serving evidence remain roadmap work, as do sampling, KV-cache mutation, MoE,
+and quantization.
 
 The first single-decode slice covers BF16 MHA, MQA, and GQA with NHD caches and
 head dimension 128. It does not establish FlashInfer performance parity. See the
@@ -156,6 +160,11 @@ relative to the immutable direct record. Loom now has 4.41x lower stable-shape
 median latency for batch-1 MHA and 2.35x lower latency for mixed-length
 batch-3 MQA than FlashInfer. The batch-4 GQA comparison remains excluded from
 stable ranking because FlashInfer's provider-order delta is 60.62%.
+
+The current ragged prefill record is correctness-only. MHA, MQA, and GQA cases
+produce bit-exact BF16 output against the Loom CPU oracle with maximum
+log2-LSE error `4.768371582e-7`; all four Compute Sanitizer tools report no
+errors. A matched FlashInfer performance result remains open.
 
 See the [architecture](docs/design/loom-infer-architecture.md),
 [repository layout](docs/design/repository-layout.md),

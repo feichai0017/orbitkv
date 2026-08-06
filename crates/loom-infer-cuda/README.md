@@ -13,17 +13,18 @@ Hardware runners live in the sibling `loom-infer-validation` crate. Use
 
 ## Module layout
 
-Public operator modules are stable facades. Attention's implemented decode
-domain lives in `src/attention/decode.rs`, including its inline cuda-oxide
-artifact bundle and immutable plans. Future prefill, MLA, and KV domains become
-sibling private modules without changing `loom_infer_cuda::attention::*`.
+Public operator modules are stable facades. Attention's decode and prefill
+domains live in `src/attention/{decode,prefill}.rs`, each with its inline
+cuda-oxide artifact bundle and immutable plans. Future MLA and KV domains
+become sibling private modules without changing
+`loom_infer_cuda::attention::*`.
 
 ## Current providers
 
 The Rust providers implement contiguous RMSNorm, BF16 single-request decode,
-and BF16 paged batch decode attention. The vendor provider freezes one
-contiguous BF16 cuBLASLt GEMM algorithm during planning. All use typed bindings
-and one completion event.
+BF16 paged batch decode, and BF16 ragged causal prefill attention. The vendor
+provider freezes one contiguous BF16 cuBLASLt GEMM algorithm during planning.
+All use typed bindings and one completion event.
 
 The current owned-binding revision passed its H20 correctness gates. The fixed
 RMSNorm-to-GEMM Graph also passed replay and Compute Sanitizer gates. The
@@ -40,3 +41,7 @@ Paged MHA keeps a direct warp, while MQA/GQA use eight-warp block-local token
 parallelism. The current matched result puts Loom 4.41x lower-latency for MHA
 and 2.35x lower-latency for MQA than the pinned FlashInfer path; GQA remains
 excluded from stable ranking because the baseline is provider-order sensitive.
+
+Ragged prefill uses a correctness-first direct warp for each query-row and
+query-head pair. MHA/MQA/GQA pass the H20 correctness and sanitizer gates.
+Matched performance, Graph replay, and engine integration remain open.

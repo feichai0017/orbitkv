@@ -32,7 +32,7 @@ No complete domain-level parity is currently claimed.
 | Domain | Representative v0.6.16.post1 surface | Loom state |
 | --- | --- | --- |
 | Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 NHD D128 has single-request direct/split-K and page-size-16 batch-decode GPU paths |
-| Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `planned`; no attention provider |
+| Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 NHD D128 ragged batch causal prefill only |
 | Mixed-batch attention | [`BatchAttention`, attention-sink wrapper](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
 | MLA attention | [`BatchMLAPagedAttentionWrapper`, XQA and TRT-LLM MLA decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
 | Attention state and cascade | [`merge_state`, `merge_states`, `MultiLevelCascadeAttentionWrapper`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cascade.rst) | `planned` at state-merge level |
@@ -125,6 +125,19 @@ The batch-4 GQA eager ranking remains excluded: FlashInfer's provider-order
 delta is 60.62%. CUPTI records Loom kernel medians of `2.176`, `4.864`, and
 `4.928` microseconds for MHA, MQA, and GQA, versus direct medians of `2.176`,
 `20.928`, and `18.304` microseconds.
+
+The third contract adds BF16 ragged batch prefill over contiguous NHD storage.
+Query and KV rows use separate `i32` `indptr` arrays, head dimension is 128,
+and the causal mask is bottom-right aligned. The first contract requires every
+request to satisfy `1 <= qo_len <= kv_len`; it does not include empty requests,
+RoPE, sliding windows, soft caps, or custom masks.
+
+The [ragged prefill H20 result](results/h20-bf16-ragged-prefill-correctness-20260806.json)
+covers MHA, MQA, GQA, equal and mixed query/KV lengths, exact metadata spans,
+and a device-side invalid-metadata guard. All valid cases produce bit-exact
+BF16 output against the CPU oracle, maximum log2-LSE error is
+`4.768371582e-7`, and four Compute Sanitizer tools report no errors. It is not
+a FlashInfer differential or performance result.
 
 Fixed-address CUDA Graph replay, a provider-ordered isolated-kernel gate,
 engine invocation, and serving results remain open before a
