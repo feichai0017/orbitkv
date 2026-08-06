@@ -1,12 +1,13 @@
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer, sys};
 use half::bf16;
 use loom_infer::{
-    Bf16GemmSpec, Bf16PagedBatchDecodeSpec, Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec,
-    DType, RmsNormSpec,
+    Bf16GemmSpec, Bf16PagedBatchDecodeSpec, Bf16RaggedPrefillSpec, Bf16SingleDecodeSpec,
+    Bf16SingleDecodeSplitKSpec, DType, RmsNormSpec,
 };
 use loom_infer_cuda::attention::{
     AttentionProvider, Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs,
-    Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,
+    Bf16RaggedPrefillArgs, Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,
+    PrefillProvider,
 };
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
@@ -22,6 +23,7 @@ const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MEASUREMENT: &str = "eager_stream_batch_cuda_event";
 const FIXTURE_ID: &str = "xorshift64_mod2001_bf16_v1";
 const PAGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_page_table_v1";
+const RAGGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1";
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -71,6 +73,17 @@ struct PagedDecodeCase {
     page_indptr: &'static [i32],
     page_indices: &'static [i32],
     last_page_len: &'static [i32],
+    salt: u64,
+}
+
+#[derive(Clone, Copy)]
+struct RaggedPrefillCase {
+    name: &'static str,
+    batch_size: usize,
+    query_heads: usize,
+    kv_heads: usize,
+    qo_indptr: &'static [i32],
+    kv_indptr: &'static [i32],
     salt: u64,
 }
 
@@ -503,17 +516,128 @@ fn benchmark_paged_decode_case(
     Ok(())
 }
 
+fn benchmark_ragged_prefill_case(
+    context: &Arc<CudaContext>,
+    stream: &Arc<CudaStream>,
+    provider: &PrefillProvider,
+    case: RaggedPrefillCase,
+    config: BenchConfig,
+    identity: &RunIdentity,
+) -> Result<(), Box<dyn Error>> {
+    let nnz_qo = usize::try_from(*case.qo_indptr.last().ok_or("empty qo_indptr")?)?;
+    let nnz_kv = usize::try_from(*case.kv_indptr.last().ok_or("empty kv_indptr")?)?;
+    let spec = Bf16RaggedPrefillSpec::new(
+        case.batch_size,
+        nnz_qo,
+        nnz_kv,
+        case.query_heads,
+        case.kv_heads,
+        128,
+    )?;
+    let metadata = spec.validate_metadata(case.qo_indptr, case.kv_indptr)?;
+    let plan = provider.plan_bf16_ragged(spec)?;
+    let query_host = deterministic_bf16(spec.query_numel(), case.salt);
+    let key_host = deterministic_bf16(spec.kv_numel(), case.salt ^ 0x4b45_5900);
+    let value_host = deterministic_bf16(spec.kv_numel(), case.salt ^ 0x5641_4c55_4500);
+    let query = Arc::new(DeviceBuffer::from_host(stream, &query_host)?);
+    let key = Arc::new(DeviceBuffer::from_host(stream, &key_host)?);
+    let value = Arc::new(DeviceBuffer::from_host(stream, &value_host)?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(stream, case.qo_indptr)?);
+    let kv_indptr = Arc::new(DeviceBuffer::from_host(stream, case.kv_indptr)?);
+    let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
+    let lse = DeviceBuffer::<f32>::zeroed(stream, spec.lse_numel())?;
+    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
+    let mut bindings = queue.bindings(7)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key)?;
+    let value_handle = bindings.bind_read(value)?;
+    let qo_indptr_handle = bindings.bind_read(qo_indptr)?;
+    let kv_indptr_handle = bindings.bind_read(kv_indptr)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+
+    let (_bindings, samples_us) =
+        benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
+            plan.enqueue_into(
+                scope,
+                Bf16RaggedPrefillArgs::new(
+                    query_handle,
+                    key_handle,
+                    value_handle,
+                    qo_indptr_handle,
+                    kv_indptr_handle,
+                    output_handle.write(),
+                    lse_handle.write(),
+                ),
+            )?;
+            Ok(())
+        })?;
+    let mut request_qo_lens = Vec::with_capacity(spec.batch_size());
+    let mut request_kv_lens = Vec::with_capacity(spec.batch_size());
+    for request in 0..spec.batch_size() {
+        let ((qo_start, qo_end), (kv_start, kv_end)) = metadata
+            .request_row_ranges(request)
+            .expect("validated request has row ranges");
+        request_qo_lens.push(qo_end - qo_start);
+        request_kv_lens.push(kv_end - kv_start);
+    }
+
+    BenchmarkRecord {
+        schema_version: 1,
+        provider: "loom-infer",
+        provider_version: PROVIDER_VERSION,
+        provider_commit: &identity.provider_commit,
+        run_label: &identity.run_label,
+        measurement: MEASUREMENT,
+        operator: "ragged_prefill",
+        case: case.name,
+        dtype: "bf16",
+        layout: "NHD_D128_ragged",
+        execution: json!({
+            "algorithm": "direct_one_warp_per_query_row_head",
+            "causal": "bottom_right",
+            "indptr_location": "device"
+        }),
+        kernels_per_call: 1,
+        shape: json!({
+            "batch_size": spec.batch_size(),
+            "nnz_qo": spec.nnz_qo(),
+            "nnz_kv": spec.nnz_kv(),
+            "request_qo_lens": request_qo_lens,
+            "request_kv_lens": request_kv_lens,
+            "query_heads": spec.num_query_heads(),
+            "kv_heads": spec.num_kv_heads(),
+            "head_dim": spec.head_dim()
+        }),
+        fixture_id: RAGGED_FIXTURE_ID,
+        fixture_digests: json!({
+            "query": format!("{:016x}", digest_bf16(&query_host)),
+            "key": format!("{:016x}", digest_bf16(&key_host)),
+            "value": format!("{:016x}", digest_bf16(&value_host)),
+            "qo_indptr": format!("{:016x}", digest_i32(case.qo_indptr)),
+            "kv_indptr": format!("{:016x}", digest_i32(case.kv_indptr))
+        }),
+        warmup_launches: config.warmup_launches,
+        launches_per_sample: config.launches_per_sample,
+        samples_us,
+    }
+    .write_json_line()?;
+    Ok(())
+}
+
 fn main() -> Result<(), Box<dyn Error>> {
     let config = BenchConfig::from_env()?;
     let identity = RunIdentity::from_env()?;
-    let requested = env::var("LOOM_BENCH_OPERATORS")
-        .unwrap_or_else(|_| "rms_norm,gemm,single_decode,paged_batch_decode".to_string());
+    let requested = env::var("LOOM_BENCH_OPERATORS").unwrap_or_else(|_| {
+        "rms_norm,gemm,single_decode,paged_batch_decode,ragged_prefill".to_string()
+    });
     let requested = requested.split(',').collect::<Vec<_>>();
     let context = CudaContext::new(0)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
     let rms_provider = RmsNormProvider::load(&context)?;
     let gemm_provider = CublasLtProvider::load(&context)?;
     let attention_provider = AttentionProvider::load(&context)?;
+    let prefill_provider = PrefillProvider::load(&context)?;
 
     if requested.contains(&"rms_norm") {
         for (rows, hidden_size) in [(1, 4096), (8, 4096), (64, 4096), (16, 8192)] {
@@ -612,6 +736,46 @@ fn main() -> Result<(), Box<dyn Error>> {
                 &context,
                 &stream,
                 &attention_provider,
+                case,
+                config,
+                &identity,
+            )?;
+        }
+    }
+    if requested.contains(&"ragged_prefill") {
+        for case in [
+            RaggedPrefillCase {
+                name: "bf16_ragged_mha_b1_q16_kv16_qh8_kvh8_d128",
+                batch_size: 1,
+                query_heads: 8,
+                kv_heads: 8,
+                qo_indptr: &[0, 16],
+                kv_indptr: &[0, 16],
+                salt: 0x1001,
+            },
+            RaggedPrefillCase {
+                name: "bf16_ragged_mqa_b3_q1_4_16_kv128_256_512_qh8_kvh1_d128",
+                batch_size: 3,
+                query_heads: 8,
+                kv_heads: 1,
+                qo_indptr: &[0, 1, 5, 21],
+                kv_indptr: &[0, 128, 384, 896],
+                salt: 0x2001,
+            },
+            RaggedPrefillCase {
+                name: "bf16_ragged_gqa4_b2_q32_64_kv256_1024_qh16_kvh4_d128",
+                batch_size: 2,
+                query_heads: 16,
+                kv_heads: 4,
+                qo_indptr: &[0, 32, 96],
+                kv_indptr: &[0, 256, 1280],
+                salt: 0x4001,
+            },
+        ] {
+            benchmark_ragged_prefill_case(
+                &context,
+                &stream,
+                &prefill_provider,
                 case,
                 config,
                 &identity,

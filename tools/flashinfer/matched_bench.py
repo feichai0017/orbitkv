@@ -24,6 +24,7 @@ PROVIDER_COMMIT = "5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57"
 MEASUREMENT = "eager_stream_batch_cuda_event"
 FIXTURE_ID = "xorshift64_mod2001_bf16_v1"
 PAGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_page_table_v1"
+RAGGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1"
 FNV_OFFSET_BASIS = 0xCBF29CE484222325
 FNV_PRIME = 0x00000100000001B3
 MASK64 = (1 << 64) - 1
@@ -381,10 +382,120 @@ def benchmark_paged_decode(
     )
 
 
+def benchmark_ragged_prefill(
+    case: str,
+    batch_size: int,
+    query_heads: int,
+    kv_heads: int,
+    qo_indptr_values: tuple[int, ...],
+    kv_indptr_values: tuple[int, ...],
+    salt: int,
+) -> None:
+    head_dim = 128
+    nnz_qo = qo_indptr_values[-1]
+    nnz_kv = kv_indptr_values[-1]
+    query_host = deterministic_bf16(nnz_qo * query_heads * head_dim, salt)
+    key_host = deterministic_bf16(
+        nnz_kv * kv_heads * head_dim, salt ^ 0x4B455900
+    )
+    value_host = deterministic_bf16(
+        nnz_kv * kv_heads * head_dim, salt ^ 0x56414C554500
+    )
+    qo_indptr_host = torch.tensor(qo_indptr_values, dtype=torch.int32)
+    kv_indptr_host = torch.tensor(kv_indptr_values, dtype=torch.int32)
+    query = query_host.reshape(nnz_qo, query_heads, head_dim).to("cuda")
+    key = key_host.reshape(nnz_kv, kv_heads, head_dim).to("cuda")
+    value = value_host.reshape(nnz_kv, kv_heads, head_dim).to("cuda")
+    qo_indptr = qo_indptr_host.to("cuda")
+    kv_indptr = kv_indptr_host.to("cuda")
+    output = torch.empty_like(query)
+    lse = torch.empty(
+        (nnz_qo, query_heads), device="cuda", dtype=torch.float32
+    )
+    workspace = torch.zeros(
+        128 * 1024 * 1024, device="cuda", dtype=torch.uint8
+    )
+    wrapper = flashinfer.BatchPrefillWithRaggedKVCacheWrapper(
+        workspace,
+        "NHD",
+        use_cuda_graph=False,
+        backend="fa2",
+    )
+    wrapper.plan(
+        qo_indptr,
+        kv_indptr,
+        query_heads,
+        kv_heads,
+        head_dim,
+        causal=True,
+        pos_encoding_mode="NONE",
+        window_left=-1,
+        q_data_type=torch.bfloat16,
+        kv_data_type=torch.bfloat16,
+        o_data_type=torch.bfloat16,
+        sm_scale=1.0 / math.sqrt(head_dim),
+        disable_split_kv=False,
+    )
+    torch.cuda.synchronize()
+
+    def run() -> None:
+        wrapper.run(
+            query,
+            key,
+            value,
+            out=output,
+            lse=lse,
+            return_lse=True,
+            enable_pdl=False,
+        )
+
+    samples_us = benchmark(run)
+    request_qo_lens = [
+        qo_indptr_values[index + 1] - qo_indptr_values[index]
+        for index in range(batch_size)
+    ]
+    request_kv_lens = [
+        kv_indptr_values[index + 1] - kv_indptr_values[index]
+        for index in range(batch_size)
+    ]
+    write_record(
+        "ragged_prefill",
+        case,
+        "NHD_D128_ragged",
+        {
+            "algorithm": "flashinfer_batch_ragged_prefill_wrapper",
+            "backend": "fa2",
+            "causal": "bottom_right",
+            "disable_split_kv": False,
+            "indptr_location": "device",
+        },
+        1,
+        {
+            "batch_size": batch_size,
+            "nnz_qo": nnz_qo,
+            "nnz_kv": nnz_kv,
+            "request_qo_lens": request_qo_lens,
+            "request_kv_lens": request_kv_lens,
+            "query_heads": query_heads,
+            "kv_heads": kv_heads,
+            "head_dim": head_dim,
+        },
+        {
+            "query": digest_bf16(query_host),
+            "key": digest_bf16(key_host),
+            "value": digest_bf16(value_host),
+            "qo_indptr": digest_i32(qo_indptr_host),
+            "kv_indptr": digest_i32(kv_indptr_host),
+        },
+        samples_us,
+        RAGGED_FIXTURE_ID,
+    )
+
+
 def main() -> None:
     requested = os.environ.get(
         "LOOM_BENCH_OPERATORS",
-        "rms_norm,gemm,single_decode,paged_batch_decode",
+        "rms_norm,gemm,single_decode,paged_batch_decode,ragged_prefill",
     ).split(",")
     if "rms_norm" in requested:
         for rows, hidden_size in ((1, 4096), (8, 4096), (64, 4096), (16, 8192)):
@@ -443,6 +554,37 @@ def main() -> None:
             ),
         ):
             benchmark_paged_decode(*args)
+    if "ragged_prefill" in requested:
+        for args in (
+            (
+                "bf16_ragged_mha_b1_q16_kv16_qh8_kvh8_d128",
+                1,
+                8,
+                8,
+                (0, 16),
+                (0, 16),
+                0x1001,
+            ),
+            (
+                "bf16_ragged_mqa_b3_q1_4_16_kv128_256_512_qh8_kvh1_d128",
+                3,
+                8,
+                1,
+                (0, 1, 5, 21),
+                (0, 128, 384, 896),
+                0x2001,
+            ),
+            (
+                "bf16_ragged_gqa4_b2_q32_64_kv256_1024_qh16_kvh4_d128",
+                2,
+                16,
+                4,
+                (0, 32, 96),
+                (0, 256, 1280),
+                0x4001,
+            ),
+        ):
+            benchmark_ragged_prefill(*args)
 
 
 if __name__ == "__main__":

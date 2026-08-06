@@ -14,8 +14,8 @@ commit:     5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57
 The harness measures the admitted BF16 contracts with preallocated tensors and
 CUDA events. Single decode calls the precompiled low-level module directly so
 temporary and output allocation stay outside the timed region. Paged decode
-plans one `BatchDecodeWithPagedKVCacheWrapper` before measurement, fixes the FA2
-CUDA-core backend, and passes caller-owned output and LSE tensors on every run.
+and ragged prefill plan their wrappers before measurement, fix the FA2
+CUDA-core backend, and pass caller-owned output and LSE tensors on every run.
 GEMM fixes the cuBLASLt backend and tactic zero after preparation.
 
 ## Environment
@@ -43,10 +43,10 @@ Use the same parameters for both providers:
 export LOOM_BENCH_WARMUP=200
 export LOOM_BENCH_LAUNCHES=100
 export LOOM_BENCH_SAMPLES=50
-export LOOM_BENCH_OPERATORS=paged_batch_decode
+export LOOM_BENCH_OPERATORS=ragged_prefill
 
 LOOM_BENCH_RUN_LABEL=loom_first \
-make bench-paged-loom > /tmp/loom-first.jsonl
+make bench-ragged-loom > /tmp/loom-first.jsonl
 
 FLASHINFER_WORKSPACE_BASE=/path/to/jit-cache \
 LOOM_BENCH_RUN_LABEL=flashinfer_second \
