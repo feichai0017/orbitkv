@@ -346,7 +346,14 @@ The [ragged Graph correctness record](../results/h20-bf16-ragged-prefill-cuda-gr
 captures the tiled partial and merge kernels on one private stream. Two
 fixed-address replays preserve the standalone output and log2-LSE digests after
 external owner teardown. Memcheck, racecheck, initcheck, and synccheck report
-no errors or leaks. Graph performance remains a separate open gate.
+no errors or leaks.
+
+The [matched ragged Graph performance record](../results/h20-flashinfer-v0.6.16.post1-ragged-prefill-graph-performance-20260806.json)
+measures one replay and one completion event per CUDA-event sample. Loom and
+FlashInfer combined medians are `50.480` and `32.640` microseconds, and their
+provider-order deltas are `0.127%` and `0.344%`. Capture, instantiation,
+planning, allocation, fixture copies, and correctness reads are excluded. Do
+not compare this single-replay metric directly with the eager provider record.
 
 The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
 retains both provider orders and all 600 raw samples. Loom is 4.21x
@@ -365,4 +372,5 @@ and `4.928` microseconds. These diagnostics guide optimization but are not a
 provider-ordered isolated-kernel gate.
 
 Fixed Rust-kernel argument packs, matched RMSNorm, hardware-counter profiling,
-provider-ordered paged kernel timing, and Graph performance gates remain open.
+provider-ordered paged kernel timing, and non-ragged Graph performance gates
+remain open.

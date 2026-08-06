@@ -151,6 +151,13 @@ The [ragged fixed-address Graph result](results/h20-bf16-ragged-prefill-cuda-gra
 captures the tiled partial and merge kernels and replays them twice after
 external provider, plan, and read-buffer owners are dropped. Output and
 log2-LSE preserve the standalone digests, and four Compute Sanitizer tools
-report no errors or leaks. Graph performance, a provider-ordered
-isolated-kernel gate, engine invocation, and serving results remain open before
-a continuous-batching parity claim.
+report no errors or leaks.
+
+The [matched ragged Graph performance result](results/h20-flashinfer-v0.6.16.post1-ragged-prefill-graph-performance-20260806.json)
+records one fixed-address replay and one completion event per CUDA-event
+sample. Loom and FlashInfer combined medians are `50.480` and `32.640`
+microseconds, so FlashInfer is `1.547x` lower-latency on this shape. The
+provider-order deltas are `0.127%` and `0.344%`. This single-replay Graph metric
+is separate from eager provider and isolated-kernel measurements. Engine
+invocation and serving results remain open before a continuous-batching parity
+claim.

@@ -5,6 +5,15 @@ providers.
 
 ## Results
 
+The current [matched ragged fixed-address Graph performance record](h20-flashinfer-v0.6.16.post1-ragged-prefill-graph-performance-20260806.json)
+measures one replay per CUDA-event sample with one matched completion event
+inside both timed paths. Loom records `50.480` microseconds and FlashInfer
+records `32.640` microseconds on the admitted long-GQA shape, so FlashInfer is
+`1.547x` lower-latency. Provider-order deltas are `0.127%` and `0.344%`.
+Capture, instantiation, planning, allocation, and correctness reads are
+excluded; all 400 raw samples are embedded. This metric is not interchangeable
+with the eager provider result below.
+
 The current [BF16 ragged prefill CUDA Graph correctness record](h20-bf16-ragged-prefill-cuda-graph-correctness-20260806.json)
 captures the tiled long-GQA partial and merge kernels in one fixed-address
 graph. Two replays preserve the standalone output and log2-LSE digests after

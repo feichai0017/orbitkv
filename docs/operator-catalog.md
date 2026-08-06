@@ -89,8 +89,9 @@ Short-MHA and mixed-MQA rankings are excluded because FlashInfer's
 provider-order deltas are `10.643%` and `14.097%`. The tiled
 partial-plus-merge plan passes fixed-address Graph correctness after two
 replays and external owner teardown, with four Compute Sanitizer tools
-reporting no errors or leaks. Graph performance, engine, and serving gates
-remain open.
+reporting no errors or leaks. The matched single-replay Graph medians are
+`50.480` microseconds for Loom and `32.640` microseconds for FlashInfer;
+FlashInfer is `1.547x` lower-latency. Engine and serving gates remain open.
 
 ## Admission
 

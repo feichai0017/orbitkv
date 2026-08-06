@@ -229,7 +229,12 @@ The same two-kernel tiled plan now passes fixed-address Graph correctness. One
 private-stream graph retains its checked Q/K/V, metadata, output, LSE, and
 workspace bindings plus both kernel functions, then replays twice after the
 runner drops external provider, plan, and read-buffer owners. Graph performance
-and mutable graph contracts remain separate open boundaries.
+uses a separate single-replay CUDA-event boundary: both providers include one
+completion event, while capture, instantiation, planning, allocation, and
+correctness reads remain outside the interval. Loom records `50.480`
+microseconds and FlashInfer records `32.640` microseconds, making FlashInfer
+`1.547x` lower-latency on the admitted long-GQA shape. Mutable graph contracts
+remain open.
 
 CUPTI activity records Loom kernel medians of `2.176`, `4.864`, and `4.928`
 microseconds for MHA, MQA, and GQA, versus direct medians of `2.176`,
@@ -240,7 +245,7 @@ pinned FlashInfer path.
 Relative to the recorded direct baseline, the current matched result lowers
 Loom latency by 5.39x at GQA KV length 127 and 38.19x at KV length 4096.
 FlashInfer remains 1.17x and 2.09x lower-latency. Hardware-counter metrics and
-Graph performance remain separate open gates.
+single-decode Graph performance remain separate open gates.
 
 ## Vendor providers
 

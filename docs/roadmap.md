@@ -128,7 +128,9 @@ previous tiled path and the complete path is `7.729x` faster than direct.
 FlashInfer remains `2.206x` lower-latency on stable long GQA. Broader query
 tiling and real model invocation remain open. Fixed-address Graph correctness
 now passes for the tiled partial-plus-merge path after two replays and external
-owner teardown; matched Graph performance remains open.
+owner teardown. The matched single-replay Graph result records Loom at `50.480`
+microseconds and FlashInfer at `32.640` microseconds, with FlashInfer `1.547x`
+lower-latency on the admitted long-GQA shape. Engine invocation remains open.
 
 ## 5. Decode and KV operations
 
