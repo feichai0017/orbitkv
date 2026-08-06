@@ -9,7 +9,11 @@ mod paged_decode;
 mod ragged_prefill;
 mod single_decode;
 
-pub use paged_append::{Bf16RopePagedKvAppendSpec, rope_paged_kv_append_bf16_reference};
+pub use paged_append::{
+    Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensMetadata,
+    Bf16RopePagedKvAppendTokensSpec, ROPE_PAGED_KV_APPEND_MAX_TOKENS,
+    rope_paged_kv_append_bf16_reference, rope_paged_kv_append_tokens_bf16_reference,
+};
 pub use paged_decode::{
     Bf16PagedBatchDecodePageTable, Bf16PagedBatchDecodeSpec, PAGED_BATCH_DECODE_PAGE_SIZE,
     paged_batch_decode_bf16_reference,

@@ -73,9 +73,30 @@ pub enum ContractError {
         token: usize,
         position: i32,
     },
+    UnsupportedAppendTokenCount {
+        maximum: usize,
+        actual: usize,
+    },
+    AppendBatchIndexOutOfRange {
+        token: usize,
+        index: i32,
+        batch_size: usize,
+    },
+    AppendPositionOutOfRange {
+        token: usize,
+        request: usize,
+        position: i32,
+        kv_len: usize,
+    },
     DuplicatePageAppendSlot {
         first_request: usize,
         second_request: usize,
+        physical_page: usize,
+        offset: usize,
+    },
+    DuplicatePageAppendTokenSlot {
+        first_token: usize,
+        second_token: usize,
         physical_page: usize,
         offset: usize,
     },
@@ -194,6 +215,29 @@ impl fmt::Display for ContractError {
                 formatter,
                 "RoPE position ID at token {token} must be nonnegative, got {position}"
             ),
+            Self::UnsupportedAppendTokenCount { maximum, actual } => write!(
+                formatter,
+                "explicit paged KV append supports at most {maximum} tokens, got {actual}"
+            ),
+            Self::AppendBatchIndexOutOfRange {
+                token,
+                index,
+                batch_size,
+            } => write!(
+                formatter,
+                "paged KV append batch index at token {token} must be in 0..{batch_size}, got \
+                 {index}"
+            ),
+            Self::AppendPositionOutOfRange {
+                token,
+                request,
+                position,
+                kv_len,
+            } => write!(
+                formatter,
+                "paged KV append position at token {token} for request {request} must be in \
+                 0..{kv_len}, got {position}"
+            ),
             Self::DuplicatePageAppendSlot {
                 first_request,
                 second_request,
@@ -203,6 +247,16 @@ impl fmt::Display for ContractError {
                 formatter,
                 "paged KV append requests {first_request} and {second_request} target the same \
                  physical slot ({physical_page}, {offset})"
+            ),
+            Self::DuplicatePageAppendTokenSlot {
+                first_token,
+                second_token,
+                physical_page,
+                offset,
+            } => write!(
+                formatter,
+                "paged KV append tokens {first_token} and {second_token} target the same physical \
+                 slot ({physical_page}, {offset})"
             ),
             Self::UnsupportedDType(dtype) => write!(formatter, "unsupported dtype {dtype:?}"),
             Self::LengthMismatch {
