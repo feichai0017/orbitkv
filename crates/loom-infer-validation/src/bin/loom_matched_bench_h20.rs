@@ -5,8 +5,8 @@ use loom_infer::{
     DType, RmsNormSpec,
 };
 use loom_infer_cuda::attention::{
-    AttentionProvider, Bf16PagedBatchDecodeArgs, Bf16SingleDecodeArgs, Bf16SingleDecodePlan,
-    Bf16SingleDecodeSplitKArgs,
+    AttentionProvider, Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs,
+    Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,
 };
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
@@ -409,6 +409,10 @@ fn benchmark_paged_decode_case(
     let table =
         spec.validate_page_table(case.page_indptr, case.page_indices, case.last_page_len)?;
     let plan = provider.plan_bf16_paged_batch(spec)?;
+    let algorithm = match plan.algorithm() {
+        Bf16PagedBatchDecodeAlgorithm::Direct => "direct_one_warp_per_request_head",
+        Bf16PagedBatchDecodeAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
+    };
     let query_host = deterministic_bf16(spec.query_numel(), case.salt);
     let key_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x4b45_5900);
     let value_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x5641_4c55_4500);
@@ -468,7 +472,7 @@ fn benchmark_paged_decode_case(
         dtype: "bf16",
         layout: "NHD_D128_page16",
         execution: json!({
-            "algorithm": "direct_one_warp_per_request_head",
+            "algorithm": algorithm,
             "page_table_location": "device"
         }),
         kernels_per_call: 1,
