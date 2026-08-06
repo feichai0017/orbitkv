@@ -1,10 +1,10 @@
 //! cuda-oxide provider for BF16 ragged causal prefill attention.
 
-use crate::command::{CommandError, CommandPermit, CommandScope, Read, Write};
+use crate::command::{CommandError, CommandPermit, CommandScope, Read, ReadWrite, Write};
 use cuda_core::{CudaContext, CudaFunction, LaunchConfig1D, LaunchContractError, PreparedLaunch};
 use cuda_device::{
     DisjointSlice, SharedArray, convert, cuda_module, float, kernel, launch_bounds,
-    launch_contract, tcgen05, thread, warp,
+    launch_contract, tcgen05, thread, warp, wmma,
 };
 use half::bf16;
 use loom_infer::{
@@ -25,10 +25,24 @@ const TOKEN_PARALLEL_16_SHARED_NUMEL: usize =
     TOKEN_PARALLEL_16_WARPS * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
 const TOKEN_PARALLEL_MIN_AVERAGE_KV_LEN: usize = 64;
 const BF16_PAIRS_PER_HEAD: usize = SINGLE_DECODE_HEAD_DIM / 2;
+const TILED_GQA_GROUP_SIZE: usize = 4;
+const TILED_QUERY_ROWS: usize = 16;
+const TILED_PACKED_QUERY_ROWS: usize = TILED_QUERY_ROWS * TILED_GQA_GROUP_SIZE;
+const TILED_WARPS: usize = 4;
+const TILED_THREADS: u32 = WARP_THREADS * TILED_WARPS as u32;
+const TILED_KV_ROWS: usize = 64;
+const TILED_KV_SUBTILES: usize = TILED_KV_ROWS / 16;
+const TILED_KV_SHARED_PAIRS: usize = TILED_KV_ROWS * BF16_PAIRS_PER_HEAD;
+const TILED_PARTITIONS: usize = 8;
+const TILED_MIN_AVERAGE_KV_LEN: usize = 256;
 
 const _: () = {
     assert!(TOKEN_PARALLEL_8_THREADS == 256);
     assert!(TOKEN_PARALLEL_16_THREADS == 512);
+    assert!(TILED_PACKED_QUERY_ROWS == TILED_WARPS * 16);
+    assert!(TILED_THREADS == 128);
+    assert!(TILED_KV_SUBTILES == 4);
+    assert!(TILED_PARTITIONS == 8);
     assert!(SINGLE_DECODE_HEAD_DIM == 128);
 };
 
@@ -478,11 +492,11 @@ mod kernels {
     }
 
     #[kernel]
-    #[launch_bounds(256)]
+    #[launch_bounds(128)]
     #[allow(clippy::too_many_arguments)]
     #[launch_contract(
         domain = 1,
-        block = (256, 1, 1),
+        block = (128, 1, 1),
         min_compute_capability = (9, 0),
         requires = (
             batch_size >= 1,
@@ -598,6 +612,952 @@ mod kernels {
             lse,
         );
     }
+
+    #[inline(always)]
+    unsafe fn tiled_qk_mma(
+        accumulator: [f32; 4],
+        query_fragment: [u32; 4],
+        kv_tile: *const u32,
+        token_row: usize,
+        component_pair_base: usize,
+        lane_in_group: usize,
+    ) -> [f32; 4] {
+        let pair_base = token_row * BF16_PAIRS_PER_HEAD + component_pair_base;
+        // SAFETY: the caller initialized the complete shared K tile and all
+        // lanes call this helper with offsets inside that tile.
+        let key_fragment = unsafe {
+            [
+                kv_tile.add(pair_base + lane_in_group).read(),
+                kv_tile.add(pair_base + 4 + lane_in_group).read(),
+            ]
+        };
+        // SAFETY: the caller invokes this uniformly across the full warp with
+        // fragments in the documented m16n8k16 BF16 layout.
+        unsafe { wmma::mma_m16n8k16_f32_bf16(accumulator, query_fragment, key_fragment) }
+    }
+
+    #[inline(always)]
+    fn tiled_mask_score(
+        score: [f32; 4],
+        token_base: usize,
+        causal_end_0: usize,
+        causal_end_1: usize,
+        query_valid_0: bool,
+        query_valid_1: bool,
+        softmax_scale_log2: f32,
+    ) -> [f32; 4] {
+        [
+            if query_valid_0 && token_base < causal_end_0 {
+                score[0] * softmax_scale_log2
+            } else {
+                f32::NEG_INFINITY
+            },
+            if query_valid_0 && token_base + 1 < causal_end_0 {
+                score[1] * softmax_scale_log2
+            } else {
+                f32::NEG_INFINITY
+            },
+            if query_valid_1 && token_base < causal_end_1 {
+                score[2] * softmax_scale_log2
+            } else {
+                f32::NEG_INFINITY
+            },
+            if query_valid_1 && token_base + 1 < causal_end_1 {
+                score[3] * softmax_scale_log2
+            } else {
+                f32::NEG_INFINITY
+            },
+        ]
+    }
+
+    #[inline(always)]
+    fn tiled_score_max_0(score: [f32; 4]) -> f32 {
+        f32::max(score[0], score[1])
+    }
+
+    #[inline(always)]
+    fn tiled_score_max_1(score: [f32; 4]) -> f32 {
+        f32::max(score[2], score[3])
+    }
+
+    #[inline(always)]
+    fn tiled_softmax_score(
+        score: [f32; 4],
+        row_max_0: f32,
+        row_max_1: f32,
+        query_valid_0: bool,
+        query_valid_1: bool,
+    ) -> [f32; 4] {
+        [
+            if query_valid_0 && score[0] != f32::NEG_INFINITY {
+                float::ex2_approx_f32(score[0] - row_max_0)
+            } else {
+                0.0
+            },
+            if query_valid_0 && score[1] != f32::NEG_INFINITY {
+                float::ex2_approx_f32(score[1] - row_max_0)
+            } else {
+                0.0
+            },
+            if query_valid_1 && score[2] != f32::NEG_INFINITY {
+                float::ex2_approx_f32(score[2] - row_max_1)
+            } else {
+                0.0
+            },
+            if query_valid_1 && score[3] != f32::NEG_INFINITY {
+                float::ex2_approx_f32(score[3] - row_max_1)
+            } else {
+                0.0
+            },
+        ]
+    }
+
+    #[inline(always)]
+    fn tiled_scale_output(output: [f32; 4], scale_0: f32, scale_1: f32) -> [f32; 4] {
+        [
+            output[0] * scale_0,
+            output[1] * scale_0,
+            output[2] * scale_1,
+            output[3] * scale_1,
+        ]
+    }
+
+    #[inline(always)]
+    fn tiled_weight_fragment(score_0: [f32; 4], score_1: [f32; 4]) -> [u32; 4] {
+        [
+            tcgen05::cvt_f32x2_bf16x2(score_0[0], score_0[1]),
+            tcgen05::cvt_f32x2_bf16x2(score_0[2], score_0[3]),
+            tcgen05::cvt_f32x2_bf16x2(score_1[0], score_1[1]),
+            tcgen05::cvt_f32x2_bf16x2(score_1[2], score_1[3]),
+        ]
+    }
+
+    #[inline(always)]
+    unsafe fn tiled_pv_mma(
+        accumulator: [f32; 4],
+        weight_fragment: [u32; 4],
+        shared_values: *const u16,
+        token_base: usize,
+        dimension: usize,
+        lane_in_group: usize,
+    ) -> [f32; 4] {
+        let value_row_0 = token_base + lane_in_group * 2;
+        let value_row_1 = value_row_0 + 1;
+        let value_row_8 = value_row_0 + 8;
+        let value_row_9 = value_row_0 + 9;
+        // SAFETY: the caller initialized all 64 shared V rows and supplies a
+        // dimension in 0..128.
+        let value_fragment = unsafe {
+            let lo_0 = shared_values
+                .add(value_row_0 * SINGLE_DECODE_HEAD_DIM + dimension)
+                .read();
+            let hi_0 = shared_values
+                .add(value_row_1 * SINGLE_DECODE_HEAD_DIM + dimension)
+                .read();
+            let lo_1 = shared_values
+                .add(value_row_8 * SINGLE_DECODE_HEAD_DIM + dimension)
+                .read();
+            let hi_1 = shared_values
+                .add(value_row_9 * SINGLE_DECODE_HEAD_DIM + dimension)
+                .read();
+            [
+                u32::from(lo_0) | (u32::from(hi_0) << 16),
+                u32::from(lo_1) | (u32::from(hi_1) << 16),
+            ]
+        };
+        // SAFETY: the caller invokes this uniformly across the full warp.
+        unsafe { wmma::mma_m16n8k16_f32_bf16(accumulator, weight_fragment, value_fragment) }
+    }
+
+    macro_rules! scale_tiled_outputs {
+        ($scale_0:expr, $scale_1:expr; $($output:ident),+ $(,)?) => {
+            $(
+                $output = tiled_scale_output($output, $scale_0, $scale_1);
+            )+
+        };
+    }
+
+    macro_rules! tiled_pv_outputs {
+        (
+            $weight:expr,
+            $shared_values:expr,
+            $token_base:expr,
+            $lane_group:expr,
+            $lane_in_group:expr;
+            $($tile:literal => $output:ident),+ $(,)?
+        ) => {
+            $(
+                // SAFETY: the complete shared V tile is initialized and all
+                // lanes execute each expanded MMA uniformly.
+                $output = unsafe {
+                    tiled_pv_mma(
+                        $output,
+                        $weight,
+                        $shared_values,
+                        $token_base,
+                        $tile * 8 + $lane_group,
+                        $lane_in_group,
+                    )
+                };
+            )+
+        };
+    }
+
+    #[kernel]
+    #[launch_bounds(128)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (128, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            nnz_qo >= 1,
+            nnz_kv >= 1,
+            num_query_heads == num_kv_heads * 4,
+            num_kv_heads >= 1,
+            query.len() == nnz_qo * num_query_heads * 128,
+            key.len() == nnz_kv * num_kv_heads * 128,
+            value.len() == nnz_kv * num_kv_heads * 128,
+            qo_indptr.len() == batch_size + 1,
+            kv_indptr.len() == batch_size + 1,
+            workspace.len() == nnz_qo * num_query_heads * 8 * 130,
+        ),
+    )]
+    pub fn ragged_prefill_bf16_nhd_causal_tiled_gqa4(
+        batch_size: usize,
+        nnz_qo: usize,
+        nnz_kv: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key: &[bf16],
+        value: &[bf16],
+        qo_indptr: &[i32],
+        kv_indptr: &[i32],
+        mut workspace: DisjointSlice<f32>,
+    ) {
+        static mut KV_TILE: SharedArray<u32, TILED_KV_SHARED_PAIRS, 16> = SharedArray::UNINIT;
+
+        let block = thread::blockIdx_x() as usize;
+        let thread_in_block = thread::threadIdx_x() as usize;
+        let warp_in_block = thread_in_block / WARP_THREADS as usize;
+        let lane = thread_in_block % WARP_THREADS as usize;
+        let partition = block % TILED_PARTITIONS;
+        let kv_head = block / TILED_PARTITIONS % num_kv_heads;
+        let mut tile_index = block / (TILED_PARTITIONS * num_kv_heads);
+
+        if qo_indptr[0] != 0
+            || kv_indptr[0] != 0
+            || qo_indptr[batch_size] != nnz_qo as i32
+            || kv_indptr[batch_size] != nnz_kv as i32
+        {
+            return;
+        }
+
+        let mut request = 0_usize;
+        let mut request_tile = 0_usize;
+        let mut qo_start = 0_usize;
+        let mut qo_len = 0_usize;
+        let mut kv_start = 0_usize;
+        let mut kv_len = 0_usize;
+        while request < batch_size {
+            let request_qo_start = qo_indptr[request];
+            let request_qo_end = qo_indptr[request + 1];
+            let request_kv_start = kv_indptr[request];
+            let request_kv_end = kv_indptr[request + 1];
+            if request_qo_start < 0
+                || request_qo_end <= request_qo_start
+                || request_kv_start < 0
+                || request_kv_end <= request_kv_start
+                || request_qo_end as usize > nnz_qo
+                || request_kv_end as usize > nnz_kv
+                || request_qo_end - request_qo_start > request_kv_end - request_kv_start
+            {
+                return;
+            }
+            let request_qo_len = (request_qo_end - request_qo_start) as usize;
+            let request_tiles = request_qo_len.div_ceil(TILED_QUERY_ROWS);
+            if tile_index < request_tiles {
+                request_tile = tile_index;
+                qo_start = request_qo_start as usize;
+                qo_len = request_qo_len;
+                kv_start = request_kv_start as usize;
+                kv_len = (request_kv_end - request_kv_start) as usize;
+                break;
+            }
+            tile_index -= request_tiles;
+            request += 1;
+        }
+        if request >= batch_size {
+            return;
+        }
+
+        let query_tile_start = request_tile * TILED_QUERY_ROWS;
+        let query_pairs = query.as_ptr().cast::<u32>();
+        let key_pairs = key.as_ptr().cast::<u32>();
+        let value_pairs = value.as_ptr().cast::<u32>();
+        // SAFETY: one block owns this shared tile and all cross-warp reuse is
+        // ordered by block barriers below.
+        let kv_tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut KV_TILE) };
+
+        let mut output_0 = [0.0_f32; 4];
+        let mut output_1 = [0.0_f32; 4];
+        let mut output_2 = [0.0_f32; 4];
+        let mut output_3 = [0.0_f32; 4];
+        let mut output_4 = [0.0_f32; 4];
+        let mut output_5 = [0.0_f32; 4];
+        let mut output_6 = [0.0_f32; 4];
+        let mut output_7 = [0.0_f32; 4];
+        let mut output_8 = [0.0_f32; 4];
+        let mut output_9 = [0.0_f32; 4];
+        let mut output_10 = [0.0_f32; 4];
+        let mut output_11 = [0.0_f32; 4];
+        let mut output_12 = [0.0_f32; 4];
+        let mut output_13 = [0.0_f32; 4];
+        let mut output_14 = [0.0_f32; 4];
+        let mut output_15 = [0.0_f32; 4];
+        let mut row_max_0 = f32::NEG_INFINITY;
+        let mut row_max_1 = f32::NEG_INFINITY;
+        let mut row_sum_0 = 0.0_f32;
+        let mut row_sum_1 = 0.0_f32;
+        let lane_group = lane / 4;
+        let lane_in_group = lane % 4;
+        let packed_row_0 = warp_in_block * 16 + lane_group;
+        let packed_row_1 = packed_row_0 + 8;
+        let query_in_request_0 = query_tile_start + packed_row_0 / TILED_GQA_GROUP_SIZE;
+        let query_in_request_1 = query_tile_start + packed_row_1 / TILED_GQA_GROUP_SIZE;
+        let query_valid_0 = query_in_request_0 < qo_len;
+        let query_valid_1 = query_in_request_1 < qo_len;
+
+        let final_query = usize::min(query_tile_start + TILED_QUERY_ROWS, qo_len);
+        let causal_token_end = kv_len - qo_len + final_query;
+        let partition_token_start = partition * causal_token_end / TILED_PARTITIONS;
+        let partition_token_end = (partition + 1) * causal_token_end / TILED_PARTITIONS;
+        let mut kv_tile_start = partition_token_start;
+        while kv_tile_start < partition_token_end {
+            let mut load_index = thread_in_block;
+            while load_index < TILED_KV_SHARED_PAIRS {
+                let token_in_tile = load_index / BF16_PAIRS_PER_HEAD;
+                let pair_in_head = load_index % BF16_PAIRS_PER_HEAD;
+                let token = kv_tile_start + token_in_tile;
+                let packed = if token < partition_token_end {
+                    let pair_index = ((kv_start + token) * num_kv_heads + kv_head)
+                        * BF16_PAIRS_PER_HEAD
+                        + pair_in_head;
+                    // SAFETY: the validated request range and token predicate
+                    // prove this packed K pair lies inside the exact key span.
+                    unsafe { key_pairs.add(pair_index).read() }
+                } else {
+                    0
+                };
+                // SAFETY: threads cover disjoint shared pair indices.
+                unsafe {
+                    kv_tile.add(load_index).write(packed);
+                }
+                load_index += TILED_THREADS as usize;
+            }
+            thread::sync_threads();
+
+            let mut score_0 = [0.0_f32; 4];
+            let mut score_1 = [0.0_f32; 4];
+            let mut score_2 = [0.0_f32; 4];
+            let mut score_3 = [0.0_f32; 4];
+            let mut score_4 = [0.0_f32; 4];
+            let mut score_5 = [0.0_f32; 4];
+            let mut score_6 = [0.0_f32; 4];
+            let mut score_7 = [0.0_f32; 4];
+            let mut component_tile = 0_usize;
+            while component_tile < SINGLE_DECODE_HEAD_DIM / 16 {
+                let component_pair_base = component_tile * 8;
+                let mut query_fragment = [0_u32; 4];
+                if query_valid_0 {
+                    let query_head =
+                        kv_head * TILED_GQA_GROUP_SIZE + packed_row_0 % TILED_GQA_GROUP_SIZE;
+                    let query_state =
+                        (qo_start + query_in_request_0) * num_query_heads + query_head;
+                    let pair_base = query_state * BF16_PAIRS_PER_HEAD + component_pair_base;
+                    // SAFETY: the valid packed row and fixed component tile
+                    // prove both query pairs are in the exact Q span.
+                    unsafe {
+                        query_fragment[0] = query_pairs.add(pair_base + lane_in_group).read();
+                        query_fragment[2] = query_pairs.add(pair_base + 4 + lane_in_group).read();
+                    }
+                }
+                if query_valid_1 {
+                    let query_head =
+                        kv_head * TILED_GQA_GROUP_SIZE + packed_row_1 % TILED_GQA_GROUP_SIZE;
+                    let query_state =
+                        (qo_start + query_in_request_1) * num_query_heads + query_head;
+                    let pair_base = query_state * BF16_PAIRS_PER_HEAD + component_pair_base;
+                    // SAFETY: as above, for the second MMA row owned by this lane.
+                    unsafe {
+                        query_fragment[1] = query_pairs.add(pair_base + lane_in_group).read();
+                        query_fragment[3] = query_pairs.add(pair_base + 4 + lane_in_group).read();
+                    }
+                }
+
+                // SAFETY: the complete shared K tile is initialized and all
+                // lanes execute these eight MMA instructions uniformly.
+                unsafe {
+                    score_0 = tiled_qk_mma(
+                        score_0,
+                        query_fragment,
+                        kv_tile,
+                        lane_group,
+                        component_pair_base,
+                        lane_in_group,
+                    );
+                    score_1 = tiled_qk_mma(
+                        score_1,
+                        query_fragment,
+                        kv_tile,
+                        8 + lane_group,
+                        component_pair_base,
+                        lane_in_group,
+                    );
+                    score_2 = tiled_qk_mma(
+                        score_2,
+                        query_fragment,
+                        kv_tile,
+                        16 + lane_group,
+                        component_pair_base,
+                        lane_in_group,
+                    );
+                    score_3 = tiled_qk_mma(
+                        score_3,
+                        query_fragment,
+                        kv_tile,
+                        24 + lane_group,
+                        component_pair_base,
+                        lane_in_group,
+                    );
+                    score_4 = tiled_qk_mma(
+                        score_4,
+                        query_fragment,
+                        kv_tile,
+                        32 + lane_group,
+                        component_pair_base,
+                        lane_in_group,
+                    );
+                    score_5 = tiled_qk_mma(
+                        score_5,
+                        query_fragment,
+                        kv_tile,
+                        40 + lane_group,
+                        component_pair_base,
+                        lane_in_group,
+                    );
+                    score_6 = tiled_qk_mma(
+                        score_6,
+                        query_fragment,
+                        kv_tile,
+                        48 + lane_group,
+                        component_pair_base,
+                        lane_in_group,
+                    );
+                    score_7 = tiled_qk_mma(
+                        score_7,
+                        query_fragment,
+                        kv_tile,
+                        56 + lane_group,
+                        component_pair_base,
+                        lane_in_group,
+                    );
+                }
+                component_tile += 1;
+            }
+
+            let causal_end_0 = usize::min(
+                kv_len - qo_len + query_in_request_0 + 1,
+                partition_token_end,
+            );
+            let causal_end_1 = usize::min(
+                kv_len - qo_len + query_in_request_1 + 1,
+                partition_token_end,
+            );
+            score_0 = tiled_mask_score(
+                score_0,
+                kv_tile_start + lane_in_group * 2,
+                causal_end_0,
+                causal_end_1,
+                query_valid_0,
+                query_valid_1,
+                softmax_scale_log2,
+            );
+            score_1 = tiled_mask_score(
+                score_1,
+                kv_tile_start + 8 + lane_in_group * 2,
+                causal_end_0,
+                causal_end_1,
+                query_valid_0,
+                query_valid_1,
+                softmax_scale_log2,
+            );
+            score_2 = tiled_mask_score(
+                score_2,
+                kv_tile_start + 16 + lane_in_group * 2,
+                causal_end_0,
+                causal_end_1,
+                query_valid_0,
+                query_valid_1,
+                softmax_scale_log2,
+            );
+            score_3 = tiled_mask_score(
+                score_3,
+                kv_tile_start + 24 + lane_in_group * 2,
+                causal_end_0,
+                causal_end_1,
+                query_valid_0,
+                query_valid_1,
+                softmax_scale_log2,
+            );
+            score_4 = tiled_mask_score(
+                score_4,
+                kv_tile_start + 32 + lane_in_group * 2,
+                causal_end_0,
+                causal_end_1,
+                query_valid_0,
+                query_valid_1,
+                softmax_scale_log2,
+            );
+            score_5 = tiled_mask_score(
+                score_5,
+                kv_tile_start + 40 + lane_in_group * 2,
+                causal_end_0,
+                causal_end_1,
+                query_valid_0,
+                query_valid_1,
+                softmax_scale_log2,
+            );
+            score_6 = tiled_mask_score(
+                score_6,
+                kv_tile_start + 48 + lane_in_group * 2,
+                causal_end_0,
+                causal_end_1,
+                query_valid_0,
+                query_valid_1,
+                softmax_scale_log2,
+            );
+            score_7 = tiled_mask_score(
+                score_7,
+                kv_tile_start + 56 + lane_in_group * 2,
+                causal_end_0,
+                causal_end_1,
+                query_valid_0,
+                query_valid_1,
+                softmax_scale_log2,
+            );
+            let mut tile_max_0 = f32::max(
+                f32::max(tiled_score_max_0(score_0), tiled_score_max_0(score_1)),
+                f32::max(tiled_score_max_0(score_2), tiled_score_max_0(score_3)),
+            );
+            tile_max_0 = f32::max(
+                tile_max_0,
+                f32::max(
+                    f32::max(tiled_score_max_0(score_4), tiled_score_max_0(score_5)),
+                    f32::max(tiled_score_max_0(score_6), tiled_score_max_0(score_7)),
+                ),
+            );
+            let mut tile_max_1 = f32::max(
+                f32::max(tiled_score_max_1(score_0), tiled_score_max_1(score_1)),
+                f32::max(tiled_score_max_1(score_2), tiled_score_max_1(score_3)),
+            );
+            tile_max_1 = f32::max(
+                tile_max_1,
+                f32::max(
+                    f32::max(tiled_score_max_1(score_4), tiled_score_max_1(score_5)),
+                    f32::max(tiled_score_max_1(score_6), tiled_score_max_1(score_7)),
+                ),
+            );
+            tile_max_0 = f32::max(tile_max_0, warp::shuffle_xor_f32(tile_max_0, 1));
+            tile_max_0 = f32::max(tile_max_0, warp::shuffle_xor_f32(tile_max_0, 2));
+            tile_max_1 = f32::max(tile_max_1, warp::shuffle_xor_f32(tile_max_1, 1));
+            tile_max_1 = f32::max(tile_max_1, warp::shuffle_xor_f32(tile_max_1, 2));
+
+            let next_max_0 = if query_valid_0 {
+                f32::max(row_max_0, tile_max_0)
+            } else {
+                row_max_0
+            };
+            let next_max_1 = if query_valid_1 {
+                f32::max(row_max_1, tile_max_1)
+            } else {
+                row_max_1
+            };
+            let previous_scale_0 = if row_sum_0 == 0.0 {
+                0.0
+            } else {
+                float::ex2_approx_f32(row_max_0 - next_max_0)
+            };
+            let previous_scale_1 = if row_sum_1 == 0.0 {
+                0.0
+            } else {
+                float::ex2_approx_f32(row_max_1 - next_max_1)
+            };
+            row_sum_0 *= previous_scale_0;
+            row_sum_1 *= previous_scale_1;
+            row_max_0 = next_max_0;
+            row_max_1 = next_max_1;
+            scale_tiled_outputs!(
+                previous_scale_0,
+                previous_scale_1;
+                output_0,
+                output_1,
+                output_2,
+                output_3,
+                output_4,
+                output_5,
+                output_6,
+                output_7,
+                output_8,
+                output_9,
+                output_10,
+                output_11,
+                output_12,
+                output_13,
+                output_14,
+                output_15,
+            );
+
+            score_0 =
+                tiled_softmax_score(score_0, row_max_0, row_max_1, query_valid_0, query_valid_1);
+            score_1 =
+                tiled_softmax_score(score_1, row_max_0, row_max_1, query_valid_0, query_valid_1);
+            score_2 =
+                tiled_softmax_score(score_2, row_max_0, row_max_1, query_valid_0, query_valid_1);
+            score_3 =
+                tiled_softmax_score(score_3, row_max_0, row_max_1, query_valid_0, query_valid_1);
+            score_4 =
+                tiled_softmax_score(score_4, row_max_0, row_max_1, query_valid_0, query_valid_1);
+            score_5 =
+                tiled_softmax_score(score_5, row_max_0, row_max_1, query_valid_0, query_valid_1);
+            score_6 =
+                tiled_softmax_score(score_6, row_max_0, row_max_1, query_valid_0, query_valid_1);
+            score_7 =
+                tiled_softmax_score(score_7, row_max_0, row_max_1, query_valid_0, query_valid_1);
+            let mut tile_sum_0 = score_0[0]
+                + score_0[1]
+                + score_1[0]
+                + score_1[1]
+                + score_2[0]
+                + score_2[1]
+                + score_3[0]
+                + score_3[1]
+                + score_4[0]
+                + score_4[1]
+                + score_5[0]
+                + score_5[1]
+                + score_6[0]
+                + score_6[1]
+                + score_7[0]
+                + score_7[1];
+            let mut tile_sum_1 = score_0[2]
+                + score_0[3]
+                + score_1[2]
+                + score_1[3]
+                + score_2[2]
+                + score_2[3]
+                + score_3[2]
+                + score_3[3]
+                + score_4[2]
+                + score_4[3]
+                + score_5[2]
+                + score_5[3]
+                + score_6[2]
+                + score_6[3]
+                + score_7[2]
+                + score_7[3];
+            tile_sum_0 += warp::shuffle_xor_f32(tile_sum_0, 1);
+            tile_sum_0 += warp::shuffle_xor_f32(tile_sum_0, 2);
+            tile_sum_1 += warp::shuffle_xor_f32(tile_sum_1, 1);
+            tile_sum_1 += warp::shuffle_xor_f32(tile_sum_1, 2);
+            row_sum_0 += tile_sum_0;
+            row_sum_1 += tile_sum_1;
+
+            thread::sync_threads();
+            load_index = thread_in_block;
+            while load_index < TILED_KV_SHARED_PAIRS {
+                let token_in_tile = load_index / BF16_PAIRS_PER_HEAD;
+                let pair_in_head = load_index % BF16_PAIRS_PER_HEAD;
+                let token = kv_tile_start + token_in_tile;
+                let packed = if token < partition_token_end {
+                    let pair_index = ((kv_start + token) * num_kv_heads + kv_head)
+                        * BF16_PAIRS_PER_HEAD
+                        + pair_in_head;
+                    // SAFETY: the same validated request range proves this V pair.
+                    unsafe { value_pairs.add(pair_index).read() }
+                } else {
+                    0
+                };
+                // SAFETY: threads again cover disjoint shared pair indices.
+                unsafe {
+                    kv_tile.add(load_index).write(packed);
+                }
+                load_index += TILED_THREADS as usize;
+            }
+            thread::sync_threads();
+
+            let shared_values = kv_tile.cast::<u16>();
+            let weight_0 = tiled_weight_fragment(score_0, score_1);
+            let weight_1 = tiled_weight_fragment(score_2, score_3);
+            let weight_2 = tiled_weight_fragment(score_4, score_5);
+            let weight_3 = tiled_weight_fragment(score_6, score_7);
+            tiled_pv_outputs!(
+                weight_0,
+                shared_values,
+                0,
+                lane_group,
+                lane_in_group;
+                0 => output_0,
+                1 => output_1,
+                2 => output_2,
+                3 => output_3,
+                4 => output_4,
+                5 => output_5,
+                6 => output_6,
+                7 => output_7,
+                8 => output_8,
+                9 => output_9,
+                10 => output_10,
+                11 => output_11,
+                12 => output_12,
+                13 => output_13,
+                14 => output_14,
+                15 => output_15,
+            );
+            tiled_pv_outputs!(
+                weight_1,
+                shared_values,
+                16,
+                lane_group,
+                lane_in_group;
+                0 => output_0,
+                1 => output_1,
+                2 => output_2,
+                3 => output_3,
+                4 => output_4,
+                5 => output_5,
+                6 => output_6,
+                7 => output_7,
+                8 => output_8,
+                9 => output_9,
+                10 => output_10,
+                11 => output_11,
+                12 => output_12,
+                13 => output_13,
+                14 => output_14,
+                15 => output_15,
+            );
+            tiled_pv_outputs!(
+                weight_2,
+                shared_values,
+                32,
+                lane_group,
+                lane_in_group;
+                0 => output_0,
+                1 => output_1,
+                2 => output_2,
+                3 => output_3,
+                4 => output_4,
+                5 => output_5,
+                6 => output_6,
+                7 => output_7,
+                8 => output_8,
+                9 => output_9,
+                10 => output_10,
+                11 => output_11,
+                12 => output_12,
+                13 => output_13,
+                14 => output_14,
+                15 => output_15,
+            );
+            tiled_pv_outputs!(
+                weight_3,
+                shared_values,
+                48,
+                lane_group,
+                lane_in_group;
+                0 => output_0,
+                1 => output_1,
+                2 => output_2,
+                3 => output_3,
+                4 => output_4,
+                5 => output_5,
+                6 => output_6,
+                7 => output_7,
+                8 => output_8,
+                9 => output_9,
+                10 => output_10,
+                11 => output_11,
+                12 => output_12,
+                13 => output_13,
+                14 => output_14,
+                15 => output_15,
+            );
+            thread::sync_threads();
+            kv_tile_start += TILED_KV_ROWS;
+        }
+
+        let query_head_0 = kv_head * TILED_GQA_GROUP_SIZE + packed_row_0 % TILED_GQA_GROUP_SIZE;
+        let query_head_1 = kv_head * TILED_GQA_GROUP_SIZE + packed_row_1 % TILED_GQA_GROUP_SIZE;
+        let state_0 = (qo_start + query_in_request_0) * num_query_heads + query_head_0;
+        let state_1 = (qo_start + query_in_request_1) * num_query_heads + query_head_1;
+        let partial_0 =
+            (state_0 * TILED_PARTITIONS + partition) * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+        let partial_1 =
+            (state_1 * TILED_PARTITIONS + partition) * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+        let first_component = lane_in_group * 2;
+        let second_component = SINGLE_DECODE_HEAD_DIM / 2 + lane_in_group * 2;
+        macro_rules! write_partial_output {
+            ($output:ident, $component:expr) => {
+                if query_valid_0 {
+                    // SAFETY: each packed query row and partition owns one
+                    // disjoint partial state; lanes own disjoint components.
+                    unsafe {
+                        *workspace.get_unchecked_mut(partial_0 + 2 + $component) = $output[0];
+                        *workspace.get_unchecked_mut(partial_0 + 3 + $component) = $output[1];
+                    }
+                }
+                if query_valid_1 {
+                    // SAFETY: the second packed row owns a different state.
+                    unsafe {
+                        *workspace.get_unchecked_mut(partial_1 + 2 + $component) = $output[2];
+                        *workspace.get_unchecked_mut(partial_1 + 3 + $component) = $output[3];
+                    }
+                }
+            };
+        }
+        write_partial_output!(output_0, first_component);
+        write_partial_output!(output_1, first_component + 8);
+        write_partial_output!(output_2, first_component + 16);
+        write_partial_output!(output_3, first_component + 24);
+        write_partial_output!(output_4, first_component + 32);
+        write_partial_output!(output_5, first_component + 40);
+        write_partial_output!(output_6, first_component + 48);
+        write_partial_output!(output_7, first_component + 56);
+        write_partial_output!(output_8, second_component);
+        write_partial_output!(output_9, second_component + 8);
+        write_partial_output!(output_10, second_component + 16);
+        write_partial_output!(output_11, second_component + 24);
+        write_partial_output!(output_12, second_component + 32);
+        write_partial_output!(output_13, second_component + 40);
+        write_partial_output!(output_14, second_component + 48);
+        write_partial_output!(output_15, second_component + 56);
+        if lane_in_group == 0 {
+            if query_valid_0 {
+                // SAFETY: one lane owns this partial state's header.
+                unsafe {
+                    *workspace.get_unchecked_mut(partial_0) = row_max_0;
+                    *workspace.get_unchecked_mut(partial_0 + 1) = row_sum_0;
+                }
+            }
+            if query_valid_1 {
+                // SAFETY: one lane owns the second partial state's header.
+                unsafe {
+                    *workspace.get_unchecked_mut(partial_1) = row_max_1;
+                    *workspace.get_unchecked_mut(partial_1 + 1) = row_sum_1;
+                }
+            }
+        }
+    }
+
+    #[kernel]
+    #[launch_bounds(32)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (32, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            nnz_qo >= 1,
+            num_query_heads >= 1,
+            workspace.len() == nnz_qo * num_query_heads * 8 * 130,
+            output.len() == nnz_qo * num_query_heads * 128,
+            lse.len() == nnz_qo * num_query_heads,
+        ),
+    )]
+    pub fn ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge(
+        nnz_qo: usize,
+        num_query_heads: usize,
+        workspace: &[f32],
+        mut output: DisjointSlice<bf16>,
+        mut lse: DisjointSlice<f32>,
+    ) {
+        let state = thread::blockIdx_x() as usize;
+        let lane = thread::threadIdx_x() as usize;
+        if state >= nnz_qo * num_query_heads {
+            return;
+        }
+
+        let first_component = lane * 2;
+        let second_component = SINGLE_DECODE_HEAD_DIM / 2 + lane * 2;
+        let mut merged_max = f32::NEG_INFINITY;
+        let mut merged_sum = 0.0_f32;
+        let mut output_0 = 0.0_f32;
+        let mut output_1 = 0.0_f32;
+        let mut output_2 = 0.0_f32;
+        let mut output_3 = 0.0_f32;
+        let mut partition = 0_usize;
+        while partition < TILED_PARTITIONS {
+            let partial =
+                (state * TILED_PARTITIONS + partition) * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+            let partial_max = workspace[partial];
+            let partial_sum = workspace[partial + 1];
+            if partial_sum != 0.0 {
+                let value_0 = workspace[partial + 2 + first_component];
+                let value_1 = workspace[partial + 3 + first_component];
+                let value_2 = workspace[partial + 2 + second_component];
+                let value_3 = workspace[partial + 3 + second_component];
+                if merged_sum == 0.0 {
+                    merged_max = partial_max;
+                    merged_sum = partial_sum;
+                    output_0 = value_0;
+                    output_1 = value_1;
+                    output_2 = value_2;
+                    output_3 = value_3;
+                } else {
+                    let next_max = f32::max(merged_max, partial_max);
+                    let merged_weight = float::ex2_approx_f32(merged_max - next_max);
+                    let partial_weight = float::ex2_approx_f32(partial_max - next_max);
+                    merged_sum = merged_sum * merged_weight + partial_sum * partial_weight;
+                    output_0 = float::fma_rn_f32(value_0, partial_weight, output_0 * merged_weight);
+                    output_1 = float::fma_rn_f32(value_1, partial_weight, output_1 * merged_weight);
+                    output_2 = float::fma_rn_f32(value_2, partial_weight, output_2 * merged_weight);
+                    output_3 = float::fma_rn_f32(value_3, partial_weight, output_3 * merged_weight);
+                    merged_max = next_max;
+                }
+            }
+            partition += 1;
+        }
+
+        let inverse_sum = float::div_rn_f32(1.0, merged_sum);
+        if lane == 0 {
+            // SAFETY: lane zero owns this state LSE.
+            unsafe {
+                *lse.get_unchecked_mut(state) = merged_max + float::lg2_approx_f32(merged_sum);
+            }
+        }
+        let output_pairs = output.as_mut_ptr().cast::<u32>();
+        let first_pair = state * BF16_PAIRS_PER_HEAD + lane;
+        let second_pair = first_pair + WARP_THREADS as usize;
+        // SAFETY: each lane owns two packed pairs for this state.
+        unsafe {
+            output_pairs
+                .add(first_pair)
+                .write(tcgen05::cvt_f32x2_bf16x2(
+                    output_0 * inverse_sum,
+                    output_1 * inverse_sum,
+                ));
+            output_pairs
+                .add(second_pair)
+                .write(tcgen05::cvt_f32x2_bf16x2(
+                    output_2 * inverse_sum,
+                    output_3 * inverse_sum,
+                ));
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -623,6 +1583,14 @@ impl PrefillProvider {
         let states = u32::try_from(states)
             .map_err(|_| RaggedPrefillPlanError::StateCountOutOfRange(states))?;
         let algorithm = ragged_prefill_algorithm(spec);
+        let workspace_numel = if algorithm == Bf16RaggedPrefillAlgorithm::TiledGqa4 {
+            (states as usize)
+                .checked_mul(TILED_PARTITIONS)
+                .and_then(|states| states.checked_mul(SINGLE_DECODE_PARTIAL_STATE_WIDTH))
+                .ok_or(RaggedPrefillPlanError::WorkspaceElementCountOutOfRange)?
+        } else {
+            0
+        };
         let launch = match algorithm {
             Bf16RaggedPrefillAlgorithm::Direct => Bf16RaggedPrefillLaunch::Direct(
                 self.module
@@ -648,10 +1616,35 @@ impl PrefillProvider {
                         )?,
                 )
             }
+            Bf16RaggedPrefillAlgorithm::TiledGqa4 => {
+                let tile_upper_bound = spec
+                    .nnz_qo()
+                    .div_ceil(TILED_QUERY_ROWS)
+                    .checked_add(spec.batch_size() - 1)
+                    .and_then(|tiles| tiles.checked_mul(spec.num_kv_heads()))
+                    .and_then(|tiles| tiles.checked_mul(TILED_PARTITIONS))
+                    .ok_or(RaggedPrefillPlanError::StateCountOutOfRange(usize::MAX))?;
+                let tile_upper_bound = u32::try_from(tile_upper_bound)
+                    .map_err(|_| RaggedPrefillPlanError::StateCountOutOfRange(tile_upper_bound))?;
+                let partial = self
+                    .module
+                    .prepare_ragged_prefill_bf16_nhd_causal_tiled_gqa4(LaunchConfig1D::new(
+                        tile_upper_bound,
+                        TILED_THREADS,
+                        0,
+                    ))?;
+                let merge = self
+                    .module
+                    .prepare_ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge(
+                        LaunchConfig1D::new(states, WARP_THREADS, 0),
+                    )?;
+                Bf16RaggedPrefillLaunch::TiledGqa4 { partial, merge }
+            }
         };
         Ok(Bf16RaggedPrefillPlan {
             spec,
             algorithm,
+            workspace_numel,
             module: self.module.clone(),
             launch,
         })
@@ -663,10 +1656,14 @@ pub enum Bf16RaggedPrefillAlgorithm {
     Direct,
     TokenParallel8,
     TokenParallel16,
+    TiledGqa4,
 }
 
 const fn ragged_prefill_algorithm(spec: Bf16RaggedPrefillSpec) -> Bf16RaggedPrefillAlgorithm {
-    if spec.nnz_kv() / spec.batch_size() < TOKEN_PARALLEL_MIN_AVERAGE_KV_LEN {
+    let average_kv_len = spec.nnz_kv() / spec.batch_size();
+    if spec.gqa_group_size() == TILED_GQA_GROUP_SIZE && average_kv_len >= TILED_MIN_AVERAGE_KV_LEN {
+        Bf16RaggedPrefillAlgorithm::TiledGqa4
+    } else if average_kv_len < TOKEN_PARALLEL_MIN_AVERAGE_KV_LEN {
         Bf16RaggedPrefillAlgorithm::Direct
     } else if spec.num_kv_heads() == 1 {
         Bf16RaggedPrefillAlgorithm::TokenParallel16
@@ -684,12 +1681,18 @@ enum Bf16RaggedPrefillLaunch {
     TokenParallel16(
         PreparedLaunch<kernels::__ragged_prefill_bf16_nhd_causal_token_parallel16_CudaKernel>,
     ),
+    TiledGqa4 {
+        partial: PreparedLaunch<kernels::__ragged_prefill_bf16_nhd_causal_tiled_gqa4_CudaKernel>,
+        merge:
+            PreparedLaunch<kernels::__ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge_CudaKernel>,
+    },
 }
 
 #[derive(Clone)]
 pub struct Bf16RaggedPrefillPlan {
     spec: Bf16RaggedPrefillSpec,
     algorithm: Bf16RaggedPrefillAlgorithm,
+    workspace_numel: usize,
     module: kernels::LoadedModule,
     launch: Bf16RaggedPrefillLaunch,
 }
@@ -703,11 +1706,23 @@ impl Bf16RaggedPrefillPlan {
         self.algorithm
     }
 
+    pub const fn workspace_required_numel(&self) -> usize {
+        self.workspace_numel
+    }
+
+    pub const fn workspace_required_bytes(&self) -> usize {
+        self.workspace_required_numel() * size_of::<f32>()
+    }
+
     pub fn enqueue_into(
         &self,
         scope: &mut CommandScope<'_>,
         args: Bf16RaggedPrefillArgs,
     ) -> Result<(), RaggedPrefillEnqueueError> {
+        if let Bf16RaggedPrefillLaunch::TiledGqa4 { partial, merge } = &self.launch {
+            return self.enqueue_tiled_gqa4(scope, args, partial, merge);
+        }
+
         let permit = scope.prepare_command()?;
         let (function, launch_result) = {
             let resolved = scope.resolve_rrrrrww(
@@ -803,9 +1818,103 @@ impl Bf16RaggedPrefillPlan {
                     );
                     (launch.function().clone(), result)
                 }
+                Bf16RaggedPrefillLaunch::TiledGqa4 { .. } => unreachable!(),
             }
         };
         record_launch(scope, permit, function, launch_result)
+    }
+
+    fn enqueue_tiled_gqa4(
+        &self,
+        scope: &mut CommandScope<'_>,
+        args: Bf16RaggedPrefillArgs,
+        partial: &PreparedLaunch<kernels::__ragged_prefill_bf16_nhd_causal_tiled_gqa4_CudaKernel>,
+        merge: &PreparedLaunch<
+            kernels::__ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge_CudaKernel,
+        >,
+    ) -> Result<(), RaggedPrefillEnqueueError> {
+        let workspace = args
+            .workspace
+            .ok_or(RaggedPrefillEnqueueError::MissingWorkspace)?;
+        scope.require_command_capacity(2)?;
+
+        {
+            let resolved = scope.resolve_rrrrrww(
+                args.query,
+                args.key,
+                args.value,
+                args.qo_indptr,
+                args.kv_indptr,
+                args.output,
+                args.lse,
+            )?;
+            require_exact_len("Q", resolved.first.len(), self.spec.query_numel())?;
+            require_exact_len("K", resolved.second.len(), self.spec.kv_numel())?;
+            require_exact_len("V", resolved.third.len(), self.spec.kv_numel())?;
+            require_exact_len("qo_indptr", resolved.fourth.len(), self.spec.indptr_numel())?;
+            require_exact_len("kv_indptr", resolved.fifth.len(), self.spec.indptr_numel())?;
+            require_exact_len("O", resolved.sixth.len(), self.spec.output_numel())?;
+            require_exact_len("LSE", resolved.seventh.len(), self.spec.lse_numel())?;
+            for (operand, address) in [
+                ("Q", resolved.first.cu_deviceptr()),
+                ("K", resolved.second.cu_deviceptr()),
+                ("V", resolved.third.cu_deviceptr()),
+                ("O", resolved.sixth.cu_deviceptr()),
+            ] {
+                require_packed_alignment(operand, address)?;
+            }
+        }
+
+        let partial_permit = scope.prepare_command()?;
+        let (partial_function, partial_result) = {
+            let resolved = scope.resolve_rrrrrw(
+                args.query,
+                args.key,
+                args.value,
+                args.qo_indptr,
+                args.kv_indptr,
+                workspace.write(),
+            )?;
+            require_exact_len(
+                "workspace",
+                resolved.sixth.len(),
+                self.workspace_required_numel(),
+            )?;
+            let result = self.module.ragged_prefill_bf16_nhd_causal_tiled_gqa4(
+                resolved.stream,
+                partial,
+                self.spec.batch_size(),
+                self.spec.nnz_qo(),
+                self.spec.nnz_kv(),
+                self.spec.num_query_heads(),
+                self.spec.num_kv_heads(),
+                self.spec.softmax_scale() * core::f32::consts::LOG2_E,
+                resolved.first,
+                resolved.second,
+                resolved.third,
+                resolved.fourth,
+                resolved.fifth,
+                resolved.sixth,
+            );
+            (partial.function().clone(), result)
+        };
+        record_launch(scope, partial_permit, partial_function, partial_result)?;
+
+        let merge_permit = scope.prepare_command()?;
+        let (merge_function, merge_result) = {
+            let resolved = scope.resolve_rww(workspace.read(), args.output, args.lse)?;
+            let result = self.module.ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge(
+                resolved.stream,
+                merge,
+                self.spec.nnz_qo(),
+                self.spec.num_query_heads(),
+                resolved.first,
+                resolved.second,
+                resolved.third,
+            );
+            (merge.function().clone(), result)
+        };
+        record_launch(scope, merge_permit, merge_function, merge_result)
     }
 }
 
@@ -818,6 +1927,7 @@ pub struct Bf16RaggedPrefillArgs {
     kv_indptr: Read<i32>,
     output: Write<bf16>,
     lse: Write<f32>,
+    workspace: Option<ReadWrite<f32>>,
 }
 
 impl Bf16RaggedPrefillArgs {
@@ -839,7 +1949,13 @@ impl Bf16RaggedPrefillArgs {
             kv_indptr,
             output,
             lse,
+            workspace: None,
         }
+    }
+
+    pub const fn with_workspace(mut self, workspace: ReadWrite<f32>) -> Self {
+        self.workspace = Some(workspace);
+        self
     }
 }
 
@@ -847,6 +1963,8 @@ impl Bf16RaggedPrefillArgs {
 pub enum RaggedPrefillPlanError {
     #[error("ragged prefill state count {0} exceeds the CUDA grid range")]
     StateCountOutOfRange(usize),
+    #[error("ragged prefill workspace element count exceeds usize")]
+    WorkspaceElementCountOutOfRange,
     #[error(transparent)]
     Launch(#[from] LaunchContractError),
 }
@@ -859,6 +1977,8 @@ pub enum RaggedPrefillEnqueueError {
         expected: usize,
         actual: usize,
     },
+    #[error("ragged prefill algorithm requires an explicit F32 workspace binding")]
+    MissingWorkspace,
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]
@@ -945,7 +2065,10 @@ mod tests {
         let grouped = Bf16RaggedPrefillSpec::new(2, 96, 1280, 16, 4, 128).unwrap();
         assert_eq!(
             ragged_prefill_algorithm(grouped),
-            Bf16RaggedPrefillAlgorithm::TokenParallel8
+            Bf16RaggedPrefillAlgorithm::TiledGqa4
         );
+        let expected_workspace =
+            grouped.nnz_qo() * grouped.num_query_heads() * 8 * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+        assert_eq!(expected_workspace, 1_597_440);
     }
 }

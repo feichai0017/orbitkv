@@ -30,6 +30,7 @@ fn run_case(
         Bf16RaggedPrefillAlgorithm::Direct => "direct",
         Bf16RaggedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp",
         Bf16RaggedPrefillAlgorithm::TokenParallel16 => "token_parallel_16warp",
+        Bf16RaggedPrefillAlgorithm::TiledGqa4 => "tiled_gqa4_mma",
     };
     let query_host = deterministic_bf16(spec.query_numel(), salt);
     let key_host = deterministic_bf16(spec.kv_numel(), salt ^ 0x4b45_5900);
@@ -54,7 +55,9 @@ fn run_case(
     let kv_indptr = Arc::new(DeviceBuffer::from_host(&stream, kv_indptr)?);
     let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
     let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
-    let mut bindings = queue.bindings(7)?;
+    let workspace =
+        DeviceBuffer::<f32>::zeroed(&stream, usize::max(plan.workspace_required_numel(), 1))?;
+    let mut bindings = queue.bindings(8)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key)?;
     let value_handle = bindings.bind_read(value)?;
@@ -62,22 +65,27 @@ fn run_case(
     let kv_indptr_handle = bindings.bind_read(kv_indptr)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
 
     let mut scope = queue.begin(bindings)?;
-    plan.enqueue_into(
-        &mut scope,
-        Bf16RaggedPrefillArgs::new(
-            query_handle,
-            key_handle,
-            value_handle,
-            qo_indptr_handle,
-            kv_indptr_handle,
-            output_handle.write(),
-            lse_handle.write(),
-        ),
-    )?;
+    let mut args = Bf16RaggedPrefillArgs::new(
+        query_handle,
+        key_handle,
+        value_handle,
+        qo_indptr_handle,
+        kv_indptr_handle,
+        output_handle.write(),
+        lse_handle.write(),
+    );
+    let expected_commands = if plan.workspace_required_numel() == 0 {
+        1
+    } else {
+        args = args.with_workspace(workspace_handle);
+        2
+    };
+    plan.enqueue_into(&mut scope, args)?;
     let completion = scope.finish();
-    if completion.submitted() != 1 {
+    if completion.submitted() != expected_commands {
         return Err("ragged prefill completion covered the wrong command count".into());
     }
     bindings = completion.wait()?;
@@ -107,7 +115,7 @@ fn run_case(
     println!(
         "{} batch_size={} nnz_qo={} nnz_kv={} query_heads={} kv_heads={} \
          group_size={} head_dim={} layout=NHD causal=bottom_right dtype=BF16 \
-         accumulation=F32 lse_domain=log2 algorithm={} commands=1 stream=non_default \
+         accumulation=F32 lse_domain=log2 algorithm={} commands={} stream=non_default \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
          lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
         GateCase::new("ragged_prefill_h20", name),
@@ -119,6 +127,7 @@ fn run_case(
         spec.gqa_group_size(),
         spec.head_dim(),
         algorithm,
+        expected_commands,
         output_comparison.max_abs,
         output_comparison.bit_mismatches,
         output_comparison.digest,
@@ -247,11 +256,68 @@ fn run_invalid_metadata_guard(
     Ok(())
 }
 
+fn run_missing_workspace_case(
+    queue: &mut CommandQueue,
+    provider: &PrefillProvider,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16RaggedPrefillSpec::new(1, 1, 256, 4, 1, 128)?;
+    let plan = provider.plan_bf16_ragged(spec)?;
+    if plan.algorithm() != Bf16RaggedPrefillAlgorithm::TiledGqa4
+        || plan.workspace_required_numel() == 0
+    {
+        return Err("missing-workspace gate did not select tiled GQA4".into());
+    }
+    let stream = queue.stream().clone();
+    let query = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.query_numel())?);
+    let key = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.kv_numel())?);
+    let value = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.kv_numel())?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1])?);
+    let kv_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 256])?);
+    let output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
+    let lse = DeviceBuffer::<f32>::zeroed(&stream, spec.lse_numel())?;
+    let mut bindings = queue.bindings(7)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key)?;
+    let value_handle = bindings.bind_read(value)?;
+    let qo_handle = bindings.bind_read(qo_indptr)?;
+    let kv_handle = bindings.bind_read(kv_indptr)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+    let mut scope = queue.begin(bindings)?;
+    let error = plan
+        .enqueue_into(
+            &mut scope,
+            Bf16RaggedPrefillArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                qo_handle,
+                kv_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            ),
+        )
+        .expect_err("tiled GQA4 must require an explicit workspace");
+    if !matches!(error, RaggedPrefillEnqueueError::MissingWorkspace) {
+        return Err(format!("missing workspace returned the wrong error: {error}").into());
+    }
+    let completion = scope.finish();
+    if completion.submitted() != 0 {
+        return Err("missing workspace reached CUDA submission".into());
+    }
+    drop(completion.wait()?);
+    println!(
+        "{} workspace=required before_submission=true",
+        GateCase::new("ragged_prefill_h20", "missing_workspace")
+    );
+    Ok(())
+}
+
 pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let provider = PrefillProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
-    let mut queue = CommandQueue::new(stream, 1)?;
+    let mut queue = CommandQueue::new(stream, 2)?;
 
     run_case(
         &mut queue,
@@ -300,6 +366,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     )?;
     run_short_indptr_case(&mut queue, &provider)?;
     run_invalid_metadata_guard(&mut queue, &provider)?;
+    run_missing_workspace_case(&mut queue, &provider)?;
     println!(
         "gate=ragged_prefill_h20 suite=all status=pass output_max_abs_limit={:.9e} \
          lse_max_abs_limit={:.9e}",

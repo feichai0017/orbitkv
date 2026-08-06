@@ -528,6 +528,7 @@ fn benchmark_ragged_prefill_case(
         Bf16RaggedPrefillAlgorithm::Direct => "direct_one_warp_per_query_row_head",
         Bf16RaggedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
         Bf16RaggedPrefillAlgorithm::TokenParallel16 => "token_parallel_16warp_block_local_merge",
+        Bf16RaggedPrefillAlgorithm::TiledGqa4 => "tiled_gqa4_mma_qk_softmax_pv",
     };
     let query_host = deterministic_bf16(spec.query_numel(), case.salt);
     let key_host = deterministic_bf16(spec.kv_numel(), case.salt ^ 0x4b45_5900);
@@ -539,8 +540,19 @@ fn benchmark_ragged_prefill_case(
     let kv_indptr = Arc::new(DeviceBuffer::from_host(stream, case.kv_indptr)?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
     let lse = DeviceBuffer::<f32>::zeroed(stream, spec.lse_numel())?;
-    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
-    let mut bindings = queue.bindings(7)?;
+    let workspace =
+        DeviceBuffer::<f32>::zeroed(stream, usize::max(plan.workspace_required_numel(), 1))?;
+    let kernels_per_call = if plan.workspace_required_numel() == 0 {
+        1
+    } else {
+        2
+    };
+    let command_capacity = config
+        .launches_per_sample
+        .checked_mul(kernels_per_call)
+        .ok_or("ragged benchmark command capacity overflow")?;
+    let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+    let mut bindings = queue.bindings(8)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key)?;
     let value_handle = bindings.bind_read(value)?;
@@ -548,21 +560,23 @@ fn benchmark_ragged_prefill_case(
     let kv_indptr_handle = bindings.bind_read(kv_indptr)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
 
     let (_bindings, samples_us) =
         benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
-            plan.enqueue_into(
-                scope,
-                Bf16RaggedPrefillArgs::new(
-                    query_handle,
-                    key_handle,
-                    value_handle,
-                    qo_indptr_handle,
-                    kv_indptr_handle,
-                    output_handle.write(),
-                    lse_handle.write(),
-                ),
-            )?;
+            let mut args = Bf16RaggedPrefillArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                qo_indptr_handle,
+                kv_indptr_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            );
+            if plan.workspace_required_numel() != 0 {
+                args = args.with_workspace(workspace_handle);
+            }
+            plan.enqueue_into(scope, args)?;
             Ok(())
         })?;
     let mut request_qo_lens = Vec::with_capacity(spec.batch_size());
@@ -591,7 +605,7 @@ fn benchmark_ragged_prefill_case(
             "causal": "bottom_right",
             "indptr_location": "device"
         }),
-        kernels_per_call: 1,
+        kernels_per_call,
         shape: json!({
             "batch_size": spec.batch_size(),
             "nnz_qo": spec.nnz_qo(),
