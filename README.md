@@ -90,8 +90,8 @@ prefill contracts with CPU references. Batch decode uses FlashInfer-compatible
 page-table semantics; ragged prefill uses bottom-right causal alignment and
 separate query/KV `indptr` arrays. Their CUDA providers pass the declared H20
 correctness and sanitizer gates. Ragged prefill keeps short requests on a
-direct warp and partitions long causal KV prefixes across eight warps with a
-block-local F32 merge. Graph replay, engine integration, and serving evidence
+direct warp, uses sixteen warps for long MQA, and uses eight warps for other
+declared long requests. Graph replay, engine integration, and serving evidence
 remain roadmap work, as do sampling, KV-cache mutation, MoE, and quantization.
 
 The first single-decode slice covers BF16 MHA, MQA, and GQA with NHD caches and
@@ -161,12 +161,13 @@ median latency for batch-1 MHA and 2.35x lower latency for mixed-length
 batch-3 MQA than FlashInfer. The batch-4 GQA comparison remains excluded from
 stable ranking because FlashInfer's provider-order delta is 60.62%.
 
-The ragged prefill result is shape-specific. Eight-warp token parallelism
-lowers Loom mixed-MQA and long-GQA eager latency by 5.779x and 1.689x relative
-to the immutable direct record. The long-GQA ranking is stable and FlashInfer
-remains 10.114x lower-latency. Short-MHA and mixed-MQA provider rankings are
-excluded because FlashInfer's order deltas are 64.03% and 15.21%. Direct and
-token-parallel correctness remains within `1.220703125e-4` BF16 output and
+The ragged prefill result is shape-specific. Specialized token parallelism
+lowers Loom mixed-MQA eager latency by 7.245x versus direct and 1.254x versus
+the earlier eight-warp path. Long GQA retains its 1.689x improvement over
+direct. Loom is 1.675x lower-latency than FlashInfer on short MHA; FlashInfer
+is 1.353x and 10.028x lower-latency on mixed MQA and long GQA. All three
+provider rankings are stable in the current run. Direct and token-parallel
+correctness remains within `1.220703125e-4` BF16 output and
 `2.861022949e-6` log2-LSE maximum absolute error, and all four Compute
 Sanitizer tools report no errors.
 

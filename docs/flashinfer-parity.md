@@ -132,18 +132,18 @@ and the causal mask is bottom-right aligned. The first contract requires every
 request to satisfy `1 <= qo_len <= kv_len`; it does not include empty requests,
 RoPE, sliding windows, soft caps, or custom masks.
 
-The current [ragged prefill H20 result](results/h20-bf16-ragged-prefill-token-parallel-correctness-20260806.json)
-covers direct and eight-warp MHA, MQA, and GQA, equal and mixed query/KV
-lengths, exact metadata spans, and a device-side nonmonotonic-indptr guard.
-Maximum BF16 output error is `1.220703125e-4`, maximum log2-LSE error is
-`2.861022949e-6`, and four Compute Sanitizer tools report no errors.
+The current [ragged prefill H20 result](results/h20-bf16-ragged-prefill-dual-token-parallel-correctness-20260806.json)
+covers direct, eight-warp, and sixteen-warp MHA, MQA, and GQA, equal and mixed
+query/KV lengths, exact metadata spans, and a device-side
+nonmonotonic-indptr guard. Maximum BF16 output error is
+`1.220703125e-4`, maximum log2-LSE error is `2.861022949e-6`, and four
+Compute Sanitizer tools report no errors.
 
-The [matched ragged eager result](results/h20-flashinfer-v0.6.16.post1-ragged-prefill-token-parallel-eager-performance-20260806.json)
-retains 600 samples and both provider orders. Token parallelism lowers Loom
-mixed-MQA and long-GQA latency by 5.779x and 1.689x versus the direct record.
-FlashInfer remains 10.114x lower-latency on stable long GQA. Short MHA and
-mixed MQA remain excluded from provider ranking because FlashInfer's order
-deltas are 64.03% and 15.21%.
+The [matched ragged eager result](results/h20-flashinfer-v0.6.16.post1-ragged-prefill-dual-token-parallel-eager-performance-20260806.json)
+retains 600 samples and both provider orders. Specialized token parallelism
+lowers Loom mixed-MQA latency by 7.245x versus direct and 1.254x versus the
+earlier eight-warp result. Loom is 1.675x lower-latency on short MHA;
+FlashInfer remains 1.353x and 10.028x lower-latency on mixed MQA and long GQA.
 
 Fixed-address CUDA Graph replay, a provider-ordered isolated-kernel gate,
 engine invocation, and serving results remain open before a

@@ -53,6 +53,6 @@ export const milestones = [
   {
     milestone: "03",
     name: "Attention core",
-    reason: "Ragged token parallelism is qualified; long GQA still trails FlashInfer and needs query tiling.",
+    reason: "Ragged MQA is now within 1.353x of FlashInfer; long GQA still needs full query tiling.",
   },
 ]

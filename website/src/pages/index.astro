@@ -127,8 +127,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </article>
     <article class="evidence-card">
       <h3>BF16 ragged prefill on H20</h3><span class="result">Qualified</span>
-      <p>Direct and eight-warp NHD D128 causal MHA, MQA, and GQA batches pass.</p>
-      <small>Token parallelism is 5.779x faster on mixed MQA and 1.689x faster on long GQA than direct Loom. FlashInfer remains 10.114x ahead on stable long GQA.</small>
+      <p>Direct and specialized eight/sixteen-warp causal MHA, MQA, and GQA pass.</p>
+      <small>Mixed MQA is 7.245x faster than direct and now trails FlashInfer by 1.353x. Long GQA remains 10.028x behind.</small>
     </article>
   </section>
 

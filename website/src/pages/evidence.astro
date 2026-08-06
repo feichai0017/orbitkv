@@ -71,21 +71,21 @@ import { repositoryUrl } from "../data/site";
       <div class="doc-note">
         <strong>BF16 ragged causal prefill passed its H20 gate.</strong>
         <p>
-          Direct and eight-warp NHD D128 MHA, MQA, and GQA batches pass the CPU
-          oracle. Separate query/KV indptr arrays, mixed lengths, bottom-right
-          causal alignment, and a nonmonotonic-metadata guard are covered. Four
-          sanitizer tools report no errors.
+          Direct, eight-warp, and sixteen-warp NHD D128 MHA, MQA, and GQA
+          batches pass the CPU oracle. Separate query/KV indptr arrays, mixed
+          lengths, bottom-right causal alignment, and a nonmonotonic-metadata
+          guard are covered. Four sanitizer tools report no errors.
         </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-ragged-prefill-token-parallel-correctness-20260806.json`}>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-ragged-prefill-dual-token-parallel-correctness-20260806.json`}>
           Ragged prefill correctness result
         </a>
         <p>
-          Token parallelism lowers Loom mixed-MQA and long-GQA eager latency by
-          5.779x and 1.689x versus direct Loom. FlashInfer remains 10.114x
-          lower-latency on stable long GQA. Short-MHA and mixed-MQA rankings
-          stay excluded because the FlashInfer provider-order deltas are large.
+          Specialized token parallelism lowers mixed-MQA latency by 7.245x
+          versus direct and 1.254x versus the earlier eight-warp path. Loom is
+          1.675x lower-latency on short MHA; FlashInfer remains 1.353x and
+          10.028x lower-latency on mixed MQA and long GQA.
         </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-ragged-prefill-token-parallel-eager-performance-20260806.json`}>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-ragged-prefill-dual-token-parallel-eager-performance-20260806.json`}>
           Ragged prefill matched performance result
         </a>
       </div>

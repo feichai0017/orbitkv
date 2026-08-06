@@ -53,9 +53,10 @@ parallelism. The current matched result puts Loom 4.41x lower-latency for MHA
 and 2.35x lower-latency for MQA than the pinned FlashInfer path; GQA remains
 excluded from stable ranking because the baseline is provider-order sensitive.
 
-Ragged prefill keeps short requests on one direct warp per query-row/head and
-uses eight-warp token partitioning with a block-local F32 merge for longer KV
-ranges. MHA/MQA/GQA pass the H20 correctness and sanitizer gates. Matched eager
-measurements improve mixed MQA and long GQA by 5.779x and 1.689x versus direct
-Loom; FlashInfer remains 10.114x lower-latency on stable long GQA. Graph replay
-and engine integration remain separate gates.
+Ragged prefill keeps short requests on one direct warp per query-row/head,
+uses sixteen-warp token partitioning for long single-KV-head MQA, and keeps
+eight-warp partitioning for other declared long requests. MHA/MQA/GQA pass the
+H20 correctness and sanitizer gates. The complete path improves mixed MQA by
+7.245x versus direct and 1.254x versus the earlier eight-warp path. FlashInfer
+remains 1.353x lower-latency on mixed MQA and 10.028x on long GQA. Graph
+replay and engine integration remain separate gates.

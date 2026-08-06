@@ -320,19 +320,19 @@ log2-LSE error `4.768371582e-7`. It covers mixed request lengths, page
 reordering and reuse, exact metadata spans, and a device-side invalid-page
 guard. All four Compute Sanitizer tools report zero errors.
 
-The current [ragged prefill record](../results/h20-bf16-ragged-prefill-token-parallel-correctness-20260806.json)
-passes direct and eight-warp MHA, MQA, and GQA batches. Maximum BF16 output
-error is `1.220703125e-4` and maximum log2-LSE error is `2.861022949e-6`. It
-covers equal and mixed query/KV lengths, bottom-right causal alignment, exact
-metadata spans, and a device-side nonmonotonic-indptr guard. All four Compute
-Sanitizer tools report zero errors.
+The current [ragged prefill record](../results/h20-bf16-ragged-prefill-dual-token-parallel-correctness-20260806.json)
+passes direct, eight-warp, and sixteen-warp MHA, MQA, and GQA batches. Maximum
+BF16 output error is `1.220703125e-4` and maximum log2-LSE error is
+`2.861022949e-6`. It covers equal and mixed query/KV lengths, bottom-right
+causal alignment, exact metadata spans, and a device-side
+nonmonotonic-indptr guard. All four Compute Sanitizer tools report zero errors.
 
-The [ragged matched eager record](../results/h20-flashinfer-v0.6.16.post1-ragged-prefill-token-parallel-eager-performance-20260806.json)
-retains both provider orders and all 600 raw samples. Eight-warp token
-parallelism lowers Loom mixed-MQA and long-GQA latency by 5.779x and 1.689x
-versus the immutable direct record. FlashInfer remains 10.114x lower-latency
-on stable long GQA. Short-MHA and mixed-MQA rankings are excluded because
-FlashInfer's order deltas are 64.03% and 15.21%.
+The [ragged matched eager record](../results/h20-flashinfer-v0.6.16.post1-ragged-prefill-dual-token-parallel-eager-performance-20260806.json)
+retains both provider orders and all 600 raw samples. Sixteen-warp MQA lowers
+Loom latency by 1.254x versus the earlier eight-warp path and 7.245x versus
+direct. Long GQA retains its eight-warp 1.689x gain over direct. Loom is
+1.675x lower-latency on short MHA; FlashInfer is 1.353x and 10.028x
+lower-latency on mixed MQA and long GQA.
 
 The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
 retains both provider orders and all 600 raw samples. Loom is 4.21x
