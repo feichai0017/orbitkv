@@ -4,11 +4,20 @@
 for permanent Loom Infer providers. It depends on both product crates; neither
 product crate depends on it.
 
-The crate owns:
+The crate is organized by validation responsibility:
 
-- H20 case orchestration and declared numerical limits.
-- shared finite comparisons, bit mismatch counts, and stable digests.
-- stable machine-readable `gate`, `case`, and `status` output.
+```text
+src/
+|-- gates/         H20 correctness and lifecycle implementations
+|-- benchmarks/    matched and tuning measurements
+|-- support/       fixtures, comparisons, records, and reporting
+|-- bin/           thin Cargo entry points
+`-- lib.rs
+```
+
+Cargo binary names stay stable, but `src/bin` contains no operator
+implementation. Shared deterministic fixtures prevent correctness and
+performance runners from drifting to different input generation.
 
 Run validation through the repository targets:
 
@@ -17,5 +26,5 @@ make cuda-test
 make h20
 ```
 
-These executables are correctness and lifecycle gates. They are not benchmark,
-engine, or serving APIs.
+These executables are validation tooling, not product, engine, or serving
+APIs. Correctness and performance remain separate entry points and claims.

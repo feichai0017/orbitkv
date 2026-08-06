@@ -21,7 +21,3 @@ pub use single_decode::{
     single_decode_bf16_split_k_merge_reference, single_decode_bf16_split_k_partials_reference,
     single_decode_bf16_split_k_reference,
 };
-
-#[cfg(test)]
-#[path = "attention/tests.rs"]
-mod tests;

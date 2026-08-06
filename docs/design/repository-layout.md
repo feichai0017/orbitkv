@@ -48,22 +48,22 @@ workspace member but not a default member.
 | `src/lib.rs` | Stable re-exports for admitted contracts |
 | `src/dtype.rs` | Backend-independent storage types |
 | `src/error.rs` | Recoverable contract and host-buffer errors |
-| `src/rms_norm.rs` | RMSNorm specification and CPU references |
-| `src/gemm.rs` | Contiguous BF16 GEMM specification and CPU reference |
-| `src/attention.rs` | Stable attention facade and public re-exports |
-| `src/attention/single_decode.rs` | Contiguous decode, split-K state, and CPU references |
-| `src/attention/paged_decode.rs` | Paged decode, page-table validation, and CPU reference |
-| `src/attention/ragged_prefill.rs` | Ragged prefill, indptr validation, and CPU reference |
-| `src/*/tests.rs` | Contract, exact-span, mapping, and numerical tests |
+| `src/rms_norm/mod.rs` | RMSNorm specification and CPU references |
+| `src/gemm/mod.rs` | Contiguous BF16 GEMM specification and CPU reference |
+| `src/attention/mod.rs` | Stable attention facade and public re-exports |
+| `src/attention/single_decode/mod.rs` | Contiguous decode, split-K state, and CPU references |
+| `src/attention/paged_decode/mod.rs` | Paged decode, page-table validation, and CPU reference |
+| `src/attention/ragged_prefill/mod.rs` | Ragged prefill, indptr validation, and CPU reference |
+| `src/**/tests.rs` | Tests owned by the corresponding operator domain |
 
 This crate contains no CUDA types, FFI, provider selection, launch
 configuration, or engine policy. A new GPU provider starts with a contract and
 reference here unless an established independent oracle is explicitly recorded.
 
-Attention is the first family converted to a facade plus private domain
-modules. Future MLA and KV mutation contracts extend `attention/{mla,kv}.rs`;
-they do not create another crate or expose the private directory structure as
-API.
+All operator families use directory modules. Family-level `mod.rs` files are
+stable facades; private domain directories own implementation and tests.
+Future MLA and KV mutation contracts extend `attention/{mla,kv}/mod.rs`; they
+do not create another crate or expose the private directory structure as API.
 
 ## CUDA crate
 
@@ -76,13 +76,13 @@ API.
 | `src/command/resolve.rs` | Disjoint operand resolution and alias rejection |
 | `src/command/submission.rs` | Queue admission, command retention, and capture transfer |
 | `src/command/completion.rs` | Completion fencing, settlement, and quiescence fallback |
-| `src/graph.rs` | Fixed-address CUDA Graph capture, replay, and retained resources |
 | `src/driver.rs` | Small raw-driver cleanup helpers |
-| `src/rms_norm.rs` | Rust device kernels plus immutable RMSNorm plans |
-| `src/attention.rs` | Stable CUDA attention facade |
+| `src/rms_norm/mod.rs` | Rust device kernels plus immutable RMSNorm plans |
+| `src/attention/mod.rs` | Stable CUDA attention facade |
 | `src/attention/decode.rs` | Single and paged decode vertical slice and cuda-oxide artifact bundle |
 | `src/attention/prefill.rs` | Ragged prefill vertical slice and cuda-oxide artifact bundle |
-| `src/gemm.rs` | Explicit fixed-algorithm cuBLASLt provider |
+| `src/gemm/mod.rs` | Explicit fixed-algorithm cuBLASLt provider |
+| `src/graph/mod.rs` | Fixed-address CUDA Graph capture and replay |
 
 The cuda-oxide `#[cuda_module]` macro must discover one inline kernel bundle.
 Do not split one bundle across file-backed modules merely to shorten a file.
@@ -105,9 +105,12 @@ finite comparisons, stable digests, and machine-readable gate prefixes:
 
 | Path | Responsibility |
 | --- | --- |
-| `src/bin/*_h20.rs` | Operator-specific H20 cases and acceptance limits |
-| `src/comparison.rs` | Shared finite comparisons, bit mismatches, and digests |
-| `src/reporting.rs` | Stable `gate/case/status` output prefixes |
+| `src/gates/*.rs` | Operator-specific H20 cases and acceptance limits |
+| `src/benchmarks/*.rs` | Matched provider and tuning measurements |
+| `src/support/fixture.rs` | Shared deterministic host fixtures |
+| `src/support/comparison.rs` | Finite comparisons, bit mismatches, and digests |
+| `src/support/reporting.rs` | Stable `gate/case/status` output prefixes |
+| `src/bin/*.rs` | Thin process entry points only |
 
 Validation binaries exercise permanent providers against CPU references and
 error contracts on real hardware. They are not benchmark or serving APIs.
@@ -144,9 +147,9 @@ FlashInfer defines the feature domains, not Loom's language-level layout:
 
 | FlashInfer concept | Loom Rust location |
 | --- | --- |
-| Single decode and state merge | `loom-infer/attention/single_decode.rs` |
-| Paged decode and page-table semantics | `loom-infer/attention/paged_decode.rs` |
-| Ragged prefill and indptr semantics | `loom-infer/attention/ragged_prefill.rs` |
+| Single decode and state merge | `loom-infer/attention/single_decode/mod.rs` |
+| Paged decode and page-table semantics | `loom-infer/attention/paged_decode/mod.rs` |
+| Ragged prefill and indptr semantics | `loom-infer/attention/ragged_prefill/mod.rs` |
 | CUDA decode providers and dispatch | `loom-infer-cuda/attention/decode.rs` |
 | CUDA ragged prefill provider | `loom-infer-cuda/attention/prefill.rs` |
 | Wrapper planning lifecycle | Immutable Rust plan types, not Python wrapper classes |

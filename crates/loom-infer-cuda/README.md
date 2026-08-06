@@ -13,10 +13,21 @@ Hardware runners live in the sibling `loom-infer-validation` crate. Use
 
 ## Module layout
 
-Public operator modules are stable facades. Attention's decode and prefill
-domains live in `src/attention/{decode,prefill}.rs`, each with its inline
-cuda-oxide artifact bundle and immutable plans. Future MLA and KV domains
-become sibling private modules without changing
+```text
+src/
+|-- attention/{mod.rs,decode.rs,prefill.rs}
+|-- command/{mod.rs,binding.rs,resolve.rs,submission.rs,completion.rs}
+|-- gemm/mod.rs
+|-- graph/mod.rs
+|-- rms_norm/mod.rs
+|-- driver.rs
+`-- lib.rs
+```
+
+Public operator modules are stable directory facades. Attention's decode and
+prefill domains keep one file per complete cuda-oxide artifact bundle because
+the macro must discover each bundle in one token tree. Future MLA and KV
+domains become sibling private modules without changing
 `loom_infer_cuda::attention::*`.
 
 ## Current providers
@@ -42,6 +53,8 @@ parallelism. The current matched result puts Loom 4.41x lower-latency for MHA
 and 2.35x lower-latency for MQA than the pinned FlashInfer path; GQA remains
 excluded from stable ranking because the baseline is provider-order sensitive.
 
-Ragged prefill uses a correctness-first direct warp for each query-row and
-query-head pair. MHA/MQA/GQA pass the H20 correctness and sanitizer gates.
-Matched performance, Graph replay, and engine integration remain open.
+Ragged prefill keeps short requests on one direct warp per query-row/head and
+uses eight-warp token partitioning with a block-local F32 merge for longer KV
+ranges. MHA/MQA/GQA pass the H20 correctness gate. Matched performance,
+sanitizer qualification for the new dispatch, Graph replay, and engine
+integration remain separate gates.

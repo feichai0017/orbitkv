@@ -2,8 +2,13 @@
 
 #![forbid(unsafe_code)]
 
+mod support;
+
 #[cfg(feature = "cuda")]
-pub mod benchmark;
+pub mod benchmarks;
 #[cfg(feature = "cuda")]
-pub mod comparison;
-pub mod reporting;
+pub mod gates;
+
+pub use support::reporting;
+#[cfg(feature = "cuda")]
+pub use support::{benchmark, comparison, fixture};

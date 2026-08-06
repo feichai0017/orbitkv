@@ -393,3 +393,6 @@ pub fn single_decode_bf16_split_k_reference(
     single_decode_bf16_split_k_partials_reference(query, key, value, workspace, spec)?;
     single_decode_bf16_split_k_merge_reference(workspace, output, lse, spec)
 }
+
+#[cfg(test)]
+mod tests;

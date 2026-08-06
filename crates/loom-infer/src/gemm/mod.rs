@@ -100,5 +100,4 @@ pub fn bf16_gemm_reference(
 }
 
 #[cfg(test)]
-#[path = "gemm/tests.rs"]
 mod tests;

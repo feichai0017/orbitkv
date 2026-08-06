@@ -330,5 +330,4 @@ pub fn ragged_prefill_bf16_reference(
 }
 
 #[cfg(test)]
-#[path = "ragged_prefill/tests.rs"]
 mod tests;

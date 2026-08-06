@@ -364,3 +364,6 @@ pub fn paged_batch_decode_bf16_reference(
 
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;

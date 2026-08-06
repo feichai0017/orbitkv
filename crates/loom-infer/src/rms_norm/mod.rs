@@ -161,5 +161,4 @@ fn rms_norm_reference<T: ReferenceElement>(
 }
 
 #[cfg(test)]
-#[path = "rms_norm/tests.rs"]
 mod tests;
