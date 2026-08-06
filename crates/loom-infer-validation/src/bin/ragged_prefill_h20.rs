@@ -1,0 +1,297 @@
+use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
+use half::bf16;
+use loom_infer::{Bf16RaggedPrefillSpec, ragged_prefill_bf16_reference};
+use loom_infer_cuda::attention::{
+    Bf16RaggedPrefillArgs, PrefillProvider, RaggedPrefillEnqueueError,
+};
+use loom_infer_cuda::command::CommandQueue;
+use loom_infer_validation::comparison::{compare_bf16, compare_f32};
+use loom_infer_validation::reporting::GateCase;
+use std::error::Error;
+use std::sync::Arc;
+
+const OUTPUT_MAX_ABS_LIMIT: f32 = 0.015_625;
+const LSE_MAX_ABS_LIMIT: f32 = 0.01;
+
+fn deterministic_bf16(len: usize, salt: u64) -> Vec<bf16> {
+    let mut state = 0x9e37_79b9_7f4a_7c15_u64 ^ salt;
+    let mut values = Vec::with_capacity(len);
+    for _ in 0..len {
+        state ^= state << 13;
+        state ^= state >> 7;
+        state ^= state << 17;
+        let signed = (state % 2001) as i32 - 1000;
+        values.push(bf16::from_f32(signed as f32 / 2048.0));
+    }
+    values
+}
+
+fn run_case(
+    queue: &mut CommandQueue,
+    provider: &PrefillProvider,
+    name: &str,
+    spec: Bf16RaggedPrefillSpec,
+    qo_indptr: &[i32],
+    kv_indptr: &[i32],
+    salt: u64,
+) -> Result<(), Box<dyn Error>> {
+    spec.validate_metadata(qo_indptr, kv_indptr)?;
+    let stream = queue.stream().clone();
+    let plan = provider.plan_bf16_ragged(spec)?;
+    let query_host = deterministic_bf16(spec.query_numel(), salt);
+    let key_host = deterministic_bf16(spec.kv_numel(), salt ^ 0x4b45_5900);
+    let value_host = deterministic_bf16(spec.kv_numel(), salt ^ 0x5641_4c55_4500);
+    let mut expected_output = vec![bf16::NAN; spec.output_numel()];
+    let mut expected_lse = vec![f32::NAN; spec.lse_numel()];
+    ragged_prefill_bf16_reference(
+        &query_host,
+        &key_host,
+        &value_host,
+        qo_indptr,
+        kv_indptr,
+        &mut expected_output,
+        &mut expected_lse,
+        spec,
+    )?;
+
+    let query = Arc::new(DeviceBuffer::from_host(&stream, &query_host)?);
+    let key = Arc::new(DeviceBuffer::from_host(&stream, &key_host)?);
+    let value = Arc::new(DeviceBuffer::from_host(&stream, &value_host)?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, qo_indptr)?);
+    let kv_indptr = Arc::new(DeviceBuffer::from_host(&stream, kv_indptr)?);
+    let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
+    let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
+    let mut bindings = queue.bindings(7)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key)?;
+    let value_handle = bindings.bind_read(value)?;
+    let qo_indptr_handle = bindings.bind_read(qo_indptr)?;
+    let kv_indptr_handle = bindings.bind_read(kv_indptr)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+
+    let mut scope = queue.begin(bindings)?;
+    plan.enqueue_into(
+        &mut scope,
+        Bf16RaggedPrefillArgs::new(
+            query_handle,
+            key_handle,
+            value_handle,
+            qo_indptr_handle,
+            kv_indptr_handle,
+            output_handle.write(),
+            lse_handle.write(),
+        ),
+    )?;
+    let completion = scope.finish();
+    if completion.submitted() != 1 {
+        return Err("ragged prefill completion covered the wrong command count".into());
+    }
+    bindings = completion.wait()?;
+    let output = bindings.take_read_write(output_handle)?;
+    let lse = bindings.take_read_write(lse_handle)?;
+    drop(bindings);
+
+    let actual_output = output.to_host_vec(&stream)?;
+    let actual_lse = lse.to_host_vec(&stream)?;
+    let output_comparison = compare_bf16(&actual_output, &expected_output, "prefill BF16")?;
+    let lse_comparison = compare_f32(&actual_lse, &expected_lse, "prefill F32 LSE")?;
+    if output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT {
+        return Err(format!(
+            "{name} output max abs {:.9e} exceeds {:.9e}",
+            output_comparison.max_abs, OUTPUT_MAX_ABS_LIMIT
+        )
+        .into());
+    }
+    if lse_comparison.max_abs > LSE_MAX_ABS_LIMIT {
+        return Err(format!(
+            "{name} LSE max abs {:.9e} exceeds {:.9e}",
+            lse_comparison.max_abs, LSE_MAX_ABS_LIMIT
+        )
+        .into());
+    }
+
+    println!(
+        "{} batch_size={} nnz_qo={} nnz_kv={} query_heads={} kv_heads={} \
+         group_size={} head_dim={} layout=NHD causal=bottom_right dtype=BF16 \
+         accumulation=F32 lse_domain=log2 commands=1 stream=non_default \
+         output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
+         lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
+        GateCase::new("ragged_prefill_h20", name),
+        spec.batch_size(),
+        spec.nnz_qo(),
+        spec.nnz_kv(),
+        spec.num_query_heads(),
+        spec.num_kv_heads(),
+        spec.gqa_group_size(),
+        spec.head_dim(),
+        output_comparison.max_abs,
+        output_comparison.bit_mismatches,
+        output_comparison.digest,
+        lse_comparison.max_abs,
+        lse_comparison.bit_mismatches,
+        lse_comparison.digest,
+    );
+    Ok(())
+}
+
+fn run_short_indptr_case(
+    queue: &mut CommandQueue,
+    provider: &PrefillProvider,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16RaggedPrefillSpec::new(2, 2, 2, 4, 2, 128)?;
+    let plan = provider.plan_bf16_ragged(spec)?;
+    let stream = queue.stream().clone();
+    let query = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.query_numel())?);
+    let key = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.kv_numel())?);
+    let value = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.kv_numel())?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 2])?);
+    let kv_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2])?);
+    let output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
+    let lse = DeviceBuffer::<f32>::zeroed(&stream, spec.lse_numel())?;
+    let mut bindings = queue.bindings(7)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key)?;
+    let value_handle = bindings.bind_read(value)?;
+    let qo_handle = bindings.bind_read(qo_indptr)?;
+    let kv_handle = bindings.bind_read(kv_indptr)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+    let mut scope = queue.begin(bindings)?;
+    let error = plan
+        .enqueue_into(
+            &mut scope,
+            Bf16RaggedPrefillArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                qo_handle,
+                kv_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            ),
+        )
+        .expect_err("short qo_indptr must fail before submission");
+    if !matches!(
+        error,
+        RaggedPrefillEnqueueError::LengthMismatch {
+            operand: "qo_indptr",
+            expected: 3,
+            actual: 2,
+        }
+    ) {
+        return Err(format!("short qo_indptr returned the wrong error: {error}").into());
+    }
+    let completion = scope.finish();
+    if completion.submitted() != 0 {
+        return Err("short qo_indptr reached CUDA submission".into());
+    }
+    drop(completion.wait()?);
+    println!(
+        "{} qo_indptr=rejected before_ffi=true",
+        GateCase::new("ragged_prefill_h20", "short_metadata")
+    );
+    Ok(())
+}
+
+fn run_invalid_metadata_guard(
+    queue: &mut CommandQueue,
+    provider: &PrefillProvider,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16RaggedPrefillSpec::new(1, 1, 1, 1, 1, 128)?;
+    let plan = provider.plan_bf16_ragged(spec)?;
+    let stream = queue.stream().clone();
+    let query = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.query_numel())?);
+    let key = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.kv_numel())?);
+    let value = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.kv_numel())?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[1_i32, 1])?);
+    let kv_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1])?);
+    let output_sentinel = vec![bf16::NAN; spec.output_numel()];
+    let lse_sentinel = vec![f32::NAN; spec.lse_numel()];
+    let output = DeviceBuffer::from_host(&stream, &output_sentinel)?;
+    let lse = DeviceBuffer::from_host(&stream, &lse_sentinel)?;
+    let mut bindings = queue.bindings(7)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key)?;
+    let value_handle = bindings.bind_read(value)?;
+    let qo_handle = bindings.bind_read(qo_indptr)?;
+    let kv_handle = bindings.bind_read(kv_indptr)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+    let mut scope = queue.begin(bindings)?;
+    plan.enqueue_into(
+        &mut scope,
+        Bf16RaggedPrefillArgs::new(
+            query_handle,
+            key_handle,
+            value_handle,
+            qo_handle,
+            kv_handle,
+            output_handle.write(),
+            lse_handle.write(),
+        ),
+    )?;
+    bindings = scope.finish().wait()?;
+    let output = bindings.take_read_write(output_handle)?;
+    let lse = bindings.take_read_write(lse_handle)?;
+    drop(bindings);
+    if output
+        .to_host_vec(&stream)?
+        .iter()
+        .any(|value| !value.to_f32().is_nan())
+        || lse
+            .to_host_vec(&stream)?
+            .iter()
+            .any(|value| !value.is_nan())
+    {
+        return Err("invalid metadata did not preserve output sentinels".into());
+    }
+    println!(
+        "{} invalid_indptr=guarded sentinel_preserved=true",
+        GateCase::new("ragged_prefill_h20", "invalid_metadata_guard")
+    );
+    Ok(())
+}
+
+fn main() -> Result<(), Box<dyn Error>> {
+    let context = CudaContext::new(0)?;
+    let provider = PrefillProvider::load(&context)?;
+    let stream: Arc<CudaStream> = context.new_stream()?;
+    let mut queue = CommandQueue::new(stream, 1)?;
+
+    run_case(
+        &mut queue,
+        &provider,
+        "mha_equal_lengths",
+        Bf16RaggedPrefillSpec::new(1, 4, 4, 8, 8, 128)?,
+        &[0, 4],
+        &[0, 4],
+        0x1001,
+    )?;
+    run_case(
+        &mut queue,
+        &provider,
+        "mqa_append_mixed",
+        Bf16RaggedPrefillSpec::new(3, 6, 13, 8, 1, 128)?,
+        &[0, 2, 5, 6],
+        &[0, 4, 10, 13],
+        0x2001,
+    )?;
+    run_case(
+        &mut queue,
+        &provider,
+        "gqa4_mixed",
+        Bf16RaggedPrefillSpec::new(2, 6, 11, 16, 4, 128)?,
+        &[0, 4, 6],
+        &[0, 7, 11],
+        0x4001,
+    )?;
+    run_short_indptr_case(&mut queue, &provider)?;
+    run_invalid_metadata_guard(&mut queue, &provider)?;
+    println!(
+        "gate=ragged_prefill_h20 suite=all status=pass output_max_abs_limit={:.9e} \
+         lse_max_abs_limit={:.9e}",
+        OUTPUT_MAX_ABS_LIMIT, LSE_MAX_ABS_LIMIT
+    );
+    Ok(())
+}

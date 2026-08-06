@@ -23,6 +23,25 @@ pub enum ContractError {
         partitions: usize,
         kv_len: usize,
     },
+    InvalidIndptrStart {
+        buffer: &'static str,
+        actual: i32,
+    },
+    NonMonotonicIndptr {
+        buffer: &'static str,
+        request: usize,
+        start: i32,
+        end: i32,
+    },
+    EmptyRaggedRequest {
+        buffer: &'static str,
+        request: usize,
+    },
+    RaggedQueryLongerThanKv {
+        request: usize,
+        query_len: usize,
+        kv_len: usize,
+    },
     InvalidPageIndptrStart {
         actual: i32,
     },
@@ -81,6 +100,29 @@ impl fmt::Display for ContractError {
             Self::InvalidPartitionCount { partitions, kv_len } => write!(
                 formatter,
                 "attention partition count must be in 1..={kv_len}, got {partitions}"
+            ),
+            Self::InvalidIndptrStart { buffer, actual } => {
+                write!(formatter, "{buffer} must start at zero, got {actual}")
+            }
+            Self::NonMonotonicIndptr {
+                buffer,
+                request,
+                start,
+                end,
+            } => write!(
+                formatter,
+                "{buffer} must be nondecreasing at request {request}, got {start} then {end}"
+            ),
+            Self::EmptyRaggedRequest { buffer, request } => {
+                write!(formatter, "{buffer} request {request} has zero length")
+            }
+            Self::RaggedQueryLongerThanKv {
+                request,
+                query_len,
+                kv_len,
+            } => write!(
+                formatter,
+                "ragged prefill request {request} has query length {query_len} greater than KV length {kv_len}"
             ),
             Self::InvalidPageIndptrStart { actual } => {
                 write!(formatter, "page indptr must start at zero, got {actual}")

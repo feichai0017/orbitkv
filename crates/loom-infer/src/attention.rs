@@ -5,11 +5,15 @@
 //! FlashInfer's Python wrapper structure.
 
 mod paged_decode;
+mod ragged_prefill;
 mod single_decode;
 
 pub use paged_decode::{
     Bf16PagedBatchDecodePageTable, Bf16PagedBatchDecodeSpec, PAGED_BATCH_DECODE_PAGE_SIZE,
     paged_batch_decode_bf16_reference,
+};
+pub use ragged_prefill::{
+    Bf16RaggedPrefillMetadata, Bf16RaggedPrefillSpec, ragged_prefill_bf16_reference,
 };
 pub use single_decode::{
     Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, SINGLE_DECODE_HEAD_DIM,
