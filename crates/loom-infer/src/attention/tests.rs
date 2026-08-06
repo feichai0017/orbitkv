@@ -1,4 +1,6 @@
 use super::*;
+use crate::ContractError;
+use half::bf16;
 
 fn bf16_slice(values: &[f32]) -> Vec<bf16> {
     values.iter().copied().map(bf16::from_f32).collect()

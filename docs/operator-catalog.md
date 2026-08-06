@@ -57,9 +57,10 @@ kernel, Graph, engine, and serving measurements have different timed regions.
 The paged batch-decode contract matches FlashInfer's `indptr`, physical page
 index, and last-page-length semantics for one query token per request. Its
 CPU tests cover malformed metadata, logical-to-physical token mapping, and
-numerical equivalence to contiguous decode. The permanent direct CUDA provider
-passes H20 MHA/MQA/GQA cases, exact-span preflight, an invalid-page device
-guard, and four Compute Sanitizer tools.
+numerical equivalence to contiguous decode. The permanent CUDA provider uses
+direct MHA and token-parallel MQA/GQA paths. It passes H20 correctness,
+exact-span preflight, an invalid-page device guard, and four Compute Sanitizer
+tools.
 
 The current matched paged result retains 600 raw eager samples and both
 provider orders. Eight-warp block-local token parallelism lowers Loom MQA and

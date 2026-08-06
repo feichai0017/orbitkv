@@ -52,6 +52,31 @@ backend.
 The workspace adds another crate only when a working vertical slice needs a
 separate ownership or safety boundary.
 
+## Module strategy
+
+Loom follows Rust visibility and ownership boundaries rather than FlashInfer's
+Python package and wrapper hierarchy. Public operator modules are facades;
+private files follow complete operator domains:
+
+```text
+loom-infer::attention
+  -> single_decode     contiguous decode and split-K reference state
+  -> paged_decode      page-table contract and paged CPU reference
+
+loom-infer-cuda::attention
+  -> decode            one decode provider domain and cuda-oxide artifact bundle
+```
+
+FlashInfer still defines the semantic domains and acceptance surface. Loom maps
+`BatchDecodeWithPagedKVCacheWrapper` planning to an immutable Rust plan, page
+utilities to a validated borrowed page-table view, and execution resources to
+the shared command/graph ownership layer. Python wrapper state is not copied
+into product architecture.
+
+Future prefill, MLA, and KV-cache mutation become sibling private modules while
+the public `attention::*` paths remain stable. A new crate requires a real
+dependency or ownership boundary, not merely another attention algorithm.
+
 ## Operator lifecycle
 
 The current RMSNorm, BF16 GEMM, and single-decode attention device slices

@@ -48,6 +48,11 @@ The repository contains three crates:
 | `loom-infer-cuda` | Rust host code and Rust CUDA kernels built with cuda-oxide |
 | `loom-infer-validation` | Non-published H20 runners and shared validation support |
 
+Operator families use stable facade modules with private domain
+implementations. Attention currently separates contiguous/split-K contracts,
+paged contracts, and the CUDA decode vertical slice while preserving
+`loom_infer::attention::*` and `loom_infer_cuda::attention::*`.
+
 The current device paths are:
 
 | Operator | Provider | H20 state |
@@ -80,8 +85,8 @@ tune or fall back.
 
 The backend-independent crate now includes a BF16 NHD D128 page-size-16 batch
 decode contract and CPU reference with FlashInfer-compatible page-table
-semantics. Its direct CUDA provider passes the declared H20 correctness and
-sanitizer gates. Matched FlashInfer performance, Graph replay, engine
+semantics. Its CUDA provider uses direct MHA and eight-warp MQA/GQA paths and
+passes the declared H20 correctness and sanitizer gates. Graph replay, engine
 integration, and serving evidence remain roadmap work, as do sampling,
 KV-cache mutation, MoE, and quantization.
 

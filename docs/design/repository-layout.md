@@ -50,17 +50,19 @@ workspace member but not a default member.
 | `src/error.rs` | Recoverable contract and host-buffer errors |
 | `src/rms_norm.rs` | RMSNorm specification and CPU references |
 | `src/gemm.rs` | Contiguous BF16 GEMM specification and CPU reference |
-| `src/attention.rs` | Admitted attention specifications and CPU references |
+| `src/attention.rs` | Stable attention facade and public re-exports |
+| `src/attention/single_decode.rs` | Contiguous decode, split-K state, and CPU references |
+| `src/attention/paged_decode.rs` | Paged decode, page-table validation, and CPU reference |
 | `src/*/tests.rs` | Contract, exact-span, mapping, and numerical tests |
 
 This crate contains no CUDA types, FFI, provider selection, launch
 configuration, or engine policy. A new GPU provider starts with a contract and
 reference here unless an established independent oracle is explicitly recorded.
 
-When one operator family gains several independent contracts, convert its
-single file into a directory while preserving the public module path. For
-example, paged decode, prefill, and state merge can become
-`attention/{decode,prefill,state}.rs` without creating another crate.
+Attention is the first family converted to a facade plus private domain
+modules. Future prefill, MLA, and KV mutation contracts extend
+`attention/{prefill,mla,kv}.rs`; they do not create another crate or expose the
+private directory structure as API.
 
 ## CUDA crate
 
@@ -76,14 +78,16 @@ example, paged decode, prefill, and state merge can become
 | `src/graph.rs` | Fixed-address CUDA Graph capture, replay, and retained resources |
 | `src/driver.rs` | Small raw-driver cleanup helpers |
 | `src/rms_norm.rs` | Rust device kernels plus immutable RMSNorm plans |
-| `src/attention.rs` | Rust device kernels plus immutable single and paged decode plans |
+| `src/attention.rs` | Stable CUDA attention facade |
+| `src/attention/decode.rs` | Single and paged decode vertical slice and cuda-oxide artifact bundle |
 | `src/gemm.rs` | Explicit fixed-algorithm cuBLASLt provider |
 
-Operator files currently keep their kernel and host plan together because each
-implemented slice is narrow. Split an operator into private `kernels`, `plan`,
-and `args` modules when it has multiple independently planned algorithms or the
-single file obscures the host/device safety proof. Preserve the existing public
-provider and plan paths unless a deliberate API revision requires otherwise.
+The cuda-oxide `#[cuda_module]` macro must discover one inline kernel bundle.
+Do not split one bundle across file-backed modules merely to shorten a file.
+Split CUDA attention by complete vertical domains instead:
+`attention/{decode,prefill,mla,kv}.rs`. Each domain may own kernels, typed
+plans, arguments, and errors when those pieces share one artifact and safety
+proof. The facade preserves `loom_infer_cuda::attention::*`.
 
 The command facade preserves `loom_infer_cuda::command::*` while implementation
 details stay in private modules. Add operand resolution patterns in
@@ -131,3 +135,19 @@ Add functionality in this order:
 
 Add a crate only for a real dependency, ownership, or safety boundary. A larger
 operator family by itself is a module-layout concern, not a crate boundary.
+
+## FlashInfer mapping
+
+FlashInfer defines the feature domains, not Loom's language-level layout:
+
+| FlashInfer concept | Loom Rust location |
+| --- | --- |
+| Single decode and state merge | `loom-infer/attention/single_decode.rs` |
+| Paged decode and page-table semantics | `loom-infer/attention/paged_decode.rs` |
+| CUDA decode providers and dispatch | `loom-infer-cuda/attention/decode.rs` |
+| Wrapper planning lifecycle | Immutable Rust plan types, not Python wrapper classes |
+| Workspace and stream ownership | Shared `command` and `graph` modules |
+| Hardware tests and benchmarks | `loom-infer-validation`, never product modules |
+
+This mapping preserves functional parity while keeping Rust ownership,
+visibility, error handling, and dependency direction idiomatic.
