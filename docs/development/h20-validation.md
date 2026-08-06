@@ -387,3 +387,20 @@ microseconds and FlashInfer records `5.077` microseconds, making Loom `1.270x`
 lower-latency. Both provider-order deltas are below five percent. Output bits
 differ because Loom uses full CUDA libdevice math while FlashInfer uses
 fast-math intrinsics; both remain within the shared BF16 reference limit.
+
+The [fused RoPE paged KV append correctness record](../results/h20-bf16-rope-paged-kv-append-correctness-20260806.json)
+qualifies one BF16 Q/K/V token per request at `request_kv_len - 1`. The full Q
+output and K/V page pools are bit-exact with the CPU oracle. Duplicate final
+slots and an invalid non-final physical page preserve all output sentinels;
+all four Compute Sanitizer tools report no errors or leaks. The fused SM90
+kernel uses 23 registers with no stack, spills, barriers, or static shared
+memory.
+
+The [matched fused append eager record](../results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-eager-performance-20260806.json)
+compares one Loom kernel with FlashInfer's standard RoPE plus paged append
+composition. Both processes are pinned to CPU 40 on the GPU-local NUMA node,
+with one OMP and MKL thread. Loom and FlashInfer combined medians are `3.989`
+and `11.735` microseconds, making Loom `2.942x` lower-latency on the admitted
+batch-4 Q16/K4 D128, page-size-16 case. Provider-order deltas are `0.128%` and
+`3.159%`. Unrestricted-affinity diagnostic samples are excluded because CPU
+migration produced non-admissible eager host-path drift.

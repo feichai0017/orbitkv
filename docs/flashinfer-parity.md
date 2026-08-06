@@ -38,7 +38,7 @@ No complete domain-level parity is currently claimed.
 | Attention state and cascade | [`merge_state`, `merge_states`, `MultiLevelCascadeAttentionWrapper`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cascade.rst) | `planned` at state-merge level |
 | Sparse and MSA attention | [`BlockSparseAttentionWrapper`, variable block sparse, MSA](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/sparse.rst) | `unscoped` |
 | POD attention | [`PODWithPagedKVCacheWrapper`, batch POD](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/pod.rst) | `unscoped` |
-| Paged KV operations | [`append_paged_kv_cache`, MLA append, index/position generation](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/page.rst) | `planned`; none implemented |
+| Paged KV operations | [`append_paged_kv_cache`, MLA append, index/position generation](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/page.rst) | `partial device correct`; one BF16 NHD D128, page-size-16, one-token/request fused standard-RoPE append path |
 | Dense and quantized GEMM | [`mm_bf16`, `mm_fp8`, `mm_fp4`, `tinygemm_bf16`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/gemm.rst) | `partial device correct`; one fixed contiguous BF16 cuBLASLt plan only |
 | Grouped GEMM | [`grouped_mm_bf16`, `grouped_mm_fp8`, `grouped_mm_fp4`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/grouped_mm.rst) | `planned` through vendor providers |
 | Fused MoE | [routing and fused MoE providers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/fused_moe.rst) | `planned`; none implemented |
@@ -46,7 +46,7 @@ No complete domain-level parity is currently claimed.
 | Logits processing | [`LogitsPipe`, temperature, Top-K, Top-P, Min-P, sample](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/logits_processor.rst) | `planned`; no pipeline API |
 | Standalone Top-K | [`top_k` and page-table/ragged transforms](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/topk.rst) | `planned`; none implemented |
 | Normalization | [RMSNorm, fused add RMSNorm, LayerNorm, fused QK RMSNorm/RoPE](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/norm.rst) | `partial device correct`; contiguous RMSNorm F32/FP16/BF16 only |
-| RoPE | [standard and Llama 3.1 RoPE, fused FP8 KV append](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/rope.rst) | `partial device correct`; BF16 D128 NeoX split-half with explicit I32 positions only |
+| RoPE | [standard and Llama 3.1 RoPE, fused FP8 KV append](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/rope.rst) | `partial device correct`; BF16 D128 NeoX split-half has explicit-I32 standalone and one-token/request paged-KV append paths |
 | Activation and gated MLP tail | [`silu_and_mul`, GELU tanh/exact variants](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/activation.rst) | `unscoped` |
 | Quantization | [`packbits`, FP4, NVFP4 KV, MXFP8](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/quantization.rst) | `planned`; none implemented |
 | Communication | [AllReduce fusion, quantized AllReduce, MoE and decode A2A](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/comm.rst) | `planned` only after a measured distributed workload |
@@ -172,5 +172,20 @@ uses positions matching two ragged prefill suffixes. Loom and FlashInfer
 combined medians are `3.997` and `5.077` microseconds, so Loom is `1.270x`
 lower-latency. Provider-order deltas are `0.048%` and `2.872%`. Both providers
 pass independent standard RoPE references within the shared BF16 error limit;
-their full-math and fast-math output bits are not equal. Other RoPE variants,
-fused KV append, Graph, engine, and serving boundaries remain open.
+their full-math and fast-math output bits are not equal.
+
+The first fused append contract adds one BF16 Q/K/V token per request, derives
+each position from the request's extended page table, rotates Q/K in NeoX
+split-half style, and writes rotated K plus unmodified V to the final physical
+NHD slot. The [H20 correctness result](results/h20-bf16-rope-paged-kv-append-correctness-20260806.json)
+is bit-exact with the Loom CPU reference for full Q and K/V page pools, covers
+duplicate-slot and invalid-page guards, and passes all four Compute Sanitizer
+tools.
+
+The [matched fused append eager result](results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-eager-performance-20260806.json)
+compares Loom's one kernel with FlashInfer's standard RoPE plus paged append
+composition. Fixed-affinity combined medians are `3.989` and `11.735`
+microseconds, making Loom `2.942x` lower-latency on the admitted batch-4
+Q16/K4 D128 page-size-16 case. Provider-order deltas are `0.128%` and
+`3.159%`. Arbitrary batch indices, multi-token, MLA, FP8, other RoPE variants,
+Graph, engine, and serving boundaries remain open.

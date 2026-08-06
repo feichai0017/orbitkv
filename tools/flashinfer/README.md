@@ -44,12 +44,16 @@ export LOOM_BENCH_WARMUP=200
 export LOOM_BENCH_LAUNCHES=100
 export LOOM_BENCH_SAMPLES=50
 export LOOM_BENCH_OPERATORS=ragged_prefill
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
 
 LOOM_BENCH_RUN_LABEL=loom_first \
+taskset -c <gpu-local-physical-cpu> \
 make bench-ragged-loom > /tmp/loom-first.jsonl
 
 FLASHINFER_WORKSPACE_BASE=/path/to/jit-cache \
 LOOM_BENCH_RUN_LABEL=flashinfer_second \
+taskset -c <gpu-local-physical-cpu> \
 <venv>/bin/python tools/flashinfer/matched_bench.py \
   > /tmp/flashinfer-second.jsonl
 ```
@@ -57,6 +61,13 @@ LOOM_BENCH_RUN_LABEL=flashinfer_second \
 `make bench-loom` records the current full Git commit automatically. Set
 `LOOM_SOURCE_COMMIT` only when deliberately identifying an equivalent external
 source projection, and record that mapping separately.
+
+Use `nvidia-smi topo -m` to choose one otherwise idle physical CPU on the
+GPU-local NUMA node, and pin both providers to that same CPU. Short eager paths
+include host submission gaps inside their CUDA-event interval; unrestricted
+CPU migration can therefore invalidate provider-order stability even when GPU
+clocks are fixed. Record the chosen CPU, NUMA node, and thread limits in the
+evidence. Do not mix pinned and unpinned samples.
 
 On hosts where PyTorch links NVSHMEM outside the default loader path, add its
 installed library directory to `LD_LIBRARY_PATH` for the external Python

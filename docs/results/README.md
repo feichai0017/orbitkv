@@ -5,6 +5,24 @@ providers.
 
 ## Results
 
+The first [BF16 fused RoPE paged KV append matched eager record](h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-eager-performance-20260806.json)
+compares one Loom cuda-oxide kernel with FlashInfer's two-kernel standard RoPE
+plus paged append composition. On the admitted batch-4 Q16/K4 D128,
+page-size-16 case, Loom records `3.989` microseconds and FlashInfer records
+`11.735` microseconds, making Loom `2.942x` lower-latency. Both provider
+processes are pinned to CPU 40 on the GPU-local NUMA node; provider-order
+deltas are `0.128%` and `3.159%`, and all 200 official raw samples are
+embedded. This is an eager provider-path result, not isolated kernel, Graph,
+engine, or serving performance.
+
+The [BF16 fused RoPE paged KV append H20 correctness record](h20-bf16-rope-paged-kv-append-correctness-20260806.json)
+qualifies one token per request at each request's final logical KV position.
+The full Q output and K/V page pools are bit-exact with the Loom CPU reference.
+Duplicate final slots and an invalid non-final physical page preserve all
+output sentinels. Four Compute Sanitizer tools report no errors or leaks; the
+kernel uses 23 registers with no stack, spills, barriers, or static shared
+memory.
+
 The first [BF16 standard RoPE matched eager record](h20-flashinfer-v0.6.16.post1-bf16-rope-pos-ids-eager-performance-20260806.json)
 uses explicit I32 positions matching two ragged prefill suffixes. Loom records
 `3.997` microseconds and FlashInfer records `5.077` microseconds, making Loom

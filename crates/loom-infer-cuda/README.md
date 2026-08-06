@@ -33,9 +33,10 @@ domains become sibling private modules without changing
 ## Current providers
 
 The Rust providers implement contiguous RMSNorm, BF16 single-request decode,
-BF16 paged batch decode, and BF16 ragged causal prefill attention. The vendor
-provider freezes one contiguous BF16 cuBLASLt GEMM algorithm during planning.
-All use typed bindings and one completion event.
+BF16 paged batch decode, BF16 ragged causal prefill attention, standard RoPE,
+and one-token/request fused RoPE plus paged KV append. The vendor provider
+freezes one contiguous BF16 cuBLASLt GEMM algorithm during planning. All use
+typed bindings and one completion event.
 
 The current owned-binding revision passed its H20 correctness gates. The fixed
 RMSNorm-to-GEMM Graph also passed replay and Compute Sanitizer gates. The
@@ -52,6 +53,13 @@ Paged MHA keeps a direct warp, while MQA/GQA use eight-warp block-local token
 parallelism. The current matched result puts Loom 4.41x lower-latency for MHA
 and 2.35x lower-latency for MQA than the pinned FlashInfer path; GQA remains
 excluded from stable ranking because the baseline is provider-order sensitive.
+
+The fused RoPE append path uses one 64-thread CTA per request/head state to
+rotate Q/K and write rotated K plus unmodified V into the final physical NHD
+slot. Full Q and K/V page pools pass the H20 CPU oracle bit-exactly, and all
+four Compute Sanitizer tools report no errors. Its admitted fixed-affinity
+eager median is `3.989` microseconds versus FlashInfer's `11.735` microsecond
+two-kernel composition.
 
 Ragged prefill keeps short requests on one direct warp per query-row/head,
 uses sixteen-warp token partitioning for long single-KV-head MQA, and keeps

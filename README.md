@@ -157,6 +157,15 @@ direct baseline; FlashInfer remains 1.17x and 2.09x lower-latency at those
 shapes. CUPTI activity records isolated kernel decomposition, but these records
 make no hardware-counter, Graph-performance, engine, or serving claim.
 
+The first fused standard RoPE plus paged KV append result is also
+shape-specific. One cuda-oxide kernel rotates Q/K and appends rotated K plus
+unmodified V for one token per request. On the admitted batch-4 Q16/K4 D128,
+page-size-16 case, Loom records a `3.989` microsecond fixed-affinity eager
+median versus `11.735` microseconds for FlashInfer's two-kernel composition,
+or `2.942x` lower latency. The full Q output and K/V page pools pass the
+declared references; arbitrary-index, multi-token, Graph, engine, and serving
+gates remain open.
+
 The current paged batch-decode result is also shape-specific. Eight-warp
 token parallelism lowers Loom MQA and GQA eager latency by 3.78x and 3.32x
 relative to the immutable direct record. Loom now has 4.41x lower stable-shape

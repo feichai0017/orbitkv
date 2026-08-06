@@ -92,7 +92,10 @@ correctness and sanitizer gates.
 - support common causal and sliding-window contracts.
 - retain the standard BF16 D128 NeoX RoPE explicit-position provider and its
   correctness, sanitizer, and matched eager gates.
-- integrate RoPE variants, KV append, and page-table access.
+- retain the first one-token/request standard RoPE plus paged KV append
+  contract and its correctness, sanitizer, and matched eager gates.
+- expand KV append to arbitrary batch indices, multi-token updates, and
+  additional RoPE/storage variants.
 - replay fixed plans through CUDA Graphs.
 
 Exit: a real model invokes Loom attention without tensor copies and preserves
@@ -139,8 +142,18 @@ NHD D128 Q/K tensors, rotates all 128 dimensions in NeoX split-half style, and
 uses CUDA libdevice full-range math. It passes positions through 32,767 and all
 four sanitizer tools. On the admitted 96-token Q16/K4 suffix shape, Loom records
 `3.997` microseconds versus FlashInfer's `5.077` microseconds, or `1.270x`
-lower latency. Interleaved, ragged-offset, Llama 3.1, cached, quantized, and
-fused KV-append variants remain open.
+lower latency.
+
+The first fused paged mutation slice accepts one BF16 Q/K/V token per request,
+derives each position from the extended page table, rotates Q/K, and writes
+rotated K plus unmodified V into the final physical NHD slot. It passes
+bit-exact H20 correctness, duplicate-slot and invalid-page sentinel guards,
+and all four sanitizer tools. On the admitted batch-4 Q16/K4 D128,
+page-size-16 case, its one-kernel eager path records `3.989` microseconds
+versus `11.735` microseconds for FlashInfer's two-kernel composition, or
+`2.942x` lower latency under fixed host affinity. Interleaved, ragged-offset,
+Llama 3.1, arbitrary-index, multi-token, cached, and quantized variants remain
+open.
 
 ## 5. Decode and KV operations
 

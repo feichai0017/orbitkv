@@ -24,6 +24,7 @@ tracks the pinned upstream comparison.
 | BF16 paged batch decode | Rust / cuda-oxide | device correct | NHD D128 page-size-16 MHA/MQA/GQA passes H20 correctness and sanitizer gates |
 | BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 direct, eight/sixteen-warp, and tiled eight-partition bottom-right causal MHA/MQA/GQA passes H20 correctness, sanitizer, and fixed-address Graph gates |
 | BF16 standard RoPE | Rust / cuda-oxide | device correct | NHD D128 NeoX split-half with explicit I32 positions passes H20 correctness, sanitizer, and matched eager gates |
+| BF16 fused RoPE paged KV append | Rust / cuda-oxide | device correct | One token/request, NHD D128, page-size-16 NeoX path passes H20 correctness, sanitizer, and matched eager gates |
 
 The matched parallel-merge H20 result is shape-specific. The complete split-K
 path lowers Loom median latency by 5.39x at GQA KV length 127 and 38.19x at KV
@@ -38,7 +39,7 @@ for raw samples, execution metadata, order variance, and excluded claims.
 | --- | --- | --- | --- |
 | Normalization | RMSNorm, Add+RMSNorm, quantized output | Rust / cuda-oxide | planned |
 | Attention | Single decode, ragged prefill, paged decode, split-K, state merge | Rust / cuda-oxide | in progress |
-| KV cache | RoPE append, gather, scatter, compaction, quantized storage | Rust / cuda-oxide | planned |
+| KV cache | RoPE append, gather, scatter, compaction, quantized storage | Rust / cuda-oxide | in progress |
 | Decode tail | Logits processing, penalties, top-k, top-p, Min-P, logprobs, sampling | Rust / cuda-oxide | planned |
 | Speculation | Greedy, stochastic, and tree verification | Rust / cuda-oxide | planned |
 | MoE | Routing support, permutation, grouped-GEMM input, combine | Rust plus vendor GEMM | planned |
@@ -71,6 +72,17 @@ is now 4.41x lower-latency for batch-1 MHA and 2.35x lower-latency for
 mixed-length batch-3 MQA than FlashInfer. The batch-4 GQA ranking remains
 excluded because FlashInfer's order delta is 60.62%. Graph, engine, and serving
 gates remain open.
+
+The first fused KV mutation contract rotates one Q/K token per request at
+`request_kv_len - 1`, writes Q to caller-owned output, and appends rotated K
+plus unmodified V into the final physical NHD slot. It rejects duplicate final
+physical slots and performs a device-side full page-table range guard before
+any write. The admitted batch-4 Q16/K4 D128 case is bit-exact with the CPU
+reference and passes all four Compute Sanitizer tools. Its one-kernel eager
+combined median is `3.989` microseconds versus `11.735` microseconds for
+FlashInfer's two-kernel standard RoPE plus paged append composition, or
+`2.942x` lower latency under the fixed-affinity matched metric. Arbitrary batch
+indices, multi-token append, Graph, engine, and serving gates remain open.
 
 The ragged prefill contract uses contiguous NHD query/KV storage with separate
 `i32` query and KV `indptr` arrays. Its causal mask is bottom-right aligned:
