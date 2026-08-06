@@ -24,7 +24,11 @@ Run validation through the repository targets:
 ```bash
 make cuda-test
 make h20
+make bench-ragged-graph-loom
 ```
 
 These executables are validation tooling, not product, engine, or serving
 APIs. Correctness and performance remain separate entry points and claims.
+The Graph benchmark fixes one long-GQA shape and measures one replay per
+CUDA-event sample; capture, planning, allocation, and correctness reads remain
+outside the timed interval.

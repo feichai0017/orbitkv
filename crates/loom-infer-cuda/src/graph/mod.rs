@@ -292,6 +292,36 @@ impl GraphExec {
         })
     }
 
+    /// Measures one replay on the private capture stream with caller-owned
+    /// timing events.
+    ///
+    /// Capture, instantiation, and event creation remain outside the measured
+    /// interval. The interval includes the graph nodes and the completion
+    /// event that every safe [`GraphExec::launch`] records after them.
+    pub fn measure_launch_ms(
+        &mut self,
+        start: &CudaEvent,
+        end: &CudaEvent,
+    ) -> Result<f32, GraphError> {
+        if !Arc::ptr_eq(start.context(), self.stream.context())
+            || !Arc::ptr_eq(end.context(), self.stream.context())
+        {
+            return Err(GraphError::TimingEventContextMismatch);
+        }
+        start
+            .record(&self.stream)
+            .map_err(|error| GraphError::driver("timing start event record", error))?;
+        let completion = self.launch()?;
+        if let Err(error) = end.record(&completion.exec.as_ref().expect("live completion").stream) {
+            drop(completion);
+            return Err(GraphError::driver("timing end event record", error));
+        }
+        completion.wait()?;
+        start
+            .elapsed_ms(end)
+            .map_err(|error| GraphError::driver("timing event elapsed query", error))
+    }
+
     /// Destroys graph handles and returns the original checked bindings.
     pub fn into_bindings(mut self) -> Result<CheckedBindings, GraphError> {
         if let Some(failure) = self.settle_in_flight() {
@@ -670,6 +700,8 @@ pub enum GraphError {
     ReplayInFlight,
     #[error("CUDA Graph launch count is exhausted")]
     LaunchCountExhausted,
+    #[error("CUDA Graph timing events belong to a different CUDA context")]
+    TimingEventContextMismatch,
     #[error("CUDA Graph {operation} failed: {source}")]
     Driver {
         operation: &'static str,

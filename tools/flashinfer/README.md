@@ -71,6 +71,28 @@ the resulting GPU idle gaps remain inside the event interval. This is an eager
 provider-path metric, not an isolated kernel-duration claim. A CUDA Graph
 comparison is a separate gate.
 
+The ragged Graph gate uses one replay per CUDA-event sample:
+
+```bash
+export LOOM_BENCH_WARMUP=200
+export LOOM_BENCH_LAUNCHES=1
+export LOOM_BENCH_SAMPLES=100
+
+LOOM_BENCH_RUN_LABEL=loom_graph_first \
+make bench-ragged-graph-loom > /tmp/loom-graph-first.jsonl
+
+FLASHINFER_WORKSPACE_BASE=/path/to/jit-cache \
+LOOM_BENCH_RUN_LABEL=flashinfer_graph_second \
+<venv>/bin/python tools/flashinfer/ragged_graph_bench.py \
+  > /tmp/flashinfer-graph-second.jsonl
+```
+
+Repeat in reverse provider order. Both paths record a start event, replay one
+fixed-address graph, record one completion event, and record an end event.
+Capture, instantiation, planning, JIT, allocation, fixture copies, correctness
+reads, and final synchronization are outside the timed interval. Do not combine
+these samples with `eager_stream_batch_cuda_event` records.
+
 RMSNorm is omitted when the unmodified FlashInfer release cannot compile or
 load its provider on the declared host. Do not patch baseline source and report
 the result as an official release comparison.
