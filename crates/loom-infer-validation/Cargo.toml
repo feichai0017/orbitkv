@@ -68,6 +68,11 @@ path = "src/bin/ragged_graph_bench_h20.rs"
 required-features = ["cuda"]
 
 [[bin]]
+name = "rope_append_graph_bench_h20"
+path = "src/bin/rope_append_graph_bench_h20.rs"
+required-features = ["cuda"]
+
+[[bin]]
 name = "split_k_sweep_h20"
 path = "src/bin/split_k_sweep_h20.rs"
 required-features = ["cuda"]

@@ -9,6 +9,7 @@ use loom_infer::{
     rope_pos_ids_bf16_reference,
 };
 use loom_infer_cuda::command::CommandQueue;
+use loom_infer_cuda::graph::GraphQueue;
 use loom_infer_cuda::rope::{
     Bf16RopePagedKvAppendArgs, Bf16RopePagedKvAppendTokensArgs, Bf16RopePosIdsArgs,
     RopeEnqueueError, RopePlanError, RopeProvider,
@@ -689,6 +690,168 @@ fn run_paged_append_tokens_short_metadata_case(
     Ok(())
 }
 
+fn run_paged_append_tokens_graph_case(context: &Arc<CudaContext>) -> Result<(), Box<dyn Error>> {
+    let provider = RopeProvider::load(context)?;
+    let spec = Bf16RopePagedKvAppendTokensSpec::new(6, 3, 8, 16, 4, 128, 16)?;
+    let batch_indices_host = [2_i32, 0, 1, 0, 2, 1];
+    let positions_host = [5_i32, 17, 20, 16, 4, 19];
+    let page_indptr_host = [0_i32, 2, 4, 5];
+    let page_indices_host = [7_i32, 3, 2, 6, 3];
+    let last_page_len_host = [2_i32, 5, 6];
+    let query_host = deterministic_bf16(spec.query_numel(), 0x5451_4147);
+    let key_host = deterministic_bf16(spec.key_numel(), 0x544b_4147);
+    let value_host = deterministic_bf16(spec.value_numel(), 0x5456_4147);
+    let key_pages_host = deterministic_bf16(spec.kv_pages_numel(), 0x544b_4343);
+    let value_pages_host = deterministic_bf16(spec.kv_pages_numel(), 0x5456_4343);
+    let mut expected_query = vec![bf16::NAN; spec.query_output_numel()];
+    let mut expected_key_pages = key_pages_host.clone();
+    let mut expected_value_pages = value_pages_host.clone();
+    rope_paged_kv_append_tokens_bf16_reference(
+        &query_host,
+        &key_host,
+        &value_host,
+        &batch_indices_host,
+        &positions_host,
+        &page_indptr_host,
+        &page_indices_host,
+        &last_page_len_host,
+        &mut expected_query,
+        &mut expected_key_pages,
+        &mut expected_value_pages,
+        spec,
+    )?;
+
+    let upload_stream = context.new_stream()?;
+    let plan = provider.plan_bf16_paged_append_tokens(spec)?;
+    let query = Arc::new(DeviceBuffer::from_host(&upload_stream, &query_host)?);
+    let key = Arc::new(DeviceBuffer::from_host(&upload_stream, &key_host)?);
+    let value = Arc::new(DeviceBuffer::from_host(&upload_stream, &value_host)?);
+    let batch_indices = Arc::new(DeviceBuffer::from_host(
+        &upload_stream,
+        &batch_indices_host,
+    )?);
+    let positions = Arc::new(DeviceBuffer::from_host(&upload_stream, &positions_host)?);
+    let page_indptr = Arc::new(DeviceBuffer::from_host(&upload_stream, &page_indptr_host)?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(&upload_stream, &page_indices_host)?);
+    let last_page_len = Arc::new(DeviceBuffer::from_host(
+        &upload_stream,
+        &last_page_len_host,
+    )?);
+    let query_output =
+        DeviceBuffer::from_host(&upload_stream, &vec![bf16::NAN; spec.query_output_numel()])?;
+    let key_pages = DeviceBuffer::from_host(&upload_stream, &key_pages_host)?;
+    let value_pages = DeviceBuffer::from_host(&upload_stream, &value_pages_host)?;
+
+    let graph_queue = GraphQueue::new(context, 1)?;
+    let mut bindings = graph_queue.bindings(11)?;
+    let query_handle = bindings.bind_read(Arc::clone(&query))?;
+    let key_handle = bindings.bind_read(Arc::clone(&key))?;
+    let value_handle = bindings.bind_read(Arc::clone(&value))?;
+    let batch_indices_handle = bindings.bind_read(Arc::clone(&batch_indices))?;
+    let positions_handle = bindings.bind_read(Arc::clone(&positions))?;
+    let page_indptr_handle = bindings.bind_read(Arc::clone(&page_indptr))?;
+    let page_indices_handle = bindings.bind_read(Arc::clone(&page_indices))?;
+    let last_page_len_handle = bindings.bind_read(Arc::clone(&last_page_len))?;
+    let query_output_handle = bindings.bind_read_write(query_output)?;
+    let key_pages_handle = bindings.bind_read_write(key_pages)?;
+    let value_pages_handle = bindings.bind_read_write(value_pages)?;
+    let captured = graph_queue.capture(bindings, |scope| {
+        plan.enqueue_into(
+            scope,
+            Bf16RopePagedKvAppendTokensArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                batch_indices_handle,
+                positions_handle,
+                page_indptr_handle,
+                page_indices_handle,
+                last_page_len_handle,
+                query_output_handle.write(),
+                key_pages_handle.write(),
+                value_pages_handle.write(),
+            ),
+        )
+    })?;
+    if captured.commands() != 1 {
+        return Err("explicit append graph captured the wrong command count".into());
+    }
+
+    drop(plan);
+    drop(provider);
+    drop(query);
+    drop(key);
+    drop(value);
+    drop(batch_indices);
+    drop(positions);
+    drop(page_indptr);
+    drop(page_indices);
+    drop(last_page_len);
+
+    let mut exec = captured.instantiate()?;
+    for expected_launch in 1..=2 {
+        let mut completion = exec.launch()?;
+        if completion.launch_index() != expected_launch {
+            return Err("explicit append graph completion reported wrong replay index".into());
+        }
+        let _ = completion.is_complete()?;
+        if expected_launch == 1 {
+            completion.wait()?;
+        } else {
+            drop(completion);
+        }
+    }
+    if exec.launches() != 2 || exec.commands() != 1 {
+        return Err("explicit append graph accounting changed across replay".into());
+    }
+
+    let mut bindings = exec.into_bindings()?;
+    let query_output = bindings.take_read_write(query_output_handle)?;
+    let key_pages = bindings.take_read_write(key_pages_handle)?;
+    let value_pages = bindings.take_read_write(value_pages_handle)?;
+    drop(bindings);
+    let query_comparison = compare_bf16(
+        &query_output.to_host_vec(&upload_stream)?,
+        &expected_query,
+        "explicit append graph query",
+    )?;
+    let key_comparison = compare_bf16(
+        &key_pages.to_host_vec(&upload_stream)?,
+        &expected_key_pages,
+        "explicit append graph key pages",
+    )?;
+    let value_comparison = compare_bf16(
+        &value_pages.to_host_vec(&upload_stream)?,
+        &expected_value_pages,
+        "explicit append graph value pages",
+    )?;
+    if query_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
+        || key_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
+        || value_comparison.max_abs != 0.0
+    {
+        return Err("explicit append graph exceeded its correctness limits".into());
+    }
+    println!(
+        "{} tokens=6 batch_size=3 commands=1 replays=2 fixed_bindings=true \
+         cross_stream=false external_owners_dropped_before_replay=true \
+         completion_queries=2 completion_waits=1 completion_drops=1 \
+         query_max_abs={:.9e} query_bit_mismatches={} query_digest={:016x} \
+         key_pages_max_abs={:.9e} key_pages_bit_mismatches={} key_pages_digest={:016x} \
+         value_pages_max_abs={:.9e} value_pages_bit_mismatches={} value_pages_digest={:016x}",
+        GateCase::new("rope_h20", "paged_append_tokens_graph"),
+        query_comparison.max_abs,
+        query_comparison.bit_mismatches,
+        query_comparison.digest,
+        key_comparison.max_abs,
+        key_comparison.bit_mismatches,
+        key_comparison.digest,
+        value_comparison.max_abs,
+        value_comparison.bit_mismatches,
+        value_comparison.digest,
+    );
+    Ok(())
+}
+
 fn run_append_metadata_guard(
     queue: &mut CommandQueue,
     provider: &RopeProvider,
@@ -936,6 +1099,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     run_paged_append_tokens_case(&mut queue, &provider)?;
     run_paged_append_tokens_limit_case(&mut queue, &provider)?;
     run_paged_append_tokens_short_metadata_case(&mut queue, &provider)?;
+    run_paged_append_tokens_graph_case(&context)?;
     run_duplicate_append_guard(&mut queue, &provider)?;
     run_invalid_page_guard(&mut queue, &provider)?;
     run_append_tokens_guards(&mut queue, &provider)?;

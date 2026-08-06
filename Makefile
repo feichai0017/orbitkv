@@ -20,7 +20,7 @@ NPM := $(RUN) npm --prefix website
 	cuda-check cuda-test h20-rms-norm h20-gemm h20-attention h20-paged-attention \
 	h20-ragged-prefill h20-rope h20 bench-loom bench-paged-loom bench-ragged-loom \
 	bench-ragged-graph-loom bench-rope-loom bench-rope-append-loom \
-	bench-rope-append-tokens-loom bench-split-k
+	bench-rope-append-tokens-loom bench-rope-append-tokens-graph-loom bench-split-k
 
 help:
 	@printf '%s\n' \
@@ -39,6 +39,7 @@ help:
 		'make bench-rope-loom  Run Loom matched RoPE case only' \
 		'make bench-rope-append-loom  Run Loom fused RoPE paged append case' \
 		'make bench-rope-append-tokens-loom  Run Loom explicit multi-token RoPE append case' \
+		'make bench-rope-append-tokens-graph-loom  Run Loom multi-token RoPE append Graph case' \
 		'make bench-split-k  Sweep Loom split-K choices on H20'
 
 check: check-rust check-website
@@ -108,6 +109,9 @@ bench-rope-append-loom:
 
 bench-rope-append-tokens-loom:
 	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_BENCH_OPERATORS=rope_paged_kv_append_tokens LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+
+bench-rope-append-tokens-graph-loom:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run rope_append_graph_bench_h20 --bin rope_append_graph_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
 bench-split-k:
 	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" LOOM_SOURCE_STATE=working_tree $(CARGO) +nightly-2026-04-03 oxide run split_k_sweep_h20 --bin split_k_sweep_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
