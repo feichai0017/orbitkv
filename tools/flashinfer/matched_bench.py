@@ -17,6 +17,8 @@ from flashinfer.gemm.gemm_base import (
     DEFAULT_WORKSPACE_SIZE,
     get_mm_bf16_cublaslt_module,
 )
+from flashinfer.rope import _apply_rope_pos_ids
+from flashinfer.trace.templates.rope import _apply_rope_pos_ids_reference
 from flashinfer.utils import SINGLE_KERNEL_TMP_SIZE
 
 
@@ -25,6 +27,7 @@ MEASUREMENT = "eager_stream_batch_cuda_event"
 FIXTURE_ID = "xorshift64_mod2001_bf16_v1"
 PAGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_page_table_v1"
 RAGGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1"
+ROPE_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_rope_pos_ids_v1"
 FNV_OFFSET_BASIS = 0xCBF29CE484222325
 FNV_PRIME = 0x00000100000001B3
 MASK64 = (1 << 64) - 1
@@ -492,10 +495,121 @@ def benchmark_ragged_prefill(
     )
 
 
+def benchmark_rope() -> None:
+    tokens = 96
+    query_heads = 16
+    key_heads = 4
+    head_dim = 128
+    query_host = deterministic_bf16(
+        tokens * query_heads * head_dim, 0x524F5045
+    )
+    key_host = deterministic_bf16(tokens * key_heads * head_dim, 0x4B455900)
+    position_ids_host = torch.tensor(
+        [*range(224, 256), *range(960, 1024)], dtype=torch.int32
+    )
+    query = query_host.reshape(tokens, query_heads, head_dim).to("cuda")
+    key = key_host.reshape(tokens, key_heads, head_dim).to("cuda")
+    position_ids = position_ids_host.to("cuda")
+    query_output = torch.empty_like(query)
+    key_output = torch.empty_like(key)
+
+    def run() -> None:
+        _apply_rope_pos_ids(
+            query,
+            key,
+            query_output,
+            key_output,
+            position_ids,
+            head_dim,
+            False,
+            1.0,
+            10000.0,
+        )
+
+    # Resolve and compile the fixed module before entering the timed region.
+    flashinfer.apply_rope_pos_ids(
+        query,
+        key,
+        position_ids,
+        rotary_dim=head_dim,
+        interleave=False,
+        rope_scale=1.0,
+        rope_theta=10000.0,
+    )
+    torch.cuda.synchronize()
+    samples_us = benchmark(run)
+    expected_query, expected_key = _apply_rope_pos_ids_reference(
+        query,
+        key,
+        position_ids,
+        rotary_dim=head_dim,
+        interleave=False,
+        rope_scale=1.0,
+        rope_theta=10000.0,
+    )
+    expected_query = expected_query.to(torch.bfloat16)
+    expected_key = expected_key.to(torch.bfloat16)
+    torch.cuda.synchronize()
+    query_max_abs = (
+        (query_output.float() - expected_query.float()).abs().max().item()
+    )
+    key_max_abs = (key_output.float() - expected_key.float()).abs().max().item()
+    query_bit_mismatches = (
+        query_output.view(torch.int16) != expected_query.view(torch.int16)
+    ).sum().item()
+    key_bit_mismatches = (
+        key_output.view(torch.int16) != expected_key.view(torch.int16)
+    ).sum().item()
+    if query_max_abs > 0.015625 or key_max_abs > 0.015625:
+        raise RuntimeError(
+            "FlashInfer RoPE output exceeded the BF16 correctness limit: "
+            f"query={query_max_abs}, key={key_max_abs}"
+        )
+    write_record(
+        "rope",
+        "bf16_rope_pos_ids_t96_qh16_kh4_d128_neox",
+        "NHD_D128_neox_split_half",
+        {
+            "algorithm": "flashinfer_apply_rope_pos_ids",
+            "position_mode": "explicit_i32",
+            "rotary_dim": 128,
+            "rope_scale": 1.0,
+            "rope_theta": 10000.0,
+            "correctness": {
+                "reference": "FlashInfer v0.6.16.post1 trace reference",
+                "query_max_abs": query_max_abs,
+                "query_bit_mismatches": query_bit_mismatches,
+                "query_digest": digest_bf16(query_output),
+                "query_reference_digest": digest_bf16(expected_query),
+                "key_max_abs": key_max_abs,
+                "key_bit_mismatches": key_bit_mismatches,
+                "key_digest": digest_bf16(key_output),
+                "key_reference_digest": digest_bf16(expected_key),
+            },
+        },
+        1,
+        {
+            "tokens": tokens,
+            "query_heads": query_heads,
+            "key_heads": key_heads,
+            "head_dim": head_dim,
+            "rotary_dim": head_dim,
+            "position_ranges": [[224, 256], [960, 1024]],
+        },
+        {
+            "query": digest_bf16(query_host),
+            "key": digest_bf16(key_host),
+            "position_ids": digest_i32(position_ids_host),
+        },
+        samples_us,
+        ROPE_FIXTURE_ID,
+    )
+
+
 def main() -> None:
     requested = os.environ.get(
         "LOOM_BENCH_OPERATORS",
-        "rms_norm,gemm,single_decode,paged_batch_decode,ragged_prefill",
+        "rms_norm,gemm,single_decode,paged_batch_decode,ragged_prefill,rope",
     ).split(",")
     if "rms_norm" in requested:
         for rows, hidden_size in ((1, 4096), (8, 4096), (64, 4096), (16, 8192)):
@@ -585,6 +699,8 @@ def main() -> None:
             ),
         ):
             benchmark_ragged_prefill(*args)
+    if "rope" in requested:
+        benchmark_rope()
 
 
 if __name__ == "__main__":

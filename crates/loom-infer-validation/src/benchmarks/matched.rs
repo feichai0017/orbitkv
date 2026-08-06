@@ -1,11 +1,12 @@
 use crate::benchmark::BenchmarkRecord;
-use crate::comparison::digest_bf16;
+use crate::comparison::{compare_bf16, digest_bf16};
 use crate::fixture::deterministic_bf16;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer, sys};
 use half::bf16;
 use loom_infer::{
-    Bf16GemmSpec, Bf16PagedBatchDecodeSpec, Bf16RaggedPrefillSpec, Bf16SingleDecodeSpec,
-    Bf16SingleDecodeSplitKSpec, DType, RmsNormSpec,
+    Bf16GemmSpec, Bf16PagedBatchDecodeSpec, Bf16RaggedPrefillSpec, Bf16RopePosIdsSpec,
+    Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, DType, RmsNormSpec,
+    rope_pos_ids_bf16_reference,
 };
 use loom_infer_cuda::attention::{
     AttentionProvider, Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs,
@@ -15,6 +16,7 @@ use loom_infer_cuda::attention::{
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
 use loom_infer_cuda::rms_norm::{RmsNormArgs, RmsNormBf16Plan, RmsNormProvider};
+use loom_infer_cuda::rope::{Bf16RopePosIdsArgs, RopeProvider};
 use serde_json::json;
 use std::env;
 use std::error::Error;
@@ -25,6 +27,7 @@ const MEASUREMENT: &str = "eager_stream_batch_cuda_event";
 const FIXTURE_ID: &str = "xorshift64_mod2001_bf16_v1";
 const PAGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_page_table_v1";
 const RAGGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1";
+const ROPE_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_rope_pos_ids_v1";
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -632,11 +635,129 @@ fn benchmark_ragged_prefill_case(
     Ok(())
 }
 
+fn benchmark_rope(
+    context: &Arc<CudaContext>,
+    stream: &Arc<CudaStream>,
+    provider: &RopeProvider,
+    config: BenchConfig,
+    identity: &RunIdentity,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16RopePosIdsSpec::new(96, 16, 4, 128, 128, 1.0, 10_000.0)?;
+    let query_host = deterministic_bf16(spec.query_numel(), 0x524f_5045);
+    let key_host = deterministic_bf16(spec.key_numel(), 0x4b45_5900);
+    let position_ids_host = (224_i32..256).chain(960_i32..1024).collect::<Vec<_>>();
+    let query = Arc::new(DeviceBuffer::from_host(stream, &query_host)?);
+    let key = Arc::new(DeviceBuffer::from_host(stream, &key_host)?);
+    let position_ids = Arc::new(DeviceBuffer::from_host(stream, &position_ids_host)?);
+    let query_output = DeviceBuffer::<bf16>::zeroed(stream, spec.query_numel())?;
+    let key_output = DeviceBuffer::<bf16>::zeroed(stream, spec.key_numel())?;
+    let plan = provider.plan_bf16_pos_ids(spec)?;
+    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
+    let mut bindings = queue.bindings(5)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key)?;
+    let position_ids_handle = bindings.bind_read(position_ids)?;
+    let query_output_handle = bindings.bind_read_write(query_output)?;
+    let key_output_handle = bindings.bind_read_write(key_output)?;
+
+    let (mut bindings, samples_us) =
+        benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
+            plan.enqueue_into(
+                scope,
+                Bf16RopePosIdsArgs::new(
+                    query_handle,
+                    key_handle,
+                    position_ids_handle,
+                    query_output_handle.write(),
+                    key_output_handle.write(),
+                ),
+            )?;
+            Ok(())
+        })?;
+    let query_output = bindings.take_read_write(query_output_handle)?;
+    let key_output = bindings.take_read_write(key_output_handle)?;
+    drop(bindings);
+    let mut expected_query = vec![bf16::NAN; spec.query_numel()];
+    let mut expected_key = vec![bf16::NAN; spec.key_numel()];
+    rope_pos_ids_bf16_reference(
+        &query_host,
+        &key_host,
+        &position_ids_host,
+        &mut expected_query,
+        &mut expected_key,
+        spec,
+    )?;
+    let query_comparison = compare_bf16(
+        &query_output.to_host_vec(stream)?,
+        &expected_query,
+        "benchmark RoPE query",
+    )?;
+    let key_comparison = compare_bf16(
+        &key_output.to_host_vec(stream)?,
+        &expected_key,
+        "benchmark RoPE key",
+    )?;
+    if query_comparison.max_abs > 0.015_625 || key_comparison.max_abs > 0.015_625 {
+        return Err("benchmark RoPE output exceeded the BF16 correctness limit".into());
+    }
+
+    BenchmarkRecord {
+        schema_version: 1,
+        provider: "loom-infer",
+        provider_version: PROVIDER_VERSION,
+        provider_commit: &identity.provider_commit,
+        run_label: &identity.run_label,
+        measurement: MEASUREMENT,
+        operator: "rope",
+        case: "bf16_rope_pos_ids_t96_qh16_kh4_d128_neox",
+        dtype: "bf16",
+        layout: "NHD_D128_neox_split_half",
+        execution: json!({
+            "algorithm": "one_64thread_cta_per_token_head",
+            "position_mode": "explicit_i32",
+            "rotary_dim": 128,
+            "rope_scale": 1.0,
+            "rope_theta": 10000.0,
+            "correctness": {
+                "reference": "loom-infer CPU reference",
+                "query_max_abs": query_comparison.max_abs,
+                "query_bit_mismatches": query_comparison.bit_mismatches,
+                "query_digest": format!("{:016x}", query_comparison.digest),
+                "query_reference_digest": format!("{:016x}", digest_bf16(&expected_query)),
+                "key_max_abs": key_comparison.max_abs,
+                "key_bit_mismatches": key_comparison.bit_mismatches,
+                "key_digest": format!("{:016x}", key_comparison.digest),
+                "key_reference_digest": format!("{:016x}", digest_bf16(&expected_key))
+            }
+        }),
+        kernels_per_call: 1,
+        shape: json!({
+            "tokens": 96,
+            "query_heads": 16,
+            "key_heads": 4,
+            "head_dim": 128,
+            "rotary_dim": 128,
+            "position_ranges": [[224, 256], [960, 1024]]
+        }),
+        fixture_id: ROPE_FIXTURE_ID,
+        fixture_digests: json!({
+            "query": format!("{:016x}", digest_bf16(&query_host)),
+            "key": format!("{:016x}", digest_bf16(&key_host)),
+            "position_ids": format!("{:016x}", digest_i32(&position_ids_host))
+        }),
+        warmup_launches: config.warmup_launches,
+        launches_per_sample: config.launches_per_sample,
+        samples_us,
+    }
+    .write_json_line()?;
+    Ok(())
+}
+
 pub fn run() -> Result<(), Box<dyn Error>> {
     let config = BenchConfig::from_env()?;
     let identity = RunIdentity::from_env()?;
     let requested = env::var("LOOM_BENCH_OPERATORS").unwrap_or_else(|_| {
-        "rms_norm,gemm,single_decode,paged_batch_decode,ragged_prefill".to_string()
+        "rms_norm,gemm,single_decode,paged_batch_decode,ragged_prefill,rope".to_string()
     });
     let requested = requested.split(',').collect::<Vec<_>>();
     let context = CudaContext::new(0)?;
@@ -645,6 +766,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let gemm_provider = CublasLtProvider::load(&context)?;
     let attention_provider = AttentionProvider::load(&context)?;
     let prefill_provider = PrefillProvider::load(&context)?;
+    let rope_provider = RopeProvider::load(&context)?;
 
     if requested.contains(&"rms_norm") {
         for (rows, hidden_size) in [(1, 4096), (8, 4096), (64, 4096), (16, 8192)] {
@@ -788,6 +910,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 &identity,
             )?;
         }
+    }
+    if requested.contains(&"rope") {
+        benchmark_rope(&context, &stream, &rope_provider, config, &identity)?;
     }
     Ok(())
 }

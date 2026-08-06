@@ -14,3 +14,5 @@ pub mod gemm;
 pub mod graph;
 #[cfg(feature = "cuda")]
 pub mod rms_norm;
+#[cfg(feature = "cuda")]
+pub mod rope;

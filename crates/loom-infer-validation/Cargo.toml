@@ -53,6 +53,11 @@ path = "src/bin/ragged_prefill_h20.rs"
 required-features = ["cuda"]
 
 [[bin]]
+name = "rope_h20"
+path = "src/bin/rope_h20.rs"
+required-features = ["cuda"]
+
+[[bin]]
 name = "loom_matched_bench_h20"
 path = "src/bin/loom_matched_bench_h20.rs"
 required-features = ["cuda"]

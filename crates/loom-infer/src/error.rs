@@ -63,6 +63,16 @@ pub enum ContractError {
         length: i32,
         page_size: usize,
     },
+    InvalidRotaryDimension {
+        rotary_dim: usize,
+        head_dim: usize,
+    },
+    InvalidRopeScale(f32),
+    InvalidRopeTheta(f32),
+    NegativePositionId {
+        token: usize,
+        position: i32,
+    },
     UnsupportedDType(DType),
     LengthMismatch {
         buffer: &'static str,
@@ -153,6 +163,30 @@ impl fmt::Display for ContractError {
             } => write!(
                 formatter,
                 "last page length for request {request} must be in 1..={page_size}, got {length}"
+            ),
+            Self::InvalidRotaryDimension {
+                rotary_dim,
+                head_dim,
+            } => write!(
+                formatter,
+                "RoPE rotary dimension must be positive, even, and no greater than head dimension \
+                 {head_dim}, got {rotary_dim}"
+            ),
+            Self::InvalidRopeScale(value) => {
+                write!(
+                    formatter,
+                    "RoPE scale must be finite and positive, got {value}"
+                )
+            }
+            Self::InvalidRopeTheta(value) => {
+                write!(
+                    formatter,
+                    "RoPE theta must be finite and greater than one, got {value}"
+                )
+            }
+            Self::NegativePositionId { token, position } => write!(
+                formatter,
+                "RoPE position ID at token {token} must be nonnegative, got {position}"
             ),
             Self::UnsupportedDType(dtype) => write!(formatter, "unsupported dtype {dtype:?}"),
             Self::LengthMismatch {

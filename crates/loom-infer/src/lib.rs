@@ -8,6 +8,7 @@ mod error;
 pub mod attention;
 pub mod gemm;
 pub mod rms_norm;
+pub mod rope;
 
 pub use attention::{
     Bf16PagedBatchDecodePageTable, Bf16PagedBatchDecodeSpec, Bf16RaggedPrefillMetadata,
@@ -23,3 +24,4 @@ pub use gemm::{Bf16GemmSpec, bf16_gemm_reference};
 pub use rms_norm::{
     RmsNormSpec, rms_norm_bf16_reference, rms_norm_f16_reference, rms_norm_f32_reference,
 };
+pub use rope::{Bf16RopePosIdsSpec, rope_pos_ids_bf16_reference};
