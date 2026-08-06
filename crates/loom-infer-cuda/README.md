@@ -69,6 +69,11 @@ invalid-metadata guards pass H20 and all four Compute Sanitizer tools. Its
 admitted six-token fixed-affinity eager median is `5.510` microseconds versus
 FlashInfer's `11.732` microsecond two-kernel composition.
 
+The same command captures into one fixed-address Graph node and replays after
+external provider, plan, and read-buffer owners are dropped. Its matched
+single-replay median is `8.288` microseconds versus `13.728` microseconds for
+FlashInfer's two-node graph.
+
 Ragged prefill keeps short requests on one direct warp per query-row/head,
 uses sixteen-warp token partitioning for long single-KV-head MQA, and keeps
 eight-warp partitioning for other declared long requests. MHA/MQA/GQA pass the

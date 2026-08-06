@@ -24,7 +24,7 @@ tracks the pinned upstream comparison.
 | BF16 paged batch decode | Rust / cuda-oxide | device correct | NHD D128 page-size-16 MHA/MQA/GQA passes H20 correctness and sanitizer gates |
 | BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 direct, eight/sixteen-warp, and tiled eight-partition bottom-right causal MHA/MQA/GQA passes H20 correctness, sanitizer, and fixed-address Graph gates |
 | BF16 standard RoPE | Rust / cuda-oxide | device correct | NHD D128 NeoX split-half with explicit I32 positions passes H20 correctness, sanitizer, and matched eager gates |
-| BF16 fused RoPE paged KV append | Rust / cuda-oxide | device correct | Explicit 1..=64 token, NHD D128, page-size-16 NeoX paths pass H20 correctness, sanitizer, and matched eager gates |
+| BF16 fused RoPE paged KV append | Rust / cuda-oxide | device correct | Explicit 1..=64 token, NHD D128, page-size-16 NeoX paths pass H20 correctness, sanitizer, matched eager, and fixed-address Graph gates |
 
 The matched parallel-merge H20 result is shape-specific. The complete split-K
 path lowers Loom median latency by 5.39x at GQA KV length 127 and 38.19x at KV
@@ -93,8 +93,16 @@ slot uniqueness before any output write. The 64-token limit and four invalid
 metadata classes pass H20 and sanitizer gates. Under the fixed-affinity eager
 metric, Loom's one-kernel combined median is `5.510` microseconds versus
 `11.732` microseconds for FlashInfer's two-kernel composition, or `2.129x`
-lower latency. Larger token batches, other layouts/dtypes, Graph, engine, and
-serving gates remain open.
+lower latency. Larger token batches, other layouts/dtypes, engine, and serving
+gates remain open.
+
+The six-token command also captures into one fixed-address Graph node and
+replays after external provider, plan, and read-buffer owners are dropped.
+The matched single-replay medians are `8.288` microseconds for Loom and
+`13.728` microseconds for FlashInfer's two-node graph, making Loom `1.656x`
+lower-latency. Both provider-order deltas are below five percent and all 400
+samples are retained. Graph updates, engine integration, and serving gates
+remain open.
 
 The ragged prefill contract uses contiguous NHD query/KV storage with separate
 `i32` query and KV `indptr` arrays. Its causal mask is bottom-right aligned:

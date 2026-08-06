@@ -175,6 +175,12 @@ shuffled suffix case, Loom records `5.510` microseconds versus FlashInfer's
 Compute Sanitizer tools. Q/K results are tolerance-correct rather than claimed
 bitwise equal across providers.
 
+The same six-token command captures into one fixed-address Graph node. Its
+single-replay completion-event median is `8.288` microseconds versus `13.728`
+microseconds for FlashInfer's two-node graph, or `1.656x` lower latency. Both
+provider-order deltas are below five percent, and Graph correctness remains
+within the CPU-reference limit after external resource-owner teardown.
+
 The current paged batch-decode result is also shape-specific. Eight-warp
 token parallelism lowers Loom MQA and GQA eager latency by 3.78x and 3.32x
 relative to the immutable direct record. Loom now has 4.41x lower stable-shape

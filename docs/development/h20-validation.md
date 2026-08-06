@@ -420,3 +420,17 @@ are `5.510` and `11.732` microseconds, making Loom `2.129x` lower-latency on
 the admitted six-token suffix case. Provider-order deltas are `2.689%` and
 `4.164%`. Both paths satisfy independent references within the shared BF16
 limit; Q/K output and reference bits are not claimed equal across providers.
+
+The [explicit append Graph correctness record](../results/h20-bf16-rope-paged-kv-append-tokens-cuda-graph-correctness-20260806.json)
+captures one checked command and replays it twice after external provider,
+plan, and read-buffer owners are dropped. Explicit wait and drop completion
+paths preserve the CPU-reference result, and all four Compute Sanitizer tools
+report no errors or leaks.
+
+The [matched explicit append Graph record](../results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-graph-performance-20260806.json)
+measures one fixed-address replay plus one completion event per sample. Loom's
+one-node and FlashInfer's two-node graphs record combined medians of `8.288`
+and `13.728` microseconds, making Loom `1.656x` lower-latency. Provider-order
+deltas are `2.330%` and `0.350%`; all 400 samples are retained without
+trimming. This metric is separate from eager provider and isolated-kernel
+measurements.

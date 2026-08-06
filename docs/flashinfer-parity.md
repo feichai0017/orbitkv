@@ -63,7 +63,7 @@ No complete domain-level parity is currently claimed.
 | cuDNN attention backend | [cuDNN batch decode and prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cudnn.rst) | `unscoped`; current vendor work is cuBLASLt GEMM only |
 | CuTe DSL backend | [CuTe DSL operators and wrappers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cute_dsl.rst) | Outside the custom-kernel source boundary; Loom kernels use cuda-oxide |
 | CUDA green contexts | [device green-context partitioning](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/green_ctx.rst) | `unscoped` |
-| Testing and benchmarks | [FLOP, bandwidth, GPU-time, and Graph helpers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/testing.rst) | Infrastructure partial; matched eager and CUPTI kernel-duration records exist, while hardware-counter and Graph benchmarks remain open |
+| Testing and benchmarks | [FLOP, bandwidth, GPU-time, and Graph helpers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/testing.rst) | Infrastructure partial; matched eager, CUPTI kernel-duration, and fixed-address Graph records exist, while hardware counters and broader Graph coverage remain open |
 
 ## First attention sequence
 
@@ -203,4 +203,13 @@ microseconds, making Loom `2.129x` lower-latency on the admitted six-token
 suffix case. Provider-order deltas are `2.689%` and `4.164%`. Both providers
 meet independent references within the shared BF16 limit, but Q/K output and
 reference bits are not claimed equal. More than 64 tokens, MLA, FP8, other
-RoPE/layout variants, Graph, engine, and serving boundaries remain open.
+RoPE/layout variants, engine, and serving boundaries remain open.
+
+The [explicit append Graph correctness result](results/h20-bf16-rope-paged-kv-append-tokens-cuda-graph-correctness-20260806.json)
+captures one checked Loom command and replays it after external resource owners
+are dropped. The [matched Graph result](results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-graph-performance-20260806.json)
+records one-node Loom and two-node FlashInfer combined medians of `8.288` and
+`13.728` microseconds, making Loom `1.656x` lower-latency under the declared
+single-replay completion-event metric. Provider-order deltas are `2.330%` and
+`0.350%`; all 400 samples are retained. Graph updates, engine, and serving
+boundaries remain open.

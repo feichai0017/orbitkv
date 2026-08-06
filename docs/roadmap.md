@@ -162,8 +162,11 @@ request's final two tokens, including page crossings and safe physical-page
 reuse at different offsets. Loom records `5.510` microseconds versus
 FlashInfer's `11.732` microsecond two-kernel composition, or `2.129x` lower
 latency. The 64-token boundary and four device metadata guards pass all four
-sanitizer tools. Larger token counts, Graph replay, and real model invocation
-remain open.
+sanitizer tools. The six-token command also captures into one fixed-address
+Graph node and replays after external resource-owner teardown. Matched
+single-replay medians are `8.288` microseconds for Loom and `13.728`
+microseconds for FlashInfer, making Loom `1.656x` lower-latency. Larger token
+counts, Graph updates, and real model invocation remain open.
 
 ## 5. Decode and KV operations
 

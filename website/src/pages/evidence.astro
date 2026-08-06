@@ -32,12 +32,25 @@ import { repositoryUrl } from "../data/site";
           two-kernel composition, or 2.129x lower latency. Both provider-order
           deltas are below five percent, and all 200 raw samples are retained.
         </p>
+        <p>
+          The same command captures into one Loom Graph node. Single-replay
+          medians are 8.288 microseconds for Loom and 13.728 microseconds for
+          FlashInfer's two-node graph, making Loom 1.656x lower-latency.
+        </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-eager-performance-20260806.json`}>
           Multi-token fused append matched performance result
         </a>
         <br />
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-graph-performance-20260806.json`}>
+          Multi-token fused append matched Graph result
+        </a>
+        <br />
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-rope-paged-kv-append-tokens-correctness-20260806.json`}>
           Multi-token fused append correctness result
+        </a>
+        <br />
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-rope-paged-kv-append-tokens-cuda-graph-correctness-20260806.json`}>
+          Multi-token fused append Graph correctness result
         </a>
       </div>
       <div class="doc-note">

@@ -5,6 +5,20 @@ providers.
 
 ## Results
 
+The [BF16 explicit multi-token fused append matched Graph record](h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-graph-performance-20260806.json)
+measures one fixed-address replay plus one completion event per sample. Loom's
+one-node graph records `8.288` microseconds and FlashInfer's two-node graph
+records `13.728` microseconds, making Loom `1.656x` lower-latency. Provider
+order deltas are `2.330%` and `0.350%`. All 400 samples, including visible
+outliers, are retained. This single-replay Graph metric is not interchangeable
+with the eager provider result below.
+
+The [BF16 explicit multi-token fused append Graph correctness record](h20-bf16-rope-paged-kv-append-tokens-cuda-graph-correctness-20260806.json)
+captures one checked cuda-oxide command and replays it twice after external
+provider, plan, and read-buffer owners are dropped. Fixed Q/K/V outputs remain
+within the CPU-reference limit across explicit wait and drop settlement paths.
+Four Compute Sanitizer tools report no errors or leaks.
+
 The [BF16 explicit multi-token fused RoPE paged KV append matched eager record](h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-eager-performance-20260806.json)
 uses six shuffled tokens covering the final two positions of three requests.
 Loom's one-kernel path records `5.510` microseconds and FlashInfer's two-kernel
