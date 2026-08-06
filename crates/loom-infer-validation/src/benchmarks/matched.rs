@@ -527,6 +527,7 @@ fn benchmark_ragged_prefill_case(
     let algorithm = match plan.algorithm() {
         Bf16RaggedPrefillAlgorithm::Direct => "direct_one_warp_per_query_row_head",
         Bf16RaggedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
+        Bf16RaggedPrefillAlgorithm::TokenParallel16 => "token_parallel_16warp_block_local_merge",
     };
     let query_host = deterministic_bf16(spec.query_numel(), case.salt);
     let key_host = deterministic_bf16(spec.kv_numel(), case.salt ^ 0x4b45_5900);

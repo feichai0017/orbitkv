@@ -15,14 +15,20 @@ use std::sync::Arc;
 use thiserror::Error;
 
 const WARP_THREADS: u32 = 32;
-const TOKEN_PARALLEL_WARPS: usize = 8;
-const TOKEN_PARALLEL_THREADS: u32 = WARP_THREADS * TOKEN_PARALLEL_WARPS as u32;
-const TOKEN_PARALLEL_SHARED_NUMEL: usize = TOKEN_PARALLEL_WARPS * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+const TOKEN_PARALLEL_8_WARPS: usize = 8;
+const TOKEN_PARALLEL_8_THREADS: u32 = WARP_THREADS * TOKEN_PARALLEL_8_WARPS as u32;
+const TOKEN_PARALLEL_8_SHARED_NUMEL: usize =
+    TOKEN_PARALLEL_8_WARPS * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+const TOKEN_PARALLEL_16_WARPS: usize = 16;
+const TOKEN_PARALLEL_16_THREADS: u32 = WARP_THREADS * TOKEN_PARALLEL_16_WARPS as u32;
+const TOKEN_PARALLEL_16_SHARED_NUMEL: usize =
+    TOKEN_PARALLEL_16_WARPS * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
 const TOKEN_PARALLEL_MIN_AVERAGE_KV_LEN: usize = 64;
 const BF16_PAIRS_PER_HEAD: usize = SINGLE_DECODE_HEAD_DIM / 2;
 
 const _: () = {
-    assert!(TOKEN_PARALLEL_THREADS == 256);
+    assert!(TOKEN_PARALLEL_8_THREADS == 256);
+    assert!(TOKEN_PARALLEL_16_THREADS == 512);
     assert!(SINGLE_DECODE_HEAD_DIM == 128);
 };
 
@@ -218,29 +224,10 @@ mod kernels {
         }
     }
 
-    #[kernel]
-    #[launch_bounds(256)]
     #[allow(clippy::too_many_arguments)]
-    #[launch_contract(
-        domain = 1,
-        block = (256, 1, 1),
-        min_compute_capability = (9, 0),
-        requires = (
-            batch_size >= 1,
-            nnz_qo >= 1,
-            nnz_kv >= 1,
-            num_query_heads >= 1,
-            num_kv_heads >= 1,
-            query.len() == nnz_qo * num_query_heads * 128,
-            key.len() == nnz_kv * num_kv_heads * 128,
-            value.len() == nnz_kv * num_kv_heads * 128,
-            qo_indptr.len() == batch_size + 1,
-            kv_indptr.len() == batch_size + 1,
-            output.len() == nnz_qo * num_query_heads * 128,
-            lse.len() == nnz_qo * num_query_heads,
-        ),
-    )]
-    pub fn ragged_prefill_bf16_nhd_causal_token_parallel(
+    fn ragged_prefill_bf16_nhd_causal_token_parallel_impl(
+        warps: usize,
+        partial_states: *mut f32,
         batch_size: usize,
         nnz_qo: usize,
         nnz_kv: usize,
@@ -255,9 +242,6 @@ mod kernels {
         mut output: DisjointSlice<bf16>,
         mut lse: DisjointSlice<f32>,
     ) {
-        static mut PARTIAL_STATES: SharedArray<f32, TOKEN_PARALLEL_SHARED_NUMEL> =
-            SharedArray::UNINIT;
-
         let state_index = thread::blockIdx_x() as usize;
         let thread_in_block = thread::threadIdx_x() as usize;
         let warp_in_block = thread_in_block / WARP_THREADS as usize;
@@ -319,10 +303,8 @@ mod kernels {
             (query_0, query_1, query_2, query_3)
         };
 
-        let token_start =
-            causal_kv_start + warp_in_block * causal_token_count / TOKEN_PARALLEL_WARPS;
-        let token_end =
-            causal_kv_start + (warp_in_block + 1) * causal_token_count / TOKEN_PARALLEL_WARPS;
+        let token_start = causal_kv_start + warp_in_block * causal_token_count / warps;
+        let token_end = causal_kv_start + (warp_in_block + 1) * causal_token_count / warps;
         let mut output_0 = 0.0_f32;
         let mut output_1 = 0.0_f32;
         let mut output_2 = 0.0_f32;
@@ -386,9 +368,6 @@ mod kernels {
         let first_component = lane * 2;
         let second_component = SINGLE_DECODE_HEAD_DIM / 2 + lane * 2;
         let state_offset = warp_in_block * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
-        // SAFETY: every warp owns one disjoint shared partial state and all
-        // threads reach the barrier before warp zero reads those states.
-        let partial_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIAL_STATES) };
         // SAFETY: lane zero owns the two header slots and every lane owns four
         // distinct weighted-value slots within its warp's partial state.
         unsafe {
@@ -422,7 +401,7 @@ mod kernels {
         let mut merged_output_2 = 0.0_f32;
         let mut merged_output_3 = 0.0_f32;
         let mut partial = 0_usize;
-        while partial < TOKEN_PARALLEL_WARPS {
+        while partial < warps {
             let partial_offset = partial * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
             // SAFETY: all warps completed their disjoint state before the
             // barrier and warp zero owns the merge reads.
@@ -497,6 +476,128 @@ mod kernels {
                 ));
         }
     }
+
+    #[kernel]
+    #[launch_bounds(256)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (256, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            nnz_qo >= 1,
+            nnz_kv >= 1,
+            num_query_heads >= 1,
+            num_kv_heads >= 1,
+            query.len() == nnz_qo * num_query_heads * 128,
+            key.len() == nnz_kv * num_kv_heads * 128,
+            value.len() == nnz_kv * num_kv_heads * 128,
+            qo_indptr.len() == batch_size + 1,
+            kv_indptr.len() == batch_size + 1,
+            output.len() == nnz_qo * num_query_heads * 128,
+            lse.len() == nnz_qo * num_query_heads,
+        ),
+    )]
+    pub fn ragged_prefill_bf16_nhd_causal_token_parallel8(
+        batch_size: usize,
+        nnz_qo: usize,
+        nnz_kv: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key: &[bf16],
+        value: &[bf16],
+        qo_indptr: &[i32],
+        kv_indptr: &[i32],
+        output: DisjointSlice<bf16>,
+        lse: DisjointSlice<f32>,
+    ) {
+        static mut PARTIAL_STATES: SharedArray<f32, TOKEN_PARALLEL_8_SHARED_NUMEL> =
+            SharedArray::UNINIT;
+        // SAFETY: each warp owns one disjoint state and the implementation
+        // orders cross-warp reads with one block barrier.
+        let partial_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIAL_STATES) };
+        ragged_prefill_bf16_nhd_causal_token_parallel_impl(
+            TOKEN_PARALLEL_8_WARPS,
+            partial_states,
+            batch_size,
+            nnz_qo,
+            nnz_kv,
+            num_query_heads,
+            num_kv_heads,
+            softmax_scale_log2,
+            query,
+            key,
+            value,
+            qo_indptr,
+            kv_indptr,
+            output,
+            lse,
+        );
+    }
+
+    #[kernel]
+    #[launch_bounds(512)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (512, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            nnz_qo >= 1,
+            nnz_kv >= 1,
+            num_query_heads >= 1,
+            num_kv_heads >= 1,
+            query.len() == nnz_qo * num_query_heads * 128,
+            key.len() == nnz_kv * num_kv_heads * 128,
+            value.len() == nnz_kv * num_kv_heads * 128,
+            qo_indptr.len() == batch_size + 1,
+            kv_indptr.len() == batch_size + 1,
+            output.len() == nnz_qo * num_query_heads * 128,
+            lse.len() == nnz_qo * num_query_heads,
+        ),
+    )]
+    pub fn ragged_prefill_bf16_nhd_causal_token_parallel16(
+        batch_size: usize,
+        nnz_qo: usize,
+        nnz_kv: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key: &[bf16],
+        value: &[bf16],
+        qo_indptr: &[i32],
+        kv_indptr: &[i32],
+        output: DisjointSlice<bf16>,
+        lse: DisjointSlice<f32>,
+    ) {
+        static mut PARTIAL_STATES: SharedArray<f32, TOKEN_PARALLEL_16_SHARED_NUMEL> =
+            SharedArray::UNINIT;
+        // SAFETY: each warp owns one disjoint state and the implementation
+        // orders cross-warp reads with one block barrier.
+        let partial_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIAL_STATES) };
+        ragged_prefill_bf16_nhd_causal_token_parallel_impl(
+            TOKEN_PARALLEL_16_WARPS,
+            partial_states,
+            batch_size,
+            nnz_qo,
+            nnz_kv,
+            num_query_heads,
+            num_kv_heads,
+            softmax_scale_log2,
+            query,
+            key,
+            value,
+            qo_indptr,
+            kv_indptr,
+            output,
+            lse,
+        );
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -534,8 +635,16 @@ impl PrefillProvider {
             Bf16RaggedPrefillAlgorithm::TokenParallel8 => {
                 Bf16RaggedPrefillLaunch::TokenParallel8(
                     self.module
-                        .prepare_ragged_prefill_bf16_nhd_causal_token_parallel(
-                            LaunchConfig1D::new(states, TOKEN_PARALLEL_THREADS, 0),
+                        .prepare_ragged_prefill_bf16_nhd_causal_token_parallel8(
+                            LaunchConfig1D::new(states, TOKEN_PARALLEL_8_THREADS, 0),
+                        )?,
+                )
+            }
+            Bf16RaggedPrefillAlgorithm::TokenParallel16 => {
+                Bf16RaggedPrefillLaunch::TokenParallel16(
+                    self.module
+                        .prepare_ragged_prefill_bf16_nhd_causal_token_parallel16(
+                            LaunchConfig1D::new(states, TOKEN_PARALLEL_16_THREADS, 0),
                         )?,
                 )
             }
@@ -553,11 +662,14 @@ impl PrefillProvider {
 pub enum Bf16RaggedPrefillAlgorithm {
     Direct,
     TokenParallel8,
+    TokenParallel16,
 }
 
 const fn ragged_prefill_algorithm(spec: Bf16RaggedPrefillSpec) -> Bf16RaggedPrefillAlgorithm {
     if spec.nnz_kv() / spec.batch_size() < TOKEN_PARALLEL_MIN_AVERAGE_KV_LEN {
         Bf16RaggedPrefillAlgorithm::Direct
+    } else if spec.num_kv_heads() == 1 {
+        Bf16RaggedPrefillAlgorithm::TokenParallel16
     } else {
         Bf16RaggedPrefillAlgorithm::TokenParallel8
     }
@@ -567,7 +679,10 @@ const fn ragged_prefill_algorithm(spec: Bf16RaggedPrefillSpec) -> Bf16RaggedPref
 enum Bf16RaggedPrefillLaunch {
     Direct(PreparedLaunch<kernels::__ragged_prefill_bf16_nhd_causal_CudaKernel>),
     TokenParallel8(
-        PreparedLaunch<kernels::__ragged_prefill_bf16_nhd_causal_token_parallel_CudaKernel>,
+        PreparedLaunch<kernels::__ragged_prefill_bf16_nhd_causal_token_parallel8_CudaKernel>,
+    ),
+    TokenParallel16(
+        PreparedLaunch<kernels::__ragged_prefill_bf16_nhd_causal_token_parallel16_CudaKernel>,
     ),
 }
 
@@ -649,7 +764,27 @@ impl Bf16RaggedPrefillPlan {
                     (launch.function().clone(), result)
                 }
                 Bf16RaggedPrefillLaunch::TokenParallel8(launch) => {
-                    let result = self.module.ragged_prefill_bf16_nhd_causal_token_parallel(
+                    let result = self.module.ragged_prefill_bf16_nhd_causal_token_parallel8(
+                        resolved.stream,
+                        launch,
+                        common.0,
+                        common.1,
+                        common.2,
+                        common.3,
+                        common.4,
+                        common.5,
+                        resolved.first,
+                        resolved.second,
+                        resolved.third,
+                        resolved.fourth,
+                        resolved.fifth,
+                        resolved.sixth,
+                        resolved.seventh,
+                    );
+                    (launch.function().clone(), result)
+                }
+                Bf16RaggedPrefillLaunch::TokenParallel16(launch) => {
+                    let result = self.module.ragged_prefill_bf16_nhd_causal_token_parallel16(
                         resolved.stream,
                         launch,
                         common.0,
@@ -805,6 +940,11 @@ mod tests {
         );
         assert_eq!(
             ragged_prefill_algorithm(long),
+            Bf16RaggedPrefillAlgorithm::TokenParallel16
+        );
+        let grouped = Bf16RaggedPrefillSpec::new(2, 96, 1280, 16, 4, 128).unwrap();
+        assert_eq!(
+            ragged_prefill_algorithm(grouped),
             Bf16RaggedPrefillAlgorithm::TokenParallel8
         );
     }

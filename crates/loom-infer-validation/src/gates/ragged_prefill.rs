@@ -29,6 +29,7 @@ fn run_case(
     let algorithm = match plan.algorithm() {
         Bf16RaggedPrefillAlgorithm::Direct => "direct",
         Bf16RaggedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp",
+        Bf16RaggedPrefillAlgorithm::TokenParallel16 => "token_parallel_16warp",
     };
     let query_host = deterministic_bf16(spec.query_numel(), salt);
     let key_host = deterministic_bf16(spec.kv_numel(), salt ^ 0x4b45_5900);
