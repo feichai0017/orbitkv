@@ -6,7 +6,7 @@ use cuda_device::{
     DisjointSlice, convert, cuda_module, kernel, launch_bounds, launch_contract, tcgen05, thread,
 };
 use half::bf16;
-use loom_infer::Bf16RopePosIdsSpec;
+use loom_infer::{Bf16RopePagedKvAppendSpec, Bf16RopePosIdsSpec, PAGED_BATCH_DECODE_PAGE_SIZE};
 use std::sync::Arc;
 use thiserror::Error;
 
@@ -75,7 +75,7 @@ mod kernels {
             // SAFETY: the launch contract proves the full Q spans. Every
             // thread owns one pair in one token/head state.
             unsafe {
-                rotate_pair(input, output, base, pair, sin, cos);
+                rotate_pair_to(input, output, base, base, pair, sin, cos);
             }
         } else {
             let key_head = combined_head - query_heads;
@@ -84,25 +84,193 @@ mod kernels {
             let output = key_output.as_mut_ptr().cast::<u16>();
             // SAFETY: as above, for the disjoint K state.
             unsafe {
-                rotate_pair(input, output, base, pair, sin, cos);
+                rotate_pair_to(input, output, base, base, pair, sin, cos);
+            }
+        }
+    }
+
+    #[kernel]
+    #[launch_bounds(64)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (64, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            max_num_pages >= 1,
+            query_heads >= 1,
+            key_heads >= 1,
+            query.len() == batch_size * query_heads * 128,
+            key.len() == batch_size * key_heads * 128,
+            value.len() == batch_size * key_heads * 128,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            query_output.len() == batch_size * query_heads * 128,
+            key_pages.len() == max_num_pages * 16 * key_heads * 128,
+            value_pages.len() == max_num_pages * 16 * key_heads * 128,
+        ),
+    )]
+    pub fn rope_paged_kv_append_bf16_neox_d128(
+        batch_size: usize,
+        max_num_pages: usize,
+        query_heads: usize,
+        key_heads: usize,
+        query: &[bf16],
+        key: &[bf16],
+        value: &[bf16],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        mut query_output: DisjointSlice<bf16>,
+        mut key_pages: DisjointSlice<bf16>,
+        mut value_pages: DisjointSlice<bf16>,
+    ) {
+        let state = thread::blockIdx_x() as usize;
+        let pair = thread::threadIdx_x() as usize;
+        let heads = query_heads + key_heads;
+        if state >= batch_size * heads || pair >= ROTARY_PAIRS {
+            return;
+        }
+        if page_indptr[0] != 0 || page_indptr[batch_size] as usize != page_indices.len() {
+            return;
+        }
+        let mut page = 0_usize;
+        while page < page_indices.len() {
+            let physical_page = page_indices[page];
+            if physical_page < 0 || physical_page as usize >= max_num_pages {
+                return;
+            }
+            page += 1;
+        }
+
+        let request = state / heads;
+        let combined_head = state % heads;
+        let Some((position, physical_page, page_offset)) = append_slot(
+            request,
+            batch_size,
+            max_num_pages,
+            page_indptr,
+            page_indices,
+            last_page_len,
+        ) else {
+            return;
+        };
+        let mut other = 0_usize;
+        while other < batch_size {
+            if other != request {
+                let Some((_, other_page, other_offset)) = append_slot(
+                    other,
+                    batch_size,
+                    max_num_pages,
+                    page_indptr,
+                    page_indices,
+                    last_page_len,
+                ) else {
+                    return;
+                };
+                if physical_page == other_page && page_offset == other_offset {
+                    return;
+                }
+            }
+            other += 1;
+        }
+
+        let exponent = pair as f32 / ROTARY_PAIRS as f32;
+        let inverse_frequency = (1.0_f32 / 10_000.0).powf(exponent);
+        let angle = position as f32 * inverse_frequency;
+        let (sin, cos) = angle.sin_cos();
+        if combined_head < query_heads {
+            let base = (request * query_heads + combined_head) * HEAD_DIM;
+            // SAFETY: this CTA/thread uniquely owns one Q split-half pair.
+            unsafe {
+                rotate_pair_to(
+                    query.as_ptr().cast(),
+                    query_output.as_mut_ptr().cast(),
+                    base,
+                    base,
+                    pair,
+                    sin,
+                    cos,
+                );
+            }
+        } else {
+            let key_head = combined_head - query_heads;
+            let source = (request * key_heads + key_head) * HEAD_DIM;
+            let destination = ((physical_page * PAGED_BATCH_DECODE_PAGE_SIZE + page_offset)
+                * key_heads
+                + key_head)
+                * HEAD_DIM;
+            // SAFETY: duplicate-slot validation and one CTA per request/head
+            // prove unique K/V cache destinations.
+            unsafe {
+                rotate_pair_to(
+                    key.as_ptr().cast(),
+                    key_pages.as_mut_ptr().cast(),
+                    source,
+                    destination,
+                    pair,
+                    sin,
+                    cos,
+                );
+                copy_pair_to(
+                    value.as_ptr().cast(),
+                    value_pages.as_mut_ptr().cast(),
+                    source,
+                    destination,
+                    pair,
+                );
             }
         }
     }
 
     #[inline(always)]
-    unsafe fn rotate_pair(
+    fn append_slot(
+        request: usize,
+        batch_size: usize,
+        max_num_pages: usize,
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+    ) -> Option<(usize, usize, usize)> {
+        if request >= batch_size {
+            return None;
+        }
+        let page_start = page_indptr[request];
+        let page_end = page_indptr[request + 1];
+        let tail = last_page_len[request];
+        if page_start < 0
+            || page_end <= page_start
+            || page_end as usize > page_indices.len()
+            || !(1..=PAGED_BATCH_DECODE_PAGE_SIZE as i32).contains(&tail)
+        {
+            return None;
+        }
+        let page_slot = (page_end - page_start - 1) as usize;
+        let physical_page = page_indices[page_start as usize + page_slot];
+        if physical_page < 0 || physical_page as usize >= max_num_pages {
+            return None;
+        }
+        let position = page_slot * PAGED_BATCH_DECODE_PAGE_SIZE + tail as usize - 1;
+        Some((position, physical_page as usize, tail as usize - 1))
+    }
+
+    #[inline(always)]
+    unsafe fn rotate_pair_to(
         input: *const u16,
         output: *mut u16,
-        base: usize,
+        source: usize,
+        destination: usize,
         pair: usize,
         sin: f32,
         cos: f32,
     ) {
         // SAFETY: the caller proves both split-half indices are in one exact
         // D128 state and uniquely owned by this thread.
-        let first_bits = unsafe { input.add(base + pair).read() };
+        let first_bits = unsafe { input.add(source + pair).read() };
         // SAFETY: as above, for the paired second-half component.
-        let second_bits = unsafe { input.add(base + ROTARY_PAIRS + pair).read() };
+        let second_bits = unsafe { input.add(source + ROTARY_PAIRS + pair).read() };
         let first = convert::cvt_f32_bf16x2_lo(first_bits as u32);
         let second = convert::cvt_f32_bf16x2_lo(second_bits as u32);
         let rotated =
@@ -110,10 +278,29 @@ mod kernels {
         // SAFETY: both output components are in the exact D128 state and no
         // other thread writes this pair.
         unsafe {
-            output.add(base + pair).write(rotated as u16);
+            output.add(destination + pair).write(rotated as u16);
             output
-                .add(base + ROTARY_PAIRS + pair)
+                .add(destination + ROTARY_PAIRS + pair)
                 .write((rotated >> 16) as u16);
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn copy_pair_to(
+        input: *const u16,
+        output: *mut u16,
+        source: usize,
+        destination: usize,
+        pair: usize,
+    ) {
+        // SAFETY: caller proves source/destination spans and unique ownership.
+        let first = unsafe { input.add(source + pair).read() };
+        // SAFETY: as above, for the second-half component.
+        let second = unsafe { input.add(source + ROTARY_PAIRS + pair).read() };
+        // SAFETY: this thread uniquely owns both output components.
+        unsafe {
+            output.add(destination + pair).write(first);
+            output.add(destination + ROTARY_PAIRS + pair).write(second);
         }
     }
 }
@@ -161,6 +348,34 @@ impl RopeProvider {
             .module
             .prepare_rope_pos_ids_bf16_neox_d128(LaunchConfig1D::new(blocks, BLOCK_THREADS, 0))?;
         Ok(Bf16RopePosIdsPlan {
+            spec,
+            module: self.module.clone(),
+            launch,
+        })
+    }
+
+    pub fn plan_bf16_paged_append(
+        &self,
+        spec: Bf16RopePagedKvAppendSpec,
+    ) -> Result<Bf16RopePagedKvAppendPlan, RopePlanError> {
+        let states = spec
+            .batch_size()
+            .checked_mul(
+                spec.num_query_heads()
+                    .checked_add(spec.num_kv_heads())
+                    .ok_or(RopePlanError::StateCountOverflow)?,
+            )
+            .ok_or(RopePlanError::StateCountOverflow)?;
+        let blocks =
+            u32::try_from(states).map_err(|_| RopePlanError::StateCountOutOfRange(states))?;
+        let launch =
+            self.module
+                .prepare_rope_paged_kv_append_bf16_neox_d128(LaunchConfig1D::new(
+                    blocks,
+                    BLOCK_THREADS,
+                    0,
+                ))?;
+        Ok(Bf16RopePagedKvAppendPlan {
             spec,
             module: self.module.clone(),
             launch,
@@ -228,6 +443,94 @@ impl Bf16RopePosIdsPlan {
     }
 }
 
+/// Immutable prepared launch for fused RoPE plus paged KV append.
+#[derive(Clone)]
+pub struct Bf16RopePagedKvAppendPlan {
+    spec: Bf16RopePagedKvAppendSpec,
+    module: kernels::LoadedModule,
+    launch: PreparedLaunch<kernels::__rope_paged_kv_append_bf16_neox_d128_CudaKernel>,
+}
+
+impl Bf16RopePagedKvAppendPlan {
+    pub const fn spec(&self) -> Bf16RopePagedKvAppendSpec {
+        self.spec
+    }
+
+    pub fn enqueue_into(
+        &self,
+        scope: &mut CommandScope<'_>,
+        args: Bf16RopePagedKvAppendArgs,
+    ) -> Result<(), RopeEnqueueError> {
+        let permit = scope.prepare_command()?;
+        let (function, result) = {
+            let resolved = scope.resolve_rrrrrrwww(
+                args.query,
+                args.key,
+                args.value,
+                args.page_indptr,
+                args.page_indices,
+                args.last_page_len,
+                args.query_output,
+                args.key_pages,
+                args.value_pages,
+            )?;
+            require_exact_len("query", resolved.first.len(), self.spec.query_numel())?;
+            require_exact_len("key", resolved.second.len(), self.spec.key_numel())?;
+            require_exact_len("value", resolved.third.len(), self.spec.value_numel())?;
+            require_exact_len(
+                "page_indptr",
+                resolved.fourth.len(),
+                self.spec.page_indptr_numel(),
+            )?;
+            if resolved.fifth.len() < self.spec.batch_size() {
+                return Err(RopeEnqueueError::PageIndicesTooShort {
+                    minimum: self.spec.batch_size(),
+                    actual: resolved.fifth.len(),
+                });
+            }
+            require_exact_len(
+                "last_page_len",
+                resolved.sixth.len(),
+                self.spec.last_page_len_numel(),
+            )?;
+            require_exact_len(
+                "query_output",
+                resolved.seventh.len(),
+                self.spec.query_output_numel(),
+            )?;
+            require_exact_len(
+                "key_pages",
+                resolved.eighth.len(),
+                self.spec.kv_pages_numel(),
+            )?;
+            require_exact_len(
+                "value_pages",
+                resolved.ninth.len(),
+                self.spec.kv_pages_numel(),
+            )?;
+            let result = self.module.rope_paged_kv_append_bf16_neox_d128(
+                resolved.stream,
+                &self.launch,
+                self.spec.batch_size(),
+                self.spec.max_num_pages(),
+                self.spec.num_query_heads(),
+                self.spec.num_kv_heads(),
+                resolved.first,
+                resolved.second,
+                resolved.third,
+                resolved.fourth,
+                resolved.fifth,
+                resolved.sixth,
+                resolved.seventh,
+                resolved.eighth,
+                resolved.ninth,
+            );
+            (self.launch.function().clone(), result)
+        };
+        record_launch(scope, permit, function, result)
+    }
+}
+
 #[derive(Clone, Copy, Debug)]
 pub struct Bf16RopePosIdsArgs {
     query: Read<bf16>,
@@ -251,6 +554,46 @@ impl Bf16RopePosIdsArgs {
             position_ids,
             query_output,
             key_output,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Bf16RopePagedKvAppendArgs {
+    query: Read<bf16>,
+    key: Read<bf16>,
+    value: Read<bf16>,
+    page_indptr: Read<i32>,
+    page_indices: Read<i32>,
+    last_page_len: Read<i32>,
+    query_output: Write<bf16>,
+    key_pages: Write<bf16>,
+    value_pages: Write<bf16>,
+}
+
+impl Bf16RopePagedKvAppendArgs {
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        query: Read<bf16>,
+        key: Read<bf16>,
+        value: Read<bf16>,
+        page_indptr: Read<i32>,
+        page_indices: Read<i32>,
+        last_page_len: Read<i32>,
+        query_output: Write<bf16>,
+        key_pages: Write<bf16>,
+        value_pages: Write<bf16>,
+    ) -> Self {
+        Self {
+            query,
+            key,
+            value,
+            page_indptr,
+            page_indices,
+            last_page_len,
+            query_output,
+            key_pages,
+            value_pages,
         }
     }
 }
@@ -281,6 +624,8 @@ pub enum RopeEnqueueError {
         expected: usize,
         actual: usize,
     },
+    #[error("page_indices requires at least {minimum} entries, got {actual}")]
+    PageIndicesTooShort { minimum: usize, actual: usize },
 }
 
 fn require_exact_len(

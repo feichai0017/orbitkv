@@ -73,6 +73,12 @@ pub enum ContractError {
         token: usize,
         position: i32,
     },
+    DuplicatePageAppendSlot {
+        first_request: usize,
+        second_request: usize,
+        physical_page: usize,
+        offset: usize,
+    },
     UnsupportedDType(DType),
     LengthMismatch {
         buffer: &'static str,
@@ -187,6 +193,16 @@ impl fmt::Display for ContractError {
             Self::NegativePositionId { token, position } => write!(
                 formatter,
                 "RoPE position ID at token {token} must be nonnegative, got {position}"
+            ),
+            Self::DuplicatePageAppendSlot {
+                first_request,
+                second_request,
+                physical_page,
+                offset,
+            } => write!(
+                formatter,
+                "paged KV append requests {first_request} and {second_request} target the same \
+                 physical slot ({physical_page}, {offset})"
             ),
             Self::UnsupportedDType(dtype) => write!(formatter, "unsupported dtype {dtype:?}"),
             Self::LengthMismatch {

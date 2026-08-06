@@ -17,6 +17,7 @@ from flashinfer.gemm.gemm_base import (
     DEFAULT_WORKSPACE_SIZE,
     get_mm_bf16_cublaslt_module,
 )
+from flashinfer.page import _append_paged_kv_cache_kernel, append_paged_kv_cache
 from flashinfer.rope import _apply_rope_pos_ids
 from flashinfer.trace.templates.rope import _apply_rope_pos_ids_reference
 from flashinfer.utils import SINGLE_KERNEL_TMP_SIZE
@@ -28,6 +29,7 @@ FIXTURE_ID = "xorshift64_mod2001_bf16_v1"
 PAGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_page_table_v1"
 RAGGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1"
 ROPE_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_rope_pos_ids_v1"
+ROPE_APPEND_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_rope_paged_append_v1"
 FNV_OFFSET_BASIS = 0xCBF29CE484222325
 FNV_PRIME = 0x00000100000001B3
 MASK64 = (1 << 64) - 1
@@ -606,10 +608,215 @@ def benchmark_rope() -> None:
     )
 
 
+def benchmark_rope_paged_append() -> None:
+    batch_size = 4
+    max_num_pages = 8
+    query_heads = 16
+    key_heads = 4
+    head_dim = 128
+    page_size = 16
+    query_host = deterministic_bf16(
+        batch_size * query_heads * head_dim, 0x51504147
+    )
+    key_host = deterministic_bf16(batch_size * key_heads * head_dim, 0x4B504147)
+    value_host = deterministic_bf16(
+        batch_size * key_heads * head_dim, 0x56504147
+    )
+    key_pages_host = deterministic_bf16(
+        max_num_pages * page_size * key_heads * head_dim, 0x4B434143
+    )
+    value_pages_host = deterministic_bf16(
+        max_num_pages * page_size * key_heads * head_dim, 0x56434143
+    )
+    page_indptr_host = torch.tensor([0, 1, 3, 5, 8], dtype=torch.int32)
+    page_indices_host = torch.tensor(
+        [7, 2, 6, 5, 1, 7, 0, 4], dtype=torch.int32
+    )
+    last_page_len_host = torch.tensor([3, 16, 1, 9], dtype=torch.int32)
+    batch_indices_host = torch.arange(batch_size, dtype=torch.int32)
+    positions_host = torch.tensor([2, 31, 16, 40], dtype=torch.int32)
+
+    query = query_host.reshape(batch_size, query_heads, head_dim).to("cuda")
+    key = key_host.reshape(batch_size, key_heads, head_dim).to("cuda")
+    value = value_host.reshape(batch_size, key_heads, head_dim).to("cuda")
+    query_output = torch.empty_like(query)
+    rotated_key = torch.empty_like(key)
+    key_pages = key_pages_host.reshape(
+        max_num_pages, page_size, key_heads, head_dim
+    ).to("cuda")
+    value_pages = value_pages_host.reshape(
+        max_num_pages, page_size, key_heads, head_dim
+    ).to("cuda")
+    page_indptr = page_indptr_host.to("cuda")
+    page_indices = page_indices_host.to("cuda")
+    last_page_len = last_page_len_host.to("cuda")
+    batch_indices = batch_indices_host.to("cuda")
+    positions = positions_host.to("cuda")
+
+    def run() -> None:
+        _apply_rope_pos_ids(
+            query,
+            key,
+            query_output,
+            rotated_key,
+            positions,
+            head_dim,
+            False,
+            1.0,
+            10000.0,
+        )
+        _append_paged_kv_cache_kernel(
+            rotated_key,
+            value,
+            batch_indices,
+            positions,
+            key_pages,
+            value_pages,
+            page_indices,
+            page_indptr,
+            last_page_len,
+            0,
+        )
+
+    # Resolve both fixed modules before entering the timed region.
+    flashinfer.apply_rope_pos_ids(
+        query,
+        key,
+        positions,
+        rotary_dim=head_dim,
+        interleave=False,
+        rope_scale=1.0,
+        rope_theta=10000.0,
+    )
+    append_paged_kv_cache(
+        key,
+        value,
+        batch_indices,
+        positions,
+        (key_pages, value_pages),
+        page_indices,
+        page_indptr,
+        last_page_len,
+        kv_layout="NHD",
+    )
+    # Restore the matched initial cache after module warmup.
+    key_pages.copy_(
+        key_pages_host.reshape(max_num_pages, page_size, key_heads, head_dim)
+    )
+    value_pages.copy_(
+        value_pages_host.reshape(max_num_pages, page_size, key_heads, head_dim)
+    )
+    torch.cuda.synchronize()
+    samples_us = benchmark(run)
+    expected_query, expected_key = _apply_rope_pos_ids_reference(
+        query,
+        key,
+        positions,
+        rotary_dim=head_dim,
+        interleave=False,
+        rope_scale=1.0,
+        rope_theta=10000.0,
+    )
+    expected_query = expected_query.to(torch.bfloat16)
+    expected_key = expected_key.to(torch.bfloat16)
+    expected_key_pages = key_pages_host.reshape(
+        max_num_pages, page_size, key_heads, head_dim
+    ).to("cuda")
+    expected_value_pages = value_pages_host.reshape(
+        max_num_pages, page_size, key_heads, head_dim
+    ).to("cuda")
+    for request in range(batch_size):
+        position = positions_host[request].item()
+        page_slot = position // page_size
+        page_offset = position % page_size
+        physical_page = page_indices_host[
+            page_indptr_host[request].item() + page_slot
+        ].item()
+        expected_key_pages[physical_page, page_offset].copy_(expected_key[request])
+        expected_value_pages[physical_page, page_offset].copy_(value[request])
+    torch.cuda.synchronize()
+    query_max_abs = (
+        (query_output.float() - expected_query.float()).abs().max().item()
+    )
+    key_pages_max_abs = (
+        (key_pages.float() - expected_key_pages.float()).abs().max().item()
+    )
+    value_pages_max_abs = (
+        (value_pages.float() - expected_value_pages.float()).abs().max().item()
+    )
+    query_bit_mismatches = (
+        query_output.view(torch.int16) != expected_query.view(torch.int16)
+    ).sum().item()
+    key_pages_bit_mismatches = (
+        key_pages.view(torch.int16) != expected_key_pages.view(torch.int16)
+    ).sum().item()
+    value_pages_bit_mismatches = (
+        value_pages.view(torch.int16) != expected_value_pages.view(torch.int16)
+    ).sum().item()
+    if (
+        query_max_abs > 0.015625
+        or key_pages_max_abs > 0.015625
+        or value_pages_max_abs != 0.0
+    ):
+        raise RuntimeError(
+            "FlashInfer RoPE paged append exceeded the BF16 correctness limits: "
+            f"query={query_max_abs}, key_pages={key_pages_max_abs}, "
+            f"value_pages={value_pages_max_abs}"
+        )
+    torch.cuda.synchronize()
+    write_record(
+        "rope_paged_kv_append",
+        "bf16_rope_paged_append_b4_qh16_kh4_d128_p16",
+        "NHD_D128_neox_split_half_page16",
+        {
+            "algorithm": "flashinfer_rope_then_paged_append",
+            "kernels": 2,
+            "positions": [2, 31, 16, 40],
+            "physical_slots": [[7, 2], [6, 15], [1, 0], [4, 8]],
+            "correctness": {
+                "reference": "FlashInfer v0.6.16.post1 trace RoPE reference plus explicit page writes",
+                "query_max_abs": query_max_abs,
+                "query_bit_mismatches": query_bit_mismatches,
+                "query_digest": digest_bf16(query_output),
+                "query_reference_digest": digest_bf16(expected_query),
+                "key_pages_max_abs": key_pages_max_abs,
+                "key_pages_bit_mismatches": key_pages_bit_mismatches,
+                "key_pages_digest": digest_bf16(key_pages),
+                "key_pages_reference_digest": digest_bf16(expected_key_pages),
+                "value_pages_max_abs": value_pages_max_abs,
+                "value_pages_bit_mismatches": value_pages_bit_mismatches,
+                "value_pages_digest": digest_bf16(value_pages),
+                "value_pages_reference_digest": digest_bf16(expected_value_pages),
+            },
+        },
+        2,
+        {
+            "batch_size": batch_size,
+            "max_num_pages": max_num_pages,
+            "query_heads": query_heads,
+            "key_heads": key_heads,
+            "head_dim": head_dim,
+            "page_size": page_size,
+        },
+        {
+            "query": digest_bf16(query_host),
+            "key": digest_bf16(key_host),
+            "value": digest_bf16(value_host),
+            "key_pages_initial": digest_bf16(key_pages_host),
+            "value_pages_initial": digest_bf16(value_pages_host),
+            "page_indptr": digest_i32(page_indptr_host),
+            "page_indices": digest_i32(page_indices_host),
+            "last_page_len": digest_i32(last_page_len_host),
+        },
+        samples_us,
+        ROPE_APPEND_FIXTURE_ID,
+    )
+
+
 def main() -> None:
     requested = os.environ.get(
         "LOOM_BENCH_OPERATORS",
-        "rms_norm,gemm,single_decode,paged_batch_decode,ragged_prefill,rope",
+        "rms_norm,gemm,single_decode,paged_batch_decode,ragged_prefill,rope,rope_paged_kv_append",
     ).split(",")
     if "rms_norm" in requested:
         for rows, hidden_size in ((1, 4096), (8, 4096), (64, 4096), (16, 8192)):
@@ -701,6 +908,8 @@ def main() -> None:
             benchmark_ragged_prefill(*args)
     if "rope" in requested:
         benchmark_rope()
+    if "rope_paged_kv_append" in requested:
+        benchmark_rope_paged_append()
 
 
 if __name__ == "__main__":

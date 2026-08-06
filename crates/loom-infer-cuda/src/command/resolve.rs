@@ -521,6 +521,107 @@ impl CommandScope<'_> {
         })
     }
 
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    pub(crate) fn resolve_rrrrrrwww<A, B, C, D, E, F, G, H, I>(
+        &mut self,
+        first: Read<A>,
+        second: Read<B>,
+        third: Read<C>,
+        fourth: Read<D>,
+        fifth: Read<E>,
+        sixth: Read<F>,
+        seventh: Write<G>,
+        eighth: Write<H>,
+        ninth: Write<I>,
+    ) -> Result<ResolvedRrrrrrwww<'_, A, B, C, D, E, F, G, H, I>, CommandError>
+    where
+        A: ResolveElement,
+        B: ResolveElement,
+        C: ResolveElement,
+        D: ResolveElement,
+        E: ResolveElement,
+        F: ResolveElement,
+        G: ResolveElement,
+        H: ResolveElement,
+        I: ResolveElement,
+    {
+        let slots = [
+            first.slot,
+            second.slot,
+            third.slot,
+            fourth.slot,
+            fifth.slot,
+            sixth.slot,
+            seventh.slot,
+            eighth.slot,
+            ninth.slot,
+        ];
+        self.validate_resolve_request(
+            &[
+                first.set_id,
+                second.set_id,
+                third.set_id,
+                fourth.set_id,
+                fifth.set_id,
+                sixth.set_id,
+                seventh.set_id,
+                eighth.set_id,
+                ninth.set_id,
+            ],
+            &slots,
+        )?;
+        let bindings = self
+            .bindings
+            .as_mut()
+            .expect("live command scope has bindings");
+        let [
+            first_lease,
+            second_lease,
+            third_lease,
+            fourth_lease,
+            fifth_lease,
+            sixth_lease,
+            seventh_lease,
+            eighth_lease,
+            ninth_lease,
+        ] = bindings
+            .leases
+            .get_disjoint_mut(slots)
+            .expect("validated binding slots are pairwise disjoint");
+        let first_buffer =
+            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
+        let second_buffer =
+            B::read(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
+        let third_buffer =
+            C::read(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
+        let fourth_buffer =
+            D::read(fourth_lease).map_err(|error| map_lease_error(error, fourth.slot))?;
+        let fifth_buffer =
+            E::read(fifth_lease).map_err(|error| map_lease_error(error, fifth.slot))?;
+        let sixth_buffer =
+            F::read(sixth_lease).map_err(|error| map_lease_error(error, sixth.slot))?;
+        let seventh_buffer =
+            G::write(seventh_lease).map_err(|error| map_lease_error(error, seventh.slot))?;
+        let eighth_buffer =
+            H::write(eighth_lease).map_err(|error| map_lease_error(error, eighth.slot))?;
+        let ninth_buffer =
+            I::write(ninth_lease).map_err(|error| map_lease_error(error, ninth.slot))?;
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
+
+        Ok(ResolvedRrrrrrwww {
+            stream: &queue.stream,
+            first: first_buffer,
+            second: second_buffer,
+            third: third_buffer,
+            fourth: fourth_buffer,
+            fifth: fifth_buffer,
+            sixth: sixth_buffer,
+            seventh: seventh_buffer,
+            eighth: eighth_buffer,
+            ninth: ninth_buffer,
+        })
+    }
+
     fn validate_resolve_request(
         &self,
         set_ids: &[u64],
@@ -688,6 +789,31 @@ pub(crate) struct ResolvedRrrrrrww<
     pub(crate) sixth: &'scope DeviceBuffer<F>,
     pub(crate) seventh: &'scope mut DeviceBuffer<G>,
     pub(crate) eighth: &'scope mut DeviceBuffer<H>,
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) struct ResolvedRrrrrrwww<
+    'scope,
+    A: BindingElement,
+    B: BindingElement,
+    C: BindingElement,
+    D: BindingElement,
+    E: BindingElement,
+    F: BindingElement,
+    G: BindingElement,
+    H: BindingElement,
+    I: BindingElement,
+> {
+    pub(crate) stream: &'scope CudaStream,
+    pub(crate) first: &'scope DeviceBuffer<A>,
+    pub(crate) second: &'scope DeviceBuffer<B>,
+    pub(crate) third: &'scope DeviceBuffer<C>,
+    pub(crate) fourth: &'scope DeviceBuffer<D>,
+    pub(crate) fifth: &'scope DeviceBuffer<E>,
+    pub(crate) sixth: &'scope DeviceBuffer<F>,
+    pub(crate) seventh: &'scope mut DeviceBuffer<G>,
+    pub(crate) eighth: &'scope mut DeviceBuffer<H>,
+    pub(crate) ninth: &'scope mut DeviceBuffer<I>,
 }
 
 #[cfg(test)]

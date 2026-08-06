@@ -4,10 +4,12 @@
 //! operator domains used by the upstream comparison surface without exposing
 //! FlashInfer's Python wrapper structure.
 
+mod paged_append;
 mod paged_decode;
 mod ragged_prefill;
 mod single_decode;
 
+pub use paged_append::{Bf16RopePagedKvAppendSpec, rope_paged_kv_append_bf16_reference};
 pub use paged_decode::{
     Bf16PagedBatchDecodePageTable, Bf16PagedBatchDecodeSpec, PAGED_BATCH_DECODE_PAGE_SIZE,
     paged_batch_decode_bf16_reference,
