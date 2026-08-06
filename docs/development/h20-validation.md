@@ -244,6 +244,23 @@ interval, so the result is not isolated kernel duration or CUDA Graph
 performance. Preserve that measurement name and boundary when comparing future
 runs.
 
+## Ragged prefill performance
+
+Match BF16 NHD D128 query, key, value, `qo_indptr`, and `kv_indptr` bits across
+Loom and the pinned FlashInfer FA2 ragged wrapper. Use bottom-right causal
+alignment, caller-owned output and LSE, preplanned providers, CUDA events, 200
+warm-up calls, 100 calls per sample, 50 samples per provider order, and both
+provider orders.
+
+Keep short MHA, mixed append-style MQA, and long GQA as separate cases. Record
+the Loom plan algorithm and every fixture digest. Exclude a provider ranking
+when either provider's order median changes by more than five percent. Compare
+an optimization against an immutable direct Loom record rather than a
+working-tree timing.
+
+The measurement remains eager provider latency. It does not establish isolated
+kernel, CUDA Graph, engine, or serving performance.
+
 ## Current device state
 
 The [shared-command regression](../results/h20-shared-command-regression-20260803.json)
@@ -303,11 +320,19 @@ log2-LSE error `4.768371582e-7`. It covers mixed request lengths, page
 reordering and reuse, exact metadata spans, and a device-side invalid-page
 guard. All four Compute Sanitizer tools report zero errors.
 
-The [ragged prefill record](../results/h20-bf16-ragged-prefill-correctness-20260806.json)
-passes MHA, MQA, and GQA batches with bit-exact BF16 output and maximum
-log2-LSE error `4.768371582e-7`. It covers equal and mixed query/KV lengths,
-bottom-right causal alignment, exact metadata spans, and a device-side
-invalid-indptr guard. All four Compute Sanitizer tools report zero errors.
+The current [ragged prefill record](../results/h20-bf16-ragged-prefill-token-parallel-correctness-20260806.json)
+passes direct and eight-warp MHA, MQA, and GQA batches. Maximum BF16 output
+error is `1.220703125e-4` and maximum log2-LSE error is `2.861022949e-6`. It
+covers equal and mixed query/KV lengths, bottom-right causal alignment, exact
+metadata spans, and a device-side nonmonotonic-indptr guard. All four Compute
+Sanitizer tools report zero errors.
+
+The [ragged matched eager record](../results/h20-flashinfer-v0.6.16.post1-ragged-prefill-token-parallel-eager-performance-20260806.json)
+retains both provider orders and all 600 raw samples. Eight-warp token
+parallelism lowers Loom mixed-MQA and long-GQA latency by 5.779x and 1.689x
+versus the immutable direct record. FlashInfer remains 10.114x lower-latency
+on stable long GQA. Short-MHA and mixed-MQA rankings are excluded because
+FlashInfer's order deltas are 64.03% and 15.21%.
 
 The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
 retains both provider orders and all 600 raw samples. Loom is 4.21x

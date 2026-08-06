@@ -55,6 +55,7 @@ excluded from stable ranking because the baseline is provider-order sensitive.
 
 Ragged prefill keeps short requests on one direct warp per query-row/head and
 uses eight-warp token partitioning with a block-local F32 merge for longer KV
-ranges. MHA/MQA/GQA pass the H20 correctness gate. Matched performance,
-sanitizer qualification for the new dispatch, Graph replay, and engine
-integration remain separate gates.
+ranges. MHA/MQA/GQA pass the H20 correctness and sanitizer gates. Matched eager
+measurements improve mixed MQA and long GQA by 5.779x and 1.689x versus direct
+Loom; FlashInfer remains 10.114x lower-latency on stable long GQA. Graph replay
+and engine integration remain separate gates.

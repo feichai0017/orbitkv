@@ -22,7 +22,7 @@ tracks the pinned upstream comparison.
 | BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
 | BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 direct and split-K MHA/MQA/GQA paths pass H20 correctness and sanitizer gates |
 | BF16 paged batch decode | Rust / cuda-oxide | device correct | NHD D128 page-size-16 MHA/MQA/GQA passes H20 correctness and sanitizer gates |
-| BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 bottom-right causal MHA/MQA/GQA passes H20 correctness and sanitizer gates |
+| BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 direct and eight-warp bottom-right causal MHA/MQA/GQA passes H20 correctness and sanitizer gates |
 
 The matched parallel-merge H20 result is shape-specific. The complete split-K
 path lowers Loom median latency by 5.39x at GQA KV length 127 and 38.19x at KV
@@ -73,11 +73,16 @@ gates remain open.
 
 The ragged prefill contract uses contiguous NHD query/KV storage with separate
 `i32` query and KV `indptr` arrays. Its causal mask is bottom-right aligned:
-`kv_index <= kv_len - qo_len + query_index`. The first direct cuda-oxide
-provider passes MHA/MQA/GQA H20 correctness, exact-span preflight, an
-invalid-metadata device guard, and all four Compute Sanitizer tools. This is a
-correctness-first provider; matched FlashInfer performance, Graph, engine, and
-serving gates remain open.
+`kv_index <= kv_len - qo_len + query_index`. Short average-KV plans use the
+direct warp; longer plans use eight-warp token partitioning and block-local
+F32 state merge. Both paths pass H20 correctness, exact-span preflight, a
+nonmonotonic-metadata device guard, and all four Compute Sanitizer tools.
+
+The matched eager result lowers Loom mixed-MQA and long-GQA latency by 5.779x
+and 1.689x relative to the immutable direct record. Long GQA has stable
+provider ordering and FlashInfer remains 10.114x lower-latency. Short-MHA and
+mixed-MQA provider rankings remain excluded because FlashInfer's order deltas
+are 64.03% and 15.21%. Graph, engine, and serving gates remain open.
 
 ## Admission
 

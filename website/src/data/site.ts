@@ -53,6 +53,6 @@ export const milestones = [
   {
     milestone: "03",
     name: "Attention core",
-    reason: "Ragged causal prefill is H20-correct; matched performance and Graph replay remain open.",
+    reason: "Ragged token parallelism is qualified; long GQA still trails FlashInfer and needs query tiling.",
   },
 ]

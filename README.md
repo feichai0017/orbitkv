@@ -89,10 +89,10 @@ The backend-independent crate includes BF16 NHD D128 batch-decode and ragged
 prefill contracts with CPU references. Batch decode uses FlashInfer-compatible
 page-table semantics; ragged prefill uses bottom-right causal alignment and
 separate query/KV `indptr` arrays. Their CUDA providers pass the declared H20
-correctness and sanitizer gates. Ragged prefill remains a correctness-first
-direct kernel with no performance claim. Graph replay, engine integration, and
-serving evidence remain roadmap work, as do sampling, KV-cache mutation, MoE,
-and quantization.
+correctness and sanitizer gates. Ragged prefill keeps short requests on a
+direct warp and partitions long causal KV prefixes across eight warps with a
+block-local F32 merge. Graph replay, engine integration, and serving evidence
+remain roadmap work, as do sampling, KV-cache mutation, MoE, and quantization.
 
 The first single-decode slice covers BF16 MHA, MQA, and GQA with NHD caches and
 head dimension 128. It does not establish FlashInfer performance parity. See the
@@ -161,10 +161,14 @@ median latency for batch-1 MHA and 2.35x lower latency for mixed-length
 batch-3 MQA than FlashInfer. The batch-4 GQA comparison remains excluded from
 stable ranking because FlashInfer's provider-order delta is 60.62%.
 
-The current ragged prefill record is correctness-only. MHA, MQA, and GQA cases
-produce bit-exact BF16 output against the Loom CPU oracle with maximum
-log2-LSE error `4.768371582e-7`; all four Compute Sanitizer tools report no
-errors. A matched FlashInfer performance result remains open.
+The ragged prefill result is shape-specific. Eight-warp token parallelism
+lowers Loom mixed-MQA and long-GQA eager latency by 5.779x and 1.689x relative
+to the immutable direct record. The long-GQA ranking is stable and FlashInfer
+remains 10.114x lower-latency. Short-MHA and mixed-MQA provider rankings are
+excluded because FlashInfer's order deltas are 64.03% and 15.21%. Direct and
+token-parallel correctness remains within `1.220703125e-4` BF16 output and
+`2.861022949e-6` log2-LSE maximum absolute error, and all four Compute
+Sanitizer tools report no errors.
 
 See the [architecture](docs/design/loom-infer-architecture.md),
 [repository layout](docs/design/repository-layout.md),

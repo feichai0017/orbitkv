@@ -127,15 +127,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </article>
     <article class="evidence-card">
       <h3>BF16 ragged prefill on H20</h3><span class="result">Qualified</span>
-      <p>NHD D128 bottom-right causal MHA, MQA, and GQA batches pass.</p>
-      <small>BF16 output is bit-exact against the CPU oracle. Four sanitizer tools report no errors; performance remains unclaimed.</small>
+      <p>Direct and eight-warp NHD D128 causal MHA, MQA, and GQA batches pass.</p>
+      <small>Token parallelism is 5.779x faster on mixed MQA and 1.689x faster on long GQA than direct Loom. FlashInfer remains 10.114x ahead on stable long GQA.</small>
     </article>
   </section>
 
   <section class="section">
     <header class="section-header">
       <div><p class="eyebrow">Next</p><h2>Extend and profile attention</h2></div>
-      <p>Optimize ragged scheduling, run matched FlashInfer measurements, and add fixed-address Graph replay.</p>
+      <p>Add ragged query tiling and K/V reuse, then qualify fixed-address Graph replay and real model invocation.</p>
     </header>
     <div class="roadmap-grid">
       {milestones.map((item) => (

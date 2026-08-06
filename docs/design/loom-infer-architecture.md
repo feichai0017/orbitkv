@@ -209,11 +209,16 @@ stable merge. MHA retains the lower-overhead direct warp.
 
 The backend-independent ragged prefill contract fixes BF16, NHD, D128,
 separate query/KV `indptr` arrays, and bottom-right causal alignment. Its first
-CUDA plan assigns one warp to each query-row and query-head pair. The warp
-scans query `indptr` to identify the request, then scans the causal KV prefix
-with packed BF16x2 access and F32 online softmax. This direct schedule is
-admitted for correctness and memory safety only; row-to-request preprocessing,
-tiling, and matched performance remain open.
+CUDA plan assigns one warp to each query-row and query-head pair for short
+average-KV requests. Longer plans assign one eight-warp block to each state,
+partition the causal KV prefix across warps, and merge eight stable F32 states
+in block-local shared memory. Both kernels scan query `indptr` to identify the
+request and use packed BF16x2 access.
+
+Token parallelism lowers the matched mixed-MQA and long-GQA eager measurements
+by 5.779x and 1.689x relative to the immutable direct record. Long GQA still
+trails FlashInfer by 10.114x under the declared stable eager metric; query
+tiling and cross-query K/V reuse remain the next kernel-level work.
 
 CUPTI activity records Loom kernel medians of `2.176`, `4.864`, and `4.928`
 microseconds for MHA, MQA, and GQA, versus direct medians of `2.176`,

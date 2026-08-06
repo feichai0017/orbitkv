@@ -5,11 +5,31 @@ providers.
 
 ## Results
 
-One 2026-08-06 record qualifies the first ragged prefill provider at the
-correctness and sanitizer gates. It contains no matched FlashInfer,
-performance, Graph, engine, or serving claim.
+Three current 2026-08-06 records preserve the direct ragged baseline and
+qualify eight-warp ragged prefill at correctness, sanitizer, and matched eager
+gates. They contain no Graph, engine, or serving claim.
+
+- [FlashInfer v0.6.16.post1 ragged token-parallel matched eager performance](h20-flashinfer-v0.6.16.post1-ragged-prefill-token-parallel-eager-performance-20260806.json):
+  eight-warp token parallelism lowers Loom mixed-MQA and long-GQA eager
+  latency by 5.779x and 1.689x versus the immutable direct record. FlashInfer
+  remains 10.114x lower-latency on stable long GQA. Short-MHA and mixed-MQA
+  provider rankings are excluded because FlashInfer's order deltas are 64.03%
+  and 15.21%. All 600 raw samples are retained.
+
+- [BF16 ragged token-parallel H20 correctness](h20-bf16-ragged-prefill-token-parallel-correctness-20260806.json):
+  direct and eight-warp MHA/MQA/GQA cases pass the CPU oracle with maximum
+  BF16 output error `1.220703125e-4` and maximum log2-LSE error
+  `2.861022949e-6`. Four Compute Sanitizer tools report no errors. The
+  token-parallel kernel uses 37 registers and 4,160 bytes shared memory with
+  no stack or spills.
+
+- [FlashInfer v0.6.16.post1 ragged direct matched eager baseline](h20-flashinfer-v0.6.16.post1-ragged-prefill-direct-eager-performance-20260806.json):
+  the immutable direct Loom source and pinned FlashInfer FA2 path use identical
+  BF16 tensor and I32 indptr fixtures. The record retains both provider orders
+  and all 600 raw samples.
 
 - [BF16 ragged prefill H20 correctness](h20-bf16-ragged-prefill-correctness-20260806.json):
+  the earlier correctness-only direct provider history remains immutable.
   BF16 NHD D128 MHA, MQA, and GQA batches pass against the CPU oracle with
   bit-exact BF16 output and maximum log2-LSE error `4.768371582e-7`.
   Separate query and KV `indptr` arrays, mixed lengths, bottom-right causal

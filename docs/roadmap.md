@@ -83,7 +83,8 @@ correctness and sanitizer gates.
   CUPTI gates, then add fixed-address Graph gates.
 - retain the BF16 NHD D128 ragged prefill contract, CPU oracle, checked
   cuda-oxide provider, and H20 correctness/sanitizer gate.
-- add a row-to-request or tile schedule before claiming ragged prefill
+- retain eight-warp long-KV token parallelism and its matched eager gate.
+- add query tiling and K/V reuse before expecting FlashInfer-class long-GQA
   performance.
 - retain split-K execution, stable F32 state merge, and its H20 correctness
   gate.
@@ -112,12 +113,16 @@ for MHA and 2.35x lower-latency for MQA than FlashInfer. Batch-4 GQA still has
 no stable ranking because FlashInfer's order delta is 60.62%. Fixed-address
 Graph replay and real model invocation remain open.
 
-The first ragged prefill slice uses separate query/KV `indptr` arrays and
-FlashInfer-compatible bottom-right causal alignment. Its correctness-first
-one-warp-per-query-row-head kernel passes MHA/MQA/GQA H20 correctness and all
-four Compute Sanitizer tools. Matched FlashInfer performance, a row-to-request
-or tile schedule, fixed-address Graph replay, and real model invocation remain
-open.
+The ragged prefill slice uses separate query/KV `indptr` arrays and
+FlashInfer-compatible bottom-right causal alignment. Short requests retain one
+warp per query-row/head; long requests use eight-warp token partitioning and a
+stable block-local F32 merge. Both paths pass MHA/MQA/GQA H20 correctness and
+all four Compute Sanitizer tools.
+
+The matched eager result lowers Loom mixed-MQA and long-GQA latency by 5.779x
+and 1.689x relative to the direct baseline. FlashInfer remains 10.114x
+lower-latency on stable long GQA. Query tiling, K/V reuse, fixed-address Graph
+replay, and real model invocation remain open.
 
 ## 5. Decode and KV operations
 
