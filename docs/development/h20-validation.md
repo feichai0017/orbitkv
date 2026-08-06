@@ -163,6 +163,12 @@ contract requires every request to satisfy `1 <= qo_len <= kv_len`. Compare
 against the ragged CPU reference with the same `0.015625` BF16 output and
 `0.01` log2-LSE absolute limits.
 
+Long group-size-four GQA uses a caller-owned F32 workspace with shape
+`[nnz_qo, query_heads, 8, 130]`. Each partial state is
+`[max_score_log2, normalizer, weighted_value[128]]`. Require one completion
+over the fused tensor-core partial kernel and the F32 merge kernel. Reject a
+missing workspace before either kernel reaches CUDA.
+
 Reject short fixed metadata spans before submission. Since indptr contents
 remain device-resident, exercise invalid endpoints under Compute Sanitizer and
 require output NaN sentinels to remain unchanged. This guard is a memory-safety
@@ -320,19 +326,20 @@ log2-LSE error `4.768371582e-7`. It covers mixed request lengths, page
 reordering and reuse, exact metadata spans, and a device-side invalid-page
 guard. All four Compute Sanitizer tools report zero errors.
 
-The current [ragged prefill record](../results/h20-bf16-ragged-prefill-dual-token-parallel-correctness-20260806.json)
-passes direct, eight-warp, and sixteen-warp MHA, MQA, and GQA batches. Maximum
-BF16 output error is `1.220703125e-4` and maximum log2-LSE error is
-`2.861022949e-6`. It covers equal and mixed query/KV lengths, bottom-right
-causal alignment, exact metadata spans, and a device-side
-nonmonotonic-indptr guard. All four Compute Sanitizer tools report zero errors.
+The current [ragged prefill record](../results/h20-bf16-ragged-prefill-tiled-split-k-correctness-20260806.json)
+passes direct, eight-warp, sixteen-warp, and tiled eight-partition MHA, MQA,
+and GQA batches. Maximum BF16 output error is `4.8828125e-4` and maximum
+log2-LSE error is `2.861022949e-6`. It covers equal and mixed query/KV lengths,
+bottom-right causal alignment, exact metadata spans, missing tiled workspace,
+and a device-side nonmonotonic-indptr guard. All four Compute Sanitizer tools
+report zero errors.
 
-The [ragged matched eager record](../results/h20-flashinfer-v0.6.16.post1-ragged-prefill-dual-token-parallel-eager-performance-20260806.json)
-retains both provider orders and all 600 raw samples. Sixteen-warp MQA lowers
-Loom latency by 1.254x versus the earlier eight-warp path and 7.245x versus
-direct. Long GQA retains its eight-warp 1.689x gain over direct. Loom is
-1.675x lower-latency on short MHA; FlashInfer is 1.353x and 10.028x
-lower-latency on mixed MQA and long GQA.
+The [ragged matched eager record](../results/h20-flashinfer-v0.6.16.post1-ragged-prefill-tiled-split-k-eager-performance-20260806.json)
+retains both provider orders and all 600 raw samples. Tiled eight-way split-K
+lowers Loom long-GQA latency by `3.986x` versus the previous specialized result
+and `6.734x` versus direct. FlashInfer remains `2.538x` and `1.349x`
+lower-latency on stable long GQA and mixed MQA. Short-MHA ranking is excluded
+because FlashInfer's provider-order delta is `54.709%`.
 
 The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
 retains both provider orders and all 600 raw samples. Loom is 4.21x

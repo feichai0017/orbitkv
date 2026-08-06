@@ -5,25 +5,39 @@ providers.
 
 ## Results
 
-Two current 2026-08-06 records qualify specialized eight/sixteen-warp ragged
-prefill at correctness, sanitizer, and matched eager gates. Earlier direct and
-uniform eight-warp records remain immutable below. None contains a Graph,
-engine, or serving claim.
+Two current 2026-08-06 records qualify tiled eight-partition ragged GQA4 at
+correctness, sanitizer, and matched eager gates. Earlier direct and
+token-parallel records remain immutable below. None contains a Graph, engine,
+or serving claim.
+
+- [FlashInfer v0.6.16.post1 ragged tiled split-K matched eager performance](h20-flashinfer-v0.6.16.post1-ragged-prefill-tiled-split-k-eager-performance-20260806.json):
+  fused tensor-core tiling and eight-way split-K lower Loom long-GQA latency
+  to `55.355` microseconds, 3.986x below the previous specialized result and
+  6.734x below direct. FlashInfer remains 2.538x and 1.349x lower-latency on
+  stable long GQA and mixed MQA. Short-MHA ranking is excluded because
+  FlashInfer's order delta is 54.709%. Both provider orders and all 600 raw
+  samples are retained.
+
+- [BF16 ragged tiled split-K H20 correctness](h20-bf16-ragged-prefill-tiled-split-k-correctness-20260806.json):
+  direct, eight/sixteen-warp, and tiled two-kernel MHA/MQA/GQA cases pass the
+  CPU oracle. Four Compute Sanitizer tools report no errors. The tiled partial
+  and merge kernels use 168/34 registers; the partial uses 16,384 bytes shared
+  memory, and both assemble without stack or spills.
+
+The earlier dual token-parallel and uniform eight-warp results remain
+immutable history:
 
 - [FlashInfer v0.6.16.post1 ragged dual token-parallel matched eager performance](h20-flashinfer-v0.6.16.post1-ragged-prefill-dual-token-parallel-eager-performance-20260806.json):
   sixteen-warp MQA lowers Loom latency by 1.254x versus the earlier eight-warp
-  path and 7.245x versus direct. Long GQA retains its eight-warp 1.689x gain
-  over direct. Loom is 1.675x lower-latency on short MHA; FlashInfer is 1.353x
-  and 10.028x lower-latency on mixed MQA and long GQA. Both provider orders and
-  all 600 raw samples are retained.
+  path and 7.245x versus direct. The previous long-GQA path was 1.689x below
+  direct but remained 10.028x slower than FlashInfer. All 600 raw samples are
+  retained.
 
 - [BF16 ragged dual token-parallel H20 correctness](h20-bf16-ragged-prefill-dual-token-parallel-correctness-20260806.json):
   direct, eight-warp, and sixteen-warp MHA/MQA/GQA cases pass the CPU oracle.
   Four Compute Sanitizer tools report no errors. The eight-warp and
   sixteen-warp kernels use 37/38 registers and 4,160/8,320 bytes shared memory
   with no stack or spills.
-
-The earlier uniform eight-warp result remains immutable history:
 
 - [FlashInfer v0.6.16.post1 ragged token-parallel matched eager performance](h20-flashinfer-v0.6.16.post1-ragged-prefill-token-parallel-eager-performance-20260806.json):
   eight-warp token parallelism lowers Loom mixed-MQA and long-GQA eager

@@ -83,10 +83,10 @@ correctness and sanitizer gates.
   CUPTI gates, then add fixed-address Graph gates.
 - retain the BF16 NHD D128 ragged prefill contract, CPU oracle, checked
   cuda-oxide provider, and H20 correctness/sanitizer gate.
-- retain eight-warp GQA and sixteen-warp MQA token parallelism with their
-  matched eager gates.
-- add query tiling and K/V reuse before expecting FlashInfer-class long-GQA
-  performance.
+- retain tiled GQA4 QK/online-softmax/PV, eight-way split-K, stable F32 merge,
+  and sixteen-warp MQA with their matched eager gates.
+- expand query tiling beyond the admitted GQA4 shape and close the remaining
+  long-GQA gap before expecting FlashInfer-class performance.
 - retain split-K execution, stable F32 state merge, and its H20 correctness
   gate.
 - support common causal and sliding-window contracts.
@@ -116,16 +116,17 @@ Graph replay and real model invocation remain open.
 
 The ragged prefill slice uses separate query/KV `indptr` arrays and
 FlashInfer-compatible bottom-right causal alignment. Short requests retain one
-warp per query-row/head; long single-KV-head MQA uses sixteen warps; other
-declared long requests use eight warps. All paths use stable block-local F32
-state merge and pass MHA/MQA/GQA H20 correctness plus all four Compute
+warp per query-row/head; long single-KV-head MQA uses sixteen warps; admitted
+long GQA4 uses fused tensor-core QK/online-softmax/PV over eight KV partitions
+and a caller-owned F32 merge workspace. Other declared long requests use eight
+warps. All paths pass MHA/MQA/GQA H20 correctness plus all four Compute
 Sanitizer tools.
 
-The matched eager result lowers Loom mixed-MQA latency by 7.245x versus direct
-and 1.254x versus the earlier eight-warp path. Long GQA retains its 1.689x
-gain over direct. FlashInfer remains 1.353x and 10.028x lower-latency on mixed
-MQA and long GQA. Full FlashAttention-style query tiling, fixed-address Graph
-replay, and real model invocation remain open.
+The matched eager result lowers Loom long-GQA latency by `3.986x` versus the
+previous specialized path and `6.734x` versus direct. FlashInfer remains
+`2.538x` lower-latency on stable long GQA and `1.349x` lower-latency on stable
+mixed MQA. Broader query tiling, fixed-address Graph replay, and real model
+invocation remain open.
 
 ## 5. Decode and KV operations
 

@@ -132,18 +132,20 @@ and the causal mask is bottom-right aligned. The first contract requires every
 request to satisfy `1 <= qo_len <= kv_len`; it does not include empty requests,
 RoPE, sliding windows, soft caps, or custom masks.
 
-The current [ragged prefill H20 result](results/h20-bf16-ragged-prefill-dual-token-parallel-correctness-20260806.json)
-covers direct, eight-warp, and sixteen-warp MHA, MQA, and GQA, equal and mixed
-query/KV lengths, exact metadata spans, and a device-side
-nonmonotonic-indptr guard. Maximum BF16 output error is
-`1.220703125e-4`, maximum log2-LSE error is `2.861022949e-6`, and four
-Compute Sanitizer tools report no errors.
+The current [ragged prefill H20 result](results/h20-bf16-ragged-prefill-tiled-split-k-correctness-20260806.json)
+covers direct, eight-warp, sixteen-warp, and tiled eight-partition MHA, MQA,
+and GQA execution, equal and mixed query/KV lengths, exact metadata spans,
+explicit tiled workspace, and a device-side nonmonotonic-indptr guard. Maximum
+BF16 output error is `4.8828125e-4`, maximum log2-LSE error is
+`2.861022949e-6`, and four Compute Sanitizer tools report no errors.
 
-The [matched ragged eager result](results/h20-flashinfer-v0.6.16.post1-ragged-prefill-dual-token-parallel-eager-performance-20260806.json)
-retains 600 samples and both provider orders. Specialized token parallelism
-lowers Loom mixed-MQA latency by 7.245x versus direct and 1.254x versus the
-earlier eight-warp result. Loom is 1.675x lower-latency on short MHA;
-FlashInfer remains 1.353x and 10.028x lower-latency on mixed MQA and long GQA.
+The [matched ragged eager result](results/h20-flashinfer-v0.6.16.post1-ragged-prefill-tiled-split-k-eager-performance-20260806.json)
+retains 600 samples and both provider orders. Fused tensor-core tiling and
+eight-way split-K lower Loom long-GQA latency by `3.986x` versus the previous
+specialized result and `6.734x` versus direct. FlashInfer remains `2.538x`
+lower-latency on stable long GQA and `1.349x` lower-latency on stable mixed
+MQA. Short-MHA ranking is excluded because FlashInfer's provider-order median
+delta is `54.709%`.
 
 Fixed-address CUDA Graph replay, a provider-ordered isolated-kernel gate,
 engine invocation, and serving results remain open before a

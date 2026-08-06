@@ -211,16 +211,18 @@ The backend-independent ragged prefill contract fixes BF16, NHD, D128,
 separate query/KV `indptr` arrays, and bottom-right causal alignment. Its first
 CUDA plan assigns one warp to each query-row and query-head pair for short
 average-KV requests. Long single-KV-head MQA assigns sixteen warps to each
-state; other declared long plans use eight warps. Both variants partition the
-causal KV prefix and merge stable F32 states in block-local shared memory.
-All kernels scan query `indptr` to identify the request and use packed BF16x2
-access.
+state. Admitted long GQA4 assigns one four-warp CTA to 64 packed query rows,
+one KV head, and one of eight causal-KV partitions. It stages 64-token K/V
+tiles in shared memory and fuses BF16 tensor-core QK, online softmax, and PV.
+A second kernel merges caller-owned F32
+`[max_log2, normalizer, weighted_value[128]]` states. Other declared long
+plans use eight warps. All kernels scan query `indptr` to identify the request.
 
-Specialized token parallelism lowers matched mixed-MQA latency by 7.245x
-versus direct and 1.254x versus the earlier eight-warp path. Long GQA retains
-its 1.689x gain over direct. Mixed MQA and long GQA still trail FlashInfer by
-1.353x and 10.028x; a complete FlashAttention-style QK/softmax/PV query tile
-remains the next kernel-level work.
+Fused tiling and split-K lower matched long-GQA latency by `3.986x` versus the
+previous specialized path and `6.734x` versus direct. Stable mixed MQA and
+long GQA still trail FlashInfer by `1.349x` and `2.538x`. Expanding query
+tiling beyond the admitted GQA4 shape and reducing the remaining kernel gap are
+the next kernel-level work.
 
 CUPTI activity records Loom kernel medians of `2.176`, `4.864`, and `4.928`
 microseconds for MHA, MQA, and GQA, versus direct medians of `2.176`,

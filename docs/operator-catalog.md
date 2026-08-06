@@ -22,7 +22,7 @@ tracks the pinned upstream comparison.
 | BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
 | BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 direct and split-K MHA/MQA/GQA paths pass H20 correctness and sanitizer gates |
 | BF16 paged batch decode | Rust / cuda-oxide | device correct | NHD D128 page-size-16 MHA/MQA/GQA passes H20 correctness and sanitizer gates |
-| BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 direct plus eight/sixteen-warp bottom-right causal MHA/MQA/GQA passes H20 correctness and sanitizer gates |
+| BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 direct, eight/sixteen-warp, and tiled eight-partition bottom-right causal MHA/MQA/GQA passes H20 correctness and sanitizer gates |
 
 The matched parallel-merge H20 result is shape-specific. The complete split-K
 path lowers Loom median latency by 5.39x at GQA KV length 127 and 38.19x at KV
@@ -75,15 +75,18 @@ The ragged prefill contract uses contiguous NHD query/KV storage with separate
 `i32` query and KV `indptr` arrays. Its causal mask is bottom-right aligned:
 `kv_index <= kv_len - qo_len + query_index`. Short average-KV plans use the
 direct warp; long single-KV-head MQA uses sixteen-warp token partitioning;
-other declared long plans use eight warps. All paths pass H20 correctness,
-exact-span preflight, a nonmonotonic-metadata device guard, and all four
-Compute Sanitizer tools.
+admitted long GQA4 plans use fused tensor-core QK/online-softmax/PV over eight
+KV partitions plus an F32 merge. Other declared long plans use eight warps.
+All paths pass H20 correctness, exact-span preflight, a missing-workspace
+preflight gate, a nonmonotonic-metadata device guard, and all four Compute
+Sanitizer tools.
 
-The matched eager result lowers Loom mixed-MQA latency by 7.245x versus direct
-and 1.254x versus the earlier eight-warp path. Long GQA retains its 1.689x
-improvement over direct. Loom is 1.675x lower-latency than FlashInfer on short
-MHA; FlashInfer remains 1.353x and 10.028x lower-latency on mixed MQA and long
-GQA. Graph, engine, and serving gates remain open.
+The matched eager result lowers Loom long-GQA latency to `55.355`
+microseconds, `3.986x` below the previous specialized result and `6.734x`
+below direct. FlashInfer remains `2.538x` and `1.349x` lower-latency on stable
+long GQA and mixed MQA. Short-MHA ranking is excluded because FlashInfer's
+provider-order delta is `54.709%`. Graph, engine, and serving gates remain
+open.
 
 ## Admission
 
