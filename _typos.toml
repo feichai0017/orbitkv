@@ -1,2 +1,5 @@
 [files]
 extend-exclude = ["docs/results/*.json"]
+
+[default.extend-words]
+subtiles = "subtiles"
