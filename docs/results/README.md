@@ -5,6 +5,16 @@ providers.
 
 ## Results
 
+The [BF16 paged causal prefill matched eager record](h20-flashinfer-v0.6.16.post1-paged-prefill-eager-performance-20260807.json)
+uses identical Q/K/V bits, query `indptr`, page tables, caller-owned outputs,
+and both provider orders. Loom records `4.816` versus `15.718` microseconds on
+short MHA and `12.171` versus `15.677` microseconds on GQA4, making Loom
+`3.264x` and `1.288x` lower-latency. FlashInfer records `15.630` versus
+`16.902` microseconds on mixed MQA, making FlashInfer `1.081x`
+lower-latency. All six provider-order deltas are below `2.1%`, and all 600
+timing samples are retained. The result is shape-specific eager-provider
+performance, not an isolated-kernel, Graph, engine, or serving claim.
+
 The [BF16 paged causal prefill H20 correctness record](h20-bf16-paged-prefill-correctness-20260807.json)
 qualifies the first ragged-query, page-size-16 NHD provider. Direct MHA, MQA,
 and GQA cases pass the CPU oracle across equal and mixed query/KV lengths,

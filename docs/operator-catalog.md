@@ -80,8 +80,13 @@ FlashInfer-compatible page `indptr`, physical indices, and last-page lengths.
 Its direct one-warp-per-query-row/head provider passes MHA, MQA, and GQA H20
 correctness, mixed query/KV lengths, physical-page reordering and reuse,
 short-metadata and duplicate-binding preflight, an invalid-page device guard,
-and all four Compute Sanitizer tools. Matched FlashInfer performance,
-token-parallel optimization, and Graph gates remain open.
+and all four Compute Sanitizer tools.
+
+The matched eager result records Loom at `4.816` and `12.171` microseconds for
+short MHA and GQA4 versus FlashInfer at `15.718` and `15.677` microseconds.
+FlashInfer records `15.630` microseconds on mixed MQA versus Loom at `16.902`
+microseconds. All provider-order deltas are below `2.1%`. Token-parallel
+optimization and Graph gates remain open.
 
 The first fused KV mutation contract rotates one Q/K token per request at
 `request_kv_len - 1`, writes Q to caller-owned output, and appends rotated K

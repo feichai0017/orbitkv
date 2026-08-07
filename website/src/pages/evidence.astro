@@ -36,6 +36,15 @@ import { repositoryUrl } from "../data/site";
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-correctness-20260807.json`}>
           Paged prefill correctness and sanitizer result
         </a>
+        <p>
+          The matched eager result is shape-specific. Loom is 3.264x
+          lower-latency on short MHA and 1.288x lower-latency on GQA4.
+          FlashInfer is 1.081x lower-latency on mixed MQA. All provider-order
+          deltas are below 2.1%, and all 600 timing samples are retained.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-eager-performance-20260807.json`}>
+          Paged prefill matched eager result
+        </a>
       </div>
 
       <h2>Matched eager performance</h2>

@@ -172,9 +172,14 @@ covers direct MHA, MQA, and GQA execution, equal and mixed query/KV lengths,
 partial pages, physical-page reordering and reuse, short metadata,
 duplicate-binding preflight, and an invalid-page device guard. Maximum BF16
 output error is `1.220703125e-4`, maximum log2-LSE error is
-`9.536743164e-7`, and four Compute Sanitizer tools report no errors. Matched
-FlashInfer performance, Graph replay, and optimized long-context paths remain
-open.
+`9.536743164e-7`, and four Compute Sanitizer tools report no errors.
+
+The [matched paged-prefill eager result](results/h20-flashinfer-v0.6.16.post1-paged-prefill-eager-performance-20260807.json)
+retains 600 samples and both provider orders. Loom is `3.264x`
+lower-latency on short MHA and `1.288x` lower-latency on GQA4. FlashInfer is
+`1.081x` lower-latency on mixed MQA. Every provider-order delta is below
+`2.1%`; no universal winner is claimed. Graph replay and optimized
+long-context paths remain open.
 
 The first standalone RoPE contract adds BF16 NHD D128 Q/K tensors with
 explicit I32 position IDs, full-dimension NeoX split-half rotation, scale one,

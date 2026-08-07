@@ -145,8 +145,10 @@ The first paged-prefill slice combines ragged query `indptr` with page
 `indptr`, physical page indices, and last-page lengths. Its direct one-warp
 provider passes MHA/MQA/GQA H20 correctness, page reordering and reuse,
 preflight and device metadata guards, and all four Compute Sanitizer tools.
-Maximum BF16 output error is `1.220703125e-4`. Matched FlashInfer performance,
-token-parallel/tiled optimization, and fixed-address Graph replay remain open.
+Maximum BF16 output error is `1.220703125e-4`. Its matched eager result puts
+Loom `3.264x` lower-latency on short MHA and `1.288x` lower-latency on GQA4,
+while FlashInfer remains `1.081x` lower-latency on mixed MQA. Token-parallel
+or tiled optimization and fixed-address Graph replay remain open.
 
 The first standalone RoPE slice accepts explicit I32 position IDs for BF16
 NHD D128 Q/K tensors, rotates all 128 dimensions in NeoX split-half style, and

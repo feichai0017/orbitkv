@@ -251,7 +251,10 @@ output write, and applies the same bottom-right causal alignment while mapping
 logical KV tokens into physical NHD pages. It passes MHA, MQA, and GQA
 correctness, mixed query/KV lengths, page reordering and reuse, metadata
 preflight, and all four Compute Sanitizer tools. Token-parallel, tiled, Graph,
-and matched-performance gates remain open.
+and Graph gates remain open. The matched eager result records Loom
+`3.264x` lower-latency on short MHA and `1.288x` lower-latency on GQA4,
+while FlashInfer is `1.081x` lower-latency on mixed MQA. All provider-order
+deltas are below `2.1%`.
 
 Fused tiling, split-K, and unrolled 16-byte `cp.async` K/V staging lower
 matched long-GQA latency to `48.232` microseconds. The asynchronous staging

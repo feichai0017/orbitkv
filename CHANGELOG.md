@@ -20,6 +20,8 @@
   RoPE plus paged-KV append contracts, CUDA providers, validation, and evidence.
 - Added BF16 NHD D128 page-size-16 paged causal prefill with a CPU reference,
   direct cuda-oxide provider, H20 validation, and sanitizer evidence.
+- Added matched dual-order paged-prefill eager benchmarks against FlashInfer
+  with identical Q/K/V and page-table fixtures.
 - Added fixed-address CUDA Graph execution for admitted command chains.
 - Added a GPU-less CUDA host CI gate for the `cuda` feature and cuBLASLt
   surface.
