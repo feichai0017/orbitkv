@@ -84,11 +84,19 @@ The first direct one-warp-per-query-row/head provider passes MHA, MQA, and GQA
 H20 correctness, mixed-length, physical-page reuse, metadata preflight, and all
 four Compute Sanitizer gates. Its matched eager result is `3.264x` and
 `1.288x` lower-latency than FlashInfer on short MHA and GQA4; FlashInfer is
-`1.081x` lower-latency on mixed MQA. The direct GQA4 command passes
+`1.081x` lower-latency on mixed MQA.
+
+Long page-pool capacities use sixteen-warp MQA and eight-warp GQA4 block-local
+token partitioning. Both pass the H20 CPU oracle and all four sanitizer gates.
+FlashInfer remains `1.430x` lower-latency on long MQA and `11.233x` on long
+GQA4, making paged tensor-core tiling and asynchronous K/V staging the next
+optimization target.
+
+The direct GQA4 command passes
 fixed-address Graph correctness after two replays and external owner teardown.
 Its matched single-replay Graph median is `15.072` microseconds versus
 FlashInfer's `18.560` microseconds, making Loom `1.231x` lower-latency on this
-shape. Mutable Graph metadata and optimized long-context paths remain open.
+shape. Mutable Graph metadata and token-parallel Graph coverage remain open.
 
 Ragged prefill keeps short requests on one direct warp per query-row/head,
 uses sixteen-warp token partitioning for long single-KV-head MQA, and keeps

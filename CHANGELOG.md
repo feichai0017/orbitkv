@@ -26,6 +26,8 @@
   direct paged-prefill GQA4 command.
 - Added a matched dual-order paged-prefill fixed-address Graph benchmark and
   immutable H20 performance evidence against FlashInfer.
+- Added sixteen-warp long-MQA and eight-warp long-GQA4 paged-prefill kernels,
+  H20 correctness and sanitizer gates, and matched long-context evidence.
 - Added fixed-address CUDA Graph execution for admitted command chains.
 - Added a GPU-less CUDA host CI gate for the `cuda` feature and cuBLASLt
   surface.

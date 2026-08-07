@@ -195,6 +195,12 @@ non-sequential physical pages, and safe physical-page reuse. Compare against
 the paged-prefill CPU reference with the same `0.015625` BF16 output and
 `0.01` log2-LSE absolute limits.
 
+For long page-pool capacities, require the immutable plan to choose sixteen
+warps for single-KV-head MQA and eight warps for GQA4. Cover request KV lengths
+`[128,256,512]` and `[256,1024]`. Every CTA must validate all referenced
+physical pages before K/V access, merge block-local F32 states without external
+workspace, and remain within the same CPU-reference limits.
+
 Reject short fixed metadata and duplicate bindings before submission. Exercise
 an out-of-range physical page under Compute Sanitizer and require the invalid
 request to preserve NaN output sentinels while a valid request in the same
@@ -387,6 +393,15 @@ page-reorder/reuse case. Loom and FlashInfer combined medians are `15.072` and
 `18.560` microseconds, with provider-order deltas of `0.213%` and `0.000%`.
 All 400 raw samples are retained. Capture, instantiation, mutable metadata,
 graph updates, and engine execution remain outside this claim.
+
+The [paged-prefill token-parallel correctness record](../results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json)
+qualifies sixteen-warp long MQA and eight-warp long GQA4, including the
+parallel page guard and all four sanitizer tools. The
+[matched long-context eager record](../results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json)
+records Loom at `27.917` and `260.709` microseconds versus FlashInfer at
+`19.524` and `23.210`. Provider-order deltas are all below `1.2%`. These
+results prioritize paged tensor-core tiling and asynchronous K/V staging; they
+do not establish long-context parity or token-parallel Graph performance.
 
 The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
 retains both provider orders and all 600 raw samples. Loom is 4.21x

@@ -180,6 +180,18 @@ lower-latency on short MHA and `1.288x` lower-latency on GQA4. FlashInfer is
 `1.081x` lower-latency on mixed MQA. Every provider-order delta is below
 `2.1%`; no universal winner is claimed.
 
+The [paged-prefill token-parallel H20 result](results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json)
+adds sixteen-warp long MQA and eight-warp long GQA4. Both paths pass the CPU
+oracle and all four Compute Sanitizer tools, including a block-wide invalid
+physical-page guard before K/V access.
+
+The [matched long-context paged-prefill result](results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json)
+records Loom and FlashInfer at `27.917` and `19.524` microseconds for MQA, and
+`260.709` and `23.210` microseconds for GQA4. FlashInfer remains `1.430x` and
+`11.233x` lower-latency. All provider-order deltas are below `1.2%`. The
+GQA4 result makes paged tensor-core tiling and asynchronous K/V staging the
+next performance gate; no long-context parity is claimed.
+
 The [paged-prefill fixed-address Graph result](results/h20-bf16-paged-prefill-cuda-graph-correctness-20260807.json)
 captures one direct command and replays it twice after external resource-owner
 teardown. Output and log2-LSE preserve the standalone digests, and all four
@@ -191,7 +203,7 @@ same GQA4 page-reorder/reuse case. Loom and FlashInfer combined medians are
 `15.072` and `18.560` microseconds, so Loom is `1.231x` lower-latency.
 Provider-order deltas are `0.213%` and `0.000%`, and all 400 samples are
 retained. This does not cover capture or instantiation latency, mutable
-metadata, graph updates, optimized long-context paths, or engine execution.
+metadata, graph updates, token-parallel Graph performance, or engine execution.
 
 The first standalone RoPE contract adds BF16 NHD D128 Q/K tensors with
 explicit I32 position IDs, full-dimension NeoX split-half rotation, scale one,

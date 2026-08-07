@@ -102,7 +102,10 @@ fixed-address Graph replay, and shape-specific comparisons with FlashInfer
 - paged-prefill GQA4 Graph: **1.231× lower replay latency**.
 
 These are contract- and shape-specific operator results, not engine or serving
-claims. Raw records and exclusions live in the
+claims. Long paged-prefill MQA/GQA4 now have token-parallel Rust kernels, but
+FlashInfer remains **1.430× / 11.233× lower-latency** on the admitted long
+shapes; paged tensor-core tiling is the next optimization target. Raw records
+and exclusions live in the
 [evidence index](docs/results/README.md).
 
 ## Status

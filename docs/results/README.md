@@ -5,6 +5,23 @@ providers.
 
 ## Results
 
+The [BF16 paged-prefill long-context matched eager record](h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json)
+adds stable dual-order MQA and GQA4 comparisons with identical paged fixtures.
+Loom's sixteen-warp MQA path records `27.917` microseconds versus
+FlashInfer's `19.524`, making FlashInfer `1.430x` lower-latency. Loom's
+eight-warp GQA4 path records `260.709` microseconds versus `23.210`, making
+FlashInfer `11.233x` lower-latency. All four provider-order deltas are below
+`1.2%`, and all 400 long-context samples are embedded. This result establishes
+the remaining tiled/tensor-core optimization gap rather than a parity claim.
+
+The [BF16 paged-prefill token-parallel correctness record](h20-bf16-paged-prefill-token-parallel-correctness-20260807.json)
+qualifies sixteen-warp long MQA and eight-warp long GQA4 against the CPU
+oracle. Both paths validate every referenced physical page before K/V access
+and merge F32 online-softmax states in block-local shared memory. Maximum BF16
+output error is `1.220703125e-4`, maximum log2-LSE error is
+`3.814697266e-6`, and all four Compute Sanitizer tools report no errors.
+Existing short direct and fixed-address Graph regressions remain unchanged.
+
 The [BF16 paged causal prefill matched fixed-address Graph record](h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json)
 measures one replay and one completion event per CUDA-event sample on the
 admitted page-reordered GQA4 case. Loom records `15.072` microseconds and

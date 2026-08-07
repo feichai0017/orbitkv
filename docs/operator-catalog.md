@@ -85,12 +85,21 @@ and all four Compute Sanitizer tools.
 The matched eager result records Loom at `4.816` and `12.171` microseconds for
 short MHA and GQA4 versus FlashInfer at `15.718` and `15.677` microseconds.
 FlashInfer records `15.630` microseconds on mixed MQA versus Loom at `16.902`
-microseconds. All provider-order deltas are below `2.1%`. Token-parallel
-optimization remains open. The direct GQA4 command passes fixed-address Graph
-correctness after two replays and external owner teardown. Its matched
+microseconds. All provider-order deltas are below `2.1%`.
+
+Long page-pool capacities dispatch single-KV-head MQA to sixteen warps and
+other admitted shapes to eight warps. Long MQA `[128,256,512]` and GQA4
+`[256,1024]` pass the CPU oracle and all four sanitizer tools. Their matched
+eager medians are `27.917` and `260.709` microseconds versus FlashInfer at
+`19.524` and `23.210` microseconds, so FlashInfer remains `1.430x` and
+`11.233x` lower-latency. Paged tensor-core tiling and asynchronous K/V staging
+remain open.
+
+The direct GQA4 command passes fixed-address Graph correctness after two
+replays and external owner teardown. Its matched
 single-replay Graph medians are `15.072` microseconds for Loom and `18.560`
 microseconds for FlashInfer, making Loom `1.231x` lower-latency on this
-shape. Mutable metadata, graph updates, and optimized long-context paths
+shape. Mutable metadata, graph updates, and token-parallel Graph coverage
 remain open.
 
 The first fused KV mutation contract rotates one Q/K token per request at

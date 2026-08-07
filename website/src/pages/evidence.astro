@@ -45,6 +45,20 @@ import { repositoryUrl } from "../data/site";
           Paged prefill matched eager result
         </a>
         <p>
+          Long page-pool capacities now use sixteen-warp MQA and eight-warp
+          GQA4 token partitioning. Both pass the CPU oracle and all four
+          sanitizer tools. FlashInfer remains 1.430x lower-latency on long MQA
+          and 11.233x on long GQA4, so paged tensor-core tiling is the next
+          performance gate.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json`}>
+          Paged prefill token-parallel correctness result
+        </a>
+        <br />
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json`}>
+          Paged prefill long-context matched eager result
+        </a>
+        <p>
           The same direct GQA4 command captures into one fixed-address Graph
           node and replays twice after external provider, plan, and read-buffer
           owners are dropped. Output and log2-LSE preserve the standalone
