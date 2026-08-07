@@ -45,6 +45,15 @@ import { repositoryUrl } from "../data/site";
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-eager-performance-20260807.json`}>
           Paged prefill matched eager result
         </a>
+        <p>
+          The same direct GQA4 command captures into one fixed-address Graph
+          node and replays twice after external provider, plan, and read-buffer
+          owners are dropped. Output and log2-LSE preserve the standalone
+          digests, and all four sanitizer tools report no errors or leaks.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-cuda-graph-correctness-20260807.json`}>
+          Paged prefill fixed-address Graph correctness result
+        </a>
       </div>
 
       <h2>Matched eager performance</h2>

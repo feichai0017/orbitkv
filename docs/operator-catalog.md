@@ -23,7 +23,7 @@ tracks the pinned upstream comparison.
 | BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
 | BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 direct and split-K MHA/MQA/GQA paths pass H20 correctness and sanitizer gates |
 | BF16 paged batch decode | Rust / cuda-oxide | device correct | NHD D128 page-size-16 MHA/MQA/GQA passes H20 correctness and sanitizer gates |
-| BF16 paged causal prefill | Rust / cuda-oxide | device correct | Ragged-query NHD D128 page-size-16 direct MHA/MQA/GQA passes H20 correctness and sanitizer gates |
+| BF16 paged causal prefill | Rust / cuda-oxide | device correct | Ragged-query NHD D128 page-size-16 direct MHA/MQA/GQA passes H20 correctness, sanitizer, and fixed-address Graph gates |
 | BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 direct, eight/sixteen-warp, and tiled eight-partition bottom-right causal MHA/MQA/GQA passes H20 correctness, sanitizer, and fixed-address Graph gates |
 | BF16 standard RoPE | Rust / cuda-oxide | device correct | NHD D128 NeoX split-half with explicit I32 positions passes H20 correctness, sanitizer, and matched eager gates |
 | BF16 fused RoPE paged KV append | Rust / cuda-oxide | device correct | Explicit 1..=64 token, NHD D128, page-size-16 NeoX paths pass H20 correctness, sanitizer, matched eager, and fixed-address Graph gates |
@@ -86,7 +86,8 @@ The matched eager result records Loom at `4.816` and `12.171` microseconds for
 short MHA and GQA4 versus FlashInfer at `15.718` and `15.677` microseconds.
 FlashInfer records `15.630` microseconds on mixed MQA versus Loom at `16.902`
 microseconds. All provider-order deltas are below `2.1%`. Token-parallel
-optimization and Graph gates remain open.
+optimization and Graph performance remain open. The direct GQA4 command passes
+fixed-address Graph correctness after two replays and external owner teardown.
 
 The first fused KV mutation contract rotates one Q/K token per request at
 `request_kv_len - 1`, writes Q to caller-owned output, and appends rotated K

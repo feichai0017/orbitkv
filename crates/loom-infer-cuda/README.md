@@ -84,8 +84,9 @@ The first direct one-warp-per-query-row/head provider passes MHA, MQA, and GQA
 H20 correctness, mixed-length, physical-page reuse, metadata preflight, and all
 four Compute Sanitizer gates. Its matched eager result is `3.264x` and
 `1.288x` lower-latency than FlashInfer on short MHA and GQA4; FlashInfer is
-`1.081x` lower-latency on mixed MQA. Graph and optimized long-context paths
-remain open.
+`1.081x` lower-latency on mixed MQA. The direct GQA4 command passes
+fixed-address Graph correctness after two replays and external owner teardown.
+Graph performance and optimized long-context paths remain open.
 
 Ragged prefill keeps short requests on one direct warp per query-row/head,
 uses sixteen-warp token partitioning for long single-KV-head MQA, and keeps

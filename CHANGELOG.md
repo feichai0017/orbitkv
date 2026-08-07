@@ -22,6 +22,8 @@
   direct cuda-oxide provider, H20 validation, and sanitizer evidence.
 - Added matched dual-order paged-prefill eager benchmarks against FlashInfer
   with identical Q/K/V and page-table fixtures.
+- Added fixed-address CUDA Graph correctness and sanitizer coverage for the
+  direct paged-prefill GQA4 command.
 - Added fixed-address CUDA Graph execution for admitted command chains.
 - Added a GPU-less CUDA host CI gate for the `cuda` feature and cuBLASLt
   surface.

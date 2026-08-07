@@ -5,6 +5,14 @@ providers.
 
 ## Results
 
+The [BF16 paged causal prefill fixed-address Graph correctness record](h20-bf16-paged-prefill-cuda-graph-correctness-20260807.json)
+captures one checked direct command on a private stream and replays it twice
+after external provider, plan, and read-buffer owners are dropped. Explicit
+wait and completion-drop settlement paths preserve the standalone GQA4 output
+and log2-LSE digests. Four Compute Sanitizer tools report no errors or leaks.
+This record contains no Graph performance, rebinding, update, engine, or
+serving claim.
+
 The [BF16 paged causal prefill matched eager record](h20-flashinfer-v0.6.16.post1-paged-prefill-eager-performance-20260807.json)
 uses identical Q/K/V bits, query `indptr`, page tables, caller-owned outputs,
 and both provider orders. Loom records `4.816` versus `15.718` microseconds on

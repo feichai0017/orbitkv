@@ -254,7 +254,10 @@ preflight, and all four Compute Sanitizer tools. Token-parallel, tiled, Graph,
 and Graph gates remain open. The matched eager result records Loom
 `3.264x` lower-latency on short MHA and `1.288x` lower-latency on GQA4,
 while FlashInfer is `1.081x` lower-latency on mixed MQA. All provider-order
-deltas are below `2.1%`.
+deltas are below `2.1%`. The same direct GQA4 command captures into one
+fixed-address Graph node and replays twice after external resource owners are
+dropped, preserving standalone output and log2-LSE digests. Graph performance
+and mutable metadata remain open.
 
 Fused tiling, split-K, and unrolled 16-byte `cp.async` K/V staging lower
 matched long-GQA latency to `48.232` microseconds. The asynchronous staging

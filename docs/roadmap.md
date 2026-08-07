@@ -148,7 +148,9 @@ preflight and device metadata guards, and all four Compute Sanitizer tools.
 Maximum BF16 output error is `1.220703125e-4`. Its matched eager result puts
 Loom `3.264x` lower-latency on short MHA and `1.288x` lower-latency on GQA4,
 while FlashInfer remains `1.081x` lower-latency on mixed MQA. Token-parallel
-or tiled optimization and fixed-address Graph replay remain open.
+or tiled optimization and Graph performance remain open. The direct GQA4
+command passes fixed-address Graph correctness after two replays and external
+owner teardown.
 
 The first standalone RoPE slice accepts explicit I32 position IDs for BF16
 NHD D128 Q/K tensors, rotates all 128 dimensions in NeoX split-half style, and

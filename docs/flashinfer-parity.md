@@ -178,8 +178,13 @@ The [matched paged-prefill eager result](results/h20-flashinfer-v0.6.16.post1-pa
 retains 600 samples and both provider orders. Loom is `3.264x`
 lower-latency on short MHA and `1.288x` lower-latency on GQA4. FlashInfer is
 `1.081x` lower-latency on mixed MQA. Every provider-order delta is below
-`2.1%`; no universal winner is claimed. Graph replay and optimized
-long-context paths remain open.
+`2.1%`; no universal winner is claimed.
+
+The [paged-prefill fixed-address Graph result](results/h20-bf16-paged-prefill-cuda-graph-correctness-20260807.json)
+captures one direct command and replays it twice after external resource-owner
+teardown. Output and log2-LSE preserve the standalone digests, and all four
+Compute Sanitizer tools report no errors or leaks. Graph performance, mutable
+metadata, and optimized long-context paths remain open.
 
 The first standalone RoPE contract adds BF16 NHD D128 Q/K tensors with
 explicit I32 position IDs, full-dimension NeoX split-half rotation, scale one,
