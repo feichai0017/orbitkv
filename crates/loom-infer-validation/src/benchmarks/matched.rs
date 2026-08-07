@@ -11,9 +11,9 @@ use loom_infer::{
     rope_pos_ids_bf16_reference,
 };
 use loom_infer_cuda::attention::{
-    Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16PagedPrefillArgs,
-    Bf16RaggedPrefillAlgorithm, Bf16RaggedPrefillArgs, Bf16SingleDecodeArgs, Bf16SingleDecodePlan,
-    Bf16SingleDecodeSplitKArgs, DecodeProvider, PrefillProvider,
+    Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16PagedPrefillAlgorithm,
+    Bf16PagedPrefillArgs, Bf16RaggedPrefillAlgorithm, Bf16RaggedPrefillArgs, Bf16SingleDecodeArgs,
+    Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs, DecodeProvider, PrefillProvider,
 };
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
@@ -554,6 +554,11 @@ fn benchmark_paged_prefill_case(
         case.last_page_len,
     )?;
     let plan = provider.plan_bf16_paged(spec)?;
+    let algorithm = match plan.algorithm() {
+        Bf16PagedPrefillAlgorithm::Direct => "direct_one_warp_per_query_row_head",
+        Bf16PagedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
+        Bf16PagedPrefillAlgorithm::TokenParallel16 => "token_parallel_16warp_block_local_merge",
+    };
     let query_host = deterministic_bf16(spec.query_numel(), case.salt);
     let key_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x4b45_5900);
     let value_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x5641_4c55_4500);
@@ -622,7 +627,7 @@ fn benchmark_paged_prefill_case(
         dtype: "bf16",
         layout: "NHD_D128_page16",
         execution: json!({
-            "algorithm": "direct_one_warp_per_query_row_head",
+            "algorithm": algorithm,
             "causal": "bottom_right",
             "page_table_location": "device"
         }),
@@ -1382,6 +1387,39 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 page_indices: &[5, 1, 5, 3],
                 last_page_len: &[7, 2],
                 salt: 0x4001,
+            },
+            PagedPrefillCase {
+                name: "bf16_paged_prefill_mqa_b3_q1_4_16_kv128_256_512_qh8_kvh1_d128_p16",
+                batch_size: 3,
+                max_num_pages: 64,
+                query_heads: 8,
+                kv_heads: 1,
+                qo_indptr: &[0, 1, 5, 21],
+                page_indptr: &[0, 8, 24, 56],
+                page_indices: &[
+                    7, 2, 11, 5, 13, 3, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 1, 4, 8,
+                    14, 22, 28, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 0,
+                    6, 9, 10, 12, 15, 16, 18, 20, 21, 24, 25, 26, 27, 30, 33,
+                ],
+                last_page_len: &[16, 16, 16],
+                salt: 0x6001,
+            },
+            PagedPrefillCase {
+                name: "bf16_paged_prefill_gqa4_b2_q32_64_kv256_1024_qh16_kvh4_d128_p16",
+                batch_size: 2,
+                max_num_pages: 96,
+                query_heads: 16,
+                kv_heads: 4,
+                qo_indptr: &[0, 32, 96],
+                page_indptr: &[0, 16, 80],
+                page_indices: &[
+                    15, 3, 27, 9, 31, 1, 35, 5, 39, 7, 43, 11, 47, 13, 51, 17, 19, 21, 23, 25, 29,
+                    33, 37, 41, 45, 49, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79, 81,
+                    83, 85, 87, 89, 91, 93, 95, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26,
+                    28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62,
+                ],
+                last_page_len: &[16, 16],
+                salt: 0x8001,
             },
         ] {
             benchmark_paged_prefill_case(
