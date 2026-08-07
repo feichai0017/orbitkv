@@ -110,6 +110,23 @@ Capture, instantiation, planning, JIT, allocation, fixture copies, correctness
 reads, and final synchronization are outside the timed interval. Do not combine
 these samples with `eager_stream_batch_cuda_event` records.
 
+The paged-prefill Graph gate uses the same protocol and the admitted GQA4
+page-reorder/reuse fixture:
+
+```bash
+LOOM_BENCH_RUN_LABEL=loom_graph_first \
+make bench-paged-prefill-graph-loom > /tmp/loom-paged-graph-first.jsonl
+
+FLASHINFER_WORKSPACE_BASE=/path/to/jit-cache \
+LOOM_BENCH_RUN_LABEL=flashinfer_graph_second \
+<venv>/bin/python tools/flashinfer/paged_prefill_graph_bench.py \
+  > /tmp/flashinfer-paged-graph-second.jsonl
+```
+
+Repeat in reverse provider order. Both paths include one completion event after
+one fixed-address replay; planning, capture, instantiation, allocation, and
+correctness reads remain outside the interval.
+
 RMSNorm is omitted when the unmodified FlashInfer release cannot compile or
 load its provider on the declared host. Do not patch baseline source and report
 the result as an official release comparison.

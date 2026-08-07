@@ -19,7 +19,8 @@ NPM := $(RUN) npm --prefix website
 .PHONY: help check check-rust check-website install-website cuda-doctor \
 	cuda-check cuda-test h20-rms-norm h20-gemm h20-attention h20-paged-attention \
 	h20-ragged-prefill h20-paged-prefill h20-rope h20 bench-loom bench-paged-loom bench-ragged-loom \
-	bench-paged-prefill-loom bench-ragged-graph-loom bench-rope-loom bench-rope-append-loom \
+	bench-paged-prefill-loom bench-paged-prefill-graph-loom bench-ragged-graph-loom \
+	bench-rope-loom bench-rope-append-loom \
 	bench-rope-append-tokens-loom bench-rope-append-tokens-graph-loom bench-split-k
 
 help:
@@ -37,6 +38,7 @@ help:
 		'make bench-paged-loom  Run Loom matched paged-decode cases only' \
 		'make bench-ragged-loom  Run Loom matched ragged-prefill cases only' \
 		'make bench-paged-prefill-loom  Run Loom matched paged-prefill cases only' \
+		'make bench-paged-prefill-graph-loom  Run Loom paged-prefill Graph replay benchmark' \
 		'make bench-ragged-graph-loom  Run Loom ragged Graph replay benchmark' \
 		'make bench-rope-loom  Run Loom matched RoPE case only' \
 		'make bench-rope-append-loom  Run Loom fused RoPE paged append case' \
@@ -105,6 +107,9 @@ bench-ragged-loom:
 
 bench-paged-prefill-loom:
 	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_BENCH_OPERATORS=paged_prefill LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+
+bench-paged-prefill-graph-loom:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run paged_prefill_graph_bench_h20 --bin paged_prefill_graph_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
 bench-ragged-graph-loom:
 	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run ragged_graph_bench_h20 --bin ragged_graph_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'

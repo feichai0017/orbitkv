@@ -73,6 +73,11 @@ path = "src/bin/ragged_graph_bench_h20.rs"
 required-features = ["cuda"]
 
 [[bin]]
+name = "paged_prefill_graph_bench_h20"
+path = "src/bin/paged_prefill_graph_bench_h20.rs"
+required-features = ["cuda"]
+
+[[bin]]
 name = "rope_append_graph_bench_h20"
 path = "src/bin/rope_append_graph_bench_h20.rs"
 required-features = ["cuda"]
