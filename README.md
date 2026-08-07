@@ -1,206 +1,116 @@
 <div align="center">
   <h1>Loom Infer</h1>
-  <p>Rust-native GPU kernels for LLM inference.</p>
+  <p><strong>High-performance CUDA operators for Rust inference engines.</strong></p>
+  <p>Rust host code. Rust device kernels via <a href="https://github.com/NVlabs/cuda-oxide">cuda-oxide</a>. FlashInfer-class contracts and evidence.</p>
+  <p>
+    <a href="https://github.com/feichai0017/loom-infer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/feichai0017/loom-infer/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-MIT-c8ff4d"></a>
+    <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-ff8b52">
+    <img alt="CUDA SM90" src="https://img.shields.io/badge/CUDA-SM90-74e7db">
+  </p>
   <p>
     <a href="docs/README.md">Docs</a> ·
     <a href="docs/operator-catalog.md">Operators</a> ·
     <a href="docs/flashinfer-parity.md">Parity</a> ·
-    <a href="docs/roadmap.md">Roadmap</a> ·
-    <a href="docs/results/README.md">Evidence</a>
+    <a href="docs/results/README.md">Evidence</a> ·
+    <a href="docs/roadmap.md">Roadmap</a>
   </p>
 </div>
 
-Loom Infer is an inference GPU operator library written in Rust. It
-provides checked operator contracts, CPU references, and Rust CUDA kernels
-compiled with [cuda-oxide](https://github.com/NVlabs/cuda-oxide).
+Loom Infer is a Rust-native inference operator layer: checked contracts,
+immutable plans, owned asynchronous execution, and custom Rust kernels compiled
+for NVIDIA GPUs with cuda-oxide.
 
-The project is not a model server. An inference engine owns requests, models,
-scheduling, and distributed execution. Loom Infer owns operator contracts,
-launch planning, GPU execution, and reproducible evidence.
+It is **not** a model server. Engines keep requests, scheduling, models, and
+distributed policy; Loom owns the operator boundary.
 
-## Project direction
+## Why Loom
 
-Loom Infer targets functional parity with the operator contracts required from
-FlashInfer while keeping Loom-owned product code in Rust. Parity is measured by
-behavior, not by copying FlashInfer's Python API, source layout, or
-implementation choices.
+- **Rust end to end** — public API, planning, resource ownership, host
+  execution, and Loom-owned device kernels.
+- **Checked asynchronous execution** — typed bindings retain reads and
+  exclusively own writable CUDA buffers until completion.
+- **Evidence before claims** — correctness, sanitizer, eager performance,
+  Graph, engine, and serving results are separate gates.
 
-- FlashInfer defines the pinned comparison surface for operator functionality.
-- Each admitted contract fixes shapes, dtypes, layouts, numerical behavior,
-  stream semantics, workspace policy, and CUDA Graph behavior.
-- Loom-owned custom GPU kernels are Rust compiled with cuda-oxide.
-- Qualified vendor libraries remain explicit providers for operations such as
-  GEMM and collectives where a custom kernel has no measured advantage.
-- Correctness, performance, Graph, engine, and serving claims pass independent
-  evidence gates.
+There is no CUDA C or CUDA C++ product source. CUDA remains the execution
+platform; cuda-oxide is the Rust compiler and artifact toolchain.
 
-The current implementation is a partial foundation toward that target, not a
-claim of complete FlashInfer parity. See the
-[parity matrix](docs/flashinfer-parity.md) for the exact admitted surface.
+## Operator Surface
 
-## Current scope
-
-The repository contains three crates:
-
-| Crate | Responsibility |
+| Family | Current admitted CUDA path |
 | --- | --- |
-| `loom-infer` | Safe operator contracts and CPU reference implementations |
-| `loom-infer-cuda` | Rust host code and Rust CUDA kernels built with cuda-oxide |
-| `loom-infer-validation` | Non-published H20 runners and shared validation support |
+| Normalization | F32, FP16, and BF16 RMSNorm |
+| Matrix | Fixed-algorithm BF16 cuBLASLt GEMM |
+| Decode | BF16 single-request direct and split-K attention |
+| Paged decode | BF16 NHD D128, page size 16 |
+| Prefill | BF16 ragged bottom-right causal attention |
+| Position | BF16 D128 NeoX RoPE |
+| KV mutation | Fused RoPE + explicit 1–64-token paged append |
+| Graphs | Fixed-address capture and replay for admitted paths |
 
-Operator families use stable facade modules with private domain
-implementations. Attention currently separates contiguous/split-K contracts,
-paged contracts, ragged prefill contracts, and CUDA decode/prefill vertical
-slices while preserving
-`loom_infer::attention::*` and `loom_infer_cuda::attention::*`.
+The surface is intentionally narrow and hardware-qualified. See the
+[operator catalog](docs/operator-catalog.md) and
+[FlashInfer parity matrix](docs/flashinfer-parity.md) for exact contracts and
+open domains.
 
-The current device paths are:
-
-| Operator | Provider | H20 state |
-| --- | --- | --- |
-| Contiguous RMSNorm F32, FP16, BF16 | Rust device kernels compiled with cuda-oxide | Owned-binding revision device-correct and sanitizer-clean |
-| Contiguous BF16 GEMM with F32 accumulation | One fixed cuBLASLt algorithm | Device-correct with fixed-address Graph replay and sanitizer coverage |
-| BF16 single-request decode attention | Rust device kernel compiled with cuda-oxide | Narrow NHD D128 contract device-correct and sanitizer-clean |
-| BF16 paged batch decode attention | Rust device kernel compiled with cuda-oxide | NHD D128 page-size-16 contract device-correct and sanitizer-clean |
-| BF16 ragged causal prefill attention | Rust device kernel compiled with cuda-oxide | NHD D128 bottom-right causal contract device-correct and sanitizer-clean |
-
-All providers use the same public flow:
+## Execution Model
 
 ```text
 validated spec
-  -> provider::load
-  -> immutable plan
-  -> CommandQueue::bindings
-  -> CommandQueue::begin
-  -> plan::enqueue_into
-  -> CommandScope::finish
-  -> CommandCompletion::wait
-  -> CheckedBindings::take_read_write
+  → immutable provider plan
+  → checked typed bindings
+  → one caller-owned CUDA stream
+  → Rust kernel | qualified vendor provider
+  → one completion fence
+  → returned writable buffers
 ```
 
-The Graph path consumes a one-shot `GraphQueue` with a private stream and
-returns the same bindings through `GraphExec::into_bindings`.
+Plans fix the provider, algorithm, launch configuration, workspace, and Graph
+policy before enqueue. There is no silent fallback.
 
-The GEMM contract is `D[M,N] = A[M,K] * W[N,K]^T` over contiguous row-major
-BF16 tensors. Algorithm selection happens during planning. Enqueue does not
-tune or fall back.
+## Workspace
 
-The backend-independent crate includes BF16 NHD D128 batch-decode and ragged
-prefill contracts with CPU references. Batch decode uses FlashInfer-compatible
-page-table semantics; ragged prefill uses bottom-right causal alignment and
-separate query/KV `indptr` arrays. Their CUDA providers pass the declared H20
-correctness and sanitizer gates. Ragged prefill keeps short requests on a
-direct warp, uses sixteen warps for long MQA, and dispatches admitted long GQA4
-to a fused tensor-core QK/online-softmax/PV partial kernel with eight KV
-partitions, unrolled 16-byte `cp.async` K/V staging, and an F32 merge. Other
-declared long requests use eight warps.
-Graph replay, engine integration, and serving evidence remain roadmap work, as
-do sampling, KV-cache mutation, MoE, and quantization.
+| Crate | Responsibility |
+| --- | --- |
+| `loom-infer` | Backend-independent contracts and CPU references |
+| `loom-infer-cuda` | Rust CUDA execution, cuda-oxide kernels, Graphs, and vendor providers |
+| `loom-infer-validation` | H20 correctness, sanitizer, and matched performance runners |
 
-The first single-decode slice covers BF16 MHA, MQA, and GQA with NHD caches and
-head dimension 128. It does not establish FlashInfer performance parity. See the
-[single-decode result](docs/results/h20-bf16-single-decode-correctness-20260803.json).
-
-### Execution
-
-The command scope chains Rust kernels and vendor calls on one caller-owned
-stream. It retains typed buffers, loaded kernel functions, and external plans
-until one completion event settles the scope. The cuda-oxide launcher still
-allocates its argument vector during Rust-kernel enqueue.
-
-## Source boundary
-
-- Loom-owned product code is Rust.
-- Custom device kernels are Rust compiled with cuda-oxide.
-- The repository has no Python product API, CUDA C++, compatibility layer, or
-  silent fallback.
-- CUDA drivers and cuBLASLt are current vendor dependencies. Other established
-  GEMM and collective libraries may enter through explicit providers.
-- The caller owns streams. Checked bindings share read-only buffers through
-  `Arc` and take exclusive ownership of writable buffers until completion.
-
-## Local checks
-
-Install the pinned toolchains described in the
-[development environment](docs/development/environment.md). The common
-CPU-only and website gate does not require CUDA:
+## Validation
 
 ```bash
+# CPU contracts, lint, package, website, and dependency audit
 make install-website
 make check
-```
 
-CUDA host compilation and release tests use the pinned nightly and cuda-oxide
-revision:
-
-```bash
+# Pinned cuda-oxide host/device toolchain
 make cuda-doctor
 make cuda-check
 make cuda-test
 make h20
 ```
 
-See the [H20 validation contract](docs/development/h20-validation.md) before
-reporting a device result.
+Current records cover H20 correctness, all four Compute Sanitizer tools,
+fixed-address Graph replay, and shape-specific comparisons with FlashInfer
+`v0.6.16.post1`. Representative admitted results include:
 
-## Evidence
+- fused RoPE + paged append: **2.942× lower eager latency**;
+- explicit multi-token append Graph: **1.656× lower replay latency**;
+- paged batch-1 MHA: **4.41× lower eager latency**.
 
-Operator correctness, kernel latency, graph execution, engine integration, and
-serving performance are separate claims. A microbenchmark does not establish
-an engine or serving speedup.
-
-The current records cover correctness, Graph replay, Compute Sanitizer, and
-shape-specific matched eager-provider comparisons with FlashInfer
-v0.6.16.post1. Split-K plus parallel state merge reduces Loom latency by 5.39x
-at GQA KV length 127 and 38.19x at KV length 4096 relative to the recorded
-direct baseline; FlashInfer remains 1.17x and 2.09x lower-latency at those
-shapes. CUPTI activity records isolated kernel decomposition, but these records
-make no hardware-counter, Graph-performance, engine, or serving claim.
-
-The first fused standard RoPE plus paged KV append result is also
-shape-specific. One cuda-oxide kernel rotates Q/K and appends rotated K plus
-unmodified V for one token per request. On the admitted batch-4 Q16/K4 D128,
-page-size-16 case, Loom records a `3.989` microsecond fixed-affinity eager
-median versus `11.735` microseconds for FlashInfer's two-kernel composition,
-or `2.942x` lower latency. The full Q output and K/V page pools pass the
-declared references. That immutable first record is limited to one token per
-request.
-
-The explicit fused append extension supports 1 through 64 caller-indexed
-tokens. Its two-warp guard validates page metadata, token mappings, and
-physical-slot uniqueness before any output write. On the admitted six-token
-shuffled suffix case, Loom records `5.510` microseconds versus FlashInfer's
-`11.732` microsecond two-kernel composition, or `2.129x` lower latency. The
-64-token boundary and four invalid-metadata guards pass H20 and all four
-Compute Sanitizer tools. Q/K results are tolerance-correct rather than claimed
-bitwise equal across providers.
-
-The same six-token command captures into one fixed-address Graph node. Its
-single-replay completion-event median is `8.288` microseconds versus `13.728`
-microseconds for FlashInfer's two-node graph, or `1.656x` lower latency. Both
-provider-order deltas are below five percent, and Graph correctness remains
-within the CPU-reference limit after external resource-owner teardown.
-
-The current paged batch-decode result is also shape-specific. Eight-warp
-token parallelism lowers Loom MQA and GQA eager latency by 3.78x and 3.32x
-relative to the immutable direct record. Loom now has 4.41x lower stable-shape
-median latency for batch-1 MHA and 2.35x lower latency for mixed-length
-batch-3 MQA than FlashInfer. The batch-4 GQA comparison remains excluded from
-stable ranking because FlashInfer's provider-order delta is 60.62%.
-
-The ragged prefill result is shape-specific. Unrolled 16-byte `cp.async` K/V
-staging lowers Loom long-GQA eager latency to `48.232` microseconds, `1.148x`
-below the previous tiled split-K result and `7.729x` below direct. FlashInfer
-remains `2.206x` lower-latency on stable long GQA. Short-MHA and mixed-MQA
-provider rankings are excluded because FlashInfer's provider-order median
-deltas are `10.643%` and `14.097%`. Correctness remains within
-`4.8828125e-4` BF16 output and `2.861022949e-6` log2-LSE maximum absolute
-error, and all four Compute Sanitizer tools report no errors.
-
-See the [architecture](docs/design/loom-infer-architecture.md),
-[repository layout](docs/design/repository-layout.md),
-[operator catalog](docs/operator-catalog.md), [roadmap](docs/roadmap.md), and
+These are contract- and shape-specific operator results, not engine or serving
+claims. Raw records and exclusions live in the
 [evidence index](docs/results/README.md).
+
+## Status
+
+Loom Infer is alpha software. Near-term work focuses on broader attention
+contracts, Graph coverage, and real Rust engine integration.
+
+Read the [architecture](docs/design/loom-infer-architecture.md),
+[development environment](docs/development/environment.md), and
+[contribution guide](CONTRIBUTING.md) before adding a provider.
 
 ## License
 

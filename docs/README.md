@@ -1,6 +1,8 @@
 # Loom Infer documentation
 
-Loom Infer is a Rust-native GPU operator library for LLM inference.
+Loom Infer is building a high-performance, FlashInfer-class CUDA operator
+library for Rust LLM inference engines. Loom-owned kernels are Rust compiled
+with cuda-oxide; there is no CUDA C or CUDA C++ product source.
 
 - [Architecture](design/loom-infer-architecture.md) defines ownership and the
   operator lifecycle.

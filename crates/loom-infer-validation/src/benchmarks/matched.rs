@@ -10,9 +10,9 @@ use loom_infer::{
     rope_paged_kv_append_tokens_bf16_reference, rope_pos_ids_bf16_reference,
 };
 use loom_infer_cuda::attention::{
-    AttentionProvider, Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs,
-    Bf16RaggedPrefillAlgorithm, Bf16RaggedPrefillArgs, Bf16SingleDecodeArgs, Bf16SingleDecodePlan,
-    Bf16SingleDecodeSplitKArgs, PrefillProvider,
+    Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16RaggedPrefillAlgorithm,
+    Bf16RaggedPrefillArgs, Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,
+    DecodeProvider, PrefillProvider,
 };
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
@@ -286,7 +286,7 @@ fn benchmark_gemm(
 fn benchmark_decode_case(
     context: &Arc<CudaContext>,
     stream: &Arc<CudaStream>,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
     case: DecodeCase,
     config: BenchConfig,
     identity: &RunIdentity,
@@ -403,7 +403,7 @@ fn benchmark_decode_case(
 fn benchmark_paged_decode_case(
     context: &Arc<CudaContext>,
     stream: &Arc<CudaStream>,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
     case: PagedDecodeCase,
     config: BenchConfig,
     identity: &RunIdentity,
@@ -1101,7 +1101,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let stream: Arc<CudaStream> = context.new_stream()?;
     let rms_provider = RmsNormProvider::load(&context)?;
     let gemm_provider = CublasLtProvider::load(&context)?;
-    let attention_provider = AttentionProvider::load(&context)?;
+    let decode_provider = DecodeProvider::load(&context)?;
     let prefill_provider = PrefillProvider::load(&context)?;
     let rope_provider = RopeProvider::load(&context)?;
 
@@ -1152,14 +1152,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 partitions: 64,
             },
         ] {
-            benchmark_decode_case(
-                &context,
-                &stream,
-                &attention_provider,
-                case,
-                config,
-                &identity,
-            )?;
+            benchmark_decode_case(&context, &stream, &decode_provider, case, config, &identity)?;
         }
     }
     if requested.contains(&"paged_batch_decode") {
@@ -1201,7 +1194,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             benchmark_paged_decode_case(
                 &context,
                 &stream,
-                &attention_provider,
+                &decode_provider,
                 case,
                 config,
                 &identity,

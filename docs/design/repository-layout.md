@@ -55,6 +55,7 @@ workspace member but not a default member.
 | `src/attention/single_decode/mod.rs` | Contiguous decode, split-K state, and CPU references |
 | `src/attention/paged_decode/mod.rs` | Paged decode, page-table validation, and CPU reference |
 | `src/attention/ragged_prefill/mod.rs` | Ragged prefill, indptr validation, and CPU reference |
+| `src/attention/paged_append/mod.rs` | Fused RoPE plus paged-KV append contracts and references |
 | `src/**/tests.rs` | Tests owned by the corresponding operator domain |
 
 This crate contains no CUDA types, FFI, provider selection, launch
@@ -82,6 +83,7 @@ do not create another crate or expose the private directory structure as API.
 | `src/attention/mod.rs` | Stable CUDA attention facade |
 | `src/attention/decode.rs` | Single and paged decode vertical slice and cuda-oxide artifact bundle |
 | `src/attention/prefill.rs` | Ragged prefill vertical slice and cuda-oxide artifact bundle |
+| `src/rope/mod.rs` | Standalone RoPE and fused paged-append cuda-oxide artifact bundle |
 | `src/gemm/mod.rs` | Explicit fixed-algorithm cuBLASLt provider |
 | `src/graph/mod.rs` | Fixed-address CUDA Graph capture and replay |
 
@@ -153,6 +155,7 @@ FlashInfer defines the feature domains, not Loom's language-level layout:
 | Ragged prefill and indptr semantics | `loom-infer/attention/ragged_prefill/mod.rs` |
 | CUDA decode providers and dispatch | `loom-infer-cuda/attention/decode.rs` |
 | CUDA ragged prefill provider | `loom-infer-cuda/attention/prefill.rs` |
+| Fused RoPE plus paged-KV append | `loom-infer/attention/paged_append/mod.rs`, `loom-infer-cuda/rope/mod.rs` |
 | Standard RoPE contract and CUDA provider | `loom-infer/rope/mod.rs`, `loom-infer-cuda/rope/mod.rs` |
 | Wrapper planning lifecycle | Immutable Rust plan types, not Python wrapper classes |
 | Workspace and stream ownership | Shared `command` and `graph` modules |

@@ -4,7 +4,7 @@ use cuda_core::{CudaContext, CudaStream, DeviceBuffer, sys};
 use half::bf16;
 use loom_infer::{Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec};
 use loom_infer_cuda::attention::{
-    AttentionProvider, Bf16SingleDecodeArgs, Bf16SingleDecodeSplitKArgs,
+    Bf16SingleDecodeArgs, Bf16SingleDecodeSplitKArgs, DecodeProvider,
 };
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue};
 use serde_json::json;
@@ -134,7 +134,7 @@ fn write_record(
 fn benchmark_direct(
     context: &Arc<CudaContext>,
     stream: &Arc<CudaStream>,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
     case: DecodeCase,
     config: BenchConfig,
     query_host: &[bf16],
@@ -186,7 +186,7 @@ fn benchmark_direct(
 fn benchmark_split_k(
     context: &Arc<CudaContext>,
     stream: &Arc<CudaStream>,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
     case: DecodeCase,
     partitions: usize,
     config: BenchConfig,
@@ -247,7 +247,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let config = BenchConfig::from_env()?;
     let context = CudaContext::new(0)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
-    let provider = AttentionProvider::load(&context)?;
+    let provider = DecodeProvider::load(&context)?;
 
     for case in [
         DecodeCase {

@@ -1,7 +1,7 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
 import {
-  milestones,
+  evidenceHighlights,
   operatorFamilies,
   repositoryUrl,
 } from "../data/site";
@@ -12,143 +12,129 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 <SiteLayout active="Overview">
   <section class="hero">
     <div class="hero-copy">
-      <p class="eyebrow">Rust-native GPU kernels</p>
-      <h1>The operator layer for LLM inference.</h1>
+      <p class="eyebrow">Rust-native CUDA operators</p>
+      <h1>Fast kernels.<br /><span>Checked execution.</span></h1>
       <p>
-        Loom Infer defines checked Rust contracts, compiles Rust device kernels,
-        and is building one execution model for Rust kernels and vendor
-        libraries.
+        A FlashInfer-class operator layer for Rust inference engines.
+        Loom-owned kernels compile with cuda-oxide and run beside qualified
+        vendor providers under one ownership model.
       </p>
       <div class="hero-actions">
-        <a class="button primary" href={`${base}/docs/operators/`}>Operators</a>
-        <a class="button" href={repositoryUrl} target="_blank" rel="noreferrer">GitHub</a>
+        <a class="button primary" href={`${base}/docs/`}>Get started</a>
+        <a class="button" href={`${base}/evidence/`}>View evidence</a>
       </div>
+      <p class="hero-note">Rust host · Rust device · CUDA SM90 · MIT</p>
     </div>
 
     <div class="kernel-window" aria-label="Target operator execution path">
       <div class="window-bar">
-        <span>one operator lifecycle</span>
+        <span>loom_infer::execute</span>
         <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
       </div>
-      <pre class="kernel-code"><code><span class="token-keyword">validated spec</span>
-  → immutable plan
-  → checked bindings
-  → enqueue
-  → <span class="token-type">Rust kernel | vendor provider</span>
+      <pre class="kernel-code"><code><span class="token-comment">// fixed before enqueue</span>
+<span class="token-keyword">let</span> plan = provider.plan(spec)?;
+<span class="token-keyword">let</span> bindings = queue.bindings(...)?;
 
-<span class="token-comment">admission target: no tuning, allocation, or fallback in enqueue</span></code></pre>
+<span class="token-keyword">let mut</span> scope = queue.begin(bindings)?;
+plan.enqueue_into(&mut scope, args)?;
+<span class="token-type">scope.finish().wait()?</span>;
+
+<span class="token-comment">// no silent fallback</span></code></pre>
     </div>
   </section>
 
   <section class="metrics-strip" aria-label="Project status">
-    <div class="metric"><strong>5</strong><span>qualified device slices</span></div>
-    <div class="metric"><strong>SM90</strong><span>first target</span></div>
     <div class="metric"><strong>Rust</strong><span>host and device source</span></div>
-    <div class="metric"><strong>Matched</strong><span>first eager performance evidence</span></div>
+    <div class="metric"><strong>SM90</strong><span>qualified first target</span></div>
+    <div class="metric"><strong>H20</strong><span>recorded evidence</span></div>
+    <div class="metric"><strong>v0.6.16</strong><span>pinned FlashInfer baseline</span></div>
   </section>
 
-  <section class="section" id="operators">
+  <section class="section section-compact" id="operators">
     <header class="section-header">
       <div>
-        <p class="eyebrow">Scope</p>
-        <h2>The inference operator surface</h2>
+        <p class="eyebrow">Operators</p>
+        <h2>A narrow, qualified surface.</h2>
       </div>
       <p>
-        Attention is central. Decode, KV, MoE, quantization, and vendor GEMM
-        integration complete the inference path.
+        Each row fixes its shape, dtype, layout, numerical behavior, stream,
+        workspace, and Graph policy before admission.
       </p>
     </header>
-    <div class="operator-grid">
+    <div class="operator-list">
       {operatorFamilies.map((family, index) => (
         <article class="operator-card">
           <span class="card-index">{String(index + 1).padStart(2, "0")}</span>
-          <h3>{family.name}</h3>
-          <p>{family.boundary}</p>
+          <div>
+            <h3>{family.name}</h3>
+            <p>{family.boundary}</p>
+          </div>
+          <span class="status-pill">{family.state}</span>
         </article>
       ))}
     </div>
+    <a class="section-link" href={`${base}/docs/operators/`}>Explore every contract →</a>
   </section>
 
-  <section class="section">
+  <section class="section section-compact">
     <header class="section-header">
       <div>
         <p class="eyebrow">Architecture</p>
-        <h2>Rust owns the path</h2>
+        <h2>One lifecycle. Two provider classes.</h2>
       </div>
       <p>
-        CPU references define behavior. Plans fix algorithms and launch
-        configurations. Bindings share reads and own writable buffers.
+        Rust kernels and vendor calls share checked bindings, caller-owned
+        streams, one completion fence, and the same failure policy.
       </p>
     </header>
-    <div class="architecture-grid">
-      <article class="architecture-card">
-        <span class="card-index">01</span><h3>Contract</h3>
-        <p>Shapes, dtypes, layouts, aliasing, and numerical rules.</p>
+    <div class="principle-grid">
+      <article class="principle-card">
+        <span>01</span>
+        <h3>Rust end to end</h3>
+        <p>Contracts, plans, host execution, and custom kernels stay in Rust.</p>
       </article>
-      <article class="architecture-card">
-        <span class="card-index">02</span><h3>Plan</h3>
-        <p>Provider, tactic, artifact, launch, workspace, and graph policy.</p>
+      <article class="principle-card">
+        <span>02</span>
+        <h3>Owned async safety</h3>
+        <p>Writable allocations cannot escape while CUDA work is in flight.</p>
       </article>
-      <article class="architecture-card">
-        <span class="card-index">03</span><h3>Binding</h3>
-        <p>Exact spans, device, context, stream, and access mode.</p>
-      </article>
-      <article class="architecture-card">
-        <span class="card-index">04</span><h3>Execution</h3>
-        <p>Rust device artifacts and fixed vendor calls share one checked command scope.</p>
+      <article class="principle-card">
+        <span>03</span>
+        <h3>Evidence before defaults</h3>
+        <p>Correctness, performance, Graph, engine, and serving gates stay separate.</p>
       </article>
     </div>
   </section>
 
-  <section class="section" id="evidence">
+  <section class="section section-compact" id="evidence">
     <header class="section-header">
-      <div><p class="eyebrow">Evidence</p><h2>Permanent providers only</h2></div>
-      <p>Every claim identifies its source, hardware, boundary, and artifact.</p>
+      <div><p class="eyebrow">H20 evidence</p><h2>Numbers with boundaries.</h2></div>
+      <p>
+        Representative matched results against the pinned FlashInfer release.
+        Every record keeps raw samples, provider order, and excluded claims.
+      </p>
     </header>
-    <article class="evidence-card">
-      <h3>RMSNorm on H20</h3><span class="result">Qualified</span>
-      <p>The owned-binding F32, FP16, and BF16 paths pass correctness.</p>
-      <small>Memcheck, racecheck, and synccheck report no errors.</small>
-    </article>
-    <article class="evidence-card">
-      <h3>BF16 cuBLASLt GEMM on H20</h3><span class="result">Qualified</span>
-      <p>The fixed plan and RMSNorm-to-GEMM Graph pass correctness.</p>
-      <small>The final output after two replays is bit-exact. Memcheck reports no errors or leaks.</small>
-    </article>
-    <article class="evidence-card">
-      <h3>BF16 single decode on H20</h3><span class="result">Qualified</span>
-      <p>Direct and split-K NHD D128 MHA, MQA, and GQA cases pass.</p>
-      <small>Four sanitizer tools report no errors. Parallel merge reduces the recorded KV4096 gap from 80.08x to 2.09x.</small>
-    </article>
-    <article class="evidence-card">
-      <h3>BF16 paged decode on H20</h3><span class="result">Qualified</span>
-      <p>NHD D128 page-size-16 MHA, MQA, and GQA batches pass.</p>
-      <small>Eight-warp token parallelism puts Loom 4.41x ahead on MHA and 2.35x ahead on matched MQA. GQA ranking remains order-sensitive.</small>
-    </article>
-    <article class="evidence-card">
-      <h3>BF16 ragged prefill on H20</h3><span class="result">Qualified</span>
-      <p>Direct, token-parallel, and tiled eight-partition causal MHA, MQA, and GQA pass.</p>
-      <small>16-byte cp.async staging is 1.148x faster than the previous tiled path. FlashInfer remains 2.206x ahead on stable long GQA.</small>
-    </article>
-  </section>
-
-  <section class="section">
-    <header class="section-header">
-      <div><p class="eyebrow">Next</p><h2>Extend and profile attention</h2></div>
-      <p>Expand ragged query tiling beyond GQA4, then qualify fixed-address Graph replay and real model invocation.</p>
-    </header>
-    <div class="roadmap-grid">
-      {milestones.map((item) => (
-        <article class="roadmap-card">
-          <span class="card-index">{item.milestone}</span>
-          <h3>{item.name}</h3><p>{item.reason}</p>
+    <div class="highlight-grid">
+      {evidenceHighlights.map((item) => (
+        <article class="highlight-card">
+          <strong>{item.value}</strong>
+          <span>{item.label}</span>
+          <p>{item.detail}</p>
         </article>
       ))}
     </div>
+    <a class="section-link" href={`${base}/evidence/`}>Read methods, raw records, and exclusions →</a>
   </section>
 
   <section class="cta-band">
-    <div><h2>Start with the boundary</h2><p>Read the architecture before adding a kernel.</p></div>
-    <a class="button primary" href={`${base}/docs/`}>Documentation</a>
+    <div>
+      <p class="eyebrow">Alpha</p>
+      <h2>Build the Rust operator layer.</h2>
+      <p>Next: broader attention contracts, Graph coverage, and real engine integration.</p>
+    </div>
+    <div class="cta-actions">
+      <a class="button primary" href={`${base}/docs/`}>Documentation</a>
+      <a class="button" href={repositoryUrl} target="_blank" rel="noreferrer">GitHub ↗</a>
+    </div>
   </section>
 </SiteLayout>

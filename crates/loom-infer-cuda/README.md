@@ -5,6 +5,10 @@
 vendor libraries. The crate does not use CUDA C++, Python, or framework
 bindings.
 
+CUDA names the target platform and execution contract. cuda-oxide is the Rust
+toolchain used for Loom-owned kernels; it does not replace CUDA contexts,
+streams, events, Graphs, or vendor libraries.
+
 The default feature set keeps CPU-only workspace checks platform independent.
 Enable `cuda` only inside the pinned CUDA build environment.
 
@@ -20,6 +24,7 @@ src/
 |-- gemm/mod.rs
 |-- graph/mod.rs
 |-- rms_norm/mod.rs
+|-- rope/mod.rs
 |-- driver.rs
 `-- lib.rs
 ```
@@ -77,7 +82,9 @@ FlashInfer's two-node graph.
 Ragged prefill keeps short requests on one direct warp per query-row/head,
 uses sixteen-warp token partitioning for long single-KV-head MQA, and keeps
 eight-warp partitioning for other declared long requests. MHA/MQA/GQA pass the
-H20 correctness and sanitizer gates. The complete path improves mixed MQA by
-7.245x versus direct and 1.254x versus the earlier eight-warp path. FlashInfer
-remains 1.353x lower-latency on mixed MQA and 10.028x on long GQA. Graph
-replay and engine integration remain separate gates.
+H20 correctness and sanitizer gates. The admitted long-GQA path uses fused
+tensor-core tiling, eight KV partitions, and unrolled 16-byte `cp.async`
+staging. It is 7.729x faster than the direct baseline; FlashInfer remains
+2.206x lower-latency on the stable long-GQA case. The fixed-address
+partial-plus-merge Graph also passes correctness and matched replay gates.
+Broader query tiling and engine integration remain open.

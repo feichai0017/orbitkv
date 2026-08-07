@@ -8,51 +8,64 @@ export const navigation = [
 
 export const operatorFamilies = [
   {
-    name: "Normalization",
-    boundary: "RMSNorm, residual fusion, and quantized output.",
-    state: "Device correct",
+    name: "RMSNorm",
+    boundary: "F32, FP16, and BF16 scalar and packed paths.",
+    state: "Qualified",
   },
   {
-    name: "Attention",
-    boundary: "Single and paged decode, split-K, state merge, and ragged causal prefill.",
-    state: "Partial device correct",
+    name: "Decode",
+    boundary: "Single-request direct and split-K plus paged batch decode.",
+    state: "Qualified",
   },
   {
-    name: "Decode tail",
-    boundary: "Sampling, filters, penalties, logprobs, and verification.",
-    state: "Planned",
+    name: "Prefill",
+    boundary: "Ragged bottom-right causal MHA, MQA, and GQA.",
+    state: "Qualified",
   },
   {
-    name: "KV cache",
-    boundary: "RoPE append, gather, scatter, compaction, and quantization.",
-    state: "Planned",
+    name: "RoPE + KV",
+    boundary: "Standard RoPE and fused 1-through-64-token paged append.",
+    state: "Qualified",
   },
   {
-    name: "MoE",
-    boundary: "Routing support, permutation, grouped-GEMM input, and combine.",
-    state: "Planned",
+    name: "GEMM",
+    boundary: "Fixed-algorithm contiguous BF16 cuBLASLt plans.",
+    state: "Qualified",
+  },
+]
+
+export const evidenceHighlights = [
+  {
+    value: "2.942×",
+    label: "lower eager latency",
+    detail: "Fused RoPE + one-token paged append",
   },
   {
-    name: "Matrix work",
-    boundary: "Fixed Rust plans for qualified vendor GEMM providers.",
-    state: "Device correct",
+    value: "1.656×",
+    label: "lower Graph replay latency",
+    detail: "Explicit six-token fused append",
+  },
+  {
+    value: "4.41×",
+    label: "lower eager latency",
+    detail: "Paged batch-1 MHA decode",
   },
 ]
 
 export const milestones = [
   {
     milestone: "01",
-    name: "Permanent RMSNorm",
-    reason: "Owned bindings pass H20 correctness; the pinned FlashInfer RMSNorm baseline did not compile on CUDA 13.1.",
+    name: "Broader attention",
+    reason: "Expand ragged query tiling and add common window and mask contracts.",
   },
   {
     milestone: "02",
-    name: "Vendor GEMM",
-    reason: "The fixed M=1 cuBLASLt eager path is 1.33x lower-latency than the matched FlashInfer path.",
+    name: "Graph coverage",
+    reason: "Qualify remaining fixed-address paths before adding mutable Graph contracts.",
   },
   {
     milestone: "03",
-    name: "Attention core",
-    reason: "Ragged MQA is now within 1.353x of FlashInfer; long GQA still needs full query tiling.",
+    name: "Engine integration",
+    reason: "Invoke Loom from a real Rust model engine without tensor copies.",
   },
 ]

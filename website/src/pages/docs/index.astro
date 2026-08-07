@@ -11,7 +11,7 @@ import { repositoryUrl } from "../../data/site";
   <header class="page-hero">
     <p class="eyebrow">Documentation</p>
     <h1>Start from the boundary.</h1>
-    <p>Loom Infer is an operator library. The engine keeps model and serving policy.</p>
+    <p>Loom Infer is a Rust and cuda-oxide CUDA operator library. The engine keeps model and serving policy.</p>
   </header>
 
   <div class="docs-layout">
@@ -50,7 +50,7 @@ cargo test --workspace --all-targets</code></pre>
       <p>
         The <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>evidence index</a>
         contains the RMSNorm, BF16 GEMM, CUDA Graph, single-decode, and paged
-        batch-decode and ragged prefill results.
+        batch-decode, ragged prefill, RoPE, and fused paged-append results.
       </p>
     </article>
   </div>

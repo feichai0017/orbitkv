@@ -998,13 +998,13 @@ mod kernels {
     }
 }
 
-/// Loaded cuda-oxide module for attention kernels.
+/// Loaded cuda-oxide module for decode kernels.
 #[derive(Clone, Debug)]
-pub struct AttentionProvider {
+pub struct DecodeProvider {
     module: kernels::LoadedModule,
 }
 
-impl AttentionProvider {
+impl DecodeProvider {
     /// Loads the embedded attention artifact into one CUDA context.
     pub fn load(context: &Arc<CudaContext>) -> Result<Self, cuda_host::EmbeddedModuleError> {
         // SAFETY: this crate owns the package-named device bundle and the

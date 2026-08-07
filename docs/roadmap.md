@@ -1,8 +1,9 @@
 # Loom Infer roadmap
 
-Loom Infer targets the operator surface required by production LLM inference.
-FlashInfer defines the broad comparison surface. FlashAttention defines the
-attention-kernel comparison surface.
+Loom Infer targets a high-performance, FlashInfer-class operator layer for
+Rust production LLM inference engines. Loom-owned kernels are Rust compiled
+with cuda-oxide for the CUDA platform. FlashInfer defines the broad comparison
+surface, and FlashAttention defines the attention-kernel comparison surface.
 
 ## 1. Permanent RMSNorm provider
 

@@ -56,6 +56,35 @@ jobs:
       - name: Check
         run: make check-rust PACKAGE_FLAGS=
 
+  cuda-host:
+    name: cuda-host
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v7
+
+      - name: Install CUDA toolkit
+        uses: Jimver/cuda-toolkit@v0.2.35
+        id: cuda-toolkit
+        with:
+          cuda: "13.1.1"
+          method: network
+          sub-packages: '["nvcc", "cudart-dev"]'
+          non-cuda-sub-packages: '["libcublas-dev", "libcurand-dev"]'
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: nightly-2026-04-03
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: Check CUDA host surface
+        env:
+          CUDA_TOOLKIT_PATH: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
+        run: make cuda-check
+
   website:
     name: website
     runs-on: ubuntu-latest

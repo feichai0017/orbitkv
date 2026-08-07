@@ -8,7 +8,7 @@ use loom_infer::{
     single_decode_bf16_reference,
 };
 use loom_infer_cuda::attention::{
-    AttentionProvider, Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,
+    Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs, DecodeProvider,
     SingleDecodeEnqueueError,
 };
 use loom_infer_cuda::command::{CommandError, CommandQueue};
@@ -29,7 +29,7 @@ enum ShortBuffer {
 
 fn run_case(
     queue: &mut CommandQueue,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
     name: &str,
     spec: Bf16SingleDecodeSpec,
     salt: u64,
@@ -50,7 +50,7 @@ fn run_case(
 
 fn run_case_with_inputs(
     queue: &mut CommandQueue,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
     name: &str,
     spec: Bf16SingleDecodeSpec,
     query_host: &[bf16],
@@ -146,7 +146,7 @@ fn run_case_with_inputs(
 
 fn run_split_k_case(
     queue: &mut CommandQueue,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
     name: &str,
     decode: Bf16SingleDecodeSpec,
     partitions: usize,
@@ -252,7 +252,7 @@ fn run_split_k_case(
 
 fn run_large_logit_case(
     queue: &mut CommandQueue,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16SingleDecodeSpec::new(3, 1, 1, SINGLE_DECODE_HEAD_DIM)?;
     let query = vec![bf16::from_f32(64.0); spec.query_numel()];
@@ -344,7 +344,7 @@ fn run_short_buffer_case(
 
 fn check_short_buffers(
     queue: &mut CommandQueue,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16SingleDecodeSpec::new(2, 4, 2, SINGLE_DECODE_HEAD_DIM)?;
     let plan = provider.plan_bf16(spec)?;
@@ -367,7 +367,7 @@ fn check_short_buffers(
 
 fn check_duplicate_binding(
     queue: &mut CommandQueue,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
 ) -> Result<(), Box<dyn Error>> {
     let stream = queue.stream().clone();
     let spec = Bf16SingleDecodeSpec::new(1, 1, 1, SINGLE_DECODE_HEAD_DIM)?;
@@ -415,7 +415,7 @@ fn check_duplicate_binding(
 
 fn check_split_k_preflight(
     stream: &Arc<CudaStream>,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
 ) -> Result<(), Box<dyn Error>> {
     let decode = Bf16SingleDecodeSpec::new(7, 8, 1, SINGLE_DECODE_HEAD_DIM)?;
     let spec = Bf16SingleDecodeSplitKSpec::new(decode, 3)?;
@@ -514,7 +514,7 @@ fn check_split_k_preflight(
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
-    let provider = AttentionProvider::load(&context)?;
+    let provider = DecodeProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
     let mut queue = CommandQueue::new(stream.clone(), 2)?;
 

@@ -8,7 +8,7 @@ use loom_infer::{
     paged_batch_decode_bf16_reference,
 };
 use loom_infer_cuda::attention::{
-    AttentionProvider, Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan,
+    Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan, DecodeProvider,
     PagedBatchDecodeEnqueueError,
 };
 use loom_infer_cuda::command::CommandQueue;
@@ -27,7 +27,7 @@ struct PageTableInput<'a> {
 
 fn run_case(
     queue: &mut CommandQueue,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
     name: &str,
     spec: Bf16PagedBatchDecodeSpec,
     page_table: PageTableInput<'_>,
@@ -223,7 +223,7 @@ fn run_short_page_indptr_case(
 
 fn run_invalid_page_guard_case(
     queue: &mut CommandQueue,
-    provider: &AttentionProvider,
+    provider: &DecodeProvider,
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16)?;
     let stream = queue.stream().clone();
@@ -309,7 +309,7 @@ fn run_invalid_page_guard_case(
 
 pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
-    let provider = AttentionProvider::load(&context)?;
+    let provider = DecodeProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
     let mut queue = CommandQueue::new(stream, 1)?;
 

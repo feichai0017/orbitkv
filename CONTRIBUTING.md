@@ -2,6 +2,10 @@
 
 Each change must implement or improve one measurable inference path.
 
+Loom Infer's product target is a high-performance, FlashInfer-class operator
+layer for Rust inference engines. CUDA is the execution platform; cuda-oxide is
+the Rust compiler and artifact toolchain for Loom-owned device kernels.
+
 ## Before implementation
 
 Record:
@@ -18,8 +22,8 @@ their Rust plans, layouts, epilogues, and measured fusion boundaries.
 ## Source rules
 
 - Product source is Rust.
-- Do not add Python APIs, CUDA C++, compatibility aliases, duplicate execution
-  paths, or silent fallback.
+- Do not add Python product APIs, CUDA C or CUDA C++ product source,
+  compatibility aliases, duplicate execution paths, or silent fallback.
 - Keep `loom-infer` independent from CUDA and FFI.
 - Keep unsafe code inside the device or vendor boundary that requires it.
 - Add a crate only when a complete vertical slice needs that boundary.

@@ -9,8 +9,8 @@ interface Props {
 }
 
 const {
-  title = "Loom Infer | Rust-native LLM inference kernels",
-  description = "Rust-native GPU kernels, checked execution, and reproducible evidence for LLM inference.",
+  title = "Loom Infer | Rust-native CUDA operators",
+  description = "High-performance Rust CUDA operators built with cuda-oxide for LLM inference.",
   active = "",
 } = Astro.props;
 
@@ -46,7 +46,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
           <span class="brand-mark" aria-hidden="true">LI</span>
           <span class="brand-copy">
             <strong>Loom Infer</strong>
-            <small>Rust × GPU</small>
+            <small>Rust × CUDA</small>
           </span>
         </a>
 
@@ -74,7 +74,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
         <div>
           <span class="footer-mark" aria-hidden="true">//</span>
           <strong>Loom Infer</strong>
-          <p>Rust-native kernels for LLM inference.</p>
+          <p>High-performance CUDA operators for Rust inference.</p>
         </div>
         <div class="footer-links">
           <a href={local("/docs/")}>Get started</a>

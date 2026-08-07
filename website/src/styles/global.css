@@ -1,14 +1,14 @@
 :root {
   color-scheme: dark;
-  --bg: #08110d;
-  --bg-raised: #0d1913;
-  --panel: #101f17;
-  --panel-strong: #16291f;
-  --line: #294235;
-  --line-soft: rgba(119, 163, 133, 0.2);
-  --text: #eff8ee;
-  --muted: #a6b8ab;
-  --dim: #718478;
+  --bg: #07100c;
+  --bg-raised: #0b1711;
+  --panel: #0e1c15;
+  --panel-strong: #14261c;
+  --line: #263d31;
+  --line-soft: rgba(119, 163, 133, 0.16);
+  --text: #f1f8f0;
+  --muted: #a9b9ad;
+  --dim: #718078;
   --acid: #c8ff4d;
   --acid-soft: rgba(200, 255, 77, 0.12);
   --orange: #ff8b52;
@@ -31,8 +31,8 @@ body {
   margin: 0;
   min-width: 320px;
   background:
-    radial-gradient(circle at 82% 12%, rgba(116, 231, 219, 0.09), transparent 28rem),
-    radial-gradient(circle at 15% 35%, rgba(200, 255, 77, 0.06), transparent 30rem),
+    radial-gradient(circle at 82% 8%, rgba(116, 231, 219, 0.07), transparent 30rem),
+    radial-gradient(circle at 12% 30%, rgba(200, 255, 77, 0.045), transparent 32rem),
     var(--bg);
   color: var(--text);
   font-family: var(--sans);
@@ -47,10 +47,10 @@ body::before {
   background-image:
     linear-gradient(var(--line-soft) 1px, transparent 1px),
     linear-gradient(90deg, var(--line-soft) 1px, transparent 1px);
-  background-size: 56px 56px;
+  background-size: 64px 64px;
   mask-image: linear-gradient(to bottom, black, transparent 78%);
   content: "";
-  opacity: 0.22;
+  opacity: 0.14;
   pointer-events: none;
 }
 
@@ -204,20 +204,20 @@ main {
 
 .hero {
   display: grid;
-  grid-template-columns: minmax(0, 1.08fr) minmax(340px, 0.92fr);
-  gap: clamp(3rem, 7vw, 7rem);
+  grid-template-columns: minmax(0, 1.14fr) minmax(340px, 0.86fr);
+  gap: clamp(3rem, 8vw, 7.5rem);
   align-items: center;
-  min-height: 680px;
-  padding-block: 5rem;
+  min-height: 650px;
+  padding-block: clamp(5rem, 10vw, 8rem);
 }
 
 .hero h1 {
   max-width: 780px;
   margin: 1.4rem 0 1.5rem;
-  font-size: clamp(3.5rem, 7vw, 6.7rem);
+  font-size: clamp(3.7rem, 7.2vw, 6.9rem);
   font-weight: 720;
-  letter-spacing: -0.072em;
-  line-height: 0.91;
+  letter-spacing: -0.075em;
+  line-height: 0.9;
 }
 
 .hero h1 span {
@@ -237,6 +237,13 @@ main {
   flex-wrap: wrap;
   gap: 0.75rem;
   margin-top: 2.25rem;
+}
+
+.hero-note {
+  margin-top: 1.4rem !important;
+  color: var(--dim) !important;
+  font: 600 0.68rem/1.4 var(--mono) !important;
+  letter-spacing: 0.04em;
 }
 
 .button {
@@ -273,9 +280,9 @@ main {
   position: relative;
   overflow: hidden;
   border: 1px solid var(--line);
-  border-radius: 0.75rem;
+  border-radius: 0.85rem;
   background: rgba(13, 25, 19, 0.88);
-  box-shadow: 0 32px 90px rgba(0, 0, 0, 0.35);
+  box-shadow: 0 36px 100px rgba(0, 0, 0, 0.38);
 }
 
 .kernel-window::after {
@@ -322,7 +329,9 @@ main {
   display: grid;
   gap: 0;
   margin: 0;
-  padding: 1.35rem 1.45rem;
+  min-height: 260px;
+  align-content: center;
+  padding: 1.7rem 1.6rem;
   color: #d7e5d8;
   font: 500 0.78rem/1.75 var(--mono);
   white-space: pre-wrap;
@@ -339,7 +348,7 @@ main {
 }
 
 .metric {
-  padding: 1.45rem 1.4rem;
+  padding: 1.3rem 1.4rem;
   border-right: 1px solid var(--line);
 }
 
@@ -350,7 +359,7 @@ main {
 .metric strong {
   display: block;
   color: var(--acid);
-  font: 600 clamp(1.35rem, 3vw, 2.15rem)/1 var(--mono);
+  font: 600 clamp(1.25rem, 2.5vw, 1.9rem)/1 var(--mono);
 }
 
 .metric span {
@@ -362,6 +371,10 @@ main {
 
 .section {
   padding-block: clamp(5.5rem, 10vw, 9rem);
+}
+
+.section-compact {
+  padding-block: clamp(4.8rem, 8vw, 7rem);
 }
 
 .section + .section {
@@ -391,7 +404,6 @@ main {
   font-size: 1rem;
 }
 
-.operator-grid,
 .architecture-grid,
 .evidence-grid,
 .roadmap-grid {
@@ -400,7 +412,6 @@ main {
   gap: 1rem;
 }
 
-.operator-card,
 .architecture-card,
 .evidence-card,
 .roadmap-card,
@@ -410,14 +421,44 @@ main {
   background: rgba(13, 25, 19, 0.7);
 }
 
-.operator-card {
-  display: flex;
-  min-height: 210px;
-  flex-direction: column;
-  padding: 1.3rem;
+.operator-list {
+  border-top: 1px solid var(--line);
 }
 
-.operator-card:hover,
+.operator-card {
+  display: grid;
+  grid-template-columns: 48px minmax(0, 1fr) auto;
+  gap: 1rem;
+  align-items: center;
+  min-height: 94px;
+  padding: 1rem 0.4rem;
+  border-bottom: 1px solid var(--line);
+  transition: padding 160ms ease, border-color 160ms ease;
+}
+
+.operator-card:hover {
+  padding-inline: 0.9rem;
+  border-color: #55705e;
+}
+
+.operator-card h3 {
+  margin: 0 0 0.28rem;
+}
+
+.operator-card p {
+  margin: 0;
+}
+
+.status-pill {
+  padding: 0.35rem 0.55rem;
+  border: 1px solid rgba(200, 255, 77, 0.28);
+  border-radius: 999px;
+  background: var(--acid-soft);
+  color: var(--acid);
+  font: 650 0.62rem/1 var(--mono);
+  letter-spacing: 0.04em;
+}
+
 .evidence-card:hover,
 .doc-card:hover {
   border-color: #55705e;
@@ -429,7 +470,6 @@ main {
   font: 600 0.65rem/1 var(--mono);
 }
 
-.operator-card h3,
 .architecture-card h3,
 .roadmap-card h3,
 .doc-card h3 {
@@ -438,7 +478,6 @@ main {
   letter-spacing: -0.02em;
 }
 
-.operator-card p,
 .architecture-card p,
 .roadmap-card p,
 .doc-card p {
@@ -450,6 +489,41 @@ main {
 .architecture-card,
 .roadmap-card {
   padding: 1.35rem;
+}
+
+.principle-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background: rgba(13, 25, 19, 0.45);
+}
+
+.principle-card {
+  min-height: 220px;
+  padding: 1.5rem;
+  border-right: 1px solid var(--line);
+}
+
+.principle-card:last-child {
+  border-right: 0;
+}
+
+.principle-card > span {
+  color: var(--cyan);
+  font: 650 0.66rem/1 var(--mono);
+}
+
+.principle-card h3 {
+  margin: 4.2rem 0 0.6rem;
+  font-size: 1.15rem;
+  letter-spacing: -0.025em;
+}
+
+.principle-card p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 0.85rem;
 }
 
 .architecture-card .card-index {
@@ -479,12 +553,50 @@ main {
   font-size: 0.72rem;
 }
 
+.highlight-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 1rem;
+}
+
+.highlight-card {
+  min-height: 220px;
+  padding: 1.5rem;
+  border: 1px solid var(--line);
+  border-radius: 0.75rem;
+  background:
+    linear-gradient(145deg, rgba(200, 255, 77, 0.08), transparent 60%),
+    rgba(13, 25, 19, 0.68);
+}
+
+.highlight-card strong {
+  display: block;
+  color: var(--acid);
+  font: 600 clamp(2.7rem, 6vw, 4.6rem)/0.95 var(--mono);
+  letter-spacing: -0.08em;
+}
+
+.highlight-card span {
+  display: block;
+  margin-top: 0.75rem;
+  color: var(--text);
+  font-size: 0.88rem;
+  font-weight: 680;
+}
+
+.highlight-card p {
+  margin: 2.7rem 0 0;
+  color: var(--dim);
+  font-size: 0.76rem;
+}
+
 .evidence-card small {
   display: block;
   margin-top: 0.45rem;
 }
 
 .section-link {
+  display: inline-block;
   margin: 1.4rem 0 0;
   color: var(--acid);
   font: 600 0.76rem/1.4 var(--mono);
@@ -495,7 +607,7 @@ main {
   grid-template-columns: 1fr auto;
   gap: 2rem;
   align-items: center;
-  margin-block: 2rem 7rem;
+  margin-block: 4rem 7rem;
   padding: clamp(1.5rem, 4vw, 2.8rem);
   border: 1px solid var(--acid);
   border-radius: 0.7rem;
@@ -503,7 +615,7 @@ main {
 }
 
 .cta-band h2 {
-  margin: 0;
+  margin: 1rem 0 0;
   font-size: clamp(1.7rem, 4vw, 3rem);
   letter-spacing: -0.045em;
 }
@@ -511,6 +623,11 @@ main {
 .cta-band p {
   margin: 0.5rem 0 0;
   color: var(--muted);
+}
+
+.cta-actions {
+  display: flex;
+  gap: 0.7rem;
 }
 
 .page-hero {
@@ -758,11 +875,21 @@ main {
     gap: 1.2rem;
   }
 
-  .operator-grid,
+  .principle-grid,
+  .highlight-grid,
   .architecture-grid,
   .evidence-grid,
   .roadmap-grid {
     grid-template-columns: repeat(2, 1fr);
+  }
+
+  .principle-card:nth-child(2) {
+    border-right: 0;
+  }
+
+  .principle-card:last-child {
+    grid-column: 1 / -1;
+    border-top: 1px solid var(--line);
   }
 
   .docs-layout {
@@ -830,12 +957,40 @@ main {
   }
 
   .metrics-strip,
-  .operator-grid,
+  .principle-grid,
+  .highlight-grid,
   .architecture-grid,
   .evidence-grid,
   .roadmap-grid,
   .doc-grid {
     grid-template-columns: 1fr;
+  }
+
+  .operator-card {
+    grid-template-columns: 38px minmax(0, 1fr);
+  }
+
+  .status-pill {
+    grid-column: 2;
+    width: fit-content;
+  }
+
+  .principle-card,
+  .principle-card:nth-child(2),
+  .principle-card:last-child {
+    grid-column: auto;
+    min-height: 190px;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+    border-top: 0;
+  }
+
+  .principle-card:last-child {
+    border-bottom: 0;
+  }
+
+  .principle-card h3 {
+    margin-top: 2.8rem;
   }
 
   .metric {
@@ -853,6 +1008,10 @@ main {
 
   .cta-band .button {
     width: 100%;
+  }
+
+  .cta-actions {
+    flex-direction: column;
   }
 
   .operator-table {

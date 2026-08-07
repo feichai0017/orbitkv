@@ -1,7 +1,25 @@
 # Loom Infer architecture
 
-Loom Infer provides Rust-native GPU operators for LLM inference. Model engines
-keep model graphs, request scheduling, KV-cache policy, and serving APIs.
+Loom Infer is building a high-performance, FlashInfer-class operator layer for
+Rust LLM inference engines. Model engines keep model graphs, request
+scheduling, KV-cache policy, distributed execution, and serving APIs.
+
+## Product target
+
+The product boundary is the inference operator layer:
+
+- public contracts, planning, ownership, and host execution are Rust.
+- custom device kernels are Rust compiled with cuda-oxide.
+- NVIDIA execution uses CUDA contexts, streams, events, Graphs, and device
+  artifacts.
+- qualified vendor libraries remain explicit providers when they are the
+  measured choice for an admitted contract.
+- FlashInfer supplies the pinned functional and matched-performance comparison
+  surface.
+
+Loom has no CUDA C or CUDA C++ product source. That source-language choice does
+not make CUDA disappear: cuda-oxide targets the NVIDIA CUDA platform and the
+host runtime still obeys CUDA resource and stream semantics.
 
 ## Parity target
 
@@ -63,10 +81,14 @@ loom-infer::attention
   -> single_decode     contiguous decode and split-K reference state
   -> paged_decode      page-table contract and paged CPU reference
   -> ragged_prefill    indptr contract and ragged causal CPU reference
+  -> paged_append      fused RoPE and paged-KV mutation contracts
 
 loom-infer-cuda::attention
   -> decode            one decode provider domain and cuda-oxide artifact bundle
   -> prefill           one prefill provider domain and cuda-oxide artifact bundle
+
+loom-infer-cuda::rope
+  -> standalone RoPE and fused paged-append artifact bundle
 ```
 
 FlashInfer still defines the semantic domains and acceptance surface. Loom maps
@@ -75,9 +97,11 @@ utilities to a validated borrowed page-table view, and execution resources to
 the shared command/graph ownership layer. Python wrapper state is not copied
 into product architecture.
 
-Future MLA and KV-cache mutation become sibling private modules while the
-public `attention::*` paths remain stable. A new crate requires a real
-dependency or ownership boundary, not merely another attention algorithm.
+Future MLA and independent KV-cache mutation domains become sibling private
+modules while the public operator facades remain stable. Fused operators may
+share one implementation module when they deliberately share a cuda-oxide
+artifact and safety proof. A new crate requires a real dependency or ownership
+boundary, not merely another attention algorithm.
 
 ## Operator lifecycle
 

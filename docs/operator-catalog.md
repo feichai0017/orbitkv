@@ -1,7 +1,8 @@
 # Operator catalog
 
-This catalog defines the target Loom Infer surface. It does not claim
-FlashInfer or FlashAttention parity. The [FlashInfer parity matrix](flashinfer-parity.md)
+This catalog defines the target surface for Loom Infer's high-performance Rust
+and cuda-oxide operator layer. It does not claim complete FlashInfer or
+FlashAttention parity. The [FlashInfer parity matrix](flashinfer-parity.md)
 tracks the pinned upstream comparison.
 
 ## States

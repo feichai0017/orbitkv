@@ -4,6 +4,9 @@
 
 ### Added
 
+- Defined the product target as a high-performance, FlashInfer-class operator
+  layer for Rust inference engines, with cuda-oxide compiling Loom-owned Rust
+  kernels for the CUDA platform.
 - Added a contiguous BF16 GEMM contract and CPU reference with F32 accumulation.
 - Added one fixed cuBLASLt plan with checked layouts, spans, alignment,
   workspace, context, and caller-owned stream.
@@ -13,9 +16,19 @@
   provider for MHA, MQA, and GQA.
 - Added H20 attention correctness, exact-span rejection, duplicate-binding checks,
   Compute Sanitizer, and SM90 artifact evidence.
+- Added BF16 paged batch decode, ragged causal prefill, standard RoPE, and fused
+  RoPE plus paged-KV append contracts, CUDA providers, validation, and evidence.
+- Added fixed-address CUDA Graph execution for admitted command chains.
+- Added a GPU-less CUDA host CI gate for the `cuda` feature and cuBLASLt
+  surface.
 
 ### Changed
 
+- Simplified the project README and documentation site around the Rust,
+  cuda-oxide, CUDA, and FlashInfer-class product boundary.
+- Updated the website dependency lock to use the patched `js-yaml` release.
+- Renamed the shared decode provider to `DecodeProvider` so decode and prefill
+  provider domains use symmetric names.
 - Generalized command scopes to retain Rust kernel functions and external
   provider plans under one completion fence.
 - Renamed launch-specific command capacity APIs to provider-neutral command

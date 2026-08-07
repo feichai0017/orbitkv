@@ -8,9 +8,9 @@ mod decode;
 mod prefill;
 
 pub use decode::{
-    AttentionProvider, Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs,
-    Bf16PagedBatchDecodePlan, Bf16SingleDecodeArgs, Bf16SingleDecodePlan,
-    Bf16SingleDecodeSplitKArgs, Bf16SingleDecodeSplitKPlan, PagedBatchDecodeEnqueueError,
+    Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan,
+    Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,
+    Bf16SingleDecodeSplitKPlan, DecodeProvider, PagedBatchDecodeEnqueueError,
     PagedBatchDecodePlanError, SingleDecodeEnqueueError, SingleDecodePlanError,
 };
 pub use prefill::{
