@@ -20,8 +20,8 @@ with cuda-oxide; there is no CUDA C or CUDA C++ product source.
 
 The root [README](../README.md) gives the short project overview. Current
 correctness evidence covers Rust RMSNorm, single-decode attention, paged
-batch-decode, and ragged prefill kernels, plus one fixed BF16 cuBLASLt GEMM
-plan on H20.
+batch-decode, ragged prefill, and paged prefill kernels, plus one fixed BF16
+cuBLASLt GEMM plan on H20.
 
 ## Documentation rules
 

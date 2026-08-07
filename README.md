@@ -44,7 +44,7 @@ platform; cuda-oxide is the Rust compiler and artifact toolchain.
 | Matrix | Fixed-algorithm BF16 cuBLASLt GEMM |
 | Decode | BF16 single-request direct and split-K attention |
 | Paged decode | BF16 NHD D128, page size 16 |
-| Prefill | BF16 ragged bottom-right causal attention |
+| Prefill | BF16 ragged and paged bottom-right causal attention |
 | Position | BF16 D128 NeoX RoPE |
 | KV mutation | Fused RoPE + explicit 1–64-token paged append |
 | Graphs | Fixed-address capture and replay for admitted paths |

@@ -84,6 +84,8 @@ correctness and sanitizer gates.
   CUPTI gates, then add fixed-address Graph gates.
 - retain the BF16 NHD D128 ragged prefill contract, CPU oracle, checked
   cuda-oxide provider, and H20 correctness/sanitizer gate.
+- retain the BF16 NHD D128 page-size-16 paged causal prefill contract, CPU
+  oracle, direct cuda-oxide provider, and H20 correctness/sanitizer gate.
 - retain tiled GQA4 QK/online-softmax/PV, eight-way split-K, stable F32 merge,
   and sixteen-warp MQA with their matched eager gates.
 - expand query tiling beyond the admitted GQA4 shape and close the remaining
@@ -138,6 +140,13 @@ now passes for the tiled partial-plus-merge path after two replays and external
 owner teardown. The matched single-replay Graph result records Loom at `50.480`
 microseconds and FlashInfer at `32.640` microseconds, with FlashInfer `1.547x`
 lower-latency on the admitted long-GQA shape. Engine invocation remains open.
+
+The first paged-prefill slice combines ragged query `indptr` with page
+`indptr`, physical page indices, and last-page lengths. Its direct one-warp
+provider passes MHA/MQA/GQA H20 correctness, page reordering and reuse,
+preflight and device metadata guards, and all four Compute Sanitizer tools.
+Maximum BF16 output error is `1.220703125e-4`. Matched FlashInfer performance,
+token-parallel/tiled optimization, and fixed-address Graph replay remain open.
 
 The first standalone RoPE slice accepts explicit I32 position IDs for BF16
 NHD D128 Q/K tensors, rotates all 128 dimensions in NeoX split-half style, and

@@ -80,6 +80,7 @@ private files follow complete operator domains:
 loom-infer::attention
   -> single_decode     contiguous decode and split-K reference state
   -> paged_decode      page-table contract and paged CPU reference
+  -> paged_prefill     ragged-query paged-KV causal reference
   -> ragged_prefill    indptr contract and ragged causal CPU reference
   -> paged_append      fused RoPE and paged-KV mutation contracts
 
@@ -105,8 +106,8 @@ boundary, not merely another attention algorithm.
 
 ## Operator lifecycle
 
-The current RMSNorm, BF16 GEMM, decode, and ragged prefill attention device
-slices implement this lifecycle:
+The current RMSNorm, BF16 GEMM, decode, ragged prefill, and paged prefill
+attention device slices implement this lifecycle:
 
 ```text
 validated specification
@@ -241,6 +242,16 @@ tiles in shared memory and fuses BF16 tensor-core QK, online softmax, and PV.
 A second kernel merges caller-owned F32
 `[max_log2, normalizer, weighted_value[128]]` states. Other declared long
 plans use eight warps. All kernels scan query `indptr` to identify the request.
+
+The backend-independent paged prefill contract combines the same ragged query
+`indptr` semantics with FlashInfer-compatible page `indptr`, physical page
+indices, and last-page lengths. The first H20 provider assigns one warp to each
+query-row/head state, validates the complete request page range before any
+output write, and applies the same bottom-right causal alignment while mapping
+logical KV tokens into physical NHD pages. It passes MHA, MQA, and GQA
+correctness, mixed query/KV lengths, page reordering and reuse, metadata
+preflight, and all four Compute Sanitizer tools. Token-parallel, tiled, Graph,
+and matched-performance gates remain open.
 
 Fused tiling, split-K, and unrolled 16-byte `cp.async` K/V staging lower
 matched long-GQA latency to `48.232` microseconds. The asynchronous staging

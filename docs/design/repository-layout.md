@@ -54,6 +54,7 @@ workspace member but not a default member.
 | `src/attention/mod.rs` | Stable attention facade and public re-exports |
 | `src/attention/single_decode/mod.rs` | Contiguous decode, split-K state, and CPU references |
 | `src/attention/paged_decode/mod.rs` | Paged decode, page-table validation, and CPU reference |
+| `src/attention/paged_prefill/mod.rs` | Ragged-query paged-KV causal prefill contract and CPU reference |
 | `src/attention/ragged_prefill/mod.rs` | Ragged prefill, indptr validation, and CPU reference |
 | `src/attention/paged_append/mod.rs` | Fused RoPE plus paged-KV append contracts and references |
 | `src/**/tests.rs` | Tests owned by the corresponding operator domain |
@@ -152,6 +153,7 @@ FlashInfer defines the feature domains, not Loom's language-level layout:
 | --- | --- |
 | Single decode and state merge | `loom-infer/attention/single_decode/mod.rs` |
 | Paged decode and page-table semantics | `loom-infer/attention/paged_decode/mod.rs` |
+| Paged prefill and page-table semantics | `loom-infer/attention/paged_prefill/mod.rs` |
 | Ragged prefill and indptr semantics | `loom-infer/attention/ragged_prefill/mod.rs` |
 | CUDA decode providers and dispatch | `loom-infer-cuda/attention/decode.rs` |
 | CUDA ragged prefill provider | `loom-infer-cuda/attention/prefill.rs` |

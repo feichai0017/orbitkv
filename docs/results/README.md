@@ -5,6 +5,17 @@ providers.
 
 ## Results
 
+The [BF16 paged causal prefill H20 correctness record](h20-bf16-paged-prefill-correctness-20260807.json)
+qualifies the first ragged-query, page-size-16 NHD provider. Direct MHA, MQA,
+and GQA cases pass the CPU oracle across equal and mixed query/KV lengths,
+partial pages, physical-page reordering and reuse, short metadata,
+duplicate-binding preflight, and an invalid-page sentinel guard. Maximum BF16
+output error is `1.220703125e-4`, maximum log2-LSE error is
+`9.536743164e-7`, and all four Compute Sanitizer tools report no errors or
+leaks. The kernel uses 42 registers with no stack, spills, barriers, or static
+shared memory. This record contains no matched FlashInfer performance or Graph
+claim.
+
 The [BF16 explicit multi-token fused append matched Graph record](h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-graph-performance-20260806.json)
 measures one fixed-address replay plus one completion event per sample. Loom's
 one-node graph records `8.288` microseconds and FlashInfer's two-node graph

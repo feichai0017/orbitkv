@@ -175,6 +175,32 @@ require output NaN sentinels to remain unchanged. This guard is a memory-safety
 behavior, not asynchronous metadata error reporting. Run memcheck, racecheck,
 synccheck, and initcheck over the complete runner.
 
+## BF16 paged prefill correctness
+
+Validate the first fixed paged causal prefill contract:
+
+```text
+Q, O:          [nnz_qo, query_heads, 128] BF16
+K/V pages:     [max_num_pages, 16, kv_heads, 128] BF16 NHD
+qo_indptr:     [batch_size + 1] I32
+page_indptr:   [batch_size + 1] I32
+page_indices:  [page_indptr[batch_size]] I32
+last_page_len: [batch_size] I32
+LSE:           [nnz_qo, query_heads] F32 log2-domain
+causal mask:   logical_kv_index <= kv_len - qo_len + query_index
+```
+
+Cover MHA, MQA, and GQA with equal and mixed query/KV lengths, partial pages,
+non-sequential physical pages, and safe physical-page reuse. Compare against
+the paged-prefill CPU reference with the same `0.015625` BF16 output and
+`0.01` log2-LSE absolute limits.
+
+Reject short fixed metadata and duplicate bindings before submission. Exercise
+an out-of-range physical page under Compute Sanitizer and require the invalid
+request to preserve NaN output sentinels while a valid request in the same
+batch completes. Run memcheck, racecheck, synccheck, and initcheck over the
+complete runner.
+
 ## Fixed-address CUDA Graph
 
 The BF16 GEMM runner also captures this exact chain:

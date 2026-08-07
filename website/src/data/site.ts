@@ -19,7 +19,7 @@ export const operatorFamilies = [
   },
   {
     name: "Prefill",
-    boundary: "Ragged bottom-right causal MHA, MQA, and GQA.",
+    boundary: "Ragged and paged bottom-right causal MHA, MQA, and GQA.",
     state: "Qualified",
   },
   {

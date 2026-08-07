@@ -38,11 +38,11 @@ domains become sibling private modules without changing
 ## Current providers
 
 The Rust providers implement contiguous RMSNorm, BF16 single-request decode,
-BF16 paged batch decode, BF16 ragged causal prefill attention, standard RoPE,
-and fused RoPE plus paged KV append for one-token/request and explicit
-1-through-64-token contracts. The vendor provider freezes one contiguous BF16
-cuBLASLt GEMM algorithm during planning. All use typed bindings and one
-completion event.
+BF16 paged batch decode, BF16 ragged and paged causal prefill attention,
+standard RoPE, and fused RoPE plus paged KV append for one-token/request and
+explicit 1-through-64-token contracts. The vendor provider freezes one
+contiguous BF16 cuBLASLt GEMM algorithm during planning. All use typed bindings
+and one completion event.
 
 The current owned-binding revision passed its H20 correctness gates. The fixed
 RMSNorm-to-GEMM Graph also passed replay and Compute Sanitizer gates. The
@@ -78,6 +78,12 @@ The same command captures into one fixed-address Graph node and replays after
 external provider, plan, and read-buffer owners are dropped. Its matched
 single-replay median is `8.288` microseconds versus `13.728` microseconds for
 FlashInfer's two-node graph.
+
+Paged prefill combines ragged query `indptr` with page-size-16 NHD KV metadata.
+The first direct one-warp-per-query-row/head provider passes MHA, MQA, and GQA
+H20 correctness, mixed-length, physical-page reuse, metadata preflight, and all
+four Compute Sanitizer gates. Performance, Graph, and optimized long-context
+paths remain open.
 
 Ragged prefill keeps short requests on one direct warp per query-row/head,
 uses sixteen-warp token partitioning for long single-KV-head MQA, and keeps

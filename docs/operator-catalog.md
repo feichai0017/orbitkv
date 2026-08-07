@@ -23,6 +23,7 @@ tracks the pinned upstream comparison.
 | BF16 dense GEMM | cuBLASLt | device correct | Fixed `D=A×Wᵀ` plan and Graph chain pass H20 correctness and sanitizer gates |
 | BF16 single decode | Rust / cuda-oxide | device correct | NHD D128 direct and split-K MHA/MQA/GQA paths pass H20 correctness and sanitizer gates |
 | BF16 paged batch decode | Rust / cuda-oxide | device correct | NHD D128 page-size-16 MHA/MQA/GQA passes H20 correctness and sanitizer gates |
+| BF16 paged causal prefill | Rust / cuda-oxide | device correct | Ragged-query NHD D128 page-size-16 direct MHA/MQA/GQA passes H20 correctness and sanitizer gates |
 | BF16 ragged causal prefill | Rust / cuda-oxide | device correct | NHD D128 direct, eight/sixteen-warp, and tiled eight-partition bottom-right causal MHA/MQA/GQA passes H20 correctness, sanitizer, and fixed-address Graph gates |
 | BF16 standard RoPE | Rust / cuda-oxide | device correct | NHD D128 NeoX split-half with explicit I32 positions passes H20 correctness, sanitizer, and matched eager gates |
 | BF16 fused RoPE paged KV append | Rust / cuda-oxide | device correct | Explicit 1..=64 token, NHD D128, page-size-16 NeoX paths pass H20 correctness, sanitizer, matched eager, and fixed-address Graph gates |
@@ -39,7 +40,7 @@ for raw samples, execution metadata, order variance, and excluded claims.
 | Family | Operators | Provider | State |
 | --- | --- | --- | --- |
 | Normalization | RMSNorm, Add+RMSNorm, quantized output | Rust / cuda-oxide | planned |
-| Attention | Single decode, ragged prefill, paged decode, split-K, state merge | Rust / cuda-oxide | in progress |
+| Attention | Single decode, ragged/paged prefill, paged decode, split-K, state merge | Rust / cuda-oxide | in progress |
 | KV cache | RoPE append, gather, scatter, compaction, quantized storage | Rust / cuda-oxide | in progress |
 | Decode tail | Logits processing, penalties, top-k, top-p, Min-P, logprobs, sampling | Rust / cuda-oxide | planned |
 | Speculation | Greedy, stochastic, and tree verification | Rust / cuda-oxide | planned |
@@ -73,6 +74,14 @@ is now 4.41x lower-latency for batch-1 MHA and 2.35x lower-latency for
 mixed-length batch-3 MQA than FlashInfer. The batch-4 GQA ranking remains
 excluded because FlashInfer's order delta is 60.62%. Graph, engine, and serving
 gates remain open.
+
+The first paged-prefill contract combines ragged query `indptr` with
+FlashInfer-compatible page `indptr`, physical indices, and last-page lengths.
+Its direct one-warp-per-query-row/head provider passes MHA, MQA, and GQA H20
+correctness, mixed query/KV lengths, physical-page reordering and reuse,
+short-metadata and duplicate-binding preflight, an invalid-page device guard,
+and all four Compute Sanitizer tools. Matched FlashInfer performance,
+token-parallel optimization, and Graph gates remain open.
 
 The first fused KV mutation contract rotates one Q/K token per request at
 `request_kv_len - 1`, writes Q to caller-owned output, and appends rotated K

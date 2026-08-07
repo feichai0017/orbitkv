@@ -18,6 +18,26 @@ import { repositoryUrl } from "../data/site";
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
+      <h2>Latest qualification</h2>
+      <div class="doc-note">
+        <strong>BF16 paged causal prefill passed its H20 gate.</strong>
+        <p>
+          Ragged query rows now attend over page-size-16 NHD KV storage with
+          bottom-right causal alignment. Direct MHA, MQA, and GQA cases cover
+          mixed lengths, physical-page reordering and reuse, metadata
+          preflight, and an invalid-page sentinel guard.
+        </p>
+        <p>
+          Maximum BF16 output error is <code>1.220703125e-4</code>, maximum
+          log2-LSE error is <code>9.536743164e-7</code>, and all four Compute
+          Sanitizer tools report no errors or leaks. Performance and Graph
+          claims remain open.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-correctness-20260807.json`}>
+          Paged prefill correctness and sanitizer result
+        </a>
+      </div>
+
       <h2>Matched eager performance</h2>
       <p>
         Current records compare attention and fused KV paths with the latest

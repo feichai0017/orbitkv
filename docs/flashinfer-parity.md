@@ -32,7 +32,7 @@ No complete domain-level parity is currently claimed.
 | Domain | Representative v0.6.16.post1 surface | Loom state |
 | --- | --- | --- |
 | Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 NHD D128 has single-request direct/split-K and page-size-16 batch-decode GPU paths |
-| Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 NHD D128 ragged batch causal prefill only |
+| Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 NHD D128 has ragged and page-size-16 paged batch causal prefill GPU paths |
 | Mixed-batch attention | [`BatchAttention`, attention-sink wrapper](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
 | MLA attention | [`BatchMLAPagedAttentionWrapper`, XQA and TRT-LLM MLA decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
 | Attention state and cascade | [`merge_state`, `merge_states`, `MultiLevelCascadeAttentionWrapper`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cascade.rst) | `planned` at state-merge level |
@@ -161,6 +161,20 @@ provider-order deltas are `0.127%` and `0.344%`. This single-replay Graph metric
 is separate from eager provider and isolated-kernel measurements. Engine
 invocation and serving results remain open before a continuous-batching parity
 claim.
+
+The fourth attention contract adds BF16 paged causal prefill with ragged query
+rows and NHD page-size-16 KV storage. It uses query `indptr`, page `indptr`,
+physical page indices, and last-page lengths compatible with the pinned
+FlashInfer paged wrapper. The causal mask remains bottom-right aligned.
+
+The [paged prefill H20 result](results/h20-bf16-paged-prefill-correctness-20260807.json)
+covers direct MHA, MQA, and GQA execution, equal and mixed query/KV lengths,
+partial pages, physical-page reordering and reuse, short metadata,
+duplicate-binding preflight, and an invalid-page device guard. Maximum BF16
+output error is `1.220703125e-4`, maximum log2-LSE error is
+`9.536743164e-7`, and four Compute Sanitizer tools report no errors. Matched
+FlashInfer performance, Graph replay, and optimized long-context paths remain
+open.
 
 The first standalone RoPE contract adds BF16 NHD D128 Q/K tensors with
 explicit I32 position IDs, full-dimension NeoX split-half rotation, scale one,
