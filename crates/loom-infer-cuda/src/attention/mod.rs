@@ -14,6 +14,7 @@ pub use decode::{
     PagedBatchDecodePlanError, SingleDecodeEnqueueError, SingleDecodePlanError,
 };
 pub use prefill::{
-    Bf16RaggedPrefillAlgorithm, Bf16RaggedPrefillArgs, Bf16RaggedPrefillPlan, PrefillProvider,
+    Bf16PagedPrefillArgs, Bf16PagedPrefillPlan, Bf16RaggedPrefillAlgorithm, Bf16RaggedPrefillArgs,
+    Bf16RaggedPrefillPlan, PagedPrefillEnqueueError, PagedPrefillPlanError, PrefillProvider,
     RaggedPrefillEnqueueError, RaggedPrefillPlanError,
 };

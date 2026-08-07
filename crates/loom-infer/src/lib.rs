@@ -11,15 +11,16 @@ pub mod rms_norm;
 pub mod rope;
 
 pub use attention::{
-    Bf16PagedBatchDecodePageTable, Bf16PagedBatchDecodeSpec, Bf16RaggedPrefillMetadata,
-    Bf16RaggedPrefillSpec, Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensMetadata,
+    Bf16PagedBatchDecodePageTable, Bf16PagedBatchDecodeSpec, Bf16PagedPrefillMetadata,
+    Bf16PagedPrefillSpec, Bf16RaggedPrefillMetadata, Bf16RaggedPrefillSpec,
+    Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensMetadata,
     Bf16RopePagedKvAppendTokensSpec, Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec,
-    PAGED_BATCH_DECODE_PAGE_SIZE, ROPE_PAGED_KV_APPEND_MAX_TOKENS, SINGLE_DECODE_HEAD_DIM,
-    SINGLE_DECODE_PARTIAL_STATE_WIDTH, paged_batch_decode_bf16_reference,
-    ragged_prefill_bf16_reference, rope_paged_kv_append_bf16_reference,
-    rope_paged_kv_append_tokens_bf16_reference, single_decode_bf16_reference,
-    single_decode_bf16_split_k_merge_reference, single_decode_bf16_split_k_partials_reference,
-    single_decode_bf16_split_k_reference,
+    PAGED_BATCH_DECODE_PAGE_SIZE, PAGED_PREFILL_PAGE_SIZE, ROPE_PAGED_KV_APPEND_MAX_TOKENS,
+    SINGLE_DECODE_HEAD_DIM, SINGLE_DECODE_PARTIAL_STATE_WIDTH, paged_batch_decode_bf16_reference,
+    paged_prefill_bf16_reference, ragged_prefill_bf16_reference,
+    rope_paged_kv_append_bf16_reference, rope_paged_kv_append_tokens_bf16_reference,
+    single_decode_bf16_reference, single_decode_bf16_split_k_merge_reference,
+    single_decode_bf16_split_k_partials_reference, single_decode_bf16_split_k_reference,
 };
 pub use dtype::DType;
 pub use error::ContractError;
