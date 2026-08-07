@@ -8,6 +8,7 @@ use loom_infer_cuda::attention::{
     Bf16PagedPrefillArgs, Bf16PagedPrefillPlan, PagedPrefillEnqueueError, PrefillProvider,
 };
 use loom_infer_cuda::command::{CommandError, CommandQueue};
+use loom_infer_cuda::graph::GraphQueue;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -368,6 +369,152 @@ fn run_duplicate_binding_case(
     Ok(())
 }
 
+fn run_graph_case(
+    queue: &mut CommandQueue,
+    provider: PrefillProvider,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16PagedPrefillSpec::new(2, 6, 6, 16, 4, 128, 16)?;
+    let qo_indptr_host = [0_i32, 4, 6];
+    let page_indptr_host = [0_i32, 2, 4];
+    let page_indices_host = [5_i32, 1, 5, 3];
+    let last_page_len_host = [7_i32, 2];
+    spec.validate_metadata(
+        &qo_indptr_host,
+        &page_indptr_host,
+        &page_indices_host,
+        &last_page_len_host,
+    )?;
+    let plan = provider.plan_bf16_paged(spec)?;
+    let stream = queue.stream().clone();
+    let query_host = deterministic_bf16(spec.query_numel(), 0x4001);
+    let key_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x4b45_5900);
+    let value_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x5641_4c55_4500);
+    let mut expected_output = vec![bf16::NAN; spec.output_numel()];
+    let mut expected_lse = vec![f32::NAN; spec.lse_numel()];
+    paged_prefill_bf16_reference(
+        &query_host,
+        &key_host,
+        &value_host,
+        &qo_indptr_host,
+        &page_indptr_host,
+        &page_indices_host,
+        &last_page_len_host,
+        &mut expected_output,
+        &mut expected_lse,
+        spec,
+    )?;
+
+    let query = Arc::new(DeviceBuffer::from_host(&stream, &query_host)?);
+    let key_pages = Arc::new(DeviceBuffer::from_host(&stream, &key_host)?);
+    let value_pages = Arc::new(DeviceBuffer::from_host(&stream, &value_host)?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &qo_indptr_host)?);
+    let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &page_indptr_host)?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &page_indices_host)?);
+    let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &last_page_len_host)?);
+    let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
+    let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
+
+    let graph_queue = GraphQueue::new(stream.context(), 1)?;
+    let mut bindings = graph_queue.bindings(9)?;
+    let query_handle = bindings.bind_read(Arc::clone(&query))?;
+    let key_handle = bindings.bind_read(Arc::clone(&key_pages))?;
+    let value_handle = bindings.bind_read(Arc::clone(&value_pages))?;
+    let qo_handle = bindings.bind_read(Arc::clone(&qo_indptr))?;
+    let page_indptr_handle = bindings.bind_read(Arc::clone(&page_indptr))?;
+    let page_indices_handle = bindings.bind_read(Arc::clone(&page_indices))?;
+    let last_page_len_handle = bindings.bind_read(Arc::clone(&last_page_len))?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+
+    let captured = graph_queue.capture(bindings, |scope| {
+        plan.enqueue_into(
+            scope,
+            Bf16PagedPrefillArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                qo_handle,
+                page_indptr_handle,
+                page_indices_handle,
+                last_page_len_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            ),
+        )
+    })?;
+    if captured.commands() != 1 {
+        return Err("paged-prefill graph captured the wrong command count".into());
+    }
+
+    drop(plan);
+    drop(provider);
+    drop(query);
+    drop(key_pages);
+    drop(value_pages);
+    drop(qo_indptr);
+    drop(page_indptr);
+    drop(page_indices);
+    drop(last_page_len);
+
+    let mut exec = captured.instantiate()?;
+    for expected_launch in 1..=2 {
+        let mut completion = exec.launch()?;
+        if completion.launch_index() != expected_launch {
+            return Err("paged-prefill graph reported the wrong replay index".into());
+        }
+        let _ = completion.is_complete()?;
+        if expected_launch == 1 {
+            completion.wait()?;
+        } else {
+            drop(completion);
+        }
+    }
+    if exec.launches() != 2 || exec.commands() != 1 {
+        return Err("paged-prefill graph accounting changed across replay".into());
+    }
+
+    let mut bindings = exec.into_bindings()?;
+    let output = bindings.take_read_write(output_handle)?;
+    let lse = bindings.take_read_write(lse_handle)?;
+    drop(bindings);
+    let actual_output = output.to_host_vec(&stream)?;
+    let actual_lse = lse.to_host_vec(&stream)?;
+    let output_comparison =
+        compare_bf16(&actual_output, &expected_output, "graph paged prefill BF16")?;
+    let lse_comparison = compare_f32(&actual_lse, &expected_lse, "graph paged prefill F32 LSE")?;
+    if output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT {
+        return Err(format!(
+            "paged-prefill graph output max abs {:.9e} exceeds {:.9e}",
+            output_comparison.max_abs, OUTPUT_MAX_ABS_LIMIT
+        )
+        .into());
+    }
+    if lse_comparison.max_abs > LSE_MAX_ABS_LIMIT {
+        return Err(format!(
+            "paged-prefill graph LSE max abs {:.9e} exceeds {:.9e}",
+            lse_comparison.max_abs, LSE_MAX_ABS_LIMIT
+        )
+        .into());
+    }
+
+    println!(
+        "{} batch_size=2 nnz_qo=6 query_heads=16 kv_heads=4 page_size=16 \
+         algorithm=direct_one_warp_per_query_row_head commands=1 replays=2 \
+         fixed_bindings=true cross_stream=false external_owners_dropped_before_replay=true \
+         completion_queries=2 completion_waits=1 completion_drops=1 \
+         output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
+         lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
+        GateCase::new("paged_prefill_h20", "gqa4_graph"),
+        output_comparison.max_abs,
+        output_comparison.bit_mismatches,
+        output_comparison.digest,
+        lse_comparison.max_abs,
+        lse_comparison.bit_mismatches,
+        lse_comparison.digest,
+    );
+    Ok(())
+}
+
 pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let provider = PrefillProvider::load(&context)?;
@@ -419,6 +566,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     run_short_metadata_case(&mut queue, &preflight_plan)?;
     run_invalid_page_guard(&mut queue, &provider)?;
     run_duplicate_binding_case(&mut queue, &provider)?;
+    run_graph_case(&mut queue, provider)?;
     println!(
         "gate=paged_prefill_h20 suite=all status=pass output_max_abs_limit={:.9e} \
          lse_max_abs_limit={:.9e}",
