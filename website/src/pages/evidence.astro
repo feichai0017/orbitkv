@@ -30,8 +30,7 @@ import { repositoryUrl } from "../data/site";
         <p>
           Maximum BF16 output error is <code>1.220703125e-4</code>, maximum
           log2-LSE error is <code>9.536743164e-7</code>, and all four Compute
-          Sanitizer tools report no errors or leaks. Performance and Graph
-          claims remain open.
+          Sanitizer tools report no errors or leaks.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-correctness-20260807.json`}>
           Paged prefill correctness and sanitizer result
@@ -53,6 +52,15 @@ import { repositoryUrl } from "../data/site";
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-cuda-graph-correctness-20260807.json`}>
           Paged prefill fixed-address Graph correctness result
+        </a>
+        <p>
+          On the same GQA4 page-reorder/reuse case, matched single-replay
+          medians are 15.072 microseconds for Loom and 18.560 microseconds for
+          FlashInfer. Loom is 1.231x lower-latency; provider-order deltas are
+          0.213% and 0.000%, and all 400 samples are retained.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json`}>
+          Paged prefill matched fixed-address Graph result
         </a>
       </div>
 

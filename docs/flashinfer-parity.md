@@ -183,8 +183,15 @@ lower-latency on short MHA and `1.288x` lower-latency on GQA4. FlashInfer is
 The [paged-prefill fixed-address Graph result](results/h20-bf16-paged-prefill-cuda-graph-correctness-20260807.json)
 captures one direct command and replays it twice after external resource-owner
 teardown. Output and log2-LSE preserve the standalone digests, and all four
-Compute Sanitizer tools report no errors or leaks. Graph performance, mutable
-metadata, and optimized long-context paths remain open.
+Compute Sanitizer tools report no errors or leaks.
+
+The [matched paged-prefill Graph performance result](results/h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json)
+records one fixed-address replay and one completion event per sample on the
+same GQA4 page-reorder/reuse case. Loom and FlashInfer combined medians are
+`15.072` and `18.560` microseconds, so Loom is `1.231x` lower-latency.
+Provider-order deltas are `0.213%` and `0.000%`, and all 400 samples are
+retained. This does not cover capture or instantiation latency, mutable
+metadata, graph updates, optimized long-context paths, or engine execution.
 
 The first standalone RoPE contract adds BF16 NHD D128 Q/K tensors with
 explicit I32 position IDs, full-dimension NeoX split-half rotation, scale one,

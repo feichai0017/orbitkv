@@ -86,8 +86,12 @@ The matched eager result records Loom at `4.816` and `12.171` microseconds for
 short MHA and GQA4 versus FlashInfer at `15.718` and `15.677` microseconds.
 FlashInfer records `15.630` microseconds on mixed MQA versus Loom at `16.902`
 microseconds. All provider-order deltas are below `2.1%`. Token-parallel
-optimization and Graph performance remain open. The direct GQA4 command passes
-fixed-address Graph correctness after two replays and external owner teardown.
+optimization remains open. The direct GQA4 command passes fixed-address Graph
+correctness after two replays and external owner teardown. Its matched
+single-replay Graph medians are `15.072` microseconds for Loom and `18.560`
+microseconds for FlashInfer, making Loom `1.231x` lower-latency on this
+shape. Mutable metadata, graph updates, and optimized long-context paths
+remain open.
 
 The first fused KV mutation contract rotates one Q/K token per request at
 `request_kv_len - 1`, writes Q to caller-owned output, and appends rotated K

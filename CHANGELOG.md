@@ -24,6 +24,8 @@
   with identical Q/K/V and page-table fixtures.
 - Added fixed-address CUDA Graph correctness and sanitizer coverage for the
   direct paged-prefill GQA4 command.
+- Added a matched dual-order paged-prefill fixed-address Graph benchmark and
+  immutable H20 performance evidence against FlashInfer.
 - Added fixed-address CUDA Graph execution for admitted command chains.
 - Added a GPU-less CUDA host CI gate for the `cuda` feature and cuBLASLt
   surface.

@@ -86,7 +86,9 @@ four Compute Sanitizer gates. Its matched eager result is `3.264x` and
 `1.288x` lower-latency than FlashInfer on short MHA and GQA4; FlashInfer is
 `1.081x` lower-latency on mixed MQA. The direct GQA4 command passes
 fixed-address Graph correctness after two replays and external owner teardown.
-Graph performance and optimized long-context paths remain open.
+Its matched single-replay Graph median is `15.072` microseconds versus
+FlashInfer's `18.560` microseconds, making Loom `1.231x` lower-latency on this
+shape. Mutable Graph metadata and optimized long-context paths remain open.
 
 Ragged prefill keeps short requests on one direct warp per query-row/head,
 uses sixteen-warp token partitioning for long single-KV-head MQA, and keeps

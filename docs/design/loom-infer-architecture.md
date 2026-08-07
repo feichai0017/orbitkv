@@ -250,14 +250,17 @@ query-row/head state, validates the complete request page range before any
 output write, and applies the same bottom-right causal alignment while mapping
 logical KV tokens into physical NHD pages. It passes MHA, MQA, and GQA
 correctness, mixed query/KV lengths, page reordering and reuse, metadata
-preflight, and all four Compute Sanitizer tools. Token-parallel, tiled, Graph,
-and Graph gates remain open. The matched eager result records Loom
+preflight, and all four Compute Sanitizer tools. Token-parallel and tiled
+optimization remain open. The matched eager result records Loom
 `3.264x` lower-latency on short MHA and `1.288x` lower-latency on GQA4,
 while FlashInfer is `1.081x` lower-latency on mixed MQA. All provider-order
 deltas are below `2.1%`. The same direct GQA4 command captures into one
 fixed-address Graph node and replays twice after external resource owners are
-dropped, preserving standalone output and log2-LSE digests. Graph performance
-and mutable metadata remain open.
+dropped, preserving standalone output and log2-LSE digests. Under a separate
+single-replay completion-event metric, Loom records `15.072` microseconds and
+FlashInfer records `18.560` microseconds, making Loom `1.231x` lower-latency
+on this shape. Capture and instantiation latency, mutable metadata, graph
+updates, and optimized long-context paths remain open.
 
 Fused tiling, split-K, and unrolled 16-byte `cp.async` K/V staging lower
 matched long-GQA latency to `48.232` microseconds. The asynchronous staging

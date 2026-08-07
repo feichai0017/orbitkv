@@ -381,6 +381,13 @@ provider-order deltas are `0.127%` and `0.344%`. Capture, instantiation,
 planning, allocation, fixture copies, and correctness reads are excluded. Do
 not compare this single-replay metric directly with the eager provider record.
 
+The [matched paged-prefill Graph performance record](../results/h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json)
+uses the same one-replay completion-event boundary on the admitted GQA4
+page-reorder/reuse case. Loom and FlashInfer combined medians are `15.072` and
+`18.560` microseconds, with provider-order deltas of `0.213%` and `0.000%`.
+All 400 raw samples are retained. Capture, instantiation, mutable metadata,
+graph updates, and engine execution remain outside this claim.
+
 The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
 retains both provider orders and all 600 raw samples. Loom is 4.21x
 lower-latency for batch-1 MHA at KV length 1. FlashInfer is 1.62x
@@ -398,8 +405,8 @@ and `4.928` microseconds. These diagnostics guide optimization but are not a
 provider-ordered isolated-kernel gate.
 
 Fixed Rust-kernel argument packs, matched RMSNorm, hardware-counter profiling,
-provider-ordered paged kernel timing, and non-ragged Graph performance gates
-remain open.
+broader provider-ordered paged shapes, and remaining operator-specific Graph
+performance gates remain open.
 
 The [standard RoPE correctness record](../results/h20-bf16-rope-pos-ids-correctness-20260806.json)
 qualifies BF16 NHD D128 NeoX split-half rotation with explicit I32 positions

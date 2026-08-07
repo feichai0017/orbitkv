@@ -5,6 +5,15 @@ providers.
 
 ## Results
 
+The [BF16 paged causal prefill matched fixed-address Graph record](h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json)
+measures one replay and one completion event per CUDA-event sample on the
+admitted page-reordered GQA4 case. Loom records `15.072` microseconds and
+FlashInfer records `18.560` microseconds, making Loom `1.231x` lower-latency.
+Provider-order deltas are `0.213%` and `0.000%`. Capture, instantiation,
+planning, allocation, and correctness reads are excluded; all 400 raw samples
+are embedded. This single-replay Graph metric is not interchangeable with the
+eager result below and makes no mutable-binding, engine, or serving claim.
+
 The [BF16 paged causal prefill fixed-address Graph correctness record](h20-bf16-paged-prefill-cuda-graph-correctness-20260807.json)
 captures one checked direct command on a private stream and replays it twice
 after external provider, plan, and read-buffer owners are dropped. Explicit

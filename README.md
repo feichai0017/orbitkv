@@ -99,6 +99,7 @@ fixed-address Graph replay, and shape-specific comparisons with FlashInfer
 - explicit multi-token append Graph: **1.656× lower replay latency**;
 - paged batch-1 MHA: **4.41× lower eager latency**.
 - paged-prefill short MHA: **3.264× lower eager latency**.
+- paged-prefill GQA4 Graph: **1.231× lower replay latency**.
 
 These are contract- and shape-specific operator results, not engine or serving
 claims. Raw records and exclusions live in the
