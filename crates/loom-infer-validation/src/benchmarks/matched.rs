@@ -4,15 +4,16 @@ use crate::fixture::deterministic_bf16;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer, sys};
 use half::bf16;
 use loom_infer::{
-    Bf16GemmSpec, Bf16PagedBatchDecodeSpec, Bf16RaggedPrefillSpec, Bf16RopePagedKvAppendSpec,
-    Bf16RopePagedKvAppendTokensSpec, Bf16RopePosIdsSpec, Bf16SingleDecodeSpec,
-    Bf16SingleDecodeSplitKSpec, DType, RmsNormSpec, rope_paged_kv_append_bf16_reference,
-    rope_paged_kv_append_tokens_bf16_reference, rope_pos_ids_bf16_reference,
+    Bf16GemmSpec, Bf16PagedBatchDecodeSpec, Bf16PagedPrefillSpec, Bf16RaggedPrefillSpec,
+    Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensSpec, Bf16RopePosIdsSpec,
+    Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, DType, RmsNormSpec,
+    rope_paged_kv_append_bf16_reference, rope_paged_kv_append_tokens_bf16_reference,
+    rope_pos_ids_bf16_reference,
 };
 use loom_infer_cuda::attention::{
-    Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16RaggedPrefillAlgorithm,
-    Bf16RaggedPrefillArgs, Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,
-    DecodeProvider, PrefillProvider,
+    Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16PagedPrefillArgs,
+    Bf16RaggedPrefillAlgorithm, Bf16RaggedPrefillArgs, Bf16SingleDecodeArgs, Bf16SingleDecodePlan,
+    Bf16SingleDecodeSplitKArgs, DecodeProvider, PrefillProvider,
 };
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
@@ -29,6 +30,7 @@ const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MEASUREMENT: &str = "eager_stream_batch_cuda_event";
 const FIXTURE_ID: &str = "xorshift64_mod2001_bf16_v1";
 const PAGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_page_table_v1";
+const PAGED_PREFILL_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_paged_prefill_v1";
 const RAGGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1";
 const ROPE_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_rope_pos_ids_v1";
 const ROPE_APPEND_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_rope_paged_append_v1";
@@ -80,6 +82,20 @@ struct PagedDecodeCase {
     max_num_pages: usize,
     query_heads: usize,
     kv_heads: usize,
+    page_indptr: &'static [i32],
+    page_indices: &'static [i32],
+    last_page_len: &'static [i32],
+    salt: u64,
+}
+
+#[derive(Clone, Copy)]
+struct PagedPrefillCase {
+    name: &'static str,
+    batch_size: usize,
+    max_num_pages: usize,
+    query_heads: usize,
+    kv_heads: usize,
+    qo_indptr: &'static [i32],
     page_indptr: &'static [i32],
     page_indices: &'static [i32],
     last_page_len: &'static [i32],
@@ -501,6 +517,134 @@ fn benchmark_paged_decode_case(
             "query": format!("{:016x}", digest_bf16(&query_host)),
             "key_pages": format!("{:016x}", digest_bf16(&key_host)),
             "value_pages": format!("{:016x}", digest_bf16(&value_host)),
+            "page_indptr": format!("{:016x}", digest_i32(case.page_indptr)),
+            "page_indices": format!("{:016x}", digest_i32(case.page_indices)),
+            "last_page_len": format!("{:016x}", digest_i32(case.last_page_len))
+        }),
+        warmup_launches: config.warmup_launches,
+        launches_per_sample: config.launches_per_sample,
+        samples_us,
+    }
+    .write_json_line()?;
+    Ok(())
+}
+
+fn benchmark_paged_prefill_case(
+    context: &Arc<CudaContext>,
+    stream: &Arc<CudaStream>,
+    provider: &PrefillProvider,
+    case: PagedPrefillCase,
+    config: BenchConfig,
+    identity: &RunIdentity,
+) -> Result<(), Box<dyn Error>> {
+    let nnz_qo = usize::try_from(*case.qo_indptr.last().ok_or("empty qo_indptr")?)?;
+    let spec = Bf16PagedPrefillSpec::new(
+        case.batch_size,
+        nnz_qo,
+        case.max_num_pages,
+        case.query_heads,
+        case.kv_heads,
+        128,
+        16,
+    )?;
+    let metadata = spec.validate_metadata(
+        case.qo_indptr,
+        case.page_indptr,
+        case.page_indices,
+        case.last_page_len,
+    )?;
+    let plan = provider.plan_bf16_paged(spec)?;
+    let query_host = deterministic_bf16(spec.query_numel(), case.salt);
+    let key_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x4b45_5900);
+    let value_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x5641_4c55_4500);
+    let query = Arc::new(DeviceBuffer::from_host(stream, &query_host)?);
+    let key_pages = Arc::new(DeviceBuffer::from_host(stream, &key_host)?);
+    let value_pages = Arc::new(DeviceBuffer::from_host(stream, &value_host)?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(stream, case.qo_indptr)?);
+    let page_indptr = Arc::new(DeviceBuffer::from_host(stream, case.page_indptr)?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(stream, case.page_indices)?);
+    let last_page_len = Arc::new(DeviceBuffer::from_host(stream, case.last_page_len)?);
+    let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
+    let lse = DeviceBuffer::<f32>::zeroed(stream, spec.lse_numel())?;
+    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
+    let mut bindings = queue.bindings(9)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key_pages)?;
+    let value_handle = bindings.bind_read(value_pages)?;
+    let qo_indptr_handle = bindings.bind_read(qo_indptr)?;
+    let page_indptr_handle = bindings.bind_read(page_indptr)?;
+    let page_indices_handle = bindings.bind_read(page_indices)?;
+    let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+
+    let (_bindings, samples_us) =
+        benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
+            plan.enqueue_into(
+                scope,
+                Bf16PagedPrefillArgs::new(
+                    query_handle,
+                    key_handle,
+                    value_handle,
+                    qo_indptr_handle,
+                    page_indptr_handle,
+                    page_indices_handle,
+                    last_page_len_handle,
+                    output_handle.write(),
+                    lse_handle.write(),
+                ),
+            )?;
+            Ok(())
+        })?;
+    let mut request_qo_lens = Vec::with_capacity(spec.batch_size());
+    let mut request_kv_lens = Vec::with_capacity(spec.batch_size());
+    for request in 0..spec.batch_size() {
+        let (qo_start, qo_end) = metadata
+            .request_query_range(request)
+            .expect("validated request has a query range");
+        request_qo_lens.push(qo_end - qo_start);
+        request_kv_lens.push(
+            metadata
+                .request_kv_len(request)
+                .expect("validated request has a KV length"),
+        );
+    }
+
+    BenchmarkRecord {
+        schema_version: 1,
+        provider: "loom-infer",
+        provider_version: PROVIDER_VERSION,
+        provider_commit: &identity.provider_commit,
+        run_label: &identity.run_label,
+        measurement: MEASUREMENT,
+        operator: "paged_prefill",
+        case: case.name,
+        dtype: "bf16",
+        layout: "NHD_D128_page16",
+        execution: json!({
+            "algorithm": "direct_one_warp_per_query_row_head",
+            "causal": "bottom_right",
+            "page_table_location": "device"
+        }),
+        kernels_per_call: 1,
+        shape: json!({
+            "batch_size": spec.batch_size(),
+            "nnz_qo": spec.nnz_qo(),
+            "max_num_pages": spec.max_num_pages(),
+            "referenced_pages": case.page_indices.len(),
+            "request_qo_lens": request_qo_lens,
+            "request_kv_lens": request_kv_lens,
+            "query_heads": spec.num_query_heads(),
+            "kv_heads": spec.num_kv_heads(),
+            "head_dim": spec.head_dim(),
+            "page_size": spec.page_size()
+        }),
+        fixture_id: PAGED_PREFILL_FIXTURE_ID,
+        fixture_digests: json!({
+            "query": format!("{:016x}", digest_bf16(&query_host)),
+            "key_pages": format!("{:016x}", digest_bf16(&key_host)),
+            "value_pages": format!("{:016x}", digest_bf16(&value_host)),
+            "qo_indptr": format!("{:016x}", digest_i32(case.qo_indptr)),
             "page_indptr": format!("{:016x}", digest_i32(case.page_indptr)),
             "page_indices": format!("{:016x}", digest_i32(case.page_indices)),
             "last_page_len": format!("{:016x}", digest_i32(case.last_page_len))
@@ -1094,7 +1238,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let config = BenchConfig::from_env()?;
     let identity = RunIdentity::from_env()?;
     let requested = env::var("LOOM_BENCH_OPERATORS").unwrap_or_else(|_| {
-        "rms_norm,gemm,single_decode,paged_batch_decode,ragged_prefill,rope,rope_paged_kv_append,rope_paged_kv_append_tokens".to_string()
+        "rms_norm,gemm,single_decode,paged_batch_decode,paged_prefill,ragged_prefill,rope,rope_paged_kv_append,rope_paged_kv_append_tokens".to_string()
     });
     let requested = requested.split(',').collect::<Vec<_>>();
     let context = CudaContext::new(0)?;
@@ -1195,6 +1339,55 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 &context,
                 &stream,
                 &decode_provider,
+                case,
+                config,
+                &identity,
+            )?;
+        }
+    }
+    if requested.contains(&"paged_prefill") {
+        for case in [
+            PagedPrefillCase {
+                name: "bf16_paged_prefill_mha_b1_q4_kv4_qh8_kvh8_d128_p16",
+                batch_size: 1,
+                max_num_pages: 2,
+                query_heads: 8,
+                kv_heads: 8,
+                qo_indptr: &[0, 4],
+                page_indptr: &[0, 1],
+                page_indices: &[1],
+                last_page_len: &[4],
+                salt: 0x1001,
+            },
+            PagedPrefillCase {
+                name: "bf16_paged_prefill_mqa_b3_q2_3_1_kv4_22_35_qh8_kvh1_d128_p16",
+                batch_size: 3,
+                max_num_pages: 7,
+                query_heads: 8,
+                kv_heads: 1,
+                qo_indptr: &[0, 2, 5, 6],
+                page_indptr: &[0, 1, 3, 6],
+                page_indices: &[4, 6, 1, 5, 0, 3],
+                last_page_len: &[4, 6, 3],
+                salt: 0x2001,
+            },
+            PagedPrefillCase {
+                name: "bf16_paged_prefill_gqa4_b2_q4_2_kv23_18_qh16_kvh4_d128_p16",
+                batch_size: 2,
+                max_num_pages: 6,
+                query_heads: 16,
+                kv_heads: 4,
+                qo_indptr: &[0, 4, 6],
+                page_indptr: &[0, 2, 4],
+                page_indices: &[5, 1, 5, 3],
+                last_page_len: &[7, 2],
+                salt: 0x4001,
+            },
+        ] {
+            benchmark_paged_prefill_case(
+                &context,
+                &stream,
+                &prefill_provider,
                 case,
                 config,
                 &identity,

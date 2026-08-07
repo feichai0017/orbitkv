@@ -27,6 +27,7 @@ PROVIDER_COMMIT = "5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57"
 MEASUREMENT = "eager_stream_batch_cuda_event"
 FIXTURE_ID = "xorshift64_mod2001_bf16_v1"
 PAGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_page_table_v1"
+PAGED_PREFILL_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_paged_prefill_v1"
 RAGGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1"
 ROPE_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_rope_pos_ids_v1"
 ROPE_APPEND_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_rope_paged_append_v1"
@@ -497,6 +498,140 @@ def benchmark_ragged_prefill(
         },
         samples_us,
         RAGGED_FIXTURE_ID,
+    )
+
+
+def benchmark_paged_prefill(
+    case: str,
+    batch_size: int,
+    max_num_pages: int,
+    query_heads: int,
+    kv_heads: int,
+    qo_indptr_values: tuple[int, ...],
+    page_indptr_values: tuple[int, ...],
+    page_indices_values: tuple[int, ...],
+    last_page_len_values: tuple[int, ...],
+    salt: int,
+) -> None:
+    head_dim = 128
+    page_size = 16
+    nnz_qo = qo_indptr_values[-1]
+    query_host = deterministic_bf16(nnz_qo * query_heads * head_dim, salt)
+    key_host = deterministic_bf16(
+        max_num_pages * page_size * kv_heads * head_dim,
+        salt ^ 0x4B455900,
+    )
+    value_host = deterministic_bf16(
+        max_num_pages * page_size * kv_heads * head_dim,
+        salt ^ 0x56414C554500,
+    )
+    qo_indptr_host = torch.tensor(qo_indptr_values, dtype=torch.int32)
+    page_indptr_host = torch.tensor(page_indptr_values, dtype=torch.int32)
+    page_indices_host = torch.tensor(page_indices_values, dtype=torch.int32)
+    last_page_len_host = torch.tensor(last_page_len_values, dtype=torch.int32)
+    query = query_host.reshape(nnz_qo, query_heads, head_dim).to("cuda")
+    key_pages = key_host.reshape(
+        max_num_pages, page_size, kv_heads, head_dim
+    ).to("cuda")
+    value_pages = value_host.reshape(
+        max_num_pages, page_size, kv_heads, head_dim
+    ).to("cuda")
+    qo_indptr = qo_indptr_host.to("cuda")
+    page_indptr = page_indptr_host.to("cuda")
+    page_indices = page_indices_host.to("cuda")
+    last_page_len = last_page_len_host.to("cuda")
+    output = torch.empty_like(query)
+    lse = torch.empty(
+        (nnz_qo, query_heads), device="cuda", dtype=torch.float32
+    )
+    workspace = torch.zeros(
+        128 * 1024 * 1024, device="cuda", dtype=torch.uint8
+    )
+    wrapper = flashinfer.BatchPrefillWithPagedKVCacheWrapper(
+        workspace,
+        "NHD",
+        use_cuda_graph=False,
+        backend="fa2",
+    )
+    wrapper.plan(
+        qo_indptr,
+        page_indptr,
+        page_indices,
+        last_page_len,
+        query_heads,
+        kv_heads,
+        head_dim,
+        page_size,
+        causal=True,
+        pos_encoding_mode="NONE",
+        window_left=-1,
+        q_data_type=torch.bfloat16,
+        kv_data_type=torch.bfloat16,
+        o_data_type=torch.bfloat16,
+        sm_scale=1.0 / math.sqrt(head_dim),
+        disable_split_kv=False,
+    )
+    torch.cuda.synchronize()
+
+    def run() -> None:
+        wrapper.run(
+            query,
+            (key_pages, value_pages),
+            out=output,
+            lse=lse,
+            return_lse=True,
+            enable_pdl=False,
+        )
+
+    samples_us = benchmark(run)
+    if not torch.isfinite(output.float()).all() or not torch.isfinite(lse).all():
+        raise RuntimeError("FlashInfer paged prefill produced non-finite output")
+    request_qo_lens = [
+        qo_indptr_values[index + 1] - qo_indptr_values[index]
+        for index in range(batch_size)
+    ]
+    request_kv_lens = [
+        (page_indptr_values[index + 1] - page_indptr_values[index] - 1)
+        * page_size
+        + last_page_len_values[index]
+        for index in range(batch_size)
+    ]
+    write_record(
+        "paged_prefill",
+        case,
+        "NHD_D128_page16",
+        {
+            "algorithm": "flashinfer_batch_paged_prefill_wrapper",
+            "backend": "fa2",
+            "causal": "bottom_right",
+            "disable_split_kv": False,
+            "page_table_location": "device",
+            "output_digest": digest_bf16(output),
+        },
+        1,
+        {
+            "batch_size": batch_size,
+            "nnz_qo": nnz_qo,
+            "max_num_pages": max_num_pages,
+            "referenced_pages": len(page_indices_values),
+            "request_qo_lens": request_qo_lens,
+            "request_kv_lens": request_kv_lens,
+            "query_heads": query_heads,
+            "kv_heads": kv_heads,
+            "head_dim": head_dim,
+            "page_size": page_size,
+        },
+        {
+            "query": digest_bf16(query_host),
+            "key_pages": digest_bf16(key_host),
+            "value_pages": digest_bf16(value_host),
+            "qo_indptr": digest_i32(qo_indptr_host),
+            "page_indptr": digest_i32(page_indptr_host),
+            "page_indices": digest_i32(page_indices_host),
+            "last_page_len": digest_i32(last_page_len_host),
+        },
+        samples_us,
+        PAGED_PREFILL_FIXTURE_ID,
     )
 
 
@@ -1024,7 +1159,7 @@ def benchmark_rope_paged_append_tokens() -> None:
 def main() -> None:
     requested = os.environ.get(
         "LOOM_BENCH_OPERATORS",
-        "rms_norm,gemm,single_decode,paged_batch_decode,ragged_prefill,rope,rope_paged_kv_append,rope_paged_kv_append_tokens",
+        "rms_norm,gemm,single_decode,paged_batch_decode,paged_prefill,ragged_prefill,rope,rope_paged_kv_append,rope_paged_kv_append_tokens",
     ).split(",")
     if "rms_norm" in requested:
         for rows, hidden_size in ((1, 4096), (8, 4096), (64, 4096), (16, 8192)):
@@ -1114,6 +1249,46 @@ def main() -> None:
             ),
         ):
             benchmark_ragged_prefill(*args)
+    if "paged_prefill" in requested:
+        for args in (
+            (
+                "bf16_paged_prefill_mha_b1_q4_kv4_qh8_kvh8_d128_p16",
+                1,
+                2,
+                8,
+                8,
+                (0, 4),
+                (0, 1),
+                (1,),
+                (4,),
+                0x1001,
+            ),
+            (
+                "bf16_paged_prefill_mqa_b3_q2_3_1_kv4_22_35_qh8_kvh1_d128_p16",
+                3,
+                7,
+                8,
+                1,
+                (0, 2, 5, 6),
+                (0, 1, 3, 6),
+                (4, 6, 1, 5, 0, 3),
+                (4, 6, 3),
+                0x2001,
+            ),
+            (
+                "bf16_paged_prefill_gqa4_b2_q4_2_kv23_18_qh16_kvh4_d128_p16",
+                2,
+                6,
+                16,
+                4,
+                (0, 4, 6),
+                (0, 2, 4),
+                (5, 1, 5, 3),
+                (7, 2),
+                0x4001,
+            ),
+        ):
+            benchmark_paged_prefill(*args)
     if "rope" in requested:
         benchmark_rope()
     if "rope_paged_kv_append" in requested:

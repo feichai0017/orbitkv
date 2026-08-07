@@ -14,7 +14,7 @@ commit:     5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57
 The harness measures the admitted BF16 contracts with preallocated tensors and
 CUDA events. Single decode calls the precompiled low-level module directly so
 temporary and output allocation stay outside the timed region. Paged decode
-and ragged prefill plan their wrappers before measurement, fix the FA2
+and ragged/paged prefill plan their wrappers before measurement, fix the FA2
 CUDA-core backend, and pass caller-owned output and LSE tensors on every run.
 GEMM fixes the cuBLASLt backend and tactic zero after preparation.
 
@@ -81,6 +81,12 @@ If a provider cannot submit work quickly enough to keep the stream occupied,
 the resulting GPU idle gaps remain inside the event interval. This is an eager
 provider-path metric, not an isolated kernel-duration claim. A CUDA Graph
 comparison is a separate gate.
+
+Use `LOOM_BENCH_OPERATORS=paged_prefill` and
+`make bench-paged-prefill-loom` for the ragged-query, page-size-16 NHD
+paged-prefill surface. The external baseline uses
+`BatchPrefillWithPagedKVCacheWrapper` with the same Q/K/V bits, query
+`indptr`, page table, output, LSE, and FA2 backend.
 
 The ragged Graph gate uses one replay per CUDA-event sample:
 
