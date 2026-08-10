@@ -4,7 +4,9 @@ use crate::fixture::deterministic_bf16;
 use cuda_core::{CudaContext, DeviceBuffer, sys};
 use half::bf16;
 use loom_infer::{Bf16PagedPrefillSpec, paged_prefill_bf16_reference};
-use loom_infer_cuda::attention::{Bf16PagedPrefillArgs, PrefillProvider};
+use loom_infer_cuda::attention::{
+    Bf16PagedPrefillAlgorithm, Bf16PagedPrefillArgs, PrefillProvider,
+};
 use loom_infer_cuda::graph::GraphQueue;
 use serde_json::json;
 use std::env;
@@ -67,7 +69,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         &page_indices_host,
         &last_page_len_host,
     )?;
-    let plan = provider.plan_bf16_paged(spec)?;
+    let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::Direct)?;
     let query_host = deterministic_bf16(spec.query_numel(), 0x4001);
     let key_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x4b45_5900);
     let value_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x5641_4c55_4500);

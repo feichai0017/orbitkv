@@ -2287,9 +2287,11 @@ impl PrefillProvider {
         Ok(Self { module })
     }
 
+    /// Creates a paged-prefill plan for the selected kernel algorithm.
     pub fn plan_bf16_paged(
         &self,
         spec: Bf16PagedPrefillSpec,
+        algorithm: Bf16PagedPrefillAlgorithm,
     ) -> Result<Bf16PagedPrefillPlan, PagedPrefillPlanError> {
         let states = spec
             .nnz_qo()
@@ -2297,7 +2299,6 @@ impl PrefillProvider {
             .ok_or(PagedPrefillPlanError::StateCountOutOfRange(usize::MAX))?;
         let states = u32::try_from(states)
             .map_err(|_| PagedPrefillPlanError::StateCountOutOfRange(states))?;
-        let algorithm = paged_prefill_algorithm(spec);
         let launch = match algorithm {
             Bf16PagedPrefillAlgorithm::Direct => {
                 Bf16PagedPrefillLaunch::Direct(self.module.prepare_paged_prefill_bf16_nhd_causal(
@@ -2413,17 +2414,6 @@ pub enum Bf16PagedPrefillAlgorithm {
     Direct,
     TokenParallel8,
     TokenParallel16,
-}
-
-const fn paged_prefill_algorithm(spec: Bf16PagedPrefillSpec) -> Bf16PagedPrefillAlgorithm {
-    let average_kv_capacity = spec.max_num_pages() * PAGED_PREFILL_PAGE_SIZE / spec.batch_size();
-    if average_kv_capacity < TOKEN_PARALLEL_MIN_AVERAGE_KV_LEN {
-        Bf16PagedPrefillAlgorithm::Direct
-    } else if spec.num_kv_heads() == 1 {
-        Bf16PagedPrefillAlgorithm::TokenParallel16
-    } else {
-        Bf16PagedPrefillAlgorithm::TokenParallel8
-    }
 }
 
 #[derive(Clone)]
@@ -3116,27 +3106,16 @@ mod tests {
     use super::*;
 
     #[test]
-    fn paged_algorithm_keeps_short_capacity_direct_and_parallelizes_long_capacity() {
-        let short = Bf16PagedPrefillSpec::new(2, 6, 6, 16, 4, 128, 16).unwrap();
-        let long = Bf16PagedPrefillSpec::new(3, 21, 32, 8, 1, 128, 16).unwrap();
-
-        assert_eq!(
-            paged_prefill_algorithm(short),
-            Bf16PagedPrefillAlgorithm::Direct
-        );
-        assert_eq!(
-            paged_prefill_algorithm(long),
-            Bf16PagedPrefillAlgorithm::TokenParallel16
-        );
-        let grouped = Bf16PagedPrefillSpec::new(2, 96, 96, 16, 4, 128, 16).unwrap();
-        assert_eq!(
-            paged_prefill_algorithm(grouped),
-            Bf16PagedPrefillAlgorithm::TokenParallel8
-        );
+    fn paged_planner_requires_an_explicit_algorithm() {
+        let _planner: fn(
+            &PrefillProvider,
+            Bf16PagedPrefillSpec,
+            Bf16PagedPrefillAlgorithm,
+        ) -> Result<Bf16PagedPrefillPlan, PagedPrefillPlanError> = PrefillProvider::plan_bf16_paged;
     }
 
     #[test]
-    fn algorithm_keeps_short_kv_direct_and_parallelizes_long_kv() {
+    fn ragged_algorithm_keeps_short_kv_direct_and_parallelizes_long_kv() {
         let short = Bf16RaggedPrefillSpec::new(1, 16, 16, 8, 8, 128).unwrap();
         let long = Bf16RaggedPrefillSpec::new(3, 21, 896, 8, 1, 128).unwrap();
 

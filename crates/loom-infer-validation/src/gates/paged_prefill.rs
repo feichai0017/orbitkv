@@ -29,6 +29,7 @@ fn run_case(
     provider: &PrefillProvider,
     name: &str,
     spec: Bf16PagedPrefillSpec,
+    requested_algorithm: Bf16PagedPrefillAlgorithm,
     metadata: MetadataInput<'_>,
     salt: u64,
 ) -> Result<(), Box<dyn Error>> {
@@ -43,7 +44,14 @@ fn run_case(
         .collect::<Vec<_>>()
         .join(",");
     let stream = queue.stream().clone();
-    let plan = provider.plan_bf16_paged(spec)?;
+    let plan = provider.plan_bf16_paged(spec, requested_algorithm)?;
+    if plan.algorithm() != requested_algorithm {
+        return Err(format!(
+            "{name} planner changed the requested algorithm: expected {requested_algorithm:?}, got {:?}",
+            plan.algorithm()
+        )
+        .into());
+    }
     let algorithm = match plan.algorithm() {
         Bf16PagedPrefillAlgorithm::Direct => "direct_one_warp_per_query_row_head",
         Bf16PagedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
@@ -241,7 +249,7 @@ fn run_invalid_page_guard(
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16PagedPrefillSpec::new(2, 2, 8, 1, 1, 128, 16)?;
     let stream = queue.stream().clone();
-    let plan = provider.plan_bf16_paged(spec)?;
+    let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::TokenParallel16)?;
     if plan.algorithm() != Bf16PagedPrefillAlgorithm::TokenParallel16 {
         return Err("invalid-page guard did not select token-parallel paged prefill".into());
     }
@@ -318,7 +326,7 @@ fn run_duplicate_binding_case(
     provider: &PrefillProvider,
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16PagedPrefillSpec::new(1, 1, 1, 1, 1, 128, 16)?;
-    let plan = provider.plan_bf16_paged(spec)?;
+    let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::Direct)?;
     let stream = queue.stream().clone();
     let query_and_key = Arc::new(DeviceBuffer::<bf16>::zeroed(
         &stream,
@@ -394,7 +402,7 @@ fn run_graph_case(
         &page_indices_host,
         &last_page_len_host,
     )?;
-    let plan = provider.plan_bf16_paged(spec)?;
+    let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::Direct)?;
     let stream = queue.stream().clone();
     let query_host = deterministic_bf16(spec.query_numel(), 0x4001);
     let key_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x4b45_5900);
@@ -536,6 +544,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         &provider,
         "mha_equal_lengths",
         Bf16PagedPrefillSpec::new(1, 4, 2, 8, 8, 128, 16)?,
+        Bf16PagedPrefillAlgorithm::Direct,
         MetadataInput {
             qo_indptr: &[0, 4],
             page_indptr: &[0, 1],
@@ -547,8 +556,23 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     run_case(
         &mut queue,
         &provider,
+        "mha_large_pool_short_table_explicit_direct",
+        Bf16PagedPrefillSpec::new(1, 4, 96, 8, 8, 128, 16)?,
+        Bf16PagedPrefillAlgorithm::Direct,
+        MetadataInput {
+            qo_indptr: &[0, 4],
+            page_indptr: &[0, 1],
+            page_indices: &[95],
+            last_page_len: &[4],
+        },
+        0x1002,
+    )?;
+    run_case(
+        &mut queue,
+        &provider,
         "mqa_append_mixed",
         Bf16PagedPrefillSpec::new(3, 6, 7, 8, 1, 128, 16)?,
+        Bf16PagedPrefillAlgorithm::Direct,
         MetadataInput {
             qo_indptr: &[0, 2, 5, 6],
             page_indptr: &[0, 1, 3, 6],
@@ -562,6 +586,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         &provider,
         "gqa4_reordered_reuse",
         Bf16PagedPrefillSpec::new(2, 6, 6, 16, 4, 128, 16)?,
+        Bf16PagedPrefillAlgorithm::Direct,
         MetadataInput {
             qo_indptr: &[0, 4, 6],
             page_indptr: &[0, 2, 4],
@@ -575,6 +600,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         &provider,
         "mqa_token_parallel",
         Bf16PagedPrefillSpec::new(3, 21, 64, 8, 1, 128, 16)?,
+        Bf16PagedPrefillAlgorithm::TokenParallel16,
         MetadataInput {
             qo_indptr: &[0, 1, 5, 21],
             page_indptr: &[0, 8, 24, 56],
@@ -592,6 +618,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         &provider,
         "gqa4_token_parallel",
         Bf16PagedPrefillSpec::new(2, 96, 96, 16, 4, 128, 16)?,
+        Bf16PagedPrefillAlgorithm::TokenParallel8,
         MetadataInput {
             qo_indptr: &[0, 32, 96],
             page_indptr: &[0, 16, 80],
@@ -607,7 +634,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     )?;
 
     let preflight_spec = Bf16PagedPrefillSpec::new(2, 2, 2, 4, 2, 128, 16)?;
-    let preflight_plan = provider.plan_bf16_paged(preflight_spec)?;
+    let preflight_plan =
+        provider.plan_bf16_paged(preflight_spec, Bf16PagedPrefillAlgorithm::Direct)?;
     run_short_metadata_case(&mut queue, &preflight_plan)?;
     run_invalid_page_guard(&mut queue, &provider)?;
     run_duplicate_binding_case(&mut queue, &provider)?;

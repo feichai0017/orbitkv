@@ -92,6 +92,7 @@ struct PagedDecodeCase {
 #[derive(Clone, Copy)]
 struct PagedPrefillCase {
     name: &'static str,
+    algorithm: Bf16PagedPrefillAlgorithm,
     batch_size: usize,
     max_num_pages: usize,
     query_heads: usize,
@@ -582,7 +583,7 @@ fn benchmark_paged_prefill_case(
         case.page_indices,
         case.last_page_len,
     )?;
-    let plan = provider.plan_bf16_paged(spec)?;
+    let plan = provider.plan_bf16_paged(spec, case.algorithm)?;
     let algorithm = match plan.algorithm() {
         Bf16PagedPrefillAlgorithm::Direct => "direct_one_warp_per_query_row_head",
         Bf16PagedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
@@ -1464,6 +1465,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         for case in [
             PagedPrefillCase {
                 name: "bf16_paged_prefill_mha_b1_q4_kv4_qh8_kvh8_d128_p16",
+                algorithm: Bf16PagedPrefillAlgorithm::Direct,
                 batch_size: 1,
                 max_num_pages: 2,
                 query_heads: 8,
@@ -1476,6 +1478,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             },
             PagedPrefillCase {
                 name: "bf16_paged_prefill_mqa_b3_q2_3_1_kv4_22_35_qh8_kvh1_d128_p16",
+                algorithm: Bf16PagedPrefillAlgorithm::Direct,
                 batch_size: 3,
                 max_num_pages: 7,
                 query_heads: 8,
@@ -1488,6 +1491,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             },
             PagedPrefillCase {
                 name: "bf16_paged_prefill_gqa4_b2_q4_2_kv23_18_qh16_kvh4_d128_p16",
+                algorithm: Bf16PagedPrefillAlgorithm::Direct,
                 batch_size: 2,
                 max_num_pages: 6,
                 query_heads: 16,
@@ -1500,6 +1504,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             },
             PagedPrefillCase {
                 name: "bf16_paged_prefill_mqa_b3_q1_4_16_kv128_256_512_qh8_kvh1_d128_p16",
+                algorithm: Bf16PagedPrefillAlgorithm::TokenParallel16,
                 batch_size: 3,
                 max_num_pages: 64,
                 query_heads: 8,
@@ -1516,6 +1521,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             },
             PagedPrefillCase {
                 name: "bf16_paged_prefill_gqa4_b2_q32_64_kv256_1024_qh16_kvh4_d128_p16",
+                algorithm: Bf16PagedPrefillAlgorithm::TokenParallel8,
                 batch_size: 2,
                 max_num_pages: 96,
                 query_heads: 16,
