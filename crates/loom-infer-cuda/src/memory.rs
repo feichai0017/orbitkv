@@ -165,10 +165,16 @@ impl<T: DeviceCopy> ReadDeviceRegion<T> {
     ///   the allocation. This constructor checks arithmetic and alignment but
     ///   cannot inspect the CUDA allocation.
     /// - `lease` keeps the allocation alive until its final clone is dropped.
+    ///   It must remain sufficient even if a separate engine authority guard
+    ///   is returned before this region leaves its completion.
     /// - Every device use of the allocation is ordered against the command
     ///   stream by the caller.
     /// - The caller owns shared-read authority for the full reported range.
     ///   No unsynchronized writer may access it while this region is bound.
+    ///   An engine may reacquire ordered access through
+    ///   [`crate::interop::EngineReturnedAuthority`] only after Loom has
+    ///   enqueued its post-event wait on that engine stream. Loom keeps the
+    ///   binding capability private until completion settles.
     pub unsafe fn from_external_parts(
         pointer: CUdeviceptr,
         len: usize,
@@ -309,11 +315,19 @@ impl<T: DeviceCopy> ReadWriteDeviceRegion<T> {
     ///   the allocation. This constructor checks arithmetic and alignment but
     ///   cannot inspect the CUDA allocation.
     /// - `lease` keeps the allocation alive until its final clone is dropped.
+    ///   It must remain sufficient even if a separate engine authority guard
+    ///   is returned before this region leaves its completion.
     /// - Every device use of the allocation is ordered against the command
     ///   stream by the caller.
     /// - The caller transfers exclusive read-write authority for the full
     ///   reported range to this value. No alias may read or write that range
-    ///   until the region is returned from the completed binding set.
+    ///   until the region is returned from the completed binding set. The only
+    ///   earlier reacquisition is a linear
+    ///   [`crate::interop::EngineReturnedAuthority`] returned after Loom
+    ///   enqueues a post-event wait. It may enqueue access only after the wait
+    ///   on the same external stream; it does not permit immediate or
+    ///   cross-stream access. Loom does not expose the retained binding while
+    ///   that authority is separate.
     pub unsafe fn from_external_parts(
         pointer: CUdeviceptr,
         len: usize,
@@ -699,9 +713,11 @@ unsafe impl<T: DeviceCopy> KernelSliceArg for ReadDeviceRegion<T> {
     }
 }
 
-// SAFETY: the writable wrapper owns a DeviceBuffer<T> or an external lease for
-// which its unsafe constructor requires exclusive read-write authority. The
-// wrapper cannot be cloned, and binding transfers it until GPU completion.
+// SAFETY: the writable wrapper owns a DeviceBuffer<T> or an independent
+// external lease. Its unsafe constructor requires exclusive authority. Engine
+// interop can return separate same-stream authority only after its post-event
+// wait, while the retained binding remains private. The wrapper cannot be
+// cloned, and binding transfers it until GPU completion.
 unsafe impl<T: DeviceCopy> KernelSliceArg for ReadWriteDeviceRegion<T> {
     type Elem = T;
 
@@ -715,7 +731,8 @@ unsafe impl<T: DeviceCopy> KernelSliceArg for ReadWriteDeviceRegion<T> {
 }
 
 // SAFETY: ReadWriteDeviceRegion's construction and ownership rules provide
-// exclusive device-write authority for the reported range.
+// exclusive device-write authority. The documented engine handoff never
+// exposes this binding while same-stream authority is separate.
 unsafe impl<T: DeviceCopy> KernelSliceArgMut for ReadWriteDeviceRegion<T> {}
 
 #[cfg(test)]

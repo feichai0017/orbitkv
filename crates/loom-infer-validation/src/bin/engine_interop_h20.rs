@@ -15,7 +15,7 @@ const LSE_MAX_ABS_LIMIT: f32 = 0.01;
 
 fn main() -> Result<(), Box<dyn Error>> {
     let context = cuda_core::CudaContext::new(0)?;
-    let engine_stream = raw_engine::EngineStream::new(context.clone())?;
+    let mut engine_stream = raw_engine::EngineStream::new(context.clone())?;
     let external_stream = engine_stream.external_lease()?;
     let mut queue = EngineInteropQueue::new(external_stream, 1)?;
     let provider = DecodeProvider::load(&context)?;
@@ -52,23 +52,42 @@ fn main() -> Result<(), Box<dyn Error>> {
     ];
 
     let mut bindings = queue.bindings(5)?;
-    let query_handle = bindings.bind_read_region(query.into_read_region())?;
-    let key_handle = bindings.bind_read_region(key.into_read_region())?;
-    let value_handle = bindings.bind_read_region(value.into_read_region())?;
-    let output_handle = bindings.bind_read_write_region(output.into_read_write_region())?;
-    let lse_handle = bindings.bind_read_write_region(lse.into_read_write_region())?;
+    let (query, query_guard) = query.into_read_region();
+    let (key, key_guard) = key.into_read_region();
+    let (value, value_guard) = value.into_read_region();
+    let (output, output_guard) = output.into_read_write_region();
+    let (lse, lse_guard) = lse.into_read_write_region();
+    let query_handle = bindings.bind_read_region(query)?;
+    let key_handle = bindings.bind_read_region(key)?;
+    let value_handle = bindings.bind_read_region(value)?;
+    let output_handle = bindings.bind_read_write_region(output)?;
+    let lse_handle = bindings.bind_read_write_region(lse)?;
 
-    let completion = queue.enqueue_bf16_single_decode(
-        &plan,
-        bindings,
-        Bf16SingleDecodeArgs::new(
-            query_handle,
-            key_handle,
-            value_handle,
-            output_handle.write(),
-            lse_handle.write(),
-        ),
-    )?;
+    let authority = engine_stream.take_authority([
+        query_guard,
+        key_guard,
+        value_guard,
+        output_guard,
+        lse_guard,
+    ])?;
+    match raw_engine::EngineBuffer::<u8>::zeroed(&engine_stream, 1) {
+        Err(raw_engine::EngineBufferError::SubmissionAuthorityUnavailable) => {}
+        Err(error) => {
+            return Err(format!("unexpected guarded stream submission error: {error}").into());
+        }
+        Ok(_) => return Err("engine submitted without stream authority".into()),
+    }
+    let external_bindings = raw_engine::couple_authority(bindings, authority)?;
+    let decode_args = Bf16SingleDecodeArgs::new(
+        query_handle,
+        key_handle,
+        value_handle,
+        output_handle.write(),
+        lse_handle.write(),
+    );
+
+    let submission = queue.enqueue_bf16_single_decode(&plan, external_bindings, decode_args)?;
+    let (completion, authority) = submission.into_parts();
     if completion.submitted() != 1 {
         return Err("engine interop completion covered the wrong command count".into());
     }
@@ -86,38 +105,44 @@ fn main() -> Result<(), Box<dyn Error>> {
         return Err(format!("engine interop returned an invalid provider trace: {trace:?}").into());
     }
 
-    // These engine-owned D2H reads are enqueued before host-side Loom
-    // completion. They can observe correct output only if the adapter placed
-    // its post-event wait on the external stream. The opaque completion borrow
-    // keeps the output bindings alive until both reads settle.
-    let output_readback = raw_engine::PendingReadback::enqueue_after_command(
-        &engine_stream,
-        pointers[3],
-        spec.output_numel(),
-        &completion,
-    )?;
-    let lse_readback = raw_engine::PendingReadback::enqueue_after_command(
-        &engine_stream,
-        pointers[4],
-        spec.lse_numel(),
-        &completion,
-    )?;
-    let actual_output = output_readback.wait()?;
-    let actual_lse = lse_readback.wait()?;
-    let output_comparison = compare_bf16(&actual_output, &expected_output, "interop BF16")?;
-    let lse_comparison = compare_f32(&actual_lse, &expected_lse, "interop F32 LSE")?;
-
     let outcome = completion.wait()?;
     if outcome.trace() != &trace {
         return Err("engine interop trace changed across completion".into());
     }
-    let mut bindings = outcome.into_bindings();
-    let output_region = bindings.take_read_write_region(output_handle)?;
-    let lse_region = bindings.take_read_write_region(lse_handle)?;
-    if output_region.cu_deviceptr() != pointers[3] || lse_region.cu_deviceptr() != pointers[4] {
-        return Err("engine-owned output pointers changed across Loom execution".into());
+    let external_bindings = outcome.rejoin(authority)?;
+    let submission = queue.enqueue_bf16_single_decode(&plan, external_bindings, decode_args)?;
+    let (completion, authority) = submission.into_parts();
+    if completion.submitted() != 1 || completion.trace() != &trace {
+        return Err("rejoined engine submission changed its command trace".into());
     }
-    drop((bindings, output_region, lse_region));
+
+    // These engine-owned D2H reads are enqueued before host-side Loom
+    // completion. The completion still owns checked bindings and independent
+    // allocation leases. Returned authority supplies separate engine guards.
+    let output_readback = raw_engine::PendingReadback::enqueue_after_command(
+        authority.authority(),
+        pointers[3],
+        spec.output_numel(),
+    )?;
+    let lse_readback = raw_engine::PendingReadback::enqueue_after_command(
+        authority.authority(),
+        pointers[4],
+        spec.lse_numel(),
+    )?;
+    let outcome = completion.wait()?;
+    let (authority, second_trace) = outcome.release(authority)?;
+    if second_trace != trace {
+        return Err("engine interop trace changed while releasing authority".into());
+    }
+    engine_stream.return_authority(authority)?;
+
+    // The readbacks retain their own allocation leases. Drop Loom's opaque
+    // bindings and the engine storage guards before waiting to prove that the
+    // pending DMA does not depend on either owner for allocation lifetime.
+    let actual_output = output_readback.wait()?;
+    let actual_lse = lse_readback.wait()?;
+    let output_comparison = compare_bf16(&actual_output, &expected_output, "interop BF16")?;
+    let lse_comparison = compare_f32(&actual_lse, &expected_lse, "interop F32 LSE")?;
     if output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT {
         return Err(format!(
             "engine interop output max abs {:.9e} exceeds {:.9e}",
@@ -137,7 +162,9 @@ fn main() -> Result<(), Box<dyn Error>> {
         "gate=engine_interop_h20 case=single_decode status=pass provider={} operator={} \
          algorithm=direct stream_handoff=external_event_bridge external_regions={} \
          adapter_zero_copy={} adapter_d2d_copies={} pointers_unchanged=true \
-         post_wait_output_read=true boundary=simulated_engine kv_len={} \
+         authority_returned_before_completion=true submission_guard_enforced=true \
+         authority_rejoined=true logical_calls=2 post_wait_output_read=true \
+         boundary=simulated_engine kv_len={} \
          output_max_abs={:.9e} lse_max_abs={:.9e}",
         trace.provider(),
         trace.operator(),
@@ -159,21 +186,60 @@ mod raw_engine {
     use cuda_core::{
         CudaContext, CudaStream, DeviceBuffer, DeviceCopy, DriverError, PinnedHostBuffer,
     };
+    use loom_infer_cuda::command::CheckedBindings;
     use loom_infer_cuda::interop::{
-        EngineCommandCompletion, ExternalCudaStream, ExternalCudaStreamError,
+        EngineExternalBindings, EngineExternalBindingsError, ExternalCudaStream,
+        ExternalCudaStreamError,
     };
     use loom_infer_cuda::memory::{ReadDeviceRegion, ReadWriteDeviceRegion};
-    use std::marker::PhantomData;
+    use std::any::Any;
+    use std::error::Error;
+    use std::fmt::{self, Display, Formatter};
+    use std::mem::size_of;
     use std::sync::Arc;
 
     pub struct EngineStream {
         raw: Arc<CudaStream>,
+        submission_guard: Option<StreamSubmissionGuard>,
+    }
+
+    struct StreamSubmissionGuard;
+
+    #[derive(Clone, Copy)]
+    enum StorageAccess {
+        Read,
+        ReadWrite,
+    }
+
+    pub struct EngineStorageGuard {
+        allocation: Arc<dyn Any + Send + Sync>,
+        pointer: CUdeviceptr,
+        num_bytes: usize,
+        access: StorageAccess,
+    }
+
+    pub struct EngineAuthority {
+        stream: Arc<CudaStream>,
+        stream_guard: StreamSubmissionGuard,
+        storage: [EngineStorageGuard; 5],
+    }
+
+    pub fn couple_authority(
+        bindings: CheckedBindings,
+        authority: EngineAuthority,
+    ) -> Result<EngineExternalBindings<EngineAuthority>, EngineExternalBindingsError<EngineAuthority>>
+    {
+        // SAFETY: the simulated engine consumed its sole stream token and all
+        // five storage guards. Their ordered spans and access modes exactly
+        // match the checked regions in `bindings`.
+        unsafe { EngineExternalBindings::assume_engine_authority(bindings, authority) }
     }
 
     impl EngineStream {
         pub fn new(context: Arc<CudaContext>) -> Result<Self, DriverError> {
             Ok(Self {
                 raw: context.new_stream()?,
+                submission_guard: Some(StreamSubmissionGuard),
             })
         }
 
@@ -189,8 +255,35 @@ mod raw_engine {
             }
         }
 
-        fn raw(&self) -> &Arc<CudaStream> {
-            &self.raw
+        fn submission_stream(&self) -> Result<&Arc<CudaStream>, EngineBufferError> {
+            self.submission_guard
+                .as_ref()
+                .ok_or(EngineBufferError::SubmissionAuthorityUnavailable)?;
+            Ok(&self.raw)
+        }
+
+        pub fn take_authority(
+            &mut self,
+            storage: [EngineStorageGuard; 5],
+        ) -> Result<EngineAuthority, &'static str> {
+            let stream_guard = self
+                .submission_guard
+                .take()
+                .ok_or("engine stream submission authority is already in flight")?;
+            Ok(EngineAuthority {
+                stream: self.raw.clone(),
+                stream_guard,
+                storage,
+            })
+        }
+
+        pub fn return_authority(&mut self, authority: EngineAuthority) -> Result<(), &'static str> {
+            if self.submission_guard.is_some() || !Arc::ptr_eq(&self.raw, &authority.stream) {
+                return Err("engine stream authority does not belong to this stream");
+            }
+            self.submission_guard = Some(authority.stream_guard);
+            drop(authority.storage);
+            Ok(())
         }
     }
 
@@ -198,16 +291,50 @@ mod raw_engine {
         allocation: Arc<DeviceBuffer<T>>,
     }
 
+    #[derive(Debug)]
+    pub enum EngineBufferError {
+        SubmissionAuthorityUnavailable,
+        Driver(DriverError),
+    }
+
+    impl Display for EngineBufferError {
+        fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+            match self {
+                Self::SubmissionAuthorityUnavailable => {
+                    formatter.write_str("engine stream submission authority is in flight")
+                }
+                Self::Driver(error) => Display::fmt(error, formatter),
+            }
+        }
+    }
+
+    impl Error for EngineBufferError {
+        fn source(&self) -> Option<&(dyn Error + 'static)> {
+            match self {
+                Self::SubmissionAuthorityUnavailable => None,
+                Self::Driver(error) => Some(error),
+            }
+        }
+    }
+
+    impl From<DriverError> for EngineBufferError {
+        fn from(error: DriverError) -> Self {
+            Self::Driver(error)
+        }
+    }
+
     impl<T: DeviceCopy + Send + Sync + 'static> EngineBuffer<T> {
-        pub fn from_host(stream: &EngineStream, data: &[T]) -> Result<Self, DriverError> {
+        pub fn from_host(stream: &EngineStream, data: &[T]) -> Result<Self, EngineBufferError> {
+            let stream = stream.submission_stream()?;
             Ok(Self {
-                allocation: Arc::new(DeviceBuffer::from_host(stream.raw(), data)?),
+                allocation: Arc::new(DeviceBuffer::from_host(stream, data)?),
             })
         }
 
-        pub fn zeroed(stream: &EngineStream, len: usize) -> Result<Self, DriverError> {
+        pub fn zeroed(stream: &EngineStream, len: usize) -> Result<Self, EngineBufferError> {
+            let stream = stream.submission_stream()?;
             Ok(Self {
-                allocation: Arc::new(DeviceBuffer::zeroed(stream.raw(), len)?),
+                allocation: Arc::new(DeviceBuffer::zeroed(stream, len)?),
             })
         }
 
@@ -215,48 +342,79 @@ mod raw_engine {
             self.allocation.cu_deviceptr()
         }
 
-        pub fn into_read_region(self) -> ReadDeviceRegion<T> {
+        pub fn into_read_region(self) -> (ReadDeviceRegion<T>, EngineStorageGuard) {
             let pointer = self.allocation.cu_deviceptr();
             let len = self.allocation.len();
             let context = self.allocation.context().clone();
+            let region_lease: Arc<dyn Any + Send + Sync> = self.allocation.clone();
+            let storage_guard = EngineStorageGuard {
+                allocation: self.allocation,
+                pointer,
+                num_bytes: len * size_of::<T>(),
+                access: StorageAccess::Read,
+            };
             // SAFETY: the consumed wrapper transfers its only public access to
-            // the region, and the Arc allocation is the retained lease.
-            unsafe {
-                ReadDeviceRegion::from_external_parts(pointer, len, context, self.allocation)
+            // the returned region and authority guard. The region has an
+            // independent allocation lease.
+            let region = unsafe {
+                ReadDeviceRegion::from_external_parts(pointer, len, context, region_lease)
                     .expect("a cuda-core allocation is a valid typed external region")
-            }
+            };
+            (region, storage_guard)
         }
 
-        pub fn into_read_write_region(self) -> ReadWriteDeviceRegion<T> {
+        pub fn into_read_write_region(self) -> (ReadWriteDeviceRegion<T>, EngineStorageGuard) {
             let pointer = self.allocation.cu_deviceptr();
             let len = self.allocation.len();
             let context = self.allocation.context().clone();
+            let region_lease: Arc<dyn Any + Send + Sync> = self.allocation.clone();
+            let storage_guard = EngineStorageGuard {
+                allocation: self.allocation,
+                pointer,
+                num_bytes: len * size_of::<T>(),
+                access: StorageAccess::ReadWrite,
+            };
             // SAFETY: consuming the wrapper transfers exclusive public access
-            // to the non-cloneable region. The Arc remains an opaque lease.
-            unsafe {
-                ReadWriteDeviceRegion::from_external_parts(pointer, len, context, self.allocation)
+            // to the returned region and authority guard. The region has an
+            // independent allocation lease.
+            let region = unsafe {
+                ReadWriteDeviceRegion::from_external_parts(pointer, len, context, region_lease)
                     .expect("a cuda-core allocation is a valid typed external region")
-            }
+            };
+            (region, storage_guard)
         }
     }
 
-    pub struct PendingReadback<'source, T: DeviceCopy + Send + Sync + 'static> {
+    pub struct PendingReadback<T: DeviceCopy + Send + Sync + 'static> {
         host: Option<PinnedHostBuffer<T>>,
         stream: Arc<CudaStream>,
-        source: PhantomData<&'source T>,
+        _source_lease: Arc<dyn Any + Send + Sync>,
         complete: bool,
     }
 
-    impl<'source, T: DeviceCopy + Send + Sync + 'static> PendingReadback<'source, T> {
+    impl<T: DeviceCopy + Send + Sync + 'static> PendingReadback<T> {
         pub fn enqueue_after_command(
-            stream: &EngineStream,
+            authority: &EngineAuthority,
             source: CUdeviceptr,
             len: usize,
-            _completion: &'source EngineCommandCompletion<'_>,
         ) -> Result<Self, DriverError> {
-            let mut host = PinnedHostBuffer::zeroed(stream.raw().context(), len)?;
-            stream.raw().context().bind_to_thread()?;
-            // SAFETY: the lifetime ties the live source to this pending copy.
+            let num_bytes = len
+                .checked_mul(size_of::<T>())
+                .expect("engine readback byte extent fits usize");
+            let source_lease = authority
+                .storage
+                .iter()
+                .find(|guard| {
+                    matches!(guard.access, StorageAccess::Read | StorageAccess::ReadWrite)
+                        && guard.pointer == source
+                        && guard.num_bytes >= num_bytes
+                })
+                .expect("engine authority covers the readback source")
+                .allocation
+                .clone();
+            let mut host = PinnedHostBuffer::zeroed(authority.stream.context(), len)?;
+            authority.stream.context().bind_to_thread()?;
+            // SAFETY: `_source_lease` keeps the source allocation live.
             // PinnedHostBuffer owns exactly `len` writable T values, and the
             // engine stream orders this read after Loom's post-event wait.
             let enqueue_result = unsafe {
@@ -264,19 +422,22 @@ mod raw_engine {
                     host.as_mut_ptr(),
                     source,
                     host.num_bytes(),
-                    stream.raw().cu_stream(),
+                    authority.stream.cu_stream(),
                 )
             };
             if let Err(error) = enqueue_result {
-                if let Some(settle_error) = synchronize_stream_or_abort(stream.raw()) {
-                    stream.raw().context().record_err::<()>(Err(settle_error));
+                if let Some(settle_error) = synchronize_stream_or_abort(&authority.stream) {
+                    authority
+                        .stream
+                        .context()
+                        .record_err::<()>(Err(settle_error));
                 }
                 return Err(error);
             }
             Ok(Self {
                 host: Some(host),
-                stream: stream.raw().clone(),
-                source: PhantomData,
+                stream: authority.stream.clone(),
+                _source_lease: source_lease,
                 complete: false,
             })
         }
@@ -296,7 +457,7 @@ mod raw_engine {
         }
     }
 
-    impl<T: DeviceCopy + Send + Sync + 'static> Drop for PendingReadback<'_, T> {
+    impl<T: DeviceCopy + Send + Sync + 'static> Drop for PendingReadback<T> {
         fn drop(&mut self) {
             if self.complete {
                 return;

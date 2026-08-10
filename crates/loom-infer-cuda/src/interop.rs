@@ -9,7 +9,7 @@
 use crate::attention::{Bf16SingleDecodeArgs, Bf16SingleDecodePlan, SingleDecodeEnqueueError};
 use crate::command::{
     BindingMemorySummary, CheckedBindings, CommandCompletion, CommandCompletionError, CommandError,
-    CommandQueue, synchronize_stream_or_abort,
+    CommandQueue, EngineBindingFingerprint, synchronize_stream_or_abort,
 };
 use cuda_core::sys::{CUcontext, CUdeviceptr, CUgreenCtx, CUstream};
 use cuda_core::{CudaContext, CudaEvent, CudaStream, DriverError, IntoResult};
@@ -40,11 +40,11 @@ impl ExternalCudaStream {
     /// not be destroyed while this value exists. Passing an invalid CUDA
     /// handle to the driver's context query is undefined behavior.
     ///
-    /// The caller must serialize engine submissions with this adapter. For
-    /// each [`EngineInteropQueue::enqueue_bf16_single_decode`] call, no other
-    /// thread may enqueue work on `raw` from the adapter's pre-event record
-    /// until the method has enqueued the post-event wait. The method returns
-    /// only after that critical section ends.
+    /// The adapter must represent exclusive submission access in the
+    /// authority passed through [`EngineExternalBindings`]. For each
+    /// [`EngineInteropQueue::enqueue_bf16_single_decode`] call, no other thread
+    /// may enqueue work on `raw` from the pre-event record until Loom enqueues
+    /// the post-event wait.
     pub unsafe fn from_raw_parts<L>(
         raw: CUstream,
         context: Arc<CudaContext>,
@@ -163,6 +163,117 @@ impl EngineExecutionTrace {
     }
 }
 
+/// External bindings coupled to the engine authority that governs them.
+///
+/// `A` is supplied by the engine adapter. It should contain every tensor,
+/// storage, and stream-submission guard required to prevent access to the
+/// bound ranges while Loom establishes the event handoff.
+pub struct EngineExternalBindings<A> {
+    bindings: CheckedBindings,
+    authority: A,
+    fingerprint: Arc<EngineBindingFingerprint>,
+}
+
+impl<A> EngineExternalBindings<A> {
+    /// Couples external bindings to the adapter's linear authority bundle.
+    ///
+    /// # Safety
+    ///
+    /// `authority` must govern the exact ordered device spans and access modes
+    /// in `bindings`. While this value is owned by Loom, no engine path may use
+    /// a writable span or enqueue work through the guarded external stream.
+    /// `A` must be a linear capability: its safe API cannot clone, replace, or
+    /// extract the guarded stream or storage authority. Shared access to `A`
+    /// may submit only through the same external stream and must keep every
+    /// allocation alive until that submitted work settles.
+    /// Dropping `A`, or recovering it before Loom completion, must only restore
+    /// engine operations ordered after the post-event wait. It must not expose
+    /// host or cross-stream access that bypasses the handoff.
+    /// The internal fingerprint detects a substituted or changed binding set;
+    /// it does not prove that `authority` governs those allocations.
+    pub unsafe fn assume_engine_authority(
+        bindings: CheckedBindings,
+        authority: A,
+    ) -> Result<Self, EngineExternalBindingsError<A>> {
+        let memory = bindings.memory_summary();
+        let Some(fingerprint) = bindings.engine_fingerprint() else {
+            return Err(EngineExternalBindingsError {
+                cause: EngineExternalBindingsCause::NotAllExternal {
+                    slots: bindings.len(),
+                    live: bindings.live_regions(),
+                    external_regions: memory.external_regions(),
+                    device_buffers: memory.device_buffers(),
+                },
+                bindings: Box::new(bindings),
+                authority: Box::new(authority),
+            });
+        };
+        Ok(Self {
+            bindings,
+            authority,
+            fingerprint: Arc::new(fingerprint),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum EngineExternalBindingsCause {
+    #[error(
+        "engine interop requires every binding slot to contain an external region; got {live} live regions across {slots} slots ({external_regions} external, {device_buffers} Loom-owned)"
+    )]
+    NotAllExternal {
+        slots: usize,
+        live: usize,
+        external_regions: usize,
+        device_buffers: usize,
+    },
+}
+
+/// A rejected coupling that retains the binding until authority is recovered.
+pub struct EngineExternalBindingsError<A> {
+    cause: EngineExternalBindingsCause,
+    bindings: Box<CheckedBindings>,
+    authority: Box<A>,
+}
+
+impl<A> EngineExternalBindingsError<A> {
+    pub const fn cause(&self) -> EngineExternalBindingsCause {
+        self.cause
+    }
+
+    /// Drops the rejected binding capability before returning engine authority.
+    pub fn into_authority(self) -> A {
+        let Self {
+            bindings,
+            authority,
+            ..
+        } = self;
+        drop(bindings);
+        *authority
+    }
+}
+
+impl<A> fmt::Debug for EngineExternalBindingsError<A> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EngineExternalBindingsError")
+            .field("cause", &self.cause)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<A> Display for EngineExternalBindingsError<A> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.cause, formatter)
+    }
+}
+
+impl<A> std::error::Error for EngineExternalBindingsError<A> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cause)
+    }
+}
+
 /// A reusable Loom queue ordered against one retained engine stream.
 pub struct EngineInteropQueue {
     external: ExternalCudaStream,
@@ -206,25 +317,55 @@ impl EngineInteropQueue {
     /// orders future engine work after Loom. The provider launches directly
     /// against the bound device pointers and the adapter performs no copy.
     ///
-    /// The unsafe construction contract of [`ExternalCudaStream`] requires
-    /// exclusive external-stream submission authority for this method's
-    /// duration. On success, the post-event wait is already enqueued before
-    /// this method returns. Every error path conservatively settles both
-    /// streams before releasing a lease. Bindings are returned in the error
-    /// whenever command settlement can recover them safely. No post-wait is
-    /// promised after an error.
-    pub fn enqueue_bf16_single_decode<'queue>(
+    /// `external_bindings` transfers the engine's stream and storage authority
+    /// for the handoff. On success, the post-event wait is already enqueued;
+    /// [`EngineSubmission::into_parts`] can return authority before the kernel
+    /// completes. Every error path conservatively settles both streams before
+    /// returning authority. Bindings are returned in the error whenever
+    /// command settlement can recover them safely. No post-wait is promised
+    /// after an error.
+    pub fn enqueue_bf16_single_decode<'queue, A>(
         &'queue mut self,
         plan: &Bf16SingleDecodePlan,
-        bindings: CheckedBindings,
+        external_bindings: EngineExternalBindings<A>,
         args: Bf16SingleDecodeArgs,
-    ) -> Result<EngineCommandCompletion<'queue>, EngineSingleDecodeEnqueueError> {
+    ) -> Result<EngineSubmission<'queue, A>, EngineSingleDecodeEnqueueError<A>> {
+        let EngineExternalBindings {
+            bindings,
+            authority,
+            fingerprint,
+        } = external_bindings;
         let loom_stream = self.loom_stream.clone();
         if self.poisoned {
             settle_bridge_streams(&self.external, &loom_stream, &mut self.poisoned);
             return Err(EngineSingleDecodeEnqueueError::recovered(
                 EngineSingleDecodeEnqueueCause::QueuePoisoned,
+                authority,
                 bindings,
+                fingerprint,
+            ));
+        }
+
+        let memory = bindings.memory_summary();
+        if !memory.all_external() || memory.total() != bindings.len() {
+            let cause = EngineSingleDecodeEnqueueCause::BindingsNotAllExternal {
+                slots: bindings.len(),
+                live: bindings.live_regions(),
+                external_regions: memory.external_regions(),
+                device_buffers: memory.device_buffers(),
+            };
+            settle_bridge_streams(&self.external, &loom_stream, &mut self.poisoned);
+            drop(bindings);
+            return Err(EngineSingleDecodeEnqueueError::unrecoverable(
+                cause, authority,
+            ));
+        }
+        if !bindings.matches_engine_fingerprint(&fingerprint) {
+            settle_bridge_streams(&self.external, &loom_stream, &mut self.poisoned);
+            drop(bindings);
+            return Err(EngineSingleDecodeEnqueueError::unrecoverable(
+                EngineSingleDecodeEnqueueCause::BindingFingerprintMismatch,
+                authority,
             ));
         }
 
@@ -236,10 +377,15 @@ impl EngineInteropQueue {
                 slots: bindings.len(),
             };
             settle_bridge_streams(&self.external, &loom_stream, &mut self.poisoned);
-            return Err(EngineSingleDecodeEnqueueError::recovered(cause, bindings));
+            return Err(EngineSingleDecodeEnqueueError::recovered(
+                cause,
+                authority,
+                bindings,
+                fingerprint,
+            ));
         };
         let trace = EngineExecutionTrace {
-            memory: bindings.memory_summary(),
+            memory,
             buffer_addresses,
             algorithm: EngineSingleDecodeAlgorithm::Direct,
             handoff: EngineStreamHandoff::ExternalEventBridge,
@@ -254,7 +400,9 @@ impl EngineInteropQueue {
             settle_bridge_streams(&self.external, &loom_stream, &mut self.poisoned);
             return Err(EngineSingleDecodeEnqueueError::recovered(
                 EngineSingleDecodeEnqueueCause::Bridge(error),
+                authority,
                 bindings,
+                fingerprint,
             ));
         }
         if let Err(error) = loom_stream.wait(&self.pre_event) {
@@ -262,7 +410,9 @@ impl EngineInteropQueue {
             settle_bridge_streams(&self.external, &loom_stream, &mut self.poisoned);
             return Err(EngineSingleDecodeEnqueueError::recovered(
                 EngineSingleDecodeEnqueueCause::Bridge(error),
+                authority,
                 bindings,
+                fingerprint,
             ));
         }
 
@@ -272,7 +422,9 @@ impl EngineInteropQueue {
                 settle_bridge_streams(&self.external, &loom_stream, &mut self.poisoned);
                 return Err(EngineSingleDecodeEnqueueError::recovered(
                     EngineSingleDecodeEnqueueCause::Command(error),
+                    authority,
                     *bindings,
+                    fingerprint,
                 ));
             }
         };
@@ -284,6 +436,8 @@ impl EngineInteropQueue {
                 &mut self.poisoned,
                 completion,
                 error,
+                authority,
+                fingerprint,
             ));
         }
 
@@ -299,6 +453,8 @@ impl EngineInteropQueue {
                 &mut self.poisoned,
                 completion,
                 error,
+                authority,
+                fingerprint,
             ));
         }
         let completion = scope.finish();
@@ -312,12 +468,22 @@ impl EngineInteropQueue {
                 &mut self.poisoned,
                 completion,
                 error,
+                authority,
+                fingerprint,
             ));
         }
 
-        Ok(EngineCommandCompletion {
-            command: completion,
-            trace,
+        let authority_fingerprint = Arc::clone(&fingerprint);
+        Ok(EngineSubmission {
+            authority: EngineReturnedAuthority {
+                authority,
+                fingerprint: authority_fingerprint,
+            },
+            completion: EngineCommandCompletion {
+                command: completion,
+                trace,
+                fingerprint,
+            },
         })
     }
 }
@@ -332,6 +498,17 @@ pub enum EngineInteropBuildError {
 
 #[derive(Debug, Error)]
 pub enum EngineSingleDecodeEnqueueCause {
+    #[error(
+        "single-decode interop requires every binding slot to contain an external region; got {live} live regions across {slots} slots ({external_regions} external, {device_buffers} Loom-owned)"
+    )]
+    BindingsNotAllExternal {
+        slots: usize,
+        live: usize,
+        external_regions: usize,
+        device_buffers: usize,
+    },
+    #[error("the external binding set changed after engine authority was attached")]
+    BindingFingerprintMismatch,
     #[error(
         "single-decode interop requires exactly {expected} live binding slots, got {live} live across {slots} slots"
     )]
@@ -376,24 +553,69 @@ pub enum EngineSingleDecodeEnqueueCause {
     },
 }
 
-/// A settled enqueue failure with recovered bindings when safe.
-pub struct EngineSingleDecodeEnqueueError {
-    cause: EngineSingleDecodeEnqueueCause,
-    bindings: Option<Box<CheckedBindings>>,
+/// Linear recovery state after an enqueue failure.
+pub enum EngineEnqueueRecovery<A> {
+    /// The original binding capability remains coupled to engine authority.
+    Coupled(EngineExternalBindings<A>),
+    /// Loom could not recover the binding capability; only engine authority remains.
+    AuthorityOnly(A),
 }
 
-impl EngineSingleDecodeEnqueueError {
-    fn recovered(cause: EngineSingleDecodeEnqueueCause, bindings: CheckedBindings) -> Self {
-        Self {
-            cause,
-            bindings: Some(Box::new(bindings)),
+impl<A> EngineEnqueueRecovery<A> {
+    pub const fn is_coupled(&self) -> bool {
+        matches!(self, Self::Coupled(_))
+    }
+
+    pub fn into_coupled(self) -> Result<EngineExternalBindings<A>, A> {
+        match self {
+            Self::Coupled(bindings) => Ok(bindings),
+            Self::AuthorityOnly(authority) => Err(authority),
         }
     }
 
-    fn unrecoverable(cause: EngineSingleDecodeEnqueueCause) -> Self {
+    /// Drops any recovered binding capability before returning authority.
+    pub fn into_authority(self) -> A {
+        match self {
+            Self::Coupled(EngineExternalBindings {
+                bindings,
+                authority,
+                ..
+            }) => {
+                drop(bindings);
+                authority
+            }
+            Self::AuthorityOnly(authority) => authority,
+        }
+    }
+}
+
+/// A settled enqueue failure with one linear recovery value.
+pub struct EngineSingleDecodeEnqueueError<A> {
+    cause: EngineSingleDecodeEnqueueCause,
+    recovery: Box<EngineEnqueueRecovery<A>>,
+}
+
+impl<A> EngineSingleDecodeEnqueueError<A> {
+    fn recovered(
+        cause: EngineSingleDecodeEnqueueCause,
+        authority: A,
+        bindings: CheckedBindings,
+        fingerprint: Arc<EngineBindingFingerprint>,
+    ) -> Self {
         Self {
             cause,
-            bindings: None,
+            recovery: Box::new(EngineEnqueueRecovery::Coupled(EngineExternalBindings {
+                bindings,
+                authority,
+                fingerprint,
+            })),
+        }
+    }
+
+    fn unrecoverable(cause: EngineSingleDecodeEnqueueCause, authority: A) -> Self {
+        Self {
+            cause,
+            recovery: Box::new(EngineEnqueueRecovery::AuthorityOnly(authority)),
         }
     }
 
@@ -401,35 +623,70 @@ impl EngineSingleDecodeEnqueueError {
         &self.cause
     }
 
-    /// Returns bindings only after both bridge streams are quiescent.
-    pub fn recovered_bindings(&self) -> Option<&CheckedBindings> {
-        self.bindings.as_deref()
+    pub fn recovery_is_coupled(&self) -> bool {
+        self.recovery.is_coupled()
     }
 
-    pub fn into_parts(self) -> (EngineSingleDecodeEnqueueCause, Option<CheckedBindings>) {
-        (self.cause, self.bindings.map(|bindings| *bindings))
+    /// Returns one recovery value after both bridge streams are quiescent.
+    pub fn into_parts(self) -> (EngineSingleDecodeEnqueueCause, EngineEnqueueRecovery<A>) {
+        (self.cause, *self.recovery)
     }
 }
 
-impl fmt::Debug for EngineSingleDecodeEnqueueError {
+impl<A> fmt::Debug for EngineSingleDecodeEnqueueError<A> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         formatter
             .debug_struct("EngineSingleDecodeEnqueueError")
             .field("cause", &self.cause)
-            .field("bindings_recovered", &self.bindings.is_some())
+            .field("bindings_recovered", &self.recovery.is_coupled())
             .finish()
     }
 }
 
-impl Display for EngineSingleDecodeEnqueueError {
+impl<A> Display for EngineSingleDecodeEnqueueError<A> {
     fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
         Display::fmt(&self.cause, formatter)
     }
 }
 
-impl std::error::Error for EngineSingleDecodeEnqueueError {
+impl<A> std::error::Error for EngineSingleDecodeEnqueueError<A> {
     fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
         Some(&self.cause)
+    }
+}
+
+/// A completed event handoff split into returned engine authority and Loom work.
+///
+/// The external stream already waits on Loom's post event. Calling
+/// [`Self::into_parts`] therefore returns an opaque authority token without
+/// waiting for the kernel.
+/// The completion keeps checked bindings and their external allocation leases
+/// until it is settled.
+#[must_use = "split the submission to recover engine authority and retain the Loom completion"]
+pub struct EngineSubmission<'queue, A> {
+    completion: EngineCommandCompletion<'queue>,
+    authority: EngineReturnedAuthority<A>,
+}
+
+impl<'queue, A> EngineSubmission<'queue, A> {
+    pub fn into_parts(self) -> (EngineCommandCompletion<'queue>, EngineReturnedAuthority<A>) {
+        (self.completion, self.authority)
+    }
+}
+
+/// Engine authority ordered after Loom while its binding capability stays private.
+///
+/// Shared access exposes the adapter's stream-scoped operations, but the
+/// authority value itself cannot be replaced while its submission identity is
+/// needed for rejoin.
+pub struct EngineReturnedAuthority<A> {
+    authority: A,
+    fingerprint: Arc<EngineBindingFingerprint>,
+}
+
+impl<A> EngineReturnedAuthority<A> {
+    pub const fn authority(&self) -> &A {
+        &self.authority
     }
 }
 
@@ -438,6 +695,7 @@ impl std::error::Error for EngineSingleDecodeEnqueueError {
 pub struct EngineCommandCompletion<'queue> {
     command: CommandCompletion<'queue>,
     trace: EngineExecutionTrace,
+    fingerprint: Arc<EngineBindingFingerprint>,
 }
 
 impl EngineCommandCompletion<'_> {
@@ -449,20 +707,26 @@ impl EngineCommandCompletion<'_> {
         self.command.submitted()
     }
 
-    /// Waits for Loom execution and returns the reusable external bindings.
+    /// Waits for Loom execution and returns opaque settled bindings.
     pub fn wait(self) -> Result<EngineCommandOutcome, EngineCommandCompletionError> {
         let trace = self.trace;
+        let fingerprint = self.fingerprint;
         match self.command.wait() {
-            Ok(bindings) => Ok(EngineCommandOutcome { bindings, trace }),
+            Ok(bindings) => Ok(EngineCommandOutcome {
+                bindings,
+                trace,
+                fingerprint,
+            }),
             Err(source) => Err(EngineCommandCompletionError { source, trace }),
         }
     }
 }
 
-/// Completed external bindings plus the provider trace for their invocation.
+/// Settled bindings that remain opaque until authority is rejoined or released.
 pub struct EngineCommandOutcome {
     bindings: CheckedBindings,
     trace: EngineExecutionTrace,
+    fingerprint: Arc<EngineBindingFingerprint>,
 }
 
 impl EngineCommandOutcome {
@@ -470,8 +734,120 @@ impl EngineCommandOutcome {
         &self.trace
     }
 
-    pub fn into_bindings(self) -> CheckedBindings {
-        self.bindings
+    /// Re-couples the exact authority returned by this submission for reuse.
+    pub fn rejoin<A>(
+        self,
+        authority: EngineReturnedAuthority<A>,
+    ) -> Result<EngineExternalBindings<A>, EngineAuthorityRejoinError<A>> {
+        if !Arc::ptr_eq(&self.fingerprint, &authority.fingerprint) {
+            return Err(EngineAuthorityRejoinError::new(
+                EngineAuthorityRejoinCause::SubmissionMismatch,
+                self,
+                authority,
+            ));
+        }
+        if !self.bindings.matches_engine_fingerprint(&self.fingerprint) {
+            return Err(EngineAuthorityRejoinError::new(
+                EngineAuthorityRejoinCause::BindingFingerprintMismatch,
+                self,
+                authority,
+            ));
+        }
+        Ok(EngineExternalBindings {
+            bindings: self.bindings,
+            authority: authority.authority,
+            fingerprint: self.fingerprint,
+        })
+    }
+
+    /// Drops Loom's binding capability and returns the matching engine authority.
+    pub fn release<A>(
+        self,
+        authority: EngineReturnedAuthority<A>,
+    ) -> Result<(A, EngineExecutionTrace), EngineAuthorityRejoinError<A>> {
+        if !Arc::ptr_eq(&self.fingerprint, &authority.fingerprint) {
+            return Err(EngineAuthorityRejoinError::new(
+                EngineAuthorityRejoinCause::SubmissionMismatch,
+                self,
+                authority,
+            ));
+        }
+        if !self.bindings.matches_engine_fingerprint(&self.fingerprint) {
+            return Err(EngineAuthorityRejoinError::new(
+                EngineAuthorityRejoinCause::BindingFingerprintMismatch,
+                self,
+                authority,
+            ));
+        }
+        let Self {
+            bindings, trace, ..
+        } = self;
+        drop(bindings);
+        Ok((authority.authority, trace))
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
+pub enum EngineAuthorityRejoinCause {
+    #[error("engine authority belongs to a different Loom submission")]
+    SubmissionMismatch,
+    #[error("settled bindings no longer match their engine handoff fingerprint")]
+    BindingFingerprintMismatch,
+}
+
+/// A rejected rejoin with both opaque linear capabilities preserved.
+pub struct EngineAuthorityRejoinError<A> {
+    cause: EngineAuthorityRejoinCause,
+    outcome: Box<EngineCommandOutcome>,
+    authority: Box<EngineReturnedAuthority<A>>,
+}
+
+impl<A> EngineAuthorityRejoinError<A> {
+    fn new(
+        cause: EngineAuthorityRejoinCause,
+        outcome: EngineCommandOutcome,
+        authority: EngineReturnedAuthority<A>,
+    ) -> Self {
+        Self {
+            cause,
+            outcome: Box::new(outcome),
+            authority: Box::new(authority),
+        }
+    }
+
+    pub const fn cause(&self) -> EngineAuthorityRejoinCause {
+        self.cause
+    }
+
+    pub fn into_parts(
+        self,
+    ) -> (
+        EngineAuthorityRejoinCause,
+        EngineCommandOutcome,
+        EngineReturnedAuthority<A>,
+    ) {
+        (self.cause, *self.outcome, *self.authority)
+    }
+}
+
+impl<A> fmt::Debug for EngineAuthorityRejoinError<A> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("EngineAuthorityRejoinError")
+            .field("cause", &self.cause)
+            .finish_non_exhaustive()
+    }
+}
+
+impl<A> Display for EngineAuthorityRejoinError<A> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        Display::fmt(&self.cause, formatter)
+    }
+}
+
+impl<A> std::error::Error for EngineAuthorityRejoinError<A> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cause)
     }
 }
 
@@ -490,31 +866,33 @@ impl EngineCommandCompletionError {
     pub const fn source_error(&self) -> &CommandCompletionError {
         &self.source
     }
-
-    pub fn into_source(self) -> CommandCompletionError {
-        self.source
-    }
 }
 
-fn settle_bridge_failure(
+fn settle_bridge_failure<A>(
     external: &ExternalCudaStream,
     loom_stream: &CudaStream,
     poisoned: &mut bool,
     completion: CommandCompletion<'_>,
     bridge: DriverError,
-) -> EngineSingleDecodeEnqueueError {
+    authority: A,
+    fingerprint: Arc<EngineBindingFingerprint>,
+) -> EngineSingleDecodeEnqueueError<A> {
     let result = completion.wait();
     settle_bridge_streams(external, loom_stream, poisoned);
     match result {
         Ok(bindings) => EngineSingleDecodeEnqueueError::recovered(
             EngineSingleDecodeEnqueueCause::Bridge(bridge),
+            authority,
             bindings,
+            fingerprint,
         ),
         Err(CommandCompletionError::DeviceRejected(rejection)) => {
             let (device, bindings) = rejection.into_parts();
             EngineSingleDecodeEnqueueError::recovered(
                 EngineSingleDecodeEnqueueCause::BridgeAndDeviceRejection { bridge, device },
+                authority,
                 bindings,
+                fingerprint,
             )
         }
         Err(completion) => EngineSingleDecodeEnqueueError::unrecoverable(
@@ -522,29 +900,36 @@ fn settle_bridge_failure(
                 bridge,
                 completion: Box::new(completion),
             },
+            authority,
         ),
     }
 }
 
-fn settle_provider_failure(
+fn settle_provider_failure<A>(
     external: &ExternalCudaStream,
     loom_stream: &CudaStream,
     poisoned: &mut bool,
     completion: CommandCompletion<'_>,
     provider: SingleDecodeEnqueueError,
-) -> EngineSingleDecodeEnqueueError {
+    authority: A,
+    fingerprint: Arc<EngineBindingFingerprint>,
+) -> EngineSingleDecodeEnqueueError<A> {
     let result = completion.wait();
     settle_bridge_streams(external, loom_stream, poisoned);
     match result {
         Ok(bindings) => EngineSingleDecodeEnqueueError::recovered(
             EngineSingleDecodeEnqueueCause::Provider(provider),
+            authority,
             bindings,
+            fingerprint,
         ),
         Err(CommandCompletionError::DeviceRejected(rejection)) => {
             let (device, bindings) = rejection.into_parts();
             EngineSingleDecodeEnqueueError::recovered(
                 EngineSingleDecodeEnqueueCause::ProviderAndDeviceRejection { provider, device },
+                authority,
                 bindings,
+                fingerprint,
             )
         }
         Err(completion) => EngineSingleDecodeEnqueueError::unrecoverable(
@@ -552,6 +937,7 @@ fn settle_provider_failure(
                 provider,
                 completion: Box::new(completion),
             },
+            authority,
         ),
     }
 }

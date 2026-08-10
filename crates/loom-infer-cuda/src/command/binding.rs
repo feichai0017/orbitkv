@@ -25,6 +25,21 @@ pub struct CheckedBindings {
     pub(crate) status: DeviceStatusState,
 }
 
+/// Exact identity of one external-only binding set at an engine handoff.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct EngineBindingFingerprint {
+    queue_id: u64,
+    set_id: u64,
+    context: usize,
+    regions: Box<[EngineBindingRegion]>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct EngineBindingRegion {
+    span: RegionSpan,
+    access: AccessMode,
+}
+
 /// Allocation provenance for one checked binding set.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct BindingMemorySummary {
@@ -89,6 +104,44 @@ impl CheckedBindings {
             .iter()
             .filter(|lease| lease.device_address().is_some())
             .count()
+    }
+
+    /// Snapshots an all-external binding set for a linear engine handoff.
+    pub(crate) fn engine_fingerprint(&self) -> Option<EngineBindingFingerprint> {
+        let mut regions = Vec::with_capacity(self.leases.len());
+        for lease in &self.leases {
+            if lease.owner() != Some(DeviceRegionOwner::External) {
+                return None;
+            }
+            let (span, access) = lease.region_span()?;
+            regions.push(EngineBindingRegion { span, access });
+        }
+        if regions.is_empty() {
+            return None;
+        }
+        Some(EngineBindingFingerprint {
+            queue_id: self.queue_id,
+            set_id: self.set_id,
+            context: self.stream.context().cu_ctx().addr(),
+            regions: regions.into_boxed_slice(),
+        })
+    }
+
+    pub(crate) fn matches_engine_fingerprint(&self, expected: &EngineBindingFingerprint) -> bool {
+        if self.queue_id != expected.queue_id
+            || self.set_id != expected.set_id
+            || self.stream.context().cu_ctx().addr() != expected.context
+            || self.leases.len() != expected.regions.len()
+        {
+            return false;
+        }
+        self.leases
+            .iter()
+            .zip(expected.regions.iter())
+            .all(|(lease, expected)| {
+                lease.owner() == Some(DeviceRegionOwner::External)
+                    && lease.region_span() == Some((expected.span, expected.access))
+            })
     }
 
     /// Returns exact device addresses in stable binding-slot order without
@@ -440,7 +493,7 @@ impl Lease {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum AccessMode {
     Read,
     ReadWrite,
@@ -452,7 +505,7 @@ impl AccessMode {
     }
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
 struct RegionSpan {
     start: u64,
     bytes: u64,
