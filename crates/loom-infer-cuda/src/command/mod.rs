@@ -5,16 +5,22 @@
 mod binding;
 mod completion;
 mod resolve;
+mod status;
 mod submission;
 
+pub use crate::device_status::DeviceStatusProtocolError;
 pub use binding::{
-    BindError, BindingElement, CheckedBindings, ErasedLease, Read, ReadWrite, Write,
+    BindError, BindingElement, CheckedBindings, ErasedLease, Read, ReadWrite,
+    TakeDeviceBufferError, Write,
 };
 pub use completion::CommandCompletion;
 pub(crate) use completion::synchronize_stream_or_abort;
+pub use completion::{CommandCompletionError, DeviceRejection};
 use cuda_core::DriverError;
 pub(crate) use resolve::ResolvedRrww;
-pub(crate) use submission::{CapturedCommandSet, CommandPermit, RetainedResource};
+pub(crate) use submission::{
+    CapturedCommandSet, CommandPermit, DeviceStatusReservation, RetainedResource,
+};
 pub use submission::{CommandQueue, CommandScope};
 use thiserror::Error;
 
@@ -80,12 +86,16 @@ pub enum CommandError {
     #[error("checked binding capacity {capacity} is exhausted")]
     BindingCapacityExceeded { capacity: usize },
     #[error(
-        "buffer belongs to CUDA device {buffer_device}, but the queue stream belongs to device {stream_device}"
+        "device region belongs to CUDA device {region_device}, but the queue stream belongs to device {stream_device}"
     )]
-    BufferContextMismatch {
-        buffer_device: usize,
+    RegionContextMismatch {
+        region_device: usize,
         stream_device: usize,
     },
+    #[error(
+        "device region overlaps binding slot {existing_slot}; any overlap involving a writer is rejected"
+    )]
+    OverlappingDeviceRegions { existing_slot: usize },
     #[error("the resource handle belongs to a different checked binding set")]
     BindingSetMismatch,
     #[error("binding slot {slot} is out of range for {bindings} bindings")]
@@ -100,6 +110,14 @@ pub enum CommandError {
     DuplicateBindingSlot,
     #[error("command scope capacity {capacity} is exhausted")]
     CommandCapacityExceeded { capacity: usize },
+    #[error("device status storage capacity overflowed")]
+    DeviceStatusCapacityOverflow,
+    #[error("device status capacity {capacity} is exhausted")]
+    DeviceStatusCapacityExceeded { capacity: usize },
+    #[error("one device status workspace cannot be validated twice in the same command scope")]
+    DuplicateDeviceStatusSource,
+    #[error("device status source must contain at least one complete packet")]
+    DeviceStatusSourceTooShort,
     #[error(transparent)]
     External(#[from] ExternalCommandError),
     #[error(transparent)]

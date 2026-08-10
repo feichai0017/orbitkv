@@ -1,6 +1,7 @@
 //! cuda-oxide provider for BF16 single-request decode attention.
 
 use crate::command::{CommandError, CommandPermit, CommandScope, Read, ReadWrite, Write};
+use crate::memory::{DeviceRegionLaunchError, enqueue_region_launch};
 use cuda_core::{CudaContext, CudaFunction, LaunchConfig1D, LaunchContractError, PreparedLaunch};
 use cuda_device::{
     DisjointSlice, SharedArray, convert, cuda_module, float, kernel, launch_bounds,
@@ -1134,8 +1135,7 @@ impl Bf16SingleDecodePlan {
             ] {
                 require_packed_alignment(operand, address)?;
             }
-            let result = self.module.single_decode_bf16_nhd(
-                resolved.stream,
+            let operation = self.module.single_decode_bf16_nhd_async(
                 &self.launch,
                 self.spec.kv_len(),
                 self.spec.num_query_heads(),
@@ -1147,6 +1147,7 @@ impl Bf16SingleDecodePlan {
                 resolved.fourth,
                 resolved.fifth,
             );
+            let result = enqueue_region_launch(resolved.stream, operation);
             (self.launch.function().clone(), result)
         };
         record_launch(scope, permit, function, launch_result)
@@ -1251,8 +1252,7 @@ impl Bf16PagedBatchDecodePlan {
             );
             match &self.launch {
                 Bf16PagedBatchDecodeLaunch::Direct(launch) => {
-                    let result = self.module.paged_batch_decode_bf16_nhd(
-                        resolved.stream,
+                    let operation = self.module.paged_batch_decode_bf16_nhd_async(
                         launch,
                         common.0,
                         common.1,
@@ -1268,26 +1268,29 @@ impl Bf16PagedBatchDecodePlan {
                         resolved.seventh,
                         resolved.eighth,
                     );
+                    let result = enqueue_region_launch(resolved.stream, operation);
                     (launch.function().clone(), result)
                 }
                 Bf16PagedBatchDecodeLaunch::TokenParallel8(launch) => {
-                    let result = self.module.paged_batch_decode_bf16_nhd_token_parallel(
-                        resolved.stream,
-                        launch,
-                        common.0,
-                        common.1,
-                        common.2,
-                        common.3,
-                        common.4,
-                        resolved.first,
-                        resolved.second,
-                        resolved.third,
-                        resolved.fourth,
-                        resolved.fifth,
-                        resolved.sixth,
-                        resolved.seventh,
-                        resolved.eighth,
-                    );
+                    let operation = self
+                        .module
+                        .paged_batch_decode_bf16_nhd_token_parallel_async(
+                            launch,
+                            common.0,
+                            common.1,
+                            common.2,
+                            common.3,
+                            common.4,
+                            resolved.first,
+                            resolved.second,
+                            resolved.third,
+                            resolved.fourth,
+                            resolved.fifth,
+                            resolved.sixth,
+                            resolved.seventh,
+                            resolved.eighth,
+                        );
+                    let result = enqueue_region_launch(resolved.stream, operation);
                     (launch.function().clone(), result)
                 }
             }
@@ -1354,8 +1357,7 @@ impl Bf16SingleDecodeSplitKPlan {
             ] {
                 require_packed_alignment(operand, address)?;
             }
-            let result = self.module.single_decode_bf16_nhd_split_k_partials(
-                resolved.stream,
+            let operation = self.module.single_decode_bf16_nhd_split_k_partials_async(
                 &self.partial_launch,
                 decode.kv_len(),
                 decode.num_query_heads(),
@@ -1367,6 +1369,7 @@ impl Bf16SingleDecodeSplitKPlan {
                 resolved.third,
                 resolved.fourth,
             );
+            let result = enqueue_region_launch(resolved.stream, operation);
             (self.partial_launch.function().clone(), result)
         };
         record_launch(scope, partial_permit, partial_function, partial_result)?;
@@ -1374,8 +1377,7 @@ impl Bf16SingleDecodeSplitKPlan {
         let merge_permit = scope.prepare_command()?;
         let (merge_function, merge_result) = {
             let resolved = scope.resolve_rww(args.workspace.read(), args.output, args.lse)?;
-            let result = self.module.single_decode_bf16_nhd_split_k_merge(
-                resolved.stream,
+            let operation = self.module.single_decode_bf16_nhd_split_k_merge_async(
                 &self.merge_launch,
                 self.spec.decode().num_query_heads(),
                 self.spec.partitions(),
@@ -1383,6 +1385,7 @@ impl Bf16SingleDecodeSplitKPlan {
                 resolved.second,
                 resolved.third,
             );
+            let result = enqueue_region_launch(resolved.stream, operation);
             (self.merge_launch.function().clone(), result)
         };
         record_launch(scope, merge_permit, merge_function, merge_result)
@@ -1515,7 +1518,7 @@ pub enum SingleDecodeEnqueueError {
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]
-    Launch(#[from] LaunchContractError),
+    Launch(#[from] DeviceRegionLaunchError),
     #[error(
         "packed single decode requires {operand} to be {alignment}-byte aligned, got {address:#x}"
     )]
@@ -1539,7 +1542,7 @@ pub enum PagedBatchDecodeEnqueueError {
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]
-    Launch(#[from] LaunchContractError),
+    Launch(#[from] DeviceRegionLaunchError),
     #[error(
         "packed paged batch decode requires {operand} to be {alignment}-byte aligned, got {address:#x}"
     )]
@@ -1618,7 +1621,7 @@ fn record_launch(
     scope: &mut CommandScope<'_>,
     permit: CommandPermit,
     function: CudaFunction,
-    result: Result<(), LaunchContractError>,
+    result: Result<(), DeviceRegionLaunchError>,
 ) -> Result<(), SingleDecodeEnqueueError> {
     match result {
         Ok(()) => {
@@ -1626,8 +1629,8 @@ fn record_launch(
             Ok(())
         }
         Err(error) => {
-            if let LaunchContractError::Driver(driver_error) = &error {
-                scope.record_failed_cuda_submission(permit, function, *driver_error);
+            if let Some(driver_error) = error.driver_error() {
+                scope.record_failed_cuda_submission(permit, function, driver_error);
             }
             Err(error.into())
         }
@@ -1638,7 +1641,7 @@ fn record_paged_launch(
     scope: &mut CommandScope<'_>,
     permit: CommandPermit,
     function: CudaFunction,
-    result: Result<(), LaunchContractError>,
+    result: Result<(), DeviceRegionLaunchError>,
 ) -> Result<(), PagedBatchDecodeEnqueueError> {
     match result {
         Ok(()) => {
@@ -1646,8 +1649,8 @@ fn record_paged_launch(
             Ok(())
         }
         Err(error) => {
-            if let LaunchContractError::Driver(driver_error) = &error {
-                scope.record_failed_cuda_submission(permit, function, *driver_error);
+            if let Some(driver_error) = error.driver_error() {
+                scope.record_failed_cuda_submission(permit, function, driver_error);
             }
             Err(error.into())
         }

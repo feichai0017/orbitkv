@@ -1,57 +1,85 @@
 ---
 import DocsNav from "../../components/DocsNav.astro";
 import SiteLayout from "../../layouts/SiteLayout.astro";
-import { repositoryUrl } from "../../data/site";
+import { executionStages, repositoryUrl } from "../../data/site";
 ---
 
 <SiteLayout
   title="Documentation | Loom Infer"
-  description="Architecture, roadmap, operator contracts, and evidence for Loom Infer."
+  description="Architecture, contracts, validation, and evidence for Loom Infer."
 >
   <header class="page-hero">
     <p class="eyebrow">Documentation</p>
-    <h1>Start from the boundary.</h1>
-    <p>Loom Infer is a Rust and cuda-oxide CUDA operator library. The engine keeps model and serving policy.</p>
+    <h1>Start with the operator boundary.</h1>
+    <p>
+      Loom Infer provides contracts, plans, CUDA execution, and completion.
+      The engine keeps model, request, and scheduling policy.
+    </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Start" />
     <article class="prose">
-      <h2>Start here</h2>
+      <h2>Read in this order</h2>
       <div class="doc-grid">
         <div class="doc-card">
+          <span class="card-index">01 / DESIGN</span>
           <h3>Architecture</h3>
-          <p>Read the Rust source boundary and one operator lifecycle.</p>
-          <a href={`${repositoryUrl}/blob/main/docs/design/loom-infer-architecture.md`}>Architecture</a>
+          <p>Understand ownership, planning, submission, and completion.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/design/loom-infer-architecture.md`}>Open architecture →</a>
         </div>
         <div class="doc-card">
-          <h3>Roadmap</h3>
-          <p>Follow the RMSNorm, vendor GEMM, attention, and decode phases.</p>
-          <a href={`${repositoryUrl}/blob/main/docs/roadmap.md`}>Roadmap</a>
+          <span class="card-index">02 / SURFACE</span>
+          <h3>Operator catalog</h3>
+          <p>Check each admitted dtype, layout, algorithm, and open gate.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>Open catalog →</a>
         </div>
         <div class="doc-card">
-          <h3>Operators</h3>
-          <p>Check the current slice and target operator surface.</p>
-          <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>Operator catalog</a>
+          <span class="card-index">03 / PROOF</span>
+          <h3>Evidence index</h3>
+          <p>Inspect source revisions, methods, raw samples, and exclusions.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>Open evidence →</a>
         </div>
         <div class="doc-card">
+          <span class="card-index">04 / DEVICE</span>
           <h3>H20 validation</h3>
-          <p>Run each correctness, stream, graph, sanitizer, and performance gate separately.</p>
-          <a href={`${repositoryUrl}/blob/main/docs/development/h20-validation.md`}>Validation guide</a>
+          <p>Run correctness, sanitizer, Graph, and performance gates separately.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/development/h20-validation.md`}>Open validation guide →</a>
         </div>
       </div>
 
-      <h2>Validate the current workspace</h2>
+      <h2>Execution lifecycle</h2>
+      <p>Every operator follows the same checked path.</p>
+      <ol>
+        {executionStages.map((stage) => (
+          <li><strong>{stage.name}.</strong> {stage.detail}</li>
+        ))}
+      </ol>
+      <pre><code>let plan = provider.plan(spec)?;
+let mut bindings = queue.bindings(capacity)?;
+
+let mut scope = queue.begin(bindings)?;
+plan.enqueue_into(&mut scope, args)?;
+bindings = scope.finish().wait()?;</code></pre>
+
+      <div class="doc-note">
+        <strong>Graph capture uses the same plan.</strong>
+        <p>Fixed-address Graph execution retains providers, bindings, functions, and completion resources.</p>
+      </div>
+
+      <h2>Validate a checkout</h2>
       <pre><code>git clone https://github.com/feichai0017/loom-infer.git
 cd loom-infer
-cargo fmt --all -- --check
-cargo clippy --workspace --all-targets -- -D warnings
-cargo test --workspace --all-targets</code></pre>
+make check
+
+# On the pinned CUDA host
+make cuda-doctor
+make cuda-check
+make h20</code></pre>
       <p>
-        The <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>evidence index</a>
-        contains the RMSNorm, BF16 GEMM, CUDA Graph, single-decode, and paged
-        batch-decode, ragged and paged prefill, RoPE, and fused paged-append
-        results.
+        Device records apply only to their declared source, hardware, contract,
+        and measurement. A correctness record does not imply a performance or
+        serving result.
       </p>
     </article>
   </div>

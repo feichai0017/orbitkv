@@ -54,7 +54,7 @@ jobs:
           fi
 
       - name: Check
-        run: make check-rust PACKAGE_FLAGS=
+        run: make check-rust check-tools PACKAGE_FLAGS=
 
   cuda-host:
     name: cuda-host

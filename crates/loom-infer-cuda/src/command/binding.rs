@@ -1,6 +1,8 @@
 //! Typed buffer ownership and opaque binding handles.
 
 use super::CommandError;
+use super::status::DeviceStatusState;
+use crate::memory::{DeviceRegion, ReadDeviceRegion, ReadWriteDeviceRegion};
 use cuda_core::{CudaStream, DeviceBuffer, DeviceCopy};
 use half::{bf16, f16};
 use std::fmt::{self, Display, Formatter};
@@ -19,6 +21,7 @@ pub struct CheckedBindings {
     pub(super) stream: Arc<CudaStream>,
     pub(super) leases: Vec<Lease>,
     pub(super) capacity: usize,
+    pub(crate) status: DeviceStatusState,
 }
 
 impl CheckedBindings {
@@ -39,19 +42,40 @@ impl CheckedBindings {
         &mut self,
         buffer: Arc<DeviceBuffer<T>>,
     ) -> Result<Read<T>, BindError<Arc<DeviceBuffer<T>>>> {
+        match self.bind_read_region(ReadDeviceRegion::from_buffer(buffer)) {
+            Ok(handle) => Ok(handle),
+            Err(error) => {
+                let (error, region) = error.into_parts();
+                let buffer = region
+                    .into_buffer()
+                    .expect("a DeviceBuffer convenience region keeps its buffer owner");
+                Err(BindError {
+                    error,
+                    resource: buffer,
+                })
+            }
+        }
+    }
+
+    /// Adds a retained read-only device region and returns its opaque handle.
+    pub fn bind_read_region<T: BindingElement>(
+        &mut self,
+        region: ReadDeviceRegion<T>,
+    ) -> Result<Read<T>, BindError<ReadDeviceRegion<T>>> {
         let slot = match self
-            .check_buffer(&buffer)
+            .check_region_context(region.context())
+            .and_then(|()| self.check_region_overlap(region.view(), AccessMode::Read))
             .and_then(|()| self.reserve_slot())
         {
             Ok(slot) => slot,
             Err(error) => {
                 return Err(BindError {
                     error,
-                    resource: buffer,
+                    resource: region,
                 });
             }
         };
-        let ErasedLease(lease) = T::__erase_read(buffer);
+        let ErasedLease(lease) = T::__erase_read(region);
         self.leases.push(lease);
         Ok(Read {
             set_id: self.set_id,
@@ -65,19 +89,40 @@ impl CheckedBindings {
         &mut self,
         buffer: DeviceBuffer<T>,
     ) -> Result<ReadWrite<T>, BindError<DeviceBuffer<T>>> {
+        match self.bind_read_write_region(ReadWriteDeviceRegion::from_buffer(buffer)) {
+            Ok(handle) => Ok(handle),
+            Err(error) => {
+                let (error, region) = error.into_parts();
+                let buffer = region
+                    .into_buffer()
+                    .expect("a DeviceBuffer convenience region keeps its buffer owner");
+                Err(BindError {
+                    error,
+                    resource: buffer,
+                })
+            }
+        }
+    }
+
+    /// Transfers one retained device region with exclusive write authority.
+    pub fn bind_read_write_region<T: BindingElement>(
+        &mut self,
+        region: ReadWriteDeviceRegion<T>,
+    ) -> Result<ReadWrite<T>, BindError<ReadWriteDeviceRegion<T>>> {
         let slot = match self
-            .check_buffer(&buffer)
+            .check_region_context(region.context())
+            .and_then(|()| self.check_region_overlap(region.view(), AccessMode::ReadWrite))
             .and_then(|()| self.reserve_slot())
         {
             Ok(slot) => slot,
             Err(error) => {
                 return Err(BindError {
                     error,
-                    resource: buffer,
+                    resource: region,
                 });
             }
         };
-        let ErasedLease(lease) = T::__erase_read_write(buffer);
+        let ErasedLease(lease) = T::__erase_read_write(region);
         self.leases.push(lease);
         Ok(ReadWrite {
             set_id: self.set_id,
@@ -93,7 +138,23 @@ impl CheckedBindings {
     pub fn take_read_write<T: BindingElement>(
         &mut self,
         handle: ReadWrite<T>,
-    ) -> Result<DeviceBuffer<T>, CommandError> {
+    ) -> Result<DeviceBuffer<T>, TakeDeviceBufferError<T>> {
+        let region = self
+            .take_read_write_region(handle)
+            .map_err(TakeDeviceBufferError::Command)?;
+        region
+            .into_buffer()
+            .map_err(TakeDeviceBufferError::ExternalRegion)
+    }
+
+    /// Removes one completed writable region from the binding arena.
+    ///
+    /// This is the ownership-preserving extraction API for both Loom-owned
+    /// buffers and external engine allocations.
+    pub fn take_read_write_region<T: BindingElement>(
+        &mut self,
+        handle: ReadWrite<T>,
+    ) -> Result<ReadWriteDeviceRegion<T>, CommandError> {
         if handle.set_id != self.set_id {
             return Err(CommandError::BindingSetMismatch);
         }
@@ -103,20 +164,19 @@ impl CheckedBindings {
                 bindings: self.leases.len(),
             });
         }
-        T::__take_read_write(self, handle.slot)
+        T::__take_read_write_region(self, handle.slot)
     }
 
-    fn check_buffer<T: BindingElement>(
+    fn check_region_context(
         &self,
-        buffer: &DeviceBuffer<T>,
+        region_context: &Arc<cuda_core::CudaContext>,
     ) -> Result<(), CommandError> {
-        let buffer_context = buffer.context();
         let stream_context = self.stream.context();
-        if buffer_context.cu_ctx() == stream_context.cu_ctx() {
+        if region_context.cu_ctx() == stream_context.cu_ctx() {
             Ok(())
         } else {
-            Err(CommandError::BufferContextMismatch {
-                buffer_device: buffer_context.ordinal(),
+            Err(CommandError::RegionContextMismatch {
+                region_device: region_context.ordinal(),
                 stream_device: stream_context.ordinal(),
             })
         }
@@ -130,6 +190,25 @@ impl CheckedBindings {
         } else {
             Ok(self.leases.len())
         }
+    }
+
+    fn check_region_overlap<T: DeviceCopy>(
+        &self,
+        region: &DeviceRegion<T>,
+        access: AccessMode,
+    ) -> Result<(), CommandError> {
+        let incoming = RegionSpan::new(region.cu_deviceptr(), region.num_bytes());
+        for (slot, lease) in self.leases.iter().enumerate() {
+            let Some((existing, existing_access)) = lease.region_span() else {
+                continue;
+            };
+            if (access.is_write() || existing_access.is_write()) && incoming.overlaps(existing) {
+                return Err(CommandError::OverlappingDeviceRegions {
+                    existing_slot: slot,
+                });
+            }
+        }
+        Ok(())
     }
 }
 
@@ -173,9 +252,81 @@ impl<R: 'static> std::error::Error for BindError<R> {
     }
 }
 
+/// Failure to recover a Loom-owned `DeviceBuffer` from a writable binding.
+///
+/// An external region remains owned by this error and can be recovered with
+/// [`Self::into_region`]. Command errors leave the resource in the binding set.
+pub enum TakeDeviceBufferError<T: BindingElement> {
+    Command(CommandError),
+    ExternalRegion(ReadWriteDeviceRegion<T>),
+}
+
+impl<T: BindingElement> TakeDeviceBufferError<T> {
+    pub const fn command_error(&self) -> Option<&CommandError> {
+        match self {
+            Self::Command(error) => Some(error),
+            Self::ExternalRegion(_) => None,
+        }
+    }
+
+    pub fn into_region(self) -> Option<ReadWriteDeviceRegion<T>> {
+        match self {
+            Self::Command(_) => None,
+            Self::ExternalRegion(region) => Some(region),
+        }
+    }
+}
+
+impl<T: BindingElement> fmt::Debug for TakeDeviceBufferError<T> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Command(error) => formatter.debug_tuple("Command").field(error).finish(),
+            Self::ExternalRegion(_) => formatter
+                .debug_tuple("ExternalRegion")
+                .field(&"retained")
+                .finish(),
+        }
+    }
+}
+
+impl<T: BindingElement> Display for TakeDeviceBufferError<T> {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Command(error) => Display::fmt(error, formatter),
+            Self::ExternalRegion(_) => formatter.write_str(
+                "the writable binding is an external device region, not an owned DeviceBuffer",
+            ),
+        }
+    }
+}
+
+impl<T: BindingElement> std::error::Error for TakeDeviceBufferError<T> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::Command(error) => Some(error),
+            Self::ExternalRegion(_) => None,
+        }
+    }
+}
+
 pub(crate) enum Access<T: DeviceCopy> {
-    Read(Arc<DeviceBuffer<T>>),
-    ReadWrite(DeviceBuffer<T>),
+    Read(ReadDeviceRegion<T>),
+    ReadWrite(ReadWriteDeviceRegion<T>),
+}
+
+impl<T: DeviceCopy> Access<T> {
+    fn region_span(&self) -> (RegionSpan, AccessMode) {
+        match self {
+            Self::Read(region) => (
+                RegionSpan::new(region.cu_deviceptr(), region.num_bytes()),
+                AccessMode::Read,
+            ),
+            Self::ReadWrite(region) => (
+                RegionSpan::new(region.cu_deviceptr(), region.num_bytes()),
+                AccessMode::ReadWrite,
+            ),
+        }
+    }
 }
 
 pub(crate) enum Lease {
@@ -185,6 +336,61 @@ pub(crate) enum Lease {
     I32(Access<i32>),
     U8(Access<u8>),
     Vacant,
+}
+
+impl Lease {
+    fn region_span(&self) -> Option<(RegionSpan, AccessMode)> {
+        match self {
+            Self::F32(access) => Some(access.region_span()),
+            Self::F16(access) => Some(access.region_span()),
+            Self::Bf16(access) => Some(access.region_span()),
+            Self::I32(access) => Some(access.region_span()),
+            Self::U8(access) => Some(access.region_span()),
+            Self::Vacant => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum AccessMode {
+    Read,
+    ReadWrite,
+}
+
+impl AccessMode {
+    const fn is_write(self) -> bool {
+        matches!(self, Self::ReadWrite)
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RegionSpan {
+    start: u64,
+    bytes: u64,
+}
+
+impl RegionSpan {
+    fn new(start: u64, bytes: usize) -> Self {
+        Self {
+            start,
+            bytes: u64::try_from(bytes).expect("device region byte extent fits CUdeviceptr"),
+        }
+    }
+
+    fn overlaps(self, other: Self) -> bool {
+        if self.bytes == 0 || other.bytes == 0 {
+            return false;
+        }
+        let self_end = self
+            .start
+            .checked_add(self.bytes)
+            .expect("checked device region pointer extent");
+        let other_end = other
+            .start
+            .checked_add(other.bytes)
+            .expect("checked device region pointer extent");
+        self.start < other_end && other.start < self_end
+    }
 }
 
 mod sealed {
@@ -197,16 +403,16 @@ mod sealed {
 /// downcasts, or unsafe pointer casts.
 pub trait BindingElement: DeviceCopy + sealed::Sealed + Sized + 'static {
     #[doc(hidden)]
-    fn __erase_read(buffer: Arc<DeviceBuffer<Self>>) -> ErasedLease;
+    fn __erase_read(region: ReadDeviceRegion<Self>) -> ErasedLease;
 
     #[doc(hidden)]
-    fn __erase_read_write(buffer: DeviceBuffer<Self>) -> ErasedLease;
+    fn __erase_read_write(region: ReadWriteDeviceRegion<Self>) -> ErasedLease;
 
     #[doc(hidden)]
-    fn __take_read_write(
+    fn __take_read_write_region(
         bindings: &mut CheckedBindings,
         slot: usize,
-    ) -> Result<DeviceBuffer<Self>, CommandError>;
+    ) -> Result<ReadWriteDeviceRegion<Self>, CommandError>;
 }
 
 /// Opaque erased storage for one binding.
@@ -217,9 +423,9 @@ pub trait BindingElement: DeviceCopy + sealed::Sealed + Sized + 'static {
 pub struct ErasedLease(Lease);
 
 pub(crate) trait ResolveElement: BindingElement {
-    fn read(lease: &Lease) -> Result<&DeviceBuffer<Self>, LeaseError>;
+    fn read(lease: &Lease) -> Result<&DeviceRegion<Self>, LeaseError>;
 
-    fn write(lease: &mut Lease) -> Result<&mut DeviceBuffer<Self>, LeaseError>;
+    fn write(lease: &mut Lease) -> Result<&mut ReadWriteDeviceRegion<Self>, LeaseError>;
 }
 
 pub(crate) enum LeaseError {
@@ -233,27 +439,27 @@ macro_rules! impl_binding_element {
         impl sealed::Sealed for $ty {}
 
         impl BindingElement for $ty {
-            fn __erase_read(buffer: Arc<DeviceBuffer<Self>>) -> ErasedLease {
-                ErasedLease(Lease::$variant(Access::Read(buffer)))
+            fn __erase_read(region: ReadDeviceRegion<Self>) -> ErasedLease {
+                ErasedLease(Lease::$variant(Access::Read(region)))
             }
 
-            fn __erase_read_write(buffer: DeviceBuffer<Self>) -> ErasedLease {
-                ErasedLease(Lease::$variant(Access::ReadWrite(buffer)))
+            fn __erase_read_write(region: ReadWriteDeviceRegion<Self>) -> ErasedLease {
+                ErasedLease(Lease::$variant(Access::ReadWrite(region)))
             }
 
-            fn __take_read_write(
+            fn __take_read_write_region(
                 bindings: &mut CheckedBindings,
                 slot: usize,
-            ) -> Result<DeviceBuffer<Self>, CommandError> {
+            ) -> Result<ReadWriteDeviceRegion<Self>, CommandError> {
                 let lease = bindings
                     .leases
                     .get_mut(slot)
                     .expect("binding slot was validated before removal");
                 let owned = std::mem::replace(lease, Lease::Vacant);
                 match owned {
-                    Lease::$variant(Access::ReadWrite(buffer)) => Ok(buffer),
-                    Lease::$variant(Access::Read(buffer)) => {
-                        *lease = Lease::$variant(Access::Read(buffer));
+                    Lease::$variant(Access::ReadWrite(region)) => Ok(region),
+                    Lease::$variant(Access::Read(region)) => {
+                        *lease = Lease::$variant(Access::Read(region));
                         Err(CommandError::BindingIsReadOnly { slot })
                     }
                     Lease::Vacant => Err(CommandError::BindingSlotVacant { slot }),
@@ -266,18 +472,18 @@ macro_rules! impl_binding_element {
         }
 
         impl ResolveElement for $ty {
-            fn read(lease: &Lease) -> Result<&DeviceBuffer<Self>, LeaseError> {
+            fn read(lease: &Lease) -> Result<&DeviceRegion<Self>, LeaseError> {
                 match lease {
-                    Lease::$variant(Access::Read(buffer)) => Ok(buffer.as_ref()),
-                    Lease::$variant(Access::ReadWrite(buffer)) => Ok(buffer),
+                    Lease::$variant(Access::Read(region)) => Ok(region.view()),
+                    Lease::$variant(Access::ReadWrite(region)) => Ok(region.view()),
                     Lease::Vacant => Err(LeaseError::Vacant),
                     _ => Err(LeaseError::ElementMismatch),
                 }
             }
 
-            fn write(lease: &mut Lease) -> Result<&mut DeviceBuffer<Self>, LeaseError> {
+            fn write(lease: &mut Lease) -> Result<&mut ReadWriteDeviceRegion<Self>, LeaseError> {
                 match lease {
-                    Lease::$variant(Access::ReadWrite(buffer)) => Ok(buffer),
+                    Lease::$variant(Access::ReadWrite(region)) => Ok(region),
                     Lease::$variant(Access::Read(_)) => Err(LeaseError::ReadOnly),
                     Lease::Vacant => Err(LeaseError::Vacant),
                     _ => Err(LeaseError::ElementMismatch),
@@ -333,4 +539,16 @@ pub struct Write<T: BindingElement> {
     pub(super) set_id: u64,
     pub(super) slot: usize,
     pub(super) element: PhantomData<fn() -> T>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn region_spans_detect_only_nonempty_intersections() {
+        assert!(RegionSpan::new(100, 16).overlaps(RegionSpan::new(108, 16)));
+        assert!(!RegionSpan::new(100, 8).overlaps(RegionSpan::new(108, 8)));
+        assert!(!RegionSpan::new(100, 0).overlaps(RegionSpan::new(100, 8)));
+    }
 }

@@ -1,33 +1,55 @@
 # Loom Infer documentation
 
-Loom Infer is building a high-performance, FlashInfer-class CUDA operator
-library for Rust LLM inference engines. Loom-owned kernels are Rust compiled
-with cuda-oxide; there is no CUDA C or CUDA C++ product source.
+Loom Infer is a Rust-native CUDA operator layer for LLM inference engines.
+This documentation separates implemented contracts, planned work, and recorded
+evidence.
 
-- [Architecture](design/loom-infer-architecture.md) defines ownership and the
-  operator lifecycle.
-- [Repository layout](design/repository-layout.md) maps source directories to
-  architectural responsibilities and defines when they should split.
-- [Operator catalog](operator-catalog.md) lists current and planned work.
-- [FlashInfer parity](flashinfer-parity.md) pins the comparison surface and
-  records every upstream operator domain.
-- [Roadmap](roadmap.md) gives the implementation order and exit gates.
-- [Development environment](development/environment.md) pins host, website,
-  and CUDA toolchains and defines the common validation commands.
-- [H20 validation](development/h20-validation.md) defines the device test
-  process.
-- [Evidence](results/README.md) indexes results from permanent providers.
+## Read in this order
 
-The root [README](../README.md) gives the short project overview. Current
-correctness evidence covers Rust RMSNorm, single-decode attention, paged
-batch-decode, ragged prefill, and paged prefill kernels, plus one fixed BF16
-cuBLASLt GEMM plan on H20.
+1. [Architecture](design/loom-infer-architecture.md) defines ownership, plans,
+   bindings, submission, and completion.
+2. [Operator catalog](operator-catalog.md) lists every admitted operator
+   combination and its current gate.
+3. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
+   surface without claiming complete parity.
+4. [Roadmap](roadmap.md) orders the remaining correctness, integration, and
+   performance work.
+5. [Evidence](results/README.md) indexes machine-readable device and benchmark
+   records.
+
+## Development
+
+- [Repository layout](design/repository-layout.md) maps each crate and module to
+  one responsibility.
+- [Environment](development/environment.md) pins Rust, Node.js, CUDA, and
+  cuda-oxide.
+- [H20 validation](development/h20-validation.md) defines device correctness,
+  sanitizer, Graph, and performance gates.
+
+## Current boundary
+
+The product contains three crates:
+
+| Crate | Responsibility |
+| --- | --- |
+| `loom-infer` | Backend-independent contracts and CPU references |
+| `loom-infer-cuda` | CUDA providers, command runtime, Graphs, and vendor calls |
+| `loom-infer-validation` | H20 gates, benchmarks, and evidence generation |
+
+The engine retains models, requests, scheduling, KV allocation policy, and
+distributed control. Loom owns the checked operator boundary.
+
+Fused KV append now requires exclusive write pages. Its historical records do
+not qualify the revised ownership contract. New device evidence is required.
 
 ## Documentation rules
 
-Document implemented behavior in the present tense. Mark planned work as
-planned. Keep correctness, kernel latency, graph behavior, engine integration,
-and serving results separate.
+- State implemented behavior in the present tense.
+- Mark planned work as planned.
+- Name each admitted algorithm and shape combination.
+- Keep correctness, performance, Graph, engine, and serving claims separate.
+- Bind each performance claim to source, hardware, contract, method, and raw
+  result.
+- Preserve historical records. Do not project them onto changed source.
 
-Every performance claim must name the source revision, hardware, operator
-contract, baseline, measurement method, and result file.
+The root [README](../README.md) provides the short project overview.

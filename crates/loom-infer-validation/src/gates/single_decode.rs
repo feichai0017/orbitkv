@@ -12,6 +12,7 @@ use loom_infer_cuda::attention::{
     SingleDecodeEnqueueError,
 };
 use loom_infer_cuda::command::{CommandError, CommandQueue};
+use loom_infer_cuda::memory::DeviceRegionLaunchError;
 use std::error::Error;
 use std::sync::Arc;
 
@@ -325,10 +326,9 @@ fn run_short_buffer_case(
     };
     if !matches!(
         &error,
-        SingleDecodeEnqueueError::Launch(LaunchContractError::SizeRequirementViolated {
-            relation,
-            ..
-        }) if *relation == expected_relation
+        SingleDecodeEnqueueError::Launch(DeviceRegionLaunchError::Contract(
+            LaunchContractError::SizeRequirementViolated { relation, .. },
+        )) if *relation == expected_relation
     ) {
         return Err(
             format!("short {short:?} buffer did not violate {expected_relation}: {error}").into(),

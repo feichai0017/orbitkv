@@ -1,10 +1,31 @@
-//! Checked conversion from opaque handles to disjoint device-buffer borrows.
+//! Checked conversion from opaque handles to disjoint device-region borrows.
 
 use super::binding::{LeaseError, ResolveElement};
 use super::{BindingElement, CommandError, CommandScope, Read, Write};
-use cuda_core::{CudaStream, DeviceBuffer};
+use crate::device_status::STATUS_PACKET_WORDS;
+use crate::memory::{DeviceRegion, ReadWriteDeviceRegion};
+use cuda_core::CudaStream;
+use std::sync::Arc;
 
 impl CommandScope<'_> {
+    pub(super) fn resolve_device_status_source(
+        &mut self,
+        status: Read<i32>,
+    ) -> Result<cuda_core::sys::CUdeviceptr, CommandError> {
+        self.validate_resolve_request(&[status.set_id], &[status.slot])?;
+        let bindings = self
+            .bindings
+            .as_ref()
+            .expect("live command scope has bindings");
+        let lease = &bindings.leases[status.slot];
+        let region = <i32 as ResolveElement>::read(lease)
+            .map_err(|error| map_lease_error(error, status.slot))?;
+        if region.len() < STATUS_PACKET_WORDS {
+            return Err(CommandError::DeviceStatusSourceTooShort);
+        }
+        Ok(region.cu_deviceptr())
+    }
+
     pub(crate) fn resolve_rww<A, B, C>(
         &mut self,
         first: Read<A>,
@@ -267,6 +288,154 @@ impl CommandScope<'_> {
     }
 
     #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    pub(crate) fn resolve_rrrrw<A, B, C, D, E>(
+        &mut self,
+        first: Read<A>,
+        second: Read<B>,
+        third: Read<C>,
+        fourth: Read<D>,
+        fifth: Write<E>,
+    ) -> Result<ResolvedRrrrw<'_, A, B, C, D, E>, CommandError>
+    where
+        A: ResolveElement,
+        B: ResolveElement,
+        C: ResolveElement,
+        D: ResolveElement,
+        E: ResolveElement,
+    {
+        let slots = [first.slot, second.slot, third.slot, fourth.slot, fifth.slot];
+        self.validate_resolve_request(
+            &[
+                first.set_id,
+                second.set_id,
+                third.set_id,
+                fourth.set_id,
+                fifth.set_id,
+            ],
+            &slots,
+        )?;
+        let bindings = self
+            .bindings
+            .as_mut()
+            .expect("live command scope has bindings");
+        let [
+            first_lease,
+            second_lease,
+            third_lease,
+            fourth_lease,
+            fifth_lease,
+        ] = bindings
+            .leases
+            .get_disjoint_mut(slots)
+            .expect("validated binding slots are pairwise disjoint");
+        let first_buffer =
+            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
+        let second_buffer =
+            B::read(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
+        let third_buffer =
+            C::read(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
+        let fourth_buffer =
+            D::read(fourth_lease).map_err(|error| map_lease_error(error, fourth.slot))?;
+        let fifth_buffer =
+            E::write(fifth_lease).map_err(|error| map_lease_error(error, fifth.slot))?;
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
+
+        Ok(ResolvedRrrrw {
+            stream: &queue.stream,
+            first: first_buffer,
+            second: second_buffer,
+            third: third_buffer,
+            fourth: fourth_buffer,
+            fifth: fifth_buffer,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    pub(crate) fn resolve_rrrrwww<A, B, C, D, E, F, G>(
+        &mut self,
+        first: Read<A>,
+        second: Read<B>,
+        third: Read<C>,
+        fourth: Read<D>,
+        fifth: Write<E>,
+        sixth: Write<F>,
+        seventh: Write<G>,
+    ) -> Result<ResolvedRrrrwww<'_, A, B, C, D, E, F, G>, CommandError>
+    where
+        A: ResolveElement,
+        B: ResolveElement,
+        C: ResolveElement,
+        D: ResolveElement,
+        E: ResolveElement,
+        F: ResolveElement,
+        G: ResolveElement,
+    {
+        let slots = [
+            first.slot,
+            second.slot,
+            third.slot,
+            fourth.slot,
+            fifth.slot,
+            sixth.slot,
+            seventh.slot,
+        ];
+        self.validate_resolve_request(
+            &[
+                first.set_id,
+                second.set_id,
+                third.set_id,
+                fourth.set_id,
+                fifth.set_id,
+                sixth.set_id,
+                seventh.set_id,
+            ],
+            &slots,
+        )?;
+        let bindings = self
+            .bindings
+            .as_mut()
+            .expect("live command scope has bindings");
+        let [
+            first_lease,
+            second_lease,
+            third_lease,
+            fourth_lease,
+            fifth_lease,
+            sixth_lease,
+            seventh_lease,
+        ] = bindings
+            .leases
+            .get_disjoint_mut(slots)
+            .expect("validated binding slots are pairwise disjoint");
+        let first_buffer =
+            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
+        let second_buffer =
+            B::read(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
+        let third_buffer =
+            C::read(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
+        let fourth_buffer =
+            D::read(fourth_lease).map_err(|error| map_lease_error(error, fourth.slot))?;
+        let fifth_buffer =
+            E::write(fifth_lease).map_err(|error| map_lease_error(error, fifth.slot))?;
+        let sixth_buffer =
+            F::write(sixth_lease).map_err(|error| map_lease_error(error, sixth.slot))?;
+        let seventh_buffer =
+            G::write(seventh_lease).map_err(|error| map_lease_error(error, seventh.slot))?;
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
+
+        Ok(ResolvedRrrrwww {
+            stream: &queue.stream,
+            first: first_buffer,
+            second: second_buffer,
+            third: third_buffer,
+            fourth: fourth_buffer,
+            fifth: fifth_buffer,
+            sixth: sixth_buffer,
+            seventh: seventh_buffer,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
     pub(crate) fn resolve_rrrrrw<A, B, C, D, E, F>(
         &mut self,
         first: Read<A>,
@@ -417,6 +586,91 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrrrww {
+            stream: &queue.stream,
+            first: first_buffer,
+            second: second_buffer,
+            third: third_buffer,
+            fourth: fourth_buffer,
+            fifth: fifth_buffer,
+            sixth: sixth_buffer,
+            seventh: seventh_buffer,
+        })
+    }
+
+    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
+    pub(crate) fn resolve_rrrrrrw<A, B, C, D, E, F, G>(
+        &mut self,
+        first: Read<A>,
+        second: Read<B>,
+        third: Read<C>,
+        fourth: Read<D>,
+        fifth: Read<E>,
+        sixth: Read<F>,
+        seventh: Write<G>,
+    ) -> Result<ResolvedRrrrrrw<'_, A, B, C, D, E, F, G>, CommandError>
+    where
+        A: ResolveElement,
+        B: ResolveElement,
+        C: ResolveElement,
+        D: ResolveElement,
+        E: ResolveElement,
+        F: ResolveElement,
+        G: ResolveElement,
+    {
+        let slots = [
+            first.slot,
+            second.slot,
+            third.slot,
+            fourth.slot,
+            fifth.slot,
+            sixth.slot,
+            seventh.slot,
+        ];
+        self.validate_resolve_request(
+            &[
+                first.set_id,
+                second.set_id,
+                third.set_id,
+                fourth.set_id,
+                fifth.set_id,
+                sixth.set_id,
+                seventh.set_id,
+            ],
+            &slots,
+        )?;
+        let bindings = self
+            .bindings
+            .as_mut()
+            .expect("live command scope has bindings");
+        let [
+            first_lease,
+            second_lease,
+            third_lease,
+            fourth_lease,
+            fifth_lease,
+            sixth_lease,
+            seventh_lease,
+        ] = bindings
+            .leases
+            .get_disjoint_mut(slots)
+            .expect("validated binding slots are pairwise disjoint");
+        let first_buffer =
+            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
+        let second_buffer =
+            B::read(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
+        let third_buffer =
+            C::read(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
+        let fourth_buffer =
+            D::read(fourth_lease).map_err(|error| map_lease_error(error, fourth.slot))?;
+        let fifth_buffer =
+            E::read(fifth_lease).map_err(|error| map_lease_error(error, fifth.slot))?;
+        let sixth_buffer =
+            F::read(sixth_lease).map_err(|error| map_lease_error(error, sixth.slot))?;
+        let seventh_buffer =
+            G::write(seventh_lease).map_err(|error| map_lease_error(error, seventh.slot))?;
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
+
+        Ok(ResolvedRrrrrrw {
             stream: &queue.stream,
             first: first_buffer,
             second: second_buffer,
@@ -622,224 +876,6 @@ impl CommandScope<'_> {
         })
     }
 
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-    pub(crate) fn resolve_rrrrrrwww<A, B, C, D, E, F, G, H, I>(
-        &mut self,
-        first: Read<A>,
-        second: Read<B>,
-        third: Read<C>,
-        fourth: Read<D>,
-        fifth: Read<E>,
-        sixth: Read<F>,
-        seventh: Write<G>,
-        eighth: Write<H>,
-        ninth: Write<I>,
-    ) -> Result<ResolvedRrrrrrwww<'_, A, B, C, D, E, F, G, H, I>, CommandError>
-    where
-        A: ResolveElement,
-        B: ResolveElement,
-        C: ResolveElement,
-        D: ResolveElement,
-        E: ResolveElement,
-        F: ResolveElement,
-        G: ResolveElement,
-        H: ResolveElement,
-        I: ResolveElement,
-    {
-        let slots = [
-            first.slot,
-            second.slot,
-            third.slot,
-            fourth.slot,
-            fifth.slot,
-            sixth.slot,
-            seventh.slot,
-            eighth.slot,
-            ninth.slot,
-        ];
-        self.validate_resolve_request(
-            &[
-                first.set_id,
-                second.set_id,
-                third.set_id,
-                fourth.set_id,
-                fifth.set_id,
-                sixth.set_id,
-                seventh.set_id,
-                eighth.set_id,
-                ninth.set_id,
-            ],
-            &slots,
-        )?;
-        let bindings = self
-            .bindings
-            .as_mut()
-            .expect("live command scope has bindings");
-        let [
-            first_lease,
-            second_lease,
-            third_lease,
-            fourth_lease,
-            fifth_lease,
-            sixth_lease,
-            seventh_lease,
-            eighth_lease,
-            ninth_lease,
-        ] = bindings
-            .leases
-            .get_disjoint_mut(slots)
-            .expect("validated binding slots are pairwise disjoint");
-        let first_buffer =
-            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
-        let second_buffer =
-            B::read(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
-        let third_buffer =
-            C::read(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
-        let fourth_buffer =
-            D::read(fourth_lease).map_err(|error| map_lease_error(error, fourth.slot))?;
-        let fifth_buffer =
-            E::read(fifth_lease).map_err(|error| map_lease_error(error, fifth.slot))?;
-        let sixth_buffer =
-            F::read(sixth_lease).map_err(|error| map_lease_error(error, sixth.slot))?;
-        let seventh_buffer =
-            G::write(seventh_lease).map_err(|error| map_lease_error(error, seventh.slot))?;
-        let eighth_buffer =
-            H::write(eighth_lease).map_err(|error| map_lease_error(error, eighth.slot))?;
-        let ninth_buffer =
-            I::write(ninth_lease).map_err(|error| map_lease_error(error, ninth.slot))?;
-        let queue = self.queue.as_ref().expect("live command scope has a queue");
-
-        Ok(ResolvedRrrrrrwww {
-            stream: &queue.stream,
-            first: first_buffer,
-            second: second_buffer,
-            third: third_buffer,
-            fourth: fourth_buffer,
-            fifth: fifth_buffer,
-            sixth: sixth_buffer,
-            seventh: seventh_buffer,
-            eighth: eighth_buffer,
-            ninth: ninth_buffer,
-        })
-    }
-
-    #[allow(clippy::too_many_arguments, clippy::type_complexity)]
-    pub(crate) fn resolve_rrrrrrrrwww<A, B, C, D, E, F, G, H, I, J, K>(
-        &mut self,
-        first: Read<A>,
-        second: Read<B>,
-        third: Read<C>,
-        fourth: Read<D>,
-        fifth: Read<E>,
-        sixth: Read<F>,
-        seventh: Read<G>,
-        eighth: Read<H>,
-        ninth: Write<I>,
-        tenth: Write<J>,
-        eleventh: Write<K>,
-    ) -> Result<ResolvedRrrrrrrrwww<'_, A, B, C, D, E, F, G, H, I, J, K>, CommandError>
-    where
-        A: ResolveElement,
-        B: ResolveElement,
-        C: ResolveElement,
-        D: ResolveElement,
-        E: ResolveElement,
-        F: ResolveElement,
-        G: ResolveElement,
-        H: ResolveElement,
-        I: ResolveElement,
-        J: ResolveElement,
-        K: ResolveElement,
-    {
-        let slots = [
-            first.slot,
-            second.slot,
-            third.slot,
-            fourth.slot,
-            fifth.slot,
-            sixth.slot,
-            seventh.slot,
-            eighth.slot,
-            ninth.slot,
-            tenth.slot,
-            eleventh.slot,
-        ];
-        self.validate_resolve_request(
-            &[
-                first.set_id,
-                second.set_id,
-                third.set_id,
-                fourth.set_id,
-                fifth.set_id,
-                sixth.set_id,
-                seventh.set_id,
-                eighth.set_id,
-                ninth.set_id,
-                tenth.set_id,
-                eleventh.set_id,
-            ],
-            &slots,
-        )?;
-        let bindings = self
-            .bindings
-            .as_mut()
-            .expect("live command scope has bindings");
-        let [
-            first_lease,
-            second_lease,
-            third_lease,
-            fourth_lease,
-            fifth_lease,
-            sixth_lease,
-            seventh_lease,
-            eighth_lease,
-            ninth_lease,
-            tenth_lease,
-            eleventh_lease,
-        ] = bindings
-            .leases
-            .get_disjoint_mut(slots)
-            .expect("validated binding slots are pairwise disjoint");
-        let first_buffer =
-            A::read(first_lease).map_err(|error| map_lease_error(error, first.slot))?;
-        let second_buffer =
-            B::read(second_lease).map_err(|error| map_lease_error(error, second.slot))?;
-        let third_buffer =
-            C::read(third_lease).map_err(|error| map_lease_error(error, third.slot))?;
-        let fourth_buffer =
-            D::read(fourth_lease).map_err(|error| map_lease_error(error, fourth.slot))?;
-        let fifth_buffer =
-            E::read(fifth_lease).map_err(|error| map_lease_error(error, fifth.slot))?;
-        let sixth_buffer =
-            F::read(sixth_lease).map_err(|error| map_lease_error(error, sixth.slot))?;
-        let seventh_buffer =
-            G::read(seventh_lease).map_err(|error| map_lease_error(error, seventh.slot))?;
-        let eighth_buffer =
-            H::read(eighth_lease).map_err(|error| map_lease_error(error, eighth.slot))?;
-        let ninth_buffer =
-            I::write(ninth_lease).map_err(|error| map_lease_error(error, ninth.slot))?;
-        let tenth_buffer =
-            J::write(tenth_lease).map_err(|error| map_lease_error(error, tenth.slot))?;
-        let eleventh_buffer =
-            K::write(eleventh_lease).map_err(|error| map_lease_error(error, eleventh.slot))?;
-        let queue = self.queue.as_ref().expect("live command scope has a queue");
-
-        Ok(ResolvedRrrrrrrrwww {
-            stream: &queue.stream,
-            first: first_buffer,
-            second: second_buffer,
-            third: third_buffer,
-            fourth: fourth_buffer,
-            fifth: fifth_buffer,
-            sixth: sixth_buffer,
-            seventh: seventh_buffer,
-            eighth: eighth_buffer,
-            ninth: ninth_buffer,
-            tenth: tenth_buffer,
-            eleventh: eleventh_buffer,
-        })
-    }
-
     fn validate_resolve_request(
         &self,
         set_ids: &[u64],
@@ -885,17 +921,17 @@ fn map_lease_error(error: LeaseError, slot: usize) -> CommandError {
 }
 
 pub(crate) struct ResolvedRww<'scope, A: BindingElement, B: BindingElement, C: BindingElement> {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope mut DeviceBuffer<B>,
-    pub(crate) third: &'scope mut DeviceBuffer<C>,
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope mut ReadWriteDeviceRegion<B>,
+    pub(crate) third: &'scope mut ReadWriteDeviceRegion<C>,
 }
 
 pub(crate) struct ResolvedRrw<'scope, A: BindingElement, B: BindingElement, C: BindingElement> {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope DeviceBuffer<B>,
-    pub(crate) third: &'scope mut DeviceBuffer<C>,
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope mut ReadWriteDeviceRegion<C>,
 }
 
 pub(crate) struct ResolvedRrww<
@@ -905,11 +941,11 @@ pub(crate) struct ResolvedRrww<
     C: BindingElement,
     D: BindingElement,
 > {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope DeviceBuffer<B>,
-    pub(crate) third: &'scope mut DeviceBuffer<C>,
-    pub(crate) fourth: &'scope mut DeviceBuffer<D>,
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope mut ReadWriteDeviceRegion<C>,
+    pub(crate) fourth: &'scope mut ReadWriteDeviceRegion<D>,
 }
 
 pub(crate) struct ResolvedRrrww<
@@ -920,12 +956,12 @@ pub(crate) struct ResolvedRrrww<
     D: BindingElement,
     E: BindingElement,
 > {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope DeviceBuffer<B>,
-    pub(crate) third: &'scope DeviceBuffer<C>,
-    pub(crate) fourth: &'scope mut DeviceBuffer<D>,
-    pub(crate) fifth: &'scope mut DeviceBuffer<E>,
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope DeviceRegion<C>,
+    pub(crate) fourth: &'scope mut ReadWriteDeviceRegion<D>,
+    pub(crate) fifth: &'scope mut ReadWriteDeviceRegion<E>,
 }
 
 pub(crate) struct ResolvedRrrwww<
@@ -937,13 +973,51 @@ pub(crate) struct ResolvedRrrwww<
     E: BindingElement,
     F: BindingElement,
 > {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope DeviceBuffer<B>,
-    pub(crate) third: &'scope DeviceBuffer<C>,
-    pub(crate) fourth: &'scope mut DeviceBuffer<D>,
-    pub(crate) fifth: &'scope mut DeviceBuffer<E>,
-    pub(crate) sixth: &'scope mut DeviceBuffer<F>,
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope DeviceRegion<C>,
+    pub(crate) fourth: &'scope mut ReadWriteDeviceRegion<D>,
+    pub(crate) fifth: &'scope mut ReadWriteDeviceRegion<E>,
+    pub(crate) sixth: &'scope mut ReadWriteDeviceRegion<F>,
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) struct ResolvedRrrrw<
+    'scope,
+    A: BindingElement,
+    B: BindingElement,
+    C: BindingElement,
+    D: BindingElement,
+    E: BindingElement,
+> {
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope DeviceRegion<C>,
+    pub(crate) fourth: &'scope DeviceRegion<D>,
+    pub(crate) fifth: &'scope mut ReadWriteDeviceRegion<E>,
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) struct ResolvedRrrrwww<
+    'scope,
+    A: BindingElement,
+    B: BindingElement,
+    C: BindingElement,
+    D: BindingElement,
+    E: BindingElement,
+    F: BindingElement,
+    G: BindingElement,
+> {
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope DeviceRegion<C>,
+    pub(crate) fourth: &'scope DeviceRegion<D>,
+    pub(crate) fifth: &'scope mut ReadWriteDeviceRegion<E>,
+    pub(crate) sixth: &'scope mut ReadWriteDeviceRegion<F>,
+    pub(crate) seventh: &'scope mut ReadWriteDeviceRegion<G>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -956,13 +1030,13 @@ pub(crate) struct ResolvedRrrrrw<
     E: BindingElement,
     F: BindingElement,
 > {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope DeviceBuffer<B>,
-    pub(crate) third: &'scope DeviceBuffer<C>,
-    pub(crate) fourth: &'scope DeviceBuffer<D>,
-    pub(crate) fifth: &'scope DeviceBuffer<E>,
-    pub(crate) sixth: &'scope mut DeviceBuffer<F>,
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope DeviceRegion<C>,
+    pub(crate) fourth: &'scope DeviceRegion<D>,
+    pub(crate) fifth: &'scope DeviceRegion<E>,
+    pub(crate) sixth: &'scope mut ReadWriteDeviceRegion<F>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -976,14 +1050,35 @@ pub(crate) struct ResolvedRrrrrww<
     F: BindingElement,
     G: BindingElement,
 > {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope DeviceBuffer<B>,
-    pub(crate) third: &'scope DeviceBuffer<C>,
-    pub(crate) fourth: &'scope DeviceBuffer<D>,
-    pub(crate) fifth: &'scope DeviceBuffer<E>,
-    pub(crate) sixth: &'scope mut DeviceBuffer<F>,
-    pub(crate) seventh: &'scope mut DeviceBuffer<G>,
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope DeviceRegion<C>,
+    pub(crate) fourth: &'scope DeviceRegion<D>,
+    pub(crate) fifth: &'scope DeviceRegion<E>,
+    pub(crate) sixth: &'scope mut ReadWriteDeviceRegion<F>,
+    pub(crate) seventh: &'scope mut ReadWriteDeviceRegion<G>,
+}
+
+#[allow(clippy::type_complexity)]
+pub(crate) struct ResolvedRrrrrrw<
+    'scope,
+    A: BindingElement,
+    B: BindingElement,
+    C: BindingElement,
+    D: BindingElement,
+    E: BindingElement,
+    F: BindingElement,
+    G: BindingElement,
+> {
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope DeviceRegion<C>,
+    pub(crate) fourth: &'scope DeviceRegion<D>,
+    pub(crate) fifth: &'scope DeviceRegion<E>,
+    pub(crate) sixth: &'scope DeviceRegion<F>,
+    pub(crate) seventh: &'scope mut ReadWriteDeviceRegion<G>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -998,15 +1093,15 @@ pub(crate) struct ResolvedRrrrrrww<
     G: BindingElement,
     H: BindingElement,
 > {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope DeviceBuffer<B>,
-    pub(crate) third: &'scope DeviceBuffer<C>,
-    pub(crate) fourth: &'scope DeviceBuffer<D>,
-    pub(crate) fifth: &'scope DeviceBuffer<E>,
-    pub(crate) sixth: &'scope DeviceBuffer<F>,
-    pub(crate) seventh: &'scope mut DeviceBuffer<G>,
-    pub(crate) eighth: &'scope mut DeviceBuffer<H>,
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope DeviceRegion<C>,
+    pub(crate) fourth: &'scope DeviceRegion<D>,
+    pub(crate) fifth: &'scope DeviceRegion<E>,
+    pub(crate) sixth: &'scope DeviceRegion<F>,
+    pub(crate) seventh: &'scope mut ReadWriteDeviceRegion<G>,
+    pub(crate) eighth: &'scope mut ReadWriteDeviceRegion<H>,
 }
 
 #[allow(clippy::type_complexity)]
@@ -1022,70 +1117,16 @@ pub(crate) struct ResolvedRrrrrrrww<
     H: BindingElement,
     I: BindingElement,
 > {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope DeviceBuffer<B>,
-    pub(crate) third: &'scope DeviceBuffer<C>,
-    pub(crate) fourth: &'scope DeviceBuffer<D>,
-    pub(crate) fifth: &'scope DeviceBuffer<E>,
-    pub(crate) sixth: &'scope DeviceBuffer<F>,
-    pub(crate) seventh: &'scope DeviceBuffer<G>,
-    pub(crate) eighth: &'scope mut DeviceBuffer<H>,
-    pub(crate) ninth: &'scope mut DeviceBuffer<I>,
-}
-
-#[allow(clippy::type_complexity)]
-pub(crate) struct ResolvedRrrrrrwww<
-    'scope,
-    A: BindingElement,
-    B: BindingElement,
-    C: BindingElement,
-    D: BindingElement,
-    E: BindingElement,
-    F: BindingElement,
-    G: BindingElement,
-    H: BindingElement,
-    I: BindingElement,
-> {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope DeviceBuffer<B>,
-    pub(crate) third: &'scope DeviceBuffer<C>,
-    pub(crate) fourth: &'scope DeviceBuffer<D>,
-    pub(crate) fifth: &'scope DeviceBuffer<E>,
-    pub(crate) sixth: &'scope DeviceBuffer<F>,
-    pub(crate) seventh: &'scope mut DeviceBuffer<G>,
-    pub(crate) eighth: &'scope mut DeviceBuffer<H>,
-    pub(crate) ninth: &'scope mut DeviceBuffer<I>,
-}
-
-#[allow(clippy::type_complexity)]
-pub(crate) struct ResolvedRrrrrrrrwww<
-    'scope,
-    A: BindingElement,
-    B: BindingElement,
-    C: BindingElement,
-    D: BindingElement,
-    E: BindingElement,
-    F: BindingElement,
-    G: BindingElement,
-    H: BindingElement,
-    I: BindingElement,
-    J: BindingElement,
-    K: BindingElement,
-> {
-    pub(crate) stream: &'scope CudaStream,
-    pub(crate) first: &'scope DeviceBuffer<A>,
-    pub(crate) second: &'scope DeviceBuffer<B>,
-    pub(crate) third: &'scope DeviceBuffer<C>,
-    pub(crate) fourth: &'scope DeviceBuffer<D>,
-    pub(crate) fifth: &'scope DeviceBuffer<E>,
-    pub(crate) sixth: &'scope DeviceBuffer<F>,
-    pub(crate) seventh: &'scope DeviceBuffer<G>,
-    pub(crate) eighth: &'scope DeviceBuffer<H>,
-    pub(crate) ninth: &'scope mut DeviceBuffer<I>,
-    pub(crate) tenth: &'scope mut DeviceBuffer<J>,
-    pub(crate) eleventh: &'scope mut DeviceBuffer<K>,
+    pub(crate) stream: &'scope Arc<CudaStream>,
+    pub(crate) first: &'scope DeviceRegion<A>,
+    pub(crate) second: &'scope DeviceRegion<B>,
+    pub(crate) third: &'scope DeviceRegion<C>,
+    pub(crate) fourth: &'scope DeviceRegion<D>,
+    pub(crate) fifth: &'scope DeviceRegion<E>,
+    pub(crate) sixth: &'scope DeviceRegion<F>,
+    pub(crate) seventh: &'scope DeviceRegion<G>,
+    pub(crate) eighth: &'scope mut ReadWriteDeviceRegion<H>,
+    pub(crate) ninth: &'scope mut ReadWriteDeviceRegion<I>,
 }
 
 #[cfg(test)]

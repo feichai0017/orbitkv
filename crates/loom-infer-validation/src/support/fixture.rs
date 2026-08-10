@@ -14,3 +14,14 @@ pub fn deterministic_bf16(len: usize, salt: u64) -> Vec<bf16> {
     }
     values
 }
+
+/// Counts references in a closed test fixture's physical page table.
+pub fn page_refcounts(max_num_pages: usize, page_indices: &[i32]) -> Vec<i32> {
+    let mut counts = vec![0_i32; max_num_pages];
+    for &page in page_indices {
+        let page = usize::try_from(page).expect("fixture page indices are nonnegative");
+        assert!(page < max_num_pages, "fixture page index is in range");
+        counts[page] += 1;
+    }
+    counts
+}

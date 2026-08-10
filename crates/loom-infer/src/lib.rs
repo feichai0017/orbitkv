@@ -13,7 +13,7 @@ pub mod rope;
 pub use attention::{
     Bf16PagedBatchDecodePageTable, Bf16PagedBatchDecodeSpec, Bf16PagedPrefillMetadata,
     Bf16PagedPrefillSpec, Bf16RaggedPrefillMetadata, Bf16RaggedPrefillSpec,
-    Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensMetadata,
+    Bf16RopePagedKvAppendMetadata, Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensMetadata,
     Bf16RopePagedKvAppendTokensSpec, Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec,
     PAGED_BATCH_DECODE_PAGE_SIZE, PAGED_PREFILL_PAGE_SIZE, ROPE_PAGED_KV_APPEND_MAX_TOKENS,
     SINGLE_DECODE_HEAD_DIM, SINGLE_DECODE_PARTIAL_STATE_WIDTH, paged_batch_decode_bf16_reference,

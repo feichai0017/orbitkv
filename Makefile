@@ -16,7 +16,7 @@ endif
 CARGO := $(CARGO_ENV) $(RUN) cargo
 NPM := $(RUN) npm --prefix website
 
-.PHONY: help check check-rust check-website install-website cuda-doctor \
+.PHONY: help check check-rust check-tools check-website install-website cuda-doctor \
 	cuda-check cuda-test h20-rms-norm h20-gemm h20-attention h20-paged-attention \
 	h20-ragged-prefill h20-paged-prefill h20-rope h20 bench-loom bench-paged-loom bench-ragged-loom \
 	bench-paged-prefill-loom bench-paged-prefill-graph-loom bench-ragged-graph-loom \
@@ -25,7 +25,8 @@ NPM := $(RUN) npm --prefix website
 
 help:
 	@printf '%s\n' \
-		'make check          Run CPU-only Rust and website gates' \
+		'make check          Run CPU-only Rust, evidence-tool, and website gates' \
+		'make check-tools    Check Python evidence tools' \
 		'make cuda-doctor    Check the pinned cuda-oxide environment' \
 		'make cuda-check     Run CUDA-feature Clippy' \
 		'make cuda-test      Run release tests through cuda-oxide' \
@@ -46,7 +47,7 @@ help:
 		'make bench-rope-append-tokens-graph-loom  Run Loom multi-token RoPE append Graph case' \
 		'make bench-split-k  Sweep Loom split-K choices on H20'
 
-check: check-rust check-website
+check: check-rust check-tools check-website
 
 check-rust:
 	$(CARGO) fmt --all -- --check
@@ -54,6 +55,10 @@ check-rust:
 	$(CARGO) test --workspace --all-targets
 	$(CARGO) check --workspace --release
 	$(CARGO) package -p loom-infer $(PACKAGE_FLAGS)
+
+check-tools:
+	python3 -m py_compile tools/flashinfer/*.py
+	python3 -m unittest discover -s tools/flashinfer -p 'test_*.py'
 
 install-website:
 	NODE_ENV=development $(NPM) ci --include=dev

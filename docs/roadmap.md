@@ -1,223 +1,185 @@
 # Loom Infer roadmap
 
-Loom Infer targets a high-performance, FlashInfer-class operator layer for
-Rust production LLM inference engines. Loom-owned kernels are Rust compiled
-with cuda-oxide for the CUDA platform. FlashInfer defines the broad comparison
-surface, and FlashAttention defines the attention-kernel comparison surface.
+Loom Infer is a Rust operator layer for production LLM inference engines.
+Custom NVIDIA kernels use cuda-oxide. Qualified GEMM and communication
+libraries remain explicit providers.
 
-## 1. Permanent RMSNorm provider
+The roadmap closes ownership and engine boundaries before it adds more
+operators.
+
+## K0.1: Requalify paged KV writes
 
 **State:** active.
 
-- keep the H20-qualified F32 path in `loom-infer-cuda`.
-- support F32, FP16, and BF16 with scalar and packed paths.
-- bind caller-supplied memory and non-default streams.
-- share read-only inputs through `Arc` and transfer writable buffers until
-  completion.
-- keep one stream-ordered command scope for Rust and vendor providers.
-- replace generated argument vectors with reusable fixed argument packs.
-- pass correctness, CUDA Graph, sanitizer, and matched H20 performance gates.
+The fused RoPE plus KV append contract now accepts a physical-page reference
+count array. Every target page must have reference count one.
 
-The current owned-binding revision passes F32, FP16, and BF16 correctness across
-scalar, packed, exact-length, non-default-stream, and chained cases. Memcheck,
-racecheck, and synccheck report no errors. Fixed argument packs and matched
-performance gates remain open.
+- Reject shared target pages in host validation and device guards.
+- Preserve Q, K pages, and V pages when the write contract fails.
+- Cover one-token and explicit one-through-64-token forms.
+- Test private tails that follow shared read-only prefix pages.
+- Keep the page table and reference-count snapshot stable through completion.
+- Run correctness and all declared Compute Sanitizer tools on H20.
+- Create new eager and fixed-address Graph records after correctness passes.
 
-Exit: all three dtypes use the common operator lifecycle and have reproducible
-H20 correctness and performance records.
+The engine or KV pager makes shared tails private. The operator does not
+allocate, copy, or remap pages.
 
-## 2. First vendor GEMM provider
+Exit: new H20 records qualify the exclusive-page contract. The old 2026-08-06
+append records remain historical.
 
-**State:** active. The owned-binding and Graph revision passed its H20
-correctness and sanitizer gates.
+## K0.2: Accept external device regions
 
-- define contiguous BF16 `D[M,N] = A[M,K] * W[N,K]^T` with F32 accumulation.
-- plan one explicit cuBLASLt algorithm before enqueue.
-- take caller-supplied output and workspace into checked ownership with validated
-  alignment and spans, then return them after completion.
-- run GEMM through the same command scope without tuning or fallback.
-- verify real model shapes before any performance or default-provider claim.
+**State:** partial.
 
-Exit: a fixed BF16 GEMM plan passes correctness, graph, and matched-provider
-gates without a tensor copy.
+The command layer now has typed read and read-write regions for complete
+`DeviceBuffer<T>` allocations, owned subranges, and leased external
+allocations. Owned buffers and external regions use one resolver path.
 
-The fixed BF16 cuBLASLt plan passes H20 correctness and command-lifecycle gates.
-Its RMSNorm-to-GEMM Graph replays twice with a bit-exact final output.
-The first matched eager-provider result covers the fixed M=1 shape and records
-1.33x lower median latency than the matched FlashInfer path. Other shapes,
-isolated kernel and Graph timings, real-model shapes, and engine invocation
-remain open.
+- Keep pointer, element span, CUDA context, access mode, and lifetime lease in
+  one region value.
+- Reject invalid ranges, alignment, context, and binding-set overlap before
+  enqueue.
+- Keep writable access exclusive until completion settles.
+- Test non-zero offsets and lifetime retention on H20.
+- Qualify fixed-address Graph retention for external leases.
+- Prove that an engine-owned region crosses no tensor copy.
 
-## 3. Fixed-address CUDA Graph execution
+Exit: an engine-owned allocation enters an operator without a tensor copy, and
+H20 evidence proves that completion keeps its lease alive through asynchronous
+execution.
 
-**State:** complete for the first fixed-address contract.
+## K0.3: Report device metadata errors
 
-- consume a one-shot `GraphQueue` to capture one checked command scope on its
-  private non-default stream.
-- retain fixed buffer ownership, CUDA functions, and vendor plans across replay.
-- instantiate and launch through owned `CapturedGraph` and `GraphExec` values.
-- retain one external completion event and record it once per replay.
-- reject rebinding, node updates, cross-stream launch, and concurrent replay in
-  the first contract.
-- validate RMSNorm to BF16 GEMM capture, replay, cleanup, and sanitizer paths.
+**State:** partial.
 
-Result: the final output after two fixed-address replays matches the CPU oracle.
-The runner drops its external resource owners before replay.
+Fused append now runs one validator, writes a compact scope-bound `AppendMap`,
+and reports semantic metadata failures through completion. A rejected command
+returns its checked bindings and does not poison the queue or Graph. Paged
+decode and prefill still use silent in-kernel guards.
 
-The Loom replay path has no planning or explicit allocation. Compute Sanitizer
-reports no errors or device leaks on H20. See the
-[machine-readable record](results/h20-owned-bindings-cuda-graph-correctness-20260803.json).
+- Extend the status protocol to paged decode and paged prefill.
+- Keep each validator responsible for fully overwriting its status packet.
+- Read status only after the completion fence.
+- Keep semantic rejection recoverable. Poison only on CUDA failure or a
+  malformed status packet.
+- Cover eager and fixed-address Graph rejection, output preservation, and
+  binding recovery.
+- Reuse one append map only with the same K/V cache binding. Add a pager-issued
+  cache epoch before allowing one map to address several layer buffers.
 
-## 4. Attention core
+Exit: every admitted dynamic metadata failure reaches the host as a typed
+error. No operator silently returns success after a device guard rejects work.
 
-**State:** active. The first narrow single-decode contract passed its H20
-correctness and sanitizer gates.
+## K0.4: Prove one engine invocation
 
-- retain the BF16 NHD D128 single-request MHA/MQA/GQA correctness baseline.
-- retain the matched eager-provider benchmark against the pinned FlashInfer
-  release and add an isolated Graph/kernel timing gate.
-- retain the backend-independent BF16 NHD D128 page-size-16 batch-decode
-  contract and CPU oracle.
-- retain its checked cuda-oxide MHA/MQA/GQA provider and H20 correctness and
-  sanitizer gate.
-- retain eight-warp paged MQA/GQA token parallelism and its matched eager and
-  CUPTI gates, then add fixed-address Graph gates.
-- retain the BF16 NHD D128 ragged prefill contract, CPU oracle, checked
-  cuda-oxide provider, and H20 correctness/sanitizer gate.
-- retain the BF16 NHD D128 page-size-16 paged causal prefill contract, CPU
-  oracle, direct cuda-oxide provider, and H20 correctness/sanitizer gate.
-- retain tiled GQA4 QK/online-softmax/PV, eight-way split-K, stable F32 merge,
-  and sixteen-warp MQA with their matched eager gates.
-- expand query tiling beyond the admitted GQA4 shape and close the remaining
-  long-GQA gap before expecting FlashInfer-class performance.
-- retain split-K execution, stable F32 state merge, and its H20 correctness
-  gate.
-- support common causal and sliding-window contracts.
-- retain the standard BF16 D128 NeoX RoPE explicit-position provider and its
-  correctness, sanitizer, and matched eager gates.
-- retain the first one-token/request standard RoPE plus paged KV append
-  contract and its correctness, sanitizer, and matched eager gates.
-- retain explicit 1..=64-token append with caller-supplied batch indices and
-  positions plus its correctness, sanitizer, and matched eager gates.
-- expand KV append beyond 64 tokens and add additional RoPE/storage variants.
-- replay fixed plans through CUDA Graphs.
+**State:** planned.
 
-Exit: a real model invokes Loom attention without tensor copies and preserves
-tokens or declared numerical quality.
+The first integration target should exercise the same Rust plan and command
+path used by hardware validation.
 
-The first slice also rejects five short buffers and duplicate bindings before
-CUDA submission. Split-K partial and merge kernels pass H20 correctness and
-sanitizer gates with checked workspace and two-command admission. They lower
-Loom median eager latency by 5.39x at GQA KV length 127 and 38.19x at KV length
-4096 relative to the recorded direct baseline. FlashInfer remains 1.17x and
-2.09x lower-latency. CUPTI activity timing now separates partial and merge
-kernel duration.
+- Select one real decode or prefill call site.
+- Bind engine-owned device regions and the engine's non-default stream.
+- Record provider hit counts and selected algorithms.
+- Prove that Q, KV, output, workspace, and metadata cross no host copy.
+- Compare model output or generated tokens with the engine baseline.
+- Measure the complete engine interval before making a latency claim.
+- Document the fallback policy at the engine boundary. The Loom provider
+  itself does not silently fall back.
 
-The paged batch-decode contract validates FlashInfer-compatible `i32`
-`indptr`, page indices, and last-page lengths before mapping logical KV tokens
-to NHD physical pages. Its direct one-warp-per-request-head cuda-oxide provider
-passes MHA/MQA/GQA H20 correctness and all four Compute Sanitizer tools. A
-eight-warp block-local token parallelism lowers Loom MQA/GQA eager latency by
-3.78x and 3.32x relative to the direct record. Loom is now 4.41x lower-latency
-for MHA and 2.35x lower-latency for MQA than FlashInfer. Batch-4 GQA still has
-no stable ranking because FlashInfer's order delta is 60.62%. Fixed-address
-Graph replay and real model invocation remain open.
+Exit: a real model invokes Loom, preserves declared numerical behavior, and
+produces an auditable no-copy trace.
 
-The ragged prefill slice uses separate query/KV `indptr` arrays and
-FlashInfer-compatible bottom-right causal alignment. Short requests retain one
-warp per query-row/head; long single-KV-head MQA uses sixteen warps; admitted
-long GQA4 uses fused tensor-core QK/online-softmax/PV over eight KV partitions
-and a caller-owned F32 merge workspace. Other declared long requests use eight
-warps. All paths pass MHA/MQA/GQA H20 correctness plus all four Compute
-Sanitizer tools.
+## K0.5: Make algorithm policy explicit
 
-The matched eager result lowers Loom long-GQA latency to `48.232`
-microseconds. Unrolled 16-byte `cp.async` staging is `1.148x` faster than the
-previous tiled path and the complete path is `7.729x` faster than direct.
-FlashInfer remains `2.206x` lower-latency on stable long GQA. Broader query
-tiling and real model invocation remain open. Fixed-address Graph correctness
-now passes for the tiled partial-plus-merge path after two replays and external
-owner teardown. The matched single-replay Graph result records Loom at `50.480`
-microseconds and FlashInfer at `32.640` microseconds, with FlashInfer `1.547x`
-lower-latency on the admitted long-GQA shape. Engine invocation remains open.
+**State:** planned.
 
-The first paged-prefill slice combines ragged query `indptr` with page
-`indptr`, physical page indices, and last-page lengths. Its direct one-warp
-provider passes MHA/MQA/GQA H20 correctness, page reordering and reuse,
-preflight and device metadata guards, and all four Compute Sanitizer tools.
-Maximum BF16 output error is `1.220703125e-4`. Its matched eager result puts
-Loom `3.264x` lower-latency on short MHA and `1.288x` lower-latency on GQA4,
-while FlashInfer remains `1.081x` lower-latency on mixed MQA. Token-parallel
-or tiled optimization remains open. The direct GQA4 command passes
-fixed-address Graph correctness after two replays and external owner teardown.
-The matched single-replay Graph result records Loom at `15.072` microseconds
-and FlashInfer at `18.560` microseconds, with Loom `1.231x` lower-latency on
-this shape. Mutable metadata, graph updates, and real engine invocation remain
-open.
+Current attention selection uses fixed source heuristics. Paged decode chooses
+direct MHA and eight-warp MQA or GQA. Ragged prefill uses the batch average KV
+length and head mapping.
 
-The first standalone RoPE slice accepts explicit I32 position IDs for BF16
-NHD D128 Q/K tensors, rotates all 128 dimensions in NeoX split-half style, and
-uses CUDA libdevice full-range math. It passes positions through 32,767 and all
-four sanitizer tools. On the admitted 96-token Q16/K4 suffix shape, Loom records
-`3.997` microseconds versus FlashInfer's `5.077` microseconds, or `1.270x`
-lower latency.
+- Separate algorithm selection from immutable launch plans.
+- Expose the selected algorithm in traces and result records.
+- Add a caller override with contract checks.
+- Replace average-only ragged decisions with measured shape classes or request
+  grouping when evidence supports it.
+- Keep planning and tuning outside enqueue.
+- Reject unsupported algorithm and workspace combinations.
 
-The first fused paged mutation slice accepts one BF16 Q/K/V token per request,
-derives each position from the extended page table, rotates Q/K, and writes
-rotated K plus unmodified V into the final physical NHD slot. It passes
-bit-exact H20 correctness, duplicate-slot and invalid-page sentinel guards,
-and all four sanitizer tools. On the admitted batch-4 Q16/K4 D128,
-page-size-16 case, its one-kernel eager path records `3.989` microseconds
-versus `11.735` microseconds for FlashInfer's two-kernel composition, or
-`2.942x` lower latency under fixed host affinity. Interleaved, ragged-offset,
-Llama 3.1, cached, and quantized variants remain open.
+Exit: the same shape and policy produce the same plan. Selection uses recorded
+evidence rather than an undocumented enqueue-time choice.
 
-The explicit extension accepts 1 through 64 shuffled tokens and validates the
-full page table, token mappings, and physical-slot uniqueness with two warps
-before any output write. The six-token H20 and matched case appends each
-request's final two tokens, including page crossings and safe physical-page
-reuse at different offsets. Loom records `5.510` microseconds versus
-FlashInfer's `11.732` microsecond two-kernel composition, or `2.129x` lower
-latency. The 64-token boundary and four device metadata guards pass all four
-sanitizer tools. The six-token command also captures into one fixed-address
-Graph node and replays after external resource-owner teardown. Matched
-single-replay medians are `8.288` microseconds for Loom and `13.728`
-microseconds for FlashInfer, making Loom `1.656x` lower-latency. Larger token
-counts, Graph updates, and real model invocation remain open.
+## K0.6: Complete fixed-address Graph coverage
 
-## 5. Decode and KV operations
+**State:** partial.
 
-- add logits processing, penalties, filtering, logprobs, and deterministic
-  sampling.
-- add speculative verification and token compaction.
-- add KV gather, scatter, compaction, and remapping.
-- add FP8 and INT8 KV storage with an explicit quality gate.
+The current Graph contract fixes addresses and uses one private capture stream.
+Evidence exists for RMSNorm-to-GEMM, tiled long-GQA ragged prefill, and one
+direct paged-prefill GQA4 fixture.
 
-Exit: decode-tail and KV operations use the same lifecycle and show value in a
-real engine workload.
+- Requalify fused append after K0.1.
+- Add paged-decode Graph correctness.
+- Add the single-decode split-K path.
+- Keep mutable bindings and graph updates outside the fixed-address claim.
+- Record capture, replay, completion, and owner-retention boundaries.
 
-## 6. Quantization, MoE, and matrix work
+Exit: every performance-relevant admitted plan has a fixed-address Graph
+correctness record or an explicit exclusion.
 
-- add scale, pack, unpack, dequantize, and layout conversion.
-- add expert routing support, permutation, and weighted combine.
-- call vendor dense, quantized, and grouped GEMM through fixed plans.
-- fuse adjacent work only when the complete matched path improves.
+## K1: Broaden attention contracts
 
-Exit: dense and MoE workloads record separate operator, engine, and serving
-results.
+**State:** planned after K0.
 
-## 7. Integration and hardware coverage
+- Add sliding-window decode and prefill.
+- Add broader head dimensions and page sizes from real model demand.
+- Extend ragged tiling beyond the admitted GQA4 shape.
+- Add optimized paged-prefill long-context paths.
+- Add mixed-batch attention after the engine defines its scheduler interface.
+- Scope MLA from a real engine call site.
 
-- expose a stable Rust API after the first provider passes admission.
-- add a checked C ABI only when an external engine requires it.
-- publish hashed device artifacts for supported architectures.
-- qualify Hopper first, then add Blackwell as a separate matrix row.
-- add collectives only for measured distributed workloads.
+Exit: each added slice passes host, device, lifecycle, sanitizer, performance,
+Graph, and engine gates that apply to its declared contract.
 
-Exit: each supported hardware row has reproducible correctness, performance,
-and integration evidence.
+## K2: KV cache and decode tail
+
+**State:** planned.
+
+- Add KV gather, scatter, compaction, and remapping.
+- Add FP8 and INT8 KV storage with explicit quality limits.
+- Add logits processing, penalties, Top-K, Top-P, Min-P, and logprobs.
+- Add deterministic sampling and RNG-state contracts.
+- Add speculative verification and token compaction.
+
+Exit: the operators reduce measured engine work without changing token output
+or the declared stochastic distribution.
+
+## K3: Quantization, MoE, and matrix providers
+
+**State:** planned.
+
+- Add scale, pack, unpack, dequantize, and layout conversion.
+- Add expert routing, permutation, grouped-GEMM inputs, and weighted combine.
+- Call qualified dense, quantized, and grouped GEMM libraries through fixed
+  plans.
+- Fuse adjacent work only when the matched complete path improves.
+
+Exit: dense and MoE workloads have separate operator and engine evidence.
+
+## K4: Hardware and distribution
+
+**State:** planned.
+
+- Keep Hopper as the first qualified architecture.
+- Add Blackwell as a separate evidence row.
+- Publish hashed device artifacts for supported targets.
+- Stabilize the Rust API after the first engine integration.
+- Add a checked C ABI only when an external engine requires it.
+- Add collectives only for a measured distributed workload.
+
+Exit: every supported hardware and API row has reproducible correctness and
+integration evidence.
 
 ## Admission rule
 
-A faster microbenchmark does not prove a faster model or server. Each result
-must state whether it covers a kernel, graph, engine, or serving boundary.
+A faster microbenchmark does not prove a faster model or server. Every result
+states its contract, source, hardware, timed region, and excluded claims.

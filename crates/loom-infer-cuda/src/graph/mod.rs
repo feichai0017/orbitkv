@@ -6,11 +6,13 @@
 //! until the executable graph is destroyed.
 
 use crate::command::{
-    CapturedCommandSet, CheckedBindings, CommandError, CommandQueue, CommandScope,
+    CapturedCommandSet, CheckedBindings, CommandError, CommandQueue, CommandScope, DeviceRejection,
     RetainedResource, synchronize_stream_or_abort,
 };
+use crate::device_status::DeviceStatusProtocolError;
 use crate::driver::bind_context_for_cleanup;
 use cuda_core::{CudaContext, CudaEvent, CudaStream, DriverError, IntoResult, sys};
+use loom_infer::ContractError;
 use std::error::Error;
 use std::fmt::{self, Display, Formatter};
 use std::marker::PhantomData;
@@ -94,6 +96,12 @@ impl CommandQueue {
         let guard = CaptureGuard::new(stream);
 
         let record_result = record(&mut commands);
+        if record_result.is_ok()
+            && commands.capture_error().is_none()
+            && commands.submitted_commands() > 0
+        {
+            commands.finalize_device_status();
+        }
         let graph_result = guard.finish();
 
         if let Err(error) = record_result {
@@ -201,6 +209,7 @@ impl CapturedGraph {
             record_error: None,
             poll_error: None,
             poisoned: false,
+            unobserved_rejection: None,
             not_send_sync: PhantomData,
         })
     }
@@ -231,6 +240,7 @@ pub struct GraphExec {
     record_error: Option<DriverError>,
     poll_error: Option<DriverError>,
     poisoned: bool,
+    unobserved_rejection: Option<ContractError>,
     not_send_sync: PhantomData<Rc<()>>,
 }
 
@@ -249,6 +259,9 @@ impl GraphExec {
     pub fn launch(&mut self) -> Result<GraphLaunchCompletion<'_>, GraphError> {
         if self.poisoned {
             return Err(GraphError::ExecutionPoisoned);
+        }
+        if let Some(error) = self.unobserved_rejection.take() {
+            return Err(GraphError::DeviceRejected(error));
         }
         if self.in_flight {
             return Err(GraphError::ReplayInFlight);
@@ -323,19 +336,38 @@ impl GraphExec {
     }
 
     /// Destroys graph handles and returns the original checked bindings.
-    pub fn into_bindings(mut self) -> Result<CheckedBindings, GraphError> {
+    pub fn into_bindings(mut self) -> Result<CheckedBindings, GraphBindingsError> {
         if let Some(failure) = self.settle_in_flight() {
             self.poisoned = true;
             record_graph_settlement_errors(&self, failure);
-            return Err(failure.into_error("completion"));
+            return Err(GraphBindingsError::Execution(
+                failure.into_error("completion"),
+            ));
         }
+        let status = self.decode_device_status();
         drop(self.exec.take());
         drop(self.graph.take());
         self.resources.clear();
-        Ok(self
+        let mut bindings = self
             .bindings
             .take()
-            .expect("live graph exec owns checked bindings"))
+            .expect("live graph exec owns checked bindings");
+        bindings.status.clear();
+        match status {
+            Ok(None) => Ok(bindings),
+            Ok(Some(error)) => Err(GraphBindingsError::DeviceRejected(DeviceRejection::new(
+                error, bindings,
+            ))),
+            Err(error) => Err(GraphBindingsError::StatusProtocol(error)),
+        }
+    }
+
+    fn decode_device_status(&self) -> Result<Option<ContractError>, DeviceStatusProtocolError> {
+        self.bindings
+            .as_ref()
+            .expect("live graph exec owns checked bindings")
+            .status
+            .decode()
     }
 
     fn settle_in_flight(&mut self) -> Option<GraphSettlementFailure> {
@@ -421,7 +453,18 @@ impl GraphLaunchCompletion<'_> {
         match self.settle() {
             None => {
                 self.settled = true;
-                Ok(())
+                let exec = self
+                    .exec
+                    .as_mut()
+                    .expect("live completion has a graph exec");
+                match exec.decode_device_status() {
+                    Ok(None) => Ok(()),
+                    Ok(Some(error)) => Err(GraphError::DeviceRejected(error)),
+                    Err(error) => {
+                        exec.poisoned = true;
+                        Err(GraphError::StatusProtocol(error))
+                    }
+                }
             }
             Some(failure) => {
                 self.settled = true;
@@ -457,6 +500,16 @@ impl Drop for GraphLaunchCompletion<'_> {
                 .expect("live completion has a graph exec");
             exec.poisoned = true;
             record_graph_settlement_errors(exec, failure);
+        } else {
+            let exec = self
+                .exec
+                .as_mut()
+                .expect("live completion has a graph exec");
+            match exec.decode_device_status() {
+                Ok(Some(error)) => exec.unobserved_rejection = Some(error),
+                Ok(None) => {}
+                Err(_) => exec.poisoned = true,
+            }
         }
         self.settled = true;
     }
@@ -698,6 +751,10 @@ pub enum GraphError {
     ExecutionPoisoned,
     #[error("a CUDA Graph replay is already in flight")]
     ReplayInFlight,
+    #[error("device rejected CUDA Graph metadata: {0}")]
+    DeviceRejected(ContractError),
+    #[error(transparent)]
+    StatusProtocol(DeviceStatusProtocolError),
     #[error("CUDA Graph launch count is exhausted")]
     LaunchCountExhausted,
     #[error("CUDA Graph timing events belong to a different CUDA context")]
@@ -718,6 +775,16 @@ pub enum GraphError {
         source: DriverError,
         synchronization: DriverError,
     },
+}
+
+#[derive(Debug, Error)]
+pub enum GraphBindingsError {
+    #[error(transparent)]
+    Execution(GraphError),
+    #[error(transparent)]
+    DeviceRejected(DeviceRejection),
+    #[error(transparent)]
+    StatusProtocol(DeviceStatusProtocolError),
 }
 
 impl GraphError {

@@ -8,14 +8,17 @@ The current baseline is:
 
 ```text
 FlashInfer: v0.6.16.post1
-commit:     5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57
+source reference: 5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57
 ```
 
-The harness measures the admitted BF16 contracts with preallocated tensors and
+The runner measures the admitted BF16 contracts with preallocated tensors and
 CUDA events. Single decode calls the precompiled low-level module directly so
-temporary and output allocation stay outside the timed region. Paged decode
-and ragged/paged prefill plan their wrappers before measurement, fix the FA2
-CUDA-core backend, and pass caller-owned output and LSE tensors on every run.
+temporary and output allocation stay outside the timed region.
+
+Paged decode and ragged or paged prefill plan their wrappers before
+measurement. They fix the FA2 CUDA-core backend and pass caller-owned output
+and LSE tensors on every run.
+
 GEMM fixes the cuBLASLt backend and tactic zero after preparation.
 
 ## Environment
@@ -33,7 +36,9 @@ python -m venv --system-site-packages <venv>
 ```
 
 Install any additional release dependencies required by the host package index.
-The benchmark records the FlashInfer package version and source commit.
+The benchmark verifies and records the installed package version. It records a
+source commit only when the installed artifact exposes one that the runner can
+verify. The reference above does not prove the provenance of a release wheel.
 
 ## Run
 
@@ -63,10 +68,13 @@ taskset -c <gpu-local-physical-cpu> \
 source projection, and record that mapping separately.
 
 Use `nvidia-smi topo -m` to choose one otherwise idle physical CPU on the
-GPU-local NUMA node, and pin both providers to that same CPU. Short eager paths
-include host submission gaps inside their CUDA-event interval; unrestricted
-CPU migration can therefore invalidate provider-order stability even when GPU
-clocks are fixed. Record the chosen CPU, NUMA node, and thread limits in the
+GPU-local NUMA node, and pin both providers to that same CPU.
+
+Short eager paths include host submission gaps inside their CUDA-event
+interval. CPU migration can invalidate provider-order stability even with
+fixed GPU clocks.
+
+Record the chosen CPU, NUMA node, and thread limits in the
 evidence. Do not mix pinned and unpinned samples.
 
 On hosts where PyTorch links NVSHMEM outside the default loader path, add its
@@ -78,9 +86,10 @@ Repeat in the reverse provider order. The measurement
 sequential calls and divides by the call count. Planning, JIT, tensor
 allocation, copies, and final host synchronization are outside that interval.
 If a provider cannot submit work quickly enough to keep the stream occupied,
-the resulting GPU idle gaps remain inside the event interval. This is an eager
-provider-path metric, not an isolated kernel-duration claim. A CUDA Graph
-comparison is a separate gate.
+the resulting GPU idle gaps remain inside the event interval.
+
+This is an eager provider-path metric, not an isolated kernel-duration claim.
+A CUDA Graph comparison is a separate gate.
 
 Use `LOOM_BENCH_OPERATORS=paged_prefill` and
 `make bench-paged-prefill-loom` for the ragged-query, page-size-16 NHD
@@ -107,8 +116,9 @@ LOOM_BENCH_RUN_LABEL=flashinfer_graph_second \
 Repeat in reverse provider order. Both paths record a start event, replay one
 fixed-address graph, record one completion event, and record an end event.
 Capture, instantiation, planning, JIT, allocation, fixture copies, correctness
-reads, and final synchronization are outside the timed interval. Do not combine
-these samples with `eager_stream_batch_cuda_event` records.
+reads, and final synchronization stay outside the timed interval.
+
+Do not combine these samples with `eager_stream_batch_cuda_event` records.
 
 The paged-prefill Graph gate uses the same protocol and the admitted GQA4
 page-reorder/reuse fixture:
@@ -124,9 +134,20 @@ LOOM_BENCH_RUN_LABEL=flashinfer_graph_second \
 ```
 
 Repeat in reverse provider order. Both paths include one completion event after
-one fixed-address replay; planning, capture, instantiation, allocation, and
-correctness reads remain outside the interval.
+one fixed-address replay. Planning, capture, instantiation, allocation, and
+correctness reads stay outside the interval.
 
-RMSNorm is omitted when the unmodified FlashInfer release cannot compile or
-load its provider on the declared host. Do not patch baseline source and report
-the result as an official release comparison.
+Skip RMSNorm when the unmodified FlashInfer release cannot compile or load its
+provider on the declared host. Do not patch baseline source and report the
+result as an official release comparison.
+
+Summarize only records from the same operator contract:
+
+```bash
+python tools/flashinfer/summarize.py /tmp/loom-first.jsonl \
+  /tmp/flashinfer-second.jsonl > /tmp/summary.json
+```
+
+The summarizer rejects changes in measurement, shape, layout, fixture,
+launch count, or other contract fields. It keeps provider, run label,
+execution identity, and correctness records separate.

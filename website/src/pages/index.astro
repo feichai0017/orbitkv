@@ -2,6 +2,8 @@
 import SiteLayout from "../layouts/SiteLayout.astro";
 import {
   evidenceHighlights,
+  executionStages,
+  milestones,
   operatorFamilies,
   repositoryUrl,
 } from "../data/site";
@@ -12,129 +14,199 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 <SiteLayout active="Overview">
   <section class="hero">
     <div class="hero-copy">
-      <p class="eyebrow">Rust-native CUDA operators</p>
-      <h1>Fast kernels.<br /><span>Checked execution.</span></h1>
-      <p>
-        A FlashInfer-class operator layer for Rust inference engines.
-        Loom-owned kernels compile with cuda-oxide and run beside qualified
-        vendor providers under one ownership model.
+      <div class="hero-kicker">
+        <span class="release-dot" aria-hidden="true"></span>
+        <span>Alpha · NVIDIA SM90 · Rust 2024</span>
+      </div>
+      <h1>Inference operators,<br /><span>in Rust.</span></h1>
+      <p class="hero-lede">
+        Loom Infer is a FlashInfer-class operator layer for Rust LLM engines.
+        It combines checked execution, cuda-oxide kernels, and qualified vendor
+        libraries under one lifecycle.
       </p>
       <div class="hero-actions">
-        <a class="button primary" href={`${base}/docs/`}>Get started</a>
-        <a class="button" href={`${base}/evidence/`}>View evidence</a>
+        <a class="button primary" href={`${base}/docs/`}>Read the architecture</a>
+        <a class="button quiet" href={`${base}/evidence/`}>Inspect the evidence</a>
       </div>
-      <p class="hero-note">Rust host · Rust device · CUDA SM90 · MIT</p>
+      <ul class="hero-facts" aria-label="Project boundaries">
+        <li>Rust product API</li>
+        <li>Rust device source</li>
+        <li>No silent fallback</li>
+      </ul>
     </div>
 
-    <div class="kernel-window" aria-label="Target operator execution path">
-      <div class="window-bar">
-        <span>loom_infer::execute</span>
-        <span class="window-dots" aria-hidden="true"><i></i><i></i><i></i></span>
+    <div class="execution-panel" aria-label="Loom Infer execution trace">
+      <div class="panel-topline">
+        <span>decode_step.trace</span>
+        <span class="live-label"><i></i> checked</span>
       </div>
-      <pre class="kernel-code"><code><span class="token-comment">// fixed before enqueue</span>
-<span class="token-keyword">let</span> plan = provider.plan(spec)?;
-<span class="token-keyword">let</span> bindings = queue.bindings(...)?;
-
-<span class="token-keyword">let mut</span> scope = queue.begin(bindings)?;
-plan.enqueue_into(&mut scope, args)?;
-<span class="token-type">scope.finish().wait()?</span>;
-
-<span class="token-comment">// no silent fallback</span></code></pre>
+      <div class="trace-body">
+        <div class="trace-row">
+          <span class="trace-index">00</span>
+          <div><small>contract</small><strong>BF16 · NHD · D128</strong></div>
+          <span class="trace-state">valid</span>
+        </div>
+        <div class="trace-row">
+          <span class="trace-index">01</span>
+          <div><small>plan</small><strong>paged_decode::tp8</strong></div>
+          <span class="trace-state">fixed</span>
+        </div>
+        <div class="trace-row">
+          <span class="trace-index">02</span>
+          <div><small>bindings</small><strong>6 read · 2 write</strong></div>
+          <span class="trace-state">owned</span>
+        </div>
+        <div class="trace-row active">
+          <span class="trace-index">03</span>
+          <div><small>stream 7</small><strong>enqueue_into(scope)</strong></div>
+          <span class="trace-state">submit</span>
+        </div>
+        <div class="trace-row">
+          <span class="trace-index">04</span>
+          <div><small>completion</small><strong>resources returned</strong></div>
+          <span class="trace-state">fenced</span>
+        </div>
+      </div>
+      <div class="panel-footline">
+        <span>provider / cuda-oxide</span>
+        <span>target / H20</span>
+      </div>
     </div>
   </section>
 
-  <section class="metrics-strip" aria-label="Project status">
-    <div class="metric"><strong>Rust</strong><span>host and device source</span></div>
-    <div class="metric"><strong>SM90</strong><span>qualified first target</span></div>
-    <div class="metric"><strong>H20</strong><span>recorded evidence</span></div>
-    <div class="metric"><strong>v0.6.16</strong><span>pinned FlashInfer baseline</span></div>
+  <section class="boundary-strip" aria-label="Product boundary">
+    <span class="boundary-label">Loom owns</span>
+    <strong>contracts · plans · bindings · kernels · completion</strong>
+    <span class="boundary-separator" aria-hidden="true"></span>
+    <span class="boundary-label">Engine owns</span>
+    <strong>models · scheduling · requests · distributed policy</strong>
   </section>
 
-  <section class="section section-compact" id="operators">
-    <header class="section-header">
+  <section class="section" id="architecture">
+    <header class="section-heading">
       <div>
-        <p class="eyebrow">Operators</p>
-        <h2>A narrow, qualified surface.</h2>
+        <p class="eyebrow">Execution model</p>
+        <h2>One path from contract to completion.</h2>
       </div>
       <p>
-        Each row fixes its shape, dtype, layout, numerical behavior, stream,
-        workspace, and Graph policy before admission.
+        Custom kernels and vendor calls use the same typed bindings, stream,
+        failure policy, and completion fence. Graph capture does not bypass the
+        operator plan.
       </p>
     </header>
-    <div class="operator-list">
-      {operatorFamilies.map((family, index) => (
-        <article class="operator-card">
-          <span class="card-index">{String(index + 1).padStart(2, "0")}</span>
+
+    <ol class="execution-rail">
+      {executionStages.map((stage) => (
+        <li>
+          <span class="rail-key">{stage.key}</span>
           <div>
-            <h3>{family.name}</h3>
-            <p>{family.boundary}</p>
+            <h3>{stage.name}</h3>
+            <p>{stage.detail}</p>
           </div>
-          <span class="status-pill">{family.state}</span>
-        </article>
+        </li>
       ))}
-    </div>
-    <a class="section-link" href={`${base}/docs/operators/`}>Explore every contract →</a>
+    </ol>
   </section>
 
-  <section class="section section-compact">
-    <header class="section-header">
+  <section class="section" id="operators">
+    <header class="section-heading">
       <div>
-        <p class="eyebrow">Architecture</p>
-        <h2>One lifecycle. Two provider classes.</h2>
+        <p class="eyebrow">Operator surface</p>
+        <h2>Narrow contracts. Explicit status.</h2>
       </div>
       <p>
-        Rust kernels and vendor calls share checked bindings, caller-owned
-        streams, one completion fence, and the same failure policy.
+        Each provider fixes its dtype, layout, hardware, workspace, numerical
+        limit, and Graph policy before admission.
       </p>
     </header>
-    <div class="principle-grid">
-      <article class="principle-card">
-        <span>01</span>
-        <h3>Rust end to end</h3>
-        <p>Contracts, plans, host execution, and custom kernels stay in Rust.</p>
-      </article>
-      <article class="principle-card">
-        <span>02</span>
-        <h3>Owned async safety</h3>
-        <p>Writable allocations cannot escape while CUDA work is in flight.</p>
-      </article>
-      <article class="principle-card">
-        <span>03</span>
-        <h3>Evidence before defaults</h3>
-        <p>Correctness, performance, Graph, engine, and serving gates stay separate.</p>
-      </article>
-    </div>
-  </section>
 
-  <section class="section section-compact" id="evidence">
-    <header class="section-header">
-      <div><p class="eyebrow">H20 evidence</p><h2>Numbers with boundaries.</h2></div>
-      <p>
-        Representative matched results against the pinned FlashInfer release.
-        Every record keeps raw samples, provider order, and excluded claims.
-      </p>
-    </header>
-    <div class="highlight-grid">
-      {evidenceHighlights.map((item) => (
-        <article class="highlight-card">
-          <strong>{item.value}</strong>
-          <span>{item.label}</span>
-          <p>{item.detail}</p>
+    <div class="operator-board">
+      <div class="operator-board-head" aria-hidden="true">
+        <span>Operator</span><span>Current boundary</span><span>Provider</span><span>Status</span>
+      </div>
+      {operatorFamilies.map((family) => (
+        <article class="operator-line">
+          <h3>{family.name}</h3>
+          <p>{family.boundary}</p>
+          <code>{family.provider}</code>
+          <span class:list={["status-tag", family.tone]}>{family.state}</span>
         </article>
       ))}
     </div>
-    <a class="section-link" href={`${base}/evidence/`}>Read methods, raw records, and exclusions →</a>
+    <a class="text-link" href={`${base}/docs/operators/`}>Open the operator matrix <span>→</span></a>
   </section>
 
-  <section class="cta-band">
-    <div>
-      <p class="eyebrow">Alpha</p>
-      <h2>Build the Rust operator layer.</h2>
-      <p>Next: broader attention contracts, Graph coverage, and real engine integration.</p>
+  <section class="section evidence-section" id="evidence">
+    <header class="section-heading">
+      <div>
+        <p class="eyebrow">Evidence ledger</p>
+        <h2>Current, historical, and open stay separate.</h2>
+      </div>
+      <p>
+        Attention rankings require a common oracle and exact contract key.
+        Fused append still needs a provider-neutral oracle. Its current
+        measurements are working-tree signals only.
+      </p>
+    </header>
+
+    <div class="evidence-ledger">
+      {evidenceHighlights.map((item, index) => (
+        <article class="ledger-item">
+          <span class="ledger-index">{String(index + 1).padStart(2, "0")}</span>
+          <strong>{item.value}</strong>
+          <div>
+            <h3>{item.label}</h3>
+            <p>{item.detail}</p>
+          </div>
+          <small>{item.sample}</small>
+        </article>
+      ))}
     </div>
-    <div class="cta-actions">
+    <a class="text-link" href={`${base}/evidence/`}>Read methods and exclusions <span>→</span></a>
+  </section>
+
+  <section class="section boundary-section">
+    <div class="boundary-statement">
+      <p class="eyebrow">Scope</p>
+      <h2>An operator layer.<br />No scheduler hidden inside.</h2>
+    </div>
+    <div class="boundary-cards">
+      <article>
+        <span>LOOM / IN SCOPE</span>
+        <h3>Own the device boundary</h3>
+        <p>Contracts, algorithm plans, memory authority, kernels, vendor calls, Graphs, and evidence.</p>
+      </article>
+      <article>
+        <span>ENGINE / OUT OF SCOPE</span>
+        <h3>Keep serving policy outside</h3>
+        <p>Model graphs, batching, KV allocation policy, request lifecycle, networking, and distributed scheduling.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="section roadmap-section">
+    <header class="section-heading">
+      <div><p class="eyebrow">Next gates</p><h2>Correctness before surface area.</h2></div>
+      <p>New operators wait until memory ownership, evidence, and engine invocation are closed.</p>
+    </header>
+    <div class="milestone-list">
+      {milestones.map((item) => (
+        <article>
+          <span>{item.milestone}</span>
+          <div><h3>{item.name}</h3><p>{item.reason}</p></div>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="closing-band">
+    <div>
+      <p class="eyebrow">Source and evidence</p>
+      <h2>Read the contracts. Check the records.</h2>
+    </div>
+    <div class="closing-actions">
       <a class="button primary" href={`${base}/docs/`}>Documentation</a>
-      <a class="button" href={repositoryUrl} target="_blank" rel="noreferrer">GitHub ↗</a>
+      <a class="button quiet" href={repositoryUrl} target="_blank" rel="noreferrer">GitHub ↗</a>
     </div>
   </section>
 </SiteLayout>

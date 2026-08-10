@@ -60,6 +60,9 @@ impl Bf16PagedBatchDecodeSpec {
                 kv_heads: num_kv_heads,
             });
         }
+        if i32::try_from(batch_size).is_err() || i32::try_from(max_num_pages).is_err() {
+            return Err(ContractError::ElementCountOverflow);
+        }
 
         batch_size
             .checked_add(1)

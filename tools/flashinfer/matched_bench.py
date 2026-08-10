@@ -8,6 +8,7 @@ import math
 import os
 import sys
 from collections.abc import Callable
+from importlib import metadata
 
 import torch
 
@@ -23,20 +24,42 @@ from flashinfer.trace.templates.rope import _apply_rope_pos_ids_reference
 from flashinfer.utils import SINGLE_KERNEL_TMP_SIZE
 
 
-PROVIDER_COMMIT = "5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57"
+# A binary wheel exposes its distribution version but does not prove the
+# source commit that produced it. Keep this field explicit and unqualified.
+PROVIDER_COMMIT: str | None = None
+EXPECTED_PROVIDER_VERSION = "0.6.16.post1"
 MEASUREMENT = "eager_stream_batch_cuda_event"
 FIXTURE_ID = "xorshift64_mod2001_bf16_v1"
 PAGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_page_table_v1"
 PAGED_PREFILL_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_paged_prefill_v1"
 RAGGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1"
 ROPE_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_rope_pos_ids_v1"
-ROPE_APPEND_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_rope_paged_append_v1"
+ROPE_APPEND_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_rope_paged_append_v2"
 ROPE_APPEND_TOKENS_FIXTURE_ID = (
-    "xorshift64_mod2001_bf16_i32_rope_paged_append_tokens_v1"
+    "xorshift64_mod2001_bf16_i32_rope_paged_append_tokens_v2"
 )
 FNV_OFFSET_BASIS = 0xCBF29CE484222325
 FNV_PRIME = 0x00000100000001B3
 MASK64 = (1 << 64) - 1
+OUTPUT_MAX_ABS_LIMIT = 0.015625
+LSE_MAX_ABS_LIMIT = 0.01
+
+
+def validate_flashinfer_installation() -> None:
+    try:
+        distribution_version = metadata.version("flashinfer-python")
+    except metadata.PackageNotFoundError as error:
+        raise RuntimeError("flashinfer-python is not installed") from error
+    module_version = flashinfer.__version__
+    if (
+        module_version != EXPECTED_PROVIDER_VERSION
+        or distribution_version != EXPECTED_PROVIDER_VERSION
+    ):
+        raise RuntimeError(
+            "FlashInfer version mismatch: "
+            f"expected {EXPECTED_PROVIDER_VERSION}, "
+            f"module={module_version}, distribution={distribution_version}"
+        )
 
 
 def env_positive_int(name: str, default: int) -> int:
@@ -100,17 +123,224 @@ def digest_i32(values: torch.Tensor) -> str:
     return f"{digest:016x}"
 
 
+def page_refcounts_i32(
+    max_num_pages: int, page_indices: torch.Tensor
+) -> torch.Tensor:
+    return torch.bincount(
+        page_indices.to(dtype=torch.int64), minlength=max_num_pages
+    ).to(dtype=torch.int32)
+
+
+def digest_f32(values: torch.Tensor) -> str:
+    digest = FNV_OFFSET_BASIS
+    for value in values.contiguous().view(torch.int32).view(-1).tolist():
+        digest ^= value & 0xFFFFFFFF
+        digest = (digest * FNV_PRIME) & MASK64
+    return f"{digest:016x}"
+
+
+def paged_attention_reference(
+    query: torch.Tensor,
+    key_pages: torch.Tensor,
+    value_pages: torch.Tensor,
+    page_indptr_values: tuple[int, ...],
+    page_indices_values: tuple[int, ...],
+    last_page_len_values: tuple[int, ...],
+    qo_indptr_values: tuple[int, ...] | None,
+    *,
+    causal: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute the admitted NHD paged-attention contract in PyTorch F32."""
+    batch_size = len(last_page_len_values)
+    if qo_indptr_values is None:
+        qo_indptr_values = tuple(range(batch_size + 1))
+    if len(qo_indptr_values) != batch_size + 1:
+        raise ValueError("qo_indptr length does not match the batch size")
+
+    query_heads = query.shape[1]
+    kv_heads = key_pages.shape[2]
+    head_dim = query.shape[2]
+    if query_heads % kv_heads != 0:
+        raise ValueError("query_heads must be divisible by kv_heads")
+    group_size = query_heads // kv_heads
+    page_size = key_pages.shape[1]
+    sm_scale = 1.0 / math.sqrt(head_dim)
+    expected_output = torch.empty_like(query, device="cpu")
+    expected_lse = torch.empty(
+        (query.shape[0], query_heads), dtype=torch.float32, device="cpu"
+    )
+    query_cpu = query.detach().to(device="cpu", dtype=torch.float32)
+    key_pages_cpu = key_pages.detach().to(device="cpu", dtype=torch.float32)
+    value_pages_cpu = value_pages.detach().to(device="cpu", dtype=torch.float32)
+
+    for request in range(batch_size):
+        query_start = qo_indptr_values[request]
+        query_end = qo_indptr_values[request + 1]
+        query_len = query_end - query_start
+        page_start = page_indptr_values[request]
+        page_end = page_indptr_values[request + 1]
+        page_ids = page_indices_values[page_start:page_end]
+        if not page_ids:
+            raise ValueError(f"request {request} has no KV pages")
+        kv_len = (len(page_ids) - 1) * page_size + last_page_len_values[request]
+        if causal and query_len > kv_len:
+            raise ValueError(f"request {request} has more query rows than KV rows")
+        request_key = torch.cat(
+            [key_pages_cpu[page_id] for page_id in page_ids], dim=0
+        )[:kv_len]
+        request_value = torch.cat(
+            [value_pages_cpu[page_id] for page_id in page_ids], dim=0
+        )[:kv_len]
+        request_query = query_cpu[query_start:query_end].reshape(
+            query_len, kv_heads, group_size, head_dim
+        )
+        scores = torch.einsum(
+            "qhgd,khd->qhgk", request_query, request_key
+        ) * sm_scale
+        if causal:
+            query_positions = torch.arange(query_len) + kv_len - query_len
+            key_positions = torch.arange(kv_len)
+            mask = key_positions.unsqueeze(0) <= query_positions.unsqueeze(1)
+            scores = scores.masked_fill(~mask[:, None, None, :], -math.inf)
+        probabilities = torch.softmax(scores, dim=-1)
+        request_output = torch.einsum(
+            "qhgk,khd->qhgd", probabilities, request_value
+        ).reshape(query_len, query_heads, head_dim)
+        request_lse = torch.logsumexp(scores, dim=-1).reshape(
+            query_len, query_heads
+        ) * math.log2(math.e)
+        expected_output[query_start:query_end] = request_output.to(torch.bfloat16)
+        expected_lse[query_start:query_end] = request_lse
+
+    return expected_output, expected_lse
+
+
+def ragged_attention_reference(
+    query: torch.Tensor,
+    key: torch.Tensor,
+    value: torch.Tensor,
+    qo_indptr_values: tuple[int, ...],
+    kv_indptr_values: tuple[int, ...],
+    *,
+    causal: bool,
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Compute the admitted NHD ragged-attention contract in PyTorch F32."""
+    batch_size = len(qo_indptr_values) - 1
+    if len(kv_indptr_values) != batch_size + 1:
+        raise ValueError("KV indptr length does not match the batch size")
+
+    query_heads = query.shape[1]
+    kv_heads = key.shape[1]
+    head_dim = query.shape[2]
+    if query_heads % kv_heads != 0:
+        raise ValueError("query_heads must be divisible by kv_heads")
+    group_size = query_heads // kv_heads
+    sm_scale = 1.0 / math.sqrt(head_dim)
+    query_cpu = query.detach().to(device="cpu", dtype=torch.float32)
+    key_cpu = key.detach().to(device="cpu", dtype=torch.float32)
+    value_cpu = value.detach().to(device="cpu", dtype=torch.float32)
+    expected_output = torch.empty_like(query, device="cpu")
+    expected_lse = torch.empty(
+        (query.shape[0], query_heads), dtype=torch.float32, device="cpu"
+    )
+
+    for request in range(batch_size):
+        query_start = qo_indptr_values[request]
+        query_end = qo_indptr_values[request + 1]
+        kv_start = kv_indptr_values[request]
+        kv_end = kv_indptr_values[request + 1]
+        query_len = query_end - query_start
+        kv_len = kv_end - kv_start
+        if query_len <= 0 or kv_len <= 0:
+            raise ValueError(f"request {request} has an empty sequence")
+        if causal and query_len > kv_len:
+            raise ValueError(f"request {request} has more query rows than KV rows")
+
+        request_query = query_cpu[query_start:query_end].reshape(
+            query_len, kv_heads, group_size, head_dim
+        )
+        request_key = key_cpu[kv_start:kv_end]
+        request_value = value_cpu[kv_start:kv_end]
+        scores = torch.einsum(
+            "qhgd,khd->qhgk", request_query, request_key
+        ) * sm_scale
+        if causal:
+            query_positions = torch.arange(query_len) + kv_len - query_len
+            key_positions = torch.arange(kv_len)
+            mask = key_positions.unsqueeze(0) <= query_positions.unsqueeze(1)
+            scores = scores.masked_fill(~mask[:, None, None, :], -math.inf)
+        probabilities = torch.softmax(scores, dim=-1)
+        request_output = torch.einsum(
+            "qhgk,khd->qhgd", probabilities, request_value
+        ).reshape(query_len, query_heads, head_dim)
+        request_lse = torch.logsumexp(scores, dim=-1).reshape(
+            query_len, query_heads
+        ) * math.log2(math.e)
+        expected_output[query_start:query_end] = request_output.to(torch.bfloat16)
+        expected_lse[query_start:query_end] = request_lse
+
+    return expected_output, expected_lse
+
+
+def check_attention_output(
+    name: str,
+    output: torch.Tensor,
+    lse: torch.Tensor,
+    expected_output: torch.Tensor,
+    expected_lse: torch.Tensor,
+    *,
+    reference: str = "independent PyTorch F32 paged-attention formula",
+) -> dict[str, object]:
+    output_cpu = output.detach().to(device="cpu", dtype=torch.bfloat16)
+    lse_cpu = lse.detach().to(device="cpu", dtype=torch.float32)
+    output_max_abs = (
+        (output_cpu.float() - expected_output.float()).abs().max().item()
+    )
+    output_bit_mismatches = (
+        output_cpu.view(torch.int16) != expected_output.view(torch.int16)
+    ).sum().item()
+    lse_max_abs = (lse_cpu - expected_lse).abs().max().item()
+    lse_bit_mismatches = (
+        lse_cpu.view(torch.int32) != expected_lse.view(torch.int32)
+    ).sum().item()
+    output_is_finite = torch.isfinite(output_cpu.float()).all()
+    lse_is_finite = torch.isfinite(lse_cpu).all()
+    if not output_is_finite or not lse_is_finite:
+        raise RuntimeError(f"{name} produced non-finite output")
+    if output_max_abs > OUTPUT_MAX_ABS_LIMIT or lse_max_abs > LSE_MAX_ABS_LIMIT:
+        raise RuntimeError(
+            f"{name} exceeded correctness limits: "
+            f"output={output_max_abs} limit={OUTPUT_MAX_ABS_LIMIT}, "
+            f"lse={lse_max_abs} limit={LSE_MAX_ABS_LIMIT}"
+        )
+    return {
+        "reference": reference,
+        "lse_domain": "log2",
+        "output_max_abs": output_max_abs,
+        "output_max_abs_limit": OUTPUT_MAX_ABS_LIMIT,
+        "output_bit_mismatches": output_bit_mismatches,
+        "output_digest": digest_bf16(output_cpu),
+        "output_reference_digest": digest_bf16(expected_output),
+        "lse_max_abs": lse_max_abs,
+        "lse_max_abs_limit": LSE_MAX_ABS_LIMIT,
+        "lse_bit_mismatches": lse_bit_mismatches,
+        "lse_digest": digest_f32(lse_cpu),
+        "lse_reference_digest": digest_f32(expected_lse),
+    }
+
+
 def write_record(
     operator: str,
     case: str,
     layout: str,
     execution: dict[str, object],
-    kernels_per_call: int,
     shape: dict[str, int],
     fixture_digests: dict[str, str],
     samples_us: list[float],
     fixture_id: str = FIXTURE_ID,
 ) -> None:
+    execution = dict(execution)
+    execution["kernel_count"] = {"status": "unverified"}
     print(
         json.dumps(
             {
@@ -125,7 +355,6 @@ def write_record(
                 "dtype": "bf16",
                 "layout": layout,
                 "execution": execution,
-                "kernels_per_call": kernels_per_call,
                 "shape": shape,
                 "fixture_id": fixture_id,
                 "fixture_digests": fixture_digests,
@@ -161,7 +390,6 @@ def benchmark_rmsnorm(rows: int, hidden_size: int) -> None:
         f"bf16_r{rows}_h{hidden_size}",
         "contiguous_rows_hidden",
         {"algorithm": "flashinfer_rmsnorm", "enable_pdl": False},
-        1,
         {"rows": rows, "hidden_size": hidden_size},
         {"input": digest_bf16(input_host), "weight": digest_bf16(weight_host)},
         samples_us,
@@ -196,7 +424,6 @@ def benchmark_gemm() -> None:
         "bf16_m1_n4096_k4096_cublaslt",
         "A_row_major_W_row_major_transposed",
         {"algorithm": "cublaslt", "tactic": 0},
-        1,
         {"m": m, "n": n, "k": k},
         {
             "activation": digest_bf16(activation_host),
@@ -249,12 +476,30 @@ def benchmark_decode(
         )
 
     samples_us = benchmark(run)
+    expected_output, expected_lse = ragged_attention_reference(
+        query_host.reshape(1, query_heads, head_dim),
+        key_host.reshape(kv_len, kv_heads, head_dim),
+        value_host.reshape(kv_len, kv_heads, head_dim),
+        (0, 1),
+        (0, kv_len),
+        causal=False,
+    )
+    correctness = check_attention_output(
+        f"FlashInfer single decode {case}",
+        output,
+        lse,
+        expected_output[0],
+        expected_lse[0],
+        reference="independent PyTorch F32 dense-attention formula",
+    )
     write_record(
         "single_decode",
         case,
         "NHD_D128",
-        {"algorithm": "flashinfer_single_decode_module"},
-        1,
+        {
+            "algorithm": "flashinfer_single_decode_module",
+            "correctness": correctness,
+        },
         {
             "kv_len": kv_len,
             "query_heads": query_heads,
@@ -350,6 +595,23 @@ def benchmark_paged_decode(
         )
 
     samples_us = benchmark(run)
+    expected_output, expected_lse = paged_attention_reference(
+        query_host.reshape(batch_size, query_heads, head_dim),
+        key_host.reshape(max_num_pages, page_size, kv_heads, head_dim),
+        value_host.reshape(max_num_pages, page_size, kv_heads, head_dim),
+        page_indptr_values,
+        page_indices_values,
+        last_page_len_values,
+        None,
+        causal=False,
+    )
+    correctness = check_attention_output(
+        f"FlashInfer paged decode {case}",
+        output,
+        lse,
+        expected_output,
+        expected_lse,
+    )
     request_kv_lens = [
         (page_indptr_values[index + 1] - page_indptr_values[index] - 1)
         * page_size
@@ -366,8 +628,8 @@ def benchmark_paged_decode(
             "use_tensor_cores": False,
             "disable_split_kv": False,
             "page_table_location": "device",
+            "correctness": correctness,
         },
-        1,
         {
             "batch_size": batch_size,
             "max_num_pages": max_num_pages,
@@ -459,6 +721,22 @@ def benchmark_ragged_prefill(
         )
 
     samples_us = benchmark(run)
+    expected_output, expected_lse = ragged_attention_reference(
+        query_host.reshape(nnz_qo, query_heads, head_dim),
+        key_host.reshape(nnz_kv, kv_heads, head_dim),
+        value_host.reshape(nnz_kv, kv_heads, head_dim),
+        qo_indptr_values,
+        kv_indptr_values,
+        causal=True,
+    )
+    correctness = check_attention_output(
+        f"FlashInfer ragged prefill {case}",
+        output,
+        lse,
+        expected_output,
+        expected_lse,
+        reference="independent PyTorch F32 ragged-attention formula",
+    )
     request_qo_lens = [
         qo_indptr_values[index + 1] - qo_indptr_values[index]
         for index in range(batch_size)
@@ -477,8 +755,8 @@ def benchmark_ragged_prefill(
             "causal": "bottom_right",
             "disable_split_kv": False,
             "indptr_location": "device",
+            "correctness": correctness,
         },
-        1,
         {
             "batch_size": batch_size,
             "nnz_qo": nnz_qo,
@@ -584,8 +862,23 @@ def benchmark_paged_prefill(
         )
 
     samples_us = benchmark(run)
-    if not torch.isfinite(output.float()).all() or not torch.isfinite(lse).all():
-        raise RuntimeError("FlashInfer paged prefill produced non-finite output")
+    expected_output, expected_lse = paged_attention_reference(
+        query_host.reshape(nnz_qo, query_heads, head_dim),
+        key_host.reshape(max_num_pages, page_size, kv_heads, head_dim),
+        value_host.reshape(max_num_pages, page_size, kv_heads, head_dim),
+        page_indptr_values,
+        page_indices_values,
+        last_page_len_values,
+        qo_indptr_values,
+        causal=True,
+    )
+    correctness = check_attention_output(
+        f"FlashInfer paged prefill {case}",
+        output,
+        lse,
+        expected_output,
+        expected_lse,
+    )
     request_qo_lens = [
         qo_indptr_values[index + 1] - qo_indptr_values[index]
         for index in range(batch_size)
@@ -606,9 +899,8 @@ def benchmark_paged_prefill(
             "causal": "bottom_right",
             "disable_split_kv": False,
             "page_table_location": "device",
-            "output_digest": digest_bf16(output),
+            "correctness": correctness,
         },
-        1,
         {
             "batch_size": batch_size,
             "nnz_qo": nnz_qo,
@@ -727,7 +1019,6 @@ def benchmark_rope() -> None:
                 "key_reference_digest": digest_bf16(expected_key),
             },
         },
-        1,
         {
             "tokens": tokens,
             "query_heads": query_heads,
@@ -768,9 +1059,10 @@ def benchmark_rope_paged_append() -> None:
     )
     page_indptr_host = torch.tensor([0, 1, 3, 5, 8], dtype=torch.int32)
     page_indices_host = torch.tensor(
-        [7, 2, 6, 5, 1, 7, 0, 4], dtype=torch.int32
+        [3, 2, 6, 2, 1, 7, 0, 4], dtype=torch.int32
     )
     last_page_len_host = torch.tensor([3, 16, 1, 9], dtype=torch.int32)
+    page_refcounts_host = page_refcounts_i32(max_num_pages, page_indices_host)
     batch_indices_host = torch.arange(batch_size, dtype=torch.int32)
     positions_host = torch.tensor([2, 31, 16, 40], dtype=torch.int32)
 
@@ -908,9 +1200,8 @@ def benchmark_rope_paged_append() -> None:
         "NHD_D128_neox_split_half_page16",
         {
             "algorithm": "flashinfer_rope_then_paged_append",
-            "kernels": 2,
             "positions": [2, 31, 16, 40],
-            "physical_slots": [[7, 2], [6, 15], [1, 0], [4, 8]],
+            "physical_slots": [[3, 2], [6, 15], [1, 0], [4, 8]],
             "correctness": {
                 "reference": "FlashInfer v0.6.16.post1 trace RoPE reference plus explicit page writes",
                 "query_max_abs": query_max_abs,
@@ -927,7 +1218,6 @@ def benchmark_rope_paged_append() -> None:
                 "value_pages_reference_digest": digest_bf16(expected_value_pages),
             },
         },
-        2,
         {
             "batch_size": batch_size,
             "max_num_pages": max_num_pages,
@@ -945,6 +1235,7 @@ def benchmark_rope_paged_append() -> None:
             "page_indptr": digest_i32(page_indptr_host),
             "page_indices": digest_i32(page_indices_host),
             "last_page_len": digest_i32(last_page_len_host),
+            "page_refcounts": digest_i32(page_refcounts_host),
         },
         samples_us,
         ROPE_APPEND_FIXTURE_ID,
@@ -971,8 +1262,9 @@ def benchmark_rope_paged_append_tokens() -> None:
     batch_indices_host = torch.tensor([2, 0, 1, 0, 2, 1], dtype=torch.int32)
     positions_host = torch.tensor([5, 17, 20, 16, 4, 19], dtype=torch.int32)
     page_indptr_host = torch.tensor([0, 2, 4, 5], dtype=torch.int32)
-    page_indices_host = torch.tensor([7, 3, 2, 6, 3], dtype=torch.int32)
+    page_indices_host = torch.tensor([7, 3, 2, 6, 5], dtype=torch.int32)
     last_page_len_host = torch.tensor([2, 5, 6], dtype=torch.int32)
+    page_refcounts_host = page_refcounts_i32(max_num_pages, page_indices_host)
 
     query = query_host.reshape(tokens, query_heads, head_dim).to("cuda")
     key = key_host.reshape(tokens, key_heads, head_dim).to("cuda")
@@ -1109,7 +1401,6 @@ def benchmark_rope_paged_append_tokens() -> None:
         "NHD_D128_neox_split_half_page16",
         {
             "algorithm": "flashinfer_rope_then_paged_append_explicit_tokens",
-            "kernels": 2,
             "batch_indices": [2, 0, 1, 0, 2, 1],
             "positions": [5, 17, 20, 16, 4, 19],
             "physical_slots": physical_slots,
@@ -1129,7 +1420,6 @@ def benchmark_rope_paged_append_tokens() -> None:
                 "value_pages_reference_digest": digest_bf16(expected_value_pages),
             },
         },
-        2,
         {
             "tokens": tokens,
             "batch_size": batch_size,
@@ -1150,6 +1440,7 @@ def benchmark_rope_paged_append_tokens() -> None:
             "page_indptr": digest_i32(page_indptr_host),
             "page_indices": digest_i32(page_indices_host),
             "last_page_len": digest_i32(last_page_len_host),
+            "page_refcounts": digest_i32(page_refcounts_host),
         },
         samples_us,
         ROPE_APPEND_TOKENS_FIXTURE_ID,
@@ -1157,6 +1448,7 @@ def benchmark_rope_paged_append_tokens() -> None:
 
 
 def main() -> None:
+    validate_flashinfer_installation()
     requested = os.environ.get(
         "LOOM_BENCH_OPERATORS",
         "rms_norm,gemm,single_decode,paged_batch_decode,paged_prefill,ragged_prefill,rope,rope_paged_kv_append,rope_paged_kv_append_tokens",

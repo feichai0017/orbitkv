@@ -1,282 +1,88 @@
 ---
 import DocsNav from "../components/DocsNav.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
-import { repositoryUrl } from "../data/site";
+import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site";
 ---
 
 <SiteLayout
   title="Evidence | Loom Infer"
-  description="Correctness and performance evidence for permanent Loom Infer providers."
+  description="Bounded correctness and performance records for Loom Infer providers."
   active="Evidence"
 >
   <header class="page-hero">
     <p class="eyebrow">Evidence</p>
-    <h1>Each claim has a fixed boundary.</h1>
-    <p>Each result fixes the source, contract, hardware, baseline, and method.</p>
+    <h1>Every number keeps its boundary.</h1>
+    <p>
+      A result fixes source, hardware, contract, baseline, measurement, raw
+      samples, and excluded claims.
+    </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
-      <h2>Latest qualification</h2>
-      <div class="doc-note">
-        <strong>BF16 paged causal prefill passed its H20 gate.</strong>
-        <p>
-          Ragged query rows now attend over page-size-16 NHD KV storage with
-          bottom-right causal alignment. Direct MHA, MQA, and GQA cases cover
-          mixed lengths, physical-page reordering and reuse, metadata
-          preflight, and an invalid-page sentinel guard.
-        </p>
-        <p>
-          Maximum BF16 output error is <code>1.220703125e-4</code>, maximum
-          log2-LSE error is <code>9.536743164e-7</code>, and all four Compute
-          Sanitizer tools report no errors or leaks.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-correctness-20260807.json`}>
-          Paged prefill correctness and sanitizer result
-        </a>
-        <p>
-          The matched eager result is shape-specific. Loom is 3.264x
-          lower-latency on short MHA and 1.288x lower-latency on GQA4.
-          FlashInfer is 1.081x lower-latency on mixed MQA. All provider-order
-          deltas are below 2.1%, and all 600 timing samples are retained.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-eager-performance-20260807.json`}>
-          Paged prefill matched eager result
-        </a>
-        <p>
-          The same direct GQA4 command captures into one fixed-address Graph
-          node and replays twice after external provider, plan, and read-buffer
-          owners are dropped. Output and log2-LSE preserve the standalone
-          digests, and all four sanitizer tools report no errors or leaks.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-cuda-graph-correctness-20260807.json`}>
-          Paged prefill fixed-address Graph correctness result
-        </a>
-        <p>
-          On the same GQA4 page-reorder/reuse case, matched single-replay
-          medians are 15.072 microseconds for Loom and 18.560 microseconds for
-          FlashInfer. Loom is 1.231x lower-latency; provider-order deltas are
-          0.213% and 0.000%, and all 400 samples are retained.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json`}>
-          Paged prefill matched fixed-address Graph result
-        </a>
-      </div>
-
-      <h2>Matched eager performance</h2>
-      <p>
-        Current records compare attention and fused KV paths with the latest
-        stable FlashInfer release, <code>v0.6.16.post1</code>, on one H20.
-      </p>
-      <div class="doc-note">
-        <strong>Explicit multi-token append keeps one fused launch.</strong>
-        <p>
-          Loom accepts 1 through 64 caller-indexed tokens. On the admitted
-          six-token shuffled suffix case, its one cuda-oxide kernel records
-          5.510 microseconds versus 11.732 microseconds for FlashInfer's
-          two-kernel composition, or 2.129x lower latency. Both provider-order
-          deltas are below five percent, and all 200 raw samples are retained.
-        </p>
-        <p>
-          The same command captures into one Loom Graph node. Single-replay
-          medians are 8.288 microseconds for Loom and 13.728 microseconds for
-          FlashInfer's two-node graph, making Loom 1.656x lower-latency.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-eager-performance-20260806.json`}>
-          Multi-token fused append matched performance result
-        </a>
-        <br />
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-graph-performance-20260806.json`}>
-          Multi-token fused append matched Graph result
-        </a>
-        <br />
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-rope-paged-kv-append-tokens-correctness-20260806.json`}>
-          Multi-token fused append correctness result
-        </a>
-        <br />
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-rope-paged-kv-append-tokens-cuda-graph-correctness-20260806.json`}>
-          Multi-token fused append Graph correctness result
-        </a>
-      </div>
-      <div class="doc-note">
-        <strong>Fused RoPE plus paged KV append removes one launch.</strong>
-        <p>
-          On the admitted batch-4 Q16/K4 D128, page-size-16 case, Loom's one
-          cuda-oxide kernel records 3.989 microseconds versus 11.735
-          microseconds for FlashInfer's two-kernel composition, or 2.942x
-          lower latency under fixed host affinity. Both provider-order deltas
-          are below five percent, and all 200 raw samples are retained.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-eager-performance-20260806.json`}>
-          Fused RoPE append matched performance result
-        </a>
-        <br />
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-rope-paged-kv-append-correctness-20260806.json`}>
-          Fused RoPE append correctness result
-        </a>
-      </div>
-      <div class="doc-note">
-        <strong>Paged decode has shape-specific winners.</strong>
-        <p>
-          Eight-warp block-local token parallelism lowers Loom MQA and GQA
-          eager latency by 3.78x and 3.32x relative to the direct record. Loom
-          is now 4.41x lower-latency for batch-1 MHA and 2.35x lower-latency
-          for mixed-length batch-3 MQA than FlashInfer.
-        </p>
-        <p>
-          The batch-4 GQA ranking is excluded because FlashInfer's order delta
-          is 60.62%. All 600 current raw samples are retained. CUPTI records
-          Loom MQA/GQA kernel medians of 4.864 and 4.928 microseconds.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-token-parallel-eager-performance-20260806.json`}>
-          Paged token-parallel matched performance result
-        </a>
-      </div>
-      <div class="doc-note">
-        <strong>Parallel merge closes more of the long-context gap.</strong>
-        <p>
-          Identical BF16 operand bits, preallocated buffers, CUDA events, and
-          both provider orders were used. The complete path lowers Loom median
-          latency by 5.39x at GQA KV length 127 and 38.19x at KV length 4096
-          relative to the recorded direct baseline. FlashInfer remains 1.17x
-          and 2.09x lower-latency at those shapes.
-        </p>
-        <p>
-          The record retains 1,400 raw samples. Separate CUPTI activity timing
-          records a 3.99x merge-kernel improvement. Hardware counters, CUDA
-          Graph, engine, and serving claims remain excluded.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-parallel-merge-eager-performance-20260805.json`}>
-          Parallel-merge matched performance result
-        </a>
-        <br />
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-single-decode-parallel-merge-profiling-20260805.json`}>
-          Isolated kernel profiling result
-        </a>
-      </div>
-
-      <h2>Current source projection</h2>
-      <p>
-        The ragged prefill, paged batch-decode, and parallel-merge records
-        independently qualify their declared device paths.
-      </p>
-      <div class="doc-note">
-        <strong>BF16 ragged causal prefill passed its H20 gate.</strong>
-        <p>
-          Direct, eight/sixteen-warp, and tiled eight-partition NHD D128 MHA,
-          MQA, and GQA batches pass the CPU oracle. Separate query/KV indptr
-          arrays, explicit tiled workspace, bottom-right causal alignment, and
-          metadata guards are covered. Four sanitizer tools report no errors.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-ragged-prefill-cp-async-correctness-20260806.json`}>
-          Ragged prefill correctness result
-        </a>
-        <p>
-          Unrolled 16-byte cp.async K/V staging lowers long-GQA latency to
-          48.232 microseconds, 1.148x below the previous tiled path and 7.729x
-          below direct. FlashInfer remains 2.206x ahead on stable long GQA.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-ragged-prefill-cp-async-eager-performance-20260806.json`}>
-          Ragged prefill matched performance result
-        </a>
-      </div>
-      <div class="doc-note">
-        <strong>BF16 paged batch decode passed its H20 gate.</strong>
-        <p>
-          NHD D128 page-size-16 MHA, MQA, and GQA batches produce bit-exact
-          BF16 output against the CPU oracle. Mixed request lengths, physical
-          page reordering and reuse, and an invalid-page guard are covered.
-          Four sanitizer tools report no errors.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-batch-decode-correctness-20260806.json`}>
-          Paged batch-decode correctness result
-        </a>
-      </div>
-      <div class="doc-note">
-        <strong>BF16 parallel merge passed its H20 gate.</strong>
-        <p>
-          Tuned MQA and GQA partitions match the CPU reference within the
-          declared limits. Four sanitizer tools report no errors. The merge
-          uses 4,160 bytes of shared memory and assembles without stack or
-          spills.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-single-decode-parallel-merge-correctness-20260805.json`}>
-          Parallel-merge correctness result
-        </a>
-        <p>
-          The earlier direct-decode and shared-command records remain immutable
-          historical evidence.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-single-decode-correctness-20260803.json`}>
-          Direct-decode correctness history
-        </a>
-      </div>
-
-      <h2>Earlier operator records</h2>
-      <div class="doc-note">
-        <strong>Owned bindings and fixed-address Graph replay passed on H20.</strong>
-        <p>
-          The graph captures BF16 RMSNorm and one fixed BF16 cuBLASLt GEMM.
-          It replays twice and produces a bit-exact final output. Compute
-          Sanitizer reports no errors or device leaks. Performance is not
-          measured.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-owned-bindings-cuda-graph-correctness-20260803.json`}>
-          Graph machine-readable result
-        </a>
-      </div>
-      <div class="doc-note">
-        <strong>F32 RMSNorm passed its recorded H20 correctness gate.</strong>
-        <p>
-          Four shapes match the CPU reference, and an invalid buffer is
-          rejected. Checked bindings chain two commands on a non-default
-          stream with one completion record. The chained maximum absolute
-          error is <code>7.152557373e-7</code>. Performance is not measured.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-rms-norm-f32-command-scope-20260802.json`}>
-          Machine-readable result
-        </a>
-      </div>
-      <div class="doc-note">
-        <strong>FP16 and BF16 RMSNorm passed their recorded H20 correctness gates.</strong>
-        <p>
-          Scalar and packed paths match the storage-rounded CPU references.
-          Three short-buffer positions are rejected. Two launches share one
-          completion record without an intermediate host wait. The FP16 chain
-          reaches two ULPs, and the BF16 chain reaches one ULP. Performance is
-          not measured.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-rms-norm-low-precision-20260802.json`}>
-          Low-precision result
-        </a>
-      </div>
-      <div class="doc-note">
-        <strong>One fixed BF16 cuBLASLt GEMM plan passed its recorded H20 gate.</strong>
-        <p>
-          Standalone and transpose-sensitive cases match the CPU reference.
-          Short A, W, and D buffers are rejected. BF16 RMSNorm feeds GEMM under
-          one completion without an intermediate host wait. The selected H20
-          algorithm requires no workspace. Performance is not measured.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-cublaslt-correctness-20260802.json`}>
-          BF16 GEMM result
-        </a>
-      </div>
-
       <h2>Evidence levels</h2>
-      <ol>
-        <li>Correctness fixes the contract, oracle, limits, and edge cases.</li>
-        <li>Kernel evidence uses matched buffers, streams, and provider order.</li>
-        <li>Graph evidence covers capture and replay with fixed plans.</li>
-        <li>Engine evidence proves invocation and model output.</li>
-        <li>Serving evidence reports latency, throughput, memory, and workload.</li>
-      </ol>
+      <div class="evidence-level-grid">
+        {evidenceLevels.map((item) => (
+          <div class="evidence-level-card">
+            <span>{item.level}</span>
+            <div><h3>{item.name}</h3><p>{item.detail}</p></div>
+            <small>{item.status}</small>
+          </div>
+        ))}
+      </div>
+
+      <h2>Current evidence status</h2>
+      <table class="evidence-table">
+        <thead>
+          <tr><th>Result</th><th>Direction</th><th>Contract</th><th>Boundary</th></tr>
+        </thead>
+        <tbody>
+          {evidenceHighlights.map((item) => (
+            <tr>
+              <td>{item.value}</td>
+              <td>{item.label}</td>
+              <td>{item.detail}</td>
+              <td>{item.sample}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div class="doc-note">
+        <strong>Loom device correctness and provider performance are separate.</strong>
+        <p>
+          Existing device records retain their claims for their recorded source
+          trees. They do not qualify the current DeviceRegion submission path.
+          Attention rankings need a new common-oracle run. Fused append still
+          needs one provider-neutral oracle before it can publish a ranking.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-correctness-20260807.json`}>Correctness record</a>
+        <span> · </span>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json`}>Graph performance record</a>
+      </div>
+
+      <div class="doc-note warning">
+        <strong>Older matched attention results are historical.</strong>
+        <p>
+          The comparison tools poison Graph outputs, check both providers
+          against one F32 reference, and reject mixed run contracts. Fused
+          append also needs new sanitizer evidence for exclusive pages.
+        </p>
+      </div>
+
+      <h2>Current exclusions</h2>
+      <ul>
+        <li>No result proves model or serving speedup.</li>
+        <li>Eager provider timing is not isolated kernel timing.</li>
+        <li>Graph results cover fixed addresses and named paths only.</li>
+        <li>H20 results do not qualify other GPU architectures.</li>
+        <li>One shape does not establish a universal provider winner.</li>
+      </ul>
 
       <p>
-        Read the
-        <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>result format</a>
-        and <a href={`${repositoryUrl}/blob/main/docs/development/h20-validation.md`}>H20 validation guide</a>.
+        Read the complete <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>evidence index</a>
+        for source hashes, fixtures, raw samples, and exclusions.
       </p>
     </article>
   </div>

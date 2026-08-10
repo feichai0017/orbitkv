@@ -100,6 +100,15 @@ pub enum ContractError {
         physical_page: usize,
         offset: usize,
     },
+    NonExclusivePageAppendTarget {
+        physical_page: usize,
+        reference_count: i32,
+    },
+    PageReferenceCountTooSmall {
+        physical_page: usize,
+        minimum: usize,
+        actual: i32,
+    },
     UnsupportedDType(DType),
     LengthMismatch {
         buffer: &'static str,
@@ -257,6 +266,22 @@ impl fmt::Display for ContractError {
                 formatter,
                 "paged KV append tokens {first_token} and {second_token} target the same physical \
                  slot ({physical_page}, {offset})"
+            ),
+            Self::NonExclusivePageAppendTarget {
+                physical_page,
+                reference_count,
+            } => write!(
+                formatter,
+                "paged KV append target page {physical_page} must have exactly one owner, got \
+                 reference count {reference_count}"
+            ),
+            Self::PageReferenceCountTooSmall {
+                physical_page,
+                minimum,
+                actual,
+            } => write!(
+                formatter,
+                "KV page {physical_page} reference count must be at least {minimum}, got {actual}"
             ),
             Self::UnsupportedDType(dtype) => write!(formatter, "unsupported dtype {dtype:?}"),
             Self::LengthMismatch {

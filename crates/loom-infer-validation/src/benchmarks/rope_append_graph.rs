@@ -1,11 +1,13 @@
 use crate::benchmark::BenchmarkRecord;
 use crate::comparison::{compare_bf16, digest_bf16};
-use crate::fixture::deterministic_bf16;
+use crate::fixture::{deterministic_bf16, page_refcounts};
 use cuda_core::{CudaContext, DeviceBuffer, sys};
 use half::bf16;
 use loom_infer::{Bf16RopePagedKvAppendTokensSpec, rope_paged_kv_append_tokens_bf16_reference};
 use loom_infer_cuda::graph::GraphQueue;
-use loom_infer_cuda::rope::{Bf16RopePagedKvAppendTokensArgs, RopeProvider};
+use loom_infer_cuda::rope::{
+    Bf16PagedKvAppendTokensMapArgs, Bf16RopePagedKvAppendMappedArgs, RopeProvider,
+};
 use serde_json::json;
 use std::env;
 use std::error::Error;
@@ -13,7 +15,7 @@ use std::sync::Arc;
 
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MEASUREMENT: &str = "fixed_address_cuda_graph_single_replay_event";
-const FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_rope_paged_append_tokens_v1";
+const FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_rope_paged_append_tokens_v2";
 const CASE: &str = "bf16_rope_paged_append_t6_b3_qh16_kh4_d128_p16";
 const OUTPUT_MAX_ABS_LIMIT: f32 = 0.015_625;
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
@@ -59,8 +61,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let batch_indices_host = [2_i32, 0, 1, 0, 2, 1];
     let positions_host = [5_i32, 17, 20, 16, 4, 19];
     let page_indptr_host = [0_i32, 2, 4, 5];
-    let page_indices_host = [7_i32, 3, 2, 6, 3];
+    let page_indices_host = [7_i32, 3, 2, 6, 5];
     let last_page_len_host = [2_i32, 5, 6];
+    let page_refcounts_host = page_refcounts(spec.max_num_pages(), &page_indices_host);
     let query_host = deterministic_bf16(spec.query_numel(), 0x5451_4147);
     let key_host = deterministic_bf16(spec.key_numel(), 0x544b_4147);
     let value_host = deterministic_bf16(spec.value_numel(), 0x5456_4147);
@@ -78,6 +81,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         &page_indptr_host,
         &page_indices_host,
         &last_page_len_host,
+        &page_refcounts_host,
         &mut expected_query,
         &mut expected_key_pages,
         &mut expected_value_pages,
@@ -100,13 +104,18 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         &upload_stream,
         &last_page_len_host,
     )?);
+    let page_refcounts = Arc::new(DeviceBuffer::from_host(
+        &upload_stream,
+        &page_refcounts_host,
+    )?);
     let query_output =
         DeviceBuffer::from_host(&upload_stream, &vec![bf16::NAN; spec.query_output_numel()])?;
     let key_pages = DeviceBuffer::from_host(&upload_stream, &key_pages_host)?;
     let value_pages = DeviceBuffer::from_host(&upload_stream, &value_pages_host)?;
+    let workspace = DeviceBuffer::<i32>::zeroed(&upload_stream, plan.workspace_required_numel())?;
 
-    let graph_queue = GraphQueue::new(&context, 1)?;
-    let mut bindings = graph_queue.bindings(11)?;
+    let graph_queue = GraphQueue::new(&context, 3)?;
+    let mut bindings = graph_queue.bindings(13)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key)?;
     let value_handle = bindings.bind_read(value)?;
@@ -115,28 +124,40 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let page_indptr_handle = bindings.bind_read(page_indptr)?;
     let page_indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let page_refcounts_handle = bindings.bind_read(page_refcounts)?;
     let query_output_handle = bindings.bind_read_write(query_output)?;
     let key_pages_handle = bindings.bind_read_write(key_pages)?;
     let value_pages_handle = bindings.bind_read_write(value_pages)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
     let captured = graph_queue.capture(bindings, |scope| {
-        plan.enqueue_into(
+        let append_map = plan.enqueue_map_into(
             scope,
-            Bf16RopePagedKvAppendTokensArgs::new(
-                query_handle,
-                key_handle,
-                value_handle,
+            Bf16PagedKvAppendTokensMapArgs::new(
                 batch_indices_handle,
                 positions_handle,
                 page_indptr_handle,
                 page_indices_handle,
                 last_page_len_handle,
+                page_refcounts_handle,
+                key_pages_handle.write(),
+                value_pages_handle.write(),
+                workspace_handle,
+            ),
+        )?;
+        plan.enqueue_mapped_into(
+            scope,
+            Bf16RopePagedKvAppendMappedArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                append_map,
                 query_output_handle.write(),
                 key_pages_handle.write(),
                 value_pages_handle.write(),
             ),
         )
     })?;
-    if captured.commands() != 1 {
+    if captured.commands() != 3 {
         return Err("explicit append Graph benchmark captured wrong command count".into());
     }
     let mut exec = captured.instantiate()?;
@@ -190,13 +211,15 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         dtype: "bf16",
         layout: "NHD_D128_neox_split_half_page16",
         execution: json!({
-            "algorithm": "fused_one_kernel_explicit_tokens",
+            "algorithm": "validate_compact_then_fused_append_explicit_tokens",
             "graph": "fixed_address_private_stream",
-            "graph_nodes": 1,
+            "graph_nodes": 3,
+            "kernels": 2,
+            "status_readbacks": 1,
             "completion_event_inside_timed_interval": true,
             "batch_indices": [2, 0, 1, 0, 2, 1],
             "positions": [5, 17, 20, 16, 4, 19],
-            "physical_slots": [[3, 5], [3, 1], [6, 4], [3, 0], [3, 4], [6, 3]],
+            "physical_slots": [[5, 5], [3, 1], [6, 4], [3, 0], [5, 4], [6, 3]],
             "correctness": {
                 "reference": "loom-infer CPU reference",
                 "query_max_abs": query_comparison.max_abs,
@@ -210,7 +233,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 "value_pages_digest": format!("{:016x}", value_comparison.digest)
             }
         }),
-        kernels_per_call: 1,
+        kernels_per_call: 2,
         shape: json!({
             "tokens": 6,
             "batch_size": 3,
@@ -231,7 +254,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             "positions": format!("{:016x}", digest_i32(&positions_host)),
             "page_indptr": format!("{:016x}", digest_i32(&page_indptr_host)),
             "page_indices": format!("{:016x}", digest_i32(&page_indices_host)),
-            "last_page_len": format!("{:016x}", digest_i32(&last_page_len_host))
+            "last_page_len": format!("{:016x}", digest_i32(&last_page_len_host)),
+            "page_refcounts": format!("{:016x}", digest_i32(&page_refcounts_host))
         }),
         warmup_launches,
         launches_per_sample: 1,

@@ -1,15 +1,25 @@
 //! cuda-oxide provider for standard BF16 NeoX rotary position embedding.
 
-use crate::command::{CommandError, CommandPermit, CommandScope, Read, Write};
+use crate::command::{
+    CommandError, CommandPermit, CommandScope, DeviceStatusReservation, Read, ReadWrite, Write,
+};
+use crate::device_status::{
+    AppendMapKind, DeviceStatusDecoder, STATUS_APPEND_BATCH_INDEX_OUT_OF_RANGE,
+    STATUS_APPEND_POSITION_OUT_OF_RANGE, STATUS_DUPLICATE_APPEND_SLOT,
+    STATUS_ELEMENT_COUNT_OVERFLOW, STATUS_EMPTY_PAGED_REQUEST, STATUS_INVALID_LAST_PAGE_LENGTH,
+    STATUS_INVALID_PAGE_INDPTR_START, STATUS_NON_EXCLUSIVE_APPEND_TARGET,
+    STATUS_NON_MONOTONIC_PAGE_INDPTR, STATUS_PACKET_WORDS, STATUS_PAGE_INDEX_OUT_OF_RANGE,
+    STATUS_PAGE_INDICES_LENGTH_MISMATCH, STATUS_PAGE_REFERENCE_COUNT_TOO_SMALL, STATUS_SUCCESS,
+};
+use crate::memory::{DeviceRegionLaunchError, enqueue_region_launch};
 use cuda_core::{CudaContext, CudaFunction, LaunchConfig1D, LaunchContractError, PreparedLaunch};
 use cuda_device::{
-    DisjointSlice, SharedArray, convert, cuda_module, kernel, launch_bounds, launch_contract,
-    tcgen05, thread, warp,
+    DisjointSlice, convert, cuda_module, kernel, launch_bounds, launch_contract, tcgen05, thread,
 };
 use half::bf16;
 use loom_infer::{
     Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensSpec, Bf16RopePosIdsSpec,
-    PAGED_BATCH_DECODE_PAGE_SIZE, ROPE_PAGED_KV_APPEND_MAX_TOKENS,
+    PAGED_BATCH_DECODE_PAGE_SIZE,
 };
 use std::sync::Arc;
 use thiserror::Error;
@@ -94,139 +104,333 @@ mod kernels {
     }
 
     #[kernel]
-    #[launch_bounds(64)]
+    #[launch_bounds(1)]
     #[allow(clippy::too_many_arguments)]
     #[launch_contract(
         domain = 1,
-        block = (64, 1, 1),
+        block = (1, 1, 1),
         min_compute_capability = (9, 0),
         requires = (
             batch_size >= 1,
             max_num_pages >= 1,
-            query_heads >= 1,
-            key_heads >= 1,
-            query.len() == batch_size * query_heads * 128,
-            key.len() == batch_size * key_heads * 128,
-            value.len() == batch_size * key_heads * 128,
             page_indptr.len() == batch_size + 1,
             page_indices.len() >= batch_size,
             last_page_len.len() == batch_size,
-            query_output.len() == batch_size * query_heads * 128,
-            key_pages.len() == max_num_pages * 16 * key_heads * 128,
-            value_pages.len() == max_num_pages * 16 * key_heads * 128,
+            page_refcounts.len() == max_num_pages,
+            workspace.len() == 5 + batch_size * 3 + max_num_pages,
         ),
     )]
-    pub fn rope_paged_kv_append_bf16_neox_d128(
+    pub fn build_paged_append_map(
         batch_size: usize,
         max_num_pages: usize,
-        query_heads: usize,
-        key_heads: usize,
-        query: &[bf16],
-        key: &[bf16],
-        value: &[bf16],
         page_indptr: &[i32],
         page_indices: &[i32],
         last_page_len: &[i32],
-        mut query_output: DisjointSlice<bf16>,
-        mut key_pages: DisjointSlice<bf16>,
-        mut value_pages: DisjointSlice<bf16>,
+        page_refcounts: &[i32],
+        mut workspace: DisjointSlice<i32>,
     ) {
-        let state = thread::blockIdx_x() as usize;
-        let pair = thread::threadIdx_x() as usize;
-        let heads = query_heads + key_heads;
-        if state >= batch_size * heads || pair >= ROTARY_PAIRS {
+        if thread::blockIdx_x() != 0 || thread::threadIdx_x() != 0 {
             return;
         }
-        if page_indptr[0] != 0 || page_indptr[batch_size] as usize != page_indices.len() {
+        let output = workspace.as_mut_ptr();
+        // SAFETY: the launch contract proves the status packet span.
+        unsafe { write_status(output, STATUS_SUCCESS, 0, 0, 0, 0) };
+        if page_indptr[0] != 0 {
+            // SAFETY: as above.
+            unsafe {
+                write_status(
+                    output,
+                    STATUS_INVALID_PAGE_INDPTR_START,
+                    page_indptr[0],
+                    0,
+                    0,
+                    0,
+                )
+            };
             return;
         }
-        let mut page = 0_usize;
-        while page < page_indices.len() {
-            let physical_page = page_indices[page];
-            if physical_page < 0 || physical_page as usize >= max_num_pages {
+        let mut request = 0_usize;
+        while request < batch_size {
+            let start = page_indptr[request];
+            let end = page_indptr[request + 1];
+            if end < start {
+                // SAFETY: the launch contract proves the status packet span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_NON_MONOTONIC_PAGE_INDPTR,
+                        request as i32,
+                        start,
+                        end,
+                        0,
+                    )
+                };
                 return;
             }
-            page += 1;
-        }
-
-        let request = state / heads;
-        let combined_head = state % heads;
-        let Some((position, physical_page, page_offset)) = append_slot(
-            request,
-            batch_size,
-            max_num_pages,
-            page_indptr,
-            page_indices,
-            last_page_len,
-        ) else {
-            return;
-        };
-        let mut other = 0_usize;
-        while other < batch_size {
-            if other != request {
-                let Some((_, other_page, other_offset)) = append_slot(
-                    other,
-                    batch_size,
-                    max_num_pages,
-                    page_indptr,
-                    page_indices,
-                    last_page_len,
-                ) else {
-                    return;
+            if end == start {
+                // SAFETY: the launch contract proves the status packet span.
+                unsafe {
+                    write_status(output, STATUS_EMPTY_PAGED_REQUEST, request as i32, 0, 0, 0)
                 };
-                if physical_page == other_page && page_offset == other_offset {
-                    return;
-                }
+                return;
             }
-            other += 1;
+            let tail = last_page_len[request];
+            if !(1..=PAGED_BATCH_DECODE_PAGE_SIZE as i32).contains(&tail) {
+                // SAFETY: the launch contract proves the status packet span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_INVALID_LAST_PAGE_LENGTH,
+                        request as i32,
+                        tail,
+                        0,
+                        0,
+                    )
+                };
+                return;
+            }
+            request += 1;
+        }
+        let terminal = page_indptr[batch_size];
+        if terminal < 0 {
+            // SAFETY: the launch contract proves the status packet span.
+            unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+            return;
+        }
+        if terminal as usize != page_indices.len() {
+            // SAFETY: the launch contract proves the status packet span.
+            unsafe {
+                write_status(
+                    output,
+                    STATUS_PAGE_INDICES_LENGTH_MISMATCH,
+                    terminal,
+                    0,
+                    0,
+                    0,
+                )
+            };
+            return;
+        }
+        // SAFETY: the launch contract proves the complete workspace span.
+        if unsafe { validate_page_indices(output, max_num_pages, page_indices) } {
+            return;
         }
 
-        let exponent = pair as f32 / ROTARY_PAIRS as f32;
-        let inverse_frequency = (1.0_f32 / 10_000.0).powf(exponent);
-        let angle = position as f32 * inverse_frequency;
-        let (sin, cos) = angle.sin_cos();
-        if combined_head < query_heads {
-            let base = (request * query_heads + combined_head) * HEAD_DIM;
-            // SAFETY: this CTA/thread uniquely owns one Q split-half pair.
-            unsafe {
-                rotate_pair_to(
-                    query.as_ptr().cast(),
-                    query_output.as_mut_ptr().cast(),
-                    base,
-                    base,
-                    pair,
-                    sin,
-                    cos,
-                );
+        request = 0;
+        while request < batch_size {
+            let start = page_indptr[request] as usize;
+            let end = page_indptr[request + 1] as usize;
+            let tail = last_page_len[request] as usize;
+            let page_slot = end - start - 1;
+            let position = page_slot * PAGED_BATCH_DECODE_PAGE_SIZE + tail - 1;
+            if position > i32::MAX as usize {
+                // SAFETY: the launch contract proves the status packet span.
+                unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+                return;
             }
-        } else {
-            let key_head = combined_head - query_heads;
-            let source = (request * key_heads + key_head) * HEAD_DIM;
-            let destination = ((physical_page * PAGED_BATCH_DECODE_PAGE_SIZE + page_offset)
-                * key_heads
-                + key_head)
-                * HEAD_DIM;
-            // SAFETY: duplicate-slot validation and one CTA per request/head
-            // prove unique K/V cache destinations.
+            let physical_page = page_indices[end - 1] as usize;
+            // SAFETY: the workspace has one descriptor for every request.
             unsafe {
-                rotate_pair_to(
-                    key.as_ptr().cast(),
-                    key_pages.as_mut_ptr().cast(),
-                    source,
-                    destination,
-                    pair,
-                    sin,
-                    cos,
-                );
-                copy_pair_to(
-                    value.as_ptr().cast(),
-                    value_pages.as_mut_ptr().cast(),
-                    source,
-                    destination,
-                    pair,
-                );
+                write_descriptor(output, request, position, physical_page, tail - 1);
             }
+            request += 1;
         }
+        // SAFETY: every request descriptor was initialized above.
+        if unsafe { validate_duplicate_slots(output, batch_size) } {
+            return;
+        }
+        // SAFETY: the workspace includes the descriptor and page-count spans.
+        let _ = unsafe {
+            validate_page_ownership(
+                output,
+                batch_size,
+                max_num_pages,
+                page_indices,
+                page_refcounts,
+            )
+        };
+    }
+
+    #[kernel]
+    #[launch_bounds(1)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (1, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            tokens >= 1,
+            tokens <= 64,
+            batch_size >= 1,
+            max_num_pages >= 1,
+            batch_indices.len() == tokens,
+            positions.len() == tokens,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            page_refcounts.len() == max_num_pages,
+            workspace.len() == 5 + tokens * 3 + max_num_pages,
+        ),
+    )]
+    pub fn build_paged_append_tokens_map(
+        tokens: usize,
+        batch_size: usize,
+        max_num_pages: usize,
+        batch_indices: &[i32],
+        positions: &[i32],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        page_refcounts: &[i32],
+        mut workspace: DisjointSlice<i32>,
+    ) {
+        if thread::blockIdx_x() != 0 || thread::threadIdx_x() != 0 {
+            return;
+        }
+        let output = workspace.as_mut_ptr();
+        // SAFETY: the launch contract proves the status packet span.
+        unsafe { write_status(output, STATUS_SUCCESS, 0, 0, 0, 0) };
+        if page_indptr[0] != 0 {
+            // SAFETY: the launch contract proves the status packet span.
+            unsafe {
+                write_status(
+                    output,
+                    STATUS_INVALID_PAGE_INDPTR_START,
+                    page_indptr[0],
+                    0,
+                    0,
+                    0,
+                )
+            };
+            return;
+        }
+        let mut request = 0_usize;
+        while request < batch_size {
+            let start = page_indptr[request];
+            let end = page_indptr[request + 1];
+            if end < start {
+                // SAFETY: the launch contract proves the status packet span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_NON_MONOTONIC_PAGE_INDPTR,
+                        request as i32,
+                        start,
+                        end,
+                        0,
+                    )
+                };
+                return;
+            }
+            if end == start {
+                // SAFETY: the launch contract proves the status packet span.
+                unsafe {
+                    write_status(output, STATUS_EMPTY_PAGED_REQUEST, request as i32, 0, 0, 0)
+                };
+                return;
+            }
+            let tail = last_page_len[request];
+            if !(1..=PAGED_BATCH_DECODE_PAGE_SIZE as i32).contains(&tail) {
+                // SAFETY: the launch contract proves the status packet span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_INVALID_LAST_PAGE_LENGTH,
+                        request as i32,
+                        tail,
+                        0,
+                        0,
+                    )
+                };
+                return;
+            }
+            request += 1;
+        }
+        let terminal = page_indptr[batch_size];
+        if terminal < 0 {
+            // SAFETY: the launch contract proves the status packet span.
+            unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+            return;
+        }
+        if terminal as usize != page_indices.len() {
+            // SAFETY: the launch contract proves the status packet span.
+            unsafe {
+                write_status(
+                    output,
+                    STATUS_PAGE_INDICES_LENGTH_MISMATCH,
+                    terminal,
+                    0,
+                    0,
+                    0,
+                )
+            };
+            return;
+        }
+        // SAFETY: the launch contract proves the complete workspace span.
+        if unsafe { validate_page_indices(output, max_num_pages, page_indices) } {
+            return;
+        }
+
+        let mut token = 0_usize;
+        while token < tokens {
+            let request_value = batch_indices[token];
+            if request_value < 0 || request_value as usize >= batch_size {
+                // SAFETY: the launch contract proves the status packet span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_APPEND_BATCH_INDEX_OUT_OF_RANGE,
+                        token as i32,
+                        request_value,
+                        0,
+                        0,
+                    )
+                };
+                return;
+            }
+            let request = request_value as usize;
+            let start = page_indptr[request] as usize;
+            let end = page_indptr[request + 1] as usize;
+            let kv_len =
+                (end - start - 1) * PAGED_BATCH_DECODE_PAGE_SIZE + last_page_len[request] as usize;
+            if kv_len > i32::MAX as usize {
+                // SAFETY: the launch contract proves the status packet span.
+                unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+                return;
+            }
+            let position_value = positions[token];
+            if position_value < 0 || position_value as usize >= kv_len {
+                // SAFETY: the launch contract proves the status packet span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_APPEND_POSITION_OUT_OF_RANGE,
+                        token as i32,
+                        request as i32,
+                        position_value,
+                        kv_len as i32,
+                    )
+                };
+                return;
+            }
+            let position = position_value as usize;
+            let page_slot = position / PAGED_BATCH_DECODE_PAGE_SIZE;
+            let page_offset = position % PAGED_BATCH_DECODE_PAGE_SIZE;
+            let physical_page = page_indices[start + page_slot] as usize;
+            // SAFETY: the workspace has one descriptor for every token.
+            unsafe {
+                write_descriptor(output, token, position, physical_page, page_offset);
+            }
+            token += 1;
+        }
+        // SAFETY: every token descriptor was initialized above.
+        if unsafe { validate_duplicate_slots(output, tokens) } {
+            return;
+        }
+        // SAFETY: the workspace includes the descriptor and page-count spans.
+        let _ = unsafe {
+            validate_page_ownership(output, tokens, max_num_pages, page_indices, page_refcounts)
+        };
     }
 
     #[kernel]
@@ -237,132 +441,55 @@ mod kernels {
         block = (64, 1, 1),
         min_compute_capability = (9, 0),
         requires = (
-            tokens >= 1,
-            tokens <= 64,
-            batch_size >= 1,
+            items >= 1,
             max_num_pages >= 1,
             query_heads >= 1,
             key_heads >= 1,
-            query.len() == tokens * query_heads * 128,
-            key.len() == tokens * key_heads * 128,
-            value.len() == tokens * key_heads * 128,
-            batch_indices.len() == tokens,
-            positions.len() == tokens,
-            page_indptr.len() == batch_size + 1,
-            page_indices.len() >= batch_size,
-            last_page_len.len() == batch_size,
-            query_output.len() == tokens * query_heads * 128,
+            query.len() == items * query_heads * 128,
+            key.len() == items * key_heads * 128,
+            value.len() == items * key_heads * 128,
+            append_map.len() >= 5 + items * 3,
+            query_output.len() == items * query_heads * 128,
             key_pages.len() == max_num_pages * 16 * key_heads * 128,
             value_pages.len() == max_num_pages * 16 * key_heads * 128,
         ),
     )]
-    pub fn rope_paged_kv_append_tokens_bf16_neox_d128(
-        tokens: usize,
-        batch_size: usize,
+    pub fn rope_paged_kv_append_mapped_bf16_neox_d128(
+        items: usize,
         max_num_pages: usize,
         query_heads: usize,
         key_heads: usize,
         query: &[bf16],
         key: &[bf16],
         value: &[bf16],
-        batch_indices: &[i32],
-        positions: &[i32],
-        page_indptr: &[i32],
-        page_indices: &[i32],
-        last_page_len: &[i32],
+        append_map: &[i32],
         mut query_output: DisjointSlice<bf16>,
         mut key_pages: DisjointSlice<bf16>,
         mut value_pages: DisjointSlice<bf16>,
     ) {
-        static mut VALIDATION_FLAGS: SharedArray<u32, 2> = SharedArray::UNINIT;
         let state = thread::blockIdx_x() as usize;
         let pair = thread::threadIdx_x() as usize;
         let heads = query_heads + key_heads;
-        if state >= tokens * heads
-            || pair >= ROTARY_PAIRS
-            || tokens > ROPE_PAGED_KV_APPEND_MAX_TOKENS
-        {
+        if state >= items * heads || pair >= ROTARY_PAIRS || append_map[0] != STATUS_SUCCESS {
             return;
         }
-        // SAFETY: each CTA owns this static shared allocation. Access is
-        // partitioned by warp leader and synchronized in `block_has_invalid`.
-        let validation_flags = unsafe { SharedArray::as_raw_mut_ptr(&raw mut VALIDATION_FLAGS) };
-        let page_table_invalid = page_table_partition_invalid(
-            pair,
-            batch_size,
-            max_num_pages,
-            page_indptr,
-            page_indices,
-            last_page_len,
-        );
-        // SAFETY: all 64 threads participate, each warp leader owns one flag,
-        // and the block barrier makes both writes visible before reads.
-        if unsafe { block_has_invalid(page_table_invalid, pair, validation_flags) } {
-            return;
-        }
-
-        let mut token_mapping_invalid = false;
-        if pair < tokens {
-            if let Some((_, _, first_page, first_offset)) = explicit_append_slot(
-                pair,
-                batch_size,
-                batch_indices,
-                positions,
-                page_indptr,
-                page_indices,
-                last_page_len,
-            ) {
-                let mut second_token = pair + 1;
-                while second_token < tokens {
-                    let Some((_, _, second_page, second_offset)) = explicit_append_slot(
-                        second_token,
-                        batch_size,
-                        batch_indices,
-                        positions,
-                        page_indptr,
-                        page_indices,
-                        last_page_len,
-                    ) else {
-                        token_mapping_invalid = true;
-                        break;
-                    };
-                    if first_page == second_page && first_offset == second_offset {
-                        token_mapping_invalid = true;
-                        break;
-                    }
-                    second_token += 1;
-                }
-            } else {
-                token_mapping_invalid = true;
-            }
-        }
-        // SAFETY: as above. This second stage overwrites both flags before the
-        // barrier, so no reset or atomic operation is required.
-        if unsafe { block_has_invalid(token_mapping_invalid, pair, validation_flags) } {
-            return;
-        }
-
-        let token = state / heads;
+        let item = state / heads;
         let combined_head = state % heads;
-        let Some((_, position, physical_page, page_offset)) = explicit_append_slot(
-            token,
-            batch_size,
-            batch_indices,
-            positions,
-            page_indptr,
-            page_indices,
-            last_page_len,
-        ) else {
+        let descriptor = STATUS_PACKET_WORDS + item * 3;
+        let position = append_map[descriptor] as usize;
+        let physical_page = append_map[descriptor + 1] as usize;
+        let page_offset = append_map[descriptor + 2] as usize;
+        if physical_page >= max_num_pages || page_offset >= PAGED_BATCH_DECODE_PAGE_SIZE {
             return;
-        };
+        }
         let exponent = pair as f32 / ROTARY_PAIRS as f32;
         let inverse_frequency = (1.0_f32 / 10_000.0).powf(exponent);
         let angle = position as f32 * inverse_frequency;
         let (sin, cos) = angle.sin_cos();
         if combined_head < query_heads {
-            let base = (token * query_heads + combined_head) * HEAD_DIM;
-            // SAFETY: global metadata validation and one CTA per token/head
-            // prove exact spans and unique Q output ownership.
+            let base = (item * query_heads + combined_head) * HEAD_DIM;
+            // SAFETY: the launch contract proves the Q spans, and each thread
+            // owns one pair in one item/head state.
             unsafe {
                 rotate_pair_to(
                     query.as_ptr().cast(),
@@ -376,13 +503,13 @@ mod kernels {
             }
         } else {
             let key_head = combined_head - query_heads;
-            let source = (token * key_heads + key_head) * HEAD_DIM;
+            let source = (item * key_heads + key_head) * HEAD_DIM;
             let destination = ((physical_page * PAGED_BATCH_DECODE_PAGE_SIZE + page_offset)
                 * key_heads
                 + key_head)
                 * HEAD_DIM;
-            // SAFETY: global physical-slot uniqueness and one CTA per
-            // token/KV-head prove unique K/V destinations.
+            // SAFETY: the validated map bounds the private destination page,
+            // and each thread owns one K/V pair in that state.
             unsafe {
                 rotate_pair_to(
                     key.as_ptr().cast(),
@@ -405,126 +532,181 @@ mod kernels {
     }
 
     #[inline(always)]
-    fn page_table_partition_invalid(
-        pair: usize,
-        batch_size: usize,
+    unsafe fn validate_page_indices(
+        output: *mut i32,
         max_num_pages: usize,
-        page_indptr: &[i32],
         page_indices: &[i32],
-        last_page_len: &[i32],
     ) -> bool {
-        let mut invalid = false;
-        if pair == 0 {
-            let final_indptr = page_indptr[batch_size];
-            invalid = page_indptr[0] != 0
-                || final_indptr < 0
-                || final_indptr as usize != page_indices.len();
-        }
-        let mut request = pair;
-        while request < batch_size {
-            let start = page_indptr[request];
-            let end = page_indptr[request + 1];
-            let tail = last_page_len[request];
-            if start < 0
-                || end <= start
-                || end as usize > page_indices.len()
-                || !(1..=PAGED_BATCH_DECODE_PAGE_SIZE as i32).contains(&tail)
-            {
-                invalid = true;
+        let mut position = 0_usize;
+        while position < page_indices.len() {
+            let index = page_indices[position];
+            if index < 0 || index as usize >= max_num_pages {
+                // SAFETY: the caller guarantees a writable status packet.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_PAGE_INDEX_OUT_OF_RANGE,
+                        position as i32,
+                        index,
+                        0,
+                        0,
+                    )
+                };
+                return true;
             }
-            request += BLOCK_THREADS as usize;
+            position += 1;
         }
-        let mut page = pair;
-        while page < page_indices.len() {
-            let physical_page = page_indices[page];
-            if physical_page < 0 || physical_page as usize >= max_num_pages {
-                invalid = true;
-            }
-            page += BLOCK_THREADS as usize;
-        }
-        invalid
+        false
     }
 
     #[inline(always)]
-    unsafe fn block_has_invalid(invalid: bool, pair: usize, flags: *mut u32) -> bool {
-        let warp_id = pair / 32;
-        let lane = pair % 32;
-        let warp_invalid = warp::any(invalid);
-        if lane == 0 {
-            // SAFETY: one leader per warp writes its disjoint flag.
-            unsafe {
-                flags.add(warp_id).write(warp_invalid as u32);
+    unsafe fn validate_duplicate_slots(output: *mut i32, items: usize) -> bool {
+        let mut first = 0_usize;
+        while first < items {
+            let first_descriptor = STATUS_PACKET_WORDS + first * 3;
+            // SAFETY: the caller guarantees `items` initialized descriptors.
+            let first_page = unsafe { output.add(first_descriptor + 1).read() };
+            // SAFETY: as above, for this descriptor's offset.
+            let first_offset = unsafe { output.add(first_descriptor + 2).read() };
+            let mut second = first + 1;
+            while second < items {
+                let second_descriptor = STATUS_PACKET_WORDS + second * 3;
+                // SAFETY: the caller guarantees `items` initialized descriptors.
+                let second_page = unsafe { output.add(second_descriptor + 1).read() };
+                // SAFETY: as above, for this descriptor's offset.
+                let second_offset = unsafe { output.add(second_descriptor + 2).read() };
+                if first_page == second_page && first_offset == second_offset {
+                    // SAFETY: the caller guarantees a writable status packet.
+                    unsafe {
+                        write_status(
+                            output,
+                            STATUS_DUPLICATE_APPEND_SLOT,
+                            first as i32,
+                            second as i32,
+                            first_page,
+                            first_offset,
+                        )
+                    };
+                    return true;
+                }
+                second += 1;
             }
+            first += 1;
         }
-        thread::sync_threads();
-        // SAFETY: the barrier completed both leader writes.
-        let invalid = unsafe { flags.read() != 0 || flags.add(1).read() != 0 };
-        // Prevent the next validation stage from overwriting either flag
-        // while another thread is still reading this stage's consensus.
-        thread::sync_threads();
-        invalid
+        false
     }
 
     #[inline(always)]
-    fn explicit_append_slot(
-        token: usize,
-        batch_size: usize,
-        batch_indices: &[i32],
-        positions: &[i32],
-        page_indptr: &[i32],
-        page_indices: &[i32],
-        last_page_len: &[i32],
-    ) -> Option<(usize, usize, usize, usize)> {
-        let request = batch_indices[token];
-        let position = positions[token];
-        if request < 0 || request as usize >= batch_size || position < 0 {
-            return None;
-        }
-        let request = request as usize;
-        let page_start = page_indptr[request] as usize;
-        let page_end = page_indptr[request + 1] as usize;
-        let page_count = page_end - page_start;
-        let kv_len =
-            (page_count - 1) * PAGED_BATCH_DECODE_PAGE_SIZE + last_page_len[request] as usize;
-        let position = position as usize;
-        if position >= kv_len {
-            return None;
-        }
-        let page_slot = position / PAGED_BATCH_DECODE_PAGE_SIZE;
-        let page_offset = position % PAGED_BATCH_DECODE_PAGE_SIZE;
-        let physical_page = page_indices[page_start + page_slot] as usize;
-        Some((request, position, physical_page, page_offset))
-    }
-
-    #[inline(always)]
-    fn append_slot(
-        request: usize,
-        batch_size: usize,
+    unsafe fn validate_page_ownership(
+        output: *mut i32,
+        items: usize,
         max_num_pages: usize,
-        page_indptr: &[i32],
         page_indices: &[i32],
-        last_page_len: &[i32],
-    ) -> Option<(usize, usize, usize)> {
-        if request >= batch_size {
-            return None;
+        page_refcounts: &[i32],
+    ) -> bool {
+        let counts_offset = STATUS_PACKET_WORDS + items * 3;
+        let mut page = 0_usize;
+        while page < max_num_pages {
+            // SAFETY: the caller guarantees `max_num_pages` count slots.
+            unsafe { output.add(counts_offset + page).write(0) };
+            page += 1;
         }
-        let page_start = page_indptr[request];
-        let page_end = page_indptr[request + 1];
-        let tail = last_page_len[request];
-        if page_start < 0
-            || page_end <= page_start
-            || page_end as usize > page_indices.len()
-            || !(1..=PAGED_BATCH_DECODE_PAGE_SIZE as i32).contains(&tail)
-        {
-            return None;
+        let mut position = 0_usize;
+        while position < page_indices.len() {
+            let page = page_indices[position] as usize;
+            // SAFETY: page indices were validated against `max_num_pages`.
+            let counter = unsafe { output.add(counts_offset + page) };
+            // SAFETY: `counter` points into the initialized count span.
+            let count = unsafe { counter.read() };
+            if count == i32::MAX {
+                // SAFETY: the caller guarantees a writable status packet.
+                unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+                return true;
+            }
+            // SAFETY: `counter` points into the writable count span.
+            unsafe { counter.write(count + 1) };
+            position += 1;
         }
-        let page_slot = (page_end - page_start - 1) as usize;
-        let physical_page = page_indices[page_start as usize + page_slot];
-        if physical_page < 0 || physical_page as usize >= max_num_pages {
-            return None;
+        page = 0;
+        while page < max_num_pages {
+            // SAFETY: the caller guarantees `max_num_pages` count slots.
+            let minimum = unsafe { output.add(counts_offset + page).read() };
+            let actual = page_refcounts[page];
+            if actual < 0 || actual < minimum {
+                // SAFETY: the caller guarantees a writable status packet.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_PAGE_REFERENCE_COUNT_TOO_SMALL,
+                        page as i32,
+                        minimum,
+                        actual,
+                        0,
+                    )
+                };
+                return true;
+            }
+            page += 1;
         }
-        let position = page_slot * PAGED_BATCH_DECODE_PAGE_SIZE + tail as usize - 1;
-        Some((position, physical_page as usize, tail as usize - 1))
+        let mut item = 0_usize;
+        while item < items {
+            let descriptor = STATUS_PACKET_WORDS + item * 3;
+            // SAFETY: the caller guarantees `items` initialized descriptors.
+            let page = unsafe { output.add(descriptor + 1).read() } as usize;
+            let reference_count = page_refcounts[page];
+            if reference_count != 1 {
+                // SAFETY: the caller guarantees a writable status packet.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_NON_EXCLUSIVE_APPEND_TARGET,
+                        page as i32,
+                        reference_count,
+                        0,
+                        0,
+                    )
+                };
+                return true;
+            }
+            item += 1;
+        }
+        false
+    }
+
+    #[inline(always)]
+    unsafe fn write_descriptor(
+        output: *mut i32,
+        item: usize,
+        position: usize,
+        physical_page: usize,
+        page_offset: usize,
+    ) {
+        let descriptor = STATUS_PACKET_WORDS + item * 3;
+        // SAFETY: the caller guarantees the descriptor span for `item`.
+        unsafe {
+            output.add(descriptor).write(position as i32);
+            output.add(descriptor + 1).write(physical_page as i32);
+            output.add(descriptor + 2).write(page_offset as i32);
+        }
+    }
+
+    #[inline(always)]
+    unsafe fn write_status(
+        output: *mut i32,
+        code: i32,
+        detail0: i32,
+        detail1: i32,
+        detail2: i32,
+        detail3: i32,
+    ) {
+        // SAFETY: the caller guarantees five writable status words.
+        unsafe {
+            output.write(code);
+            output.add(1).write(detail0);
+            output.add(2).write(detail1);
+            output.add(3).write(detail2);
+            output.add(4).write(detail3);
+        }
     }
 
     #[inline(always)]
@@ -629,6 +811,7 @@ impl RopeProvider {
         &self,
         spec: Bf16RopePagedKvAppendSpec,
     ) -> Result<Bf16RopePagedKvAppendPlan, RopePlanError> {
+        let workspace_numel = append_map_workspace_numel(spec.batch_size(), spec.max_num_pages())?;
         let states = spec
             .batch_size()
             .checked_mul(
@@ -639,17 +822,22 @@ impl RopeProvider {
             .ok_or(RopePlanError::StateCountOverflow)?;
         let blocks =
             u32::try_from(states).map_err(|_| RopePlanError::StateCountOutOfRange(states))?;
-        let launch =
-            self.module
-                .prepare_rope_paged_kv_append_bf16_neox_d128(LaunchConfig1D::new(
-                    blocks,
-                    BLOCK_THREADS,
-                    0,
-                ))?;
+        let map_launch = self
+            .module
+            .prepare_build_paged_append_map(LaunchConfig1D::new(1, 1, 0))?;
+        let append_launch = self
+            .module
+            .prepare_rope_paged_kv_append_mapped_bf16_neox_d128(LaunchConfig1D::new(
+                blocks,
+                BLOCK_THREADS,
+                0,
+            ))?;
         Ok(Bf16RopePagedKvAppendPlan {
             spec,
+            workspace_numel,
             module: self.module.clone(),
-            launch,
+            map_launch,
+            append_launch,
         })
     }
 
@@ -657,6 +845,7 @@ impl RopeProvider {
         &self,
         spec: Bf16RopePagedKvAppendTokensSpec,
     ) -> Result<Bf16RopePagedKvAppendTokensPlan, RopePlanError> {
+        let workspace_numel = append_map_workspace_numel(spec.tokens(), spec.max_num_pages())?;
         let states = spec
             .tokens()
             .checked_mul(
@@ -667,17 +856,22 @@ impl RopeProvider {
             .ok_or(RopePlanError::StateCountOverflow)?;
         let blocks =
             u32::try_from(states).map_err(|_| RopePlanError::StateCountOutOfRange(states))?;
-        let launch = self
+        let map_launch = self
             .module
-            .prepare_rope_paged_kv_append_tokens_bf16_neox_d128(LaunchConfig1D::new(
+            .prepare_build_paged_append_tokens_map(LaunchConfig1D::new(1, 1, 0))?;
+        let append_launch = self
+            .module
+            .prepare_rope_paged_kv_append_mapped_bf16_neox_d128(LaunchConfig1D::new(
                 blocks,
                 BLOCK_THREADS,
                 0,
             ))?;
         Ok(Bf16RopePagedKvAppendTokensPlan {
             spec,
+            workspace_numel,
             module: self.module.clone(),
-            launch,
+            map_launch,
+            append_launch,
         })
     }
 }
@@ -722,8 +916,7 @@ impl Bf16RopePosIdsPlan {
                 self.spec.query_numel(),
             )?;
             require_exact_len("key_output", resolved.fifth.len(), self.spec.key_numel())?;
-            let result = self.module.rope_pos_ids_bf16_neox_d128(
-                resolved.stream,
+            let operation = self.module.rope_pos_ids_bf16_neox_d128_async(
                 &self.launch,
                 self.spec.tokens(),
                 self.spec.query_heads(),
@@ -736,18 +929,21 @@ impl Bf16RopePosIdsPlan {
                 resolved.fourth,
                 resolved.fifth,
             );
+            let result = enqueue_region_launch(resolved.stream, operation);
             (self.launch.function().clone(), result)
         };
         record_launch(scope, permit, function, result)
     }
 }
 
-/// Immutable prepared launch for fused RoPE plus paged KV append.
+/// Immutable plan for a reusable one-token-per-request append map and RoPE append.
 #[derive(Clone)]
 pub struct Bf16RopePagedKvAppendPlan {
     spec: Bf16RopePagedKvAppendSpec,
+    workspace_numel: usize,
     module: kernels::LoadedModule,
-    launch: PreparedLaunch<kernels::__rope_paged_kv_append_bf16_neox_d128_CudaKernel>,
+    map_launch: PreparedLaunch<kernels::__build_paged_append_map_CudaKernel>,
+    append_launch: PreparedLaunch<kernels::__rope_paged_kv_append_mapped_bf16_neox_d128_CudaKernel>,
 }
 
 impl Bf16RopePagedKvAppendPlan {
@@ -755,87 +951,134 @@ impl Bf16RopePagedKvAppendPlan {
         self.spec
     }
 
-    pub fn enqueue_into(
+    pub const fn workspace_required_numel(&self) -> usize {
+        self.workspace_numel
+    }
+
+    pub fn enqueue_map_into(
         &self,
         scope: &mut CommandScope<'_>,
-        args: Bf16RopePagedKvAppendArgs,
-    ) -> Result<(), RopeEnqueueError> {
-        let permit = scope.prepare_command()?;
-        let (function, result) = {
-            let resolved = scope.resolve_rrrrrrwww(
-                args.query,
-                args.key,
-                args.value,
+        args: Bf16PagedKvAppendMapArgs,
+    ) -> Result<Bf16PagedKvAppendMap, RopeEnqueueError> {
+        let page_indices_len = {
+            let resolved = scope.resolve_rrrrw(
                 args.page_indptr,
                 args.page_indices,
                 args.last_page_len,
-                args.query_output,
-                args.key_pages,
-                args.value_pages,
+                args.page_refcounts,
+                args.workspace.write(),
             )?;
-            require_exact_len("query", resolved.first.len(), self.spec.query_numel())?;
-            require_exact_len("key", resolved.second.len(), self.spec.key_numel())?;
-            require_exact_len("value", resolved.third.len(), self.spec.value_numel())?;
             require_exact_len(
                 "page_indptr",
-                resolved.fourth.len(),
+                resolved.first.len(),
                 self.spec.page_indptr_numel(),
             )?;
-            if resolved.fifth.len() < self.spec.batch_size() {
+            if resolved.second.len() < self.spec.batch_size() {
                 return Err(RopeEnqueueError::PageIndicesTooShort {
                     minimum: self.spec.batch_size(),
-                    actual: resolved.fifth.len(),
+                    actual: resolved.second.len(),
                 });
             }
             require_exact_len(
                 "last_page_len",
-                resolved.sixth.len(),
+                resolved.third.len(),
                 self.spec.last_page_len_numel(),
             )?;
             require_exact_len(
-                "query_output",
-                resolved.seventh.len(),
-                self.spec.query_output_numel(),
+                "page_refcounts",
+                resolved.fourth.len(),
+                self.spec.page_refcounts_numel(),
             )?;
-            require_exact_len(
-                "key_pages",
-                resolved.eighth.len(),
-                self.spec.kv_pages_numel(),
-            )?;
-            require_exact_len(
-                "value_pages",
-                resolved.ninth.len(),
-                self.spec.kv_pages_numel(),
-            )?;
-            let result = self.module.rope_paged_kv_append_bf16_neox_d128(
-                resolved.stream,
-                &self.launch,
+            require_exact_len("workspace", resolved.fifth.len(), self.workspace_numel)?;
+            resolved.second.len()
+        };
+        scope.require_command_capacity(2)?;
+        let status = scope.reserve_device_status(
+            args.workspace.read(),
+            DeviceStatusDecoder::paged_append(
+                AppendMapKind::Requests,
+                self.spec.batch_size(),
                 self.spec.batch_size(),
                 self.spec.max_num_pages(),
-                self.spec.num_query_heads(),
-                self.spec.num_kv_heads(),
+                page_indices_len,
+                PAGED_BATCH_DECODE_PAGE_SIZE,
+            ),
+        )?;
+        let permit = scope.prepare_command()?;
+        let (function, result) = {
+            let resolved = scope.resolve_rrrrw(
+                args.page_indptr,
+                args.page_indices,
+                args.last_page_len,
+                args.page_refcounts,
+                args.workspace.write(),
+            )?;
+            let operation = self.module.build_paged_append_map_async(
+                &self.map_launch,
+                self.spec.batch_size(),
+                self.spec.max_num_pages(),
                 resolved.first,
                 resolved.second,
                 resolved.third,
                 resolved.fourth,
                 resolved.fifth,
-                resolved.sixth,
-                resolved.seventh,
-                resolved.eighth,
-                resolved.ninth,
             );
-            (self.launch.function().clone(), result)
+            let result = enqueue_region_launch(resolved.stream, operation);
+            (self.map_launch.function().clone(), result)
         };
-        record_launch(scope, permit, function, result)
+        record_map_launch(scope, status, permit, function, result)?;
+        Ok(Bf16PagedKvAppendMap {
+            scope_id: scope.scope_id(),
+            kind: AppendMapKind::Requests,
+            items: self.spec.batch_size(),
+            max_num_pages: self.spec.max_num_pages(),
+            workspace: args.workspace.read(),
+            key_pages: args.key_pages,
+            value_pages: args.value_pages,
+        })
+    }
+
+    pub fn enqueue_mapped_into(
+        &self,
+        scope: &mut CommandScope<'_>,
+        args: Bf16RopePagedKvAppendMappedArgs,
+    ) -> Result<(), RopeEnqueueError> {
+        require_append_map(
+            scope,
+            args.append_map,
+            AppendMapKind::Requests,
+            self.spec.batch_size(),
+            self.spec.max_num_pages(),
+            args.key_pages,
+            args.value_pages,
+        )?;
+        enqueue_mapped_append(
+            scope,
+            &self.module,
+            &self.append_launch,
+            self.spec.batch_size(),
+            self.spec.max_num_pages(),
+            self.spec.num_query_heads(),
+            self.spec.num_kv_heads(),
+            self.spec.query_numel(),
+            self.spec.key_numel(),
+            self.spec.value_numel(),
+            self.spec.query_output_numel(),
+            self.spec.kv_pages_numel(),
+            self.workspace_numel,
+            args,
+        )
     }
 }
 
-/// Immutable prepared launch for explicit multi-token fused RoPE append.
+/// Immutable plan for an explicit-token append map and reusable RoPE append.
 #[derive(Clone)]
 pub struct Bf16RopePagedKvAppendTokensPlan {
     spec: Bf16RopePagedKvAppendTokensSpec,
+    workspace_numel: usize,
     module: kernels::LoadedModule,
-    launch: PreparedLaunch<kernels::__rope_paged_kv_append_tokens_bf16_neox_d128_CudaKernel>,
+    map_launch: PreparedLaunch<kernels::__build_paged_append_tokens_map_CudaKernel>,
+    append_launch: PreparedLaunch<kernels::__rope_paged_kv_append_mapped_bf16_neox_d128_CudaKernel>,
 }
 
 impl Bf16RopePagedKvAppendTokensPlan {
@@ -843,78 +1086,87 @@ impl Bf16RopePagedKvAppendTokensPlan {
         self.spec
     }
 
-    pub fn enqueue_into(
+    pub const fn workspace_required_numel(&self) -> usize {
+        self.workspace_numel
+    }
+
+    pub fn enqueue_map_into(
         &self,
         scope: &mut CommandScope<'_>,
-        args: Bf16RopePagedKvAppendTokensArgs,
-    ) -> Result<(), RopeEnqueueError> {
-        let permit = scope.prepare_command()?;
-        let (function, result) = {
-            let resolved = scope.resolve_rrrrrrrrwww(
-                args.query,
-                args.key,
-                args.value,
+        args: Bf16PagedKvAppendTokensMapArgs,
+    ) -> Result<Bf16PagedKvAppendMap, RopeEnqueueError> {
+        let page_indices_len = {
+            let resolved = scope.resolve_rrrrrrw(
                 args.batch_indices,
                 args.positions,
                 args.page_indptr,
                 args.page_indices,
                 args.last_page_len,
-                args.query_output,
-                args.key_pages,
-                args.value_pages,
+                args.page_refcounts,
+                args.workspace.write(),
             )?;
-            require_exact_len("query", resolved.first.len(), self.spec.query_numel())?;
-            require_exact_len("key", resolved.second.len(), self.spec.key_numel())?;
-            require_exact_len("value", resolved.third.len(), self.spec.value_numel())?;
             require_exact_len(
                 "batch_indices",
-                resolved.fourth.len(),
+                resolved.first.len(),
                 self.spec.batch_indices_numel(),
             )?;
             require_exact_len(
                 "positions",
-                resolved.fifth.len(),
+                resolved.second.len(),
                 self.spec.positions_numel(),
             )?;
             require_exact_len(
                 "page_indptr",
-                resolved.sixth.len(),
+                resolved.third.len(),
                 self.spec.page_indptr_numel(),
             )?;
-            if resolved.seventh.len() < self.spec.batch_size() {
+            if resolved.fourth.len() < self.spec.batch_size() {
                 return Err(RopeEnqueueError::PageIndicesTooShort {
                     minimum: self.spec.batch_size(),
-                    actual: resolved.seventh.len(),
+                    actual: resolved.fourth.len(),
                 });
             }
             require_exact_len(
                 "last_page_len",
-                resolved.eighth.len(),
+                resolved.fifth.len(),
                 self.spec.last_page_len_numel(),
             )?;
             require_exact_len(
-                "query_output",
-                resolved.ninth.len(),
-                self.spec.query_output_numel(),
+                "page_refcounts",
+                resolved.sixth.len(),
+                self.spec.page_refcounts_numel(),
             )?;
-            require_exact_len(
-                "key_pages",
-                resolved.tenth.len(),
-                self.spec.kv_pages_numel(),
-            )?;
-            require_exact_len(
-                "value_pages",
-                resolved.eleventh.len(),
-                self.spec.kv_pages_numel(),
-            )?;
-            let result = self.module.rope_paged_kv_append_tokens_bf16_neox_d128(
-                resolved.stream,
-                &self.launch,
+            require_exact_len("workspace", resolved.seventh.len(), self.workspace_numel)?;
+            resolved.fourth.len()
+        };
+        scope.require_command_capacity(2)?;
+        let status = scope.reserve_device_status(
+            args.workspace.read(),
+            DeviceStatusDecoder::paged_append(
+                AppendMapKind::ExplicitTokens,
                 self.spec.tokens(),
                 self.spec.batch_size(),
                 self.spec.max_num_pages(),
-                self.spec.num_query_heads(),
-                self.spec.num_kv_heads(),
+                page_indices_len,
+                PAGED_BATCH_DECODE_PAGE_SIZE,
+            ),
+        )?;
+        let permit = scope.prepare_command()?;
+        let (function, result) = {
+            let resolved = scope.resolve_rrrrrrw(
+                args.batch_indices,
+                args.positions,
+                args.page_indptr,
+                args.page_indices,
+                args.last_page_len,
+                args.page_refcounts,
+                args.workspace.write(),
+            )?;
+            let operation = self.module.build_paged_append_tokens_map_async(
+                &self.map_launch,
+                self.spec.tokens(),
+                self.spec.batch_size(),
+                self.spec.max_num_pages(),
                 resolved.first,
                 resolved.second,
                 resolved.third,
@@ -922,14 +1174,52 @@ impl Bf16RopePagedKvAppendTokensPlan {
                 resolved.fifth,
                 resolved.sixth,
                 resolved.seventh,
-                resolved.eighth,
-                resolved.ninth,
-                resolved.tenth,
-                resolved.eleventh,
             );
-            (self.launch.function().clone(), result)
+            let result = enqueue_region_launch(resolved.stream, operation);
+            (self.map_launch.function().clone(), result)
         };
-        record_launch(scope, permit, function, result)
+        record_map_launch(scope, status, permit, function, result)?;
+        Ok(Bf16PagedKvAppendMap {
+            scope_id: scope.scope_id(),
+            kind: AppendMapKind::ExplicitTokens,
+            items: self.spec.tokens(),
+            max_num_pages: self.spec.max_num_pages(),
+            workspace: args.workspace.read(),
+            key_pages: args.key_pages,
+            value_pages: args.value_pages,
+        })
+    }
+
+    pub fn enqueue_mapped_into(
+        &self,
+        scope: &mut CommandScope<'_>,
+        args: Bf16RopePagedKvAppendMappedArgs,
+    ) -> Result<(), RopeEnqueueError> {
+        require_append_map(
+            scope,
+            args.append_map,
+            AppendMapKind::ExplicitTokens,
+            self.spec.tokens(),
+            self.spec.max_num_pages(),
+            args.key_pages,
+            args.value_pages,
+        )?;
+        enqueue_mapped_append(
+            scope,
+            &self.module,
+            &self.append_launch,
+            self.spec.tokens(),
+            self.spec.max_num_pages(),
+            self.spec.num_query_heads(),
+            self.spec.num_kv_heads(),
+            self.spec.query_numel(),
+            self.spec.key_numel(),
+            self.spec.value_numel(),
+            self.spec.query_output_numel(),
+            self.spec.kv_pages_numel(),
+            self.workspace_numel,
+            args,
+        )
     }
 }
 
@@ -961,71 +1251,108 @@ impl Bf16RopePosIdsArgs {
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Bf16RopePagedKvAppendArgs {
-    query: Read<bf16>,
-    key: Read<bf16>,
-    value: Read<bf16>,
+pub struct Bf16PagedKvAppendMapArgs {
     page_indptr: Read<i32>,
     page_indices: Read<i32>,
     last_page_len: Read<i32>,
-    query_output: Write<bf16>,
+    page_refcounts: Read<i32>,
     key_pages: Write<bf16>,
     value_pages: Write<bf16>,
+    workspace: ReadWrite<i32>,
 }
 
-impl Bf16RopePagedKvAppendArgs {
-    #[allow(clippy::too_many_arguments)]
+impl Bf16PagedKvAppendMapArgs {
     pub const fn new(
-        query: Read<bf16>,
-        key: Read<bf16>,
-        value: Read<bf16>,
         page_indptr: Read<i32>,
         page_indices: Read<i32>,
         last_page_len: Read<i32>,
-        query_output: Write<bf16>,
+        page_refcounts: Read<i32>,
         key_pages: Write<bf16>,
         value_pages: Write<bf16>,
+        workspace: ReadWrite<i32>,
     ) -> Self {
         Self {
-            query,
-            key,
-            value,
             page_indptr,
             page_indices,
             last_page_len,
-            query_output,
+            page_refcounts,
             key_pages,
             value_pages,
+            workspace,
         }
     }
 }
 
 #[derive(Clone, Copy, Debug)]
-pub struct Bf16RopePagedKvAppendTokensArgs {
-    query: Read<bf16>,
-    key: Read<bf16>,
-    value: Read<bf16>,
+pub struct Bf16PagedKvAppendTokensMapArgs {
     batch_indices: Read<i32>,
     positions: Read<i32>,
     page_indptr: Read<i32>,
     page_indices: Read<i32>,
     last_page_len: Read<i32>,
-    query_output: Write<bf16>,
+    page_refcounts: Read<i32>,
     key_pages: Write<bf16>,
     value_pages: Write<bf16>,
+    workspace: ReadWrite<i32>,
 }
 
-impl Bf16RopePagedKvAppendTokensArgs {
+impl Bf16PagedKvAppendTokensMapArgs {
     #[allow(clippy::too_many_arguments)]
     pub const fn new(
-        query: Read<bf16>,
-        key: Read<bf16>,
-        value: Read<bf16>,
         batch_indices: Read<i32>,
         positions: Read<i32>,
         page_indptr: Read<i32>,
         page_indices: Read<i32>,
         last_page_len: Read<i32>,
+        page_refcounts: Read<i32>,
+        key_pages: Write<bf16>,
+        value_pages: Write<bf16>,
+        workspace: ReadWrite<i32>,
+    ) -> Self {
+        Self {
+            batch_indices,
+            positions,
+            page_indptr,
+            page_indices,
+            last_page_len,
+            page_refcounts,
+            key_pages,
+            value_pages,
+            workspace,
+        }
+    }
+}
+
+/// Scope-bound compact append mapping produced by one device validator.
+#[derive(Clone, Copy, Debug)]
+pub struct Bf16PagedKvAppendMap {
+    scope_id: u64,
+    kind: AppendMapKind,
+    items: usize,
+    max_num_pages: usize,
+    workspace: Read<i32>,
+    key_pages: Write<bf16>,
+    value_pages: Write<bf16>,
+}
+
+#[derive(Clone, Copy, Debug)]
+pub struct Bf16RopePagedKvAppendMappedArgs {
+    query: Read<bf16>,
+    key: Read<bf16>,
+    value: Read<bf16>,
+    append_map: Bf16PagedKvAppendMap,
+    query_output: Write<bf16>,
+    key_pages: Write<bf16>,
+    value_pages: Write<bf16>,
+}
+
+impl Bf16RopePagedKvAppendMappedArgs {
+    #[allow(clippy::too_many_arguments)]
+    pub const fn new(
+        query: Read<bf16>,
+        key: Read<bf16>,
+        value: Read<bf16>,
+        append_map: Bf16PagedKvAppendMap,
         query_output: Write<bf16>,
         key_pages: Write<bf16>,
         value_pages: Write<bf16>,
@@ -1034,11 +1361,7 @@ impl Bf16RopePagedKvAppendTokensArgs {
             query,
             key,
             value,
-            batch_indices,
-            positions,
-            page_indptr,
-            page_indices,
-            last_page_len,
+            append_map,
             query_output,
             key_pages,
             value_pages,
@@ -1056,6 +1379,8 @@ pub enum RopePlanError {
     StateCountOverflow,
     #[error("RoPE state count {0} exceeds the CUDA grid range")]
     StateCountOutOfRange(usize),
+    #[error("paged append map workspace size overflowed")]
+    WorkspaceSizeOverflow,
     #[error(transparent)]
     Launch(#[from] LaunchContractError),
 }
@@ -1065,7 +1390,7 @@ pub enum RopeEnqueueError {
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]
-    Launch(#[from] LaunchContractError),
+    Launch(#[from] DeviceRegionLaunchError),
     #[error("{operand} length mismatch: expected {expected}, got {actual}")]
     LengthMismatch {
         operand: &'static str,
@@ -1074,6 +1399,99 @@ pub enum RopeEnqueueError {
     },
     #[error("page_indices requires at least {minimum} entries, got {actual}")]
     PageIndicesTooShort { minimum: usize, actual: usize },
+    #[error("the append map was created by a different command scope")]
+    AppendMapScopeMismatch,
+    #[error("the append map does not match this append plan")]
+    AppendMapSpecMismatch,
+    #[error("the append map belongs to a different paged KV cache binding")]
+    AppendMapCacheMismatch,
+}
+
+fn append_map_workspace_numel(items: usize, max_num_pages: usize) -> Result<usize, RopePlanError> {
+    items
+        .checked_mul(3)
+        .and_then(|descriptors| descriptors.checked_add(STATUS_PACKET_WORDS))
+        .and_then(|fixed| fixed.checked_add(max_num_pages))
+        .ok_or(RopePlanError::WorkspaceSizeOverflow)
+}
+
+fn require_append_map(
+    scope: &CommandScope<'_>,
+    append_map: Bf16PagedKvAppendMap,
+    kind: AppendMapKind,
+    items: usize,
+    max_num_pages: usize,
+    key_pages: Write<bf16>,
+    value_pages: Write<bf16>,
+) -> Result<(), RopeEnqueueError> {
+    if append_map.scope_id != scope.scope_id() {
+        return Err(RopeEnqueueError::AppendMapScopeMismatch);
+    }
+    if append_map.kind != kind
+        || append_map.items != items
+        || append_map.max_num_pages != max_num_pages
+    {
+        return Err(RopeEnqueueError::AppendMapSpecMismatch);
+    }
+    if append_map.key_pages != key_pages || append_map.value_pages != value_pages {
+        return Err(RopeEnqueueError::AppendMapCacheMismatch);
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn enqueue_mapped_append(
+    scope: &mut CommandScope<'_>,
+    module: &kernels::LoadedModule,
+    launch: &PreparedLaunch<kernels::__rope_paged_kv_append_mapped_bf16_neox_d128_CudaKernel>,
+    items: usize,
+    max_num_pages: usize,
+    query_heads: usize,
+    key_heads: usize,
+    query_numel: usize,
+    key_numel: usize,
+    value_numel: usize,
+    query_output_numel: usize,
+    kv_pages_numel: usize,
+    workspace_numel: usize,
+    args: Bf16RopePagedKvAppendMappedArgs,
+) -> Result<(), RopeEnqueueError> {
+    let permit = scope.prepare_command()?;
+    let (function, result) = {
+        let resolved = scope.resolve_rrrrwww(
+            args.query,
+            args.key,
+            args.value,
+            args.append_map.workspace,
+            args.query_output,
+            args.key_pages,
+            args.value_pages,
+        )?;
+        require_exact_len("query", resolved.first.len(), query_numel)?;
+        require_exact_len("key", resolved.second.len(), key_numel)?;
+        require_exact_len("value", resolved.third.len(), value_numel)?;
+        require_exact_len("append_map", resolved.fourth.len(), workspace_numel)?;
+        require_exact_len("query_output", resolved.fifth.len(), query_output_numel)?;
+        require_exact_len("key_pages", resolved.sixth.len(), kv_pages_numel)?;
+        require_exact_len("value_pages", resolved.seventh.len(), kv_pages_numel)?;
+        let operation = module.rope_paged_kv_append_mapped_bf16_neox_d128_async(
+            launch,
+            items,
+            max_num_pages,
+            query_heads,
+            key_heads,
+            resolved.first,
+            resolved.second,
+            resolved.third,
+            resolved.fourth,
+            resolved.fifth,
+            resolved.sixth,
+            resolved.seventh,
+        );
+        let result = enqueue_region_launch(resolved.stream, operation);
+        (launch.function().clone(), result)
+    };
+    record_launch(scope, permit, function, result)
 }
 
 fn require_exact_len(
@@ -1096,7 +1514,7 @@ fn record_launch(
     scope: &mut CommandScope<'_>,
     permit: CommandPermit,
     function: CudaFunction,
-    result: Result<(), LaunchContractError>,
+    result: Result<(), DeviceRegionLaunchError>,
 ) -> Result<(), RopeEnqueueError> {
     match result {
         Ok(()) => {
@@ -1104,8 +1522,31 @@ fn record_launch(
             Ok(())
         }
         Err(error) => {
-            if let LaunchContractError::Driver(driver_error) = &error {
-                scope.record_failed_cuda_submission(permit, function, *driver_error);
+            if let Some(driver_error) = error.driver_error() {
+                scope.record_failed_cuda_submission(permit, function, driver_error);
+            }
+            Err(error.into())
+        }
+    }
+}
+
+fn record_map_launch(
+    scope: &mut CommandScope<'_>,
+    status: DeviceStatusReservation,
+    permit: CommandPermit,
+    function: CudaFunction,
+    result: Result<(), DeviceRegionLaunchError>,
+) -> Result<(), RopeEnqueueError> {
+    match result {
+        Ok(()) => {
+            scope.record_cuda_submission(permit, function);
+            Ok(())
+        }
+        Err(error) => {
+            if let Some(driver_error) = error.driver_error() {
+                scope.record_failed_cuda_submission(permit, function, driver_error);
+            } else {
+                scope.cancel_device_status(status);
             }
             Err(error.into())
         }

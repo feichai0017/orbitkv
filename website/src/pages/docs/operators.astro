@@ -6,47 +6,62 @@ import { milestones, operatorFamilies, repositoryUrl } from "../../data/site";
 
 <SiteLayout
   title="Operators | Loom Infer"
-  description="The current and planned operator surface for Loom Infer."
+  description="Current operator contracts and qualification status for Loom Infer."
   active="Operators"
 >
   <header class="page-hero">
     <p class="eyebrow">Operators</p>
-    <h1>One lifecycle for every operator.</h1>
-    <p>The current H20 records cover normalization, matrix, decode, ragged and paged prefill, RoPE, and fused KV paths.</p>
+    <h1>A qualified slice, not a parity claim.</h1>
+    <p>
+      Each row names the current provider boundary. Unsupported contracts
+      return an error instead of selecting a fallback.
+    </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Operators" />
     <article class="prose">
-      <h2>Operator families</h2>
+      <h2>Current surface</h2>
       <table class="operator-table">
         <thead>
-          <tr><th>Family</th><th>Boundary</th><th>State</th></tr>
+          <tr><th>Family</th><th>Boundary</th><th>Provider</th><th>Status</th></tr>
         </thead>
         <tbody>
           {operatorFamilies.map((operator) => (
             <tr>
               <td>{operator.name}</td>
               <td>{operator.boundary}</td>
+              <td><code>{operator.provider}</code></td>
               <td>{operator.state}</td>
             </tr>
           ))}
         </tbody>
       </table>
 
-      <h2>Admission</h2>
+      <div class="doc-note warning">
+        <strong>All CUDA providers are under requalification.</strong>
+        <p>
+          DeviceRegion changed the shared submission path. Fused append also
+          adds exclusive write pages. Historical records stay immutable, but
+          they do not qualify the current source.
+        </p>
+      </div>
+
+      <h2>Admission rules</h2>
       <ol>
-        <li>A named engine profile shows memory, launch, layout, or scheduling cost.</li>
-        <li>Loom can enter the path without copying tensors into private storage.</li>
-        <li>A model or serving workload can prove the final value.</li>
+        <li>Name the engine call site and the cost it exposes.</li>
+        <li>Fix dtype, shape, layout, alignment, mask, workspace, and stream.</li>
+        <li>Define the CPU oracle and numerical limit.</li>
+        <li>Pass device correctness and sanitizer gates.</li>
+        <li>Measure the declared baseline under a matched contract.</li>
+        <li>Keep Graph, engine, and serving claims separate.</li>
       </ol>
       <p>
-        A Rust provider passes contract, device, named-baseline, graph, engine,
-        and serving gates independently. Read the full
-        <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>operator catalog</a>.
+        The full <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>operator catalog</a>
+        records the admitted combinations and planned domains.
       </p>
 
-      <h2>Next work</h2>
+      <h2>Next gates</h2>
       <div class="doc-grid">
         {milestones.map((item) => (
           <div class="doc-card">

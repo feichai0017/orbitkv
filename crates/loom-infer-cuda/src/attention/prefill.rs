@@ -1,6 +1,7 @@
 //! cuda-oxide providers for BF16 ragged and paged causal prefill attention.
 
 use crate::command::{CommandError, CommandPermit, CommandScope, Read, ReadWrite, Write};
+use crate::memory::{DeviceRegionLaunchError, enqueue_region_launch};
 use cuda_core::{CudaContext, CudaFunction, LaunchConfig1D, LaunchContractError, PreparedLaunch};
 use cuda_device::{
     DisjointSlice, SharedArray, async_copy, convert, cuda_module, float, kernel, launch_bounds,
@@ -1992,8 +1993,7 @@ impl Bf16PagedPrefillPlan {
             ] {
                 require_paged_alignment(operand, address)?;
             }
-            let result = self.module.paged_prefill_bf16_nhd_causal(
-                resolved.stream,
+            let operation = self.module.paged_prefill_bf16_nhd_causal_async(
                 &self.launch,
                 self.spec.batch_size(),
                 self.spec.nnz_qo(),
@@ -2011,6 +2011,7 @@ impl Bf16PagedPrefillPlan {
                 resolved.eighth,
                 resolved.ninth,
             );
+            let result = enqueue_region_launch(resolved.stream, operation);
             (self.launch.function().clone(), result)
         };
         record_paged_launch(scope, permit, function, launch_result)
@@ -2125,8 +2126,7 @@ impl Bf16RaggedPrefillPlan {
             );
             match &self.launch {
                 Bf16RaggedPrefillLaunch::Direct(launch) => {
-                    let result = self.module.ragged_prefill_bf16_nhd_causal(
-                        resolved.stream,
+                    let operation = self.module.ragged_prefill_bf16_nhd_causal_async(
                         launch,
                         common.0,
                         common.1,
@@ -2142,46 +2142,51 @@ impl Bf16RaggedPrefillPlan {
                         resolved.sixth,
                         resolved.seventh,
                     );
+                    let result = enqueue_region_launch(resolved.stream, operation);
                     (launch.function().clone(), result)
                 }
                 Bf16RaggedPrefillLaunch::TokenParallel8(launch) => {
-                    let result = self.module.ragged_prefill_bf16_nhd_causal_token_parallel8(
-                        resolved.stream,
-                        launch,
-                        common.0,
-                        common.1,
-                        common.2,
-                        common.3,
-                        common.4,
-                        common.5,
-                        resolved.first,
-                        resolved.second,
-                        resolved.third,
-                        resolved.fourth,
-                        resolved.fifth,
-                        resolved.sixth,
-                        resolved.seventh,
-                    );
+                    let operation = self
+                        .module
+                        .ragged_prefill_bf16_nhd_causal_token_parallel8_async(
+                            launch,
+                            common.0,
+                            common.1,
+                            common.2,
+                            common.3,
+                            common.4,
+                            common.5,
+                            resolved.first,
+                            resolved.second,
+                            resolved.third,
+                            resolved.fourth,
+                            resolved.fifth,
+                            resolved.sixth,
+                            resolved.seventh,
+                        );
+                    let result = enqueue_region_launch(resolved.stream, operation);
                     (launch.function().clone(), result)
                 }
                 Bf16RaggedPrefillLaunch::TokenParallel16(launch) => {
-                    let result = self.module.ragged_prefill_bf16_nhd_causal_token_parallel16(
-                        resolved.stream,
-                        launch,
-                        common.0,
-                        common.1,
-                        common.2,
-                        common.3,
-                        common.4,
-                        common.5,
-                        resolved.first,
-                        resolved.second,
-                        resolved.third,
-                        resolved.fourth,
-                        resolved.fifth,
-                        resolved.sixth,
-                        resolved.seventh,
-                    );
+                    let operation = self
+                        .module
+                        .ragged_prefill_bf16_nhd_causal_token_parallel16_async(
+                            launch,
+                            common.0,
+                            common.1,
+                            common.2,
+                            common.3,
+                            common.4,
+                            common.5,
+                            resolved.first,
+                            resolved.second,
+                            resolved.third,
+                            resolved.fourth,
+                            resolved.fifth,
+                            resolved.sixth,
+                            resolved.seventh,
+                        );
+                    let result = enqueue_region_launch(resolved.stream, operation);
                     (launch.function().clone(), result)
                 }
                 Bf16RaggedPrefillLaunch::TiledGqa4 { .. } => unreachable!(),
@@ -2246,8 +2251,7 @@ impl Bf16RaggedPrefillPlan {
                 resolved.sixth.len(),
                 self.workspace_required_numel(),
             )?;
-            let result = self.module.ragged_prefill_bf16_nhd_causal_tiled_gqa4(
-                resolved.stream,
+            let operation = self.module.ragged_prefill_bf16_nhd_causal_tiled_gqa4_async(
                 partial,
                 self.spec.batch_size(),
                 self.spec.nnz_qo(),
@@ -2262,6 +2266,7 @@ impl Bf16RaggedPrefillPlan {
                 resolved.fifth,
                 resolved.sixth,
             );
+            let result = enqueue_region_launch(resolved.stream, operation);
             (partial.function().clone(), result)
         };
         record_launch(scope, partial_permit, partial_function, partial_result)?;
@@ -2269,15 +2274,17 @@ impl Bf16RaggedPrefillPlan {
         let merge_permit = scope.prepare_command()?;
         let (merge_function, merge_result) = {
             let resolved = scope.resolve_rww(workspace.read(), args.output, args.lse)?;
-            let result = self.module.ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge(
-                resolved.stream,
-                merge,
-                self.spec.nnz_qo(),
-                self.spec.num_query_heads(),
-                resolved.first,
-                resolved.second,
-                resolved.third,
-            );
+            let operation = self
+                .module
+                .ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge_async(
+                    merge,
+                    self.spec.nnz_qo(),
+                    self.spec.num_query_heads(),
+                    resolved.first,
+                    resolved.second,
+                    resolved.third,
+                );
+            let result = enqueue_region_launch(resolved.stream, operation);
             (merge.function().clone(), result)
         };
         record_launch(scope, merge_permit, merge_function, merge_result)
@@ -2386,7 +2393,7 @@ pub enum PagedPrefillEnqueueError {
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]
-    Launch(#[from] LaunchContractError),
+    Launch(#[from] DeviceRegionLaunchError),
     #[error(
         "packed paged prefill requires {operand} to be {alignment}-byte aligned, got {address:#x}"
     )]
@@ -2420,7 +2427,7 @@ pub enum RaggedPrefillEnqueueError {
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]
-    Launch(#[from] LaunchContractError),
+    Launch(#[from] DeviceRegionLaunchError),
     #[error(
         "packed ragged prefill requires {operand} to be {alignment}-byte aligned, got {address:#x}"
     )]
@@ -2499,7 +2506,7 @@ fn record_paged_launch(
     scope: &mut CommandScope<'_>,
     permit: CommandPermit,
     function: CudaFunction,
-    result: Result<(), LaunchContractError>,
+    result: Result<(), DeviceRegionLaunchError>,
 ) -> Result<(), PagedPrefillEnqueueError> {
     match result {
         Ok(()) => {
@@ -2507,8 +2514,8 @@ fn record_paged_launch(
             Ok(())
         }
         Err(error) => {
-            if let LaunchContractError::Driver(driver_error) = &error {
-                scope.record_failed_cuda_submission(permit, function, *driver_error);
+            if let Some(driver_error) = error.driver_error() {
+                scope.record_failed_cuda_submission(permit, function, driver_error);
             }
             Err(error.into())
         }
@@ -2519,7 +2526,7 @@ fn record_launch(
     scope: &mut CommandScope<'_>,
     permit: CommandPermit,
     function: CudaFunction,
-    result: Result<(), LaunchContractError>,
+    result: Result<(), DeviceRegionLaunchError>,
 ) -> Result<(), RaggedPrefillEnqueueError> {
     match result {
         Ok(()) => {
@@ -2527,8 +2534,8 @@ fn record_launch(
             Ok(())
         }
         Err(error) => {
-            if let LaunchContractError::Driver(driver_error) = &error {
-                scope.record_failed_cuda_submission(permit, function, *driver_error);
+            if let Some(driver_error) = error.driver_error() {
+                scope.record_failed_cuda_submission(permit, function, driver_error);
             }
             Err(error.into())
         }

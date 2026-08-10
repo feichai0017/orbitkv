@@ -91,16 +91,30 @@ impl Bf16RopePagedKvAppendSpec {
         self.paged.last_page_len_numel()
     }
 
-    /// Validates the extended page table and rejects duplicate final slots.
-    pub fn validate_page_table<'a>(
+    pub const fn page_refcounts_numel(self) -> usize {
+        self.max_num_pages()
+    }
+
+    /// Validates the append mapping and proves that every target page is private.
+    ///
+    /// `page_refcounts` is the pager's authoritative ownership snapshot. A
+    /// target page is writable only when its reference count is exactly one.
+    pub fn validate_metadata<'a>(
         self,
         page_indptr: &'a [i32],
         page_indices: &'a [i32],
         last_page_len: &'a [i32],
-    ) -> Result<Bf16PagedBatchDecodePageTable<'a>, ContractError> {
+        page_refcounts: &'a [i32],
+    ) -> Result<Bf16RopePagedKvAppendMetadata<'a>, ContractError> {
+        require_len(
+            "page_refcounts",
+            page_refcounts.len(),
+            self.page_refcounts_numel(),
+        )?;
         let table = self
             .paged
             .validate_page_table(page_indptr, page_indices, last_page_len)?;
+        let mut slots = Vec::with_capacity(self.batch_size());
         for first_request in 0..self.batch_size() {
             let first_position = table
                 .request_kv_len(first_request)
@@ -126,8 +140,43 @@ impl Bf16RopePagedKvAppendSpec {
                     });
                 }
             }
+            slots.push(first_slot);
         }
-        Ok(table)
+        validate_page_refcounts(table.page_indices(), page_refcounts)?;
+        validate_exclusive_targets(&slots, page_refcounts)?;
+        Ok(Bf16RopePagedKvAppendMetadata {
+            spec: self,
+            table,
+            page_refcounts,
+            slots,
+        })
+    }
+}
+
+/// Validated one-token append mapping with private target-page ownership.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Bf16RopePagedKvAppendMetadata<'a> {
+    spec: Bf16RopePagedKvAppendSpec,
+    table: Bf16PagedBatchDecodePageTable<'a>,
+    page_refcounts: &'a [i32],
+    slots: Vec<(usize, usize)>,
+}
+
+impl<'a> Bf16RopePagedKvAppendMetadata<'a> {
+    pub const fn spec(&self) -> Bf16RopePagedKvAppendSpec {
+        self.spec
+    }
+
+    pub const fn page_table(&self) -> Bf16PagedBatchDecodePageTable<'a> {
+        self.table
+    }
+
+    pub const fn page_refcounts(&self) -> &'a [i32] {
+        self.page_refcounts
+    }
+
+    pub fn physical_slot_for_request(&self, request: usize) -> Option<(usize, usize)> {
+        self.slots.get(request).copied()
     }
 }
 
@@ -240,6 +289,10 @@ impl Bf16RopePagedKvAppendTokensSpec {
         self.paged.last_page_len_numel()
     }
 
+    pub const fn page_refcounts_numel(self) -> usize {
+        self.max_num_pages()
+    }
+
     /// Validates page metadata, explicit mappings, and physical write uniqueness.
     pub fn validate_metadata<'a>(
         self,
@@ -248,6 +301,7 @@ impl Bf16RopePagedKvAppendTokensSpec {
         page_indptr: &'a [i32],
         page_indices: &'a [i32],
         last_page_len: &'a [i32],
+        page_refcounts: &'a [i32],
     ) -> Result<Bf16RopePagedKvAppendTokensMetadata<'a>, ContractError> {
         require_len(
             "batch_indices",
@@ -255,6 +309,11 @@ impl Bf16RopePagedKvAppendTokensSpec {
             self.batch_indices_numel(),
         )?;
         require_len("positions", positions.len(), self.positions_numel())?;
+        require_len(
+            "page_refcounts",
+            page_refcounts.len(),
+            self.page_refcounts_numel(),
+        )?;
         let table = self
             .paged
             .validate_page_table(page_indptr, page_indices, last_page_len)?;
@@ -307,11 +366,14 @@ impl Bf16RopePagedKvAppendTokensSpec {
             }
             slots.push(slot);
         }
+        validate_page_refcounts(table.page_indices(), page_refcounts)?;
+        validate_exclusive_targets(&slots, page_refcounts)?;
         Ok(Bf16RopePagedKvAppendTokensMetadata {
             spec: self,
             table,
             batch_indices,
             positions,
+            page_refcounts,
             slots,
         })
     }
@@ -324,6 +386,7 @@ pub struct Bf16RopePagedKvAppendTokensMetadata<'a> {
     table: Bf16PagedBatchDecodePageTable<'a>,
     batch_indices: &'a [i32],
     positions: &'a [i32],
+    page_refcounts: &'a [i32],
     slots: Vec<(usize, usize)>,
 }
 
@@ -344,6 +407,10 @@ impl<'a> Bf16RopePagedKvAppendTokensMetadata<'a> {
         self.positions
     }
 
+    pub const fn page_refcounts(&self) -> &'a [i32] {
+        self.page_refcounts
+    }
+
     pub fn request_for_token(&self, token: usize) -> Option<usize> {
         self.batch_indices
             .get(token)
@@ -355,6 +422,45 @@ impl<'a> Bf16RopePagedKvAppendTokensMetadata<'a> {
     }
 }
 
+fn validate_exclusive_targets(
+    slots: &[(usize, usize)],
+    page_refcounts: &[i32],
+) -> Result<(), ContractError> {
+    for &(physical_page, _) in slots {
+        let reference_count = page_refcounts[physical_page];
+        if reference_count != 1 {
+            return Err(ContractError::NonExclusivePageAppendTarget {
+                physical_page,
+                reference_count,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn validate_page_refcounts(
+    page_indices: &[i32],
+    page_refcounts: &[i32],
+) -> Result<(), ContractError> {
+    let mut observed = vec![0_usize; page_refcounts.len()];
+    for &physical_page in page_indices {
+        let physical_page = physical_page as usize;
+        observed[physical_page] = observed[physical_page]
+            .checked_add(1)
+            .ok_or(ContractError::ElementCountOverflow)?;
+    }
+    for (physical_page, (&minimum, &actual)) in observed.iter().zip(page_refcounts).enumerate() {
+        if actual < 0 || (actual as usize) < minimum {
+            return Err(ContractError::PageReferenceCountTooSmall {
+                physical_page,
+                minimum,
+                actual,
+            });
+        }
+    }
+    Ok(())
+}
+
 /// Rotates Q/K and appends rotated K plus unmodified V into paged NHD storage.
 #[allow(clippy::too_many_arguments)]
 pub fn rope_paged_kv_append_bf16_reference(
@@ -364,6 +470,7 @@ pub fn rope_paged_kv_append_bf16_reference(
     page_indptr: &[i32],
     page_indices: &[i32],
     last_page_len: &[i32],
+    page_refcounts: &[i32],
     query_output: &mut [bf16],
     key_pages: &mut [bf16],
     value_pages: &mut [bf16],
@@ -379,7 +486,9 @@ pub fn rope_paged_kv_append_bf16_reference(
     )?;
     require_len("key_pages", key_pages.len(), spec.kv_pages_numel())?;
     require_len("value_pages", value_pages.len(), spec.kv_pages_numel())?;
-    let table = spec.validate_page_table(page_indptr, page_indices, last_page_len)?;
+    let metadata =
+        spec.validate_metadata(page_indptr, page_indices, last_page_len, page_refcounts)?;
+    let table = metadata.page_table();
 
     let positions = (0..spec.batch_size())
         .map(|request| {
@@ -435,6 +544,7 @@ pub fn rope_paged_kv_append_tokens_bf16_reference(
     page_indptr: &[i32],
     page_indices: &[i32],
     last_page_len: &[i32],
+    page_refcounts: &[i32],
     query_output: &mut [bf16],
     key_pages: &mut [bf16],
     value_pages: &mut [bf16],
@@ -456,6 +566,7 @@ pub fn rope_paged_kv_append_tokens_bf16_reference(
         page_indptr,
         page_indices,
         last_page_len,
+        page_refcounts,
     )?;
     let rope = Bf16RopePosIdsSpec::new(
         spec.tokens(),

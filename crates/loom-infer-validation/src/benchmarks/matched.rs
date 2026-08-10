@@ -1,6 +1,6 @@
 use crate::benchmark::BenchmarkRecord;
 use crate::comparison::{compare_bf16, digest_bf16};
-use crate::fixture::deterministic_bf16;
+use crate::fixture::{deterministic_bf16, page_refcounts};
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer, sys};
 use half::bf16;
 use loom_infer::{
@@ -19,7 +19,8 @@ use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
 use loom_infer_cuda::rms_norm::{RmsNormArgs, RmsNormBf16Plan, RmsNormProvider};
 use loom_infer_cuda::rope::{
-    Bf16RopePagedKvAppendArgs, Bf16RopePagedKvAppendTokensArgs, Bf16RopePosIdsArgs, RopeProvider,
+    Bf16PagedKvAppendMapArgs, Bf16PagedKvAppendTokensMapArgs, Bf16RopePagedKvAppendMappedArgs,
+    Bf16RopePosIdsArgs, RopeProvider,
 };
 use serde_json::json;
 use std::env;
@@ -33,9 +34,9 @@ const PAGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_page_table_v1";
 const PAGED_PREFILL_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_paged_prefill_v1";
 const RAGGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1";
 const ROPE_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_rope_pos_ids_v1";
-const ROPE_APPEND_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_rope_paged_append_v1";
+const ROPE_APPEND_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_rope_paged_append_v2";
 const ROPE_APPEND_TOKENS_FIXTURE_ID: &str =
-    "xorshift64_mod2001_bf16_i32_rope_paged_append_tokens_v1";
+    "xorshift64_mod2001_bf16_i32_rope_paged_append_tokens_v2";
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -164,8 +165,9 @@ where
         for _ in 0..config.launches_per_sample {
             enqueue(&mut scope)?;
         }
+        let completion = scope.finish();
         end.record(stream)?;
-        bindings = scope.finish().wait()?;
+        bindings = completion.wait()?;
         samples_us
             .push(f64::from(start.elapsed_ms(&end)?) * 1000.0 / config.launches_per_sample as f64);
     }
@@ -912,9 +914,15 @@ fn benchmark_rope_paged_append(
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16RopePagedKvAppendSpec::new(4, 8, 16, 4, 128, 16)?;
     let page_indptr_host = [0_i32, 1, 3, 5, 8];
-    let page_indices_host = [7_i32, 2, 6, 5, 1, 7, 0, 4];
+    let page_indices_host = [3_i32, 2, 6, 2, 1, 7, 0, 4];
     let last_page_len_host = [3_i32, 16, 1, 9];
-    spec.validate_page_table(&page_indptr_host, &page_indices_host, &last_page_len_host)?;
+    let page_refcounts_host = page_refcounts(spec.max_num_pages(), &page_indices_host);
+    spec.validate_metadata(
+        &page_indptr_host,
+        &page_indices_host,
+        &last_page_len_host,
+        &page_refcounts_host,
+    )?;
     let query_host = deterministic_bf16(spec.query_numel(), 0x5150_4147);
     let key_host = deterministic_bf16(spec.key_numel(), 0x4b50_4147);
     let value_host = deterministic_bf16(spec.value_numel(), 0x5650_4147);
@@ -930,6 +938,7 @@ fn benchmark_rope_paged_append(
         &page_indptr_host,
         &page_indices_host,
         &last_page_len_host,
+        &page_refcounts_host,
         &mut expected_query,
         &mut expected_key_pages,
         &mut expected_value_pages,
@@ -942,33 +951,66 @@ fn benchmark_rope_paged_append(
     let page_indptr = Arc::new(DeviceBuffer::from_host(stream, &page_indptr_host)?);
     let page_indices = Arc::new(DeviceBuffer::from_host(stream, &page_indices_host)?);
     let last_page_len = Arc::new(DeviceBuffer::from_host(stream, &last_page_len_host)?);
+    let page_refcounts = Arc::new(DeviceBuffer::from_host(stream, &page_refcounts_host)?);
     let query_output = DeviceBuffer::<bf16>::zeroed(stream, spec.query_output_numel())?;
     let key_pages = DeviceBuffer::from_host(stream, &key_pages_host)?;
     let value_pages = DeviceBuffer::from_host(stream, &value_pages_host)?;
     let plan = provider.plan_bf16_paged_append(spec)?;
-    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
-    let mut bindings = queue.bindings(9)?;
+    let mut workspaces = Vec::with_capacity(config.launches_per_sample);
+    for _ in 0..config.launches_per_sample {
+        workspaces.push(DeviceBuffer::<i32>::zeroed(
+            stream,
+            plan.workspace_required_numel(),
+        )?);
+    }
+    let command_capacity = config
+        .launches_per_sample
+        .checked_mul(3)
+        .ok_or("RoPE append command capacity overflowed")?;
+    let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+    let binding_capacity = 10_usize
+        .checked_add(config.launches_per_sample)
+        .ok_or("RoPE append binding capacity overflowed")?;
+    let mut bindings = queue.bindings(binding_capacity)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key)?;
     let value_handle = bindings.bind_read(value)?;
     let page_indptr_handle = bindings.bind_read(page_indptr)?;
     let page_indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let page_refcounts_handle = bindings.bind_read(page_refcounts)?;
     let query_output_handle = bindings.bind_read_write(query_output)?;
     let key_pages_handle = bindings.bind_read_write(key_pages)?;
     let value_pages_handle = bindings.bind_read_write(value_pages)?;
+    let mut workspace_handles = Vec::with_capacity(config.launches_per_sample);
+    for workspace in workspaces {
+        workspace_handles.push(bindings.bind_read_write(workspace)?);
+    }
+    let mut workspace_index = 0_usize;
 
     let (mut bindings, samples_us) =
         benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
-            plan.enqueue_into(
+            let workspace_handle = workspace_handles[workspace_index];
+            workspace_index = (workspace_index + 1) % workspace_handles.len();
+            let append_map = plan.enqueue_map_into(
                 scope,
-                Bf16RopePagedKvAppendArgs::new(
-                    query_handle,
-                    key_handle,
-                    value_handle,
+                Bf16PagedKvAppendMapArgs::new(
                     page_indptr_handle,
                     page_indices_handle,
                     last_page_len_handle,
+                    page_refcounts_handle,
+                    key_pages_handle.write(),
+                    value_pages_handle.write(),
+                    workspace_handle,
+                ),
+            )?;
+            plan.enqueue_mapped_into(
+                scope,
+                Bf16RopePagedKvAppendMappedArgs::new(
+                    query_handle,
+                    key_handle,
+                    value_handle,
+                    append_map,
                     query_output_handle.write(),
                     key_pages_handle.write(),
                     value_pages_handle.write(),
@@ -1014,10 +1056,12 @@ fn benchmark_rope_paged_append(
         dtype: "bf16",
         layout: "NHD_D128_neox_split_half_page16",
         execution: json!({
-            "algorithm": "fused_one_kernel",
-            "kernels": 1,
+            "algorithm": "validate_compact_then_fused_append",
+            "commands": 3,
+            "kernels": 2,
+            "status_readbacks": 1,
             "positions": [2, 31, 16, 40],
-            "physical_slots": [[7, 2], [6, 15], [1, 0], [4, 8]],
+            "physical_slots": [[3, 2], [6, 15], [1, 0], [4, 8]],
             "correctness": {
                 "reference": "loom-infer CPU reference",
                 "query_max_abs": query_comparison.max_abs,
@@ -1034,7 +1078,7 @@ fn benchmark_rope_paged_append(
                 "value_pages_reference_digest": format!("{:016x}", digest_bf16(&expected_value_pages))
             }
         }),
-        kernels_per_call: 1,
+        kernels_per_call: 2,
         shape: json!({
             "batch_size": 4,
             "max_num_pages": 8,
@@ -1052,7 +1096,8 @@ fn benchmark_rope_paged_append(
             "value_pages_initial": format!("{:016x}", digest_bf16(&value_pages_host)),
             "page_indptr": format!("{:016x}", digest_i32(&page_indptr_host)),
             "page_indices": format!("{:016x}", digest_i32(&page_indices_host)),
-            "last_page_len": format!("{:016x}", digest_i32(&last_page_len_host))
+            "last_page_len": format!("{:016x}", digest_i32(&last_page_len_host)),
+            "page_refcounts": format!("{:016x}", digest_i32(&page_refcounts_host))
         }),
         warmup_launches: config.warmup_launches,
         launches_per_sample: config.launches_per_sample,
@@ -1073,8 +1118,9 @@ fn benchmark_rope_paged_append_tokens(
     let batch_indices_host = [2_i32, 0, 1, 0, 2, 1];
     let positions_host = [5_i32, 17, 20, 16, 4, 19];
     let page_indptr_host = [0_i32, 2, 4, 5];
-    let page_indices_host = [7_i32, 3, 2, 6, 3];
+    let page_indices_host = [7_i32, 3, 2, 6, 5];
     let last_page_len_host = [2_i32, 5, 6];
+    let page_refcounts_host = page_refcounts(spec.max_num_pages(), &page_indices_host);
     let query_host = deterministic_bf16(spec.query_numel(), 0x5451_4147);
     let key_host = deterministic_bf16(spec.key_numel(), 0x544b_4147);
     let value_host = deterministic_bf16(spec.value_numel(), 0x5456_4147);
@@ -1092,6 +1138,7 @@ fn benchmark_rope_paged_append_tokens(
         &page_indptr_host,
         &page_indices_host,
         &last_page_len_host,
+        &page_refcounts_host,
         &mut expected_query,
         &mut expected_key_pages,
         &mut expected_value_pages,
@@ -1106,12 +1153,27 @@ fn benchmark_rope_paged_append_tokens(
     let page_indptr = Arc::new(DeviceBuffer::from_host(stream, &page_indptr_host)?);
     let page_indices = Arc::new(DeviceBuffer::from_host(stream, &page_indices_host)?);
     let last_page_len = Arc::new(DeviceBuffer::from_host(stream, &last_page_len_host)?);
+    let page_refcounts = Arc::new(DeviceBuffer::from_host(stream, &page_refcounts_host)?);
     let query_output = DeviceBuffer::<bf16>::zeroed(stream, spec.query_output_numel())?;
     let key_pages = DeviceBuffer::from_host(stream, &key_pages_host)?;
     let value_pages = DeviceBuffer::from_host(stream, &value_pages_host)?;
     let plan = provider.plan_bf16_paged_append_tokens(spec)?;
-    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
-    let mut bindings = queue.bindings(11)?;
+    let mut workspaces = Vec::with_capacity(config.launches_per_sample);
+    for _ in 0..config.launches_per_sample {
+        workspaces.push(DeviceBuffer::<i32>::zeroed(
+            stream,
+            plan.workspace_required_numel(),
+        )?);
+    }
+    let command_capacity = config
+        .launches_per_sample
+        .checked_mul(3)
+        .ok_or("explicit RoPE append command capacity overflowed")?;
+    let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+    let binding_capacity = 12_usize
+        .checked_add(config.launches_per_sample)
+        .ok_or("explicit RoPE append binding capacity overflowed")?;
+    let mut bindings = queue.bindings(binding_capacity)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key)?;
     let value_handle = bindings.bind_read(value)?;
@@ -1120,23 +1182,41 @@ fn benchmark_rope_paged_append_tokens(
     let page_indptr_handle = bindings.bind_read(page_indptr)?;
     let page_indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let page_refcounts_handle = bindings.bind_read(page_refcounts)?;
     let query_output_handle = bindings.bind_read_write(query_output)?;
     let key_pages_handle = bindings.bind_read_write(key_pages)?;
     let value_pages_handle = bindings.bind_read_write(value_pages)?;
+    let mut workspace_handles = Vec::with_capacity(config.launches_per_sample);
+    for workspace in workspaces {
+        workspace_handles.push(bindings.bind_read_write(workspace)?);
+    }
+    let mut workspace_index = 0_usize;
 
     let (mut bindings, samples_us) =
         benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
-            plan.enqueue_into(
+            let workspace_handle = workspace_handles[workspace_index];
+            workspace_index = (workspace_index + 1) % workspace_handles.len();
+            let append_map = plan.enqueue_map_into(
                 scope,
-                Bf16RopePagedKvAppendTokensArgs::new(
-                    query_handle,
-                    key_handle,
-                    value_handle,
+                Bf16PagedKvAppendTokensMapArgs::new(
                     batch_indices_handle,
                     positions_handle,
                     page_indptr_handle,
                     page_indices_handle,
                     last_page_len_handle,
+                    page_refcounts_handle,
+                    key_pages_handle.write(),
+                    value_pages_handle.write(),
+                    workspace_handle,
+                ),
+            )?;
+            plan.enqueue_mapped_into(
+                scope,
+                Bf16RopePagedKvAppendMappedArgs::new(
+                    query_handle,
+                    key_handle,
+                    value_handle,
+                    append_map,
                     query_output_handle.write(),
                     key_pages_handle.write(),
                     value_pages_handle.write(),
@@ -1182,11 +1262,13 @@ fn benchmark_rope_paged_append_tokens(
         dtype: "bf16",
         layout: "NHD_D128_neox_split_half_page16",
         execution: json!({
-            "algorithm": "fused_one_kernel_explicit_tokens",
-            "kernels": 1,
+            "algorithm": "validate_compact_then_fused_append_explicit_tokens",
+            "commands": 3,
+            "kernels": 2,
+            "status_readbacks": 1,
             "batch_indices": [2, 0, 1, 0, 2, 1],
             "positions": [5, 17, 20, 16, 4, 19],
-            "physical_slots": [[3, 5], [3, 1], [6, 4], [3, 0], [3, 4], [6, 3]],
+            "physical_slots": [[5, 5], [3, 1], [6, 4], [3, 0], [5, 4], [6, 3]],
             "correctness": {
                 "reference": "loom-infer CPU reference",
                 "query_max_abs": query_comparison.max_abs,
@@ -1203,7 +1285,7 @@ fn benchmark_rope_paged_append_tokens(
                 "value_pages_reference_digest": format!("{:016x}", digest_bf16(&expected_value_pages))
             }
         }),
-        kernels_per_call: 1,
+        kernels_per_call: 2,
         shape: json!({
             "tokens": 6,
             "batch_size": 3,
@@ -1224,7 +1306,8 @@ fn benchmark_rope_paged_append_tokens(
             "positions": format!("{:016x}", digest_i32(&positions_host)),
             "page_indptr": format!("{:016x}", digest_i32(&page_indptr_host)),
             "page_indices": format!("{:016x}", digest_i32(&page_indices_host)),
-            "last_page_len": format!("{:016x}", digest_i32(&last_page_len_host))
+            "last_page_len": format!("{:016x}", digest_i32(&last_page_len_host)),
+            "page_refcounts": format!("{:016x}", digest_i32(&page_refcounts_host))
         }),
         warmup_launches: config.warmup_launches,
         launches_per_sample: config.launches_per_sample,

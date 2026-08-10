@@ -18,6 +18,8 @@ from matched_bench import (
     deterministic_bf16,
     digest_bf16,
     digest_i32,
+    page_refcounts_i32,
+    validate_flashinfer_installation,
 )
 
 
@@ -33,6 +35,7 @@ def env_positive_int(name: str, default: int) -> int:
 
 
 def main() -> None:
+    validate_flashinfer_installation()
     warmup = env_positive_int("LOOM_BENCH_WARMUP", 200)
     launches = env_positive_int("LOOM_BENCH_LAUNCHES", 1)
     samples = env_positive_int("LOOM_BENCH_SAMPLES", 100)
@@ -59,8 +62,9 @@ def main() -> None:
     batch_indices_host = torch.tensor([2, 0, 1, 0, 2, 1], dtype=torch.int32)
     positions_host = torch.tensor([5, 17, 20, 16, 4, 19], dtype=torch.int32)
     page_indptr_host = torch.tensor([0, 2, 4, 5], dtype=torch.int32)
-    page_indices_host = torch.tensor([7, 3, 2, 6, 3], dtype=torch.int32)
+    page_indices_host = torch.tensor([7, 3, 2, 6, 5], dtype=torch.int32)
     last_page_len_host = torch.tensor([2, 5, 6], dtype=torch.int32)
+    page_refcounts_host = page_refcounts_i32(max_num_pages, page_indices_host)
 
     query = query_host.reshape(tokens, query_heads, head_dim).to("cuda")
     key = key_host.reshape(tokens, key_heads, head_dim).to("cuda")
@@ -157,6 +161,24 @@ def main() -> None:
         end.synchronize()
         samples_us.append(start.elapsed_time(end) * 1000.0)
 
+    physical_slots: list[list[int]] = []
+    for token in range(tokens):
+        request = batch_indices_host[token].item()
+        position = positions_host[token].item()
+        page_slot = position // page_size
+        page_offset = position % page_size
+        physical_page = page_indices_host[
+            page_indptr_host[request].item() + page_slot
+        ].item()
+        physical_slots.append([physical_page, page_offset])
+
+    # A replay must overwrite every logical result. Poison only the append
+    # targets so untouched cache entries retain their fixture values.
+    query_output.fill_(torch.nan)
+    for physical_page, page_offset in physical_slots:
+        key_pages[physical_page, page_offset].fill_(torch.nan)
+        value_pages[physical_page, page_offset].fill_(torch.nan)
+    graph.replay()
     torch.cuda.synchronize()
     query_max_abs = (
         (query_output.float() - reference_query.float()).abs().max().item()
@@ -203,20 +225,13 @@ def main() -> None:
                 "execution": {
                     "algorithm": "flashinfer_rope_then_paged_append_explicit_tokens",
                     "graph": "torch_cuda_graph_fixed_address",
-                    "graph_nodes": 2,
                     "completion_event_inside_timed_interval": True,
+                    "kernel_count": {"status": "unverified"},
                     "batch_indices": [2, 0, 1, 0, 2, 1],
                     "positions": [5, 17, 20, 16, 4, 19],
-                    "physical_slots": [
-                        [3, 5],
-                        [3, 1],
-                        [6, 4],
-                        [3, 0],
-                        [3, 4],
-                        [6, 3],
-                    ],
+                    "physical_slots": physical_slots,
                     "correctness": {
-                        "reference": "same fixed low-level composition eager run",
+                        "reference": "eager composition after poisoned-output replay",
                         "query_max_abs": query_max_abs,
                         "query_bit_mismatches": query_bit_mismatches,
                         "query_digest": digest_bf16(query_output),
@@ -228,7 +243,6 @@ def main() -> None:
                         "value_pages_digest": digest_bf16(value_pages),
                     },
                 },
-                "kernels_per_call": 2,
                 "shape": {
                     "tokens": tokens,
                     "batch_size": batch_size,
@@ -250,6 +264,7 @@ def main() -> None:
                     "page_indptr": digest_i32(page_indptr_host),
                     "page_indices": digest_i32(page_indices_host),
                     "last_page_len": digest_i32(last_page_len_host),
+                    "page_refcounts": digest_i32(page_refcounts_host),
                 },
                 "warmup_launches": warmup,
                 "launches_per_sample": 1,

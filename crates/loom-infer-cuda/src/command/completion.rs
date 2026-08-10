@@ -1,7 +1,11 @@
 //! Completion fences and conservative CUDA quiescence handling.
 
 use super::{CheckedBindings, CommandError, CommandQueue, SubmissionError};
+use crate::device_status::DeviceStatusProtocolError;
 use cuda_core::{CudaStream, DriverError};
+use loom_infer::ContractError;
+use std::fmt::{self, Display, Formatter};
+use thiserror::Error;
 
 /// The final fence and all bindings retained by a completed command scope.
 #[must_use = "dropping the completion waits before releasing CUDA resources"]
@@ -59,16 +63,39 @@ impl<'queue> CommandCompletion<'queue> {
     }
 
     /// Waits once and returns the reusable checked bindings.
-    pub fn wait(mut self) -> Result<CheckedBindings, CommandError> {
+    pub fn wait(mut self) -> Result<CheckedBindings, CommandCompletionError> {
         match self.settle() {
             None => {
                 self.complete = true;
-                self.queue
-                    .as_mut()
-                    .expect("live completion has a queue")
-                    .retained_resources
-                    .clear();
-                Ok(self.bindings.take().expect("live completion has bindings"))
+                let queue = self.queue.as_mut().expect("live completion has a queue");
+                queue.retained_resources.clear();
+                let status = self
+                    .bindings
+                    .as_ref()
+                    .expect("live completion has bindings")
+                    .status
+                    .decode();
+                match status {
+                    Ok(None) => {
+                        let mut bindings =
+                            self.bindings.take().expect("live completion has bindings");
+                        bindings.status.clear();
+                        Ok(bindings)
+                    }
+                    Ok(Some(error)) => {
+                        let mut bindings =
+                            self.bindings.take().expect("live completion has bindings");
+                        bindings.status.clear();
+                        Err(CommandCompletionError::DeviceRejected(
+                            DeviceRejection::new(error, bindings),
+                        ))
+                    }
+                    Err(error) => {
+                        queue.poisoned = true;
+                        self.bindings.take();
+                        Err(CommandCompletionError::StatusProtocol(error))
+                    }
+                }
             }
             Some(failure) => {
                 self.complete = true;
@@ -77,7 +104,7 @@ impl<'queue> CommandCompletion<'queue> {
                 queue.retained_resources.clear();
                 record_settlement_errors(queue, failure);
                 self.bindings.take();
-                Err(failure.command_error())
+                Err(CommandCompletionError::Execution(failure.command_error()))
             }
         }
     }
@@ -120,6 +147,87 @@ impl<'queue> CommandCompletion<'queue> {
                 synchronize_error: synchronize_stream_or_abort(&queue.stream),
             }),
         }
+    }
+}
+
+#[derive(Debug, Error)]
+pub enum CommandCompletionError {
+    #[error(transparent)]
+    Execution(CommandError),
+    #[error(transparent)]
+    DeviceRejected(DeviceRejection),
+    #[error(transparent)]
+    StatusProtocol(DeviceStatusProtocolError),
+}
+
+impl CommandCompletionError {
+    pub const fn execution_error(&self) -> Option<&CommandError> {
+        match self {
+            Self::Execution(error) => Some(error),
+            Self::DeviceRejected(_) | Self::StatusProtocol(_) => None,
+        }
+    }
+
+    pub const fn device_rejection(&self) -> Option<&DeviceRejection> {
+        match self {
+            Self::DeviceRejected(rejection) => Some(rejection),
+            Self::Execution(_) | Self::StatusProtocol(_) => None,
+        }
+    }
+
+    pub fn into_device_rejection(self) -> Option<DeviceRejection> {
+        match self {
+            Self::DeviceRejected(rejection) => Some(rejection),
+            Self::Execution(_) | Self::StatusProtocol(_) => None,
+        }
+    }
+}
+
+/// A device-side contract rejection with all completed bindings recovered.
+pub struct DeviceRejection {
+    error: ContractError,
+    bindings: Box<CheckedBindings>,
+}
+
+impl DeviceRejection {
+    pub(crate) fn new(error: ContractError, bindings: CheckedBindings) -> Self {
+        Self {
+            error,
+            bindings: Box::new(bindings),
+        }
+    }
+
+    pub const fn error(&self) -> ContractError {
+        self.error
+    }
+
+    pub fn into_parts(self) -> (ContractError, CheckedBindings) {
+        (self.error, *self.bindings)
+    }
+}
+
+impl fmt::Debug for DeviceRejection {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        formatter
+            .debug_struct("DeviceRejection")
+            .field("error", &self.error)
+            .finish_non_exhaustive()
+    }
+}
+
+impl Display for DeviceRejection {
+    fn fmt(&self, formatter: &mut Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "device rejected command metadata: {}",
+            self.error
+        )
+    }
+}
+
+impl std::error::Error for DeviceRejection {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
     }
 }
 

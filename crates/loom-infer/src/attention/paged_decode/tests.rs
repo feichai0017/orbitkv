@@ -18,6 +18,88 @@ fn deterministic_bf16(len: usize, salt: u64) -> Vec<bf16> {
     values
 }
 
+fn next_u64(state: &mut u64) -> u64 {
+    *state ^= *state << 13;
+    *state ^= *state >> 7;
+    *state ^= *state << 17;
+    *state
+}
+
+fn assert_paged_matches_contiguous(
+    spec: Bf16PagedBatchDecodeSpec,
+    page_indptr: &[i32],
+    page_indices: &[i32],
+    last_page_len: &[i32],
+    salt: u64,
+) {
+    let table = spec
+        .validate_page_table(page_indptr, page_indices, last_page_len)
+        .unwrap();
+    let query = deterministic_bf16(spec.query_numel(), salt ^ 0x51);
+    let key_pages = deterministic_bf16(spec.kv_pages_numel(), salt ^ 0x4b);
+    let value_pages = deterministic_bf16(spec.kv_pages_numel(), salt ^ 0x56);
+    let mut actual_output = vec![bf16::NAN; spec.output_numel()];
+    let mut actual_lse = vec![f32::NAN; spec.lse_numel()];
+
+    paged_batch_decode_bf16_reference(
+        &query,
+        &key_pages,
+        &value_pages,
+        page_indptr,
+        page_indices,
+        last_page_len,
+        &mut actual_output,
+        &mut actual_lse,
+        spec,
+    )
+    .unwrap();
+
+    for request in 0..spec.batch_size() {
+        let kv_len = table.request_kv_len(request).unwrap();
+        let direct =
+            Bf16SingleDecodeSpec::new(kv_len, spec.num_query_heads(), spec.num_kv_heads(), 128)
+                .unwrap();
+        let mut contiguous_key = Vec::with_capacity(direct.kv_numel());
+        let mut contiguous_value = Vec::with_capacity(direct.kv_numel());
+        for token in 0..kv_len {
+            let (physical_page, page_offset) =
+                table.physical_page_for_token(request, token).unwrap();
+            let start = (physical_page * spec.page_size() + page_offset)
+                * spec.num_kv_heads()
+                * spec.head_dim();
+            let end = start + spec.num_kv_heads() * spec.head_dim();
+            contiguous_key.extend_from_slice(&key_pages[start..end]);
+            contiguous_value.extend_from_slice(&value_pages[start..end]);
+        }
+        let query_start = request * direct.query_numel();
+        let output_start = request * direct.output_numel();
+        let lse_start = request * direct.lse_numel();
+        let mut expected_output = vec![bf16::NAN; direct.output_numel()];
+        let mut expected_lse = vec![f32::NAN; direct.lse_numel()];
+
+        single_decode_bf16_reference(
+            &query[query_start..query_start + direct.query_numel()],
+            &contiguous_key,
+            &contiguous_value,
+            &mut expected_output,
+            &mut expected_lse,
+            direct,
+        )
+        .unwrap();
+
+        assert_eq!(
+            &actual_output[output_start..output_start + direct.output_numel()],
+            expected_output,
+            "paged output mismatch for request {request}"
+        );
+        assert_eq!(
+            &actual_lse[lse_start..lse_start + direct.lse_numel()],
+            expected_lse,
+            "paged LSE mismatch for request {request}"
+        );
+    }
+}
+
 #[test]
 fn paged_spec_reports_fixed_shapes_and_mapping() {
     let spec = Bf16PagedBatchDecodeSpec::new(
@@ -99,6 +181,15 @@ fn paged_spec_rejects_unsupported_shapes_and_overflow() {
     );
     assert_eq!(
         Bf16PagedBatchDecodeSpec::new(1, usize::MAX, 1, 1, 128, 16),
+        Err(ContractError::ElementCountOverflow)
+    );
+    let beyond_i32 = usize::try_from(i32::MAX).unwrap() + 1;
+    assert_eq!(
+        Bf16PagedBatchDecodeSpec::new(beyond_i32, 1, 1, 1, 128, 16),
+        Err(ContractError::ElementCountOverflow)
+    );
+    assert_eq!(
+        Bf16PagedBatchDecodeSpec::new(1, beyond_i32, 1, 1, 128, 16),
         Err(ContractError::ElementCountOverflow)
     );
 }
@@ -222,70 +313,54 @@ fn paged_reference_matches_contiguous_decode_per_request() {
     let page_indptr = [0, 1, 3, 6];
     let page_indices = [4, 6, 1, 5, 0, 3];
     let last_page_len = [1, 7, 16];
-    let table = spec
-        .validate_page_table(&page_indptr, &page_indices, &last_page_len)
-        .unwrap();
-    let query = deterministic_bf16(spec.query_numel(), 0x5041_4745_4451);
-    let key_pages = deterministic_bf16(spec.kv_pages_numel(), 0x5041_4745_444b);
-    let value_pages = deterministic_bf16(spec.kv_pages_numel(), 0x5041_4745_4456);
-    let mut actual_output = vec![bf16::NAN; spec.output_numel()];
-    let mut actual_lse = vec![f32::NAN; spec.lse_numel()];
-
-    paged_batch_decode_bf16_reference(
-        &query,
-        &key_pages,
-        &value_pages,
+    assert_paged_matches_contiguous(
+        spec,
         &page_indptr,
         &page_indices,
         &last_page_len,
-        &mut actual_output,
-        &mut actual_lse,
-        spec,
-    )
-    .unwrap();
+        0x5041_4745_4400,
+    );
+}
 
-    for request in 0..spec.batch_size() {
-        let kv_len = table.request_kv_len(request).unwrap();
-        let direct =
-            Bf16SingleDecodeSpec::new(kv_len, spec.num_query_heads(), spec.num_kv_heads(), 128)
-                .unwrap();
-        let mut contiguous_key = Vec::with_capacity(direct.kv_numel());
-        let mut contiguous_value = Vec::with_capacity(direct.kv_numel());
-        for token in 0..kv_len {
-            let (physical_page, page_offset) =
-                table.physical_page_for_token(request, token).unwrap();
-            let start = (physical_page * spec.page_size() + page_offset)
-                * spec.num_kv_heads()
-                * spec.head_dim();
-            let end = start + spec.num_kv_heads() * spec.head_dim();
-            contiguous_key.extend_from_slice(&key_pages[start..end]);
-            contiguous_value.extend_from_slice(&value_pages[start..end]);
-        }
-        let query_start = request * direct.query_numel();
-        let output_start = request * direct.output_numel();
-        let lse_start = request * direct.lse_numel();
-        let mut expected_output = vec![bf16::NAN; direct.output_numel()];
-        let mut expected_lse = vec![f32::NAN; direct.lse_numel()];
-
-        single_decode_bf16_reference(
-            &query[query_start..query_start + direct.query_numel()],
-            &contiguous_key,
-            &contiguous_value,
-            &mut expected_output,
-            &mut expected_lse,
-            direct,
+#[test]
+fn generated_paged_cases_match_contiguous_decode() {
+    let mut state = 0xd1ff_3a11_5eed_0001_u64;
+    for case in 0..64_u64 {
+        let batch_size = (next_u64(&mut state) % 4 + 1) as usize;
+        let max_num_pages = 8;
+        let num_kv_heads = if next_u64(&mut state).is_multiple_of(2) {
+            1
+        } else {
+            2
+        };
+        let group_size = [1, 2, 4][(next_u64(&mut state) % 3) as usize];
+        let num_query_heads = num_kv_heads * group_size;
+        let spec = Bf16PagedBatchDecodeSpec::new(
+            batch_size,
+            max_num_pages,
+            num_query_heads,
+            num_kv_heads,
+            128,
+            16,
         )
         .unwrap();
-
-        assert_eq!(
-            &actual_output[output_start..output_start + direct.output_numel()],
-            expected_output,
-            "paged output mismatch for request {request}"
-        );
-        assert_eq!(
-            &actual_lse[lse_start..lse_start + direct.lse_numel()],
-            expected_lse,
-            "paged LSE mismatch for request {request}"
+        let mut page_indptr = vec![0_i32];
+        let mut page_indices = Vec::new();
+        let mut last_page_len = Vec::with_capacity(batch_size);
+        for _ in 0..batch_size {
+            let request_pages = (next_u64(&mut state) % 3 + 1) as usize;
+            for _ in 0..request_pages {
+                page_indices.push((next_u64(&mut state) % max_num_pages as u64) as i32);
+            }
+            page_indptr.push(i32::try_from(page_indices.len()).unwrap());
+            last_page_len.push((next_u64(&mut state) % 16 + 1) as i32);
+        }
+        assert_paged_matches_contiguous(
+            spec,
+            &page_indptr,
+            &page_indices,
+            &last_page_len,
+            case ^ state,
         );
     }
 }

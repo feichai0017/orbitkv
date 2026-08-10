@@ -1,74 +1,116 @@
 # H20 validation
 
-NVIDIA H20 is the first Loom Infer device target. Permanent providers live in
-`crates/loom-infer-cuda`; hardware runners live in
+NVIDIA H20 is Loom Infer's first device target. Product providers live in
+`crates/loom-infer-cuda`. Hardware gates live in
 `crates/loom-infer-validation`.
 
-## Repository identity
+## Evidence boundaries
 
-The local checkout and the H20 validation checkout must have the same source
-manifest and lockfile. Do not test a remote-only patch or copy generated
-artifacts into the source tree.
+Validate each boundary separately.
 
-Record these values before the run:
+| Boundary | Required proof |
+| --- | --- |
+| Host contract | Rust validation, CPU or independent reference, and error behavior |
+| Device correctness | H20 output, numerical limit, sentinels, and exact admitted cases |
+| Lifecycle | Stream order, retained resources, completion, and failure settlement |
+| Sanitizer | Declared Compute Sanitizer tools over the permanent runner |
+| Graph | Capture, poisoned replay, fixed-binding policy, and completion behavior |
+| Performance | Matched contract, independent oracle, raw samples, and both provider orders |
+| Engine | Real call site, no-copy proof, provider hit count, and model output |
 
-- source-manifest and `Cargo.lock` hashes.
-- Rust nightly and `cuda-oxide` revision.
-- CUDA toolkit, driver, LLVM, and Clang versions.
-- GPU model and compute capability.
-- PTX or cubin target and content hash.
+A lower boundary never proves a higher one. A result applies only to its
+recorded source tree, contract, toolchain, artifact, and device.
 
-## Device compiler
+## Canonical commands
 
-Run the permanent crate from the H20 validation checkout:
+Use one checkout for source, build, and execution.
 
 ```bash
-ssh <h20-validation-host>
+ssh <h20-host>
 cd <loom-infer-checkout>
+git status --short
+git rev-parse HEAD
+
 make cuda-doctor
 make cuda-check
 make cuda-test
 make h20
 ```
 
-The Make targets are the canonical local entry points. Evidence records still
-list the expanded commands so each compiler and runner invocation remains
-auditable.
+The Make targets are the canonical entry points. Evidence records include the
+expanded commands.
 
-The run writes `loom_infer_cuda.ptx` at the workspace root with the pinned
-cargo-oxide revision. The PTX must target `sm_90`. Assemble it with the recorded
-CUDA toolkit before accepting the artifact.
+Run one gate during development:
 
-## RMSNorm correctness
+| Target | Permanent runner |
+| --- | --- |
+| `make h20-rms-norm` | `rms_norm_h20` |
+| `make h20-gemm` | `bf16_gemm_h20` |
+| `make h20-attention` | `single_decode_h20` |
+| `make h20-paged-attention` | `paged_batch_decode_h20` |
+| `make h20-ragged-prefill` | `ragged_prefill_h20` |
+| `make h20-paged-prefill` | `paged_prefill_h20` |
+| `make h20-rope` | `rope_h20` |
 
-Validate these F32 shapes against the `loom-infer` CPU reference:
+`make cuda-test` writes `loom_infer_cuda.ptx` at the workspace root. Record
+its hash and assemble it for `sm_90` with the same CUDA toolkit used by the
+run.
+
+Before a run, record:
+
+- source commit, tree state, and `Cargo.lock` hash.
+- Rust nightly and cuda-oxide revision.
+- CUDA toolkit, driver, LLVM, and Clang versions.
+- GPU model, compute capability, clocks, and power policy.
+- PTX or cubin target and content hash.
+
+Do not qualify a remote-only patch or a copied artifact from another source
+tree.
+
+## Common correctness rules
+
+Attention and RoPE use BF16 storage with F32 reference arithmetic. Attention
+output maximum absolute error is `0.015625`. Log2-LSE maximum absolute error is
+`0.01`. Initialize every output with a NaN sentinel.
+
+RMSNorm limits are:
+
+| Dtype | Maximum absolute error | Additional limit |
+| --- | --- | --- |
+| F32 | `5e-5` | All outputs finite |
+| FP16 | `4e-3` | At most two storage ULPs |
+| BF16 | `4e-2` | At most two storage ULPs |
+
+Reject short fixed spans, wrong contexts, and duplicate writable bindings
+before CUDA submission.
+
+Paged decode and paged prefill still use silent in-kernel metadata guards.
+Those guards protect memory but do not return a typed semantic host error.
+
+Fused append uses the typed status path described below.
+
+## RMSNorm gate
+
+The F32 runner covers:
 
 ```text
-(rows, hidden) = (1, 1), (3, 127), (8, 4096), (16, 8192)
+(rows, hidden) = (1,1), (3,127), (8,4096), (16,8192)
 ```
 
-All outputs must be finite. Maximum absolute error must not exceed `5e-5` for
-F32, `4e-3` for FP16, or `4e-2` for BF16. Low-precision results must also stay
-within two storage-format ULPs.
-
-Validate FP16 and BF16 on these shapes:
+The FP16 and BF16 runner covers:
 
 ```text
-scalar:  (1, 1), (3, 127), (3, 4097)
-packed:  (1, 2), (32, 256), (8, 4096), (16, 8192), (1, 11008)
+scalar: (1,1), (3,127), (3,4097)
+packed: (1,2), (32,256), (8,4096), (16,8192), (1,11008)
 ```
 
-The packed path requires four-byte-aligned input, weight, and output buffers.
-Both paths use F32 arithmetic and nearest-even output conversion.
+The gate also checks short buffers, signed zero, scalar and packed dispatch,
+typed bindings, a non-default stream, queue reuse, chained commands, and one
+partial-scope rejection.
 
-The current gate covers odd and even hidden sizes, all three short-buffer
-positions, signed zero, typed heterogeneous bindings, and a caller-owned
-non-default stream. It also covers two chained commands, queue reuse, and one
-partial F32 scope. CUDA Graph replay remains a separate gate.
+## BF16 GEMM gate
 
-## BF16 GEMM correctness
-
-Validate the fixed cuBLASLt contract:
+The provider fixes this cuBLASLt contract before enqueue:
 
 ```text
 D[M,N] = A[M,K] * W[N,K]^T
@@ -76,394 +118,242 @@ A, W, D: contiguous row-major BF16
 accumulation: F32
 ```
 
-The gate covers `(M,N,K) = (1,4096,4096)` across two reusable scopes and a
-transpose-sensitive `(2,3,4)` case. It rejects short A, W, and D buffers and a
-second command when queue capacity is one. It also chains BF16 RMSNorm
-`(1,4096)` into GEMM under one completion with no intermediate host wait.
+The runner covers `(M,N,K) = (1,4096,4096)` and the transpose-sensitive
+`(2,3,4)` case. It checks exact spans, command capacity, reusable scopes, and
+the selected algorithm's actual workspace requirement.
 
-Record the selected algorithm's actual workspace requirement. Test a short
-workspace only when that requirement is nonzero. The current H20 selection
-requires zero workspace, so that rejection case is not applicable.
-
-## BF16 single-decode correctness
-
-Validate the first fixed attention contract:
-
-```text
-Q, O: [query_heads, 128] BF16
-K, V: [kv_len, kv_heads, 128] BF16 NHD
-LSE:   [query_heads] F32 log2-domain
-scale: 1 / sqrt(128)
-```
-
-The gate covers MHA `(1,8,8)`, MQA `(33,8,1)`, GQA `(127,16,4)` and
-`(4096,32,4)`, plus one large-logit stability case. Tuples use
-`(kv_len, query_heads, kv_heads)`.
-
-Compare against the `loom-infer` CPU reference. BF16 output maximum absolute
-error must not exceed `0.015625`. Log2-LSE maximum absolute error must not
-exceed `0.01`. Initialize output buffers with NaN sentinels.
-
-Reject Q, K, V, O, or LSE that is one element short. Reject duplicate operand
-bindings before CUDA submission. Run memcheck, racecheck, synccheck, and
-initcheck over the complete runner.
-
-## BF16 paged batch-decode correctness
-
-Validate the fixed FlashInfer-compatible paged contract:
-
-```text
-Q, O:          [batch_size, query_heads, 128] BF16
-K/V pages:     [max_num_pages, 16, kv_heads, 128] BF16 NHD
-page_indptr:   [batch_size + 1] I32
-page_indices:  [page_indptr[batch_size]] I32
-last_page_len: [batch_size] I32
-LSE:           [batch_size, query_heads] F32 log2-domain
-```
-
-Cover MHA, MQA, and GQA with mixed request lengths, partial and full tail
-pages, non-sequential physical pages, and physical-page reuse. Compare against
-the paged CPU reference with the same `0.015625` BF16 output and `0.01`
-log2-LSE absolute limits.
-
-Reject short fixed metadata spans before submission. Since page-table contents
-remain device-resident, exercise an out-of-range physical page under Compute
-Sanitizer and require the invalid request to preserve NaN output sentinels
-without preventing a valid request in the same batch from completing. This
-guard is a memory-safety behavior, not asynchronous metadata error reporting.
-
-Validate split-K with a non-divisible KV range and the tuned H20 configurations:
-
-```text
-(kv_len, query_heads, kv_heads, partitions)
-  = (7,8,1,3), (33,8,1,12), (127,16,4,16), (4096,32,4,64)
-```
-
-Each partial state is F32
-`[max_score_log2, normalizer, weighted_value[128]]`. The merge kernel must
-produce the same final BF16 output and F32 log2-LSE contract. Require one
-completion over both kernel submissions. Reject a one-command queue and a
-workspace that is one F32 element short before either kernel reaches CUDA.
-
-## BF16 ragged prefill correctness
-
-Validate the first fixed ragged causal contract:
-
-```text
-Q, O:        [nnz_qo, query_heads, 128] BF16
-K, V:        [nnz_kv, kv_heads, 128] BF16 NHD
-qo_indptr:   [batch_size + 1] I32
-kv_indptr:   [batch_size + 1] I32
-LSE:         [nnz_qo, query_heads] F32 log2-domain
-causal mask: kv_index <= kv_len - qo_len + query_index
-```
-
-Cover MHA, MQA, and GQA with equal and mixed query/KV lengths. The first
-contract requires every request to satisfy `1 <= qo_len <= kv_len`. Compare
-against the ragged CPU reference with the same `0.015625` BF16 output and
-`0.01` log2-LSE absolute limits.
-
-Long group-size-four GQA uses a caller-owned F32 workspace with shape
-`[nnz_qo, query_heads, 8, 130]`. Each partial state is
-`[max_score_log2, normalizer, weighted_value[128]]`. Require one completion
-over the fused tensor-core partial kernel and the F32 merge kernel. Reject a
-missing workspace before either kernel reaches CUDA.
-
-Reject short fixed metadata spans before submission. Since indptr contents
-remain device-resident, exercise invalid endpoints under Compute Sanitizer and
-require output NaN sentinels to remain unchanged. This guard is a memory-safety
-behavior, not asynchronous metadata error reporting. Run memcheck, racecheck,
-synccheck, and initcheck over the complete runner.
-
-## BF16 paged prefill correctness
-
-Validate the first fixed paged causal prefill contract:
-
-```text
-Q, O:          [nnz_qo, query_heads, 128] BF16
-K/V pages:     [max_num_pages, 16, kv_heads, 128] BF16 NHD
-qo_indptr:     [batch_size + 1] I32
-page_indptr:   [batch_size + 1] I32
-page_indices:  [page_indptr[batch_size]] I32
-last_page_len: [batch_size] I32
-LSE:           [nnz_qo, query_heads] F32 log2-domain
-causal mask:   logical_kv_index <= kv_len - qo_len + query_index
-```
-
-Cover MHA, MQA, and GQA with equal and mixed query/KV lengths, partial pages,
-non-sequential physical pages, and safe physical-page reuse. Compare against
-the paged-prefill CPU reference with the same `0.015625` BF16 output and
-`0.01` log2-LSE absolute limits.
-
-Reject short fixed metadata and duplicate bindings before submission. Exercise
-an out-of-range physical page under Compute Sanitizer and require the invalid
-request to preserve NaN output sentinels while a valid request in the same
-batch completes. Run memcheck, racecheck, synccheck, and initcheck over the
-complete runner.
-
-## Fixed-address CUDA Graph
-
-The BF16 GEMM runner also captures this exact chain:
+The same runner checks one RMSNorm-to-GEMM command chain and one fixed-address
+Graph:
 
 ```text
 BF16 RMSNorm (1,4096)
-  -> fixed BF16 cuBLASLt GEMM (1,4096,4096)
+  -> BF16 cuBLASLt GEMM (1,4096,4096)
 ```
 
-The graph gate prepares buffers on the ordinary validation stream, establishes
-input readiness, then consumes a one-shot `GraphQueue` to capture on its private
-stream. It requires two accepted replays with the same device addresses and one
-retained external completion event recorded after each replay.
+## Attention gates
 
-RMSNorm and GEMM must execute without a host wait between the two graph nodes.
-The first replay waits before the second starts. The final output must match the
-CPU oracle bit for bit.
+All admitted attention contracts fix NHD layout and head dimension 128. Scores,
+online-softmax state, split states, and merge arithmetic use F32.
 
-One replay must settle through `wait()` and one through completion Drop.
-Capture and replay must retain the kernel module, cuBLASLt plan, workspace, and
-all bound allocations. The runner drops its external kernel-plan and read-buffer
-owners after capture and before graph instantiation.
+| Gate | Storage and mask | Exact current cases |
+| --- | --- | --- |
+| Single decode direct | `Q/O [qh,128]`, `K/V [kv_len,kvh,128]`, full attention | `(kv_len,qh,kvh)`: `(1,8,8)`, `(33,8,1)`, `(127,16,4)`, `(4096,32,4)` |
+| Single decode split-K | Same tensors plus caller F32 workspace `[qh,partitions,130]` | `(kv_len,qh,kvh,p)`: `(7,8,1,3)`, `(33,8,1,12)`, `(127,16,4,16)`, `(4096,32,4,64)` |
+| Paged batch decode | `Q/O [batch,qh,128]`, pages `[max_pages,16,kvh,128]`, full attention | MHA `(1,2,8,8)`, MQA `(3,7,8,1)`, GQA `(4,8,16,4)` as `(batch,max_pages,qh,kvh)` |
+| Ragged causal prefill | Contiguous Q/K/V with separate I32 `qo_indptr` and `kv_indptr` | `(batch,nnz_qo,nnz_kv,qh,kvh)`: `(1,4,4,8,8)`, `(3,6,13,8,1)`, `(2,6,11,16,4)`, `(3,21,896,8,1)`, `(2,96,1280,16,4)` |
+| Paged causal prefill | Ragged Q plus page-size-16 KV and bottom-right causal mask | `(batch,nnz_qo,max_pages,qh,kvh)`: `(1,4,2,8,8)`, `(3,6,7,8,1)`, `(2,6,6,16,4)` |
 
-Run Compute Sanitizer over capture, both replays, and graph destruction before
-changing the graph state from open. A successful compiler check alone is not a
-device or graph result.
+Paged metadata uses I32 `page_indptr`, `page_indices`, and `last_page_len`.
+Cover mixed lengths, partial tails, physical-page order, and read-only page
+reuse. Invalid page indices must preserve the affected request's sentinels.
 
-### Open checks
+Ragged requests satisfy `1 <= qo_len <= kv_len`. The causal rule is:
 
-The pinned compiler fails the debug-profile `DisjointSlice` MIR check but passes
-the release device test. Keep this boundary until the pinned revision changes.
+```text
+kv_index <= kv_len - qo_len + query_index
+```
 
-Run Compute Sanitizer before full provider admission, or record that the host
-does not provide it.
+The current ragged runner selects direct for the three short cases, sixteen
+warps for long MQA, and tiled split-eight for long GQA4. Earlier records cover
+the eight-warp stage, but the current runner needs a dedicated eight-warp case
+before that path gains current-source qualification.
 
-## RMSNorm performance
+The tiled GQA4 workspace is F32
+`[nnz_qo, query_heads, 8, 130]`. One completion covers the partial and merge
+kernels. A missing workspace must fail before CUDA submission.
 
-Measure `(1,4096)`, `(8,4096)`, `(64,4096)`, and `(16,8192)` with identical
-preallocated buffers and streams. Use CUDA events around launches only.
+## RoPE and paged append gate
 
-Run both provider orders. Record warm-up count, samples, launches per sample,
-raw timings, median, dispersion, clocks, and power policy. The timed region
-must not allocate, copy, compile, tune, or synchronize the host.
+Standalone RoPE fixes BF16 NHD D128, NeoX split-half rotation, scale one,
+theta 10,000, and explicit I32 positions. The current fixture uses five tokens,
+16 query heads, four KV heads, and positions `0, 1, 127, 4096, 32767`.
 
-Compare against the current named provider on the same revision and device.
-Do not reuse timings from a deleted implementation.
+Fused append uses page size 16 and adds one I32 reference count for every
+physical page. Every write target must have reference count one. Shared pages
+remain legal for read-only prefixes.
 
-The current FlashInfer `v0.6.16.post1` RMSNorm source fails to compile
-unmodified on the declared CUDA 13.1 host, so no matched RMSNorm performance
-gate has passed. Loom-only timings in the eager record are diagnostic, not a
-provider comparison.
+The current runner covers:
 
-## GEMM performance
+- one token per request with batch four, 16 query heads, and four KV heads.
+- six shuffled explicit tokens with batch three and private target pages.
+- the 64-token contract limit with one query and KV head.
+- short metadata, duplicate slots, invalid pages, invalid token mappings, and
+  shared target rejection.
+- one fixed-address six-token Graph case.
 
-Benchmark the fixed BF16 contract against the same cuBLASLt contract through a
-named baseline. Keep algorithm, layouts, workspace, stream, and timing region
-identical.
+One mapped append uses three commands: one validator kernel, one mapped append
+kernel, and one device-to-host status copy. The fixed-address Graph case
+captures this three-command sequence.
 
-The correctness runner is not a benchmark. The first matched eager-provider
-gate covers only `(M,N,K) = (1,4096,4096)` with fixed tactic 0, preallocated
-buffers, CUDA events, and both provider orders. It does not establish isolated
-kernel, Graph, engine, serving, or other-shape performance.
+Each map owns one workspace for the full scope. A second map from the same
+workspace must fail before submission. The map also binds the exact writable
+K/V pages. Using another cache must fail before submission.
 
-## Single-decode performance
+The one-token gate also reuses one map for two mapped appends in the same
+scope and the same cache binding.
 
-The first matched eager-provider gate covers BF16 NHD D128 MHA, MQA, and GQA
-with identical operand bit patterns. It records 200 warm-up launches, 100
-launches per sample, 50 samples per provider order, and both provider orders.
+That scope contains four commands: one validator, two mapped appends, and one
+status copy.
 
-The CUDA event interval contains 100 sequential eager provider calls and is
-divided by 100. Host-submission gaps can leave the GPU idle inside that
-interval, so the result is not isolated kernel duration or CUDA Graph
-performance. Preserve that measurement name and boundary when comparing future
-runs.
+A semantic rejection must return the exact `ContractError`, preserve every
+output sentinel, return the checked bindings, and leave the queue or Graph
+reusable.
 
-## Ragged prefill performance
+The engine or KV pager makes a shared tail private before append. The operator
+does not allocate, copy, or remap pages. Reference counts and the page table
+must describe one stable snapshot through completion.
 
-Match BF16 NHD D128 query, key, value, `qo_indptr`, and `kv_indptr` bits across
-Loom and the pinned FlashInfer FA2 ragged wrapper. Use bottom-right causal
-alignment, caller-owned output and LSE, preplanned providers, CUDA events, 200
-warm-up calls, 100 calls per sample, 50 samples per provider order, and both
-provider orders.
+The fused-append records dated 2026-08-06 predate this exclusive-page contract.
+They remain historical and do not qualify current correctness, Graph, or
+performance.
 
-Keep short MHA, mixed append-style MQA, and long GQA as separate cases. Record
-the Loom plan algorithm and every fixture digest. Exclude a provider ranking
-when either provider's order median changes by more than five percent. Compare
-an optimization against an immutable direct Loom record rather than a
-working-tree timing.
+The DeviceRegion refactor also changed submission for every CUDA provider.
+Existing RMSNorm, GEMM, decode, prefill, RoPE, and Graph records predate the
+current source. Run the matching gates and publish new records before restoring
+their device-qualified status.
 
-The measurement remains eager provider latency. It does not establish isolated
-kernel, CUDA Graph, engine, or serving performance.
+## Compute Sanitizer
 
-## Current device state
+Run all four tools against every admitted runner. Use leak checking with
+memcheck.
 
-The [shared-command regression](../results/h20-shared-command-regression-20260803.json)
-qualifies the current source projection. It reruns RMSNorm, BF16 GEMM, the
-fixed-address Graph, and BF16 single decode. The maximum F32 RMSNorm absolute
-error is `4.768371582e-7`.
+```bash
+compute-sanitizer --tool memcheck --leak-check full --error-exitcode 99 \
+  target/release/<runner>
+compute-sanitizer --tool racecheck --error-exitcode 99 \
+  target/release/<runner>
+compute-sanitizer --tool synccheck --error-exitcode 99 \
+  target/release/<runner>
+compute-sanitizer --tool initcheck --error-exitcode 99 \
+  target/release/<runner>
+```
 
-The F32 two-command chain reaches `7.152557373e-7` maximum absolute error. The
-FP16 chain reaches two ULPs, and the BF16 chain reaches one ULP. Generated PTX
-uses scalar and packed instructions, targets `sm_90`, and assembles with CUDA
-13.1. The GEMM correctness cases are BF16 bit-exact against their declared CPU
-fixtures. The fixed Graph replays twice and produces a bit-exact final output.
+For Graph gates, include capture, replay, completion settlement, and graph
+destruction in the sanitizer process. A clean sanitizer run does not replace
+the numerical oracle.
 
-Compute Sanitizer memcheck reports no errors or leaked device allocations for
-the RMSNorm and Graph runners. RMSNorm racecheck and synccheck report no errors.
-Graph-runner initcheck also reports no errors.
+## Fixed-address Graph gate
 
-The [single-decode record](../results/h20-bf16-single-decode-correctness-20260803.json)
-qualifies the narrow attention slice. Its largest output absolute error is
-`7.629394531e-6`; its largest log2-LSE error is `1.907348633e-6`. All four
-Compute Sanitizer tools report zero errors.
+The current Graph contract fixes device addresses and uses a private
+non-default capture stream. It rejects rebinding, graph updates, cross-stream
+launch, concurrent replay, and default-stream capture.
 
-The [split-K correctness record](../results/h20-bf16-single-decode-split-k-correctness-20260805.json)
-passes the same H20 numerical limits for the declared partition choices. Its
-tuned KV-length-4096 case has `9.536743164e-7` output maximum absolute error and
-`3.814697266e-6` log2-LSE maximum absolute error. All four Compute Sanitizer
-tools report zero errors, and both kernels assemble without stack or spills.
+Current Graph cases are:
 
-The [matched eager-provider record](../results/h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json)
-compares the pre-split-K Loom source against FlashInfer `v0.6.16.post1`.
-FlashInfer has 6.29x lower median latency at GQA KV length 127 and 80.08x lower
-median latency at KV length 4096 under the declared eager metric. Loom has
-1.33x lower median latency for the fixed M=1 cuBLASLt GEMM case. The record
-retains both provider orders and all 1,400 raw samples.
+| Operator | Captured commands | Fixture |
+| --- | --- | --- |
+| RMSNorm to GEMM | Two | `(1,4096)` RMSNorm into `(1,4096,4096)` GEMM |
+| Ragged prefill | Two | Long tiled GQA4 `(2,96,1280,16,4)` |
+| Paged prefill | One | Direct GQA4 `(2,6,6,16,4)` |
+| Fused append | Three | Validator, six-token mapped append, and status copy under the exclusive-page contract |
 
-The [matched split-K record](../results/h20-flashinfer-v0.6.16.post1-split-k-eager-performance-20260805.json)
-retains the same semantic fixtures and adds execution metadata. Split-K lowers
-Loom median latency by 3.79x at GQA KV length 127 and 26.79x at KV length 4096
-relative to the recorded direct baseline. FlashInfer remains 1.69x and 3.00x
-lower-latency under the declared eager metric.
+A current Graph qualification must:
 
-The [parallel-merge profiling record](../results/h20-bf16-single-decode-parallel-merge-profiling-20260805.json)
-uses Nsight Systems CUPTI activity timing. At KV length 4096, the partial kernel
-records `31.104` microseconds and the parallel merge records `5.056`
-microseconds, down from `20.192` for the serial merge. Nsight Compute
-hardware-counter metrics remain unavailable because the host sets
-`RmProfilingAdminOnly=1`.
+1. Compare the standalone result with the independent reference.
+2. Poison every graph-written output span or append target before replay.
+3. Replay and prove that no poison remains in a valid result.
+4. Drop external plan and read owners before replay.
+5. Exercise explicit `wait()` and completion-drop settlement.
+6. Record capture count, command count, replay count, and binding policy.
+7. Run all four sanitizer tools.
 
-The [parallel-merge matched record](../results/h20-flashinfer-v0.6.16.post1-parallel-merge-eager-performance-20260805.json)
-raises the complete Loom speedup over the direct baseline to 5.39x at GQA KV
-length 127 and 38.19x at KV length 4096. FlashInfer remains 1.17x and 2.09x
-lower-latency.
+Earlier attention Graph records did not use the current poisoned-replay and
+strict-summary policy. Treat their correctness and performance claims as
+historical until a new record passes this gate.
 
-The [paged batch-decode record](../results/h20-bf16-paged-batch-decode-correctness-20260806.json)
-passes MHA, MQA, and GQA batches with bit-exact BF16 output and maximum
-log2-LSE error `4.768371582e-7`. It covers mixed request lengths, page
-reordering and reuse, exact metadata spans, and a device-side invalid-page
-guard. All four Compute Sanitizer tools report zero errors.
+## External device regions
 
-The current [ragged prefill record](../results/h20-bf16-ragged-prefill-tiled-split-k-correctness-20260806.json)
-passes direct, eight-warp, sixteen-warp, and tiled eight-partition MHA, MQA,
-and GQA batches. Maximum BF16 output error is `4.8828125e-4` and maximum
-log2-LSE error is `2.861022949e-6`. It covers equal and mixed query/KV lengths,
-bottom-right causal alignment, exact metadata spans, missing tiled workspace,
-and a device-side nonmonotonic-indptr guard. All four Compute Sanitizer tools
-report zero errors.
+The command layer now implements external `DeviceRegion` host support. Source
+presence and host tests do not qualify the boundary on H20.
 
-The [ragged matched eager record](../results/h20-flashinfer-v0.6.16.post1-ragged-prefill-cp-async-eager-performance-20260806.json)
-retains both provider orders and all 600 raw samples. Unrolled 16-byte
-`cp.async` K/V staging lowers Loom long-GQA latency to `48.232` microseconds,
-`1.148x` below the previous tiled split-K result and `7.729x` below direct.
-FlashInfer remains `2.206x` lower-latency on stable long GQA. Short-MHA and
-mixed-MQA rankings are excluded because FlashInfer's provider-order deltas are
-`10.643%` and `14.097%`.
+H20 region admission still requires:
 
-The [ragged Graph correctness record](../results/h20-bf16-ragged-prefill-cuda-graph-correctness-20260806.json)
-captures the tiled partial and merge kernels on one private stream. Two
-fixed-address replays preserve the standalone output and log2-LSE digests after
-external owner teardown. Memcheck, racecheck, initcheck, and synccheck report
-no errors or leaks.
+- non-zero-offset read and read-write subranges.
+- range, alignment, context, and overlap rejection before submission.
+- external lease retention after the caller drops its owner.
+- output recovery only after completion settlement.
+- fixed-address Graph retention when the contract admits Graph use.
+- proof that no tensor copy occurs.
 
-The [matched ragged Graph performance record](../results/h20-flashinfer-v0.6.16.post1-ragged-prefill-graph-performance-20260806.json)
-measures one replay and one completion event per CUDA-event sample. Loom and
-FlashInfer combined medians are `50.480` and `32.640` microseconds, and their
-provider-order deltas are `0.127%` and `0.344%`. Capture, instantiation,
-planning, allocation, fixture copies, and correctness reads are excluded. Do
-not compare this single-replay metric directly with the eager provider record.
+A real engine invocation remains a separate gate. It must bind an
+engine-owned allocation and stream, record a Loom provider hit, and preserve
+model output.
 
-The [matched paged-prefill Graph performance record](../results/h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json)
-uses the same one-replay completion-event boundary on the admitted GQA4
-page-reorder/reuse case. Loom and FlashInfer combined medians are `15.072` and
-`18.560` microseconds, with provider-order deltas of `0.213%` and `0.000%`.
-All 400 raw samples are retained. Capture, instantiation, mutable metadata,
-graph updates, and engine execution remain outside this claim.
+## Matched performance requalification
 
-The first [matched paged eager record](../results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
-retains both provider orders and all 600 raw samples. Loom is 4.21x
-lower-latency for batch-1 MHA at KV length 1. FlashInfer is 1.62x
-lower-latency for the mixed-length batch-3 MQA case. The batch-4 GQA shape is
-excluded from stable ranking because FlashInfer's order delta is 52.49%.
+Existing matched attention and attention-Graph records predate the current
+evidence tooling. Keep them immutable as historical records. Do not reuse their
+ratios as current claims.
 
-The current [token-parallel record](../results/h20-flashinfer-v0.6.16.post1-paged-token-parallel-eager-performance-20260806.json)
-uses the same fixtures and protocol. Eight-warp block-local state merge lowers
-Loom MQA/GQA eager latency by 3.78x and 3.32x. Loom is now 4.41x
-lower-latency for MHA and 2.35x lower-latency for MQA than FlashInfer. GQA
-remains excluded because FlashInfer's order delta is 60.62%.
+Before a new matched run:
 
-CUPTI records current Loom MHA/MQA/GQA kernel medians of `2.176`, `4.864`,
-and `4.928` microseconds. These diagnostics guide optimization but are not a
-provider-ordered isolated-kernel gate.
+```bash
+make check-tools
+```
 
-Fixed Rust-kernel argument packs, matched RMSNorm, hardware-counter profiling,
-broader provider-ordered paged shapes, and remaining operator-specific Graph
-performance gates remain open.
+The new scripts require:
 
-The [standard RoPE correctness record](../results/h20-bf16-rope-pos-ids-correctness-20260806.json)
-qualifies BF16 NHD D128 NeoX split-half rotation with explicit I32 positions
-through 32,767. The query/key maximum absolute errors are `0.00390625` and
-`0.001953125`; memcheck, racecheck, initcheck, and synccheck report no errors
-or leaks.
+- the same independent F32 attention formula and reference digests for both
+  providers.
+- identical fixture bits and digests across providers and orders.
+- identical dtype, layout, shape, mask, caller-visible contract, and timed
+  boundary. Record every provider-private workspace and include its required
+  device work in the timing.
+- preallocated buffers and no compile, tune, allocation, or result transfer in
+  the timed interval.
+- one distinct status workspace for each logical append call in a batched
+  eager timing scope. The final status readbacks must be inside the timed
+  interval.
+- raw samples from both provider orders.
+- a verified provider version and source identity, or an explicit unverified
+  source field.
+- poisoned Graph outputs before the correctness replay.
+- strict summaries that reject incompatible contract, run, or execution
+  metadata.
 
-The [matched RoPE eager record](../results/h20-flashinfer-v0.6.16.post1-bf16-rope-pos-ids-eager-performance-20260806.json)
-uses the same Q/K bits and positions for both providers. Loom records `3.997`
-microseconds and FlashInfer records `5.077` microseconds, making Loom `1.270x`
-lower-latency. Both provider-order deltas are below five percent. Output bits
-differ because Loom uses full CUDA libdevice math while FlashInfer uses
-fast-math intrinsics; both remain within the shared BF16 reference limit.
+Run each provider in a separate process. A paged-decode example is:
 
-The [fused RoPE paged KV append correctness record](../results/h20-bf16-rope-paged-kv-append-correctness-20260806.json)
-qualifies one BF16 Q/K/V token per request at `request_kv_len - 1`. The full Q
-output and K/V page pools are bit-exact with the CPU oracle. Duplicate final
-slots and an invalid non-final physical page preserve all output sentinels;
-all four Compute Sanitizer tools report no errors or leaks. The fused SM90
-kernel uses 23 registers with no stack, spills, barriers, or static shared
-memory.
+```bash
+LOOM_BENCH_RUN_LABEL=loom_first \
+  make bench-paged-loom > loom-first.jsonl
+LOOM_BENCH_RUN_LABEL=flashinfer_second \
+  LOOM_BENCH_OPERATORS=paged_batch_decode \
+  python3 tools/flashinfer/matched_bench.py > flashinfer-second.jsonl
 
-The [matched fused append eager record](../results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-eager-performance-20260806.json)
-compares one Loom kernel with FlashInfer's standard RoPE plus paged append
-composition. Both processes are pinned to CPU 40 on the GPU-local NUMA node,
-with one OMP and MKL thread. Loom and FlashInfer combined medians are `3.989`
-and `11.735` microseconds, making Loom `2.942x` lower-latency on the admitted
-batch-4 Q16/K4 D128, page-size-16 case. Provider-order deltas are `0.128%` and
-`3.159%`. Unrestricted-affinity diagnostic samples are excluded because CPU
-migration produced non-admissible eager host-path drift.
+LOOM_BENCH_RUN_LABEL=flashinfer_first \
+  LOOM_BENCH_OPERATORS=paged_batch_decode \
+  python3 tools/flashinfer/matched_bench.py > flashinfer-first.jsonl
+LOOM_BENCH_RUN_LABEL=loom_second \
+  make bench-paged-loom > loom-second.jsonl
 
-The [explicit multi-token correctness record](../results/h20-bf16-rope-paged-kv-append-tokens-correctness-20260806.json)
-extends fused append to 1 through 64 tokens with explicit batch indices and
-positions. The six-token case appends each request's final two tokens in
-shuffled order; the 64-token case exercises both validation warps. Short
-metadata fails before CUDA submission, four invalid device metadata classes
-preserve all output sentinels, and memcheck, racecheck, initcheck, and
-synccheck report no errors or leaks. The kernel uses 28 registers, 8 bytes
-shared memory, and no stack or spills.
+python3 tools/flashinfer/summarize.py \
+  loom-first.jsonl flashinfer-second.jsonl \
+  flashinfer-first.jsonl loom-second.jsonl > summary.json
+```
 
-The [matched explicit multi-token eager record](../results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-eager-performance-20260806.json)
-uses the same fixed CPU40/NUMA0 protocol. Loom and FlashInfer combined medians
-are `5.510` and `11.732` microseconds, making Loom `2.129x` lower-latency on
-the admitted six-token suffix case. Provider-order deltas are `2.689%` and
-`4.164%`. Both paths satisfy independent references within the shared BF16
-limit; Q/K output and reference bits are not claimed equal across providers.
+Use these Loom targets for the other admitted measurements:
 
-The [explicit append Graph correctness record](../results/h20-bf16-rope-paged-kv-append-tokens-cuda-graph-correctness-20260806.json)
-captures one checked command and replays it twice after external provider,
-plan, and read-buffer owners are dropped. Explicit wait and drop completion
-paths preserve the CPU-reference result, and all four Compute Sanitizer tools
-report no errors or leaks.
+| Measurement | Loom target | FlashInfer script |
+| --- | --- | --- |
+| All eager cases | `make bench-loom` | `tools/flashinfer/matched_bench.py` |
+| Ragged prefill eager | `make bench-ragged-loom` | `tools/flashinfer/matched_bench.py` |
+| Paged prefill eager | `make bench-paged-prefill-loom` | `tools/flashinfer/matched_bench.py` |
+| Ragged prefill Graph | `make bench-ragged-graph-loom` | `tools/flashinfer/ragged_graph_bench.py` |
+| Paged prefill Graph | `make bench-paged-prefill-graph-loom` | `tools/flashinfer/paged_prefill_graph_bench.py` |
+| Standard RoPE eager | `make bench-rope-loom` | `tools/flashinfer/matched_bench.py` |
+| Fused append eager | `make bench-rope-append-tokens-loom` | `tools/flashinfer/matched_bench.py` |
+| Fused append Graph | `make bench-rope-append-tokens-graph-loom` | `tools/flashinfer/rope_append_graph_bench.py` |
 
-The [matched explicit append Graph record](../results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-graph-performance-20260806.json)
-measures one fixed-address replay plus one completion event per sample. Loom's
-one-node and FlashInfer's two-node graphs record combined medians of `8.288`
-and `13.728` microseconds, making Loom `1.656x` lower-latency. Provider-order
-deltas are `2.330%` and `0.350%`; all 400 samples are retained without
-trimming. This metric is separate from eager provider and isolated-kernel
-measurements.
+Keep eager and Graph samples in separate summaries. Keep different algorithms
+and run labels separate. Exclude a ranking when either provider's order median
+changes by more than five percent.
+
+## Evidence records
+
+Store reviewed JSON records in [the evidence directory](../results/README.md).
+Each record includes source identity, environment, contract, commands, artifact
+hashes, accepted claims, excluded claims, and raw samples when applicable.
+
+Use `h20-<operator>-<gate>-YYYYMMDD.json`. Do not edit a reviewed file. A
+changed source, contract, provider, toolchain, oracle, poison policy, or summary
+schema requires a new record.

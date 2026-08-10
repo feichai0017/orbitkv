@@ -11,7 +11,7 @@ mod ragged_prefill;
 mod single_decode;
 
 pub use paged_append::{
-    Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensMetadata,
+    Bf16RopePagedKvAppendMetadata, Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensMetadata,
     Bf16RopePagedKvAppendTokensSpec, ROPE_PAGED_KV_APPEND_MAX_TOKENS,
     rope_paged_kv_append_bf16_reference, rope_paged_kv_append_tokens_bf16_reference,
 };

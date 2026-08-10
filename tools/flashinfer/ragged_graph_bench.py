@@ -13,17 +13,17 @@ import flashinfer
 from matched_bench import (
     PROVIDER_COMMIT,
     RAGGED_FIXTURE_ID,
+    check_attention_output,
     deterministic_bf16,
     digest_bf16,
     digest_i32,
+    ragged_attention_reference,
+    validate_flashinfer_installation,
 )
 
 
 MEASUREMENT = "fixed_address_cuda_graph_single_replay_event"
 CASE = "bf16_ragged_gqa4_b2_q32_64_kv256_1024_qh16_kvh4_d128"
-FNV_OFFSET_BASIS = 0xCBF29CE484222325
-FNV_PRIME = 0x00000100000001B3
-MASK64 = (1 << 64) - 1
 
 
 def env_positive_int(name: str, default: int) -> int:
@@ -33,15 +33,8 @@ def env_positive_int(name: str, default: int) -> int:
     return value
 
 
-def digest_f32(values: torch.Tensor) -> str:
-    digest = FNV_OFFSET_BASIS
-    for value in values.contiguous().view(torch.int32).view(-1).tolist():
-        digest ^= value & 0xFFFFFFFF
-        digest = (digest * FNV_PRIME) & MASK64
-    return f"{digest:016x}"
-
-
 def main() -> None:
+    validate_flashinfer_installation()
     warmup = env_positive_int("LOOM_BENCH_WARMUP", 200)
     launches = env_positive_int("LOOM_BENCH_LAUNCHES", 1)
     samples = env_positive_int("LOOM_BENCH_SAMPLES", 100)
@@ -126,15 +119,32 @@ def main() -> None:
     torch.cuda.current_stream().wait_stream(warmup_stream)
     torch.cuda.synchronize()
 
-    run()
-    torch.cuda.synchronize()
-    reference_output = output.clone()
-    reference_lse = lse.clone()
+    expected_output, expected_lse = ragged_attention_reference(
+        query_host.reshape(nnz_qo, query_heads, head_dim),
+        key_host.reshape(nnz_kv, kv_heads, head_dim),
+        value_host.reshape(nnz_kv, kv_heads, head_dim),
+        qo_indptr_values,
+        kv_indptr_values,
+        causal=True,
+    )
 
     graph = torch.cuda.CUDAGraph()
     with torch.cuda.graph(graph):
         run()
     torch.cuda.synchronize()
+    output.fill_(math.nan)
+    lse.fill_(math.nan)
+    torch.cuda.synchronize()
+    graph.replay()
+    torch.cuda.synchronize()
+    correctness = check_attention_output(
+        "FlashInfer ragged-prefill Graph replay",
+        output,
+        lse,
+        expected_output,
+        expected_lse,
+        reference="independent PyTorch F32 ragged-attention formula",
+    )
     for _ in range(warmup):
         graph.replay()
     torch.cuda.synchronize()
@@ -150,24 +160,6 @@ def main() -> None:
         end.record()
         end.synchronize()
         samples_us.append(start.elapsed_time(end) * 1000.0)
-
-    torch.cuda.synchronize()
-    output_max_abs = (
-        (output.float() - reference_output.float()).abs().max().item()
-    )
-    output_bit_mismatches = (
-        output.view(torch.int16) != reference_output.view(torch.int16)
-    ).sum().item()
-    lse_max_abs = (lse - reference_lse).abs().max().item()
-    lse_bit_mismatches = (
-        lse.view(torch.int32) != reference_lse.view(torch.int32)
-    ).sum().item()
-    if output_bit_mismatches != 0 or lse_bit_mismatches != 0:
-        raise RuntimeError(
-            "FlashInfer graph replay changed output versus its eager reference: "
-            f"output_mismatches={output_bit_mismatches}, "
-            f"lse_mismatches={lse_bit_mismatches}"
-        )
 
     print(
         json.dumps(
@@ -190,17 +182,10 @@ def main() -> None:
                     "graph": "torch_cuda_graph_fixed_address",
                     "wrapper_cuda_graph_mode": True,
                     "completion_event_inside_timed_interval": True,
-                    "correctness": {
-                        "reference": "same fixed wrapper eager run",
-                        "output_max_abs": output_max_abs,
-                        "output_bit_mismatches": output_bit_mismatches,
-                        "output_digest": digest_bf16(output),
-                        "lse_max_abs": lse_max_abs,
-                        "lse_bit_mismatches": lse_bit_mismatches,
-                        "lse_digest": digest_f32(lse),
-                    },
+                    "replay_output_poisoned": True,
+                    "kernel_count": {"status": "unverified"},
+                    "correctness": correctness,
                 },
-                "kernels_per_call": 1,
                 "shape": {
                     "batch_size": batch_size,
                     "nnz_qo": nnz_qo,

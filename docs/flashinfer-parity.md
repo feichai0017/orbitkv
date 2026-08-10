@@ -1,246 +1,140 @@
 # FlashInfer parity matrix
 
-Loom Infer targets the inference-operator surface of
-[FlashInfer v0.6.16.post1](https://github.com/flashinfer-ai/flashinfer/releases/tag/v0.6.16.post1),
-pinned to source commit
-[`5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57`](https://github.com/flashinfer-ai/flashinfer/commit/5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57).
+Loom Infer uses this pinned comparison baseline:
 
-Release candidates, nightly builds, and rolling online documentation do not
-change this acceptance baseline. They enter an upstream watch list before the
-project deliberately advances the pin.
+| Item | Reference |
+| --- | --- |
+| Release | [FlashInfer v0.6.16.post1](https://github.com/flashinfer-ai/flashinfer/releases/tag/v0.6.16.post1) |
+| Source | [`5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57`](https://github.com/flashinfer-ai/flashinfer/commit/5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57) |
 
-Loom measures parity by operator contract, not file or symbol count. Each
-admitted row records shapes, dtypes, layouts, architecture, and execution
-semantics.
+Benchmark records verify the installed wheel version. They record a provider
+commit only when the installed artifact proves its source revision.
 
-Each row also records its oracle, H20 correctness, matched performance, CUDA
-Graph, and engine integration. A domain remains incomplete until every admitted
-contract passes its declared gates.
+Parity means matching an admitted operator contract. It does not mean matching
+Python wrappers, file structure, or symbol count. Shape, dtype, layout,
+masking, numerical behavior, workspace, aliasing, stream, and Graph semantics
+must agree before two paths form a matched comparison.
+
+Loom does not claim complete domain-level parity.
 
 ## States
 
 | State | Meaning |
 | --- | --- |
-| `partial device correct` | A narrower Loom contract passed its declared device correctness gate |
+| `partial device correct` | A narrower Loom contract passed its declared H20 correctness gate |
+| `requalification` | Loom changed the contract after its last H20 record |
 | `planned` | The roadmap names the domain, but no permanent provider is admitted |
-| `unscoped` | The pinned upstream surface is recorded, but Loom has not admitted a contract |
+| `unscoped` | Loom has not admitted a contract for the upstream domain |
 
-No complete domain-level parity is currently claimed.
+## Domain coverage
 
-## Operator domains
-
-| Domain | Representative v0.6.16.post1 surface | Loom state |
+| Domain | Representative upstream surface | Loom state |
 | --- | --- | --- |
-| Dense decode attention | [`single_decode_with_kv_cache`, `BatchDecodeWithPagedKVCacheWrapper`, `xqa`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 NHD D128 has single-request direct/split-K and page-size-16 batch-decode GPU paths |
-| Prefill and append attention | [`single_prefill_with_kv_cache`, paged and ragged batch prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `partial device correct`; BF16 NHD D128 has ragged and page-size-16 paged batch causal prefill GPU paths |
-| Mixed-batch attention | [`BatchAttention`, attention-sink wrapper](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
-| MLA attention | [`BatchMLAPagedAttentionWrapper`, XQA and TRT-LLM MLA decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/attention.rst) | `unscoped` |
-| Attention state and cascade | [`merge_state`, `merge_states`, `MultiLevelCascadeAttentionWrapper`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cascade.rst) | `planned` at state-merge level |
-| Sparse and MSA attention | [`BlockSparseAttentionWrapper`, variable block sparse, MSA](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/sparse.rst) | `unscoped` |
-| POD attention | [`PODWithPagedKVCacheWrapper`, batch POD](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/pod.rst) | `unscoped` |
-| Paged KV operations | [`append_paged_kv_cache`, MLA append, index/position generation](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/page.rst) | `partial device correct`; BF16 NHD D128, page-size-16 fused standard-RoPE append supports explicit 1..=64 tokens |
-| Dense and quantized GEMM | [`mm_bf16`, `mm_fp8`, `mm_fp4`, `tinygemm_bf16`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/gemm.rst) | `partial device correct`; one fixed contiguous BF16 cuBLASLt plan only |
-| Grouped GEMM | [`grouped_mm_bf16`, `grouped_mm_fp8`, `grouped_mm_fp4`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/grouped_mm.rst) | `planned` through vendor providers |
-| Fused MoE | [routing and fused MoE providers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/fused_moe.rst) | `planned`; none implemented |
-| Sampling and speculation | [logits/probability sampling and chain speculative sampling](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/sampling.rst) | `planned`; none implemented |
-| Logits processing | [`LogitsPipe`, temperature, Top-K, Top-P, Min-P, sample](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/logits_processor.rst) | `planned`; no pipeline API |
-| Standalone Top-K | [`top_k` and page-table/ragged transforms](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/topk.rst) | `planned`; none implemented |
-| Normalization | [RMSNorm, fused add RMSNorm, LayerNorm, fused QK RMSNorm/RoPE](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/norm.rst) | `partial device correct`; contiguous RMSNorm F32/FP16/BF16 only |
-| RoPE | [standard and Llama 3.1 RoPE, fused FP8 KV append](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/rope.rst) | `partial device correct`; BF16 D128 NeoX split-half has standalone and explicit 1..=64-token paged-KV append paths |
-| Activation and gated MLP tail | [`silu_and_mul`, GELU tanh/exact variants](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/activation.rst) | `unscoped` |
-| Quantization | [`packbits`, FP4, NVFP4 KV, MXFP8](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/quantization.rst) | `planned`; none implemented |
-| Communication | [AllReduce fusion, quantized AllReduce, MoE and decode A2A](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/comm.rst) | `planned` only after a measured distributed workload |
-| GDN prefill/decode | [chunk GDN](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/gdn_prefill.rst), [recurrent GDN decode](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/gdn_decode.rst) | `unscoped` |
-| KDA decode | [`recurrent_kda`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/kda_decode.rst) | `unscoped` |
-| Mamba and SSM | [`selective_state_update`, checkpointing SSU](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/mamba.rst) | `unscoped` |
-| mHC | [post and pre-fusion operators](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/mhc.rst) | `unscoped` |
-| MLA packing | [`concat_mla_k`](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/concat_ops.rst) | `unscoped` |
+| Dense decode attention | `single_decode_with_kv_cache`, paged batch decode, XQA | `requalification`: BF16 NHD D128 providers exist, but their records predate the DeviceRegion launch path |
+| Prefill attention | Single, ragged batch, and paged batch prefill | `requalification`: BF16 NHD D128 providers exist, but their records predate the DeviceRegion launch path |
+| Paged KV append | Standard and MLA paged append, index and position generation | `requalification`: fused standard-RoPE BF16 append now requires exclusive target pages |
+| Attention state and cascade | State merge and cascade wrappers | `planned` at state-merge level |
+| Mixed-batch attention | Batch attention and attention sinks | `unscoped` |
+| MLA attention | Paged MLA decode and prefill | `unscoped` |
+| Sparse, MSA, and POD attention | Sparse, multiple-sequence, and combined prefill/decode wrappers | `unscoped` |
+| Dense GEMM | BF16, FP8, FP4, and tiny GEMM | `requalification`: one contiguous BF16 cuBLASLt plan requires a current-source H20 record |
+| Grouped GEMM | BF16, FP8, and FP4 grouped matrix work | `planned` through vendor providers |
+| Normalization | RMSNorm, add RMSNorm, LayerNorm, and fused QK norm | `requalification`: contiguous RMSNorm F32, FP16, and BF16 providers require current-source H20 records |
+| RoPE | Standard, Llama 3.1, and fused KV variants | `requalification`: standalone BF16 D128 NeoX passed the local H20 gate, but no current-source record is published |
+| Sampling and speculation | Sampling, logits processors, and speculative verification | `planned` |
+| MoE | Routing and fused expert execution | `planned` |
+| Quantization | Packbits, FP4, FP8, and KV formats | `planned` |
+| Communication | AllReduce and all-to-all variants | `planned` after a measured distributed workload |
+| Activation and MLP tail | SiLU-multiply and GELU variants | `unscoped` |
+| GDN, KDA, Mamba, and SSM | Recurrent and state-update operators | `unscoped` |
+| Supporting backends | cuDNN attention, CuTe DSL, and green contexts | `unscoped`. Loom custom kernels use cuda-oxide |
 
-## Supporting surfaces
+The upstream links remain in the pinned
+[FlashInfer API index](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/index.rst).
 
-| Surface | Representative v0.6.16.post1 surface | Loom state |
-| --- | --- | --- |
-| cuDNN attention backend | [cuDNN batch decode and prefill](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cudnn.rst) | `unscoped`; current vendor work is cuBLASLt GEMM only |
-| CuTe DSL backend | [CuTe DSL operators and wrappers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/cute_dsl.rst) | Outside the custom-kernel source boundary; Loom kernels use cuda-oxide |
-| CUDA green contexts | [device green-context partitioning](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/green_ctx.rst) | `unscoped` |
-| Testing and benchmarks | [FLOP, bandwidth, GPU-time, and Graph helpers](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/testing.rst) | Infrastructure partial; matched eager, CUPTI kernel-duration, and fixed-address Graph records exist, while hardware counters and broader Graph coverage remain open |
+## Admitted attention matrix
 
-## First attention sequence
+| Loom contract | CUDA implementation | Historical H20 matrix | Historical Graph evidence |
+| --- | --- | --- | --- |
+| Single decode | Direct online softmax | MHA, MQA, and GQA | None |
+| Single decode split-K | Explicit partitions, F32 partial workspace, and eight-warp merge | MQA and GQA | None |
+| Paged batch decode | Direct MHA. Eight-warp token-parallel MQA and GQA | MHA, MQA, GQA, mixed lengths, page order, and read-only page reuse | None |
+| Ragged causal prefill | Direct, eight-warp, sixteen-warp, and tiled GQA4 split-eight | Direct short MHA, MQA, and GQA. Long MQA uses sixteen warps. Published stages also cover eight-warp and tiled GQA4 paths | Tiled long GQA4 only |
+| Paged causal prefill | Direct online softmax | MHA, MQA, GQA, mixed query and KV lengths, page order, and read-only page reuse | One direct GQA4 fixture |
+| Standard RoPE | D128 NeoX split-half with explicit I32 positions | Positions through 32,767 in the recorded fixture | None |
+| Fused RoPE plus paged append | One through 64 explicit tokens with per-page reference counts | Requalification | Requalification |
 
-The first admitted attention contract is a BF16 SM90 single-request decode
-slice: NHD layout, head dimension 128, MHA/GQA, full window, no positional
-encoding or soft cap, F32 score/softmax accumulation, BF16 output, and F32
-log2-LSE. It covers head mapping, online softmax, numerical stability, and
-non-power-of-two KV lengths.
+All attention rows fix BF16, NHD layout, head dimension 128, full attention
+unless the row says causal, and F32 softmax state. Paged rows fix page size 16.
+No row covers sliding windows, soft caps, custom masks, FP8 KV, or MLA.
 
-The
-[H20 result](results/h20-bf16-single-decode-correctness-20260803.json) is a
-Loom GPU versus CPU-oracle gate. It contains no matched FlashInfer run.
+Every matrix entry predates the DeviceRegion submission path. Current-source
+device and Graph records remain open.
 
-The first [matched eager-provider result](results/h20-flashinfer-v0.6.16.post1-eager-performance-20260805.json)
-uses identical BF16 operand bit patterns and both provider orders. It measures
-the pre-split-K Loom source: FlashInfer has 6.29x lower median latency at GQA KV
-length 127 and 80.08x lower median latency at GQA KV length 4096 under that
-declared metric. Loom has lower median latency for the KV-length-1 MHA case, but
-short eager paths show larger cross-process order variance and are not an
-isolated kernel-duration claim.
+## Dispatch limits
 
-The current [matched split-K result](results/h20-flashinfer-v0.6.16.post1-split-k-eager-performance-20260805.json)
-retains the same semantic shapes and fixtures while recording both providers'
-execution metadata. Split-K lowers Loom median latency by 3.79x at GQA KV
-length 127 and 26.79x at KV length 4096. FlashInfer remains 1.69x and 3.00x
-lower-latency under the declared eager metric.
+Paged decode chooses direct only when query-head count equals KV-head count.
+It chooses eight-warp token parallelism for MQA and GQA. The policy does not
+use KV length.
 
-The current [parallel-merge result](results/h20-flashinfer-v0.6.16.post1-parallel-merge-eager-performance-20260805.json)
-uses an eight-warp block-local merge and retuned partition counts. Relative to
-the direct baseline, Loom reaches 5.39x and 38.19x lower latency at GQA KV
-lengths 127 and 4096. FlashInfer remains 1.17x and 2.09x lower-latency.
+Ragged prefill uses average KV length across the batch:
 
-The second contract adds BF16 paged batch decode with NHD pages, head dimension
-128, page size 16, MHA/MQA/GQA, one query token per request, full window, and no
-positional encoding or soft cap. Its `i32` page table uses `indptr`, physical
-page indices, and per-request last-page lengths compatible with the pinned
-FlashInfer wrapper.
+- below 64 tokens: direct.
+- at least 64 tokens with one KV head: sixteen warps.
+- other long shapes: eight warps.
+- GQA group size four with average KV length at least 256: tiled split-eight.
 
-The [paged H20 result](results/h20-bf16-paged-batch-decode-correctness-20260806.json)
-covers mixed request lengths, arbitrary physical page order and reuse, exact
-metadata spans, and a device-side invalid-page guard. All valid cases produce
-bit-exact BF16 output against the CPU oracle, maximum log2-LSE error is
-`4.768371582e-7`, and four Compute Sanitizer tools report no errors.
+This policy does not use a length histogram or request grouping. The tiled
+Graph record does not qualify the other ragged algorithms.
 
-The first [matched paged eager result](results/h20-flashinfer-v0.6.16.post1-paged-batch-decode-eager-performance-20260806.json)
-uses identical BF16 page-pool bits, `i32` page tables, preallocated buffers,
-CUDA events, and both provider orders. Loom has 4.21x lower combined median
-latency for batch-1 MHA at KV length 1. FlashInfer has 1.62x lower combined
-median latency for the mixed-length batch-3 MQA case.
+Paged prefill has one direct provider. Its GQA4 Graph record does not qualify
+MHA, MQA, mutable metadata, graph updates, or optimized long-context paths.
 
-The current [token-parallel result](results/h20-flashinfer-v0.6.16.post1-paged-token-parallel-eager-performance-20260806.json)
-preserves the same fixtures and measurement. Eight warps partition each
-MQA/GQA request-head KV range and merge stable F32 state inside one block.
-Loom MQA and GQA eager latency falls by 3.78x and 3.32x relative to the direct
-record. Loom is now 4.41x lower-latency for MHA and 2.35x lower-latency for
-MQA than FlashInfer.
+## Paged KV ownership difference
 
-The batch-4 GQA eager ranking remains excluded: FlashInfer's provider-order
-delta is 60.62%. CUPTI records Loom kernel medians of `2.176`, `4.864`, and
-`4.928` microseconds for MHA, MQA, and GQA, versus direct medians of `2.176`,
-`20.928`, and `18.304` microseconds.
+FlashInfer parity at the tensor level does not define the engine's KV ownership
+policy. Loom now makes write ownership explicit.
 
-The third contract adds BF16 ragged batch prefill over contiguous NHD storage.
-Query and KV rows use separate `i32` `indptr` arrays, head dimension is 128,
-and the causal mask is bottom-right aligned. The first contract requires every
-request to satisfy `1 <= qo_len <= kv_len`; it does not include empty requests,
-RoPE, sliding windows, soft caps, or custom masks.
+Paged decode and prefill may read shared physical pages. Fused append accepts
+an authoritative reference-count snapshot and writes only to pages whose count
+is one. The engine or pager must make the target private and remap the request
+before enqueue.
 
-The current [ragged prefill H20 result](results/h20-bf16-ragged-prefill-tiled-split-k-correctness-20260806.json)
-covers direct, eight-warp, sixteen-warp, and tiled eight-partition MHA, MQA,
-and GQA execution, equal and mixed query/KV lengths, exact metadata spans,
-explicit tiled workspace, and a device-side nonmonotonic-indptr guard. Maximum
-BF16 output error is `4.8828125e-4`, maximum log2-LSE error is
-`2.861022949e-6`, and four Compute Sanitizer tools report no errors.
+The old append records have these limits:
 
-The [matched ragged eager result](results/h20-flashinfer-v0.6.16.post1-ragged-prefill-cp-async-eager-performance-20260806.json)
-retains 600 samples and both provider orders. Unrolled 16-byte `cp.async` K/V
-staging lowers Loom long-GQA latency to `48.232` microseconds, `1.148x` below
-the previous tiled split-K result and `7.729x` below direct. FlashInfer remains
-`2.206x` lower-latency on stable long GQA. Short-MHA and mixed-MQA rankings are
-excluded because FlashInfer's provider-order median deltas are `10.643%` and
-`14.097%`.
+- They use the earlier 2026-08-06 contract.
+- Some fixtures reuse a physical page at different write offsets.
+- They do not qualify the new rule.
 
-The [ragged fixed-address Graph result](results/h20-bf16-ragged-prefill-cuda-graph-correctness-20260806.json)
-captures the tiled partial and merge kernels and replays them twice after
-external provider, plan, and read-buffer owners are dropped. Output and
-log2-LSE preserve the standalone digests, and four Compute Sanitizer tools
-report no errors or leaks.
+See the [evidence index](results/README.md) for the historical files.
 
-The [matched ragged Graph performance result](results/h20-flashinfer-v0.6.16.post1-ragged-prefill-graph-performance-20260806.json)
-records one fixed-address replay and one completion event per CUDA-event
-sample. Loom and FlashInfer combined medians are `50.480` and `32.640`
-microseconds, so FlashInfer is `1.547x` lower-latency on this shape. The
-provider-order deltas are `0.127%` and `0.344%`. This single-replay Graph metric
-is separate from eager provider and isolated-kernel measurements. Engine
-invocation and serving results remain open before a continuous-batching parity
-claim.
+## Evidence interpretation
 
-The fourth attention contract adds BF16 paged causal prefill with ragged query
-rows and NHD page-size-16 KV storage. It uses query `indptr`, page `indptr`,
-physical page indices, and last-page lengths compatible with the pinned
-FlashInfer paged wrapper. The causal mask remains bottom-right aligned.
+The single-decode, paged-decode, ragged-prefill, paged-prefill, and standalone
+RoPE records cover only their named shapes and timed regions. Stable results
+retain both provider orders and raw samples. The record excludes a ranking
+when its order variance exceeds the acceptance limit.
 
-The [paged prefill H20 result](results/h20-bf16-paged-prefill-correctness-20260807.json)
-covers direct MHA, MQA, and GQA execution, equal and mixed query/KV lengths,
-partial pages, physical-page reordering and reuse, short metadata,
-duplicate-binding preflight, and an invalid-page device guard. Maximum BF16
-output error is `1.220703125e-4`, maximum log2-LSE error is
-`9.536743164e-7`, and four Compute Sanitizer tools report no errors.
+The project keeps four boundaries separate:
 
-The [matched paged-prefill eager result](results/h20-flashinfer-v0.6.16.post1-paged-prefill-eager-performance-20260807.json)
-retains 600 samples and both provider orders. Loom is `3.264x`
-lower-latency on short MHA and `1.288x` lower-latency on GQA4. FlashInfer is
-`1.081x` lower-latency on mixed MQA. Every provider-order delta is below
-`2.1%`; no universal winner is claimed.
+| Boundary | Required proof |
+| --- | --- |
+| Host | Contract validation and CPU or independent reference |
+| Device | H20 correctness, edge cases, and declared sanitizer tools |
+| Graph | Capture and replay under one declared binding policy |
+| Performance | Matched providers, timed region, raw samples, and order variance |
 
-The [paged-prefill fixed-address Graph result](results/h20-bf16-paged-prefill-cuda-graph-correctness-20260807.json)
-captures one direct command and replays it twice after external resource-owner
-teardown. Output and log2-LSE preserve the standalone digests, and all four
-Compute Sanitizer tools report no errors or leaks.
+Engine and serving parity remain open. No existing record proves continuous
+batching, end-to-end model speed, TTFT, TPOT, throughput, or memory savings.
 
-The [matched paged-prefill Graph performance result](results/h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json)
-records one fixed-address replay and one completion event per sample on the
-same GQA4 page-reorder/reuse case. Loom and FlashInfer combined medians are
-`15.072` and `18.560` microseconds, so Loom is `1.231x` lower-latency.
-Provider-order deltas are `0.213%` and `0.000%`, and all 400 samples are
-retained. This does not cover capture or instantiation latency, mutable
-metadata, graph updates, optimized long-context paths, or engine execution.
+## Advancing the pin
 
-The first standalone RoPE contract adds BF16 NHD D128 Q/K tensors with
-explicit I32 position IDs, full-dimension NeoX split-half rotation, scale one,
-and theta 10,000. The [H20 correctness result](results/h20-bf16-rope-pos-ids-correctness-20260806.json)
-covers positions through 32,767 and all four Compute Sanitizer tools.
+Release candidates, nightly builds, and rolling documentation do not change
+the baseline. To advance the pin:
 
-The [matched RoPE eager result](results/h20-flashinfer-v0.6.16.post1-bf16-rope-pos-ids-eager-performance-20260806.json)
-uses positions matching two ragged prefill suffixes. Loom and FlashInfer
-combined medians are `3.997` and `5.077` microseconds, so Loom is `1.270x`
-lower-latency. Provider-order deltas are `0.048%` and `2.872%`. Both providers
-pass independent standard RoPE references within the shared BF16 error limit;
-their full-math and fast-math output bits are not equal.
-
-The first fused append contract adds one BF16 Q/K/V token per request, derives
-each position from the request's extended page table, rotates Q/K in NeoX
-split-half style, and writes rotated K plus unmodified V to the final physical
-NHD slot. The [H20 correctness result](results/h20-bf16-rope-paged-kv-append-correctness-20260806.json)
-is bit-exact with the Loom CPU reference for full Q and K/V page pools, covers
-duplicate-slot and invalid-page guards, and passes all four Compute Sanitizer
-tools.
-
-The [matched fused append eager result](results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-eager-performance-20260806.json)
-compares Loom's one kernel with FlashInfer's standard RoPE plus paged append
-composition. Fixed-affinity combined medians are `3.989` and `11.735`
-microseconds, making Loom `2.942x` lower-latency on the admitted batch-4
-Q16/K4 D128 page-size-16 case. Provider-order deltas are `0.128%` and
-`3.159%`. That immutable first record is limited to one token per request.
-
-The explicit [multi-token correctness result](results/h20-bf16-rope-paged-kv-append-tokens-correctness-20260806.json)
-extends the same NHD D128/page-size-16 boundary to 1 through 64 tokens with
-caller-supplied batch indices and positions. The six-token case covers each
-request's final two tokens in shuffled order; the 64-token case exercises both
-validation warps. Short metadata fails before submission, four invalid
-device-resident metadata classes preserve output sentinels, and all four
-Compute Sanitizer tools pass.
-
-The [matched explicit multi-token eager result](results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-eager-performance-20260806.json)
-records Loom and FlashInfer combined medians of `5.510` and `11.732`
-microseconds, making Loom `2.129x` lower-latency on the admitted six-token
-suffix case. Provider-order deltas are `2.689%` and `4.164%`. Both providers
-meet independent references within the shared BF16 limit, but Q/K output and
-reference bits are not claimed equal. More than 64 tokens, MLA, FP8, other
-RoPE/layout variants, engine, and serving boundaries remain open.
-
-The [explicit append Graph correctness result](results/h20-bf16-rope-paged-kv-append-tokens-cuda-graph-correctness-20260806.json)
-captures one checked Loom command and replays it after external resource owners
-are dropped. The [matched Graph result](results/h20-flashinfer-v0.6.16.post1-bf16-rope-paged-kv-append-tokens-graph-performance-20260806.json)
-records one-node Loom and two-node FlashInfer combined medians of `8.288` and
-`13.728` microseconds, making Loom `1.656x` lower-latency under the declared
-single-replay completion-event metric. Provider-order deltas are `2.330%` and
-`0.350%`; all 400 samples are retained. Graph updates, engine, and serving
-boundaries remain open.
+1. Record the new release and source commit.
+2. Diff the operator contracts used by admitted rows.
+3. Update fixtures and independent references.
+4. Rerun affected correctness, sanitizer, Graph, and matched performance
+   gates.
+5. Preserve old records as historical evidence.

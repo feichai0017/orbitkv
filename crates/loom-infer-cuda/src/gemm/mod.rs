@@ -2,7 +2,8 @@
 
 use crate::command::{CommandError, CommandScope, ExternalCommandError, Read, ResolvedRrww, Write};
 use crate::driver::bind_context_for_cleanup;
-use cuda_core::{CudaContext, DeviceBuffer, DriverError};
+use crate::memory::{DeviceRegion, ReadWriteDeviceRegion};
+use cuda_core::{CudaContext, DeviceCopy, DriverError};
 use cudarc::cublaslt::{result, sys};
 use half::bf16;
 use loom_infer::Bf16GemmSpec;
@@ -553,12 +554,12 @@ fn require_alignment(
     }
 }
 
-fn const_device_ptr<T>(buffer: &DeviceBuffer<T>) -> *const c_void {
-    buffer.cu_deviceptr() as usize as *const c_void
+fn const_device_ptr<T: DeviceCopy>(region: &DeviceRegion<T>) -> *const c_void {
+    region.cu_deviceptr() as usize as *const c_void
 }
 
-fn mutable_device_ptr<T>(buffer: &mut DeviceBuffer<T>) -> *mut c_void {
-    buffer.cu_deviceptr() as usize as *mut c_void
+fn mutable_device_ptr<T: DeviceCopy>(region: &mut ReadWriteDeviceRegion<T>) -> *mut c_void {
+    region.cu_deviceptr() as usize as *mut c_void
 }
 
 fn cublas_status(error: result::CublasError) -> i32 {
