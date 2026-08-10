@@ -35,14 +35,14 @@ export const operatorFamilies = [
   },
   {
     name: "Decode",
-    boundary: "Single direct and split-K, plus page-size-16 batch decode.",
+    boundary: "Single direct and split-K, plus typed-status page-size-16 batch decode.",
     provider: "cuda-oxide",
     state: "Requalification",
     tone: "review",
   },
   {
     name: "Prefill",
-    boundary: "Ragged and paged bottom-right causal MHA, MQA, and GQA.",
+    boundary: "Ragged and explicit-plan paged causal MHA, MQA, and GQA.",
     provider: "cuda-oxide",
     state: "Requalification",
     tone: "review",
@@ -65,28 +65,28 @@ export const operatorFamilies = [
 
 export const evidenceHighlights = [
   {
-    value: "Current",
-    label: "Host contracts",
-    detail: "Shared-tail isolation and generated paged-decode cases",
-    sample: "local gates",
+    value: "Source",
+    label: "Paged status",
+    detail: "Typed metadata errors for decode, prefill, and append",
+    sample: "records pending",
+  },
+  {
+    value: "H20",
+    label: "Simulated interop",
+    detail: "External stream and regions with no adapter D2D copy",
+    sample: "not a real engine",
   },
   {
     value: "Pending",
-    label: "H20 records",
-    detail: "Current-source device, sanitizer, and Graph evidence",
+    label: "Current records",
+    detail: "Device, sanitizer, Graph, and matched evidence",
     sample: "old records are historical",
   },
   {
-    value: "Re-run",
-    label: "Matched attention",
-    detail: "Common F32 oracle and strict contract grouping",
-    sample: "old timings are historical",
-  },
-  {
     value: "Open",
-    label: "Engine proof",
-    detail: "Zero-copy invocation from one real model path",
-    sample: "no serving claim",
+    label: "mistral.rs proof",
+    detail: "Real adapter, provider trace, and model-output parity",
+    sample: "no model claim",
   },
 ]
 
@@ -107,17 +107,17 @@ export const evidenceLevels = [
 export const milestones = [
   {
     milestone: "01",
-    name: "Append requalification",
-    reason: "Publish H20 records for exclusive-page writes and typed completion status.",
+    name: "Current-source records",
+    reason: "Publish H20 correctness, sanitizer, and Graph evidence for the merged paths.",
   },
   {
     milestone: "02",
-    name: "Engine memory",
-    reason: "Qualify external CUDA regions without copying or transferring allocations.",
+    name: "mistral.rs boundary",
+    reason: "Use HND decode and linear authority handoff in one real model call.",
   },
   {
     milestone: "03",
-    name: "Paged status",
-    reason: "Return typed metadata errors from decode and prefill completion.",
+    name: "Matched evidence",
+    reason: "Prove reference parity and query Graph nodes before a provider ranking.",
   },
 ]

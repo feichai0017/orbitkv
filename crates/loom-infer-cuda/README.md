@@ -44,12 +44,14 @@ The crate exposes these provider families:
 - F32, FP16, and BF16 contiguous RMSNorm. Low-precision plans select scalar or
   packed-pair kernels from the hidden size.
 - BF16 single decode with direct and explicit split-K plans.
-- BF16 paged batch decode. MHA uses direct attention. MQA and GQA use an
-  eight-warp token-parallel plan.
+- BF16 NHD or HND paged batch decode. MHA uses direct attention. MQA and GQA
+  use an eight-warp token-parallel plan. A device validator reports typed
+  page-table errors at completion.
 - BF16 ragged causal prefill with direct, eight-warp, sixteen-warp, and tiled
   GQA4 plans.
-- BF16 paged causal prefill. Short capacities use direct attention. Long MQA
-  uses sixteen warps, and long GQA uses eight warps.
+- BF16 paged causal prefill with direct, eight-warp, and sixteen-warp plans.
+  The caller selects the algorithm. A device validator reports typed query and
+  page metadata errors at completion.
 - BF16 D128 NeoX RoPE with explicit positions.
 - Fused RoPE and paged KV append for one token per request or 1 through 64
   explicit tokens.
@@ -84,3 +86,16 @@ The fixed-address Graph runtime retains bindings and provider resources until
 replay completes. Operator-specific Graph evidence remains path-specific.
 Mutable bindings, Graph updates, concurrent replay, and cross-stream launch
 remain outside the current contract.
+
+## Engine interop boundary
+
+`ExternalCudaStream` retains an engine-owned stream without adopting it.
+`EngineInteropQueue` orders one single-decode call through pre- and post-events on a Loom-owned stream.
+Checked external regions retain allocation leases and preserve their device addresses.
+After Loom enqueues the post-event wait, an opaque token returns stream-ordered engine authority.
+Checked bindings remain private until completion and must rejoin that exact token before reuse.
+
+The `engine_interop_h20` gate uses an in-repository simulated engine.
+It is not evidence for mistral.rs, vLLM, or another model runner.
+HND paged decode and the authority handoff are source prerequisites.
+A real model call and output parity remain open.

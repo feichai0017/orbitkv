@@ -50,7 +50,7 @@ does not select a silent fallback.
 | RMSNorm | F32, FP16, and BF16 scalar and packed paths | Requalification |
 | GEMM | Fixed contiguous BF16 `D = A × Wᵀ` | Requalification |
 | Single decode | BF16 NHD D128 direct and split-K | Requalification |
-| Paged decode | BF16 NHD D128, page size 16 | Requalification |
+| Paged decode | BF16 NHD or HND D128, page size 16 | Requalification |
 | Ragged prefill | BF16 bottom-right causal MHA, MQA, and GQA | Requalification |
 | Paged prefill | BF16 NHD D128, page size 16 | Requalification |
 | RoPE | BF16 D128 NeoX with explicit I32 positions | Requalification |
@@ -66,22 +66,30 @@ The [operator catalog](docs/operator-catalog.md) lists exact combinations. The
 Loom keeps host correctness, H20 correctness, sanitizer, performance, Graph,
 engine, and serving evidence separate.
 
-The current comparison tools add a common F32 attention oracle, strict
-contract grouping, and validated provider package versions. The FlashInfer
-Graph scripts also poison replay outputs before validation.
-Existing matched attention timings predate these checks and remain historical
-until they are rerun.
+The current comparison tools group exact contracts and validate provider package versions.
+Loom H20 gates use Rust CPU references, while FlashInfer scripts use separate PyTorch F32 references.
+A new ranking must first prove that both references describe the same fixture and contract.
 
 Existing fused-append records also predate the exclusive-page ownership
 contract.
 
 The DeviceRegion refactor changed every CUDA submission path. All published
-device and Graph records predate the current source and require replacement.
+device, Graph, and performance records predate the current source and require
+replacement.
 
-The current append path validates device metadata once, emits a scope-bound
-compact map, and reports a typed error at completion. Its eager and Graph H20
-gates pass in an isolated working-tree run, but the project has not published
-a new immutable record yet.
+Paged decode, paged prefill, and fused append now validate device metadata on the CUDA stream.
+Semantic rejection returns a typed completion error without poisoning the queue or fixed-address Graph.
+These are source capabilities.
+No immutable current-source record exists yet.
+
+Paged prefill requires the caller to select direct, eight-warp, or sixteen-warp
+execution. It has no hidden capacity-based dispatch.
+
+The external-stream bridge accepts leased `DeviceRegion` values and orders one single-decode call with CUDA events.
+After Loom enqueues the post-event wait, the bridge returns opaque stream-ordered engine authority.
+Loom keeps its binding capability private until completion.
+The H20 gate uses a simulated engine and reports unchanged pointers with no adapter device-to-device copy.
+This is not a real engine integration.
 
 Performance claims are contract-specific. Loom does not claim that every
 operator or shape is faster than FlashInfer.
@@ -130,14 +138,14 @@ defines device qualification.
 
 ## Project status
 
-Loom Infer is alpha software. The merged source adds sixteen-warp long-MQA and
-eight-warp long-GQA4 paged-prefill providers whose H20 records cover the source
-tree before the DeviceRegion merge. Both providers require current-source
-requalification.
+Loom Infer is alpha software.
+The merged source adds sixteen-warp long-MQA and eight-warp long-GQA4 paged-prefill providers.
+Callers select these algorithms explicitly.
+Their published H20 records cover source before the DeviceRegion and typed-status changes.
 
-Current work publishes new shared-KV and external-region evidence, extends
-typed device errors to the remaining paged operators, and proves one real
-engine invocation.
+Current source has HND paged-decode kernels and a stream-ordered authority handoff.
+The next step is a real mistral.rs adapter that proves provider hits, unchanged device pointers, and model-output parity.
+Current-source H20 records remain unpublished.
 
 Read the [architecture](docs/design/loom-infer-architecture.md) and
 [contribution guide](CONTRIBUTING.md) before adding a provider.

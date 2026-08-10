@@ -30,11 +30,11 @@ append records remain historical.
 
 ## K0.2: Accept external device regions
 
-**State:** partial.
+**State:** source implemented. Real-engine evidence pending.
 
-The command layer now has typed read and read-write regions for complete
-`DeviceBuffer<T>` allocations, owned subranges, and leased external
-allocations. Owned buffers and external regions use one resolver path.
+The command layer accepts typed owned and external device regions.
+`ExternalCudaStream` retains an engine stream without taking ownership.
+`EngineInteropQueue` orders one single-decode call through CUDA events.
 
 - Keep pointer, element span, CUDA context, access mode, and lifetime lease in
   one region value.
@@ -43,22 +43,21 @@ allocations. Owned buffers and external regions use one resolver path.
 - Keep writable access exclusive until completion settles.
 - Test non-zero offsets and lifetime retention on H20.
 - Qualify fixed-address Graph retention for external leases.
-- Prove that an engine-owned region crosses no tensor copy.
+- Preserve the simulated-engine H20 gate for external pointers, stream order,
+  and zero adapter device-to-device copies.
+- Prove the same properties at a real model-runner call site.
 
-Exit: an engine-owned allocation enters an operator without a tensor copy, and
-H20 evidence proves that completion keeps its lease alive through asynchronous
-execution.
+Exit: a real model runner passes its own allocation and stream without an
+adapter copy. Completion retains every lease through asynchronous execution.
 
 ## K0.3: Report device metadata errors
 
-**State:** partial.
+**State:** source implemented. Immutable evidence pending.
 
-Fused append now runs one validator, writes a compact scope-bound `AppendMap`,
-and reports semantic metadata failures through completion. A rejected command
-returns its checked bindings and does not poison the queue or Graph. Paged
-decode and prefill still use silent in-kernel guards.
+Paged decode, paged prefill, and fused append report device metadata failures
+through typed completion errors. Rejection preserves outputs and bindings. It
+does not poison the queue or fixed-address Graph.
 
-- Extend the status protocol to paged decode and paged prefill.
 - Keep each validator responsible for fully overwriting its status packet.
 - Read status only after the completion fence.
 - Keep semantic rejection recoverable. Poison only on CUDA failure or a
@@ -75,11 +74,13 @@ error. No operator silently returns success after a device guard rejects work.
 
 **State:** planned.
 
-The first integration target should exercise the same Rust plan and command
-path used by hardware validation.
+The proposed first target is mistral.rs. It must exercise the same Rust plan
+and command path used by hardware validation.
 
-- Select one real decode or prefill call site.
+- Use the HND paged-decode path now present in Loom source.
 - Bind engine-owned device regions and the engine's non-default stream.
+- Adapt the engine's linear stream and storage authority to Loom's
+  stream-ordered handoff without exposing a second writable capability.
 - Record provider hit counts and selected algorithms.
 - Prove that Q, KV, output, workspace, and metadata cross no host copy.
 - Compare model output or generated tokens with the engine baseline.
@@ -92,18 +93,17 @@ produces an auditable no-copy trace.
 
 ## K0.5: Make algorithm policy explicit
 
-**State:** planned.
+**State:** partial.
 
-Current attention selection uses fixed source heuristics. Paged decode chooses
-direct MHA and eight-warp MQA or GQA.
+Paged decode still chooses direct MHA and eight-warp MQA or GQA.
 
-Ragged prefill uses the batch average KV length and head mapping. Paged prefill
-uses average physical page-pool capacity and head mapping.
+Ragged prefill still uses the batch average KV length and head mapping. Paged
+prefill now requires an explicit direct, eight-warp, or sixteen-warp algorithm.
 
 The long MQA and GQA4 records apply to source `8478ee9`, not the merged
 DeviceRegion path.
 
-- Separate algorithm selection from immutable launch plans.
+- Separate the remaining automatic selection from immutable launch plans.
 - Expose the selected algorithm in traces and result records.
 - Add a caller override with contract checks.
 - Replace average-only ragged decisions with measured shape classes or request

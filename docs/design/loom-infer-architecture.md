@@ -93,9 +93,16 @@ The external constructors are unsafe because Loom cannot inspect allocation
 extent, global aliases, or stream ordering in another runtime. Host tests do
 not qualify this boundary on H20.
 
-Device evidence must still cover non-zero offsets and lease retention through
-asynchronous completion and Graph replay. Engine evidence must prove no-copy
-behavior.
+`ExternalCudaStream` retains an ordinary engine stream without adopting or destroying it.
+`EngineInteropQueue` uses pre- and post-events to order a Loom stream against that external stream.
+The current adapter covers direct single decode and issues no device-to-device copy itself.
+After Loom enqueues the post-event wait, the adapter returns opaque stream-ordered engine authority.
+Loom keeps its binding capability private until completion and reuses it only after an exact-token rejoin.
+
+The H20 interop gate uses a simulated engine.
+It covers unchanged pointers, the event-bridge path, and lease behavior.
+It is not a controlled negative test for a missing post-event wait.
+A real engine must supply its own stream and allocations before Loom can claim engine interoperability.
 
 ## Paged KV read and write semantics
 
@@ -132,7 +139,7 @@ The current plans use source-defined selection rules.
 | Single decode | Direct plan for the admitted MHA, MQA, and GQA contract. Split-K is a separate explicit plan | None |
 | Paged batch decode | Direct for MHA. Eight-warp token parallelism for MQA and GQA | None |
 | Ragged prefill | Direct below average KV length 64. Sixteen warps for long MQA. Eight warps for other long shapes. Tiled split-eight for GQA group size four at average KV length 256 or greater | Tiled long GQA4 only |
-| Paged prefill | Direct below an average physical page-pool capacity of 64 tokens per request. Long MQA selects sixteen warps. Other admitted long shapes select eight warps | One direct GQA4 fixture |
+| Paged prefill | The caller selects direct, eight-warp, or sixteen-warp execution. Contract checks reject unsupported combinations | One historical direct GQA4 fixture |
 | Fused append | One validator builds a compact `AppendMap`; one fused kernel consumes it. A scope may reuse the map only with the same K/V cache binding | Requalification after ownership and status changes |
 
 Evidence limits are narrower than the source surface:
@@ -165,8 +172,10 @@ Fused append uses a checked status path:
 - Semantic rejection does not poison the queue or Graph. CUDA failure and a
   malformed status packet do.
 
-Paged decode and paged prefill have not moved to this status path. Their
-device guards still preserve bounds without reporting a typed semantic error.
+Paged decode and paged prefill use the same completion protocol. Each plan
+launches one metadata validator, one attention kernel, and one status copy.
+The validator gates all metadata-dependent pointer arithmetic in the attention
+kernel.
 
 ## CUDA Graph contract
 
@@ -193,6 +202,17 @@ Historical published Graph evidence covers:
 All three records predate the DeviceRegion submission path. Fused append also
 predates the exclusive-page contract. No current-source Graph record is
 published yet.
+
+Benchmark `graph_nodes` fields are source declarations. The tools do not query
+the CUDA driver for instantiated node counts. Use command count for lifecycle
+checks, and treat node count as unverified until the tool enumerates the Graph.
+
+## Model-runner target
+
+The proposed first real integration target is mistral.rs.
+Current source has HND paged decode and stream-ordered return of a linear external-stream authority token.
+The simulated-engine gate does not prove that mistral.rs can supply those resources without a copy.
+It also does not prove a Loom provider hit or model-output parity.
 
 ## Device code
 

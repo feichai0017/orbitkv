@@ -30,7 +30,7 @@ Loom does not claim complete domain-level parity.
 
 | Domain | Representative upstream surface | Loom state |
 | --- | --- | --- |
-| Dense decode attention | `single_decode_with_kv_cache`, paged batch decode, XQA | `requalification`: BF16 NHD D128 providers exist, but their records predate the DeviceRegion launch path |
+| Dense decode attention | `single_decode_with_kv_cache`, paged batch decode, XQA | `requalification`: BF16 NHD single-decode and NHD/HND paged-decode providers exist, but their records predate the DeviceRegion launch path |
 | Prefill attention | Single, ragged batch, and paged batch prefill | `requalification`: BF16 NHD D128 providers exist, but their records predate the DeviceRegion launch path |
 | Paged KV append | Standard and MLA paged append, index and position generation | `requalification`: fused standard-RoPE BF16 append now requires exclusive target pages |
 | Attention state and cascade | State merge and cascade wrappers | `planned` at state-merge level |

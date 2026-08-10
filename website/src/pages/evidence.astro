@@ -59,11 +59,11 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
       </div>
 
       <div class="doc-note">
-        <strong>Long paged prefill has two token-parallel providers.</strong>
+        <strong>Paged prefill has three explicit algorithms.</strong>
         <p>
-          The merged source selects sixteen warps for long MQA and eight warps
-          for long GQA4. The incoming records passed the H20 CPU oracle and four
-          Compute Sanitizer tools before the DeviceRegion merge.
+          The caller selects direct, eight-warp, or sixteen-warp execution.
+          Published token-parallel records predate the DeviceRegion and typed
+          metadata-status paths.
         </p>
         <p>
           Those records do not qualify the merged source. Correctness,
@@ -77,6 +77,16 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json`}>
           Historical long-context performance record
         </a>
+      </div>
+
+      <div class="doc-note">
+        <strong>Engine interop is a simulated boundary.</strong>
+        <p>
+          The H20 gate checks external pointers, the event-bridge path, and
+          zero adapter D2D copies for direct single decode. It does not run a model.
+          HND paged decode and a linear authority handoff exist in source. A
+          mistral.rs provider hit and model-output comparison remain open.
+        </p>
       </div>
 
       <div class="doc-note">
@@ -98,6 +108,7 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
         <li>No result proves model or serving speedup.</li>
         <li>Eager provider timing is not isolated kernel timing.</li>
         <li>Graph results cover fixed addresses and named paths only.</li>
+        <li>Recorded graph node counts are declarations, not driver enumeration.</li>
         <li>H20 results do not qualify other GPU architectures.</li>
         <li>One shape does not establish a universal provider winner.</li>
       </ul>

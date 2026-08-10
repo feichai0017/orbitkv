@@ -25,10 +25,14 @@ to clean source commit `8478ee9`, before the DeviceRegion submission path.
 No other record gains a broader claim because it appears in this index. Check
 the record's `accepted_claims` and `excluded_claims` fields.
 
-The matched attention tools now use one independent PyTorch F32 oracle for
-single decode, paged decode, ragged prefill, and paged prefill. Graph scripts
-poison outputs before the validation replay. The summarizer rejects mixed
-contracts, fixtures, measurements, and execution identities.
+Loom H20 gates use Rust CPU references.
+FlashInfer comparison scripts use separate PyTorch F32 references.
+No published result proves cross-provider reference-digest parity.
+The summarizer rejects mixed contracts, fixtures, measurements, and execution identities.
+
+Current Graph qualification also requires output poison before each validation
+replay. Earlier records do not satisfy that rule. Benchmark `graph_nodes`
+fields are handwritten metadata, not CUDA driver enumeration.
 
 A binary FlashInfer wheel records its verified distribution version but no
 source commit unless the artifact proves one.
@@ -75,6 +79,12 @@ qualification.
 
 The records contain no single-decode CUDA Graph, engine, or serving result.
 
+The current source has a simulated-engine H20 gate for direct single decode.
+It uses external regions and an event-bridged stream without adapter copies.
+The bridge returns its authority token after it enqueues the post-event wait.
+Checked bindings remain opaque.
+No reviewed JSON record or real model-runner result exists.
+
 ## Paged batch decode
 
 - [Direct correctness](h20-bf16-paged-batch-decode-correctness-20260806.json)
@@ -89,6 +99,9 @@ The records contain no single-decode CUDA Graph, engine, or serving result.
 The batch-4 GQA provider ranking remains excluded because the recorded
 FlashInfer order delta exceeds the acceptance limit. The records contain no
 Graph, engine, or serving result.
+
+Current source adds typed device metadata errors for paged decode. The records
+in this section predate its validator, status readback, and HND layout.
 
 ## Ragged causal prefill
 
@@ -129,11 +142,11 @@ excluded because their provider-order deltas exceed the acceptance limit.
   and [matched Graph performance](h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json)
   cover one direct GQA4 page-reorder fixture.
 
-The Graph records do not cover MHA, MQA, mutable metadata, graph updates,
-token-parallel plans, engine execution, or serving. The token-parallel records
-do not qualify the merged DeviceRegion path. The long-context performance
-record's FlashInfer commit is a harness assertion; the installed wheel proves
-its distribution version, not that source revision.
+The Graph records do not cover MHA, MQA, mutable metadata, graph updates, token-parallel plans, engine execution, or serving.
+The token-parallel records do not qualify the merged DeviceRegion and typed-status path.
+Paged-prefill algorithm selection is now explicit.
+The long-context record's FlashInfer commit is an unverified script assertion.
+The installed wheel proves only its distribution version.
 
 ## Standard RoPE
 

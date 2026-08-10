@@ -51,6 +51,7 @@ Run one gate during development:
 | `make h20-ragged-prefill` | `ragged_prefill_h20` |
 | `make h20-paged-prefill` | `paged_prefill_h20` |
 | `make h20-rope` | `rope_h20` |
+| `make h20-engine-interop` | `engine_interop_h20` |
 
 `make cuda-test` writes `loom_infer_cuda.ptx` at the workspace root. Record
 its hash and assemble it for `sm_90` with the same CUDA toolkit used by the
@@ -84,10 +85,9 @@ RMSNorm limits are:
 Reject short fixed spans, wrong contexts, and duplicate writable bindings
 before CUDA submission.
 
-Paged decode and paged prefill still use silent in-kernel metadata guards.
-Those guards protect memory but do not return a typed semantic host error.
-
-Fused append uses the typed status path described below.
+Paged decode, paged prefill, and fused append validate device metadata on the
+CUDA stream. Each validator fully overwrites its status packet. Semantic
+rejection returns a typed completion error and preserves checked bindings.
 
 ## RMSNorm gate
 
@@ -163,12 +163,17 @@ The tiled GQA4 workspace is F32
 `[nnz_qo, query_heads, 8, 130]`. One completion covers the partial and merge
 kernels. A missing workspace must fail before CUDA submission.
 
-Paged prefill selects direct execution below an average physical page-pool
-capacity of 64 tokens per request. Long MQA selects sixteen warps. Other
-admitted long shapes select eight warps.
+Paged prefill requires an explicit algorithm at plan creation. The gate uses
+direct for short cases, sixteen warps for long MQA, and eight warps for long
+GQA4. These choices are fixtures, not an automatic runtime policy.
 
 The token-parallel plans keep partial F32 online-softmax states in block-local
 shared memory and need no caller workspace.
+
+Paged decode and paged prefill each submit three commands: one validator
+kernel, one attention kernel, and one device-to-host status copy. Invalid
+metadata must preserve sentinels, return bindings, and leave the queue or
+fixed-address Graph reusable.
 
 ## RoPE and paged append gate
 
@@ -259,7 +264,8 @@ Current Graph cases are:
 | --- | --- | --- |
 | RMSNorm to GEMM | Two | `(1,4096)` RMSNorm into `(1,4096,4096)` GEMM |
 | Ragged prefill | Two | Long tiled GQA4 `(2,96,1280,16,4)` |
-| Paged prefill | One | Direct GQA4 `(2,6,6,16,4)` |
+| Paged decode rejection | Three | Invalid page index with two reusable replays |
+| Paged prefill | Three | Direct GQA4 `(2,6,6,16,4)` |
 | Fused append | Three | Validator, six-token mapped append, and status copy under the exclusive-page contract |
 
 A current Graph qualification must:
@@ -272,27 +278,27 @@ A current Graph qualification must:
 6. Record capture count, command count, replay count, and binding policy.
 7. Run all four sanitizer tools.
 
+Captured command counts come from Loom's command plan. Benchmark
+`graph_nodes` fields are handwritten metadata, not CUDA driver enumeration.
+Do not use them as verified node counts.
+
 Earlier attention Graph records did not use the current poisoned-replay and
 strict-summary policy. Treat their correctness and performance claims as
 historical until a new record passes this gate.
 
 ## External device regions
 
-The command layer now implements external `DeviceRegion` host support. Source
-presence and host tests do not qualify the boundary on H20.
+The `engine_interop_h20` runner creates external allocations and a non-default stream in a simulated engine module.
+It checks five unchanged pointers, five external-region leases, provider identity, and zero adapter device-to-device copies.
+It executes the pre/post event bridge but is not a negative-control proof of post-wait causality.
+The handoff returns opaque stream-ordered authority before host completion and keeps the Loom bindings private.
+The gate enqueues engine readback, settles Loom, and drops the engine storage guards.
+It then waits on the readback's own source lease.
 
-H20 region admission still requires:
-
-- non-zero-offset read and read-write subranges.
-- range, alignment, context, and overlap rejection before submission.
-- external lease retention after the caller drops its owner.
-- output recovery only after completion settlement.
-- fixed-address Graph retention when the contract admits Graph use.
-- proof that no tensor copy occurs.
-
-A real engine invocation remains a separate gate. It must bind an
-engine-owned allocation and stream, record a Loom provider hit, and preserve
-model output.
+The runner reports `boundary=simulated_engine`.
+It does not qualify a model runner.
+HND paged decode and the authority handoff now exist in source.
+A real mistral.rs invocation, provider hit, pointer trace, and model-output comparison remain required.
 
 ## Matched performance requalification
 
@@ -310,8 +316,8 @@ make check-tools
 
 The new scripts require:
 
-- the same independent F32 attention formula and reference digests for both
-  providers.
+- equivalent F32 attention formulas and matching reference digests across the
+  Rust CPU reference and the separate PyTorch reference.
 - identical fixture bits and digests across providers and orders.
 - identical dtype, layout, shape, mask, caller-visible contract, and timed
   boundary. Record every provider-private workspace and include its required
@@ -327,6 +333,9 @@ The new scripts require:
 - poisoned Graph outputs before the correctness replay.
 - strict summaries that reject incompatible contract, run, or execution
   metadata.
+
+This cross-provider oracle check is not yet published. Do not call the current
+references one common oracle until a gate compares their fixture digests.
 
 Run each provider in a separate process. A paged-decode example is:
 

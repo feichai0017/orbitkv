@@ -24,21 +24,21 @@ performance, engine, and serving evidence remain separate.
 | Dense GEMM | Contiguous BF16 `D=A*W^T` with F32 accumulation. One fixed cuBLASLt algorithm | Historical H20 correctness, sanitizer, and one Graph record | Current-source H20 requalification, more shapes, and engine invocation |
 | Single decode | BF16 NHD D128 full attention. Direct MHA, MQA, and GQA | Historical H20 correctness and matched eager records | Current-source H20 requalification, CUDA Graph, and engine invocation |
 | Single decode split-K | Explicit partitions and caller-owned F32 workspace. The historical H20 matrix covers MQA and GQA | Historical H20 correctness, matched eager, and CUPTI records | Current-source H20 requalification, MHA evidence, and automatic policy |
-| Paged batch decode | BF16 NHD D128, page size 16. MHA uses direct. MQA and GQA use eight-warp block-local merge | Historical H20 correctness and matched eager records | Current-source H20 requalification, CUDA Graph, and length-aware policy |
+| Paged batch decode | BF16 NHD or HND D128, page size 16. MHA uses direct. MQA and GQA use eight-warp block-local merge. A device validator returns typed metadata errors | Historical NHD H20 correctness and matched eager records | Publish current-source NHD/HND status, correctness, sanitizer, Graph, and performance records |
 | Ragged causal prefill | BF16 NHD D128 with bottom-right causal masking. Direct, eight-warp, sixteen-warp, and tiled GQA4 providers exist | Historical H20 correctness, matched eager, and tiled long-GQA4 Graph records | Current-source H20 requalification, per-request dispatch, and engine invocation |
-| Paged causal prefill | BF16 NHD D128, page size 16, bottom-right causal masking. Direct, sixteen-warp long-MQA, and eight-warp long-GQA4 providers | Historical H20 correctness, matched eager, and one direct-GQA4 Graph record | Current-source H20 requalification, tiled long-context optimization, token-parallel Graph, and engine invocation |
+| Paged causal prefill | BF16 NHD D128, page size 16, bottom-right causal masking. The caller selects direct, eight-warp, or sixteen-warp execution. A device validator returns typed metadata errors | Historical H20 correctness, matched eager, and one direct-GQA4 Graph record | Publish current-source status, correctness, sanitizer, Graph, and performance records |
 | Standard RoPE | BF16 NHD D128 NeoX split-half with explicit I32 positions | Historical H20 correctness, sanitizer, and matched eager records | Publish the current-source H20 rerun, then cover more RoPE variants |
 | Fused RoPE plus paged KV append | BF16 NHD D128, page size 16, one through 64 explicit tokens. A validator emits a cache-bound compact map; every target page must have reference count one | `requalification` | Publish current-source correctness, sanitizer, Graph, and performance records under the ownership and typed-status contract |
 
 ## Attention dispatch
 
-Plan creation fixes the current dispatch rules.
+Plan creation fixes the selected algorithm.
 
 | Operator | Selection rule | Graph evidence |
 | --- | --- | --- |
 | Paged decode | MHA selects direct. MQA and GQA select eight-warp token parallelism | None |
 | Ragged prefill | Average KV length below 64 selects direct. Long MQA selects sixteen warps. Other long shapes select eight warps. GQA group size four with average KV length at least 256 selects tiled split-eight | Tiled long GQA4 only |
-| Paged prefill | Average physical page-pool capacity below 64 tokens per request selects direct. Long MQA selects sixteen warps. Other admitted long shapes select eight warps | One fixed-address direct GQA4 fixture |
+| Paged prefill | The caller selects direct, eight-warp, or sixteen-warp execution. Contract checks reject unsupported combinations | One historical fixed-address direct GQA4 fixture |
 
 Ragged dispatch uses the batch average KV length. It does not group requests by
 length or use a per-shape tuning database.
@@ -66,10 +66,18 @@ source. See the [evidence index](results/README.md).
 
 ## Dynamic metadata
 
-Host-resident metadata can return a `ContractError` before submission. Fused
-append also reports device-resident page-table, mapping, and ownership errors
-as typed completion failures while returning the checked bindings. Paged
-decode and prefill still use bounds guards without a semantic host error.
+Host-resident metadata can return a `ContractError` before submission.
+Paged decode, paged prefill, and fused append also validate device-resident metadata on the CUDA stream.
+They return typed completion failures with the checked bindings.
+Semantic rejection does not poison the queue or Graph.
+
+## Engine interop
+
+The source accepts leased external regions and an engine-owned CUDA stream for one direct single-decode path.
+The H20 gate uses a simulated engine.
+No real model runner has qualification.
+HND paged decode and stream-ordered return of linear engine authority are source capabilities.
+The mistral.rs adapter, provider trace, and model-output parity remain open.
 
 ## Target surface
 
