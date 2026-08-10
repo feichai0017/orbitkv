@@ -4,8 +4,8 @@ use crate::reporting::GateCase;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use half::bf16;
 use loom_infer::{
-    Bf16PagedBatchDecodeSpec, ContractError, PAGED_BATCH_DECODE_PAGE_SIZE, SINGLE_DECODE_HEAD_DIM,
-    paged_batch_decode_bf16_reference,
+    Bf16PagedBatchDecodeSpec, ContractError, PAGED_BATCH_DECODE_PAGE_SIZE, PagedKvLayout,
+    SINGLE_DECODE_HEAD_DIM, paged_batch_decode_bf16_reference,
 };
 use loom_infer_cuda::attention::{
     Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan, DecodeProvider,
@@ -40,6 +40,10 @@ fn run_case(
         page_table.last_page_len,
     )?;
     let referenced_pages = table.page_indices().len();
+    let layout = match spec.kv_layout() {
+        PagedKvLayout::Nhd => "NHD",
+        PagedKvLayout::Hnd => "HND",
+    };
     let kv_lens = (0..spec.batch_size())
         .map(|request| table.request_kv_len(request).unwrap().to_string())
         .collect::<Vec<_>>()
@@ -129,7 +133,7 @@ fn run_case(
 
     println!(
         "{} batch_size={} query_heads={} kv_heads={} group_size={} \
-         max_num_pages={} referenced_pages={} page_size={} kv_lens={} layout=NHD \
+         max_num_pages={} referenced_pages={} page_size={} kv_lens={} layout={} \
          dtype=BF16 accumulation=F32 lse_domain=log2 commands=3 \
          validator_kernels=1 attention_kernels=1 status_readbacks=1 stream=non_default \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
@@ -143,6 +147,7 @@ fn run_case(
         referenced_pages,
         spec.page_size(),
         kv_lens,
+        layout,
         output_comparison.max_abs,
         output_comparison.bit_mismatches,
         output_comparison.digest,
@@ -235,7 +240,7 @@ fn run_invalid_page_guard_case(
     queue: &mut CommandQueue,
     provider: &DecodeProvider,
 ) -> Result<(), Box<dyn Error>> {
-    let spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16)?;
+    let spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16, PagedKvLayout::Hnd)?;
     let expected_error = ContractError::PageIndexOutOfRange {
         position: 1,
         index: 2,
@@ -333,7 +338,7 @@ fn run_invalid_page_graph_rejection_case(
     context: &Arc<CudaContext>,
     provider: &DecodeProvider,
 ) -> Result<(), Box<dyn Error>> {
-    let spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16)?;
+    let spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16, PagedKvLayout::Hnd)?;
     let expected_error = ContractError::PageIndexOutOfRange {
         position: 1,
         index: 2,
@@ -465,51 +470,58 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let stream: Arc<CudaStream> = context.new_stream()?;
     let mut queue = CommandQueue::new(stream, 3)?;
 
-    run_case(
-        &mut queue,
-        &provider,
-        "mha_b1_l1",
-        Bf16PagedBatchDecodeSpec::new(
-            1,
-            2,
-            8,
-            8,
-            SINGLE_DECODE_HEAD_DIM,
-            PAGED_BATCH_DECODE_PAGE_SIZE,
-        )?,
-        PageTableInput {
-            indptr: &[0, 1],
-            indices: &[1],
-            last_page_len: &[1],
-        },
-        0x1001,
-    )?;
-    run_case(
-        &mut queue,
-        &provider,
-        "mqa_b3_mixed",
-        Bf16PagedBatchDecodeSpec::new(3, 7, 8, 1, 128, 16)?,
-        PageTableInput {
-            indptr: &[0, 1, 3, 6],
-            indices: &[4, 6, 1, 5, 0, 3],
-            last_page_len: &[16, 7, 16],
-        },
-        0x2001,
-    )?;
-    run_case(
-        &mut queue,
-        &provider,
-        "gqa4_b4_reuse",
-        Bf16PagedBatchDecodeSpec::new(4, 8, 16, 4, 128, 16)?,
-        PageTableInput {
-            indptr: &[0, 1, 3, 5, 8],
-            indices: &[7, 2, 6, 5, 1, 7, 0, 4],
-            last_page_len: &[3, 16, 1, 9],
-        },
-        0x4001,
-    )?;
+    for layout in [PagedKvLayout::Nhd, PagedKvLayout::Hnd] {
+        let layout_name = match layout {
+            PagedKvLayout::Nhd => "nhd",
+            PagedKvLayout::Hnd => "hnd",
+        };
+        run_case(
+            &mut queue,
+            &provider,
+            &format!("mha_b1_l1_{layout_name}"),
+            Bf16PagedBatchDecodeSpec::new(
+                1,
+                2,
+                8,
+                8,
+                SINGLE_DECODE_HEAD_DIM,
+                PAGED_BATCH_DECODE_PAGE_SIZE,
+                layout,
+            )?,
+            PageTableInput {
+                indptr: &[0, 1],
+                indices: &[1],
+                last_page_len: &[1],
+            },
+            0x1001,
+        )?;
+        run_case(
+            &mut queue,
+            &provider,
+            &format!("mqa_b3_mixed_{layout_name}"),
+            Bf16PagedBatchDecodeSpec::new(3, 7, 8, 1, 128, 16, layout)?,
+            PageTableInput {
+                indptr: &[0, 1, 3, 6],
+                indices: &[4, 6, 1, 5, 0, 3],
+                last_page_len: &[16, 7, 16],
+            },
+            0x2001,
+        )?;
+        run_case(
+            &mut queue,
+            &provider,
+            &format!("gqa4_b4_reuse_{layout_name}"),
+            Bf16PagedBatchDecodeSpec::new(4, 8, 16, 4, 128, 16, layout)?,
+            PageTableInput {
+                indptr: &[0, 1, 3, 5, 8],
+                indices: &[7, 2, 6, 5, 1, 7, 0, 4],
+                last_page_len: &[3, 16, 1, 9],
+            },
+            0x4001,
+        )?;
+    }
 
-    let preflight_spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16)?;
+    let preflight_spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16, PagedKvLayout::Nhd)?;
     let preflight_plan = provider.plan_bf16_paged_batch(preflight_spec)?;
     run_short_page_indptr_case(&mut queue, &preflight_plan)?;
     run_invalid_page_guard_case(&mut queue, &provider)?;

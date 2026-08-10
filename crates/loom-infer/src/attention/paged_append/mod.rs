@@ -2,7 +2,7 @@
 
 use super::{
     Bf16PagedBatchDecodePageTable, Bf16PagedBatchDecodeSpec, PAGED_BATCH_DECODE_PAGE_SIZE,
-    SINGLE_DECODE_HEAD_DIM,
+    PagedKvLayout, SINGLE_DECODE_HEAD_DIM,
 };
 use crate::error::require_len;
 use crate::{Bf16RopePosIdsSpec, ContractError, rope_pos_ids_bf16_reference};
@@ -35,6 +35,7 @@ impl Bf16RopePagedKvAppendSpec {
                 num_kv_heads,
                 head_dim,
                 page_size,
+                PagedKvLayout::Nhd,
             )?,
         })
     }
@@ -215,6 +216,7 @@ impl Bf16RopePagedKvAppendTokensSpec {
             num_kv_heads,
             head_dim,
             page_size,
+            PagedKvLayout::Nhd,
         )?;
         tokens
             .checked_mul(num_query_heads)

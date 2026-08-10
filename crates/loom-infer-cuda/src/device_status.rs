@@ -32,9 +32,9 @@ pub(crate) enum AppendMapKind {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum DeviceStatusKind {
-    PagedAppend(AppendMapKind),
-    PagedBatchDecode,
-    PagedPrefill,
+    Append(AppendMapKind),
+    BatchDecode,
+    Prefill,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -57,7 +57,7 @@ impl DeviceStatusDecoder {
         page_size: usize,
     ) -> Self {
         Self {
-            kind: DeviceStatusKind::PagedAppend(kind),
+            kind: DeviceStatusKind::Append(kind),
             items,
             batch_size,
             max_num_pages,
@@ -73,7 +73,7 @@ impl DeviceStatusDecoder {
         page_size: usize,
     ) -> Self {
         Self {
-            kind: DeviceStatusKind::PagedBatchDecode,
+            kind: DeviceStatusKind::BatchDecode,
             items: batch_size,
             batch_size,
             max_num_pages,
@@ -90,7 +90,7 @@ impl DeviceStatusDecoder {
         page_size: usize,
     ) -> Self {
         Self {
-            kind: DeviceStatusKind::PagedPrefill,
+            kind: DeviceStatusKind::Prefill,
             items: nnz_qo,
             batch_size,
             max_num_pages,
@@ -101,12 +101,12 @@ impl DeviceStatusDecoder {
 
     pub(crate) const fn operation(self) -> &'static str {
         match self.kind {
-            DeviceStatusKind::PagedAppend(AppendMapKind::Requests) => "paged KV append map",
-            DeviceStatusKind::PagedAppend(AppendMapKind::ExplicitTokens) => {
+            DeviceStatusKind::Append(AppendMapKind::Requests) => "paged KV append map",
+            DeviceStatusKind::Append(AppendMapKind::ExplicitTokens) => {
                 "explicit-token paged KV append map"
             }
-            DeviceStatusKind::PagedBatchDecode => "paged batch decode metadata",
-            DeviceStatusKind::PagedPrefill => "paged prefill metadata",
+            DeviceStatusKind::BatchDecode => "paged batch decode metadata",
+            DeviceStatusKind::Prefill => "paged prefill metadata",
         }
     }
 
@@ -478,13 +478,13 @@ impl DeviceStatusDecoder {
 
     const fn append_kind(self) -> Option<AppendMapKind> {
         match self.kind {
-            DeviceStatusKind::PagedAppend(kind) => Some(kind),
-            DeviceStatusKind::PagedBatchDecode | DeviceStatusKind::PagedPrefill => None,
+            DeviceStatusKind::Append(kind) => Some(kind),
+            DeviceStatusKind::BatchDecode | DeviceStatusKind::Prefill => None,
         }
     }
 
     fn require_paged_prefill(self, code: i32) -> Result<(), DeviceStatusProtocolError> {
-        if self.kind == DeviceStatusKind::PagedPrefill {
+        if self.kind == DeviceStatusKind::Prefill {
             Ok(())
         } else {
             Err(self.unexpected(code))

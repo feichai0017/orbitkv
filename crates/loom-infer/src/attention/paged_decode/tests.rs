@@ -25,6 +25,40 @@ fn next_u64(state: &mut u64) -> u64 {
     *state
 }
 
+fn pack_paged_kv(
+    logical_nhd: &[bf16],
+    max_num_pages: usize,
+    num_kv_heads: usize,
+    layout: PagedKvLayout,
+) -> Vec<bf16> {
+    match layout {
+        PagedKvLayout::Nhd => logical_nhd.to_vec(),
+        PagedKvLayout::Hnd => {
+            let mut packed = vec![bf16::NAN; logical_nhd.len()];
+            for page in 0..max_num_pages {
+                for token in 0..PAGED_BATCH_DECODE_PAGE_SIZE {
+                    for head in 0..num_kv_heads {
+                        for component in 0..SINGLE_DECODE_HEAD_DIM {
+                            let source = (((page * PAGED_BATCH_DECODE_PAGE_SIZE + token)
+                                * num_kv_heads
+                                + head)
+                                * SINGLE_DECODE_HEAD_DIM)
+                                + component;
+                            let target = (((page * num_kv_heads + head)
+                                * PAGED_BATCH_DECODE_PAGE_SIZE
+                                + token)
+                                * SINGLE_DECODE_HEAD_DIM)
+                                + component;
+                            packed[target] = logical_nhd[source];
+                        }
+                    }
+                }
+            }
+            packed
+        }
+    }
+}
+
 fn assert_paged_matches_contiguous(
     spec: Bf16PagedBatchDecodeSpec,
     page_indptr: &[i32],
@@ -64,12 +98,23 @@ fn assert_paged_matches_contiguous(
         for token in 0..kv_len {
             let (physical_page, page_offset) =
                 table.physical_page_for_token(request, token).unwrap();
-            let start = (physical_page * spec.page_size() + page_offset)
-                * spec.num_kv_heads()
-                * spec.head_dim();
-            let end = start + spec.num_kv_heads() * spec.head_dim();
-            contiguous_key.extend_from_slice(&key_pages[start..end]);
-            contiguous_value.extend_from_slice(&value_pages[start..end]);
+            for kv_head in 0..spec.num_kv_heads() {
+                let start = match spec.kv_layout() {
+                    PagedKvLayout::Nhd => {
+                        ((physical_page * spec.page_size() + page_offset) * spec.num_kv_heads()
+                            + kv_head)
+                            * spec.head_dim()
+                    }
+                    PagedKvLayout::Hnd => {
+                        ((physical_page * spec.num_kv_heads() + kv_head) * spec.page_size()
+                            + page_offset)
+                            * spec.head_dim()
+                    }
+                };
+                let end = start + spec.head_dim();
+                contiguous_key.extend_from_slice(&key_pages[start..end]);
+                contiguous_value.extend_from_slice(&value_pages[start..end]);
+            }
         }
         let query_start = request * direct.query_numel();
         let output_start = request * direct.output_numel();
@@ -109,6 +154,7 @@ fn paged_spec_reports_fixed_shapes_and_mapping() {
         2,
         SINGLE_DECODE_HEAD_DIM,
         PAGED_BATCH_DECODE_PAGE_SIZE,
+        PagedKvLayout::Hnd,
     )
     .unwrap();
 
@@ -118,6 +164,7 @@ fn paged_spec_reports_fixed_shapes_and_mapping() {
     assert_eq!(spec.num_kv_heads(), 2);
     assert_eq!(spec.head_dim(), 128);
     assert_eq!(spec.page_size(), 16);
+    assert_eq!(spec.kv_layout(), PagedKvLayout::Hnd);
     assert_eq!(spec.gqa_group_size(), 4);
     assert_eq!(spec.kv_head_for_query_head(0), Some(0));
     assert_eq!(spec.kv_head_for_query_head(3), Some(0));
@@ -150,53 +197,54 @@ fn paged_spec_rejects_unsupported_shapes_and_overflow() {
                 dimensions.3,
                 dimensions.4,
                 dimensions.5,
+                PagedKvLayout::Nhd,
             ),
             Err(ContractError::ZeroDimension)
         );
     }
     assert_eq!(
-        Bf16PagedBatchDecodeSpec::new(1, 1, 1, 1, 64, 16),
+        Bf16PagedBatchDecodeSpec::new(1, 1, 1, 1, 64, 16, PagedKvLayout::Nhd),
         Err(ContractError::UnsupportedHeadDimension {
             expected: SINGLE_DECODE_HEAD_DIM,
             actual: 64,
         })
     );
     assert_eq!(
-        Bf16PagedBatchDecodeSpec::new(1, 1, 1, 1, 128, 8),
+        Bf16PagedBatchDecodeSpec::new(1, 1, 1, 1, 128, 8, PagedKvLayout::Nhd),
         Err(ContractError::UnsupportedPageSize {
             expected: PAGED_BATCH_DECODE_PAGE_SIZE,
             actual: 8,
         })
     );
     assert_eq!(
-        Bf16PagedBatchDecodeSpec::new(1, 1, 6, 4, 128, 16),
+        Bf16PagedBatchDecodeSpec::new(1, 1, 6, 4, 128, 16, PagedKvLayout::Nhd),
         Err(ContractError::InvalidHeadMapping {
             query_heads: 6,
             kv_heads: 4,
         })
     );
     assert_eq!(
-        Bf16PagedBatchDecodeSpec::new(usize::MAX, 1, 1, 1, 128, 16),
+        Bf16PagedBatchDecodeSpec::new(usize::MAX, 1, 1, 1, 128, 16, PagedKvLayout::Nhd),
         Err(ContractError::ElementCountOverflow)
     );
     assert_eq!(
-        Bf16PagedBatchDecodeSpec::new(1, usize::MAX, 1, 1, 128, 16),
+        Bf16PagedBatchDecodeSpec::new(1, usize::MAX, 1, 1, 128, 16, PagedKvLayout::Nhd),
         Err(ContractError::ElementCountOverflow)
     );
     let beyond_i32 = usize::try_from(i32::MAX).unwrap() + 1;
     assert_eq!(
-        Bf16PagedBatchDecodeSpec::new(beyond_i32, 1, 1, 1, 128, 16),
+        Bf16PagedBatchDecodeSpec::new(beyond_i32, 1, 1, 1, 128, 16, PagedKvLayout::Nhd),
         Err(ContractError::ElementCountOverflow)
     );
     assert_eq!(
-        Bf16PagedBatchDecodeSpec::new(1, beyond_i32, 1, 1, 128, 16),
+        Bf16PagedBatchDecodeSpec::new(1, beyond_i32, 1, 1, 128, 16, PagedKvLayout::Nhd),
         Err(ContractError::ElementCountOverflow)
     );
 }
 
 #[test]
 fn paged_table_reports_lengths_and_maps_logical_tokens() {
-    let spec = Bf16PagedBatchDecodeSpec::new(3, 8, 4, 2, 128, 16).unwrap();
+    let spec = Bf16PagedBatchDecodeSpec::new(3, 8, 4, 2, 128, 16, PagedKvLayout::Nhd).unwrap();
     let table = spec
         .validate_page_table(&[0, 2, 3, 6], &[5, 1, 7, 2, 0, 6], &[3, 16, 1])
         .unwrap();
@@ -225,7 +273,7 @@ fn paged_table_reports_lengths_and_maps_logical_tokens() {
 
 #[test]
 fn paged_table_rejects_malformed_metadata() {
-    let spec = Bf16PagedBatchDecodeSpec::new(2, 4, 4, 2, 128, 16).unwrap();
+    let spec = Bf16PagedBatchDecodeSpec::new(2, 4, 4, 2, 128, 16, PagedKvLayout::Nhd).unwrap();
 
     let cases = [
         (
@@ -309,17 +357,19 @@ fn paged_table_rejects_malformed_metadata() {
 
 #[test]
 fn paged_reference_matches_contiguous_decode_per_request() {
-    let spec = Bf16PagedBatchDecodeSpec::new(3, 7, 8, 2, 128, 16).unwrap();
     let page_indptr = [0, 1, 3, 6];
     let page_indices = [4, 6, 1, 5, 0, 3];
     let last_page_len = [1, 7, 16];
-    assert_paged_matches_contiguous(
-        spec,
-        &page_indptr,
-        &page_indices,
-        &last_page_len,
-        0x5041_4745_4400,
-    );
+    for layout in [PagedKvLayout::Nhd, PagedKvLayout::Hnd] {
+        let spec = Bf16PagedBatchDecodeSpec::new(3, 7, 8, 2, 128, 16, layout).unwrap();
+        assert_paged_matches_contiguous(
+            spec,
+            &page_indptr,
+            &page_indices,
+            &last_page_len,
+            0x5041_4745_4400,
+        );
+    }
 }
 
 #[test]
@@ -335,15 +385,6 @@ fn generated_paged_cases_match_contiguous_decode() {
         };
         let group_size = [1, 2, 4][(next_u64(&mut state) % 3) as usize];
         let num_query_heads = num_kv_heads * group_size;
-        let spec = Bf16PagedBatchDecodeSpec::new(
-            batch_size,
-            max_num_pages,
-            num_query_heads,
-            num_kv_heads,
-            128,
-            16,
-        )
-        .unwrap();
         let mut page_indptr = vec![0_i32];
         let mut page_indices = Vec::new();
         let mut last_page_len = Vec::with_capacity(batch_size);
@@ -355,19 +396,89 @@ fn generated_paged_cases_match_contiguous_decode() {
             page_indptr.push(i32::try_from(page_indices.len()).unwrap());
             last_page_len.push((next_u64(&mut state) % 16 + 1) as i32);
         }
-        assert_paged_matches_contiguous(
-            spec,
-            &page_indptr,
-            &page_indices,
-            &last_page_len,
-            case ^ state,
-        );
+        for layout in [PagedKvLayout::Nhd, PagedKvLayout::Hnd] {
+            let spec = Bf16PagedBatchDecodeSpec::new(
+                batch_size,
+                max_num_pages,
+                num_query_heads,
+                num_kv_heads,
+                128,
+                16,
+                layout,
+            )
+            .unwrap();
+            assert_paged_matches_contiguous(
+                spec,
+                &page_indptr,
+                &page_indices,
+                &last_page_len,
+                case ^ state,
+            );
+        }
     }
 }
 
 #[test]
+fn nhd_and_hnd_encode_the_same_logical_cache() {
+    let query = deterministic_bf16(2 * 8 * 128, 0x0051_5545_5259);
+    let logical_key = deterministic_bf16(5 * 16 * 2 * 128, 0x004b_4559);
+    let logical_value = deterministic_bf16(5 * 16 * 2 * 128, 0x0056_414c_5545);
+    let page_indptr = [0, 2, 5];
+    let page_indices = [4, 1, 3, 0, 2];
+    let last_page_len = [7, 13];
+    let mut outputs = Vec::new();
+    let mut lses = Vec::new();
+
+    for layout in [PagedKvLayout::Nhd, PagedKvLayout::Hnd] {
+        let spec = Bf16PagedBatchDecodeSpec::new(2, 5, 8, 2, 128, 16, layout).unwrap();
+        let key = pack_paged_kv(&logical_key, 5, 2, layout);
+        let value = pack_paged_kv(&logical_value, 5, 2, layout);
+        let mut output = vec![bf16::NAN; spec.output_numel()];
+        let mut lse = vec![f32::NAN; spec.lse_numel()];
+        paged_batch_decode_bf16_reference(
+            &query,
+            &key,
+            &value,
+            &page_indptr,
+            &page_indices,
+            &last_page_len,
+            &mut output,
+            &mut lse,
+            spec,
+        )
+        .unwrap();
+        outputs.push(output);
+        lses.push(lse);
+    }
+
+    assert_eq!(outputs[0], outputs[1]);
+    assert_eq!(lses[0], lses[1]);
+
+    let wrong_spec =
+        Bf16PagedBatchDecodeSpec::new(2, 5, 8, 2, 128, 16, PagedKvLayout::Nhd).unwrap();
+    let hnd_key = pack_paged_kv(&logical_key, 5, 2, PagedKvLayout::Hnd);
+    let hnd_value = pack_paged_kv(&logical_value, 5, 2, PagedKvLayout::Hnd);
+    let mut wrong_output = vec![bf16::NAN; wrong_spec.output_numel()];
+    let mut wrong_lse = vec![f32::NAN; wrong_spec.lse_numel()];
+    paged_batch_decode_bf16_reference(
+        &query,
+        &hnd_key,
+        &hnd_value,
+        &page_indptr,
+        &page_indices,
+        &last_page_len,
+        &mut wrong_output,
+        &mut wrong_lse,
+        wrong_spec,
+    )
+    .unwrap();
+    assert_ne!(wrong_output, outputs[0]);
+    assert_ne!(wrong_lse, lses[0]);
+}
+
+#[test]
 fn paged_reference_requires_exact_tensor_lengths() {
-    let spec = Bf16PagedBatchDecodeSpec::new(2, 2, 2, 1, 128, 16).unwrap();
+    let spec = Bf16PagedBatchDecodeSpec::new(2, 2, 2, 1, 128, 16, PagedKvLayout::Hnd).unwrap();
     let query = vec![bf16::ZERO; spec.query_numel()];
     let key_pages = vec![bf16::ZERO; spec.kv_pages_numel()];
     let value_pages = vec![bf16::ZERO; spec.kv_pages_numel()];

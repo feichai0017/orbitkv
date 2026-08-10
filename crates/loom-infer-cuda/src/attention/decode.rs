@@ -12,13 +12,14 @@ use crate::device_status::{
 use crate::memory::{DeviceRegionLaunchError, enqueue_region_launch};
 use cuda_core::{CudaContext, CudaFunction, LaunchConfig1D, LaunchContractError, PreparedLaunch};
 use cuda_device::{
-    DisjointSlice, SharedArray, convert, cuda_module, float, kernel, launch_bounds,
+    DisjointSlice, SharedArray, convert, cuda_module, device, float, kernel, launch_bounds,
     launch_contract, tcgen05, thread, warp,
 };
 use half::bf16;
 use loom_infer::{
     Bf16PagedBatchDecodeSpec, Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec,
-    PAGED_BATCH_DECODE_PAGE_SIZE, SINGLE_DECODE_HEAD_DIM, SINGLE_DECODE_PARTIAL_STATE_WIDTH,
+    PAGED_BATCH_DECODE_PAGE_SIZE, PagedKvLayout, SINGLE_DECODE_HEAD_DIM,
+    SINGLE_DECODE_PARTIAL_STATE_WIDTH,
 };
 use std::mem::size_of;
 use std::sync::Arc;
@@ -48,6 +49,7 @@ const _: () = {
 };
 
 #[cuda_module]
+#[allow(clippy::too_many_arguments)]
 mod kernels {
     use super::*;
 
@@ -195,6 +197,120 @@ mod kernels {
     }
 
     #[kernel]
+    #[launch_bounds(32)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (32, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            max_num_pages >= 1,
+            num_query_heads >= 1,
+            num_kv_heads >= 1,
+            query.len() == batch_size * num_query_heads * 128,
+            key_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            value_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            metadata_status.len() == 5,
+            output.len() == batch_size * num_query_heads * 128,
+            lse.len() == batch_size * num_query_heads,
+        ),
+    )]
+    pub fn paged_batch_decode_bf16_nhd(
+        batch_size: usize,
+        max_num_pages: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key_pages: &[bf16],
+        value_pages: &[bf16],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        metadata_status: &[i32],
+        output: DisjointSlice<bf16>,
+        lse: DisjointSlice<f32>,
+    ) {
+        let _ = max_num_pages;
+        paged_batch_decode_bf16_impl::<false>(
+            batch_size,
+            num_query_heads,
+            num_kv_heads,
+            softmax_scale_log2,
+            query,
+            key_pages,
+            value_pages,
+            page_indptr,
+            page_indices,
+            last_page_len,
+            metadata_status,
+            output,
+            lse,
+        );
+    }
+
+    #[kernel]
+    #[launch_bounds(32)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (32, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            max_num_pages >= 1,
+            num_query_heads >= 1,
+            num_kv_heads >= 1,
+            query.len() == batch_size * num_query_heads * 128,
+            key_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            value_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            metadata_status.len() == 5,
+            output.len() == batch_size * num_query_heads * 128,
+            lse.len() == batch_size * num_query_heads,
+        ),
+    )]
+    pub fn paged_batch_decode_bf16_hnd(
+        batch_size: usize,
+        max_num_pages: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key_pages: &[bf16],
+        value_pages: &[bf16],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        metadata_status: &[i32],
+        output: DisjointSlice<bf16>,
+        lse: DisjointSlice<f32>,
+    ) {
+        let _ = max_num_pages;
+        paged_batch_decode_bf16_impl::<true>(
+            batch_size,
+            num_query_heads,
+            num_kv_heads,
+            softmax_scale_log2,
+            query,
+            key_pages,
+            value_pages,
+            page_indptr,
+            page_indices,
+            last_page_len,
+            metadata_status,
+            output,
+            lse,
+        );
+    }
+
+    #[kernel]
     #[launch_bounds(1)]
     #[launch_contract(
         domain = 1,
@@ -323,32 +439,9 @@ mod kernels {
         }
     }
 
-    #[kernel]
-    #[launch_bounds(32)]
-    #[allow(clippy::too_many_arguments)]
-    #[launch_contract(
-        domain = 1,
-        block = (32, 1, 1),
-        min_compute_capability = (9, 0),
-        requires = (
-            batch_size >= 1,
-            max_num_pages >= 1,
-            num_query_heads >= 1,
-            num_kv_heads >= 1,
-            query.len() == batch_size * num_query_heads * 128,
-            key_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
-            value_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
-            page_indptr.len() == batch_size + 1,
-            page_indices.len() >= batch_size,
-            last_page_len.len() == batch_size,
-            metadata_status.len() == 5,
-            output.len() == batch_size * num_query_heads * 128,
-            lse.len() == batch_size * num_query_heads,
-        ),
-    )]
-    pub fn paged_batch_decode_bf16_nhd(
+    #[device]
+    fn paged_batch_decode_bf16_impl<const HND: bool>(
         batch_size: usize,
-        max_num_pages: usize,
         num_query_heads: usize,
         num_kv_heads: usize,
         softmax_scale_log2: f32,
@@ -371,8 +464,6 @@ mod kernels {
         {
             return;
         }
-        let _ = max_num_pages;
-
         let request = state_index / num_query_heads;
         let query_head = state_index % num_query_heads;
         let page_start = page_indptr[request];
@@ -410,15 +501,21 @@ mod kernels {
             let page_slot = token / PAGED_BATCH_DECODE_PAGE_SIZE;
             let page_offset = token % PAGED_BATCH_DECODE_PAGE_SIZE;
             let physical_page = page_indices[page_start as usize + page_slot] as usize;
-            let kv_pair_offset = (((physical_page * PAGED_BATCH_DECODE_PAGE_SIZE + page_offset)
-                * num_kv_heads
-                + kv_head)
-                * BF16_PAIRS_PER_HEAD)
-                + lane;
+            let kv_pair_offset = if HND {
+                (((physical_page * num_kv_heads + kv_head) * PAGED_BATCH_DECODE_PAGE_SIZE
+                    + page_offset)
+                    * BF16_PAIRS_PER_HEAD)
+                    + lane
+            } else {
+                (((physical_page * PAGED_BATCH_DECODE_PAGE_SIZE + page_offset) * num_kv_heads
+                    + kv_head)
+                    * BF16_PAIRS_PER_HEAD)
+                    + lane
+            };
 
             // SAFETY: the preceding stream-ordered validator proved the page
-            // index is in range. Each lane then reads two disjoint packed
-            // pairs from the exact NHD page-pool span.
+            // index is in range. The layout is fixed by this entry point. Each
+            // lane reads two disjoint pairs from the page-pool span.
             let (key_0, key_1, key_2, key_3, value_0, value_1, value_2, value_3) = unsafe {
                 let (key_0, key_1) =
                     convert::cvt_f32x2_bf16x2(key_pairs.add(kv_pair_offset).read());
@@ -498,32 +595,9 @@ mod kernels {
         }
     }
 
-    #[kernel]
-    #[launch_bounds(256)]
-    #[allow(clippy::too_many_arguments)]
-    #[launch_contract(
-        domain = 1,
-        block = (256, 1, 1),
-        min_compute_capability = (9, 0),
-        requires = (
-            batch_size >= 1,
-            max_num_pages >= 1,
-            num_query_heads >= 1,
-            num_kv_heads >= 1,
-            query.len() == batch_size * num_query_heads * 128,
-            key_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
-            value_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
-            page_indptr.len() == batch_size + 1,
-            page_indices.len() >= batch_size,
-            last_page_len.len() == batch_size,
-            metadata_status.len() == 5,
-            output.len() == batch_size * num_query_heads * 128,
-            lse.len() == batch_size * num_query_heads,
-        ),
-    )]
-    pub fn paged_batch_decode_bf16_nhd_token_parallel(
+    #[device]
+    fn paged_batch_decode_bf16_token_parallel_impl<const HND: bool>(
         batch_size: usize,
-        max_num_pages: usize,
         num_query_heads: usize,
         num_kv_heads: usize,
         softmax_scale_log2: f32,
@@ -534,12 +608,10 @@ mod kernels {
         page_indices: &[i32],
         last_page_len: &[i32],
         metadata_status: &[i32],
+        partial_states: *mut f32,
         mut output: DisjointSlice<bf16>,
         mut lse: DisjointSlice<f32>,
     ) {
-        static mut PARTIAL_STATES: SharedArray<f32, PAGED_BATCH_DECODE_SHARED_NUMEL> =
-            SharedArray::UNINIT;
-
         let state_index = thread::blockIdx_x() as usize;
         let thread_in_block = thread::threadIdx_x() as usize;
         let warp_in_block = thread_in_block / WARP_THREADS as usize;
@@ -548,8 +620,6 @@ mod kernels {
         if state_index >= state_count || metadata_status[0] != STATUS_SUCCESS {
             return;
         }
-        let _ = max_num_pages;
-
         let request = state_index / num_query_heads;
         let query_head = state_index % num_query_heads;
         let page_start = page_indptr[request];
@@ -587,11 +657,17 @@ mod kernels {
             let page_slot = token / PAGED_BATCH_DECODE_PAGE_SIZE;
             let page_offset = token % PAGED_BATCH_DECODE_PAGE_SIZE;
             let physical_page = page_indices[page_start as usize + page_slot] as usize;
-            let kv_pair_offset = (((physical_page * PAGED_BATCH_DECODE_PAGE_SIZE + page_offset)
-                * num_kv_heads
-                + kv_head)
-                * BF16_PAIRS_PER_HEAD)
-                + lane;
+            let kv_pair_offset = if HND {
+                (((physical_page * num_kv_heads + kv_head) * PAGED_BATCH_DECODE_PAGE_SIZE
+                    + page_offset)
+                    * BF16_PAIRS_PER_HEAD)
+                    + lane
+            } else {
+                (((physical_page * PAGED_BATCH_DECODE_PAGE_SIZE + page_offset) * num_kv_heads
+                    + kv_head)
+                    * BF16_PAIRS_PER_HEAD)
+                    + lane
+            };
 
             // SAFETY: the preceding stream-ordered validator proved every
             // referenced physical page is in range.
@@ -649,7 +725,6 @@ mod kernels {
         let state_offset = warp_in_block * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
         // SAFETY: each CUDA block owns this shared allocation. Each warp
         // writes one disjoint state before the block barrier.
-        let partial_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIAL_STATES) };
         // SAFETY: each warp owns one complete 130-float partial state.
         unsafe {
             if lane == 0 {
@@ -754,6 +829,130 @@ mod kernels {
                     merged_output_3 * inverse_normalizer,
                 ));
         }
+    }
+
+    #[kernel]
+    #[launch_bounds(256)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (256, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            max_num_pages >= 1,
+            num_query_heads >= 1,
+            num_kv_heads >= 1,
+            query.len() == batch_size * num_query_heads * 128,
+            key_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            value_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            metadata_status.len() == 5,
+            output.len() == batch_size * num_query_heads * 128,
+            lse.len() == batch_size * num_query_heads,
+        ),
+    )]
+    pub fn paged_batch_decode_bf16_nhd_token_parallel(
+        batch_size: usize,
+        max_num_pages: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key_pages: &[bf16],
+        value_pages: &[bf16],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        metadata_status: &[i32],
+        output: DisjointSlice<bf16>,
+        lse: DisjointSlice<f32>,
+    ) {
+        static mut PARTIAL_STATES: SharedArray<f32, PAGED_BATCH_DECODE_SHARED_NUMEL> =
+            SharedArray::UNINIT;
+        let _ = max_num_pages;
+        // SAFETY: this kernel entry owns its block-local shared allocation.
+        let partial_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIAL_STATES) };
+        paged_batch_decode_bf16_token_parallel_impl::<false>(
+            batch_size,
+            num_query_heads,
+            num_kv_heads,
+            softmax_scale_log2,
+            query,
+            key_pages,
+            value_pages,
+            page_indptr,
+            page_indices,
+            last_page_len,
+            metadata_status,
+            partial_states,
+            output,
+            lse,
+        );
+    }
+
+    #[kernel]
+    #[launch_bounds(256)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (256, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            max_num_pages >= 1,
+            num_query_heads >= 1,
+            num_kv_heads >= 1,
+            query.len() == batch_size * num_query_heads * 128,
+            key_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            value_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            metadata_status.len() == 5,
+            output.len() == batch_size * num_query_heads * 128,
+            lse.len() == batch_size * num_query_heads,
+        ),
+    )]
+    pub fn paged_batch_decode_bf16_hnd_token_parallel(
+        batch_size: usize,
+        max_num_pages: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key_pages: &[bf16],
+        value_pages: &[bf16],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        metadata_status: &[i32],
+        output: DisjointSlice<bf16>,
+        lse: DisjointSlice<f32>,
+    ) {
+        static mut PARTIAL_STATES: SharedArray<f32, PAGED_BATCH_DECODE_SHARED_NUMEL> =
+            SharedArray::UNINIT;
+        let _ = max_num_pages;
+        // SAFETY: this kernel entry owns its block-local shared allocation.
+        let partial_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIAL_STATES) };
+        paged_batch_decode_bf16_token_parallel_impl::<true>(
+            batch_size,
+            num_query_heads,
+            num_kv_heads,
+            softmax_scale_log2,
+            query,
+            key_pages,
+            value_pages,
+            page_indptr,
+            page_indices,
+            last_page_len,
+            metadata_status,
+            partial_states,
+            output,
+            lse,
+        );
     }
 
     #[kernel]
@@ -1161,7 +1360,7 @@ impl DecodeProvider {
         })
     }
 
-    /// Creates one immutable BF16 paged NHD batch-decode launch plan.
+    /// Creates one immutable BF16 paged batch-decode launch plan.
     pub fn plan_bf16_paged_batch(
         &self,
         spec: Bf16PagedBatchDecodeSpec,
@@ -1177,19 +1376,39 @@ impl DecodeProvider {
             .module
             .prepare_validate_paged_batch_decode_metadata(LaunchConfig1D::new(1, 1, 0))?;
         let launch =
-            match algorithm {
-                Bf16PagedBatchDecodeAlgorithm::Direct => Bf16PagedBatchDecodeLaunch::Direct(
-                    self.module
-                        .prepare_paged_batch_decode_bf16_nhd(LaunchConfig1D::new(
-                            states,
-                            WARP_THREADS,
-                            0,
-                        ))?,
-                ),
-                Bf16PagedBatchDecodeAlgorithm::TokenParallel8 => {
-                    Bf16PagedBatchDecodeLaunch::TokenParallel8(
+            match (algorithm, spec.kv_layout()) {
+                (Bf16PagedBatchDecodeAlgorithm::Direct, PagedKvLayout::Nhd) => {
+                    Bf16PagedBatchDecodeLaunch::DirectNhd(
+                        self.module
+                            .prepare_paged_batch_decode_bf16_nhd(LaunchConfig1D::new(
+                                states,
+                                WARP_THREADS,
+                                0,
+                            ))?,
+                    )
+                }
+                (Bf16PagedBatchDecodeAlgorithm::Direct, PagedKvLayout::Hnd) => {
+                    Bf16PagedBatchDecodeLaunch::DirectHnd(
+                        self.module
+                            .prepare_paged_batch_decode_bf16_hnd(LaunchConfig1D::new(
+                                states,
+                                WARP_THREADS,
+                                0,
+                            ))?,
+                    )
+                }
+                (Bf16PagedBatchDecodeAlgorithm::TokenParallel8, PagedKvLayout::Nhd) => {
+                    Bf16PagedBatchDecodeLaunch::TokenParallel8Nhd(
                         self.module
                             .prepare_paged_batch_decode_bf16_nhd_token_parallel(
+                                LaunchConfig1D::new(states, PAGED_BATCH_DECODE_BLOCK_THREADS, 0),
+                            )?,
+                    )
+                }
+                (Bf16PagedBatchDecodeAlgorithm::TokenParallel8, PagedKvLayout::Hnd) => {
+                    Bf16PagedBatchDecodeLaunch::TokenParallel8Hnd(
+                        self.module
+                            .prepare_paged_batch_decode_bf16_hnd_token_parallel(
                                 LaunchConfig1D::new(states, PAGED_BATCH_DECODE_BLOCK_THREADS, 0),
                             )?,
                     )
@@ -1255,7 +1474,7 @@ impl Bf16SingleDecodePlan {
     }
 }
 
-/// Immutable launch plan for BF16 paged NHD batch decode.
+/// Immutable launch plan for BF16 paged batch decode.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Bf16PagedBatchDecodeAlgorithm {
     Direct,
@@ -1274,9 +1493,13 @@ const fn paged_batch_decode_algorithm(
 
 #[derive(Clone)]
 enum Bf16PagedBatchDecodeLaunch {
-    Direct(PreparedLaunch<kernels::__paged_batch_decode_bf16_nhd_CudaKernel>),
-    TokenParallel8(
+    DirectNhd(PreparedLaunch<kernels::__paged_batch_decode_bf16_nhd_CudaKernel>),
+    DirectHnd(PreparedLaunch<kernels::__paged_batch_decode_bf16_hnd_CudaKernel>),
+    TokenParallel8Nhd(
         PreparedLaunch<kernels::__paged_batch_decode_bf16_nhd_token_parallel_CudaKernel>,
+    ),
+    TokenParallel8Hnd(
+        PreparedLaunch<kernels::__paged_batch_decode_bf16_hnd_token_parallel_CudaKernel>,
     ),
 }
 
@@ -1414,7 +1637,7 @@ impl Bf16PagedBatchDecodePlan {
                 self.spec.softmax_scale() * core::f32::consts::LOG2_E,
             );
             match &self.launch {
-                Bf16PagedBatchDecodeLaunch::Direct(launch) => {
+                Bf16PagedBatchDecodeLaunch::DirectNhd(launch) => {
                     let operation = self.module.paged_batch_decode_bf16_nhd_async(
                         launch,
                         common.0,
@@ -1435,10 +1658,54 @@ impl Bf16PagedBatchDecodePlan {
                     let result = enqueue_region_launch(resolved.stream, operation);
                     (launch.function().clone(), result)
                 }
-                Bf16PagedBatchDecodeLaunch::TokenParallel8(launch) => {
+                Bf16PagedBatchDecodeLaunch::DirectHnd(launch) => {
+                    let operation = self.module.paged_batch_decode_bf16_hnd_async(
+                        launch,
+                        common.0,
+                        common.1,
+                        common.2,
+                        common.3,
+                        common.4,
+                        resolved.first,
+                        resolved.second,
+                        resolved.third,
+                        resolved.fourth,
+                        resolved.fifth,
+                        resolved.sixth,
+                        resolved.seventh,
+                        resolved.eighth,
+                        resolved.ninth,
+                    );
+                    let result = enqueue_region_launch(resolved.stream, operation);
+                    (launch.function().clone(), result)
+                }
+                Bf16PagedBatchDecodeLaunch::TokenParallel8Nhd(launch) => {
                     let operation = self
                         .module
                         .paged_batch_decode_bf16_nhd_token_parallel_async(
+                            launch,
+                            common.0,
+                            common.1,
+                            common.2,
+                            common.3,
+                            common.4,
+                            resolved.first,
+                            resolved.second,
+                            resolved.third,
+                            resolved.fourth,
+                            resolved.fifth,
+                            resolved.sixth,
+                            resolved.seventh,
+                            resolved.eighth,
+                            resolved.ninth,
+                        );
+                    let result = enqueue_region_launch(resolved.stream, operation);
+                    (launch.function().clone(), result)
+                }
+                Bf16PagedBatchDecodeLaunch::TokenParallel8Hnd(launch) => {
+                    let operation = self
+                        .module
+                        .paged_batch_decode_bf16_hnd_token_parallel_async(
                             launch,
                             common.0,
                             common.1,
@@ -1854,9 +2121,9 @@ mod tests {
 
     #[test]
     fn paged_algorithm_keeps_mha_direct_and_parallelizes_grouped_heads() {
-        let mha = Bf16PagedBatchDecodeSpec::new(1, 1, 8, 8, 128, 16).unwrap();
-        let mqa = Bf16PagedBatchDecodeSpec::new(1, 1, 8, 1, 128, 16).unwrap();
-        let gqa = Bf16PagedBatchDecodeSpec::new(1, 1, 16, 4, 128, 16).unwrap();
+        let mha = Bf16PagedBatchDecodeSpec::new(1, 1, 8, 8, 128, 16, PagedKvLayout::Nhd).unwrap();
+        let mqa = Bf16PagedBatchDecodeSpec::new(1, 1, 8, 1, 128, 16, PagedKvLayout::Hnd).unwrap();
+        let gqa = Bf16PagedBatchDecodeSpec::new(1, 1, 16, 4, 128, 16, PagedKvLayout::Nhd).unwrap();
 
         assert_eq!(
             paged_batch_decode_algorithm(mha),

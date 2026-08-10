@@ -30,7 +30,7 @@ PROVIDER_COMMIT: str | None = None
 EXPECTED_PROVIDER_VERSION = "0.6.16.post1"
 MEASUREMENT = "eager_stream_batch_cuda_event"
 FIXTURE_ID = "xorshift64_mod2001_bf16_v1"
-PAGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_page_table_v1"
+PAGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_page_table_layout_v2"
 PAGED_PREFILL_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_paged_prefill_v1"
 RAGGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1"
 ROPE_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_rope_pos_ids_v1"
@@ -104,6 +104,24 @@ def deterministic_bf16(length: int, salt: int) -> torch.Tensor:
         signed = state % 2001 - 1000
         values.append(signed / 2048.0)
     return torch.tensor(values, dtype=torch.float32).to(torch.bfloat16)
+
+
+def pack_paged_kv(
+    logical_nhd: torch.Tensor,
+    max_num_pages: int,
+    page_size: int,
+    kv_heads: int,
+    head_dim: int,
+    layout: str,
+) -> torch.Tensor:
+    pages = logical_nhd.reshape(
+        max_num_pages, page_size, kv_heads, head_dim
+    )
+    if layout == "NHD":
+        return pages.contiguous().view(-1)
+    if layout == "HND":
+        return pages.permute(0, 2, 1, 3).contiguous().view(-1)
+    raise ValueError(f"unsupported paged KV layout: {layout}")
 
 
 def digest_bf16(values: torch.Tensor) -> str:
@@ -517,6 +535,7 @@ def benchmark_decode(
 
 def benchmark_paged_decode(
     case: str,
+    layout: str,
     batch_size: int,
     max_num_pages: int,
     query_heads: int,
@@ -531,24 +550,42 @@ def benchmark_paged_decode(
     query_host = deterministic_bf16(
         batch_size * query_heads * head_dim, salt
     )
-    key_host = deterministic_bf16(
+    logical_key_host = deterministic_bf16(
         max_num_pages * page_size * kv_heads * head_dim,
         salt ^ 0x4B455900,
     )
-    value_host = deterministic_bf16(
+    logical_value_host = deterministic_bf16(
         max_num_pages * page_size * kv_heads * head_dim,
         salt ^ 0x56414C554500,
+    )
+    key_host = pack_paged_kv(
+        logical_key_host,
+        max_num_pages,
+        page_size,
+        kv_heads,
+        head_dim,
+        layout,
+    )
+    value_host = pack_paged_kv(
+        logical_value_host,
+        max_num_pages,
+        page_size,
+        kv_heads,
+        head_dim,
+        layout,
     )
     page_indptr_host = torch.tensor(page_indptr_values, dtype=torch.int32)
     page_indices_host = torch.tensor(page_indices_values, dtype=torch.int32)
     last_page_len_host = torch.tensor(last_page_len_values, dtype=torch.int32)
     query = query_host.reshape(batch_size, query_heads, head_dim).to("cuda")
-    key_pages = key_host.reshape(
-        max_num_pages, page_size, kv_heads, head_dim
-    ).to("cuda")
-    value_pages = value_host.reshape(
-        max_num_pages, page_size, kv_heads, head_dim
-    ).to("cuda")
+    if layout == "NHD":
+        cache_shape = (max_num_pages, page_size, kv_heads, head_dim)
+    elif layout == "HND":
+        cache_shape = (max_num_pages, kv_heads, page_size, head_dim)
+    else:
+        raise ValueError(f"unsupported paged KV layout: {layout}")
+    key_pages = key_host.reshape(cache_shape).to("cuda")
+    value_pages = value_host.reshape(cache_shape).to("cuda")
     page_indptr = page_indptr_host.to("cuda")
     page_indices = page_indices_host.to("cuda")
     last_page_len = last_page_len_host.to("cuda")
@@ -561,7 +598,7 @@ def benchmark_paged_decode(
     )
     wrapper = flashinfer.BatchDecodeWithPagedKVCacheWrapper(
         workspace,
-        "NHD",
+        layout,
         use_cuda_graph=False,
         use_tensor_cores=False,
         backend="fa2",
@@ -597,8 +634,12 @@ def benchmark_paged_decode(
     samples_us = benchmark(run)
     expected_output, expected_lse = paged_attention_reference(
         query_host.reshape(batch_size, query_heads, head_dim),
-        key_host.reshape(max_num_pages, page_size, kv_heads, head_dim),
-        value_host.reshape(max_num_pages, page_size, kv_heads, head_dim),
+        logical_key_host.reshape(
+            max_num_pages, page_size, kv_heads, head_dim
+        ),
+        logical_value_host.reshape(
+            max_num_pages, page_size, kv_heads, head_dim
+        ),
         page_indptr_values,
         page_indices_values,
         last_page_len_values,
@@ -621,7 +662,7 @@ def benchmark_paged_decode(
     write_record(
         "paged_batch_decode",
         case,
-        "NHD_D128_page16",
+        f"{layout}_D128_page16",
         {
             "algorithm": "flashinfer_batch_decode_wrapper",
             "backend": "fa2",
@@ -1476,7 +1517,8 @@ def main() -> None:
     if "paged_batch_decode" in requested:
         for args in (
             (
-                "bf16_paged_mha_b1_l1_qh8_kvh8_d128_p16",
+                "bf16_paged_mha_b1_l1_qh8_kvh8_d128_p16_nhd",
+                "NHD",
                 1,
                 2,
                 8,
@@ -1487,7 +1529,8 @@ def main() -> None:
                 0x1001,
             ),
             (
-                "bf16_paged_mqa_b3_l16_23_48_qh8_kvh1_d128_p16",
+                "bf16_paged_mqa_b3_l16_23_48_qh8_kvh1_d128_p16_nhd",
+                "NHD",
                 3,
                 7,
                 8,
@@ -1498,7 +1541,44 @@ def main() -> None:
                 0x2001,
             ),
             (
-                "bf16_paged_gqa4_b4_l3_32_17_41_qh16_kvh4_d128_p16",
+                "bf16_paged_gqa4_b4_l3_32_17_41_qh16_kvh4_d128_p16_nhd",
+                "NHD",
+                4,
+                8,
+                16,
+                4,
+                (0, 1, 3, 5, 8),
+                (7, 2, 6, 5, 1, 7, 0, 4),
+                (3, 16, 1, 9),
+                0x4001,
+            ),
+            (
+                "bf16_paged_mha_b1_l1_qh8_kvh8_d128_p16_hnd",
+                "HND",
+                1,
+                2,
+                8,
+                8,
+                (0, 1),
+                (1,),
+                (1,),
+                0x1001,
+            ),
+            (
+                "bf16_paged_mqa_b3_l16_23_48_qh8_kvh1_d128_p16_hnd",
+                "HND",
+                3,
+                7,
+                8,
+                1,
+                (0, 1, 3, 6),
+                (4, 6, 1, 5, 0, 3),
+                (16, 7, 16),
+                0x2001,
+            ),
+            (
+                "bf16_paged_gqa4_b4_l3_32_17_41_qh16_kvh4_d128_p16_hnd",
+                "HND",
                 4,
                 8,
                 16,

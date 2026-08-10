@@ -17,7 +17,7 @@ pub use paged_append::{
 };
 pub use paged_decode::{
     Bf16PagedBatchDecodePageTable, Bf16PagedBatchDecodeSpec, PAGED_BATCH_DECODE_PAGE_SIZE,
-    paged_batch_decode_bf16_reference,
+    PagedKvLayout, paged_batch_decode_bf16_reference,
 };
 pub use paged_prefill::{
     Bf16PagedPrefillMetadata, Bf16PagedPrefillSpec, PAGED_PREFILL_PAGE_SIZE,

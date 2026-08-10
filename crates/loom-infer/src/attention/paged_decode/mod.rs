@@ -8,23 +8,33 @@ use half::bf16;
 /// Page size admitted by the first paged batch-decode contract.
 pub const PAGED_BATCH_DECODE_PAGE_SIZE: usize = 16;
 
-/// BF16 batch decode over a FlashInfer-compatible paged NHD KV cache.
+/// Physical axis order for one paged KV cache.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum PagedKvLayout {
+    /// `[page, page_size, kv_head, head_dim]`.
+    Nhd,
+    /// `[page, kv_head, page_size, head_dim]`.
+    Hnd,
+}
+
+/// BF16 batch decode over a paged NHD or HND KV cache.
 ///
 /// Query and output use `[batch_size, query_heads, 128]`. Key and value pages
-/// use `[max_num_pages, 16, kv_heads, 128]`. Each request contributes one query
-/// token and at least one KV page. This first contract uses a full attention
-/// window with no positional encoding or logits soft cap.
+/// use the explicit [`PagedKvLayout`]. Each request contributes one query token
+/// and at least one KV page. This first contract uses a full attention window
+/// with no positional encoding or logits soft cap.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct Bf16PagedBatchDecodeSpec {
     batch_size: usize,
     max_num_pages: usize,
     num_query_heads: usize,
     num_kv_heads: usize,
+    kv_layout: PagedKvLayout,
     softmax_scale: f32,
 }
 
 impl Bf16PagedBatchDecodeSpec {
-    /// Creates the fixed BF16, NHD, D128, page-size-16 batch-decode contract.
+    /// Creates the fixed BF16, D128, page-size-16 batch-decode contract.
     pub fn new(
         batch_size: usize,
         max_num_pages: usize,
@@ -32,6 +42,7 @@ impl Bf16PagedBatchDecodeSpec {
         num_kv_heads: usize,
         head_dim: usize,
         page_size: usize,
+        kv_layout: PagedKvLayout,
     ) -> Result<Self, ContractError> {
         if batch_size == 0
             || max_num_pages == 0
@@ -80,6 +91,7 @@ impl Bf16PagedBatchDecodeSpec {
             max_num_pages,
             num_query_heads,
             num_kv_heads,
+            kv_layout,
             softmax_scale: 1.0 / (head_dim as f32).sqrt(),
         })
     }
@@ -106,6 +118,10 @@ impl Bf16PagedBatchDecodeSpec {
 
     pub const fn page_size(self) -> usize {
         PAGED_BATCH_DECODE_PAGE_SIZE
+    }
+
+    pub const fn kv_layout(self) -> PagedKvLayout {
+        self.kv_layout
     }
 
     pub const fn softmax_scale(self) -> f32 {
@@ -323,10 +339,20 @@ pub fn paged_batch_decode_bf16_reference(
                 let (physical_page, page_offset) = page_table
                     .physical_page_for_token(request, token)
                     .expect("enumerated token is inside the validated request");
-                let kv_offset = ((physical_page * PAGED_BATCH_DECODE_PAGE_SIZE + page_offset)
-                    * spec.num_kv_heads()
-                    + kv_head)
-                    * SINGLE_DECODE_HEAD_DIM;
+                let kv_offset = match spec.kv_layout() {
+                    PagedKvLayout::Nhd => {
+                        ((physical_page * PAGED_BATCH_DECODE_PAGE_SIZE + page_offset)
+                            * spec.num_kv_heads()
+                            + kv_head)
+                            * SINGLE_DECODE_HEAD_DIM
+                    }
+                    PagedKvLayout::Hnd => {
+                        ((physical_page * spec.num_kv_heads() + kv_head)
+                            * PAGED_BATCH_DECODE_PAGE_SIZE
+                            + page_offset)
+                            * SINGLE_DECODE_HEAD_DIM
+                    }
+                };
                 let dot = (0..SINGLE_DECODE_HEAD_DIM).fold(0.0_f32, |sum, component| {
                     query[query_offset + component]
                         .to_f32()

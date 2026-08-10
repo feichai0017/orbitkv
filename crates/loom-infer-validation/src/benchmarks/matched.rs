@@ -6,7 +6,7 @@ use half::bf16;
 use loom_infer::{
     Bf16GemmSpec, Bf16PagedBatchDecodeSpec, Bf16PagedPrefillSpec, Bf16RaggedPrefillSpec,
     Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensSpec, Bf16RopePosIdsSpec,
-    Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, DType, RmsNormSpec,
+    Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, DType, PagedKvLayout, RmsNormSpec,
     rope_paged_kv_append_bf16_reference, rope_paged_kv_append_tokens_bf16_reference,
     rope_pos_ids_bf16_reference,
 };
@@ -30,7 +30,7 @@ use std::sync::Arc;
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MEASUREMENT: &str = "eager_stream_batch_cuda_event";
 const FIXTURE_ID: &str = "xorshift64_mod2001_bf16_v1";
-const PAGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_page_table_v1";
+const PAGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_page_table_layout_v2";
 const PAGED_PREFILL_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_paged_prefill_v1";
 const RAGGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1";
 const ROPE_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_rope_pos_ids_v1";
@@ -79,6 +79,7 @@ struct DecodeCase {
 #[derive(Clone, Copy)]
 struct PagedDecodeCase {
     name: &'static str,
+    layout: PagedKvLayout,
     batch_size: usize,
     max_num_pages: usize,
     query_heads: usize,
@@ -179,6 +180,33 @@ fn digest_i32(values: &[i32]) -> u64 {
     values.iter().fold(FNV_OFFSET_BASIS, |digest, &value| {
         (digest ^ u64::from(value as u32)).wrapping_mul(FNV_PRIME)
     })
+}
+
+fn pack_paged_decode_kv(
+    logical_nhd: &[bf16],
+    max_num_pages: usize,
+    kv_heads: usize,
+    layout: PagedKvLayout,
+) -> Vec<bf16> {
+    match layout {
+        PagedKvLayout::Nhd => logical_nhd.to_vec(),
+        PagedKvLayout::Hnd => {
+            let page_size = 16;
+            let head_dim = 128;
+            let mut packed = vec![bf16::NAN; logical_nhd.len()];
+            for page in 0..max_num_pages {
+                for token in 0..page_size {
+                    for head in 0..kv_heads {
+                        let source = ((page * page_size + token) * kv_heads + head) * head_dim;
+                        let target = ((page * kv_heads + head) * page_size + token) * head_dim;
+                        packed[target..target + head_dim]
+                            .copy_from_slice(&logical_nhd[source..source + head_dim]);
+                    }
+                }
+            }
+            packed
+        }
+    }
 }
 
 fn benchmark_rms_norm(
@@ -434,6 +462,7 @@ fn benchmark_paged_decode_case(
         case.kv_heads,
         128,
         16,
+        case.layout,
     )?;
     let table =
         spec.validate_page_table(case.page_indptr, case.page_indices, case.last_page_len)?;
@@ -443,8 +472,21 @@ fn benchmark_paged_decode_case(
         Bf16PagedBatchDecodeAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
     };
     let query_host = deterministic_bf16(spec.query_numel(), case.salt);
-    let key_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x4b45_5900);
-    let value_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x5641_4c55_4500);
+    let logical_key_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x4b45_5900);
+    let logical_value_host =
+        deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x5641_4c55_4500);
+    let key_host = pack_paged_decode_kv(
+        &logical_key_host,
+        spec.max_num_pages(),
+        spec.num_kv_heads(),
+        case.layout,
+    );
+    let value_host = pack_paged_decode_kv(
+        &logical_value_host,
+        spec.max_num_pages(),
+        spec.num_kv_heads(),
+        case.layout,
+    );
     let query = Arc::new(DeviceBuffer::from_host(stream, &query_host)?);
     let key_pages = Arc::new(DeviceBuffer::from_host(stream, &key_host)?);
     let value_pages = Arc::new(DeviceBuffer::from_host(stream, &value_host)?);
@@ -521,7 +563,10 @@ fn benchmark_paged_decode_case(
         operator: "paged_batch_decode",
         case: case.name,
         dtype: "bf16",
-        layout: "NHD_D128_page16",
+        layout: match case.layout {
+            PagedKvLayout::Nhd => "NHD_D128_page16",
+            PagedKvLayout::Hnd => "HND_D128_page16",
+        },
         execution: json!({
             "algorithm": algorithm,
             "page_table_location": "device",
@@ -1445,7 +1490,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     if requested.contains(&"paged_batch_decode") {
         for case in [
             PagedDecodeCase {
-                name: "bf16_paged_mha_b1_l1_qh8_kvh8_d128_p16",
+                name: "bf16_paged_mha_b1_l1_qh8_kvh8_d128_p16_nhd",
+                layout: PagedKvLayout::Nhd,
                 batch_size: 1,
                 max_num_pages: 2,
                 query_heads: 8,
@@ -1456,7 +1502,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 salt: 0x1001,
             },
             PagedDecodeCase {
-                name: "bf16_paged_mqa_b3_l16_23_48_qh8_kvh1_d128_p16",
+                name: "bf16_paged_mqa_b3_l16_23_48_qh8_kvh1_d128_p16_nhd",
+                layout: PagedKvLayout::Nhd,
                 batch_size: 3,
                 max_num_pages: 7,
                 query_heads: 8,
@@ -1467,7 +1514,44 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 salt: 0x2001,
             },
             PagedDecodeCase {
-                name: "bf16_paged_gqa4_b4_l3_32_17_41_qh16_kvh4_d128_p16",
+                name: "bf16_paged_gqa4_b4_l3_32_17_41_qh16_kvh4_d128_p16_nhd",
+                layout: PagedKvLayout::Nhd,
+                batch_size: 4,
+                max_num_pages: 8,
+                query_heads: 16,
+                kv_heads: 4,
+                page_indptr: &[0, 1, 3, 5, 8],
+                page_indices: &[7, 2, 6, 5, 1, 7, 0, 4],
+                last_page_len: &[3, 16, 1, 9],
+                salt: 0x4001,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_mha_b1_l1_qh8_kvh8_d128_p16_hnd",
+                layout: PagedKvLayout::Hnd,
+                batch_size: 1,
+                max_num_pages: 2,
+                query_heads: 8,
+                kv_heads: 8,
+                page_indptr: &[0, 1],
+                page_indices: &[1],
+                last_page_len: &[1],
+                salt: 0x1001,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_mqa_b3_l16_23_48_qh8_kvh1_d128_p16_hnd",
+                layout: PagedKvLayout::Hnd,
+                batch_size: 3,
+                max_num_pages: 7,
+                query_heads: 8,
+                kv_heads: 1,
+                page_indptr: &[0, 1, 3, 6],
+                page_indices: &[4, 6, 1, 5, 0, 3],
+                last_page_len: &[16, 7, 16],
+                salt: 0x2001,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_gqa4_b4_l3_32_17_41_qh16_kvh4_d128_p16_hnd",
+                layout: PagedKvLayout::Hnd,
                 batch_size: 4,
                 max_num_pages: 8,
                 query_heads: 16,
