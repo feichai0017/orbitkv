@@ -455,7 +455,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let provider = PrefillProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
-    let mut queue = CommandQueue::new(stream, 2)?;
+    let mut queue = CommandQueue::new(stream, 2, 1)?;
 
     run_case(
         &mut queue,

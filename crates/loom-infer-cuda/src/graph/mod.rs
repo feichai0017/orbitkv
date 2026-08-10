@@ -36,7 +36,7 @@ impl GraphQueue {
     pub fn new(context: &Arc<CudaContext>, max_commands: usize) -> Result<Self, CommandError> {
         let stream = context.new_stream().map_err(CommandError::from)?;
         Ok(Self {
-            queue: CommandQueue::new(stream, max_commands)?,
+            queue: CommandQueue::new(stream, max_commands, 1)?,
             not_send_sync: PhantomData,
         })
     }
@@ -91,7 +91,9 @@ impl CommandQueue {
             return Err(CaptureError::Graph(GraphError::DefaultStreamUnsupported));
         }
 
-        let mut commands = self.begin(bindings).map_err(CaptureError::Command)?;
+        let mut commands = self
+            .begin_capture(bindings)
+            .map_err(CaptureError::Command)?;
         begin_capture(&stream).map_err(CaptureError::Graph)?;
         let guard = CaptureGuard::new(stream);
 

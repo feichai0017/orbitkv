@@ -4,14 +4,16 @@ use crate::reporting::GateCase;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use half::bf16;
 use loom_infer::{
-    Bf16PagedBatchDecodeSpec, ContractError, PAGED_BATCH_DECODE_PAGE_SIZE, PagedKvLayout,
-    SINGLE_DECODE_HEAD_DIM, paged_batch_decode_bf16_reference,
+    Bf16PagedBatchDecodeSpec, Bf16SingleDecodeSpec, ContractError, PAGED_BATCH_DECODE_PAGE_SIZE,
+    PagedKvLayout, SINGLE_DECODE_HEAD_DIM, paged_batch_decode_bf16_reference,
 };
 use loom_infer_cuda::attention::{
-    Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan, DecodeProvider,
-    PagedBatchDecodeEnqueueError,
+    Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan, Bf16SingleDecodeArgs, DecodeProvider,
+    PagedBatchDecodeEnqueueError, SingleDecodeEnqueueError,
 };
-use loom_infer_cuda::command::{CommandCompletionError, CommandQueue};
+use loom_infer_cuda::command::{
+    CommandCompletion, CommandCompletionError, CommandError, CommandQueue,
+};
 use loom_infer_cuda::graph::{GraphBindingsError, GraphError, GraphQueue};
 use std::error::Error;
 use std::sync::Arc;
@@ -334,6 +336,194 @@ fn run_invalid_page_guard_case(
     Ok(())
 }
 
+fn enqueue_dropped_invalid_page(
+    queue: &mut CommandQueue,
+    plan: &Bf16PagedBatchDecodePlan,
+) -> Result<CommandCompletion, Box<dyn Error>> {
+    let stream = queue.stream().clone();
+    let spec = plan.spec();
+    let query = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.query_numel())?);
+    let key_pages = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        &stream,
+        spec.kv_pages_numel(),
+    )?);
+    let value_pages = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        &stream,
+        spec.kv_pages_numel(),
+    )?);
+    let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2])?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 2])?);
+    let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &[16_i32, 16])?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
+    let output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
+    let lse = DeviceBuffer::<f32>::zeroed(&stream, spec.lse_numel())?;
+    let mut bindings = queue.bindings(9)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key_pages)?;
+    let value_handle = bindings.bind_read(value_pages)?;
+    let indptr_handle = bindings.bind_read(page_indptr)?;
+    let indices_handle = bindings.bind_read(page_indices)?;
+    let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+    let mut scope = queue.begin(bindings)?;
+    plan.enqueue_into(
+        &mut scope,
+        Bf16PagedBatchDecodeArgs::new(
+            query_handle,
+            key_handle,
+            value_handle,
+            indptr_handle,
+            indices_handle,
+            last_page_len_handle,
+            metadata_status_handle,
+            output_handle.write(),
+            lse_handle.write(),
+        ),
+    )?;
+    Ok(scope.finish())
+}
+
+fn run_dropped_rejection_queue_case(
+    stream: &Arc<CudaStream>,
+    provider: &DecodeProvider,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16, PagedKvLayout::Hnd)?;
+    let plan = provider.plan_bf16_paged_batch(spec)?;
+    let expected = ContractError::PageIndexOutOfRange {
+        position: 1,
+        index: 2,
+        max_num_pages: 2,
+    };
+    let mut queue = CommandQueue::new(stream.clone(), 3, 2)?;
+    let mut bindings = queue.bindings(1)?;
+    bindings.bind_read(Arc::new(DeviceBuffer::<bf16>::zeroed(stream, 1)?))?;
+    let first = enqueue_dropped_invalid_page(&mut queue, &plan)?;
+    let second = enqueue_dropped_invalid_page(&mut queue, &plan)?;
+    drop(first);
+    drop(second);
+
+    for rejection_index in 1..=2 {
+        let admission = match queue.begin(bindings) {
+            Ok(scope) => {
+                drop(scope);
+                return Err(
+                    format!("dropped device rejection {rejection_index} was not reported").into(),
+                );
+            }
+            Err(error) => error,
+        };
+        let (cause, recovered) = admission.into_parts();
+        match cause {
+            CommandError::UnobservedDeviceRejection(actual) if actual == expected => {}
+            error => {
+                return Err(format!(
+                    "dropped device rejection {rejection_index} returned the wrong error: {error}"
+                )
+                .into());
+            }
+        }
+        bindings = recovered;
+    }
+    let completion = queue.begin(bindings)?.finish();
+    drop(completion.wait()?);
+
+    println!(
+        "{} dropped_rejections=2 preserved=2 acknowledged=2 queue_reusable=true poisoned=false",
+        GateCase::new("paged_batch_decode_h20", "dropped_rejection_queue")
+    );
+    Ok(())
+}
+
+fn run_late_rejection_admission_case(
+    stream: &Arc<CudaStream>,
+    provider: &DecodeProvider,
+) -> Result<(), Box<dyn Error>> {
+    let paged_spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16, PagedKvLayout::Hnd)?;
+    let paged_plan = provider.plan_bf16_paged_batch(paged_spec)?;
+    let expected = ContractError::PageIndexOutOfRange {
+        position: 1,
+        index: 2,
+        max_num_pages: 2,
+    };
+    let decode_spec = Bf16SingleDecodeSpec::new(1, 1, 1, SINGLE_DECODE_HEAD_DIM)?;
+    let decode_plan = provider.plan_bf16(decode_spec)?;
+    let mut queue = CommandQueue::new(stream.clone(), 3, 2)?;
+
+    let query = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        stream,
+        decode_spec.query_numel(),
+    )?);
+    let key = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        stream,
+        decode_spec.kv_numel(),
+    )?);
+    let value = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        stream,
+        decode_spec.kv_numel(),
+    )?);
+    let output = DeviceBuffer::<bf16>::zeroed(stream, decode_spec.output_numel())?;
+    let lse = DeviceBuffer::<f32>::zeroed(stream, decode_spec.lse_numel())?;
+    let mut bindings = queue.bindings(5)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key)?;
+    let value_handle = bindings.bind_read(value)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+
+    let rejected = enqueue_dropped_invalid_page(&mut queue, &paged_plan)?;
+    let mut admitted_before_rejection = queue.begin(bindings)?;
+    drop(rejected);
+    let enqueue_error = decode_plan
+        .enqueue_into(
+            &mut admitted_before_rejection,
+            Bf16SingleDecodeArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            ),
+        )
+        .expect_err("a late rejection must block a previously admitted scope");
+    if !matches!(
+        enqueue_error,
+        SingleDecodeEnqueueError::Command(CommandError::UnobservedDeviceRejection(actual))
+            if actual == expected
+    ) {
+        return Err(
+            format!("late rejection returned the wrong enqueue error: {enqueue_error}").into(),
+        );
+    }
+    bindings = admitted_before_rejection.finish().wait()?;
+    let admission = match queue.begin(bindings) {
+        Ok(scope) => {
+            drop(scope);
+            return Err("late rejection was consumed by the in-flight scope".into());
+        }
+        Err(error) => error,
+    };
+    let (cause, bindings) = admission.into_parts();
+    if !matches!(
+        cause,
+        CommandError::UnobservedDeviceRejection(actual) if actual == expected
+    ) {
+        return Err(
+            format!("late rejection acknowledgement returned the wrong error: {cause}").into(),
+        );
+    }
+    drop(queue.begin(bindings)?.finish().wait()?);
+
+    println!(
+        "{} scope_admitted_before_rejection=true enqueue_blocked=true rejection_peeked=true \
+         next_begin_acknowledged=true queue_reusable=true poisoned=false",
+        GateCase::new("paged_batch_decode_h20", "late_rejection_admission")
+    );
+    Ok(())
+}
+
 fn run_invalid_page_graph_rejection_case(
     context: &Arc<CudaContext>,
     provider: &DecodeProvider,
@@ -468,7 +658,9 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let provider = DecodeProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
-    let mut queue = CommandQueue::new(stream, 3)?;
+    run_dropped_rejection_queue_case(&stream, &provider)?;
+    run_late_rejection_admission_case(&stream, &provider)?;
+    let mut queue = CommandQueue::new(stream, 3, 1)?;
 
     for layout in [PagedKvLayout::Nhd, PagedKvLayout::Hnd] {
         let layout_name = match layout {

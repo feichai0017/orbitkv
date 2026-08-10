@@ -774,7 +774,7 @@ pub fn run() -> Result<(), Box<dyn std::error::Error>> {
     let context = CudaContext::new(0)?;
     let provider = RmsNormProvider::load(&context)?;
     let stream = context.new_stream()?;
-    let mut queue = CommandQueue::new(stream, 2)?;
+    let mut queue = CommandQueue::new(stream, 2, 1)?;
 
     for (rows, hidden_size) in [(1, 1), (3, 127), (8, 4096), (16, 8192)] {
         check_f32_case(&mut queue, &provider, rows, hidden_size)?;

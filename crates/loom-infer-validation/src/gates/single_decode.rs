@@ -11,7 +11,7 @@ use loom_infer_cuda::attention::{
     Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs, DecodeProvider,
     SingleDecodeEnqueueError,
 };
-use loom_infer_cuda::command::{CommandError, CommandQueue};
+use loom_infer_cuda::command::{CommandCompletion, CommandError, CommandQueue, ReadWrite};
 use loom_infer_cuda::memory::DeviceRegionLaunchError;
 use std::error::Error;
 use std::sync::Arc;
@@ -26,6 +26,137 @@ enum ShortBuffer {
     Value,
     Output,
     Lse,
+}
+
+struct DetachedDecode {
+    completion: CommandCompletion,
+    output: ReadWrite<bf16>,
+    lse: ReadWrite<f32>,
+    expected_output: Vec<bf16>,
+    expected_lse: Vec<f32>,
+}
+
+fn enqueue_detached_decode(
+    queue: &mut CommandQueue,
+    plan: &Bf16SingleDecodePlan,
+    salt: u64,
+) -> Result<DetachedDecode, Box<dyn Error>> {
+    let stream = queue.stream().clone();
+    let spec = plan.spec();
+    let query_host = deterministic_bf16(spec.query_numel(), salt);
+    let key_host = deterministic_bf16(spec.kv_numel(), salt ^ 0x4b45_5900);
+    let value_host = deterministic_bf16(spec.kv_numel(), salt ^ 0x5641_4c55_4500);
+    let mut expected_output = vec![bf16::ZERO; spec.output_numel()];
+    let mut expected_lse = vec![0.0_f32; spec.lse_numel()];
+    single_decode_bf16_reference(
+        &query_host,
+        &key_host,
+        &value_host,
+        &mut expected_output,
+        &mut expected_lse,
+        spec,
+    )?;
+
+    let query = Arc::new(DeviceBuffer::from_host(&stream, &query_host)?);
+    let key = Arc::new(DeviceBuffer::from_host(&stream, &key_host)?);
+    let value = Arc::new(DeviceBuffer::from_host(&stream, &value_host)?);
+    let output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
+    let lse = DeviceBuffer::<f32>::zeroed(&stream, spec.lse_numel())?;
+    let mut bindings = queue.bindings(5)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key)?;
+    let value_handle = bindings.bind_read(value)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+    let mut scope = queue.begin(bindings)?;
+    plan.enqueue_into(
+        &mut scope,
+        Bf16SingleDecodeArgs::new(
+            query_handle,
+            key_handle,
+            value_handle,
+            output_handle.write(),
+            lse_handle.write(),
+        ),
+    )?;
+    Ok(DetachedDecode {
+        completion: scope.finish(),
+        output: output_handle,
+        lse: lse_handle,
+        expected_output,
+        expected_lse,
+    })
+}
+
+fn wait_detached_decode(
+    stream: &Arc<CudaStream>,
+    pending: DetachedDecode,
+) -> Result<(), Box<dyn Error>> {
+    let DetachedDecode {
+        completion,
+        output,
+        lse,
+        expected_output,
+        expected_lse,
+    } = pending;
+    let mut bindings = completion.wait()?;
+    let output = bindings.take_read_write(output)?;
+    let lse = bindings.take_read_write(lse)?;
+    drop(bindings);
+    let actual_output = output.to_host_vec(stream)?;
+    let actual_lse = lse.to_host_vec(stream)?;
+    let output_comparison = compare_bf16(&actual_output, &expected_output, "detached BF16")?;
+    let lse_comparison = compare_f32(&actual_lse, &expected_lse, "detached F32 LSE")?;
+    if output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
+        || lse_comparison.max_abs > LSE_MAX_ABS_LIMIT
+    {
+        return Err("detached completion produced an incorrect result".into());
+    }
+    Ok(())
+}
+
+fn check_detached_completion(
+    stream: &Arc<CudaStream>,
+    provider: &DecodeProvider,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16SingleDecodeSpec::new(127, 16, 4, SINGLE_DECODE_HEAD_DIM)?;
+    let plan = provider.plan_bf16(spec)?;
+    let mut queue = CommandQueue::new(stream.clone(), 1, 2)?;
+    let mut exhausted_bindings = queue.bindings(1)?;
+    let exhausted_buffer = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, 1)?);
+    exhausted_bindings.bind_read(exhausted_buffer)?;
+    let first = enqueue_detached_decode(&mut queue, &plan, 0xd001)?;
+    let second = enqueue_detached_decode(&mut queue, &plan, 0xd002)?;
+
+    let (error, exhausted_bindings) = match queue.begin(exhausted_bindings) {
+        Ok(scope) => {
+            drop(scope);
+            return Err("a third detached scope exceeded max_in_flight".into());
+        }
+        Err(error) => error.into_parts(),
+    };
+    if !matches!(
+        error,
+        CommandError::InFlightCapacityExceeded { capacity: 2 }
+    ) {
+        return Err(format!("detached capacity returned the wrong error: {error}").into());
+    }
+
+    wait_detached_decode(stream, second)?;
+    let recovered = queue.begin(exhausted_bindings)?.finish();
+    drop(recovered.wait()?);
+    let dropped = enqueue_detached_decode(&mut queue, &plan, 0xd003)?;
+    drop(dropped);
+    let reused = enqueue_detached_decode(&mut queue, &plan, 0xd004)?;
+    wait_detached_decode(stream, reused)?;
+    wait_detached_decode(stream, first)?;
+
+    println!(
+        "{} max_in_flight=2 concurrent_submissions=2 exhausted=true reverse_wait=true \
+         drop_settled=true queue_reused=true",
+        GateCase::new("single_decode_h20", "detached_completion")
+    );
+    Ok(())
 }
 
 fn run_case(
@@ -421,7 +552,7 @@ fn check_split_k_preflight(
     let spec = Bf16SingleDecodeSplitKSpec::new(decode, 3)?;
     let plan = provider.plan_bf16_split_k(spec)?;
 
-    let mut capacity_queue = CommandQueue::new(stream.clone(), 1)?;
+    let mut capacity_queue = CommandQueue::new(stream.clone(), 1, 1)?;
     let query = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, decode.query_numel())?);
     let key = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, decode.kv_numel())?);
     let value = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, decode.kv_numel())?);
@@ -461,7 +592,7 @@ fn check_split_k_preflight(
     }
     drop(completion.wait()?);
 
-    let mut workspace_queue = CommandQueue::new(stream.clone(), 2)?;
+    let mut workspace_queue = CommandQueue::new(stream.clone(), 2, 1)?;
     let query = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, decode.query_numel())?);
     let key = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, decode.kv_numel())?);
     let value = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, decode.kv_numel())?);
@@ -516,7 +647,8 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let provider = DecodeProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
-    let mut queue = CommandQueue::new(stream.clone(), 2)?;
+    check_detached_completion(&stream, &provider)?;
+    let mut queue = CommandQueue::new(stream.clone(), 2, 1)?;
 
     run_case(
         &mut queue,

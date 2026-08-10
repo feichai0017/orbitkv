@@ -58,7 +58,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRww {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -97,7 +97,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrw {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -141,7 +141,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrw {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -186,7 +186,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrww {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -247,7 +247,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrww {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -322,7 +322,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrwww {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -386,7 +386,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrrw {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -469,7 +469,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrrwww {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -547,7 +547,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrrrw {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -631,7 +631,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrrrww {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -716,7 +716,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrrrrw {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -815,7 +815,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrrrrrww {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,
@@ -923,7 +923,7 @@ impl CommandScope<'_> {
         let queue = self.queue.as_ref().expect("live command scope has a queue");
 
         Ok(ResolvedRrrrrrrrww {
-            stream: &queue.stream,
+            stream: queue.stream(),
             first: first_buffer,
             second: second_buffer,
             third: third_buffer,

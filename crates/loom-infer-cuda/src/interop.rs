@@ -16,6 +16,7 @@ use cuda_core::{CudaContext, CudaEvent, CudaStream, DriverError, IntoResult};
 use loom_infer::ContractError;
 use std::any::Any;
 use std::fmt::{self, Display, Formatter};
+use std::marker::PhantomData;
 use std::mem::MaybeUninit;
 use std::sync::Arc;
 use thiserror::Error;
@@ -295,7 +296,7 @@ impl EngineInteropQueue {
         let loom_stream = external.context.new_stream()?;
         let pre_event = external.context.new_event(None)?;
         let post_event = external.context.new_event(None)?;
-        let queue = CommandQueue::new(loom_stream.clone(), max_commands)?;
+        let queue = CommandQueue::new(loom_stream.clone(), max_commands, 1)?;
         Ok(Self {
             external,
             loom_stream,
@@ -416,14 +417,15 @@ impl EngineInteropQueue {
             ));
         }
 
-        let mut scope = match self.queue.begin_recover(bindings) {
+        let mut scope = match self.queue.begin(bindings) {
             Ok(scope) => scope,
-            Err((error, bindings)) => {
+            Err(error) => {
+                let (error, bindings) = error.into_parts();
                 settle_bridge_streams(&self.external, &loom_stream, &mut self.poisoned);
                 return Err(EngineSingleDecodeEnqueueError::recovered(
                     EngineSingleDecodeEnqueueCause::Command(error),
                     authority,
-                    *bindings,
+                    bindings,
                     fingerprint,
                 ));
             }
@@ -483,6 +485,7 @@ impl EngineInteropQueue {
                 command: completion,
                 trace,
                 fingerprint,
+                queue_borrow: PhantomData,
             },
         })
     }
@@ -693,9 +696,10 @@ impl<A> EngineReturnedAuthority<A> {
 /// One in-flight provider command and its external-stream handoff evidence.
 #[must_use = "dropping the completion waits before releasing buffer and stream leases"]
 pub struct EngineCommandCompletion<'queue> {
-    command: CommandCompletion<'queue>,
+    command: CommandCompletion,
     trace: EngineExecutionTrace,
     fingerprint: Arc<EngineBindingFingerprint>,
+    queue_borrow: PhantomData<&'queue mut EngineInteropQueue>,
 }
 
 impl EngineCommandCompletion<'_> {
@@ -872,7 +876,7 @@ fn settle_bridge_failure<A>(
     external: &ExternalCudaStream,
     loom_stream: &CudaStream,
     poisoned: &mut bool,
-    completion: CommandCompletion<'_>,
+    completion: CommandCompletion,
     bridge: DriverError,
     authority: A,
     fingerprint: Arc<EngineBindingFingerprint>,
@@ -909,7 +913,7 @@ fn settle_provider_failure<A>(
     external: &ExternalCudaStream,
     loom_stream: &CudaStream,
     poisoned: &mut bool,
-    completion: CommandCompletion<'_>,
+    completion: CommandCompletion,
     provider: SingleDecodeEnqueueError,
     authority: A,
     fingerprint: Arc<EngineBindingFingerprint>,

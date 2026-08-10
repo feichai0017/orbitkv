@@ -225,7 +225,7 @@ fn benchmark_rms_norm(
     let input = Arc::new(DeviceBuffer::from_host(stream, &input_host)?);
     let weight = Arc::new(DeviceBuffer::from_host(stream, &weight_host)?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.numel())?;
-    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
+    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample, 1)?;
     let mut bindings = queue.bindings(3)?;
     let input_handle: Read<bf16> = bindings.bind_read(input)?;
     let weight_handle: Read<bf16> = bindings.bind_read(weight)?;
@@ -282,7 +282,7 @@ fn benchmark_gemm(
     let weight = Arc::new(DeviceBuffer::from_host(stream, &weight_host)?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
     let workspace = DeviceBuffer::<u8>::zeroed(stream, plan.workspace_required_bytes())?;
-    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
+    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample, 1)?;
     let mut bindings = queue.bindings(4)?;
     let activation_handle = bindings.bind_read(activation)?;
     let weight_handle = bindings.bind_read(weight)?;
@@ -349,7 +349,7 @@ fn benchmark_decode_case(
     let lse = DeviceBuffer::<f32>::zeroed(stream, spec.lse_numel())?;
     let (samples_us, execution, kernels_per_call) = if case.partitions == 1 {
         let plan: Bf16SingleDecodePlan = provider.plan_bf16(spec)?;
-        let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
+        let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample, 1)?;
         let mut bindings = queue.bindings(5)?;
         let query_handle = bindings.bind_read(query)?;
         let key_handle = bindings.bind_read(key)?;
@@ -379,7 +379,7 @@ fn benchmark_decode_case(
             .launches_per_sample
             .checked_mul(2)
             .ok_or("split-K command capacity overflow")?;
-        let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+        let mut queue = CommandQueue::new(stream.clone(), command_capacity, 1)?;
         let mut bindings = queue.bindings(6)?;
         let query_handle = bindings.bind_read(query)?;
         let key_handle = bindings.bind_read(key)?;
@@ -506,7 +506,7 @@ fn benchmark_paged_decode_case(
         .launches_per_sample
         .checked_mul(3)
         .ok_or("paged-decode command capacity overflowed")?;
-    let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+    let mut queue = CommandQueue::new(stream.clone(), command_capacity, 1)?;
     let binding_capacity = 8_usize
         .checked_add(config.launches_per_sample)
         .ok_or("paged-decode binding capacity overflowed")?;
@@ -657,7 +657,7 @@ fn benchmark_paged_prefill_case(
         .launches_per_sample
         .checked_mul(3)
         .ok_or("paged-prefill command capacity overflowed")?;
-    let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+    let mut queue = CommandQueue::new(stream.clone(), command_capacity, 1)?;
     let binding_capacity = 9_usize
         .checked_add(config.launches_per_sample)
         .ok_or("paged-prefill binding capacity overflowed")?;
@@ -811,7 +811,7 @@ fn benchmark_ragged_prefill_case(
         .launches_per_sample
         .checked_mul(kernels_per_call)
         .ok_or("ragged benchmark command capacity overflow")?;
-    let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+    let mut queue = CommandQueue::new(stream.clone(), command_capacity, 1)?;
     let mut bindings = queue.bindings(8)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key)?;
@@ -909,7 +909,7 @@ fn benchmark_rope(
     let query_output = DeviceBuffer::<bf16>::zeroed(stream, spec.query_numel())?;
     let key_output = DeviceBuffer::<bf16>::zeroed(stream, spec.key_numel())?;
     let plan = provider.plan_bf16_pos_ids(spec)?;
-    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
+    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample, 1)?;
     let mut bindings = queue.bindings(5)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key)?;
@@ -1072,7 +1072,7 @@ fn benchmark_rope_paged_append(
         .launches_per_sample
         .checked_mul(3)
         .ok_or("RoPE append command capacity overflowed")?;
-    let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+    let mut queue = CommandQueue::new(stream.clone(), command_capacity, 1)?;
     let binding_capacity = 10_usize
         .checked_add(config.launches_per_sample)
         .ok_or("RoPE append binding capacity overflowed")?;
@@ -1274,7 +1274,7 @@ fn benchmark_rope_paged_append_tokens(
         .launches_per_sample
         .checked_mul(3)
         .ok_or("explicit RoPE append command capacity overflowed")?;
-    let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+    let mut queue = CommandQueue::new(stream.clone(), command_capacity, 1)?;
     let binding_capacity = 12_usize
         .checked_add(config.launches_per_sample)
         .ok_or("explicit RoPE append binding capacity overflowed")?;

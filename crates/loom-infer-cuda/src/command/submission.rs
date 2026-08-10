@@ -1,59 +1,127 @@
 //! Stream-ordered command admission, retention, and capture transfer.
 
 use super::{
-    CheckedBindings, CommandCompletion, CommandError, ExternalCommandError, SubmissionError,
-    synchronize_stream_or_abort,
+    CheckedBindings, CommandAdmissionError, CommandCompletion, CommandError, ExternalCommandError,
+    SubmissionError, synchronize_stream_or_abort,
 };
 use crate::device_status::{DeviceStatusDecoder, STATUS_PACKET_WORDS};
 use crate::memory::enqueue_status_packet_copy;
 use cuda_core::{CudaEvent, CudaFunction, CudaStream, DriverError};
+use loom_infer::ContractError;
 use std::any::Any;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicU64, Ordering};
+use std::collections::VecDeque;
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 static NEXT_ID: AtomicU64 = AtomicU64::new(1);
 
 /// A reusable submission queue for one exact CUDA stream.
 ///
-/// The queue preallocates its completion event and resource-retention storage.
-/// Rust's mutable borrow rules prevent a second scope from re-recording the
-/// event while an earlier completion is still alive.
+/// The queue preallocates one completion event per allowed in-flight scope.
+/// Each finished scope owns its event until settlement, so later scopes may be
+/// submitted immediately without re-recording an in-flight fence.
 pub struct CommandQueue {
     pub(super) id: u64,
-    pub(super) stream: Arc<CudaStream>,
-    pub(super) completion_event: CudaEvent,
-    pub(super) retained_resources: Vec<RetainedResource>,
+    pub(super) shared: Arc<QueueShared>,
     pub(super) max_commands: usize,
-    pub(super) poisoned: bool,
+    pub(super) max_in_flight: usize,
+}
+
+pub(crate) struct QueueShared {
+    pub(super) stream: Arc<CudaStream>,
+    poisoned: AtomicBool,
+    free_slots: Mutex<Vec<CompletionSlot>>,
+    unobserved_rejections: Mutex<VecDeque<ContractError>>,
+}
+
+pub(crate) struct CompletionSlot {
+    pub(super) event: CudaEvent,
+    pub(super) retained_resources: Vec<RetainedResource>,
+}
+
+impl QueueShared {
+    pub(super) fn is_poisoned(&self) -> bool {
+        self.poisoned.load(Ordering::Acquire)
+    }
+
+    pub(super) fn poison(&self) {
+        self.poisoned.store(true, Ordering::Release);
+    }
+
+    pub(super) fn take_slot(&self) -> Option<CompletionSlot> {
+        lock_or_recover(&self.free_slots).pop()
+    }
+
+    pub(super) fn return_slot(&self, slot: CompletionSlot) {
+        lock_or_recover(&self.free_slots).push(slot);
+    }
+
+    pub(super) fn record_unobserved_rejection(&self, error: ContractError) {
+        let mut rejections = lock_or_recover(&self.unobserved_rejections);
+        if rejections.len() == rejections.capacity() {
+            self.poison();
+            return;
+        }
+        rejections.push_back(error);
+    }
+
+    fn take_unobserved_rejection(&self) -> Option<ContractError> {
+        lock_or_recover(&self.unobserved_rejections).pop_front()
+    }
+
+    fn first_unobserved_rejection(&self) -> Option<ContractError> {
+        lock_or_recover(&self.unobserved_rejections)
+            .front()
+            .copied()
+    }
 }
 
 impl CommandQueue {
-    /// Creates a queue for `stream` with storage for at most `max_commands`
-    /// commands per scope.
-    pub fn new(stream: Arc<CudaStream>, max_commands: usize) -> Result<Self, CommandError> {
+    /// Creates a queue for `stream` with explicit per-scope and in-flight bounds.
+    pub fn new(
+        stream: Arc<CudaStream>,
+        max_commands: usize,
+        max_in_flight: usize,
+    ) -> Result<Self, CommandError> {
         if max_commands == 0 {
             return Err(CommandError::ZeroCommandCapacity);
         }
+        if max_in_flight == 0 {
+            return Err(CommandError::ZeroInFlightCapacity);
+        }
 
         let id = fresh_id()?;
-        let completion_event = stream.context().new_event(None)?;
+        let mut free_slots = Vec::with_capacity(max_in_flight);
+        for _ in 0..max_in_flight {
+            free_slots.push(CompletionSlot {
+                event: stream.context().new_event(None)?,
+                retained_resources: Vec::with_capacity(max_commands),
+            });
+        }
         Ok(Self {
             id,
-            stream,
-            completion_event,
-            retained_resources: Vec::with_capacity(max_commands),
+            shared: Arc::new(QueueShared {
+                stream,
+                poisoned: AtomicBool::new(false),
+                free_slots: Mutex::new(free_slots),
+                unobserved_rejections: Mutex::new(VecDeque::with_capacity(max_in_flight)),
+            }),
             max_commands,
-            poisoned: false,
+            max_in_flight,
         })
     }
 
     /// Returns the exact stream used by every scope from this queue.
     pub fn stream(&self) -> &Arc<CudaStream> {
-        &self.stream
+        &self.shared.stream
     }
 
     pub const fn max_commands(&self) -> usize {
         self.max_commands
+    }
+
+    pub const fn max_in_flight(&self) -> usize {
+        self.max_in_flight
     }
 
     /// Creates reusable checked binding storage outside the enqueue path.
@@ -65,57 +133,111 @@ impl CommandQueue {
         Ok(CheckedBindings {
             queue_id: self.id,
             set_id: fresh_id()?,
-            stream: self.stream.clone(),
+            stream: self.shared.stream.clone(),
             leases: Vec::with_capacity(capacity),
             capacity,
             status: super::status::DeviceStatusState::new(
-                self.stream.context(),
+                self.shared.stream.context(),
                 self.max_commands,
             )?,
         })
     }
 
     /// Begins one stream-ordered command scope.
+    ///
+    /// Admission never waits for CUDA completion. On failure,
+    /// [`CommandAdmissionError`] preserves the complete binding capability for
+    /// retry or explicit release.
     pub fn begin<'queue>(
         &'queue mut self,
         bindings: CheckedBindings,
-    ) -> Result<CommandScope<'queue>, CommandError> {
-        self.begin_recover(bindings)
-            .map_err(|(error, _bindings)| error)
-    }
-
-    /// Begins a scope while preserving bindings when admission fails.
-    pub(crate) fn begin_recover<'queue>(
-        &'queue mut self,
-        bindings: CheckedBindings,
-    ) -> Result<CommandScope<'queue>, (CommandError, Box<CheckedBindings>)> {
-        if self.poisoned {
-            return Err((CommandError::QueuePoisoned, Box::new(bindings)));
+    ) -> Result<CommandScope<'queue>, CommandAdmissionError> {
+        if self.shared.is_poisoned() {
+            return Err(CommandAdmissionError::new(
+                CommandError::QueuePoisoned,
+                bindings,
+            ));
         }
         if bindings.queue_id != self.id
-            || bindings.stream.cu_stream() != self.stream.cu_stream()
-            || bindings.stream.context().cu_ctx() != self.stream.context().cu_ctx()
+            || bindings.stream.cu_stream() != self.shared.stream.cu_stream()
+            || bindings.stream.context().cu_ctx() != self.shared.stream.context().cu_ctx()
         {
-            return Err((CommandError::BindingsQueueMismatch, Box::new(bindings)));
+            return Err(CommandAdmissionError::new(
+                CommandError::BindingsQueueMismatch,
+                bindings,
+            ));
         }
-        if !self.retained_resources.is_empty() {
-            self.poisoned = true;
-            return Err((CommandError::QueuePoisoned, Box::new(bindings)));
+        if let Some(error) = self.shared.take_unobserved_rejection() {
+            return Err(CommandAdmissionError::new(
+                CommandError::UnobservedDeviceRejection(error),
+                bindings,
+            ));
         }
         if !bindings.status.is_empty() {
-            self.poisoned = true;
-            return Err((CommandError::QueuePoisoned, Box::new(bindings)));
+            self.shared.poison();
+            return Err(CommandAdmissionError::new(
+                CommandError::QueuePoisoned,
+                bindings,
+            ));
         }
+
+        let Some(slot) = self.shared.take_slot() else {
+            return Err(CommandAdmissionError::new(
+                CommandError::InFlightCapacityExceeded {
+                    capacity: self.max_in_flight,
+                },
+                bindings,
+            ));
+        };
 
         let scope_id = match fresh_id() {
             Ok(scope_id) => scope_id,
-            Err(error) => return Err((error, Box::new(bindings))),
+            Err(error) => {
+                self.shared.return_slot(slot);
+                return Err(CommandAdmissionError::new(error, bindings));
+            }
         };
 
         Ok(CommandScope {
             queue: Some(self),
+            slot: Some(slot),
             bindings: Some(bindings),
+            capture_resources: None,
             scope_id,
+            submitted: 0,
+            status_copies_submitted: 0,
+            submission_error: None,
+            finished: false,
+        })
+    }
+
+    pub(crate) fn begin_capture<'queue>(
+        &'queue mut self,
+        bindings: CheckedBindings,
+    ) -> Result<CommandScope<'queue>, CommandError> {
+        if self.shared.is_poisoned() {
+            return Err(CommandError::QueuePoisoned);
+        }
+        if bindings.queue_id != self.id
+            || bindings.stream.cu_stream() != self.shared.stream.cu_stream()
+            || bindings.stream.context().cu_ctx() != self.shared.stream.context().cu_ctx()
+        {
+            return Err(CommandError::BindingsQueueMismatch);
+        }
+        if let Some(error) = self.shared.take_unobserved_rejection() {
+            return Err(CommandError::UnobservedDeviceRejection(error));
+        }
+        if !bindings.status.is_empty() {
+            self.shared.poison();
+            return Err(CommandError::QueuePoisoned);
+        }
+        let max_commands = self.max_commands;
+        Ok(CommandScope {
+            queue: Some(self),
+            slot: None,
+            bindings: Some(bindings),
+            capture_resources: Some(Vec::with_capacity(max_commands)),
+            scope_id: fresh_id()?,
             submitted: 0,
             status_copies_submitted: 0,
             submission_error: None,
@@ -124,27 +246,12 @@ impl CommandQueue {
     }
 }
 
-impl Drop for CommandQueue {
-    fn drop(&mut self) {
-        if self.retained_resources.is_empty() {
-            return;
-        }
-
-        let synchronize_error = synchronize_stream_or_abort(&self.stream);
-        self.retained_resources.clear();
-        if let Some(error) = synchronize_error {
-            eprintln!(
-                "loom-infer-cuda command queue synchronized after a stream error during drop: \
-                 {error}"
-            );
-        }
-    }
-}
-
 /// A stream-ordered sequence of commands with one final completion fence.
 pub struct CommandScope<'queue> {
     pub(super) queue: Option<&'queue mut CommandQueue>,
+    pub(super) slot: Option<CompletionSlot>,
     pub(super) bindings: Option<CheckedBindings>,
+    pub(super) capture_resources: Option<Vec<RetainedResource>>,
     pub(super) scope_id: u64,
     pub(super) submitted: usize,
     pub(super) status_copies_submitted: usize,
@@ -154,9 +261,13 @@ pub struct CommandScope<'queue> {
 
 impl<'queue> CommandScope<'queue> {
     /// Records one final fence and transfers all bindings to the completion.
-    pub fn finish(mut self) -> CommandCompletion<'queue> {
+    pub fn finish(mut self) -> CommandCompletion {
         self.enqueue_device_status_readbacks();
         let queue = self.queue.take().expect("live command scope has a queue");
+        let slot = self
+            .slot
+            .take()
+            .expect("eager command scope has a completion slot");
         let bindings = self
             .bindings
             .take()
@@ -164,12 +275,16 @@ impl<'queue> CommandScope<'queue> {
         let record_error = if self.submitted == 0 || self.submission_error.is_some() {
             None
         } else {
-            queue.completion_event.record(&queue.stream).err()
+            slot.event.record(&queue.shared.stream).err()
         };
+        if record_error.is_some() {
+            queue.shared.poison();
+        }
 
         self.finished = true;
         CommandCompletion::new(
-            queue,
+            queue.shared.clone(),
+            slot,
             bindings,
             self.submitted,
             self.submission_error,
@@ -191,10 +306,16 @@ impl<'queue> CommandScope<'queue> {
         &self,
         additional_commands: usize,
     ) -> Result<(), CommandError> {
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
+        if queue.shared.is_poisoned() {
+            return Err(CommandError::QueuePoisoned);
+        }
+        if let Some(error) = queue.shared.first_unobserved_rejection() {
+            return Err(CommandError::UnobservedDeviceRejection(error));
+        }
         if self.submission_error.is_some() {
             return Err(CommandError::ScopePoisoned);
         }
-        let queue = self.queue.as_ref().expect("live command scope has a queue");
         let reserved_status_copies = self
             .bindings
             .as_ref()
@@ -283,13 +404,17 @@ impl<'queue> CommandScope<'queue> {
             .bindings
             .take()
             .expect("live command scope has bindings");
-        let resources = std::mem::replace(
-            &mut queue.retained_resources,
-            Vec::with_capacity(queue.max_commands),
+        assert!(
+            self.slot.is_none(),
+            "capture scope must not own an eager completion slot"
         );
+        let resources = self
+            .capture_resources
+            .take()
+            .expect("capture scope has capture resource storage");
         self.finished = true;
         CapturedCommandSet {
-            stream: queue.stream.clone(),
+            stream: queue.shared.stream.clone(),
             bindings,
             resources,
             submitted: self.submitted,
@@ -318,9 +443,10 @@ impl<'queue> CommandScope<'queue> {
             },
         );
         self.queue
-            .as_mut()
+            .as_ref()
             .expect("live command scope has a queue")
-            .poisoned = true;
+            .shared
+            .poison();
         self.submission_error = Some(SubmissionError::Driver(error));
     }
 
@@ -351,31 +477,33 @@ impl<'queue> CommandScope<'queue> {
             },
         );
         self.queue
-            .as_mut()
+            .as_ref()
             .expect("live command scope has a queue")
-            .poisoned = true;
+            .shared
+            .poison();
         self.submission_error = Some(SubmissionError::External(error));
     }
 
     pub(crate) fn record_preflight_driver_failure(&mut self, error: DriverError) {
         self.queue
-            .as_mut()
+            .as_ref()
             .expect("live command scope has a queue")
-            .poisoned = true;
+            .shared
+            .poison();
         self.submission_error = Some(SubmissionError::Driver(error));
     }
 
     fn record_submission(&mut self, permit: CommandPermit, resource: RetainedResource) {
-        let queue = self.queue.as_mut().expect("live command scope has a queue");
+        let queue = self.queue.as_ref().expect("live command scope has a queue");
         if permit.queue_id != queue.id
             || permit.scope_id != self.scope_id
             || permit.submission_index != self.submitted
-            || queue.retained_resources.len() != self.submitted
+            || self.retained_resources().len() != self.submitted
             || self.submitted >= queue.max_commands
         {
             abort_after_bookkeeping_invariant();
         }
-        queue.retained_resources.push(resource);
+        self.retained_resources_mut().push(resource);
         self.submitted += 1;
     }
 
@@ -408,7 +536,7 @@ impl<'queue> CommandScope<'queue> {
                     .expect("live command scope has bindings");
                 let pending = bindings.status.pending(index);
                 enqueue_status_packet_copy(
-                    &queue.stream,
+                    &queue.shared.stream,
                     pending.source(),
                     bindings.status.host_mut(),
                     index * STATUS_PACKET_WORDS,
@@ -419,9 +547,10 @@ impl<'queue> CommandScope<'queue> {
             self.status_copies_submitted += 1;
             if let Err(error) = result {
                 self.queue
-                    .as_mut()
+                    .as_ref()
                     .expect("live command scope has a queue")
-                    .poisoned = true;
+                    .shared
+                    .poison();
                 self.submission_error = Some(SubmissionError::Driver(error));
                 break;
             }
@@ -434,33 +563,59 @@ impl Drop for CommandScope<'_> {
         if self.finished {
             return;
         }
-        let Some(queue) = self.queue.as_mut() else {
+        let Some(queue) = self.queue.as_ref() else {
             return;
         };
+        let shared = queue.shared.clone();
 
         if self.submitted > 0 {
-            let synchronize_error = synchronize_stream_or_abort(&queue.stream);
+            let synchronize_error = synchronize_stream_or_abort(&shared.stream);
             if self.submission_error.is_some() || synchronize_error.is_some() {
-                queue.poisoned = true;
+                shared.poison();
             }
             let submission_driver_error = self
                 .submission_error
                 .and_then(SubmissionError::driver_error);
-            queue.retained_resources.clear();
+            self.retained_resources_mut().clear();
             if let Some(error) = submission_driver_error {
-                queue.stream.context().record_err::<()>(Err(error));
+                shared.stream.context().record_err::<()>(Err(error));
             }
             if let Some(error) = synchronize_error {
-                queue.stream.context().record_err::<()>(Err(error));
+                shared.stream.context().record_err::<()>(Err(error));
             }
         } else {
-            queue.retained_resources.clear();
+            self.retained_resources_mut().clear();
             if let Some(error) = self.submission_error {
-                queue.poisoned = true;
+                shared.poison();
                 if let Some(error) = error.driver_error() {
-                    queue.stream.context().record_err::<()>(Err(error));
+                    shared.stream.context().record_err::<()>(Err(error));
                 }
             }
+        }
+        if let Some(slot) = self.slot.take() {
+            shared.return_slot(slot);
+        }
+    }
+}
+
+impl CommandScope<'_> {
+    fn retained_resources(&self) -> &Vec<RetainedResource> {
+        match self.slot.as_ref() {
+            Some(slot) => &slot.retained_resources,
+            None => self
+                .capture_resources
+                .as_ref()
+                .expect("capture scope has capture resource storage"),
+        }
+    }
+
+    fn retained_resources_mut(&mut self) -> &mut Vec<RetainedResource> {
+        match self.slot.as_mut() {
+            Some(slot) => &mut slot.retained_resources,
+            None => self
+                .capture_resources
+                .as_mut()
+                .expect("capture scope has capture resource storage"),
         }
     }
 }
@@ -506,4 +661,10 @@ fn abort_after_bookkeeping_invariant() -> ! {
          aborting to preserve resource safety"
     );
     std::process::abort()
+}
+
+fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
+    mutex
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
 }

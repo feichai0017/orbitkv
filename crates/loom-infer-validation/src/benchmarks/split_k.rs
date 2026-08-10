@@ -149,7 +149,7 @@ fn benchmark_direct(
     let value = Arc::new(DeviceBuffer::from_host(stream, value_host)?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
     let lse = DeviceBuffer::<f32>::zeroed(stream, spec.lse_numel())?;
-    let mut queue = CommandQueue::new(stream.clone(), config.calls_per_sample)?;
+    let mut queue = CommandQueue::new(stream.clone(), config.calls_per_sample, 1)?;
     let mut bindings = queue.bindings(5)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key)?;
@@ -208,7 +208,7 @@ fn benchmark_split_k(
         .calls_per_sample
         .checked_mul(2)
         .ok_or("split-K command capacity overflow")?;
-    let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+    let mut queue = CommandQueue::new(stream.clone(), command_capacity, 1)?;
     let mut bindings = queue.bindings(6)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key)?;

@@ -1753,7 +1753,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let provider = RopeProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
-    let mut queue = CommandQueue::new(stream, 4)?;
+    let mut queue = CommandQueue::new(stream, 4, 1)?;
 
     run_reference_case(&mut queue, &provider)?;
     run_short_buffer_case(&mut queue, &provider)?;

@@ -1,16 +1,23 @@
 //! Completion fences and conservative CUDA quiescence handling.
 
-use super::{CheckedBindings, CommandError, CommandQueue, SubmissionError};
+use super::{CheckedBindings, CommandError, CompletionSlot, QueueShared, SubmissionError};
 use crate::device_status::DeviceStatusProtocolError;
 use cuda_core::{CudaStream, DriverError};
 use loom_infer::ContractError;
 use std::fmt::{self, Display, Formatter};
+use std::sync::Arc;
 use thiserror::Error;
 
 /// The final fence and all bindings retained by a completed command scope.
+///
+/// Forgetting this value is memory-safe but leaks its slot, retained bindings,
+/// and one shared queue reference. The queue permanently loses that capacity.
+/// It never waits or allocates to replace the slot, and it cannot observe or
+/// propagate errors from forgotten work.
 #[must_use = "dropping the completion waits before releasing CUDA resources"]
-pub struct CommandCompletion<'queue> {
-    queue: Option<&'queue mut CommandQueue>,
+pub struct CommandCompletion {
+    shared: Arc<QueueShared>,
+    slot: Option<CompletionSlot>,
     bindings: Option<CheckedBindings>,
     submitted: usize,
     submission_error: Option<SubmissionError>,
@@ -19,16 +26,18 @@ pub struct CommandCompletion<'queue> {
     complete: bool,
 }
 
-impl<'queue> CommandCompletion<'queue> {
+impl CommandCompletion {
     pub(super) fn new(
-        queue: &'queue mut CommandQueue,
+        shared: Arc<QueueShared>,
+        slot: CompletionSlot,
         bindings: CheckedBindings,
         submitted: usize,
         submission_error: Option<SubmissionError>,
         record_error: Option<DriverError>,
     ) -> Self {
         Self {
-            queue: Some(queue),
+            shared,
+            slot: Some(slot),
             bindings: Some(bindings),
             submitted,
             submission_error,
@@ -52,11 +61,12 @@ impl<'queue> CommandCompletion<'queue> {
         if self.submitted == 0 {
             return Ok(true);
         }
-        let queue = self.queue.as_ref().expect("live completion has a queue");
-        match queue.completion_event.query() {
+        let slot = self.slot.as_ref().expect("live completion has a slot");
+        match slot.event.query() {
             Ok(complete) => Ok(complete),
             Err(error) => {
                 self.poll_error = Some(error);
+                self.shared.poison();
                 Err(error.into())
             }
         }
@@ -66,9 +76,6 @@ impl<'queue> CommandCompletion<'queue> {
     pub fn wait(mut self) -> Result<CheckedBindings, CommandCompletionError> {
         match self.settle() {
             None => {
-                self.complete = true;
-                let queue = self.queue.as_mut().expect("live completion has a queue");
-                queue.retained_resources.clear();
                 let status = self
                     .bindings
                     .as_ref()
@@ -80,30 +87,31 @@ impl<'queue> CommandCompletion<'queue> {
                         let mut bindings =
                             self.bindings.take().expect("live completion has bindings");
                         bindings.status.clear();
+                        self.complete_and_return_slot();
                         Ok(bindings)
                     }
                     Ok(Some(error)) => {
                         let mut bindings =
                             self.bindings.take().expect("live completion has bindings");
                         bindings.status.clear();
+                        self.complete_and_return_slot();
                         Err(CommandCompletionError::DeviceRejected(
                             DeviceRejection::new(error, bindings),
                         ))
                     }
                     Err(error) => {
-                        queue.poisoned = true;
+                        self.shared.poison();
                         self.bindings.take();
+                        self.complete_and_return_slot();
                         Err(CommandCompletionError::StatusProtocol(error))
                     }
                 }
             }
             Some(failure) => {
-                self.complete = true;
-                let queue = self.queue.as_mut().expect("live completion has a queue");
-                queue.poisoned = true;
-                queue.retained_resources.clear();
-                record_settlement_errors(queue, failure);
+                self.shared.poison();
+                record_settlement_errors(&self.shared, failure);
                 self.bindings.take();
+                self.complete_and_return_slot();
                 Err(CommandCompletionError::Execution(failure.command_error()))
             }
         }
@@ -121,32 +129,39 @@ impl<'queue> CommandCompletion<'queue> {
                 synchronize_error: None,
             });
         }
-        let queue = self.queue.as_ref().expect("live completion has a queue");
         if let Some(submission_error) = self.submission_error {
             return Some(SettlementFailure {
                 reported: submission_error,
-                synchronize_error: synchronize_stream_or_abort(&queue.stream),
+                synchronize_error: synchronize_stream_or_abort(&self.shared.stream),
             });
         }
         if let Some(record_error) = self.record_error {
             return Some(SettlementFailure {
                 reported: SubmissionError::Driver(record_error),
-                synchronize_error: synchronize_stream_or_abort(&queue.stream),
+                synchronize_error: synchronize_stream_or_abort(&self.shared.stream),
             });
         }
         if let Some(poll_error) = self.poll_error {
             return Some(SettlementFailure {
                 reported: SubmissionError::Driver(poll_error),
-                synchronize_error: synchronize_stream_or_abort(&queue.stream),
+                synchronize_error: synchronize_stream_or_abort(&self.shared.stream),
             });
         }
-        match queue.completion_event.synchronize() {
+        let slot = self.slot.as_ref().expect("live completion has a slot");
+        match slot.event.synchronize() {
             Ok(()) => None,
             Err(event_error) => Some(SettlementFailure {
                 reported: SubmissionError::Driver(event_error),
-                synchronize_error: synchronize_stream_or_abort(&queue.stream),
+                synchronize_error: synchronize_stream_or_abort(&self.shared.stream),
             }),
         }
+    }
+
+    fn complete_and_return_slot(&mut self) {
+        let mut slot = self.slot.take().expect("live completion has a slot");
+        slot.retained_resources.clear();
+        self.shared.return_slot(slot);
+        self.complete = true;
     }
 }
 
@@ -231,21 +246,30 @@ impl std::error::Error for DeviceRejection {
     }
 }
 
-impl Drop for CommandCompletion<'_> {
+impl Drop for CommandCompletion {
     fn drop(&mut self) {
         if self.complete {
             return;
         }
         let result = self.settle();
-        let queue = self.queue.as_mut().expect("live completion has a queue");
         if let Some(failure) = result {
-            queue.poisoned = true;
-            queue.retained_resources.clear();
-            record_settlement_errors(queue, failure);
+            self.shared.poison();
+            record_settlement_errors(&self.shared, failure);
         } else {
-            queue.retained_resources.clear();
+            match self
+                .bindings
+                .as_ref()
+                .expect("live completion has bindings")
+                .status
+                .decode()
+            {
+                Ok(Some(error)) => self.shared.record_unobserved_rejection(error),
+                Ok(None) => {}
+                Err(_) => self.shared.poison(),
+            }
         }
-        self.complete = true;
+        self.bindings.take();
+        self.complete_and_return_slot();
     }
 }
 
@@ -261,12 +285,12 @@ impl SettlementFailure {
     }
 }
 
-fn record_settlement_errors(queue: &CommandQueue, failure: SettlementFailure) {
+fn record_settlement_errors(shared: &QueueShared, failure: SettlementFailure) {
     if let Some(error) = failure.synchronize_error {
-        queue.stream.context().record_err::<()>(Err(error));
+        shared.stream.context().record_err::<()>(Err(error));
     }
     if let Some(error) = failure.reported.driver_error() {
-        queue.stream.context().record_err::<()>(Err(error));
+        shared.stream.context().record_err::<()>(Err(error));
     }
 }
 

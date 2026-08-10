@@ -311,7 +311,7 @@ fn check_command_capacity(
     plan: &Bf16GemmPlan,
 ) -> Result<(), Box<dyn Error>> {
     let spec = plan.spec();
-    let mut queue = CommandQueue::new(stream.clone(), 1)?;
+    let mut queue = CommandQueue::new(stream.clone(), 1, 1)?;
     let activation = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, spec.a_numel())?);
     let weight = Arc::new(DeviceBuffer::<bf16>::zeroed(stream, spec.weight_numel())?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
@@ -550,7 +550,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let rms_provider = RmsNormProvider::load(&context)?;
     let gemm_provider = CublasLtProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
-    let mut queue = CommandQueue::new(stream, 2)?;
+    let mut queue = CommandQueue::new(stream, 2, 1)?;
 
     let large_spec = Bf16GemmSpec::new(LARGE_M, LARGE_N, LARGE_K)?;
     let large_plan = gemm_provider.plan_bf16(large_spec)?;

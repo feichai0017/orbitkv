@@ -18,12 +18,58 @@ pub use completion::CommandCompletion;
 pub(crate) use completion::synchronize_stream_or_abort;
 pub use completion::{CommandCompletionError, DeviceRejection};
 use cuda_core::DriverError;
+use loom_infer::ContractError;
 pub(crate) use resolve::ResolvedRrww;
 pub(crate) use submission::{
-    CapturedCommandSet, CommandPermit, DeviceStatusReservation, RetainedResource,
+    CapturedCommandSet, CommandPermit, CompletionSlot, DeviceStatusReservation, QueueShared,
+    RetainedResource,
 };
 pub use submission::{CommandQueue, CommandScope};
 use thiserror::Error;
+
+/// A failed scope admission with the caller's binding capability preserved.
+pub struct CommandAdmissionError {
+    cause: CommandError,
+    bindings: Box<CheckedBindings>,
+}
+
+impl CommandAdmissionError {
+    pub(crate) fn new(cause: CommandError, bindings: CheckedBindings) -> Self {
+        Self {
+            cause,
+            bindings: Box::new(bindings),
+        }
+    }
+
+    pub const fn cause(&self) -> &CommandError {
+        &self.cause
+    }
+
+    pub fn into_parts(self) -> (CommandError, CheckedBindings) {
+        (self.cause, *self.bindings)
+    }
+}
+
+impl std::fmt::Debug for CommandAdmissionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("CommandAdmissionError")
+            .field("cause", &self.cause)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Display for CommandAdmissionError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        std::fmt::Display::fmt(&self.cause, formatter)
+    }
+}
+
+impl std::error::Error for CommandAdmissionError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.cause)
+    }
+}
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Error)]
 #[error("{provider} command submission failed with status {status}")]
@@ -74,6 +120,8 @@ impl From<SubmissionError> for CommandError {
 pub enum CommandError {
     #[error("command queues require capacity for at least one command")]
     ZeroCommandCapacity,
+    #[error("command queues require capacity for at least one in-flight scope")]
+    ZeroInFlightCapacity,
     #[error("checked bindings require capacity for at least one resource")]
     ZeroBindingCapacity,
     #[error("command queue identifier space is exhausted")]
@@ -82,6 +130,11 @@ pub enum CommandError {
     BindingsQueueMismatch,
     #[error("the command queue is poisoned by an earlier completion failure")]
     QueuePoisoned,
+    /// The next admission consumes and reports exactly one queued rejection.
+    /// A scope admitted earlier only peeks this error and leaves it for that
+    /// acknowledgement path.
+    #[error("an earlier dropped completion reported a device rejection: {0}")]
+    UnobservedDeviceRejection(ContractError),
     #[error("the command scope is poisoned by an earlier submission failure")]
     ScopePoisoned,
     #[error("checked binding capacity {capacity} is exhausted")]
@@ -111,6 +164,8 @@ pub enum CommandError {
     DuplicateBindingSlot,
     #[error("command scope capacity {capacity} is exhausted")]
     CommandCapacityExceeded { capacity: usize },
+    #[error("command queue in-flight capacity {capacity} is exhausted")]
+    InFlightCapacityExceeded { capacity: usize },
     #[error("device status storage capacity overflowed")]
     DeviceStatusCapacityOverflow,
     #[error("device status capacity {capacity} is exhausted")]
