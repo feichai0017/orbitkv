@@ -27,11 +27,13 @@
 - Added a matched dual-order paged-prefill fixed-address Graph benchmark and
   immutable H20 performance evidence against FlashInfer.
 - Added sixteen-warp long-MQA and eight-warp long-GQA4 paged-prefill kernels.
-  Their archived H20 records cover the source before the DeviceRegion merge;
-  the merged submission path still requires requalification.
+  Their archived H20 records cover the source before the DeviceRegion merge.
+  The merged submission path still requires requalification.
 - Added fixed-address CUDA Graph execution for admitted command chains.
 - Added a GPU-less CUDA host CI gate for the `cuda` feature and cuBLASLt
   surface.
+- Added a bounded external-stream adapter for direct single decode and NHD or
+  HND paged decode, with detached completion and typed metadata rejection.
 
 ### Changed
 
@@ -46,6 +48,9 @@
   terminology.
 - Separated external provider submission errors from CUDA driver errors.
 - Added checked three-read, two-write resolution to the shared binding path.
+- Replaced the single-decode interop and binding-rejoin API with one
+  `EngineCommand` submission path that returns stream-ordered engine authority
+  after Loom queues the post-event wait.
 
 ## 1.0.0-alpha.1
 

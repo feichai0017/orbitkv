@@ -95,12 +95,13 @@ not qualify this boundary on H20.
 
 `ExternalCudaStream` retains an ordinary engine stream without adopting or destroying it.
 `EngineInteropQueue` uses pre- and post-events to order a Loom stream against that external stream.
-The current adapter covers direct single decode and issues no device-to-device copy itself.
-After Loom enqueues the post-event wait, the adapter returns opaque stream-ordered engine authority.
-Loom keeps its binding capability private until completion and reuses it only after an exact-token rejoin.
+The current adapter covers direct single decode and NHD or HND paged decode.
+After Loom enqueues the post-event wait, it returns the engine's stream-ordered authority without waiting on the host.
+Each owned completion keeps its checked bindings, allocation leases, status storage, and event slot private until settlement.
+Backpressure returns the original coupled authority and bindings before any bridge work starts.
 
 The H20 interop gate uses a simulated engine.
-It covers unchanged pointers, the event-bridge path, and lease behavior.
+It covers two in-flight commands, slot recovery, cross-thread completion, HND GQA6 paged decode, typed metadata rejection, unchanged pointers, and lease behavior.
 It is not a controlled negative test for a missing post-event wait.
 A real engine must supply its own stream and allocations before Loom can claim engine interoperability.
 

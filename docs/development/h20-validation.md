@@ -289,15 +289,17 @@ historical until a new record passes this gate.
 ## External device regions
 
 The `engine_interop_h20` runner creates external allocations and a non-default stream in a simulated engine module.
-It checks five unchanged pointers, five external-region leases, provider identity, and zero adapter device-to-device copies.
+It checks five single-decode pointers and nine HND paged-decode pointers, provider identity, and zero adapter device-to-device copies.
+It keeps two completions in flight and verifies backpressure and retry.
+It also settles one completion on another host thread and checks a typed paged-metadata rejection with queue reuse.
 It executes the pre/post event bridge but is not a negative-control proof of post-wait causality.
-The handoff returns opaque stream-ordered authority before host completion and keeps the Loom bindings private.
+
+The handoff returns stream-ordered engine authority before host completion and keeps the Loom bindings private.
 The gate enqueues engine readback, settles Loom, and drops the engine storage guards.
 It then waits on the readback's own source lease.
 
 The runner reports `boundary=simulated_engine`.
 It does not qualify a model runner.
-HND paged decode and the authority handoff now exist in source.
 A real mistral.rs invocation, provider hit, pointer trace, and model-output comparison remain required.
 
 ## Matched performance requalification

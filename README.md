@@ -85,10 +85,10 @@ No immutable current-source record exists yet.
 Paged prefill requires the caller to select direct, eight-warp, or sixteen-warp
 execution. It has no hidden capacity-based dispatch.
 
-The external-stream bridge accepts leased `DeviceRegion` values and orders one single-decode call with CUDA events.
-After Loom enqueues the post-event wait, the bridge returns opaque stream-ordered engine authority.
-Loom keeps its binding capability private until completion.
-The H20 gate uses a simulated engine and reports unchanged pointers with no adapter device-to-device copy.
+The external-stream bridge accepts leased `DeviceRegion` values and submits single or paged decode through CUDA events.
+After Loom enqueues the post-event wait, it returns the engine's stream-ordered authority without a host wait.
+An owned completion keeps allocation leases and status storage private until settlement.
+The H20 gate covers two in-flight commands, HND GQA6 paged decode, typed metadata rejection, unchanged pointers, and no adapter device-to-device copy in a simulated engine.
 This is not a real engine integration.
 
 Performance claims are contract-specific. Loom does not claim that every

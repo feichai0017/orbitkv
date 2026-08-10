@@ -34,7 +34,7 @@ append records remain historical.
 
 The command layer accepts typed owned and external device regions.
 `ExternalCudaStream` retains an engine stream without taking ownership.
-`EngineInteropQueue` orders one single-decode call through CUDA events.
+`EngineInteropQueue` orders direct single decode and NHD or HND paged decode through CUDA events.
 
 - Keep pointer, element span, CUDA context, access mode, and lifetime lease in
   one region value.
@@ -44,7 +44,7 @@ The command layer accepts typed owned and external device regions.
 - Test non-zero offsets and lifetime retention on H20.
 - Qualify fixed-address Graph retention for external leases.
 - Preserve the simulated-engine H20 gate for external pointers, stream order,
-  and zero adapter device-to-device copies.
+  bounded in-flight completion, typed rejection, and zero adapter device-to-device copies.
 - Prove the same properties at a real model-runner call site.
 
 Exit: a real model runner passes its own allocation and stream without an

@@ -73,7 +73,7 @@ export const evidenceHighlights = [
   {
     value: "H20",
     label: "Simulated interop",
-    detail: "External stream and regions with no adapter D2D copy",
+    detail: "Single and HND paged decode, two in flight, no adapter D2D copy",
     sample: "not a real engine",
   },
   {

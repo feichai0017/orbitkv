@@ -32,7 +32,7 @@ help:
 		'make cuda-check     Run CUDA-feature Clippy' \
 		'make cuda-test      Run release tests through cuda-oxide' \
 		'make h20            Run all H20 correctness programs sequentially' \
-		'make h20-engine-interop  Validate external-stream zero-copy decode interop' \
+		'make h20-engine-interop  Validate single and paged external-stream interop' \
 		'make h20-paged-attention  Run paged batch-decode H20 correctness' \
 		'make h20-ragged-prefill  Run ragged prefill H20 correctness' \
 		'make h20-paged-prefill  Run paged prefill H20 correctness' \

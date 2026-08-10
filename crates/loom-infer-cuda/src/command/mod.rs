@@ -9,7 +9,6 @@ mod status;
 mod submission;
 
 pub use crate::device_status::DeviceStatusProtocolError;
-pub(crate) use binding::EngineBindingFingerprint;
 pub use binding::{
     BindError, BindingElement, BindingMemorySummary, CheckedBindings, ErasedLease, Read, ReadWrite,
     TakeDeviceBufferError, Write,

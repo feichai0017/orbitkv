@@ -171,10 +171,10 @@ impl<T: DeviceCopy> ReadDeviceRegion<T> {
     ///   stream by the caller.
     /// - The caller owns shared-read authority for the full reported range.
     ///   No unsynchronized writer may access it while this region is bound.
-    ///   An engine may reacquire ordered access through
-    ///   [`crate::interop::EngineReturnedAuthority`] only after Loom has
-    ///   enqueued its post-event wait on that engine stream. Loom keeps the
-    ///   binding capability private until completion settles.
+    ///   An engine may reacquire ordered access through its
+    ///   [`crate::interop::StreamOrderedEngineAuthority`] only after Loom has
+    ///   enqueued its post-event wait. Loom keeps the retained binding private
+    ///   until completion settles.
     pub unsafe fn from_external_parts(
         pointer: CUdeviceptr,
         len: usize,
@@ -322,12 +322,11 @@ impl<T: DeviceCopy> ReadWriteDeviceRegion<T> {
     /// - The caller transfers exclusive read-write authority for the full
     ///   reported range to this value. No alias may read or write that range
     ///   until the region is returned from the completed binding set. The only
-    ///   earlier reacquisition is a linear
-    ///   [`crate::interop::EngineReturnedAuthority`] returned after Loom
-    ///   enqueues a post-event wait. It may enqueue access only after the wait
-    ///   on the same external stream; it does not permit immediate or
-    ///   cross-stream access. Loom does not expose the retained binding while
-    ///   that authority is separate.
+    ///   earlier reacquisition is the linear
+    ///   [`crate::interop::StreamOrderedEngineAuthority`] returned after Loom
+    ///   enqueues a post-event wait. It may access the range only through that
+    ///   same stream; it does not permit host or cross-stream access. Loom does
+    ///   not expose the retained binding while that authority is separate.
     pub unsafe fn from_external_parts(
         pointer: CUdeviceptr,
         len: usize,

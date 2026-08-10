@@ -73,10 +73,10 @@ Semantic rejection does not poison the queue or Graph.
 
 ## Engine interop
 
-The source accepts leased external regions and an engine-owned CUDA stream for one direct single-decode path.
+The source accepts leased external regions and an engine-owned CUDA stream for direct single decode and NHD or HND paged decode.
+The queue supports bounded detached completions and returns stream-ordered engine authority after Loom queues the post-event wait.
 The H20 gate uses a simulated engine.
 No real model runner has qualification.
-HND paged decode and stream-ordered return of linear engine authority are source capabilities.
 The mistral.rs adapter, provider trace, and model-output parity remain open.
 
 ## Target surface
