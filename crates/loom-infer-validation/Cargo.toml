@@ -87,5 +87,10 @@ name = "split_k_sweep_h20"
 path = "src/bin/split_k_sweep_h20.rs"
 required-features = ["cuda"]
 
+[[bin]]
+name = "engine_interop_h20"
+path = "src/bin/engine_interop_h20.rs"
+required-features = ["cuda"]
+
 [lints]
 workspace = true

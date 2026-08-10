@@ -10,7 +10,7 @@ mod submission;
 
 pub use crate::device_status::DeviceStatusProtocolError;
 pub use binding::{
-    BindError, BindingElement, CheckedBindings, ErasedLease, Read, ReadWrite,
+    BindError, BindingElement, BindingMemorySummary, CheckedBindings, ErasedLease, Read, ReadWrite,
     TakeDeviceBufferError, Write,
 };
 pub use completion::CommandCompletion;

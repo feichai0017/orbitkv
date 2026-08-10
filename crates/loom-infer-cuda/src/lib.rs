@@ -15,6 +15,8 @@ pub mod gemm;
 #[cfg(feature = "cuda")]
 pub mod graph;
 #[cfg(feature = "cuda")]
+pub mod interop;
+#[cfg(feature = "cuda")]
 pub mod memory;
 #[cfg(feature = "cuda")]
 pub mod rms_norm;

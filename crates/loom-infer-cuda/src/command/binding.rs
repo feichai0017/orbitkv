@@ -2,7 +2,8 @@
 
 use super::CommandError;
 use super::status::DeviceStatusState;
-use crate::memory::{DeviceRegion, ReadDeviceRegion, ReadWriteDeviceRegion};
+use crate::memory::{DeviceRegion, DeviceRegionOwner, ReadDeviceRegion, ReadWriteDeviceRegion};
+use cuda_core::sys::CUdeviceptr;
 use cuda_core::{CudaStream, DeviceBuffer, DeviceCopy};
 use half::{bf16, f16};
 use std::fmt::{self, Display, Formatter};
@@ -24,6 +25,39 @@ pub struct CheckedBindings {
     pub(crate) status: DeviceStatusState,
 }
 
+/// Allocation provenance for one checked binding set.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct BindingMemorySummary {
+    device_buffers: usize,
+    external_regions: usize,
+}
+
+impl BindingMemorySummary {
+    pub(crate) const fn from_counts(device_buffers: usize, external_regions: usize) -> Self {
+        Self {
+            device_buffers,
+            external_regions,
+        }
+    }
+
+    pub const fn device_buffers(self) -> usize {
+        self.device_buffers
+    }
+
+    pub const fn external_regions(self) -> usize {
+        self.external_regions
+    }
+
+    pub const fn total(self) -> usize {
+        self.device_buffers + self.external_regions
+    }
+
+    /// Returns whether every bound operator buffer is externally owned.
+    pub const fn all_external(self) -> bool {
+        self.external_regions > 0 && self.device_buffers == 0
+    }
+}
+
 impl CheckedBindings {
     pub const fn capacity(&self) -> usize {
         self.capacity
@@ -35,6 +69,39 @@ impl CheckedBindings {
 
     pub fn is_empty(&self) -> bool {
         self.leases.is_empty()
+    }
+
+    /// Summarizes the allocation owners retained by this binding set.
+    pub fn memory_summary(&self) -> BindingMemorySummary {
+        let mut summary = BindingMemorySummary::from_counts(0, 0);
+        for lease in &self.leases {
+            match lease.owner() {
+                Some(DeviceRegionOwner::DeviceBuffer) => summary.device_buffers += 1,
+                Some(DeviceRegionOwner::External) => summary.external_regions += 1,
+                None => {}
+            }
+        }
+        summary
+    }
+
+    pub(crate) fn live_regions(&self) -> usize {
+        self.leases
+            .iter()
+            .filter(|lease| lease.device_address().is_some())
+            .count()
+    }
+
+    /// Returns exact device addresses in stable binding-slot order without
+    /// allocating. Vacant slots and any count other than `N` are rejected.
+    pub(crate) fn exact_device_addresses<const N: usize>(&self) -> Option<[CUdeviceptr; N]> {
+        if self.leases.len() != N {
+            return None;
+        }
+        let mut addresses = [0; N];
+        for (index, lease) in self.leases.iter().enumerate() {
+            addresses[index] = lease.device_address()?;
+        }
+        Some(addresses)
     }
 
     /// Adds a read-only buffer and returns its opaque handle.
@@ -315,6 +382,13 @@ pub(crate) enum Access<T: DeviceCopy> {
 }
 
 impl<T: DeviceCopy> Access<T> {
+    fn owner(&self) -> DeviceRegionOwner {
+        match self {
+            Self::Read(region) => region.owner(),
+            Self::ReadWrite(region) => region.owner(),
+        }
+    }
+
     fn region_span(&self) -> (RegionSpan, AccessMode) {
         match self {
             Self::Read(region) => (
@@ -339,6 +413,21 @@ pub(crate) enum Lease {
 }
 
 impl Lease {
+    fn device_address(&self) -> Option<CUdeviceptr> {
+        self.region_span().map(|(span, _)| span.start)
+    }
+
+    fn owner(&self) -> Option<DeviceRegionOwner> {
+        match self {
+            Self::F32(access) => Some(access.owner()),
+            Self::F16(access) => Some(access.owner()),
+            Self::Bf16(access) => Some(access.owner()),
+            Self::I32(access) => Some(access.owner()),
+            Self::U8(access) => Some(access.owner()),
+            Self::Vacant => None,
+        }
+    }
+
     fn region_span(&self) -> Option<(RegionSpan, AccessMode)> {
         match self {
             Self::F32(access) => Some(access.region_span()),

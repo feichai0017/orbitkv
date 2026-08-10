@@ -21,6 +21,15 @@ use std::ops::Range;
 use std::sync::Arc;
 use thiserror::Error;
 
+/// Identifies who owns the allocation behind a retained device region.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DeviceRegionOwner {
+    /// The region retains a cuda-oxide [`DeviceBuffer`].
+    DeviceBuffer,
+    /// The region retains an opaque allocation lease supplied by an engine.
+    External,
+}
+
 /// Submits a prepared region-backed launch to one exact command stream.
 ///
 /// The generated cuda-oxide async launcher accepts [`KernelSliceArg`] instead
@@ -213,6 +222,11 @@ impl<T: DeviceCopy> ReadDeviceRegion<T> {
         self.view.context()
     }
 
+    /// Returns the allocation owner retained by this region.
+    pub const fn owner(&self) -> DeviceRegionOwner {
+        self.lease.owner()
+    }
+
     pub(crate) const fn view(&self) -> &DeviceRegion<T> {
         &self.view
     }
@@ -352,6 +366,11 @@ impl<T: DeviceCopy> ReadWriteDeviceRegion<T> {
 
     pub fn context(&self) -> &Arc<CudaContext> {
         self.view.context()
+    }
+
+    /// Returns the allocation owner retained by this region.
+    pub const fn owner(&self) -> DeviceRegionOwner {
+        self.lease.owner()
     }
 
     /// Recovers a Loom-owned allocation. External regions are returned
@@ -532,10 +551,17 @@ impl<T> Clone for ReadLease<T> {
 }
 
 impl<T> ReadLease<T> {
-    const fn kind(&self) -> &'static str {
+    const fn owner(&self) -> DeviceRegionOwner {
         match self {
-            Self::Buffer(_) => "device-buffer",
-            Self::External { .. } => "external",
+            Self::Buffer(_) => DeviceRegionOwner::DeviceBuffer,
+            Self::External { .. } => DeviceRegionOwner::External,
+        }
+    }
+
+    const fn kind(&self) -> &'static str {
+        match self.owner() {
+            DeviceRegionOwner::DeviceBuffer => "device-buffer",
+            DeviceRegionOwner::External => "external",
         }
     }
 }
@@ -546,10 +572,17 @@ enum ReadWriteLease<T> {
 }
 
 impl<T> ReadWriteLease<T> {
-    const fn kind(&self) -> &'static str {
+    const fn owner(&self) -> DeviceRegionOwner {
         match self {
-            Self::Buffer(_) => "device-buffer",
-            Self::External { .. } => "external",
+            Self::Buffer(_) => DeviceRegionOwner::DeviceBuffer,
+            Self::External { .. } => DeviceRegionOwner::External,
+        }
+    }
+
+    const fn kind(&self) -> &'static str {
+        match self.owner() {
+            DeviceRegionOwner::DeviceBuffer => "device-buffer",
+            DeviceRegionOwner::External => "external",
         }
     }
 }

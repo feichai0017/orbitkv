@@ -80,28 +80,42 @@ impl CommandQueue {
         &'queue mut self,
         bindings: CheckedBindings,
     ) -> Result<CommandScope<'queue>, CommandError> {
+        self.begin_recover(bindings)
+            .map_err(|(error, _bindings)| error)
+    }
+
+    /// Begins a scope while preserving bindings when admission fails.
+    pub(crate) fn begin_recover<'queue>(
+        &'queue mut self,
+        bindings: CheckedBindings,
+    ) -> Result<CommandScope<'queue>, (CommandError, Box<CheckedBindings>)> {
         if self.poisoned {
-            return Err(CommandError::QueuePoisoned);
+            return Err((CommandError::QueuePoisoned, Box::new(bindings)));
         }
         if bindings.queue_id != self.id
             || bindings.stream.cu_stream() != self.stream.cu_stream()
             || bindings.stream.context().cu_ctx() != self.stream.context().cu_ctx()
         {
-            return Err(CommandError::BindingsQueueMismatch);
+            return Err((CommandError::BindingsQueueMismatch, Box::new(bindings)));
         }
         if !self.retained_resources.is_empty() {
             self.poisoned = true;
-            return Err(CommandError::QueuePoisoned);
+            return Err((CommandError::QueuePoisoned, Box::new(bindings)));
         }
         if !bindings.status.is_empty() {
             self.poisoned = true;
-            return Err(CommandError::QueuePoisoned);
+            return Err((CommandError::QueuePoisoned, Box::new(bindings)));
         }
+
+        let scope_id = match fresh_id() {
+            Ok(scope_id) => scope_id,
+            Err(error) => return Err((error, Box::new(bindings))),
+        };
 
         Ok(CommandScope {
             queue: Some(self),
             bindings: Some(bindings),
-            scope_id: fresh_id()?,
+            scope_id,
             submitted: 0,
             status_copies_submitted: 0,
             submission_error: None,
