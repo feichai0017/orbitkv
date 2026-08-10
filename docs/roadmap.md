@@ -95,8 +95,13 @@ produces an auditable no-copy trace.
 **State:** planned.
 
 Current attention selection uses fixed source heuristics. Paged decode chooses
-direct MHA and eight-warp MQA or GQA. Ragged prefill uses the batch average KV
-length and head mapping.
+direct MHA and eight-warp MQA or GQA.
+
+Ragged prefill uses the batch average KV length and head mapping. Paged prefill
+uses average physical page-pool capacity and head mapping.
+
+The long MQA and GQA4 records apply to source `8478ee9`, not the merged
+DeviceRegion path.
 
 - Separate algorithm selection from immutable launch plans.
 - Expose the selected algorithm in traces and result records.
@@ -133,7 +138,8 @@ correctness record or an explicit exclusion.
 - Add sliding-window decode and prefill.
 - Add broader head dimensions and page sizes from real model demand.
 - Extend ragged tiling beyond the admitted GQA4 shape.
-- Add optimized paged-prefill long-context paths.
+- Add paged tensor-core tiling and asynchronous K/V staging beyond the current
+  token-parallel paged-prefill paths.
 - Add mixed-batch attention after the engine defines its scheduler interface.
 - Scope MLA from a real engine call site.
 

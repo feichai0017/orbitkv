@@ -465,6 +465,459 @@ mod kernels {
     }
 
     #[allow(clippy::too_many_arguments)]
+    fn paged_prefill_bf16_nhd_causal_token_parallel_impl(
+        warps: usize,
+        partial_states: *mut f32,
+        page_valid: *mut u32,
+        batch_size: usize,
+        nnz_qo: usize,
+        max_num_pages: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key_pages: &[bf16],
+        value_pages: &[bf16],
+        qo_indptr: &[i32],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        mut output: DisjointSlice<bf16>,
+        mut lse: DisjointSlice<f32>,
+    ) {
+        let state_index = thread::blockIdx_x() as usize;
+        let thread_in_block = thread::threadIdx_x() as usize;
+        let warp_in_block = thread_in_block / WARP_THREADS as usize;
+        let lane = thread_in_block % WARP_THREADS as usize;
+        let state_count = nnz_qo * num_query_heads;
+        if state_index >= state_count {
+            return;
+        }
+
+        let query_row = state_index / num_query_heads;
+        let query_head = state_index % num_query_heads;
+        let mut request = 0_usize;
+        while request < batch_size {
+            let start = qo_indptr[request];
+            let end = qo_indptr[request + 1];
+            if start < 0 || end <= start || end as usize > nnz_qo {
+                return;
+            }
+            if query_row >= start as usize && query_row < end as usize {
+                break;
+            }
+            request += 1;
+        }
+        if request >= batch_size {
+            return;
+        }
+
+        let qo_start = qo_indptr[request] as usize;
+        let qo_end = qo_indptr[request + 1] as usize;
+        let page_start = page_indptr[request];
+        let page_end = page_indptr[request + 1];
+        let global_page_end = page_indptr[batch_size];
+        let tail_len = last_page_len[request];
+        let metadata_valid = qo_indptr[0] == 0
+            && qo_indptr[batch_size] == nnz_qo as i32
+            && page_indptr[0] == 0
+            && global_page_end >= 0
+            && global_page_end as usize == page_indices.len()
+            && page_start >= 0
+            && page_end > page_start
+            && page_end <= global_page_end
+            && tail_len >= 1
+            && tail_len <= PAGED_PREFILL_PAGE_SIZE as i32;
+
+        if lane == 0 {
+            // SAFETY: each warp owns one validation flag.
+            unsafe {
+                page_valid
+                    .add(warp_in_block)
+                    .write(u32::from(metadata_valid));
+            }
+        }
+        thread::sync_threads();
+        if metadata_valid {
+            let page_count = (page_end - page_start) as usize;
+            let mut page_slot = warp_in_block * WARP_THREADS as usize + lane;
+            let mut local_valid = true;
+            while page_slot < page_count {
+                let physical_page = page_indices[page_start as usize + page_slot];
+                local_valid &= physical_page >= 0 && (physical_page as usize) < max_num_pages;
+                page_slot += warps * WARP_THREADS as usize;
+            }
+            let warp_valid = warp::all(local_valid);
+            if lane == 0 {
+                // SAFETY: each warp owns one validation flag.
+                unsafe {
+                    page_valid.add(warp_in_block).write(u32::from(warp_valid));
+                }
+            }
+        }
+        thread::sync_threads();
+        let mut valid = true;
+        let mut validation_warp = 0_usize;
+        while validation_warp < warps {
+            // SAFETY: all warps initialized their flags before the barrier.
+            valid &= unsafe { page_valid.add(validation_warp).read() != 0 };
+            validation_warp += 1;
+        }
+        if !valid {
+            return;
+        }
+
+        let qo_len = qo_end - qo_start;
+        let page_count = (page_end - page_start) as usize;
+        let kv_len = (page_count - 1) * PAGED_PREFILL_PAGE_SIZE + tail_len as usize;
+        if qo_len > kv_len {
+            return;
+        }
+        let query_index = query_row - qo_start;
+        let causal_token_count = kv_len - qo_len + query_index + 1;
+        let group_size = num_query_heads / num_kv_heads;
+        let kv_head = query_head / group_size;
+        let query_pairs = query.as_ptr().cast::<u32>();
+        let key_pairs = key_pages.as_ptr().cast::<u32>();
+        let value_pairs = value_pages.as_ptr().cast::<u32>();
+        let first_pair = state_index * BF16_PAIRS_PER_HEAD + lane;
+        let second_pair = first_pair + WARP_THREADS as usize;
+
+        // SAFETY: the host validates alignment and the launch contract proves
+        // the exact query span. Every warp reads the same query-row/head.
+        let (query_0, query_1, query_2, query_3) = unsafe {
+            let (query_0, query_1) = convert::cvt_f32x2_bf16x2(query_pairs.add(first_pair).read());
+            let (query_2, query_3) = convert::cvt_f32x2_bf16x2(query_pairs.add(second_pair).read());
+            (query_0, query_1, query_2, query_3)
+        };
+
+        let token_start = warp_in_block * causal_token_count / warps;
+        let token_end = (warp_in_block + 1) * causal_token_count / warps;
+        let mut output_0 = 0.0_f32;
+        let mut output_1 = 0.0_f32;
+        let mut output_2 = 0.0_f32;
+        let mut output_3 = 0.0_f32;
+        let mut max_score_log2 = f32::NEG_INFINITY;
+        let mut normalizer = 0.0_f32;
+        let mut logical_token = token_start;
+        while logical_token < token_end {
+            let logical_page = logical_token / PAGED_PREFILL_PAGE_SIZE;
+            let page_offset = logical_token % PAGED_PREFILL_PAGE_SIZE;
+            let physical_page = page_indices[page_start as usize + logical_page] as usize;
+            let kv_pair_offset = (((physical_page * PAGED_PREFILL_PAGE_SIZE + page_offset)
+                * num_kv_heads
+                + kv_head)
+                * BF16_PAIRS_PER_HEAD)
+                + lane;
+
+            // SAFETY: block-wide validation proved every referenced page is in
+            // range before any K/V pointer arithmetic.
+            let (key_0, key_1, key_2, key_3, value_0, value_1, value_2, value_3) = unsafe {
+                let (key_0, key_1) =
+                    convert::cvt_f32x2_bf16x2(key_pairs.add(kv_pair_offset).read());
+                let (key_2, key_3) = convert::cvt_f32x2_bf16x2(
+                    key_pairs.add(kv_pair_offset + WARP_THREADS as usize).read(),
+                );
+                let (value_0, value_1) =
+                    convert::cvt_f32x2_bf16x2(value_pairs.add(kv_pair_offset).read());
+                let (value_2, value_3) = convert::cvt_f32x2_bf16x2(
+                    value_pairs
+                        .add(kv_pair_offset + WARP_THREADS as usize)
+                        .read(),
+                );
+                (
+                    key_0, key_1, key_2, key_3, value_0, value_1, value_2, value_3,
+                )
+            };
+
+            let mut dot = 0.0_f32;
+            dot = float::fma_rn_f32(query_0, key_0, dot);
+            dot = float::fma_rn_f32(query_1, key_1, dot);
+            dot = float::fma_rn_f32(query_2, key_2, dot);
+            dot = float::fma_rn_f32(query_3, key_3, dot);
+            let score_log2 = warp::reduce_sum_f32(dot) * softmax_scale_log2;
+
+            let mut previous_weight = 0.0_f32;
+            let mut current_weight = 0.0_f32;
+            if lane == 0 {
+                if logical_token == token_start {
+                    max_score_log2 = score_log2;
+                    normalizer = 1.0;
+                    current_weight = 1.0;
+                } else {
+                    let next_max = f32::max(max_score_log2, score_log2);
+                    previous_weight = float::ex2_approx_f32(max_score_log2 - next_max);
+                    current_weight = float::ex2_approx_f32(score_log2 - next_max);
+                    normalizer = normalizer * previous_weight + current_weight;
+                    max_score_log2 = next_max;
+                }
+            }
+            previous_weight = warp::shuffle_f32(previous_weight, 0);
+            current_weight = warp::shuffle_f32(current_weight, 0);
+            output_0 = float::fma_rn_f32(value_0, current_weight, output_0 * previous_weight);
+            output_1 = float::fma_rn_f32(value_1, current_weight, output_1 * previous_weight);
+            output_2 = float::fma_rn_f32(value_2, current_weight, output_2 * previous_weight);
+            output_3 = float::fma_rn_f32(value_3, current_weight, output_3 * previous_weight);
+            logical_token += 1;
+        }
+
+        let first_component = lane * 2;
+        let second_component = SINGLE_DECODE_HEAD_DIM / 2 + lane * 2;
+        let state_offset = warp_in_block * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+        // SAFETY: lane zero owns the headers and every lane owns four distinct
+        // weighted-value slots within its warp's partial state.
+        unsafe {
+            if lane == 0 {
+                partial_states.add(state_offset).write(max_score_log2);
+                partial_states.add(state_offset + 1).write(normalizer);
+            }
+            partial_states
+                .add(state_offset + 2 + first_component)
+                .write(output_0);
+            partial_states
+                .add(state_offset + 3 + first_component)
+                .write(output_1);
+            partial_states
+                .add(state_offset + 2 + second_component)
+                .write(output_2);
+            partial_states
+                .add(state_offset + 3 + second_component)
+                .write(output_3);
+        }
+        thread::sync_threads();
+
+        if warp_in_block != 0 {
+            return;
+        }
+
+        let mut merged_max_log2 = f32::NEG_INFINITY;
+        let mut merged_normalizer = 0.0_f32;
+        let mut merged_output_0 = 0.0_f32;
+        let mut merged_output_1 = 0.0_f32;
+        let mut merged_output_2 = 0.0_f32;
+        let mut merged_output_3 = 0.0_f32;
+        let mut partial = 0_usize;
+        while partial < warps {
+            let partial_offset = partial * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+            // SAFETY: all warps completed their disjoint states before the
+            // barrier and warp zero owns the merge reads.
+            let (partial_max, partial_normalizer, value_0, value_1, value_2, value_3) = unsafe {
+                (
+                    partial_states.add(partial_offset).read(),
+                    partial_states.add(partial_offset + 1).read(),
+                    partial_states
+                        .add(partial_offset + 2 + first_component)
+                        .read(),
+                    partial_states
+                        .add(partial_offset + 3 + first_component)
+                        .read(),
+                    partial_states
+                        .add(partial_offset + 2 + second_component)
+                        .read(),
+                    partial_states
+                        .add(partial_offset + 3 + second_component)
+                        .read(),
+                )
+            };
+            if partial_normalizer != 0.0 {
+                if merged_normalizer == 0.0 {
+                    merged_max_log2 = partial_max;
+                    merged_normalizer = partial_normalizer;
+                    merged_output_0 = value_0;
+                    merged_output_1 = value_1;
+                    merged_output_2 = value_2;
+                    merged_output_3 = value_3;
+                } else {
+                    let next_max = f32::max(merged_max_log2, partial_max);
+                    let merged_weight = float::ex2_approx_f32(merged_max_log2 - next_max);
+                    let partial_weight = float::ex2_approx_f32(partial_max - next_max);
+                    merged_normalizer =
+                        merged_normalizer * merged_weight + partial_normalizer * partial_weight;
+                    merged_output_0 =
+                        float::fma_rn_f32(value_0, partial_weight, merged_output_0 * merged_weight);
+                    merged_output_1 =
+                        float::fma_rn_f32(value_1, partial_weight, merged_output_1 * merged_weight);
+                    merged_output_2 =
+                        float::fma_rn_f32(value_2, partial_weight, merged_output_2 * merged_weight);
+                    merged_output_3 =
+                        float::fma_rn_f32(value_3, partial_weight, merged_output_3 * merged_weight);
+                    merged_max_log2 = next_max;
+                }
+            }
+            partial += 1;
+        }
+
+        let inverse_normalizer = float::div_rn_f32(1.0, merged_normalizer);
+        if lane == 0 {
+            // SAFETY: only lane zero writes this query-row/head LSE slot.
+            unsafe {
+                *lse.get_unchecked_mut(state_index) =
+                    merged_max_log2 + float::lg2_approx_f32(merged_normalizer);
+            }
+        }
+        let output_pairs = output.as_mut_ptr().cast::<u32>();
+        // SAFETY: warp zero owns all packed output pairs for this state.
+        unsafe {
+            output_pairs
+                .add(first_pair)
+                .write(tcgen05::cvt_f32x2_bf16x2(
+                    merged_output_0 * inverse_normalizer,
+                    merged_output_1 * inverse_normalizer,
+                ));
+            output_pairs
+                .add(second_pair)
+                .write(tcgen05::cvt_f32x2_bf16x2(
+                    merged_output_2 * inverse_normalizer,
+                    merged_output_3 * inverse_normalizer,
+                ));
+        }
+    }
+
+    #[kernel]
+    #[launch_bounds(256)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (256, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            nnz_qo >= 1,
+            max_num_pages >= 1,
+            num_query_heads >= 1,
+            num_kv_heads >= 1,
+            query.len() == nnz_qo * num_query_heads * 128,
+            key_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            value_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            qo_indptr.len() == batch_size + 1,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            output.len() == nnz_qo * num_query_heads * 128,
+            lse.len() == nnz_qo * num_query_heads,
+        ),
+    )]
+    pub fn paged_prefill_bf16_nhd_causal_token_parallel8(
+        batch_size: usize,
+        nnz_qo: usize,
+        max_num_pages: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key_pages: &[bf16],
+        value_pages: &[bf16],
+        qo_indptr: &[i32],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        output: DisjointSlice<bf16>,
+        lse: DisjointSlice<f32>,
+    ) {
+        static mut PARTIAL_STATES: SharedArray<f32, TOKEN_PARALLEL_8_SHARED_NUMEL> =
+            SharedArray::UNINIT;
+        static mut PAGE_VALID: SharedArray<u32, TOKEN_PARALLEL_8_WARPS> = SharedArray::UNINIT;
+        // SAFETY: each block owns these arrays, every warp owns one partial
+        // state and validation flag, and barriers order all cross-warp reads.
+        let partial_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIAL_STATES) };
+        // SAFETY: each block owns the validation flags and barriers order all
+        // cross-warp reads.
+        let page_valid = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PAGE_VALID) };
+        paged_prefill_bf16_nhd_causal_token_parallel_impl(
+            TOKEN_PARALLEL_8_WARPS,
+            partial_states,
+            page_valid,
+            batch_size,
+            nnz_qo,
+            max_num_pages,
+            num_query_heads,
+            num_kv_heads,
+            softmax_scale_log2,
+            query,
+            key_pages,
+            value_pages,
+            qo_indptr,
+            page_indptr,
+            page_indices,
+            last_page_len,
+            output,
+            lse,
+        );
+    }
+
+    #[kernel]
+    #[launch_bounds(512)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (512, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            nnz_qo >= 1,
+            max_num_pages >= 1,
+            num_query_heads >= 1,
+            num_kv_heads >= 1,
+            query.len() == nnz_qo * num_query_heads * 128,
+            key_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            value_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            qo_indptr.len() == batch_size + 1,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            output.len() == nnz_qo * num_query_heads * 128,
+            lse.len() == nnz_qo * num_query_heads,
+        ),
+    )]
+    pub fn paged_prefill_bf16_nhd_causal_token_parallel16(
+        batch_size: usize,
+        nnz_qo: usize,
+        max_num_pages: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key_pages: &[bf16],
+        value_pages: &[bf16],
+        qo_indptr: &[i32],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        output: DisjointSlice<bf16>,
+        lse: DisjointSlice<f32>,
+    ) {
+        static mut PARTIAL_STATES: SharedArray<f32, TOKEN_PARALLEL_16_SHARED_NUMEL> =
+            SharedArray::UNINIT;
+        static mut PAGE_VALID: SharedArray<u32, TOKEN_PARALLEL_16_WARPS> = SharedArray::UNINIT;
+        // SAFETY: each block owns these arrays, every warp owns one partial
+        // state and validation flag, and barriers order all cross-warp reads.
+        let partial_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIAL_STATES) };
+        // SAFETY: each block owns the validation flags and barriers order all
+        // cross-warp reads.
+        let page_valid = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PAGE_VALID) };
+        paged_prefill_bf16_nhd_causal_token_parallel_impl(
+            TOKEN_PARALLEL_16_WARPS,
+            partial_states,
+            page_valid,
+            batch_size,
+            nnz_qo,
+            max_num_pages,
+            num_query_heads,
+            num_kv_heads,
+            softmax_scale_log2,
+            query,
+            key_pages,
+            value_pages,
+            qo_indptr,
+            page_indptr,
+            page_indices,
+            last_page_len,
+            output,
+            lse,
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
     fn ragged_prefill_bf16_nhd_causal_token_parallel_impl(
         warps: usize,
         partial_states: *mut f32,
@@ -1844,11 +2297,33 @@ impl PrefillProvider {
             .ok_or(PagedPrefillPlanError::StateCountOutOfRange(usize::MAX))?;
         let states = u32::try_from(states)
             .map_err(|_| PagedPrefillPlanError::StateCountOutOfRange(states))?;
-        let launch = self
-            .module
-            .prepare_paged_prefill_bf16_nhd_causal(LaunchConfig1D::new(states, WARP_THREADS, 0))?;
+        let algorithm = paged_prefill_algorithm(spec);
+        let launch = match algorithm {
+            Bf16PagedPrefillAlgorithm::Direct => {
+                Bf16PagedPrefillLaunch::Direct(self.module.prepare_paged_prefill_bf16_nhd_causal(
+                    LaunchConfig1D::new(states, WARP_THREADS, 0),
+                )?)
+            }
+            Bf16PagedPrefillAlgorithm::TokenParallel8 => {
+                Bf16PagedPrefillLaunch::TokenParallel8(
+                    self.module
+                        .prepare_paged_prefill_bf16_nhd_causal_token_parallel8(
+                            LaunchConfig1D::new(states, TOKEN_PARALLEL_8_THREADS, 0),
+                        )?,
+                )
+            }
+            Bf16PagedPrefillAlgorithm::TokenParallel16 => {
+                Bf16PagedPrefillLaunch::TokenParallel16(
+                    self.module
+                        .prepare_paged_prefill_bf16_nhd_causal_token_parallel16(
+                            LaunchConfig1D::new(states, TOKEN_PARALLEL_16_THREADS, 0),
+                        )?,
+                )
+            }
+        };
         Ok(Bf16PagedPrefillPlan {
             spec,
+            algorithm,
             module: self.module.clone(),
             launch,
         })
@@ -1933,16 +2408,50 @@ impl PrefillProvider {
     }
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Bf16PagedPrefillAlgorithm {
+    Direct,
+    TokenParallel8,
+    TokenParallel16,
+}
+
+const fn paged_prefill_algorithm(spec: Bf16PagedPrefillSpec) -> Bf16PagedPrefillAlgorithm {
+    let average_kv_capacity = spec.max_num_pages() * PAGED_PREFILL_PAGE_SIZE / spec.batch_size();
+    if average_kv_capacity < TOKEN_PARALLEL_MIN_AVERAGE_KV_LEN {
+        Bf16PagedPrefillAlgorithm::Direct
+    } else if spec.num_kv_heads() == 1 {
+        Bf16PagedPrefillAlgorithm::TokenParallel16
+    } else {
+        Bf16PagedPrefillAlgorithm::TokenParallel8
+    }
+}
+
+#[derive(Clone)]
+enum Bf16PagedPrefillLaunch {
+    Direct(PreparedLaunch<kernels::__paged_prefill_bf16_nhd_causal_CudaKernel>),
+    TokenParallel8(
+        PreparedLaunch<kernels::__paged_prefill_bf16_nhd_causal_token_parallel8_CudaKernel>,
+    ),
+    TokenParallel16(
+        PreparedLaunch<kernels::__paged_prefill_bf16_nhd_causal_token_parallel16_CudaKernel>,
+    ),
+}
+
 #[derive(Clone)]
 pub struct Bf16PagedPrefillPlan {
     spec: Bf16PagedPrefillSpec,
+    algorithm: Bf16PagedPrefillAlgorithm,
     module: kernels::LoadedModule,
-    launch: PreparedLaunch<kernels::__paged_prefill_bf16_nhd_causal_CudaKernel>,
+    launch: Bf16PagedPrefillLaunch,
 }
 
 impl Bf16PagedPrefillPlan {
     pub const fn spec(&self) -> Bf16PagedPrefillSpec {
         self.spec
+    }
+
+    pub const fn algorithm(&self) -> Bf16PagedPrefillAlgorithm {
+        self.algorithm
     }
 
     pub fn enqueue_into(
@@ -1993,26 +2502,86 @@ impl Bf16PagedPrefillPlan {
             ] {
                 require_paged_alignment(operand, address)?;
             }
-            let operation = self.module.paged_prefill_bf16_nhd_causal_async(
-                &self.launch,
+            let common = (
                 self.spec.batch_size(),
                 self.spec.nnz_qo(),
                 self.spec.max_num_pages(),
                 self.spec.num_query_heads(),
                 self.spec.num_kv_heads(),
                 self.spec.softmax_scale() * core::f32::consts::LOG2_E,
-                resolved.first,
-                resolved.second,
-                resolved.third,
-                resolved.fourth,
-                resolved.fifth,
-                resolved.sixth,
-                resolved.seventh,
-                resolved.eighth,
-                resolved.ninth,
             );
-            let result = enqueue_region_launch(resolved.stream, operation);
-            (self.launch.function().clone(), result)
+            match &self.launch {
+                Bf16PagedPrefillLaunch::Direct(launch) => {
+                    let operation = self.module.paged_prefill_bf16_nhd_causal_async(
+                        launch,
+                        common.0,
+                        common.1,
+                        common.2,
+                        common.3,
+                        common.4,
+                        common.5,
+                        resolved.first,
+                        resolved.second,
+                        resolved.third,
+                        resolved.fourth,
+                        resolved.fifth,
+                        resolved.sixth,
+                        resolved.seventh,
+                        resolved.eighth,
+                        resolved.ninth,
+                    );
+                    let result = enqueue_region_launch(resolved.stream, operation);
+                    (launch.function().clone(), result)
+                }
+                Bf16PagedPrefillLaunch::TokenParallel8(launch) => {
+                    let operation = self
+                        .module
+                        .paged_prefill_bf16_nhd_causal_token_parallel8_async(
+                            launch,
+                            common.0,
+                            common.1,
+                            common.2,
+                            common.3,
+                            common.4,
+                            common.5,
+                            resolved.first,
+                            resolved.second,
+                            resolved.third,
+                            resolved.fourth,
+                            resolved.fifth,
+                            resolved.sixth,
+                            resolved.seventh,
+                            resolved.eighth,
+                            resolved.ninth,
+                        );
+                    let result = enqueue_region_launch(resolved.stream, operation);
+                    (launch.function().clone(), result)
+                }
+                Bf16PagedPrefillLaunch::TokenParallel16(launch) => {
+                    let operation = self
+                        .module
+                        .paged_prefill_bf16_nhd_causal_token_parallel16_async(
+                            launch,
+                            common.0,
+                            common.1,
+                            common.2,
+                            common.3,
+                            common.4,
+                            common.5,
+                            resolved.first,
+                            resolved.second,
+                            resolved.third,
+                            resolved.fourth,
+                            resolved.fifth,
+                            resolved.sixth,
+                            resolved.seventh,
+                            resolved.eighth,
+                            resolved.ninth,
+                        );
+                    let result = enqueue_region_launch(resolved.stream, operation);
+                    (launch.function().clone(), result)
+                }
+            }
         };
         record_paged_launch(scope, permit, function, launch_result)
     }
@@ -2545,6 +3114,26 @@ fn record_launch(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn paged_algorithm_keeps_short_capacity_direct_and_parallelizes_long_capacity() {
+        let short = Bf16PagedPrefillSpec::new(2, 6, 6, 16, 4, 128, 16).unwrap();
+        let long = Bf16PagedPrefillSpec::new(3, 21, 32, 8, 1, 128, 16).unwrap();
+
+        assert_eq!(
+            paged_prefill_algorithm(short),
+            Bf16PagedPrefillAlgorithm::Direct
+        );
+        assert_eq!(
+            paged_prefill_algorithm(long),
+            Bf16PagedPrefillAlgorithm::TokenParallel16
+        );
+        let grouped = Bf16PagedPrefillSpec::new(2, 96, 96, 16, 4, 128, 16).unwrap();
+        assert_eq!(
+            paged_prefill_algorithm(grouped),
+            Bf16PagedPrefillAlgorithm::TokenParallel8
+        );
+    }
 
     #[test]
     fn algorithm_keeps_short_kv_direct_and_parallelizes_long_kv() {

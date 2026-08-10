@@ -95,7 +95,10 @@ Use `LOOM_BENCH_OPERATORS=paged_prefill` and
 `make bench-paged-prefill-loom` for the ragged-query, page-size-16 NHD
 paged-prefill surface. The external baseline uses
 `BatchPrefillWithPagedKVCacheWrapper` with the same Q/K/V bits, query
-`indptr`, page table, output, LSE, and FA2 backend.
+`indptr`, page table, output, LSE, and FA2 backend. The harness includes short
+direct cases plus long MQA `[128,256,512]` and GQA4 `[256,1024]` cases. Retain
+both provider orders and report the long-context results separately from the
+short eager and fixed-address Graph records.
 
 The ragged Graph gate uses one replay per CUDA-event sample:
 

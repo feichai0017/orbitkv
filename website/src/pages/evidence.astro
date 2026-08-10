@@ -11,10 +11,10 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
 >
   <header class="page-hero">
     <p class="eyebrow">Evidence</p>
-    <h1>Every number keeps its boundary.</h1>
+    <h1>Each result keeps its boundary.</h1>
     <p>
-      A result fixes source, hardware, contract, baseline, measurement, raw
-      samples, and excluded claims.
+      A result fixes the source, hardware, contract, baseline, method, and
+      excluded claims.
     </p>
   </header>
 
@@ -49,25 +49,47 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
         </tbody>
       </table>
 
-      <div class="doc-note">
-        <strong>Loom device correctness and provider performance are separate.</strong>
+      <div class="doc-note warning">
+        <strong>The merged CUDA source requires requalification.</strong>
         <p>
-          Existing device records retain their claims for their recorded source
-          trees. They do not qualify the current DeviceRegion submission path.
-          Attention rankings need a new common-oracle run. Fused append still
-          needs one provider-neutral oracle before it can publish a ranking.
+          DeviceRegion changed the submission path for every provider. The
+          published device, Graph, and performance records cover earlier source
+          trees. They remain historical records for those exact trees.
         </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-correctness-20260807.json`}>Correctness record</a>
-        <span> · </span>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json`}>Graph performance record</a>
       </div>
 
-      <div class="doc-note warning">
-        <strong>Older matched attention results are historical.</strong>
+      <div class="doc-note">
+        <strong>Long paged prefill has two token-parallel providers.</strong>
         <p>
-          The comparison tools poison Graph outputs, check both providers
-          against one F32 reference, and reject mixed run contracts. Fused
-          append also needs new sanitizer evidence for exclusive pages.
+          The merged source selects sixteen warps for long MQA and eight warps
+          for long GQA4. The incoming records passed the H20 CPU oracle and four
+          Compute Sanitizer tools before the DeviceRegion merge.
+        </p>
+        <p>
+          Those records do not qualify the merged source. Correctness,
+          sanitizer, and matched performance require a new run before Loom can
+          publish a current provider ranking.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json`}>
+          Historical token-parallel correctness record
+        </a>
+        <span> · </span>
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json`}>
+          Historical long-context performance record
+        </a>
+      </div>
+
+      <div class="doc-note">
+        <strong>Fused append now uses a checked three-command path.</strong>
+        <p>
+          One validator builds a cache-bound append map. The mapped kernel then
+          rotates Q and K and writes private K/V pages. A device-status copy
+          reports semantic rejection at completion.
+        </p>
+        <p>
+          The 2026-08-06 append records measured the earlier single-kernel path
+          without exclusive-page ownership or typed status. They do not support
+          a current performance or Graph claim.
         </p>
       </div>
 

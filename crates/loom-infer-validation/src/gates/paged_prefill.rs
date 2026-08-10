@@ -5,7 +5,8 @@ use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use half::bf16;
 use loom_infer::{Bf16PagedPrefillSpec, paged_prefill_bf16_reference};
 use loom_infer_cuda::attention::{
-    Bf16PagedPrefillArgs, Bf16PagedPrefillPlan, PagedPrefillEnqueueError, PrefillProvider,
+    Bf16PagedPrefillAlgorithm, Bf16PagedPrefillArgs, Bf16PagedPrefillPlan,
+    PagedPrefillEnqueueError, PrefillProvider,
 };
 use loom_infer_cuda::command::{CommandError, CommandQueue};
 use loom_infer_cuda::graph::GraphQueue;
@@ -43,6 +44,11 @@ fn run_case(
         .join(",");
     let stream = queue.stream().clone();
     let plan = provider.plan_bf16_paged(spec)?;
+    let algorithm = match plan.algorithm() {
+        Bf16PagedPrefillAlgorithm::Direct => "direct_one_warp_per_query_row_head",
+        Bf16PagedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
+        Bf16PagedPrefillAlgorithm::TokenParallel16 => "token_parallel_16warp_block_local_merge",
+    };
     let query_host = deterministic_bf16(spec.query_numel(), salt);
     let key_host = deterministic_bf16(spec.kv_pages_numel(), salt ^ 0x4b45_5900);
     let value_host = deterministic_bf16(spec.kv_pages_numel(), salt ^ 0x5641_4c55_4500);
@@ -128,7 +134,7 @@ fn run_case(
         "{} batch_size={} nnz_qo={} query_heads={} kv_heads={} group_size={} \
          max_num_pages={} referenced_pages={} page_size={} kv_lens={} layout=NHD \
          causal=bottom_right dtype=BF16 accumulation=F32 lse_domain=log2 \
-         algorithm=direct_one_warp_per_query_row_head commands=1 stream=non_default \
+         algorithm={} commands=1 stream=non_default \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
          lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
         GateCase::new("paged_prefill_h20", name),
@@ -141,6 +147,7 @@ fn run_case(
         metadata.page_indices.len(),
         spec.page_size(),
         kv_lens,
+        algorithm,
         output_comparison.max_abs,
         output_comparison.bit_mismatches,
         output_comparison.digest,
@@ -232,9 +239,12 @@ fn run_invalid_page_guard(
     queue: &mut CommandQueue,
     provider: &PrefillProvider,
 ) -> Result<(), Box<dyn Error>> {
-    let spec = Bf16PagedPrefillSpec::new(2, 2, 2, 1, 1, 128, 16)?;
+    let spec = Bf16PagedPrefillSpec::new(2, 2, 8, 1, 1, 128, 16)?;
     let stream = queue.stream().clone();
     let plan = provider.plan_bf16_paged(spec)?;
+    if plan.algorithm() != Bf16PagedPrefillAlgorithm::TokenParallel16 {
+        return Err("invalid-page guard did not select token-parallel paged prefill".into());
+    }
     let query = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.query_numel())?);
     let key_pages = Arc::new(DeviceBuffer::<bf16>::zeroed(
         &stream,
@@ -246,7 +256,7 @@ fn run_invalid_page_guard(
     )?);
     let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2])?);
     let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2])?);
-    let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 2])?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 8])?);
     let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &[1_i32, 1])?);
     let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
     let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
@@ -559,6 +569,41 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             last_page_len: &[7, 2],
         },
         0x4001,
+    )?;
+    run_case(
+        &mut queue,
+        &provider,
+        "mqa_token_parallel",
+        Bf16PagedPrefillSpec::new(3, 21, 64, 8, 1, 128, 16)?,
+        MetadataInput {
+            qo_indptr: &[0, 1, 5, 21],
+            page_indptr: &[0, 8, 24, 56],
+            page_indices: &[
+                7, 2, 11, 5, 13, 3, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 1, 4, 8, 14,
+                22, 28, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62, 0, 6, 9,
+                10, 12, 15, 16, 18, 20, 21, 24, 25, 26, 27, 30, 33,
+            ],
+            last_page_len: &[16, 16, 16],
+        },
+        0x6001,
+    )?;
+    run_case(
+        &mut queue,
+        &provider,
+        "gqa4_token_parallel",
+        Bf16PagedPrefillSpec::new(2, 96, 96, 16, 4, 128, 16)?,
+        MetadataInput {
+            qo_indptr: &[0, 32, 96],
+            page_indptr: &[0, 16, 80],
+            page_indices: &[
+                15, 3, 27, 9, 31, 1, 35, 5, 39, 7, 43, 11, 47, 13, 51, 17, 19, 21, 23, 25, 29, 33,
+                37, 41, 45, 49, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79, 81, 83, 85,
+                87, 89, 91, 93, 95, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32,
+                34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62,
+            ],
+            last_page_len: &[16, 16],
+        },
+        0x8001,
     )?;
 
     let preflight_spec = Bf16PagedPrefillSpec::new(2, 2, 2, 4, 2, 128, 16)?;

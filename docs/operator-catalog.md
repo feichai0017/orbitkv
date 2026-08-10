@@ -26,7 +26,7 @@ performance, engine, and serving evidence remain separate.
 | Single decode split-K | Explicit partitions and caller-owned F32 workspace. The historical H20 matrix covers MQA and GQA | Historical H20 correctness, matched eager, and CUPTI records | Current-source H20 requalification, MHA evidence, and automatic policy |
 | Paged batch decode | BF16 NHD D128, page size 16. MHA uses direct. MQA and GQA use eight-warp block-local merge | Historical H20 correctness and matched eager records | Current-source H20 requalification, CUDA Graph, and length-aware policy |
 | Ragged causal prefill | BF16 NHD D128 with bottom-right causal masking. Direct, eight-warp, sixteen-warp, and tiled GQA4 providers exist | Historical H20 correctness, matched eager, and tiled long-GQA4 Graph records | Current-source H20 requalification, per-request dispatch, and engine invocation |
-| Paged causal prefill | BF16 NHD D128, page size 16, bottom-right causal masking. Direct provider only | Historical H20 correctness, matched eager, and one direct-GQA4 Graph record | Current-source H20 requalification, mutable metadata, and engine invocation |
+| Paged causal prefill | BF16 NHD D128, page size 16, bottom-right causal masking. Direct, sixteen-warp long-MQA, and eight-warp long-GQA4 providers | Historical H20 correctness, matched eager, and one direct-GQA4 Graph record | Current-source H20 requalification, tiled long-context optimization, token-parallel Graph, and engine invocation |
 | Standard RoPE | BF16 NHD D128 NeoX split-half with explicit I32 positions | Historical H20 correctness, sanitizer, and matched eager records | Publish the current-source H20 rerun, then cover more RoPE variants |
 | Fused RoPE plus paged KV append | BF16 NHD D128, page size 16, one through 64 explicit tokens. A validator emits a cache-bound compact map; every target page must have reference count one | `requalification` | Publish current-source correctness, sanitizer, Graph, and performance records under the ownership and typed-status contract |
 
@@ -38,10 +38,14 @@ Plan creation fixes the current dispatch rules.
 | --- | --- | --- |
 | Paged decode | MHA selects direct. MQA and GQA select eight-warp token parallelism | None |
 | Ragged prefill | Average KV length below 64 selects direct. Long MQA selects sixteen warps. Other long shapes select eight warps. GQA group size four with average KV length at least 256 selects tiled split-eight | Tiled long GQA4 only |
-| Paged prefill | All admitted MHA, MQA, and GQA shapes select the direct provider | One fixed-address direct GQA4 fixture |
+| Paged prefill | Average physical page-pool capacity below 64 tokens per request selects direct. Long MQA selects sixteen warps. Other admitted long shapes select eight warps | One fixed-address direct GQA4 fixture |
 
 Ragged dispatch uses the batch average KV length. It does not group requests by
 length or use a per-shape tuning database.
+
+The 2026-08-07 paged-prefill token-parallel correctness and matched performance
+records apply to source `8478ee9`. They do not qualify the merged DeviceRegion
+submission path.
 
 ## KV append ownership
 

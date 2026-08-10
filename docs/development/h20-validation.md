@@ -141,7 +141,8 @@ online-softmax state, split states, and merge arithmetic use F32.
 | Single decode split-K | Same tensors plus caller F32 workspace `[qh,partitions,130]` | `(kv_len,qh,kvh,p)`: `(7,8,1,3)`, `(33,8,1,12)`, `(127,16,4,16)`, `(4096,32,4,64)` |
 | Paged batch decode | `Q/O [batch,qh,128]`, pages `[max_pages,16,kvh,128]`, full attention | MHA `(1,2,8,8)`, MQA `(3,7,8,1)`, GQA `(4,8,16,4)` as `(batch,max_pages,qh,kvh)` |
 | Ragged causal prefill | Contiguous Q/K/V with separate I32 `qo_indptr` and `kv_indptr` | `(batch,nnz_qo,nnz_kv,qh,kvh)`: `(1,4,4,8,8)`, `(3,6,13,8,1)`, `(2,6,11,16,4)`, `(3,21,896,8,1)`, `(2,96,1280,16,4)` |
-| Paged causal prefill | Ragged Q plus page-size-16 KV and bottom-right causal mask | `(batch,nnz_qo,max_pages,qh,kvh)`: `(1,4,2,8,8)`, `(3,6,7,8,1)`, `(2,6,6,16,4)` |
+| Paged causal prefill | Ragged Q plus page-size-16 KV and bottom-right causal mask | Short: `(batch,nnz_qo,max_pages,qh,kvh)` is `(1,4,2,8,8)`, `(3,6,7,8,1)`, or `(2,6,6,16,4)` |
+| Paged causal prefill, long | Same contract with block-local token partitioning | MQA `(3,21,64,8,1)` uses sixteen warps. GQA4 `(2,96,96,16,4)` uses eight warps |
 
 Paged metadata uses I32 `page_indptr`, `page_indices`, and `last_page_len`.
 Cover mixed lengths, partial tails, physical-page order, and read-only page
@@ -161,6 +162,13 @@ before that path gains current-source qualification.
 The tiled GQA4 workspace is F32
 `[nnz_qo, query_heads, 8, 130]`. One completion covers the partial and merge
 kernels. A missing workspace must fail before CUDA submission.
+
+Paged prefill selects direct execution below an average physical page-pool
+capacity of 64 tokens per request. Long MQA selects sixteen warps. Other
+admitted long shapes select eight warps.
+
+The token-parallel plans keep partial F32 online-softmax states in block-local
+shared memory and need no caller workspace.
 
 ## RoPE and paged append gate
 
@@ -207,10 +215,17 @@ The fused-append records dated 2026-08-06 predate this exclusive-page contract.
 They remain historical and do not qualify current correctness, Graph, or
 performance.
 
-The DeviceRegion refactor also changed submission for every CUDA provider.
-Existing RMSNorm, GEMM, decode, prefill, RoPE, and Graph records predate the
-current source. Run the matching gates and publish new records before restoring
-their device-qualified status.
+The [paged-prefill token-parallel correctness record](../results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json)
+and the [matched long-context record](../results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json)
+describe clean source commit `8478ee9`. They cover sixteen-warp long MQA and
+eight-warp long GQA4.
+
+They do not qualify the merged DeviceRegion submission path.
+
+The DeviceRegion refactor changed submission for every CUDA provider. Existing
+RMSNorm, GEMM, decode, prefill, RoPE, and Graph records predate the current
+source. Run the matching gates and publish new records before restoring their
+device-qualified status.
 
 ## Compute Sanitizer
 
@@ -282,8 +297,10 @@ model output.
 ## Matched performance requalification
 
 Existing matched attention and attention-Graph records predate the current
-evidence tooling. Keep them immutable as historical records. Do not reuse their
-ratios as current claims.
+evidence tooling. Keep them immutable as historical records.
+
+Do not reuse their ratios as current claims. This rule includes the 2026-08-07
+paged-prefill long-context record.
 
 Before a new matched run:
 

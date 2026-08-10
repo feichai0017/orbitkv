@@ -60,7 +60,7 @@ The upstream links remain in the pinned
 | Single decode split-K | Explicit partitions, F32 partial workspace, and eight-warp merge | MQA and GQA | None |
 | Paged batch decode | Direct MHA. Eight-warp token-parallel MQA and GQA | MHA, MQA, GQA, mixed lengths, page order, and read-only page reuse | None |
 | Ragged causal prefill | Direct, eight-warp, sixteen-warp, and tiled GQA4 split-eight | Direct short MHA, MQA, and GQA. Long MQA uses sixteen warps. Published stages also cover eight-warp and tiled GQA4 paths | Tiled long GQA4 only |
-| Paged causal prefill | Direct online softmax | MHA, MQA, GQA, mixed query and KV lengths, page order, and read-only page reuse | One direct GQA4 fixture |
+| Paged causal prefill | Direct online softmax, sixteen-warp long MQA, and eight-warp long GQA4 | Short MHA, MQA, and GQA. The 2026-08-07 source also covers long MQA and long GQA4 | One direct GQA4 fixture |
 | Standard RoPE | D128 NeoX split-half with explicit I32 positions | Positions through 32,767 in the recorded fixture | None |
 | Fused RoPE plus paged append | One through 64 explicit tokens with per-page reference counts | Requalification | Requalification |
 
@@ -87,8 +87,12 @@ Ragged prefill uses average KV length across the batch:
 This policy does not use a length histogram or request grouping. The tiled
 Graph record does not qualify the other ragged algorithms.
 
-Paged prefill has one direct provider. Its GQA4 Graph record does not qualify
-MHA, MQA, mutable metadata, graph updates, or optimized long-context paths.
+Paged prefill selects direct execution below an average physical page-pool
+capacity of 64 tokens per request. Long MQA selects sixteen warps. Other
+admitted long shapes select eight warps.
+
+The direct GQA4 Graph record does not qualify token-parallel plans, mutable
+metadata, or graph updates.
 
 ## Paged KV ownership difference
 
@@ -123,6 +127,14 @@ The project keeps four boundaries separate:
 | Device | H20 correctness, edge cases, and declared sanitizer tools |
 | Graph | Capture and replay under one declared binding policy |
 | Performance | Matched providers, timed region, raw samples, and order variance |
+
+The [token-parallel correctness record](results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json)
+and [matched long-context record](results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json)
+apply to source `8478ee9`. They confirm the previous sixteen-warp MQA and
+eight-warp GQA4 implementation.
+
+They do not qualify the merged DeviceRegion path or token-parallel Graph
+execution.
 
 Engine and serving parity remain open. No existing record proves continuous
 batching, end-to-end model speed, TTFT, TPOT, throughput, or memory savings.

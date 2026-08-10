@@ -19,6 +19,9 @@ decode, prefill, and RoPE. Every published device and Graph record predates
 that launch-path change. The records still describe their exact source trees,
 but they do not qualify the current worktree.
 
+This notice includes the two paged-prefill records dated 2026-08-07. They apply
+to clean source commit `8478ee9`, before the DeviceRegion submission path.
+
 No other record gains a broader claim because it appears in this index. Check
 the record's `accepted_claims` and `excluded_claims` fields.
 
@@ -118,12 +121,19 @@ excluded because their provider-order deltas exceed the acceptance limit.
   read-only page reuse, and metadata guards.
 - Historical [matched eager performance](h20-flashinfer-v0.6.16.post1-paged-prefill-eager-performance-20260807.json)
   retains 600 raw samples and both provider orders.
+- [Token-parallel correctness](h20-bf16-paged-prefill-token-parallel-correctness-20260807.json)
+  covers sixteen-warp long MQA and eight-warp long GQA4 at source `8478ee9`.
+- Historical [long-context matched eager performance](h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json)
+  retains both provider orders for those two token-parallel cases.
 - [Fixed-address Graph correctness](h20-bf16-paged-prefill-cuda-graph-correctness-20260807.json)
   and [matched Graph performance](h20-flashinfer-v0.6.16.post1-paged-prefill-graph-performance-20260807.json)
   cover one direct GQA4 page-reorder fixture.
 
 The Graph records do not cover MHA, MQA, mutable metadata, graph updates,
-optimized long-context plans, engine execution, or serving.
+token-parallel plans, engine execution, or serving. The token-parallel records
+do not qualify the merged DeviceRegion path. The long-context performance
+record's FlashInfer commit is a harness assertion; the installed wheel proves
+its distribution version, not that source revision.
 
 ## Standard RoPE
 

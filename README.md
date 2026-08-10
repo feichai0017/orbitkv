@@ -130,9 +130,14 @@ defines device qualification.
 
 ## Project status
 
-Loom Infer is alpha software. Current work publishes new shared-KV and
-external-region evidence, extends typed device errors to the remaining paged
-operators, and proves one real engine invocation.
+Loom Infer is alpha software. The merged source adds sixteen-warp long-MQA and
+eight-warp long-GQA4 paged-prefill providers whose H20 records cover the source
+tree before the DeviceRegion merge. Both providers require current-source
+requalification.
+
+Current work publishes new shared-KV and external-region evidence, extends
+typed device errors to the remaining paged operators, and proves one real
+engine invocation.
 
 Read the [architecture](docs/design/loom-infer-architecture.md) and
 [contribution guide](CONTRIBUTING.md) before adding a provider.

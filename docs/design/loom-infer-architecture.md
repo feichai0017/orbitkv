@@ -132,7 +132,7 @@ The current plans use source-defined selection rules.
 | Single decode | Direct plan for the admitted MHA, MQA, and GQA contract. Split-K is a separate explicit plan | None |
 | Paged batch decode | Direct for MHA. Eight-warp token parallelism for MQA and GQA | None |
 | Ragged prefill | Direct below average KV length 64. Sixteen warps for long MQA. Eight warps for other long shapes. Tiled split-eight for GQA group size four at average KV length 256 or greater | Tiled long GQA4 only |
-| Paged prefill | Direct for every admitted MHA, MQA, and GQA shape | One direct GQA4 fixture |
+| Paged prefill | Direct below an average physical page-pool capacity of 64 tokens per request. Long MQA selects sixteen warps. Other admitted long shapes select eight warps | One direct GQA4 fixture |
 | Fused append | One validator builds a compact `AppendMap`; one fused kernel consumes it. A scope may reuse the map only with the same K/V cache binding | Requalification after ownership and status changes |
 
 Evidence limits are narrower than the source surface:
@@ -140,6 +140,7 @@ Evidence limits are narrower than the source surface:
 - The single-decode split-K H20 matrix covers MQA and GQA, not MHA.
 - Ragged Graph evidence covers only the tiled long-GQA plan.
 - Paged-prefill Graph evidence covers one recorded direct GQA4 fixture.
+- The 2026-08-07 token-parallel records cover long MQA and long GQA4 at source `8478ee9` only. They predate the DeviceRegion path.
 - Ragged selection uses the batch average KV length.
 - Planning has no length grouping or persistent tuning database.
 
@@ -207,6 +208,16 @@ with stable base-two weights.
 The first admitted attention contracts fix NHD layout and head dimension 128.
 Paged contracts also fix page size 16. Ragged and paged prefill use
 bottom-right causal alignment.
+
+The paged-prefill source includes block-local token partitioning for long
+contexts. Long MQA uses sixteen warps. The admitted long GQA4 shape uses eight
+warps.
+
+Each warp computes an F32 online-softmax partial. Warp zero then merges the
+shared states without caller-owned workspace.
+
+The 2026-08-07 correctness and performance records describe source `8478ee9`.
+They do not qualify the merged DeviceRegion submission path.
 
 The first RoPE contract fixes BF16 NHD D128 NeoX split-half rotation, scale
 one, theta 10,000, and explicit I32 positions. Loom full-math and FlashInfer
