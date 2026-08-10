@@ -18,6 +18,11 @@ pub(crate) const STATUS_DUPLICATE_APPEND_SLOT: i32 = 9;
 pub(crate) const STATUS_PAGE_REFERENCE_COUNT_TOO_SMALL: i32 = 10;
 pub(crate) const STATUS_NON_EXCLUSIVE_APPEND_TARGET: i32 = 11;
 pub(crate) const STATUS_ELEMENT_COUNT_OVERFLOW: i32 = 12;
+pub(crate) const STATUS_INVALID_QO_INDPTR_START: i32 = 13;
+pub(crate) const STATUS_NON_MONOTONIC_QO_INDPTR: i32 = 14;
+pub(crate) const STATUS_EMPTY_QO_REQUEST: i32 = 15;
+pub(crate) const STATUS_QO_INDPTR_LENGTH_MISMATCH: i32 = 16;
+pub(crate) const STATUS_RAGGED_QUERY_LONGER_THAN_KV: i32 = 17;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum AppendMapKind {
@@ -29,6 +34,7 @@ pub(crate) enum AppendMapKind {
 enum DeviceStatusKind {
     PagedAppend(AppendMapKind),
     PagedBatchDecode,
+    PagedPrefill,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -76,6 +82,23 @@ impl DeviceStatusDecoder {
         }
     }
 
+    pub(crate) const fn paged_prefill(
+        batch_size: usize,
+        nnz_qo: usize,
+        max_num_pages: usize,
+        page_indices_len: usize,
+        page_size: usize,
+    ) -> Self {
+        Self {
+            kind: DeviceStatusKind::PagedPrefill,
+            items: nnz_qo,
+            batch_size,
+            max_num_pages,
+            page_indices_len,
+            page_size,
+        }
+    }
+
     pub(crate) const fn operation(self) -> &'static str {
         match self.kind {
             DeviceStatusKind::PagedAppend(AppendMapKind::Requests) => "paged KV append map",
@@ -83,6 +106,7 @@ impl DeviceStatusDecoder {
                 "explicit-token paged KV append map"
             }
             DeviceStatusKind::PagedBatchDecode => "paged batch decode metadata",
+            DeviceStatusKind::PagedPrefill => "paged prefill metadata",
         }
     }
 
@@ -359,6 +383,94 @@ impl DeviceStatusDecoder {
                 self.require_zero_tail(code, detail, 0)?;
                 ContractError::ElementCountOverflow
             }
+            STATUS_INVALID_QO_INDPTR_START => {
+                self.require_paged_prefill(code)?;
+                self.require(code, detail[0] != 0, "invalid qo indptr start is zero")?;
+                self.require_zero_tail(code, detail, 1)?;
+                ContractError::InvalidIndptrStart {
+                    buffer: "qo_indptr",
+                    actual: detail[0],
+                }
+            }
+            STATUS_NON_MONOTONIC_QO_INDPTR => {
+                self.require_paged_prefill(code)?;
+                let request = self.index_below(
+                    code,
+                    detail[0],
+                    self.batch_size,
+                    "request index is outside the batch",
+                )?;
+                self.require(code, detail[2] < detail[1], "qo indptr pair is monotonic")?;
+                self.require_zero_tail(code, detail, 3)?;
+                ContractError::NonMonotonicIndptr {
+                    buffer: "qo_indptr",
+                    request,
+                    start: detail[1],
+                    end: detail[2],
+                }
+            }
+            STATUS_EMPTY_QO_REQUEST => {
+                self.require_paged_prefill(code)?;
+                let request = self.index_below(
+                    code,
+                    detail[0],
+                    self.batch_size,
+                    "request index is outside the batch",
+                )?;
+                self.require_zero_tail(code, detail, 1)?;
+                ContractError::EmptyRaggedRequest {
+                    buffer: "qo_indptr",
+                    request,
+                }
+            }
+            STATUS_QO_INDPTR_LENGTH_MISMATCH => {
+                self.require_paged_prefill(code)?;
+                let actual = self.index(code, detail[0])?;
+                self.require(code, actual != self.items, "qo indptr totals are equal")?;
+                self.require_zero_tail(code, detail, 1)?;
+                ContractError::LengthMismatch {
+                    buffer: "qo_indptr",
+                    expected: self.items,
+                    actual,
+                }
+            }
+            STATUS_RAGGED_QUERY_LONGER_THAN_KV => {
+                self.require_paged_prefill(code)?;
+                let request = self.index_below(
+                    code,
+                    detail[0],
+                    self.batch_size,
+                    "request index is outside the batch",
+                )?;
+                let query_len = self.index(code, detail[1])?;
+                let kv_len = self.index(code, detail[2])?;
+                let max_kv_len = self
+                    .page_indices_len
+                    .checked_mul(self.page_size)
+                    .ok_or_else(|| {
+                        DeviceStatusProtocolError::new(
+                            self.operation(),
+                            code,
+                            "decoder KV length domain overflows",
+                        )
+                    })?;
+                self.require(
+                    code,
+                    query_len > 0 && query_len <= self.items,
+                    "query length is outside the operation domain",
+                )?;
+                self.require(
+                    code,
+                    kv_len > 0 && kv_len <= max_kv_len && query_len > kv_len,
+                    "query length does not exceed KV length",
+                )?;
+                self.require_zero_tail(code, detail, 3)?;
+                ContractError::RaggedQueryLongerThanKv {
+                    request,
+                    query_len,
+                    kv_len,
+                }
+            }
             _ => return Err(self.unexpected(code)),
         };
         Ok(Some(error))
@@ -367,7 +479,15 @@ impl DeviceStatusDecoder {
     const fn append_kind(self) -> Option<AppendMapKind> {
         match self.kind {
             DeviceStatusKind::PagedAppend(kind) => Some(kind),
-            DeviceStatusKind::PagedBatchDecode => None,
+            DeviceStatusKind::PagedBatchDecode | DeviceStatusKind::PagedPrefill => None,
+        }
+    }
+
+    fn require_paged_prefill(self, code: i32) -> Result<(), DeviceStatusProtocolError> {
+        if self.kind == DeviceStatusKind::PagedPrefill {
+            Ok(())
+        } else {
+            Err(self.unexpected(code))
         }
     }
 
@@ -634,6 +754,96 @@ mod tests {
                 decoder.decode(&packet).is_err(),
                 "packet should fail paged-decode protocol validation: {packet:?}"
             );
+        }
+    }
+
+    #[test]
+    fn paged_prefill_status_decodes_query_and_page_rejections() {
+        let decoder = DeviceStatusDecoder::paged_prefill(2, 3, 4, 3, 16);
+        for (packet, expected) in [
+            (
+                [STATUS_INVALID_QO_INDPTR_START, 1, 0, 0, 0],
+                ContractError::InvalidIndptrStart {
+                    buffer: "qo_indptr",
+                    actual: 1,
+                },
+            ),
+            (
+                [STATUS_NON_MONOTONIC_QO_INDPTR, 1, 2, 1, 0],
+                ContractError::NonMonotonicIndptr {
+                    buffer: "qo_indptr",
+                    request: 1,
+                    start: 2,
+                    end: 1,
+                },
+            ),
+            (
+                [STATUS_EMPTY_QO_REQUEST, 0, 0, 0, 0],
+                ContractError::EmptyRaggedRequest {
+                    buffer: "qo_indptr",
+                    request: 0,
+                },
+            ),
+            (
+                [STATUS_QO_INDPTR_LENGTH_MISMATCH, 2, 0, 0, 0],
+                ContractError::LengthMismatch {
+                    buffer: "qo_indptr",
+                    expected: 3,
+                    actual: 2,
+                },
+            ),
+            (
+                [STATUS_RAGGED_QUERY_LONGER_THAN_KV, 0, 2, 1, 0],
+                ContractError::RaggedQueryLongerThanKv {
+                    request: 0,
+                    query_len: 2,
+                    kv_len: 1,
+                },
+            ),
+            (
+                [STATUS_PAGE_INDEX_OUT_OF_RANGE, 2, 4, 0, 0],
+                ContractError::PageIndexOutOfRange {
+                    position: 2,
+                    index: 4,
+                    max_num_pages: 4,
+                },
+            ),
+        ] {
+            assert_eq!(decoder.decode(&packet), Ok(Some(expected)));
+        }
+    }
+
+    #[test]
+    fn paged_prefill_rejects_malformed_or_foreign_status() {
+        let decoder = DeviceStatusDecoder::paged_prefill(2, 3, 4, 3, 16);
+        for packet in [
+            [STATUS_SUCCESS, 1, 0, 0, 0],
+            [STATUS_INVALID_QO_INDPTR_START, 0, 0, 0, 0],
+            [STATUS_NON_MONOTONIC_QO_INDPTR, 0, 1, 1, 0],
+            [STATUS_EMPTY_QO_REQUEST, 2, 0, 0, 0],
+            [STATUS_QO_INDPTR_LENGTH_MISMATCH, 3, 0, 0, 0],
+            [STATUS_RAGGED_QUERY_LONGER_THAN_KV, 0, 0, 0, 0],
+            [STATUS_RAGGED_QUERY_LONGER_THAN_KV, 0, 2, 2, 0],
+            [STATUS_APPEND_BATCH_INDEX_OUT_OF_RANGE, 0, -1, 0, 0],
+            [99, 0, 0, 0, 0],
+        ] {
+            assert!(
+                decoder.decode(&packet).is_err(),
+                "packet should fail paged-prefill protocol validation: {packet:?}"
+            );
+        }
+
+        let decode = DeviceStatusDecoder::paged_batch_decode(2, 4, 3, 16);
+        let append = DeviceStatusDecoder::paged_append(AppendMapKind::Requests, 2, 2, 4, 3, 16);
+        for packet in [
+            [STATUS_INVALID_QO_INDPTR_START, 1, 0, 0, 0],
+            [STATUS_NON_MONOTONIC_QO_INDPTR, 1, 2, 1, 0],
+            [STATUS_EMPTY_QO_REQUEST, 0, 0, 0, 0],
+            [STATUS_QO_INDPTR_LENGTH_MISMATCH, 2, 0, 0, 0],
+            [STATUS_RAGGED_QUERY_LONGER_THAN_KV, 0, 2, 1, 0],
+        ] {
+            assert!(decode.decode(&packet).is_err());
+            assert!(append.decode(&packet).is_err());
         }
     }
 }

@@ -1,6 +1,16 @@
 //! cuda-oxide providers for BF16 ragged and paged causal prefill attention.
 
-use crate::command::{CommandError, CommandPermit, CommandScope, Read, ReadWrite, Write};
+use crate::command::{
+    CommandError, CommandPermit, CommandScope, DeviceStatusReservation, Read, ReadWrite, Write,
+};
+use crate::device_status::{
+    DeviceStatusDecoder, STATUS_ELEMENT_COUNT_OVERFLOW, STATUS_EMPTY_PAGED_REQUEST,
+    STATUS_EMPTY_QO_REQUEST, STATUS_INVALID_LAST_PAGE_LENGTH, STATUS_INVALID_PAGE_INDPTR_START,
+    STATUS_INVALID_QO_INDPTR_START, STATUS_NON_MONOTONIC_PAGE_INDPTR,
+    STATUS_NON_MONOTONIC_QO_INDPTR, STATUS_PACKET_WORDS, STATUS_PAGE_INDEX_OUT_OF_RANGE,
+    STATUS_PAGE_INDICES_LENGTH_MISMATCH, STATUS_QO_INDPTR_LENGTH_MISMATCH,
+    STATUS_RAGGED_QUERY_LONGER_THAN_KV, STATUS_SUCCESS,
+};
 use crate::memory::{DeviceRegionLaunchError, enqueue_region_launch};
 use cuda_core::{CudaContext, CudaFunction, LaunchConfig1D, LaunchContractError, PreparedLaunch};
 use cuda_device::{
@@ -55,6 +65,224 @@ const _: () = {
 #[cuda_module]
 mod kernels {
     use super::*;
+
+    #[kernel]
+    #[launch_bounds(1)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (1, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            nnz_qo >= 1,
+            max_num_pages >= 1,
+            qo_indptr.len() == batch_size + 1,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            metadata_status.len() == 5,
+        ),
+    )]
+    pub fn validate_paged_prefill_metadata(
+        batch_size: usize,
+        nnz_qo: usize,
+        max_num_pages: usize,
+        qo_indptr: &[i32],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        mut metadata_status: DisjointSlice<i32>,
+    ) {
+        if thread::blockIdx_x() != 0 || thread::threadIdx_x() != 0 {
+            return;
+        }
+        let output = metadata_status.as_mut_ptr();
+        // SAFETY: the launch contract proves the five-word status span.
+        unsafe { write_status(output, STATUS_SUCCESS, 0, 0, 0, 0) };
+
+        if qo_indptr[0] != 0 {
+            // SAFETY: as above.
+            unsafe {
+                write_status(
+                    output,
+                    STATUS_INVALID_QO_INDPTR_START,
+                    qo_indptr[0],
+                    0,
+                    0,
+                    0,
+                )
+            };
+            return;
+        }
+        let mut request = 0_usize;
+        while request < batch_size {
+            let start = qo_indptr[request];
+            let end = qo_indptr[request + 1];
+            if end < start {
+                // SAFETY: the launch contract proves the status span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_NON_MONOTONIC_QO_INDPTR,
+                        request as i32,
+                        start,
+                        end,
+                        0,
+                    )
+                };
+                return;
+            }
+            if end == start {
+                // SAFETY: as above.
+                unsafe { write_status(output, STATUS_EMPTY_QO_REQUEST, request as i32, 0, 0, 0) };
+                return;
+            }
+            request += 1;
+        }
+        let qo_terminal = qo_indptr[batch_size];
+        if qo_terminal < 0 {
+            // SAFETY: the launch contract proves the status span.
+            unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+            return;
+        }
+        if qo_terminal as usize != nnz_qo {
+            // SAFETY: as above.
+            unsafe {
+                write_status(
+                    output,
+                    STATUS_QO_INDPTR_LENGTH_MISMATCH,
+                    qo_terminal,
+                    0,
+                    0,
+                    0,
+                )
+            };
+            return;
+        }
+
+        if page_indptr[0] != 0 {
+            // SAFETY: the launch contract proves the status span.
+            unsafe {
+                write_status(
+                    output,
+                    STATUS_INVALID_PAGE_INDPTR_START,
+                    page_indptr[0],
+                    0,
+                    0,
+                    0,
+                )
+            };
+            return;
+        }
+        request = 0;
+        while request < batch_size {
+            let page_start = page_indptr[request];
+            let page_end = page_indptr[request + 1];
+            if page_end < page_start {
+                // SAFETY: the launch contract proves the status span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_NON_MONOTONIC_PAGE_INDPTR,
+                        request as i32,
+                        page_start,
+                        page_end,
+                        0,
+                    )
+                };
+                return;
+            }
+            if page_end == page_start {
+                // SAFETY: as above.
+                unsafe {
+                    write_status(output, STATUS_EMPTY_PAGED_REQUEST, request as i32, 0, 0, 0)
+                };
+                return;
+            }
+            let tail_len = last_page_len[request];
+            if !(1..=PAGED_PREFILL_PAGE_SIZE as i32).contains(&tail_len) {
+                // SAFETY: as above.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_INVALID_LAST_PAGE_LENGTH,
+                        request as i32,
+                        tail_len,
+                        0,
+                        0,
+                    )
+                };
+                return;
+            }
+            let qo_len = (qo_indptr[request + 1] - qo_indptr[request]) as usize;
+            let page_count = (page_end - page_start) as usize;
+            let Some(kv_len) = (page_count - 1)
+                .checked_mul(PAGED_PREFILL_PAGE_SIZE)
+                .and_then(|tokens| tokens.checked_add(tail_len as usize))
+            else {
+                // SAFETY: the launch contract proves the status span.
+                unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+                return;
+            };
+            if qo_len > kv_len {
+                // The failing lengths are bounded by the validated i32 query domain.
+                // SAFETY: the launch contract proves the status span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_RAGGED_QUERY_LONGER_THAN_KV,
+                        request as i32,
+                        qo_len as i32,
+                        kv_len as i32,
+                        0,
+                    )
+                };
+                return;
+            }
+            request += 1;
+        }
+
+        let page_terminal = page_indptr[batch_size];
+        if page_terminal < 0 {
+            // SAFETY: the launch contract proves the status span.
+            unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+            return;
+        }
+        if page_terminal as usize != page_indices.len() {
+            // SAFETY: as above.
+            unsafe {
+                write_status(
+                    output,
+                    STATUS_PAGE_INDICES_LENGTH_MISMATCH,
+                    page_terminal,
+                    0,
+                    0,
+                    0,
+                )
+            };
+            return;
+        }
+        let mut position = 0_usize;
+        while position < page_indices.len() {
+            let physical_page = page_indices[position];
+            if physical_page < 0 || physical_page as usize >= max_num_pages {
+                // SAFETY: the launch contract proves the status span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_PAGE_INDEX_OUT_OF_RANGE,
+                        position as i32,
+                        physical_page,
+                        0,
+                        0,
+                    )
+                };
+                return;
+            }
+            position += 1;
+        }
+    }
 
     #[kernel]
     #[launch_bounds(32)]
@@ -264,6 +492,7 @@ mod kernels {
             page_indptr.len() == batch_size + 1,
             page_indices.len() >= batch_size,
             last_page_len.len() == batch_size,
+            metadata_status.len() == 5,
             output.len() == nnz_qo * num_query_heads * 128,
             lse.len() == nnz_qo * num_query_heads,
         ),
@@ -282,73 +511,37 @@ mod kernels {
         page_indptr: &[i32],
         page_indices: &[i32],
         last_page_len: &[i32],
+        metadata_status: &[i32],
         mut output: DisjointSlice<bf16>,
         mut lse: DisjointSlice<f32>,
     ) {
         let state_index = thread::blockIdx_x() as usize;
         let lane = thread::threadIdx_x() as usize;
         let state_count = nnz_qo * num_query_heads;
-        if state_index >= state_count || lane >= WARP_THREADS as usize {
-            return;
-        }
-
-        if qo_indptr[0] != 0
-            || qo_indptr[batch_size] != nnz_qo as i32
-            || page_indptr[0] != 0
-            || page_indptr[batch_size] < 0
-            || page_indptr[batch_size] as usize != page_indices.len()
+        if state_index >= state_count
+            || lane >= WARP_THREADS as usize
+            || metadata_status[0] != STATUS_SUCCESS
         {
             return;
         }
+        let _ = (batch_size, max_num_pages);
 
         let query_row = state_index / num_query_heads;
         let query_head = state_index % num_query_heads;
         let mut request = 0_usize;
-        while request < batch_size {
-            let start = qo_indptr[request];
-            let end = qo_indptr[request + 1];
-            if start < 0 || end <= start || end as usize > nnz_qo {
-                return;
-            }
-            if query_row >= start as usize && query_row < end as usize {
-                break;
-            }
+        while query_row >= qo_indptr[request + 1] as usize {
             request += 1;
-        }
-        if request >= batch_size {
-            return;
         }
 
         let qo_start = qo_indptr[request] as usize;
         let qo_end = qo_indptr[request + 1] as usize;
         let page_start = page_indptr[request];
         let page_end = page_indptr[request + 1];
-        let global_page_end = page_indptr[batch_size];
         let tail_len = last_page_len[request];
-        if page_start < 0
-            || page_end <= page_start
-            || page_end > global_page_end
-            || tail_len < 1
-            || tail_len > PAGED_PREFILL_PAGE_SIZE as i32
-        {
-            return;
-        }
-
-        let mut page_slot = page_start as usize;
-        while page_slot < page_end as usize {
-            let physical_page = page_indices[page_slot];
-            if physical_page < 0 || physical_page as usize >= max_num_pages {
-                return;
-            }
-            page_slot += 1;
-        }
 
         let qo_len = qo_end - qo_start;
         let page_count = (page_end - page_start) as usize;
         let kv_len = (page_count - 1) * PAGED_PREFILL_PAGE_SIZE + tail_len as usize;
-        if qo_len > kv_len {
-            return;
-        }
         let query_index = query_row - qo_start;
         let causal_kv_end = kv_len - qo_len + query_index + 1;
         let group_size = num_query_heads / num_kv_heads;
@@ -385,9 +578,9 @@ mod kernels {
                 * BF16_PAIRS_PER_HEAD)
                 + lane;
 
-            // SAFETY: every page in this request was validated before any
-            // output write. The launch contract proves the exact page-pool
-            // spans, and each lane owns two packed head pairs.
+            // SAFETY: the preceding stream-ordered validator proved every
+            // referenced page is in range before this K/V pointer arithmetic.
+            // The launch contract proves the exact page-pool spans.
             let (key_0, key_1, key_2, key_3, value_0, value_1, value_2, value_3) = unsafe {
                 let (key_0, key_1) =
                     convert::cvt_f32x2_bf16x2(key_pairs.add(kv_pair_offset).read());
@@ -468,7 +661,6 @@ mod kernels {
     fn paged_prefill_bf16_nhd_causal_token_parallel_impl(
         warps: usize,
         partial_states: *mut f32,
-        page_valid: *mut u32,
         batch_size: usize,
         nnz_qo: usize,
         max_num_pages: usize,
@@ -482,6 +674,7 @@ mod kernels {
         page_indptr: &[i32],
         page_indices: &[i32],
         last_page_len: &[i32],
+        metadata_status: &[i32],
         mut output: DisjointSlice<bf16>,
         mut lse: DisjointSlice<f32>,
     ) {
@@ -490,89 +683,27 @@ mod kernels {
         let warp_in_block = thread_in_block / WARP_THREADS as usize;
         let lane = thread_in_block % WARP_THREADS as usize;
         let state_count = nnz_qo * num_query_heads;
-        if state_index >= state_count {
+        if state_index >= state_count || metadata_status[0] != STATUS_SUCCESS {
             return;
         }
+        let _ = (batch_size, max_num_pages);
 
         let query_row = state_index / num_query_heads;
         let query_head = state_index % num_query_heads;
         let mut request = 0_usize;
-        while request < batch_size {
-            let start = qo_indptr[request];
-            let end = qo_indptr[request + 1];
-            if start < 0 || end <= start || end as usize > nnz_qo {
-                return;
-            }
-            if query_row >= start as usize && query_row < end as usize {
-                break;
-            }
+        while query_row >= qo_indptr[request + 1] as usize {
             request += 1;
-        }
-        if request >= batch_size {
-            return;
         }
 
         let qo_start = qo_indptr[request] as usize;
         let qo_end = qo_indptr[request + 1] as usize;
         let page_start = page_indptr[request];
         let page_end = page_indptr[request + 1];
-        let global_page_end = page_indptr[batch_size];
         let tail_len = last_page_len[request];
-        let metadata_valid = qo_indptr[0] == 0
-            && qo_indptr[batch_size] == nnz_qo as i32
-            && page_indptr[0] == 0
-            && global_page_end >= 0
-            && global_page_end as usize == page_indices.len()
-            && page_start >= 0
-            && page_end > page_start
-            && page_end <= global_page_end
-            && tail_len >= 1
-            && tail_len <= PAGED_PREFILL_PAGE_SIZE as i32;
-
-        if lane == 0 {
-            // SAFETY: each warp owns one validation flag.
-            unsafe {
-                page_valid
-                    .add(warp_in_block)
-                    .write(u32::from(metadata_valid));
-            }
-        }
-        thread::sync_threads();
-        if metadata_valid {
-            let page_count = (page_end - page_start) as usize;
-            let mut page_slot = warp_in_block * WARP_THREADS as usize + lane;
-            let mut local_valid = true;
-            while page_slot < page_count {
-                let physical_page = page_indices[page_start as usize + page_slot];
-                local_valid &= physical_page >= 0 && (physical_page as usize) < max_num_pages;
-                page_slot += warps * WARP_THREADS as usize;
-            }
-            let warp_valid = warp::all(local_valid);
-            if lane == 0 {
-                // SAFETY: each warp owns one validation flag.
-                unsafe {
-                    page_valid.add(warp_in_block).write(u32::from(warp_valid));
-                }
-            }
-        }
-        thread::sync_threads();
-        let mut valid = true;
-        let mut validation_warp = 0_usize;
-        while validation_warp < warps {
-            // SAFETY: all warps initialized their flags before the barrier.
-            valid &= unsafe { page_valid.add(validation_warp).read() != 0 };
-            validation_warp += 1;
-        }
-        if !valid {
-            return;
-        }
 
         let qo_len = qo_end - qo_start;
         let page_count = (page_end - page_start) as usize;
         let kv_len = (page_count - 1) * PAGED_PREFILL_PAGE_SIZE + tail_len as usize;
-        if qo_len > kv_len {
-            return;
-        }
         let query_index = query_row - qo_start;
         let causal_token_count = kv_len - qo_len + query_index + 1;
         let group_size = num_query_heads / num_kv_heads;
@@ -610,8 +741,8 @@ mod kernels {
                 * BF16_PAIRS_PER_HEAD)
                 + lane;
 
-            // SAFETY: block-wide validation proved every referenced page is in
-            // range before any K/V pointer arithmetic.
+            // SAFETY: the preceding stream-ordered validator proved every
+            // referenced page is in range before this K/V pointer arithmetic.
             let (key_0, key_1, key_2, key_3, value_0, value_1, value_2, value_3) = unsafe {
                 let (key_0, key_1) =
                     convert::cvt_f32x2_bf16x2(key_pairs.add(kv_pair_offset).read());
@@ -793,6 +924,7 @@ mod kernels {
             page_indptr.len() == batch_size + 1,
             page_indices.len() >= batch_size,
             last_page_len.len() == batch_size,
+            metadata_status.len() == 5,
             output.len() == nnz_qo * num_query_heads * 128,
             lse.len() == nnz_qo * num_query_heads,
         ),
@@ -811,22 +943,18 @@ mod kernels {
         page_indptr: &[i32],
         page_indices: &[i32],
         last_page_len: &[i32],
+        metadata_status: &[i32],
         output: DisjointSlice<bf16>,
         lse: DisjointSlice<f32>,
     ) {
         static mut PARTIAL_STATES: SharedArray<f32, TOKEN_PARALLEL_8_SHARED_NUMEL> =
             SharedArray::UNINIT;
-        static mut PAGE_VALID: SharedArray<u32, TOKEN_PARALLEL_8_WARPS> = SharedArray::UNINIT;
-        // SAFETY: each block owns these arrays, every warp owns one partial
-        // state and validation flag, and barriers order all cross-warp reads.
+        // SAFETY: each block owns this array, every warp owns one partial
+        // state, and barriers order all cross-warp reads.
         let partial_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIAL_STATES) };
-        // SAFETY: each block owns the validation flags and barriers order all
-        // cross-warp reads.
-        let page_valid = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PAGE_VALID) };
         paged_prefill_bf16_nhd_causal_token_parallel_impl(
             TOKEN_PARALLEL_8_WARPS,
             partial_states,
-            page_valid,
             batch_size,
             nnz_qo,
             max_num_pages,
@@ -840,6 +968,7 @@ mod kernels {
             page_indptr,
             page_indices,
             last_page_len,
+            metadata_status,
             output,
             lse,
         );
@@ -865,6 +994,7 @@ mod kernels {
             page_indptr.len() == batch_size + 1,
             page_indices.len() >= batch_size,
             last_page_len.len() == batch_size,
+            metadata_status.len() == 5,
             output.len() == nnz_qo * num_query_heads * 128,
             lse.len() == nnz_qo * num_query_heads,
         ),
@@ -883,22 +1013,18 @@ mod kernels {
         page_indptr: &[i32],
         page_indices: &[i32],
         last_page_len: &[i32],
+        metadata_status: &[i32],
         output: DisjointSlice<bf16>,
         lse: DisjointSlice<f32>,
     ) {
         static mut PARTIAL_STATES: SharedArray<f32, TOKEN_PARALLEL_16_SHARED_NUMEL> =
             SharedArray::UNINIT;
-        static mut PAGE_VALID: SharedArray<u32, TOKEN_PARALLEL_16_WARPS> = SharedArray::UNINIT;
-        // SAFETY: each block owns these arrays, every warp owns one partial
-        // state and validation flag, and barriers order all cross-warp reads.
+        // SAFETY: each block owns this array, every warp owns one partial
+        // state, and barriers order all cross-warp reads.
         let partial_states = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PARTIAL_STATES) };
-        // SAFETY: each block owns the validation flags and barriers order all
-        // cross-warp reads.
-        let page_valid = unsafe { SharedArray::as_raw_mut_ptr(&raw mut PAGE_VALID) };
         paged_prefill_bf16_nhd_causal_token_parallel_impl(
             TOKEN_PARALLEL_16_WARPS,
             partial_states,
-            page_valid,
             batch_size,
             nnz_qo,
             max_num_pages,
@@ -912,6 +1038,7 @@ mod kernels {
             page_indptr,
             page_indices,
             last_page_len,
+            metadata_status,
             output,
             lse,
         );
@@ -2273,6 +2400,25 @@ mod kernels {
                 ));
         }
     }
+
+    #[inline(always)]
+    unsafe fn write_status(
+        output: *mut i32,
+        code: i32,
+        detail0: i32,
+        detail1: i32,
+        detail2: i32,
+        detail3: i32,
+    ) {
+        // SAFETY: the caller guarantees five writable status words.
+        unsafe {
+            output.write(code);
+            output.add(1).write(detail0);
+            output.add(2).write(detail1);
+            output.add(3).write(detail2);
+            output.add(4).write(detail3);
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2299,6 +2445,9 @@ impl PrefillProvider {
             .ok_or(PagedPrefillPlanError::StateCountOutOfRange(usize::MAX))?;
         let states = u32::try_from(states)
             .map_err(|_| PagedPrefillPlanError::StateCountOutOfRange(states))?;
+        let metadata_launch = self
+            .module
+            .prepare_validate_paged_prefill_metadata(LaunchConfig1D::new(1, 1, 0))?;
         let launch = match algorithm {
             Bf16PagedPrefillAlgorithm::Direct => {
                 Bf16PagedPrefillLaunch::Direct(self.module.prepare_paged_prefill_bf16_nhd_causal(
@@ -2326,6 +2475,7 @@ impl PrefillProvider {
             spec,
             algorithm,
             module: self.module.clone(),
+            metadata_launch,
             launch,
         })
     }
@@ -2432,6 +2582,7 @@ pub struct Bf16PagedPrefillPlan {
     spec: Bf16PagedPrefillSpec,
     algorithm: Bf16PagedPrefillAlgorithm,
     module: kernels::LoadedModule,
+    metadata_launch: PreparedLaunch<kernels::__validate_paged_prefill_metadata_CudaKernel>,
     launch: Bf16PagedPrefillLaunch,
 }
 
@@ -2444,14 +2595,21 @@ impl Bf16PagedPrefillPlan {
         self.algorithm
     }
 
+    pub const fn metadata_status_required_numel(&self) -> usize {
+        STATUS_PACKET_WORDS
+    }
+
+    pub const fn metadata_status_required_bytes(&self) -> usize {
+        STATUS_PACKET_WORDS * size_of::<i32>()
+    }
+
     pub fn enqueue_into(
         &self,
         scope: &mut CommandScope<'_>,
         args: Bf16PagedPrefillArgs,
     ) -> Result<(), PagedPrefillEnqueueError> {
-        let permit = scope.prepare_command()?;
-        let (function, launch_result) = {
-            let resolved = scope.resolve_rrrrrrrww(
+        let page_indices_len = {
+            let resolved = scope.resolve_rrrrrrrrww(
                 args.query,
                 args.key_pages,
                 args.value_pages,
@@ -2459,6 +2617,7 @@ impl Bf16PagedPrefillPlan {
                 args.page_indptr,
                 args.page_indices,
                 args.last_page_len,
+                args.metadata_status.read(),
                 args.output,
                 args.lse,
             )?;
@@ -2482,16 +2641,74 @@ impl Bf16PagedPrefillPlan {
                 resolved.seventh.len(),
                 self.spec.last_page_len_numel(),
             )?;
-            require_paged_exact_len("O", resolved.eighth.len(), self.spec.output_numel())?;
-            require_paged_exact_len("LSE", resolved.ninth.len(), self.spec.lse_numel())?;
+            require_paged_exact_len(
+                "metadata_status",
+                resolved.eighth.len(),
+                STATUS_PACKET_WORDS,
+            )?;
+            require_paged_exact_len("O", resolved.ninth.len(), self.spec.output_numel())?;
+            require_paged_exact_len("LSE", resolved.tenth.len(), self.spec.lse_numel())?;
             for (operand, address) in [
                 ("Q", resolved.first.cu_deviceptr()),
                 ("K_pages", resolved.second.cu_deviceptr()),
                 ("V_pages", resolved.third.cu_deviceptr()),
-                ("O", resolved.eighth.cu_deviceptr()),
+                ("O", resolved.ninth.cu_deviceptr()),
             ] {
                 require_paged_alignment(operand, address)?;
             }
+            resolved.sixth.len()
+        };
+
+        scope.require_command_capacity(3)?;
+        let status = scope.reserve_device_status(
+            args.metadata_status.read(),
+            DeviceStatusDecoder::paged_prefill(
+                self.spec.batch_size(),
+                self.spec.nnz_qo(),
+                self.spec.max_num_pages(),
+                page_indices_len,
+                PAGED_PREFILL_PAGE_SIZE,
+            ),
+        )?;
+        let permit = scope.prepare_command()?;
+        let (function, validation_result) = {
+            let resolved = scope.resolve_rrrrw(
+                args.qo_indptr,
+                args.page_indptr,
+                args.page_indices,
+                args.last_page_len,
+                args.metadata_status.write(),
+            )?;
+            let operation = self.module.validate_paged_prefill_metadata_async(
+                &self.metadata_launch,
+                self.spec.batch_size(),
+                self.spec.nnz_qo(),
+                self.spec.max_num_pages(),
+                resolved.first,
+                resolved.second,
+                resolved.third,
+                resolved.fourth,
+                resolved.fifth,
+            );
+            let result = enqueue_region_launch(resolved.stream, operation);
+            (self.metadata_launch.function().clone(), result)
+        };
+        record_paged_metadata_launch(scope, status, permit, function, validation_result)?;
+
+        let permit = scope.prepare_command()?;
+        let (function, launch_result) = {
+            let resolved = scope.resolve_rrrrrrrrww(
+                args.query,
+                args.key_pages,
+                args.value_pages,
+                args.qo_indptr,
+                args.page_indptr,
+                args.page_indices,
+                args.last_page_len,
+                args.metadata_status.read(),
+                args.output,
+                args.lse,
+            )?;
             let common = (
                 self.spec.batch_size(),
                 self.spec.nnz_qo(),
@@ -2519,6 +2736,7 @@ impl Bf16PagedPrefillPlan {
                         resolved.seventh,
                         resolved.eighth,
                         resolved.ninth,
+                        resolved.tenth,
                     );
                     let result = enqueue_region_launch(resolved.stream, operation);
                     (launch.function().clone(), result)
@@ -2543,6 +2761,7 @@ impl Bf16PagedPrefillPlan {
                             resolved.seventh,
                             resolved.eighth,
                             resolved.ninth,
+                            resolved.tenth,
                         );
                     let result = enqueue_region_launch(resolved.stream, operation);
                     (launch.function().clone(), result)
@@ -2567,6 +2786,7 @@ impl Bf16PagedPrefillPlan {
                             resolved.seventh,
                             resolved.eighth,
                             resolved.ninth,
+                            resolved.tenth,
                         );
                     let result = enqueue_region_launch(resolved.stream, operation);
                     (launch.function().clone(), result)
@@ -2859,6 +3079,7 @@ pub struct Bf16PagedPrefillArgs {
     page_indptr: Read<i32>,
     page_indices: Read<i32>,
     last_page_len: Read<i32>,
+    metadata_status: ReadWrite<i32>,
     output: Write<bf16>,
     lse: Write<f32>,
 }
@@ -2873,6 +3094,7 @@ impl Bf16PagedPrefillArgs {
         page_indptr: Read<i32>,
         page_indices: Read<i32>,
         last_page_len: Read<i32>,
+        metadata_status: ReadWrite<i32>,
         output: Write<bf16>,
         lse: Write<f32>,
     ) -> Self {
@@ -2884,6 +3106,7 @@ impl Bf16PagedPrefillArgs {
             page_indptr,
             page_indices,
             last_page_len,
+            metadata_status,
             output,
             lse,
         }
@@ -3075,6 +3298,29 @@ fn record_paged_launch(
         Err(error) => {
             if let Some(driver_error) = error.driver_error() {
                 scope.record_failed_cuda_submission(permit, function, driver_error);
+            }
+            Err(error.into())
+        }
+    }
+}
+
+fn record_paged_metadata_launch(
+    scope: &mut CommandScope<'_>,
+    status: DeviceStatusReservation,
+    permit: CommandPermit,
+    function: CudaFunction,
+    result: Result<(), DeviceRegionLaunchError>,
+) -> Result<(), PagedPrefillEnqueueError> {
+    match result {
+        Ok(()) => {
+            scope.record_cuda_submission(permit, function);
+            Ok(())
+        }
+        Err(error) => {
+            if let Some(driver_error) = error.driver_error() {
+                scope.record_failed_cuda_submission(permit, function, driver_error);
+            } else {
+                scope.cancel_device_status(status);
             }
             Err(error.into())
         }

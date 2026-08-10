@@ -601,8 +601,22 @@ fn benchmark_paged_prefill_case(
     let last_page_len = Arc::new(DeviceBuffer::from_host(stream, case.last_page_len)?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
     let lse = DeviceBuffer::<f32>::zeroed(stream, spec.lse_numel())?;
-    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample)?;
-    let mut bindings = queue.bindings(9)?;
+    let mut metadata_statuses = Vec::with_capacity(config.launches_per_sample);
+    for _ in 0..config.launches_per_sample {
+        metadata_statuses.push(DeviceBuffer::<i32>::zeroed(
+            stream,
+            plan.metadata_status_required_numel(),
+        )?);
+    }
+    let command_capacity = config
+        .launches_per_sample
+        .checked_mul(3)
+        .ok_or("paged-prefill command capacity overflowed")?;
+    let mut queue = CommandQueue::new(stream.clone(), command_capacity)?;
+    let binding_capacity = 9_usize
+        .checked_add(config.launches_per_sample)
+        .ok_or("paged-prefill binding capacity overflowed")?;
+    let mut bindings = queue.bindings(binding_capacity)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key_pages)?;
     let value_handle = bindings.bind_read(value_pages)?;
@@ -612,9 +626,16 @@ fn benchmark_paged_prefill_case(
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
+    let mut metadata_status_handles = Vec::with_capacity(config.launches_per_sample);
+    for metadata_status in metadata_statuses {
+        metadata_status_handles.push(bindings.bind_read_write(metadata_status)?);
+    }
+    let mut metadata_status_index = 0_usize;
 
     let (_bindings, samples_us) =
         benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
+            let metadata_status_handle = metadata_status_handles[metadata_status_index];
+            metadata_status_index = (metadata_status_index + 1) % metadata_status_handles.len();
             plan.enqueue_into(
                 scope,
                 Bf16PagedPrefillArgs::new(
@@ -625,6 +646,7 @@ fn benchmark_paged_prefill_case(
                     page_indptr_handle,
                     page_indices_handle,
                     last_page_len_handle,
+                    metadata_status_handle,
                     output_handle.write(),
                     lse_handle.write(),
                 ),
@@ -659,9 +681,14 @@ fn benchmark_paged_prefill_case(
         execution: json!({
             "algorithm": algorithm,
             "causal": "bottom_right",
-            "page_table_location": "device"
+            "page_table_location": "device",
+            "metadata_validation": "device_status",
+            "validator_kernels_per_call": 1,
+            "attention_kernels_per_call": 1,
+            "status_readbacks_per_call": 1,
+            "commands_per_call": 3
         }),
-        kernels_per_call: 1,
+        kernels_per_call: 2,
         shape: json!({
             "batch_size": spec.batch_size(),
             "nnz_qo": spec.nnz_qo(),

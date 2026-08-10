@@ -3,13 +3,13 @@ use crate::fixture::deterministic_bf16;
 use crate::reporting::GateCase;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use half::bf16;
-use loom_infer::{Bf16PagedPrefillSpec, paged_prefill_bf16_reference};
+use loom_infer::{Bf16PagedPrefillSpec, ContractError, paged_prefill_bf16_reference};
 use loom_infer_cuda::attention::{
     Bf16PagedPrefillAlgorithm, Bf16PagedPrefillArgs, Bf16PagedPrefillPlan,
     PagedPrefillEnqueueError, PrefillProvider,
 };
-use loom_infer_cuda::command::{CommandError, CommandQueue};
-use loom_infer_cuda::graph::GraphQueue;
+use loom_infer_cuda::command::{CommandCompletionError, CommandError, CommandQueue};
+use loom_infer_cuda::graph::{GraphBindingsError, GraphError, GraphQueue};
 use std::error::Error;
 use std::sync::Arc;
 
@@ -82,9 +82,11 @@ fn run_case(
     let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, metadata.page_indptr)?);
     let page_indices = Arc::new(DeviceBuffer::from_host(&stream, metadata.page_indices)?);
     let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, metadata.last_page_len)?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
     let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
     let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
-    let mut bindings = queue.bindings(9)?;
+    let mut bindings = queue.bindings(10)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key_pages)?;
     let value_handle = bindings.bind_read(value_pages)?;
@@ -92,6 +94,7 @@ fn run_case(
     let page_indptr_handle = bindings.bind_read(page_indptr)?;
     let page_indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
 
@@ -106,12 +109,13 @@ fn run_case(
             page_indptr_handle,
             page_indices_handle,
             last_page_len_handle,
+            metadata_status_handle,
             output_handle.write(),
             lse_handle.write(),
         ),
     )?;
     let completion = scope.finish();
-    if completion.submitted() != 1 {
+    if completion.submitted() != 3 {
         return Err("paged prefill completion covered the wrong command count".into());
     }
     bindings = completion.wait()?;
@@ -142,7 +146,8 @@ fn run_case(
         "{} batch_size={} nnz_qo={} query_heads={} kv_heads={} group_size={} \
          max_num_pages={} referenced_pages={} page_size={} kv_lens={} layout=NHD \
          causal=bottom_right dtype=BF16 accumulation=F32 lse_domain=log2 \
-         algorithm={} commands=1 stream=non_default \
+         algorithm={} commands=3 validator_kernels=1 attention_kernels=1 \
+         status_readbacks=1 stream=non_default \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
          lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
         GateCase::new("paged_prefill_h20", name),
@@ -191,9 +196,11 @@ fn run_short_metadata_case(
         &stream,
         spec.last_page_len_numel(),
     )?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
     let output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
     let lse = DeviceBuffer::<f32>::zeroed(&stream, spec.lse_numel())?;
-    let mut bindings = queue.bindings(9)?;
+    let mut bindings = queue.bindings(10)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key_pages)?;
     let value_handle = bindings.bind_read(value_pages)?;
@@ -201,6 +208,7 @@ fn run_short_metadata_case(
     let page_indptr_handle = bindings.bind_read(page_indptr)?;
     let page_indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
 
@@ -216,6 +224,7 @@ fn run_short_metadata_case(
                 page_indptr_handle,
                 page_indices_handle,
                 last_page_len_handle,
+                metadata_status_handle,
                 output_handle.write(),
                 lse_handle.write(),
             ),
@@ -243,15 +252,20 @@ fn run_short_metadata_case(
     Ok(())
 }
 
-fn run_invalid_page_guard(
+fn run_invalid_query_guard(
     queue: &mut CommandQueue,
     provider: &PrefillProvider,
 ) -> Result<(), Box<dyn Error>> {
-    let spec = Bf16PagedPrefillSpec::new(2, 2, 8, 1, 1, 128, 16)?;
+    let spec = Bf16PagedPrefillSpec::new(2, 3, 2, 1, 1, 128, 16)?;
+    let expected_error = ContractError::RaggedQueryLongerThanKv {
+        request: 0,
+        query_len: 2,
+        kv_len: 1,
+    };
     let stream = queue.stream().clone();
     let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::TokenParallel16)?;
     if plan.algorithm() != Bf16PagedPrefillAlgorithm::TokenParallel16 {
-        return Err("invalid-page guard did not select token-parallel paged prefill".into());
+        return Err("invalid-query guard did not select token-parallel paged prefill".into());
     }
     let query = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.query_numel())?);
     let key_pages = Arc::new(DeviceBuffer::<bf16>::zeroed(
@@ -262,13 +276,17 @@ fn run_invalid_page_guard(
         &stream,
         spec.kv_pages_numel(),
     )?);
-    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2])?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 2, 3])?);
     let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2])?);
-    let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 8])?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1])?);
     let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &[1_i32, 1])?);
-    let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
-    let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
-    let mut bindings = queue.bindings(9)?;
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
+    let output_sentinel = vec![bf16::NAN; spec.output_numel()];
+    let lse_sentinel = vec![f32::NAN; spec.lse_numel()];
+    let output = DeviceBuffer::from_host(&stream, &output_sentinel)?;
+    let lse = DeviceBuffer::from_host(&stream, &lse_sentinel)?;
+    let mut bindings = queue.bindings(10)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key_pages)?;
     let value_handle = bindings.bind_read(value_pages)?;
@@ -276,6 +294,7 @@ fn run_invalid_page_guard(
     let page_indptr_handle = bindings.bind_read(page_indptr)?;
     let page_indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
 
@@ -290,33 +309,49 @@ fn run_invalid_page_guard(
             page_indptr_handle,
             page_indices_handle,
             last_page_len_handle,
+            metadata_status_handle,
             output_handle.write(),
             lse_handle.write(),
         ),
     )?;
-    bindings = scope.finish().wait()?;
+    let completion = scope.finish();
+    if completion.submitted() != 3 {
+        return Err("invalid-query rejection covered the wrong command count".into());
+    }
+    bindings = match completion.wait() {
+        Err(CommandCompletionError::DeviceRejected(rejection)) => {
+            if rejection.error() != expected_error {
+                return Err(format!(
+                    "paged prefill returned the wrong device rejection: expected \
+                     {expected_error}, got {}",
+                    rejection.error()
+                )
+                .into());
+            }
+            rejection.into_parts().1
+        }
+        Err(error) => return Err(format!("paged prefill returned the wrong error: {error}").into()),
+        Ok(_) => return Err("invalid paged-prefill query metadata was not rejected".into()),
+    };
     let output = bindings.take_read_write(output_handle)?;
     let lse = bindings.take_read_write(lse_handle)?;
-    drop(bindings);
+    let scope = queue.begin(bindings)?;
+    let recovered = scope.finish();
+    if recovered.submitted() != 0 {
+        return Err("device rejection recovery submitted an unexpected command".into());
+    }
+    drop(recovered.wait()?);
     let actual_output = output.to_host_vec(&stream)?;
     let actual_lse = lse.to_host_vec(&stream)?;
-    if actual_output[..spec.head_dim()]
-        .iter()
-        .any(|&value| value != bf16::ZERO)
-        || actual_lse[0] != 0.0
+    if actual_output.iter().any(|value| !value.to_f32().is_nan())
+        || actual_lse.iter().any(|value| !value.is_nan())
     {
-        return Err("valid request in paged-prefill guard case produced the wrong output".into());
-    }
-    if actual_output[spec.head_dim()..]
-        .iter()
-        .any(|value| !value.to_f32().is_nan())
-        || !actual_lse[1].is_nan()
-    {
-        return Err("invalid page did not preserve paged-prefill sentinels".into());
+        return Err("rejected paged prefill changed output sentinels".into());
     }
     println!(
-        "{} invalid_physical_page=guarded valid_request=completed invalid_request=sentinel_preserved",
-        GateCase::new("paged_prefill_h20", "invalid_page_guard")
+        "{} query_longer_than_kv=device_rejected bindings_recovered=true \
+         queue_reusable=true sentinels_unchanged=true commands=3",
+        GateCase::new("paged_prefill_h20", "invalid_query_guard")
     );
     Ok(())
 }
@@ -340,15 +375,18 @@ fn run_duplicate_binding_case(
     let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1])?);
     let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32])?);
     let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &[1_i32])?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
     let output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
     let lse = DeviceBuffer::<f32>::zeroed(&stream, spec.lse_numel())?;
-    let mut bindings = queue.bindings(8)?;
+    let mut bindings = queue.bindings(9)?;
     let query_and_key_handle = bindings.bind_read(query_and_key)?;
     let value_handle = bindings.bind_read(value_pages)?;
     let qo_handle = bindings.bind_read(qo_indptr)?;
     let page_indptr_handle = bindings.bind_read(page_indptr)?;
     let page_indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
 
@@ -364,6 +402,7 @@ fn run_duplicate_binding_case(
                 page_indptr_handle,
                 page_indices_handle,
                 last_page_len_handle,
+                metadata_status_handle,
                 output_handle.write(),
                 lse_handle.write(),
             ),
@@ -389,7 +428,7 @@ fn run_duplicate_binding_case(
 
 fn run_graph_case(
     queue: &mut CommandQueue,
-    provider: PrefillProvider,
+    provider: &PrefillProvider,
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16PagedPrefillSpec::new(2, 6, 6, 16, 4, 128, 16)?;
     let qo_indptr_host = [0_i32, 4, 6];
@@ -429,11 +468,13 @@ fn run_graph_case(
     let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &page_indptr_host)?);
     let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &page_indices_host)?);
     let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &last_page_len_host)?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
     let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
     let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
 
-    let graph_queue = GraphQueue::new(stream.context(), 1)?;
-    let mut bindings = graph_queue.bindings(9)?;
+    let graph_queue = GraphQueue::new(stream.context(), 3)?;
+    let mut bindings = graph_queue.bindings(10)?;
     let query_handle = bindings.bind_read(Arc::clone(&query))?;
     let key_handle = bindings.bind_read(Arc::clone(&key_pages))?;
     let value_handle = bindings.bind_read(Arc::clone(&value_pages))?;
@@ -441,6 +482,7 @@ fn run_graph_case(
     let page_indptr_handle = bindings.bind_read(Arc::clone(&page_indptr))?;
     let page_indices_handle = bindings.bind_read(Arc::clone(&page_indices))?;
     let last_page_len_handle = bindings.bind_read(Arc::clone(&last_page_len))?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
 
@@ -455,17 +497,17 @@ fn run_graph_case(
                 page_indptr_handle,
                 page_indices_handle,
                 last_page_len_handle,
+                metadata_status_handle,
                 output_handle.write(),
                 lse_handle.write(),
             ),
         )
     })?;
-    if captured.commands() != 1 {
+    if captured.commands() != 3 {
         return Err("paged-prefill graph captured the wrong command count".into());
     }
 
     drop(plan);
-    drop(provider);
     drop(query);
     drop(key_pages);
     drop(value_pages);
@@ -487,7 +529,7 @@ fn run_graph_case(
             drop(completion);
         }
     }
-    if exec.launches() != 2 || exec.commands() != 1 {
+    if exec.launches() != 2 || exec.commands() != 3 {
         return Err("paged-prefill graph accounting changed across replay".into());
     }
 
@@ -517,7 +559,8 @@ fn run_graph_case(
 
     println!(
         "{} batch_size=2 nnz_qo=6 query_heads=16 kv_heads=4 page_size=16 \
-         algorithm=direct_one_warp_per_query_row_head commands=1 replays=2 \
+         algorithm=direct_one_warp_per_query_row_head commands=3 validator_kernels=1 \
+         attention_kernels=1 status_readbacks=1 replays=2 \
          fixed_bindings=true cross_stream=false external_owners_dropped_before_replay=true \
          completion_queries=2 completion_waits=1 completion_drops=1 \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
@@ -533,11 +576,145 @@ fn run_graph_case(
     Ok(())
 }
 
+fn run_invalid_page_graph_rejection_case(
+    context: &Arc<CudaContext>,
+    provider: &PrefillProvider,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16PagedPrefillSpec::new(2, 2, 2, 1, 1, 128, 16)?;
+    let expected_error = ContractError::PageIndexOutOfRange {
+        position: 1,
+        index: 2,
+        max_num_pages: 2,
+    };
+    let upload_stream = context.new_stream()?;
+    let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::Direct)?;
+    let query = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        &upload_stream,
+        spec.query_numel(),
+    )?);
+    let key_pages = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        &upload_stream,
+        spec.kv_pages_numel(),
+    )?);
+    let value_pages = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        &upload_stream,
+        spec.kv_pages_numel(),
+    )?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&upload_stream, &[0_i32, 1, 2])?);
+    let page_indptr = Arc::new(DeviceBuffer::from_host(&upload_stream, &[0_i32, 1, 2])?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(&upload_stream, &[0_i32, 2])?);
+    let last_page_len = Arc::new(DeviceBuffer::from_host(&upload_stream, &[1_i32, 1])?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&upload_stream, plan.metadata_status_required_numel())?;
+    let output_sentinel = vec![bf16::NAN; spec.output_numel()];
+    let lse_sentinel = vec![f32::NAN; spec.lse_numel()];
+    let output = DeviceBuffer::from_host(&upload_stream, &output_sentinel)?;
+    let lse = DeviceBuffer::from_host(&upload_stream, &lse_sentinel)?;
+
+    let graph_queue = GraphQueue::new(context, 3)?;
+    let mut bindings = graph_queue.bindings(10)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key_pages)?;
+    let value_handle = bindings.bind_read(value_pages)?;
+    let qo_handle = bindings.bind_read(qo_indptr)?;
+    let page_indptr_handle = bindings.bind_read(page_indptr)?;
+    let page_indices_handle = bindings.bind_read(page_indices)?;
+    let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+    let captured = graph_queue.capture(bindings, |scope| {
+        plan.enqueue_into(
+            scope,
+            Bf16PagedPrefillArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                qo_handle,
+                page_indptr_handle,
+                page_indices_handle,
+                last_page_len_handle,
+                metadata_status_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            ),
+        )
+    })?;
+    if captured.commands() != 3 {
+        return Err("rejected paged-prefill graph captured the wrong command count".into());
+    }
+
+    let mut exec = captured.instantiate()?;
+    for expected_launch in 1..=2 {
+        let completion = exec.launch()?;
+        if completion.launch_index() != expected_launch {
+            return Err("rejected paged-prefill graph reported the wrong replay index".into());
+        }
+        match completion.wait() {
+            Err(GraphError::DeviceRejected(error)) if error == expected_error => {}
+            Err(error) => {
+                return Err(format!(
+                    "rejected paged-prefill graph returned the wrong error: {error}"
+                )
+                .into());
+            }
+            Ok(()) => return Err("invalid paged-prefill graph metadata was not rejected".into()),
+        }
+    }
+    if exec.launches() != 2 || exec.commands() != 3 {
+        return Err("rejected paged-prefill graph accounting changed across replay".into());
+    }
+
+    let mut bindings = match exec.into_bindings() {
+        Err(GraphBindingsError::DeviceRejected(rejection)) => {
+            if rejection.error() != expected_error {
+                return Err(format!(
+                    "rejected paged-prefill graph returned the wrong bindings error: expected \
+                     {expected_error}, got {}",
+                    rejection.error()
+                )
+                .into());
+            }
+            rejection.into_parts().1
+        }
+        Err(error) => {
+            return Err(format!(
+                "rejected paged-prefill graph could not recover bindings: {error}"
+            )
+            .into());
+        }
+        Ok(_) => {
+            return Err("invalid paged-prefill graph returned bindings without rejection".into());
+        }
+    };
+    let output = bindings.take_read_write(output_handle)?;
+    let lse = bindings.take_read_write(lse_handle)?;
+    drop(bindings);
+    if output
+        .to_host_vec(&upload_stream)?
+        .iter()
+        .any(|value| !value.to_f32().is_nan())
+        || lse
+            .to_host_vec(&upload_stream)?
+            .iter()
+            .any(|value| !value.is_nan())
+    {
+        return Err("rejected paged-prefill graph changed output sentinels".into());
+    }
+
+    println!(
+        "{} replays=2 fixed_bindings=true device_rejected=true graph_reusable=true \
+         bindings_recovered=true sentinels_unchanged=true commands=3",
+        GateCase::new("paged_prefill_h20", "invalid_page_graph")
+    );
+    Ok(())
+}
+
 pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let provider = PrefillProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
-    let mut queue = CommandQueue::new(stream, 1)?;
+    let mut queue = CommandQueue::new(stream, 3)?;
 
     run_case(
         &mut queue,
@@ -637,9 +814,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let preflight_plan =
         provider.plan_bf16_paged(preflight_spec, Bf16PagedPrefillAlgorithm::Direct)?;
     run_short_metadata_case(&mut queue, &preflight_plan)?;
-    run_invalid_page_guard(&mut queue, &provider)?;
+    run_invalid_query_guard(&mut queue, &provider)?;
     run_duplicate_binding_case(&mut queue, &provider)?;
-    run_graph_case(&mut queue, provider)?;
+    run_graph_case(&mut queue, &provider)?;
+    run_invalid_page_graph_rejection_case(&context, &provider)?;
     println!(
         "gate=paged_prefill_h20 suite=all status=pass output_max_abs_limit={:.9e} \
          lse_max_abs_limit={:.9e}",

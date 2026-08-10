@@ -101,9 +101,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     )?);
     let output = DeviceBuffer::from_host(&upload_stream, &vec![bf16::NAN; spec.output_numel()])?;
     let lse = DeviceBuffer::from_host(&upload_stream, &vec![f32::NAN; spec.lse_numel()])?;
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&upload_stream, plan.metadata_status_required_numel())?;
 
-    let graph_queue = GraphQueue::new(&context, 1)?;
-    let mut bindings = graph_queue.bindings(9)?;
+    let graph_queue = GraphQueue::new(&context, 3)?;
+    let mut bindings = graph_queue.bindings(10)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key_pages)?;
     let value_handle = bindings.bind_read(value_pages)?;
@@ -111,6 +113,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let page_indptr_handle = bindings.bind_read(page_indptr)?;
     let page_indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
     let captured = graph_queue.capture(bindings, |scope| {
@@ -124,12 +127,13 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 page_indptr_handle,
                 page_indices_handle,
                 last_page_len_handle,
+                metadata_status_handle,
                 output_handle.write(),
                 lse_handle.write(),
             ),
         )
     })?;
-    if captured.commands() != 1 {
+    if captured.commands() != 3 {
         return Err("paged-prefill Graph benchmark captured the wrong command count".into());
     }
     let mut exec = captured.instantiate()?;
@@ -188,7 +192,12 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             "algorithm": "direct_one_warp_per_query_row_head",
             "causal": "bottom_right",
             "graph": "fixed_address_private_stream",
-            "graph_nodes": 1,
+            "graph_nodes": 3,
+            "metadata_validation": "device_status",
+            "validator_kernels_per_call": 1,
+            "attention_kernels_per_call": 1,
+            "status_readbacks_per_call": 1,
+            "commands_per_call": 3,
             "completion_event_inside_timed_interval": true,
             "correctness": {
                 "output_max_abs": output_comparison.max_abs,
@@ -199,7 +208,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 "lse_digest": format!("{:016x}", lse_comparison.digest)
             }
         }),
-        kernels_per_call: 1,
+        kernels_per_call: 2,
         shape: json!({
             "batch_size": 2,
             "nnz_qo": 6,
