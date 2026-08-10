@@ -4,14 +4,15 @@ use crate::reporting::GateCase;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use half::bf16;
 use loom_infer::{
-    Bf16PagedBatchDecodeSpec, PAGED_BATCH_DECODE_PAGE_SIZE, SINGLE_DECODE_HEAD_DIM,
+    Bf16PagedBatchDecodeSpec, ContractError, PAGED_BATCH_DECODE_PAGE_SIZE, SINGLE_DECODE_HEAD_DIM,
     paged_batch_decode_bf16_reference,
 };
 use loom_infer_cuda::attention::{
     Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan, DecodeProvider,
     PagedBatchDecodeEnqueueError,
 };
-use loom_infer_cuda::command::CommandQueue;
+use loom_infer_cuda::command::{CommandCompletionError, CommandQueue};
+use loom_infer_cuda::graph::{GraphBindingsError, GraphError, GraphQueue};
 use std::error::Error;
 use std::sync::Arc;
 
@@ -68,15 +69,18 @@ fn run_case(
     let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, page_table.indptr)?);
     let page_indices = Arc::new(DeviceBuffer::from_host(&stream, page_table.indices)?);
     let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, page_table.last_page_len)?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
     let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
     let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
-    let mut bindings = queue.bindings(8)?;
+    let mut bindings = queue.bindings(9)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key_pages)?;
     let value_handle = bindings.bind_read(value_pages)?;
     let indptr_handle = bindings.bind_read(page_indptr)?;
     let indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
 
@@ -90,12 +94,13 @@ fn run_case(
             indptr_handle,
             indices_handle,
             last_page_len_handle,
+            metadata_status_handle,
             output_handle.write(),
             lse_handle.write(),
         ),
     )?;
     let completion = scope.finish();
-    if completion.submitted() != 1 {
+    if completion.submitted() != 3 {
         return Err("paged batch decode completion covered the wrong command count".into());
     }
     bindings = completion.wait()?;
@@ -125,7 +130,8 @@ fn run_case(
     println!(
         "{} batch_size={} query_heads={} kv_heads={} group_size={} \
          max_num_pages={} referenced_pages={} page_size={} kv_lens={} layout=NHD \
-         dtype=BF16 accumulation=F32 lse_domain=log2 commands=1 stream=non_default \
+         dtype=BF16 accumulation=F32 lse_domain=log2 commands=3 \
+         validator_kernels=1 attention_kernels=1 status_readbacks=1 stream=non_default \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
          lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
         GateCase::new("paged_batch_decode_h20", name),
@@ -171,15 +177,18 @@ fn run_short_page_indptr_case(
         &stream,
         spec.last_page_len_numel(),
     )?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
     let output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
     let lse = DeviceBuffer::<f32>::zeroed(&stream, spec.lse_numel())?;
-    let mut bindings = queue.bindings(8)?;
+    let mut bindings = queue.bindings(9)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key_pages)?;
     let value_handle = bindings.bind_read(value_pages)?;
     let indptr_handle = bindings.bind_read(page_indptr)?;
     let indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
 
@@ -194,6 +203,7 @@ fn run_short_page_indptr_case(
                 indptr_handle,
                 indices_handle,
                 last_page_len_handle,
+                metadata_status_handle,
                 output_handle.write(),
                 lse_handle.write(),
             ),
@@ -226,6 +236,11 @@ fn run_invalid_page_guard_case(
     provider: &DecodeProvider,
 ) -> Result<(), Box<dyn Error>> {
     let spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16)?;
+    let expected_error = ContractError::PageIndexOutOfRange {
+        position: 1,
+        index: 2,
+        max_num_pages: 2,
+    };
     let stream = queue.stream().clone();
     let plan = provider.plan_bf16_paged_batch(spec)?;
     let query = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.query_numel())?);
@@ -240,17 +255,20 @@ fn run_invalid_page_guard_case(
     let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2])?);
     let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 2])?);
     let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &[16_i32, 16])?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
     let output_sentinel = vec![bf16::NAN; spec.output_numel()];
     let lse_sentinel = vec![f32::NAN; spec.lse_numel()];
     let output = DeviceBuffer::from_host(&stream, &output_sentinel)?;
     let lse = DeviceBuffer::from_host(&stream, &lse_sentinel)?;
-    let mut bindings = queue.bindings(8)?;
+    let mut bindings = queue.bindings(9)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key_pages)?;
     let value_handle = bindings.bind_read(value_pages)?;
     let indptr_handle = bindings.bind_read(page_indptr)?;
     let indices_handle = bindings.bind_read(page_indices)?;
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
 
@@ -264,45 +282,179 @@ fn run_invalid_page_guard_case(
             indptr_handle,
             indices_handle,
             last_page_len_handle,
+            metadata_status_handle,
             output_handle.write(),
             lse_handle.write(),
         ),
     )?;
     let completion = scope.finish();
-    if completion.submitted() != 1 {
-        return Err("invalid-page guard did not submit exactly one checked kernel".into());
+    if completion.submitted() != 3 {
+        return Err("invalid-page rejection covered the wrong command count".into());
     }
-    bindings = completion.wait()?;
+    bindings = match completion.wait() {
+        Err(CommandCompletionError::DeviceRejected(rejection)) => {
+            if rejection.error() != expected_error {
+                return Err(format!(
+                    "paged decode returned the wrong device rejection: expected \
+                     {expected_error}, got {}",
+                    rejection.error()
+                )
+                .into());
+            }
+            rejection.into_parts().1
+        }
+        Err(error) => return Err(format!("paged decode returned the wrong error: {error}").into()),
+        Ok(_) => return Err("invalid paged-decode metadata was not rejected".into()),
+    };
+    let output = bindings.take_read_write(output_handle)?;
+    let lse = bindings.take_read_write(lse_handle)?;
+    let scope = queue.begin(bindings)?;
+    let recovered = scope.finish();
+    if recovered.submitted() != 0 {
+        return Err("device rejection recovery submitted an unexpected command".into());
+    }
+    drop(recovered.wait()?);
+    let actual_output = output.to_host_vec(&stream)?;
+    let actual_lse = lse.to_host_vec(&stream)?;
+    if actual_output.iter().any(|value| !value.to_f32().is_nan())
+        || actual_lse.iter().any(|value| !value.is_nan())
+    {
+        return Err("rejected paged decode changed output sentinels".into());
+    }
+    println!(
+        "{} invalid_physical_page=device_rejected bindings_recovered=true \
+         queue_reusable=true sentinels_unchanged=true commands=3",
+        GateCase::new("paged_batch_decode_h20", "invalid_page_guard")
+    );
+    Ok(())
+}
+
+fn run_invalid_page_graph_rejection_case(
+    context: &Arc<CudaContext>,
+    provider: &DecodeProvider,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16PagedBatchDecodeSpec::new(2, 2, 4, 2, 128, 16)?;
+    let expected_error = ContractError::PageIndexOutOfRange {
+        position: 1,
+        index: 2,
+        max_num_pages: 2,
+    };
+    let upload_stream = context.new_stream()?;
+    let plan = provider.plan_bf16_paged_batch(spec)?;
+    let query = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        &upload_stream,
+        spec.query_numel(),
+    )?);
+    let key_pages = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        &upload_stream,
+        spec.kv_pages_numel(),
+    )?);
+    let value_pages = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        &upload_stream,
+        spec.kv_pages_numel(),
+    )?);
+    let page_indptr = Arc::new(DeviceBuffer::from_host(&upload_stream, &[0_i32, 1, 2])?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(&upload_stream, &[0_i32, 2])?);
+    let last_page_len = Arc::new(DeviceBuffer::from_host(&upload_stream, &[16_i32, 16])?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&upload_stream, plan.metadata_status_required_numel())?;
+    let output_sentinel = vec![bf16::NAN; spec.output_numel()];
+    let lse_sentinel = vec![f32::NAN; spec.lse_numel()];
+    let output = DeviceBuffer::from_host(&upload_stream, &output_sentinel)?;
+    let lse = DeviceBuffer::from_host(&upload_stream, &lse_sentinel)?;
+
+    let graph_queue = GraphQueue::new(context, 3)?;
+    let mut bindings = graph_queue.bindings(9)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key_pages)?;
+    let value_handle = bindings.bind_read(value_pages)?;
+    let indptr_handle = bindings.bind_read(page_indptr)?;
+    let indices_handle = bindings.bind_read(page_indices)?;
+    let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+    let captured = graph_queue.capture(bindings, |scope| {
+        plan.enqueue_into(
+            scope,
+            Bf16PagedBatchDecodeArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                indptr_handle,
+                indices_handle,
+                last_page_len_handle,
+                metadata_status_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            ),
+        )
+    })?;
+    if captured.commands() != 3 {
+        return Err("rejected paged-decode graph captured the wrong command count".into());
+    }
+
+    let mut exec = captured.instantiate()?;
+    for expected_launch in 1..=2 {
+        let completion = exec.launch()?;
+        if completion.launch_index() != expected_launch {
+            return Err("rejected paged-decode graph reported the wrong replay index".into());
+        }
+        match completion.wait() {
+            Err(GraphError::DeviceRejected(error)) if error == expected_error => {}
+            Err(error) => {
+                return Err(format!(
+                    "rejected paged-decode graph returned the wrong error: {error}"
+                )
+                .into());
+            }
+            Ok(()) => return Err("invalid paged-decode graph metadata was not rejected".into()),
+        }
+    }
+    if exec.launches() != 2 || exec.commands() != 3 {
+        return Err("rejected paged-decode graph accounting changed across replay".into());
+    }
+
+    let mut bindings = match exec.into_bindings() {
+        Err(GraphBindingsError::DeviceRejected(rejection)) => {
+            if rejection.error() != expected_error {
+                return Err(format!(
+                    "rejected paged-decode graph returned the wrong bindings error: expected \
+                     {expected_error}, got {}",
+                    rejection.error()
+                )
+                .into());
+            }
+            rejection.into_parts().1
+        }
+        Err(error) => {
+            return Err(
+                format!("rejected paged-decode graph could not recover bindings: {error}").into(),
+            );
+        }
+        Ok(_) => {
+            return Err("invalid paged-decode graph returned bindings without rejection".into());
+        }
+    };
     let output = bindings.take_read_write(output_handle)?;
     let lse = bindings.take_read_write(lse_handle)?;
     drop(bindings);
-    let actual_output = output.to_host_vec(&stream)?;
-    let actual_lse = lse.to_host_vec(&stream)?;
-    let first_request_output = spec.num_query_heads() * spec.head_dim();
-    if actual_output[..first_request_output]
-        .iter()
-        .any(|&value| value != bf16::ZERO)
-    {
-        return Err("valid request in guard case produced the wrong zero output".into());
-    }
-    if actual_lse[..spec.num_query_heads()]
-        .iter()
-        .any(|&value| value != 4.0)
-    {
-        return Err("valid request in guard case produced the wrong log2 LSE".into());
-    }
-    if actual_output[first_request_output..]
+    if output
+        .to_host_vec(&upload_stream)?
         .iter()
         .any(|value| !value.to_f32().is_nan())
-        || actual_lse[spec.num_query_heads()..]
+        || lse
+            .to_host_vec(&upload_stream)?
             .iter()
             .any(|value| !value.is_nan())
     {
-        return Err("invalid physical page did not preserve output sentinels".into());
+        return Err("rejected paged-decode graph changed output sentinels".into());
     }
+
     println!(
-        "{} invalid_physical_page=guarded valid_request=completed invalid_request=sentinel_preserved",
-        GateCase::new("paged_batch_decode_h20", "invalid_page_guard")
+        "{} replays=2 fixed_bindings=true device_rejected=true \
+         graph_reusable=true bindings_recovered=true sentinels_unchanged=true commands=3",
+        GateCase::new("paged_batch_decode_h20", "invalid_page_graph")
     );
     Ok(())
 }
@@ -311,7 +463,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let provider = DecodeProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
-    let mut queue = CommandQueue::new(stream, 1)?;
+    let mut queue = CommandQueue::new(stream, 3)?;
 
     run_case(
         &mut queue,
@@ -361,6 +513,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let preflight_plan = provider.plan_bf16_paged_batch(preflight_spec)?;
     run_short_page_indptr_case(&mut queue, &preflight_plan)?;
     run_invalid_page_guard_case(&mut queue, &provider)?;
+    run_invalid_page_graph_rejection_case(&context, &provider)?;
     println!(
         "gate=paged_batch_decode_h20 suite=all status=pass output_max_abs_limit={:.9e} \
          lse_max_abs_limit={:.9e}",

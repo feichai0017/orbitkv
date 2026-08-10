@@ -25,9 +25,15 @@ pub(crate) enum AppendMapKind {
     ExplicitTokens,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum DeviceStatusKind {
+    PagedAppend(AppendMapKind),
+    PagedBatchDecode,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct DeviceStatusDecoder {
-    kind: AppendMapKind,
+    kind: DeviceStatusKind,
     items: usize,
     batch_size: usize,
     max_num_pages: usize,
@@ -45,8 +51,24 @@ impl DeviceStatusDecoder {
         page_size: usize,
     ) -> Self {
         Self {
-            kind,
+            kind: DeviceStatusKind::PagedAppend(kind),
             items,
+            batch_size,
+            max_num_pages,
+            page_indices_len,
+            page_size,
+        }
+    }
+
+    pub(crate) const fn paged_batch_decode(
+        batch_size: usize,
+        max_num_pages: usize,
+        page_indices_len: usize,
+        page_size: usize,
+    ) -> Self {
+        Self {
+            kind: DeviceStatusKind::PagedBatchDecode,
+            items: batch_size,
             batch_size,
             max_num_pages,
             page_indices_len,
@@ -56,8 +78,11 @@ impl DeviceStatusDecoder {
 
     pub(crate) const fn operation(self) -> &'static str {
         match self.kind {
-            AppendMapKind::Requests => "paged KV append map",
-            AppendMapKind::ExplicitTokens => "explicit-token paged KV append map",
+            DeviceStatusKind::PagedAppend(AppendMapKind::Requests) => "paged KV append map",
+            DeviceStatusKind::PagedAppend(AppendMapKind::ExplicitTokens) => {
+                "explicit-token paged KV append map"
+            }
+            DeviceStatusKind::PagedBatchDecode => "paged batch decode metadata",
         }
     }
 
@@ -164,7 +189,7 @@ impl DeviceStatusDecoder {
                 }
             }
             STATUS_APPEND_BATCH_INDEX_OUT_OF_RANGE => {
-                if self.kind != AppendMapKind::ExplicitTokens {
+                if self.append_kind() != Some(AppendMapKind::ExplicitTokens) {
                     return Err(self.unexpected(code));
                 }
                 let token = self.index_below(
@@ -188,7 +213,7 @@ impl DeviceStatusDecoder {
                 }
             }
             STATUS_APPEND_POSITION_OUT_OF_RANGE => {
-                if self.kind != AppendMapKind::ExplicitTokens {
+                if self.append_kind() != Some(AppendMapKind::ExplicitTokens) {
                     return Err(self.unexpected(code));
                 }
                 let token = self.index_below(
@@ -233,6 +258,9 @@ impl DeviceStatusDecoder {
                 }
             }
             STATUS_DUPLICATE_APPEND_SLOT => {
+                let Some(kind) = self.append_kind() else {
+                    return Err(self.unexpected(code));
+                };
                 let first = self.index_below(
                     code,
                     detail[0],
@@ -262,7 +290,7 @@ impl DeviceStatusDecoder {
                     self.page_size,
                     "page offset is outside the page",
                 )?;
-                match self.kind {
+                match kind {
                     AppendMapKind::Requests => ContractError::DuplicatePageAppendSlot {
                         first_request: first,
                         second_request: second,
@@ -278,6 +306,9 @@ impl DeviceStatusDecoder {
                 }
             }
             STATUS_PAGE_REFERENCE_COUNT_TOO_SMALL => {
+                if self.append_kind().is_none() {
+                    return Err(self.unexpected(code));
+                }
                 let physical_page = self.index_below(
                     code,
                     detail[0],
@@ -304,6 +335,9 @@ impl DeviceStatusDecoder {
                 }
             }
             STATUS_NON_EXCLUSIVE_APPEND_TARGET => {
+                if self.append_kind().is_none() {
+                    return Err(self.unexpected(code));
+                }
                 let physical_page = self.index_below(
                     code,
                     detail[0],
@@ -328,6 +362,13 @@ impl DeviceStatusDecoder {
             _ => return Err(self.unexpected(code)),
         };
         Ok(Some(error))
+    }
+
+    const fn append_kind(self) -> Option<AppendMapKind> {
+        match self.kind {
+            DeviceStatusKind::PagedAppend(kind) => Some(kind),
+            DeviceStatusKind::PagedBatchDecode => None,
+        }
     }
 
     fn index(self, code: i32, value: i32) -> Result<usize, DeviceStatusProtocolError> {
@@ -553,6 +594,45 @@ mod tests {
             assert!(
                 decoder.decode(&packet).is_err(),
                 "packet should fail protocol validation: {packet:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn paged_decode_status_decodes_contract_rejections() {
+        let decoder = DeviceStatusDecoder::paged_batch_decode(2, 4, 3, 16);
+        assert_eq!(
+            decoder.decode(&[STATUS_NON_MONOTONIC_PAGE_INDPTR, 1, 3, 2, 0]),
+            Ok(Some(ContractError::NonMonotonicPageIndptr {
+                request: 1,
+                start: 3,
+                end: 2,
+            }))
+        );
+        assert_eq!(
+            decoder.decode(&[STATUS_PAGE_INDEX_OUT_OF_RANGE, 2, 4, 0, 0]),
+            Ok(Some(ContractError::PageIndexOutOfRange {
+                position: 2,
+                index: 4,
+                max_num_pages: 4,
+            }))
+        );
+    }
+
+    #[test]
+    fn paged_decode_rejects_malformed_or_append_only_status() {
+        let decoder = DeviceStatusDecoder::paged_batch_decode(2, 4, 3, 16);
+        for packet in [
+            [STATUS_SUCCESS, 1, 0, 0, 0],
+            [STATUS_EMPTY_PAGED_REQUEST, 2, 0, 0, 0],
+            [STATUS_INVALID_LAST_PAGE_LENGTH, 0, 16, 0, 0],
+            [STATUS_DUPLICATE_APPEND_SLOT, 0, 1, 3, 0],
+            [STATUS_NON_EXCLUSIVE_APPEND_TARGET, 3, 2, 0, 0],
+            [99, 0, 0, 0, 0],
+        ] {
+            assert!(
+                decoder.decode(&packet).is_err(),
+                "packet should fail paged-decode protocol validation: {packet:?}"
             );
         }
     }
