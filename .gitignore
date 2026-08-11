@@ -3,9 +3,9 @@ target/
 *.pdb
 __pycache__/
 *.py[cod]
-loom_infer_cuda.ptx
-loom_infer_cuda.ll
-loom_infer_cuda.opt.ll
+oxide_infer_cuda.ptx
+oxide_infer_cuda.ll
+oxide_infer_cuda.opt.ll
 *.cubin
 *.fatbin
 *.nsys-rep

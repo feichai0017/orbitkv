@@ -423,38 +423,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0ceec5bc11778974d1bcb055b18002eba7f4b3518b6a0081b3af5f21666da9ad"
 
 [[package]]
-name = "loom-infer"
-version = "1.0.0-alpha.1"
-dependencies = [
- "half",
-]
-
-[[package]]
-name = "loom-infer-cuda"
-version = "1.0.0-alpha.1"
-dependencies = [
- "cuda-core",
- "cuda-device",
- "cuda-host",
- "cudarc",
- "half",
- "loom-infer",
- "thiserror",
-]
-
-[[package]]
-name = "loom-infer-validation"
-version = "1.0.0-alpha.1"
-dependencies = [
- "cuda-core",
- "half",
- "loom-infer",
- "loom-infer-cuda",
- "serde",
- "serde_json",
-]
-
-[[package]]
 name = "memchr"
 version = "2.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -503,6 +471,38 @@ version = "0.2.1"
 source = "git+https://github.com/NVlabs/cuda-oxide.git?rev=868f8ec4ef900bae7e67e7f9508b2da66eee5472#868f8ec4ef900bae7e67e7f9508b2da66eee5472"
 dependencies = [
  "object",
+]
+
+[[package]]
+name = "oxide-infer"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "half",
+]
+
+[[package]]
+name = "oxide-infer-cuda"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "cuda-core",
+ "cuda-device",
+ "cuda-host",
+ "cudarc",
+ "half",
+ "oxide-infer",
+ "thiserror",
+]
+
+[[package]]
+name = "oxide-infer-lab"
+version = "1.0.0-alpha.1"
+dependencies = [
+ "cuda-core",
+ "half",
+ "oxide-infer",
+ "oxide-infer-cuda",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

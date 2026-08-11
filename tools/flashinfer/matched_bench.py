@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Matched FlashInfer baseline for Loom Infer's admitted BF16 contracts."""
+"""Matched FlashInfer baseline for Oxide Infer's admitted BF16 contracts."""
 
 from __future__ import annotations
 
@@ -69,10 +69,10 @@ def env_positive_int(name: str, default: int) -> int:
     return value
 
 
-WARMUP = env_positive_int("LOOM_BENCH_WARMUP", 20)
-LAUNCHES = env_positive_int("LOOM_BENCH_LAUNCHES", 100)
-SAMPLES = env_positive_int("LOOM_BENCH_SAMPLES", 30)
-RUN_LABEL = os.environ.get("LOOM_BENCH_RUN_LABEL", "unlabeled")
+WARMUP = env_positive_int("OXIDE_BENCH_WARMUP", 20)
+LAUNCHES = env_positive_int("OXIDE_BENCH_LAUNCHES", 100)
+SAMPLES = env_positive_int("OXIDE_BENCH_SAMPLES", 30)
+RUN_LABEL = os.environ.get("OXIDE_BENCH_RUN_LABEL", "unlabeled")
 
 
 def benchmark(fn: Callable[[], None]) -> list[float]:
@@ -429,7 +429,7 @@ def benchmark_gemm() -> None:
     )
     runner = get_mm_bf16_cublaslt_module().cublaslt_bf16_gemm_runner()
     inputs = [activation, weight, None, False, output, workspace]
-    # Freeze the same first heuristic tactic policy Loom currently uses.
+    # Freeze the same first heuristic tactic policy Oxide Infer currently uses.
     runner.forward(inputs, tactic=0, do_preparation=True)
     torch.cuda.synchronize()
 
@@ -1491,7 +1491,7 @@ def benchmark_rope_paged_append_tokens() -> None:
 def main() -> None:
     validate_flashinfer_installation()
     requested = os.environ.get(
-        "LOOM_BENCH_OPERATORS",
+        "OXIDE_BENCH_OPERATORS",
         "rms_norm,gemm,single_decode,paged_batch_decode,paged_prefill,ragged_prefill,rope,rope_paged_kv_append,rope_paged_kv_append_tokens",
     ).split(",")
     if "rms_norm" in requested:

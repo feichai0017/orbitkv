@@ -3,6 +3,10 @@
 This directory stores immutable machine-readable records. Each record applies
 only to its source tree, contract, toolchain, device, and command matrix.
 
+The project rename changed crate and native-provider identities. Records that
+use the former name remain historical and unchanged. They do not qualify the
+current Oxide source. See [rename provenance](../design/rename-provenance.md).
+
 ## Current qualification notice
 
 The fused RoPE plus paged KV append contract now requires an authoritative
@@ -18,8 +22,8 @@ The current DeviceRegion work changed submission for RMSNorm, GEMM, decode,
 prefill, and RoPE:
 
 - Device and Graph records dated through 2026-08-07 predate that launch path.
-- The 2026-08-11 experimental Loom GEMV record covers the post-change path
-  only for its declared H20 `sm_90a` contract.
+- The 2026-08-11 experimental Loom GEMV record is a historical pre-rename row.
+  It covers the post-change path only for its declared H20 `sm_90a` contract.
 
 This notice includes the two paged-prefill records dated 2026-08-07. They apply
 to clean source commit `8478ee9`, before the DeviceRegion submission path.
@@ -27,7 +31,7 @@ to clean source commit `8478ee9`, before the DeviceRegion submission path.
 No other record gains a broader claim because it appears in this index. Check
 the record's `accepted_claims` and `excluded_claims` fields.
 
-Loom H20 gates use Rust CPU references.
+Oxide Infer H20 gates use Rust CPU references.
 FlashInfer comparison scripts use separate PyTorch F32 references.
 No published result proves cross-provider reference-digest parity.
 The summarizer rejects mixed contracts, fixtures, measurements, and execution identities.
@@ -42,7 +46,7 @@ source commit unless the artifact proves one.
 
 Existing matched attention and attention-Graph records predate these checks.
 Their raw samples remain historical. Rerun them before citing a current
-provider ranking. The notice above excludes all Loom device records dated
+provider ranking. The notice above excludes all pre-rename device records dated
 through 2026-08-07 from current-source qualification.
 
 ## Runtime, normalization, and GEMM
@@ -58,7 +62,7 @@ through 2026-08-07 from current-source qualification.
   covers one fixed contiguous GEMM plan and command reuse.
 - [Owned bindings and fixed-address Graph correctness](h20-owned-bindings-cuda-graph-correctness-20260803.json)
   covers the RMSNorm-to-GEMM chain.
-- [Experimental Loom SM90a M=1 GEMV correctness and fixed-address Graph](h20-bf16-loom-sm90a-simt-gemv-correctness-20260811.json)
+- [Historical pre-rename SM90a M=1 GEMV correctness and fixed-address Graph](h20-bf16-pre-rename-sm90a-simt-gemv-correctness-20260811.json)
   covers five census shapes, typed pre-submit rejection, plan reuse, a
   three-command poison-and-write Graph recipe, two observable outputs, and two
   replays on one H20. It does not qualify performance, Compute Sanitizer, SASS,

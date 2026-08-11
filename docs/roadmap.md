@@ -1,278 +1,369 @@
-# Loom Infer roadmap
+# Oxide Infer roadmap
 
-Loom Infer is a Rust operator layer for production LLM inference engines.
-Custom NVIDIA kernels use cuda-oxide. Qualified GEMM and communication
-libraries remain explicit providers.
+Oxide Infer is a Rust operator layer for LLM inference engines. The roadmap
+stabilizes the framework and current evidence before it expands the operator
+surface.
 
-The complete target stays within `loom-infer`, `loom-infer-cuda`, and
-`loom-infer-validation`. The roadmap fixes the framework before it expands the
-operator surface.
+The complete target stays within `oxide-infer`, `oxide-infer-cuda`, and
+`oxide-infer-lab`. A fourth crate needs an independent dependency, artifact,
+safety, or release boundary.
 
-## K0.0: Normalize the operator framework
+## Global admission rules
 
-**State:** active. Design fixed. Source migration pending.
+Every new vertical slice needs a real consumer or measured workload. A design
+idea alone does not justify a public API or empty module.
 
-All current operators will use the same lifecycle:
+### Contract gate
+
+Before CUDA work starts, record:
+
+- engine call site and tensor roles
+- shape, dtype, layout, masking, and post-operations
+- numerical and determinism limits
+- alias, workspace, page-table, and stream ownership
+- independent CPU reference or external oracle
+- unsupported cases and typed errors
+
+### Provider gate
+
+Every provider exposes one named algorithm through this lifecycle:
 
 ```text
 Spec -> Provider -> Algorithm -> Plan -> Operands -> CommandScope -> Completion
 ```
 
-- Keep the three-crate dependency boundary.
-- Move implemented domains to the final attention, KV-cache, GEMM,
-  normalization, and position namespaces.
-- Add a planned family only with its first contract or provider.
-- Rename current `*Args` types to `*Operands` without compatibility aliases.
-- Select providers and algorithms before immutable plan creation.
-- Keep tuning and fallback outside enqueue.
-- Split large source files only at an operator or provider boundary.
-- Preserve one public execution path for each operator.
-- Update the operator catalog from source and keep old evidence immutable.
+Planning fixes provider, algorithm, artifact, workspace, launch, and Graph
+policy. Enqueue cannot tune, switch providers, or fall back.
 
-The source migration must preserve current contract behavior. It does not
-inherit old H20 qualification under a new source commit.
+### Device gate
 
-Exit: every implemented operator follows the common lifecycle and final family
-namespace. Host tests pass, and no duplicate API or empty provider remains.
+An admitted device algorithm needs:
 
-## K0.1: Requalify paged KV writes
+- positive and negative host cases
+- device correctness with sentinels
+- asynchronous lifetime and completion tests
+- Compute Sanitizer for all applicable tools
+- artifact hash and target identity
+- SASS and spill review for a performance candidate
+- fixed-address Graph proof or an explicit exclusion
+
+### Performance gate
+
+Performance records need identical fixtures, contracts, and timed boundaries.
+Run each provider order separately. Reject a ranking when order drift exceeds
+the recorded stability limit.
+
+Operator speed alone does not promote an engine route. Measure TTFT, TPOT,
+throughput, and memory in the real consumer path.
+
+### Release gate
+
+A stable public surface needs:
+
+- current-source evidence for each claimed target
+- no compatibility alias or duplicate execution path
+- complete API and safety documentation
+- one external engine integration at a pinned version
+- package contents, CI, and installation checks
+
+## R0: Rename and normalize the framework
 
 **State:** active.
 
-The fused RoPE plus KV append contract now accepts a physical-page reference
-count array. Every target page must have reference count one.
+The rename changes current identifiers to Oxide Infer. Historical records,
+tags, and commit links keep their original names.
 
-- Reject shared target pages in host validation and device guards.
-- Preserve Q, K pages, and V pages when the write contract fails.
-- Cover one-token and explicit one-through-64-token forms.
-- Test private tails that follow shared read-only prefix pages.
-- Keep the page table and reference-count snapshot stable through completion.
-- Run correctness and all declared Compute Sanitizer tools on H20.
-- Create new eager and fixed-address Graph records after correctness passes.
+Work:
 
-The engine or KV pager makes shared tails private. The operator does not
-allocate, copy, or remap pages.
+- Rename the repository and three crates to `oxide-infer`,
+  `oxide-infer-cuda`, and `oxide-infer-lab`.
+- Rename the native provider to `Oxide`.
+- Rename current CLI programs and environment variables to `oxide_*` and
+  `OXIDE_*`.
+- Keep old result JSON files byte-for-byte unchanged.
+- Use the final operator families: attention, GEMM, KV cache, normalization,
+  position, activation, sampling, speculation, quantization, MoE, and
+  communication.
+- Move implemented domains directly to their final namespaces.
+- Rename remaining `*Args` types to `*Operands` without aliases.
+- Keep one public execution path per operator.
+- Keep runtime memory, command, status, Graph, driver, and interop code inside
+  `oxide-infer-cuda`.
 
-Exit: new H20 records qualify the exclusive-page contract. The old 2026-08-06
-append records remain historical.
+Exit gate:
 
-## K0.2: Accept external device regions
+- All current source, Cargo metadata, CI, tools, website, and live docs use the
+  new identifiers.
+- Historical provenance remains readable and unmodified.
+- Host tests, strict Clippy, formatting, documentation links, and package
+  checks pass.
+- No empty family, architecture, or provider module exists.
 
-**State:** source implemented. Model-owned paired-repository POC recorded on one H20.
+## R1: Requalify current source
 
-The command layer accepts typed owned and external device regions.
-`ExternalCudaStream` retains an engine stream without taking ownership.
-`EngineInteropQueue` orders direct single decode and NHD or HND paged decode through CUDA events.
+**State:** planned immediately after R0.
 
-- Keep pointer, element span, CUDA context, access mode, and lifetime lease in
-  one region value.
-- Reject invalid ranges, alignment, context, and binding-set overlap before
-  enqueue.
-- Keep writable access exclusive until completion settles.
-- Test non-zero offsets and lifetime retention on H20.
-- Qualify fixed-address Graph retention for external leases.
-- Preserve the simulated-engine H20 gate for external pointers, stream order,
-  bounded in-flight completion, typed rejection, and zero adapter device-to-device copies.
-- Extend the model-owned Mistral.rs qualification beyond one model and one ordinary stream.
+The rename and namespace migration change source identity. Historical device
+records do not qualify the new tree.
 
-Exit: a real model runner passes its own allocation and stream without an
-adapter copy. Completion retains every lease through asynchronous execution.
+Work:
 
-## K0.3: Report device metadata errors
+- Requalify RMSNorm, RoPE, dense cuBLASLt GEMM, decode, prefill, and fused
+  append on H20.
+- Cover host errors, device correctness, sentinels, lifecycle, and resource
+  recovery.
+- Run memcheck, racecheck, synccheck, and initcheck over permanent runners.
+- Rebuild fixed-address Graph records with poisoned outputs and lease checks.
+- Record the exact `sm_90a` artifact and source hashes.
+- Keep engine evidence separate from the simulated-engine gate.
 
-**State:** source implemented. Immutable evidence pending.
+Exit gate:
 
-Paged decode, paged prefill, and fused append report device metadata failures
-through typed completion errors. Rejection preserves outputs and bindings. It
-does not poison the queue or fixed-address Graph.
+- Each current operator has one reviewed H20 correctness record for the renamed
+  source or an explicit source-level exclusion.
+- Each performance-relevant plan has sanitizer and Graph evidence or a written
+  exclusion.
+- Dynamic metadata rejection preserves outputs and leaves the queue reusable.
+- Paged append passes the exclusive-target-page contract.
 
-- Keep each validator responsible for fully overwriting its status packet.
-- Read status only after the completion fence.
-- Keep semantic rejection recoverable. Poison only on CUDA failure or a
-  malformed status packet.
-- Cover eager and fixed-address Graph rejection, output preservation, and
-  binding recovery.
-- Reuse one append map only with the same K/V cache binding. Add a pager-issued
-  cache epoch before allowing one map to address several layer buffers.
+## R2: Promote or stop the native M=1 GEMV
 
-Exit: every admitted dynamic metadata failure reaches the host as a typed
-error. No operator silently returns success after a device guard rejects work.
+**State:** experimental.
 
-## K0.4: Prove one engine invocation
+The current native candidate is `OxideSm90SimtGemvM1N16K64`. It admits BF16
+`M=1`, `N % 16 = 0`, `K % 64 = 0`, no post-operation, and zero workspace on
+H20 `sm_90a`.
 
-**State:** paired-repository POC and model-owned runtime evidence recorded.
+Work:
 
-The first adapter stays in the Mistral.rs fork.
-Loom does not vendor the engine or copy its raw evidence.
-The historical POC ran Mistral.rs sources `9f6acf2a` and `805dc8f1` against Loom
-`d27b6e5`. The Mistral.rs fork publishes the records.
+- Preserve the five-shape Qwen2.5-1.5B census identity.
+- Re-run correctness and fixed-address Graph gates under the Oxide provider
+  identity.
+- Run all Compute Sanitizer tools.
+- Inspect SASS, registers, local memory, memory traffic, and scheduler stalls.
+- Compare against Mistral.rs custom GEMV and cuBLASLt.
+- Run each matched pair in both provider orders.
+- Measure provider hits, TTFT, TPOT, throughput, and peak memory in the engine.
 
-On one H20 Qwen path, the adapter recorded Loom provider hits and no adapter-issued device-to-device copy.
-Loom and the standard provider selected the same eight token strings.
-A separate gate returned a typed metadata error in FIFO order and then reused the same runtime.
+Promotion gate:
 
-Mistral.rs source `84602212` owns runtime state and pending completions in each model pipeline.
-Its H20 record covers 196 completed Qwen paged-decode calls, typed rejection and same-runtime reuse, and concurrent drain serialization.
-It does not qualify production safety, full-model zero-copy execution, general model coverage, or performance.
+- Every declared shape has at least 10% lower combined median latency than
+  each baseline.
+- Provider-order median drift is at most 5%.
+- No spill, local-memory regression, overread, overwrite, Graph failure, or
+  lease failure occurs.
+- TPOT and throughput improve beyond measured engine noise.
 
-- Use the HND paged-decode path now present in Loom source.
-- Bind engine-owned device regions and the engine's non-default stream.
-- Adapt the engine's linear stream and storage authority to Loom's
-  stream-ordered handoff without exposing a second writable capability.
-- Record provider hit counts and selected algorithms.
-- Prove that Q, KV, output, workspace, and metadata cross no host copy.
-- Compare model output or generated tokens with the engine baseline.
-- Carry a typed, linear runner authority through the model path.
-- Define fail-closed behavior for a panic or abandoned model forward.
-- Replace the sibling path dependency with an immutable published source.
-- Measure the complete engine interval before making a latency claim.
-- Document the fallback policy at the engine boundary. The Loom provider
-  itself does not silently fall back.
+Stop gate:
 
-Exit: a real model invokes Loom, preserves declared numerical behavior, and
-produces an auditable no-copy trace.
+- A safety failure removes the artifact from selectable plans until full
+  requalification.
+- A performance failure keeps the algorithm experimental. `CublasLt` remains
+  the selected production plan.
+- A larger-M WGMMA experiment gets a new algorithm identity and workload
+  census. It cannot modify this frozen algorithm.
 
-## K0.5: Make algorithm policy explicit
+Exit gate:
 
-**State:** partial.
+- Promote the exact algorithm with complete evidence, or record the stop
+  result and retain the vendor route.
 
-Paged decode still chooses direct MHA and eight-warp MQA or GQA.
+## R3: Stabilize engine adapters
 
-Ragged prefill still uses the batch average KV length and head mapping. Paged
-prefill now requires an explicit direct, eight-warp, or sixteen-warp algorithm.
+**State:** experimental paired-repository work exists.
 
-The long MQA and GQA4 records apply to source `8478ee9`, not the merged
-DeviceRegion path.
+The consumer engine owns model execution, scheduling, batching, KV policy,
+sampling, and serving. The adapter owns type conversion and stream handoff.
 
-- Separate the remaining automatic selection from immutable launch plans.
-- Expose the selected algorithm in traces and result records.
-- Add a caller override with contract checks.
-- Replace average-only ragged decisions with measured shape classes or request
-  grouping when evidence supports it.
-- Keep planning and tuning outside enqueue.
-- Reject unsupported algorithm and workspace combinations.
+Work:
 
-Exit: the same shape and policy produce the same plan. Selection uses recorded
-evidence rather than an undocumented enqueue-time choice.
+- Requalify the Mistral.rs decode path against renamed source.
+- Bind engine allocations through typed external regions.
+- Use the engine's non-default CUDA stream without adopting it.
+- Prove that Q, KV, output, workspace, and metadata cross no adapter device
+  copy.
+- Record provider hits and algorithm identities.
+- Compare model outputs or selected tokens with the engine baseline.
+- Define fail-closed behavior for panic and abandoned forward execution.
+- Replace local path dependencies with immutable source identities.
+- Define a checked C ABI only when a non-Rust engine needs it.
 
-## K0.6: Complete fixed-address Graph coverage
+Mistral.rs exit gate:
 
-**State:** partial.
+- At least two model configurations pass output, no-copy, stream-order,
+  completion, and typed-recovery checks.
+- The adapter has no process-global runtime state.
+- The complete engine interval has TTFT, TPOT, throughput, and memory records.
 
-The current Graph contract fixes addresses and uses one private capture stream.
-Evidence exists for RMSNorm-to-GEMM, tiled long-GQA ragged prefill, and one
-direct paged-prefill GQA4 fixture.
+vLLM admission gate:
 
-- Requalify fused append after K0.1.
-- Add paged-decode Graph correctness.
-- Add the single-decode split-K path.
-- Keep mutable bindings and graph updates outside the fixed-address claim.
-- Record capture, replay, completion, and owner-retention boundaries.
+- The Rust API and any C ABI have a versioned ownership contract.
+- Pin one vLLM release and one attention or linear call site.
+- The adapter remains outside the three core crates.
+- PyTorch and vLLM types do not enter `oxide-infer` or
+  `oxide-infer-cuda`.
 
-Exit: every performance-relevant admitted plan has a fixed-address Graph
-correctness record or an explicit exclusion.
+vLLM exit gate:
 
-## K0.7: Establish dual-provider dense GEMM
+- A real vLLM request records provider hits, unchanged tensor addresses,
+  current-stream ordering, output comparison, and clean teardown.
+- The adapter defines behavior for unsupported shapes without native-provider
+  fallback during enqueue.
+- Engine-level performance exceeds measured noise before a speed claim.
 
-**State:** active. Loom implements the provider-neutral cuBLASLt path and the
-first experimental kernel from a pinned H20 census.
+## R4: Complete attention and KV-cache contracts
 
-The current source admits explicit `CublasLt` and `Loom` plans through one
-`GemmPlanner`, plan type, operands type, and enqueue path. Unsupported Loom
-contracts fail during planning. The implementation does not replace the vendor
-baseline or select a fallback.
+**State:** current narrow contracts, broader work planned.
 
-- Keep one `Bf16DenseGemmSpec`, plan surface, operands type, and enqueue path.
-- Keep the implemented `CublasLt` and `Loom` provider identities explicit.
-- Keep provider and algorithm selection outside enqueue.
-- Preserve the Qwen2.5-1.5B census identity and hashes in the
-  [experimental contract](development/sm90-simt-gemv-m1.md). Its ten buckets
-  contain 1,352 host calls. The five `M=1` shapes account for 1,184 calls.
-- Retain `LoomSm90SimtGemvM1N16K64` as an experimental cuda-oxide algorithm
-  for the frozen BF16, contiguous, transpose-weight, no-post-op,
-  zero-workspace contract.
-- Keep WGMMA in a separate future algorithm. The measured `M=1` slice would
-  waste 63 rows of a 64-row WGMMA tile, and the pinned lowering is limited.
-- Compare Loom with both Mistral.rs CUDA GEMV and cuBLASLt. Run each matched
-  H20 pair in both provider orders on current source.
-- Inspect SASS, local memory, spills, Tensor Core use, memory traffic, and
-  scheduler stalls.
-- Preserve the passing host, H20 correctness, lifecycle, and fixed-address
-  Graph gates. Add sanitizer and matched-performance gates.
-- Measure TTFT, TPOT, throughput, and peak memory in the model runner.
-- Return a planning error for unsupported Loom shapes. Do not switch providers
-  during enqueue.
+Work:
 
-The frozen admission threshold is at least 10% lower combined median operator
-latency than both baselines on each declared shape. Provider-order median drift
-above 5% invalidates the ranking. Real-model TPOT and throughput must also
-improve beyond measured noise.
+- Requalify direct, split-K, token-parallel, and tiled attention algorithms.
+- Add paged-decode and split-K fixed-address Graph coverage.
+- Replace average-only ragged selection with measured shape classes when data
+  supports the change.
+- Add sliding-window attention from a pinned engine call site.
+- Add broader head dimensions and page sizes from measured model demand.
+- Scope mixed-batch attention from the engine scheduler contract.
+- Scope MLA from one exact model and cache layout.
+- Add KV gather, scatter, compaction, and remapping after pager ownership is
+  fixed.
 
-Any spill, HBM overread, failed negative gate, Graph failure, or lease failure
-stops promotion. The Loom algorithm remains experimental, and cuBLASLt remains
-the selected plan until every gate passes.
+Attention admission gate:
 
-Exit: the same dense GEMM contract can produce either explicit provider plan.
-Each published result names its provider, algorithm, source, and timed region.
+- The engine trace fixes mask, layout, head mapping, sequence distribution,
+  and workspace requirements.
+- The independent reference covers the exact contract.
+- The plan selects one named algorithm before enqueue.
 
-## K1: Broaden attention contracts
+KV mutation admission gate:
 
-**State:** planned after K0.
+- Specify read sharing, write ownership, copy-on-write owner, metadata epoch,
+  and completion lifetime first.
+- A failure preserves all cache pages and returns the writable capability.
 
-- Add sliding-window decode and prefill.
-- Add broader head dimensions and page sizes from real model demand.
-- Extend ragged tiling beyond the admitted GQA4 shape.
-- Add paged tensor-core tiling and asynchronous K/V staging beyond the current
-  token-parallel paged-prefill paths.
-- Add mixed-batch attention after the engine defines its scheduler interface.
-- Scope MLA from a real engine call site.
+Exit gate:
 
-Exit: each added slice passes host, device, lifecycle, sanitizer, performance,
-Graph, and engine gates that apply to its declared contract.
+- Each new contract passes current-source correctness, lifecycle, sanitizer,
+  Graph, matched performance, and one engine invocation where applicable.
+- The catalog contains no generic claim beyond recorded shape classes.
 
-## K2: KV cache, sampling, and speculation
+## R5: Add activation, sampling, and speculation
 
 **State:** planned.
 
-- Add KV gather, scatter, compaction, and remapping.
-- Add FP8 and INT8 KV storage with explicit quality limits.
-- Add logits processing, penalties, Top-K, Top-P, Min-P, and logprobs.
-- Add deterministic sampling and RNG-state contracts.
-- Add speculative verification and token compaction.
+Activation work:
 
-Exit: the operators reduce measured engine work without changing token output
-or the declared stochastic distribution.
+- Start with a measured SwiGLU or gated-activation call.
+- Define a standalone contract and reference before fusion.
+- Fuse RMSNorm, GEMM, bias, or activation only when the complete path wins.
 
-## K3: Quantization, MoE, and GEMM expansion
+Sampling work:
+
+- Define logits dtype, transforms, penalties, Top-K, Top-P, Min-P, logprobs,
+  and output ordering.
+- Bind deterministic RNG state to request and token position.
+- Test finite behavior, ties, degenerate distributions, and reproducibility.
+
+Speculation work:
+
+- Define draft and target token spans.
+- Bind accepted-token count, pending token, RNG state, and grammar state in one
+  commit contract.
+- Cover greedy, stochastic, and tree verification separately.
+
+Exit gate:
+
+- Each family starts with one real engine call and no empty sibling modules.
+- Sampling matches its declared deterministic or statistical limits.
+- Speculative decoding preserves baseline token output or the declared
+  stochastic distribution.
+- Engine TPOT improves beyond measured noise.
+
+## R6: Add quantization and MoE
 
 **State:** planned.
 
-- Add scale, pack, unpack, dequantize, and layout conversion.
-- Add activation and gated-activation contracts from measured model paths.
-- Add expert routing, permutation, grouped-GEMM inputs, and weighted combine.
-- Add separate dense, grouped, and quantized GEMM contracts.
-- Extend explicit Loom and vendor providers through fixed plans.
-- Keep FP8 and FP4 out of Loom device code until cuda-oxide supports the
-  required types and instructions or Loom contributes them upstream.
-- Fuse adjacent work only when the matched complete path improves.
+Quantization work:
 
-Exit: dense and MoE workloads have separate operator and engine evidence.
+- Pin scale granularity, packing format, zero-point policy, accumulator type,
+  and quality limit.
+- Add conversion and dequantization before fused compute.
+- Keep FP8 and FP4 native kernels out until cuda-oxide supports the required
+  types and instructions or the project contributes that support upstream.
 
-## K4: Hardware and distribution
+MoE work:
+
+- Pin routing, capacity, permutation, expert input, and weighted-combine
+  semantics.
+- Add grouped GEMM only after the routing trace fixes expert size
+  distributions.
+- Keep dense, grouped, and quantized GEMM as separate contracts.
+
+Exit gate:
+
+- Quantized outputs pass numerical and model-quality limits.
+- Grouped GEMM passes per-expert correctness and end-to-end MoE output checks.
+- Native and vendor providers use one plan and command lifecycle per contract.
+- Real-engine throughput and memory improve beyond measured noise.
+
+## R7: Add hardware targets
+
+**State:** `sm_90a` is current. Future work targets `sm_100a` and `sm_120`.
+
+Work:
+
+- Keep H20 `sm_90a` as the first qualified architecture row.
+- Add `sm_100a` as a separate provider artifact and evidence row.
+- Add `sm_120` only from a measured consumer workload.
+- Give TMA, WGMMA, and tcgen05 matrix algorithms stable names.
+- Publish hashes for every admitted PTX or cubin.
+- Reject incompatible devices before module load.
+
+Target admission gate:
+
+- Hardware is available for correctness, sanitizer, SASS, Graph, and
+  performance work.
+- cuda-oxide supports every required type and instruction with a pinned
+  revision.
+- One engine workload justifies the target-specific algorithm.
+
+Exit gate:
+
+- Each architecture has independent host, device, sanitizer, Graph,
+  performance, and engine rows.
+- No target inherits qualification from PTX forward compatibility.
+- No empty `sm100` or `sm120` directory exists.
+
+## R8: Add communication and release a stable API
 
 **State:** planned.
 
-- Keep Hopper as the first qualified architecture.
-- Add Blackwell as a separate evidence row.
-- Publish hashed device artifacts for supported targets.
-- Stabilize the Rust API after the first engine integration.
-- Add a checked C ABI only when an external engine requires it.
-- Add collectives only for a measured distributed workload.
+Work:
 
-Exit: every supported hardware and API row has reproducible correctness and
-integration evidence.
+- Start collectives from one measured tensor-parallel or expert-parallel
+  workload.
+- Define communicator ownership, stream order, topology, timeout, failure, and
+  recovery boundaries.
+- Use an explicit vendor provider unless a measured native alternative exists.
+- Stabilize the Rust API after the first production-shaped engine adapter.
+- Audit package contents, CI targets, documentation, and registry access.
 
-## Admission rule
+Communication exit gate:
 
-A faster microbenchmark does not prove a faster model or server. Every result
-states its contract, source, hardware, timed region, and excluded claims.
+- Multi-GPU correctness covers ordering, partial failure, and teardown.
+- Performance uses the same topology and payload distribution as the engine.
+- A collective failure cannot release live device resources early.
+
+Stable release exit gate:
+
+- All documented current rows have current-source evidence.
+- Public names follow one lifecycle and final family namespaces.
+- The release contains no experimental default selection or silent fallback.
+- A clean downstream install and one pinned engine integration pass.
+
+## Evidence rule
+
+Every result states its contract, source, provider, algorithm, artifact,
+hardware, timed region, accepted claims, and excluded claims. Reviewed records
+remain immutable. A faster kernel never proves a faster model or server by
+itself.

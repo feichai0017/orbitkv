@@ -1,8 +1,8 @@
 # FlashInfer matched baseline
 
-This directory contains an external Python baseline for comparing Loom Infer
+This directory contains an external Python baseline for comparing Oxide Infer
 with the latest pinned stable FlashInfer release. It is measurement tooling,
-not Loom product code or a supported Python API.
+not Oxide Infer product code or a supported Python API.
 
 The current baseline is:
 
@@ -45,26 +45,26 @@ verify. The reference above does not prove the provenance of a release wheel.
 Use the same parameters for both providers:
 
 ```bash
-export LOOM_BENCH_WARMUP=200
-export LOOM_BENCH_LAUNCHES=100
-export LOOM_BENCH_SAMPLES=50
-export LOOM_BENCH_OPERATORS=ragged_prefill
+export OXIDE_BENCH_WARMUP=200
+export OXIDE_BENCH_LAUNCHES=100
+export OXIDE_BENCH_SAMPLES=50
+export OXIDE_BENCH_OPERATORS=ragged_prefill
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
-LOOM_BENCH_RUN_LABEL=loom_first \
+OXIDE_BENCH_RUN_LABEL=oxide_first \
 taskset -c <gpu-local-physical-cpu> \
-make bench-ragged-loom > /tmp/loom-first.jsonl
+make bench-ragged-oxide > /tmp/oxide-first.jsonl
 
 FLASHINFER_WORKSPACE_BASE=/path/to/jit-cache \
-LOOM_BENCH_RUN_LABEL=flashinfer_second \
+OXIDE_BENCH_RUN_LABEL=flashinfer_second \
 taskset -c <gpu-local-physical-cpu> \
 <venv>/bin/python tools/flashinfer/matched_bench.py \
   > /tmp/flashinfer-second.jsonl
 ```
 
-`make bench-loom` records the current full Git commit automatically. Set
-`LOOM_SOURCE_COMMIT` only when deliberately identifying an equivalent external
+`make bench-oxide` records the current full Git commit automatically. Set
+`OXIDE_SOURCE_COMMIT` only when deliberately identifying an equivalent external
 source projection, and record that mapping separately.
 
 Use `nvidia-smi topo -m` to choose one otherwise idle physical CPU on the
@@ -79,7 +79,7 @@ evidence. Do not mix pinned and unpinned samples.
 
 On hosts where PyTorch links NVSHMEM outside the default loader path, add its
 installed library directory to `LD_LIBRARY_PATH` for the external Python
-baseline. This does not affect Loom product dependencies.
+baseline. This does not affect Oxide Infer product dependencies.
 
 Repeat in the reverse provider order. The measurement
 `eager_stream_batch_cuda_event` records one CUDA-event interval around several
@@ -91,8 +91,8 @@ the resulting GPU idle gaps remain inside the event interval.
 This is an eager provider-path metric, not an isolated kernel-duration claim.
 A CUDA Graph comparison is a separate gate.
 
-Use `LOOM_BENCH_OPERATORS=paged_prefill` and
-`make bench-paged-prefill-loom` for the ragged-query, page-size-16 NHD
+Use `OXIDE_BENCH_OPERATORS=paged_prefill` and
+`make bench-paged-prefill-oxide` for the ragged-query, page-size-16 NHD
 paged-prefill surface. The external baseline uses
 `BatchPrefillWithPagedKVCacheWrapper` with the same Q/K/V bits, query
 `indptr`, page table, output, LSE, and FA2 backend. The harness includes short
@@ -103,15 +103,15 @@ short eager and fixed-address Graph records.
 The ragged Graph gate uses one replay per CUDA-event sample:
 
 ```bash
-export LOOM_BENCH_WARMUP=200
-export LOOM_BENCH_LAUNCHES=1
-export LOOM_BENCH_SAMPLES=100
+export OXIDE_BENCH_WARMUP=200
+export OXIDE_BENCH_LAUNCHES=1
+export OXIDE_BENCH_SAMPLES=100
 
-LOOM_BENCH_RUN_LABEL=loom_graph_first \
-make bench-ragged-graph-loom > /tmp/loom-graph-first.jsonl
+OXIDE_BENCH_RUN_LABEL=oxide_graph_first \
+make bench-ragged-graph-oxide > /tmp/oxide-graph-first.jsonl
 
 FLASHINFER_WORKSPACE_BASE=/path/to/jit-cache \
-LOOM_BENCH_RUN_LABEL=flashinfer_graph_second \
+OXIDE_BENCH_RUN_LABEL=flashinfer_graph_second \
 <venv>/bin/python tools/flashinfer/ragged_graph_bench.py \
   > /tmp/flashinfer-graph-second.jsonl
 ```
@@ -127,11 +127,11 @@ The paged-prefill Graph gate uses the same protocol and the admitted GQA4
 page-reorder/reuse fixture:
 
 ```bash
-LOOM_BENCH_RUN_LABEL=loom_graph_first \
-make bench-paged-prefill-graph-loom > /tmp/loom-paged-graph-first.jsonl
+OXIDE_BENCH_RUN_LABEL=oxide_graph_first \
+make bench-paged-prefill-graph-oxide > /tmp/oxide-paged-graph-first.jsonl
 
 FLASHINFER_WORKSPACE_BASE=/path/to/jit-cache \
-LOOM_BENCH_RUN_LABEL=flashinfer_graph_second \
+OXIDE_BENCH_RUN_LABEL=flashinfer_graph_second \
 <venv>/bin/python tools/flashinfer/paged_prefill_graph_bench.py \
   > /tmp/flashinfer-paged-graph-second.jsonl
 ```
@@ -147,7 +147,7 @@ result as an official release comparison.
 Summarize only records from the same operator contract:
 
 ```bash
-python tools/flashinfer/summarize.py /tmp/loom-first.jsonl \
+python tools/flashinfer/summarize.py /tmp/oxide-first.jsonl \
   /tmp/flashinfer-second.jsonl > /tmp/summary.json
 ```
 

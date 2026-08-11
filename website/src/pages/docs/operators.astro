@@ -1,55 +1,56 @@
 ---
 import DocsNav from "../../components/DocsNav.astro";
 import SiteLayout from "../../layouts/SiteLayout.astro";
-import { milestones, operatorFamilies, repositoryUrl } from "../../data/site";
+import { milestones, operatorGroups, repositoryUrl } from "../../data/site";
 ---
 
 <SiteLayout
-  title="Operators | Loom Infer"
-  description="Current operator contracts and qualification status for Loom Infer."
+  title="Operators | Oxide Infer"
+  description="Implemented, experimental, and planned operator boundaries for Oxide Infer."
   active="Operators"
 >
   <header class="page-hero">
-    <p class="eyebrow">Operators</p>
-    <h1>A qualified slice, not a parity claim.</h1>
+    <p class="eyebrow">Documentation / Operators</p>
+    <h1>Each row has a bounded contract.</h1>
     <p>
-      Each row names the current provider boundary. Unsupported contracts
-      return an error instead of selecting a fallback.
+      Unsupported shapes, dtypes, layouts, and algorithms return an error.
+      Oxide Infer does not hide a provider switch behind enqueue.
     </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Operators" />
     <article class="prose">
-      <h2>Current surface</h2>
-      <table class="operator-table">
-        <thead>
-          <tr><th>Family</th><th>Boundary</th><th>Provider</th><th>Status</th></tr>
-        </thead>
-        <tbody>
-          {operatorFamilies.map((operator) => (
-            <tr>
-              <td>{operator.name}</td>
-              <td>{operator.boundary}</td>
-              <td><code>{operator.provider}</code></td>
-              <td>{operator.state}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <h2>Operator matrix</h2>
+      <div class="operator-doc-groups">
+        {operatorGroups.map((group) => (
+          <section class:list={["operator-doc-group", group.tone]}>
+            <header><h3>{group.state}</h3><p>{group.note}</p></header>
+            <div class="table-scroll" tabindex="0" role="region" aria-label={`${group.state} operators`}>
+              <table>
+                <thead><tr><th>Family</th><th>Boundary</th><th>Provider</th></tr></thead>
+                <tbody>
+                  {group.operators.map((operator) => (
+                    <tr><td>{operator.name}</td><td>{operator.boundary}</td><td><code>{operator.provider}</code></td></tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </section>
+        ))}
+      </div>
 
       <div class="doc-note warning">
-        <strong>All CUDA providers are under requalification.</strong>
+        <strong>Current source is not the same as current qualification.</strong>
         <p>
-          DeviceRegion changed the shared submission path. Fused append also
-          adds exclusive write pages. Historical records stay immutable, but
-          they do not qualify the current source.
+          The shared DeviceRegion submission path changed after most H20 records.
+          Those records remain historical, but they do not qualify the merged paths.
         </p>
       </div>
 
       <h2>Admission rules</h2>
       <ol>
-        <li>Name the engine call site and the cost it exposes.</li>
+        <li>Name the engine call site and exposed cost.</li>
         <li>Fix dtype, shape, layout, alignment, mask, workspace, and stream.</li>
         <li>Define the CPU oracle and numerical limit.</li>
         <li>Pass device correctness and sanitizer gates.</li>
@@ -57,18 +58,14 @@ import { milestones, operatorFamilies, repositoryUrl } from "../../data/site";
         <li>Keep Graph, engine, and serving claims separate.</li>
       </ol>
       <p>
-        The full <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>operator catalog</a>
-        records the admitted combinations and planned domains.
+        The <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>source operator catalog</a>{" "}
+        records the full admitted combinations and open boundaries.
       </p>
 
       <h2>Next gates</h2>
       <div class="doc-grid">
         {milestones.map((item) => (
-          <div class="doc-card">
-            <span class="card-index">{item.milestone}</span>
-            <h3>{item.name}</h3>
-            <p>{item.reason}</p>
-          </div>
+          <div class="doc-card"><span>{item.milestone}</span><h3>{item.name}</h3><p>{item.reason}</p></div>
         ))}
       </div>
     </article>

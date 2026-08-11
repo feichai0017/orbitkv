@@ -1,17 +1,17 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-CUDA_CRATE := crates/loom-infer-cuda
-VALIDATION_CRATE := crates/loom-infer-validation
+CUDA_CRATE := crates/oxide-infer-cuda
+VALIDATION_CRATE := crates/oxide-infer-lab
 CUDA_ARCH ?= sm_90
 PACKAGE_FLAGS ?= --allow-dirty
-LOOM_SOURCE_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
+OXIDE_SOURCE_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null)
 MISE := $(shell command -v mise 2>/dev/null)
 ifneq ($(MISE),)
 RUN := $(MISE) exec --
 endif
-ifneq ($(LOOM_CARGO_HOME),)
-CARGO_ENV := CARGO_HOME=$(LOOM_CARGO_HOME)
+ifneq ($(OXIDE_CARGO_HOME),)
+CARGO_ENV := CARGO_HOME=$(OXIDE_CARGO_HOME)
 endif
 CARGO := $(CARGO_ENV) $(RUN) cargo
 NPM := $(RUN) npm --prefix website
@@ -19,10 +19,10 @@ NPM := $(RUN) npm --prefix website
 .PHONY: help check check-rust check-tools check-website install-website cuda-doctor \
 	cuda-check cuda-test h20-rms-norm h20-gemm h20-oxide-gemm h20-attention h20-paged-attention \
 	h20-ragged-prefill h20-paged-prefill h20-rope h20-engine-interop h20 \
-	bench-loom bench-paged-loom bench-ragged-loom \
-	bench-paged-prefill-loom bench-paged-prefill-graph-loom bench-ragged-graph-loom \
-	bench-rope-loom bench-rope-append-loom \
-	bench-rope-append-tokens-loom bench-rope-append-tokens-graph-loom bench-split-k
+	bench-oxide bench-paged-oxide bench-ragged-oxide \
+	bench-paged-prefill-oxide bench-paged-prefill-graph-oxide bench-ragged-graph-oxide \
+	bench-rope-oxide bench-rope-append-oxide \
+	bench-rope-append-tokens-oxide bench-rope-append-tokens-graph-oxide bench-split-k
 
 help:
 	@printf '%s\n' \
@@ -32,23 +32,23 @@ help:
 		'make cuda-check     Run CUDA-feature Clippy' \
 		'make cuda-test      Run release tests through cuda-oxide' \
 		'make h20            Run all H20 correctness programs sequentially' \
-		'make h20-oxide-gemm  Validate the experimental Loom SM90a M=1 GEMV' \
+		'make h20-oxide-gemm  Validate the experimental Oxide SM90a M=1 GEMV' \
 		'make h20-engine-interop  Validate single and paged external-stream interop' \
 		'make h20-paged-attention  Run paged batch-decode H20 correctness' \
 		'make h20-ragged-prefill  Run ragged prefill H20 correctness' \
 		'make h20-paged-prefill  Run paged prefill H20 correctness' \
 		'make h20-rope       Run standard RoPE H20 correctness' \
-		'make bench-loom     Run the Loom side of the matched H20 benchmark' \
-		'make bench-paged-loom  Run Loom matched paged-decode cases only' \
-		'make bench-ragged-loom  Run Loom matched ragged-prefill cases only' \
-		'make bench-paged-prefill-loom  Run Loom matched paged-prefill cases only' \
-		'make bench-paged-prefill-graph-loom  Run Loom paged-prefill Graph replay benchmark' \
-		'make bench-ragged-graph-loom  Run Loom ragged Graph replay benchmark' \
-		'make bench-rope-loom  Run Loom matched RoPE case only' \
-		'make bench-rope-append-loom  Run Loom fused RoPE paged append case' \
-		'make bench-rope-append-tokens-loom  Run Loom explicit multi-token RoPE append case' \
-		'make bench-rope-append-tokens-graph-loom  Run Loom multi-token RoPE append Graph case' \
-		'make bench-split-k  Sweep Loom split-K choices on H20'
+		'make bench-oxide     Run the Oxide side of the matched H20 benchmark' \
+		'make bench-paged-oxide  Run Oxide matched paged-decode cases only' \
+		'make bench-ragged-oxide  Run Oxide matched ragged-prefill cases only' \
+		'make bench-paged-prefill-oxide  Run Oxide matched paged-prefill cases only' \
+		'make bench-paged-prefill-graph-oxide  Run Oxide paged-prefill Graph replay benchmark' \
+		'make bench-ragged-graph-oxide  Run Oxide ragged Graph replay benchmark' \
+		'make bench-rope-oxide  Run Oxide matched RoPE case only' \
+		'make bench-rope-append-oxide  Run Oxide fused RoPE paged append case' \
+		'make bench-rope-append-tokens-oxide  Run Oxide explicit multi-token RoPE append case' \
+		'make bench-rope-append-tokens-graph-oxide  Run Oxide multi-token RoPE append Graph case' \
+		'make bench-split-k  Sweep Oxide split-K choices on H20'
 
 check: check-rust check-tools check-website
 
@@ -57,7 +57,7 @@ check-rust:
 	$(CARGO) clippy --workspace --all-targets -- -D warnings
 	$(CARGO) test --workspace --all-targets
 	$(CARGO) check --workspace --release
-	$(CARGO) package -p loom-infer $(PACKAGE_FLAGS)
+	$(CARGO) package -p oxide-infer $(PACKAGE_FLAGS)
 
 check-tools:
 	python3 -m py_compile tools/flashinfer/*.py tools/gemm/*.py
@@ -89,7 +89,7 @@ h20-gemm:
 	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch $(CUDA_ARCH)
 
 h20-oxide-gemm:
-	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run loom_sm90_simt_gemv_h20 --bin loom_sm90_simt_gemv_h20 --features cuda --arch sm_90a
+	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run oxide_sm90_simt_gemv_h20 --bin oxide_sm90_simt_gemv_h20 --features cuda --arch sm_90a
 
 h20-attention:
 	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch $(CUDA_ARCH)
@@ -111,35 +111,35 @@ h20-engine-interop:
 
 h20: h20-rms-norm h20-gemm h20-oxide-gemm h20-attention h20-paged-attention h20-ragged-prefill h20-paged-prefill h20-rope h20-engine-interop
 
-bench-loom:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+bench-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
-bench-paged-loom:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_BENCH_OPERATORS=paged_batch_decode LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+bench-paged-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_BENCH_OPERATORS=paged_batch_decode OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
-bench-ragged-loom:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_BENCH_OPERATORS=ragged_prefill LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+bench-ragged-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_BENCH_OPERATORS=ragged_prefill OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
-bench-paged-prefill-loom:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_BENCH_OPERATORS=paged_prefill LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+bench-paged-prefill-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_BENCH_OPERATORS=paged_prefill OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
-bench-paged-prefill-graph-loom:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run paged_prefill_graph_bench_h20 --bin paged_prefill_graph_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+bench-paged-prefill-graph-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run paged_prefill_graph_bench_h20 --bin paged_prefill_graph_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
-bench-ragged-graph-loom:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run ragged_graph_bench_h20 --bin ragged_graph_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+bench-ragged-graph-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run ragged_graph_bench_h20 --bin ragged_graph_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
-bench-rope-loom:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_BENCH_OPERATORS=rope LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+bench-rope-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_BENCH_OPERATORS=rope OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
-bench-rope-append-loom:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_BENCH_OPERATORS=rope_paged_kv_append LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+bench-rope-append-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_BENCH_OPERATORS=rope_paged_kv_append OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
-bench-rope-append-tokens-loom:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_BENCH_OPERATORS=rope_paged_kv_append_tokens LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+bench-rope-append-tokens-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_BENCH_OPERATORS=rope_paged_kv_append_tokens OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
-bench-rope-append-tokens-graph-loom:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run rope_append_graph_bench_h20 --bin rope_append_graph_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+bench-rope-append-tokens-graph-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run rope_append_graph_bench_h20 --bin rope_append_graph_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
 
 bench-split-k:
-	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" LOOM_SOURCE_STATE=working_tree $(CARGO) +nightly-2026-04-03 oxide run split_k_sweep_h20 --bin split_k_sweep_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" OXIDE_SOURCE_STATE=working_tree $(CARGO) +nightly-2026-04-03 oxide run split_k_sweep_h20 --bin split_k_sweep_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'

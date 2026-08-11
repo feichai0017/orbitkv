@@ -1,12 +1,12 @@
 [workspace]
 members = [
-    "crates/loom-infer-cuda",
-    "crates/loom-infer-validation",
-    "crates/loom-infer",
+    "crates/oxide-infer-cuda",
+    "crates/oxide-infer-lab",
+    "crates/oxide-infer",
 ]
 default-members = [
-    "crates/loom-infer",
-    "crates/loom-infer-cuda",
+    "crates/oxide-infer",
+    "crates/oxide-infer-cuda",
 ]
 resolver = "2"
 
@@ -14,8 +14,8 @@ resolver = "2"
 version = "1.0.0-alpha.1"
 edition = "2024"
 license = "MIT"
-repository = "https://github.com/feichai0017/loom-infer"
-homepage = "https://feichai0017.github.io/loom-infer/"
+repository = "https://github.com/feichai0017/oxide-infer"
+homepage = "https://feichai0017.github.io/oxide-infer/"
 
 [workspace.dependencies]
 half = "2.7"

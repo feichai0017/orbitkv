@@ -34,12 +34,12 @@ def env_positive_int(name: str, default: int) -> int:
 
 def main() -> None:
     validate_flashinfer_installation()
-    warmup = env_positive_int("LOOM_BENCH_WARMUP", 200)
-    launches = env_positive_int("LOOM_BENCH_LAUNCHES", 1)
-    samples = env_positive_int("LOOM_BENCH_SAMPLES", 100)
+    warmup = env_positive_int("OXIDE_BENCH_WARMUP", 200)
+    launches = env_positive_int("OXIDE_BENCH_LAUNCHES", 1)
+    samples = env_positive_int("OXIDE_BENCH_SAMPLES", 100)
     if launches != 1:
-        raise ValueError("Graph benchmark requires LOOM_BENCH_LAUNCHES=1")
-    run_label = os.environ.get("LOOM_BENCH_RUN_LABEL", "unlabeled")
+        raise ValueError("Graph benchmark requires OXIDE_BENCH_LAUNCHES=1")
+    run_label = os.environ.get("OXIDE_BENCH_RUN_LABEL", "unlabeled")
 
     batch_size = 2
     nnz_qo = 6

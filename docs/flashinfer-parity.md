@@ -1,6 +1,6 @@
 # FlashInfer parity matrix
 
-Loom Infer uses this pinned comparison baseline:
+Oxide Infer uses this pinned comparison baseline:
 
 | Item | Reference |
 | --- | --- |
@@ -15,20 +15,20 @@ Python wrappers, file structure, or symbol count. Shape, dtype, layout,
 masking, numerical behavior, workspace, aliasing, stream, and Graph semantics
 must agree before two paths form a matched comparison.
 
-Loom does not claim complete domain-level parity.
+Oxide Infer does not claim complete domain-level parity.
 
 ## States
 
 | State | Meaning |
 | --- | --- |
-| `partial device correct` | A narrower Loom contract passed its declared H20 correctness gate |
-| `requalification` | Loom changed the contract after its last H20 record |
+| `partial device correct` | A narrower Oxide Infer contract passed its declared H20 correctness gate |
+| `requalification` | Oxide Infer changed the contract after its last H20 record |
 | `planned` | The roadmap names the domain, but no permanent provider is admitted |
-| `unscoped` | Loom has not admitted a contract for the upstream domain |
+| `unscoped` | Oxide Infer has not admitted a contract for the upstream domain |
 
 ## Domain coverage
 
-| Domain | Representative upstream surface | Loom state |
+| Domain | Representative upstream surface | Oxide Infer state |
 | --- | --- | --- |
 | Dense decode attention | `single_decode_with_kv_cache`, paged batch decode, XQA | `requalification`: BF16 NHD single-decode and NHD/HND paged-decode providers exist, but their records predate the DeviceRegion launch path |
 | Prefill attention | Single, ragged batch, and paged batch prefill | `requalification`: BF16 NHD D128 providers exist, but their records predate the DeviceRegion launch path |
@@ -47,14 +47,14 @@ Loom does not claim complete domain-level parity.
 | Communication | AllReduce and all-to-all variants | `planned` after a measured distributed workload |
 | Activation and MLP tail | SiLU-multiply and GELU variants | `unscoped` |
 | GDN, KDA, Mamba, and SSM | Recurrent and state-update operators | `unscoped` |
-| Supporting backends | cuDNN attention, CuTe DSL, and green contexts | `unscoped`. Loom custom kernels use cuda-oxide |
+| Supporting backends | cuDNN attention, CuTe DSL, and green contexts | `unscoped`. Oxide native kernels use cuda-oxide |
 
 The upstream links remain in the pinned
 [FlashInfer API index](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/index.rst).
 
 ## Admitted attention matrix
 
-| Loom contract | CUDA implementation | Historical H20 matrix | Historical Graph evidence |
+| Oxide Infer contract | CUDA implementation | Historical H20 matrix | Historical Graph evidence |
 | --- | --- | --- | --- |
 | Single decode | Direct online softmax | MHA, MQA, and GQA | None |
 | Single decode split-K | Explicit partitions, F32 partial workspace, and eight-warp merge | MQA and GQA | None |
@@ -68,8 +68,8 @@ All attention rows fix BF16, NHD layout, head dimension 128, full attention
 unless the row says causal, and F32 softmax state. Paged rows fix page size 16.
 No row covers sliding windows, soft caps, custom masks, FP8 KV, or MLA.
 
-Every matrix entry predates the DeviceRegion submission path. Current-source
-device and Graph records remain open.
+Every matrix entry predates the DeviceRegion submission path or the project
+rename. Current-source device and Graph records remain open.
 
 ## Dispatch limits
 
@@ -97,7 +97,7 @@ metadata, or graph updates.
 ## Paged KV ownership difference
 
 FlashInfer parity at the tensor level does not define the engine's KV ownership
-policy. Loom now makes write ownership explicit.
+policy. Oxide Infer makes write ownership explicit.
 
 Paged decode and prefill may read shared physical pages. Fused append accepts
 an authoritative reference-count snapshot and writes only to pages whose count

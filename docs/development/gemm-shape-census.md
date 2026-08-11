@@ -52,12 +52,12 @@ FLOP coverage because a frequent small-M launch and a large prefill GEMM have
 different optimization value.
 
 The tool does not choose an algorithm. A reviewer uses the validated profile
-to freeze the first Loom admission contract. The first provider candidate must
+to freeze the first Oxide admission contract. The first provider candidate must
 then pass correctness, lifecycle, sanitizer, Graph, matched operator, and real
 model gates.
 
 For Mistral.rs decode, `M <= 8` and even `K` currently select its custom CUDA
-GEMV before cuBLASLt. A Loom small-M algorithm must beat both that engine path
+GEMV before cuBLASLt. An Oxide small-M algorithm must beat both that engine path
 and the cuBLASLt baseline. Winning only the vendor microbenchmark is not enough
 for engine admission.
 
@@ -66,5 +66,5 @@ boundary, dtype, layout, transpose, or post-op metadata differs. Do not present
 a single-request census as a production traffic distribution.
 
 The shape census profiles the engine baseline. It does not compile or execute
-a Loom kernel. Record cuda-oxide source, backend, and codegen provenance in the
-later Loom provider benchmark, not in this host-dispatch record.
+an Oxide kernel. Record cuda-oxide source, backend, and codegen provenance in
+the later Oxide provider benchmark, not in this host-dispatch record.

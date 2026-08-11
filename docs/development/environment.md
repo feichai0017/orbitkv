@@ -1,6 +1,6 @@
 # Development environment
 
-Loom Infer uses separate toolchains for ordinary Rust checks and CUDA device
+Oxide Infer uses separate toolchains for ordinary Rust checks and CUDA device
 compilation. Keep their versions explicit so a successful local run means the
 same thing as CI or an H20 validation run.
 
@@ -16,10 +16,10 @@ same thing as CI or an H20 validation run.
 | npm | `11.17.x` | `/website/package.json` |
 | CUDA toolkit | `13.1` for the qualified H20 row | H20 evidence records |
 | Clang/libclang | `21` | cuda-oxide host binding requirement |
-| Device target | `sm_90` for H20 | H20 validation contract |
+| Device target | `sm_90` for general H20 gates and explicit `sm_90a` for target-restricted algorithms | H20 validation contract |
 
 The root Rust toolchain applies to CPU-only workspace commands. Entering
-`crates/loom-infer-cuda` or `crates/loom-infer-validation` selects the pinned
+`crates/oxide-infer-cuda` or `crates/oxide-infer-lab` selects the pinned
 nightly for cargo-oxide. Do not replace one with the other globally.
 
 ## Host setup
@@ -69,7 +69,7 @@ The CUDA path requires:
 - Compute Sanitizer for sanitizer evidence.
 
 On Debian or Ubuntu, install LLVM and Clang 21 from the LLVM package repository
-when the distribution does not provide them. Ensure `/usr/lib/llvm-21/bin`
+when the distribution does not provide them. Make sure `/usr/lib/llvm-21/bin`
 precedes older Clang installations and set:
 
 ```bash
@@ -116,6 +116,6 @@ Point the common commands at such an external Cargo home without changing the
 repository:
 
 ```bash
-LOOM_CARGO_HOME=/path/to/validated/cargo-home make check
-LOOM_CARGO_HOME=/path/to/validated/cargo-home make cuda-test
+OXIDE_CARGO_HOME=/path/to/validated/cargo-home make check
+OXIDE_CARGO_HOME=/path/to/validated/cargo-home make cuda-test
 ```

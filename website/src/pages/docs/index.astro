@@ -5,15 +5,16 @@ import { executionStages, repositoryUrl } from "../../data/site";
 ---
 
 <SiteLayout
-  title="Documentation | Loom Infer"
-  description="Architecture, contracts, validation, and evidence for Loom Infer."
+  title="Documentation | Oxide Infer"
+  description="Architecture, execution contracts, validation, and evidence for Oxide Infer."
+  active="Docs"
 >
   <header class="page-hero">
-    <p class="eyebrow">Documentation</p>
-    <h1>Start with the operator boundary.</h1>
+    <p class="eyebrow">Documentation / Start</p>
+    <h1>Start at the operator boundary.</h1>
     <p>
-      Loom Infer provides contracts, plans, CUDA execution, and completion.
-      The engine keeps model, request, and scheduling policy.
+      Oxide Infer owns planning, GPU submission, and completion. The engine
+      retains its model graph, scheduler, request lifecycle, and distributed policy.
     </p>
   </header>
 
@@ -23,53 +24,49 @@ import { executionStages, repositoryUrl } from "../../data/site";
       <h2>Read in this order</h2>
       <div class="doc-grid">
         <div class="doc-card">
-          <span class="card-index">01 / DESIGN</span>
-          <h3>Architecture</h3>
-          <p>Understand ownership, planning, submission, and completion.</p>
-          <a href={`${repositoryUrl}/blob/main/docs/design/loom-infer-architecture.md`}>Open architecture →</a>
+          <span>01 / DESIGN</span><h3>Architecture</h3>
+          <p>Review ownership, planning, submission, and completion.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/design/oxide-infer-architecture.md`}>Open architecture →</a>
         </div>
         <div class="doc-card">
-          <span class="card-index">02 / SURFACE</span>
-          <h3>Operator catalog</h3>
-          <p>Check each admitted dtype, layout, algorithm, and open gate.</p>
+          <span>02 / SURFACE</span><h3>Operator catalog</h3>
+          <p>Check admitted dtypes, layouts, algorithms, and open gates.</p>
           <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>Open catalog →</a>
         </div>
         <div class="doc-card">
-          <span class="card-index">03 / PROOF</span>
-          <h3>Evidence index</h3>
+          <span>03 / PROOF</span><h3>Evidence index</h3>
           <p>Inspect source revisions, methods, raw samples, and exclusions.</p>
           <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>Open evidence →</a>
         </div>
         <div class="doc-card">
-          <span class="card-index">04 / DEVICE</span>
-          <h3>H20 validation</h3>
+          <span>04 / DEVICE</span><h3>H20 validation</h3>
           <p>Run correctness, sanitizer, Graph, and performance gates separately.</p>
           <a href={`${repositoryUrl}/blob/main/docs/development/h20-validation.md`}>Open validation guide →</a>
         </div>
       </div>
 
       <h2>Execution lifecycle</h2>
-      <p>Every operator follows the same checked path.</p>
-      <ol>
+      <p>Every admitted operator uses the same checked chain.</p>
+      <ol class="lifecycle-list">
         {executionStages.map((stage) => (
-          <li><strong>{stage.name}.</strong> {stage.detail}</li>
+          <li><span>{stage.key}</span><div><strong>{stage.name}</strong><p>{stage.detail}</p></div></li>
         ))}
       </ol>
-      <pre><code>let plan = provider.plan(spec)?;
-let mut bindings = queue.bindings(capacity)?;
+      <pre><code>{`let plan = provider.plan(spec)?
+let mut bindings = queue.bindings(capacity)?
 
-let mut scope = queue.begin(bindings)?;
-plan.enqueue_into(&mut scope, args)?;
-bindings = scope.finish().wait()?;</code></pre>
+let mut scope = queue.begin(bindings)?
+plan.enqueue_into(&mut scope, operands)?
+bindings = scope.finish().wait()?`}</code></pre>
 
       <div class="doc-note">
-        <strong>Graph capture uses the same plan.</strong>
+        <strong>Graph capture uses the same immutable plan.</strong>
         <p>Fixed-address Graph execution retains providers, bindings, functions, and completion resources.</p>
       </div>
 
       <h2>Validate a checkout</h2>
-      <pre><code>git clone https://github.com/feichai0017/loom-infer.git
-cd loom-infer
+      <pre><code>git clone https://github.com/feichai0017/oxide-infer.git
+cd oxide-infer
 make check
 
 # On the pinned CUDA host
@@ -77,9 +74,9 @@ make cuda-doctor
 make cuda-check
 make h20</code></pre>
       <p>
-        Device records apply only to their declared source, hardware, contract,
-        and measurement. A correctness record does not imply a performance or
-        serving result.
+        A record applies only to its declared source, hardware, contract, and
+        method. Device correctness does not imply performance, engine, or
+        serving results.
       </p>
     </article>
   </div>
