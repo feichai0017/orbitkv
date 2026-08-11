@@ -82,15 +82,25 @@ Dense BF16 GEMM has one current provider and one planned provider:
 | Provider | State | Role |
 | --- | --- | --- |
 | `CublasLt` | Provider-neutral source path implemented; current-source H20 requalification pending | Explicit vendor baseline using `CublasLtHeuristic` |
-| `Loom` | Planned | cuda-oxide SM90 algorithms for measured inference shapes |
+| `Loom` | Planned. First experimental contract frozen | cuda-oxide SM90 algorithms for measured inference shapes |
 
 `GemmPlanner` already exposes one dense GEMM contract and execution path for
 explicit cuBLASLt selection. The Loom provider will join that path. An
 unsupported Loom shape returns a planning error. Enqueue does not switch to
 cuBLASLt.
 
-The first Loom candidate is BF16 small-M GEMM. No Loom GEMM kernel or
-performance result exists in the current source.
+The first frozen Loom candidate is `LoomSm90SimtGemvM1N16K64`. It admits
+`M=1`, BF16 contiguous `D=A*W^T`, `N % 16 = 0`, `K % 64 = 0`, no post-ops,
+and zero workspace on H20 `sm_90a`.
+
+One untimed Qwen2.5-1.5B H20 census recorded 1,184 matching calls across five
+logical shapes. That is 87.574% of calls and 16.708% of FLOPs in the pinned
+single-request workload. The census is workload evidence, not performance
+evidence.
+
+No Loom GEMM kernel or performance result exists in the current source. The
+[experimental contract](development/sm90-simt-gemv-m1.md) defines the layout,
+both baselines, promotion gates, and stop conditions.
 
 ## KV append ownership
 

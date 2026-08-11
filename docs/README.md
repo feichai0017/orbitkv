@@ -29,6 +29,8 @@ evidence.
   sanitizer, Graph, and performance gates.
 - [Dense GEMM shape census](development/gemm-shape-census.md) defines the
   untimed model-call profile used to select Loom GEMM candidates.
+- [Experimental SM90 M=1 GEMV](development/sm90-simt-gemv-m1.md) freezes the
+  first measured Loom GEMM contract and its promotion gates.
 
 ## Current boundary
 
