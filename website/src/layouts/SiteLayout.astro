@@ -26,7 +26,8 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <meta name="viewport" content="width=device-width" />
     <meta name="generator" content={Astro.generator} />
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#070910" />
+    <meta name="theme-color" content="#090b0a" />
+    <link rel="icon" type="image/svg+xml" href={local("/favicon.svg")} />
     <link rel="canonical" href={canonical} />
     <meta property="og:type" content="website" />
     <meta property="og:site_name" content="Oxide Infer" />
@@ -43,7 +44,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <div class="site-shell">
       <header class="site-header">
         <a class="brand" href={local("/")} aria-label="Oxide Infer home">
-          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span class="brand-mark" aria-hidden="true">//</span>
           <span class="brand-copy"><strong>OXIDE</strong><small>INFER</small></span>
         </a>
 
@@ -66,7 +67,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
 
       <footer class="site-footer">
         <div class="footer-brand">
-          <span class="footer-glyph" aria-hidden="true">OX</span>
+          <span class="footer-glyph" aria-hidden="true">//</span>
           <div><strong>Oxide Infer</strong><p>Rust-native GPU operator runtime.</p></div>
         </div>
         <div class="footer-links">
