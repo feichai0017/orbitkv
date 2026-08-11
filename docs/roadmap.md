@@ -68,7 +68,7 @@ A stable public surface needs:
 
 ## R0: Rename and normalize the framework
 
-**State:** active.
+**State:** complete.
 
 The rename changes current identifiers to Oxide Infer. Historical records,
 tags, and commit links keep their original names.
@@ -101,7 +101,7 @@ Exit gate:
 
 ## R1: Requalify current source
 
-**State:** planned immediately after R0.
+**State:** active.
 
 The rename and namespace migration change source identity. Historical device
 records do not qualify the new tree.

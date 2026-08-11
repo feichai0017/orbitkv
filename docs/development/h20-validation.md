@@ -37,7 +37,8 @@ make h20
 ```
 
 The Make targets are the canonical entry points. Evidence records include the
-expanded commands.
+expanded commands. `cuda-test` accepts `CUDA_ARCH` for generic device tests.
+Every H20 correctness and benchmark target fixes `H20_ARCH` to `sm_90a`.
 
 Run one gate during development:
 
@@ -54,8 +55,8 @@ Run one gate during development:
 | `make h20-engine-interop` | `engine_interop_h20` |
 
 `make cuda-test` writes `oxide_infer_cuda.ptx` at the workspace root. Record
-its hash and assemble it for `sm_90` with the same CUDA toolkit used by the
-run.
+its hash and assemble it for the selected `CUDA_ARCH` with the same CUDA
+toolkit used by the run. This generic artifact does not qualify an H20 target.
 
 Before a run, record:
 
@@ -234,19 +235,28 @@ device-qualified status.
 
 ## Compute Sanitizer
 
-Run all four tools against every admitted runner. Use leak checking with
-memcheck.
+Build each admitted runner once, then run all four tools against that exact
+binary. For example:
 
 ```bash
-compute-sanitizer --tool memcheck --leak-check full --error-exitcode 99 \
-  target/release/<runner>
-compute-sanitizer --tool racecheck --error-exitcode 99 \
-  target/release/<runner>
-compute-sanitizer --tool synccheck --error-exitcode 99 \
-  target/release/<runner>
-compute-sanitizer --tool initcheck --error-exitcode 99 \
-  target/release/<runner>
+make h20-build-runner H20_RUNNER=rms_norm_h20 | tee h20-build.log
+runner_sha="$(sed -n 's/^runner_binary=.* sha256=\([0-9a-f]\{64\}\) arch=.*/\1/p' h20-build.log)"
+test "${#runner_sha}" -eq 64
+make h20-sanitize-runner H20_RUNNER=rms_norm_h20 \
+  H20_RUNNER_SHA256="$runner_sha"
 ```
+
+The build target uses `sm_90a` with device line information and prints the
+runner's SHA-256 hash. Pass that exact hash to the sanitizer target. The
+sanitizer target has no build dependency.
+
+It rejects a different binary and invokes `compute-sanitizer` directly for
+memcheck, racecheck, synccheck, and initcheck. It verifies the hash after each
+tool. Memcheck includes full leak checking. Each tool uses error exit code 99.
+
+Do not use `cargo oxide sanitize` for qualification. That shortcut can rebuild
+the runner, so it cannot prove that all four reports cover one recorded
+artifact.
 
 For Graph gates, include capture, replay, completion settlement, and graph
 destruction in the sanitizer process. A clean sanitizer run does not replace
