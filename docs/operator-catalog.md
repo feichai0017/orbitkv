@@ -62,16 +62,16 @@ The migration moves source directly. It adds no compatibility module.
 
 | Operator | Contract and algorithm | Source state | Evidence boundary |
 | --- | --- | --- | --- |
-| RMSNorm | Contiguous F32, FP16, and BF16. Scalar and packed algorithms. | Current source under `rms_norm`; family migration pending | Historical H20 correctness, sanitizer, and one Graph record require renamed-source requalification. |
-| Dense BF16 GEMM, vendor | Contiguous `D=A*W^T`, BF16 storage, F32 accumulation, explicit `CublasLtHeuristic` | Current | Historical cuBLASLt record requires renamed-source requalification. |
-| Dense BF16 GEMM, native | Same `Spec`, explicit `OxideSm90SimtGemvM1N16K64`, zero workspace | Experimental | Historical native correctness and fixed-address Graph evidence exist under the former provider identity. Sanitizer, SASS, matched performance, and engine gates remain open. |
-| Single decode | BF16 NHD D128, direct MHA, MQA, and GQA | Current | Historical H20 correctness and eager records require renamed-source requalification. |
-| Single decode split-K | Explicit partitions and caller-owned F32 workspace | Current | Historical H20 matrix covers MQA and GQA. MHA, current source, Graph, and policy evidence remain open. |
-| Paged batch decode | BF16 NHD or HND D128, page size 16. Direct MHA and eight-warp MQA or GQA. | Current | Current-source NHD and HND status, sanitizer, Graph, and performance records remain open. |
-| Ragged causal prefill | BF16 NHD D128, bottom-right causal mask. Direct, eight-warp, sixteen-warp, and tiled GQA4. | Current | Historical correctness, eager, and one tiled Graph row require renamed-source requalification. |
-| Paged causal prefill | BF16 NHD D128, page size 16. Caller selects direct, eight-warp, or sixteen-warp. | Current | Historical evidence requires renamed-source requalification. |
-| Standard RoPE | BF16 NHD D128, NeoX split-half, explicit I32 positions | Current source under `rope`; family migration pending | Historical correctness, sanitizer, and eager records require renamed-source requalification. |
-| Fused RoPE plus paged append | BF16 NHD D128, page size 16, one through 64 tokens, exclusive target pages | Requalification | Existing 2026-08-06 records predate the page-ownership contract. |
+| RMSNorm | Contiguous F32, FP16, and BF16. Scalar and packed algorithms. | Current source under `rms_norm`; family migration pending | Current R1 H20 correctness, lifecycle, and sanitizer for the permanent runner; no standalone Graph. |
+| Dense BF16 GEMM, vendor | Contiguous `D=A*W^T`, BF16 storage, F32 accumulation, explicit `CublasLtHeuristic` | Current | Current R1 H20 correctness, RMSNorm-to-GEMM Graph, and sanitizer. |
+| Dense BF16 GEMM, native | Same `Spec`, explicit `OxideSm90SimtGemvM1N16K64`, zero workspace | Experimental | Current R1 H20 correctness, five Graph shapes, and sanitizer. SASS, matched performance, and engine gates remain open. |
+| Single decode | BF16 NHD D128, direct MHA, MQA, and GQA | Current | Current R1 H20 correctness, lifecycle, and sanitizer. No Graph or current performance claim. |
+| Single decode split-K | Explicit partitions and caller-owned F32 workspace | Current | Current R1 runner covers declared MQA and GQA shapes plus sanitizer. MHA, Graph, and current performance remain open. |
+| Paged batch decode | BF16 NHD or HND D128, page size 16. Direct MHA and eight-warp MQA or GQA. | Current | Current R1 H20 correctness, rejection Graph, simulated-engine boundary, and sanitizer. Valid-output Graph and performance remain open. |
+| Ragged causal prefill | BF16 NHD D128, bottom-right causal mask. Direct, eight-warp, sixteen-warp, and tiled GQA4. | Current | Current R1 H20 correctness, tiled GQA4 Graph, and sanitizer for declared runner cases. |
+| Paged causal prefill | BF16 NHD D128, page size 16. Caller selects direct, eight-warp, or sixteen-warp. | Current | Current R1 H20 correctness, valid-output and rejection Graph cases, and sanitizer for declared runner cases. |
+| Standard RoPE | BF16 NHD D128, NeoX split-half, explicit I32 positions | Current source under `rope`; family migration pending | Current R1 H20 correctness and sanitizer; no standalone RoPE Graph. |
+| Fused RoPE plus paged append | BF16 NHD D128, page size 16, one through 64 tokens, exclusive target pages | Current | Current R1 H20 correctness, six-token valid-output Graph, rejection Graph, and sanitizer. |
 
 ## Attention plan policy
 
@@ -79,9 +79,9 @@ Plan creation fixes one algorithm.
 
 | Operator | Current selection | Current Graph boundary |
 | --- | --- | --- |
-| Paged decode | MHA selects direct. MQA and GQA select eight-warp token parallelism. | No renamed-source record |
-| Ragged prefill | Average KV length below 64 selects direct. Long MQA selects sixteen warps. Other long cases select eight warps. Long GQA4 can select tiled split-eight. | Historical tiled long-GQA4 record only |
-| Paged prefill | Caller selects direct, eight-warp, or sixteen-warp. Contract checks reject unsupported combinations. | Historical direct GQA4 fixture only |
+| Paged decode | MHA selects direct. MQA and GQA select eight-warp token parallelism. | Current rejection-only invalid-page Graph; no valid-output Graph |
+| Ragged prefill | Average KV length below 64 selects direct. Long MQA selects sixteen warps. Other long cases select eight warps. Long GQA4 can select tiled split-eight. | Current tiled long-GQA4 valid-output Graph |
+| Paged prefill | Caller selects direct, eight-warp, or sixteen-warp. Contract checks reject unsupported combinations. | Current direct GQA4 valid-output Graph and invalid-page rejection Graph |
 
 Ragged selection uses batch-average KV length. It has no request grouping or
 persistent tuning database. Enqueue does not change the chosen algorithm.

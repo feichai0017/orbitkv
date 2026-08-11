@@ -30,17 +30,17 @@ Oxide Infer does not claim complete domain-level parity.
 
 | Domain | Representative upstream surface | Oxide Infer state |
 | --- | --- | --- |
-| Dense decode attention | `single_decode_with_kv_cache`, paged batch decode, XQA | `requalification`: BF16 NHD single-decode and NHD/HND paged-decode providers exist, but their records predate the DeviceRegion launch path |
-| Prefill attention | Single, ragged batch, and paged batch prefill | `requalification`: BF16 NHD D128 providers exist, but their records predate the DeviceRegion launch path |
-| Paged KV append | Standard and MLA paged append, index and position generation | `requalification`: fused standard-RoPE BF16 append now requires exclusive target pages |
+| Dense decode attention | `single_decode_with_kv_cache`, paged batch decode, XQA | `partial device correct`: current R1 covers declared BF16 NHD single-decode and NHD/HND paged-decode runner cases; XQA and broader contracts remain open |
+| Prefill attention | Single, ragged batch, and paged batch prefill | `partial device correct`: current R1 covers declared BF16 NHD D128 ragged and paged runner cases |
+| Paged KV append | Standard and MLA paged append, index and position generation | `partial device correct`: current R1 covers the declared fused standard-RoPE BF16 exclusive-target-page cases; MLA remains open |
 | Attention state and cascade | State merge and cascade wrappers | `planned` at state-merge level |
 | Mixed-batch attention | Batch attention and attention sinks | `unscoped` |
 | MLA attention | Paged MLA decode and prefill | `unscoped` |
 | Sparse, MSA, and POD attention | Sparse, multiple-sequence, and combined prefill/decode wrappers | `unscoped` |
-| Dense GEMM | BF16, FP8, FP4, and tiny GEMM | `requalification`: one contiguous BF16 cuBLASLt plan requires a current-source H20 record |
+| Dense GEMM | BF16, FP8, FP4, and tiny GEMM | `partial device correct`: current R1 covers one contiguous BF16 cuBLASLt contract; FP8, FP4, and broader GEMM remain open |
 | Grouped GEMM | BF16, FP8, and FP4 grouped matrix work | `planned` through vendor providers |
-| Normalization | RMSNorm, add RMSNorm, LayerNorm, and fused QK norm | `requalification`: contiguous RMSNorm F32, FP16, and BF16 providers require current-source H20 records |
-| RoPE | Standard, Llama 3.1, and fused KV variants | `requalification`: standalone BF16 D128 NeoX passed the local H20 gate, but no current-source record is published |
+| Normalization | RMSNorm, add RMSNorm, LayerNorm, and fused QK norm | `partial device correct`: current R1 covers declared contiguous RMSNorm F32, FP16, and BF16 cases |
+| RoPE | Standard, Llama 3.1, and fused KV variants | `partial device correct`: current R1 covers declared standard BF16 D128 NeoX and fused paged-append cases |
 | Sampling and speculation | Sampling, logits processors, and speculative verification | `planned` |
 | MoE | Routing and fused expert execution | `planned` |
 | Quantization | Packbits, FP4, FP8, and KV formats | `planned` |
@@ -68,8 +68,10 @@ All attention rows fix BF16, NHD layout, head dimension 128, full attention
 unless the row says causal, and F32 softmax state. Paged rows fix page size 16.
 No row covers sliding windows, soft caps, custom masks, FP8 KV, or MLA.
 
-Every matrix entry predates the DeviceRegion submission path or the project
-rename. Current-source device and Graph records remain open.
+The phase 2 R1 record supersedes the pre-rename device status only for the
+exact current-source cases emitted by its permanent runners. Historical
+performance rows remain historical, and unlisted algorithms or Graph paths
+remain open.
 
 ## Dispatch limits
 

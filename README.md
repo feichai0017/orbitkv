@@ -98,12 +98,12 @@ prove device correctness or performance.
 
 | Family | Current source | State |
 | --- | --- | --- |
-| Attention | Single decode, paged decode, ragged prefill, paged prefill | Implemented; path-specific requalification |
-| KV cache | Paged append and RoPE plus paged append | Implemented; ownership requalification |
-| GEMM | Contiguous BF16 dense through cuBLASLt | Implemented |
-| GEMV | Native BF16 M=1 SM90a algorithm | Experimental |
-| Normalization | RMSNorm for F32, FP16, and BF16 | Implemented; path-specific requalification |
-| Position | BF16 NeoX RoPE with explicit positions | Implemented; path-specific requalification |
+| Attention | Single decode, paged decode, ragged prefill, paged prefill | Declared H20 runner paths qualified in R1 |
+| KV cache | Paged append and RoPE plus paged append | Exclusive-page H20 runner path qualified in R1 |
+| GEMM | Contiguous BF16 dense through cuBLASLt | H20 correctness, Graph, and sanitizer qualified |
+| GEMV | Native BF16 M=1 SM90a algorithm | Experimental; H20 correctness, Graph, and sanitizer qualified |
+| Normalization | RMSNorm for F32, FP16, and BF16 | Declared H20 runner paths qualified in R1 |
+| Position | BF16 NeoX RoPE with explicit positions | Declared H20 runner path qualified in R1 |
 | Activation | SwiGLU and fused epilogues | Planned |
 | Sampling | Logits transforms, RNG, and token selection | Planned |
 | Advanced attention | MLA and expanded KV layouts | Planned |

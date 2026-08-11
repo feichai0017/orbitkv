@@ -22,7 +22,7 @@ export const operatorGroups = [
   {
     state: "Current source",
     tone: "current",
-    note: "Implemented contracts. Most CUDA paths need current-source H20 requalification.",
+    note: "Implemented contracts. Declared permanent-runner paths passed current-source H20 R1 qualification.",
     operators: [
       { name: "RMSNorm", boundary: "F32, FP16, BF16 · scalar and packed", provider: "Native" },
       { name: "Dense GEMM", boundary: "BF16 D=A×Wᵀ · F32 accumulation", provider: "Vendor" },
@@ -69,15 +69,15 @@ export const providerLanes = [
 ]
 
 export const evidenceHighlights = [
-  { value: "Phase 1", label: "Current H20 source", detail: "GEMM, ragged and paged prefill, RoPE, and fused append", sample: "correctness and named Graph cases" },
-  { value: "Pending", label: "Remaining R1", detail: "five runners, Compute Sanitizer, and performance", sample: "not qualified by phase 1" },
-  { value: "Simulated", label: "Engine interop", detail: "external pointers and event bridge", sample: "not a model run" },
+  { value: "9 / 9", label: "Current H20 runners", detail: "89 passing case lines and 12 named Graph cases", sample: "exact source and binary hashes" },
+  { value: "36 / 36", label: "Compute Sanitizer", detail: "memcheck, racecheck, synccheck, and initcheck", sample: "no filters or suppressions" },
+  { value: "Simulated", label: "Engine interop", detail: "qualified external pointers and event bridge", sample: "still not a model run" },
   { value: "Open", label: "Serving", detail: "TTFT, TPOT, throughput, and memory", sample: "no serving evidence" },
 ]
 
 export const evidenceLevels = [
   { level: "01", name: "Contract", status: "Required", detail: "CPU oracle, edge cases, and typed rejection" },
-  { level: "02", name: "Device", status: "Per source", detail: "GPU correctness, lifecycle, and sanitizer" },
+  { level: "02", name: "Device", status: "H20 qualified", detail: "Current-source correctness, lifecycle, Graph, and sanitizer" },
   { level: "03", name: "Performance", status: "Per shape", detail: "Matched inputs, streams, and raw samples" },
 
   { level: "04", name: "Graph", status: "Per plan", detail: "Capture, replay, addresses, and retention" },

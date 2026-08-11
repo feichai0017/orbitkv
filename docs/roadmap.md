@@ -101,7 +101,12 @@ Exit gate:
 
 ## R1: Requalify current source
 
-**State:** active.
+**State:** complete.
+
+The phase 2 H20 record binds clean source `477b47a`, all nine permanent
+`sm_90a` runners, 89 machine-readable passing case lines, 12 named Graph case
+lines, and 36 of 36 Compute Sanitizer cells. Performance and real-model engine
+claims remain outside R1.
 
 The rename and namespace migration change source identity. Historical device
 records do not qualify the new tree.

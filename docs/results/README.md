@@ -17,14 +17,18 @@ All fused-append H20 records dated 2026-08-06 predate this rule. They remain
 useful for implementation history and old-contract performance, but they do
 not qualify the current source.
 
-The 2026-08-12 phase 1 record below qualifies
-current-source correctness for four declared runners and their named
-fixed-address Graph cases. Compute Sanitizer and matched performance remain open.
+The 2026-08-12 phase 2 record below completes R1 for the exact declared H20
+boundary. It binds all nine permanent runners, 89 machine-readable passing
+case lines, 12 named Graph case lines, and 36 of 36 Compute Sanitizer cells to
+clean source `477b47a` and nine recorded `sm_90a` binary hashes. Performance,
+real-model engine execution, serving, and other GPUs remain open.
 
 The current DeviceRegion work changed submission for RMSNorm, GEMM, decode,
 prefill, and RoPE:
 
 - Device and Graph records dated through 2026-08-07 predate that launch path.
+- The phase 2 record qualifies only the current paths and exact cases emitted
+  by its nine permanent runners; it does not revive broader historical claims.
 - The 2026-08-11 experimental Loom GEMV record is a historical pre-rename row.
   It covers the post-change path only for its declared H20 `sm_90a` contract.
 
@@ -54,7 +58,20 @@ Their raw samples remain historical. Rerun them before citing a current
 provider ranking. The notice above excludes all pre-rename device records dated
 through 2026-08-07 from current-source qualification.
 
-## Current-source R1 phase 1
+## Current-source R1 phase 2
+
+- [H20 phase 2 correctness, fixed-address Graph, and sanitizer qualification](h20-r1-phase2-qualification-477b47a-20260812.json)
+  binds clean source `477b47a`, strict CUDA Clippy, seven release `sm_90a` lab
+  tests, all nine permanent H20 runners, and all four sanitizer tools over each
+  exact runner binary. It records 89 machine-readable passing case lines, nine
+  valid-output Graph cases, three rejection Graph cases, and 36 passing
+  sanitizer cells without filters or suppressions.
+
+This record completes R1 at its declared boundary. It excludes performance,
+native GEMV promotion, real mistral.rs model execution, serving metrics, a
+valid-output paged-decode Graph, and all GPUs other than the recorded H20.
+
+## Historical R1 phase 1 precursor
 
 - [H20 phase 1 correctness and fixed-address Graph](h20-r1-graph-correctness-8927ed7-20260812.json)
   binds clean source `8927ed7`, strict CUDA Clippy, seven lab library tests,
@@ -62,8 +79,9 @@ through 2026-08-07 from current-source qualification.
   ragged prefill, paged prefill, RoPE, and fused paged append. They report 48
   passing case lines and six named Graph cases.
 
-This record is partial R1 evidence. It excludes Compute Sanitizer, performance,
-the other five permanent runners, other GPUs, and engine or serving execution.
+This record remains the immutable partial precursor to phase 2. It excludes
+Compute Sanitizer, performance, the other five permanent runners, other GPUs,
+and engine or serving execution.
 
 ## Runtime, normalization, and GEMM
 

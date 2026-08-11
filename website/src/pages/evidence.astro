@@ -49,19 +49,21 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
         </tbody>
       </table>
 
-      <div class="doc-note warning">
-        <strong>Current-source H20 qualification is partial.</strong>
+      <div class="doc-note">
+        <strong>Current-source H20 R1 qualification is complete.</strong>
         <p>
-          The phase 1 record covers strict CUDA Clippy, seven lab tests, and
-          four of nine permanent H20 runners. It records correctness and named
-          fixed-address Graph cases.
+          The phase 2 record binds clean source <code>477b47a</code>, strict
+          CUDA Clippy, seven release <code>sm_90a</code> lab tests, all nine
+          permanent H20 runners, 89 passing case lines, and 12 named Graph
+          cases.
         </p>
         <p>
-          It does not cover Compute Sanitizer, performance, the other five
-          runners, other GPUs, or engine execution.
+          All 36 Compute Sanitizer cells pass without filters or suppressions.
+          Performance, real-model engine execution, serving, and other GPUs
+          remain outside this record.
         </p>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-r1-graph-correctness-8927ed7-20260812.json`}>
-          Current-source H20 phase 1 record
+        <a href={`${repositoryUrl}/blob/main/docs/results/h20-r1-phase2-qualification-477b47a-20260812.json`}>
+          Current-source H20 phase 2 record
         </a>
       </div>
 
@@ -69,13 +71,13 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
         <strong>Paged prefill has three explicit algorithms.</strong>
         <p>
           The caller selects direct, eight-warp, or sixteen-warp execution.
-          Published token-parallel records predate the DeviceRegion and typed
-          metadata-status paths.
+          The phase 2 record qualifies the current declared correctness,
+          rejection, fixed-address Graph, and sanitizer paths.
         </p>
         <p>
-          Those records do not qualify the merged source. Correctness,
-          sanitizer, and matched performance require a new run before Oxide Infer can
-          publish a current provider ranking.
+          Historical performance records still predate the DeviceRegion and
+          typed metadata-status paths. A matched current-source run is required
+          before Oxide Infer can publish a current provider ranking.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json`}>
           Historical token-parallel correctness record
@@ -89,9 +91,9 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
       <div class="doc-note">
         <strong>Engine interop is a simulated boundary.</strong>
         <p>
-          The H20 gate checks external pointers, the event-bridge path, and
-          zero adapter D2D copies for direct single decode. It does not run a model.
-          HND paged decode and a linear authority handoff exist in source. A
+          The phase 2 H20 gate qualifies external pointers, the event-bridge
+          path, zero adapter D2D copies, recovery, and all four sanitizer tools
+          for direct single and HND paged decode. It does not run a model. A
           mistral.rs provider hit and model-output comparison remain open.
         </p>
       </div>
@@ -105,8 +107,9 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
         </p>
         <p>
           The 2026-08-06 append records measured the earlier single-kernel path
-          without exclusive-page ownership or typed status. They do not support
-          a current performance or Graph claim.
+          without exclusive-page ownership or typed status. Phase 2 qualifies
+          the current path's declared correctness, valid-output and rejection
+          Graph cases, and sanitizer matrix, but not current performance.
         </p>
       </div>
 
