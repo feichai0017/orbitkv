@@ -1,3 +1,4 @@
+use super::{VALID_GRAPH_REPLAYS, valid_graph_commands};
 use crate::comparison::{compare_bf16, compare_f32};
 use crate::fixture::deterministic_bf16;
 use crate::reporting::GateCase;
@@ -15,6 +16,8 @@ use std::sync::Arc;
 
 const OUTPUT_MAX_ABS_LIMIT: f32 = 0.015_625;
 const LSE_MAX_ABS_LIMIT: f32 = 0.01;
+const PAGED_GRAPH_COMMANDS_PER_STAGE: usize = 3;
+const STATUS_POISON: i32 = i32::MIN;
 
 #[derive(Clone, Copy)]
 struct MetadataInput<'a> {
@@ -446,8 +449,25 @@ fn run_graph_case(
     let query_host = deterministic_bf16(spec.query_numel(), 0x4001);
     let key_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x4b45_5900);
     let value_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x5641_4c55_4500);
+    let poison_query_host = vec![bf16::ZERO; spec.query_numel()];
+    let poison_key_host = vec![bf16::ZERO; spec.kv_pages_numel()];
+    let poison_value_host = vec![bf16::ZERO; spec.kv_pages_numel()];
+    let mut poison_expected_output = vec![bf16::NAN; spec.output_numel()];
+    let mut poison_expected_lse = vec![f32::NAN; spec.lse_numel()];
     let mut expected_output = vec![bf16::NAN; spec.output_numel()];
     let mut expected_lse = vec![f32::NAN; spec.lse_numel()];
+    paged_prefill_bf16_reference(
+        &poison_query_host,
+        &poison_key_host,
+        &poison_value_host,
+        &qo_indptr_host,
+        &page_indptr_host,
+        &page_indices_host,
+        &last_page_len_host,
+        &mut poison_expected_output,
+        &mut poison_expected_lse,
+        spec,
+    )?;
     paged_prefill_bf16_reference(
         &query_host,
         &key_host,
@@ -460,7 +480,21 @@ fn run_graph_case(
         &mut expected_lse,
         spec,
     )?;
+    if poison_expected_output
+        .iter()
+        .zip(&expected_output)
+        .all(|(poison, expected)| poison.to_bits() == expected.to_bits())
+        || poison_expected_lse
+            .iter()
+            .zip(&expected_lse)
+            .all(|(poison, expected)| poison.to_bits() == expected.to_bits())
+    {
+        return Err("paged-prefill graph poison does not distinguish every checked output".into());
+    }
 
+    let poison_query = Arc::new(DeviceBuffer::from_host(&stream, &poison_query_host)?);
+    let poison_key_pages = Arc::new(DeviceBuffer::from_host(&stream, &poison_key_host)?);
+    let poison_value_pages = Arc::new(DeviceBuffer::from_host(&stream, &poison_value_host)?);
     let query = Arc::new(DeviceBuffer::from_host(&stream, &query_host)?);
     let key_pages = Arc::new(DeviceBuffer::from_host(&stream, &key_host)?);
     let value_pages = Arc::new(DeviceBuffer::from_host(&stream, &value_host)?);
@@ -468,13 +502,23 @@ fn run_graph_case(
     let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &page_indptr_host)?);
     let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &page_indices_host)?);
     let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &last_page_len_host)?);
-    let metadata_status =
-        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
-    let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
-    let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
+    let initial_status = vec![STATUS_POISON; plan.metadata_status_required_numel()];
+    let poison_observer_status = DeviceBuffer::from_host(&stream, &initial_status)?;
+    let target_poison_status = DeviceBuffer::from_host(&stream, &initial_status)?;
+    let real_status = DeviceBuffer::from_host(&stream, &initial_status)?;
+    let initial_output = vec![bf16::NAN; spec.output_numel()];
+    let initial_lse = vec![f32::NAN; spec.lse_numel()];
+    let poison_observer_output = DeviceBuffer::from_host(&stream, &initial_output)?;
+    let poison_observer_lse = DeviceBuffer::from_host(&stream, &initial_lse)?;
+    let output = DeviceBuffer::from_host(&stream, &initial_output)?;
+    let lse = DeviceBuffer::from_host(&stream, &initial_lse)?;
 
-    let graph_queue = GraphQueue::new(stream.context(), 3)?;
-    let mut bindings = graph_queue.bindings(10)?;
+    let graph_commands = valid_graph_commands(PAGED_GRAPH_COMMANDS_PER_STAGE);
+    let graph_queue = GraphQueue::new(stream.context(), graph_commands)?;
+    let mut bindings = graph_queue.bindings(17)?;
+    let poison_query_handle = bindings.bind_read(Arc::clone(&poison_query))?;
+    let poison_key_handle = bindings.bind_read(Arc::clone(&poison_key_pages))?;
+    let poison_value_handle = bindings.bind_read(Arc::clone(&poison_value_pages))?;
     let query_handle = bindings.bind_read(Arc::clone(&query))?;
     let key_handle = bindings.bind_read(Arc::clone(&key_pages))?;
     let value_handle = bindings.bind_read(Arc::clone(&value_pages))?;
@@ -482,11 +526,45 @@ fn run_graph_case(
     let page_indptr_handle = bindings.bind_read(Arc::clone(&page_indptr))?;
     let page_indices_handle = bindings.bind_read(Arc::clone(&page_indices))?;
     let last_page_len_handle = bindings.bind_read(Arc::clone(&last_page_len))?;
-    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
+    let poison_observer_status_handle = bindings.bind_read_write(poison_observer_status)?;
+    let target_poison_status_handle = bindings.bind_read_write(target_poison_status)?;
+    let real_status_handle = bindings.bind_read_write(real_status)?;
+    let poison_observer_output_handle = bindings.bind_read_write(poison_observer_output)?;
+    let poison_observer_lse_handle = bindings.bind_read_write(poison_observer_lse)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
 
     let captured = graph_queue.capture(bindings, |scope| {
+        plan.enqueue_into(
+            scope,
+            Bf16PagedPrefillArgs::new(
+                poison_query_handle,
+                poison_key_handle,
+                poison_value_handle,
+                qo_handle,
+                page_indptr_handle,
+                page_indices_handle,
+                last_page_len_handle,
+                poison_observer_status_handle,
+                poison_observer_output_handle.write(),
+                poison_observer_lse_handle.write(),
+            ),
+        )?;
+        plan.enqueue_into(
+            scope,
+            Bf16PagedPrefillArgs::new(
+                poison_query_handle,
+                poison_key_handle,
+                poison_value_handle,
+                qo_handle,
+                page_indptr_handle,
+                page_indices_handle,
+                last_page_len_handle,
+                target_poison_status_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            ),
+        )?;
         plan.enqueue_into(
             scope,
             Bf16PagedPrefillArgs::new(
@@ -497,17 +575,20 @@ fn run_graph_case(
                 page_indptr_handle,
                 page_indices_handle,
                 last_page_len_handle,
-                metadata_status_handle,
+                real_status_handle,
                 output_handle.write(),
                 lse_handle.write(),
             ),
         )
     })?;
-    if captured.commands() != 3 {
+    if captured.commands() != graph_commands {
         return Err("paged-prefill graph captured the wrong command count".into());
     }
 
     drop(plan);
+    drop(poison_query);
+    drop(poison_key_pages);
+    drop(poison_value_pages);
     drop(query);
     drop(key_pages);
     drop(value_pages);
@@ -517,7 +598,7 @@ fn run_graph_case(
     drop(last_page_len);
 
     let mut exec = captured.instantiate()?;
-    for expected_launch in 1..=2 {
+    for expected_launch in 1..=VALID_GRAPH_REPLAYS {
         let mut completion = exec.launch()?;
         if completion.launch_index() != expected_launch {
             return Err("paged-prefill graph reported the wrong replay index".into());
@@ -529,43 +610,91 @@ fn run_graph_case(
             drop(completion);
         }
     }
-    if exec.launches() != 2 || exec.commands() != 3 {
+    if exec.launches() != VALID_GRAPH_REPLAYS || exec.commands() != graph_commands {
         return Err("paged-prefill graph accounting changed across replay".into());
     }
 
     let mut bindings = exec.into_bindings()?;
+    let poison_observer_status = bindings.take_read_write(poison_observer_status_handle)?;
+    let target_poison_status = bindings.take_read_write(target_poison_status_handle)?;
+    let real_status = bindings.take_read_write(real_status_handle)?;
+    let poison_observer_output = bindings.take_read_write(poison_observer_output_handle)?;
+    let poison_observer_lse = bindings.take_read_write(poison_observer_lse_handle)?;
     let output = bindings.take_read_write(output_handle)?;
     let lse = bindings.take_read_write(lse_handle)?;
     drop(bindings);
     let actual_output = output.to_host_vec(&stream)?;
     let actual_lse = lse.to_host_vec(&stream)?;
+    for (label, status) in [
+        (
+            "independent poison",
+            poison_observer_status.to_host_vec(&stream)?,
+        ),
+        ("target poison", target_poison_status.to_host_vec(&stream)?),
+        ("real", real_status.to_host_vec(&stream)?),
+    ] {
+        if status.iter().any(|&word| word != 0) {
+            return Err(format!("paged-prefill graph {label} status was not rewritten").into());
+        }
+    }
+    let poison_output_comparison = compare_bf16(
+        &poison_observer_output.to_host_vec(&stream)?,
+        &poison_expected_output,
+        "graph paged prefill poison BF16",
+    )?;
+    let poison_lse_comparison = compare_f32(
+        &poison_observer_lse.to_host_vec(&stream)?,
+        &poison_expected_lse,
+        "graph paged prefill poison F32 LSE",
+    )?;
     let output_comparison =
         compare_bf16(&actual_output, &expected_output, "graph paged prefill BF16")?;
     let lse_comparison = compare_f32(&actual_lse, &expected_lse, "graph paged prefill F32 LSE")?;
-    if output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT {
+    if poison_output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
+        || output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
+    {
         return Err(format!(
             "paged-prefill graph output max abs {:.9e} exceeds {:.9e}",
-            output_comparison.max_abs, OUTPUT_MAX_ABS_LIMIT
+            poison_output_comparison
+                .max_abs
+                .max(output_comparison.max_abs),
+            OUTPUT_MAX_ABS_LIMIT
         )
         .into());
     }
-    if lse_comparison.max_abs > LSE_MAX_ABS_LIMIT {
+    if poison_lse_comparison.max_abs > LSE_MAX_ABS_LIMIT
+        || lse_comparison.max_abs > LSE_MAX_ABS_LIMIT
+    {
         return Err(format!(
             "paged-prefill graph LSE max abs {:.9e} exceeds {:.9e}",
-            lse_comparison.max_abs, LSE_MAX_ABS_LIMIT
+            poison_lse_comparison.max_abs.max(lse_comparison.max_abs),
+            LSE_MAX_ABS_LIMIT
         )
         .into());
     }
 
     println!(
         "{} batch_size=2 nnz_qo=6 query_heads=16 kv_heads=4 page_size=16 \
-         algorithm=direct_one_warp_per_query_row_head commands=3 validator_kernels=1 \
-         attention_kernels=1 status_readbacks=1 replays=2 \
+         algorithm=direct_one_warp_per_query_row_head commands={} commands_per_stage=3 \
+         validator_kernels_per_stage=1 attention_kernels_per_stage=1 \
+         status_readbacks_per_stage=1 replays={} \
+         replay_stages=independent_poison_then_target_poison_then_real \
+         independent_poison_observable=true output_lse_poisoned_each_replay=true \
+         independent_status_packets=true status_packets_rewritten=true \
+         initial_outputs=poisoned \
          fixed_bindings=true cross_stream=false external_owners_dropped_before_replay=true \
          completion_queries=2 completion_waits=1 completion_drops=1 \
+         poison_output_max_abs={:.9e} poison_output_digest={:016x} \
+         poison_lse_max_abs={:.9e} poison_lse_digest={:016x} \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
          lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
         GateCase::new("paged_prefill_h20", "gqa4_graph"),
+        graph_commands,
+        VALID_GRAPH_REPLAYS,
+        poison_output_comparison.max_abs,
+        poison_output_comparison.digest,
+        poison_lse_comparison.max_abs,
+        poison_lse_comparison.digest,
         output_comparison.max_abs,
         output_comparison.bit_mismatches,
         output_comparison.digest,

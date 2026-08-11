@@ -16,7 +16,7 @@ same thing as CI or an H20 validation run.
 | npm | `11.17.x` | `/website/package.json` |
 | CUDA toolkit | `13.1` for the qualified H20 row | H20 evidence records |
 | Clang/libclang | `21` | cuda-oxide host binding requirement |
-| Device target | `sm_90` for general H20 gates and explicit `sm_90a` for target-restricted algorithms | H20 validation contract |
+| Device target | `CUDA_ARCH` for generic CUDA tests; fixed `sm_90a` for every H20 correctness and benchmark target | Makefile and H20 validation contract |
 
 The root Rust toolchain applies to CPU-only workspace commands. Entering
 `crates/oxide-infer-cuda` or `crates/oxide-infer-lab` selects the pinned
@@ -49,11 +49,22 @@ calling shell sets `NODE_ENV=production`:
 ```bash
 mise trust
 mise install
-make install-website
+USE_MISE=1 make install-website
 ```
 
 Review `mise.toml` before trusting it. The committed configuration selects
 Node 24.19.0 and prepends the Clang 21 binaries and libclang directory.
+
+Make uses the current shell by default. It does not invoke an installed mise
+automatically. Set `USE_MISE=1` only after you trust the repository config:
+
+```bash
+USE_MISE=1 make install-website
+USE_MISE=1 make check
+```
+
+This opt-in prevents an untrusted mise config from blocking unrelated Make
+targets. An activated mise shell also works without `USE_MISE=1`.
 
 The website permits only the version-pinned esbuild script and the optional
 macOS fsevents script declared in `package.json`. An unreviewed dependency
@@ -95,14 +106,17 @@ target GPU.
 ```bash
 make check          # CPU-only Rust checks, package verification, website, audit
 make cuda-check     # CUDA-feature host compilation and Clippy
-make cuda-test      # release tests through cuda-oxide
-make h20            # RMSNorm, GEMM/Graph, and attention correctness programs
+make cuda-test      # generic release tests; CUDA_ARCH selects the device target
+make h20            # H20 correctness programs fixed to sm_90a
 ```
 
 `make h20` runs device programs sequentially because they generate the same
 workspace artifact and share one validation GPU. It is a correctness gate, not
 a Compute Sanitizer or performance gate. Follow
 [H20 validation](h20-validation.md) before recording evidence.
+
+`H20_ARCH` is fixed to `sm_90a` and ignores command-line overrides. Use
+`CUDA_ARCH` only for generic `cuda-test` runs.
 
 ## Dependency caching
 

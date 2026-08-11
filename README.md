@@ -161,17 +161,17 @@ cd oxide-infer
 
 mise trust
 mise install
-make install-website
-make check
+USE_MISE=1 make install-website
+USE_MISE=1 make check
 ```
 
 Run CUDA gates inside the pinned Linux environment:
 
 ```bash
-make cuda-doctor
-make cuda-check
-make cuda-test
-make h20
+USE_MISE=1 make cuda-doctor
+USE_MISE=1 make cuda-check
+USE_MISE=1 make cuda-test
+USE_MISE=1 make h20
 ```
 
 The [environment guide](docs/development/environment.md) lists the pinned Rust,

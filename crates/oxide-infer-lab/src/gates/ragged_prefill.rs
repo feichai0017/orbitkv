@@ -1,3 +1,4 @@
+use super::{VALID_GRAPH_REPLAYS, valid_graph_commands};
 use crate::comparison::{compare_bf16, compare_f32};
 use crate::fixture::deterministic_bf16;
 use crate::reporting::GateCase;
@@ -14,6 +15,7 @@ use std::sync::Arc;
 
 const OUTPUT_MAX_ABS_LIMIT: f32 = 0.015_625;
 const LSE_MAX_ABS_LIMIT: f32 = 0.01;
+const TILED_GRAPH_COMMANDS_PER_STAGE: usize = 2;
 
 fn run_case(
     queue: &mut CommandQueue,
@@ -333,8 +335,23 @@ fn run_tiled_graph_case(
     let query_host = deterministic_bf16(spec.query_numel(), 0x4001);
     let key_host = deterministic_bf16(spec.kv_numel(), 0x4001 ^ 0x4b45_5900);
     let value_host = deterministic_bf16(spec.kv_numel(), 0x4001 ^ 0x5641_4c55_4500);
+    let poison_query_host = vec![bf16::ZERO; spec.query_numel()];
+    let poison_key_host = vec![bf16::ZERO; spec.kv_numel()];
+    let poison_value_host = vec![bf16::ZERO; spec.kv_numel()];
+    let mut poison_expected_output = vec![bf16::NAN; spec.output_numel()];
+    let mut poison_expected_lse = vec![f32::NAN; spec.lse_numel()];
     let mut expected_output = vec![bf16::NAN; spec.output_numel()];
     let mut expected_lse = vec![f32::NAN; spec.lse_numel()];
+    ragged_prefill_bf16_reference(
+        &poison_query_host,
+        &poison_key_host,
+        &poison_value_host,
+        &qo_indptr_host,
+        &kv_indptr_host,
+        &mut poison_expected_output,
+        &mut poison_expected_lse,
+        spec,
+    )?;
     ragged_prefill_bf16_reference(
         &query_host,
         &key_host,
@@ -345,28 +362,84 @@ fn run_tiled_graph_case(
         &mut expected_lse,
         spec,
     )?;
+    if poison_expected_output
+        .iter()
+        .zip(&expected_output)
+        .all(|(poison, expected)| poison.to_bits() == expected.to_bits())
+        || poison_expected_lse
+            .iter()
+            .zip(&expected_lse)
+            .all(|(poison, expected)| poison.to_bits() == expected.to_bits())
+    {
+        return Err("ragged graph poison does not distinguish every checked output".into());
+    }
 
+    let poison_query = Arc::new(DeviceBuffer::from_host(&stream, &poison_query_host)?);
+    let poison_key = Arc::new(DeviceBuffer::from_host(&stream, &poison_key_host)?);
+    let poison_value = Arc::new(DeviceBuffer::from_host(&stream, &poison_value_host)?);
     let query = Arc::new(DeviceBuffer::from_host(&stream, &query_host)?);
     let key = Arc::new(DeviceBuffer::from_host(&stream, &key_host)?);
     let value = Arc::new(DeviceBuffer::from_host(&stream, &value_host)?);
     let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &qo_indptr_host)?);
     let kv_indptr = Arc::new(DeviceBuffer::from_host(&stream, &kv_indptr_host)?);
-    let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
-    let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
-    let workspace = DeviceBuffer::<f32>::zeroed(&stream, plan.workspace_required_numel())?;
+    let initial_output = vec![bf16::NAN; spec.output_numel()];
+    let initial_lse = vec![f32::NAN; spec.lse_numel()];
+    let poison_observer_output = DeviceBuffer::from_host(&stream, &initial_output)?;
+    let poison_observer_lse = DeviceBuffer::from_host(&stream, &initial_lse)?;
+    let output = DeviceBuffer::from_host(&stream, &initial_output)?;
+    let lse = DeviceBuffer::from_host(&stream, &initial_lse)?;
+    let poison_observer_workspace =
+        DeviceBuffer::<f32>::zeroed(&stream, plan.workspace_required_numel())?;
+    let target_poison_workspace =
+        DeviceBuffer::<f32>::zeroed(&stream, plan.workspace_required_numel())?;
+    let real_workspace = DeviceBuffer::<f32>::zeroed(&stream, plan.workspace_required_numel())?;
 
-    let graph_queue = GraphQueue::new(stream.context(), 2)?;
-    let mut bindings = graph_queue.bindings(8)?;
+    let graph_commands = valid_graph_commands(TILED_GRAPH_COMMANDS_PER_STAGE);
+    let graph_queue = GraphQueue::new(stream.context(), graph_commands)?;
+    let mut bindings = graph_queue.bindings(15)?;
+    let poison_query_handle = bindings.bind_read(Arc::clone(&poison_query))?;
+    let poison_key_handle = bindings.bind_read(Arc::clone(&poison_key))?;
+    let poison_value_handle = bindings.bind_read(Arc::clone(&poison_value))?;
     let query_handle = bindings.bind_read(Arc::clone(&query))?;
     let key_handle = bindings.bind_read(Arc::clone(&key))?;
     let value_handle = bindings.bind_read(Arc::clone(&value))?;
     let qo_indptr_handle = bindings.bind_read(Arc::clone(&qo_indptr))?;
     let kv_indptr_handle = bindings.bind_read(Arc::clone(&kv_indptr))?;
+    let poison_observer_output_handle = bindings.bind_read_write(poison_observer_output)?;
+    let poison_observer_lse_handle = bindings.bind_read_write(poison_observer_lse)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
-    let workspace_handle = bindings.bind_read_write(workspace)?;
+    let poison_observer_workspace_handle = bindings.bind_read_write(poison_observer_workspace)?;
+    let target_poison_workspace_handle = bindings.bind_read_write(target_poison_workspace)?;
+    let real_workspace_handle = bindings.bind_read_write(real_workspace)?;
 
     let captured = graph_queue.capture(bindings, |scope| {
+        plan.enqueue_into(
+            scope,
+            Bf16RaggedPrefillArgs::new(
+                poison_query_handle,
+                poison_key_handle,
+                poison_value_handle,
+                qo_indptr_handle,
+                kv_indptr_handle,
+                poison_observer_output_handle.write(),
+                poison_observer_lse_handle.write(),
+            )
+            .with_workspace(poison_observer_workspace_handle),
+        )?;
+        plan.enqueue_into(
+            scope,
+            Bf16RaggedPrefillArgs::new(
+                poison_query_handle,
+                poison_key_handle,
+                poison_value_handle,
+                qo_indptr_handle,
+                kv_indptr_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            )
+            .with_workspace(target_poison_workspace_handle),
+        )?;
         plan.enqueue_into(
             scope,
             Bf16RaggedPrefillArgs::new(
@@ -378,15 +451,18 @@ fn run_tiled_graph_case(
                 output_handle.write(),
                 lse_handle.write(),
             )
-            .with_workspace(workspace_handle),
+            .with_workspace(real_workspace_handle),
         )
     })?;
-    if captured.commands() != 2 {
+    if captured.commands() != graph_commands {
         return Err("ragged graph captured the wrong command count".into());
     }
 
     drop(plan);
     drop(provider);
+    drop(poison_query);
+    drop(poison_key);
+    drop(poison_value);
     drop(query);
     drop(key);
     drop(value);
@@ -394,7 +470,7 @@ fn run_tiled_graph_case(
     drop(kv_indptr);
 
     let mut exec = captured.instantiate()?;
-    for expected_launch in 1..=2 {
+    for expected_launch in 1..=VALID_GRAPH_REPLAYS {
         let mut completion = exec.launch()?;
         if completion.launch_index() != expected_launch {
             return Err("ragged graph completion reported the wrong replay index".into());
@@ -406,41 +482,72 @@ fn run_tiled_graph_case(
             drop(completion);
         }
     }
-    if exec.launches() != 2 || exec.commands() != 2 {
+    if exec.launches() != VALID_GRAPH_REPLAYS || exec.commands() != graph_commands {
         return Err("ragged graph accounting changed across replay".into());
     }
 
     let mut bindings = exec.into_bindings()?;
+    let poison_observer_output = bindings.take_read_write(poison_observer_output_handle)?;
+    let poison_observer_lse = bindings.take_read_write(poison_observer_lse_handle)?;
     let output = bindings.take_read_write(output_handle)?;
     let lse = bindings.take_read_write(lse_handle)?;
     drop(bindings);
     let actual_output = output.to_host_vec(&stream)?;
     let actual_lse = lse.to_host_vec(&stream)?;
+    let poison_output_comparison = compare_bf16(
+        &poison_observer_output.to_host_vec(&stream)?,
+        &poison_expected_output,
+        "graph prefill poison BF16",
+    )?;
+    let poison_lse_comparison = compare_f32(
+        &poison_observer_lse.to_host_vec(&stream)?,
+        &poison_expected_lse,
+        "graph prefill poison F32 LSE",
+    )?;
     let output_comparison = compare_bf16(&actual_output, &expected_output, "graph prefill BF16")?;
     let lse_comparison = compare_f32(&actual_lse, &expected_lse, "graph prefill F32 LSE")?;
-    if output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT {
+    if poison_output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
+        || output_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
+    {
         return Err(format!(
             "ragged graph output max abs {:.9e} exceeds {:.9e}",
-            output_comparison.max_abs, OUTPUT_MAX_ABS_LIMIT
+            poison_output_comparison
+                .max_abs
+                .max(output_comparison.max_abs),
+            OUTPUT_MAX_ABS_LIMIT
         )
         .into());
     }
-    if lse_comparison.max_abs > LSE_MAX_ABS_LIMIT {
+    if poison_lse_comparison.max_abs > LSE_MAX_ABS_LIMIT
+        || lse_comparison.max_abs > LSE_MAX_ABS_LIMIT
+    {
         return Err(format!(
             "ragged graph LSE max abs {:.9e} exceeds {:.9e}",
-            lse_comparison.max_abs, LSE_MAX_ABS_LIMIT
+            poison_lse_comparison.max_abs.max(lse_comparison.max_abs),
+            LSE_MAX_ABS_LIMIT
         )
         .into());
     }
 
     println!(
         "{} batch_size=2 nnz_qo=96 nnz_kv=1280 query_heads=16 kv_heads=4 \
-         head_dim=128 algorithm=tiled_gqa4_mma commands=2 replays=2 \
+         head_dim=128 algorithm=tiled_gqa4_mma commands={} commands_per_stage=2 replays={} \
+         replay_stages=independent_poison_then_target_poison_then_real \
+         independent_poison_observable=true output_lse_poisoned_each_replay=true \
+         independent_workspaces=true initial_outputs=poisoned \
          fixed_bindings=true cross_stream=false external_owners_dropped_before_replay=true \
          completion_queries=2 completion_waits=1 completion_drops=1 \
+         poison_output_max_abs={:.9e} poison_output_digest={:016x} \
+         poison_lse_max_abs={:.9e} poison_lse_digest={:016x} \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
          lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
         GateCase::new("ragged_prefill_h20", "gqa4_graph"),
+        graph_commands,
+        VALID_GRAPH_REPLAYS,
+        poison_output_comparison.max_abs,
+        poison_output_comparison.digest,
+        poison_lse_comparison.max_abs,
+        poison_lse_comparison.digest,
         output_comparison.max_abs,
         output_comparison.bit_mismatches,
         output_comparison.digest,
