@@ -15,8 +15,11 @@ count one. The engine or KV pager must make shared tails private before enqueue.
 
 All fused-append H20 records dated 2026-08-06 predate this rule. They remain
 useful for implementation history and old-contract performance, but they do
-not qualify the current source. New correctness, sanitizer, Graph, and matched
-performance records are required.
+not qualify the current source.
+
+The 2026-08-12 phase 1 record below qualifies
+current-source correctness for four declared runners and their named
+fixed-address Graph cases. Compute Sanitizer and matched performance remain open.
 
 The current DeviceRegion work changed submission for RMSNorm, GEMM, decode,
 prefill, and RoPE:
@@ -50,6 +53,17 @@ Existing matched attention and attention-Graph records predate these checks.
 Their raw samples remain historical. Rerun them before citing a current
 provider ranking. The notice above excludes all pre-rename device records dated
 through 2026-08-07 from current-source qualification.
+
+## Current-source R1 phase 1
+
+- [H20 phase 1 correctness and fixed-address Graph](h20-r1-graph-correctness-8927ed7-20260812.json)
+  binds clean source `8927ed7`, strict CUDA Clippy, seven lab library tests,
+  and four of nine permanent H20 runners. The runners cover BF16 cuBLASLt GEMM,
+  ragged prefill, paged prefill, RoPE, and fused paged append. They report 48
+  passing case lines and six named Graph cases.
+
+This record is partial R1 evidence. It excludes Compute Sanitizer, performance,
+the other five permanent runners, other GPUs, and engine or serving execution.
 
 ## Runtime, normalization, and GEMM
 
