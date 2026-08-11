@@ -195,9 +195,9 @@ The current runner covers:
   shared target rejection.
 - one fixed-address six-token Graph case.
 
-One mapped append uses three commands: one validator kernel, one mapped append
-kernel, and one device-to-host status copy. The fixed-address Graph case
-captures this three-command sequence.
+Each mapped-append stage uses three commands: one validator kernel, one mapped
+append kernel, and one device-to-host status copy. The valid-output Graph
+captures three stages, for nine Oxide commands in total.
 
 Each map owns one workspace for the full scope. A second map from the same
 workspace must fail before submission. The map also binds the exact writable
@@ -239,7 +239,8 @@ Build each admitted runner once, then run all four tools against that exact
 binary. For example:
 
 ```bash
-make h20-build-runner H20_RUNNER=rms_norm_h20 | tee h20-build.log
+set -euo pipefail
+make h20-build-runner H20_RUNNER=rms_norm_h20 2>&1 | tee h20-build.log
 runner_sha="$(sed -n 's/^runner_binary=.* sha256=\([0-9a-f]\{64\}\) arch=.*/\1/p' h20-build.log)"
 test "${#runner_sha}" -eq 64
 make h20-sanitize-runner H20_RUNNER=rms_norm_h20 \
