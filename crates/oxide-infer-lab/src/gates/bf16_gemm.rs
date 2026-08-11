@@ -1,3 +1,4 @@
+use super::{VALID_GRAPH_REPLAYS, valid_graph_commands};
 use crate::comparison::{Comparison, compare_bf16};
 use crate::reporting::GateCase;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
@@ -18,6 +19,7 @@ use std::sync::Arc;
 const LARGE_M: usize = 1;
 const LARGE_N: usize = 4096;
 const LARGE_K: usize = 4096;
+const RMS_GEMM_GRAPH_COMMANDS_PER_STAGE: usize = 2;
 
 fn require_bit_exact(case: &str, comparison: Comparison) -> Result<(), Box<dyn Error>> {
     if comparison.bit_mismatches == 0 {
@@ -451,10 +453,25 @@ fn check_rms_norm_gemm_graph(
     let rms_plan = rms_provider.plan_bf16(rms_spec)?;
     drop(rms_provider);
     let input_host = vec![bf16::ONE; rms_spec.numel()];
+    let poison_input_host = vec![bf16::ZERO; rms_spec.numel()];
     let norm_weight_host = vec![bf16::ONE; rms_spec.hidden_size()];
     let (_, gemm_weight_host) = large_fixture(gemm_spec);
+    let mut poison_intermediate_expected = vec![bf16::NAN; rms_spec.numel()];
+    let mut poison_expected = vec![bf16::NAN; gemm_spec.output_numel()];
     let mut intermediate_expected = vec![bf16::ZERO; rms_spec.numel()];
     let mut expected = vec![bf16::ZERO; gemm_spec.output_numel()];
+    rms_norm_bf16_reference(
+        &poison_input_host,
+        &norm_weight_host,
+        &mut poison_intermediate_expected,
+        rms_spec,
+    )?;
+    bf16_dense_gemm_reference(
+        &poison_intermediate_expected,
+        &gemm_weight_host,
+        &mut poison_expected,
+        gemm_spec,
+    )?;
     rms_norm_bf16_reference(
         &input_host,
         &norm_weight_host,
@@ -467,53 +484,110 @@ fn check_rms_norm_gemm_graph(
         &mut expected,
         gemm_spec,
     )?;
+    if poison_expected
+        .iter()
+        .zip(&expected)
+        .all(|(poison, expected)| poison.to_bits() == expected.to_bits())
+    {
+        return Err("RMSNorm to GEMM graph poison does not differ from the real output".into());
+    }
 
     let input = Arc::new(DeviceBuffer::from_host(&stream, &input_host)?);
+    let poison_input = Arc::new(DeviceBuffer::from_host(&stream, &poison_input_host)?);
     let norm_weight = Arc::new(DeviceBuffer::from_host(&stream, &norm_weight_host)?);
-    let intermediate = DeviceBuffer::<bf16>::zeroed(&stream, rms_spec.numel())?;
+    let poison_observer_intermediate = DeviceBuffer::<bf16>::zeroed(&stream, rms_spec.numel())?;
+    let target_poison_intermediate = DeviceBuffer::<bf16>::zeroed(&stream, rms_spec.numel())?;
+    let real_intermediate = DeviceBuffer::<bf16>::zeroed(&stream, rms_spec.numel())?;
     let gemm_weight = Arc::new(DeviceBuffer::from_host(&stream, &gemm_weight_host)?);
-    let output = DeviceBuffer::<bf16>::zeroed(&stream, gemm_spec.output_numel())?;
-    let workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(&gemm_plan))?;
-    let graph_queue = GraphQueue::new(stream.context(), 2)?;
-    let mut bindings = graph_queue.bindings(6)?;
+    let initial_output = vec![bf16::NAN; gemm_spec.output_numel()];
+    let poison_observer_output = DeviceBuffer::from_host(&stream, &initial_output)?;
+    let output = DeviceBuffer::from_host(&stream, &initial_output)?;
+    let poison_observer_workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(&gemm_plan))?;
+    let target_poison_workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(&gemm_plan))?;
+    let real_workspace = DeviceBuffer::<u8>::zeroed(&stream, workspace_len(&gemm_plan))?;
+    let graph_commands = valid_graph_commands(RMS_GEMM_GRAPH_COMMANDS_PER_STAGE);
+    let graph_queue = GraphQueue::new(stream.context(), graph_commands)?;
+    let mut bindings = graph_queue.bindings(12)?;
+    let poison_input_handle = bindings.bind_read(Arc::clone(&poison_input))?;
     let input_handle = bindings.bind_read(Arc::clone(&input))?;
     let norm_weight_handle = bindings.bind_read(Arc::clone(&norm_weight))?;
-    let intermediate_handle = bindings.bind_read_write(intermediate)?;
+    let poison_observer_intermediate_handle =
+        bindings.bind_read_write(poison_observer_intermediate)?;
+    let target_poison_intermediate_handle = bindings.bind_read_write(target_poison_intermediate)?;
+    let real_intermediate_handle = bindings.bind_read_write(real_intermediate)?;
     let gemm_weight_handle = bindings.bind_read(Arc::clone(&gemm_weight))?;
+    let poison_observer_output_handle = bindings.bind_read_write(poison_observer_output)?;
     let output_handle = bindings.bind_read_write(output)?;
-    let workspace_handle = bindings.bind_read_write(workspace)?;
+    let poison_observer_workspace_handle = bindings.bind_read_write(poison_observer_workspace)?;
+    let target_poison_workspace_handle = bindings.bind_read_write(target_poison_workspace)?;
+    let real_workspace_handle = bindings.bind_read_write(real_workspace)?;
 
     let captured = graph_queue.capture(bindings, |scope| -> Result<(), Box<dyn Error>> {
         rms_plan.enqueue_into(
             scope,
             RmsNormArgs::new(
-                input_handle,
+                poison_input_handle,
                 norm_weight_handle,
-                intermediate_handle.write(),
+                poison_observer_intermediate_handle.write(),
             ),
         )?;
         gemm_plan.enqueue_into(
             scope,
             Bf16DenseGemmOperands::new(
-                intermediate_handle.read(),
+                poison_observer_intermediate_handle.read(),
+                gemm_weight_handle,
+                poison_observer_output_handle.write(),
+                poison_observer_workspace_handle.write(),
+            ),
+        )?;
+        rms_plan.enqueue_into(
+            scope,
+            RmsNormArgs::new(
+                poison_input_handle,
+                norm_weight_handle,
+                target_poison_intermediate_handle.write(),
+            ),
+        )?;
+        gemm_plan.enqueue_into(
+            scope,
+            Bf16DenseGemmOperands::new(
+                target_poison_intermediate_handle.read(),
                 gemm_weight_handle,
                 output_handle.write(),
-                workspace_handle.write(),
+                target_poison_workspace_handle.write(),
+            ),
+        )?;
+        rms_plan.enqueue_into(
+            scope,
+            RmsNormArgs::new(
+                input_handle,
+                norm_weight_handle,
+                real_intermediate_handle.write(),
+            ),
+        )?;
+        gemm_plan.enqueue_into(
+            scope,
+            Bf16DenseGemmOperands::new(
+                real_intermediate_handle.read(),
+                gemm_weight_handle,
+                output_handle.write(),
+                real_workspace_handle.write(),
             ),
         )?;
         Ok(())
     })?;
-    if captured.commands() != 2 {
+    if captured.commands() != graph_commands {
         return Err("captured graph covered the wrong command count".into());
     }
     drop(rms_plan);
     drop(gemm_plan);
+    drop(poison_input);
     drop(input);
     drop(norm_weight);
     drop(gemm_weight);
 
     let mut exec = captured.instantiate()?;
-    for expected_launch in 1..=2 {
+    for expected_launch in 1..=VALID_GRAPH_REPLAYS {
         let mut completion = exec.launch()?;
         if completion.launch_index() != expected_launch {
             return Err("graph completion reported the wrong replay index".into());
@@ -525,27 +599,40 @@ fn check_rms_norm_gemm_graph(
             drop(completion);
         }
     }
-    if exec.launches() != 2 || exec.commands() != 2 {
+    if exec.launches() != VALID_GRAPH_REPLAYS || exec.commands() != graph_commands {
         return Err("graph exec accounting changed across replay".into());
     }
     let mut bindings = exec.into_bindings()?;
+    let poison_observer_output = bindings.take_read_write(poison_observer_output_handle)?;
     let output = bindings.take_read_write(output_handle)?;
     drop(bindings);
 
+    let poison_actual = poison_observer_output.to_host_vec(&stream)?;
     let actual = output.to_host_vec(&stream)?;
+    let poison_comparison = compare_bf16(&poison_actual, &poison_expected, "BF16 poison")?;
     let comparison = compare_bf16(&actual, &expected, "BF16")?;
+    require_bit_exact("RMSNorm to GEMM graph poison observer", poison_comparison)?;
     require_bit_exact("RMSNorm to GEMM graph", comparison)?;
     println!(
         "{} rows=1 hidden=4096 \
-         m={} n={} k={} commands=2 replays=2 fixed_bindings=true cross_stream=false \
+         m={} n={} k={} commands={} commands_per_stage=2 replays={} \
+         replay_stages=independent_poison_then_target_poison_then_real \
+         independent_poison_observable=true output_poisoned_each_replay=true \
+         independent_intermediates=true independent_workspaces=true \
+         initial_outputs=poisoned fixed_bindings=true cross_stream=false \
          external_owners_dropped_before_replay=true \
          completion_queries=2 completion_waits=1 completion_drops=1 \
          intra_graph_host_waits=0 inter_replay_host_waits=1 \
+         poison_bit_mismatches={} poison_digest={:016x} \
          bit_mismatches={} max_abs={:.9e} digest={:016x}",
         GateCase::new("bf16_gemm_h20", "rms_norm_gemm_graph"),
         gemm_spec.m(),
         gemm_spec.n(),
         gemm_spec.k(),
+        graph_commands,
+        VALID_GRAPH_REPLAYS,
+        poison_comparison.bit_mismatches,
+        poison_comparison.digest,
         comparison.bit_mismatches,
         comparison.max_abs,
         comparison.digest,

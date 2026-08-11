@@ -1,3 +1,4 @@
+use super::{VALID_GRAPH_REPLAYS, valid_graph_commands};
 use crate::comparison::compare_bf16;
 use crate::fixture::{deterministic_bf16, page_refcounts};
 use crate::reporting::GateCase;
@@ -18,6 +19,8 @@ use std::error::Error;
 use std::sync::Arc;
 
 const OUTPUT_MAX_ABS_LIMIT: f32 = 0.015_625;
+const APPEND_GRAPH_COMMANDS_PER_STAGE: usize = 3;
+const APPEND_WORKSPACE_POISON: i32 = i32::MIN;
 
 fn run_reference_case(
     queue: &mut CommandQueue,
@@ -756,11 +759,32 @@ fn run_paged_append_tokens_graph_case(context: &Arc<CudaContext>) -> Result<(), 
     let query_host = deterministic_bf16(spec.query_numel(), 0x5451_4147);
     let key_host = deterministic_bf16(spec.key_numel(), 0x544b_4147);
     let value_host = deterministic_bf16(spec.value_numel(), 0x5456_4147);
+    let poison_query_host = vec![bf16::ZERO; spec.query_numel()];
+    let poison_key_host = vec![bf16::ZERO; spec.key_numel()];
+    let poison_value_host = vec![bf16::ZERO; spec.value_numel()];
     let key_pages_host = deterministic_bf16(spec.kv_pages_numel(), 0x544b_4343);
     let value_pages_host = deterministic_bf16(spec.kv_pages_numel(), 0x5456_4343);
+    let mut poison_expected_query = vec![bf16::NAN; spec.query_output_numel()];
+    let mut poison_expected_key_pages = key_pages_host.clone();
+    let mut poison_expected_value_pages = value_pages_host.clone();
     let mut expected_query = vec![bf16::NAN; spec.query_output_numel()];
     let mut expected_key_pages = key_pages_host.clone();
     let mut expected_value_pages = value_pages_host.clone();
+    rope_paged_kv_append_tokens_bf16_reference(
+        &poison_query_host,
+        &poison_key_host,
+        &poison_value_host,
+        &batch_indices_host,
+        &positions_host,
+        &page_indptr_host,
+        &page_indices_host,
+        &last_page_len_host,
+        &page_refcounts_host,
+        &mut poison_expected_query,
+        &mut poison_expected_key_pages,
+        &mut poison_expected_value_pages,
+        spec,
+    )?;
     rope_paged_kv_append_tokens_bf16_reference(
         &query_host,
         &key_host,
@@ -776,9 +800,33 @@ fn run_paged_append_tokens_graph_case(context: &Arc<CudaContext>) -> Result<(), 
         &mut expected_value_pages,
         spec,
     )?;
+    for (label, poison, expected) in [
+        ("query", &poison_expected_query[..], &expected_query[..]),
+        (
+            "key pages",
+            &poison_expected_key_pages[..],
+            &expected_key_pages[..],
+        ),
+        (
+            "value pages",
+            &poison_expected_value_pages[..],
+            &expected_value_pages[..],
+        ),
+    ] {
+        if poison
+            .iter()
+            .zip(expected)
+            .all(|(poison, expected)| poison.to_bits() == expected.to_bits())
+        {
+            return Err(format!("explicit append graph {label} poison is not observable").into());
+        }
+    }
 
     let upload_stream = context.new_stream()?;
     let plan = provider.plan_bf16_paged_append_tokens(spec)?;
+    let poison_query = Arc::new(DeviceBuffer::from_host(&upload_stream, &poison_query_host)?);
+    let poison_key = Arc::new(DeviceBuffer::from_host(&upload_stream, &poison_key_host)?);
+    let poison_value = Arc::new(DeviceBuffer::from_host(&upload_stream, &poison_value_host)?);
     let query = Arc::new(DeviceBuffer::from_host(&upload_stream, &query_host)?);
     let key = Arc::new(DeviceBuffer::from_host(&upload_stream, &key_host)?);
     let value = Arc::new(DeviceBuffer::from_host(&upload_stream, &value_host)?);
@@ -797,14 +845,25 @@ fn run_paged_append_tokens_graph_case(context: &Arc<CudaContext>) -> Result<(), 
         &upload_stream,
         &page_refcounts_host,
     )?);
-    let query_output =
-        DeviceBuffer::from_host(&upload_stream, &vec![bf16::NAN; spec.query_output_numel()])?;
+    let initial_query_output = vec![bf16::NAN; spec.query_output_numel()];
+    let poison_observer_query_output =
+        DeviceBuffer::from_host(&upload_stream, &initial_query_output)?;
+    let poison_observer_key_pages = DeviceBuffer::from_host(&upload_stream, &key_pages_host)?;
+    let poison_observer_value_pages = DeviceBuffer::from_host(&upload_stream, &value_pages_host)?;
+    let query_output = DeviceBuffer::from_host(&upload_stream, &initial_query_output)?;
     let key_pages = DeviceBuffer::from_host(&upload_stream, &key_pages_host)?;
     let value_pages = DeviceBuffer::from_host(&upload_stream, &value_pages_host)?;
-    let workspace = DeviceBuffer::<i32>::zeroed(&upload_stream, plan.workspace_required_numel())?;
+    let initial_workspace = vec![APPEND_WORKSPACE_POISON; plan.workspace_required_numel()];
+    let poison_observer_workspace = DeviceBuffer::from_host(&upload_stream, &initial_workspace)?;
+    let target_poison_workspace = DeviceBuffer::from_host(&upload_stream, &initial_workspace)?;
+    let real_workspace = DeviceBuffer::from_host(&upload_stream, &initial_workspace)?;
 
-    let graph_queue = GraphQueue::new(context, 3)?;
-    let mut bindings = graph_queue.bindings(13)?;
+    let graph_commands = valid_graph_commands(APPEND_GRAPH_COMMANDS_PER_STAGE);
+    let graph_queue = GraphQueue::new(context, graph_commands)?;
+    let mut bindings = graph_queue.bindings(21)?;
+    let poison_query_handle = bindings.bind_read(Arc::clone(&poison_query))?;
+    let poison_key_handle = bindings.bind_read(Arc::clone(&poison_key))?;
+    let poison_value_handle = bindings.bind_read(Arc::clone(&poison_value))?;
     let query_handle = bindings.bind_read(Arc::clone(&query))?;
     let key_handle = bindings.bind_read(Arc::clone(&key))?;
     let value_handle = bindings.bind_read(Arc::clone(&value))?;
@@ -814,12 +873,45 @@ fn run_paged_append_tokens_graph_case(context: &Arc<CudaContext>) -> Result<(), 
     let page_indices_handle = bindings.bind_read(Arc::clone(&page_indices))?;
     let last_page_len_handle = bindings.bind_read(Arc::clone(&last_page_len))?;
     let page_refcounts_handle = bindings.bind_read(Arc::clone(&page_refcounts))?;
+    let poison_observer_query_output_handle =
+        bindings.bind_read_write(poison_observer_query_output)?;
+    let poison_observer_key_pages_handle = bindings.bind_read_write(poison_observer_key_pages)?;
+    let poison_observer_value_pages_handle =
+        bindings.bind_read_write(poison_observer_value_pages)?;
     let query_output_handle = bindings.bind_read_write(query_output)?;
     let key_pages_handle = bindings.bind_read_write(key_pages)?;
     let value_pages_handle = bindings.bind_read_write(value_pages)?;
-    let workspace_handle = bindings.bind_read_write(workspace)?;
+    let poison_observer_workspace_handle = bindings.bind_read_write(poison_observer_workspace)?;
+    let target_poison_workspace_handle = bindings.bind_read_write(target_poison_workspace)?;
+    let real_workspace_handle = bindings.bind_read_write(real_workspace)?;
     let captured = graph_queue.capture(bindings, |scope| {
-        let append_map = plan.enqueue_map_into(
+        let poison_observer_map = plan.enqueue_map_into(
+            scope,
+            Bf16PagedKvAppendTokensMapArgs::new(
+                batch_indices_handle,
+                positions_handle,
+                page_indptr_handle,
+                page_indices_handle,
+                last_page_len_handle,
+                page_refcounts_handle,
+                poison_observer_key_pages_handle.write(),
+                poison_observer_value_pages_handle.write(),
+                poison_observer_workspace_handle,
+            ),
+        )?;
+        plan.enqueue_mapped_into(
+            scope,
+            Bf16RopePagedKvAppendMappedArgs::new(
+                poison_query_handle,
+                poison_key_handle,
+                poison_value_handle,
+                poison_observer_map,
+                poison_observer_query_output_handle.write(),
+                poison_observer_key_pages_handle.write(),
+                poison_observer_value_pages_handle.write(),
+            ),
+        )?;
+        let target_poison_map = plan.enqueue_map_into(
             scope,
             Bf16PagedKvAppendTokensMapArgs::new(
                 batch_indices_handle,
@@ -830,7 +922,33 @@ fn run_paged_append_tokens_graph_case(context: &Arc<CudaContext>) -> Result<(), 
                 page_refcounts_handle,
                 key_pages_handle.write(),
                 value_pages_handle.write(),
-                workspace_handle,
+                target_poison_workspace_handle,
+            ),
+        )?;
+        plan.enqueue_mapped_into(
+            scope,
+            Bf16RopePagedKvAppendMappedArgs::new(
+                poison_query_handle,
+                poison_key_handle,
+                poison_value_handle,
+                target_poison_map,
+                query_output_handle.write(),
+                key_pages_handle.write(),
+                value_pages_handle.write(),
+            ),
+        )?;
+        let real_map = plan.enqueue_map_into(
+            scope,
+            Bf16PagedKvAppendTokensMapArgs::new(
+                batch_indices_handle,
+                positions_handle,
+                page_indptr_handle,
+                page_indices_handle,
+                last_page_len_handle,
+                page_refcounts_handle,
+                key_pages_handle.write(),
+                value_pages_handle.write(),
+                real_workspace_handle,
             ),
         )?;
         plan.enqueue_mapped_into(
@@ -839,19 +957,22 @@ fn run_paged_append_tokens_graph_case(context: &Arc<CudaContext>) -> Result<(), 
                 query_handle,
                 key_handle,
                 value_handle,
-                append_map,
+                real_map,
                 query_output_handle.write(),
                 key_pages_handle.write(),
                 value_pages_handle.write(),
             ),
         )
     })?;
-    if captured.commands() != 3 {
+    if captured.commands() != graph_commands {
         return Err("explicit append graph captured the wrong command count".into());
     }
 
     drop(plan);
     drop(provider);
+    drop(poison_query);
+    drop(poison_key);
+    drop(poison_value);
     drop(query);
     drop(key);
     drop(value);
@@ -863,7 +984,7 @@ fn run_paged_append_tokens_graph_case(context: &Arc<CudaContext>) -> Result<(), 
     drop(page_refcounts);
 
     let mut exec = captured.instantiate()?;
-    for expected_launch in 1..=2 {
+    for expected_launch in 1..=VALID_GRAPH_REPLAYS {
         let mut completion = exec.launch()?;
         if completion.launch_index() != expected_launch {
             return Err("explicit append graph completion reported wrong replay index".into());
@@ -875,15 +996,48 @@ fn run_paged_append_tokens_graph_case(context: &Arc<CudaContext>) -> Result<(), 
             drop(completion);
         }
     }
-    if exec.launches() != 2 || exec.commands() != 3 {
+    if exec.launches() != VALID_GRAPH_REPLAYS || exec.commands() != graph_commands {
         return Err("explicit append graph accounting changed across replay".into());
     }
 
     let mut bindings = exec.into_bindings()?;
+    let poison_observer_query_output =
+        bindings.take_read_write(poison_observer_query_output_handle)?;
+    let poison_observer_key_pages = bindings.take_read_write(poison_observer_key_pages_handle)?;
+    let poison_observer_value_pages =
+        bindings.take_read_write(poison_observer_value_pages_handle)?;
     let query_output = bindings.take_read_write(query_output_handle)?;
     let key_pages = bindings.take_read_write(key_pages_handle)?;
     let value_pages = bindings.take_read_write(value_pages_handle)?;
+    let poison_observer_workspace = bindings.take_read_write(poison_observer_workspace_handle)?;
+    let target_poison_workspace = bindings.take_read_write(target_poison_workspace_handle)?;
+    let real_workspace = bindings.take_read_write(real_workspace_handle)?;
     drop(bindings);
+    for (label, workspace) in [
+        ("independent poison", poison_observer_workspace),
+        ("target poison", target_poison_workspace),
+        ("real", real_workspace),
+    ] {
+        let status = workspace.to_host_vec(&upload_stream)?;
+        if status.get(..5) != Some(&[0_i32; 5]) {
+            return Err(format!("explicit append graph {label} status was not successful").into());
+        }
+    }
+    let poison_query_comparison = compare_bf16(
+        &poison_observer_query_output.to_host_vec(&upload_stream)?,
+        &poison_expected_query,
+        "explicit append graph poison query",
+    )?;
+    let poison_key_comparison = compare_bf16(
+        &poison_observer_key_pages.to_host_vec(&upload_stream)?,
+        &poison_expected_key_pages,
+        "explicit append graph poison key pages",
+    )?;
+    let poison_value_comparison = compare_bf16(
+        &poison_observer_value_pages.to_host_vec(&upload_stream)?,
+        &poison_expected_value_pages,
+        "explicit append graph poison value pages",
+    )?;
     let query_comparison = compare_bf16(
         &query_output.to_host_vec(&upload_stream)?,
         &expected_query,
@@ -899,20 +1053,38 @@ fn run_paged_append_tokens_graph_case(context: &Arc<CudaContext>) -> Result<(), 
         &expected_value_pages,
         "explicit append graph value pages",
     )?;
-    if query_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
+    if poison_query_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
+        || poison_key_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
+        || poison_value_comparison.max_abs != 0.0
+        || query_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
         || key_comparison.max_abs > OUTPUT_MAX_ABS_LIMIT
         || value_comparison.max_abs != 0.0
     {
         return Err("explicit append graph exceeded its correctness limits".into());
     }
     println!(
-        "{} tokens=6 batch_size=3 commands=3 replays=2 fixed_bindings=true \
+        "{} tokens=6 batch_size=3 commands={} commands_per_stage=3 replays={} \
+         replay_stages=independent_poison_then_target_poison_then_real \
+         independent_poison_observable=true append_targets_poisoned_each_replay=true \
+         independent_workspaces=true status_packets_rewritten=true initial_outputs=poisoned \
+         fixed_bindings=true \
          cross_stream=false external_owners_dropped_before_replay=true \
          completion_queries=2 completion_waits=1 completion_drops=1 \
+         poison_query_max_abs={:.9e} poison_query_digest={:016x} \
+         poison_key_pages_max_abs={:.9e} poison_key_pages_digest={:016x} \
+         poison_value_pages_max_abs={:.9e} poison_value_pages_digest={:016x} \
          query_max_abs={:.9e} query_bit_mismatches={} query_digest={:016x} \
          key_pages_max_abs={:.9e} key_pages_bit_mismatches={} key_pages_digest={:016x} \
          value_pages_max_abs={:.9e} value_pages_bit_mismatches={} value_pages_digest={:016x}",
         GateCase::new("rope_h20", "paged_append_tokens_graph"),
+        graph_commands,
+        VALID_GRAPH_REPLAYS,
+        poison_query_comparison.max_abs,
+        poison_query_comparison.digest,
+        poison_key_comparison.max_abs,
+        poison_key_comparison.digest,
+        poison_value_comparison.max_abs,
+        poison_value_comparison.digest,
         query_comparison.max_abs,
         query_comparison.bit_mismatches,
         query_comparison.digest,
