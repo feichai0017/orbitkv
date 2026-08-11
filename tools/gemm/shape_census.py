@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 
-SCHEMA = "loom.gemm-shape-census.v1"
+SCHEMA = "oxide.gemm-shape-census.v1"
 CAPTURE_BOUNDARY = "resolved_dense_linear_before_backend_selection"
 COUNT_SEMANTICS = "successful_linear_dispatches"
 PHASES = {"prefill", "decode"}
@@ -56,7 +56,7 @@ SOURCE_FIELDS = (
     "worktree_clean",
     "cargo_lock_sha256",
     "binary_sha256",
-    "loom_schema_commit",
+    "oxide_schema_commit",
 )
 HARDWARE_FIELDS = ("gpu", "compute_capability")
 ENVIRONMENT_FIELDS = (
@@ -256,7 +256,7 @@ def _validate_source(record: dict[str, Any], source: str) -> None:
         record["cargo_lock_sha256"], HEX_64, f"{source}.cargo_lock_sha256"
     )
     _require_hex(record["binary_sha256"], HEX_64, f"{source}.binary_sha256")
-    _require_hex(record["loom_schema_commit"], HEX_40, f"{source}.loom_schema_commit")
+    _require_hex(record["oxide_schema_commit"], HEX_40, f"{source}.oxide_schema_commit")
 
 
 def _validate_hardware(record: dict[str, Any], source: str) -> None:
@@ -650,7 +650,7 @@ def _require_one_contract(records: list[dict[str, Any]]) -> None:
             )
 
 
-def _loom_contract_compatible(entry: dict[str, Any]) -> bool:
+def _oxide_contract_compatible(entry: dict[str, Any]) -> bool:
     return (
         entry["a_dtype"] == "bf16"
         and entry["weight_dtype"] == "bf16"
@@ -732,7 +732,7 @@ def summarize_runs(
                     "transpose_a": entry["transpose_a"],
                     "transpose_weight": entry["transpose_weight"],
                     "post_ops": entry["post_ops"],
-                    "loom_logical_contract_compatible": _loom_contract_compatible(entry),
+                    "oxide_logical_contract_compatible": _oxide_contract_compatible(entry),
                     "host_calls": 0,
                     "flops": 0,
                     "phase_calls": defaultdict(int),
@@ -804,7 +804,7 @@ def summarize_runs(
         if entry["phase"] == "decode"
     )
     return {
-        "schema": "loom.gemm-shape-census-summary.v1",
+        "schema": "oxide.gemm-shape-census-summary.v1",
         "inputs": inputs,
         "run_ids": [record["run_id"] for record in records],
         "contract": contract,

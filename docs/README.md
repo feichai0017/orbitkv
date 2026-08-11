@@ -1,87 +1,87 @@
-# Loom Infer documentation
+# Oxide Infer documentation
 
-Loom Infer is a Rust-native CUDA operator layer for LLM inference engines.
-This documentation separates implemented contracts, planned work, and recorded
-evidence.
+Oxide Infer is a Rust-native CUDA operator layer for LLM inference engines.
+It does not own model graphs, request scheduling, KV allocation policy, or
+serving APIs.
 
-## Read in this order
+The documentation separates three facts:
 
-1. [Architecture](design/loom-infer-architecture.md) defines ownership, plans,
-   bindings, submission, and completion.
-2. [Repository layout](design/repository-layout.md) separates current paths
-   from the target family namespaces.
-3. [Operator catalog](operator-catalog.md) lists every admitted operator
-   combination and its current gate.
-4. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
-   surface without claiming complete parity.
-5. [Roadmap](roadmap.md) orders the remaining correctness, integration, and
-   performance work.
-6. [Mistral.rs integration](integrations/mistralrs.md) defines the
-   paired-repository boundary and POC qualification.
-7. [Evidence](results/README.md) indexes machine-readable device and benchmark
+- **Current** means the source implements the stated contract.
+- **Experimental** means the source implements the contract, but promotion
+  gates remain open.
+- **Planned** means the roadmap admits the work. No public module or provider
+  exists yet.
+
+Source presence does not prove device correctness or performance. Each result
+applies only to its recorded source, contract, artifact, hardware, and command.
+
+## Core documents
+
+1. [Architecture](design/oxide-infer-architecture.md) defines product
+   ownership, provider paths, planning, execution, and hardware boundaries.
+2. [Repository layout](design/repository-layout.md) defines the three crates
+   and the operator family namespaces.
+3. [Operator catalog](operator-catalog.md) lists current, experimental, and
+   planned contracts.
+4. [Roadmap](roadmap.md) orders work and defines admission and exit gates.
+5. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
+   surface without claiming full parity.
+6. [Mistral.rs integration](integrations/mistralrs.md) records the first engine
+   adapter boundary.
+7. [Evidence index](results/README.md) lists immutable device and benchmark
    records.
 
-## Development
+The [rename provenance](design/rename-provenance.md) maps the former project
+name to current identifiers. Historical records and links keep their original
+names.
 
-- [Environment](development/environment.md) pins Rust, Node.js, CUDA, and
-  cuda-oxide.
-- [H20 validation](development/h20-validation.md) defines device correctness,
-  sanitizer, Graph, and performance gates.
+## Development documents
+
+- [Environment](development/environment.md) pins Rust, CUDA, cuda-oxide, and
+  website toolchains.
+- [H20 validation](development/h20-validation.md) defines correctness,
+  sanitizer, Graph, performance, and engine gates.
 - [Dense GEMM shape census](development/gemm-shape-census.md) defines the
-  untimed model-call profile used to select Loom GEMM candidates.
-- [Experimental SM90 M=1 GEMV](development/sm90-simt-gemv-m1.md) freezes the
-  first measured Loom GEMM contract and its promotion gates.
+  untimed workload profile used to select native GEMM candidates.
+- [Experimental SM90a M=1 GEMV](development/sm90-simt-gemv-m1.md) fixes the
+  first native GEMM contract and its promotion gates.
 
-## Current boundary
+## Crates
 
-The product contains three crates:
+| Crate | Responsibility | Published |
+| --- | --- | --- |
+| `oxide-infer` | Backend-independent `Spec` types and CPU references | Yes |
+| `oxide-infer-cuda` | CUDA plans, native and vendor providers, command runtime, and Graph execution | No |
+| `oxide-infer-lab` | Hardware gates, benchmarks, fixtures, and evidence generation | No |
 
-| Crate | Responsibility |
-| --- | --- |
-| `loom-infer` | Backend-independent contracts and CPU references |
-| `loom-infer-cuda` | CUDA providers, command runtime, Graphs, and vendor calls |
-| `loom-infer-validation` | H20 gates, benchmarks, and evidence generation |
-
-The engine retains models, requests, scheduling, KV allocation policy, and
-distributed control. Loom owns the checked operator boundary.
-
-Engine adapters stay in their engine repositories.
-Loom records their pinned source pairs and qualification status without vendoring engine source or raw evidence.
-
-Fused KV append now requires exclusive write pages. Its historical records do
-not qualify the revised ownership contract. New device evidence is required.
+`oxide-infer` has no CUDA dependency. Product crates never depend on
+`oxide-infer-lab`.
 
 ## State sources
 
-Use one source for each kind of fact:
-
-| Source | Question answered |
+| Source | Fact |
 | --- | --- |
-| Rust source and Cargo manifests | What exists in the current checkout? |
-| [Operator catalog](operator-catalog.md) | What source surface is admitted for users? |
-| [Evidence index](results/README.md) and immutable records | What passed on an exact source and environment? |
-| [Integration documents](integrations/mistralrs.md) | What external source pair and adapter boundary passed? |
-| [Roadmap](roadmap.md) | What work is planned, and what ends each milestone? |
-| Design documents | Which boundaries and names guide future source? |
+| Rust source and Cargo manifests | Current implementation |
+| [Operator catalog](operator-catalog.md) | Admitted public and experimental surface |
+| [Evidence index](results/README.md) | Qualified source and hardware pairs |
+| [Integration documents](integrations/mistralrs.md) | External adapter source pairs |
+| [Roadmap](roadmap.md) | Planned work and exit gates |
+| Design documents | Target boundaries and names |
 
-Source presence does not prove device correctness or performance. Old evidence
-does not qualify changed source. Planned work does not count as an admitted
-operator.
-
-When these surfaces disagree, keep result records unchanged. Correct the
-catalog or design projection against the source, then create new evidence for
-the new commit.
+If these sources disagree, keep reviewed result records unchanged. Correct the
+catalog or design projection, then create evidence for the new source.
 
 ## Documentation rules
 
-- State implemented behavior in the present tense.
-- Mark planned work as planned.
-- Name each admitted algorithm and shape combination.
-- Use the public lifecycle terms from `Spec` through `Completion` without
-  synonyms.
-- Keep correctness, performance, Graph, engine, and serving claims separate.
-- Bind each performance claim to source, hardware, contract, method, and raw
-  result.
-- Preserve historical records. Do not project them onto changed source.
+- Use the lifecycle names `Spec`, `Provider`, `Algorithm`, `Plan`, `Operands`,
+  `CommandScope`, and `Completion`.
+- State whether a capability is current, experimental, or planned.
+- Keep correctness, sanitizer, Graph, performance, engine, and serving claims
+  separate.
+- Name each admitted dtype, layout, shape class, algorithm, and hardware
+  target.
+- Preserve historical records. A rename does not transfer qualification to a
+  new source commit.
+- Do not create a target module until its first contract or provider exists.
 
-The root [README](../README.md) provides the short project overview.
+The root [README](../README.md) gives the short project overview.

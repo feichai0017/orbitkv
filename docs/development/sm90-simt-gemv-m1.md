@@ -1,12 +1,12 @@
-# Experimental SM90 M=1 GEMV contract
+# Experimental SM90a M=1 GEMV contract
 
-The first implemented Loom dense-GEMM algorithm is
-`LoomSm90SimtGemvM1N16K64`. It remains experimental. This document fixes its
+The first implemented Oxide dense-GEMM algorithm is
+`OxideSm90SimtGemvM1N16K64`. It remains experimental. This document fixes its
 contract and separates the implemented correctness boundary from the work
 needed for performance qualification.
 
-The source contains an explicit Loom provider and cuda-oxide kernel. It does
-not select Loom by default or fall back to cuBLASLt. Current H20 correctness
+The source contains an explicit Oxide provider and cuda-oxide kernel. It does
+not select Oxide by default or fall back to cuBLASLt. Current H20 correctness
 does not establish a performance or production claim.
 
 ## Census basis
@@ -17,7 +17,7 @@ Qwen2.5-1.5B path at tensor parallel size one.
 | Item | Identity |
 | --- | --- |
 | Producer source | Mistral.rs `b0d0cbffb71d17e22e2a215a82020e2d3d4cd7b1` |
-| Schema source | Loom `8b971b064d4246b2cd5cbc74f9902a51c720aefa` |
+| Historical schema source | Loom `8b971b064d4246b2cd5cbc74f9902a51c720aefa` |
 | Raw record SHA-256 | `bb063790374493eda03a1e04295a4e5ac831d8d17b329a0ac32f977b68f1b3f7` |
 | Summary SHA-256 | `c0630b3388b830d2e993c41a86539a1b258951c4c67b24d6f4b1229080a245f3` |
 | Hardware | NVIDIA H20, compute capability 9.0, `sm_90a` build target |
@@ -49,7 +49,7 @@ The five logical shapes occupy six census buckets. The `lm_head` call has
 separate prefill and decode activation views.
 
 The census records successful host dispatch before backend selection. It
-compiles and executes no Loom or cuda-oxide kernel. It proves no latency,
+compiles and executes no Oxide or cuda-oxide kernel. It proves no latency,
 throughput, code generation, HBM behavior, or Graph behavior.
 
 ## Frozen operator contract
@@ -63,8 +63,8 @@ holds:
 
 | Field | Requirement |
 | --- | --- |
-| Algorithm | `LoomSm90SimtGemvM1N16K64` |
-| Provider | `Loom` |
+| Algorithm | `OxideSm90SimtGemvM1N16K64` |
+| Provider | `Oxide` |
 | Device | NVIDIA H20 with an `sm_90a` artifact |
 | Shape | `M=1`, `N % 16 = 0`, and `K % 64 = 0` |
 | Activation | BF16, row-major contiguous `[1,K]`, not transposed |
@@ -84,15 +84,15 @@ requires a new algorithm identity or an explicit revision to this freeze.
 ## Framework placement
 
 cuda-oxide is the device compiler, not the provider identity. The provider is
-`Loom`, which matches the existing framework vocabulary.
+`Oxide`, which matches the current framework vocabulary.
 
 | Lifecycle role | Placement |
 | --- | --- |
-| `Spec` | Reuse `crates/loom-infer/src/gemm/mod.rs::Bf16DenseGemmSpec` |
-| `Provider` and `Algorithm` selection | `crates/loom-infer-cuda/src/gemm/planner.rs` |
-| Immutable `Plan` facade | `crates/loom-infer-cuda/src/gemm/plan.rs` |
-| Loom provider owner | `crates/loom-infer-cuda/src/gemm/provider/loom/` |
-| SM90 implementation | `crates/loom-infer-cuda/src/gemm/provider/loom/sm90/` |
+| `Spec` | Reuse `crates/oxide-infer/src/gemm/mod.rs::Bf16DenseGemmSpec` |
+| `Provider` and `Algorithm` selection | `crates/oxide-infer-cuda/src/gemm/planner.rs` |
+| Immutable `Plan` facade | `crates/oxide-infer-cuda/src/gemm/plan.rs` |
+| Oxide provider owner | `crates/oxide-infer-cuda/src/gemm/provider/oxide/` |
+| SM90 implementation | `crates/oxide-infer-cuda/src/gemm/provider/oxide/sm90/` |
 | `Operands`, `CommandScope`, and `Completion` | Reuse the current dense-GEMM path |
 
 The source tree keeps the current singular `provider` directory:
@@ -105,7 +105,7 @@ gemm/
 `-- provider/
     |-- mod.rs
     |-- cublaslt.rs
-    `-- loom/
+    `-- oxide/
         |-- mod.rs
         `-- sm90/
             `-- mod.rs
@@ -133,7 +133,7 @@ whether the SIMT candidate advances.
 The candidate remains experimental. Each cuda-oxide build and gate must use
 `sm_90a` explicitly instead of the repository default.
 
-The current implementation has passed these gates on one NVIDIA H20:
+The pre-rename implementation passed these gates on one NVIDIA H20:
 
 - Host admission accepts all five census shapes and rejects unsupported M, N,
   K, buffer length, and alignment. The successful device run also confirms the
@@ -149,6 +149,9 @@ The current implementation has passed these gates on one NVIDIA H20:
   hidden workspace.
 - Standard RoPE passed its permanent H20 runner with both `sm_90` and
   `sm_90a` after the shared device-math compiler contract changed.
+
+Those records remain historical. The renamed Oxide provider must rerun the
+same matrix on its exact source and artifact.
 
 The following gates still block promotion:
 
@@ -170,7 +173,7 @@ The following gates still block promotion:
 Performance qualification uses both existing baselines:
 
 - Mistral.rs custom CUDA GEMV on the same engine tensor contract.
-- Loom `CublasLt` with `CublasLtHeuristic` on the same tensor bits.
+- Oxide Infer `CublasLt` with `CublasLtHeuristic` on the same tensor bits.
 
 Each shape needs raw H20 samples against each baseline in both provider orders.
 The ranking is invalid when either provider's order medians differ by more
@@ -185,7 +188,7 @@ provider-private device work required by the declared operator boundary.
 The paired Mistral engine gate holds model, requests, scheduler, and output
 checks constant. Define the noise method before execution, then require lower
 TPOT and higher throughput beyond that bound. Record TTFT, peak memory,
-provider hits, and non-Loom dense-linear routes.
+provider hits, and non-Oxide dense-linear routes.
 
 ## Stop conditions
 

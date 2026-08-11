@@ -1,35 +1,41 @@
 <div align="center">
-  <h1>Loom Infer</h1>
-  <p><strong>Rust-native CUDA operators for LLM inference.</strong></p>
-  <p>Checked execution, cuda-oxide kernels, vendor GEMM, and bounded evidence.</p>
+  <p><code>OXIDE // INFER</code></p>
+  <h1>Rust-native GPU operators for LLM inference</h1>
   <p>
-    <a href="https://github.com/feichai0017/loom-infer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/feichai0017/loom-infer/actions/workflows/ci.yml/badge.svg"></a>
-    <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-d6ff63"></a>
-    <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-ff9a68">
-    <img alt="CUDA SM90" src="https://img.shields.io/badge/CUDA-SM90-82adff">
+    Checked asynchronous execution, native cuda-oxide kernels, and explicit vendor providers.
+  </p>
+  <p>
+    <a href="https://github.com/feichai0017/oxide-infer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/feichai0017/oxide-infer/actions/workflows/ci.yml/badge.svg"></a>
+    <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-6fffe9"></a>
+    <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-ff6b9d">
+    <img alt="CUDA SM90a" src="https://img.shields.io/badge/CUDA-SM90a-8b7cff">
+    <img alt="Project status alpha" src="https://img.shields.io/badge/status-alpha-141827">
   </p>
   <p>
     <a href="docs/README.md">Docs</a> ·
+    <a href="docs/design/oxide-infer-architecture.md">Architecture</a> ·
     <a href="docs/operator-catalog.md">Operators</a> ·
-    <a href="docs/integrations/mistralrs.md">Mistral.rs POC</a> ·
-    <a href="docs/flashinfer-parity.md">FlashInfer parity</a> ·
     <a href="docs/results/README.md">Evidence</a> ·
     <a href="docs/roadmap.md">Roadmap</a>
   </p>
 </div>
 
-Loom Infer is a FlashInfer-class operator layer for Rust inference engines.
-The public contracts, plans, resource bindings, and Loom-owned kernels use
-Rust. [cuda-oxide](https://github.com/NVlabs/cuda-oxide) compiles the device
-code for NVIDIA GPUs. Qualified vendor libraries provide matrix operations.
+Oxide Infer is a GPU operator runtime for Rust inference engines. It defines
+operator contracts, chooses an explicit provider and algorithm, freezes an
+immutable plan, checks runtime resources, and retains them until GPU work
+settles.
 
-Loom Infer does not implement a model server. Engines retain model execution,
-request scheduling, batching, KV allocation policy, and distributed control.
+[cuda-oxide](https://github.com/NVlabs/cuda-oxide) compiles native Rust device
+code. Vendor providers such as cuBLASLt enter through the same checked command
+runtime without passing through the native-kernel toolchain.
 
-## Execution model
+Oxide Infer is an operator layer. Consumer engines retain model graphs,
+continuous batching, request scheduling, KV-cache policy, distributed control,
+tokenizers, and serving APIs.
 
-The target operator framework uses one lifecycle. The dense GEMM path already
-uses these public roles. The roadmap tracks migration of the remaining APIs.
+## One execution model
+
+Every operator follows one lifecycle:
 
 ```text
 Spec
@@ -41,94 +47,117 @@ Spec
   → Completion
 ```
 
-A plan fixes the provider, algorithm, workspace, launch configuration, and
-Graph policy before submission. Unsupported contracts return an error. Loom
-does not select a silent fallback.
+Planning fixes the provider, algorithm, workspace contract, launch
+configuration, artifact, and CUDA Graph policy. Enqueue does not tune, switch
+providers, or select a silent fallback.
 
-## Current operator surface
+## Architecture
 
-| Family | Admitted boundary | Current state |
+```mermaid
+flowchart TB
+  Engines["Consumer engines<br/>Mistral.rs POC · vLLM planned · custom Rust"]
+  Adapter["Engine adapter"]
+
+  subgraph Core["oxide-infer · contracts"]
+    Families["attention · gemm · kv_cache<br/>normalization · position · activation<br/>sampling · speculation · moe"]
+    Spec["Spec · errors · capabilities · CPU reference"]
+  end
+
+  subgraph Cuda["oxide-infer-cuda · execution"]
+    Planning["Provider → Algorithm → immutable Plan"]
+    Runtime["Operands → CommandScope → Completion"]
+    Native["Oxide native provider"]
+    Vendor["Vendor providers"]
+  end
+
+  Oxide["cuda-oxide<br/>Rust → PTX/cubin"]
+  Libraries["cuBLASLt · future vendor libraries"]
+  Driver["CUDA Driver · NVIDIA GPU"]
+  Lab["oxide-infer-lab<br/>correctness · Graph · sanitizer · performance · engine gates"]
+
+  Engines --> Adapter --> Families --> Spec --> Planning --> Runtime
+  Runtime --> Native --> Oxide --> Driver
+  Runtime --> Vendor --> Libraries --> Driver
+  Lab -. qualifies .-> Core
+  Lab -. qualifies .-> Cuda
+```
+
+The native provider owns architecture-specific Rust kernels. `sm90a`,
+`sm100a`, and later modules combine the CUDA primitives that each algorithm
+needs. TMA is a data-movement primitive. WGMMA and tcgen05 are compute
+instruction families. They are not runtime providers by themselves.
+
+The [architecture document](docs/design/oxide-infer-architecture.md) defines
+ownership, planning, workspace, stream, Graph, artifact, and engine-adapter
+boundaries.
+
+## Operator surface
+
+The table separates source presence from qualification. A source path does not
+prove device correctness or performance.
+
+| Family | Current source | State |
 | --- | --- | --- |
-| RMSNorm | F32, FP16, and BF16 scalar and packed paths | Requalification |
-| GEMM | Fixed contiguous BF16 `D = A × Wᵀ` | Requalification |
-| Single decode | BF16 NHD D128 direct and split-K | Requalification |
-| Paged decode | BF16 NHD or HND D128, page size 16 | Requalification |
-| Ragged prefill | BF16 bottom-right causal MHA, MQA, and GQA | Requalification |
-| Paged prefill | BF16 NHD D128, page size 16 | Requalification |
-| RoPE | BF16 D128 NeoX with explicit I32 positions | Requalification |
-| Fused KV append | RoPE plus explicit paged append with exclusive write pages | Requalification |
-| CUDA Graph | Fixed-address capture for named paths | Path-specific |
+| Attention | Single decode, paged decode, ragged prefill, paged prefill | Implemented; path-specific requalification |
+| KV cache | Paged append and RoPE plus paged append | Implemented; ownership requalification |
+| GEMM | Contiguous BF16 dense through cuBLASLt | Implemented |
+| GEMV | Native BF16 M=1 SM90a algorithm | Experimental |
+| Normalization | RMSNorm for F32, FP16, and BF16 | Implemented; path-specific requalification |
+| Position | BF16 NeoX RoPE with explicit positions | Implemented; path-specific requalification |
+| Activation | SwiGLU and fused epilogues | Planned |
+| Sampling | Logits transforms, RNG, and token selection | Planned |
+| Advanced attention | MLA and expanded KV layouts | Planned |
+| Matrix operations | FP8, grouped GEMM, and MoE shapes | Planned |
 
-The surface stays narrow until each combination passes its declared gates.
-The [operator catalog](docs/operator-catalog.md) lists exact combinations. The
-[FlashInfer parity matrix](docs/flashinfer-parity.md) records open domains.
+The [operator catalog](docs/operator-catalog.md) records the exact dtype,
+shape, layout, provider, algorithm, and evidence state for every admitted path.
 
-## Evidence
+## Providers
 
-Loom keeps host correctness, H20 correctness, sanitizer, performance, Graph,
-engine, and serving evidence separate.
+Oxide Infer exposes provider selection before execution.
 
-The current comparison tools group exact contracts and validate provider package versions.
-Loom H20 gates use Rust CPU references, while FlashInfer scripts use separate PyTorch F32 references.
-A new ranking must first prove that both references describe the same fixture and contract.
+```text
+Oxide
+  native Rust kernels
+  → cuda-oxide
+  → PTX or cubin
+  → CUDA Driver
 
-Existing fused-append records also predate the exclusive-page ownership
-contract.
+CublasLt
+  checked vendor plan
+  → cuBLASLt
+  → CUDA Driver
+```
 
-The DeviceRegion refactor changed every CUDA submission path. All published
-device, Graph, and performance records predate the current source and require
-replacement.
+The command runtime gives both paths the same resource and failure model:
 
-Paged decode, paged prefill, and fused append now validate device metadata on the CUDA stream.
-Semantic rejection returns a typed completion error without poisoning the queue or fixed-address Graph.
-These are source capabilities.
-No immutable current-source record exists yet.
-
-Paged prefill requires the caller to select direct, eight-warp, or sixteen-warp
-execution. It has no hidden capacity-based dispatch.
-
-The external-stream bridge accepts leased `DeviceRegion` values and submits single or paged decode through CUDA events.
-After Loom enqueues the post-event wait, it returns the engine's stream-ordered authority without a host wait.
-An owned completion keeps allocation leases and status storage private until settlement.
-The H20 gate covers two in-flight commands, HND GQA6 paged decode, typed metadata rejection, unchanged pointers, and no adapter device-to-device copy in a simulated engine.
-The simulated gate remains separate from engine evidence.
-
-An experimental paired-repository POC routes Mistral.rs decode attention through Loom.
-The historical H20 model and recovery records ran Mistral.rs sources `9f6acf2a`
-and `805dc8f1` against Loom `d27b6e5`.
-They record provider hits, no adapter-issued device-to-device copy, matching selected token strings, and typed recovery after metadata rejection.
-The raw records remain in the Mistral.rs fork.
-
-Mistral.rs source `84602212` moves the runtime and completion FIFO into each model pipeline.
-Its H20 record covers 196 completed Qwen paged-decode calls, typed rejection and same-runtime reuse, and concurrent drain serialization.
-It does not qualify production safety or performance.
-See the [Mistral.rs integration boundary](docs/integrations/mistralrs.md).
-
-Performance claims are contract-specific. Loom does not claim that every
-operator or shape is faster than FlashInfer.
-
-The [evidence index](docs/results/README.md) identifies the records that still
-qualify current source and the records that require replacement. No published
-record proves model or serving speedup.
+- caller-selected CUDA context and stream
+- typed read and write regions
+- checked span, alignment, alias, and capacity rules
+- explicit workspace requirements
+- completion-owned resource leases
+- typed device-status failures
+- fixed-address CUDA Graph capture where admitted
 
 ## Workspace
 
 | Crate | Responsibility |
 | --- | --- |
-| `loom-infer` | Backend-independent contracts and CPU references |
-| `loom-infer-cuda` | CUDA providers, command runtime, Graphs, and vendor calls |
-| `loom-infer-validation` | H20 gates, matched benchmarks, and evidence generation |
+| `oxide-infer` | Backend-independent contracts, errors, capabilities, and CPU references |
+| `oxide-infer-cuda` | Planning, CUDA command runtime, native kernels, Graphs, and vendor providers |
+| `oxide-infer-lab` | Non-published H20 gates, matched benchmarks, fixtures, and evidence generation |
 
-Product code has no Python API, CUDA C++, or Triton implementation. Python in
-`tools/flashinfer` runs the pinned comparison provider and evidence tooling.
+The workspace does not split GEMM, kernels, or runtime into additional crates.
+They remain modules until they need a separate dependency, release, ownership,
+or safety boundary.
 
-## Validate a checkout
+## Build and validate
 
-Install `mise`, then review `mise.toml` before you trust it.
+Install `mise`, then review `mise.toml` before trusting it.
 
 ```bash
-git clone https://github.com/feichai0017/loom-infer.git
-cd loom-infer
+git clone https://github.com/feichai0017/oxide-infer.git
+cd oxide-infer
 
 mise trust
 mise install
@@ -136,7 +165,7 @@ make install-website
 make check
 ```
 
-Run device gates inside the pinned CUDA environment:
+Run CUDA gates inside the pinned Linux environment:
 
 ```bash
 make cuda-doctor
@@ -147,22 +176,58 @@ make h20
 
 The [environment guide](docs/development/environment.md) lists the pinned Rust,
 Node.js, CUDA, and cuda-oxide versions. The [H20 guide](docs/development/h20-validation.md)
-defines device qualification.
+defines correctness, sanitizer, Graph, and performance gates.
 
-## Project status
+## Evidence before claims
 
-Loom Infer is alpha software.
-The merged source adds sixteen-warp long-MQA and eight-warp long-GQA4 paged-prefill providers.
-Callers select these algorithms explicitly.
-Their published H20 records cover source before the DeviceRegion and typed-status changes.
+Oxide Infer keeps these evidence levels separate:
 
-Current source has HND paged-decode kernels and a stream-ordered authority handoff.
-The paired Mistral.rs POC proves one narrow real-model path at pinned commits.
-The model-owned runtime record covers one H20, one model, and one ordinary stream.
-Loom-owned current-source operator requalification records remain unpublished.
+```text
+host reference
+  → CUDA correctness
+  → lifetime and negative gates
+  → CUDA Graph
+  → sanitizer
+  → matched operator benchmark
+  → engine integration
+  → serving workload
+```
 
-Read the [architecture](docs/design/loom-infer-architecture.md) and
-[contribution guide](CONTRIBUTING.md) before adding a provider.
+A lower level does not imply a higher one. Correct output does not prove a
+speedup. A Graph replay does not prove serving throughput. An adapter hit does
+not prove end-to-end latency.
+
+Historical Loom Infer records remain immutable. They retain their original
+provider names, source hashes, and commands.
+
+New Oxide Infer records qualify only the source revision named by each record. See the
+[evidence index](docs/results/README.md).
+
+## Roadmap
+
+The roadmap advances through measured vertical slices:
+
+1. Complete the Oxide Infer namespace and framework migration.
+2. Requalify current operators on exact H20 source and artifacts.
+3. Close the Mistral.rs adapter and define a narrow vLLM C ABI boundary.
+4. Compare native M=1 GEMV against Mistral.rs GEMV and cuBLASLt.
+5. Expand attention, KV-cache operations, and MLA from engine traces.
+6. Add activation, sampling, quantization, grouped GEMM, and MoE paths.
+7. Add Blackwell modules only with hardware-backed contracts and evidence.
+8. Qualify collectives and distributed integration after single-GPU ownership
+   is stable.
+
+Each milestone has admission, evidence, and stop conditions in the
+[full roadmap](docs/roadmap.md).
+
+## Contributing
+
+Start with a real engine call site and one measurable contract. Keep one public
+execution path per operator. Do not add compatibility facades, hidden fallback,
+or a new crate without a concrete boundary.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before adding a provider or changing
+runtime ownership.
 
 ## License
 

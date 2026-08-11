@@ -1,8 +1,7 @@
 # H20 validation
 
-NVIDIA H20 is Loom Infer's first device target. Product providers live in
-`crates/loom-infer-cuda`. Hardware gates live in
-`crates/loom-infer-validation`.
+NVIDIA H20 is Oxide Infer's first device target. Product providers live in
+`crates/oxide-infer-cuda`. Hardware gates live in `crates/oxide-infer-lab`.
 
 ## Evidence boundaries
 
@@ -27,7 +26,7 @@ Use one checkout for source, build, and execution.
 
 ```bash
 ssh <h20-host>
-cd <loom-infer-checkout>
+cd <oxide-infer-checkout>
 git status --short
 git rev-parse HEAD
 
@@ -46,6 +45,7 @@ Run one gate during development:
 | --- | --- |
 | `make h20-rms-norm` | `rms_norm_h20` |
 | `make h20-gemm` | `bf16_gemm_h20` |
+| `make h20-oxide-gemm` | `oxide_sm90_simt_gemv_h20` |
 | `make h20-attention` | `single_decode_h20` |
 | `make h20-paged-attention` | `paged_batch_decode_h20` |
 | `make h20-ragged-prefill` | `ragged_prefill_h20` |
@@ -53,7 +53,7 @@ Run one gate during development:
 | `make h20-rope` | `rope_h20` |
 | `make h20-engine-interop` | `engine_interop_h20` |
 
-`make cuda-test` writes `loom_infer_cuda.ptx` at the workspace root. Record
+`make cuda-test` writes `oxide_infer_cuda.ptx` at the workspace root. Record
 its hash and assemble it for `sm_90` with the same CUDA toolkit used by the
 run.
 
@@ -278,7 +278,7 @@ A current Graph qualification must:
 6. Record capture count, command count, replay count, and binding policy.
 7. Run all four sanitizer tools.
 
-Captured command counts come from Loom's command plan. Benchmark
+Captured command counts come from the Oxide command plan. Benchmark
 `graph_nodes` fields are handwritten metadata, not CUDA driver enumeration.
 Do not use them as verified node counts.
 
@@ -294,8 +294,8 @@ It keeps two completions in flight and verifies backpressure and retry.
 It also settles one completion on another host thread and checks a typed paged-metadata rejection with queue reuse.
 It executes the pre/post event bridge but is not a negative-control proof of post-wait causality.
 
-The handoff returns stream-ordered engine authority before host completion and keeps the Loom bindings private.
-The gate enqueues engine readback, settles Loom, and drops the engine storage guards.
+The handoff returns stream-ordered engine authority before host completion and keeps the Oxide bindings private.
+The gate enqueues engine readback, settles Oxide work, and drops the engine storage guards.
 It then waits on the readback's own source lease.
 
 The runner reports `boundary=simulated_engine`.
@@ -342,35 +342,35 @@ references one common oracle until a gate compares their fixture digests.
 Run each provider in a separate process. A paged-decode example is:
 
 ```bash
-LOOM_BENCH_RUN_LABEL=loom_first \
-  make bench-paged-loom > loom-first.jsonl
-LOOM_BENCH_RUN_LABEL=flashinfer_second \
-  LOOM_BENCH_OPERATORS=paged_batch_decode \
+OXIDE_BENCH_RUN_LABEL=oxide_first \
+  make bench-paged-oxide > oxide-first.jsonl
+OXIDE_BENCH_RUN_LABEL=flashinfer_second \
+  OXIDE_BENCH_OPERATORS=paged_batch_decode \
   python3 tools/flashinfer/matched_bench.py > flashinfer-second.jsonl
 
-LOOM_BENCH_RUN_LABEL=flashinfer_first \
-  LOOM_BENCH_OPERATORS=paged_batch_decode \
+OXIDE_BENCH_RUN_LABEL=flashinfer_first \
+  OXIDE_BENCH_OPERATORS=paged_batch_decode \
   python3 tools/flashinfer/matched_bench.py > flashinfer-first.jsonl
-LOOM_BENCH_RUN_LABEL=loom_second \
-  make bench-paged-loom > loom-second.jsonl
+OXIDE_BENCH_RUN_LABEL=oxide_second \
+  make bench-paged-oxide > oxide-second.jsonl
 
 python3 tools/flashinfer/summarize.py \
-  loom-first.jsonl flashinfer-second.jsonl \
-  flashinfer-first.jsonl loom-second.jsonl > summary.json
+  oxide-first.jsonl flashinfer-second.jsonl \
+  flashinfer-first.jsonl oxide-second.jsonl > summary.json
 ```
 
-Use these Loom targets for the other admitted measurements:
+Use these Oxide targets for the other admitted measurements:
 
-| Measurement | Loom target | FlashInfer script |
+| Measurement | Oxide target | FlashInfer script |
 | --- | --- | --- |
-| All eager cases | `make bench-loom` | `tools/flashinfer/matched_bench.py` |
-| Ragged prefill eager | `make bench-ragged-loom` | `tools/flashinfer/matched_bench.py` |
-| Paged prefill eager | `make bench-paged-prefill-loom` | `tools/flashinfer/matched_bench.py` |
-| Ragged prefill Graph | `make bench-ragged-graph-loom` | `tools/flashinfer/ragged_graph_bench.py` |
-| Paged prefill Graph | `make bench-paged-prefill-graph-loom` | `tools/flashinfer/paged_prefill_graph_bench.py` |
-| Standard RoPE eager | `make bench-rope-loom` | `tools/flashinfer/matched_bench.py` |
-| Fused append eager | `make bench-rope-append-tokens-loom` | `tools/flashinfer/matched_bench.py` |
-| Fused append Graph | `make bench-rope-append-tokens-graph-loom` | `tools/flashinfer/rope_append_graph_bench.py` |
+| All eager cases | `make bench-oxide` | `tools/flashinfer/matched_bench.py` |
+| Ragged prefill eager | `make bench-ragged-oxide` | `tools/flashinfer/matched_bench.py` |
+| Paged prefill eager | `make bench-paged-prefill-oxide` | `tools/flashinfer/matched_bench.py` |
+| Ragged prefill Graph | `make bench-ragged-graph-oxide` | `tools/flashinfer/ragged_graph_bench.py` |
+| Paged prefill Graph | `make bench-paged-prefill-graph-oxide` | `tools/flashinfer/paged_prefill_graph_bench.py` |
+| Standard RoPE eager | `make bench-rope-oxide` | `tools/flashinfer/matched_bench.py` |
+| Fused append eager | `make bench-rope-append-tokens-oxide` | `tools/flashinfer/matched_bench.py` |
+| Fused append Graph | `make bench-rope-append-tokens-graph-oxide` | `tools/flashinfer/rope_append_graph_bench.py` |
 
 Keep eager and Graph samples in separate summaries. Keep different algorithms
 and run labels separate. Exclude a ranking when either provider's order median

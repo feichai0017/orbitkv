@@ -1,5 +1,5 @@
 ---
-import { navigation, repositoryUrl } from "../data/site";
+import { homeUrl, navigation, repositoryUrl } from "../data/site";
 import "../styles/global.css";
 
 interface Props {
@@ -9,8 +9,8 @@ interface Props {
 }
 
 const {
-  title = "Loom Infer | Rust-native inference operators",
-  description = "A Rust-native, FlashInfer-class CUDA operator layer built with cuda-oxide.",
+  title = "Oxide Infer | Rust-native GPU operators",
+  description = "A Rust-native GPU operator runtime for LLM inference, with native CUDA and vendor providers under one checked execution contract.",
   active = "",
 } = Astro.props;
 
@@ -26,10 +26,10 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <meta name="viewport" content="width=device-width" />
     <meta name="generator" content={Astro.generator} />
     <meta name="description" content={description} />
-    <meta name="theme-color" content="#090b0a" />
+    <meta name="theme-color" content="#070910" />
     <link rel="canonical" href={canonical} />
     <meta property="og:type" content="website" />
-    <meta property="og:site_name" content="Loom Infer" />
+    <meta property="og:site_name" content="Oxide Infer" />
     <meta property="og:title" content={title} />
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
@@ -42,25 +42,21 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <a class="skip-link" href="#content">Skip to content</a>
     <div class="site-shell">
       <header class="site-header">
-        <a class="brand" href={local("/")} aria-label="Loom Infer home">
-          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i></span>
-          <span class="brand-name">Loom Infer</span>
-          <span class="brand-version">alpha</span>
+        <a class="brand" href={local("/")} aria-label="Oxide Infer home">
+          <span class="brand-mark" aria-hidden="true"><i></i><i></i><i></i><i></i></span>
+          <span class="brand-copy"><strong>OXIDE</strong><small>INFER</small></span>
         </a>
 
         <nav aria-label="Primary navigation">
           {navigation.map((item) => (
-            <a
-              href={local(item.href)}
-              aria-current={active === item.label ? "page" : undefined}
-            >
+            <a href={local(item.href)} aria-current={active === item.label ? "page" : undefined}>
               {item.label}
             </a>
           ))}
         </nav>
 
-        <a class="source-link" href={repositoryUrl} target="_blank" rel="noreferrer" aria-label="Loom Infer source on GitHub">
-          <span>Source</span><span aria-hidden="true">↗</span>
+        <a class="source-link" href={repositoryUrl} target="_blank" rel="noreferrer" aria-label="Oxide Infer source on GitHub">
+          <span>GitHub</span><span aria-hidden="true">↗</span>
         </a>
       </header>
 
@@ -70,16 +66,17 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
 
       <footer class="site-footer">
         <div class="footer-brand">
-          <span class="footer-glyph" aria-hidden="true">LI</span>
-          <div><strong>Loom Infer</strong><p>Rust-native inference operators.</p></div>
+          <span class="footer-glyph" aria-hidden="true">OX</span>
+          <div><strong>Oxide Infer</strong><p>Rust-native GPU operator runtime.</p></div>
         </div>
         <div class="footer-links">
           <a href={local("/docs/")}>Docs</a>
           <a href={local("/docs/operators/")}>Operators</a>
           <a href={local("/evidence/")}>Evidence</a>
-          <a href={`${repositoryUrl}/blob/main/LICENSE`}>MIT</a>
+          <a href={repositoryUrl}>Source</a>
+          <a href={homeUrl}>Site</a>
         </div>
-        <p class="footer-note">H20 evidence · shape-specific claims</p>
+        <p class="footer-note">Claims stay bound to source, hardware, contract, and evidence.</p>
       </footer>
     </div>
   </body>

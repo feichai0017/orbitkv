@@ -1,25 +1,22 @@
 # Operator catalog
 
-This catalog projects the current Rust API, CUDA providers, and published
-evidence. Rust source decides what exists. Recorded evidence decides what is
-qualified. The roadmap does not change either state.
+This catalog projects the current Rust API, CUDA providers, and recorded
+evidence. Source decides what exists. Evidence decides what passed. The
+roadmap does not change either state.
 
-The catalog does not claim complete FlashInfer or FlashAttention parity.
-See the [FlashInfer parity matrix](flashinfer-parity.md) for the broader target.
-
-## States
+## State model
 
 | State | Meaning |
 | --- | --- |
-| `contract` | A public Rust `Spec` and CPU reference exist |
-| `device correct` | The CUDA provider passed its declared H20 correctness gate |
-| `requalification` | The source contract changed after the last H20 record |
-| `planned` | The roadmap names the work, but no provider is admitted |
+| `current` | The product source implements the stated contract. |
+| `experimental` | Source exists, but promotion gates remain open. |
+| `requalification` | A source, contract, provider, or ownership change occurred after the last record. |
+| `planned` | The roadmap admits the work. No public module or provider exists. |
 
-Each state applies only to the contract shown in the same row. Graph,
-performance, engine, and serving evidence remain separate.
+Graph, performance, engine, and serving evidence remain separate from these
+states.
 
-## Framework vocabulary
+## Framework lifecycle
 
 Every admitted operator converges on one lifecycle:
 
@@ -27,142 +24,170 @@ Every admitted operator converges on one lifecycle:
 Spec -> Provider -> Algorithm -> Plan -> Operands -> CommandScope -> Completion
 ```
 
-The current source still uses `*Args` for several operand types. K0.0 tracks
-their source migration. The catalog does not treat target names as implemented
-API.
+The source still uses `*Args` for some invocation types. Framework migration
+renames them to `*Operands` without forwarding aliases. Target names in this
+document do not claim that migration is complete.
 
-## Family namespace migration
+## Family summary
 
-| Implemented domain | Current public area | Target family |
+| Family | State | Admitted or next contract |
+| --- | --- | --- |
+| `attention` | Current | Single decode, paged decode, ragged prefill, and paged prefill |
+| `gemm` | Current and experimental | cuBLASLt BF16 dense is current. Native SM90a M=1 GEMV is experimental. |
+| `kv_cache` | Requalification | Fused RoPE plus paged append with exclusive target pages |
+| `normalization` | Requalification | F32, FP16, and BF16 RMSNorm |
+| `position` | Requalification | BF16 D128 NeoX RoPE with explicit I32 positions |
+| `activation` | Planned | SwiGLU or another engine-observed gated activation |
+| `sampling` | Planned | Logits processing, Top-K, Top-P, Min-P, logprobs, and deterministic RNG |
+| `speculation` | Planned | Draft verification and token compaction |
+| `quantization` | Planned | Scale, packing, conversion, and dequantization |
+| `moe` | Planned | Routing, permutation, grouped-GEMM inputs, and combine |
+| `communication` | Planned | Measured tensor-parallel or expert-parallel collectives |
+
+The project does not create an empty namespace for a planned family.
+
+## Namespace migration
+
+| Implemented domain | Current public area | Final family |
 | --- | --- | --- |
 | Decode and prefill | `attention` | `attention` |
 | Fused paged append | `attention::paged_append` plus CUDA `rope` | `kv_cache::paged_append` |
-| Dense BF16 GEMM | `gemm` | `gemm::dense` |
+| Dense BF16 GEMM | `gemm` | `gemm`, then `gemm::dense` when another GEMM contract exists |
 | RMSNorm | `rms_norm` | `normalization::rms_norm` |
 | Standard RoPE | `rope` | `position::rope` |
 
-The migration moves source directly. It does not add forwarding modules or
-empty directories.
+The migration moves source directly. It adds no compatibility module.
 
-## Implemented surface
+## Current and experimental operators
 
-| Operator | Admitted contract and CUDA path | Published evidence | Open boundary |
+| Operator | Contract and algorithm | Source state | Evidence boundary |
 | --- | --- | --- | --- |
-| RMSNorm | Contiguous F32, FP16, and BF16. Scalar and packed paths | Historical H20 correctness, sanitizer, and one Graph record | Current-source H20 requalification, matched performance, and external-region qualification |
-| Dense GEMM | Contiguous BF16 `D=A*W^T` with F32 accumulation. `GemmPlanner` admits explicit `CublasLt` and experimental H20 `Loom` selection | Historical cuBLASLt evidence and current Loom M=1 H20 correctness plus fixed-address Graph evidence | Current-source cuBLASLt requalification; Loom sanitizer, SASS, performance, and engine evidence; more contracts |
-| Single decode | BF16 NHD D128 full attention. Direct MHA, MQA, and GQA | Historical H20 correctness and matched eager records | Current-source H20 requalification, CUDA Graph, and engine invocation |
-| Single decode split-K | Explicit partitions and caller-owned F32 workspace. The historical H20 matrix covers MQA and GQA | Historical H20 correctness, matched eager, and CUPTI records | Current-source H20 requalification, MHA evidence, and automatic policy |
-| Paged batch decode | BF16 NHD or HND D128, page size 16. MHA uses direct. MQA and GQA use eight-warp block-local merge. A device validator returns typed metadata errors | Historical NHD H20 correctness and matched eager records | Publish current-source NHD/HND status, correctness, sanitizer, Graph, and performance records |
-| Ragged causal prefill | BF16 NHD D128 with bottom-right causal masking. Direct, eight-warp, sixteen-warp, and tiled GQA4 algorithms exist | Historical H20 correctness, matched eager, and tiled long-GQA4 Graph records | Current-source H20 requalification, per-request dispatch, and engine invocation |
-| Paged causal prefill | BF16 NHD D128, page size 16, bottom-right causal masking. The caller selects direct, eight-warp, or sixteen-warp execution. A device validator returns typed metadata errors | Historical H20 correctness, matched eager, and one direct-GQA4 Graph record | Publish current-source status, correctness, sanitizer, Graph, and performance records |
-| Standard RoPE | BF16 NHD D128 NeoX split-half with explicit I32 positions | Historical H20 correctness, sanitizer, and matched eager records | Publish the current-source H20 rerun, then cover more RoPE variants |
-| Fused RoPE plus paged KV append | BF16 NHD D128, page size 16, one through 64 explicit tokens. A validator emits a cache-bound compact map; every target page must have reference count one | `requalification` | Publish current-source correctness, sanitizer, Graph, and performance records under the ownership and typed-status contract |
+| RMSNorm | Contiguous F32, FP16, and BF16. Scalar and packed algorithms. | Current source under `rms_norm`; family migration pending | Historical H20 correctness, sanitizer, and one Graph record require renamed-source requalification. |
+| Dense BF16 GEMM, vendor | Contiguous `D=A*W^T`, BF16 storage, F32 accumulation, explicit `CublasLtHeuristic` | Current | Historical cuBLASLt record requires renamed-source requalification. |
+| Dense BF16 GEMM, native | Same `Spec`, explicit `OxideSm90SimtGemvM1N16K64`, zero workspace | Experimental | Historical native correctness and fixed-address Graph evidence exist under the former provider identity. Sanitizer, SASS, matched performance, and engine gates remain open. |
+| Single decode | BF16 NHD D128, direct MHA, MQA, and GQA | Current | Historical H20 correctness and eager records require renamed-source requalification. |
+| Single decode split-K | Explicit partitions and caller-owned F32 workspace | Current | Historical H20 matrix covers MQA and GQA. MHA, current source, Graph, and policy evidence remain open. |
+| Paged batch decode | BF16 NHD or HND D128, page size 16. Direct MHA and eight-warp MQA or GQA. | Current | Current-source NHD and HND status, sanitizer, Graph, and performance records remain open. |
+| Ragged causal prefill | BF16 NHD D128, bottom-right causal mask. Direct, eight-warp, sixteen-warp, and tiled GQA4. | Current | Historical correctness, eager, and one tiled Graph row require renamed-source requalification. |
+| Paged causal prefill | BF16 NHD D128, page size 16. Caller selects direct, eight-warp, or sixteen-warp. | Current | Historical evidence requires renamed-source requalification. |
+| Standard RoPE | BF16 NHD D128, NeoX split-half, explicit I32 positions | Current source under `rope`; family migration pending | Historical correctness, sanitizer, and eager records require renamed-source requalification. |
+| Fused RoPE plus paged append | BF16 NHD D128, page size 16, one through 64 tokens, exclusive target pages | Requalification | Existing 2026-08-06 records predate the page-ownership contract. |
 
-## Attention dispatch
+## Attention plan policy
 
-Plan creation fixes the selected algorithm.
+Plan creation fixes one algorithm.
 
-| Operator | Selection rule | Graph evidence |
+| Operator | Current selection | Current Graph boundary |
 | --- | --- | --- |
-| Paged decode | MHA selects direct. MQA and GQA select eight-warp token parallelism | None |
-| Ragged prefill | Average KV length below 64 selects direct. Long MQA selects sixteen warps. Other long shapes select eight warps. GQA group size four with average KV length at least 256 selects tiled split-eight | Tiled long GQA4 only |
-| Paged prefill | The caller selects direct, eight-warp, or sixteen-warp execution. Contract checks reject unsupported combinations | One historical fixed-address direct GQA4 fixture |
+| Paged decode | MHA selects direct. MQA and GQA select eight-warp token parallelism. | No renamed-source record |
+| Ragged prefill | Average KV length below 64 selects direct. Long MQA selects sixteen warps. Other long cases select eight warps. Long GQA4 can select tiled split-eight. | Historical tiled long-GQA4 record only |
+| Paged prefill | Caller selects direct, eight-warp, or sixteen-warp. Contract checks reject unsupported combinations. | Historical direct GQA4 fixture only |
 
-Ragged dispatch uses the batch average KV length. It does not group requests by
-length or use a per-shape tuning database.
-
-The 2026-08-07 paged-prefill token-parallel correctness and matched performance
-records apply to source `8478ee9`. They do not qualify the merged DeviceRegion
-submission path.
+Ragged selection uses batch-average KV length. It has no request grouping or
+persistent tuning database. Enqueue does not change the chosen algorithm.
 
 ## Dense GEMM providers
 
-Dense BF16 GEMM has two implemented providers on one public execution path:
+Both providers use one `Bf16DenseGemmSpec`, plan type, operands type, command
+path, completion, and Graph path.
 
-| Provider | State | Role |
-| --- | --- | --- |
-| `CublasLt` | Implemented; current-source H20 requalification pending | Explicit vendor baseline using `CublasLtHeuristic` |
-| `Loom` | Experimental implementation; H20 correctness and fixed-address Graph gate passed; performance not qualified | Explicit cuda-oxide path using `LoomSm90SimtGemvM1N16K64` |
+| Provider | Algorithm | State | Role |
+| --- | --- | --- | --- |
+| `CublasLt` | `CublasLtHeuristic` | Current | General vendor BF16 dense baseline |
+| `Oxide` | `OxideSm90SimtGemvM1N16K64` | Experimental | Native cuda-oxide M=1 algorithm for H20 `sm_90a` |
 
-`GemmPlanner` exposes one dense GEMM contract and execution path for explicit
-`CublasLt` or `Loom` selection. An unsupported Loom shape returns a planning
-error. Enqueue does not switch providers.
+`GemmPlanner` accepts explicit provider selection. Unsupported native shapes
+return a planning error. Enqueue does not switch to cuBLASLt.
 
-The first frozen Loom candidate is `LoomSm90SimtGemvM1N16K64`. It admits
-`M=1`, BF16 contiguous `D=A*W^T`, `N % 16 = 0`, `K % 64 = 0`, no post-ops,
-and zero workspace on H20 `sm_90a`.
+The native algorithm admits this exact contract:
 
-One untimed Qwen2.5-1.5B H20 census recorded 1,184 matching calls across five
-logical shapes. That is 87.574% of calls and 16.708% of FLOPs in the pinned
-single-request workload. The census is workload evidence, not performance
+- `M=1`
+- `N % 16 = 0`
+- `K % 64 = 0`
+- contiguous row-major BF16 `D=A*W^T`
+- no post-operation
+- four-byte alignment
+- zero workspace
+- H20 with an `sm_90a` artifact
+
+One untimed Qwen2.5-1.5B census recorded 1,184 matching calls across five
+logical shapes. They represent 87.574% of calls and 16.708% of FLOPs in that
+single-request workload. This census is workload evidence, not performance
 evidence.
 
-The current Loom kernel has H20 correctness and fixed-address Graph coverage
-for the five census shapes.
+The [experimental contract](development/sm90-simt-gemv-m1.md) defines both
+baselines, promotion gates, and stop conditions.
 
-It has no sanitizer, SASS, matched-performance, or engine-performance
-qualification. The [experimental contract](development/sm90-simt-gemv-m1.md)
-defines the layout, both baselines, promotion gates, and stop conditions.
+## Workspace ownership
 
-## KV append ownership
+Each plan declares exact workspace bytes and alignment. The caller allocates
+and binds that workspace through operands. A provider cannot allocate hidden
+workspace during enqueue.
 
-Paged attention may read shared physical pages. Fused append has a stricter
-write contract:
+Split-K attention owns caller-visible F32 partial state. Token-parallel paged
+attention uses block-local state and needs no caller workspace. The native M=1
+GEMV plan declares zero workspace.
 
-- The caller supplies one reference count for every physical page.
-- The host contract and device guard require count one for each target page.
-- The engine or KV pager makes a shared tail private before enqueue.
-- The caller updates the page table and counts before append.
-- The caller keeps that metadata snapshot stable through completion.
+## Page-table ownership
 
-The operator does not allocate pages, copy shared data, or remap requests.
+Paged attention and paged append receive page tables as operands. The engine
+or KV pager owns allocation, sharing, copy-on-write, eviction, and remapping.
 
-The 2026-08-06 fused-append records predate this ownership contract. They
-remain immutable historical measurements and do not qualify the current
-source. See the [evidence index](results/README.md).
+Paged attention accepts shared read-only physical pages. Paged append requires
+reference count one for every target page. The caller keeps the validated page
+table and reference-count snapshot stable through completion.
+
+The append operator does not allocate pages, copy shared tails, or remap
+requests.
 
 ## Dynamic metadata
 
-Host-resident metadata can return a `ContractError` before submission.
-Paged decode, paged prefill, and fused append also validate device-resident metadata on the CUDA stream.
-They return typed `Completion` failures with the checked bindings.
-Semantic rejection does not poison the queue or Graph.
+Paged decode, paged prefill, and fused append validate device metadata on the
+CUDA stream. A semantic rejection returns a typed completion error, preserves
+outputs, and returns checked bindings. It does not poison the queue or Graph.
+
+## Architecture support
+
+| Architecture | State | Admitted boundary |
+| --- | --- | --- |
+| `sm_90a` | Current first target | H20-specific native artifacts and provider gates |
+| `sm_100a` | Planned | Separate Blackwell algorithms and evidence |
+| `sm_120` | Planned | Separate consumer Blackwell algorithms and evidence |
+
+No architecture target inherits qualification from another target. TMA,
+WGMMA, and tcgen05 matrix operations require named algorithms and independent
+evidence.
 
 ## Engine interop
 
-The source accepts leased external regions and an engine-owned CUDA stream for direct single decode and NHD or HND paged decode.
-The queue supports bounded detached completions and returns stream-ordered engine authority after Loom queues the post-event wait.
-The H20 gate uses a simulated engine.
+The source accepts leased external regions and an engine-owned CUDA stream for
+direct single decode and NHD or HND paged decode. A simulated-engine H20 gate
+covers bounded in-flight work, typed rejection, stream order, and lease
+retention.
 
-An experimental paired-repository POC routes Mistral.rs decode attention through Loom.
-Historical records ran Mistral.rs sources `9f6acf2a` and `805dc8f1` against Loom
-`d27b6e5`. They show provider hits and matching selected token strings for one Qwen request.
-They also show no adapter-issued device-to-device copy and typed recovery after one rejected metadata command.
+Historical Mistral.rs records show one Qwen decode path, provider hits, matching
+selected token strings, and no adapter-issued device copy. Those source pairs
+use the former project name. They do not qualify renamed source, general model
+coverage, production recovery, or performance.
 
-The POC does not qualify production safety, general model coverage, full-model zero-copy execution, or performance.
-Mistral.rs source `84602212` replaces the process-global runtime with model-owned state.
-Its H20 record covers one Qwen request, typed rejection and reuse, and two concurrent drain callers.
-That qualification is limited to one model, one H20, and one ordinary stream.
-See the [Mistral.rs integration boundary](integrations/mistralrs.md).
+## Planned contracts
 
-## Target surface
+| Family | Admission input | First required proof |
+| --- | --- | --- |
+| Attention | Measured engine shape and mask contract | Host reference and one named CUDA algorithm |
+| KV cache | Pager ownership protocol | Copy-on-write and metadata-lifetime proof before device code |
+| GEMM | Workload census and both baselines | One exact dense, grouped, or quantized contract |
+| Normalization | Model call site absent from current RMSNorm | Numerical contract and independent reference |
+| Position | Model layout or dimension demand | Position semantics and reference vectors |
+| Activation | Measured unfused engine call | Standalone reference before any fusion experiment |
+| Sampling | Exact distribution and RNG state contract | Deterministic replay and statistical test plan |
+| Speculation | Engine draft/target state machine | Accepted-token and RNG commit semantics |
+| Quantization | Model format and quality budget | Scale ownership, packing format, and error bound |
+| MoE | Engine routing trace | Stable routing, permutation, and combine contract |
+| Communication | Measured distributed workload | Collective ordering, failure, topology, and baseline contract |
 
-| Family | Planned work |
-| --- | --- |
-| Attention | Sliding window, mixed-batch attention, MLA, and broader head dimensions |
-| KV cache | Gather, scatter, compaction, remapping, FP8, and INT8 storage |
-| GEMM | Loom and vendor dense, grouped, and quantized providers |
-| Normalization | Additional normalization contracts from model demand |
-| Position | Additional RoPE layouts and position transforms |
-| Activation | Activation and gated-activation operations |
-| Sampling | Logits processing, penalties, Top-K, Top-P, Min-P, logprobs, and deterministic RNG |
-| Speculation | Greedy, stochastic, and tree verification |
-| MoE | Routing, permutation, grouped-GEMM inputs, and weighted combine |
-| Quantization | Scale, pack, unpack, dequantize, and layout conversion |
-| Communication | Collectives for measured tensor-parallel and expert-parallel workloads |
+## Admission rule
 
-## Admission
-
-Every new contract records its call site, tensors, numerical limit, baseline,
-hardware, metric, and stop condition. Unsupported contracts return an error.
-The project records each evidence level independently.
+Every new contract records its call site, tensors, numerical limit, provider,
+algorithm, hardware, metric, and stop condition. Unsupported combinations
+return errors. A planned row does not authorize an empty API or source module.

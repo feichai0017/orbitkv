@@ -4,6 +4,12 @@
 
 ### Breaking
 
+- Renamed the project from Loom Infer to Oxide Infer. The workspace packages
+  are now `oxide-infer`, `oxide-infer-cuda`, and `oxide-infer-lab`. Public Rust
+  paths, provider identifiers, binaries, and environment variables changed in
+  the same breaking migration. Historical evidence and tags retain their
+  original Loom identities.
+
 - Replaced the public cuBLASLt-specific GEMM API with `GemmPlanner`, explicit
   provider selection, `Bf16DenseGemmPlan`, and `Bf16DenseGemmOperands`. The
   cuBLASLt implementation is now a private provider behind the common plan.
@@ -11,7 +17,7 @@
 ### Added
 
 - Defined the product target as a high-performance, FlashInfer-class operator
-  layer for Rust inference engines, with cuda-oxide compiling Loom-owned Rust
+  layer for Rust inference engines, with cuda-oxide compiling Oxide-owned Rust
   kernels for the CUDA platform.
 - Added a contiguous BF16 GEMM contract and CPU reference with F32 accumulation.
 - Added one fixed cuBLASLt plan with checked layouts, spans, alignment,
@@ -46,7 +52,7 @@
 
 ### Changed
 
-- Simplified the project README and documentation site around the Rust,
+- Rebuilt the project README and documentation site around the Rust,
   cuda-oxide, CUDA, and FlashInfer-class product boundary.
 - Updated the website dependency lock to use the patched `js-yaml` release.
 - Renamed the shared decode provider to `DecodeProvider` so decode and prefill
@@ -59,7 +65,7 @@
 - Added checked three-read, two-write resolution to the shared binding path.
 - Replaced the single-decode interop and binding-rejoin API with one
   `EngineCommand` submission path that returns stream-ordered engine authority
-  after Loom queues the post-event wait.
+  after Oxide Infer queues the post-event wait.
 
 ## 1.0.0-alpha.1
 

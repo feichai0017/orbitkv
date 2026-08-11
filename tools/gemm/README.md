@@ -25,11 +25,11 @@ The summary reports:
 
 - call and FLOP shares
 - path and site breakdowns
-- logical Loom BF16 compatibility
+- logical Oxide Infer BF16 compatibility
 - each input record SHA-256
 
 Runtime pointer alignment and buffer capacity remain binding-time checks. The
 summary makes no provider performance claim.
 
-Raw model-runner records stay in the engine repository. A later Loom selection
+Raw model-runner records stay in the engine repository. A later Oxide selection
 record can reference a validated raw blob by SHA-256.

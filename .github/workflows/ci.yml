@@ -30,13 +30,20 @@ jobs:
             benchmarks \
             python \
             spikes \
+            crates/loom-infer \
+            crates/loom-infer-cuda \
+            crates/loom-infer-validation \
             crates/loom-cuda \
             crates/loom-cuda-bridge \
             crates/loom-cuda-sys \
             crates/loom-kernels \
-            crates/loom-infer-cuda-bridge \
-            crates/loom-infer-cuda-sys \
-            crates/loom-infer-cuda/src/bin
+            crates/oxide-cuda \
+            crates/oxide-cuda-bridge \
+            crates/oxide-cuda-sys \
+            crates/oxide-kernels \
+            crates/oxide-infer-cuda-bridge \
+            crates/oxide-infer-cuda-sys \
+            crates/oxide-infer-cuda/src/bin
           do
             if [[ -e "$path" ]]; then
               echo "removed product path exists: $path"

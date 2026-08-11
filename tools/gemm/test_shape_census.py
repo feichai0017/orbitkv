@@ -66,7 +66,7 @@ def run(run_id: str = "run-1") -> dict:
         canonical_request, ensure_ascii=False, separators=(",", ":"), sort_keys=True
     ).encode()
     return {
-        "schema": "loom.gemm-shape-census.v1",
+        "schema": "oxide.gemm-shape-census.v1",
         "run_id": run_id,
         "source": {
             "producer": "mistral.rs",
@@ -75,7 +75,7 @@ def run(run_id: str = "run-1") -> dict:
             "worktree_clean": True,
             "cargo_lock_sha256": "b" * 64,
             "binary_sha256": "c" * 64,
-            "loom_schema_commit": "d" * 40,
+            "oxide_schema_commit": "d" * 40,
         },
         "hardware": {"gpu": "NVIDIA H20", "compute_capability": "9.0"},
         "environment": {
@@ -150,7 +150,7 @@ class ShapeCensusTests(unittest.TestCase):
         self.assertEqual(
             result["shapes"][0]["observed_path_calls"], {"mistral_cuda_gemv": 7}
         )
-        self.assertTrue(result["shapes"][0]["loom_logical_contract_compatible"])
+        self.assertTrue(result["shapes"][0]["oxide_logical_contract_compatible"])
 
     def test_merges_same_shape_across_sites_and_runs(self) -> None:
         first = run("first")
@@ -279,7 +279,7 @@ class ShapeCensusTests(unittest.TestCase):
 
         result = summarize_runs([record], [])
 
-        self.assertFalse(result["shapes"][0]["loom_logical_contract_compatible"])
+        self.assertFalse(result["shapes"][0]["oxide_logical_contract_compatible"])
 
     def test_rejects_unknown_post_op_and_usize_overflow(self) -> None:
         unknown_post_op = run()
