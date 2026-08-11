@@ -69,8 +69,8 @@ export const providerLanes = [
 ]
 
 export const evidenceHighlights = [
-  { value: "Pending", label: "Experimental GEMV", detail: "H20 rerun against renamed source and artifact", sample: "prior record is historical" },
-  { value: "Historical", label: "Core CUDA paths", detail: "correctness, Graph, and matched records", sample: "requalification required" },
+  { value: "Phase 1", label: "Current H20 source", detail: "GEMM, ragged and paged prefill, RoPE, and fused append", sample: "correctness and named Graph cases" },
+  { value: "Pending", label: "Remaining R1", detail: "five runners, Compute Sanitizer, and performance", sample: "not qualified by phase 1" },
   { value: "Simulated", label: "Engine interop", detail: "external pointers and event bridge", sample: "not a model run" },
   { value: "Open", label: "Serving", detail: "TTFT, TPOT, throughput, and memory", sample: "no serving evidence" },
 ]
