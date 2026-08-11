@@ -14,7 +14,8 @@ evidence.
    surface without claiming complete parity.
 4. [Roadmap](roadmap.md) orders the remaining correctness, integration, and
    performance work.
-5. [Evidence](results/README.md) indexes machine-readable device and benchmark
+5. [Mistral.rs integration](integrations/mistralrs.md) defines the paired-repository boundary and POC qualification.
+6. [Evidence](results/README.md) indexes machine-readable device and benchmark
    records.
 
 ## Development
@@ -38,6 +39,9 @@ The product contains three crates:
 
 The engine retains models, requests, scheduling, KV allocation policy, and
 distributed control. Loom owns the checked operator boundary.
+
+Engine adapters stay in their engine repositories.
+Loom records their pinned source pairs and qualification status without vendoring engine source or raw evidence.
 
 Fused KV append now requires exclusive write pages. Its historical records do
 not qualify the revised ownership contract. New device evidence is required.

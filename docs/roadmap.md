@@ -30,7 +30,7 @@ append records remain historical.
 
 ## K0.2: Accept external device regions
 
-**State:** source implemented. Real-engine evidence pending.
+**State:** source implemented. Model-owned paired-repository POC recorded on one H20.
 
 The command layer accepts typed owned and external device regions.
 `ExternalCudaStream` retains an engine stream without taking ownership.
@@ -45,7 +45,7 @@ The command layer accepts typed owned and external device regions.
 - Qualify fixed-address Graph retention for external leases.
 - Preserve the simulated-engine H20 gate for external pointers, stream order,
   bounded in-flight completion, typed rejection, and zero adapter device-to-device copies.
-- Prove the same properties at a real model-runner call site.
+- Extend the model-owned Mistral.rs qualification beyond one model and one ordinary stream.
 
 Exit: a real model runner passes its own allocation and stream without an
 adapter copy. Completion retains every lease through asynchronous execution.
@@ -72,10 +72,20 @@ error. No operator silently returns success after a device guard rejects work.
 
 ## K0.4: Prove one engine invocation
 
-**State:** planned.
+**State:** paired-repository POC and model-owned runtime evidence recorded.
 
-The proposed first target is mistral.rs. It must exercise the same Rust plan
-and command path used by hardware validation.
+The first adapter stays in the Mistral.rs fork.
+Loom does not vendor the engine or copy its raw evidence.
+The historical POC ran Mistral.rs sources `9f6acf2a` and `805dc8f1` against Loom
+`d27b6e5`. The Mistral.rs fork publishes the records.
+
+On one H20 Qwen path, the adapter recorded Loom provider hits and no adapter-issued device-to-device copy.
+Loom and the standard provider selected the same eight token strings.
+A separate gate returned a typed metadata error in FIFO order and then reused the same runtime.
+
+Mistral.rs source `84602212` owns runtime state and pending completions in each model pipeline.
+Its H20 record covers 196 completed Qwen paged-decode calls, typed rejection and same-runtime reuse, and concurrent drain serialization.
+It does not qualify production safety, full-model zero-copy execution, general model coverage, or performance.
 
 - Use the HND paged-decode path now present in Loom source.
 - Bind engine-owned device regions and the engine's non-default stream.
@@ -84,6 +94,9 @@ and command path used by hardware validation.
 - Record provider hit counts and selected algorithms.
 - Prove that Q, KV, output, workspace, and metadata cross no host copy.
 - Compare model output or generated tokens with the engine baseline.
+- Carry a typed, linear runner authority through the model path.
+- Define fail-closed behavior for a panic or abandoned model forward.
+- Replace the sibling path dependency with an immutable published source.
 - Measure the complete engine interval before making a latency claim.
 - Document the fallback policy at the engine boundary. The Loom provider
   itself does not silently fall back.

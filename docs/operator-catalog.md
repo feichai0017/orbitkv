@@ -76,8 +76,17 @@ Semantic rejection does not poison the queue or Graph.
 The source accepts leased external regions and an engine-owned CUDA stream for direct single decode and NHD or HND paged decode.
 The queue supports bounded detached completions and returns stream-ordered engine authority after Loom queues the post-event wait.
 The H20 gate uses a simulated engine.
-No real model runner has qualification.
-The mistral.rs adapter, provider trace, and model-output parity remain open.
+
+An experimental paired-repository POC routes Mistral.rs decode attention through Loom.
+Historical records ran Mistral.rs sources `9f6acf2a` and `805dc8f1` against Loom
+`d27b6e5`. They show provider hits and matching selected token strings for one Qwen request.
+They also show no adapter-issued device-to-device copy and typed recovery after one rejected metadata command.
+
+The POC does not qualify production safety, general model coverage, full-model zero-copy execution, or performance.
+Mistral.rs source `84602212` replaces the process-global runtime with model-owned state.
+Its H20 record covers one Qwen request, typed rejection and reuse, and two concurrent drain callers.
+That qualification is limited to one model, one H20, and one ordinary stream.
+See the [Mistral.rs integration boundary](integrations/mistralrs.md).
 
 ## Target surface
 

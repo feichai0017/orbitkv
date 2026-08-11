@@ -11,6 +11,7 @@
   <p>
     <a href="docs/README.md">Docs</a> ·
     <a href="docs/operator-catalog.md">Operators</a> ·
+    <a href="docs/integrations/mistralrs.md">Mistral.rs POC</a> ·
     <a href="docs/flashinfer-parity.md">FlashInfer parity</a> ·
     <a href="docs/results/README.md">Evidence</a> ·
     <a href="docs/roadmap.md">Roadmap</a>
@@ -89,7 +90,18 @@ The external-stream bridge accepts leased `DeviceRegion` values and submits sing
 After Loom enqueues the post-event wait, it returns the engine's stream-ordered authority without a host wait.
 An owned completion keeps allocation leases and status storage private until settlement.
 The H20 gate covers two in-flight commands, HND GQA6 paged decode, typed metadata rejection, unchanged pointers, and no adapter device-to-device copy in a simulated engine.
-This is not a real engine integration.
+The simulated gate remains separate from engine evidence.
+
+An experimental paired-repository POC routes Mistral.rs decode attention through Loom.
+The historical H20 model and recovery records ran Mistral.rs sources `9f6acf2a`
+and `805dc8f1` against Loom `d27b6e5`.
+They record provider hits, no adapter-issued device-to-device copy, matching selected token strings, and typed recovery after metadata rejection.
+The raw records remain in the Mistral.rs fork.
+
+Mistral.rs source `84602212` moves the runtime and completion FIFO into each model pipeline.
+Its H20 record covers 196 completed Qwen paged-decode calls, typed rejection and same-runtime reuse, and concurrent drain serialization.
+It does not qualify production safety or performance.
+See the [Mistral.rs integration boundary](docs/integrations/mistralrs.md).
 
 Performance claims are contract-specific. Loom does not claim that every
 operator or shape is faster than FlashInfer.
@@ -144,8 +156,9 @@ Callers select these algorithms explicitly.
 Their published H20 records cover source before the DeviceRegion and typed-status changes.
 
 Current source has HND paged-decode kernels and a stream-ordered authority handoff.
-The next step is a real mistral.rs adapter that proves provider hits, unchanged device pointers, and model-output parity.
-Current-source H20 records remain unpublished.
+The paired Mistral.rs POC proves one narrow real-model path at pinned commits.
+The model-owned runtime record covers one H20, one model, and one ordinary stream.
+Loom-owned current-source operator requalification records remain unpublished.
 
 Read the [architecture](docs/design/loom-infer-architecture.md) and
 [contribution guide](CONTRIBUTING.md) before adding a provider.
