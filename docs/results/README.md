@@ -36,10 +36,12 @@ FlashInfer comparison scripts use separate PyTorch F32 references.
 No published result proves cross-provider reference-digest parity.
 The summarizer rejects mixed contracts, fixtures, measurements, and execution identities.
 
-Current Graph qualification requires each validation replay to run an output
-poison command before the checked operator writes that output. Earlier records
-do not satisfy that rule. Benchmark `graph_nodes` fields are handwritten
-metadata, not CUDA driver enumeration.
+Current Graph qualification requires every valid recipe to capture a
+target-poison operator stage before the real operator stage. Both stages run
+inside each replay and write the same output addresses.
+
+Earlier records do not satisfy that rule. Benchmark `graph_nodes` fields are
+handwritten metadata, not CUDA driver enumeration.
 
 A binary FlashInfer wheel records its verified distribution version but no
 source commit unless the artifact proves one.

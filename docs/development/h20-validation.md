@@ -270,19 +270,26 @@ launch, concurrent replay, and default-stream capture.
 
 Current Graph cases are:
 
-| Operator | Captured commands | Fixture |
-| --- | --- | --- |
-| RMSNorm to GEMM | Two | `(1,4096)` RMSNorm into `(1,4096,4096)` GEMM |
-| Ragged prefill | Two | Long tiled GQA4 `(2,96,1280,16,4)` |
-| Paged decode rejection | Three | Invalid page index with two reusable replays |
-| Paged prefill | Three | Direct GQA4 `(2,6,6,16,4)` |
-| Fused append | Three | Validator, six-token mapped append, and status copy under the exclusive-page contract |
+Every valid-output case captures three stages: an independent poison observer,
+a target-poison stage, and the real stage. The last two stages write the same
+checked addresses in order during every replay.
+
+| Operator | Commands per stage | Captured total | Fixture |
+| --- | ---: | ---: | --- |
+| RMSNorm to GEMM | 2 | 6 | `(1,4096)` RMSNorm into `(1,4096,4096)` GEMM |
+| Ragged prefill | 2 | 6 | Long tiled GQA4 `(2,96,1280,16,4)` |
+| Paged decode rejection | Not applicable | 3 | Invalid page index with two reusable replays |
+| Paged prefill | 3 | 9 | Direct GQA4 `(2,6,6,16,4)` |
+| Fused append | 3 | 9 | Validator, six-token mapped append, and status copy under the exclusive-page contract |
+
+The paged-decode row is a sentinel-preserving rejection Graph. It does not
+qualify a valid-output Graph path.
 
 A current Graph qualification must:
 
 1. Compare the standalone result with the independent reference.
-2. Poison every graph-written output span or append target before replay.
-3. Replay and prove that no poison remains in a valid result.
+2. Capture a target-poison stage before the real stage in every valid replay.
+3. Replay and prove that the real stage replaces the poison.
 4. Drop external plan and read owners before replay.
 5. Exercise explicit `wait()` and completion-drop settlement.
 6. Record capture count, command count, replay count, and binding policy.
@@ -342,7 +349,8 @@ The new scripts require:
 - raw samples from both provider orders.
 - a verified provider version and source identity, or an explicit unverified
   source field.
-- poisoned Graph outputs before the correctness replay.
+- for valid Graph cases, a captured target-poison stage before the real stage
+  inside each correctness replay.
 - strict summaries that reject incompatible contract, run, or execution
   metadata.
 
