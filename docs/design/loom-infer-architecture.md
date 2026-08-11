@@ -11,7 +11,7 @@ execution, and serving APIs.
 | --- | --- |
 | Operator contract, planning, ownership, and host execution | Loom Rust crates |
 | Custom NVIDIA kernels | Loom Rust device code compiled with cuda-oxide |
-| GEMM and communication algorithms | Qualified vendor providers unless a matched Loom implementation wins |
+| GEMM and communication implementations | Explicit Loom or vendor providers selected before execution |
 | Request scheduling and continuous batching | Consumer engine |
 | KV allocation, sharing, eviction, and copy-on-write | Consumer engine or KV pager |
 | Model graph and serving API | Consumer engine |
@@ -41,31 +41,74 @@ loom-infer-validation
 
 | Crate | Responsibility |
 | --- | --- |
-| `loom-infer` | Public specifications, errors, capabilities, and CPU references |
+| `loom-infer` | Public `Spec` types, errors, capabilities, and CPU references |
 | `loom-infer-cuda` | Immutable plans, checked execution, Rust device kernels, Graphs, and vendor calls |
 | `loom-infer-validation` | Non-published H20 gates, fixtures, comparisons, benchmarks, and reports |
 
 `loom-infer` has no CUDA dependency. Product crates do not depend on the
 validation crate. A new crate requires a separate dependency, ownership, or
-safety boundary.
+safety boundary. GEMM and the CUDA runtime remain modules until such a boundary
+exists.
+
+## Operator families
+
+The complete architecture uses semantic families across both product crates:
+
+| Family | Scope |
+| --- | --- |
+| `attention` | Decode, prefill, masking, and attention-state merge |
+| `kv_cache` | Paged append, gather, scatter, compaction, and remapping |
+| `gemm` | Dense, grouped, and quantized matrix operations |
+| `normalization` | RMSNorm and later normalization operations |
+| `position` | RoPE and other position transforms |
+| `activation` | Activation and gated-activation operations |
+| `sampling` | Logits transforms, RNG, and token selection |
+| `speculation` | Draft verification and token compaction |
+| `quantization` | Scale, packing, conversion, and dequantization |
+| `moe` | Routing, permutation, expert inputs, and combine |
+| `communication` | Qualified tensor-parallel and expert-parallel collectives |
+
+Only attention, dense GEMM, RMSNorm, RoPE, and paged append have current
+implementations. The [repository layout](repository-layout.md) records their
+present paths and target families. Planned families do not imply source or
+device support.
 
 ## Operator lifecycle
 
-Every provider uses one execution path:
+The target operator framework uses one public lifecycle. The dense GEMM slice
+already follows it. K0.0 migrates the remaining APIs.
 
 ```text
-specification
-  -> immutable plan
-  -> checked bindings
-  -> command scope
-  -> enqueue
-  -> completion fence
+Spec
+  -> Provider
+  -> Algorithm
+  -> Plan
+  -> Operands
+  -> CommandScope
+  -> Completion
 ```
 
-The specification fixes tensor semantics. The plan fixes the provider,
-algorithm, launch configuration, workspace requirement, and device artifact.
-Bindings retain device resources. The command scope checks spans, context,
-alignment, aliasing, and command capacity before submission.
+These names have one meaning throughout the project:
+
+| Name | Meaning |
+| --- | --- |
+| `Spec` | Backend-independent tensor semantics, shape, dtype, layout, and numerical contract |
+| `Provider` | Implementation owner, such as `Loom` or `CublasLt` |
+| `Algorithm` | One named execution strategy within a provider |
+| `Plan` | Immutable provider, algorithm, launch, workspace, artifact, and Graph decision |
+| `Operands` | Typed resources for one invocation |
+| `CommandScope` | Checked queue admission, alias resolution, retention, and submission boundary |
+| `Completion` | Fence and status result that retains resources until quiescence |
+
+Planning selects the `Provider` and `Algorithm`. Enqueue does not tune, switch
+providers, or fall back. Unsupported combinations return a planning error.
+Names such as `Fast`, `Optimized`, `Auto`, and `V2` do not identify a stable
+algorithm.
+
+The current CUDA API still exposes several `*Args` types. The framework
+migration will rename them to `*Operands` rather than add aliases. Internal
+`CheckedBindings` values remain the resolved resource set owned by a
+`CommandScope` or `Completion`.
 
 `finish()` records one queue event. The completion retains bindings, loaded
 functions, and vendor plans until `wait()` or destruction proves quiescence.
@@ -208,12 +251,16 @@ Benchmark `graph_nodes` fields are source declarations. The tools do not query
 the CUDA driver for instantiated node counts. Use command count for lifecycle
 checks, and treat node count as unverified until the tool enumerates the Graph.
 
-## Model-runner target
+## Model-runner boundary
 
-The proposed first real integration target is mistral.rs.
-Current source has HND paged decode and stream-ordered return of a linear external-stream authority token.
-The simulated-engine gate does not prove that mistral.rs can supply those resources without a copy.
-It also does not prove a Loom provider hit or model-output parity.
+Mistral.rs is the first experimental paired-repository integration. Historical
+H20 records show one Qwen path with completed Loom provider calls, matching
+selected token strings, and no adapter-issued device-to-device copy.
+
+Those records bind older Loom and Mistral.rs commits. They do not qualify the
+current source, full-model zero-copy execution, production safety, or
+performance. The [integration document](../integrations/mistralrs.md) owns the
+exact source pairs and excluded claims.
 
 ## Device code
 
@@ -245,15 +292,41 @@ one, theta 10,000, and explicit I32 positions. Loom full-math and FlashInfer
 fast-math paths use independent references and a shared error limit. Their
 bits need not match.
 
-## Vendor providers
+## GEMM provider architecture
 
-A vendor plan fixes the library, algorithm, layouts, packed weights, scales,
-epilogue, workspace, and Graph policy before enqueue. Provider selection does
-not change during enqueue, and the operator has no silent fallback path.
+Dense GEMM has one contract and one execution lifecycle. Providers do not
+expose parallel public APIs.
 
-The first vendor plan uses cuBLASLt for contiguous row-major BF16
-`D[M,N] = A[M,K] * W[N,K]^T` with F32 accumulation. It validates exact spans,
-alignment, CUDA context, and workspace before submission.
+Target provider set:
+
+```text
+Bf16DenseGemmSpec
+  -> Bf16DenseGemmSelection
+  -> GemmPlanner::plan_bf16_dense
+  -> Bf16DenseGemmPlan
+  -> Bf16DenseGemmOperands
+  -> CommandScope
+  -> Completion
+```
+
+The selection fixes the `Provider` and requested `Algorithm`. Plan information
+reports their stable identities after planning.
+
+The current `GemmPlanner` accepts `Bf16DenseGemmSelection::CublasLt`. Plan
+information reports `GemmProviderId::CublasLt` and
+`Bf16DenseGemmAlgorithm::CublasLtHeuristic`. Its private provider computes
+contiguous row-major BF16 `D[M,N] = A[M,K] * W[N,K]^T` with F32 accumulation.
+It validates exact spans, alignment, CUDA context, and workspace.
+
+The target adds `Loom` in the same CUDA crate. Its first candidate is a
+cuda-oxide SM90 BF16 small-M algorithm selected from measured model shapes.
+Admission requires an independent oracle and current-source H20 evidence.
+
+The cuBLASLt provider remains the explicit general baseline. An unsupported
+Loom `Spec` returns a planning error, so the caller can request another plan.
+
+Dense BF16, dense FP8, grouped BF16, and grouped FP8 use separate `Spec` and
+`Plan` types to preserve scale, grouping, layout, and epilogue semantics.
 
 ## Evidence model
 
@@ -273,3 +346,21 @@ throughput, and memory.
 
 The [evidence index](../results/README.md) records current limitations and
 historical results. Passing one layer never implies that a later layer passes.
+
+## State sources
+
+Each repository surface answers one question:
+
+| Source | Authoritative fact |
+| --- | --- |
+| Rust source and manifests | Which crates, contracts, providers, algorithms, and checks exist |
+| `docs/operator-catalog.md` | Human-readable projection of the admitted source surface |
+| `docs/results` | Immutable qualification for the exact recorded source and environment |
+| Integration documents | External source pairs, adapter boundary, and excluded claims |
+| `docs/roadmap.md` | Planned order and exit conditions only |
+| Design documents | Target boundaries and naming rules only |
+
+Source existence does not create evidence. Historical evidence does not
+qualify changed source. A roadmap item does not upgrade the operator catalog.
+If two surfaces disagree, correct the projection and preserve the immutable
+record.

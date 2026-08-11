@@ -28,16 +28,17 @@ request scheduling, batching, KV allocation policy, and distributed control.
 
 ## Execution model
 
-Every provider uses one lifecycle:
+The target operator framework uses one lifecycle. The dense GEMM path already
+uses these public roles. The roadmap tracks migration of the remaining APIs.
 
 ```text
-contract
-  → immutable plan
-  → checked bindings
-  → caller-owned CUDA stream
-  → Rust kernel | qualified vendor call
-  → completion fence
-  → returned write authority
+Spec
+  → Provider
+  → Algorithm
+  → Plan
+  → Operands
+  → CommandScope
+  → Completion
 ```
 
 A plan fixes the provider, algorithm, workspace, launch configuration, and

@@ -4,7 +4,7 @@ use crate::fixture::{deterministic_bf16, page_refcounts};
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer, sys};
 use half::bf16;
 use loom_infer::{
-    Bf16GemmSpec, Bf16PagedBatchDecodeSpec, Bf16PagedPrefillSpec, Bf16RaggedPrefillSpec,
+    Bf16DenseGemmSpec, Bf16PagedBatchDecodeSpec, Bf16PagedPrefillSpec, Bf16RaggedPrefillSpec,
     Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensSpec, Bf16RopePosIdsSpec,
     Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, DType, PagedKvLayout, RmsNormSpec,
     rope_paged_kv_append_bf16_reference, rope_paged_kv_append_tokens_bf16_reference,
@@ -16,7 +16,9 @@ use loom_infer_cuda::attention::{
     Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs, DecodeProvider, PrefillProvider,
 };
 use loom_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
-use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmPlan, CublasLtProvider};
+use loom_infer_cuda::gemm::{
+    Bf16DenseGemmOperands, Bf16DenseGemmPlan, Bf16DenseGemmSelection, GemmPlanner,
+};
 use loom_infer_cuda::rms_norm::{RmsNormArgs, RmsNormBf16Plan, RmsNormProvider};
 use loom_infer_cuda::rope::{
     Bf16PagedKvAppendMapArgs, Bf16PagedKvAppendTokensMapArgs, Bf16RopePagedKvAppendMappedArgs,
@@ -270,12 +272,13 @@ fn benchmark_rms_norm(
 fn benchmark_gemm(
     context: &Arc<CudaContext>,
     stream: &Arc<CudaStream>,
-    provider: &CublasLtProvider,
+    planner: &GemmPlanner,
     config: BenchConfig,
     identity: &RunIdentity,
 ) -> Result<(), Box<dyn Error>> {
-    let spec = Bf16GemmSpec::new(1, 4096, 4096)?;
-    let plan: Bf16GemmPlan = provider.plan_bf16(spec)?;
+    let spec = Bf16DenseGemmSpec::new(1, 4096, 4096)?;
+    let plan: Bf16DenseGemmPlan =
+        planner.plan_bf16_dense(spec, Bf16DenseGemmSelection::CublasLt)?;
     let activation_host = deterministic_bf16(spec.a_numel(), 0x4143_5449);
     let weight_host = deterministic_bf16(spec.weight_numel(), 0x4745_4d4d);
     let activation = Arc::new(DeviceBuffer::from_host(stream, &activation_host)?);
@@ -293,7 +296,7 @@ fn benchmark_gemm(
         benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
             plan.enqueue_into(
                 scope,
-                Bf16GemmArgs::new(
+                Bf16DenseGemmOperands::new(
                     activation_handle,
                     weight_handle,
                     output_handle.write(),
@@ -1432,7 +1435,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
     let rms_provider = RmsNormProvider::load(&context)?;
-    let gemm_provider = CublasLtProvider::load(&context)?;
+    let gemm_planner = GemmPlanner::load(&context)?;
     let decode_provider = DecodeProvider::load(&context)?;
     let prefill_provider = PrefillProvider::load(&context)?;
     let rope_provider = RopeProvider::load(&context)?;
@@ -1451,7 +1454,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     if requested.contains(&"gemm") {
-        benchmark_gemm(&context, &stream, &gemm_provider, config, &identity)?;
+        benchmark_gemm(&context, &stream, &gemm_planner, config, &identity)?;
     }
     if requested.contains(&"single_decode") {
         for case in [

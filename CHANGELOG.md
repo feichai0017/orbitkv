@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+### Breaking
+
+- Replaced the public cuBLASLt-specific GEMM API with `GemmPlanner`, explicit
+  provider selection, `Bf16DenseGemmPlan`, and `Bf16DenseGemmOperands`. The
+  cuBLASLt implementation is now a private provider behind the common plan.
+
 ### Added
 
 - Defined the product target as a high-performance, FlashInfer-class operator

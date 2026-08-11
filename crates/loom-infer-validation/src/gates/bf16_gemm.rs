@@ -2,9 +2,14 @@ use crate::comparison::{Comparison, compare_bf16};
 use crate::reporting::GateCase;
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use half::bf16;
-use loom_infer::{Bf16GemmSpec, DType, RmsNormSpec, bf16_gemm_reference, rms_norm_bf16_reference};
+use loom_infer::{
+    Bf16DenseGemmSpec, DType, RmsNormSpec, bf16_dense_gemm_reference, rms_norm_bf16_reference,
+};
 use loom_infer_cuda::command::{CommandError, CommandQueue};
-use loom_infer_cuda::gemm::{Bf16GemmArgs, Bf16GemmEnqueueError, Bf16GemmPlan, CublasLtProvider};
+use loom_infer_cuda::gemm::{
+    Bf16DenseGemmAlgorithm, Bf16DenseGemmEnqueueError, Bf16DenseGemmOperands, Bf16DenseGemmPlan,
+    Bf16DenseGemmSelection, GemmPlanner, GemmProviderId, GemmProviderVersion,
+};
 use loom_infer_cuda::graph::GraphQueue;
 use loom_infer_cuda::rms_norm::{RmsNormArgs, RmsNormProvider};
 use std::error::Error;
@@ -26,7 +31,7 @@ fn require_bit_exact(case: &str, comparison: Comparison) -> Result<(), Box<dyn E
     }
 }
 
-fn large_fixture(spec: Bf16GemmSpec) -> (Vec<bf16>, Vec<bf16>) {
+fn large_fixture(spec: Bf16DenseGemmSpec) -> (Vec<bf16>, Vec<bf16>) {
     let activation = vec![bf16::ONE; spec.a_numel()];
     let mut weight = Vec::with_capacity(spec.weight_numel());
     for row in 0..spec.n() {
@@ -44,16 +49,19 @@ fn large_fixture(spec: Bf16GemmSpec) -> (Vec<bf16>, Vec<bf16>) {
     (activation, weight)
 }
 
-fn workspace_len(plan: &Bf16GemmPlan) -> usize {
+fn workspace_len(plan: &Bf16DenseGemmPlan) -> usize {
     plan.workspace_required_bytes()
 }
 
-fn check_standalone(queue: &mut CommandQueue, plan: &Bf16GemmPlan) -> Result<(), Box<dyn Error>> {
+fn check_standalone(
+    queue: &mut CommandQueue,
+    plan: &Bf16DenseGemmPlan,
+) -> Result<(), Box<dyn Error>> {
     let stream = queue.stream().clone();
     let spec = plan.spec();
     let (activation_host, weight_host) = large_fixture(spec);
     let mut expected = vec![bf16::ZERO; spec.output_numel()];
-    bf16_gemm_reference(&activation_host, &weight_host, &mut expected, spec)?;
+    bf16_dense_gemm_reference(&activation_host, &weight_host, &mut expected, spec)?;
 
     let activation = Arc::new(DeviceBuffer::from_host(&stream, &activation_host)?);
     let weight = Arc::new(DeviceBuffer::from_host(&stream, &weight_host)?);
@@ -71,7 +79,7 @@ fn check_standalone(queue: &mut CommandQueue, plan: &Bf16GemmPlan) -> Result<(),
         let mut scope = queue.begin(bindings)?;
         plan.enqueue_into(
             &mut scope,
-            Bf16GemmArgs::new(
+            Bf16DenseGemmOperands::new(
                 activation_handle,
                 weight_handle,
                 output_handle,
@@ -114,7 +122,7 @@ fn check_standalone(queue: &mut CommandQueue, plan: &Bf16GemmPlan) -> Result<(),
 
 fn check_row_major_transpose(
     queue: &mut CommandQueue,
-    plan: &Bf16GemmPlan,
+    plan: &Bf16DenseGemmPlan,
 ) -> Result<(), Box<dyn Error>> {
     let stream = queue.stream().clone();
     let spec = plan.spec();
@@ -143,7 +151,7 @@ fn check_row_major_transpose(
         bf16::from_f32(0.25),
     ];
     let mut expected = vec![bf16::ZERO; spec.output_numel()];
-    bf16_gemm_reference(&activation_host, &weight_host, &mut expected, spec)?;
+    bf16_dense_gemm_reference(&activation_host, &weight_host, &mut expected, spec)?;
 
     let activation = Arc::new(DeviceBuffer::from_host(&stream, &activation_host)?);
     let weight = Arc::new(DeviceBuffer::from_host(&stream, &weight_host)?);
@@ -157,7 +165,7 @@ fn check_row_major_transpose(
     let mut scope = queue.begin(bindings)?;
     plan.enqueue_into(
         &mut scope,
-        Bf16GemmArgs::new(
+        Bf16DenseGemmOperands::new(
             activation_handle,
             weight_handle,
             output_handle.write(),
@@ -191,7 +199,7 @@ fn check_row_major_transpose(
 
 fn expect_length_rejection(
     queue: &mut CommandQueue,
-    plan: &Bf16GemmPlan,
+    plan: &Bf16DenseGemmPlan,
     operand: &'static str,
     activation_len: usize,
     weight_len: usize,
@@ -210,7 +218,7 @@ fn expect_length_rejection(
     let mut scope = queue.begin(bindings)?;
     let result = plan.enqueue_into(
         &mut scope,
-        Bf16GemmArgs::new(
+        Bf16DenseGemmOperands::new(
             activation_handle,
             weight_handle,
             output_handle.write(),
@@ -218,7 +226,7 @@ fn expect_length_rejection(
         ),
     );
     match result {
-        Err(Bf16GemmEnqueueError::LengthMismatch {
+        Err(Bf16DenseGemmEnqueueError::LengthMismatch {
             operand: actual, ..
         }) if actual == operand => {}
         other => {
@@ -233,7 +241,7 @@ fn expect_length_rejection(
 
 fn check_short_buffers(
     queue: &mut CommandQueue,
-    plan: &Bf16GemmPlan,
+    plan: &Bf16DenseGemmPlan,
 ) -> Result<(), Box<dyn Error>> {
     let spec = plan.spec();
     expect_length_rejection(
@@ -278,7 +286,7 @@ fn check_short_buffers(
         let mut scope = queue.begin(bindings)?;
         let result = plan.enqueue_into(
             &mut scope,
-            Bf16GemmArgs::new(
+            Bf16DenseGemmOperands::new(
                 activation_handle,
                 weight_handle,
                 output_handle.write(),
@@ -286,7 +294,7 @@ fn check_short_buffers(
             ),
         );
         match result {
-            Err(Bf16GemmEnqueueError::WorkspaceTooSmall { required, actual })
+            Err(Bf16DenseGemmEnqueueError::WorkspaceTooSmall { required, actual })
                 if required == workspace_required && actual == workspace_required - 1 => {}
             other => {
                 return Err(format!("short workspace returned the wrong result: {other:?}").into());
@@ -308,7 +316,7 @@ fn check_short_buffers(
 
 fn check_command_capacity(
     stream: &Arc<CudaStream>,
-    plan: &Bf16GemmPlan,
+    plan: &Bf16DenseGemmPlan,
 ) -> Result<(), Box<dyn Error>> {
     let spec = plan.spec();
     let mut queue = CommandQueue::new(stream.clone(), 1, 1)?;
@@ -321,16 +329,16 @@ fn check_command_capacity(
     let weight_handle = bindings.bind_read(Arc::clone(&weight))?;
     let output_handle = bindings.bind_read_write(output)?;
     let workspace_handle = bindings.bind_read_write(workspace)?;
-    let args = Bf16GemmArgs::new(
+    let operands = Bf16DenseGemmOperands::new(
         activation_handle,
         weight_handle,
         output_handle.write(),
         workspace_handle.write(),
     );
     let mut scope = queue.begin(bindings)?;
-    plan.enqueue_into(&mut scope, args)?;
-    match plan.enqueue_into(&mut scope, args) {
-        Err(Bf16GemmEnqueueError::Command(CommandError::CommandCapacityExceeded {
+    plan.enqueue_into(&mut scope, operands)?;
+    match plan.enqueue_into(&mut scope, operands) {
+        Err(Bf16DenseGemmEnqueueError::Command(CommandError::CommandCapacityExceeded {
             capacity: 1,
         })) => {}
         other => return Err(format!("second command returned the wrong result: {other:?}").into()),
@@ -351,7 +359,7 @@ fn check_command_capacity(
 fn check_rms_norm_gemm_chain(
     queue: &mut CommandQueue,
     rms_provider: &RmsNormProvider,
-    gemm_plan: &Bf16GemmPlan,
+    gemm_plan: &Bf16DenseGemmPlan,
 ) -> Result<(), Box<dyn Error>> {
     let stream = queue.stream().clone();
     let gemm_spec = gemm_plan.spec();
@@ -368,7 +376,7 @@ fn check_rms_norm_gemm_chain(
         &mut intermediate_expected,
         rms_spec,
     )?;
-    bf16_gemm_reference(
+    bf16_dense_gemm_reference(
         &intermediate_expected,
         &gemm_weight_host,
         &mut expected,
@@ -399,7 +407,7 @@ fn check_rms_norm_gemm_chain(
     )?;
     gemm_plan.enqueue_into(
         &mut scope,
-        Bf16GemmArgs::new(
+        Bf16DenseGemmOperands::new(
             intermediate_handle.read(),
             gemm_weight_handle,
             output_handle.write(),
@@ -435,7 +443,7 @@ fn check_rms_norm_gemm_chain(
 fn check_rms_norm_gemm_graph(
     queue: &mut CommandQueue,
     rms_provider: RmsNormProvider,
-    gemm_plan: Bf16GemmPlan,
+    gemm_plan: Bf16DenseGemmPlan,
 ) -> Result<(), Box<dyn Error>> {
     let stream = queue.stream().clone();
     let gemm_spec = gemm_plan.spec();
@@ -453,7 +461,7 @@ fn check_rms_norm_gemm_graph(
         &mut intermediate_expected,
         rms_spec,
     )?;
-    bf16_gemm_reference(
+    bf16_dense_gemm_reference(
         &intermediate_expected,
         &gemm_weight_host,
         &mut expected,
@@ -486,7 +494,7 @@ fn check_rms_norm_gemm_graph(
         )?;
         gemm_plan.enqueue_into(
             scope,
-            Bf16GemmArgs::new(
+            Bf16DenseGemmOperands::new(
                 intermediate_handle.read(),
                 gemm_weight_handle,
                 output_handle.write(),
@@ -548,24 +556,47 @@ fn check_rms_norm_gemm_graph(
 pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let rms_provider = RmsNormProvider::load(&context)?;
-    let gemm_provider = CublasLtProvider::load(&context)?;
+    let gemm_planner = GemmPlanner::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
     let mut queue = CommandQueue::new(stream, 2, 1)?;
 
-    let large_spec = Bf16GemmSpec::new(LARGE_M, LARGE_N, LARGE_K)?;
-    let large_plan = gemm_provider.plan_bf16(large_spec)?;
-    let small_plan = gemm_provider.plan_bf16(Bf16GemmSpec::new(2, 3, 4)?)?;
+    let large_spec = Bf16DenseGemmSpec::new(LARGE_M, LARGE_N, LARGE_K)?;
+    let large_plan = gemm_planner.plan_bf16_dense(large_spec, Bf16DenseGemmSelection::CublasLt)?;
+    let small_plan = gemm_planner.plan_bf16_dense(
+        Bf16DenseGemmSpec::new(2, 3, 4)?,
+        Bf16DenseGemmSelection::CublasLt,
+    )?;
+    for (name, plan) in [("large", &large_plan), ("small", &small_plan)] {
+        let info = plan.plan_info();
+        if info.provider() != GemmProviderId::CublasLt
+            || info.algorithm() != Bf16DenseGemmAlgorithm::CublasLtHeuristic
+            || info.workspace_required_bytes() != plan.workspace_required_bytes()
+            || info.tensor_alignment_bytes() != plan.tensor_alignment_bytes()
+            || info.workspace_alignment_bytes() != plan.workspace_alignment_bytes()
+        {
+            return Err(format!("{name} dense GEMM plan reported inconsistent plan info").into());
+        }
+    }
+    let GemmProviderVersion::CublasLt(library_version) =
+        gemm_planner.provider_version(GemmProviderId::CublasLt);
+    let workspace_limit = gemm_planner.workspace_limit_bytes(Bf16DenseGemmSelection::CublasLt);
+    let large_waves = large_plan
+        .estimated_waves_count()
+        .ok_or("cuBLASLt large plan did not report its estimated waves count")?;
+    let small_waves = small_plan
+        .estimated_waves_count()
+        .ok_or("cuBLASLt small plan did not report its estimated waves count")?;
     println!(
         "{} library_version={} \
          workspace_limit={} large_workspace_required={} large_waves={:.6} \
          small_workspace_required={} small_waves={:.6}",
         GateCase::new("bf16_gemm_h20", "plan"),
-        gemm_provider.library_version(),
-        gemm_provider.workspace_limit_bytes(),
+        library_version,
+        workspace_limit,
         large_plan.workspace_required_bytes(),
-        large_plan.heuristic_waves_count(),
+        large_waves,
         small_plan.workspace_required_bytes(),
-        small_plan.heuristic_waves_count(),
+        small_waves,
     );
 
     check_standalone(&mut queue, &large_plan)?;
@@ -574,7 +605,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     check_command_capacity(queue.stream(), &small_plan)?;
     check_rms_norm_gemm_chain(&mut queue, &rms_provider, &large_plan)?;
     drop(small_plan);
-    drop(gemm_provider);
+    drop(gemm_planner);
     check_rms_norm_gemm_graph(&mut queue, rms_provider, large_plan)?;
     println!("gate=bf16_gemm_h20 suite=all status=pass");
     Ok(())

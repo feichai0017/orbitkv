@@ -8,20 +8,21 @@ evidence.
 
 1. [Architecture](design/loom-infer-architecture.md) defines ownership, plans,
    bindings, submission, and completion.
-2. [Operator catalog](operator-catalog.md) lists every admitted operator
+2. [Repository layout](design/repository-layout.md) separates current paths
+   from the target family namespaces.
+3. [Operator catalog](operator-catalog.md) lists every admitted operator
    combination and its current gate.
-3. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
+4. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
    surface without claiming complete parity.
-4. [Roadmap](roadmap.md) orders the remaining correctness, integration, and
+5. [Roadmap](roadmap.md) orders the remaining correctness, integration, and
    performance work.
-5. [Mistral.rs integration](integrations/mistralrs.md) defines the paired-repository boundary and POC qualification.
-6. [Evidence](results/README.md) indexes machine-readable device and benchmark
+6. [Mistral.rs integration](integrations/mistralrs.md) defines the
+   paired-repository boundary and POC qualification.
+7. [Evidence](results/README.md) indexes machine-readable device and benchmark
    records.
 
 ## Development
 
-- [Repository layout](design/repository-layout.md) maps each crate and module to
-  one responsibility.
 - [Environment](development/environment.md) pins Rust, Node.js, CUDA, and
   cuda-oxide.
 - [H20 validation](development/h20-validation.md) defines device correctness,
@@ -46,11 +47,34 @@ Loom records their pinned source pairs and qualification status without vendorin
 Fused KV append now requires exclusive write pages. Its historical records do
 not qualify the revised ownership contract. New device evidence is required.
 
+## State sources
+
+Use one source for each kind of fact:
+
+| Source | Question answered |
+| --- | --- |
+| Rust source and Cargo manifests | What exists in the current checkout? |
+| [Operator catalog](operator-catalog.md) | What source surface is admitted for users? |
+| [Evidence index](results/README.md) and immutable records | What passed on an exact source and environment? |
+| [Integration documents](integrations/mistralrs.md) | What external source pair and adapter boundary passed? |
+| [Roadmap](roadmap.md) | What work is planned, and what ends each milestone? |
+| Design documents | Which boundaries and names guide future source? |
+
+Source presence does not prove device correctness or performance. Old evidence
+does not qualify changed source. Planned work does not count as an admitted
+operator.
+
+When these surfaces disagree, keep result records unchanged. Correct the
+catalog or design projection against the source, then create new evidence for
+the new commit.
+
 ## Documentation rules
 
 - State implemented behavior in the present tense.
 - Mark planned work as planned.
 - Name each admitted algorithm and shape combination.
+- Use the public lifecycle terms from `Spec` through `Completion` without
+  synonyms.
 - Keep correctness, performance, Graph, engine, and serving claims separate.
 - Bind each performance claim to source, hardware, contract, method, and raw
   result.

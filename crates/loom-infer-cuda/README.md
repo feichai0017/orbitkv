@@ -22,7 +22,7 @@ src/
 |-- attention/{mod.rs,decode.rs,prefill.rs}
 |-- command/{mod.rs,binding.rs,resolve.rs,status.rs,submission.rs,completion.rs}
 |-- device_status.rs
-|-- gemm/mod.rs
+|-- gemm/{mod.rs,plan.rs,planner.rs,provider/{mod.rs,cublaslt.rs}}
 |-- graph/mod.rs
 |-- memory.rs
 |-- rms_norm/mod.rs
@@ -55,7 +55,8 @@ The crate exposes these provider families:
 - BF16 D128 NeoX RoPE with explicit positions.
 - Fused RoPE and paged KV append for one token per request or 1 through 64
   explicit tokens.
-- One contiguous BF16 cuBLASLt GEMM plan with a frozen vendor algorithm.
+- One contiguous BF16 dense GEMM path through `GemmPlanner`. The caller selects
+  `CublasLt`, and the immutable common plan retains the frozen vendor algorithm.
 
 ## Append execution
 
@@ -90,12 +91,15 @@ remain outside the current contract.
 ## Engine interop boundary
 
 `ExternalCudaStream` retains an engine-owned stream without adopting it.
-`EngineInteropQueue` orders one single-decode call through pre- and post-events on a Loom-owned stream.
-Checked external regions retain allocation leases and preserve their device addresses.
-After Loom enqueues the post-event wait, an opaque token returns stream-ordered engine authority.
-Checked bindings remain private until completion and must rejoin that exact token before reuse.
+`EngineInteropQueue` orders direct single decode or NHD or HND paged decode
+through pre- and post-events on a Loom-owned stream. Checked external regions
+retain allocation leases and preserve their device addresses.
 
-The `engine_interop_h20` gate uses an in-repository simulated engine.
-It is not evidence for mistral.rs, vLLM, or another model runner.
-HND paged decode and the authority handoff are source prerequisites.
-A real model call and output parity remain open.
+After Loom enqueues the post-event wait, the submission returns the engine's
+stream-ordered authority without a host wait. An owned completion keeps the
+checked bindings, allocation leases, device status storage, and event slot
+private until settlement.
+
+The `engine_interop_h20` gate uses an in-repository simulated engine. It is not
+evidence for Mistral.rs, vLLM, or another model runner. The separate Mistral.rs
+integration record covers one narrow model-owned runtime path.

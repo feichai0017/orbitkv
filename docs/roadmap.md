@@ -4,8 +4,36 @@ Loom Infer is a Rust operator layer for production LLM inference engines.
 Custom NVIDIA kernels use cuda-oxide. Qualified GEMM and communication
 libraries remain explicit providers.
 
-The roadmap closes ownership and engine boundaries before it adds more
-operators.
+The complete target stays within `loom-infer`, `loom-infer-cuda`, and
+`loom-infer-validation`. The roadmap fixes the framework before it expands the
+operator surface.
+
+## K0.0: Normalize the operator framework
+
+**State:** active. Design fixed. Source migration pending.
+
+All current operators will use the same lifecycle:
+
+```text
+Spec -> Provider -> Algorithm -> Plan -> Operands -> CommandScope -> Completion
+```
+
+- Keep the three-crate dependency boundary.
+- Move implemented domains to the final attention, KV-cache, GEMM,
+  normalization, and position namespaces.
+- Add a planned family only with its first contract or provider.
+- Rename current `*Args` types to `*Operands` without compatibility aliases.
+- Select providers and algorithms before immutable plan creation.
+- Keep tuning and fallback outside enqueue.
+- Split large source files only at an operator or provider boundary.
+- Preserve one public execution path for each operator.
+- Update the operator catalog from source and keep old evidence immutable.
+
+The source migration must preserve current contract behavior. It does not
+inherit old H20 qualification under a new source commit.
+
+Exit: every implemented operator follows the common lifecycle and final family
+namespace. Host tests pass, and no duplicate API or empty provider remains.
 
 ## K0.1: Requalify paged KV writes
 
@@ -144,6 +172,39 @@ direct paged-prefill GQA4 fixture.
 Exit: every performance-relevant admitted plan has a fixed-address Graph
 correctness record or an explicit exclusion.
 
+## K0.7: Establish dual-provider dense GEMM
+
+**State:** active. Provider-neutral cuBLASLt source path implemented. Loom
+provider planned after the current-source baseline.
+
+The current source admits one contiguous BF16 cuBLASLt provider through
+`GemmPlanner`, explicit selection, and one provider-neutral plan type. The next
+slice adds an explicit Loom provider without replacing the vendor baseline.
+
+- Keep one `Bf16DenseGemmSpec`, plan surface, operands type, and enqueue path.
+- Add explicit `CublasLt` and `Loom` provider identities.
+- Keep provider and algorithm selection outside enqueue.
+- Record `(M, N, K, dtype, layout, frequency)` from a real model path.
+- Implement the first Loom SM90 BF16 small-M algorithm with cuda-oxide.
+- Use separate algorithms for GEMV-like and WGMMA-suitable M ranges when the
+  profile requires them.
+- Compare both providers in both benchmark orders on current source.
+- Inspect SASS, local memory, spills, Tensor Core use, memory traffic, and
+  scheduler stalls.
+- Run host, H20 correctness, lifecycle, sanitizer, Graph, and matched
+  performance gates.
+- Measure TTFT, TPOT, throughput, and peak memory in the model runner.
+- Return a planning error for unsupported Loom shapes. Do not switch providers
+  during enqueue.
+
+Record the admission threshold before tuning. The initial target is at least
+10% lower median operator latency on declared high-frequency shapes and a
+positive engine change outside measured noise. Otherwise the Loom algorithm
+remains experimental and cuBLASLt remains the selected plan.
+
+Exit: the same dense GEMM contract can produce either explicit provider plan.
+Each published result names its provider, algorithm, source, and timed region.
+
 ## K1: Broaden attention contracts
 
 **State:** planned after K0.
@@ -159,7 +220,7 @@ correctness record or an explicit exclusion.
 Exit: each added slice passes host, device, lifecycle, sanitizer, performance,
 Graph, and engine gates that apply to its declared contract.
 
-## K2: KV cache and decode tail
+## K2: KV cache, sampling, and speculation
 
 **State:** planned.
 
@@ -172,14 +233,17 @@ Graph, and engine gates that apply to its declared contract.
 Exit: the operators reduce measured engine work without changing token output
 or the declared stochastic distribution.
 
-## K3: Quantization, MoE, and matrix providers
+## K3: Quantization, MoE, and GEMM expansion
 
 **State:** planned.
 
 - Add scale, pack, unpack, dequantize, and layout conversion.
+- Add activation and gated-activation contracts from measured model paths.
 - Add expert routing, permutation, grouped-GEMM inputs, and weighted combine.
-- Call qualified dense, quantized, and grouped GEMM libraries through fixed
-  plans.
+- Add separate dense, grouped, and quantized GEMM contracts.
+- Extend explicit Loom and vendor providers through fixed plans.
+- Keep FP8 and FP4 out of Loom device code until cuda-oxide supports the
+  required types and instructions or Loom contributes them upstream.
 - Fuse adjacent work only when the matched complete path improves.
 
 Exit: dense and MoE workloads have separate operator and engine evidence.

@@ -1,4 +1,4 @@
-//! Contiguous BF16 GEMM contract and CPU reference implementation.
+//! Dense BF16 GEMM contract and CPU reference implementation.
 
 use crate::ContractError;
 use crate::error::require_len;
@@ -9,13 +9,13 @@ use half::bf16;
 /// `A`, `W`, and `D` are contiguous row-major BF16 tensors. Each dot product
 /// accumulates in F32, and the completed result is rounded once to BF16.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub struct Bf16GemmSpec {
+pub struct Bf16DenseGemmSpec {
     m: usize,
     n: usize,
     k: usize,
 }
 
-impl Bf16GemmSpec {
+impl Bf16DenseGemmSpec {
     /// Creates a fixed-shape contiguous BF16 GEMM contract.
     pub fn new(m: usize, n: usize, k: usize) -> Result<Self, ContractError> {
         if m == 0 || n == 0 || k == 0 {
@@ -69,11 +69,11 @@ impl Bf16GemmSpec {
 /// one F32 fused multiply-add per element. This fixes the oracle's reduction
 /// order; a parallel provider may require a declared numerical tolerance while
 /// still using F32 accumulation.
-pub fn bf16_gemm_reference(
+pub fn bf16_dense_gemm_reference(
     a: &[bf16],
     weight: &[bf16],
     output: &mut [bf16],
-    spec: Bf16GemmSpec,
+    spec: Bf16DenseGemmSpec,
 ) -> Result<(), ContractError> {
     require_len("A", a.len(), spec.a_numel())?;
     require_len("W", weight.len(), spec.weight_numel())?;
