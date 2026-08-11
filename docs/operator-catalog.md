@@ -77,17 +77,16 @@ submission path.
 
 ## Dense GEMM providers
 
-Dense BF16 GEMM has one current provider and one planned provider:
+Dense BF16 GEMM has two implemented providers on one public execution path:
 
 | Provider | State | Role |
 | --- | --- | --- |
-| `CublasLt` | Provider-neutral source path implemented; current-source H20 requalification pending | Explicit vendor baseline using `CublasLtHeuristic` |
-| `Loom` | Planned. First experimental contract frozen | cuda-oxide SM90 algorithms for measured inference shapes |
+| `CublasLt` | Implemented; current-source H20 requalification pending | Explicit vendor baseline using `CublasLtHeuristic` |
+| `Loom` | Experimental implementation; H20 correctness and fixed-address Graph gate passed; performance not qualified | Explicit cuda-oxide path using `LoomSm90SimtGemvM1N16K64` |
 
-`GemmPlanner` already exposes one dense GEMM contract and execution path for
-explicit cuBLASLt selection. The Loom provider will join that path. An
-unsupported Loom shape returns a planning error. Enqueue does not switch to
-cuBLASLt.
+`GemmPlanner` exposes one dense GEMM contract and execution path for explicit
+`CublasLt` or `Loom` selection. An unsupported Loom shape returns a planning
+error. Enqueue does not switch providers.
 
 The first frozen Loom candidate is `LoomSm90SimtGemvM1N16K64`. It admits
 `M=1`, BF16 contiguous `D=A*W^T`, `N % 16 = 0`, `K % 64 = 0`, no post-ops,
@@ -98,9 +97,12 @@ logical shapes. That is 87.574% of calls and 16.708% of FLOPs in the pinned
 single-request workload. The census is workload evidence, not performance
 evidence.
 
-No Loom GEMM kernel or performance result exists in the current source. The
-[experimental contract](development/sm90-simt-gemv-m1.md) defines the layout,
-both baselines, promotion gates, and stop conditions.
+The current Loom kernel has H20 correctness and fixed-address Graph coverage
+for the five census shapes.
+
+It has no sanitizer, SASS, matched-performance, or engine-performance
+qualification. The [experimental contract](development/sm90-simt-gemv-m1.md)
+defines the layout, both baselines, promotion gates, and stop conditions.
 
 ## KV append ownership
 

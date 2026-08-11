@@ -17,7 +17,7 @@ CARGO := $(CARGO_ENV) $(RUN) cargo
 NPM := $(RUN) npm --prefix website
 
 .PHONY: help check check-rust check-tools check-website install-website cuda-doctor \
-	cuda-check cuda-test h20-rms-norm h20-gemm h20-attention h20-paged-attention \
+	cuda-check cuda-test h20-rms-norm h20-gemm h20-oxide-gemm h20-attention h20-paged-attention \
 	h20-ragged-prefill h20-paged-prefill h20-rope h20-engine-interop h20 \
 	bench-loom bench-paged-loom bench-ragged-loom \
 	bench-paged-prefill-loom bench-paged-prefill-graph-loom bench-ragged-graph-loom \
@@ -32,6 +32,7 @@ help:
 		'make cuda-check     Run CUDA-feature Clippy' \
 		'make cuda-test      Run release tests through cuda-oxide' \
 		'make h20            Run all H20 correctness programs sequentially' \
+		'make h20-oxide-gemm  Validate the experimental Loom SM90a M=1 GEMV' \
 		'make h20-engine-interop  Validate single and paged external-stream interop' \
 		'make h20-paged-attention  Run paged batch-decode H20 correctness' \
 		'make h20-ragged-prefill  Run ragged prefill H20 correctness' \
@@ -87,6 +88,9 @@ h20-rms-norm:
 h20-gemm:
 	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run bf16_gemm_h20 --bin bf16_gemm_h20 --features cuda --arch $(CUDA_ARCH)
 
+h20-oxide-gemm:
+	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run loom_sm90_simt_gemv_h20 --bin loom_sm90_simt_gemv_h20 --features cuda --arch sm_90a
+
 h20-attention:
 	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run single_decode_h20 --bin single_decode_h20 --features cuda --arch $(CUDA_ARCH)
 
@@ -105,7 +109,7 @@ h20-rope:
 h20-engine-interop:
 	cd $(VALIDATION_CRATE) && $(CARGO) +nightly-2026-04-03 oxide run engine_interop_h20 --bin engine_interop_h20 --features cuda --arch $(CUDA_ARCH)
 
-h20: h20-rms-norm h20-gemm h20-attention h20-paged-attention h20-ragged-prefill h20-paged-prefill h20-rope h20-engine-interop
+h20: h20-rms-norm h20-gemm h20-oxide-gemm h20-attention h20-paged-attention h20-ragged-prefill h20-paged-prefill h20-rope h20-engine-interop
 
 bench-loom:
 	@set -o pipefail; cd $(VALIDATION_CRATE) && LOOM_SOURCE_COMMIT="$(LOOM_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run loom_matched_bench_h20 --bin loom_matched_bench_h20 --features cuda --arch $(CUDA_ARCH) | sed -n '/^{/p'

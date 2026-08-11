@@ -22,7 +22,8 @@ src/
 |-- attention/{mod.rs,decode.rs,prefill.rs}
 |-- command/{mod.rs,binding.rs,resolve.rs,status.rs,submission.rs,completion.rs}
 |-- device_status.rs
-|-- gemm/{mod.rs,plan.rs,planner.rs,provider/{mod.rs,cublaslt.rs}}
+|-- gemm/{mod.rs,plan.rs,planner.rs}
+|   `-- provider/{mod.rs,cublaslt.rs,loom/{mod.rs,sm90/mod.rs}}
 |-- graph/mod.rs
 |-- memory.rs
 |-- rms_norm/mod.rs
@@ -56,7 +57,9 @@ The crate exposes these provider families:
 - Fused RoPE and paged KV append for one token per request or 1 through 64
   explicit tokens.
 - One contiguous BF16 dense GEMM path through `GemmPlanner`. The caller selects
-  `CublasLt`, and the immutable common plan retains the frozen vendor algorithm.
+  `CublasLt` or the experimental `LoomSm90SimtGemvM1N16K64` H20 `sm_90a`
+  algorithm. The common immutable plan and checked enqueue path do not change
+  providers at runtime.
 
 ## Append execution
 

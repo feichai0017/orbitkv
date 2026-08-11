@@ -578,7 +578,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         }
     }
     let GemmProviderVersion::CublasLt(library_version) =
-        gemm_planner.provider_version(GemmProviderId::CublasLt);
+        gemm_planner.provider_version(GemmProviderId::CublasLt)
+    else {
+        return Err("cuBLASLt GEMM provider reported the wrong version identity".into());
+    };
     let workspace_limit = gemm_planner.workspace_limit_bytes(Bf16DenseGemmSelection::CublasLt);
     let large_waves = large_plan
         .estimated_waves_count()

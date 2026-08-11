@@ -1,6 +1,7 @@
 use crate::command::{CommandError, CommandScope, Read, Write};
-use crate::gemm::provider::CublasLtBf16DensePlan;
-use cuda_core::DriverError;
+use crate::gemm::provider::{CublasLtBf16DensePlan, LoomBf16DensePlan};
+use crate::memory::DeviceRegionLaunchError;
+use cuda_core::{DriverError, LaunchContractError};
 use cudarc::cublaslt::result;
 use half::bf16;
 use loom_infer::Bf16DenseGemmSpec;
@@ -10,12 +11,14 @@ use thiserror::Error;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GemmProviderId {
     CublasLt,
+    Loom,
 }
 
 impl GemmProviderId {
     pub const fn name(self) -> &'static str {
         match self {
             Self::CublasLt => "cuBLASLt",
+            Self::Loom => "Loom",
         }
     }
 }
@@ -24,12 +27,14 @@ impl GemmProviderId {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum GemmProviderVersion {
     CublasLt(usize),
+    Loom(&'static str),
 }
 
 /// Frozen algorithm used by a dense BF16 GEMM plan.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum Bf16DenseGemmAlgorithm {
     CublasLtHeuristic,
+    LoomSm90SimtGemvM1N16K64,
 }
 
 /// Stable information about one immutable dense BF16 GEMM plan.
@@ -73,6 +78,7 @@ pub struct Bf16DenseGemmPlan {
 #[derive(Clone)]
 enum Bf16DenseGemmPlanInner {
     CublasLt(CublasLtBf16DensePlan),
+    Loom(LoomBf16DensePlan),
 }
 
 impl Bf16DenseGemmPlan {
@@ -82,9 +88,16 @@ impl Bf16DenseGemmPlan {
         }
     }
 
+    pub(crate) const fn from_loom(plan: LoomBf16DensePlan) -> Self {
+        Self {
+            inner: Bf16DenseGemmPlanInner::Loom(plan),
+        }
+    }
+
     pub fn spec(&self) -> Bf16DenseGemmSpec {
         match &self.inner {
             Bf16DenseGemmPlanInner::CublasLt(plan) => plan.spec(),
+            Bf16DenseGemmPlanInner::Loom(plan) => plan.spec(),
         }
     }
 
@@ -93,6 +106,13 @@ impl Bf16DenseGemmPlan {
             Bf16DenseGemmPlanInner::CublasLt(plan) => Bf16DenseGemmPlanInfo {
                 provider: GemmProviderId::CublasLt,
                 algorithm: Bf16DenseGemmAlgorithm::CublasLtHeuristic,
+                workspace_required_bytes: plan.workspace_required_bytes(),
+                tensor_alignment_bytes: plan.tensor_alignment_bytes(),
+                workspace_alignment_bytes: plan.workspace_alignment_bytes(),
+            },
+            Bf16DenseGemmPlanInner::Loom(plan) => Bf16DenseGemmPlanInfo {
+                provider: GemmProviderId::Loom,
+                algorithm: Bf16DenseGemmAlgorithm::LoomSm90SimtGemvM1N16K64,
                 workspace_required_bytes: plan.workspace_required_bytes(),
                 tensor_alignment_bytes: plan.tensor_alignment_bytes(),
                 workspace_alignment_bytes: plan.workspace_alignment_bytes(),
@@ -116,6 +136,7 @@ impl Bf16DenseGemmPlan {
     pub fn estimated_waves_count(&self) -> Option<f32> {
         match &self.inner {
             Bf16DenseGemmPlanInner::CublasLt(plan) => Some(plan.estimated_waves_count()),
+            Bf16DenseGemmPlanInner::Loom(_) => None,
         }
     }
 
@@ -127,6 +148,7 @@ impl Bf16DenseGemmPlan {
     ) -> Result<(), Bf16DenseGemmEnqueueError> {
         match &self.inner {
             Bf16DenseGemmPlanInner::CublasLt(plan) => plan.enqueue_into(scope, operands),
+            Bf16DenseGemmPlanInner::Loom(plan) => plan.enqueue_into(scope, operands),
         }
     }
 }
@@ -180,6 +202,28 @@ pub enum Bf16DenseGemmPlanError {
     DimensionOutOfRange { name: &'static str, value: usize },
     #[error("selected GEMM needs {required} workspace bytes, above the {limit}-byte plan limit")]
     WorkspaceRequirementExceedsLimit { required: usize, limit: usize },
+    #[error("Loom SM90 GEMV requires M=1, got {m}")]
+    LoomMNotOne { m: usize },
+    #[error("Loom SM90 GEMV requires N to be a multiple of 16, got {n}")]
+    LoomNNotMultipleOf16 { n: usize },
+    #[error("Loom SM90 GEMV requires K to be a multiple of 64, got {k}")]
+    LoomKNotMultipleOf64 { k: usize },
+    #[error("Loom SM90 GEMV requires device 'NVIDIA H20', got '{device}'")]
+    LoomUnsupportedDevice { device: String },
+    #[error("Loom SM90 GEMV requires compute capability 9.0, got {major}.{minor}")]
+    LoomUnsupportedComputeCapability { major: i32, minor: i32 },
+    #[error("Loom SM90 GEMV requires an sm_90a artifact, got {actual:?}")]
+    LoomUnsupportedArtifactTarget { actual: Option<String> },
+    #[error("Loom SM90 GEMV grid needs {blocks} blocks, exceeding the CUDA x-grid range")]
+    LoomGridDimensionOutOfRange { blocks: usize },
+    #[error("Loom provider initialization lock is poisoned")]
+    LoomProviderLockPoisoned,
+    #[error(transparent)]
+    EmbeddedArtifact(#[from] cuda_core::EmbeddedModuleError),
+    #[error(transparent)]
+    EmbeddedModule(#[from] cuda_host::EmbeddedModuleError),
+    #[error(transparent)]
+    Launch(#[from] LaunchContractError),
     #[error(transparent)]
     Driver(#[from] DriverError),
     #[error(transparent)]
@@ -189,7 +233,7 @@ pub enum Bf16DenseGemmPlanError {
 #[derive(Debug, Error)]
 pub enum Bf16DenseGemmEnqueueError {
     #[error(
-        "cuBLASLt plan belongs to CUDA device {plan_device}, but the stream belongs to device {stream_device}"
+        "GEMM plan belongs to CUDA device {plan_device}, but the stream belongs to device {stream_device}"
     )]
     ContextMismatch {
         plan_device: usize,
@@ -211,6 +255,8 @@ pub enum Bf16DenseGemmEnqueueError {
         address: u64,
         alignment: u64,
     },
+    #[error(transparent)]
+    KernelLaunch(#[from] DeviceRegionLaunchError),
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]

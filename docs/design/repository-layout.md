@@ -112,12 +112,12 @@ lands.
 | `src/graph/mod.rs` | Fixed-address Graph capture and replay | `runtime/graph` |
 | `src/interop.rs` | External streams and engine handoff | `runtime/interop` |
 | `src/rms_norm/mod.rs` | RMSNorm plan and Rust device kernels | `normalization/rms_norm` |
-| `src/gemm/` | Dense BF16 planning, plan facade, and private cuBLASLt provider | `gemm/dense` when a second GEMM contract needs the split |
+| `src/gemm/` | Dense BF16 planning, one plan facade, and private cuBLASLt and Loom providers | `gemm/dense` when a second GEMM contract needs the split |
 | `src/attention/decode.rs` | Single and paged decode providers | Matching attention domains |
 | `src/attention/prefill.rs` | Ragged and paged prefill providers | Matching attention domains |
 | `src/rope/mod.rs` | Standard RoPE and fused append providers | `position/rope` and `kv_cache/paged_append` |
 
-The current GEMM area has one public dense operation and one private provider:
+The current GEMM area has one public dense operation and two private providers:
 
 ```text
 gemm/
@@ -126,12 +126,17 @@ gemm/
 |-- plan.rs
 `-- provider/
     |-- mod.rs
-    `-- cublaslt.rs
+    |-- cublaslt.rs
+    `-- loom/
+        |-- mod.rs
+        `-- sm90/
+            `-- mod.rs
 ```
 
 `GemmPlanner` exposes the provider-neutral plan path. `provider/cublaslt.rs`
-owns the admitted vendor implementation. `provider/loom/sm90` will exist only
-when the first cuda-oxide GEMM provider lands.
+owns the general vendor implementation. `provider/loom/sm90` owns the
+experimental H20 `sm_90a` M=1 kernel. Both use the same plan, operands,
+command, completion, and Graph path.
 
 When a second GEMM contract lands, `gemm/mod.rs` remains the family facade and
 the existing files can move under `gemm/dense`. Grouped and quantized contracts

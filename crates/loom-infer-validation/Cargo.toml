@@ -38,6 +38,11 @@ path = "src/bin/bf16_gemm_h20.rs"
 required-features = ["cuda"]
 
 [[bin]]
+name = "loom_sm90_simt_gemv_h20"
+path = "src/bin/loom_sm90_simt_gemv_h20.rs"
+required-features = ["cuda"]
+
+[[bin]]
 name = "single_decode_h20"
 path = "src/bin/single_decode_h20.rs"
 required-features = ["cuda"]

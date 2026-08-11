@@ -312,18 +312,21 @@ Bf16DenseGemmSpec
 The selection fixes the `Provider` and requested `Algorithm`. Plan information
 reports their stable identities after planning.
 
-The current `GemmPlanner` accepts `Bf16DenseGemmSelection::CublasLt`. Plan
-information reports `GemmProviderId::CublasLt` and
-`Bf16DenseGemmAlgorithm::CublasLtHeuristic`. Its private provider computes
-contiguous row-major BF16 `D[M,N] = A[M,K] * W[N,K]^T` with F32 accumulation.
-It validates exact spans, alignment, CUDA context, and workspace.
+The current `GemmPlanner` accepts explicit `CublasLt` and `Loom` selections.
+Plan information reports the selected provider and frozen algorithm. The
+private providers compute contiguous row-major BF16
+`D[M,N] = A[M,K] * W[N,K]^T` with F32 accumulation. Both use the same checked
+operands, command scope, completion, and Graph lifecycle.
 
-The target adds `Loom` in the same CUDA crate. Its first candidate is a
-cuda-oxide SM90 BF16 small-M algorithm selected from measured model shapes.
-Admission requires an independent oracle and current-source H20 evidence.
+`CublasLt` selects `CublasLtHeuristic`. `Loom` selects the experimental
+`LoomSm90SimtGemvM1N16K64` only for its exact H20 `sm_90a` contract. The Loom
+module loads lazily on the first explicit Loom plan. Unsupported contracts fail
+during planning, and enqueue never changes providers.
 
-The cuBLASLt provider remains the explicit general baseline. An unsupported
-Loom `Spec` returns a planning error, so the caller can request another plan.
+The cuBLASLt provider remains the explicit general baseline. `GemmPlanner`
+still creates the cuBLASLt provider when it loads, even for a later Loom-only
+request. Provider-specific planner construction remains future work. This
+eager construction does not create an enqueue-time fallback.
 
 Dense BF16, dense FP8, grouped BF16, and grouped FP8 use separate `Spec` and
 `Plan` types to preserve scale, grouping, layout, and epilogue semantics.

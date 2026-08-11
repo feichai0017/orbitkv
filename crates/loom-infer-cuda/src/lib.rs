@@ -1,3 +1,6 @@
+#![cfg_attr(feature = "cuda", allow(internal_features))]
+#![cfg_attr(feature = "cuda", feature(core_intrinsics))]
+
 //! Rust CUDA providers for Loom Infer.
 //!
 //! Enable the `cuda` feature inside the pinned cuda-oxide toolchain.

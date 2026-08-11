@@ -1,12 +1,13 @@
 # Experimental SM90 M=1 GEMV contract
 
-The first planned Loom dense-GEMM algorithm is
-`LoomSm90SimtGemvM1N16K64`. This document freezes its experimental contract
-before kernel work starts.
+The first implemented Loom dense-GEMM algorithm is
+`LoomSm90SimtGemvM1N16K64`. It remains experimental. This document fixes its
+contract and separates the implemented correctness boundary from the work
+needed for performance qualification.
 
-The current source contains no Loom GEMM provider or kernel. This freeze
-controls the first implementation and its evidence. It does not admit device
-support or a performance claim.
+The source contains an explicit Loom provider and cuda-oxide kernel. It does
+not select Loom by default or fall back to cuBLASLt. Current H20 correctness
+does not establish a performance or production claim.
 
 ## Census basis
 
@@ -69,7 +70,7 @@ holds:
 | Activation | BF16, row-major contiguous `[1,K]`, not transposed |
 | Weight | BF16, row-major contiguous `[N,K]`, interpreted as transposed |
 | Output | BF16, row-major contiguous `[1,N]` |
-| Region offset | Allowed when the bound logical span remains exact and contiguous |
+| Region offset | Allowed when the bound logical span is exact, contiguous, and four-byte aligned |
 | Post-ops | None, including no bias or fused activation |
 | Workspace | Zero required bytes |
 | Aliasing | Existing `CommandScope` read and exclusive-write rules |
@@ -88,10 +89,10 @@ cuda-oxide is the device compiler, not the provider identity. The provider is
 | Lifecycle role | Placement |
 | --- | --- |
 | `Spec` | Reuse `crates/loom-infer/src/gemm/mod.rs::Bf16DenseGemmSpec` |
-| `Provider` and `Algorithm` selection | Extend `crates/loom-infer-cuda/src/gemm/planner.rs` |
-| Immutable `Plan` facade | Extend `crates/loom-infer-cuda/src/gemm/plan.rs` |
-| Loom provider owner | Add `crates/loom-infer-cuda/src/gemm/provider/loom/` |
-| SM90 implementation | Add `crates/loom-infer-cuda/src/gemm/provider/loom/sm90/` |
+| `Provider` and `Algorithm` selection | `crates/loom-infer-cuda/src/gemm/planner.rs` |
+| Immutable `Plan` facade | `crates/loom-infer-cuda/src/gemm/plan.rs` |
+| Loom provider owner | `crates/loom-infer-cuda/src/gemm/provider/loom/` |
+| SM90 implementation | `crates/loom-infer-cuda/src/gemm/provider/loom/sm90/` |
 | `Operands`, `CommandScope`, and `Completion` | Reuse the current dense-GEMM path |
 
 The source tree keeps the current singular `provider` directory:
@@ -129,26 +130,40 @@ whether the SIMT candidate advances.
 
 ## Qualification gates
 
-The candidate remains experimental until one clean source and artifact pass
-all applicable H20 gates. Each cuda-oxide build and gate must set
-`CUDA_ARCH=sm_90a` explicitly instead of using the repository default.
+The candidate remains experimental. Each cuda-oxide build and gate must use
+`sm_90a` explicitly instead of the repository default.
 
-- Host tests accept all five shapes and reject every condition outside the
-  frozen contract.
+The current implementation has passed these gates on one NVIDIA H20:
+
+- Host admission accepts all five census shapes and rejects unsupported M, N,
+  K, buffer length, and alignment. The successful device run also confirms the
+  positive NVIDIA H20, compute capability 9.0, and `sm_90a` artifact path.
 - Device correctness covers all five shapes against the independent reference.
-  It also checks output sentinels and the declared numerical limit.
-- Lifecycle tests cover plan reuse, command capacity, ordinary stream order,
-  completion settlement, and retained resource leases.
-- Compute Sanitizer runs memcheck with leak checking, racecheck, synccheck, and
+  A positive exact fixture checks indexing and sentinels. A separate
+  varying-scale cancellation fixture checks the declared mixed tolerance.
+- Lifecycle coverage includes plan reuse, command capacity, completion, and
+  retained resource leases.
+- Fixed-address Graph coverage uses a three-command poison-and-write recipe,
+  two guarded outputs, and two replays for every census shape.
+- Plan metadata reports zero required workspace. The provider allocates no
+  hidden workspace.
+- Standard RoPE passed its permanent H20 runner with both `sm_90` and
+  `sm_90a` after the shared device-math compiler contract changed.
+
+The following gates still block promotion:
+
+- Compute Sanitizer memcheck with leak checking, racecheck, synccheck, and
   initcheck over the permanent runner.
-- SASS and compiler reports show no register spill or local-memory traffic for
-  the admitted artifact.
-- Fixed-address Graph tests cover capture, poisoned output, replay, completion,
-  owner drop, and lease retention for every admitted shape.
-- Plan metadata reports zero required workspace, and the provider allocates no
-  hidden storage.
-- Negative gates reject unsupported shapes, layouts, dtypes, post-ops, and
-  device targets before submission.
+- SASS and compiler reports that show no register spill or unexpected local
+  memory.
+- Matched performance against both baselines and real-engine performance.
+
+### Contract evidence boundaries
+
+| Boundary | Evidence status |
+| --- | --- |
+| Alternate layouts, dtypes, and post-ops | The fixed `Bf16DenseGemmSpec` cannot express them. These are type-level boundaries, not runtime rejection results |
+| Device, compute capability, and artifact target | The provider checks them before loading. The permanent gate covers only the successful H20 `sm_90a` path |
 
 ### Operator performance
 

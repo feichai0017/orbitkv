@@ -174,29 +174,31 @@ correctness record or an explicit exclusion.
 
 ## K0.7: Establish dual-provider dense GEMM
 
-**State:** active. Provider-neutral cuBLASLt source path implemented. The first
-experimental Loom contract is frozen from a pinned H20 census.
+**State:** active. Loom implements the provider-neutral cuBLASLt path and the
+first experimental kernel from a pinned H20 census.
 
-The current source admits one contiguous BF16 cuBLASLt provider through
-`GemmPlanner`, explicit selection, and one provider-neutral plan type. The next
-slice adds an explicit Loom provider without replacing the vendor baseline.
+The current source admits explicit `CublasLt` and `Loom` plans through one
+`GemmPlanner`, plan type, operands type, and enqueue path. Unsupported Loom
+contracts fail during planning. The implementation does not replace the vendor
+baseline or select a fallback.
 
 - Keep one `Bf16DenseGemmSpec`, plan surface, operands type, and enqueue path.
-- Add explicit `CublasLt` and `Loom` provider identities.
+- Keep the implemented `CublasLt` and `Loom` provider identities explicit.
 - Keep provider and algorithm selection outside enqueue.
 - Preserve the Qwen2.5-1.5B census identity and hashes in the
   [experimental contract](development/sm90-simt-gemv-m1.md). Its ten buckets
   contain 1,352 host calls. The five `M=1` shapes account for 1,184 calls.
-- Implement `LoomSm90SimtGemvM1N16K64` with cuda-oxide for the frozen BF16,
-  contiguous, transpose-weight, no-post-op, zero-workspace contract.
+- Retain `LoomSm90SimtGemvM1N16K64` as an experimental cuda-oxide algorithm
+  for the frozen BF16, contiguous, transpose-weight, no-post-op,
+  zero-workspace contract.
 - Keep WGMMA in a separate future algorithm. The measured `M=1` slice would
   waste 63 rows of a 64-row WGMMA tile, and the pinned lowering is limited.
 - Compare Loom with both Mistral.rs CUDA GEMV and cuBLASLt. Run each matched
   H20 pair in both provider orders on current source.
 - Inspect SASS, local memory, spills, Tensor Core use, memory traffic, and
   scheduler stalls.
-- Run host, H20 correctness, lifecycle, sanitizer, Graph, and matched
-  performance gates.
+- Preserve the passing host, H20 correctness, lifecycle, and fixed-address
+  Graph gates. Add sanitizer and matched-performance gates.
 - Measure TTFT, TPOT, throughput, and peak memory in the model runner.
 - Return a planning error for unsupported Loom shapes. Do not switch providers
   during enqueue.

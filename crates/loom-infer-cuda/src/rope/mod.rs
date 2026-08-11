@@ -78,9 +78,11 @@ mod kernels {
         }
 
         let exponent = pair as f32 / ROTARY_PAIRS as f32;
-        let inverse_frequency = (1.0_f32 / rope_theta).powf(exponent) / rope_scale;
+        let inverse_frequency =
+            core::intrinsics::powf32(1.0_f32 / rope_theta, exponent) / rope_scale;
         let angle = position as f32 * inverse_frequency;
-        let (sin, cos) = angle.sin_cos();
+        let sin = core::intrinsics::sinf32(angle);
+        let cos = core::intrinsics::cosf32(angle);
 
         if combined_head < query_heads {
             let base = (token * query_heads + combined_head) * HEAD_DIM;
@@ -483,9 +485,10 @@ mod kernels {
             return;
         }
         let exponent = pair as f32 / ROTARY_PAIRS as f32;
-        let inverse_frequency = (1.0_f32 / 10_000.0).powf(exponent);
+        let inverse_frequency = core::intrinsics::powf32(1.0_f32 / 10_000.0, exponent);
         let angle = position as f32 * inverse_frequency;
-        let (sin, cos) = angle.sin_cos();
+        let sin = core::intrinsics::sinf32(angle);
+        let cos = core::intrinsics::cosf32(angle);
         if combined_head < query_heads {
             let base = (item * query_heads + combined_head) * HEAD_DIM;
             // SAFETY: the launch contract proves the Q spans, and each thread
