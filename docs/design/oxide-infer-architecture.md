@@ -63,11 +63,11 @@ not to a top-level `fused_ops` family.
 
 | Family | Current | Experimental | Planned |
 | --- | --- | --- | --- |
-| `attention` | Single decode, paged decode, ragged prefill, paged prefill | Selected source paths await current-source requalification | Sliding window, mixed-batch attention, MLA, broader head dimensions |
+| `attention` | Single decode, paged decode, ragged prefill, paged prefill; declared R1 runner paths are H20-qualified | None | Sliding window, mixed-batch attention, MLA, broader head dimensions |
 | `gemm` | Contiguous BF16 dense GEMM through cuBLASLt | Native SM90a M=1 BF16 GEMV | FP8, FP4, grouped, quantized, and broader small-M algorithms |
-| `kv_cache` | Fused RoPE plus paged append source | Exclusive-page append contract awaits full requalification | Gather, scatter, compaction, remapping, FP8, and INT8 storage |
-| `normalization` | RMSNorm for F32, FP16, and BF16 | Current-source device requalification | Additional normalization contracts from engine demand |
-| `position` | BF16 NeoX RoPE with explicit positions | Current-source device requalification | Other layouts, dimensions, and position transforms |
+| `kv_cache` | Fused RoPE plus exclusive-page paged append; declared R1 runner path is H20-qualified | None | Gather, scatter, compaction, remapping, FP8, and INT8 storage |
+| `normalization` | RMSNorm for F32, FP16, and BF16; declared R1 runner paths are H20-qualified | None | Additional normalization contracts from engine demand |
+| `position` | BF16 NeoX RoPE with explicit positions; declared R1 runner path is H20-qualified | None | Other layouts, dimensions, and position transforms |
 | `activation` | None | None | SwiGLU and other measured activation contracts |
 | `sampling` | None | None | Logits transforms, penalties, Top-K, Top-P, Min-P, logprobs, and RNG |
 | `speculation` | None | None | Draft verification and token compaction |
