@@ -14,10 +14,12 @@ useful for implementation history and old-contract performance, but they do
 not qualify the current source. New correctness, sanitizer, Graph, and matched
 performance records are required.
 
-The current DeviceRegion work also changed submission for RMSNorm, GEMM,
-decode, prefill, and RoPE. Every published device and Graph record predates
-that launch-path change. The records still describe their exact source trees,
-but they do not qualify the current worktree.
+The current DeviceRegion work changed submission for RMSNorm, GEMM, decode,
+prefill, and RoPE:
+
+- Device and Graph records dated through 2026-08-07 predate that launch path.
+- The 2026-08-11 experimental Loom GEMV record covers the post-change path
+  only for its declared H20 `sm_90a` contract.
 
 This notice includes the two paged-prefill records dated 2026-08-07. They apply
 to clean source commit `8478ee9`, before the DeviceRegion submission path.
@@ -30,17 +32,18 @@ FlashInfer comparison scripts use separate PyTorch F32 references.
 No published result proves cross-provider reference-digest parity.
 The summarizer rejects mixed contracts, fixtures, measurements, and execution identities.
 
-Current Graph qualification also requires output poison before each validation
-replay. Earlier records do not satisfy that rule. Benchmark `graph_nodes`
-fields are handwritten metadata, not CUDA driver enumeration.
+Current Graph qualification requires each validation replay to run an output
+poison command before the checked operator writes that output. Earlier records
+do not satisfy that rule. Benchmark `graph_nodes` fields are handwritten
+metadata, not CUDA driver enumeration.
 
 A binary FlashInfer wheel records its verified distribution version but no
 source commit unless the artifact proves one.
 
 Existing matched attention and attention-Graph records predate these checks.
 Their raw samples remain historical. Rerun them before citing a current
-provider ranking. The notice above excludes all existing Loom device records
-from current-source qualification.
+provider ranking. The notice above excludes all Loom device records dated
+through 2026-08-07 from current-source qualification.
 
 ## Runtime, normalization, and GEMM
 
@@ -55,6 +58,11 @@ from current-source qualification.
   covers one fixed contiguous GEMM plan and command reuse.
 - [Owned bindings and fixed-address Graph correctness](h20-owned-bindings-cuda-graph-correctness-20260803.json)
   covers the RMSNorm-to-GEMM chain.
+- [Experimental Loom SM90a M=1 GEMV correctness and fixed-address Graph](h20-bf16-loom-sm90a-simt-gemv-correctness-20260811.json)
+  covers five census shapes, typed pre-submit rejection, plan reuse, a
+  three-command poison-and-write Graph recipe, two observable outputs, and two
+  replays on one H20. It does not qualify performance, Compute Sanitizer, SASS,
+  or engine integration.
 - [Shared command-resolution regression](h20-shared-command-regression-20260803.json)
   covers the source projection recorded on 2026-08-03.
 

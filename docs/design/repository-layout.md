@@ -57,7 +57,7 @@ family only when its first contract or provider exists.
 | --- | --- | --- |
 | `attention` | Decode, prefill, masking, and attention-state merge | Implemented under `attention` |
 | `kv_cache` | Paged append, gather, scatter, compaction, and remapping | Paged append is currently under `attention/paged_append` and the CUDA RoPE module |
-| `gemm` | Dense, grouped, and quantized matrix operations | One contiguous BF16 dense contract and cuBLASLt provider exist in `gemm/` |
+| `gemm` | Dense, grouped, and quantized matrix operations | One contiguous BF16 dense contract with private cuBLASLt and experimental Loom providers exists in `gemm/` |
 | `normalization` | RMSNorm and later normalization contracts | RMSNorm is currently exposed as `rms_norm` |
 | `position` | RoPE and other position transforms | RoPE is currently exposed as `rope` |
 | `activation` | Activation and gated-activation operators | Planned |

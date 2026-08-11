@@ -244,7 +244,11 @@ Historical published Graph evidence covers:
 - one direct paged-prefill GQA4 fixture.
 
 All three records predate the DeviceRegion submission path. Fused append also
-predates the exclusive-page contract. No current-source Graph record is
+predates the exclusive-page contract.
+
+Current-source Graph evidence covers the experimental Loom SM90a M=1 GEMV on
+five census shapes. It does not qualify performance, mutable bindings, other
+GEMM contracts, or other providers. No other current-source Graph record is
 published yet.
 
 Benchmark `graph_nodes` fields are source declarations. The tools do not query

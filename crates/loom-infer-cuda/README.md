@@ -77,9 +77,10 @@ do not qualify the current eager or Graph path.
 
 ## Qualification status
 
-DeviceRegion changed every provider's submission path. All published device,
-Graph, and performance records cover earlier source trees and require a new
-run for the merged source.
+DeviceRegion changed every provider's submission path. Records dated through
+2026-08-07 cover earlier source trees and require a new run for the merged
+source. The 2026-08-11 experimental Loom M=1 GEMV record covers only its exact
+H20 `sm_90a` correctness and fixed-address Graph contract.
 
 The merged paged-prefill source adds sixteen-warp long-MQA and eight-warp
 long-GQA providers. Their incoming H20 records qualify the source tree before
