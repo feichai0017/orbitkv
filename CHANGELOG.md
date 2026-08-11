@@ -40,6 +40,9 @@
   surface.
 - Added a bounded external-stream adapter for direct single decode and NHD or
   HND paged decode, with detached completion and typed metadata rejection.
+- Added a strict, untimed dense GEMM shape-census schema and aggregation tool.
+  The schema records successful engine dispatches without making performance
+  claims.
 
 ### Changed
 

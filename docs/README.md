@@ -27,6 +27,8 @@ evidence.
   cuda-oxide.
 - [H20 validation](development/h20-validation.md) defines device correctness,
   sanitizer, Graph, and performance gates.
+- [Dense GEMM shape census](development/gemm-shape-census.md) defines the
+  untimed model-call profile used to select Loom GEMM candidates.
 
 ## Current boundary
 

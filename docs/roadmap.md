@@ -184,7 +184,9 @@ slice adds an explicit Loom provider without replacing the vendor baseline.
 - Keep one `Bf16DenseGemmSpec`, plan surface, operands type, and enqueue path.
 - Add explicit `CublasLt` and `Loom` provider identities.
 - Keep provider and algorithm selection outside enqueue.
-- Record `(M, N, K, dtype, layout, frequency)` from a real model path.
+- Record `(M, N, K, dtype, layout, frequency)` from a real model path. The
+  repository now contains an independent schema and aggregation tool. The
+  current-source Qwen census remains pending.
 - Implement the first Loom SM90 BF16 small-M algorithm with cuda-oxide.
 - Use separate algorithms for GEMV-like and WGMMA-suitable M ranges when the
   profile requires them.

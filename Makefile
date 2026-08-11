@@ -59,8 +59,9 @@ check-rust:
 	$(CARGO) package -p loom-infer $(PACKAGE_FLAGS)
 
 check-tools:
-	python3 -m py_compile tools/flashinfer/*.py
+	python3 -m py_compile tools/flashinfer/*.py tools/gemm/*.py
 	python3 -m unittest discover -s tools/flashinfer -p 'test_*.py'
+	python3 -m unittest discover -s tools/gemm -p 'test_*.py'
 
 install-website:
 	NODE_ENV=development $(NPM) ci --include=dev
