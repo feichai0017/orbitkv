@@ -280,9 +280,9 @@ fn run_invalid_query_guard(
     queue: &mut CommandQueue,
     provider: &PrefillProvider,
 ) -> Result<(), Box<dyn Error>> {
-    let spec = Bf16PagedPrefillSpec::new(2, 3, 2, 1, 1, 128, 16)?;
+    let spec = Bf16PagedPrefillSpec::new(3, 5, 3, 1, 1, 128, 16)?;
     let expected_error = ContractError::RaggedQueryLongerThanKv {
-        request: 0,
+        request: 1,
         query_len: 2,
         kv_len: 1,
     };
@@ -300,10 +300,10 @@ fn run_invalid_query_guard(
         &stream,
         spec.kv_pages_numel(),
     )?);
-    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 2, 3])?);
-    let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2])?);
-    let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1])?);
-    let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &[1_i32, 1])?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 3, 5])?);
+    let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2, 3])?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1, 2])?);
+    let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &[1_i32, 1, 1])?);
     let metadata_status =
         DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
     let output_sentinel = vec![bf16::NAN; spec.output_numel()];
@@ -810,11 +810,11 @@ fn run_invalid_page_graph_rejection_case(
     context: &Arc<CudaContext>,
     provider: &PrefillProvider,
 ) -> Result<(), Box<dyn Error>> {
-    let spec = Bf16PagedPrefillSpec::new(2, 2, 2, 1, 1, 128, 16)?;
+    let spec = Bf16PagedPrefillSpec::new(1, 1, 66, 1, 1, 128, 16)?;
     let expected_error = ContractError::PageIndexOutOfRange {
-        position: 1,
-        index: 2,
-        max_num_pages: 2,
+        position: 33,
+        index: 66,
+        max_num_pages: 66,
     };
     let upload_stream = context.new_stream()?;
     let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::Direct)?;
@@ -830,10 +830,13 @@ fn run_invalid_page_graph_rejection_case(
         &upload_stream,
         spec.kv_pages_numel(),
     )?);
-    let qo_indptr = Arc::new(DeviceBuffer::from_host(&upload_stream, &[0_i32, 1, 2])?);
-    let page_indptr = Arc::new(DeviceBuffer::from_host(&upload_stream, &[0_i32, 1, 2])?);
-    let page_indices = Arc::new(DeviceBuffer::from_host(&upload_stream, &[0_i32, 2])?);
-    let last_page_len = Arc::new(DeviceBuffer::from_host(&upload_stream, &[1_i32, 1])?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&upload_stream, &[0_i32, 1])?);
+    let page_indptr = Arc::new(DeviceBuffer::from_host(&upload_stream, &[0_i32, 66])?);
+    let mut page_indices_host = (0_i32..66).collect::<Vec<_>>();
+    page_indices_host[33] = 66;
+    page_indices_host[65] = -1;
+    let page_indices = Arc::new(DeviceBuffer::from_host(&upload_stream, &page_indices_host)?);
+    let last_page_len = Arc::new(DeviceBuffer::from_host(&upload_stream, &[1_i32])?);
     let metadata_status =
         DeviceBuffer::<i32>::zeroed(&upload_stream, plan.metadata_status_required_numel())?;
     let output_sentinel = vec![bf16::NAN; spec.output_numel()];
