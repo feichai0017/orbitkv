@@ -1,7 +1,7 @@
 # GEMM shape census tools
 
-These tools validate and summarize dense-linear call counts from a pinned model
-run. They do not measure latency and do not select a GEMM provider.
+`shape_census.py` validates and summarizes dense-linear call counts from a
+pinned model run. It does not measure latency or select a GEMM provider.
 
 The producer records resolved linear shapes before it selects Mistral.rs GEMV
 or Candle matmul. One JSON Lines record represents one complete model run. The
@@ -33,3 +33,22 @@ summary makes no provider performance claim.
 
 Raw model-runner records stay in the engine repository. A later Oxide selection
 record can reference a validated raw blob by SHA-256.
+
+## Matched M=1 benchmark
+
+The H20 benchmark runner reuses the five validated Qwen2.5-1.5B census shapes
+and one bit-exact dyadic fixture. Run the native provider and cuBLASLt in
+separate processes so their order can be reversed:
+
+```bash
+OXIDE_BENCH_RUN_LABEL=oxide_first make bench-sm90-gemv-oxide
+OXIDE_BENCH_RUN_LABEL=cublaslt_second make bench-sm90-gemv-cublaslt
+
+OXIDE_BENCH_RUN_LABEL=cublaslt_first make bench-sm90-gemv-cublaslt
+OXIDE_BENCH_RUN_LABEL=oxide_second make bench-sm90-gemv-oxide
+```
+
+Each JSON Lines record includes the selected provider and algorithm, provider
+version, workspace, fixture digests, CPU-reference correctness, and raw CUDA
+event samples. These operator records do not establish an engine-performance
+claim and do not replace the Mistral.rs custom GEMV baseline.

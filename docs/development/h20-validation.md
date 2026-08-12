@@ -397,6 +397,13 @@ Keep eager and Graph samples in separate summaries. Keep different algorithms
 and run labels separate. Exclude a ranking when either provider's order median
 changes by more than five percent.
 
+The native M=1 GEMV decision uses two Oxide Infer benchmark targets rather
+than a FlashInfer script: `make bench-sm90-gemv-oxide` and
+`make bench-sm90-gemv-cublaslt`. Run them as Oxide/cuBLASLt and
+cuBLASLt/Oxide process pairs with distinct run labels. Those five-shape
+operator records still need a separate matched Mistral.rs custom-GEMV baseline
+before the algorithm can pass its promotion gate.
+
 ## Evidence records
 
 Store reviewed JSON records in [the evidence directory](../results/README.md).
