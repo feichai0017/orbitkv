@@ -2,6 +2,7 @@ export const repositoryUrl = "https://github.com/feichai0017/oxide-infer"
 export const homeUrl = "https://feichai0017.github.io/oxide-infer/"
 export const performanceEvidenceUrl = `${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json`
 export const pagedPrefillOptimizationEvidenceUrl = `${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json`
+export const raggedPrefillOptimizationEvidenceUrl = `${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.17-ragged-prefill-dual-tile-gqa4-eager-performance-f9b95b0-20260812.json`
 
 export const navigation = [
   { label: "Overview", href: "/" },
@@ -89,8 +90,8 @@ export const evidenceLevels = [
 
 export const milestones = [
   { milestone: "NOW", name: "Optimize measured gaps", reason: "Long-context GQA prefill is the clearest current bottleneck." },
-  { milestone: "NEXT", name: "Qualify native M=1 GEMV", reason: "Compare against Mistral.rs GEMV and cuBLASLt, then promote or stop." },
-  { milestone: "THEN", name: "Close one engine adapter", reason: "Measure provider hits, output parity, TTFT, TPOT, throughput, and memory." },
+  { milestone: "NEXT", name: "Close one engine adapter", reason: "Measure provider hits, output parity, TTFT, TPOT, throughput, and memory." },
+  { milestone: "THEN", name: "Expand measured contracts", reason: "Add operators only after a workload census and explicit evidence gate." },
 ]
 
 export const performanceSummary = [
@@ -119,9 +120,9 @@ export const performanceRows = [
   {
     name: "Ragged prefill · GQA4",
     shape: "Q 32+64 · KV 256+1024 · D128",
-    oxideUs: "48.20",
-    flashinferUs: "21.82",
-    result: "FlashInfer 2.21× lower",
+    oxideUs: "36.94",
+    flashinferUs: "21.93",
+    result: "FlashInfer 1.68× lower",
     winner: "flashinfer",
   },
   {

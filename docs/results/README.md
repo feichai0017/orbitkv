@@ -76,6 +76,13 @@ valid-output paged-decode Graph, and all GPUs other than the recorded H20.
 
 ## Current-source R2 matched performance
 
+- [Optimized long ragged-GQA4 eager performance against FlashInfer 0.6.17](h20-flashinfer-v0.6.17-ragged-prefill-dual-tile-gqa4-eager-performance-f9b95b0-20260812.json)
+  binds clean source `f9b95b0`, its source-bound parent, exact matched and gate
+  runner hashes, both provider orders, 400 raw latency samples, correctness,
+  fixed-address Graph replay, and all four Compute Sanitizer tools. The
+  dual-tile path reduces the parent median from 39.42 to 37.04 microseconds.
+  FlashInfer remains lower at 21.93 microseconds, a 1.68x gap.
+
 - [Native SM90a M=1 GEMV performance stop against Mistral.rs custom GEMV and cuBLASLt](h20-sm90a-m1-gemv-stop-ac2bd5a-20260812.json)
   binds the five-shape fixture, exact Oxide and Mistral.rs source commits,
   runner hashes, bit-exact output digests, and both process orders. Only one
@@ -101,9 +108,9 @@ valid-output paged-decode Graph, and all GPUs other than the recorded H20.
 The record is an eager-provider microbenchmark on one recorded H20. It does
 not establish an overall library winner, isolated-kernel or Graph performance,
 native GEMV promotion, model speed, serving throughput, or behavior on another
-GPU. Its largest measured gap was long-context GQA4 paged prefill at 11.51x;
-the optimized record above supersedes that row only. The remaining gap and the
-long ragged-GQA4 path stay explicit optimization targets.
+GPU. Its largest measured gap was long-context GQA4 paged prefill at 11.51x.
+The optimized paged and ragged records above supersede only their exact rows.
+Their remaining gaps stay explicit optimization targets.
 
 ## Historical R1 phase 1 precursor
 

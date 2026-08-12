@@ -1547,7 +1547,6 @@ mod kernels {
             // SAFETY: all copies issued by this thread belong to this group.
             unsafe {
                 async_copy::cp_async_commit_group();
-                async_copy::cp_async_wait_all();
             }
         }};
     }
@@ -1723,7 +1722,8 @@ mod kernels {
     #[allow(clippy::too_many_arguments)]
     fn prefill_bf16_nhd_causal_tiled_gqa4_impl(
         paged: bool,
-        kv_tile: *mut u32,
+        key_tile: *mut u32,
+        value_tile: *mut u32,
         batch_size: usize,
         nnz_qo: usize,
         kv_bound: usize,
@@ -1858,7 +1858,7 @@ mod kernels {
             // SAFETY: metadata validation proves the request range, and the
             // helper zfills the final partial tile without reading past K.
             load_tiled_kv_async!(
-                kv_tile,
+                key_tile,
                 key_pairs,
                 thread_in_block,
                 paged,
@@ -1870,6 +1870,23 @@ mod kernels {
                 num_kv_heads,
                 kv_head,
             );
+            // The V copy is a second asynchronous group. Waiting until one
+            // group remains makes K visible while V can overlap QK work.
+            load_tiled_kv_async!(
+                value_tile,
+                value_pairs,
+                thread_in_block,
+                paged,
+                kv_start,
+                page_start,
+                page_indices,
+                kv_tile_start,
+                partition_token_end,
+                num_kv_heads,
+                kv_head,
+            );
+            // SAFETY: the first committed group is the complete K tile.
+            unsafe { async_copy::cp_async_wait_group(1) };
             thread::sync_threads();
 
             let mut score_0 = [0.0_f32; 4];
@@ -1916,7 +1933,7 @@ mod kernels {
                     score_0 = tiled_qk_mma(
                         score_0,
                         query_fragment,
-                        kv_tile,
+                        key_tile,
                         lane_group,
                         component_pair_base,
                         lane_in_group,
@@ -1924,7 +1941,7 @@ mod kernels {
                     score_1 = tiled_qk_mma(
                         score_1,
                         query_fragment,
-                        kv_tile,
+                        key_tile,
                         8 + lane_group,
                         component_pair_base,
                         lane_in_group,
@@ -1932,7 +1949,7 @@ mod kernels {
                     score_2 = tiled_qk_mma(
                         score_2,
                         query_fragment,
-                        kv_tile,
+                        key_tile,
                         16 + lane_group,
                         component_pair_base,
                         lane_in_group,
@@ -1940,7 +1957,7 @@ mod kernels {
                     score_3 = tiled_qk_mma(
                         score_3,
                         query_fragment,
-                        kv_tile,
+                        key_tile,
                         24 + lane_group,
                         component_pair_base,
                         lane_in_group,
@@ -1948,7 +1965,7 @@ mod kernels {
                     score_4 = tiled_qk_mma(
                         score_4,
                         query_fragment,
-                        kv_tile,
+                        key_tile,
                         32 + lane_group,
                         component_pair_base,
                         lane_in_group,
@@ -1956,7 +1973,7 @@ mod kernels {
                     score_5 = tiled_qk_mma(
                         score_5,
                         query_fragment,
-                        kv_tile,
+                        key_tile,
                         40 + lane_group,
                         component_pair_base,
                         lane_in_group,
@@ -1964,7 +1981,7 @@ mod kernels {
                     score_6 = tiled_qk_mma(
                         score_6,
                         query_fragment,
-                        kv_tile,
+                        key_tile,
                         48 + lane_group,
                         component_pair_base,
                         lane_in_group,
@@ -1972,7 +1989,7 @@ mod kernels {
                     score_7 = tiled_qk_mma(
                         score_7,
                         query_fragment,
-                        kv_tile,
+                        key_tile,
                         56 + lane_group,
                         component_pair_base,
                         lane_in_group,
@@ -2188,24 +2205,11 @@ mod kernels {
             row_sum_0 += tile_sum_0;
             row_sum_1 += tile_sum_1;
 
-            thread::sync_threads();
-            // SAFETY: as above, for the matching V tile.
-            load_tiled_kv_async!(
-                kv_tile,
-                value_pairs,
-                thread_in_block,
-                paged,
-                kv_start,
-                page_start,
-                page_indices,
-                kv_tile_start,
-                partition_token_end,
-                num_kv_heads,
-                kv_head,
-            );
+            // SAFETY: the only remaining group is the complete V tile.
+            unsafe { async_copy::cp_async_wait_all() };
             thread::sync_threads();
 
-            let shared_values = kv_tile.cast::<u16>();
+            let shared_values = value_tile.cast::<u16>();
             let weight_0 = tiled_weight_fragment(score_0, score_1);
             let weight_1 = tiled_weight_fragment(score_2, score_3);
             let weight_2 = tiled_weight_fragment(score_4, score_5);
@@ -2370,7 +2374,7 @@ mod kernels {
     }
 
     #[kernel]
-    #[launch_bounds(64)]
+    #[launch_bounds(64, 3)]
     #[allow(clippy::too_many_arguments)]
     #[launch_contract(
         domain = 1,
@@ -2404,13 +2408,17 @@ mod kernels {
         kv_indptr: &[i32],
         workspace: DisjointSlice<f32>,
     ) {
-        static mut KV_TILE: SharedArray<u32, TILED_KV_SHARED_PAIRS, 16> = SharedArray::UNINIT;
+        static mut KEY_TILE: SharedArray<u32, TILED_KV_SHARED_PAIRS, 16> = SharedArray::UNINIT;
+        static mut VALUE_TILE: SharedArray<u32, TILED_KV_SHARED_PAIRS, 16> = SharedArray::UNINIT;
         // SAFETY: one block owns this shared tile and the implementation orders
         // every cross-warp reuse with a block barrier.
-        let kv_tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut KV_TILE) };
+        let key_tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut KEY_TILE) };
+        // SAFETY: this block exclusively owns the matching shared V tile.
+        let value_tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut VALUE_TILE) };
         prefill_bf16_nhd_causal_tiled_gqa4_impl(
             false,
-            kv_tile,
+            key_tile,
+            value_tile,
             batch_size,
             nnz_qo,
             nnz_kv,
@@ -2470,13 +2478,17 @@ mod kernels {
         metadata_status: &[i32],
         workspace: DisjointSlice<f32>,
     ) {
-        static mut KV_TILE: SharedArray<u32, TILED_KV_SHARED_PAIRS, 16> = SharedArray::UNINIT;
+        static mut KEY_TILE: SharedArray<u32, TILED_KV_SHARED_PAIRS, 16> = SharedArray::UNINIT;
+        static mut VALUE_TILE: SharedArray<u32, TILED_KV_SHARED_PAIRS, 16> = SharedArray::UNINIT;
         // SAFETY: one block owns this shared tile and the implementation orders
         // every cross-warp reuse with a block barrier.
-        let kv_tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut KV_TILE) };
+        let key_tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut KEY_TILE) };
+        // SAFETY: this block exclusively owns the matching shared V tile.
+        let value_tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut VALUE_TILE) };
         prefill_bf16_nhd_causal_tiled_gqa4_impl(
             true,
-            kv_tile,
+            key_tile,
+            value_tile,
             batch_size,
             nnz_qo,
             max_num_pages,
