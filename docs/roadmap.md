@@ -142,8 +142,9 @@ Oxide has lower combined median eager latency in eight and FlashInfer in six.
 The first paged long-context GQA4 optimization reduced the recorded Oxide
 latency from 265.66 to 57.60 microseconds. FlashInfer remains 2.47x lower on
 that exact eager contract. The current ragged optimization reduces its
-source-bound parent from 39.42 to 37.04 microseconds; FlashInfer remains 1.68x
-lower on that exact eager contract.
+source-bound parent from 39.42 to 37.04 microseconds. In the separate matched
+provider cohort, Oxide measures 36.94 microseconds and FlashInfer 21.93
+microseconds, a 1.68x gap.
 
 The current native candidate is `OxideSm90SimtGemvM1N16K64`. It admits BF16
 `M=1`, `N % 16 = 0`, `K % 64 = 0`, no post-operation, and zero workspace on

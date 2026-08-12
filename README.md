@@ -118,7 +118,8 @@ Matched BF16 eager-provider timing against FlashInfer 0.6.17 produced stable
 rankings for all 14 baseline attention shapes on the recorded H20. Oxide Infer
 had lower combined median latency in 8 shapes; FlashInfer had lower latency in
 6. The two long GQA4 rows below are refreshed from their optimized paths; the
-other rows retain the full-matrix baseline.
+other rows retain the full-matrix baseline. Every row uses its matched
+provider-comparison cohort.
 
 | Contract | Shape | Oxide | FlashInfer | Lower latency |
 | --- | --- | ---: | ---: | --- |

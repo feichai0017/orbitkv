@@ -93,9 +93,9 @@ import {
       <div class="doc-note">
         <strong>Ragged GQA4 pipelines K and V tile loads.</strong>
         <p>
-          The accepted path reduces its source-bound parent from 39.42 to
-          37.04 µs. FlashInfer 0.6.17 remains lower at 21.93 µs, a 1.68× gap
-          for this exact eager contract.
+          The source-bound cohort moves from 39.42 to 37.04 µs. In the
+          separate provider-comparison cohort, Oxide measures 36.94 µs and
+          FlashInfer 0.6.17 measures 21.93 µs, a 1.68× gap.
         </p>
         <a href={raggedPrefillOptimizationEvidenceUrl} target="_blank" rel="noreferrer">
           Optimized ragged-GQA4 performance record

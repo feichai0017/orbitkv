@@ -80,8 +80,9 @@ valid-output paged-decode Graph, and all GPUs other than the recorded H20.
   binds clean source `f9b95b0`, its source-bound parent, exact matched and gate
   runner hashes, both provider orders, 400 raw latency samples, correctness,
   fixed-address Graph replay, and all four Compute Sanitizer tools. The
-  dual-tile path reduces the parent median from 39.42 to 37.04 microseconds.
-  FlashInfer remains lower at 21.93 microseconds, a 1.68x gap.
+  parent/candidate cohort moves from 39.42 to 37.04 microseconds. In the
+  separate provider-comparison cohort, Oxide measures 36.94 microseconds and
+  FlashInfer 21.93 microseconds, a 1.68x gap.
 
 - [Native SM90a M=1 GEMV performance stop against Mistral.rs custom GEMV and cuBLASLt](h20-sm90a-m1-gemv-stop-ac2bd5a-20260812.json)
   binds the five-shape fixture, exact Oxide and Mistral.rs source commits,
