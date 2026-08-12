@@ -134,10 +134,12 @@ pinned FlashInfer release. It retains both provider orders and 2,800 raw
 latency samples. Oxide has lower combined median eager latency in eight stable
 shapes and FlashInfer in six.
 
-The [optimized paged-GQA4 record](results/h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json)
-supersedes only the long paged-GQA4 row. It binds the tiled split-four source,
-both provider orders, paged and ragged correctness and Graph gates, and all
-four sanitizer tools for both exact runners.
+The [current paged-GQA4 record](results/h20-flashinfer-v0.6.17-paged-prefill-current-gqa4-eager-performance-02faf27-20260812.json)
+supersedes only the long paged-GQA4 row. It keeps provider and source
+progression in separate two-order cohorts and binds raw samples, exact runner
+and artifact hashes, correctness and Graph gates, and all four sanitizer tools.
+The earlier [paged optimization record](results/h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json)
+remains its immutable precursor.
 
 The [optimized ragged-GQA4 record](results/h20-flashinfer-v0.6.17-ragged-prefill-dual-tile-gqa4-eager-performance-f9b95b0-20260812.json)
 supersedes only the long ragged-GQA4 row. It binds the dual-tile source and

@@ -126,13 +126,13 @@ provider-comparison cohort.
 | Paged decode MHA | B1, KV 1, NHD, D128 | 9.54 µs | 13.77 µs | Oxide 1.44× |
 | Ragged prefill MHA | Q 16, KV 16, D128 | 8.25 µs | 13.99 µs | Oxide 1.69× |
 | Ragged prefill GQA4 | Q 32+64, KV 256+1024, D128 | 36.94 µs | 21.93 µs | FlashInfer 1.68× |
-| Paged prefill GQA4 | Q 32+64, KV 256+1024, D128 | 57.60 µs | 23.35 µs | FlashInfer 2.47× |
+| Paged prefill GQA4 | Q 32+64, KV 256+1024, D128 | 46.60 µs | 23.21 µs | FlashInfer 2.01× |
 
 These are CUDA-event measurements of matched operator paths, not isolated
 kernel, model, or serving results. See the [complete record and raw
 samples](docs/results/h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json).
-The [optimized paged-GQA4 record](docs/results/h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json)
-contains its source-bound two-order samples and before/after comparison.
+The [current paged-GQA4 record](docs/results/h20-flashinfer-v0.6.17-paged-prefill-current-gqa4-eager-performance-02faf27-20260812.json)
+contains separate two-order provider and source-progression cohorts.
 The [optimized ragged-GQA4 record](docs/results/h20-flashinfer-v0.6.17-ragged-prefill-dual-tile-gqa4-eager-performance-f9b95b0-20260812.json)
 does the same for the dual-tile path.
 

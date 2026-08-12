@@ -76,6 +76,14 @@ valid-output paged-decode Graph, and all GPUs other than the recorded H20.
 
 ## Current-source R2 matched performance
 
+- [Current long paged-GQA4 eager performance against FlashInfer 0.6.17](h20-flashinfer-v0.6.17-paged-prefill-current-gqa4-eager-performance-02faf27-20260812.json)
+  binds source `02faf27`, source `49290b5` as a separate progression cohort,
+  exact runner and artifact hashes, 400 raw samples, correctness, valid-output
+  and rejection Graph replay, and all four Compute Sanitizer tools. In the
+  provider cohort, Oxide measures 46.60 microseconds and FlashInfer 23.21
+  microseconds, a 2.01x gap. In the source cohort, current Oxide is 18.45%
+  lower latency than `49290b5`.
+
 - [Optimized long ragged-GQA4 eager performance against FlashInfer 0.6.17](h20-flashinfer-v0.6.17-ragged-prefill-dual-tile-gqa4-eager-performance-f9b95b0-20260812.json)
   binds clean source `f9b95b0`, its source-bound parent, exact matched and gate
   runner hashes, both provider orders, 400 raw latency samples, correctness,
@@ -92,12 +100,12 @@ valid-output paged-decode Graph, and all GPUs other than the recorded H20.
   record retains per-order summaries but not raw samples; it supports the
   conservative stop decision, not a complete performance qualification.
 
-- [Optimized long paged-GQA4 eager performance against FlashInfer 0.6.17](h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json)
+- [First optimized long paged-GQA4 eager performance against FlashInfer 0.6.17](h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json)
   binds clean source `49290b5`, exact paged and ragged tiled-GQA4 runners, both
   provider orders, correctness and Graph limits, and all four Compute
   Sanitizer tools. Oxide moves from 265.66 to 57.60 microseconds on the recorded
   shape, a 4.61x speedup. FlashInfer remains lower at 23.35 microseconds, a
-  2.47x gap.
+  2.47x gap. The current paged record above supersedes this exact row.
 
 - [Matched BF16 attention eager-provider performance against FlashInfer 0.6.17](h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json)
   binds the unchanged product source at merged commit `7f3d08e`, the exact
