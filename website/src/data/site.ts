@@ -1,5 +1,6 @@
 export const repositoryUrl = "https://github.com/feichai0017/oxide-infer"
 export const homeUrl = "https://feichai0017.github.io/oxide-infer/"
+export const performanceEvidenceUrl = `${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json`
 
 export const navigation = [
   { label: "Overview", href: "/" },
@@ -22,7 +23,7 @@ export const operatorGroups = [
   {
     state: "Current source",
     tone: "current",
-    note: "Implemented contracts. Declared permanent-runner paths passed current-source H20 R1 qualification.",
+    note: "Implemented contracts. Declared permanent-runner paths passed current-source R1 device qualification.",
     operators: [
       { name: "RMSNorm", boundary: "F32, FP16, BF16 · scalar and packed", provider: "Native" },
       { name: "Dense GEMM", boundary: "BF16 D=A×Wᵀ · F32 accumulation", provider: "Vendor" },
@@ -37,7 +38,7 @@ export const operatorGroups = [
     tone: "experimental",
     note: "Usable only inside the declared contract. No performance or engine claim.",
     operators: [
-      { name: "M=1 GEMV", boundary: "BF16 · H20 sm_90a · fixed census", provider: "Native" },
+      { name: "M=1 GEMV", boundary: "BF16 · SM90a · fixed census", provider: "Native" },
       { name: "Engine stream bridge", boundary: "external regions · event ordering", provider: "Runtime" },
     ],
   },
@@ -69,16 +70,16 @@ export const providerLanes = [
 ]
 
 export const evidenceHighlights = [
-  { value: "9 / 9", label: "Current H20 runners", detail: "89 passing case lines and 12 named Graph cases", sample: "exact source and binary hashes" },
+  { value: "9 / 9", label: "Qualification runners", detail: "89 passing case lines and 12 named Graph cases", sample: "recorded H20 test host · exact source and binary hashes" },
   { value: "36 / 36", label: "Compute Sanitizer", detail: "memcheck, racecheck, synccheck, and initcheck", sample: "no filters or suppressions" },
-  { value: "Simulated", label: "Engine interop", detail: "qualified external pointers and event bridge", sample: "still not a model run" },
-  { value: "Open", label: "Serving", detail: "TTFT, TPOT, throughput, and memory", sample: "no serving evidence" },
+  { value: "14 / 14", label: "Stable benchmark shapes", detail: "8 lower-latency Oxide paths and 6 FlashInfer paths", sample: "matched eager-provider timing · not serving" },
+  { value: "Open", label: "Engine serving", detail: "TTFT, TPOT, throughput, and memory", sample: "no model-level speed claim" },
 ]
 
 export const evidenceLevels = [
   { level: "01", name: "Contract", status: "Required", detail: "CPU oracle, edge cases, and typed rejection" },
-  { level: "02", name: "Device", status: "H20 qualified", detail: "Current-source correctness, lifecycle, Graph, and sanitizer" },
-  { level: "03", name: "Performance", status: "Per shape", detail: "Matched inputs, streams, and raw samples" },
+  { level: "02", name: "Device", status: "R1 qualified", detail: "Current-source correctness, lifecycle, Graph, and sanitizer on the recorded target" },
+  { level: "03", name: "Performance", status: "14 shapes", detail: "Matched inputs, streams, provider orders, and raw samples" },
 
   { level: "04", name: "Graph", status: "Per plan", detail: "Capture, replay, addresses, and retention" },
   { level: "05", name: "Engine", status: "Open", detail: "Real call site, provider hit, and model parity" },
@@ -86,9 +87,50 @@ export const evidenceLevels = [
 ]
 
 export const milestones = [
-  { milestone: "NOW", name: "Requalify merged paths", reason: "Publish current H20 correctness, sanitizer, Graph, and matched records." },
-  { milestone: "NEXT", name: "Close one engine adapter", reason: "Run a real model call with provider trace, output parity, and no-copy evidence." },
-  { milestone: "THEN", name: "Measure serving impact", reason: "Report workload, TTFT, TPOT, throughput, and memory before broader claims." },
+  { milestone: "NOW", name: "Optimize measured gaps", reason: "Long-context GQA prefill is the clearest current bottleneck." },
+  { milestone: "NEXT", name: "Qualify native M=1 GEMV", reason: "Compare against Mistral.rs GEMV and cuBLASLt, then promote or stop." },
+  { milestone: "THEN", name: "Close one engine adapter", reason: "Measure provider hits, output parity, TTFT, TPOT, throughput, and memory." },
+]
+
+export const performanceSummary = [
+  { value: "14 / 14", label: "stable shapes", detail: "both provider-order deltas ≤ 5%" },
+  { value: "8", label: "Oxide lower", detail: "combined median eager latency" },
+  { value: "6", label: "FlashInfer lower", detail: "combined median eager latency" },
+]
+
+export const performanceRows = [
+  {
+    name: "Paged decode · MHA",
+    shape: "B1 · KV 1 · NHD · D128",
+    oxideUs: "9.54",
+    flashinferUs: "13.77",
+    result: "Oxide 1.44× lower",
+    winner: "oxide",
+  },
+  {
+    name: "Ragged prefill · MHA",
+    shape: "Q 16 · KV 16 · D128",
+    oxideUs: "8.25",
+    flashinferUs: "13.99",
+    result: "Oxide 1.69× lower",
+    winner: "oxide",
+  },
+  {
+    name: "Ragged prefill · GQA4",
+    shape: "Q 32+64 · KV 256+1024 · D128",
+    oxideUs: "48.20",
+    flashinferUs: "21.82",
+    result: "FlashInfer 2.21× lower",
+    winner: "flashinfer",
+  },
+  {
+    name: "Paged prefill · GQA4",
+    shape: "Q 32+64 · KV 256+1024 · D128",
+    oxideUs: "265.66",
+    flashinferUs: "23.08",
+    result: "FlashInfer 11.51× lower",
+    winner: "flashinfer",
+  },
 ]
 
 export const engineAdapters = [

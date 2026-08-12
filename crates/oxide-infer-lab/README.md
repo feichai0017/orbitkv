@@ -8,7 +8,7 @@ The crate groups code by validation responsibility:
 
 ```text
 src/
-|-- gates/         H20 correctness and lifecycle implementations
+|-- gates/         hardware correctness and lifecycle implementations
 |-- benchmarks/    matched and tuning measurements
 |-- support/       fixtures, comparisons, records, and reporting
 |-- bin/           thin Cargo entry points

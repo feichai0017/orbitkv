@@ -21,7 +21,10 @@ The 2026-08-12 phase 2 record below completes R1 for the exact declared H20
 boundary. It binds all nine permanent runners, 89 machine-readable passing
 case lines, 12 named Graph case lines, and 36 of 36 Compute Sanitizer cells to
 clean source `477b47a` and nine recorded `sm_90a` binary hashes. Performance,
-real-model engine execution, serving, and other GPUs remain open.
+real-model engine execution, serving, and other GPUs remain outside R1.
+
+Performance is qualified separately by the current-source R2 matched record
+below. It does not broaden the R1 correctness or device boundary.
 
 The current DeviceRegion work changed submission for RMSNorm, GEMM, decode,
 prefill, and RoPE:
@@ -53,10 +56,10 @@ handwritten metadata, not CUDA driver enumeration.
 A binary FlashInfer wheel records its verified distribution version but no
 source commit unless the artifact proves one.
 
-Existing matched attention and attention-Graph records predate these checks.
-Their raw samples remain historical. Rerun them before citing a current
-provider ranking. The notice above excludes all pre-rename device records dated
-through 2026-08-07 from current-source qualification.
+Matched attention and attention-Graph records through 2026-08-07 predate these
+checks and remain historical. Use the 2026-08-12 FlashInfer 0.6.17 record below
+for current-source eager-provider rankings. No current Graph comparison has
+been published.
 
 ## Current-source R1 phase 2
 
@@ -70,6 +73,22 @@ through 2026-08-07 from current-source qualification.
 This record completes R1 at its declared boundary. It excludes performance,
 native GEMV promotion, real mistral.rs model execution, serving metrics, a
 valid-output paged-decode Graph, and all GPUs other than the recorded H20.
+
+## Current-source R2 matched performance
+
+- [Matched BF16 attention eager-provider performance against FlashInfer 0.6.17](h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json)
+  binds the unchanged product source at merged commit `7f3d08e`, the exact
+  Rust runner binary, FlashInfer 0.6.17, both provider orders, and 2,800 raw
+  latency samples. All 14 measured paged-decode, ragged-prefill, and
+  paged-prefill shapes satisfy the five-percent order-stability limit. Oxide
+  has lower combined median latency in eight shapes and FlashInfer in six.
+
+The record is an eager-provider microbenchmark on one recorded H20. It does
+not establish an overall library winner, isolated-kernel or Graph performance,
+native GEMV promotion, model speed, serving throughput, or behavior on another
+GPU. The largest measured gap is long-context GQA4 paged prefill, where
+FlashInfer has 11.51x lower median latency; that is now an explicit optimization
+target.
 
 ## Historical R1 phase 1 precursor
 

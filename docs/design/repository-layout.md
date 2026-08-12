@@ -132,7 +132,7 @@ gemm/
 ```
 
 `GemmPlanner` creates a provider-neutral plan. `provider/cublaslt.rs` owns the
-vendor implementation. `provider/oxide/sm90` owns the experimental H20
+vendor implementation. `provider/oxide/sm90` owns the experimental SM90a
 `sm_90a` M=1 kernel.
 
 When a second GEMM contract lands, keep `gemm/mod.rs` as the family facade and

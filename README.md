@@ -8,7 +8,7 @@
     <a href="https://github.com/feichai0017/oxide-infer/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/feichai0017/oxide-infer/actions/workflows/ci.yml/badge.svg"></a>
     <a href="LICENSE"><img alt="MIT license" src="https://img.shields.io/badge/license-MIT-6fffe9"></a>
     <img alt="Rust 2024" src="https://img.shields.io/badge/Rust-2024-ff6b9d">
-    <img alt="CUDA SM90a" src="https://img.shields.io/badge/CUDA-SM90a-8b7cff">
+    <img alt="NVIDIA CUDA" src="https://img.shields.io/badge/NVIDIA-CUDA-8b7cff">
     <img alt="Project status alpha" src="https://img.shields.io/badge/status-alpha-141827">
   </p>
   <p>
@@ -98,12 +98,12 @@ prove device correctness or performance.
 
 | Family | Current source | State |
 | --- | --- | --- |
-| Attention | Single decode, paged decode, ragged prefill, paged prefill | Declared H20 runner paths qualified in R1 |
-| KV cache | Paged append and RoPE plus paged append | Exclusive-page H20 runner path qualified in R1 |
-| GEMM | Contiguous BF16 dense through cuBLASLt | H20 correctness, Graph, and sanitizer qualified |
-| GEMV | Native BF16 M=1 SM90a algorithm | Experimental; H20 correctness, Graph, and sanitizer qualified |
-| Normalization | RMSNorm for F32, FP16, and BF16 | Declared H20 runner paths qualified in R1 |
-| Position | BF16 NeoX RoPE with explicit positions | Declared H20 runner path qualified in R1 |
+| Attention | Single decode, paged decode, ragged prefill, paged prefill | Declared runner paths device-qualified in R1 |
+| KV cache | Paged append and RoPE plus paged append | Exclusive-page runner path device-qualified in R1 |
+| GEMM | Contiguous BF16 dense through cuBLASLt | R1 correctness, Graph, and sanitizer qualified |
+| GEMV | Native BF16 M=1 SM90a algorithm | Experimental; R1-qualified but not performance-promoted |
+| Normalization | RMSNorm for F32, FP16, and BF16 | Declared runner paths device-qualified in R1 |
+| Position | BF16 NeoX RoPE with explicit positions | Declared runner path device-qualified in R1 |
 | Activation | SwiGLU and fused epilogues | Planned |
 | Sampling | Logits transforms, RNG, and token selection | Planned |
 | Advanced attention | MLA and expanded KV layouts | Planned |
@@ -111,6 +111,24 @@ prove device correctness or performance.
 
 The [operator catalog](docs/operator-catalog.md) records the exact dtype,
 shape, layout, provider, algorithm, and evidence state for every admitted path.
+
+## Performance snapshot
+
+Matched BF16 eager-provider timing against FlashInfer 0.6.17 produced stable
+rankings for all 14 measured attention shapes on the recorded H20. Oxide Infer
+has lower combined median latency in 8 shapes; FlashInfer has lower latency in
+6. The representative rows deliberately include both strengths and gaps.
+
+| Contract | Shape | Oxide | FlashInfer | Lower latency |
+| --- | --- | ---: | ---: | --- |
+| Paged decode MHA | B1, KV 1, NHD, D128 | 9.54 µs | 13.77 µs | Oxide 1.44× |
+| Ragged prefill MHA | Q 16, KV 16, D128 | 8.25 µs | 13.99 µs | Oxide 1.69× |
+| Ragged prefill GQA4 | Q 32+64, KV 256+1024, D128 | 48.20 µs | 21.82 µs | FlashInfer 2.21× |
+| Paged prefill GQA4 | Q 32+64, KV 256+1024, D128 | 265.66 µs | 23.08 µs | FlashInfer 11.51× |
+
+These are CUDA-event measurements of matched operator paths, not isolated
+kernel, model, or serving results. See the [complete record and raw
+samples](docs/results/h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json).
 
 ## Providers
 
@@ -145,7 +163,7 @@ The command runtime gives both paths the same resource and failure model:
 | --- | --- |
 | `oxide-infer` | Backend-independent contracts, errors, capabilities, and CPU references |
 | `oxide-infer-cuda` | Planning, CUDA command runtime, native kernels, Graphs, and vendor providers |
-| `oxide-infer-lab` | Non-published H20 gates, matched benchmarks, fixtures, and evidence generation |
+| `oxide-infer-lab` | Non-published hardware gates, matched benchmarks, fixtures, and evidence generation |
 
 The workspace does not split GEMM, kernels, or runtime into additional crates.
 They remain modules until they need a separate dependency, release, ownership,
@@ -175,8 +193,9 @@ USE_MISE=1 make h20
 ```
 
 The [environment guide](docs/development/environment.md) lists the pinned Rust,
-Node.js, CUDA, and cuda-oxide versions. The [H20 guide](docs/development/h20-validation.md)
-defines correctness, sanitizer, Graph, and performance gates.
+Node.js, CUDA, and cuda-oxide versions. The current [device qualification
+guide](docs/development/h20-validation.md) defines the recorded H20 correctness,
+sanitizer, Graph, and performance gates without making H20 the product boundary.
 
 ## Evidence before claims
 
@@ -208,9 +227,9 @@ New Oxide Infer records qualify only the source revision named by each record. S
 The roadmap advances through measured vertical slices:
 
 1. Complete the Oxide Infer namespace and framework migration.
-2. Requalify current operators on exact H20 source and artifacts.
-3. Close the Mistral.rs adapter and define a narrow vLLM C ABI boundary.
-4. Compare native M=1 GEMV against Mistral.rs GEMV and cuBLASLt.
+2. Optimize the measured long-context prefill gaps.
+3. Compare native M=1 GEMV against Mistral.rs GEMV and cuBLASLt.
+4. Close the Mistral.rs adapter and define a narrow vLLM C ABI boundary.
 5. Expand attention, KV-cache operations, and MLA from engine traces.
 6. Add activation, sampling, quantization, grouped GEMM, and MoE paths.
 7. Add Blackwell modules only with hardware-backed contracts and evidence.

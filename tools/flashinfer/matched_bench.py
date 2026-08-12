@@ -27,7 +27,7 @@ from flashinfer.utils import SINGLE_KERNEL_TMP_SIZE
 # A binary wheel exposes its distribution version but does not prove the
 # source commit that produced it. Keep this field explicit and unqualified.
 PROVIDER_COMMIT: str | None = None
-EXPECTED_PROVIDER_VERSION = "0.6.16.post1"
+EXPECTED_PROVIDER_VERSION = "0.6.17"
 MEASUREMENT = "eager_stream_batch_cuda_event"
 FIXTURE_ID = "xorshift64_mod2001_bf16_v1"
 PAGED_FIXTURE_ID = "xorshift64_mod2001_bf16_i32_page_table_layout_v2"
@@ -1049,7 +1049,7 @@ def benchmark_rope() -> None:
             "rope_scale": 1.0,
             "rope_theta": 10000.0,
             "correctness": {
-                "reference": "FlashInfer v0.6.16.post1 trace reference",
+                "reference": "FlashInfer v0.6.17 trace reference",
                 "query_max_abs": query_max_abs,
                 "query_bit_mismatches": query_bit_mismatches,
                 "query_digest": digest_bf16(query_output),
@@ -1244,7 +1244,7 @@ def benchmark_rope_paged_append() -> None:
             "positions": [2, 31, 16, 40],
             "physical_slots": [[3, 2], [6, 15], [1, 0], [4, 8]],
             "correctness": {
-                "reference": "FlashInfer v0.6.16.post1 trace RoPE reference plus explicit page writes",
+                "reference": "FlashInfer v0.6.17 trace RoPE reference plus explicit page writes",
                 "query_max_abs": query_max_abs,
                 "query_bit_mismatches": query_bit_mismatches,
                 "query_digest": digest_bf16(query_output),
@@ -1446,7 +1446,7 @@ def benchmark_rope_paged_append_tokens() -> None:
             "positions": [5, 17, 20, 16, 4, 19],
             "physical_slots": physical_slots,
             "correctness": {
-                "reference": "FlashInfer v0.6.16.post1 trace RoPE reference plus explicit page writes",
+                "reference": "FlashInfer v0.6.17 trace RoPE reference plus explicit page writes",
                 "query_max_abs": query_max_abs,
                 "query_bit_mismatches": query_bit_mismatches,
                 "query_digest": digest_bf16(query_output),

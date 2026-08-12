@@ -62,16 +62,16 @@ The migration moves source directly. It adds no compatibility module.
 
 | Operator | Contract and algorithm | Source state | Evidence boundary |
 | --- | --- | --- | --- |
-| RMSNorm | Contiguous F32, FP16, and BF16. Scalar and packed algorithms. | Current source under `rms_norm`; family migration pending | Current R1 H20 correctness, lifecycle, and sanitizer for the permanent runner; no standalone Graph. |
-| Dense BF16 GEMM, vendor | Contiguous `D=A*W^T`, BF16 storage, F32 accumulation, explicit `CublasLtHeuristic` | Current | Current R1 H20 correctness, RMSNorm-to-GEMM Graph, and sanitizer. |
-| Dense BF16 GEMM, native | Same `Spec`, explicit `OxideSm90SimtGemvM1N16K64`, zero workspace | Experimental | Current R1 H20 correctness, five Graph shapes, and sanitizer. SASS, matched performance, and engine gates remain open. |
-| Single decode | BF16 NHD D128, direct MHA, MQA, and GQA | Current | Current R1 H20 correctness, lifecycle, and sanitizer. No Graph or current performance claim. |
+| RMSNorm | Contiguous F32, FP16, and BF16. Scalar and packed algorithms. | Current source under `rms_norm`; family migration pending | Current R1 device correctness, lifecycle, and sanitizer for the permanent runner; no standalone Graph. |
+| Dense BF16 GEMM, vendor | Contiguous `D=A*W^T`, BF16 storage, F32 accumulation, explicit `CublasLtHeuristic` | Current | Current R1 device correctness, RMSNorm-to-GEMM Graph, and sanitizer. |
+| Dense BF16 GEMM, native | Same `Spec`, explicit `OxideSm90SimtGemvM1N16K64`, zero workspace | Experimental | Current R1 device correctness, five Graph shapes, and sanitizer. SASS, matched performance, and engine gates remain open. |
+| Single decode | BF16 NHD D128, direct MHA, MQA, and GQA | Current | Current R1 device correctness, lifecycle, and sanitizer. No Graph or current performance claim. |
 | Single decode split-K | Explicit partitions and caller-owned F32 workspace | Current | Current R1 runner covers declared MQA and GQA shapes plus sanitizer. MHA, Graph, and current performance remain open. |
-| Paged batch decode | BF16 NHD or HND D128, page size 16. Direct MHA and eight-warp MQA or GQA. | Current | Current R1 H20 correctness, rejection Graph, simulated-engine boundary, and sanitizer. Valid-output Graph and performance remain open. |
-| Ragged causal prefill | BF16 NHD D128, bottom-right causal mask. Direct, eight-warp, sixteen-warp, and tiled GQA4. | Current | Current R1 H20 correctness, tiled GQA4 Graph, and sanitizer for declared runner cases. |
-| Paged causal prefill | BF16 NHD D128, page size 16. Caller selects direct, eight-warp, or sixteen-warp. | Current | Current R1 H20 correctness, valid-output and rejection Graph cases, and sanitizer for declared runner cases. |
-| Standard RoPE | BF16 NHD D128, NeoX split-half, explicit I32 positions | Current source under `rope`; family migration pending | Current R1 H20 correctness and sanitizer; no standalone RoPE Graph. |
-| Fused RoPE plus paged append | BF16 NHD D128, page size 16, one through 64 tokens, exclusive target pages | Current | Current R1 H20 correctness, six-token valid-output Graph, rejection Graph, and sanitizer. |
+| Paged batch decode | BF16 NHD or HND D128, page size 16. Direct MHA and eight-warp MQA or GQA. | Current | Current R1 device correctness, rejection Graph, simulated-engine boundary, and sanitizer. Current R2 matched eager performance covers six shapes; valid-output Graph remains open. |
+| Ragged causal prefill | BF16 NHD D128, bottom-right causal mask. Direct, eight-warp, sixteen-warp, and tiled GQA4. | Current | Current R1 device correctness, tiled GQA4 Graph, and sanitizer. Current R2 matched eager performance covers three shapes. |
+| Paged causal prefill | BF16 NHD D128, page size 16. Caller selects direct, eight-warp, or sixteen-warp. | Current | Current R1 device correctness, valid-output and rejection Graph cases, and sanitizer. Current R2 matched eager performance covers five shapes. |
+| Standard RoPE | BF16 NHD D128, NeoX split-half, explicit I32 positions | Current source under `rope`; family migration pending | Current R1 device correctness and sanitizer; no standalone RoPE Graph. |
+| Fused RoPE plus paged append | BF16 NHD D128, page size 16, one through 64 tokens, exclusive target pages | Current | Current R1 device correctness, six-token valid-output Graph, rejection Graph, and sanitizer. |
 
 ## Attention plan policy
 
@@ -94,7 +94,7 @@ path, completion, and Graph path.
 | Provider | Algorithm | State | Role |
 | --- | --- | --- | --- |
 | `CublasLt` | `CublasLtHeuristic` | Current | General vendor BF16 dense baseline |
-| `Oxide` | `OxideSm90SimtGemvM1N16K64` | Experimental | Native cuda-oxide M=1 algorithm for H20 `sm_90a` |
+| `Oxide` | `OxideSm90SimtGemvM1N16K64` | Experimental | Native cuda-oxide M=1 algorithm for the currently admitted H20 `sm_90a` target |
 
 `GemmPlanner` accepts explicit provider selection. Unsupported native shapes
 return a planning error. Enqueue does not switch to cuBLASLt.
@@ -150,7 +150,7 @@ outputs, and returns checked bindings. It does not poison the queue or Graph.
 
 | Architecture | State | Admitted boundary |
 | --- | --- | --- |
-| `sm_90a` | Current first target | H20-specific native artifacts and provider gates |
+| `sm_90a` | Current first target | Architecture-specific native artifacts and provider gates; current evidence was recorded on H20 |
 | `sm_100a` | Planned | Separate Blackwell algorithms and evidence |
 | `sm_120` | Planned | Separate consumer Blackwell algorithms and evidence |
 
@@ -161,7 +161,7 @@ evidence.
 ## Engine interop
 
 The source accepts leased external regions and an engine-owned CUDA stream for
-direct single decode and NHD or HND paged decode. A simulated-engine H20 gate
+direct single decode and NHD or HND paged decode. A simulated-engine device gate
 covers bounded in-flight work, typed rejection, stream order, and lease
 retention.
 

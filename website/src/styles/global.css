@@ -399,6 +399,26 @@ main { min-height: 72vh; }
 .provider-lanes ul { display: flex; flex-wrap: wrap; gap: 0.45rem; margin: 1.4rem 0 0; padding: 0; list-style: none; }
 .provider-lanes li { padding: 0.32rem 0.45rem; border: 1px solid var(--line); color: var(--dim); font: 550 0.55rem/1 var(--mono); }
 
+.performance-summary { display: grid; grid-template-columns: repeat(3, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
+.performance-summary article { display: grid; grid-template-columns: auto 1fr; gap: 1rem; align-items: center; min-height: 118px; padding: 1.15rem; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
+.performance-summary strong { color: var(--accent); font: 620 clamp(1.45rem, 3vw, 2.4rem)/1 var(--mono); letter-spacing: -0.06em; }
+.performance-summary article:nth-child(3) strong { color: var(--accent-secondary); }
+.performance-summary h3, .performance-summary p { margin: 0; }
+.performance-summary h3 { font-size: 0.78rem; }
+.performance-summary p { margin-top: 0.2rem; color: var(--dim); font-size: 0.66rem; }
+.performance-table { margin-top: 1.4rem; border: 1px solid var(--line); background: rgba(16, 22, 18, 0.58); }
+.performance-row { display: grid; grid-template-columns: minmax(260px, 1.5fr) minmax(110px, 0.55fr) minmax(110px, 0.55fr) minmax(180px, 0.8fr); gap: 1rem; align-items: center; min-height: 78px; padding: 0.85rem 1rem; border-bottom: 1px solid var(--line-soft); }
+.performance-row:last-child { border-bottom: 0; }
+.performance-row > div { display: grid; gap: 0.15rem; }
+.performance-row strong { font-size: 0.79rem; }
+.performance-row small { color: var(--dim); font: 540 0.58rem/1.4 var(--mono); }
+.performance-row code { color: var(--text); font-size: 0.73rem; }
+.performance-row > span { color: var(--accent); font: 620 0.66rem/1.4 var(--mono); }
+.performance-row.flashinfer > span { color: var(--accent-secondary); }
+.performance-head { min-height: 44px; background: var(--panel); color: var(--dim); font: 620 0.54rem/1 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; }
+.performance-head > span { color: inherit; font: inherit; }
+.performance-note { max-width: 820px; margin: 1rem 0 0; color: var(--dim); font: 540 0.62rem/1.55 var(--mono); }
+
 .evidence-ledger { display: grid; grid-template-columns: repeat(2, 1fr); border-top: 1px solid var(--line); border-left: 1px solid var(--line); }
 .evidence-ledger article { display: grid; grid-template-columns: 32px minmax(120px, 0.72fr) 1fr; gap: 1rem; min-height: 190px; padding: 1.35rem; border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); }
 .evidence-ledger article > span { color: var(--dim); font: 570 0.56rem/1 var(--mono); }
@@ -523,6 +543,7 @@ main { min-height: 72vh; }
   .execution-chain li:nth-child(3)::after { display: none; }
   .operator-matrix { grid-template-columns: 1fr; }
   .operator-group > header { min-height: 0; }
+  .performance-row { grid-template-columns: minmax(220px, 1.3fr) repeat(2, minmax(105px, 0.55fr)) minmax(170px, 0.75fr); }
   .adapter-grid { grid-template-columns: repeat(2, 1fr); }
 }
 
@@ -537,6 +558,10 @@ main { min-height: 72vh; }
   .scope-strip div + div { border-top: 1px solid var(--line); border-left: 0; }
   .section-heading { grid-template-columns: 1fr; gap: 1.5rem; }
   .provider-branches { width: 70%; }
+  .performance-summary { grid-template-columns: 1fr; }
+  .performance-row { grid-template-columns: minmax(210px, 1.2fr) repeat(2, minmax(100px, 0.55fr)); }
+  .performance-row > span:last-child { grid-column: 2 / -1; }
+  .performance-head > span:last-child { display: none; }
   .docs-layout { grid-template-columns: 1fr; }
   .docs-sidebar { position: static; display: flex; overflow-x: auto; padding: 0 0 1rem; }
   .docs-sidebar p { display: none; }
@@ -560,6 +585,10 @@ main { min-height: 72vh; }
   .operator-list article { grid-template-columns: 1fr; gap: 0.35rem; }
   .provider-branches { width: 48%; }
   .provider-lanes { grid-template-columns: 1fr; }
+  .performance-row { grid-template-columns: 1fr 1fr; gap: 0.5rem 1rem; padding-block: 1rem; }
+  .performance-row > div { grid-column: 1 / -1; }
+  .performance-row > span:last-child { grid-column: 1 / -1; }
+  .performance-head { display: none; }
   .evidence-ledger { grid-template-columns: 1fr; }
   .evidence-ledger article { grid-template-columns: 30px 1fr; }
   .evidence-ledger article > div { grid-column: 2; }

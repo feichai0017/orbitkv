@@ -39,7 +39,7 @@ names.
 
 - [Environment](development/environment.md) pins Rust, CUDA, cuda-oxide, and
   website toolchains.
-- [H20 validation](development/h20-validation.md) defines correctness,
+- [Current device validation](development/h20-validation.md) defines correctness,
   sanitizer, Graph, performance, and engine gates.
 - [Dense GEMM shape census](development/gemm-shape-census.md) defines the
   untimed workload profile used to select native GEMM candidates.

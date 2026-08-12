@@ -57,8 +57,9 @@ The crate exposes these provider families:
 - Fused RoPE and paged KV append for one token per request or 1 through 64
   explicit tokens.
 - One contiguous BF16 dense GEMM path through `GemmPlanner`. The caller selects
-  `CublasLt` or the experimental `OxideSm90SimtGemvM1N16K64` H20 `sm_90a`
-  algorithm. The common immutable plan and checked enqueue path do not change
+  `CublasLt` or the experimental `OxideSm90SimtGemvM1N16K64` algorithm. The
+  native candidate is currently admitted only for the recorded H20 `sm_90a`
+  target. The common immutable plan and checked enqueue path does not change
   providers at runtime.
 
 ## Append execution
@@ -77,15 +78,15 @@ do not qualify the current eager or Graph path.
 
 ## Qualification status
 
-DeviceRegion changed every provider's submission path. Records dated through
-2026-08-07 cover earlier source trees and require a new run for the merged
-source. The 2026-08-11 experimental Oxide M=1 GEMV record covers only its exact
-H20 `sm_90a` correctness and fixed-address Graph contract.
+The current R1 record qualifies the declared DeviceRegion paths for
+correctness, lifecycle, fixed-address Graph behavior, and Compute Sanitizer on
+its recorded target. The experimental M=1 GEMV remains limited to its exact
+`sm_90a` contract and still needs matched performance and engine evidence.
 
-The merged paged-prefill source adds sixteen-warp long-MQA and eight-warp
-long-GQA providers. Their incoming H20 records qualify the source tree before
-the DeviceRegion merge. The combined paths require correctness, sanitizer,
-Graph, and matched-performance requalification.
+The current R2 record adds matched eager-provider timing for paged decode,
+ragged prefill, and paged prefill against FlashInfer 0.6.17. It exposes strong
+short paths and large long-context GQA prefill gaps; it is not Graph, model, or
+serving evidence.
 
 The fixed-address Graph runtime retains bindings and provider resources until
 replay completes. Operator-specific Graph evidence remains path-specific.
