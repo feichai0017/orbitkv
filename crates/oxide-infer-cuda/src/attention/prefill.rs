@@ -38,9 +38,9 @@ const TOKEN_PARALLEL_16_SHARED_NUMEL: usize =
 const TOKEN_PARALLEL_MIN_AVERAGE_KV_LEN: usize = 64;
 const BF16_PAIRS_PER_HEAD: usize = SINGLE_DECODE_HEAD_DIM / 2;
 const TILED_GQA_GROUP_SIZE: usize = 4;
-const TILED_QUERY_ROWS: usize = 16;
+const TILED_QUERY_ROWS: usize = 8;
 const TILED_PACKED_QUERY_ROWS: usize = TILED_QUERY_ROWS * TILED_GQA_GROUP_SIZE;
-const TILED_WARPS: usize = 4;
+const TILED_WARPS: usize = 2;
 const TILED_THREADS: u32 = WARP_THREADS * TILED_WARPS as u32;
 const TILED_KV_ROWS: usize = 64;
 const TILED_KV_SUBTILES: usize = TILED_KV_ROWS / 16;
@@ -48,6 +48,8 @@ const TILED_KV_SHARED_PAIRS: usize = TILED_KV_ROWS * BF16_PAIRS_PER_HEAD;
 const TILED_KV_COPY_BYTES: usize = 16;
 const TILED_KV_COPY_PAIRS: usize = TILED_KV_COPY_BYTES / size_of::<u32>();
 const TILED_KV_COPIES: usize = TILED_KV_SHARED_PAIRS / TILED_KV_COPY_PAIRS;
+const TILED_KV_TOKEN_ROWS_PER_COPY_ITERATION: usize = TILED_THREADS as usize / 16;
+const TILED_KV_COPY_ITERATIONS: usize = TILED_KV_COPIES / TILED_THREADS as usize;
 const TILED_PARTITIONS: usize = 4;
 const TILED_MIN_AVERAGE_KV_LEN: usize = 256;
 
@@ -55,9 +57,10 @@ const _: () = {
     assert!(TOKEN_PARALLEL_8_THREADS == 256);
     assert!(TOKEN_PARALLEL_16_THREADS == 512);
     assert!(TILED_PACKED_QUERY_ROWS == TILED_WARPS * 16);
-    assert!(TILED_THREADS == 128);
+    assert!(TILED_THREADS == 64);
     assert!(TILED_KV_SUBTILES == 4);
-    assert!(TILED_KV_COPIES == TILED_THREADS as usize * 8);
+    assert!(TILED_KV_COPY_ITERATIONS == 16);
+    assert!(TILED_KV_TOKEN_ROWS_PER_COPY_ITERATION * TILED_KV_COPY_ITERATIONS == TILED_KV_ROWS);
     assert!(TILED_PARTITIONS == 4);
     assert!(SINGLE_DECODE_HEAD_DIM == 128);
 };
@@ -1460,7 +1463,9 @@ mod kernels {
             let pair_in_head = ($thread_in_block % 16) * TILED_KV_COPY_PAIRS;
             macro_rules! issue_copy {
                 ($iteration:literal) => {{
-                    let token = $kv_tile_start + token_lane + $iteration * 8;
+                    let token = $kv_tile_start
+                        + token_lane
+                        + $iteration * TILED_KV_TOKEN_ROWS_PER_COPY_ITERATION;
                     let source_token = usize::min(token, $partition_token_end - 1);
                     let physical_token = if $paged {
                         let logical_page = source_token / PAGED_PREFILL_PAGE_SIZE;
@@ -1499,6 +1504,14 @@ mod kernels {
             issue_copy!(5);
             issue_copy!(6);
             issue_copy!(7);
+            issue_copy!(8);
+            issue_copy!(9);
+            issue_copy!(10);
+            issue_copy!(11);
+            issue_copy!(12);
+            issue_copy!(13);
+            issue_copy!(14);
+            issue_copy!(15);
             // SAFETY: all copies issued by this thread belong to this group.
             unsafe {
                 async_copy::cp_async_commit_group();
@@ -2325,11 +2338,11 @@ mod kernels {
     }
 
     #[kernel]
-    #[launch_bounds(128, 3)]
+    #[launch_bounds(64)]
     #[allow(clippy::too_many_arguments)]
     #[launch_contract(
         domain = 1,
-        block = (128, 1, 1),
+        block = (64, 1, 1),
         min_compute_capability = (9, 0),
         requires = (
             batch_size >= 1,
@@ -2385,11 +2398,11 @@ mod kernels {
     }
 
     #[kernel]
-    #[launch_bounds(128)]
+    #[launch_bounds(64)]
     #[allow(clippy::too_many_arguments)]
     #[launch_contract(
         domain = 1,
-        block = (128, 1, 1),
+        block = (64, 1, 1),
         min_compute_capability = (9, 0),
         requires = (
             batch_size >= 1,
