@@ -1,8 +1,6 @@
 use crate::comparison::{Comparison, compare_bf16};
 use crate::reporting::GateCase;
-use crate::support::gemm_fixture::{
-    CENSUS_SHAPES, MINIMUM_SHAPE, exact_activation_value, exact_weight_value,
-};
+use crate::support::gemm_fixture::{CENSUS_SHAPES, MINIMUM_SHAPE, exact_fixture};
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer};
 use half::bf16;
 use oxide_infer::{Bf16DenseGemmSpec, bf16_dense_gemm_reference};
@@ -23,20 +21,6 @@ const OXIDE_TENSOR_ALIGNMENT_BYTES: u64 = 4;
 const OXIDE_WORKSPACE_ALIGNMENT_BYTES: u64 = 1;
 const GENERAL_MAX_ABS_ERROR: f32 = 3.125e-2;
 const GENERAL_MAX_REL_ERROR: f32 = 1.5625e-2;
-
-fn fixture(spec: Bf16DenseGemmSpec) -> (Vec<bf16>, Vec<bf16>) {
-    // Every product is an integer multiple of 2^-14. The largest possible
-    // partial sum has fewer than 24 significant integer bits for the covered
-    // census K range, so the F32 result is independent of reduction order.
-    let activation = (0..spec.k())
-        .map(|column| bf16::from_f32(exact_activation_value(column)))
-        .collect();
-    let mut weight = Vec::with_capacity(spec.weight_numel());
-    for row in 0..spec.n() {
-        weight.extend((0..spec.k()).map(|column| bf16::from_f32(exact_weight_value(row, column))));
-    }
-    (activation, weight)
-}
 
 fn cancellation_fixture(spec: Bf16DenseGemmSpec) -> (Vec<bf16>, Vec<bf16>) {
     let activation = (0..spec.k())
@@ -458,7 +442,7 @@ fn check_census_shape(
     let spec = Bf16DenseGemmSpec::new(dimensions.0, dimensions.1, dimensions.2)?;
     let plan = planner.plan_bf16_dense(spec, Bf16DenseGemmSelection::Oxide)?;
     check_plan_metadata(planner, &plan, spec)?;
-    let (activation_host, weight_host) = fixture(spec);
+    let (activation_host, weight_host) = exact_fixture(spec);
     let expected = reference(&activation_host, &weight_host, spec)?;
     let stream = queue.stream().clone();
     let activation = Arc::new(DeviceBuffer::from_host(&stream, &activation_host)?);
@@ -780,7 +764,7 @@ fn check_command_capacity(
     plan: &Bf16DenseGemmPlan,
 ) -> Result<(), Box<dyn Error>> {
     let spec = plan.spec();
-    let (activation_host, weight_host) = fixture(spec);
+    let (activation_host, weight_host) = exact_fixture(spec);
     let expected = reference(&activation_host, &weight_host, spec)?;
     let activation = Arc::new(DeviceBuffer::from_host(stream, &activation_host)?);
     let weight = Arc::new(DeviceBuffer::from_host(stream, &weight_host)?);

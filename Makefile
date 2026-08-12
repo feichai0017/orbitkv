@@ -37,6 +37,7 @@ NPM := $(RUN) npm --prefix website
 	h20-ragged-prefill h20-paged-prefill h20-rope h20-engine-interop h20 \
 	h20-runner-preflight h20-build-runner h20-sanitize-runner \
 	bench-oxide bench-paged-oxide bench-ragged-oxide \
+	bench-sm90-gemv-oxide bench-sm90-gemv-cublaslt \
 	bench-paged-prefill-oxide bench-paged-prefill-graph-oxide bench-ragged-graph-oxide \
 	bench-rope-oxide bench-rope-append-oxide \
 	bench-rope-append-tokens-oxide bench-rope-append-tokens-graph-oxide bench-split-k
@@ -58,6 +59,8 @@ help:
 		'make h20-paged-prefill  Run paged prefill H20 correctness' \
 		'make h20-rope       Run standard RoPE H20 correctness' \
 		'make bench-oxide     Run the Oxide side of the matched H20 benchmark' \
+		'make bench-sm90-gemv-oxide  Run the five-shape native M=1 GEMV benchmark' \
+		'make bench-sm90-gemv-cublaslt  Run its matched cuBLASLt baseline' \
 		'make bench-paged-oxide  Run Oxide matched paged-decode cases only' \
 		'make bench-ragged-oxide  Run Oxide matched ragged-prefill cases only' \
 		'make bench-paged-prefill-oxide  Run Oxide matched paged-prefill cases only' \
@@ -171,6 +174,12 @@ h20-sanitize-runner: h20-runner-preflight
 
 bench-oxide:
 	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(H20_ARCH) | sed -n '/^{/p'
+
+bench-sm90-gemv-oxide:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_BENCH_OPERATORS=gemv_m1 OXIDE_BENCH_GEMV_PROVIDER=oxide OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(H20_ARCH) | sed -n '/^{/p'
+
+bench-sm90-gemv-cublaslt:
+	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_BENCH_OPERATORS=gemv_m1 OXIDE_BENCH_GEMV_PROVIDER=cublaslt OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(H20_ARCH) | sed -n '/^{/p'
 
 bench-paged-oxide:
 	@set -o pipefail; cd $(VALIDATION_CRATE) && OXIDE_BENCH_OPERATORS=paged_batch_decode OXIDE_SOURCE_COMMIT="$(OXIDE_SOURCE_COMMIT)" $(CARGO) +nightly-2026-04-03 oxide run oxide_matched_bench_h20 --bin oxide_matched_bench_h20 --features cuda --arch $(H20_ARCH) | sed -n '/^{/p'

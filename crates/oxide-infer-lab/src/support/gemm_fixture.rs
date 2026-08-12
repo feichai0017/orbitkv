@@ -1,3 +1,8 @@
+#[cfg(feature = "cuda")]
+use half::bf16;
+#[cfg(feature = "cuda")]
+use oxide_infer::Bf16DenseGemmSpec;
+
 pub(crate) const CENSUS_SHAPES: [(usize, usize, usize); 5] = [
     (1, 1_536, 1_536),
     (1, 256, 1_536),
@@ -13,6 +18,21 @@ pub(crate) fn exact_activation_value(column: usize) -> f32 {
 
 pub(crate) fn exact_weight_value(row: usize, column: usize) -> f32 {
     (((row * 3 + column * 5) % 16) + 1) as f32 / 256.0
+}
+
+#[cfg(feature = "cuda")]
+pub(crate) fn exact_fixture(spec: Bf16DenseGemmSpec) -> (Vec<bf16>, Vec<bf16>) {
+    // Every product is an integer multiple of 2^-14. The largest possible
+    // partial sum has fewer than 24 significant integer bits for the covered
+    // census K range, so the F32 result is independent of reduction order.
+    let activation = (0..spec.k())
+        .map(|column| bf16::from_f32(exact_activation_value(column)))
+        .collect();
+    let mut weight = Vec::with_capacity(spec.weight_numel());
+    for row in 0..spec.n() {
+        weight.extend((0..spec.k()).map(|column| bf16::from_f32(exact_weight_value(row, column))));
+    }
+    (activation, weight)
 }
 
 #[cfg(test)]

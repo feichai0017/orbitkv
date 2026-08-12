@@ -1,14 +1,15 @@
 use crate::benchmark::BenchmarkRecord;
 use crate::comparison::{compare_bf16, digest_bf16};
 use crate::fixture::{deterministic_bf16, page_refcounts};
+use crate::support::gemm_fixture::{CENSUS_SHAPES, exact_fixture};
 use cuda_core::{CudaContext, CudaStream, DeviceBuffer, sys};
 use half::bf16;
 use oxide_infer::{
     Bf16DenseGemmSpec, Bf16PagedBatchDecodeSpec, Bf16PagedPrefillSpec, Bf16RaggedPrefillSpec,
     Bf16RopePagedKvAppendSpec, Bf16RopePagedKvAppendTokensSpec, Bf16RopePosIdsSpec,
     Bf16SingleDecodeSpec, Bf16SingleDecodeSplitKSpec, DType, PagedKvLayout, RmsNormSpec,
-    rope_paged_kv_append_bf16_reference, rope_paged_kv_append_tokens_bf16_reference,
-    rope_pos_ids_bf16_reference,
+    bf16_dense_gemm_reference, rope_paged_kv_append_bf16_reference,
+    rope_paged_kv_append_tokens_bf16_reference, rope_pos_ids_bf16_reference,
 };
 use oxide_infer_cuda::attention::{
     Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16PagedPrefillAlgorithm,
@@ -17,7 +18,8 @@ use oxide_infer_cuda::attention::{
 };
 use oxide_infer_cuda::command::{CheckedBindings, CommandQueue, Read, ReadWrite};
 use oxide_infer_cuda::gemm::{
-    Bf16DenseGemmOperands, Bf16DenseGemmPlan, Bf16DenseGemmSelection, GemmPlanner,
+    Bf16DenseGemmAlgorithm, Bf16DenseGemmOperands, Bf16DenseGemmPlan, Bf16DenseGemmSelection,
+    GemmPlanner, GemmProviderId, GemmProviderVersion,
 };
 use oxide_infer_cuda::rms_norm::{RmsNormArgs, RmsNormBf16Plan, RmsNormProvider};
 use oxide_infer_cuda::rope::{
@@ -32,6 +34,7 @@ use std::sync::Arc;
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MEASUREMENT: &str = "eager_stream_batch_cuda_event";
 const FIXTURE_ID: &str = "xorshift64_mod2001_bf16_v1";
+const GEMV_FIXTURE_ID: &str = "dyadic_exact_qwen25_15b_gemv_census_v1";
 const PAGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_page_table_layout_v2";
 const PAGED_PREFILL_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_paged_prefill_v1";
 const RAGGED_FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_ragged_indptr_v1";
@@ -325,6 +328,130 @@ fn benchmark_gemm(
         fixture_digests: json!({
             "activation": format!("{:016x}", digest_bf16(&activation_host)),
             "weight_storage": format!("{:016x}", digest_bf16(&weight_host))
+        }),
+        warmup_launches: config.warmup_launches,
+        launches_per_sample: config.launches_per_sample,
+        samples_us,
+    }
+    .write_json_line()?;
+    Ok(())
+}
+
+fn gemv_selection_from_env() -> Result<Bf16DenseGemmSelection, Box<dyn Error>> {
+    match env::var("OXIDE_BENCH_GEMV_PROVIDER") {
+        Ok(value) if value == "oxide" => Ok(Bf16DenseGemmSelection::Oxide),
+        Ok(value) if value == "cublaslt" => Ok(Bf16DenseGemmSelection::CublasLt),
+        Ok(value) => {
+            Err(format!("OXIDE_BENCH_GEMV_PROVIDER must be oxide or cublaslt, got {value}").into())
+        }
+        Err(env::VarError::NotPresent) => {
+            Err("OXIDE_BENCH_GEMV_PROVIDER is required for gemv_m1".into())
+        }
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn gemv_algorithm_name(algorithm: Bf16DenseGemmAlgorithm) -> &'static str {
+    match algorithm {
+        Bf16DenseGemmAlgorithm::CublasLtHeuristic => "cublaslt_heuristic",
+        Bf16DenseGemmAlgorithm::OxideSm90SimtGemvM1N16K64 => "oxide_sm90_simt_gemv_m1_n16_k64",
+    }
+}
+
+fn gemv_provider_version(planner: &GemmPlanner, provider: GemmProviderId) -> serde_json::Value {
+    match planner.provider_version(provider) {
+        GemmProviderVersion::CublasLt(version) => json!(version),
+        GemmProviderVersion::Oxide(version) => json!(version),
+    }
+}
+
+fn benchmark_gemv_case(
+    context: &Arc<CudaContext>,
+    stream: &Arc<CudaStream>,
+    planner: &GemmPlanner,
+    selection: Bf16DenseGemmSelection,
+    dimensions: (usize, usize, usize),
+    config: BenchConfig,
+    identity: &RunIdentity,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16DenseGemmSpec::new(dimensions.0, dimensions.1, dimensions.2)?;
+    let plan = planner.plan_bf16_dense(spec, selection)?;
+    let plan_info = plan.plan_info();
+    let (activation_host, weight_host) = exact_fixture(spec);
+    let mut expected = vec![bf16::ZERO; spec.output_numel()];
+    bf16_dense_gemm_reference(&activation_host, &weight_host, &mut expected, spec)?;
+
+    let activation = Arc::new(DeviceBuffer::from_host(stream, &activation_host)?);
+    let weight = Arc::new(DeviceBuffer::from_host(stream, &weight_host)?);
+    let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
+    let workspace = DeviceBuffer::<u8>::zeroed(stream, plan.workspace_required_bytes())?;
+    let mut queue = CommandQueue::new(stream.clone(), config.launches_per_sample, 1)?;
+    let mut bindings = queue.bindings(4)?;
+    let activation_handle = bindings.bind_read(activation)?;
+    let weight_handle = bindings.bind_read(weight)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
+
+    let (mut bindings, samples_us) =
+        benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
+            plan.enqueue_into(
+                scope,
+                Bf16DenseGemmOperands::new(
+                    activation_handle,
+                    weight_handle,
+                    output_handle.write(),
+                    workspace_handle.write(),
+                ),
+            )?;
+            Ok(())
+        })?;
+    let output = bindings.take_read_write(output_handle)?;
+    let actual = output.to_host_vec(stream)?;
+    let comparison = compare_bf16(&actual, &expected, "matched GEMV")?;
+    if comparison.bit_mismatches != 0 {
+        return Err(format!(
+            "matched GEMV provider {} differed from the exact CPU reference: bit_mismatches={} max_abs={}",
+            plan_info.provider().name(),
+            comparison.bit_mismatches,
+            comparison.max_abs,
+        )
+        .into());
+    }
+
+    let case = format!("bf16_gemv_m1_n{}_k{}", spec.n(), spec.k());
+    BenchmarkRecord {
+        schema_version: 1,
+        provider: "oxide-infer",
+        provider_version: PROVIDER_VERSION,
+        provider_commit: &identity.provider_commit,
+        run_label: &identity.run_label,
+        measurement: MEASUREMENT,
+        operator: "gemv",
+        case: &case,
+        dtype: "bf16",
+        layout: "A_row_major_W_row_major_transposed",
+        execution: json!({
+            "provider": plan_info.provider().name(),
+            "provider_version": gemv_provider_version(planner, plan_info.provider()),
+            "algorithm": gemv_algorithm_name(plan_info.algorithm()),
+            "commands_per_call": 1,
+            "workspace_required_bytes": plan_info.workspace_required_bytes(),
+            "estimated_waves_count": plan.estimated_waves_count(),
+            "correctness": {
+                "reference": "oxide-infer CPU F32 sequential dense GEMM",
+                "tolerance": "bit_exact_dyadic_fixture",
+                "max_abs": comparison.max_abs,
+                "bit_mismatches": comparison.bit_mismatches,
+                "output_digest": format!("{:016x}", comparison.digest),
+                "reference_digest": format!("{:016x}", digest_bf16(&expected)),
+            }
+        }),
+        kernels_per_call: 1,
+        shape: json!({"m": spec.m(), "n": spec.n(), "k": spec.k()}),
+        fixture_id: GEMV_FIXTURE_ID,
+        fixture_digests: json!({
+            "activation": format!("{:016x}", digest_bf16(&activation_host)),
+            "weight_storage": format!("{:016x}", digest_bf16(&weight_host)),
         }),
         warmup_launches: config.warmup_launches,
         launches_per_sample: config.launches_per_sample,
@@ -1468,6 +1595,20 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     }
     if requested.contains(&"gemm") {
         benchmark_gemm(&context, &stream, &gemm_planner, config, &identity)?;
+    }
+    if requested.contains(&"gemv_m1") {
+        let selection = gemv_selection_from_env()?;
+        for dimensions in CENSUS_SHAPES {
+            benchmark_gemv_case(
+                &context,
+                &stream,
+                &gemm_planner,
+                selection,
+                dimensions,
+                config,
+                &identity,
+            )?;
+        }
     }
     if requested.contains(&"single_decode") {
         for case in [
