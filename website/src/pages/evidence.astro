@@ -5,6 +5,7 @@ import {
   evidenceHighlights,
   evidenceLevels,
   performanceEvidenceUrl,
+  pagedPrefillOptimizationEvidenceUrl,
   performanceRows,
   repositoryUrl,
 } from "../data/site";
@@ -80,9 +81,8 @@ import {
         <strong>Operator timing, not a serving claim.</strong>
         <p>
           Measured on one NVIDIA H20 using matched eager-provider CUDA-event
-          timing. Oxide has lower median latency in 8 of 14 stable shapes;
-          FlashInfer has lower latency in 6, including the largest long-context
-          GQA prefill cases.
+          timing. The 14-shape baseline is retained, while the long paged-GQA4
+          row is refreshed from the optimized source-bound record.
         </p>
         <a href={performanceEvidenceUrl} target="_blank" rel="noreferrer">
           Open the current comparison record and raw samples
@@ -108,23 +108,22 @@ import {
       </div>
 
       <div class="doc-note">
-        <strong>Paged prefill has three explicit algorithms.</strong>
+        <strong>Paged prefill has four explicit algorithms.</strong>
         <p>
-          The caller selects direct, eight-warp, or sixteen-warp execution.
-          The phase 2 record qualifies the current declared correctness,
-          rejection, fixed-address Graph, and sanitizer paths.
+          The caller selects direct, eight-warp, sixteen-warp, or tiled GQA4
+          execution. Tiled GQA4 uses a caller-owned F32 partial workspace.
         </p>
         <p>
-          The current matched record now covers direct, eight-warp, and
-          sixteen-warp eager-provider paths. Short shapes are competitive, but
-          long MQA and GQA4 prefill remain explicit optimization targets.
+          The tiled paged-GQA4 path is 4.61× faster than its prior Oxide
+          baseline for the recorded long shape. FlashInfer remains 2.47× lower
+          latency, so long MQA and GQA prefill remain optimization targets.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json`}>
           Historical token-parallel correctness record
         </a>
         <span> · </span>
-        <a href={performanceEvidenceUrl} target="_blank" rel="noreferrer">
-          Current matched performance record
+        <a href={pagedPrefillOptimizationEvidenceUrl} target="_blank" rel="noreferrer">
+          Optimized paged-GQA4 performance record
         </a>
       </div>
 

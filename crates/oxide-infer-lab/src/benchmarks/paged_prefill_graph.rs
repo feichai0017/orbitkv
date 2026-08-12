@@ -16,7 +16,7 @@ use std::sync::Arc;
 const PROVIDER_VERSION: &str = env!("CARGO_PKG_VERSION");
 const MEASUREMENT: &str = "fixed_address_cuda_graph_single_replay_event";
 const FIXTURE_ID: &str = "xorshift64_mod2001_bf16_i32_paged_prefill_v1";
-const CASE: &str = "bf16_paged_prefill_gqa4_b2_q4_2_kv23_18_qh16_kvh4_d128_p16";
+const CASE: &str = "bf16_paged_prefill_gqa4_b2_q32_64_kv256_1024_qh16_kvh4_d128_p16";
 const OUTPUT_MAX_ABS_LIMIT: f32 = 0.015_625;
 const LSE_MAX_ABS_LIMIT: f32 = 0.01;
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
@@ -58,21 +58,26 @@ pub fn run() -> Result<(), Box<dyn Error>> {
 
     let context = CudaContext::new(0)?;
     let provider = PrefillProvider::load(&context)?;
-    let spec = Bf16PagedPrefillSpec::new(2, 6, 6, 16, 4, 128, 16)?;
-    let qo_indptr_host = [0_i32, 4, 6];
-    let page_indptr_host = [0_i32, 2, 4];
-    let page_indices_host = [5_i32, 1, 5, 3];
-    let last_page_len_host = [7_i32, 2];
+    let spec = Bf16PagedPrefillSpec::new(2, 96, 96, 16, 4, 128, 16)?;
+    let qo_indptr_host = [0_i32, 32, 96];
+    let page_indptr_host = [0_i32, 16, 80];
+    let page_indices_host = [
+        15_i32, 3, 27, 9, 31, 1, 35, 5, 39, 7, 43, 11, 47, 13, 51, 17, 19, 21, 23, 25, 29, 33, 37,
+        41, 45, 49, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79, 81, 83, 85, 87, 89, 91,
+        93, 95, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42,
+        44, 46, 48, 50, 52, 54, 56, 58, 60, 62,
+    ];
+    let last_page_len_host = [16_i32, 16];
     spec.validate_metadata(
         &qo_indptr_host,
         &page_indptr_host,
         &page_indices_host,
         &last_page_len_host,
     )?;
-    let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::Direct)?;
-    let query_host = deterministic_bf16(spec.query_numel(), 0x4001);
-    let key_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x4b45_5900);
-    let value_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x5641_4c55_4500);
+    let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::TiledGqa4)?;
+    let query_host = deterministic_bf16(spec.query_numel(), 0x8001);
+    let key_host = deterministic_bf16(spec.kv_pages_numel(), 0x8001 ^ 0x4b45_5900);
+    let value_host = deterministic_bf16(spec.kv_pages_numel(), 0x8001 ^ 0x5641_4c55_4500);
     let mut expected_output = vec![bf16::NAN; spec.output_numel()];
     let mut expected_lse = vec![f32::NAN; spec.lse_numel()];
     paged_prefill_bf16_reference(
@@ -103,9 +108,10 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let lse = DeviceBuffer::from_host(&upload_stream, &vec![f32::NAN; spec.lse_numel()])?;
     let metadata_status =
         DeviceBuffer::<i32>::zeroed(&upload_stream, plan.metadata_status_required_numel())?;
+    let workspace = DeviceBuffer::<f32>::zeroed(&upload_stream, plan.workspace_required_numel())?;
 
-    let graph_queue = GraphQueue::new(&context, 3)?;
-    let mut bindings = graph_queue.bindings(10)?;
+    let graph_queue = GraphQueue::new(&context, 4)?;
+    let mut bindings = graph_queue.bindings(11)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key_pages)?;
     let value_handle = bindings.bind_read(value_pages)?;
@@ -116,6 +122,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
     let captured = graph_queue.capture(bindings, |scope| {
         plan.enqueue_into(
             scope,
@@ -130,10 +137,11 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 metadata_status_handle,
                 output_handle.write(),
                 lse_handle.write(),
-            ),
+            )
+            .with_workspace(workspace_handle),
         )
     })?;
-    if captured.commands() != 3 {
+    if captured.commands() != 4 {
         return Err("paged-prefill Graph benchmark captured the wrong command count".into());
     }
     let mut exec = captured.instantiate()?;
@@ -189,15 +197,15 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         dtype: "bf16",
         layout: "NHD_D128_page16",
         execution: json!({
-            "algorithm": "direct_one_warp_per_query_row_head",
+            "algorithm": "tiled_gqa4_paged_mma_qk_softmax_pv",
             "causal": "bottom_right",
             "graph": "fixed_address_private_stream",
-            "graph_nodes": 3,
+            "graph_nodes": 4,
             "metadata_validation": "device_status",
             "validator_kernels_per_call": 1,
-            "attention_kernels_per_call": 1,
+            "attention_kernels_per_call": 2,
             "status_readbacks_per_call": 1,
-            "commands_per_call": 3,
+            "commands_per_call": 4,
             "completion_event_inside_timed_interval": true,
             "correctness": {
                 "output_max_abs": output_comparison.max_abs,
@@ -208,14 +216,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 "lse_digest": format!("{:016x}", lse_comparison.digest)
             }
         }),
-        kernels_per_call: 2,
+        kernels_per_call: 3,
         shape: json!({
             "batch_size": 2,
-            "nnz_qo": 6,
-            "max_num_pages": 6,
-            "referenced_pages": 4,
-            "request_qo_lens": [4, 2],
-            "request_kv_lens": [23, 18],
+            "nnz_qo": 96,
+            "max_num_pages": 96,
+            "referenced_pages": 80,
+            "request_qo_lens": [32, 64],
+            "request_kv_lens": [256, 1024],
             "query_heads": 16,
             "kv_heads": 4,
             "head_dim": 128,

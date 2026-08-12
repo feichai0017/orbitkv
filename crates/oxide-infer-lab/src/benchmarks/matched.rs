@@ -637,6 +637,7 @@ fn benchmark_paged_prefill_case(
         Bf16PagedPrefillAlgorithm::Direct => "direct_one_warp_per_query_row_head",
         Bf16PagedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
         Bf16PagedPrefillAlgorithm::TokenParallel16 => "token_parallel_16warp_block_local_merge",
+        Bf16PagedPrefillAlgorithm::TiledGqa4 => "tiled_gqa4_paged_mma_qk_softmax_pv",
     };
     let query_host = deterministic_bf16(spec.query_numel(), case.salt);
     let key_host = deterministic_bf16(spec.kv_pages_numel(), case.salt ^ 0x4b45_5900);
@@ -650,6 +651,8 @@ fn benchmark_paged_prefill_case(
     let last_page_len = Arc::new(DeviceBuffer::from_host(stream, case.last_page_len)?);
     let output = DeviceBuffer::<bf16>::zeroed(stream, spec.output_numel())?;
     let lse = DeviceBuffer::<f32>::zeroed(stream, spec.lse_numel())?;
+    let workspace =
+        DeviceBuffer::<f32>::zeroed(stream, usize::max(plan.workspace_required_numel(), 1))?;
     let mut metadata_statuses = Vec::with_capacity(config.launches_per_sample);
     for _ in 0..config.launches_per_sample {
         metadata_statuses.push(DeviceBuffer::<i32>::zeroed(
@@ -657,12 +660,19 @@ fn benchmark_paged_prefill_case(
             plan.metadata_status_required_numel(),
         )?);
     }
+    let attention_kernels_per_call = if plan.workspace_required_numel() == 0 {
+        1
+    } else {
+        2
+    };
+    let commands_per_call = attention_kernels_per_call + 2;
+    let kernels_per_call = attention_kernels_per_call + 1;
     let command_capacity = config
         .launches_per_sample
-        .checked_mul(3)
+        .checked_mul(commands_per_call)
         .ok_or("paged-prefill command capacity overflowed")?;
     let mut queue = CommandQueue::new(stream.clone(), command_capacity, 1)?;
-    let binding_capacity = 9_usize
+    let binding_capacity = 10_usize
         .checked_add(config.launches_per_sample)
         .ok_or("paged-prefill binding capacity overflowed")?;
     let mut bindings = queue.bindings(binding_capacity)?;
@@ -675,6 +685,7 @@ fn benchmark_paged_prefill_case(
     let last_page_len_handle = bindings.bind_read(last_page_len)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
     let mut metadata_status_handles = Vec::with_capacity(config.launches_per_sample);
     for metadata_status in metadata_statuses {
         metadata_status_handles.push(bindings.bind_read_write(metadata_status)?);
@@ -685,21 +696,22 @@ fn benchmark_paged_prefill_case(
         benchmark_scopes(context, stream, &mut queue, bindings, config, |scope| {
             let metadata_status_handle = metadata_status_handles[metadata_status_index];
             metadata_status_index = (metadata_status_index + 1) % metadata_status_handles.len();
-            plan.enqueue_into(
-                scope,
-                Bf16PagedPrefillArgs::new(
-                    query_handle,
-                    key_handle,
-                    value_handle,
-                    qo_indptr_handle,
-                    page_indptr_handle,
-                    page_indices_handle,
-                    last_page_len_handle,
-                    metadata_status_handle,
-                    output_handle.write(),
-                    lse_handle.write(),
-                ),
-            )?;
+            let mut args = Bf16PagedPrefillArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                qo_indptr_handle,
+                page_indptr_handle,
+                page_indices_handle,
+                last_page_len_handle,
+                metadata_status_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            );
+            if plan.workspace_required_numel() != 0 {
+                args = args.with_workspace(workspace_handle);
+            }
+            plan.enqueue_into(scope, args)?;
             Ok(())
         })?;
     let mut request_qo_lens = Vec::with_capacity(spec.batch_size());
@@ -733,11 +745,11 @@ fn benchmark_paged_prefill_case(
             "page_table_location": "device",
             "metadata_validation": "device_status",
             "validator_kernels_per_call": 1,
-            "attention_kernels_per_call": 1,
+            "attention_kernels_per_call": attention_kernels_per_call,
             "status_readbacks_per_call": 1,
-            "commands_per_call": 3
+            "commands_per_call": commands_per_call
         }),
-        kernels_per_call: 2,
+        kernels_per_call,
         shape: json!({
             "batch_size": spec.batch_size(),
             "nnz_qo": spec.nnz_qo(),
@@ -1636,7 +1648,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             },
             PagedPrefillCase {
                 name: "bf16_paged_prefill_gqa4_b2_q32_64_kv256_1024_qh16_kvh4_d128_p16",
-                algorithm: Bf16PagedPrefillAlgorithm::TokenParallel8,
+                algorithm: Bf16PagedPrefillAlgorithm::TiledGqa4,
                 batch_size: 2,
                 max_num_pages: 96,
                 query_heads: 16,

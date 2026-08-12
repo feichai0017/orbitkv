@@ -50,9 +50,10 @@ The crate exposes these provider families:
   page-table errors at completion.
 - BF16 ragged causal prefill with direct, eight-warp, sixteen-warp, and tiled
   GQA4 plans.
-- BF16 paged causal prefill with direct, eight-warp, and sixteen-warp plans.
-  The caller selects the algorithm. A device validator reports typed query and
-  page metadata errors at completion.
+- BF16 paged causal prefill with direct, eight-warp, sixteen-warp, and tiled
+  GQA4 plans. The tiled plan uses a caller-owned F32 partial workspace. The
+  caller selects the algorithm. A device validator reports typed query and page
+  metadata errors at completion.
 - BF16 D128 NeoX RoPE with explicit positions.
 - Fused RoPE and paged KV append for one token per request or 1 through 64
   explicit tokens.
@@ -83,10 +84,10 @@ correctness, lifecycle, fixed-address Graph behavior, and Compute Sanitizer on
 its recorded target. The experimental M=1 GEMV remains limited to its exact
 `sm_90a` contract and still needs matched performance and engine evidence.
 
-The current R2 record adds matched eager-provider timing for paged decode,
-ragged prefill, and paged prefill against FlashInfer 0.6.17. It exposes strong
-short paths and large long-context GQA prefill gaps; it is not Graph, model, or
-serving evidence.
+The current R2 records add matched eager-provider timing for paged decode,
+ragged prefill, and paged prefill against FlashInfer 0.6.17. The first optimized
+paged-GQA4 path reduces the recorded worst gap substantially, while long-context
+GQA prefill remains behind. These are not Graph, model, or serving results.
 
 The fixed-address Graph runtime retains bindings and provider resources until
 replay completes. Operator-specific Graph evidence remains path-specific.

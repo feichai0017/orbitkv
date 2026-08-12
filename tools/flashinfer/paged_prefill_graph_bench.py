@@ -23,7 +23,7 @@ from matched_bench import (
 
 
 MEASUREMENT = "fixed_address_cuda_graph_single_replay_event"
-CASE = "bf16_paged_prefill_gqa4_b2_q4_2_kv23_18_qh16_kvh4_d128_p16"
+CASE = "bf16_paged_prefill_gqa4_b2_q32_64_kv256_1024_qh16_kvh4_d128_p16"
 
 
 def env_positive_int(name: str, default: int) -> int:
@@ -42,17 +42,23 @@ def main() -> None:
     run_label = os.environ.get("OXIDE_BENCH_RUN_LABEL", "unlabeled")
 
     batch_size = 2
-    nnz_qo = 6
-    max_num_pages = 6
+    nnz_qo = 96
+    max_num_pages = 96
     query_heads = 16
     kv_heads = 4
     head_dim = 128
     page_size = 16
-    qo_indptr_values = (0, 4, 6)
-    page_indptr_values = (0, 2, 4)
-    page_indices_values = (5, 1, 5, 3)
-    last_page_len_values = (7, 2)
-    salt = 0x4001
+    qo_indptr_values = (0, 32, 96)
+    page_indptr_values = (0, 16, 80)
+    page_indices_values = (
+        15, 3, 27, 9, 31, 1, 35, 5, 39, 7, 43, 11, 47, 13, 51, 17,
+        19, 21, 23, 25, 29, 33, 37, 41, 45, 49, 53, 55, 57, 59, 61, 63,
+        65, 67, 69, 71, 73, 75, 77, 79, 81, 83, 85, 87, 89, 91, 93, 95,
+        0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32,
+        34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62,
+    )
+    last_page_len_values = (16, 16)
+    salt = 0x8001
 
     query_host = deterministic_bf16(nnz_qo * query_heads * head_dim, salt)
     key_host = deterministic_bf16(
@@ -211,8 +217,8 @@ def main() -> None:
                     "nnz_qo": nnz_qo,
                     "max_num_pages": max_num_pages,
                     "referenced_pages": len(page_indices_values),
-                    "request_qo_lens": [4, 2],
-                    "request_kv_lens": [23, 18],
+                    "request_qo_lens": [32, 64],
+                    "request_kv_lens": [256, 1024],
                     "query_heads": query_heads,
                     "kv_heads": kv_heads,
                     "head_dim": head_dim,
