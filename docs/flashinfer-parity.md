@@ -59,8 +59,8 @@ The upstream links remain in the pinned
 | Single decode | Direct online softmax | MHA, MQA, and GQA | None |
 | Single decode split-K | Explicit partitions, F32 partial workspace, and eight-warp merge | MQA and GQA | None |
 | Paged batch decode | Direct MHA. Eight-warp token-parallel MQA and GQA | MHA, MQA, GQA, mixed lengths, page order, and read-only page reuse | None |
-| Ragged causal prefill | Direct, eight-warp, sixteen-warp, and tiled GQA4 split-eight | Direct short MHA, MQA, and GQA. Long MQA uses sixteen warps. Published stages also cover eight-warp and tiled GQA4 paths | Tiled long GQA4 only |
-| Paged causal prefill | Direct online softmax, sixteen-warp long MQA, and eight-warp long GQA4 | Short MHA, MQA, and GQA. The 2026-08-07 source also covers long MQA and long GQA4 | One direct GQA4 fixture |
+| Ragged causal prefill | Direct, eight-warp, sixteen-warp, and tiled GQA4 split-four | Direct short MHA, MQA, and GQA. Long MQA uses sixteen warps. Current stages also cover tiled GQA4 | Tiled long GQA4 only |
+| Paged causal prefill | Direct, eight-warp, sixteen-warp, and tiled GQA4 split-four | Short MHA, MQA, and GQA plus long MQA and tiled GQA4 | Tiled long GQA4 plus invalid-page rejection |
 | Standard RoPE | D128 NeoX split-half with explicit I32 positions | Positions through 32,767 in the recorded fixture | None |
 | Fused RoPE plus paged append | One through 64 explicit tokens with per-page reference counts | Requalification | Requalification |
 
@@ -84,17 +84,15 @@ Ragged prefill uses average KV length across the batch:
 - below 64 tokens: direct.
 - at least 64 tokens with one KV head: sixteen warps.
 - other long shapes: eight warps.
-- GQA group size four with average KV length at least 256: tiled split-eight.
+- GQA group size four with average KV length at least 256: tiled split-four.
 
 This policy does not use a length histogram or request grouping. The tiled
 Graph record does not qualify the other ragged algorithms.
 
-Paged prefill selects direct execution below an average physical page-pool
-capacity of 64 tokens per request. Long MQA selects sixteen warps. Other
-admitted long shapes select eight warps.
-
-The direct GQA4 Graph record does not qualify token-parallel plans, mutable
-metadata, or graph updates.
+Paged prefill uses explicit caller selection. The current long MQA fixture uses
+sixteen warps; the long GQA4 fixture uses tiled split-four with a caller-owned
+F32 workspace. The tiled Graph record does not qualify mutable metadata, graph
+updates, concurrent replay, or other algorithms.
 
 ## Paged KV ownership difference
 
@@ -135,6 +133,11 @@ covers 14 paged-decode, ragged-prefill, and paged-prefill shapes against the
 pinned FlashInfer release. It retains both provider orders and 2,800 raw
 latency samples. Oxide has lower combined median eager latency in eight stable
 shapes and FlashInfer in six.
+
+The [optimized paged-GQA4 record](results/h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json)
+supersedes only the long paged-GQA4 row. It binds the tiled split-four source,
+both provider orders, paged and ragged correctness and Graph gates, and all
+four sanitizer tools for both exact runners.
 
 The older [token-parallel correctness record](results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json)
 and [long-context performance record](results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json)

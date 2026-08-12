@@ -76,6 +76,13 @@ valid-output paged-decode Graph, and all GPUs other than the recorded H20.
 
 ## Current-source R2 matched performance
 
+- [Optimized long paged-GQA4 eager performance against FlashInfer 0.6.17](h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json)
+  binds clean source `49290b5`, exact paged and ragged tiled-GQA4 runners, both
+  provider orders, correctness and Graph limits, and all four Compute
+  Sanitizer tools. Oxide moves from 265.66 to 57.60 microseconds on the recorded
+  shape, a 4.61x speedup. FlashInfer remains lower at 23.35 microseconds, a
+  2.47x gap.
+
 - [Matched BF16 attention eager-provider performance against FlashInfer 0.6.17](h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json)
   binds the unchanged product source at merged commit `7f3d08e`, the exact
   Rust runner binary, FlashInfer 0.6.17, both provider orders, and 2,800 raw
@@ -86,9 +93,9 @@ valid-output paged-decode Graph, and all GPUs other than the recorded H20.
 The record is an eager-provider microbenchmark on one recorded H20. It does
 not establish an overall library winner, isolated-kernel or Graph performance,
 native GEMV promotion, model speed, serving throughput, or behavior on another
-GPU. The largest measured gap is long-context GQA4 paged prefill, where
-FlashInfer has 11.51x lower median latency; that is now an explicit optimization
-target.
+GPU. Its largest measured gap was long-context GQA4 paged prefill at 11.51x;
+the optimized record above supersedes that row only. The remaining gap and the
+long ragged-GQA4 path stay explicit optimization targets.
 
 ## Historical R1 phase 1 precursor
 

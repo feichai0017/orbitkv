@@ -69,7 +69,7 @@ The migration moves source directly. It adds no compatibility module.
 | Single decode split-K | Explicit partitions and caller-owned F32 workspace | Current | Current R1 runner covers declared MQA and GQA shapes plus sanitizer. MHA, Graph, and current performance remain open. |
 | Paged batch decode | BF16 NHD or HND D128, page size 16. Direct MHA and eight-warp MQA or GQA. | Current | Current R1 device correctness, rejection Graph, simulated-engine boundary, and sanitizer. Current R2 matched eager performance covers six shapes; valid-output Graph remains open. |
 | Ragged causal prefill | BF16 NHD D128, bottom-right causal mask. Direct, eight-warp, sixteen-warp, and tiled GQA4. | Current | Current R1 device correctness, tiled GQA4 Graph, and sanitizer. Current R2 matched eager performance covers three shapes. |
-| Paged causal prefill | BF16 NHD D128, page size 16. Caller selects direct, eight-warp, or sixteen-warp. | Current | Current R1 device correctness, valid-output and rejection Graph cases, and sanitizer. Current R2 matched eager performance covers five shapes. |
+| Paged causal prefill | BF16 NHD D128, page size 16. Caller selects direct, eight-warp, sixteen-warp, or tiled GQA4 with F32 workspace. | Current | Current device correctness, long tiled valid-output Graph, rejection Graph, sanitizer, and matched eager performance. |
 | Standard RoPE | BF16 NHD D128, NeoX split-half, explicit I32 positions | Current source under `rope`; family migration pending | Current R1 device correctness and sanitizer; no standalone RoPE Graph. |
 | Fused RoPE plus paged append | BF16 NHD D128, page size 16, one through 64 tokens, exclusive target pages | Current | Current R1 device correctness, six-token valid-output Graph, rejection Graph, and sanitizer. |
 
@@ -80,8 +80,8 @@ Plan creation fixes one algorithm.
 | Operator | Current selection | Current Graph boundary |
 | --- | --- | --- |
 | Paged decode | MHA selects direct. MQA and GQA select eight-warp token parallelism. | Current rejection-only invalid-page Graph; no valid-output Graph |
-| Ragged prefill | Average KV length below 64 selects direct. Long MQA selects sixteen warps. Other long cases select eight warps. Long GQA4 can select tiled split-eight. | Current tiled long-GQA4 valid-output Graph |
-| Paged prefill | Caller selects direct, eight-warp, or sixteen-warp. Contract checks reject unsupported combinations. | Current direct GQA4 valid-output Graph and invalid-page rejection Graph |
+| Ragged prefill | Average KV length below 64 selects direct. Long MQA selects sixteen warps. Other long cases select eight warps. Long GQA4 can select tiled split-four. | Current tiled long-GQA4 valid-output Graph |
+| Paged prefill | Caller selects direct, eight-warp, sixteen-warp, or tiled GQA4. Tiled GQA4 requires group size four and explicit workspace. | Current tiled long-GQA4 valid-output Graph and invalid-page rejection Graph |
 
 Ragged selection uses batch-average KV length. It has no request grouping or
 persistent tuning database. Enqueue does not change the chosen algorithm.

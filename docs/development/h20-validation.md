@@ -143,7 +143,7 @@ online-softmax state, split states, and merge arithmetic use F32.
 | Paged batch decode | `Q/O [batch,qh,128]`, pages `[max_pages,16,kvh,128]`, full attention | MHA `(1,2,8,8)`, MQA `(3,7,8,1)`, GQA `(4,8,16,4)` as `(batch,max_pages,qh,kvh)` |
 | Ragged causal prefill | Contiguous Q/K/V with separate I32 `qo_indptr` and `kv_indptr` | `(batch,nnz_qo,nnz_kv,qh,kvh)`: `(1,4,4,8,8)`, `(3,6,13,8,1)`, `(2,6,11,16,4)`, `(3,21,896,8,1)`, `(2,96,1280,16,4)` |
 | Paged causal prefill | Ragged Q plus page-size-16 KV and bottom-right causal mask | Short: `(batch,nnz_qo,max_pages,qh,kvh)` is `(1,4,2,8,8)`, `(3,6,7,8,1)`, or `(2,6,6,16,4)` |
-| Paged causal prefill, long | Same contract with block-local token partitioning | MQA `(3,21,64,8,1)` uses sixteen warps. GQA4 `(2,96,96,16,4)` uses eight warps |
+| Paged causal prefill, long | Same contract with partitioned F32 state | MQA `(3,21,64,8,1)` uses sixteen warps. GQA4 `(2,96,96,16,4)` uses tiled split-four |
 
 Paged metadata uses I32 `page_indptr`, `page_indices`, and `last_page_len`.
 Cover mixed lengths, partial tails, physical-page order, and read-only page
@@ -156,25 +156,27 @@ kv_index <= kv_len - qo_len + query_index
 ```
 
 The current ragged runner selects direct for the three short cases, sixteen
-warps for long MQA, and tiled split-eight for long GQA4. Earlier records cover
+warps for long MQA, and tiled split-four for long GQA4. Earlier records cover
 the eight-warp stage, but the current runner needs a dedicated eight-warp case
 before that path gains current-source qualification.
 
 The tiled GQA4 workspace is F32
-`[nnz_qo, query_heads, 8, 130]`. One completion covers the partial and merge
+`[nnz_qo, query_heads, 4, 130]`. One completion covers the partial and merge
 kernels. A missing workspace must fail before CUDA submission.
 
 Paged prefill requires an explicit algorithm at plan creation. The gate uses
-direct for short cases, sixteen warps for long MQA, and eight warps for long
-GQA4. These choices are fixtures, not an automatic runtime policy.
+direct for short cases, sixteen warps for long MQA, and tiled split-four for
+long GQA4. The tiled plan requires an explicit F32 workspace and rejects a
+missing binding before submission.
 
 The token-parallel plans keep partial F32 online-softmax states in block-local
 shared memory and need no caller workspace.
 
-Paged decode and paged prefill each submit three commands: one validator
-kernel, one attention kernel, and one device-to-host status copy. Invalid
-metadata must preserve sentinels, return bindings, and leave the queue or
-fixed-address Graph reusable.
+Paged decode and direct or token-parallel paged prefill submit three commands:
+one validator, one attention kernel, and one status copy. Tiled paged prefill
+submits four commands because partial and merge are separate attention kernels.
+Invalid metadata must preserve sentinels, return bindings, and leave the queue
+or fixed-address Graph reusable.
 
 ## RoPE and paged append gate
 
@@ -280,7 +282,7 @@ checked addresses in order during every replay.
 | RMSNorm to GEMM | 2 | 6 | `(1,4096)` RMSNorm into `(1,4096,4096)` GEMM |
 | Ragged prefill | 2 | 6 | Long tiled GQA4 `(2,96,1280,16,4)` |
 | Paged decode rejection | Not applicable | 3 | Invalid page index with two reusable replays |
-| Paged prefill | 3 | 9 | Direct GQA4 `(2,6,6,16,4)` |
+| Paged prefill | 4 | 12 | Long tiled GQA4 `(2,96,96,16,4)` |
 | Fused append | 3 | 9 | Validator, six-token mapped append, and status copy under the exclusive-page contract |
 
 The paged-decode row is a sentinel-preserving rejection Graph. It does not
