@@ -70,11 +70,11 @@ mod kernels {
     use super::*;
 
     #[kernel]
-    #[launch_bounds(1)]
+    #[launch_bounds(32)]
     #[allow(clippy::too_many_arguments)]
     #[launch_contract(
         domain = 1,
-        block = (1, 1, 1),
+        block = (32, 1, 1),
         min_compute_capability = (9, 0),
         requires = (
             batch_size >= 1,
@@ -97,193 +97,225 @@ mod kernels {
         last_page_len: &[i32],
         mut metadata_status: DisjointSlice<i32>,
     ) {
-        if thread::blockIdx_x() != 0 || thread::threadIdx_x() != 0 {
+        if thread::blockIdx_x() != 0 {
             return;
         }
+        let lane = thread::threadIdx_x();
         let output = metadata_status.as_mut_ptr();
-        // SAFETY: the launch contract proves the five-word status span.
-        unsafe { write_status(output, STATUS_SUCCESS, 0, 0, 0, 0) };
+        if lane == 0 {
+            // SAFETY: the launch contract proves the five-word status span.
+            unsafe { write_status(output, STATUS_SUCCESS, 0, 0, 0, 0) };
+        }
 
         if qo_indptr[0] != 0 {
-            // SAFETY: as above.
-            unsafe {
-                write_status(
-                    output,
-                    STATUS_INVALID_QO_INDPTR_START,
-                    qo_indptr[0],
-                    0,
-                    0,
-                    0,
-                )
-            };
-            return;
-        }
-        let mut request = 0_usize;
-        while request < batch_size {
-            let start = qo_indptr[request];
-            let end = qo_indptr[request + 1];
-            if end < start {
-                // SAFETY: the launch contract proves the status span.
+            if lane == 0 {
+                // SAFETY: as above.
                 unsafe {
                     write_status(
                         output,
-                        STATUS_NON_MONOTONIC_QO_INDPTR,
-                        request as i32,
-                        start,
-                        end,
+                        STATUS_INVALID_QO_INDPTR_START,
+                        qo_indptr[0],
+                        0,
+                        0,
                         0,
                     )
                 };
+            }
+            return;
+        }
+        let mut request_base = 0_usize;
+        while request_base < batch_size {
+            let request = request_base + lane as usize;
+            let mut error_code = STATUS_SUCCESS;
+            let mut detail_0 = 0_i32;
+            let mut detail_1 = 0_i32;
+            let mut detail_2 = 0_i32;
+            if request < batch_size {
+                let start = qo_indptr[request];
+                let end = qo_indptr[request + 1];
+                if end < start {
+                    error_code = STATUS_NON_MONOTONIC_QO_INDPTR;
+                    detail_0 = request as i32;
+                    detail_1 = start;
+                    detail_2 = end;
+                } else if end == start {
+                    error_code = STATUS_EMPTY_QO_REQUEST;
+                    detail_0 = request as i32;
+                }
+            }
+            let failures = warp::ballot(error_code != STATUS_SUCCESS);
+            if failures != 0 {
+                let failing_lane = failures.trailing_zeros();
+                error_code = warp::shuffle(error_code as u32, failing_lane) as i32;
+                detail_0 = warp::shuffle(detail_0 as u32, failing_lane) as i32;
+                detail_1 = warp::shuffle(detail_1 as u32, failing_lane) as i32;
+                detail_2 = warp::shuffle(detail_2 as u32, failing_lane) as i32;
+                if lane == 0 {
+                    // SAFETY: the launch contract proves the status span.
+                    unsafe { write_status(output, error_code, detail_0, detail_1, detail_2, 0) };
+                }
                 return;
             }
-            if end == start {
-                // SAFETY: as above.
-                unsafe { write_status(output, STATUS_EMPTY_QO_REQUEST, request as i32, 0, 0, 0) };
-                return;
-            }
-            request += 1;
+            request_base += 32;
         }
         let qo_terminal = qo_indptr[batch_size];
         if qo_terminal < 0 {
-            // SAFETY: the launch contract proves the status span.
-            unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+            if lane == 0 {
+                // SAFETY: the launch contract proves the status span.
+                unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+            }
             return;
         }
         if qo_terminal as usize != nnz_qo {
-            // SAFETY: as above.
-            unsafe {
-                write_status(
-                    output,
-                    STATUS_QO_INDPTR_LENGTH_MISMATCH,
-                    qo_terminal,
-                    0,
-                    0,
-                    0,
-                )
-            };
+            if lane == 0 {
+                // SAFETY: as above.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_QO_INDPTR_LENGTH_MISMATCH,
+                        qo_terminal,
+                        0,
+                        0,
+                        0,
+                    )
+                };
+            }
             return;
         }
 
         if page_indptr[0] != 0 {
-            // SAFETY: the launch contract proves the status span.
-            unsafe {
-                write_status(
-                    output,
-                    STATUS_INVALID_PAGE_INDPTR_START,
-                    page_indptr[0],
-                    0,
-                    0,
-                    0,
-                )
-            };
+            if lane == 0 {
+                // SAFETY: the launch contract proves the status span.
+                unsafe {
+                    write_status(
+                        output,
+                        STATUS_INVALID_PAGE_INDPTR_START,
+                        page_indptr[0],
+                        0,
+                        0,
+                        0,
+                    )
+                };
+            }
             return;
         }
-        request = 0;
-        while request < batch_size {
-            let page_start = page_indptr[request];
-            let page_end = page_indptr[request + 1];
-            if page_end < page_start {
-                // SAFETY: the launch contract proves the status span.
-                unsafe {
-                    write_status(
-                        output,
-                        STATUS_NON_MONOTONIC_PAGE_INDPTR,
-                        request as i32,
-                        page_start,
-                        page_end,
-                        0,
-                    )
-                };
+        request_base = 0;
+        while request_base < batch_size {
+            let request = request_base + lane as usize;
+            let mut error_code = STATUS_SUCCESS;
+            let mut detail_0 = 0_i32;
+            let mut detail_1 = 0_i32;
+            let mut detail_2 = 0_i32;
+            if request < batch_size {
+                let page_start = page_indptr[request];
+                let page_end = page_indptr[request + 1];
+                if page_end < page_start {
+                    error_code = STATUS_NON_MONOTONIC_PAGE_INDPTR;
+                    detail_0 = request as i32;
+                    detail_1 = page_start;
+                    detail_2 = page_end;
+                } else if page_end == page_start {
+                    error_code = STATUS_EMPTY_PAGED_REQUEST;
+                    detail_0 = request as i32;
+                } else {
+                    let tail_len = last_page_len[request];
+                    if !(1..=PAGED_PREFILL_PAGE_SIZE as i32).contains(&tail_len) {
+                        error_code = STATUS_INVALID_LAST_PAGE_LENGTH;
+                        detail_0 = request as i32;
+                        detail_1 = tail_len;
+                    } else if page_start < 0 {
+                        // A preceding request necessarily owns the first malformed
+                        // transition, so this only keeps later lanes' arithmetic safe.
+                        error_code = STATUS_ELEMENT_COUNT_OVERFLOW;
+                    } else {
+                        let qo_len = (qo_indptr[request + 1] - qo_indptr[request]) as usize;
+                        let page_count = (page_end - page_start) as usize;
+                        if let Some(kv_len) = (page_count - 1)
+                            .checked_mul(PAGED_PREFILL_PAGE_SIZE)
+                            .and_then(|tokens| tokens.checked_add(tail_len as usize))
+                        {
+                            if qo_len > kv_len {
+                                error_code = STATUS_RAGGED_QUERY_LONGER_THAN_KV;
+                                detail_0 = request as i32;
+                                detail_1 = qo_len as i32;
+                                detail_2 = kv_len as i32;
+                            }
+                        } else {
+                            error_code = STATUS_ELEMENT_COUNT_OVERFLOW;
+                        }
+                    }
+                }
+            }
+            let failures = warp::ballot(error_code != STATUS_SUCCESS);
+            if failures != 0 {
+                let failing_lane = failures.trailing_zeros();
+                error_code = warp::shuffle(error_code as u32, failing_lane) as i32;
+                detail_0 = warp::shuffle(detail_0 as u32, failing_lane) as i32;
+                detail_1 = warp::shuffle(detail_1 as u32, failing_lane) as i32;
+                detail_2 = warp::shuffle(detail_2 as u32, failing_lane) as i32;
+                if lane == 0 {
+                    // SAFETY: the launch contract proves the status span.
+                    unsafe { write_status(output, error_code, detail_0, detail_1, detail_2, 0) };
+                }
                 return;
             }
-            if page_end == page_start {
-                // SAFETY: as above.
-                unsafe {
-                    write_status(output, STATUS_EMPTY_PAGED_REQUEST, request as i32, 0, 0, 0)
-                };
-                return;
-            }
-            let tail_len = last_page_len[request];
-            if !(1..=PAGED_PREFILL_PAGE_SIZE as i32).contains(&tail_len) {
-                // SAFETY: as above.
-                unsafe {
-                    write_status(
-                        output,
-                        STATUS_INVALID_LAST_PAGE_LENGTH,
-                        request as i32,
-                        tail_len,
-                        0,
-                        0,
-                    )
-                };
-                return;
-            }
-            let qo_len = (qo_indptr[request + 1] - qo_indptr[request]) as usize;
-            let page_count = (page_end - page_start) as usize;
-            let Some(kv_len) = (page_count - 1)
-                .checked_mul(PAGED_PREFILL_PAGE_SIZE)
-                .and_then(|tokens| tokens.checked_add(tail_len as usize))
-            else {
-                // SAFETY: the launch contract proves the status span.
-                unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
-                return;
-            };
-            if qo_len > kv_len {
-                // The failing lengths are bounded by the validated i32 query domain.
-                // SAFETY: the launch contract proves the status span.
-                unsafe {
-                    write_status(
-                        output,
-                        STATUS_RAGGED_QUERY_LONGER_THAN_KV,
-                        request as i32,
-                        qo_len as i32,
-                        kv_len as i32,
-                        0,
-                    )
-                };
-                return;
-            }
-            request += 1;
+            request_base += 32;
         }
 
         let page_terminal = page_indptr[batch_size];
         if page_terminal < 0 {
-            // SAFETY: the launch contract proves the status span.
-            unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+            if lane == 0 {
+                // SAFETY: the launch contract proves the status span.
+                unsafe { write_status(output, STATUS_ELEMENT_COUNT_OVERFLOW, 0, 0, 0, 0) };
+            }
             return;
         }
         if page_terminal as usize != page_indices.len() {
-            // SAFETY: as above.
-            unsafe {
-                write_status(
-                    output,
-                    STATUS_PAGE_INDICES_LENGTH_MISMATCH,
-                    page_terminal,
-                    0,
-                    0,
-                    0,
-                )
-            };
-            return;
-        }
-        let mut position = 0_usize;
-        while position < page_indices.len() {
-            let physical_page = page_indices[position];
-            if physical_page < 0 || physical_page as usize >= max_num_pages {
-                // SAFETY: the launch contract proves the status span.
+            if lane == 0 {
+                // SAFETY: as above.
                 unsafe {
                     write_status(
                         output,
-                        STATUS_PAGE_INDEX_OUT_OF_RANGE,
-                        position as i32,
-                        physical_page,
+                        STATUS_PAGE_INDICES_LENGTH_MISMATCH,
+                        page_terminal,
+                        0,
                         0,
                         0,
                     )
                 };
+            }
+            return;
+        }
+        let mut position_base = 0_usize;
+        while position_base < page_indices.len() {
+            let position = position_base + lane as usize;
+            let mut physical_page = 0_i32;
+            let invalid = if position < page_indices.len() {
+                physical_page = page_indices[position];
+                physical_page < 0 || physical_page as usize >= max_num_pages
+            } else {
+                false
+            };
+            let failures = warp::ballot(invalid);
+            if failures != 0 {
+                let failing_lane = failures.trailing_zeros();
+                physical_page = warp::shuffle(physical_page as u32, failing_lane) as i32;
+                if lane == 0 {
+                    // SAFETY: the launch contract proves the status span.
+                    unsafe {
+                        write_status(
+                            output,
+                            STATUS_PAGE_INDEX_OUT_OF_RANGE,
+                            (position_base + failing_lane as usize) as i32,
+                            physical_page,
+                            0,
+                            0,
+                        )
+                    };
+                }
                 return;
             }
-            position += 1;
+            position_base += 32;
         }
     }
 
@@ -2620,7 +2652,7 @@ impl PrefillProvider {
             .map_err(|_| PagedPrefillPlanError::StateCountOutOfRange(state_count))?;
         let metadata_launch = self
             .module
-            .prepare_validate_paged_prefill_metadata(LaunchConfig1D::new(1, 1, 0))?;
+            .prepare_validate_paged_prefill_metadata(LaunchConfig1D::new(1, 32, 0))?;
         let launch = match algorithm {
             Bf16PagedPrefillAlgorithm::Direct => {
                 Bf16PagedPrefillLaunch::Direct(self.module.prepare_paged_prefill_bf16_nhd_causal(
