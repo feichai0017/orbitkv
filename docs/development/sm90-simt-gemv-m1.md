@@ -2,12 +2,11 @@
 
 The first implemented Oxide dense-GEMM algorithm is
 `OxideSm90SimtGemvM1N16K64`. It remains experimental. This document fixes its
-contract and separates the implemented correctness boundary from the work
-needed for performance qualification.
+contract and records the completed performance stop decision.
 
 The source contains an explicit Oxide provider and cuda-oxide kernel. It does
-not select Oxide by default or fall back to cuBLASLt. Current H20 correctness
-does not establish a performance or production claim.
+not select Oxide by default or fall back to cuBLASLt. `CublasLtHeuristic`
+remains the selected production plan.
 
 ## Census basis
 
@@ -150,16 +149,12 @@ The pre-rename implementation passed these gates on one NVIDIA H20:
 - Standard RoPE passed its permanent H20 runner with both `sm_90` and
   `sm_90a` after the shared device-math compiler contract changed.
 
-Those records remain historical. The renamed Oxide provider must rerun the
-same matrix on its exact source and artifact.
-
-The following gates still block promotion:
-
-- Compute Sanitizer memcheck with leak checking, racecheck, synccheck, and
-  initcheck over the permanent runner.
-- SASS and compiler reports that show no register spill or unexpected local
-  memory.
-- Matched performance against both baselines and real-engine performance.
+Those records remain historical. The current-source R1 phase 2 record reran
+the five shapes under the Oxide identity and passed correctness,
+fixed-address Graph replay, and all four Compute Sanitizer tools. The R2
+matched comparison then triggered the performance stop gate. SASS review and
+real-engine performance were not run because they cannot promote this frozen
+candidate after the operator-level stop.
 
 ### Contract evidence boundaries
 
@@ -183,12 +178,31 @@ For each shape, the candidate's combined median must be at least 10% lower
 than each baseline's combined median. Every timed interval must include all
 provider-private device work required by the declared operator boundary.
 
+The 2026-08-12 paired runs used 200 warmups, 100 launches per CUDA-event
+sample, 50 samples per order, and both process orders. Positive percentages
+below mean lower Oxide latency. All provider-order median drift was at most
+2.66%, below the 5% limit.
+
+| M | N | K | Versus Mistral.rs | Versus cuBLASLt | Both gates |
+| ---: | ---: | ---: | ---: | ---: | --- |
+| 1 | 1,536 | 1,536 | +20.49% | +20.17% | Pass |
+| 1 | 256 | 1,536 | -30.39% | +24.38% | Fail |
+| 1 | 17,920 | 1,536 | +63.99% | -13.43% | Fail |
+| 1 | 1,536 | 8,960 | -45.11% | -47.76% | Fail |
+| 1 | 151,936 | 1,536 | +69.47% | -4.98% | Fail |
+
+Only one of five declared shapes beats both baselines by the required margin.
+The [machine-readable stop record](../results/h20-sm90a-m1-gemv-stop-ac2bd5a-20260812.json)
+retains per-order summaries, fixture digests, source identities, and artifact
+hashes. Its raw samples were reviewed but not archived, so it supports the
+conservative stop decision rather than a full performance qualification.
+
 ### Engine performance
 
-The paired Mistral engine gate holds model, requests, scheduler, and output
-checks constant. Define the noise method before execution, then require lower
-TPOT and higher throughput beyond that bound. Record TTFT, peak memory,
-provider hits, and non-Oxide dense-linear routes.
+The paired Mistral engine gate was not run. The operator gate already stopped
+this exact algorithm, so engine routing, TPOT, throughput, and peak-memory work
+would not change its promotion result. A future algorithm identity must define
+its own engine gate after it passes operator performance.
 
 ## Stop conditions
 
@@ -205,3 +219,8 @@ Any condition in this list stops promotion:
 After a hard safety failure, the artifact cannot remain selectable. A corrected
 artifact requires the full gate matrix again. After a performance failure, the
 algorithm remains experimental and `CublasLt` remains the selected plan.
+
+The 2026-08-12 comparison triggered the performance stop: four of five shapes
+missed the required margin against at least one baseline. Do not add
+shape-aware production routing for this candidate. A future M=1 design or a
+larger-M experiment needs a new algorithm identity and evidence matrix.

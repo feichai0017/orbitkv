@@ -101,7 +101,7 @@ prove device correctness or performance.
 | Attention | Single decode, paged decode, ragged prefill, paged prefill | Declared runner paths device-qualified in R1 |
 | KV cache | Paged append and RoPE plus paged append | Exclusive-page runner path device-qualified in R1 |
 | GEMM | Contiguous BF16 dense through cuBLASLt | R1 correctness, Graph, and sanitizer qualified |
-| GEMV | Native BF16 M=1 SM90a algorithm | Experimental; R1-qualified but not performance-promoted |
+| GEMV | Native BF16 M=1 SM90a algorithm | Experimental; performance stop recorded, cuBLASLt remains selected |
 | Normalization | RMSNorm for F32, FP16, and BF16 | Declared runner paths device-qualified in R1 |
 | Position | BF16 NeoX RoPE with explicit positions | Declared runner path device-qualified in R1 |
 | Activation | SwiGLU and fused epilogues | Planned |
@@ -132,6 +132,12 @@ kernel, model, or serving results. See the [complete record and raw
 samples](docs/results/h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json).
 The [optimized paged-GQA4 record](docs/results/h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json)
 contains its source-bound two-order samples and before/after comparison.
+
+The experimental native M=1 GEMV met its 10% margin against both Mistral.rs
+custom GEMV and cuBLASLt on only one of five census shapes. Its
+[stop record](docs/results/h20-sm90a-m1-gemv-stop-ac2bd5a-20260812.json) keeps
+the per-order summaries and evidence limits; no engine rollout follows for
+that frozen candidate.
 
 ## Providers
 
@@ -231,7 +237,8 @@ The roadmap advances through measured vertical slices:
 
 1. Complete the Oxide Infer namespace and framework migration.
 2. Optimize the measured long-context prefill gaps.
-3. Compare native M=1 GEMV against Mistral.rs GEMV and cuBLASLt.
+3. Keep the stopped native M=1 GEMV experimental; evaluate a new design only
+   under a new algorithm identity.
 4. Close the Mistral.rs adapter and define a narrow vLLM C ABI boundary.
 5. Expand attention, KV-cache operations, and MLA from engine traces.
 6. Add activation, sampling, quantization, grouped GEMM, and MoE paths.

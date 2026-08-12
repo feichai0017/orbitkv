@@ -134,7 +134,7 @@ Exit gate:
 
 ## R2: Performance baseline and native M=1 GEMV decision
 
-**State:** active.
+**State:** active; the frozen native M=1 GEMV decision is complete with a stop.
 
 The first current-source matched baseline covers 14 BF16 attention shapes
 against FlashInfer 0.6.17. All 14 pass the provider-order stability gate;
@@ -145,21 +145,20 @@ that exact eager contract, and long ragged GQA4 remains a related target.
 
 The current native candidate is `OxideSm90SimtGemvM1N16K64`. It admits BF16
 `M=1`, `N % 16 = 0`, `K % 64 = 0`, no post-operation, and zero workspace on
-H20 `sm_90a`.
+the currently recorded `sm_90a` target. Its matched decision run passed the
+10% margin against both Mistral.rs custom GEMV and cuBLASLt on only one of five
+declared shapes. Four shapes triggered the stop gate, so it remains
+experimental and `CublasLtHeuristic` remains selected.
 
 Work:
 
 - Continue reducing the long ragged and paged GQA4 prefill gaps without
   regressing the current short paths.
 - Keep eager-provider, Graph, engine, and serving measurements separate.
-- Preserve the five-shape Qwen2.5-1.5B census identity.
-- Re-run correctness and fixed-address Graph gates under the Oxide provider
-  identity.
-- Run all Compute Sanitizer tools.
-- Inspect SASS, registers, local memory, memory traffic, and scheduler stalls.
-- Compare against Mistral.rs custom GEMV and cuBLASLt.
-- Run each matched pair in both provider orders.
-- Measure provider hits, TTFT, TPOT, throughput, and peak memory in the engine.
+- Retain the five-shape census and the stopped algorithm identity as immutable
+  evidence; do not add shape-aware production routing for it.
+- Give any new M=1 design or larger-M experiment a new algorithm identity and
+  workload census.
 
 Promotion gate:
 
@@ -181,8 +180,8 @@ Stop gate:
 
 Exit gate:
 
-- Promote the exact algorithm with complete evidence, or record the stop
-  result and retain the vendor route.
+- The frozen M=1 algorithm exited through its recorded stop result; retain the
+  vendor route.
 
 ## R3: Stabilize engine adapters
 

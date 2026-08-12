@@ -51,4 +51,6 @@ OXIDE_BENCH_RUN_LABEL=oxide_second make bench-sm90-gemv-oxide
 Each JSON Lines record includes the selected provider and algorithm, provider
 version, workspace, fixture digests, CPU-reference correctness, and raw CUDA
 event samples. These operator records do not establish an engine-performance
-claim and do not replace the Mistral.rs custom GEMV baseline.
+claim. The paired Mistral.rs baseline and the resulting no-promotion decision
+are summarized in the
+[reviewed stop record](../../docs/results/h20-sm90a-m1-gemv-stop-ac2bd5a-20260812.json).

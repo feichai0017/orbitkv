@@ -64,7 +64,7 @@ The migration moves source directly. It adds no compatibility module.
 | --- | --- | --- | --- |
 | RMSNorm | Contiguous F32, FP16, and BF16. Scalar and packed algorithms. | Current source under `rms_norm`; family migration pending | Current R1 device correctness, lifecycle, and sanitizer for the permanent runner; no standalone Graph. |
 | Dense BF16 GEMM, vendor | Contiguous `D=A*W^T`, BF16 storage, F32 accumulation, explicit `CublasLtHeuristic` | Current | Current R1 device correctness, RMSNorm-to-GEMM Graph, and sanitizer. |
-| Dense BF16 GEMM, native | Same `Spec`, explicit `OxideSm90SimtGemvM1N16K64`, zero workspace | Experimental | Current R1 device correctness, five Graph shapes, and sanitizer. SASS, matched performance, and engine gates remain open. |
+| Dense BF16 GEMM, native | Same `Spec`, explicit `OxideSm90SimtGemvM1N16K64`, zero workspace | Experimental, performance-stopped | Current R1 device correctness, five Graph shapes, and sanitizer. The R2 matched comparison passed both baselines on only one of five shapes; SASS and engine gates were not run after the stop. |
 | Single decode | BF16 NHD D128, direct MHA, MQA, and GQA | Current | Current R1 device correctness, lifecycle, and sanitizer. No Graph or current performance claim. |
 | Single decode split-K | Explicit partitions and caller-owned F32 workspace | Current | Current R1 runner covers declared MQA and GQA shapes plus sanitizer. MHA, Graph, and current performance remain open. |
 | Paged batch decode | BF16 NHD or HND D128, page size 16. Direct MHA and eight-warp MQA or GQA. | Current | Current R1 device correctness, rejection Graph, simulated-engine boundary, and sanitizer. Current R2 matched eager performance covers six shapes; valid-output Graph remains open. |
@@ -94,7 +94,7 @@ path, completion, and Graph path.
 | Provider | Algorithm | State | Role |
 | --- | --- | --- | --- |
 | `CublasLt` | `CublasLtHeuristic` | Current | General vendor BF16 dense baseline |
-| `Oxide` | `OxideSm90SimtGemvM1N16K64` | Experimental | Native cuda-oxide M=1 algorithm for the currently admitted H20 `sm_90a` target |
+| `Oxide` | `OxideSm90SimtGemvM1N16K64` | Experimental, performance-stopped | Native cuda-oxide M=1 algorithm retained for evidence; not selected for production |
 
 `GemmPlanner` accepts explicit provider selection. Unsupported native shapes
 return a planning error. Enqueue does not switch to cuBLASLt.
