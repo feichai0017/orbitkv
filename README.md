@@ -117,14 +117,14 @@ shape, layout, provider, algorithm, and evidence state for every admitted path.
 Matched BF16 eager-provider timing against FlashInfer 0.6.17 produced stable
 rankings for all 14 baseline attention shapes on the recorded H20. Oxide Infer
 had lower combined median latency in 8 shapes; FlashInfer had lower latency in
-6. The long paged-GQA4 row below is refreshed from the current optimized path;
-the other rows retain the full-matrix baseline.
+6. The two long GQA4 rows below are refreshed from their optimized paths; the
+other rows retain the full-matrix baseline.
 
 | Contract | Shape | Oxide | FlashInfer | Lower latency |
 | --- | --- | ---: | ---: | --- |
 | Paged decode MHA | B1, KV 1, NHD, D128 | 9.54 µs | 13.77 µs | Oxide 1.44× |
 | Ragged prefill MHA | Q 16, KV 16, D128 | 8.25 µs | 13.99 µs | Oxide 1.69× |
-| Ragged prefill GQA4 | Q 32+64, KV 256+1024, D128 | 48.20 µs | 21.82 µs | FlashInfer 2.21× |
+| Ragged prefill GQA4 | Q 32+64, KV 256+1024, D128 | 36.94 µs | 21.93 µs | FlashInfer 1.68× |
 | Paged prefill GQA4 | Q 32+64, KV 256+1024, D128 | 57.60 µs | 23.35 µs | FlashInfer 2.47× |
 
 These are CUDA-event measurements of matched operator paths, not isolated
@@ -132,6 +132,8 @@ kernel, model, or serving results. See the [complete record and raw
 samples](docs/results/h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json).
 The [optimized paged-GQA4 record](docs/results/h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json)
 contains its source-bound two-order samples and before/after comparison.
+The [optimized ragged-GQA4 record](docs/results/h20-flashinfer-v0.6.17-ragged-prefill-dual-tile-gqa4-eager-performance-f9b95b0-20260812.json)
+does the same for the dual-tile path.
 
 The experimental native M=1 GEMV met its 10% margin against both Mistral.rs
 custom GEMV and cuBLASLt on only one of five census shapes. Its

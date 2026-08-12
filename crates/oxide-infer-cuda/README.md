@@ -82,12 +82,13 @@ do not qualify the current eager or Graph path.
 The current R1 record qualifies the declared DeviceRegion paths for
 correctness, lifecycle, fixed-address Graph behavior, and Compute Sanitizer on
 its recorded target. The experimental M=1 GEMV remains limited to its exact
-`sm_90a` contract and still needs matched performance and engine evidence.
+`sm_90a` contract after its matched performance stop and has no engine claim.
 
 The current R2 records add matched eager-provider timing for paged decode,
-ragged prefill, and paged prefill against FlashInfer 0.6.17. The first optimized
-paged-GQA4 path reduces the recorded worst gap substantially, while long-context
-GQA prefill remains behind. These are not Graph, model, or serving results.
+ragged prefill, and paged prefill against FlashInfer 0.6.17. Optimized paged and
+ragged GQA4 paths reduce the recorded long-context gaps, while both remain
+behind on their exact measured shapes. These are not Graph, model, or serving
+results.
 
 The fixed-address Graph runtime retains bindings and provider resources until
 replay completes. Operator-specific Graph evidence remains path-specific.

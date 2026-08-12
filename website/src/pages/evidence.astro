@@ -6,6 +6,7 @@ import {
   evidenceLevels,
   performanceEvidenceUrl,
   pagedPrefillOptimizationEvidenceUrl,
+  raggedPrefillOptimizationEvidenceUrl,
   performanceRows,
   repositoryUrl,
 } from "../data/site";
@@ -81,11 +82,23 @@ import {
         <strong>Operator timing, not a serving claim.</strong>
         <p>
           Measured on one NVIDIA H20 using matched eager-provider CUDA-event
-          timing. The 14-shape baseline is retained, while the long paged-GQA4
-          row is refreshed from the optimized source-bound record.
+          timing. The 14-shape baseline is retained, while the long paged- and
+          ragged-GQA4 rows are refreshed from source-bound optimization records.
         </p>
         <a href={performanceEvidenceUrl} target="_blank" rel="noreferrer">
           Open the current comparison record and raw samples
+        </a>
+      </div>
+
+      <div class="doc-note">
+        <strong>Ragged GQA4 pipelines K and V tile loads.</strong>
+        <p>
+          The accepted path reduces its source-bound parent from 39.42 to
+          37.04 µs. FlashInfer 0.6.17 remains lower at 21.93 µs, a 1.68× gap
+          for this exact eager contract.
+        </p>
+        <a href={raggedPrefillOptimizationEvidenceUrl} target="_blank" rel="noreferrer">
+          Optimized ragged-GQA4 performance record
         </a>
       </div>
 

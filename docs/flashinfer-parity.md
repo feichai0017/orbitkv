@@ -139,6 +139,11 @@ supersedes only the long paged-GQA4 row. It binds the tiled split-four source,
 both provider orders, paged and ragged correctness and Graph gates, and all
 four sanitizer tools for both exact runners.
 
+The [optimized ragged-GQA4 record](results/h20-flashinfer-v0.6.17-ragged-prefill-dual-tile-gqa4-eager-performance-f9b95b0-20260812.json)
+supersedes only the long ragged-GQA4 row. It binds the dual-tile source and
+parent, both provider orders, raw samples, exact runner hashes, correctness and
+Graph gates, and all four sanitizer tools.
+
 The older [token-parallel correctness record](results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json)
 and [long-context performance record](results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json)
 remain historical source `8478ee9` evidence. No eager record qualifies
