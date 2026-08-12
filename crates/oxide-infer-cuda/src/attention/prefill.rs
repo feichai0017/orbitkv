@@ -2325,7 +2325,7 @@ mod kernels {
     }
 
     #[kernel]
-    #[launch_bounds(128)]
+    #[launch_bounds(128, 3)]
     #[allow(clippy::too_many_arguments)]
     #[launch_contract(
         domain = 1,
