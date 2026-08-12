@@ -400,9 +400,10 @@ changes by more than five percent.
 The native M=1 GEMV decision uses two Oxide Infer benchmark targets rather
 than a FlashInfer script: `make bench-sm90-gemv-oxide` and
 `make bench-sm90-gemv-cublaslt`. Run them as Oxide/cuBLASLt and
-cuBLASLt/Oxide process pairs with distinct run labels. Those five-shape
-operator records still need a separate matched Mistral.rs custom-GEMV baseline
-before the algorithm can pass its promotion gate.
+cuBLASLt/Oxide process pairs with distinct run labels. The separate matched
+Mistral.rs custom-GEMV pair is complete. Only one of five shapes passed both
+10% margins, so the exact native candidate is performance-stopped and does not
+advance to an engine gate.
 
 ## Evidence records
 

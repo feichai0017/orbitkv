@@ -76,6 +76,14 @@ valid-output paged-decode Graph, and all GPUs other than the recorded H20.
 
 ## Current-source R2 matched performance
 
+- [Native SM90a M=1 GEMV performance stop against Mistral.rs custom GEMV and cuBLASLt](h20-sm90a-m1-gemv-stop-ac2bd5a-20260812.json)
+  binds the five-shape fixture, exact Oxide and Mistral.rs source commits,
+  runner hashes, bit-exact output digests, and both process orders. Only one
+  shape met the required 10% margin against both baselines, so the frozen
+  native algorithm remains experimental and cuBLASLt remains selected. The
+  record retains per-order summaries but not raw samples; it supports the
+  conservative stop decision, not a complete performance qualification.
+
 - [Optimized long paged-GQA4 eager performance against FlashInfer 0.6.17](h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json)
   binds clean source `49290b5`, exact paged and ragged tiled-GQA4 runners, both
   provider orders, correctness and Graph limits, and all four Compute
