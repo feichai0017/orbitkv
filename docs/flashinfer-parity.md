@@ -4,8 +4,8 @@ Oxide Infer uses this pinned comparison baseline:
 
 | Item | Reference |
 | --- | --- |
-| Release | [FlashInfer v0.6.16.post1](https://github.com/flashinfer-ai/flashinfer/releases/tag/v0.6.16.post1) |
-| Source | [`5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57`](https://github.com/flashinfer-ai/flashinfer/commit/5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57) |
+| Release | [FlashInfer v0.6.17](https://github.com/flashinfer-ai/flashinfer/releases/tag/v0.6.17) |
+| Source | [`a0a6b019b9b27d49d209f85d028a1ae5a9b347d7`](https://github.com/flashinfer-ai/flashinfer/commit/a0a6b019b9b27d49d209f85d028a1ae5a9b347d7) |
 
 Benchmark records verify the installed wheel version. They record a provider
 commit only when the installed artifact proves its source revision.
@@ -21,8 +21,8 @@ Oxide Infer does not claim complete domain-level parity.
 
 | State | Meaning |
 | --- | --- |
-| `partial device correct` | A narrower Oxide Infer contract passed its declared H20 correctness gate |
-| `requalification` | Oxide Infer changed the contract after its last H20 record |
+| `partial device correct` | A narrower Oxide Infer contract passed its declared device correctness gate |
+| `requalification` | Oxide Infer changed the contract after its last device record |
 | `planned` | The roadmap names the domain, but no permanent provider is admitted |
 | `unscoped` | Oxide Infer has not admitted a contract for the upstream domain |
 
@@ -50,11 +50,11 @@ Oxide Infer does not claim complete domain-level parity.
 | Supporting backends | cuDNN attention, CuTe DSL, and green contexts | `unscoped`. Oxide native kernels use cuda-oxide |
 
 The upstream links remain in the pinned
-[FlashInfer API index](https://github.com/flashinfer-ai/flashinfer/blob/v0.6.16.post1/docs/api/index.rst).
+[FlashInfer API index](https://docs.flashinfer.ai/).
 
 ## Admitted attention matrix
 
-| Oxide Infer contract | CUDA implementation | Historical H20 matrix | Historical Graph evidence |
+| Oxide Infer contract | CUDA implementation | Historical device matrix | Historical Graph evidence |
 | --- | --- | --- | --- |
 | Single decode | Direct online softmax | MHA, MQA, and GQA | None |
 | Single decode split-K | Explicit partitions, F32 partial workspace, and eight-warp merge | MQA and GQA | None |
@@ -126,17 +126,20 @@ The project keeps four boundaries separate:
 | Boundary | Required proof |
 | --- | --- |
 | Host | Contract validation and CPU or independent reference |
-| Device | H20 correctness, edge cases, and declared sanitizer tools |
+| Device | Correctness, edge cases, declared target, and sanitizer tools |
 | Graph | Capture and replay under one declared binding policy |
 | Performance | Matched providers, timed region, raw samples, and order variance |
 
-The [token-parallel correctness record](results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json)
-and [matched long-context record](results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json)
-apply to source `8478ee9`. They confirm the previous sixteen-warp MQA and
-eight-warp GQA4 implementation.
+The [current matched attention record](results/h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json)
+covers 14 paged-decode, ragged-prefill, and paged-prefill shapes against the
+pinned FlashInfer release. It retains both provider orders and 2,800 raw
+latency samples. Oxide has lower combined median eager latency in eight stable
+shapes and FlashInfer in six.
 
-They do not qualify the merged DeviceRegion path or token-parallel Graph
-execution.
+The older [token-parallel correctness record](results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json)
+and [long-context performance record](results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json)
+remain historical source `8478ee9` evidence. No eager record qualifies
+token-parallel Graph execution.
 
 Engine and serving parity remain open. No existing record proves continuous
 batching, end-to-end model speed, TTFT, TPOT, throughput, or memory savings.

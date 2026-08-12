@@ -7,7 +7,7 @@ The current contracts cover RMSNorm for F32, FP16, and BF16, contiguous BF16
 GEMM, BF16 single-request decode, BF16 paged batch decode, BF16 ragged causal
 prefill, BF16 paged causal prefill, standard RoPE, and fused RoPE plus
 paged-KV append. A separate `oxide-infer-cuda` crate implements the admitted
-H20 device paths.
+recorded CUDA device paths.
 
 ## Module layout
 

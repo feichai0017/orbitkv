@@ -7,8 +7,8 @@ not Oxide Infer product code or a supported Python API.
 The current baseline is:
 
 ```text
-FlashInfer: v0.6.16.post1
-source reference: 5f3d1b3fc6e1ed8a79429986b3637802f1bd2b57
+FlashInfer: v0.6.17
+source reference: a0a6b019b9b27d49d209f85d028a1ae5a9b347d7
 ```
 
 The runner measures the admitted BF16 contracts with preallocated tensors and
@@ -28,7 +28,7 @@ dependencies:
 
 ```bash
 python -m venv --system-site-packages <venv>
-<venv>/bin/python -m pip install flashinfer-python==0.6.16.post1
+<venv>/bin/python -m pip install flashinfer-python==0.6.17
 <venv>/bin/python -m pip install \
   apache-tvm-ffi==0.1.13.post0 \
   cuda-python==13.1.1 click einops packaging requests tabulate tqdm ninja \

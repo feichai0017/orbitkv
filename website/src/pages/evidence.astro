@@ -1,7 +1,13 @@
 ---
 import DocsNav from "../components/DocsNav.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
-import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site";
+import {
+  evidenceHighlights,
+  evidenceLevels,
+  performanceEvidenceUrl,
+  performanceRows,
+  repositoryUrl,
+} from "../data/site";
 ---
 
 <SiteLayout
@@ -49,21 +55,55 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
         </tbody>
       </table>
 
+      <h2>Current performance baseline</h2>
+      <p>
+        Four representative rows are shown below. The complete record contains
+        14 stable BF16 attention shapes, both provider orders, and all 2,800
+        latency samples.
+      </p>
+      <table class="evidence-table">
+        <thead>
+          <tr><th>Contract</th><th>Oxide</th><th>FlashInfer 0.6.17</th><th>Result</th></tr>
+        </thead>
+        <tbody>
+          {performanceRows.map((item) => (
+            <tr>
+              <td>{item.name}<br /><small>{item.shape}</small></td>
+              <td>{item.oxideUs} µs</td>
+              <td>{item.flashinferUs} µs</td>
+              <td>{item.result}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
       <div class="doc-note">
-        <strong>Current-source H20 R1 qualification is complete.</strong>
+        <strong>Operator timing, not a serving claim.</strong>
         <p>
-          The phase 2 record binds clean source <code>477b47a</code>, strict
-          CUDA Clippy, seven release <code>sm_90a</code> lab tests, all nine
-          permanent H20 runners, 89 passing case lines, and 12 named Graph
-          cases.
+          Measured on one NVIDIA H20 using matched eager-provider CUDA-event
+          timing. Oxide has lower median latency in 8 of 14 stable shapes;
+          FlashInfer has lower latency in 6, including the largest long-context
+          GQA prefill cases.
+        </p>
+        <a href={performanceEvidenceUrl} target="_blank" rel="noreferrer">
+          Open the current comparison record and raw samples
+        </a>
+      </div>
+
+      <div class="doc-note">
+        <strong>Current-source R1 device qualification is complete.</strong>
+        <p>
+          The recorded H20 qualification binds clean source{" "}
+          <code>477b47a</code>, strict CUDA Clippy, seven release{" "}
+          <code>sm_90a</code> lab tests, all nine permanent runners, 89 passing
+          case lines, and 12 named Graph cases.
         </p>
         <p>
           All 36 Compute Sanitizer cells pass without filters or suppressions.
-          Performance, real-model engine execution, serving, and other GPUs
-          remain outside this record.
+          Performance is published separately above. Real-model engine
+          execution, serving, and other GPUs remain outside the R1 record.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-r1-phase2-qualification-477b47a-20260812.json`}>
-          Current-source H20 phase 2 record
+          Current-source R1 phase 2 record
         </a>
       </div>
 
@@ -75,23 +115,23 @@ import { evidenceHighlights, evidenceLevels, repositoryUrl } from "../data/site"
           rejection, fixed-address Graph, and sanitizer paths.
         </p>
         <p>
-          Historical performance records still predate the DeviceRegion and
-          typed metadata-status paths. A matched current-source run is required
-          before Oxide Infer can publish a current provider ranking.
+          The current matched record now covers direct, eight-warp, and
+          sixteen-warp eager-provider paths. Short shapes are competitive, but
+          long MQA and GQA4 prefill remain explicit optimization targets.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json`}>
           Historical token-parallel correctness record
         </a>
         <span> · </span>
-        <a href={`${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.16.post1-paged-prefill-long-eager-performance-20260807.json`}>
-          Historical long-context performance record
+        <a href={performanceEvidenceUrl} target="_blank" rel="noreferrer">
+          Current matched performance record
         </a>
       </div>
 
       <div class="doc-note">
         <strong>Engine interop is a simulated boundary.</strong>
         <p>
-          The phase 2 H20 gate qualifies external pointers, the event-bridge
+          The phase 2 device gate qualifies external pointers, the event-bridge
           path, zero adapter D2D copies, recovery, and all four sanitizer tools
           for direct single and HND paged decode. It does not run a model. A
           mistral.rs provider hit and model-output comparison remain open.

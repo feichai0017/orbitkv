@@ -103,10 +103,11 @@ Exit gate:
 
 **State:** complete.
 
-The phase 2 H20 record binds clean source `477b47a`, all nine permanent
+The phase 2 device record binds clean source `477b47a`, all nine permanent
 `sm_90a` runners, 89 machine-readable passing case lines, 12 named Graph case
-lines, and 36 of 36 Compute Sanitizer cells. Performance and real-model engine
-claims remain outside R1.
+lines, and 36 of 36 Compute Sanitizer cells. The record names its H20 test host;
+that hardware identity is evidence scope, not the project identity. Performance
+and real-model engine claims remain outside R1.
 
 The rename and namespace migration change source identity. Historical device
 records do not qualify the new tree.
@@ -114,7 +115,7 @@ records do not qualify the new tree.
 Work:
 
 - Requalify RMSNorm, RoPE, dense cuBLASLt GEMM, decode, prefill, and fused
-  append on H20.
+  append on the declared device target.
 - Cover host errors, device correctness, sentinels, lifecycle, and resource
   recovery.
 - Run memcheck, racecheck, synccheck, and initcheck over permanent runners.
@@ -124,16 +125,21 @@ Work:
 
 Exit gate:
 
-- Each current operator has one reviewed H20 correctness record for the renamed
+- Each current operator has one reviewed device correctness record for the renamed
   source or an explicit source-level exclusion.
 - Each performance-relevant plan has sanitizer and Graph evidence or a written
   exclusion.
 - Dynamic metadata rejection preserves outputs and leaves the queue reusable.
 - Paged append passes the exclusive-target-page contract.
 
-## R2: Promote or stop the native M=1 GEMV
+## R2: Performance baseline and native M=1 GEMV decision
 
-**State:** experimental.
+**State:** active.
+
+The first current-source matched baseline covers 14 BF16 attention shapes
+against FlashInfer 0.6.17. All 14 pass the provider-order stability gate;
+Oxide has lower combined median eager latency in eight and FlashInfer in six.
+The long-context GQA4 prefill gaps are the first attention optimization target.
 
 The current native candidate is `OxideSm90SimtGemvM1N16K64`. It admits BF16
 `M=1`, `N % 16 = 0`, `K % 64 = 0`, no post-operation, and zero workspace on
@@ -141,6 +147,9 @@ H20 `sm_90a`.
 
 Work:
 
+- Profile and reduce the long ragged and paged GQA4 prefill gaps without
+  regressing the current short paths.
+- Keep eager-provider, Graph, engine, and serving measurements separate.
 - Preserve the five-shape Qwen2.5-1.5B census identity.
 - Re-run correctness and fixed-address Graph gates under the Oxide provider
   identity.

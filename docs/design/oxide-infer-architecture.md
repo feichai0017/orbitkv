@@ -63,11 +63,11 @@ not to a top-level `fused_ops` family.
 
 | Family | Current | Experimental | Planned |
 | --- | --- | --- | --- |
-| `attention` | Single decode, paged decode, ragged prefill, paged prefill; declared R1 runner paths are H20-qualified | None | Sliding window, mixed-batch attention, MLA, broader head dimensions |
+| `attention` | Single decode, paged decode, ragged prefill, paged prefill; declared R1 runner paths are device-qualified | None | Sliding window, mixed-batch attention, MLA, broader head dimensions |
 | `gemm` | Contiguous BF16 dense GEMM through cuBLASLt | Native SM90a M=1 BF16 GEMV | FP8, FP4, grouped, quantized, and broader small-M algorithms |
-| `kv_cache` | Fused RoPE plus exclusive-page paged append; declared R1 runner path is H20-qualified | None | Gather, scatter, compaction, remapping, FP8, and INT8 storage |
-| `normalization` | RMSNorm for F32, FP16, and BF16; declared R1 runner paths are H20-qualified | None | Additional normalization contracts from engine demand |
-| `position` | BF16 NeoX RoPE with explicit positions; declared R1 runner path is H20-qualified | None | Other layouts, dimensions, and position transforms |
+| `kv_cache` | Fused RoPE plus exclusive-page paged append; declared R1 runner path is device-qualified | None | Gather, scatter, compaction, remapping, FP8, and INT8 storage |
+| `normalization` | RMSNorm for F32, FP16, and BF16; declared R1 runner paths are device-qualified | None | Additional normalization contracts from engine demand |
+| `position` | BF16 NeoX RoPE with explicit positions; declared R1 runner path is device-qualified | None | Other layouts, dimensions, and position transforms |
 | `activation` | None | None | SwiGLU and other measured activation contracts |
 | `sampling` | None | None | Logits transforms, penalties, Top-K, Top-P, Min-P, logprobs, and RNG |
 | `speculation` | None | None | Draft verification and token compaction |
@@ -181,7 +181,7 @@ runtime dispatcher. Each plan selects one exact target artifact before enqueue.
 
 | Target | State | Boundary |
 | --- | --- | --- |
-| `sm_90a` | Current first target | NVIDIA H20 qualification row. Current kernels use SIMT, warp operations, WMMA, and selected `cp.async` paths. |
+| `sm_90a` | Current first target | Current kernels use SIMT, warp operations, WMMA, and selected `cp.async` paths. The published qualification row records an NVIDIA H20. |
 | `sm_100a` | Planned | Separate Blackwell contracts, artifacts, numerical gates, SASS review, and benchmarks are required. |
 | `sm_120` | Planned | Separate consumer Blackwell contracts and evidence are required. No forward-compatibility claim exists. |
 
