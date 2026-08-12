@@ -48,7 +48,7 @@ const TILED_KV_SHARED_PAIRS: usize = TILED_KV_ROWS * BF16_PAIRS_PER_HEAD;
 const TILED_KV_COPY_BYTES: usize = 16;
 const TILED_KV_COPY_PAIRS: usize = TILED_KV_COPY_BYTES / size_of::<u32>();
 const TILED_KV_COPIES: usize = TILED_KV_SHARED_PAIRS / TILED_KV_COPY_PAIRS;
-const TILED_PARTITIONS: usize = 8;
+const TILED_PARTITIONS: usize = 4;
 const TILED_MIN_AVERAGE_KV_LEN: usize = 256;
 
 const _: () = {
@@ -58,7 +58,7 @@ const _: () = {
     assert!(TILED_THREADS == 128);
     assert!(TILED_KV_SUBTILES == 4);
     assert!(TILED_KV_COPIES == TILED_THREADS as usize * 8);
-    assert!(TILED_PARTITIONS == 8);
+    assert!(TILED_PARTITIONS == 4);
     assert!(SINGLE_DECODE_HEAD_DIM == 128);
 };
 
@@ -1447,7 +1447,10 @@ mod kernels {
             $shared_tile:expr,
             $global_pairs:expr,
             $thread_in_block:expr,
+            $paged:expr,
             $kv_start:expr,
+            $page_start:expr,
+            $page_indices:expr,
             $kv_tile_start:expr,
             $partition_token_end:expr,
             $num_kv_heads:expr,
@@ -1459,7 +1462,15 @@ mod kernels {
                 ($iteration:literal) => {{
                     let token = $kv_tile_start + token_lane + $iteration * 8;
                     let source_token = usize::min(token, $partition_token_end - 1);
-                    let source_pair = (($kv_start + source_token) * $num_kv_heads + $kv_head)
+                    let physical_token = if $paged {
+                        let logical_page = source_token / PAGED_PREFILL_PAGE_SIZE;
+                        let page_offset = source_token % PAGED_PREFILL_PAGE_SIZE;
+                        let physical_page = $page_indices[$page_start + logical_page] as usize;
+                        physical_page * PAGED_PREFILL_PAGE_SIZE + page_offset
+                    } else {
+                        $kv_start + source_token
+                    };
+                    let source_pair = (physical_token * $num_kv_heads + $kv_head)
                         * BF16_PAIRS_PER_HEAD
                         + pair_in_head;
                     let destination_pair = ($thread_in_block + $iteration * TILED_THREADS as usize)
@@ -1663,31 +1674,14 @@ mod kernels {
         };
     }
 
-    #[kernel]
-    #[launch_bounds(128)]
+    #[inline(always)]
     #[allow(clippy::too_many_arguments)]
-    #[launch_contract(
-        domain = 1,
-        block = (128, 1, 1),
-        min_compute_capability = (9, 0),
-        requires = (
-            batch_size >= 1,
-            nnz_qo >= 1,
-            nnz_kv >= 1,
-            num_query_heads == num_kv_heads * 4,
-            num_kv_heads >= 1,
-            query.len() == nnz_qo * num_query_heads * 128,
-            key.len() == nnz_kv * num_kv_heads * 128,
-            value.len() == nnz_kv * num_kv_heads * 128,
-            qo_indptr.len() == batch_size + 1,
-            kv_indptr.len() == batch_size + 1,
-            workspace.len() == nnz_qo * num_query_heads * 8 * 130,
-        ),
-    )]
-    pub fn ragged_prefill_bf16_nhd_causal_tiled_gqa4(
+    fn prefill_bf16_nhd_causal_tiled_gqa4_impl(
+        paged: bool,
+        kv_tile: *mut u32,
         batch_size: usize,
         nnz_qo: usize,
-        nnz_kv: usize,
+        kv_bound: usize,
         num_query_heads: usize,
         num_kv_heads: usize,
         softmax_scale_log2: f32,
@@ -1696,10 +1690,11 @@ mod kernels {
         value: &[bf16],
         qo_indptr: &[i32],
         kv_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        metadata_status: &[i32],
         mut workspace: DisjointSlice<f32>,
     ) {
-        static mut KV_TILE: SharedArray<u32, TILED_KV_SHARED_PAIRS, 16> = SharedArray::UNINIT;
-
         let block = thread::blockIdx_x() as usize;
         let thread_in_block = thread::threadIdx_x() as usize;
         let warp_in_block = thread_in_block / WARP_THREADS as usize;
@@ -1708,11 +1703,12 @@ mod kernels {
         let kv_head = block / TILED_PARTITIONS % num_kv_heads;
         let mut tile_index = block / (TILED_PARTITIONS * num_kv_heads);
 
-        if qo_indptr[0] != 0
-            || kv_indptr[0] != 0
-            || qo_indptr[batch_size] != nnz_qo as i32
-            || kv_indptr[batch_size] != nnz_kv as i32
-        {
+        let metadata_invalid = if paged {
+            metadata_status[0] != STATUS_SUCCESS
+        } else {
+            kv_indptr[0] != 0 || kv_indptr[batch_size] != kv_bound as i32
+        };
+        if qo_indptr[0] != 0 || qo_indptr[batch_size] != nnz_qo as i32 || metadata_invalid {
             return;
         }
 
@@ -1721,30 +1717,50 @@ mod kernels {
         let mut qo_start = 0_usize;
         let mut qo_len = 0_usize;
         let mut kv_start = 0_usize;
+        let mut page_start = 0_usize;
         let mut kv_len = 0_usize;
         while request < batch_size {
             let request_qo_start = qo_indptr[request];
             let request_qo_end = qo_indptr[request + 1];
-            let request_kv_start = kv_indptr[request];
-            let request_kv_end = kv_indptr[request + 1];
+            let request_range_start = kv_indptr[request];
+            let request_range_end = kv_indptr[request + 1];
             if request_qo_start < 0
                 || request_qo_end <= request_qo_start
-                || request_kv_start < 0
-                || request_kv_end <= request_kv_start
                 || request_qo_end as usize > nnz_qo
-                || request_kv_end as usize > nnz_kv
-                || request_qo_end - request_qo_start > request_kv_end - request_kv_start
+                || request_range_start < 0
+                || request_range_end <= request_range_start
             {
                 return;
             }
             let request_qo_len = (request_qo_end - request_qo_start) as usize;
+            let (request_kv_start, request_page_start, request_kv_len) = if paged {
+                let page_count = (request_range_end - request_range_start) as usize;
+                (
+                    0,
+                    request_range_start as usize,
+                    (page_count - 1) * PAGED_PREFILL_PAGE_SIZE + last_page_len[request] as usize,
+                )
+            } else {
+                if request_range_end as usize > kv_bound {
+                    return;
+                }
+                (
+                    request_range_start as usize,
+                    0,
+                    (request_range_end - request_range_start) as usize,
+                )
+            };
+            if request_qo_len > request_kv_len {
+                return;
+            }
             let request_tiles = request_qo_len.div_ceil(TILED_QUERY_ROWS);
             if tile_index < request_tiles {
                 request_tile = tile_index;
                 qo_start = request_qo_start as usize;
                 qo_len = request_qo_len;
-                kv_start = request_kv_start as usize;
-                kv_len = (request_kv_end - request_kv_start) as usize;
+                kv_start = request_kv_start;
+                page_start = request_page_start;
+                kv_len = request_kv_len;
                 break;
             }
             tile_index -= request_tiles;
@@ -1758,9 +1774,6 @@ mod kernels {
         let query_pairs = query.as_ptr().cast::<u32>();
         let key_pairs = key.as_ptr().cast::<u32>();
         let value_pairs = value.as_ptr().cast::<u32>();
-        // SAFETY: one block owns this shared tile and all cross-warp reuse is
-        // ordered by block barriers below.
-        let kv_tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut KV_TILE) };
 
         let mut output_0 = [0.0_f32; 4];
         let mut output_1 = [0.0_f32; 4];
@@ -1803,7 +1816,10 @@ mod kernels {
                 kv_tile,
                 key_pairs,
                 thread_in_block,
+                paged,
                 kv_start,
+                page_start,
+                page_indices,
                 kv_tile_start,
                 partition_token_end,
                 num_kv_heads,
@@ -2133,7 +2149,10 @@ mod kernels {
                 kv_tile,
                 value_pairs,
                 thread_in_block,
+                paged,
                 kv_start,
+                page_start,
+                page_indices,
                 kv_tile_start,
                 partition_token_end,
                 num_kv_heads,
@@ -2306,6 +2325,132 @@ mod kernels {
     }
 
     #[kernel]
+    #[launch_bounds(128)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (128, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            nnz_qo >= 1,
+            nnz_kv >= 1,
+            num_query_heads == num_kv_heads * 4,
+            num_kv_heads >= 1,
+            query.len() == nnz_qo * num_query_heads * 128,
+            key.len() == nnz_kv * num_kv_heads * 128,
+            value.len() == nnz_kv * num_kv_heads * 128,
+            qo_indptr.len() == batch_size + 1,
+            kv_indptr.len() == batch_size + 1,
+            workspace.len() == nnz_qo * num_query_heads * 4 * 130,
+        ),
+    )]
+    pub fn ragged_prefill_bf16_nhd_causal_tiled_gqa4(
+        batch_size: usize,
+        nnz_qo: usize,
+        nnz_kv: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key: &[bf16],
+        value: &[bf16],
+        qo_indptr: &[i32],
+        kv_indptr: &[i32],
+        workspace: DisjointSlice<f32>,
+    ) {
+        static mut KV_TILE: SharedArray<u32, TILED_KV_SHARED_PAIRS, 16> = SharedArray::UNINIT;
+        // SAFETY: one block owns this shared tile and the implementation orders
+        // every cross-warp reuse with a block barrier.
+        let kv_tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut KV_TILE) };
+        prefill_bf16_nhd_causal_tiled_gqa4_impl(
+            false,
+            kv_tile,
+            batch_size,
+            nnz_qo,
+            nnz_kv,
+            num_query_heads,
+            num_kv_heads,
+            softmax_scale_log2,
+            query,
+            key,
+            value,
+            qo_indptr,
+            kv_indptr,
+            kv_indptr,
+            kv_indptr,
+            kv_indptr,
+            workspace,
+        );
+    }
+
+    #[kernel]
+    #[launch_bounds(128)]
+    #[allow(clippy::too_many_arguments)]
+    #[launch_contract(
+        domain = 1,
+        block = (128, 1, 1),
+        min_compute_capability = (9, 0),
+        requires = (
+            batch_size >= 1,
+            nnz_qo >= 1,
+            max_num_pages >= 1,
+            num_query_heads == num_kv_heads * 4,
+            num_kv_heads >= 1,
+            query.len() == nnz_qo * num_query_heads * 128,
+            key_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            value_pages.len() == max_num_pages * 16 * num_kv_heads * 128,
+            qo_indptr.len() == batch_size + 1,
+            page_indptr.len() == batch_size + 1,
+            page_indices.len() >= batch_size,
+            last_page_len.len() == batch_size,
+            metadata_status.len() == 5,
+            workspace.len() == nnz_qo * num_query_heads * 4 * 130,
+        ),
+    )]
+    pub fn paged_prefill_bf16_nhd_causal_tiled_gqa4(
+        batch_size: usize,
+        nnz_qo: usize,
+        max_num_pages: usize,
+        num_query_heads: usize,
+        num_kv_heads: usize,
+        softmax_scale_log2: f32,
+        query: &[bf16],
+        key_pages: &[bf16],
+        value_pages: &[bf16],
+        qo_indptr: &[i32],
+        page_indptr: &[i32],
+        page_indices: &[i32],
+        last_page_len: &[i32],
+        metadata_status: &[i32],
+        workspace: DisjointSlice<f32>,
+    ) {
+        static mut KV_TILE: SharedArray<u32, TILED_KV_SHARED_PAIRS, 16> = SharedArray::UNINIT;
+        // SAFETY: one block owns this shared tile and the implementation orders
+        // every cross-warp reuse with a block barrier.
+        let kv_tile = unsafe { SharedArray::as_raw_mut_ptr(&raw mut KV_TILE) };
+        prefill_bf16_nhd_causal_tiled_gqa4_impl(
+            true,
+            kv_tile,
+            batch_size,
+            nnz_qo,
+            max_num_pages,
+            num_query_heads,
+            num_kv_heads,
+            softmax_scale_log2,
+            query,
+            key_pages,
+            value_pages,
+            qo_indptr,
+            page_indptr,
+            page_indices,
+            last_page_len,
+            metadata_status,
+            workspace,
+        );
+    }
+
+    #[kernel]
     #[launch_bounds(32)]
     #[allow(clippy::too_many_arguments)]
     #[launch_contract(
@@ -2315,7 +2460,7 @@ mod kernels {
         requires = (
             nnz_qo >= 1,
             num_query_heads >= 1,
-            workspace.len() == nnz_qo * num_query_heads * 8 * 130,
+            workspace.len() == nnz_qo * num_query_heads * 4 * 130,
             output.len() == nnz_qo * num_query_heads * 128,
             lse.len() == nnz_qo * num_query_heads,
         ),
@@ -2439,12 +2584,27 @@ impl PrefillProvider {
         spec: Bf16PagedPrefillSpec,
         algorithm: Bf16PagedPrefillAlgorithm,
     ) -> Result<Bf16PagedPrefillPlan, PagedPrefillPlanError> {
-        let states = spec
+        if algorithm == Bf16PagedPrefillAlgorithm::TiledGqa4
+            && spec.gqa_group_size() != TILED_GQA_GROUP_SIZE
+        {
+            return Err(PagedPrefillPlanError::TiledGqa4GroupSize {
+                actual: spec.gqa_group_size(),
+            });
+        }
+        let state_count = spec
             .nnz_qo()
             .checked_mul(spec.num_query_heads())
             .ok_or(PagedPrefillPlanError::StateCountOutOfRange(usize::MAX))?;
-        let states = u32::try_from(states)
-            .map_err(|_| PagedPrefillPlanError::StateCountOutOfRange(states))?;
+        let workspace_numel = if algorithm == Bf16PagedPrefillAlgorithm::TiledGqa4 {
+            state_count
+                .checked_mul(TILED_PARTITIONS)
+                .and_then(|states| states.checked_mul(SINGLE_DECODE_PARTIAL_STATE_WIDTH))
+                .ok_or(PagedPrefillPlanError::WorkspaceElementCountOutOfRange)?
+        } else {
+            0
+        };
+        let states = u32::try_from(state_count)
+            .map_err(|_| PagedPrefillPlanError::StateCountOutOfRange(state_count))?;
         let metadata_launch = self
             .module
             .prepare_validate_paged_prefill_metadata(LaunchConfig1D::new(1, 1, 0))?;
@@ -2470,10 +2630,35 @@ impl PrefillProvider {
                         )?,
                 )
             }
+            Bf16PagedPrefillAlgorithm::TiledGqa4 => {
+                let tile_upper_bound = spec
+                    .nnz_qo()
+                    .div_ceil(TILED_QUERY_ROWS)
+                    .checked_add(spec.batch_size() - 1)
+                    .and_then(|tiles| tiles.checked_mul(spec.num_kv_heads()))
+                    .and_then(|tiles| tiles.checked_mul(TILED_PARTITIONS))
+                    .ok_or(PagedPrefillPlanError::StateCountOutOfRange(usize::MAX))?;
+                let tile_upper_bound = u32::try_from(tile_upper_bound)
+                    .map_err(|_| PagedPrefillPlanError::StateCountOutOfRange(tile_upper_bound))?;
+                let partial = self
+                    .module
+                    .prepare_paged_prefill_bf16_nhd_causal_tiled_gqa4(LaunchConfig1D::new(
+                        tile_upper_bound,
+                        TILED_THREADS,
+                        0,
+                    ))?;
+                let merge = self
+                    .module
+                    .prepare_ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge(
+                        LaunchConfig1D::new(states, WARP_THREADS, 0),
+                    )?;
+                Bf16PagedPrefillLaunch::TiledGqa4 { partial, merge }
+            }
         };
         Ok(Bf16PagedPrefillPlan {
             spec,
             algorithm,
+            workspace_numel,
             module: self.module.clone(),
             metadata_launch,
             launch,
@@ -2564,6 +2749,7 @@ pub enum Bf16PagedPrefillAlgorithm {
     Direct,
     TokenParallel8,
     TokenParallel16,
+    TiledGqa4,
 }
 
 #[derive(Clone)]
@@ -2575,12 +2761,18 @@ enum Bf16PagedPrefillLaunch {
     TokenParallel16(
         PreparedLaunch<kernels::__paged_prefill_bf16_nhd_causal_token_parallel16_CudaKernel>,
     ),
+    TiledGqa4 {
+        partial: PreparedLaunch<kernels::__paged_prefill_bf16_nhd_causal_tiled_gqa4_CudaKernel>,
+        merge:
+            PreparedLaunch<kernels::__ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge_CudaKernel>,
+    },
 }
 
 #[derive(Clone)]
 pub struct Bf16PagedPrefillPlan {
     spec: Bf16PagedPrefillSpec,
     algorithm: Bf16PagedPrefillAlgorithm,
+    workspace_numel: usize,
     module: kernels::LoadedModule,
     metadata_launch: PreparedLaunch<kernels::__validate_paged_prefill_metadata_CudaKernel>,
     launch: Bf16PagedPrefillLaunch,
@@ -2593,6 +2785,14 @@ impl Bf16PagedPrefillPlan {
 
     pub const fn algorithm(&self) -> Bf16PagedPrefillAlgorithm {
         self.algorithm
+    }
+
+    pub const fn workspace_required_numel(&self) -> usize {
+        self.workspace_numel
+    }
+
+    pub const fn workspace_required_bytes(&self) -> usize {
+        self.workspace_required_numel() * size_of::<f32>()
     }
 
     pub const fn metadata_status_required_numel(&self) -> usize {
@@ -2608,6 +2808,10 @@ impl Bf16PagedPrefillPlan {
         scope: &mut CommandScope<'_>,
         args: Bf16PagedPrefillArgs,
     ) -> Result<(), PagedPrefillEnqueueError> {
+        if let Bf16PagedPrefillLaunch::TiledGqa4 { partial, merge } = &self.launch {
+            return self.enqueue_tiled_gqa4(scope, args, partial, merge);
+        }
+
         let page_indices_len = {
             let resolved = scope.resolve_rrrrrrrrww(
                 args.query,
@@ -2791,9 +2995,181 @@ impl Bf16PagedPrefillPlan {
                     let result = enqueue_region_launch(resolved.stream, operation);
                     (launch.function().clone(), result)
                 }
+                Bf16PagedPrefillLaunch::TiledGqa4 { .. } => unreachable!(),
             }
         };
         record_paged_launch(scope, permit, function, launch_result)
+    }
+
+    fn enqueue_tiled_gqa4(
+        &self,
+        scope: &mut CommandScope<'_>,
+        args: Bf16PagedPrefillArgs,
+        partial: &PreparedLaunch<kernels::__paged_prefill_bf16_nhd_causal_tiled_gqa4_CudaKernel>,
+        merge: &PreparedLaunch<
+            kernels::__ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge_CudaKernel,
+        >,
+    ) -> Result<(), PagedPrefillEnqueueError> {
+        let workspace = args
+            .workspace
+            .ok_or(PagedPrefillEnqueueError::MissingWorkspace)?;
+        let page_indices_len = {
+            let resolved = scope.resolve_rrrrrrrrww(
+                args.query,
+                args.key_pages,
+                args.value_pages,
+                args.qo_indptr,
+                args.page_indptr,
+                args.page_indices,
+                args.last_page_len,
+                args.metadata_status.read(),
+                args.output,
+                args.lse,
+            )?;
+            require_paged_exact_len("Q", resolved.first.len(), self.spec.query_numel())?;
+            require_paged_exact_len("K_pages", resolved.second.len(), self.spec.kv_pages_numel())?;
+            require_paged_exact_len("V_pages", resolved.third.len(), self.spec.kv_pages_numel())?;
+            require_paged_exact_len("qo_indptr", resolved.fourth.len(), self.spec.indptr_numel())?;
+            require_paged_exact_len(
+                "page_indptr",
+                resolved.fifth.len(),
+                self.spec.indptr_numel(),
+            )?;
+            if resolved.sixth.len() < self.spec.batch_size() {
+                return Err(PagedPrefillEnqueueError::PageIndicesTooShort {
+                    minimum: self.spec.batch_size(),
+                    actual: resolved.sixth.len(),
+                });
+            }
+            require_paged_exact_len(
+                "last_page_len",
+                resolved.seventh.len(),
+                self.spec.last_page_len_numel(),
+            )?;
+            require_paged_exact_len(
+                "metadata_status",
+                resolved.eighth.len(),
+                STATUS_PACKET_WORDS,
+            )?;
+            require_paged_exact_len("O", resolved.ninth.len(), self.spec.output_numel())?;
+            require_paged_exact_len("LSE", resolved.tenth.len(), self.spec.lse_numel())?;
+            for (operand, address) in [
+                ("Q", resolved.first.cu_deviceptr()),
+                ("K_pages", resolved.second.cu_deviceptr()),
+                ("V_pages", resolved.third.cu_deviceptr()),
+                ("O", resolved.ninth.cu_deviceptr()),
+            ] {
+                require_paged_alignment(operand, address)?;
+            }
+            resolved.sixth.len()
+        };
+        {
+            let resolved = scope.resolve_rww(workspace.read(), args.output, args.lse)?;
+            require_paged_exact_len(
+                "workspace",
+                resolved.first.len(),
+                self.workspace_required_numel(),
+            )?;
+        }
+
+        scope.require_command_capacity(4)?;
+        let status = scope.reserve_device_status(
+            args.metadata_status.read(),
+            DeviceStatusDecoder::paged_prefill(
+                self.spec.batch_size(),
+                self.spec.nnz_qo(),
+                self.spec.max_num_pages(),
+                page_indices_len,
+                PAGED_PREFILL_PAGE_SIZE,
+            ),
+        )?;
+        let validation_permit = scope.prepare_command()?;
+        let (validation_function, validation_result) = {
+            let resolved = scope.resolve_rrrrw(
+                args.qo_indptr,
+                args.page_indptr,
+                args.page_indices,
+                args.last_page_len,
+                args.metadata_status.write(),
+            )?;
+            let operation = self.module.validate_paged_prefill_metadata_async(
+                &self.metadata_launch,
+                self.spec.batch_size(),
+                self.spec.nnz_qo(),
+                self.spec.max_num_pages(),
+                resolved.first,
+                resolved.second,
+                resolved.third,
+                resolved.fourth,
+                resolved.fifth,
+            );
+            let result = enqueue_region_launch(resolved.stream, operation);
+            (self.metadata_launch.function().clone(), result)
+        };
+        record_paged_metadata_launch(
+            scope,
+            status,
+            validation_permit,
+            validation_function,
+            validation_result,
+        )?;
+
+        let partial_permit = scope.prepare_command()?;
+        let (partial_function, partial_result) = {
+            // The tenth resolved binding is a conservative write dependency;
+            // the partial kernel writes only the F32 workspace in `ninth`.
+            let resolved = scope.resolve_rrrrrrrrww(
+                args.query,
+                args.key_pages,
+                args.value_pages,
+                args.qo_indptr,
+                args.page_indptr,
+                args.page_indices,
+                args.last_page_len,
+                args.metadata_status.read(),
+                workspace.write(),
+                args.output,
+            )?;
+            let operation = self.module.paged_prefill_bf16_nhd_causal_tiled_gqa4_async(
+                partial,
+                self.spec.batch_size(),
+                self.spec.nnz_qo(),
+                self.spec.max_num_pages(),
+                self.spec.num_query_heads(),
+                self.spec.num_kv_heads(),
+                self.spec.softmax_scale() * core::f32::consts::LOG2_E,
+                resolved.first,
+                resolved.second,
+                resolved.third,
+                resolved.fourth,
+                resolved.fifth,
+                resolved.sixth,
+                resolved.seventh,
+                resolved.eighth,
+                resolved.ninth,
+            );
+            let result = enqueue_region_launch(resolved.stream, operation);
+            (partial.function().clone(), result)
+        };
+        record_paged_launch(scope, partial_permit, partial_function, partial_result)?;
+
+        let merge_permit = scope.prepare_command()?;
+        let (merge_function, merge_result) = {
+            let resolved = scope.resolve_rww(workspace.read(), args.output, args.lse)?;
+            let operation = self
+                .module
+                .ragged_prefill_bf16_nhd_causal_tiled_gqa4_merge_async(
+                    merge,
+                    self.spec.nnz_qo(),
+                    self.spec.num_query_heads(),
+                    resolved.first,
+                    resolved.second,
+                    resolved.third,
+                );
+            let result = enqueue_region_launch(resolved.stream, operation);
+            (merge.function().clone(), result)
+        };
+        record_paged_launch(scope, merge_permit, merge_function, merge_result)
     }
 }
 
@@ -3082,6 +3458,7 @@ pub struct Bf16PagedPrefillArgs {
     metadata_status: ReadWrite<i32>,
     output: Write<bf16>,
     lse: Write<f32>,
+    workspace: Option<ReadWrite<f32>>,
 }
 
 impl Bf16PagedPrefillArgs {
@@ -3109,7 +3486,13 @@ impl Bf16PagedPrefillArgs {
             metadata_status,
             output,
             lse,
+            workspace: None,
         }
+    }
+
+    pub const fn with_workspace(mut self, workspace: ReadWrite<f32>) -> Self {
+        self.workspace = Some(workspace);
+        self
     }
 }
 
@@ -3158,6 +3541,10 @@ impl Bf16RaggedPrefillArgs {
 pub enum PagedPrefillPlanError {
     #[error("paged prefill state count {0} exceeds the CUDA grid range")]
     StateCountOutOfRange(usize),
+    #[error("paged prefill workspace element count exceeds usize")]
+    WorkspaceElementCountOutOfRange,
+    #[error("paged tiled GQA4 requires group size 4, got {actual}")]
+    TiledGqa4GroupSize { actual: usize },
     #[error(transparent)]
     Launch(#[from] LaunchContractError),
 }
@@ -3172,6 +3559,8 @@ pub enum PagedPrefillEnqueueError {
     },
     #[error("page_indices requires at least {minimum} entries, got {actual}")]
     PageIndicesTooShort { minimum: usize, actual: usize },
+    #[error("paged prefill algorithm requires an explicit F32 workspace binding")]
+    MissingWorkspace,
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]
@@ -3378,8 +3767,10 @@ mod tests {
             ragged_prefill_algorithm(grouped),
             Bf16RaggedPrefillAlgorithm::TiledGqa4
         );
-        let expected_workspace =
-            grouped.nnz_qo() * grouped.num_query_heads() * 8 * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
-        assert_eq!(expected_workspace, 1_597_440);
+        let expected_workspace = grouped.nnz_qo()
+            * grouped.num_query_heads()
+            * TILED_PARTITIONS
+            * SINGLE_DECODE_PARTIAL_STATE_WIDTH;
+        assert_eq!(expected_workspace, 798_720);
     }
 }

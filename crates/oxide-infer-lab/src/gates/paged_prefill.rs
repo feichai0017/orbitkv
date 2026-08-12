@@ -16,8 +16,17 @@ use std::sync::Arc;
 
 const OUTPUT_MAX_ABS_LIMIT: f32 = 0.015_625;
 const LSE_MAX_ABS_LIMIT: f32 = 0.01;
-const PAGED_GRAPH_COMMANDS_PER_STAGE: usize = 3;
+const PAGED_GRAPH_COMMANDS_PER_STAGE: usize = 4;
 const STATUS_POISON: i32 = i32::MIN;
+const LONG_GQA4_QO_INDPTR: [i32; 3] = [0, 32, 96];
+const LONG_GQA4_PAGE_INDPTR: [i32; 3] = [0, 16, 80];
+const LONG_GQA4_PAGE_INDICES: [i32; 80] = [
+    15, 3, 27, 9, 31, 1, 35, 5, 39, 7, 43, 11, 47, 13, 51, 17, 19, 21, 23, 25, 29, 33, 37, 41, 45,
+    49, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79, 81, 83, 85, 87, 89, 91, 93, 95, 0,
+    2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32, 34, 36, 38, 40, 42, 44, 46, 48, 50,
+    52, 54, 56, 58, 60, 62,
+];
+const LONG_GQA4_LAST_PAGE_LEN: [i32; 2] = [16, 16];
 
 #[derive(Clone, Copy)]
 struct MetadataInput<'a> {
@@ -59,6 +68,7 @@ fn run_case(
         Bf16PagedPrefillAlgorithm::Direct => "direct_one_warp_per_query_row_head",
         Bf16PagedPrefillAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
         Bf16PagedPrefillAlgorithm::TokenParallel16 => "token_parallel_16warp_block_local_merge",
+        Bf16PagedPrefillAlgorithm::TiledGqa4 => "tiled_gqa4_paged_mma_qk_softmax_pv",
     };
     let query_host = deterministic_bf16(spec.query_numel(), salt);
     let key_host = deterministic_bf16(spec.kv_pages_numel(), salt ^ 0x4b45_5900);
@@ -89,7 +99,9 @@ fn run_case(
         DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
     let output = DeviceBuffer::from_host(&stream, &vec![bf16::NAN; spec.output_numel()])?;
     let lse = DeviceBuffer::from_host(&stream, &vec![f32::NAN; spec.lse_numel()])?;
-    let mut bindings = queue.bindings(10)?;
+    let workspace =
+        DeviceBuffer::<f32>::zeroed(&stream, usize::max(plan.workspace_required_numel(), 1))?;
+    let mut bindings = queue.bindings(11)?;
     let query_handle = bindings.bind_read(query)?;
     let key_handle = bindings.bind_read(key_pages)?;
     let value_handle = bindings.bind_read(value_pages)?;
@@ -100,25 +112,32 @@ fn run_case(
     let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
 
     let mut scope = queue.begin(bindings)?;
-    plan.enqueue_into(
-        &mut scope,
-        Bf16PagedPrefillArgs::new(
-            query_handle,
-            key_handle,
-            value_handle,
-            qo_handle,
-            page_indptr_handle,
-            page_indices_handle,
-            last_page_len_handle,
-            metadata_status_handle,
-            output_handle.write(),
-            lse_handle.write(),
-        ),
-    )?;
+    let mut args = Bf16PagedPrefillArgs::new(
+        query_handle,
+        key_handle,
+        value_handle,
+        qo_handle,
+        page_indptr_handle,
+        page_indices_handle,
+        last_page_len_handle,
+        metadata_status_handle,
+        output_handle.write(),
+        lse_handle.write(),
+    );
+    if plan.workspace_required_numel() != 0 {
+        args = args.with_workspace(workspace_handle);
+    }
+    plan.enqueue_into(&mut scope, args)?;
     let completion = scope.finish();
-    if completion.submitted() != 3 {
+    let expected_commands = if plan.workspace_required_numel() == 0 {
+        3
+    } else {
+        4
+    };
+    if completion.submitted() != expected_commands {
         return Err("paged prefill completion covered the wrong command count".into());
     }
     bindings = completion.wait()?;
@@ -149,7 +168,7 @@ fn run_case(
         "{} batch_size={} nnz_qo={} query_heads={} kv_heads={} group_size={} \
          max_num_pages={} referenced_pages={} page_size={} kv_lens={} layout=NHD \
          causal=bottom_right dtype=BF16 accumulation=F32 lse_domain=log2 \
-         algorithm={} commands=3 validator_kernels=1 attention_kernels=1 \
+         algorithm={} commands={} validator_kernels=1 attention_kernels={} \
          status_readbacks=1 stream=non_default \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
          lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
@@ -164,6 +183,8 @@ fn run_case(
         spec.page_size(),
         kv_lens,
         algorithm,
+        expected_commands,
+        expected_commands - 2,
         output_comparison.max_abs,
         output_comparison.bit_mismatches,
         output_comparison.digest,
@@ -429,26 +450,101 @@ fn run_duplicate_binding_case(
     Ok(())
 }
 
+fn run_missing_workspace_case(
+    queue: &mut CommandQueue,
+    provider: &PrefillProvider,
+) -> Result<(), Box<dyn Error>> {
+    let spec = Bf16PagedPrefillSpec::new(1, 1, 16, 4, 1, 128, 16)?;
+    let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::TiledGqa4)?;
+    if plan.workspace_required_numel() == 0 {
+        return Err("missing-workspace gate did not select tiled GQA4".into());
+    }
+    let stream = queue.stream().clone();
+    let query = Arc::new(DeviceBuffer::<bf16>::zeroed(&stream, spec.query_numel())?);
+    let key_pages = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        &stream,
+        spec.kv_pages_numel(),
+    )?);
+    let value_pages = Arc::new(DeviceBuffer::<bf16>::zeroed(
+        &stream,
+        spec.kv_pages_numel(),
+    )?);
+    let qo_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 1])?);
+    let page_indptr = Arc::new(DeviceBuffer::from_host(&stream, &[0_i32, 16])?);
+    let page_indices = Arc::new(DeviceBuffer::from_host(
+        &stream,
+        &(0_i32..16).collect::<Vec<_>>(),
+    )?);
+    let last_page_len = Arc::new(DeviceBuffer::from_host(&stream, &[16_i32])?);
+    let metadata_status =
+        DeviceBuffer::<i32>::zeroed(&stream, plan.metadata_status_required_numel())?;
+    let output = DeviceBuffer::<bf16>::zeroed(&stream, spec.output_numel())?;
+    let lse = DeviceBuffer::<f32>::zeroed(&stream, spec.lse_numel())?;
+    let mut bindings = queue.bindings(10)?;
+    let query_handle = bindings.bind_read(query)?;
+    let key_handle = bindings.bind_read(key_pages)?;
+    let value_handle = bindings.bind_read(value_pages)?;
+    let qo_handle = bindings.bind_read(qo_indptr)?;
+    let page_indptr_handle = bindings.bind_read(page_indptr)?;
+    let page_indices_handle = bindings.bind_read(page_indices)?;
+    let last_page_len_handle = bindings.bind_read(last_page_len)?;
+    let metadata_status_handle = bindings.bind_read_write(metadata_status)?;
+    let output_handle = bindings.bind_read_write(output)?;
+    let lse_handle = bindings.bind_read_write(lse)?;
+
+    let mut scope = queue.begin(bindings)?;
+    let error = plan
+        .enqueue_into(
+            &mut scope,
+            Bf16PagedPrefillArgs::new(
+                query_handle,
+                key_handle,
+                value_handle,
+                qo_handle,
+                page_indptr_handle,
+                page_indices_handle,
+                last_page_len_handle,
+                metadata_status_handle,
+                output_handle.write(),
+                lse_handle.write(),
+            ),
+        )
+        .expect_err("paged tiled GQA4 must require an explicit workspace");
+    if !matches!(error, PagedPrefillEnqueueError::MissingWorkspace) {
+        return Err(format!("missing workspace returned the wrong error: {error}").into());
+    }
+    let completion = scope.finish();
+    if completion.submitted() != 0 {
+        return Err("missing workspace reached CUDA submission".into());
+    }
+    drop(completion.wait()?);
+    println!(
+        "{} workspace=required before_submission=true",
+        GateCase::new("paged_prefill_h20", "missing_workspace")
+    );
+    Ok(())
+}
+
 fn run_graph_case(
     queue: &mut CommandQueue,
     provider: &PrefillProvider,
 ) -> Result<(), Box<dyn Error>> {
-    let spec = Bf16PagedPrefillSpec::new(2, 6, 6, 16, 4, 128, 16)?;
-    let qo_indptr_host = [0_i32, 4, 6];
-    let page_indptr_host = [0_i32, 2, 4];
-    let page_indices_host = [5_i32, 1, 5, 3];
-    let last_page_len_host = [7_i32, 2];
+    let spec = Bf16PagedPrefillSpec::new(2, 96, 96, 16, 4, 128, 16)?;
+    let qo_indptr_host = LONG_GQA4_QO_INDPTR;
+    let page_indptr_host = LONG_GQA4_PAGE_INDPTR;
+    let page_indices_host = LONG_GQA4_PAGE_INDICES;
+    let last_page_len_host = LONG_GQA4_LAST_PAGE_LEN;
     spec.validate_metadata(
         &qo_indptr_host,
         &page_indptr_host,
         &page_indices_host,
         &last_page_len_host,
     )?;
-    let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::Direct)?;
+    let plan = provider.plan_bf16_paged(spec, Bf16PagedPrefillAlgorithm::TiledGqa4)?;
     let stream = queue.stream().clone();
-    let query_host = deterministic_bf16(spec.query_numel(), 0x4001);
-    let key_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x4b45_5900);
-    let value_host = deterministic_bf16(spec.kv_pages_numel(), 0x4001 ^ 0x5641_4c55_4500);
+    let query_host = deterministic_bf16(spec.query_numel(), 0x8001);
+    let key_host = deterministic_bf16(spec.kv_pages_numel(), 0x8001 ^ 0x4b45_5900);
+    let value_host = deterministic_bf16(spec.kv_pages_numel(), 0x8001 ^ 0x5641_4c55_4500);
     let poison_query_host = vec![bf16::ZERO; spec.query_numel()];
     let poison_key_host = vec![bf16::ZERO; spec.kv_pages_numel()];
     let poison_value_host = vec![bf16::ZERO; spec.kv_pages_numel()];
@@ -512,10 +608,11 @@ fn run_graph_case(
     let poison_observer_lse = DeviceBuffer::from_host(&stream, &initial_lse)?;
     let output = DeviceBuffer::from_host(&stream, &initial_output)?;
     let lse = DeviceBuffer::from_host(&stream, &initial_lse)?;
+    let workspace = DeviceBuffer::<f32>::zeroed(&stream, plan.workspace_required_numel())?;
 
     let graph_commands = valid_graph_commands(PAGED_GRAPH_COMMANDS_PER_STAGE);
     let graph_queue = GraphQueue::new(stream.context(), graph_commands)?;
-    let mut bindings = graph_queue.bindings(17)?;
+    let mut bindings = graph_queue.bindings(18)?;
     let poison_query_handle = bindings.bind_read(Arc::clone(&poison_query))?;
     let poison_key_handle = bindings.bind_read(Arc::clone(&poison_key_pages))?;
     let poison_value_handle = bindings.bind_read(Arc::clone(&poison_value_pages))?;
@@ -533,6 +630,7 @@ fn run_graph_case(
     let poison_observer_lse_handle = bindings.bind_read_write(poison_observer_lse)?;
     let output_handle = bindings.bind_read_write(output)?;
     let lse_handle = bindings.bind_read_write(lse)?;
+    let workspace_handle = bindings.bind_read_write(workspace)?;
 
     let captured = graph_queue.capture(bindings, |scope| {
         plan.enqueue_into(
@@ -548,7 +646,8 @@ fn run_graph_case(
                 poison_observer_status_handle,
                 poison_observer_output_handle.write(),
                 poison_observer_lse_handle.write(),
-            ),
+            )
+            .with_workspace(workspace_handle),
         )?;
         plan.enqueue_into(
             scope,
@@ -563,7 +662,8 @@ fn run_graph_case(
                 target_poison_status_handle,
                 output_handle.write(),
                 lse_handle.write(),
-            ),
+            )
+            .with_workspace(workspace_handle),
         )?;
         plan.enqueue_into(
             scope,
@@ -578,7 +678,8 @@ fn run_graph_case(
                 real_status_handle,
                 output_handle.write(),
                 lse_handle.write(),
-            ),
+            )
+            .with_workspace(workspace_handle),
         )
     })?;
     if captured.commands() != graph_commands {
@@ -674,9 +775,9 @@ fn run_graph_case(
     }
 
     println!(
-        "{} batch_size=2 nnz_qo=6 query_heads=16 kv_heads=4 page_size=16 \
-         algorithm=direct_one_warp_per_query_row_head commands={} commands_per_stage=3 \
-         validator_kernels_per_stage=1 attention_kernels_per_stage=1 \
+        "{} batch_size=2 nnz_qo=96 query_heads=16 kv_heads=4 page_size=16 \
+         algorithm=tiled_gqa4_paged_mma_qk_softmax_pv commands={} commands_per_stage=4 \
+         validator_kernels_per_stage=1 attention_kernels_per_stage=2 \
          status_readbacks_per_stage=1 replays={} \
          replay_stages=independent_poison_then_target_poison_then_real \
          independent_poison_observable=true output_lse_poisoned_each_replay=true \
@@ -688,7 +789,7 @@ fn run_graph_case(
          poison_lse_max_abs={:.9e} poison_lse_digest={:016x} \
          output_max_abs={:.9e} output_bit_mismatches={} output_digest={:016x} \
          lse_max_abs={:.9e} lse_bit_mismatches={} lse_digest={:016x}",
-        GateCase::new("paged_prefill_h20", "gqa4_graph"),
+        GateCase::new("paged_prefill_h20", "gqa4_tiled_graph"),
         graph_commands,
         VALID_GRAPH_REPLAYS,
         poison_output_comparison.max_abs,
@@ -843,7 +944,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     let context = CudaContext::new(0)?;
     let provider = PrefillProvider::load(&context)?;
     let stream: Arc<CudaStream> = context.new_stream()?;
-    let mut queue = CommandQueue::new(stream, 3, 1)?;
+    let mut queue = CommandQueue::new(stream, 4, 1)?;
 
     run_case(
         &mut queue,
@@ -922,19 +1023,14 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     run_case(
         &mut queue,
         &provider,
-        "gqa4_token_parallel",
+        "gqa4_tiled",
         Bf16PagedPrefillSpec::new(2, 96, 96, 16, 4, 128, 16)?,
-        Bf16PagedPrefillAlgorithm::TokenParallel8,
+        Bf16PagedPrefillAlgorithm::TiledGqa4,
         MetadataInput {
-            qo_indptr: &[0, 32, 96],
-            page_indptr: &[0, 16, 80],
-            page_indices: &[
-                15, 3, 27, 9, 31, 1, 35, 5, 39, 7, 43, 11, 47, 13, 51, 17, 19, 21, 23, 25, 29, 33,
-                37, 41, 45, 49, 53, 55, 57, 59, 61, 63, 65, 67, 69, 71, 73, 75, 77, 79, 81, 83, 85,
-                87, 89, 91, 93, 95, 0, 2, 4, 6, 8, 10, 12, 14, 16, 18, 20, 22, 24, 26, 28, 30, 32,
-                34, 36, 38, 40, 42, 44, 46, 48, 50, 52, 54, 56, 58, 60, 62,
-            ],
-            last_page_len: &[16, 16],
+            qo_indptr: &LONG_GQA4_QO_INDPTR,
+            page_indptr: &LONG_GQA4_PAGE_INDPTR,
+            page_indices: &LONG_GQA4_PAGE_INDICES,
+            last_page_len: &LONG_GQA4_LAST_PAGE_LEN,
         },
         0x8001,
     )?;
@@ -945,6 +1041,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
     run_short_metadata_case(&mut queue, &preflight_plan)?;
     run_invalid_query_guard(&mut queue, &provider)?;
     run_duplicate_binding_case(&mut queue, &provider)?;
+    run_missing_workspace_case(&mut queue, &provider)?;
     run_graph_case(&mut queue, &provider)?;
     run_invalid_page_graph_rejection_case(&context, &provider)?;
     println!(
