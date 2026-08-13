@@ -902,9 +902,11 @@ mod tests {
 
     #[test]
     fn rejects_changed_artifact_bytes_and_size() {
-        let hash_error = manifest()
-            .verify(b"oxide tile artifacU".to_vec(), &device())
-            .unwrap_err();
+        let mut changed_bytes = ARTIFACT_BYTES.to_vec();
+        *changed_bytes
+            .last_mut()
+            .expect("the artifact fixture must not be empty") ^= 1;
+        let hash_error = manifest().verify(changed_bytes, &device()).unwrap_err();
         assert!(matches!(
             hash_error,
             TileArtifactError::ArtifactHashMismatch { .. }
