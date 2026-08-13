@@ -649,7 +649,7 @@ pub(crate) struct CapturedCommandSet {
     pub(crate) submitted: usize,
 }
 
-fn fresh_id() -> Result<u64, CommandError> {
+pub(super) fn fresh_id() -> Result<u64, CommandError> {
     NEXT_ID
         .fetch_update(Ordering::Relaxed, Ordering::Relaxed, |id| id.checked_add(1))
         .map_err(|_| CommandError::IdentifierSpaceExhausted)
