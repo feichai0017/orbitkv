@@ -89,9 +89,9 @@ export const evidenceLevels = [
 ]
 
 export const milestones = [
-  { milestone: "NOW", name: "Optimize measured gaps", reason: "Long-context GQA prefill is the clearest current bottleneck." },
-  { milestone: "NEXT", name: "Close one engine adapter", reason: "Measure provider hits, output parity, TTFT, TPOT, throughput, and memory." },
-  { milestone: "THEN", name: "Expand measured contracts", reason: "Add operators only after a workload census and explicit evidence gate." },
+  { milestone: "NOW", name: "Freeze the artifact boundary", reason: "Load one immutable TileLang cubin through the checked Rust runtime." },
+  { milestone: "NEXT", name: "Complete one model data plane", reason: "Run Qwen2.5-1.5B without Candle CUDA or a silent provider fallback." },
+  { milestone: "THEN", name: "Embed and benchmark the server", reason: "Wire one OxidePipeline, then compare kernels and complete serving workloads." },
 ]
 
 export const performanceSummary = [
