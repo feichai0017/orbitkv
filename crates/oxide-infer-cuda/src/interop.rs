@@ -16,7 +16,9 @@ use crate::command::{
     CommandQueue, synchronize_stream_or_abort,
 };
 use crate::device_status::DeviceStatusProtocolError;
-use cuda_core::sys::{CUcontext, CUdeviceptr, CUgreenCtx, CUstream};
+use cuda_core::sys::{
+    CUcontext, CUdeviceptr, CUevent_flags_enum_CU_EVENT_DEFAULT, CUgreenCtx, CUstream,
+};
 use cuda_core::{CudaContext, CudaEvent, CudaStream, DriverError, IntoResult};
 use oxide_infer::{ContractError, PagedKvLayout};
 use std::any::Any;
@@ -259,6 +261,33 @@ impl EngineInteropHostProfile {
     }
 }
 
+/// Device timeline timings collected across one engine interop handoff.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EngineInteropDeviceProfile {
+    total_device_nanoseconds: u64,
+    pre_handoff_device_nanoseconds: u64,
+    provider_device_nanoseconds: u64,
+    post_handoff_device_nanoseconds: u64,
+}
+
+impl EngineInteropDeviceProfile {
+    pub const fn total_device_nanoseconds(self) -> u64 {
+        self.total_device_nanoseconds
+    }
+
+    pub const fn pre_handoff_device_nanoseconds(self) -> u64 {
+        self.pre_handoff_device_nanoseconds
+    }
+
+    pub const fn provider_device_nanoseconds(self) -> u64 {
+        self.provider_device_nanoseconds
+    }
+
+    pub const fn post_handoff_device_nanoseconds(self) -> u64 {
+        self.post_handoff_device_nanoseconds
+    }
+}
+
 impl EngineBufferAddresses {
     pub const fn as_slice(&self) -> &[CUdeviceptr] {
         match self {
@@ -281,6 +310,7 @@ pub struct EngineExecutionTrace {
     handoff: EngineStreamHandoff,
     adapter_device_to_device_copies: usize,
     host_profile: Option<EngineInteropHostProfile>,
+    device_profile: Option<EngineInteropDeviceProfile>,
 }
 
 impl EngineExecutionTrace {
@@ -327,6 +357,10 @@ impl EngineExecutionTrace {
 
     pub const fn host_profile(&self) -> Option<EngineInteropHostProfile> {
         self.host_profile
+    }
+
+    pub const fn device_profile(&self) -> Option<EngineInteropDeviceProfile> {
+        self.device_profile
     }
 
     /// Returns whether all operator buffers were external and this adapter
@@ -459,6 +493,47 @@ struct EngineInteropShared {
 struct EngineHandoffSlot {
     pre_event: CudaEvent,
     post_event: CudaEvent,
+    device_timing: Option<EngineDeviceTimingEvents>,
+}
+
+struct EngineDeviceTimingEvents {
+    external_start: CudaEvent,
+    provider_start: CudaEvent,
+    provider_end: CudaEvent,
+    external_end: CudaEvent,
+}
+
+impl EngineDeviceTimingEvents {
+    fn new(context: &Arc<CudaContext>) -> Result<Self, DriverError> {
+        let timing = Some(CUevent_flags_enum_CU_EVENT_DEFAULT);
+        Ok(Self {
+            external_start: context.new_event(timing)?,
+            provider_start: context.new_event(timing)?,
+            provider_end: context.new_event(timing)?,
+            external_end: context.new_event(timing)?,
+        })
+    }
+
+    fn profile(&self) -> Result<EngineInteropDeviceProfile, DriverError> {
+        Ok(EngineInteropDeviceProfile {
+            total_device_nanoseconds: elapsed_event_nanoseconds(
+                &self.external_start,
+                &self.external_end,
+            )?,
+            pre_handoff_device_nanoseconds: elapsed_event_nanoseconds(
+                &self.external_start,
+                &self.provider_start,
+            )?,
+            provider_device_nanoseconds: elapsed_event_nanoseconds(
+                &self.provider_start,
+                &self.provider_end,
+            )?,
+            post_handoff_device_nanoseconds: elapsed_event_nanoseconds(
+                &self.provider_end,
+                &self.external_end,
+            )?,
+        })
+    }
 }
 
 /// One immutable plan and its checked argument handles.
@@ -534,6 +609,7 @@ impl EngineCommand<'_> {
                     handoff: EngineStreamHandoff::ExternalEventBridge,
                     adapter_device_to_device_copies: 0,
                     host_profile: None,
+                    device_profile: None,
                 });
             }
             Self::Bf16PagedBatchDecode { plan, .. } => {
@@ -570,6 +646,7 @@ impl EngineCommand<'_> {
             handoff: EngineStreamHandoff::ExternalEventBridge,
             adapter_device_to_device_copies: 0,
             host_profile: None,
+            device_profile: None,
         })
     }
 
@@ -612,6 +689,24 @@ impl EngineInteropQueue {
         max_commands: usize,
         max_in_flight: usize,
     ) -> Result<Self, EngineInteropBuildError> {
+        Self::new_impl(external, max_commands, max_in_flight, false)
+    }
+
+    /// Creates an interop queue with diagnostic CUDA event timings enabled.
+    pub fn new_device_profiled(
+        external: ExternalCudaStream,
+        max_commands: usize,
+        max_in_flight: usize,
+    ) -> Result<Self, EngineInteropBuildError> {
+        Self::new_impl(external, max_commands, max_in_flight, true)
+    }
+
+    fn new_impl(
+        external: ExternalCudaStream,
+        max_commands: usize,
+        max_in_flight: usize,
+        device_profiling_enabled: bool,
+    ) -> Result<Self, EngineInteropBuildError> {
         let oxide_stream = external.context.new_stream()?;
         let queue = CommandQueue::new(oxide_stream.clone(), max_commands, max_in_flight)?;
         let mut free_slots = Vec::with_capacity(max_in_flight);
@@ -619,6 +714,9 @@ impl EngineInteropQueue {
             free_slots.push(EngineHandoffSlot {
                 pre_event: external.context.new_event(None)?,
                 post_event: external.context.new_event(None)?,
+                device_timing: device_profiling_enabled
+                    .then(|| EngineDeviceTimingEvents::new(&external.context))
+                    .transpose()?,
             });
         }
         Ok(Self {
@@ -744,6 +842,22 @@ impl EngineInteropQueue {
         let setup_host_nanoseconds = elapsed_nanoseconds(setup_started);
         let pre_handoff_started = self.host_profiling_enabled.then(Instant::now);
 
+        if let Some(timing) = &slot.device_timing {
+            // SAFETY: ExternalCudaStream validated and retains `external_raw`.
+            let record_result =
+                unsafe { record_event_on_raw_stream(&timing.external_start, external_raw) };
+            if let Err(error) = record_result {
+                self.shared.poisoned.store(true, Ordering::Release);
+                return Err(settle_started_failure(
+                    Arc::clone(&self.shared),
+                    slot,
+                    scope.finish(),
+                    EngineEnqueuePrimaryFailure::Bridge(error),
+                    authority,
+                ));
+            }
+        }
+
         // SAFETY: ExternalCudaStream validated and retains `external_raw`.
         // `pre_event` belongs to the same primary context.
         if let Err(error) = unsafe { record_event_on_raw_stream(&slot.pre_event, external_raw) } {
@@ -767,6 +881,18 @@ impl EngineInteropQueue {
             ));
         }
         let pre_handoff_host_nanoseconds = elapsed_nanoseconds(pre_handoff_started);
+        if let Some(timing) = &slot.device_timing
+            && let Err(error) = timing.provider_start.record(&oxide_stream)
+        {
+            self.shared.poisoned.store(true, Ordering::Release);
+            return Err(settle_started_failure(
+                Arc::clone(&self.shared),
+                slot,
+                scope.finish(),
+                EngineEnqueuePrimaryFailure::Bridge(error),
+                authority,
+            ));
+        }
         let provider_started = self.host_profiling_enabled.then(Instant::now);
         let provider_profile = match command.enqueue_into(&mut scope, self.host_profiling_enabled) {
             Ok(profile) => profile.unwrap_or_default(),
@@ -785,6 +911,18 @@ impl EngineInteropQueue {
         let status_readback_started = self.host_profiling_enabled.then(Instant::now);
         scope.finalize_device_status();
         let status_readback_host_nanoseconds = elapsed_nanoseconds(status_readback_started);
+        if let Some(timing) = &slot.device_timing
+            && let Err(error) = timing.provider_end.record(&oxide_stream)
+        {
+            self.shared.poisoned.store(true, Ordering::Release);
+            return Err(settle_started_failure(
+                Arc::clone(&self.shared),
+                slot,
+                scope.finish(),
+                EngineEnqueuePrimaryFailure::Bridge(error),
+                authority,
+            ));
+        }
         let post_handoff_started = self.host_profiling_enabled.then(Instant::now);
         if let Err(error) = slot.post_event.record(&oxide_stream) {
             self.shared.poisoned.store(true, Ordering::Release);
@@ -808,6 +946,21 @@ impl EngineInteropQueue {
                 EngineEnqueuePrimaryFailure::Bridge(error),
                 authority,
             ));
+        }
+        if let Some(timing) = &slot.device_timing {
+            // SAFETY: ExternalCudaStream validated and retains `external_raw`.
+            let record_result =
+                unsafe { record_event_on_raw_stream(&timing.external_end, external_raw) };
+            if let Err(error) = record_result {
+                self.shared.poisoned.store(true, Ordering::Release);
+                return Err(settle_started_failure(
+                    Arc::clone(&self.shared),
+                    slot,
+                    scope.finish(),
+                    EngineEnqueuePrimaryFailure::Bridge(error),
+                    authority,
+                ));
+            }
         }
         let post_handoff_host_nanoseconds = elapsed_nanoseconds(post_handoff_started);
         if let Some(started) = total_started {
@@ -1048,7 +1201,22 @@ impl EngineCommandCompletion {
         let result = match sanitize_completion(command.wait()) {
             Ok(bindings) => {
                 recycle_bindings(&self.shared, bindings);
-                Ok(self.trace.clone())
+                match self
+                    .slot
+                    .as_ref()
+                    .and_then(|slot| slot.device_timing.as_ref())
+                    .map(EngineDeviceTimingEvents::profile)
+                    .transpose()
+                {
+                    Ok(profile) => {
+                        self.trace.device_profile = profile;
+                        Ok(self.trace.clone())
+                    }
+                    Err(error) => Err(EngineCommandCompletionError {
+                        cause: Box::new(EngineCommandFailure::DeviceProfiling(error)),
+                        trace: Box::new(self.trace.clone()),
+                    }),
+                }
             }
             Err(cause) => Err(EngineCommandCompletionError {
                 cause: Box::new(cause),
@@ -1065,6 +1233,11 @@ impl EngineCommandCompletion {
             .slot
             .take()
             .expect("live engine completion has a handoff slot");
+        if let Some(timing) = &slot.device_timing
+            && timing.external_end.synchronize().is_err()
+        {
+            self.shared.poisoned.store(true, Ordering::Release);
+        }
         lock_or_recover(&self.shared.free_slots).push(slot);
     }
 }
@@ -1077,6 +1250,8 @@ pub enum EngineCommandFailure {
     DeviceRejected(ContractError),
     #[error("device status protocol failed: {0}")]
     StatusProtocol(DeviceStatusProtocolError),
+    #[error("device profiling failed: {0}")]
+    DeviceProfiling(DriverError),
 }
 
 #[derive(Debug, Error)]
@@ -1281,6 +1456,11 @@ unsafe fn wait_raw_stream_on_event(stream: CUstream, event: &CudaEvent) -> Resul
     }
 }
 
+fn elapsed_event_nanoseconds(start: &CudaEvent, end: &CudaEvent) -> Result<u64, DriverError> {
+    let milliseconds = start.elapsed_ms(end)?;
+    Ok((f64::from(milliseconds) * 1_000_000.0).round() as u64)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1310,10 +1490,26 @@ mod tests {
             handoff: EngineStreamHandoff::ExternalEventBridge,
             adapter_device_to_device_copies: 0,
             host_profile: None,
+            device_profile: None,
         };
         assert!(trace.is_adapter_zero_copy());
         assert_eq!(trace.provider(), "oxide-infer-cuda");
         assert_eq!(trace.operator(), EngineOperator::Bf16SingleDecode);
+        assert_eq!(trace.device_profile(), None);
+    }
+
+    #[test]
+    fn device_profile_exposes_each_handoff_segment() {
+        let profile = EngineInteropDeviceProfile {
+            total_device_nanoseconds: 1_000,
+            pre_handoff_device_nanoseconds: 100,
+            provider_device_nanoseconds: 700,
+            post_handoff_device_nanoseconds: 200,
+        };
+        assert_eq!(profile.total_device_nanoseconds(), 1_000);
+        assert_eq!(profile.pre_handoff_device_nanoseconds(), 100);
+        assert_eq!(profile.provider_device_nanoseconds(), 700);
+        assert_eq!(profile.post_handoff_device_nanoseconds(), 200);
     }
 
     #[test]
