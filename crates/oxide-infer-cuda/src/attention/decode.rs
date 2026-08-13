@@ -1365,13 +1365,21 @@ impl DecodeProvider {
         &self,
         spec: Bf16PagedBatchDecodeSpec,
     ) -> Result<Bf16PagedBatchDecodePlan, PagedBatchDecodePlanError> {
+        self.plan_bf16_paged_batch_with_algorithm(spec, paged_batch_decode_algorithm(spec))
+    }
+
+    /// Creates one immutable BF16 paged batch-decode launch plan with an explicit algorithm.
+    pub fn plan_bf16_paged_batch_with_algorithm(
+        &self,
+        spec: Bf16PagedBatchDecodeSpec,
+        algorithm: Bf16PagedBatchDecodeAlgorithm,
+    ) -> Result<Bf16PagedBatchDecodePlan, PagedBatchDecodePlanError> {
         let states = spec
             .batch_size()
             .checked_mul(spec.num_query_heads())
             .ok_or(PagedBatchDecodePlanError::StateCountOutOfRange(usize::MAX))?;
         let states = u32::try_from(states)
             .map_err(|_| PagedBatchDecodePlanError::StateCountOutOfRange(states))?;
-        let algorithm = paged_batch_decode_algorithm(spec);
         let metadata_launch = self
             .module
             .prepare_validate_paged_batch_decode_metadata(LaunchConfig1D::new(1, 1, 0))?;

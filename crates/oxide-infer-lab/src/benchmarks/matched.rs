@@ -44,6 +44,22 @@ const ROPE_APPEND_TOKENS_FIXTURE_ID: &str =
     "xorshift64_mod2001_bf16_i32_rope_paged_append_tokens_v2";
 const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+const PAGED_DECODE_B8_L96_INDPTR: [i32; 9] = [0, 6, 12, 18, 24, 30, 36, 42, 48];
+const PAGED_DECODE_B8_L96_INDICES: [i32; 48] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47,
+];
+const PAGED_DECODE_B8_L96_LAST_PAGE_LEN: [i32; 8] = [16; 8];
+const PAGED_DECODE_B16_L96_INDPTR: [i32; 17] = [
+    0, 6, 12, 18, 24, 30, 36, 42, 48, 54, 60, 66, 72, 78, 84, 90, 96,
+];
+const PAGED_DECODE_B16_L96_INDICES: [i32; 96] = [
+    0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25,
+    26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46, 47, 48, 49,
+    50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 65, 66, 67, 68, 69, 70, 71, 72, 73,
+    74, 75, 76, 77, 78, 79, 80, 81, 82, 83, 84, 85, 86, 87, 88, 89, 90, 91, 92, 93, 94, 95,
+];
+const PAGED_DECODE_B16_L96_LAST_PAGE_LEN: [i32; 16] = [16; 16];
 
 struct RunIdentity {
     provider_commit: String,
@@ -85,6 +101,7 @@ struct DecodeCase {
 #[derive(Clone, Copy)]
 struct PagedDecodeCase {
     name: &'static str,
+    algorithm: Bf16PagedBatchDecodeAlgorithm,
     layout: PagedKvLayout,
     batch_size: usize,
     max_num_pages: usize,
@@ -597,7 +614,7 @@ fn benchmark_paged_decode_case(
     )?;
     let table =
         spec.validate_page_table(case.page_indptr, case.page_indices, case.last_page_len)?;
-    let plan = provider.plan_bf16_paged_batch(spec)?;
+    let plan = provider.plan_bf16_paged_batch_with_algorithm(spec, case.algorithm)?;
     let algorithm = match plan.algorithm() {
         Bf16PagedBatchDecodeAlgorithm::Direct => "direct_one_warp_per_request_head",
         Bf16PagedBatchDecodeAlgorithm::TokenParallel8 => "token_parallel_8warp_block_local_merge",
@@ -1648,6 +1665,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
         for case in [
             PagedDecodeCase {
                 name: "bf16_paged_mha_b1_l1_qh8_kvh8_d128_p16_nhd",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::Direct,
                 layout: PagedKvLayout::Nhd,
                 batch_size: 1,
                 max_num_pages: 2,
@@ -1660,6 +1678,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             },
             PagedDecodeCase {
                 name: "bf16_paged_mqa_b3_l16_23_48_qh8_kvh1_d128_p16_nhd",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::TokenParallel8,
                 layout: PagedKvLayout::Nhd,
                 batch_size: 3,
                 max_num_pages: 7,
@@ -1672,6 +1691,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             },
             PagedDecodeCase {
                 name: "bf16_paged_gqa4_b4_l3_32_17_41_qh16_kvh4_d128_p16_nhd",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::TokenParallel8,
                 layout: PagedKvLayout::Nhd,
                 batch_size: 4,
                 max_num_pages: 8,
@@ -1684,6 +1704,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             },
             PagedDecodeCase {
                 name: "bf16_paged_mha_b1_l1_qh8_kvh8_d128_p16_hnd",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::Direct,
                 layout: PagedKvLayout::Hnd,
                 batch_size: 1,
                 max_num_pages: 2,
@@ -1696,6 +1717,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             },
             PagedDecodeCase {
                 name: "bf16_paged_mqa_b3_l16_23_48_qh8_kvh1_d128_p16_hnd",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::TokenParallel8,
                 layout: PagedKvLayout::Hnd,
                 batch_size: 3,
                 max_num_pages: 7,
@@ -1708,6 +1730,7 @@ pub fn run() -> Result<(), Box<dyn Error>> {
             },
             PagedDecodeCase {
                 name: "bf16_paged_gqa4_b4_l3_32_17_41_qh16_kvh4_d128_p16_hnd",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::TokenParallel8,
                 layout: PagedKvLayout::Hnd,
                 batch_size: 4,
                 max_num_pages: 8,
@@ -1717,6 +1740,110 @@ pub fn run() -> Result<(), Box<dyn Error>> {
                 page_indices: &[7, 2, 6, 5, 1, 7, 0, 4],
                 last_page_len: &[3, 16, 1, 9],
                 salt: 0x4001,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_qwen15b_b8_l96_qh12_kvh2_d128_p16_hnd_direct",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::Direct,
+                layout: PagedKvLayout::Hnd,
+                batch_size: 8,
+                max_num_pages: 48,
+                query_heads: 12,
+                kv_heads: 2,
+                page_indptr: &PAGED_DECODE_B8_L96_INDPTR,
+                page_indices: &PAGED_DECODE_B8_L96_INDICES,
+                last_page_len: &PAGED_DECODE_B8_L96_LAST_PAGE_LEN,
+                salt: 0x1508,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_qwen15b_b8_l96_qh12_kvh2_d128_p16_hnd_token_parallel8",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::TokenParallel8,
+                layout: PagedKvLayout::Hnd,
+                batch_size: 8,
+                max_num_pages: 48,
+                query_heads: 12,
+                kv_heads: 2,
+                page_indptr: &PAGED_DECODE_B8_L96_INDPTR,
+                page_indices: &PAGED_DECODE_B8_L96_INDICES,
+                last_page_len: &PAGED_DECODE_B8_L96_LAST_PAGE_LEN,
+                salt: 0x1508,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_qwen15b_b16_l96_qh12_kvh2_d128_p16_hnd_direct",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::Direct,
+                layout: PagedKvLayout::Hnd,
+                batch_size: 16,
+                max_num_pages: 96,
+                query_heads: 12,
+                kv_heads: 2,
+                page_indptr: &PAGED_DECODE_B16_L96_INDPTR,
+                page_indices: &PAGED_DECODE_B16_L96_INDICES,
+                last_page_len: &PAGED_DECODE_B16_L96_LAST_PAGE_LEN,
+                salt: 0x1516,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_qwen15b_b16_l96_qh12_kvh2_d128_p16_hnd_token_parallel8",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::TokenParallel8,
+                layout: PagedKvLayout::Hnd,
+                batch_size: 16,
+                max_num_pages: 96,
+                query_heads: 12,
+                kv_heads: 2,
+                page_indptr: &PAGED_DECODE_B16_L96_INDPTR,
+                page_indices: &PAGED_DECODE_B16_L96_INDICES,
+                last_page_len: &PAGED_DECODE_B16_L96_LAST_PAGE_LEN,
+                salt: 0x1516,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_qwen7b_b8_l96_qh28_kvh4_d128_p16_hnd_direct",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::Direct,
+                layout: PagedKvLayout::Hnd,
+                batch_size: 8,
+                max_num_pages: 48,
+                query_heads: 28,
+                kv_heads: 4,
+                page_indptr: &PAGED_DECODE_B8_L96_INDPTR,
+                page_indices: &PAGED_DECODE_B8_L96_INDICES,
+                last_page_len: &PAGED_DECODE_B8_L96_LAST_PAGE_LEN,
+                salt: 0x7008,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_qwen7b_b8_l96_qh28_kvh4_d128_p16_hnd_token_parallel8",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::TokenParallel8,
+                layout: PagedKvLayout::Hnd,
+                batch_size: 8,
+                max_num_pages: 48,
+                query_heads: 28,
+                kv_heads: 4,
+                page_indptr: &PAGED_DECODE_B8_L96_INDPTR,
+                page_indices: &PAGED_DECODE_B8_L96_INDICES,
+                last_page_len: &PAGED_DECODE_B8_L96_LAST_PAGE_LEN,
+                salt: 0x7008,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_qwen7b_b16_l96_qh28_kvh4_d128_p16_hnd_direct",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::Direct,
+                layout: PagedKvLayout::Hnd,
+                batch_size: 16,
+                max_num_pages: 96,
+                query_heads: 28,
+                kv_heads: 4,
+                page_indptr: &PAGED_DECODE_B16_L96_INDPTR,
+                page_indices: &PAGED_DECODE_B16_L96_INDICES,
+                last_page_len: &PAGED_DECODE_B16_L96_LAST_PAGE_LEN,
+                salt: 0x7016,
+            },
+            PagedDecodeCase {
+                name: "bf16_paged_qwen7b_b16_l96_qh28_kvh4_d128_p16_hnd_token_parallel8",
+                algorithm: Bf16PagedBatchDecodeAlgorithm::TokenParallel8,
+                layout: PagedKvLayout::Hnd,
+                batch_size: 16,
+                max_num_pages: 96,
+                query_heads: 28,
+                kv_heads: 4,
+                page_indptr: &PAGED_DECODE_B16_L96_INDPTR,
+                page_indices: &PAGED_DECODE_B16_L96_INDICES,
+                last_page_len: &PAGED_DECODE_B16_L96_LAST_PAGE_LEN,
+                salt: 0x7016,
             },
         ] {
             benchmark_paged_decode_case(
