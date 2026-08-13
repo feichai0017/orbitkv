@@ -1,7 +1,7 @@
 # Product differentiation and peer boundaries
 
-**Decision date:** 2026-08-14. This document describes intended position, not
-current performance leadership.
+**Decision date:** 2026-08-14 (Asia/Shanghai). This document describes intended
+position, not current performance leadership.
 
 Oxide Infer is a narrow, NVIDIA-focused Rust inference engine whose custom GPU
 computation is supplied exclusively as qualified ahead-of-time TileLang

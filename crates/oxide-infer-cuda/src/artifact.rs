@@ -706,19 +706,26 @@ fn validate_launch(
     symbol: &str,
     requirements: LaunchRequirements,
 ) -> Result<(), TileArtifactError> {
-    if requirements.grid_dimensions.contains(&0) {
+    const MAX_GRID_DIMENSIONS: [u32; 3] = [2_147_483_647, 65_535, 65_535];
+    const MAX_BLOCK_DIMENSIONS: [u32; 3] = [1024, 1024, 64];
+
+    if !dimensions_in_range(requirements.grid_dimensions, MAX_GRID_DIMENSIONS) {
         return Err(TileArtifactError::InvalidLaunchDimensions {
             symbol: symbol.to_owned(),
             field: "grid_dimensions",
             dimensions: requirements.grid_dimensions,
         });
     }
-    let block_threads = requirements
-        .block_dimensions
-        .iter()
-        .map(|dimension| u64::from(*dimension))
-        .product::<u64>();
-    if block_threads == 0 || block_threads > 1024 {
+    if !dimensions_in_range(requirements.block_dimensions, MAX_BLOCK_DIMENSIONS) {
+        return Err(TileArtifactError::InvalidLaunchDimensions {
+            symbol: symbol.to_owned(),
+            field: "block_dimensions",
+            dimensions: requirements.block_dimensions,
+        });
+    }
+    let [block_x, block_y, block_z] = requirements.block_dimensions;
+    let block_threads = u64::from(block_x) * u64::from(block_y) * u64::from(block_z);
+    if block_threads > 1024 {
         return Err(TileArtifactError::InvalidLaunchDimensions {
             symbol: symbol.to_owned(),
             field: "block_dimensions",
@@ -726,7 +733,12 @@ fn validate_launch(
         });
     }
     if let Some(cluster_dimensions) = requirements.cluster_dimensions
-        && cluster_dimensions.contains(&0)
+        && (!dimensions_in_range(cluster_dimensions, requirements.grid_dimensions)
+            || requirements
+                .grid_dimensions
+                .iter()
+                .zip(cluster_dimensions)
+                .any(|(grid, cluster)| grid % cluster != 0))
     {
         return Err(TileArtifactError::InvalidLaunchDimensions {
             symbol: symbol.to_owned(),
@@ -735,6 +747,13 @@ fn validate_launch(
         });
     }
     Ok(())
+}
+
+fn dimensions_in_range(dimensions: [u32; 3], maximum: [u32; 3]) -> bool {
+    dimensions
+        .iter()
+        .zip(maximum)
+        .all(|(dimension, maximum)| *dimension != 0 && *dimension <= maximum)
 }
 
 fn sha256(bytes: &[u8]) -> String {
@@ -836,6 +855,14 @@ mod tests {
                     },
                 ),
                 (
+                    "page_size".to_owned(),
+                    DimensionConstraint {
+                        min: 16,
+                        max: 64,
+                        multiple_of: 16,
+                    },
+                ),
+                (
                     "query_tokens".to_owned(),
                     DimensionConstraint {
                         min: 1,
@@ -871,6 +898,7 @@ mod tests {
             ]),
             dimensions: BTreeMap::from([
                 ("head_dim".to_owned(), 128),
+                ("page_size".to_owned(), 16),
                 ("query_tokens".to_owned(), 2048),
             ]),
         }
@@ -1005,9 +1033,16 @@ mod tests {
         ));
 
         let mut invalid_launch = manifest();
-        invalid_launch.entry_points[0].launch.block_dimensions = [1025, 1, 1];
+        invalid_launch.entry_points[0].launch.block_dimensions = [u32::MAX; 3];
         assert!(matches!(
             invalid_launch.validate().unwrap_err(),
+            TileArtifactError::InvalidLaunchDimensions { .. }
+        ));
+
+        let mut invalid_grid = manifest();
+        invalid_grid.entry_points[0].launch.grid_dimensions = [1, 65_536, 1];
+        assert!(matches!(
+            invalid_grid.validate().unwrap_err(),
             TileArtifactError::InvalidLaunchDimensions { .. }
         ));
 
@@ -1045,11 +1080,18 @@ mod tests {
             TileArtifactError::PropertyMismatch { .. }
         ));
 
+        let mut wrong_range = request();
+        wrong_range.dimensions.insert("head_dim".to_owned(), 127);
+        assert!(matches!(
+            registry.resolve(&wrong_range).unwrap_err(),
+            TileArtifactError::DimensionOutOfRange { .. }
+        ));
+
         let mut wrong_multiple = request();
-        wrong_multiple.dimensions.insert("head_dim".to_owned(), 127);
+        wrong_multiple.dimensions.insert("page_size".to_owned(), 24);
         assert!(matches!(
             registry.resolve(&wrong_multiple).unwrap_err(),
-            TileArtifactError::DimensionOutOfRange { .. }
+            TileArtifactError::DimensionNotMultiple { .. }
         ));
 
         let mut missing = request();

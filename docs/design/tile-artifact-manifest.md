@@ -4,9 +4,10 @@
 registry selection are current. CUDA module loading and launch remain planned
 under roadmap phase E1.
 
-Oxide compiles TileLang outside the production process. The serving runtime
-accepts only immutable cubin or PTX bytes accompanied by a versioned manifest.
-The manifest is a compatibility contract, not build-system metadata.
+Oxide compiles TileLang outside the production process. The target serving
+runtime will accept only immutable cubin or PTX bytes accompanied by a
+versioned manifest. The manifest is a compatibility contract, not build-system
+metadata.
 
 The current Rust implementation is
 `crates/oxide-infer-cuda/src/artifact.rs`. It has no CUDA dependency, so a
@@ -122,6 +123,11 @@ Only provider `oxide_tile` is accepted by the target artifact path.
       "min": 128,
       "max": 128,
       "multiple_of": 8
+    },
+    "page_size": {
+      "min": 16,
+      "max": 64,
+      "multiple_of": 16
     },
     "query_tokens": {
       "min": 1,

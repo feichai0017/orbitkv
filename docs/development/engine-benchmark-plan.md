@@ -153,7 +153,8 @@ rate.
 
 ## Fairness controls
 
-All three engines use:
+All four engines in the primary cohort—Oxide, the pinned source-reference
+engine, vLLM, and SGLang—use:
 
 - the same GPU and exclusive host allocation;
 - the same local model and tokenizer file hashes;
