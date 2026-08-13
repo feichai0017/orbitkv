@@ -11,10 +11,11 @@ import { executionStages, repositoryUrl } from "../../data/site";
 >
   <header class="page-hero">
     <p class="eyebrow">Documentation / Start</p>
-    <h1>Start at the operator boundary.</h1>
+    <h1>Start with the engine boundary.</h1>
     <p>
-      Oxide Infer owns planning, GPU submission, and completion. The engine
-      retains its model graph, scheduler, request lifecycle, and distributed policy.
+      Current source is an operator runtime. The accepted target combines a
+      Mistral.rs control plane, an Oxide data plane, and offline TileLang
+      kernel artifacts into one Rust inference engine.
     </p>
   </header>
 
@@ -24,22 +25,32 @@ import { executionStages, repositoryUrl } from "../../data/site";
       <h2>Read in this order</h2>
       <div class="doc-grid">
         <div class="doc-card">
-          <span>01 / DESIGN</span><h3>Architecture</h3>
-          <p>Review ownership, planning, submission, and completion.</p>
-          <a href={`${repositoryUrl}/blob/main/docs/design/oxide-infer-architecture.md`}>Open architecture →</a>
+          <span>01 / TARGET</span><h3>Engine architecture</h3>
+          <p>Review Mistral.rs, Oxide, TileLang, and fail-closed ownership.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/design/tilelang-engine-architecture.md`}>Open target architecture →</a>
         </div>
         <div class="doc-card">
-          <span>02 / SURFACE</span><h3>Operator catalog</h3>
+          <span>02 / CURRENT</span><h3>Operator architecture</h3>
+          <p>Inspect the transitional source that the engine plan will replace.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/design/oxide-infer-architecture.md`}>Open current architecture →</a>
+        </div>
+        <div class="doc-card">
+          <span>03 / BENCHMARK</span><h3>Engine evidence</h3>
+          <p>Compare kernels with FlashInfer and serving with vLLM and SGLang.</p>
+          <a href={`${repositoryUrl}/blob/main/docs/development/engine-benchmark-plan.md`}>Open benchmark plan →</a>
+        </div>
+        <div class="doc-card">
+          <span>04 / SURFACE</span><h3>Operator catalog</h3>
           <p>Check admitted dtypes, layouts, algorithms, and open gates.</p>
           <a href={`${repositoryUrl}/blob/main/docs/operator-catalog.md`}>Open catalog →</a>
         </div>
         <div class="doc-card">
-          <span>03 / PROOF</span><h3>Evidence index</h3>
+          <span>05 / PROOF</span><h3>Evidence index</h3>
           <p>Inspect source revisions, methods, raw samples, and exclusions.</p>
           <a href={`${repositoryUrl}/blob/main/docs/results/README.md`}>Open evidence →</a>
         </div>
         <div class="doc-card">
-          <span>04 / DEVICE</span><h3>Device validation</h3>
+          <span>06 / DEVICE</span><h3>Device validation</h3>
           <p>Run correctness, sanitizer, Graph, and performance gates separately. The current recorded target is H20.</p>
           <a href={`${repositoryUrl}/blob/main/docs/development/h20-validation.md`}>Open validation guide →</a>
         </div>

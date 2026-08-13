@@ -1,8 +1,10 @@
 # Oxide Infer documentation
 
-Oxide Infer is a Rust-native CUDA operator layer for LLM inference engines.
-It does not own model graphs, request scheduling, KV allocation policy, or
-serving APIs.
+The current source is a Rust-native CUDA operator layer. The accepted target
+is a complete Rust inference engine that embeds a Mistral.rs control-plane
+shell, owns model execution in Oxide, and uses offline TileLang artifacts as
+its only product custom compute kernels. The target does not describe a
+completed migration.
 
 The documentation separates three facts:
 
@@ -17,18 +19,22 @@ applies only to its recorded source, contract, artifact, hardware, and command.
 
 ## Core documents
 
-1. [Architecture](design/oxide-infer-architecture.md) defines product
-   ownership, provider paths, planning, execution, and hardware boundaries.
-2. [Repository layout](design/repository-layout.md) defines the three crates
-   and the operator family namespaces.
-3. [Operator catalog](operator-catalog.md) lists current, experimental, and
+1. [Target engine architecture](design/tilelang-engine-architecture.md)
+   defines the accepted Mistral.rs, Oxide, and TileLang ownership model.
+2. [Current operator architecture](design/oxide-infer-architecture.md)
+   defines the source that is being migrated.
+3. [Engine benchmark plan](development/engine-benchmark-plan.md) defines
+   kernel, model, and serving comparisons.
+4. [Repository layout](design/repository-layout.md) separates current and
+   target source trees.
+5. [Operator catalog](operator-catalog.md) lists current, experimental, and
    planned contracts.
-4. [Roadmap](roadmap.md) orders work and defines admission and exit gates.
-5. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
+6. [Roadmap](roadmap.md) orders work and defines admission and exit gates.
+7. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
    surface without claiming full parity.
-6. [Mistral.rs integration](integrations/mistralrs.md) records the first engine
+8. [Mistral.rs integration](integrations/mistralrs.md) records the first engine
    adapter boundary.
-7. [Evidence index](results/README.md) lists immutable device and benchmark
+9. [Evidence index](results/README.md) lists immutable device and benchmark
    records.
 
 The [rename provenance](design/rename-provenance.md) maps the former project
@@ -37,8 +43,10 @@ names.
 
 ## Development documents
 
-- [Environment](development/environment.md) pins Rust, CUDA, cuda-oxide, and
-  website toolchains.
+- [Environment](development/environment.md) pins the current transitional
+  Rust, CUDA, cuda-oxide, and website toolchains.
+- [Engine benchmark plan](development/engine-benchmark-plan.md) fixes the
+  future FlashInfer, vLLM, and SGLang comparison protocol.
 - [Current device validation](development/h20-validation.md) defines correctness,
   sanitizer, Graph, performance, and engine gates.
 - [Dense GEMM shape census](development/gemm-shape-census.md) defines the

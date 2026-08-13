@@ -25,6 +25,14 @@ operator contracts, chooses an explicit provider and algorithm, freezes an
 immutable plan, checks runtime resources, and retains them until GPU work
 settles.
 
+The [accepted target architecture](docs/design/tilelang-engine-architecture.md)
+evolves this alpha into a complete Rust inference engine: a Mistral.rs
+control-plane shell, an Oxide-owned model and KV data plane, and offline
+TileLang artifacts as the only product custom compute kernels. That target is
+not yet the state of the current source; migration gates and the
+[engine benchmark plan](docs/development/engine-benchmark-plan.md) keep the
+distinction explicit.
+
 [cuda-oxide](https://github.com/NVlabs/cuda-oxide) compiles native Rust device
 code. Vendor providers such as cuBLASLt enter through the same checked command
 runtime without passing through the native-kernel toolchain.
@@ -236,18 +244,18 @@ New Oxide Infer records qualify only the source revision named by each record. S
 
 ## Roadmap
 
-The roadmap advances through measured vertical slices:
+The roadmap now advances one complete engine profile at a time:
 
-1. Complete the Oxide Infer namespace and framework migration.
-2. Optimize the measured long-context prefill gaps.
-3. Keep the stopped native M=1 GEMV experimental; evaluate a new design only
-   under a new algorithm identity.
-4. Close the Mistral.rs adapter and define a narrow vLLM C ABI boundary.
-5. Expand attention, KV-cache operations, and MLA from engine traces.
-6. Add activation, sampling, quantization, grouped GEMM, and MoE paths.
-7. Add Blackwell modules only with hardware-backed contracts and evidence.
-8. Qualify collectives and distributed integration after single-GPU ownership
-   is stable.
+1. Freeze the TileLang artifact ABI and checked Rust loader.
+2. Replace the current native and vendor paths for one BF16 model profile.
+3. Build the complete Qwen2.5-1.5B prefill and decode plan with no Candle CUDA
+   execution or silent provider fallback.
+4. Import the Mistral.rs shell and connect it through one `OxidePipeline`.
+5. Qualify continuous batching, KV paging, cancellation, Graphs, and recovery.
+6. Compare kernels with FlashInfer and the complete server with vLLM and
+   SGLang under matched workloads.
+7. Expand model, dtype, hardware, and distributed coverage only after the
+   first profile passes its release gate.
 
 Each milestone has admission, evidence, and stop conditions in the
 [full roadmap](docs/roadmap.md).

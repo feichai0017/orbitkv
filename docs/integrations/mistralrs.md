@@ -1,16 +1,24 @@
 # Mistral.rs integration
 
-The Mistral.rs adapter is an experimental paired-repository proof of concept.
-It stays in the Mistral.rs fork because the engine owns model execution, storage, streams, and forward lifecycle.
-Oxide Infer does not vendor, snapshot, or submodule the full engine.
+The current Mistral.rs adapter is an experimental paired-repository proof of
+concept. The accepted target imports the fork under `engine/mistralrs` with
+`git subtree` and replaces the paired operator adapter with one
+`OxidePipeline` full-model boundary. See the
+[target engine architecture](../design/tilelang-engine-architecture.md).
+
+Until that migration lands, the adapter stays in the separate Mistral.rs fork
+because the current engine owns model execution, storage, streams, and forward
+lifecycle. The current Oxide Infer tree does not yet vendor, snapshot,
+submodule, or subtree the full engine.
 
 ## Repository boundary
 
 Oxide Infer contains engine-neutral contracts, checked bindings, provider plans, stream handoff, and qualification rules.
 The Mistral.rs fork contains Candle storage adaptation, feature wiring, model-runner calls, completion drain, and raw integration evidence.
 
-This split keeps the operator API independent from one engine release cycle.
-It also lets the adapter change with Mistral.rs types without adding engine code to Oxide Infer.
+This split keeps the current operator API independent from one engine release
+cycle. The target replaces the split with a pinned subtree while keeping the
+fork diff localized to shell registration and `OxidePipeline` wiring.
 
 The historical records use these sources:
 
