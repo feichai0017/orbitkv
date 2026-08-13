@@ -225,6 +225,7 @@ mod kernels {
         num_query_heads: usize,
         num_kv_heads: usize,
         softmax_scale_log2: f32,
+        metadata_is_trusted: bool,
         query: &[bf16],
         key_pages: &[bf16],
         value_pages: &[bf16],
@@ -241,6 +242,7 @@ mod kernels {
             num_query_heads,
             num_kv_heads,
             softmax_scale_log2,
+            metadata_is_trusted,
             query,
             key_pages,
             value_pages,
@@ -282,6 +284,7 @@ mod kernels {
         num_query_heads: usize,
         num_kv_heads: usize,
         softmax_scale_log2: f32,
+        metadata_is_trusted: bool,
         query: &[bf16],
         key_pages: &[bf16],
         value_pages: &[bf16],
@@ -298,6 +301,7 @@ mod kernels {
             num_query_heads,
             num_kv_heads,
             softmax_scale_log2,
+            metadata_is_trusted,
             query,
             key_pages,
             value_pages,
@@ -445,6 +449,7 @@ mod kernels {
         num_query_heads: usize,
         num_kv_heads: usize,
         softmax_scale_log2: f32,
+        metadata_is_trusted: bool,
         query: &[bf16],
         key_pages: &[bf16],
         value_pages: &[bf16],
@@ -460,7 +465,7 @@ mod kernels {
         let state_count = batch_size * num_query_heads;
         if state_index >= state_count
             || lane >= WARP_THREADS as usize
-            || metadata_status[0] != STATUS_SUCCESS
+            || (!metadata_is_trusted && metadata_status[0] != STATUS_SUCCESS)
         {
             return;
         }
@@ -601,6 +606,7 @@ mod kernels {
         num_query_heads: usize,
         num_kv_heads: usize,
         softmax_scale_log2: f32,
+        metadata_is_trusted: bool,
         query: &[bf16],
         key_pages: &[bf16],
         value_pages: &[bf16],
@@ -617,7 +623,9 @@ mod kernels {
         let warp_in_block = thread_in_block / WARP_THREADS as usize;
         let lane = thread_in_block % WARP_THREADS as usize;
         let state_count = batch_size * num_query_heads;
-        if state_index >= state_count || metadata_status[0] != STATUS_SUCCESS {
+        if state_index >= state_count
+            || (!metadata_is_trusted && metadata_status[0] != STATUS_SUCCESS)
+        {
             return;
         }
         let request = state_index / num_query_heads;
@@ -860,6 +868,7 @@ mod kernels {
         num_query_heads: usize,
         num_kv_heads: usize,
         softmax_scale_log2: f32,
+        metadata_is_trusted: bool,
         query: &[bf16],
         key_pages: &[bf16],
         value_pages: &[bf16],
@@ -880,6 +889,7 @@ mod kernels {
             num_query_heads,
             num_kv_heads,
             softmax_scale_log2,
+            metadata_is_trusted,
             query,
             key_pages,
             value_pages,
@@ -922,6 +932,7 @@ mod kernels {
         num_query_heads: usize,
         num_kv_heads: usize,
         softmax_scale_log2: f32,
+        metadata_is_trusted: bool,
         query: &[bf16],
         key_pages: &[bf16],
         value_pages: &[bf16],
@@ -942,6 +953,7 @@ mod kernels {
             num_query_heads,
             num_kv_heads,
             softmax_scale_log2,
+            metadata_is_trusted,
             query,
             key_pages,
             value_pages,
@@ -1564,7 +1576,7 @@ impl Bf16PagedBatchDecodePlan {
         scope: &mut CommandScope<'_>,
         args: Bf16PagedBatchDecodeArgs,
     ) -> Result<(), PagedBatchDecodeEnqueueError> {
-        self.enqueue_into_impl(scope, args, None)
+        self.enqueue_into_impl(scope, args, false, None)
     }
 
     pub(crate) fn enqueue_into_profiled(
@@ -1573,14 +1585,47 @@ impl Bf16PagedBatchDecodePlan {
         args: Bf16PagedBatchDecodeArgs,
     ) -> Result<PagedBatchDecodeHostProfile, PagedBatchDecodeEnqueueError> {
         let mut profile = PagedBatchDecodeHostProfile::default();
-        self.enqueue_into_impl(scope, args, Some(&mut profile))?;
+        self.enqueue_into_impl(scope, args, false, Some(&mut profile))?;
         Ok(profile)
+    }
+
+    /// Enqueues after a trusted adapter has established metadata validity.
+    pub fn enqueue_trusted_metadata_into(
+        &self,
+        scope: &mut CommandScope<'_>,
+        args: TrustedBf16PagedBatchDecodeArgs,
+    ) -> Result<(), PagedBatchDecodeEnqueueError> {
+        self.require_trusted_spec(args.spec)?;
+        self.enqueue_into_impl(scope, args.args, true, None)
+    }
+
+    pub(crate) fn enqueue_trusted_metadata_into_profiled(
+        &self,
+        scope: &mut CommandScope<'_>,
+        args: TrustedBf16PagedBatchDecodeArgs,
+    ) -> Result<PagedBatchDecodeHostProfile, PagedBatchDecodeEnqueueError> {
+        self.require_trusted_spec(args.spec)?;
+        let mut profile = PagedBatchDecodeHostProfile::default();
+        self.enqueue_into_impl(scope, args.args, true, Some(&mut profile))?;
+        Ok(profile)
+    }
+
+    fn require_trusted_spec(
+        &self,
+        trusted_spec: Bf16PagedBatchDecodeSpec,
+    ) -> Result<(), PagedBatchDecodeEnqueueError> {
+        if trusted_spec == self.spec {
+            Ok(())
+        } else {
+            Err(PagedBatchDecodeEnqueueError::TrustedMetadataPlanMismatch)
+        }
     }
 
     fn enqueue_into_impl(
         &self,
         scope: &mut CommandScope<'_>,
         args: Bf16PagedBatchDecodeArgs,
+        metadata_is_trusted: bool,
         mut profile: Option<&mut PagedBatchDecodeHostProfile>,
     ) -> Result<(), PagedBatchDecodeEnqueueError> {
         let preflight_started = profile.is_some().then(std::time::Instant::now);
@@ -1633,43 +1678,45 @@ impl Bf16PagedBatchDecodePlan {
             resolved.fifth.len()
         };
 
-        scope.require_command_capacity(3)?;
-        let status = scope.reserve_device_status(
-            args.metadata_status.read(),
-            DeviceStatusDecoder::paged_batch_decode(
-                self.spec.batch_size(),
-                self.spec.max_num_pages(),
-                page_indices_len,
-                PAGED_BATCH_DECODE_PAGE_SIZE,
-            ),
-        )?;
+        scope.require_command_capacity(if metadata_is_trusted { 1 } else { 3 })?;
         if let Some(profile) = profile.as_deref_mut() {
             profile.preflight_host_nanoseconds = elapsed_nanoseconds(preflight_started);
         }
-        let metadata_started = profile.is_some().then(std::time::Instant::now);
-        let permit = scope.prepare_command()?;
-        let (function, validation_result) = {
-            let resolved = scope.resolve_rrrw(
-                args.page_indptr,
-                args.page_indices,
-                args.last_page_len,
-                args.metadata_status.write(),
+        if !metadata_is_trusted {
+            let metadata_started = profile.is_some().then(std::time::Instant::now);
+            let status = scope.reserve_device_status(
+                args.metadata_status.read(),
+                DeviceStatusDecoder::paged_batch_decode(
+                    self.spec.batch_size(),
+                    self.spec.max_num_pages(),
+                    page_indices_len,
+                    PAGED_BATCH_DECODE_PAGE_SIZE,
+                ),
             )?;
-            let operation = self.module.validate_paged_batch_decode_metadata_async(
-                &self.metadata_launch,
-                self.spec.batch_size(),
-                self.spec.max_num_pages(),
-                resolved.first,
-                resolved.second,
-                resolved.third,
-                resolved.fourth,
-            );
-            let result = enqueue_region_launch(resolved.stream, operation);
-            (self.metadata_launch.function().clone(), result)
-        };
-        record_paged_metadata_launch(scope, status, permit, function, validation_result)?;
-        if let Some(profile) = profile.as_deref_mut() {
-            profile.metadata_host_nanoseconds = elapsed_nanoseconds(metadata_started);
+            let permit = scope.prepare_command()?;
+            let (function, validation_result) = {
+                let resolved = scope.resolve_rrrw(
+                    args.page_indptr,
+                    args.page_indices,
+                    args.last_page_len,
+                    args.metadata_status.write(),
+                )?;
+                let operation = self.module.validate_paged_batch_decode_metadata_async(
+                    &self.metadata_launch,
+                    self.spec.batch_size(),
+                    self.spec.max_num_pages(),
+                    resolved.first,
+                    resolved.second,
+                    resolved.third,
+                    resolved.fourth,
+                );
+                let result = enqueue_region_launch(resolved.stream, operation);
+                (self.metadata_launch.function().clone(), result)
+            };
+            record_paged_metadata_launch(scope, status, permit, function, validation_result)?;
+            if let Some(profile) = profile.as_deref_mut() {
+                profile.metadata_host_nanoseconds = elapsed_nanoseconds(metadata_started);
+            }
         }
 
         let attention_started = profile.is_some().then(std::time::Instant::now);
@@ -1702,6 +1749,7 @@ impl Bf16PagedBatchDecodePlan {
                         common.2,
                         common.3,
                         common.4,
+                        metadata_is_trusted,
                         resolved.first,
                         resolved.second,
                         resolved.third,
@@ -1723,6 +1771,7 @@ impl Bf16PagedBatchDecodePlan {
                         common.2,
                         common.3,
                         common.4,
+                        metadata_is_trusted,
                         resolved.first,
                         resolved.second,
                         resolved.third,
@@ -1746,6 +1795,7 @@ impl Bf16PagedBatchDecodePlan {
                             common.2,
                             common.3,
                             common.4,
+                            metadata_is_trusted,
                             resolved.first,
                             resolved.second,
                             resolved.third,
@@ -1769,6 +1819,7 @@ impl Bf16PagedBatchDecodePlan {
                             common.2,
                             common.3,
                             common.4,
+                            metadata_is_trusted,
                             resolved.first,
                             resolved.second,
                             resolved.third,
@@ -1991,6 +2042,32 @@ impl Bf16PagedBatchDecodeArgs {
     }
 }
 
+/// Checked handles whose paged metadata validity is guaranteed by the adapter.
+#[derive(Clone, Copy, Debug)]
+pub struct TrustedBf16PagedBatchDecodeArgs {
+    spec: Bf16PagedBatchDecodeSpec,
+    args: Bf16PagedBatchDecodeArgs,
+}
+
+impl TrustedBf16PagedBatchDecodeArgs {
+    /// Marks paged metadata as valid for the complete lifetime of this command.
+    ///
+    /// # Safety
+    ///
+    /// The bound CSR page table must satisfy the paged-decode contract for
+    /// `spec`: indptr starts at zero and is monotonic, every request has at
+    /// least one page, each last-page length is within the page size, the
+    /// terminal indptr equals the exposed page-index length, and every page
+    /// index is below `spec.max_num_pages()`. The adapter must prevent mutation
+    /// of these buffers until command completion.
+    pub unsafe fn assume_metadata_valid(
+        spec: Bf16PagedBatchDecodeSpec,
+        args: Bf16PagedBatchDecodeArgs,
+    ) -> Self {
+        Self { spec, args }
+    }
+}
+
 #[derive(Debug, Error)]
 pub enum SingleDecodePlanError {
     #[error("single-decode query-head count {0} exceeds the CUDA grid range")]
@@ -2041,6 +2118,8 @@ pub enum PagedBatchDecodeEnqueueError {
     },
     #[error("page_indices requires at least {minimum} entries, got {actual}")]
     PageIndicesTooShort { minimum: usize, actual: usize },
+    #[error("trusted paged metadata belongs to a different decode plan")]
+    TrustedMetadataPlanMismatch,
     #[error(transparent)]
     Command(#[from] CommandError),
     #[error(transparent)]
