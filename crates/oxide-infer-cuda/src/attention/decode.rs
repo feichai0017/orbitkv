@@ -1614,11 +1614,7 @@ impl Bf16PagedBatchDecodePlan {
         &self,
         trusted_spec: Bf16PagedBatchDecodeSpec,
     ) -> Result<(), PagedBatchDecodeEnqueueError> {
-        if trusted_spec == self.spec {
-            Ok(())
-        } else {
-            Err(PagedBatchDecodeEnqueueError::TrustedMetadataPlanMismatch)
-        }
+        require_trusted_spec_match(self.spec, trusted_spec)
     }
 
     fn enqueue_into_impl(
@@ -2043,10 +2039,21 @@ impl Bf16PagedBatchDecodeArgs {
 }
 
 /// Checked handles whose paged metadata validity is guaranteed by the adapter.
-#[derive(Clone, Copy, Debug)]
+#[derive(Debug)]
 pub struct TrustedBf16PagedBatchDecodeArgs {
     spec: Bf16PagedBatchDecodeSpec,
     args: Bf16PagedBatchDecodeArgs,
+}
+
+fn require_trusted_spec_match(
+    plan_spec: Bf16PagedBatchDecodeSpec,
+    trusted_spec: Bf16PagedBatchDecodeSpec,
+) -> Result<(), PagedBatchDecodeEnqueueError> {
+    if trusted_spec == plan_spec {
+        Ok(())
+    } else {
+        Err(PagedBatchDecodeEnqueueError::TrustedMetadataPlanMismatch)
+    }
 }
 
 impl TrustedBf16PagedBatchDecodeArgs {
@@ -2300,6 +2307,20 @@ mod tests {
                 address: 0x1002,
                 alignment: 4,
             }
+        ));
+    }
+
+    #[test]
+    fn trusted_metadata_requires_the_same_plan_spec() {
+        let plan_spec =
+            Bf16PagedBatchDecodeSpec::new(1, 4, 8, 2, 128, 16, PagedKvLayout::Hnd).unwrap();
+        let other_spec =
+            Bf16PagedBatchDecodeSpec::new(2, 4, 8, 2, 128, 16, PagedKvLayout::Hnd).unwrap();
+
+        assert!(require_trusted_spec_match(plan_spec, plan_spec).is_ok());
+        assert!(matches!(
+            require_trusted_spec_match(plan_spec, other_spec),
+            Err(PagedBatchDecodeEnqueueError::TrustedMetadataPlanMismatch)
         ));
     }
 }

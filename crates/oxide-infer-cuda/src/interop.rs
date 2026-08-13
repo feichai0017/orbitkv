@@ -28,6 +28,8 @@ use std::time::Instant;
 use thiserror::Error;
 
 const SPECIAL_STREAM_MAX_ADDRESS: usize = 2;
+const PAGED_BATCH_DECODE_CHECKED_COMMANDS: usize = 3;
+const PAGED_BATCH_DECODE_TRUSTED_COMMANDS: usize = 1;
 
 /// A validated, retained borrow of an engine-owned CUDA stream.
 pub struct ExternalCudaStream {
@@ -168,6 +170,15 @@ pub enum EngineAlgorithm {
 pub enum EngineMetadataValidation {
     DeviceChecked,
     TrustedByAdapter,
+}
+
+const fn paged_batch_decode_required_commands(
+    metadata_validation: EngineMetadataValidation,
+) -> usize {
+    match metadata_validation {
+        EngineMetadataValidation::DeviceChecked => PAGED_BATCH_DECODE_CHECKED_COMMANDS,
+        EngineMetadataValidation::TrustedByAdapter => PAGED_BATCH_DECODE_TRUSTED_COMMANDS,
+    }
 }
 
 /// Contract dimensions recorded without retaining a plan or allocating.
@@ -451,7 +462,6 @@ struct EngineHandoffSlot {
 }
 
 /// One immutable plan and its checked argument handles.
-#[derive(Clone, Copy)]
 pub enum EngineCommand<'a> {
     Bf16SingleDecode {
         plan: &'a Bf16SingleDecodePlan,
@@ -468,7 +478,7 @@ pub enum EngineCommand<'a> {
 }
 
 impl EngineCommand<'_> {
-    const fn operator(self) -> EngineOperator {
+    const fn operator(&self) -> EngineOperator {
         match self {
             Self::Bf16SingleDecode { .. } => EngineOperator::Bf16SingleDecode,
             Self::Bf16PagedBatchDecode { .. }
@@ -478,7 +488,7 @@ impl EngineCommand<'_> {
         }
     }
 
-    const fn binding_count(self) -> usize {
+    const fn binding_count(&self) -> usize {
         match self {
             Self::Bf16SingleDecode { .. } => SINGLE_DECODE_BINDING_COUNT,
             Self::Bf16PagedBatchDecode { .. }
@@ -486,78 +496,77 @@ impl EngineCommand<'_> {
         }
     }
 
-    const fn required_commands(self) -> usize {
+    const fn required_commands(&self) -> usize {
         match self {
             Self::Bf16SingleDecode { .. } => 1,
-            Self::Bf16PagedBatchDecode { .. } => 3,
-            Self::Bf16PagedBatchDecodeTrustedMetadata { .. } => 1,
+            Self::Bf16PagedBatchDecode { .. } => {
+                paged_batch_decode_required_commands(EngineMetadataValidation::DeviceChecked)
+            }
+            Self::Bf16PagedBatchDecodeTrustedMetadata { .. } => {
+                paged_batch_decode_required_commands(EngineMetadataValidation::TrustedByAdapter)
+            }
         }
     }
 
     fn trace(
-        self,
+        &self,
         memory: BindingMemorySummary,
         bindings: &CheckedBindings,
     ) -> Option<EngineExecutionTrace> {
-        let (addresses, algorithm, shape, paged_kv_layout, metadata_validation) = match self {
+        let (plan, metadata_validation) = match self {
             Self::Bf16SingleDecode { plan, .. } => {
                 let spec = plan.spec();
-                (
-                    EngineBufferAddresses::SingleDecode(bindings.exact_device_addresses()?),
-                    EngineAlgorithm::SingleDecodeDirect,
-                    EngineExecutionShape::SingleDecode {
+                return Some(EngineExecutionTrace {
+                    memory,
+                    buffer_addresses: EngineBufferAddresses::SingleDecode(
+                        bindings.exact_device_addresses()?,
+                    ),
+                    operator: EngineOperator::Bf16SingleDecode,
+                    algorithm: EngineAlgorithm::SingleDecodeDirect,
+                    shape: EngineExecutionShape::SingleDecode {
                         kv_len: spec.kv_len(),
                         query_heads: spec.num_query_heads(),
                         kv_heads: spec.num_kv_heads(),
                         head_dim: spec.head_dim(),
                     },
-                    None,
-                    None,
-                )
+                    paged_kv_layout: None,
+                    metadata_validation: None,
+                    handoff: EngineStreamHandoff::ExternalEventBridge,
+                    adapter_device_to_device_copies: 0,
+                    host_profile: None,
+                });
             }
-            Self::Bf16PagedBatchDecode { plan, .. }
-            | Self::Bf16PagedBatchDecodeTrustedMetadata { plan, .. } => {
-                let spec = plan.spec();
-                let algorithm = match plan.algorithm() {
-                    Bf16PagedBatchDecodeAlgorithm::Direct => {
-                        EngineAlgorithm::PagedBatchDecodeDirect
-                    }
-                    Bf16PagedBatchDecodeAlgorithm::TokenParallel8 => {
-                        EngineAlgorithm::PagedBatchDecodeTokenParallel8
-                    }
-                };
-                (
-                    EngineBufferAddresses::PagedBatchDecode(bindings.exact_device_addresses()?),
-                    algorithm,
-                    EngineExecutionShape::PagedBatchDecode {
-                        batch_size: spec.batch_size(),
-                        max_num_pages: spec.max_num_pages(),
-                        query_heads: spec.num_query_heads(),
-                        kv_heads: spec.num_kv_heads(),
-                        head_dim: spec.head_dim(),
-                        page_size: spec.page_size(),
-                    },
-                    Some(spec.kv_layout()),
-                    Some(match self {
-                        Self::Bf16PagedBatchDecode { .. } => {
-                            EngineMetadataValidation::DeviceChecked
-                        }
-                        Self::Bf16PagedBatchDecodeTrustedMetadata { .. } => {
-                            EngineMetadataValidation::TrustedByAdapter
-                        }
-                        Self::Bf16SingleDecode { .. } => unreachable!(),
-                    }),
-                )
+            Self::Bf16PagedBatchDecode { plan, .. } => {
+                (plan, EngineMetadataValidation::DeviceChecked)
+            }
+            Self::Bf16PagedBatchDecodeTrustedMetadata { plan, .. } => {
+                (plan, EngineMetadataValidation::TrustedByAdapter)
+            }
+        };
+        let spec = plan.spec();
+        let algorithm = match plan.algorithm() {
+            Bf16PagedBatchDecodeAlgorithm::Direct => EngineAlgorithm::PagedBatchDecodeDirect,
+            Bf16PagedBatchDecodeAlgorithm::TokenParallel8 => {
+                EngineAlgorithm::PagedBatchDecodeTokenParallel8
             }
         };
         Some(EngineExecutionTrace {
             memory,
-            buffer_addresses: addresses,
-            operator: self.operator(),
+            buffer_addresses: EngineBufferAddresses::PagedBatchDecode(
+                bindings.exact_device_addresses()?,
+            ),
+            operator: EngineOperator::Bf16PagedBatchDecode,
             algorithm,
-            shape,
-            paged_kv_layout,
-            metadata_validation,
+            shape: EngineExecutionShape::PagedBatchDecode {
+                batch_size: spec.batch_size(),
+                max_num_pages: spec.max_num_pages(),
+                query_heads: spec.num_query_heads(),
+                kv_heads: spec.num_kv_heads(),
+                head_dim: spec.head_dim(),
+                page_size: spec.page_size(),
+            },
+            paged_kv_layout: Some(spec.kv_layout()),
+            metadata_validation: Some(metadata_validation),
             handoff: EngineStreamHandoff::ExternalEventBridge,
             adapter_device_to_device_copies: 0,
             host_profile: None,
@@ -1305,5 +1314,17 @@ mod tests {
         assert!(trace.is_adapter_zero_copy());
         assert_eq!(trace.provider(), "oxide-infer-cuda");
         assert_eq!(trace.operator(), EngineOperator::Bf16SingleDecode);
+    }
+
+    #[test]
+    fn trusted_paged_decode_reserves_one_command() {
+        assert_eq!(
+            paged_batch_decode_required_commands(EngineMetadataValidation::DeviceChecked),
+            PAGED_BATCH_DECODE_CHECKED_COMMANDS
+        );
+        assert_eq!(
+            paged_batch_decode_required_commands(EngineMetadataValidation::TrustedByAdapter),
+            PAGED_BATCH_DECODE_TRUSTED_COMMANDS
+        );
     }
 }
