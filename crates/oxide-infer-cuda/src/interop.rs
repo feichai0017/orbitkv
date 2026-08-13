@@ -9,7 +9,7 @@
 use crate::attention::{
     Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan,
     Bf16SingleDecodeArgs, Bf16SingleDecodePlan, PagedBatchDecodeEnqueueError,
-    SingleDecodeEnqueueError,
+    PagedBatchDecodeHostProfile, SingleDecodeEnqueueError,
 };
 use crate::command::{
     BindingMemorySummary, CheckedBindings, CommandCompletion, CommandCompletionError, CommandError,
@@ -24,6 +24,7 @@ use std::fmt::{self, Display, Formatter};
 use std::mem::MaybeUninit;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
+use std::time::Instant;
 use thiserror::Error;
 
 const SPECIAL_STREAM_MAX_ADDRESS: usize = 2;
@@ -188,6 +189,58 @@ pub enum EngineBufferAddresses {
     PagedBatchDecode([CUdeviceptr; PAGED_BATCH_DECODE_BINDING_COUNT]),
 }
 
+/// Host-side enqueue timings collected by an engine interop queue.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EngineInteropHostProfile {
+    total_host_nanoseconds: u64,
+    setup_host_nanoseconds: u64,
+    pre_handoff_host_nanoseconds: u64,
+    provider_host_nanoseconds: u64,
+    provider_preflight_host_nanoseconds: u64,
+    provider_metadata_host_nanoseconds: u64,
+    provider_attention_host_nanoseconds: u64,
+    status_readback_host_nanoseconds: u64,
+    post_handoff_host_nanoseconds: u64,
+}
+
+impl EngineInteropHostProfile {
+    pub const fn total_host_nanoseconds(self) -> u64 {
+        self.total_host_nanoseconds
+    }
+
+    pub const fn setup_host_nanoseconds(self) -> u64 {
+        self.setup_host_nanoseconds
+    }
+
+    pub const fn pre_handoff_host_nanoseconds(self) -> u64 {
+        self.pre_handoff_host_nanoseconds
+    }
+
+    pub const fn provider_host_nanoseconds(self) -> u64 {
+        self.provider_host_nanoseconds
+    }
+
+    pub const fn provider_preflight_host_nanoseconds(self) -> u64 {
+        self.provider_preflight_host_nanoseconds
+    }
+
+    pub const fn provider_metadata_host_nanoseconds(self) -> u64 {
+        self.provider_metadata_host_nanoseconds
+    }
+
+    pub const fn provider_attention_host_nanoseconds(self) -> u64 {
+        self.provider_attention_host_nanoseconds
+    }
+
+    pub const fn status_readback_host_nanoseconds(self) -> u64 {
+        self.status_readback_host_nanoseconds
+    }
+
+    pub const fn post_handoff_host_nanoseconds(self) -> u64 {
+        self.post_handoff_host_nanoseconds
+    }
+}
+
 impl EngineBufferAddresses {
     pub const fn as_slice(&self) -> &[CUdeviceptr] {
         match self {
@@ -208,6 +261,7 @@ pub struct EngineExecutionTrace {
     paged_kv_layout: Option<PagedKvLayout>,
     handoff: EngineStreamHandoff,
     adapter_device_to_device_copies: usize,
+    host_profile: Option<EngineInteropHostProfile>,
 }
 
 impl EngineExecutionTrace {
@@ -246,6 +300,10 @@ impl EngineExecutionTrace {
 
     pub const fn adapter_device_to_device_copies(&self) -> usize {
         self.adapter_device_to_device_copies
+    }
+
+    pub const fn host_profile(&self) -> Option<EngineInteropHostProfile> {
+        self.host_profile
     }
 
     /// Returns whether all operator buffers were external and this adapter
@@ -361,6 +419,7 @@ impl<A> std::error::Error for EngineExternalBindingsError<A> {
 pub struct EngineInteropQueue {
     shared: Arc<EngineInteropShared>,
     queue: CommandQueue,
+    host_profiling_enabled: bool,
 }
 
 const SINGLE_DECODE_BINDING_COUNT: usize = 5;
@@ -468,19 +527,27 @@ impl EngineCommand<'_> {
             paged_kv_layout,
             handoff: EngineStreamHandoff::ExternalEventBridge,
             adapter_device_to_device_copies: 0,
+            host_profile: None,
         })
     }
 
     fn enqueue_into(
         self,
         scope: &mut crate::command::CommandScope<'_>,
-    ) -> Result<(), EngineProviderError> {
+        host_profiling_enabled: bool,
+    ) -> Result<Option<PagedBatchDecodeHostProfile>, EngineProviderError> {
         match self {
             Self::Bf16SingleDecode { plan, args } => {
-                plan.enqueue_into(scope, args).map_err(Into::into)
+                plan.enqueue_into(scope, args)?;
+                Ok(None)
             }
             Self::Bf16PagedBatchDecode { plan, args } => {
-                plan.enqueue_into(scope, args).map_err(Into::into)
+                if host_profiling_enabled {
+                    Ok(Some(plan.enqueue_into_profiled(scope, args)?))
+                } else {
+                    plan.enqueue_into(scope, args)?;
+                    Ok(None)
+                }
             }
         }
     }
@@ -511,7 +578,13 @@ impl EngineInteropQueue {
                 poisoned: AtomicBool::new(false),
             }),
             queue,
+            host_profiling_enabled: false,
         })
+    }
+
+    /// Enables host-side timing evidence for subsequent enqueue traces.
+    pub fn set_host_profiling_enabled(&mut self, enabled: bool) {
+        self.host_profiling_enabled = enabled;
     }
 
     /// Returns checked binding storage for this exact Oxide execution queue.
@@ -545,6 +618,8 @@ impl EngineInteropQueue {
         command: EngineCommand<'_>,
         external_bindings: EngineExternalBindings<A>,
     ) -> Result<EngineSubmission<A>, EngineEnqueueError<A>> {
+        let total_started = self.host_profiling_enabled.then(Instant::now);
+        let setup_started = self.host_profiling_enabled.then(Instant::now);
         let EngineExternalBindings {
             bindings,
             authority,
@@ -574,7 +649,7 @@ impl EngineInteropQueue {
                 bindings,
             ));
         }
-        let Some(trace) = command.trace(memory, &bindings) else {
+        let Some(mut trace) = command.trace(memory, &bindings) else {
             let cause = EngineEnqueueCause::BindingShape {
                 operator: command.operator(),
                 expected: command.binding_count(),
@@ -614,6 +689,8 @@ impl EngineInteropQueue {
         };
         let oxide_stream = Arc::clone(&self.shared.oxide_stream);
         let external_raw = self.shared.external.raw;
+        let setup_host_nanoseconds = elapsed_nanoseconds(setup_started);
+        let pre_handoff_started = self.host_profiling_enabled.then(Instant::now);
 
         // SAFETY: ExternalCudaStream validated and retains `external_raw`.
         // `pre_event` belongs to the same primary context.
@@ -637,17 +714,26 @@ impl EngineInteropQueue {
                 authority,
             ));
         }
-        if let Err(error) = command.enqueue_into(&mut scope) {
-            return Err(settle_started_failure(
-                Arc::clone(&self.shared),
-                slot,
-                scope.finish(),
-                EngineEnqueuePrimaryFailure::Provider(error),
-                authority,
-            ));
-        }
+        let pre_handoff_host_nanoseconds = elapsed_nanoseconds(pre_handoff_started);
+        let provider_started = self.host_profiling_enabled.then(Instant::now);
+        let provider_profile = match command.enqueue_into(&mut scope, self.host_profiling_enabled) {
+            Ok(profile) => profile.unwrap_or_default(),
+            Err(error) => {
+                return Err(settle_started_failure(
+                    Arc::clone(&self.shared),
+                    slot,
+                    scope.finish(),
+                    EngineEnqueuePrimaryFailure::Provider(error),
+                    authority,
+                ));
+            }
+        };
+        let provider_host_nanoseconds = elapsed_nanoseconds(provider_started);
 
+        let status_readback_started = self.host_profiling_enabled.then(Instant::now);
         scope.finalize_device_status();
+        let status_readback_host_nanoseconds = elapsed_nanoseconds(status_readback_started);
+        let post_handoff_started = self.host_profiling_enabled.then(Instant::now);
         if let Err(error) = slot.post_event.record(&oxide_stream) {
             self.shared.poisoned.store(true, Ordering::Release);
             return Err(settle_started_failure(
@@ -670,6 +756,20 @@ impl EngineInteropQueue {
                 EngineEnqueuePrimaryFailure::Bridge(error),
                 authority,
             ));
+        }
+        let post_handoff_host_nanoseconds = elapsed_nanoseconds(post_handoff_started);
+        if let Some(started) = total_started {
+            trace.host_profile = Some(EngineInteropHostProfile {
+                total_host_nanoseconds: duration_nanoseconds(started.elapsed()),
+                setup_host_nanoseconds,
+                pre_handoff_host_nanoseconds,
+                provider_host_nanoseconds,
+                provider_preflight_host_nanoseconds: provider_profile.preflight_host_nanoseconds(),
+                provider_metadata_host_nanoseconds: provider_profile.metadata_host_nanoseconds(),
+                provider_attention_host_nanoseconds: provider_profile.attention_host_nanoseconds(),
+                status_readback_host_nanoseconds,
+                post_handoff_host_nanoseconds,
+            });
         }
 
         let completion = scope.finish();
@@ -1046,6 +1146,16 @@ fn lock_or_recover<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(std::sync::PoisonError::into_inner)
 }
 
+fn elapsed_nanoseconds(started: Option<Instant>) -> u64 {
+    started
+        .map(|started| duration_nanoseconds(started.elapsed()))
+        .unwrap_or_default()
+}
+
+fn duration_nanoseconds(duration: std::time::Duration) -> u64 {
+    u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
+}
+
 fn synchronize_external_stream_or_abort(stream: &ExternalCudaStream) -> Option<DriverError> {
     let stream_result = stream.context.bind_to_thread().and_then(|()| {
         // SAFETY: ExternalCudaStream retains this validated raw handle.
@@ -1146,6 +1256,7 @@ mod tests {
             paged_kv_layout: None,
             handoff: EngineStreamHandoff::ExternalEventBridge,
             adapter_device_to_device_copies: 0,
+            host_profile: None,
         };
         assert!(trace.is_adapter_zero_copy());
         assert_eq!(trace.provider(), "oxide-infer-cuda");
