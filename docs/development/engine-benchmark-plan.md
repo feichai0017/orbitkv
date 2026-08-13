@@ -3,7 +3,8 @@
 Oxide Infer needs two independent performance proofs:
 
 1. matched kernel comparisons against FlashInfer where contracts overlap;
-2. complete inference and serving comparisons against vLLM and SGLang.
+2. complete inference and serving comparisons against vLLM and SGLang, plus
+   the pinned source-reference engine.
 
 A faster kernel does not prove a faster engine. A faster unloaded server does
 not prove production goodput. Correctness, kernel timing, model execution, and
@@ -166,6 +167,27 @@ All three engines use:
 Engine-native optimizations may be enabled only in a separately named
 "best configured" cohort. The primary cohort isolates the core engine under
 matched semantics.
+
+## Rust-native peer cohort
+
+PegaInfer is a useful architectural and performance peer, but it is not forced
+into the first release matrix unless it supports the same model profile,
+weights, dtype, context, and semantics. Its current public measurements use
+Qwen3-4B on an RTX 5090, which cannot be compared numerically with Oxide's
+historical H20 operator records or the first Qwen2.5-1.5B target.
+
+When both engines admit an identical profile, run PegaInfer through the same
+neutral JSONL workload driver and fairness controls. Report it as a separate
+Rust-native cohort until repeated results justify changing a primary release
+gate. PegaFlow is not an engine baseline; external-KV comparisons belong to a
+future cache-service matrix with fixed cache budget, hit trace, topology, and
+transfer semantics.
+
+Pinned peer references:
+
+- <https://github.com/pegainfer-project/pegainfer>
+- <https://openedinfer.com/blog/pegainfer-010/>
+- <https://github.com/novitalabs/pegaflow>
 
 ## Competitive claim gate
 

@@ -23,22 +23,26 @@ applies only to its recorded source, contract, artifact, hardware, and command.
 1. [Standalone engine architecture](design/standalone-oxide-engine.md)
    defines the accepted server, engine, runtime, TileLang, and provenance
    boundaries.
-2. [Control-plane source map](design/control-plane-source-map.md) defines what
+2. [Product differentiation](design/product-differentiation.md) defines the
+   Mistral.rs, PegaInfer, PegaFlow, FlashInfer, vLLM, and SGLang boundaries.
+3. [TileLang artifact manifest](design/tile-artifact-manifest.md) defines the
+   current versioned schema, verification, and fail-closed registry contract.
+4. [Control-plane source map](design/control-plane-source-map.md) defines what
    is imported, split, referenced, or excluded from the upstream baseline.
-3. [Current operator architecture](design/oxide-infer-architecture.md)
+5. [Current operator architecture](design/oxide-infer-architecture.md)
    defines the source that is being migrated.
-4. [Engine benchmark plan](development/engine-benchmark-plan.md) defines
+6. [Engine benchmark plan](development/engine-benchmark-plan.md) defines
    kernel, model, and serving comparisons.
-5. [Repository layout](design/repository-layout.md) separates current and
+7. [Repository layout](design/repository-layout.md) separates current and
    target source trees.
-6. [Operator catalog](operator-catalog.md) lists current, experimental, and
+8. [Operator catalog](operator-catalog.md) lists current, experimental, and
    planned contracts.
-7. [Roadmap](roadmap.md) orders work and defines admission and exit gates.
-8. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
+9. [Roadmap](roadmap.md) orders work and defines admission and exit gates.
+10. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
    surface without claiming full parity.
-9. [Historical reference integration](integrations/mistralrs.md) records the
+11. [Historical reference integration](integrations/mistralrs.md) records the
    former paired-repository proof and benchmark provenance.
-10. [Evidence index](results/README.md) lists immutable device and benchmark
+12. [Evidence index](results/README.md) lists immutable device and benchmark
    records.
 
 The [rename provenance](design/rename-provenance.md) maps the former project

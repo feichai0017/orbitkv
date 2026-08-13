@@ -490,6 +490,9 @@ dependencies = [
  "cudarc",
  "half",
  "oxide-infer",
+ "serde",
+ "serde_json",
+ "sha2",
  "thiserror",
 ]
 
