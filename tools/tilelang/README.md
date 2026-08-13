@@ -36,13 +36,19 @@ installed version from the inspected source reference.
 
 ```bash
 <venv>/bin/python tools/tilelang/paged_prefill_spike.py \
-  --output /tmp/tilelang-paged-prefill.json
+  --provider-order tilelang-first \
+  --output /tmp/tilelang-paged-prefill-first.json
+
+<venv>/bin/python tools/tilelang/paged_prefill_spike.py \
+  --provider-order flashinfer-first \
+  --output /tmp/tilelang-paged-prefill-second.json
 ```
 
 The default formal protocol uses 100 warmups, 100 launches per CUDA-event
-sample, 50 samples per provider block, and a balanced six-block provider
-schedule. The runner fails closed if output or LSE exceeds its declared error
-limit and records failed tuning candidates rather than silently dropping them.
+sample, 50 samples per provider block, and complementary balanced six-block
+provider schedules. The runner fails closed if output or LSE exceeds its
+declared error limit and records failed tuning candidates rather than silently
+dropping them.
 
 This single operator shape is an admission spike. It does not establish model
 throughput, serving latency, CUDA Graph behavior, broad-shape coverage, or

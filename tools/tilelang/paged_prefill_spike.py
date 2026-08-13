@@ -121,7 +121,24 @@ PAGE_INDICES = (
     62,
 )
 LAST_PAGE_LEN = (16, 16)
-SCHEDULE = ("tilelang", "flashinfer", "flashinfer", "tilelang", "tilelang", "flashinfer")
+SCHEDULES = {
+    "tilelang-first": (
+        "tilelang",
+        "flashinfer",
+        "flashinfer",
+        "tilelang",
+        "tilelang",
+        "flashinfer",
+    ),
+    "flashinfer-first": (
+        "flashinfer",
+        "tilelang",
+        "tilelang",
+        "flashinfer",
+        "flashinfer",
+        "tilelang",
+    ),
+}
 
 
 @dataclass(frozen=True)
@@ -576,7 +593,13 @@ def main() -> None:
     parser.add_argument("--warmups", type=int, default=100)
     parser.add_argument("--launches", type=int, default=100)
     parser.add_argument("--samples", type=int, default=50)
+    parser.add_argument(
+        "--provider-order",
+        choices=tuple(SCHEDULES),
+        default="tilelang-first",
+    )
     args = parser.parse_args()
+    schedule = SCHEDULES[args.provider_order]
     if min(
         args.tune_warmups,
         args.tune_launches,
@@ -640,8 +663,11 @@ def main() -> None:
         "flashinfer": (flashinfer_run, flashinfer_output, flashinfer_lse),
     }
     blocks = []
-    for block_index, provider in enumerate(SCHEDULE):
-        print(f"running block {block_index + 1}/{len(SCHEDULE)} {provider}", flush=True)
+    for block_index, provider in enumerate(schedule):
+        print(
+            f"running block {block_index + 1}/{len(schedule)} {provider}",
+            flush=True,
+        )
         run, output, lse = providers[provider]
         samples = measure(run, args.warmups, args.launches, args.samples)
         blocks.append(
@@ -720,7 +746,8 @@ def main() -> None:
             "compilation_timed": False,
             "planning_timed": False,
             "page_materialization_timed": False,
-            "schedule": list(SCHEDULE),
+            "provider_order": args.provider_order,
+            "schedule": list(schedule),
             "warmups_per_block": args.warmups,
             "launches_per_sample": args.launches,
             "samples_per_block": args.samples,
