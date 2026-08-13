@@ -50,6 +50,15 @@ provider schedules. The runner fails closed if output or LSE exceeds its
 declared error limit and records failed tuning candidates rather than silently
 dropping them.
 
+## Current admission result
+
+The 2026-08-14 fixed-shape result admitted TileLang only as an experimental
+optional provider. Its pooled median was 31.83 microseconds, compared with
+47.01 microseconds for the current Oxide path and 25.90 microseconds for
+FlashInfer. This is a 32.3% latency reduction from Oxide, but a 22.9% overhead
+over FlashInfer. See the source-bound record in `docs/results` for raw-record
+hashes, correctness limits, provider-order results, and claim boundaries.
+
 This single operator shape is an admission spike. It does not establish model
 throughput, serving latency, CUDA Graph behavior, broad-shape coverage, or
 production readiness.

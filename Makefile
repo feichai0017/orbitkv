@@ -83,7 +83,7 @@ check-rust:
 	$(CARGO) package -p oxide-infer $(PACKAGE_FLAGS)
 
 check-tools:
-	python3 -m py_compile tools/flashinfer/*.py tools/gemm/*.py
+	python3 -m py_compile tools/flashinfer/*.py tools/gemm/*.py tools/tilelang/*.py
 	python3 -m unittest discover -s tools/flashinfer -p 'test_*.py'
 	python3 -m unittest discover -s tools/gemm -p 'test_*.py'
 
