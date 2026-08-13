@@ -139,9 +139,10 @@ Exit gate:
 The first current-source matched baseline covers 14 BF16 attention shapes
 against FlashInfer 0.6.17. All 14 pass the provider-order stability gate;
 Oxide has lower combined median eager latency in eight and FlashInfer in six.
-The first paged long-context GQA4 optimization reduced the recorded Oxide
-latency from 265.66 to 57.60 microseconds. FlashInfer remains 2.47x lower on
-that exact eager contract. The current ragged optimization reduces its
+The current paged long-context GQA4 path measures 46.60 microseconds against
+FlashInfer at 23.21 microseconds, a 2.01x gap on that exact eager contract. In
+the separate source cohort it is 18.45% lower latency than source `49290b5`.
+The current ragged optimization reduces its
 source-bound parent from 39.42 to 37.04 microseconds. In the separate matched
 provider cohort, Oxide measures 36.94 microseconds and FlashInfer 21.93
 microseconds, a 1.68x gap.

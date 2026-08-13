@@ -5,7 +5,7 @@ import {
   evidenceHighlights,
   evidenceLevels,
   performanceEvidenceUrl,
-  pagedPrefillOptimizationEvidenceUrl,
+  pagedPrefillCurrentEvidenceUrl,
   raggedPrefillOptimizationEvidenceUrl,
   performanceRows,
   repositoryUrl,
@@ -127,16 +127,17 @@ import {
           execution. Tiled GQA4 uses a caller-owned F32 partial workspace.
         </p>
         <p>
-          The tiled paged-GQA4 path is 4.61× faster than its prior Oxide
-          baseline for the recorded long shape. FlashInfer remains 2.47× lower
-          latency, so long MQA and GQA prefill remain optimization targets.
+          The current paged-GQA4 path is 18.45% lower latency than source{" "}
+          <code>49290b5</code> in a separate source cohort. In the matched
+          provider cohort, Oxide measures 46.60 µs and FlashInfer 23.21 µs, a
+          2.01× gap.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/results/h20-bf16-paged-prefill-token-parallel-correctness-20260807.json`}>
           Historical token-parallel correctness record
         </a>
         <span> · </span>
-        <a href={pagedPrefillOptimizationEvidenceUrl} target="_blank" rel="noreferrer">
-          Optimized paged-GQA4 performance record
+        <a href={pagedPrefillCurrentEvidenceUrl} target="_blank" rel="noreferrer">
+          Current paged-GQA4 performance record
         </a>
       </div>
 

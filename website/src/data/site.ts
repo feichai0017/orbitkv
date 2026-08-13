@@ -1,7 +1,7 @@
 export const repositoryUrl = "https://github.com/feichai0017/oxide-infer"
 export const homeUrl = "https://feichai0017.github.io/oxide-infer/"
 export const performanceEvidenceUrl = `${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.17-attention-eager-performance-7f3d08e-20260812.json`
-export const pagedPrefillOptimizationEvidenceUrl = `${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.17-paged-prefill-tiled-gqa4-eager-performance-49290b5-20260812.json`
+export const pagedPrefillCurrentEvidenceUrl = `${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.17-paged-prefill-current-gqa4-eager-performance-02faf27-20260812.json`
 export const raggedPrefillOptimizationEvidenceUrl = `${repositoryUrl}/blob/main/docs/results/h20-flashinfer-v0.6.17-ragged-prefill-dual-tile-gqa4-eager-performance-f9b95b0-20260812.json`
 
 export const navigation = [
@@ -128,9 +128,9 @@ export const performanceRows = [
   {
     name: "Paged prefill · GQA4",
     shape: "Q 32+64 · KV 256+1024 · D128",
-    oxideUs: "57.60",
-    flashinferUs: "23.35",
-    result: "FlashInfer 2.47× lower",
+    oxideUs: "46.60",
+    flashinferUs: "23.21",
+    result: "FlashInfer 2.01× lower",
     winner: "flashinfer",
   },
 ]
