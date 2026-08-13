@@ -71,8 +71,10 @@ Kernel promotion gates for the first release are:
 
 ## Full-model correctness
 
-Before performance ranking, run the Oxide and Mistral reference profiles with
-the same local weights and tokenizer.
+Before performance ranking, run Oxide and the pinned source-reference engine
+with the same local weights and tokenizer. The source-reference engine is an
+independent process and build; no reference implementation path is linked into
+the Oxide product.
 
 The first gate uses deterministic greedy decoding with fixed prompt token IDs,
 fixed output lengths, EOS ignored for the timed interval, and prefix caching,

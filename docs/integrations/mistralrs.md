@@ -1,24 +1,27 @@
 # Mistral.rs integration
 
 The current Mistral.rs adapter is an experimental paired-repository proof of
-concept. The accepted target imports the fork under `engine/mistralrs` with
-`git subtree` and replaces the paired operator adapter with one
-`OxidePipeline` full-model boundary. See the
-[target engine architecture](../design/tilelang-engine-architecture.md).
+concept. It is historical evidence, not the target product boundary.
 
-Until that migration lands, the adapter stays in the separate Mistral.rs fork
-because the current engine owns model execution, storage, streams, and forward
-lifecycle. The current Oxide Infer tree does not yet vendor, snapshot,
-submodule, or subtree the full engine.
+The accepted target is a standalone Oxide engine. Reusable non-compute source
+becomes attributed, renamed Oxide modules; model forward, framework tensors,
+physical KV storage, and GPU providers do not enter the product. Mistral.rs
+remains an independently built behavior and performance baseline. See the
+[standalone engine architecture](../design/standalone-oxide-engine.md) and
+[control-plane source map](../design/control-plane-source-map.md).
+
+The current adapter stays in the separate fork because it owns historical run
+commands and raw evidence. The Oxide target does not vendor, submodule, or
+execute that fork as a runtime shell.
 
 ## Repository boundary
 
 Oxide Infer contains engine-neutral contracts, checked bindings, provider plans, stream handoff, and qualification rules.
 The Mistral.rs fork contains Candle storage adaptation, feature wiring, model-runner calls, completion drain, and raw integration evidence.
 
-This split keeps the current operator API independent from one engine release
-cycle. The target replaces the split with a pinned subtree while keeping the
-fork diff localized to shell registration and `OxidePipeline` wiring.
+This split keeps the current operator evidence independent from one engine
+release cycle. Future source-derived modules record their exact upstream paths
+and revisions but build entirely inside Oxide product crates.
 
 The historical records use these sources:
 

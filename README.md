@@ -25,11 +25,14 @@ operator contracts, chooses an explicit provider and algorithm, freezes an
 immutable plan, checks runtime resources, and retains them until GPU work
 settles.
 
-The [accepted target architecture](docs/design/tilelang-engine-architecture.md)
-evolves this alpha into a complete Rust inference engine: a Mistral.rs
-control-plane shell, an Oxide-owned model and KV data plane, and offline
-TileLang artifacts as the only product custom compute kernels. That target is
-not yet the state of the current source; migration gates and the
+The [accepted target architecture](docs/design/standalone-oxide-engine.md)
+evolves this alpha into a standalone Rust inference engine: an Oxide-owned
+server, scheduler, model and KV data plane, with offline TileLang artifacts as
+the only product custom compute kernels. Mature non-compute capabilities start
+from a pinned, attributed Rust engine source baseline and are transplanted into
+Oxide modules; the source engine remains an independent behavioral and
+performance baseline. That target is not yet the state of the current source;
+migration gates and the
 [engine benchmark plan](docs/development/engine-benchmark-plan.md) keep the
 distinction explicit.
 
@@ -63,7 +66,7 @@ providers, or select a silent fallback.
 
 ```mermaid
 flowchart TB
-  Engines["Consumer engines<br/>Mistral.rs POC · vLLM planned · custom Rust"]
+  Engines["External engine adapters and reference harnesses"]
   Adapter["Engine adapter"]
 
   subgraph Core["oxide-infer · contracts"]
@@ -250,7 +253,8 @@ The roadmap now advances one complete engine profile at a time:
 2. Replace the current native and vendor paths for one BF16 model profile.
 3. Build the complete Qwen2.5-1.5B prefill and decode plan with no Candle CUDA
    execution or silent provider fallback.
-4. Import the Mistral.rs shell and connect it through one `OxidePipeline`.
+4. Build the Oxide API, tokenizer, streaming, and continuous-batch control
+   plane around stable engine request and event types.
 5. Qualify continuous batching, KV paging, cancellation, Graphs, and recovery.
 6. Compare kernels with FlashInfer and the complete server with vLLM and
    SGLang under matched workloads.

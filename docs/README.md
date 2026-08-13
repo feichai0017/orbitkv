@@ -1,9 +1,10 @@
 # Oxide Infer documentation
 
 The current source is a Rust-native CUDA operator layer. The accepted target
-is a complete Rust inference engine that embeds a Mistral.rs control-plane
-shell, owns model execution in Oxide, and uses offline TileLang artifacts as
-its only product custom compute kernels. The target does not describe a
+is a standalone Rust inference engine with an Oxide-owned server, scheduler,
+model and KV data plane, and offline TileLang artifacts as its only product
+custom compute kernels. External engines remain provenance sources and
+performance baselines, not product components. The target does not describe a
 completed migration.
 
 The documentation separates three facts:
@@ -19,22 +20,25 @@ applies only to its recorded source, contract, artifact, hardware, and command.
 
 ## Core documents
 
-1. [Target engine architecture](design/tilelang-engine-architecture.md)
-   defines the accepted Mistral.rs, Oxide, and TileLang ownership model.
-2. [Current operator architecture](design/oxide-infer-architecture.md)
+1. [Standalone engine architecture](design/standalone-oxide-engine.md)
+   defines the accepted server, engine, runtime, TileLang, and provenance
+   boundaries.
+2. [Control-plane source map](design/control-plane-source-map.md) defines what
+   is imported, split, referenced, or excluded from the upstream baseline.
+3. [Current operator architecture](design/oxide-infer-architecture.md)
    defines the source that is being migrated.
-3. [Engine benchmark plan](development/engine-benchmark-plan.md) defines
+4. [Engine benchmark plan](development/engine-benchmark-plan.md) defines
    kernel, model, and serving comparisons.
-4. [Repository layout](design/repository-layout.md) separates current and
+5. [Repository layout](design/repository-layout.md) separates current and
    target source trees.
-5. [Operator catalog](operator-catalog.md) lists current, experimental, and
+6. [Operator catalog](operator-catalog.md) lists current, experimental, and
    planned contracts.
-6. [Roadmap](roadmap.md) orders work and defines admission and exit gates.
-7. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
+7. [Roadmap](roadmap.md) orders work and defines admission and exit gates.
+8. [FlashInfer parity](flashinfer-parity.md) tracks the pinned comparison
    surface without claiming full parity.
-8. [Mistral.rs integration](integrations/mistralrs.md) records the first engine
-   adapter boundary.
-9. [Evidence index](results/README.md) lists immutable device and benchmark
+9. [Historical reference integration](integrations/mistralrs.md) records the
+   former paired-repository proof and benchmark provenance.
+10. [Evidence index](results/README.md) lists immutable device and benchmark
    records.
 
 The [rename provenance](design/rename-provenance.md) maps the former project
@@ -72,7 +76,7 @@ names.
 | Rust source and Cargo manifests | Current implementation |
 | [Operator catalog](operator-catalog.md) | Admitted public and experimental surface |
 | [Evidence index](results/README.md) | Qualified source and hardware pairs |
-| [Integration documents](integrations/mistralrs.md) | External adapter source pairs |
+| [Integration documents](integrations/mistralrs.md) | Historical and external reference source pairs |
 | [Roadmap](roadmap.md) | Planned work and exit gates |
 | Design documents | Target boundaries and names |
 

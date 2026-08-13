@@ -1,7 +1,7 @@
 # Repository layout
 
-The current source keeps three crates. The accepted engine target adds one
-model-execution crate, an embedded Mistral.rs shell, and an offline TileLang
+The current source keeps three crates. The accepted standalone-engine target
+adds separate model-execution and server crates plus an offline TileLang
 kernel tree. A module or crate still needs a functional, dependency, build,
 ownership, safety, or release boundary.
 
@@ -33,33 +33,37 @@ build output are not product source.
 
 ```text
 oxide-infer/
+|-- apps/
+|   `-- oxide-infer/          CLI and server binary
 |-- crates/
 |   |-- oxide-infer/          contracts and CPU references
 |   |-- oxide-infer-cuda/     CUDA resources and checked artifact launch
 |   |-- oxide-infer-engine/   model IR, plans, KV pager, executor, sampling
+|   |-- oxide-infer-server/   API, tokenizer, streaming, process lifecycle
 |   `-- oxide-infer-lab/      correctness and benchmark programs
-|-- engine/
-|   `-- mistralrs/            git-subtree fork and OxidePipeline wiring
 |-- kernels/
 |   `-- tilelang/             sources, build profiles, and manifests
 |-- benchmarks/
 |   |-- kernels/              matched FlashInfer comparisons
-|   `-- serving/              neutral vLLM and SGLang comparisons
+|   `-- engines/              neutral reference-engine comparisons
+|-- artifacts/
+|   `-- manifests/            release metadata; binaries remain generated
 |-- docs/
 |-- website/
 `-- .github/
 ```
 
-The root Cargo workspace excludes `engine/mistralrs`; CI addresses its Cargo
-workspace through `--manifest-path`. The imported shell depends on the Oxide
-engine crate through one adapter boundary. TileLang and Python run only in the
-artifact build and qualification environment, never in the serving process.
+The binary composes `oxide-infer-server` and `oxide-infer-engine`. The server
+depends on engine request and event types, not GPU tensors. TileLang and Python
+run only in the artifact build and qualification environment, never in the
+serving process.
 
 The new `oxide-infer-engine` crate has a real boundary: it owns model and KV
 state and depends on execution facilities that the backend-independent
-contract crate must not acquire. The target structure and subtree-sync rules
-are defined in the
-[TileLang engine architecture](tilelang-engine-architecture.md).
+contract crate must not acquire. `oxide-infer-server` has a separate dependency
+boundary for HTTP, tokenizer, and process concerns. The target structure and
+external-source rules are defined in the
+[standalone engine architecture](standalone-oxide-engine.md).
 
 ## Transitional three-crate rule
 
@@ -80,8 +84,8 @@ documentation, website, tools, or result records. The lab crate is a workspace
 member but not a default member.
 
 This rule describes current source only. The engine migration may add
-`oxide-infer-engine` after its first complete vertical slice; it does not add
-empty placeholder crates.
+`oxide-infer-engine` and `oxide-infer-server` with their first executable
+vertical slices; it does not add empty placeholder crates.
 
 GEMM, attention, KV-cache operations, and Graph execution remain modules in
 these crates. Do not add `oxide-gemm`, `oxide-runtime`, or

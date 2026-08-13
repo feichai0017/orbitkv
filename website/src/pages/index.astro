@@ -1,7 +1,7 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
 import {
-  engineAdapters,
+  engineBaselines,
   evidenceHighlights,
   executionStages,
   milestones,
@@ -220,7 +220,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   <section class="section roadmap-section" id="roadmap">
     <header class="section-heading">
       <div><p class="eyebrow">Engine roadmap</p><h2>Complete one model before adding breadth.</h2></div>
-      <p>The accepted target uses a Mistral.rs shell, an Oxide data plane, and offline TileLang artifacts.</p>
+      <p>The accepted target is a standalone Oxide server and engine, derived from attributed control-plane source and powered by offline TileLang artifacts.</p>
     </header>
     <div class="milestone-list">
       {milestones.map((item) => (
@@ -229,22 +229,22 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     </div>
   </section>
 
-  <section class="section adapter-section" id="adapters">
+  <section class="section adapter-section" id="baselines">
     <header class="section-heading">
-      <div><p class="eyebrow">Engine adapter entry</p><h2>The runtime stops at a narrow seam.</h2></div>
+      <div><p class="eyebrow">Independent baselines</p><h2>References stay outside the runtime.</h2></div>
       <p>
-        An adapter supplies engine-owned streams and allocations, maps model
-        tensors to typed operands, and reports provider hits. Scheduling stays
-        in the engine.
+        Oxide derives mature control behavior with attribution, but owns its
+        product types and execution. Reference engines remain separate
+        correctness and performance processes.
       </p>
     </header>
     <div class="adapter-flow">
-      <div class="adapter-ingress"><span>ENGINE</span><strong>model call</strong><small>stream + tensor regions</small></div>
-      <div class="adapter-gate"><span>ADAPTER</span><strong>contract mapping</strong><small>no-copy proof + provider trace</small></div>
-      <div class="adapter-runtime"><span>OXIDE</span><strong>planned operator</strong><small>completion returns authority</small></div>
+      <div class="adapter-ingress"><span>SOURCE</span><strong>pinned behavior</strong><small>license + provenance + parity</small></div>
+      <div class="adapter-gate"><span>OXIDE</span><strong>derived control plane</strong><small>request + scheduler + streaming</small></div>
+      <div class="adapter-runtime"><span>RUNTIME</span><strong>independent execution</strong><small>model plan + TileLang artifacts</small></div>
     </div>
     <div class="adapter-grid">
-      {engineAdapters.map((adapter) => (
+      {engineBaselines.map((adapter) => (
         <article><span>{adapter.state}</span><h3>{adapter.name}</h3><p>{adapter.detail}</p></article>
       ))}
     </div>
