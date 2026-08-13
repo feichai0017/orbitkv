@@ -115,7 +115,13 @@ Exit gate:
 
 ## E1: Build the TileLang artifact boundary
 
-**State:** planned.
+**State:** in progress.
+
+Current source defines strict manifest JSON, independent schema and launch ABI
+versions, structural validation, target and driver checks, SHA-256 and size
+verification, owned verified bytes, and exact fail-closed registry selection.
+CUDA module loading, checked launch, packaging, and device evidence remain
+open.
 
 Work:
 

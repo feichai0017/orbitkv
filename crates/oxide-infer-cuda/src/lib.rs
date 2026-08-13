@@ -1,9 +1,12 @@
 #![cfg_attr(feature = "cuda", allow(internal_features))]
 #![cfg_attr(feature = "cuda", feature(core_intrinsics))]
 
-//! Rust CUDA providers for Oxide Infer.
+//! Checked CUDA resources and offline artifact contracts for Oxide Infer.
 //!
-//! Enable the `cuda` feature inside the pinned cuda-oxide toolchain.
+//! The artifact contract is pure Rust. Enable the transitional `cuda` feature
+//! inside the pinned cuda-oxide toolchain for the current device providers.
+
+pub mod artifact;
 
 #[cfg(feature = "cuda")]
 pub mod attention;
