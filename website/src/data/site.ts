@@ -91,7 +91,7 @@ export const evidenceLevels = [
 export const milestones = [
   { milestone: "NOW", name: "Freeze the artifact boundary", reason: "Load one immutable TileLang cubin through the checked Rust runtime." },
   { milestone: "NEXT", name: "Complete one model data plane", reason: "Run Qwen2.5-1.5B without Candle CUDA or a silent provider fallback." },
-  { milestone: "THEN", name: "Embed and benchmark the server", reason: "Wire one OxidePipeline, then compare kernels and complete serving workloads." },
+  { milestone: "THEN", name: "Transplant and benchmark the server", reason: "Port the attributed control plane into Oxide modules, then compare complete serving workloads." },
 ]
 
 export const performanceSummary = [
@@ -135,9 +135,9 @@ export const performanceRows = [
   },
 ]
 
-export const engineAdapters = [
-  { name: "mistral.rs", state: "First target", detail: "Rust-native model call and stream ownership boundary." },
-  { name: "vLLM", state: "Planned", detail: "Out-of-tree custom operator or attention backend seam." },
-  { name: "SGLang", state: "Planned", detail: "Operator backend boundary after one adapter passes qualification." },
-  { name: "Candle", state: "Planned", detail: "Direct Rust integration after contracts stabilize." },
+export const engineBaselines = [
+  { name: "Source reference", state: "Behavior", detail: "Pinned Rust source baseline for protocol, scheduling, and token-output parity." },
+  { name: "vLLM", state: "Performance", detail: "Pinned OpenAI-compatible serving baseline." },
+  { name: "SGLang", state: "Performance", detail: "Pinned scheduler and serving baseline." },
+  { name: "FlashInfer", state: "Kernel", detail: "Matched operator baseline outside the product dependency graph." },
 ]

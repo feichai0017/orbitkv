@@ -1,10 +1,11 @@
 # Oxide Infer architecture
 
 This document describes the current transitional operator source. The
-[accepted target architecture](tilelang-engine-architecture.md) turns Oxide
-Infer into a complete engine with a Mistral.rs control-plane shell and
-TileLang-only product custom kernels. Current source and historical evidence
-remain accurately documented here until each migration gate is complete.
+[accepted target architecture](standalone-oxide-engine.md) turns Oxide Infer
+into a standalone engine with Oxide-owned server, scheduling, model execution,
+and TileLang-only product custom kernels. Current source and historical
+evidence remain accurately documented here until each migration gate is
+complete.
 
 The current source provides checked GPU operator contracts and CUDA providers
 for LLM inference engines. A consumer engine retains its model graph,
