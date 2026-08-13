@@ -370,6 +370,7 @@ struct EngineInteropShared {
     external: Arc<ExternalCudaStream>,
     oxide_stream: Arc<CudaStream>,
     free_slots: Mutex<Vec<EngineHandoffSlot>>,
+    free_bindings: Mutex<Vec<CheckedBindings>>,
     poisoned: AtomicBool,
 }
 
@@ -506,14 +507,24 @@ impl EngineInteropQueue {
                 external: Arc::new(external),
                 oxide_stream,
                 free_slots: Mutex::new(free_slots),
+                free_bindings: Mutex::new(Vec::with_capacity(max_in_flight)),
                 poisoned: AtomicBool::new(false),
             }),
             queue,
         })
     }
 
-    /// Creates checked binding storage for this exact Oxide execution queue.
+    /// Returns checked binding storage for this exact Oxide execution queue.
+    /// Successfully settled storage is reused when its capacity matches.
     pub fn bindings(&self, capacity: usize) -> Result<CheckedBindings, CommandError> {
+        let mut free_bindings = lock_or_recover(&self.shared.free_bindings);
+        if let Some(index) = free_bindings
+            .iter()
+            .position(|bindings| bindings.capacity() == capacity)
+        {
+            return Ok(free_bindings.swap_remove(index));
+        }
+        drop(free_bindings);
         self.queue.bindings(capacity)
     }
 
@@ -882,16 +893,19 @@ impl EngineCommandCompletion {
             .command
             .take()
             .expect("live engine completion has a command");
-        let result = sanitize_completion(command.wait());
-        self.return_slot();
-        self.complete = true;
-        match result {
-            Ok(()) => Ok(self.trace.clone()),
+        let result = match sanitize_completion(command.wait()) {
+            Ok(bindings) => {
+                recycle_bindings(&self.shared, bindings);
+                Ok(self.trace.clone())
+            }
             Err(cause) => Err(EngineCommandCompletionError {
                 cause: Box::new(cause),
                 trace: Box::new(self.trace.clone()),
             }),
-        }
+        };
+        self.return_slot();
+        self.complete = true;
+        result
     }
 
     fn return_slot(&mut self) {
@@ -943,12 +957,9 @@ impl Drop for EngineCommandCompletion {
 
 fn sanitize_completion(
     result: Result<CheckedBindings, CommandCompletionError>,
-) -> Result<(), EngineCommandFailure> {
+) -> Result<CheckedBindings, EngineCommandFailure> {
     match result {
-        Ok(bindings) => {
-            drop(bindings);
-            Ok(())
-        }
+        Ok(bindings) => Ok(bindings),
         Err(CommandCompletionError::Execution(error)) => {
             Err(EngineCommandFailure::Execution(error))
         }
@@ -961,6 +972,14 @@ fn sanitize_completion(
             Err(EngineCommandFailure::StatusProtocol(error))
         }
     }
+}
+
+fn recycle_bindings(shared: &EngineInteropShared, mut bindings: CheckedBindings) {
+    if bindings.prepare_for_reuse().is_err() {
+        shared.poisoned.store(true, Ordering::Release);
+        return;
+    }
+    lock_or_recover(&shared.free_bindings).push(bindings);
 }
 
 fn settle_started_failure<A: StreamOrderedEngineAuthority>(

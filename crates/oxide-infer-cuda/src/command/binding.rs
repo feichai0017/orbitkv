@@ -84,6 +84,16 @@ impl CheckedBindings {
         summary
     }
 
+    pub(crate) fn prepare_for_reuse(&mut self) -> Result<(), CommandError> {
+        assert!(
+            self.status.is_empty(),
+            "only settled bindings may be prepared for reuse"
+        );
+        self.leases.clear();
+        self.set_id = super::submission::fresh_id()?;
+        Ok(())
+    }
+
     pub(crate) fn live_regions(&self) -> usize {
         self.leases
             .iter()
