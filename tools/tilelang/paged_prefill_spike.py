@@ -147,10 +147,14 @@ class KernelConfig:
     block_n: int
     num_stages: int
     threads: int
+    head_group: int = 1
 
     @property
     def name(self) -> str:
-        return f"m{self.block_m}_n{self.block_n}_s{self.num_stages}_t{self.threads}"
+        return (
+            f"m{self.block_m}_n{self.block_n}_s{self.num_stages}"
+            f"_t{self.threads}_h{self.head_group}"
+        )
 
 
 @dataclass
@@ -177,6 +181,11 @@ CONFIGS = (
     KernelConfig(64, 128, 1, 128),
     KernelConfig(64, 128, 2, 128),
     KernelConfig(64, 128, 3, 128),
+    KernelConfig(64, 32, 1, 128, 2),
+    KernelConfig(64, 32, 2, 128, 2),
+    KernelConfig(64, 64, 1, 128, 2),
+    KernelConfig(64, 64, 2, 128, 2),
+    KernelConfig(64, 64, 2, 256, 2),
 )
 
 
@@ -189,6 +198,8 @@ def paged_prefill(config: KernelConfig):
     block_n = config.block_n
     num_stages = config.num_stages
     threads = config.threads
+    head_group = config.head_group
+    matrix_m = block_m * head_group
     scale_log2e = SOFTMAX_SCALE * 1.4426950408889634
 
     @T.prim_func
@@ -209,40 +220,51 @@ def paged_prefill(config: KernelConfig):
     ):
         with T.Kernel(
             T.ceildiv(MAX_Q_LEN, block_m),
-            QUERY_HEADS,
+            QUERY_HEADS // head_group,
             BATCH_SIZE,
             threads=threads,
-        ) as (query_block, query_head, request):
-            query_shared = T.alloc_shared([block_m, HEAD_DIM], T.bfloat16)
+        ) as (query_block, query_head_group, request):
+            query_shared = T.alloc_shared([matrix_m, HEAD_DIM], T.bfloat16)
             key_shared = T.alloc_shared([block_n, HEAD_DIM], T.bfloat16)
             value_shared = T.alloc_shared([block_n, HEAD_DIM], T.bfloat16)
-            output_shared = T.alloc_shared([block_m, HEAD_DIM], T.bfloat16)
-            score = T.alloc_fragment([block_m, block_n], T.float32)
-            probability = T.alloc_fragment([block_m, block_n], T.bfloat16)
-            accumulator = T.alloc_fragment([block_m, HEAD_DIM], T.float32)
-            row_max = T.alloc_fragment([block_m], T.float32)
-            previous_row_max = T.alloc_fragment([block_m], T.float32)
-            row_scale = T.alloc_fragment([block_m], T.float32)
-            row_sum = T.alloc_fragment([block_m], T.float32)
-            normalizer = T.alloc_fragment([block_m], T.float32)
+            output_shared = T.alloc_shared([matrix_m, HEAD_DIM], T.bfloat16)
+            score = T.alloc_fragment([matrix_m, block_n], T.float32)
+            probability = T.alloc_fragment([matrix_m, block_n], T.bfloat16)
+            accumulator = T.alloc_fragment([matrix_m, HEAD_DIM], T.float32)
+            row_max = T.alloc_fragment([matrix_m], T.float32)
+            previous_row_max = T.alloc_fragment([matrix_m], T.float32)
+            row_scale = T.alloc_fragment([matrix_m], T.float32)
+            row_sum = T.alloc_fragment([matrix_m], T.float32)
+            normalizer = T.alloc_fragment([matrix_m], T.float32)
 
             query_start = qo_indptr[request]
             query_len = qo_indptr[request + 1] - query_start
             page_start = page_indptr[request]
             page_count = page_indptr[request + 1] - page_start
             kv_len = (page_count - 1) * PAGE_SIZE + last_page_len[request]
-            kv_head = query_head // GROUP_SIZE
+            query_head_start = query_head_group * head_group
+            kv_head = query_head_start // GROUP_SIZE
 
-            T.copy(
-                query[
-                    query_start
-                    + query_block * block_m : query_start
-                    + (query_block + 1) * block_m,
-                    query_head,
-                    :,
-                ],
-                query_shared,
-            )
+            if head_group == 1:
+                T.copy(
+                    query[
+                        query_start
+                        + query_block * block_m : query_start
+                        + (query_block + 1) * block_m,
+                        query_head_start,
+                        :,
+                    ],
+                    query_shared,
+                )
+            else:
+                for row, component in T.Parallel(matrix_m, HEAD_DIM):
+                    query_shared[row, component] = query[
+                        query_start
+                        + query_block * block_m
+                        + row // head_group,
+                        query_head_start + row % head_group,
+                        component,
+                    ]
             T.fill(accumulator, 0)
             T.fill(normalizer, 0)
             T.fill(row_max, -T.infinity(T.float32))
@@ -272,8 +294,8 @@ def paged_prefill(config: KernelConfig):
                         component,
                     ]
 
-                for row, column in T.Parallel(block_m, block_n):
-                    query_index = query_block * block_m + row
+                for row, column in T.Parallel(matrix_m, block_n):
+                    query_index = query_block * block_m + row // head_group
                     kv_index = kv_block * block_n + column
                     score[row, column] = T.if_then_else(
                         query_index >= query_len
@@ -294,24 +316,24 @@ def paged_prefill(config: KernelConfig):
                 T.copy(row_max, previous_row_max)
                 T.fill(row_max, -T.infinity(T.float32))
                 T.reduce_max(score, row_max, dim=1, clear=False)
-                for row in T.Parallel(block_m):
+                for row in T.Parallel(matrix_m):
                     row_max[row] = T.max(row_max[row], previous_row_max[row])
                     row_scale[row] = T.exp2(
                         previous_row_max[row] * scale_log2e
                         - row_max[row] * scale_log2e
                     )
-                for row, column in T.Parallel(block_m, block_n):
+                for row, column in T.Parallel(matrix_m, block_n):
                     score[row, column] = T.exp2(
                         score[row, column] * scale_log2e
                         - row_max[row] * scale_log2e
                     )
                 T.reduce_sum(score, row_sum, dim=1)
-                for row in T.Parallel(block_m):
+                for row in T.Parallel(matrix_m):
                     normalizer[row] = (
                         normalizer[row] * row_scale[row] + row_sum[row]
                     )
                 T.copy(score, probability)
-                for row, component in T.Parallel(block_m, HEAD_DIM):
+                for row, component in T.Parallel(matrix_m, HEAD_DIM):
                     accumulator[row, component] *= row_scale[row]
                 T.gemm(
                     probability,
@@ -320,23 +342,28 @@ def paged_prefill(config: KernelConfig):
                     policy=T.GemmWarpPolicy.FullRow,
                 )
 
-            for row, component in T.Parallel(block_m, HEAD_DIM):
+            for row, component in T.Parallel(matrix_m, HEAD_DIM):
                 accumulator[row, component] /= normalizer[row]
             T.copy(accumulator, output_shared)
-            for row in T.Parallel(block_m):
+            for row in T.Parallel(matrix_m):
                 normalizer[row] = (
                     T.log2(normalizer[row]) + row_max[row] * scale_log2e
                 )
-            for row, component in T.Parallel(block_m, HEAD_DIM):
-                query_index = query_block * block_m + row
+            for row, component in T.Parallel(matrix_m, HEAD_DIM):
+                query_index = query_block * block_m + row // head_group
                 if query_index < query_len:
                     output[
-                        query_start + query_index, query_head, component
+                        query_start + query_index,
+                        query_head_start + row % head_group,
+                        component,
                     ] = output_shared[row, component]
-            for row in T.Parallel(block_m):
-                query_index = query_block * block_m + row
+            for row in T.Parallel(matrix_m):
+                query_index = query_block * block_m + row // head_group
                 if query_index < query_len:
-                    lse[query_start + query_index, query_head] = normalizer[row]
+                    lse[
+                        query_start + query_index,
+                        query_head_start + row % head_group,
+                    ] = normalizer[row]
 
     return main
 
