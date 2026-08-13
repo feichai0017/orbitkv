@@ -9,7 +9,7 @@
 use crate::attention::{
     Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan,
     Bf16SingleDecodeArgs, Bf16SingleDecodePlan, PagedBatchDecodeEnqueueError,
-    SingleDecodeEnqueueError,
+    PagedBatchDecodeHostProfile, SingleDecodeEnqueueError,
 };
 use crate::command::{
     BindingMemorySummary, CheckedBindings, CommandCompletion, CommandCompletionError, CommandError,
@@ -196,6 +196,9 @@ pub struct EngineInteropHostProfile {
     setup_host_nanoseconds: u64,
     pre_handoff_host_nanoseconds: u64,
     provider_host_nanoseconds: u64,
+    provider_preflight_host_nanoseconds: u64,
+    provider_metadata_host_nanoseconds: u64,
+    provider_attention_host_nanoseconds: u64,
     status_readback_host_nanoseconds: u64,
     post_handoff_host_nanoseconds: u64,
 }
@@ -215,6 +218,18 @@ impl EngineInteropHostProfile {
 
     pub const fn provider_host_nanoseconds(self) -> u64 {
         self.provider_host_nanoseconds
+    }
+
+    pub const fn provider_preflight_host_nanoseconds(self) -> u64 {
+        self.provider_preflight_host_nanoseconds
+    }
+
+    pub const fn provider_metadata_host_nanoseconds(self) -> u64 {
+        self.provider_metadata_host_nanoseconds
+    }
+
+    pub const fn provider_attention_host_nanoseconds(self) -> u64 {
+        self.provider_attention_host_nanoseconds
     }
 
     pub const fn status_readback_host_nanoseconds(self) -> u64 {
@@ -519,13 +534,20 @@ impl EngineCommand<'_> {
     fn enqueue_into(
         self,
         scope: &mut crate::command::CommandScope<'_>,
-    ) -> Result<(), EngineProviderError> {
+        host_profiling_enabled: bool,
+    ) -> Result<Option<PagedBatchDecodeHostProfile>, EngineProviderError> {
         match self {
             Self::Bf16SingleDecode { plan, args } => {
-                plan.enqueue_into(scope, args).map_err(Into::into)
+                plan.enqueue_into(scope, args)?;
+                Ok(None)
             }
             Self::Bf16PagedBatchDecode { plan, args } => {
-                plan.enqueue_into(scope, args).map_err(Into::into)
+                if host_profiling_enabled {
+                    Ok(Some(plan.enqueue_into_profiled(scope, args)?))
+                } else {
+                    plan.enqueue_into(scope, args)?;
+                    Ok(None)
+                }
             }
         }
     }
@@ -694,15 +716,18 @@ impl EngineInteropQueue {
         }
         let pre_handoff_host_nanoseconds = elapsed_nanoseconds(pre_handoff_started);
         let provider_started = self.host_profiling_enabled.then(Instant::now);
-        if let Err(error) = command.enqueue_into(&mut scope) {
-            return Err(settle_started_failure(
-                Arc::clone(&self.shared),
-                slot,
-                scope.finish(),
-                EngineEnqueuePrimaryFailure::Provider(error),
-                authority,
-            ));
-        }
+        let provider_profile = match command.enqueue_into(&mut scope, self.host_profiling_enabled) {
+            Ok(profile) => profile.unwrap_or_default(),
+            Err(error) => {
+                return Err(settle_started_failure(
+                    Arc::clone(&self.shared),
+                    slot,
+                    scope.finish(),
+                    EngineEnqueuePrimaryFailure::Provider(error),
+                    authority,
+                ));
+            }
+        };
         let provider_host_nanoseconds = elapsed_nanoseconds(provider_started);
 
         let status_readback_started = self.host_profiling_enabled.then(Instant::now);
@@ -739,6 +764,9 @@ impl EngineInteropQueue {
                 setup_host_nanoseconds,
                 pre_handoff_host_nanoseconds,
                 provider_host_nanoseconds,
+                provider_preflight_host_nanoseconds: provider_profile.preflight_host_nanoseconds(),
+                provider_metadata_host_nanoseconds: provider_profile.metadata_host_nanoseconds(),
+                provider_attention_host_nanoseconds: provider_profile.attention_host_nanoseconds(),
                 status_readback_host_nanoseconds,
                 post_handoff_host_nanoseconds,
             });

@@ -7,6 +7,8 @@
 mod decode;
 mod prefill;
 
+pub(crate) use decode::PagedBatchDecodeHostProfile;
+
 pub use decode::{
     Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan,
     Bf16SingleDecodeArgs, Bf16SingleDecodePlan, Bf16SingleDecodeSplitKArgs,

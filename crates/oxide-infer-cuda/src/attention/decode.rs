@@ -1489,6 +1489,27 @@ pub enum Bf16PagedBatchDecodeAlgorithm {
     TokenParallel8,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PagedBatchDecodeHostProfile {
+    preflight_host_nanoseconds: u64,
+    metadata_host_nanoseconds: u64,
+    attention_host_nanoseconds: u64,
+}
+
+impl PagedBatchDecodeHostProfile {
+    pub(crate) const fn preflight_host_nanoseconds(self) -> u64 {
+        self.preflight_host_nanoseconds
+    }
+
+    pub(crate) const fn metadata_host_nanoseconds(self) -> u64 {
+        self.metadata_host_nanoseconds
+    }
+
+    pub(crate) const fn attention_host_nanoseconds(self) -> u64 {
+        self.attention_host_nanoseconds
+    }
+}
+
 const fn paged_batch_decode_algorithm(
     spec: Bf16PagedBatchDecodeSpec,
 ) -> Bf16PagedBatchDecodeAlgorithm {
@@ -1543,6 +1564,26 @@ impl Bf16PagedBatchDecodePlan {
         scope: &mut CommandScope<'_>,
         args: Bf16PagedBatchDecodeArgs,
     ) -> Result<(), PagedBatchDecodeEnqueueError> {
+        self.enqueue_into_impl(scope, args, None)
+    }
+
+    pub(crate) fn enqueue_into_profiled(
+        &self,
+        scope: &mut CommandScope<'_>,
+        args: Bf16PagedBatchDecodeArgs,
+    ) -> Result<PagedBatchDecodeHostProfile, PagedBatchDecodeEnqueueError> {
+        let mut profile = PagedBatchDecodeHostProfile::default();
+        self.enqueue_into_impl(scope, args, Some(&mut profile))?;
+        Ok(profile)
+    }
+
+    fn enqueue_into_impl(
+        &self,
+        scope: &mut CommandScope<'_>,
+        args: Bf16PagedBatchDecodeArgs,
+        mut profile: Option<&mut PagedBatchDecodeHostProfile>,
+    ) -> Result<(), PagedBatchDecodeEnqueueError> {
+        let preflight_started = profile.is_some().then(std::time::Instant::now);
         let page_indices_len = {
             let resolved = scope.resolve_rrrrrrrww(
                 args.query,
@@ -1602,6 +1643,10 @@ impl Bf16PagedBatchDecodePlan {
                 PAGED_BATCH_DECODE_PAGE_SIZE,
             ),
         )?;
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.preflight_host_nanoseconds = elapsed_nanoseconds(preflight_started);
+        }
+        let metadata_started = profile.is_some().then(std::time::Instant::now);
         let permit = scope.prepare_command()?;
         let (function, validation_result) = {
             let resolved = scope.resolve_rrrw(
@@ -1623,7 +1668,11 @@ impl Bf16PagedBatchDecodePlan {
             (self.metadata_launch.function().clone(), result)
         };
         record_paged_metadata_launch(scope, status, permit, function, validation_result)?;
+        if let Some(profile) = profile.as_deref_mut() {
+            profile.metadata_host_nanoseconds = elapsed_nanoseconds(metadata_started);
+        }
 
+        let attention_started = profile.is_some().then(std::time::Instant::now);
         let permit = scope.prepare_command()?;
         let (function, launch_result) = {
             let resolved = scope.resolve_rrrrrrrww(
@@ -1735,8 +1784,18 @@ impl Bf16PagedBatchDecodePlan {
                 }
             }
         };
-        record_paged_launch(scope, permit, function, launch_result)
+        let result = record_paged_launch(scope, permit, function, launch_result);
+        if let Some(profile) = profile {
+            profile.attention_host_nanoseconds = elapsed_nanoseconds(attention_started);
+        }
+        result
     }
+}
+
+fn elapsed_nanoseconds(started: Option<std::time::Instant>) -> u64 {
+    started
+        .map(|started| u64::try_from(started.elapsed().as_nanos()).unwrap_or(u64::MAX))
+        .unwrap_or_default()
 }
 
 /// Immutable partial-state and merge launches for split-K single decode.
