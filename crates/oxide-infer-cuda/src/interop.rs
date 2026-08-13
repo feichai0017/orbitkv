@@ -9,7 +9,7 @@
 use crate::attention::{
     Bf16PagedBatchDecodeAlgorithm, Bf16PagedBatchDecodeArgs, Bf16PagedBatchDecodePlan,
     Bf16SingleDecodeArgs, Bf16SingleDecodePlan, PagedBatchDecodeEnqueueError,
-    PagedBatchDecodeHostProfile, SingleDecodeEnqueueError,
+    PagedBatchDecodeHostProfile, SingleDecodeEnqueueError, TrustedBf16PagedBatchDecodeArgs,
 };
 use crate::command::{
     BindingMemorySummary, CheckedBindings, CommandCompletion, CommandCompletionError, CommandError,
@@ -28,6 +28,8 @@ use std::time::Instant;
 use thiserror::Error;
 
 const SPECIAL_STREAM_MAX_ADDRESS: usize = 2;
+const PAGED_BATCH_DECODE_CHECKED_COMMANDS: usize = 3;
+const PAGED_BATCH_DECODE_TRUSTED_COMMANDS: usize = 1;
 
 /// A validated, retained borrow of an engine-owned CUDA stream.
 pub struct ExternalCudaStream {
@@ -163,6 +165,22 @@ pub enum EngineAlgorithm {
     PagedBatchDecodeTokenParallel8,
 }
 
+/// Metadata validation used by one paged operator submission.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EngineMetadataValidation {
+    DeviceChecked,
+    TrustedByAdapter,
+}
+
+const fn paged_batch_decode_required_commands(
+    metadata_validation: EngineMetadataValidation,
+) -> usize {
+    match metadata_validation {
+        EngineMetadataValidation::DeviceChecked => PAGED_BATCH_DECODE_CHECKED_COMMANDS,
+        EngineMetadataValidation::TrustedByAdapter => PAGED_BATCH_DECODE_TRUSTED_COMMANDS,
+    }
+}
+
 /// Contract dimensions recorded without retaining a plan or allocating.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum EngineExecutionShape {
@@ -259,6 +277,7 @@ pub struct EngineExecutionTrace {
     algorithm: EngineAlgorithm,
     shape: EngineExecutionShape,
     paged_kv_layout: Option<PagedKvLayout>,
+    metadata_validation: Option<EngineMetadataValidation>,
     handoff: EngineStreamHandoff,
     adapter_device_to_device_copies: usize,
     host_profile: Option<EngineInteropHostProfile>,
@@ -283,6 +302,10 @@ impl EngineExecutionTrace {
 
     pub const fn paged_kv_layout(&self) -> Option<PagedKvLayout> {
         self.paged_kv_layout
+    }
+
+    pub const fn metadata_validation(&self) -> Option<EngineMetadataValidation> {
+        self.metadata_validation
     }
 
     pub const fn memory(&self) -> BindingMemorySummary {
@@ -439,7 +462,6 @@ struct EngineHandoffSlot {
 }
 
 /// One immutable plan and its checked argument handles.
-#[derive(Clone, Copy)]
 pub enum EngineCommand<'a> {
     Bf16SingleDecode {
         plan: &'a Bf16SingleDecodePlan,
@@ -449,82 +471,102 @@ pub enum EngineCommand<'a> {
         plan: &'a Bf16PagedBatchDecodePlan,
         args: Bf16PagedBatchDecodeArgs,
     },
+    Bf16PagedBatchDecodeTrustedMetadata {
+        plan: &'a Bf16PagedBatchDecodePlan,
+        args: TrustedBf16PagedBatchDecodeArgs,
+    },
 }
 
 impl EngineCommand<'_> {
-    const fn operator(self) -> EngineOperator {
+    const fn operator(&self) -> EngineOperator {
         match self {
             Self::Bf16SingleDecode { .. } => EngineOperator::Bf16SingleDecode,
-            Self::Bf16PagedBatchDecode { .. } => EngineOperator::Bf16PagedBatchDecode,
+            Self::Bf16PagedBatchDecode { .. }
+            | Self::Bf16PagedBatchDecodeTrustedMetadata { .. } => {
+                EngineOperator::Bf16PagedBatchDecode
+            }
         }
     }
 
-    const fn binding_count(self) -> usize {
+    const fn binding_count(&self) -> usize {
         match self {
             Self::Bf16SingleDecode { .. } => SINGLE_DECODE_BINDING_COUNT,
-            Self::Bf16PagedBatchDecode { .. } => PAGED_BATCH_DECODE_BINDING_COUNT,
+            Self::Bf16PagedBatchDecode { .. }
+            | Self::Bf16PagedBatchDecodeTrustedMetadata { .. } => PAGED_BATCH_DECODE_BINDING_COUNT,
         }
     }
 
-    const fn required_commands(self) -> usize {
+    const fn required_commands(&self) -> usize {
         match self {
             Self::Bf16SingleDecode { .. } => 1,
-            Self::Bf16PagedBatchDecode { .. } => 3,
+            Self::Bf16PagedBatchDecode { .. } => {
+                paged_batch_decode_required_commands(EngineMetadataValidation::DeviceChecked)
+            }
+            Self::Bf16PagedBatchDecodeTrustedMetadata { .. } => {
+                paged_batch_decode_required_commands(EngineMetadataValidation::TrustedByAdapter)
+            }
         }
     }
 
     fn trace(
-        self,
+        &self,
         memory: BindingMemorySummary,
         bindings: &CheckedBindings,
     ) -> Option<EngineExecutionTrace> {
-        let (addresses, algorithm, shape, paged_kv_layout) = match self {
+        let (plan, metadata_validation) = match self {
             Self::Bf16SingleDecode { plan, .. } => {
                 let spec = plan.spec();
-                (
-                    EngineBufferAddresses::SingleDecode(bindings.exact_device_addresses()?),
-                    EngineAlgorithm::SingleDecodeDirect,
-                    EngineExecutionShape::SingleDecode {
+                return Some(EngineExecutionTrace {
+                    memory,
+                    buffer_addresses: EngineBufferAddresses::SingleDecode(
+                        bindings.exact_device_addresses()?,
+                    ),
+                    operator: EngineOperator::Bf16SingleDecode,
+                    algorithm: EngineAlgorithm::SingleDecodeDirect,
+                    shape: EngineExecutionShape::SingleDecode {
                         kv_len: spec.kv_len(),
                         query_heads: spec.num_query_heads(),
                         kv_heads: spec.num_kv_heads(),
                         head_dim: spec.head_dim(),
                     },
-                    None,
-                )
+                    paged_kv_layout: None,
+                    metadata_validation: None,
+                    handoff: EngineStreamHandoff::ExternalEventBridge,
+                    adapter_device_to_device_copies: 0,
+                    host_profile: None,
+                });
             }
             Self::Bf16PagedBatchDecode { plan, .. } => {
-                let spec = plan.spec();
-                let algorithm = match plan.algorithm() {
-                    Bf16PagedBatchDecodeAlgorithm::Direct => {
-                        EngineAlgorithm::PagedBatchDecodeDirect
-                    }
-                    Bf16PagedBatchDecodeAlgorithm::TokenParallel8 => {
-                        EngineAlgorithm::PagedBatchDecodeTokenParallel8
-                    }
-                };
-                (
-                    EngineBufferAddresses::PagedBatchDecode(bindings.exact_device_addresses()?),
-                    algorithm,
-                    EngineExecutionShape::PagedBatchDecode {
-                        batch_size: spec.batch_size(),
-                        max_num_pages: spec.max_num_pages(),
-                        query_heads: spec.num_query_heads(),
-                        kv_heads: spec.num_kv_heads(),
-                        head_dim: spec.head_dim(),
-                        page_size: spec.page_size(),
-                    },
-                    Some(spec.kv_layout()),
-                )
+                (plan, EngineMetadataValidation::DeviceChecked)
+            }
+            Self::Bf16PagedBatchDecodeTrustedMetadata { plan, .. } => {
+                (plan, EngineMetadataValidation::TrustedByAdapter)
+            }
+        };
+        let spec = plan.spec();
+        let algorithm = match plan.algorithm() {
+            Bf16PagedBatchDecodeAlgorithm::Direct => EngineAlgorithm::PagedBatchDecodeDirect,
+            Bf16PagedBatchDecodeAlgorithm::TokenParallel8 => {
+                EngineAlgorithm::PagedBatchDecodeTokenParallel8
             }
         };
         Some(EngineExecutionTrace {
             memory,
-            buffer_addresses: addresses,
-            operator: self.operator(),
+            buffer_addresses: EngineBufferAddresses::PagedBatchDecode(
+                bindings.exact_device_addresses()?,
+            ),
+            operator: EngineOperator::Bf16PagedBatchDecode,
             algorithm,
-            shape,
-            paged_kv_layout,
+            shape: EngineExecutionShape::PagedBatchDecode {
+                batch_size: spec.batch_size(),
+                max_num_pages: spec.max_num_pages(),
+                query_heads: spec.num_query_heads(),
+                kv_heads: spec.num_kv_heads(),
+                head_dim: spec.head_dim(),
+                page_size: spec.page_size(),
+            },
+            paged_kv_layout: Some(spec.kv_layout()),
+            metadata_validation: Some(metadata_validation),
             handoff: EngineStreamHandoff::ExternalEventBridge,
             adapter_device_to_device_copies: 0,
             host_profile: None,
@@ -546,6 +588,16 @@ impl EngineCommand<'_> {
                     Ok(Some(plan.enqueue_into_profiled(scope, args)?))
                 } else {
                     plan.enqueue_into(scope, args)?;
+                    Ok(None)
+                }
+            }
+            Self::Bf16PagedBatchDecodeTrustedMetadata { plan, args } => {
+                if host_profiling_enabled {
+                    Ok(Some(
+                        plan.enqueue_trusted_metadata_into_profiled(scope, args)?,
+                    ))
+                } else {
+                    plan.enqueue_trusted_metadata_into(scope, args)?;
                     Ok(None)
                 }
             }
@@ -1254,6 +1306,7 @@ mod tests {
                 head_dim: 128,
             },
             paged_kv_layout: None,
+            metadata_validation: None,
             handoff: EngineStreamHandoff::ExternalEventBridge,
             adapter_device_to_device_copies: 0,
             host_profile: None,
@@ -1261,5 +1314,17 @@ mod tests {
         assert!(trace.is_adapter_zero_copy());
         assert_eq!(trace.provider(), "oxide-infer-cuda");
         assert_eq!(trace.operator(), EngineOperator::Bf16SingleDecode);
+    }
+
+    #[test]
+    fn trusted_paged_decode_reserves_one_command() {
+        assert_eq!(
+            paged_batch_decode_required_commands(EngineMetadataValidation::DeviceChecked),
+            PAGED_BATCH_DECODE_CHECKED_COMMANDS
+        );
+        assert_eq!(
+            paged_batch_decode_required_commands(EngineMetadataValidation::TrustedByAdapter),
+            PAGED_BATCH_DECODE_TRUSTED_COMMANDS
+        );
     }
 }
