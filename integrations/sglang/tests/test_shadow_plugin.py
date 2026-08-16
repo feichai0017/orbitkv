@@ -60,6 +60,97 @@ class FakeSWATokenToKVPoolAllocator:
         self.swa_available += value.numel()
 
 
+class FakeOwner:
+    def __init__(self):
+        self.commands = []
+
+    def command(self, command):
+        self.commands.append(command)
+        if command["op"] == "plan_reclamation":
+            return {
+                "status": "reclamation",
+                "certificate": {
+                    "schema": "orbitkv.sglang-retirement-certificate.v1",
+                    "plan_fingerprint": "fnv1a64:test",
+                    "certificate_id": 7,
+                    "request_id": command["request_id"],
+                    "class_name": "swa",
+                    "page_tokens": 16,
+                    "token_start": command["observed_evicted_seqlen"],
+                    "token_end_exclusive": 32,
+                    "semantic_proof": {
+                        "kind": "sliding_window",
+                        "semantic_frontier": command["semantic_frontier"],
+                        "window_tokens": 32,
+                        "maximum_reclaimable_end": 32,
+                    },
+                    "execution_proof": {
+                        "kind": "non_overlap_scheduler_barrier",
+                        "execution_epoch": command["execution_epoch"],
+                    },
+                },
+            }
+        if command["op"] == "commit_reclamations":
+            return {
+                "status": "committed",
+                "certificate_ids": command["certificate_ids"],
+            }
+        if command["op"] == "release_request":
+            return {"status": "released", "request_id": command["request_id"]}
+        raise AssertionError(command)
+
+
+class FakeReqToToken:
+    def __getitem__(self, key):
+        _, token_range = key
+        return FakeTensor(token_range.stop - token_range.start)
+
+
+class FakeTreeCache:
+    page_size = 16
+
+    @staticmethod
+    def is_chunk_cache() -> bool:
+        return True
+
+
+class FakeSpecAlgorithm:
+    @staticmethod
+    def is_none() -> bool:
+        return True
+
+
+class FakeOwningAllocator:
+    def __init__(self, events, fail_free=False):
+        self.events = events
+        self.fail_free = fail_free
+
+    def free_swa(self, value):
+        self.events.append(("physical_free", value.numel()))
+        if self.fail_free:
+            raise RuntimeError("injected physical free failure")
+
+
+class FakeOwningReq:
+    rid = "r0"
+    req_pool_idx = 0
+    decode_batch_idx = 3
+    extend_batch_idx = 0
+
+    def __init__(self):
+        self.kv = types.SimpleNamespace(swa_evicted_seqlen=0)
+
+
+class FakeOwningBatch:
+    enable_overlap = False
+    tree_cache = FakeTreeCache()
+    spec_algorithm = FakeSpecAlgorithm()
+    req_to_token_pool = types.SimpleNamespace(req_to_token=FakeReqToToken())
+
+    def __init__(self, allocator):
+        self.token_to_kv_pool_allocator = allocator
+
+
 def _module(name: str, *, package: bool = True) -> types.ModuleType:
     module = types.ModuleType(name)
     if package:
@@ -195,6 +286,92 @@ class ShadowPluginTests(unittest.TestCase):
                 self.assertEqual(summary["peak_swa_used_tokens"], 112)
                 self.assertEqual(summary["peak_full_used_tokens"], 112)
                 self.assertEqual(summary["minimum_expected_swa_slots"], 1040)
+
+    def test_owner_commits_only_after_physical_free_group(self):
+        from orbitkv_sglang import plugin
+
+        events = []
+        owner = FakeOwner()
+        batch = FakeOwningBatch(FakeOwningAllocator(events))
+        req = FakeOwningReq()
+        old_owner = plugin._OWNER
+        old_policy = plugin._POLICY
+        old_trace = os.environ.get("ORBITKV_TRACE_ALLOCATIONS")
+        try:
+            plugin._OWNER = owner
+            plugin._POLICY = {
+                "plan_fingerprint": "fnv1a64:test",
+                "page_tokens": 16,
+            }
+            os.environ["ORBITKV_TRACE_ALLOCATIONS"] = "0"
+
+            def original(current_batch):
+                plugin._own_swa_reclamation(
+                    lambda *_args, **_kwargs: None,
+                    current_batch,
+                    req,
+                    64,
+                )
+                events.append(("free_group_end", None))
+
+            plugin._commit_swa_reclamations(original, batch)
+        finally:
+            plugin._OWNER = old_owner
+            plugin._POLICY = old_policy
+            if old_trace is None:
+                os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
+            else:
+                os.environ["ORBITKV_TRACE_ALLOCATIONS"] = old_trace
+
+        self.assertEqual(
+            [command["op"] for command in owner.commands],
+            ["plan_reclamation", "commit_reclamations"],
+        )
+        self.assertEqual(events, [("physical_free", 32), ("free_group_end", None)])
+        self.assertEqual(req.kv.swa_evicted_seqlen, 32)
+
+    def test_owner_does_not_commit_failed_physical_free(self):
+        from orbitkv_sglang import plugin
+
+        owner = FakeOwner()
+        batch = FakeOwningBatch(FakeOwningAllocator([], fail_free=True))
+        req = FakeOwningReq()
+        old_owner = plugin._OWNER
+        old_policy = plugin._POLICY
+        old_trace = os.environ.get("ORBITKV_TRACE_ALLOCATIONS")
+        try:
+            plugin._OWNER = owner
+            plugin._POLICY = {
+                "plan_fingerprint": "fnv1a64:test",
+                "page_tokens": 16,
+            }
+            os.environ["ORBITKV_TRACE_ALLOCATIONS"] = "0"
+
+            def original(current_batch):
+                plugin._own_swa_reclamation(
+                    lambda *_args, **_kwargs: None,
+                    current_batch,
+                    req,
+                    64,
+                )
+
+            with self.assertRaisesRegex(
+                RuntimeError, "injected physical free failure"
+            ):
+                plugin._commit_swa_reclamations(original, batch)
+        finally:
+            plugin._OWNER = old_owner
+            plugin._POLICY = old_policy
+            if old_trace is None:
+                os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
+            else:
+                os.environ["ORBITKV_TRACE_ALLOCATIONS"] = old_trace
+
+        self.assertEqual(
+            [command["op"] for command in owner.commands],
+            ["plan_reclamation"],
+        )
+        self.assertEqual(req.kv.swa_evicted_seqlen, 0)
 
 
 if __name__ == "__main__":

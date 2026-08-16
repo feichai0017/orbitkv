@@ -87,43 +87,64 @@ Enable radix cache and separately measure:
 This stage is deliberately separate because cached shared state is retained for
 future requests and is not request-live state.
 
-## Stage B: Offline replacement replay
+## Stage B: Owning runtime invariants
 
-Replay the Stage A JSONL trace through OrbitKV's block manager simulator.
-For each event boundary verify:
+The Rust owning block manager now verifies:
 
 ```text
-required read block is resident
-retired block is not reused while pinned
-resident blocks do not exceed the compiled bound plus declared headroom
-release returns all unshared blocks
+logical identity includes request + class + ordinal
+immutable views carry physical slot + generation
+semantic death does not imply immediate physical reuse
+out-of-order completion advances only a contiguous execution frontier
+certified slots remain unavailable until backend commit
+failed batch commit leaves every certificate pending
 ```
 
-The first owning adapter is blocked until replay is exact for all A0 traces.
+The core tests cover multi-request identity, stale-generation rejection,
+out-of-order submission completion, request release, and two-phase
+certificate commit.
 
-## Stage C: Owning allocator adapter
+## Stage C: Owning reclamation adapter
 
-The owning adapter will implement SGLang's
-`BaseTokenToKVPoolAllocator` contract but use OrbitKV for block identity,
-allocation, and retirement. SGLang continues to own:
+The first owning adapter is implemented for the strict SWA chunk-cache path.
+OrbitKV owns the retirement frontier and proof; SGLang remains the physical
+page backend. The protocol is:
 
-- scheduling;
-- radix-tree policy;
-- model execution;
-- attention kernels;
-- CUDA Graph execution;
-- network and connector transport.
+```text
+Rust plan_reclamation
+    -> retirement certificate
+    -> SGLang free_swa group
+    -> Rust commit_reclamations
+```
 
-The first owning implementation uses SGLang's existing physical KV pools and
-attention kernels. It does not introduce a ring kernel or VMM.
+The adapter rejects radix cache, overlap scheduling, and speculative decoding
+instead of silently applying an unqualified execution proof. SGLang continues
+to own scheduling, model execution, attention kernels, request protocol, and
+the current physical tensor pools.
 
-Comparators:
+The H20 comparison uses:
 
-1. stock SGLang hybrid allocator;
-2. OrbitKV with the same page size and kernels;
-3. all-full fallback as a diagnostic only.
+1. generated OrbitKV policy with SGLang-owned reclamation decisions;
+2. the same capacity policy with Rust-owned certificate decisions.
 
-## Stage D: Value gates
+Three fresh-process pairs measured a median Owner/Policy ratio of `1.0062x`
+with identical capacity and output digests. See
+`docs/h20-owning-vmm-validation-20260817.md`.
+
+## Stage D: NVIDIA physical backend
+
+The isolated `orbitkv-cuda` backend implements CUDA Driver API VMM slots. H20
+qualification proved 64 fresh physical backing remaps at one stable virtual
+address, with verified data and no before/after GPU-memory delta.
+
+The H20 minimum VMM granularity is 2 MiB. The optimizer therefore keeps the
+paged backend for small regions and selects VMM only when stable addresses are
+required and rounding amplification is within budget.
+
+VMM is not yet SGLang tensor storage. That integration and CUDA Graph replay
+remain separate gates.
+
+## Stage E: Remaining value gates
 
 ### Correctness gate
 
@@ -143,7 +164,9 @@ At least one:
 - 20% fewer continuation or P/D transfer bytes;
 - materially lower retraction or offload frequency.
 
-The owning adapter's manager overhead must remain below 2% of decode wall time.
+The first owning adapter met the project target of less than 2% median
+control-plane overhead on the recorded three-pair workload. More samples and
+additional request distributions remain required.
 
 ### Research gate
 
@@ -151,10 +174,15 @@ OrbitKV must beat a hand-written Full+SWA manager on at least one workload with
 more than two lifetime classes, or demonstrate that the same compiler adds a
 new retention pattern without changing the runtime state machine.
 
-## Required environment
+## Qualified environment
 
-The current development host has no functioning NVIDIA driver and does not
-contain SGLang's complete Python dependencies. Therefore Stage A GPU results
-are intentionally not reported from this host. Host compiler and lifecycle
-tests remain valid, while all SGLang performance claims require a recorded GPU
-run with source revision, model revision, command, environment, and raw trace.
+Recorded GPU evidence uses:
+
+- NVIDIA H20, compute capability 9.0;
+- driver 535.161.08;
+- PyTorch 2.13.0+cu130;
+- FlashInfer 0.6.17;
+- SGLang `095ec6c997bfdd25d3864cb0ce77a6562a934b96`.
+
+Every performance claim remains scoped to its recorded fixture, disabled
+features, source hashes, and result manifest.

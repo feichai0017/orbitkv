@@ -1,4 +1,6 @@
 target/
+node_modules/
+.astro/
 __pycache__/
 *.py[cod]
 *.egg-info/

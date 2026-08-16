@@ -1,0 +1,86 @@
+---
+import DocsNav from "../components/DocsNav.astro";
+import SiteLayout from "../layouts/SiteLayout.astro";
+import { evidenceRows, metrics, repositoryUrl } from "../data/site";
+---
+
+<SiteLayout
+  title="Evidence | OrbitKV"
+  description="H20 memory, admission, owning-control, and CUDA VMM evidence for OrbitKV."
+  active="Evidence"
+>
+  <header class="page-hero">
+    <p class="eyebrow">Evidence</p>
+    <h1>Each result keeps its boundary.</h1>
+    <p>
+      A result fixes source, GPU, workload, method, and excluded claims.
+    </p>
+  </header>
+
+  <div class="docs-layout">
+    <DocsNav active="Evidence" />
+    <article class="prose">
+      <h2>Current H20 results</h2>
+      <div class="metric-grid compact">
+        {metrics.map((item) => (
+          <article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>
+        ))}
+      </div>
+
+      <h2>Evidence ledger</h2>
+      <table class="evidence-table-native">
+        <thead>
+          <tr><th>Result</th><th>Value</th><th>Contract</th><th>Boundary</th></tr>
+        </thead>
+        <tbody>
+          {evidenceRows.map((item) => (
+            <tr>
+              <td>{item.result}</td>
+              <td><code>{item.value}</code></td>
+              <td>{item.contract}</td>
+              <td>{item.boundary}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <div class="doc-note">
+        <strong>Owning control plane.</strong>
+        <p>
+          Three Policy/Owner pairs produced a median ratio of 1.0062x with
+          identical capacity and output digest. A traced smoke run emitted and
+          committed one SHA-256-bound certificate for <code>[0, 1024)</code>.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/results/h20-owner-ab-20260817/summary.json`}>
+          Owner summary
+        </a>
+      </div>
+
+      <div class="doc-note">
+        <strong>CUDA VMM physical primitive.</strong>
+        <p>
+          Sixty-four fresh physical backings were mapped at one stable virtual
+          address. Every pattern passed, and GPU memory returned to the pre-test
+          value. This is not yet SGLang KV tensor storage.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/results/h20-cuda-vmm-20260817/smoke.json`}>
+          VMM smoke record
+        </a>
+      </div>
+
+      <h2>Current exclusions</h2>
+      <ul>
+        <li>No released-checkpoint model-quality claim.</li>
+        <li>No radix/prefix-cache, speculative, overlap, or CUDA Graph qualification.</li>
+        <li>No claim that VMM already backs SGLang KV tensors.</li>
+        <li>No multi-GPU multicast or fabric-memory claim.</li>
+        <li>One H20 does not qualify other NVIDIA architectures.</li>
+      </ul>
+
+      <p>
+        The complete result index and source hashes are in{" "}
+        <a href={`${repositoryUrl}/tree/main/results`}>results/</a>.
+      </p>
+    </article>
+  </div>
+</SiteLayout>

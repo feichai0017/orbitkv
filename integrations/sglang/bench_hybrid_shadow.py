@@ -56,7 +56,9 @@ def token_digest(outputs: list[dict]) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mode", choices=("stock", "shadow", "policy"), required=True)
+    parser.add_argument(
+        "--mode", choices=("stock", "shadow", "policy", "owner"), required=True
+    )
     parser.add_argument("--model", default=str(DEFAULT_MODEL_PATH))
     parser.add_argument("--plan", default=str(DEFAULT_PLAN_PATH))
     parser.add_argument("--requests", type=int, default=8)
@@ -79,6 +81,7 @@ def main() -> None:
         os.environ["SGLANG_PLUGINS"] = "__orbitkv_disabled__"
         os.environ.pop("ORBITKV_TRACE_PATH", None)
         os.environ.pop("ORBITKV_SGLANG_POLICY", None)
+        os.environ.pop("ORBITKV_SGLANG_OWNING", None)
     else:
         os.environ["SGLANG_PLUGINS"] = "orbitkv_shadow"
         os.environ["ORBITKV_TRACE_PATH"] = args.trace
@@ -86,14 +89,18 @@ def main() -> None:
         os.environ["ORBITKV_TRACE_ALLOCATIONS"] = (
             "0" if args.no_trace_allocations else "1"
         )
-        if args.mode == "policy":
+        if args.mode in ("policy", "owner"):
             os.environ["ORBITKV_SGLANG_POLICY"] = str(plan_path)
             os.environ["ORBITKV_SGLANG_EVICTION_INTERVAL"] = str(
                 args.eviction_interval
             )
+            os.environ["ORBITKV_SGLANG_OWNING"] = (
+                "1" if args.mode == "owner" else "0"
+            )
         else:
             os.environ.pop("ORBITKV_SGLANG_POLICY", None)
             os.environ.pop("ORBITKV_SGLANG_EVICTION_INTERVAL", None)
+            os.environ.pop("ORBITKV_SGLANG_OWNING", None)
         Path(args.trace).unlink(missing_ok=True)
 
     engine_args = dict(
@@ -149,7 +156,9 @@ def main() -> None:
             "decode_tokens": args.decode_tokens,
             "iterations": args.iterations,
             "eviction_interval": (
-                args.eviction_interval if args.mode == "policy" else 128
+                args.eviction_interval
+                if args.mode in ("policy", "owner")
+                else 128
             ),
             "load_seconds": loaded - started,
             "iteration_seconds": iteration_seconds,
@@ -169,7 +178,7 @@ def main() -> None:
             "gpu_after_workload": after_workload,
         }
 
-    if args.mode in ("shadow", "policy") and not args.no_trace_allocations:
+    if args.mode in ("shadow", "policy", "owner") and not args.no_trace_allocations:
         summary = subprocess.check_output(
             [
                 args.orbitkv_bin,

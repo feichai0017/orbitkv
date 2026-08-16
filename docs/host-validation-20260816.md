@@ -1,5 +1,9 @@
 # Host Validation — 2026-08-16
 
+> Historical host-only baseline. Current H20 system evidence is recorded in
+> `docs/h20-sglang-validation-20260817.md` and
+> `docs/h20-owning-vmm-validation-20260817.md`.
+
 ## Scope
 
 This record validates the independent Rust OrbitKV compiler, reference

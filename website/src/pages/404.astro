@@ -1,0 +1,13 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<SiteLayout title="Not found | OrbitKV">
+  <header class="page-hero">
+    <p class="eyebrow">404</p>
+    <h1>This state is not resident.</h1>
+    <p>The requested page has no live materialization.</p>
+    <a class="button primary" href={`${base}/`}>Return to OrbitKV</a>
+  </header>
+</SiteLayout>

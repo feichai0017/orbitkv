@@ -1,0 +1,623 @@
+{
+  "date": "2026-08-17",
+  "gpu": "NVIDIA H20",
+  "pairs": [
+    {
+      "pair": 0,
+      "runs": [
+        {
+          "completion_tokens": 256,
+          "decode_tokens": 32,
+          "engine_args": {
+            "attention_backend": "triton",
+            "chunked_prefill_size": 2048,
+            "context_length": 8192,
+            "disable_cuda_graph": true,
+            "disable_overlap_schedule": true,
+            "disable_radix_cache": true,
+            "load_format": "dummy",
+            "log_level": "error",
+            "max_running_requests": 32,
+            "mem_fraction_static": 0.05,
+            "model_path": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+            "moe_runner_backend": "triton",
+            "page_size": 16,
+            "random_seed": 20260816,
+            "skip_tokenizer_init": true,
+            "trust_remote_code": false
+          },
+          "eviction_interval": 32,
+          "gpu_after_load": {
+            "memory.free": "91903",
+            "memory.used": "5381",
+            "name": "NVIDIA H20",
+            "power.draw": "118.51",
+            "temperature.gpu": "34",
+            "utilization.gpu": "3",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_after_workload": {
+            "memory.free": "91845",
+            "memory.used": "5439",
+            "name": "NVIDIA H20",
+            "power.draw": "122.15",
+            "temperature.gpu": "34",
+            "utilization.gpu": "7",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_before": {
+            "memory.free": "97281",
+            "memory.used": "3",
+            "name": "NVIDIA H20",
+            "power.draw": "116.75",
+            "temperature.gpu": "34",
+            "utilization.gpu": "0",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "iteration_seconds": [
+            6.509410530328751
+          ],
+          "iterations": 1,
+          "load_seconds": 12.432075824588537,
+          "max_running_requests": 32,
+          "mode": "policy",
+          "model": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "76cf04ef40736dcfe5761952139ce6c1e73c99b41b1a0a7cf05ccead8be3333d",
+          "plan": "/workspace/orbitkv/examples/gpt_oss_hybrid_62l.json",
+          "process_wall_seconds": 24.786271333694458,
+          "prompt_tokens": 6000,
+          "request_e2e_seconds": [
+            6.508130025118589,
+            6.50813639909029,
+            6.508140694350004,
+            6.508135586977005,
+            6.508140783756971,
+            6.507895093411207,
+            6.50789749994874,
+            6.50790436565876
+          ],
+          "requests": 8,
+          "schema": "orbitkv.sglang-ab.v1",
+          "server_memory": {
+            "graph": {
+              "decode": 0.0,
+              "draft_decode": 0.0,
+              "draft_extend": 0.0,
+              "draft_prefill": 0.0,
+              "prefill": 0.0,
+              "target_verify": 0.0
+            },
+            "kvcache": 4.608,
+            "startup_available": 89.749,
+            "token_capacity": 49888,
+            "token_capacity_swa": 36848,
+            "weight": 0.057
+          },
+          "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96"
+        },
+        {
+          "completion_tokens": 256,
+          "decode_tokens": 32,
+          "engine_args": {
+            "attention_backend": "triton",
+            "chunked_prefill_size": 2048,
+            "context_length": 8192,
+            "disable_cuda_graph": true,
+            "disable_overlap_schedule": true,
+            "disable_radix_cache": true,
+            "load_format": "dummy",
+            "log_level": "error",
+            "max_running_requests": 32,
+            "mem_fraction_static": 0.05,
+            "model_path": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+            "moe_runner_backend": "triton",
+            "page_size": 16,
+            "random_seed": 20260816,
+            "skip_tokenizer_init": true,
+            "trust_remote_code": false
+          },
+          "eviction_interval": 32,
+          "gpu_after_load": {
+            "memory.free": "91903",
+            "memory.used": "5381",
+            "name": "NVIDIA H20",
+            "power.draw": "116.73",
+            "temperature.gpu": "34",
+            "utilization.gpu": "3",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_after_workload": {
+            "memory.free": "91845",
+            "memory.used": "5439",
+            "name": "NVIDIA H20",
+            "power.draw": "122.00",
+            "temperature.gpu": "34",
+            "utilization.gpu": "7",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_before": {
+            "memory.free": "97281",
+            "memory.used": "3",
+            "name": "NVIDIA H20",
+            "power.draw": "116.83",
+            "temperature.gpu": "34",
+            "utilization.gpu": "0",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "iteration_seconds": [
+            6.436081539839506
+          ],
+          "iterations": 1,
+          "load_seconds": 12.564509637653828,
+          "max_running_requests": 32,
+          "mode": "owner",
+          "model": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "76cf04ef40736dcfe5761952139ce6c1e73c99b41b1a0a7cf05ccead8be3333d",
+          "plan": "/workspace/orbitkv/examples/gpt_oss_hybrid_62l.json",
+          "process_wall_seconds": 24.856274127960205,
+          "prompt_tokens": 6000,
+          "request_e2e_seconds": [
+            6.4347720593214035,
+            6.434785425662994,
+            6.434788953512907,
+            6.43511899933219,
+            6.435127731412649,
+            6.435134522616863,
+            6.434891521930695,
+            6.434904366731644
+          ],
+          "requests": 8,
+          "schema": "orbitkv.sglang-ab.v1",
+          "server_memory": {
+            "graph": {
+              "decode": 0.0,
+              "draft_decode": 0.0,
+              "draft_extend": 0.0,
+              "draft_prefill": 0.0,
+              "prefill": 0.0,
+              "target_verify": 0.0
+            },
+            "kvcache": 4.608,
+            "startup_available": 89.749,
+            "token_capacity": 49888,
+            "token_capacity_swa": 36848,
+            "weight": 0.057
+          },
+          "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96"
+        }
+      ]
+    },
+    {
+      "pair": 1,
+      "runs": [
+        {
+          "completion_tokens": 256,
+          "decode_tokens": 32,
+          "engine_args": {
+            "attention_backend": "triton",
+            "chunked_prefill_size": 2048,
+            "context_length": 8192,
+            "disable_cuda_graph": true,
+            "disable_overlap_schedule": true,
+            "disable_radix_cache": true,
+            "load_format": "dummy",
+            "log_level": "error",
+            "max_running_requests": 32,
+            "mem_fraction_static": 0.05,
+            "model_path": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+            "moe_runner_backend": "triton",
+            "page_size": 16,
+            "random_seed": 20260816,
+            "skip_tokenizer_init": true,
+            "trust_remote_code": false
+          },
+          "eviction_interval": 32,
+          "gpu_after_load": {
+            "memory.free": "91903",
+            "memory.used": "5381",
+            "name": "NVIDIA H20",
+            "power.draw": "117.63",
+            "temperature.gpu": "34",
+            "utilization.gpu": "3",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_after_workload": {
+            "memory.free": "91845",
+            "memory.used": "5439",
+            "name": "NVIDIA H20",
+            "power.draw": "121.21",
+            "temperature.gpu": "34",
+            "utilization.gpu": "7",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_before": {
+            "memory.free": "97281",
+            "memory.used": "3",
+            "name": "NVIDIA H20",
+            "power.draw": "116.77",
+            "temperature.gpu": "34",
+            "utilization.gpu": "0",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "iteration_seconds": [
+            6.295254189521074
+          ],
+          "iterations": 1,
+          "load_seconds": 13.01234558224678,
+          "max_running_requests": 32,
+          "mode": "policy",
+          "model": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "76cf04ef40736dcfe5761952139ce6c1e73c99b41b1a0a7cf05ccead8be3333d",
+          "plan": "/workspace/orbitkv/examples/gpt_oss_hybrid_62l.json",
+          "process_wall_seconds": 25.470834255218506,
+          "prompt_tokens": 6000,
+          "request_e2e_seconds": [
+            6.294327229261398,
+            6.294336386024952,
+            6.294339876621962,
+            6.294337119907141,
+            6.294340640306473,
+            6.294119857251644,
+            6.294120691716671,
+            6.294131837785244
+          ],
+          "requests": 8,
+          "schema": "orbitkv.sglang-ab.v1",
+          "server_memory": {
+            "graph": {
+              "decode": 0.0,
+              "draft_decode": 0.0,
+              "draft_extend": 0.0,
+              "draft_prefill": 0.0,
+              "prefill": 0.0,
+              "target_verify": 0.0
+            },
+            "kvcache": 4.608,
+            "startup_available": 89.749,
+            "token_capacity": 49888,
+            "token_capacity_swa": 36848,
+            "weight": 0.057
+          },
+          "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96"
+        },
+        {
+          "completion_tokens": 256,
+          "decode_tokens": 32,
+          "engine_args": {
+            "attention_backend": "triton",
+            "chunked_prefill_size": 2048,
+            "context_length": 8192,
+            "disable_cuda_graph": true,
+            "disable_overlap_schedule": true,
+            "disable_radix_cache": true,
+            "load_format": "dummy",
+            "log_level": "error",
+            "max_running_requests": 32,
+            "mem_fraction_static": 0.05,
+            "model_path": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+            "moe_runner_backend": "triton",
+            "page_size": 16,
+            "random_seed": 20260816,
+            "skip_tokenizer_init": true,
+            "trust_remote_code": false
+          },
+          "eviction_interval": 32,
+          "gpu_after_load": {
+            "memory.free": "91903",
+            "memory.used": "5381",
+            "name": "NVIDIA H20",
+            "power.draw": "117.83",
+            "temperature.gpu": "34",
+            "utilization.gpu": "3",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_after_workload": {
+            "memory.free": "91845",
+            "memory.used": "5439",
+            "name": "NVIDIA H20",
+            "power.draw": "122.30",
+            "temperature.gpu": "34",
+            "utilization.gpu": "7",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_before": {
+            "memory.free": "97281",
+            "memory.used": "3",
+            "name": "NVIDIA H20",
+            "power.draw": "116.86",
+            "temperature.gpu": "34",
+            "utilization.gpu": "0",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "iteration_seconds": [
+            6.352352902293205
+          ],
+          "iterations": 1,
+          "load_seconds": 12.418596468865871,
+          "max_running_requests": 32,
+          "mode": "owner",
+          "model": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "76cf04ef40736dcfe5761952139ce6c1e73c99b41b1a0a7cf05ccead8be3333d",
+          "plan": "/workspace/orbitkv/examples/gpt_oss_hybrid_62l.json",
+          "process_wall_seconds": 25.312015533447266,
+          "prompt_tokens": 6000,
+          "request_e2e_seconds": [
+            6.351498212665319,
+            6.351507391780615,
+            6.351507049053907,
+            6.3515092469751835,
+            6.351513911038637,
+            6.351518150418997,
+            6.351282071322203,
+            6.351293101906776
+          ],
+          "requests": 8,
+          "schema": "orbitkv.sglang-ab.v1",
+          "server_memory": {
+            "graph": {
+              "decode": 0.0,
+              "draft_decode": 0.0,
+              "draft_extend": 0.0,
+              "draft_prefill": 0.0,
+              "prefill": 0.0,
+              "target_verify": 0.0
+            },
+            "kvcache": 4.608,
+            "startup_available": 89.749,
+            "token_capacity": 49888,
+            "token_capacity_swa": 36848,
+            "weight": 0.057
+          },
+          "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96"
+        }
+      ]
+    },
+    {
+      "pair": 2,
+      "runs": [
+        {
+          "completion_tokens": 256,
+          "decode_tokens": 32,
+          "engine_args": {
+            "attention_backend": "triton",
+            "chunked_prefill_size": 2048,
+            "context_length": 8192,
+            "disable_cuda_graph": true,
+            "disable_overlap_schedule": true,
+            "disable_radix_cache": true,
+            "load_format": "dummy",
+            "log_level": "error",
+            "max_running_requests": 32,
+            "mem_fraction_static": 0.05,
+            "model_path": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+            "moe_runner_backend": "triton",
+            "page_size": 16,
+            "random_seed": 20260816,
+            "skip_tokenizer_init": true,
+            "trust_remote_code": false
+          },
+          "eviction_interval": 32,
+          "gpu_after_load": {
+            "memory.free": "91903",
+            "memory.used": "5381",
+            "name": "NVIDIA H20",
+            "power.draw": "117.35",
+            "temperature.gpu": "34",
+            "utilization.gpu": "3",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_after_workload": {
+            "memory.free": "91845",
+            "memory.used": "5439",
+            "name": "NVIDIA H20",
+            "power.draw": "123.08",
+            "temperature.gpu": "34",
+            "utilization.gpu": "7",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_before": {
+            "memory.free": "97281",
+            "memory.used": "3",
+            "name": "NVIDIA H20",
+            "power.draw": "116.86",
+            "temperature.gpu": "34",
+            "utilization.gpu": "0",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "iteration_seconds": [
+            6.3406285010278225
+          ],
+          "iterations": 1,
+          "load_seconds": 12.420452807098627,
+          "max_running_requests": 32,
+          "mode": "policy",
+          "model": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "76cf04ef40736dcfe5761952139ce6c1e73c99b41b1a0a7cf05ccead8be3333d",
+          "plan": "/workspace/orbitkv/examples/gpt_oss_hybrid_62l.json",
+          "process_wall_seconds": 25.25143527984619,
+          "prompt_tokens": 6000,
+          "request_e2e_seconds": [
+            6.339717376977205,
+            6.339725084602833,
+            6.339727900922298,
+            6.339726835489273,
+            6.339732147753239,
+            6.339497700333595,
+            6.339499443769455,
+            6.339507512748241
+          ],
+          "requests": 8,
+          "schema": "orbitkv.sglang-ab.v1",
+          "server_memory": {
+            "graph": {
+              "decode": 0.0,
+              "draft_decode": 0.0,
+              "draft_extend": 0.0,
+              "draft_prefill": 0.0,
+              "prefill": 0.0,
+              "target_verify": 0.0
+            },
+            "kvcache": 4.608,
+            "startup_available": 89.749,
+            "token_capacity": 49888,
+            "token_capacity_swa": 36848,
+            "weight": 0.057
+          },
+          "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96"
+        },
+        {
+          "completion_tokens": 256,
+          "decode_tokens": 32,
+          "engine_args": {
+            "attention_backend": "triton",
+            "chunked_prefill_size": 2048,
+            "context_length": 8192,
+            "disable_cuda_graph": true,
+            "disable_overlap_schedule": true,
+            "disable_radix_cache": true,
+            "load_format": "dummy",
+            "log_level": "error",
+            "max_running_requests": 32,
+            "mem_fraction_static": 0.05,
+            "model_path": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+            "moe_runner_backend": "triton",
+            "page_size": 16,
+            "random_seed": 20260816,
+            "skip_tokenizer_init": true,
+            "trust_remote_code": false
+          },
+          "eviction_interval": 32,
+          "gpu_after_load": {
+            "memory.free": "91903",
+            "memory.used": "5381",
+            "name": "NVIDIA H20",
+            "power.draw": "117.84",
+            "temperature.gpu": "34",
+            "utilization.gpu": "3",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_after_workload": {
+            "memory.free": "91845",
+            "memory.used": "5439",
+            "name": "NVIDIA H20",
+            "power.draw": "121.50",
+            "temperature.gpu": "34",
+            "utilization.gpu": "7",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "gpu_before": {
+            "memory.free": "97281",
+            "memory.used": "3",
+            "name": "NVIDIA H20",
+            "power.draw": "116.86",
+            "temperature.gpu": "34",
+            "utilization.gpu": "0",
+            "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+          },
+          "iteration_seconds": [
+            6.380047343671322
+          ],
+          "iterations": 1,
+          "load_seconds": 12.726645078510046,
+          "max_running_requests": 32,
+          "mode": "owner",
+          "model": "/workspace/orbitkv/fixtures/gpt-oss-hybrid-62l",
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "76cf04ef40736dcfe5761952139ce6c1e73c99b41b1a0a7cf05ccead8be3333d",
+          "plan": "/workspace/orbitkv/examples/gpt_oss_hybrid_62l.json",
+          "process_wall_seconds": 25.31062078475952,
+          "prompt_tokens": 6000,
+          "request_e2e_seconds": [
+            6.378827415406704,
+            6.378836661577225,
+            6.378839027136564,
+            6.378841508179903,
+            6.378846719861031,
+            6.378852099180222,
+            6.3786213137209415,
+            6.378632564097643
+          ],
+          "requests": 8,
+          "schema": "orbitkv.sglang-ab.v1",
+          "server_memory": {
+            "graph": {
+              "decode": 0.0,
+              "draft_decode": 0.0,
+              "draft_extend": 0.0,
+              "draft_prefill": 0.0,
+              "prefill": 0.0,
+              "target_verify": 0.0
+            },
+            "kvcache": 4.608,
+            "startup_available": 89.749,
+            "token_capacity": 49888,
+            "token_capacity_swa": 36848,
+            "weight": 0.057
+          },
+          "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96"
+        }
+      ]
+    }
+  ],
+  "schema": "orbitkv.h20-owner-policy-ab.v1",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96"
+}

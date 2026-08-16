@@ -1,0 +1,37 @@
+{
+  "certificate_trace_smoke": {
+    "committed_certificates": 1,
+    "committed_ranges": [
+      [
+        0,
+        1024
+      ]
+    ],
+    "decode_tokens": 8,
+    "issued_certificates": 1,
+    "output_digest": "e2c6c9ba07e056486e40c913276022e01a14c6a633f0b94856a511b56de49998",
+    "plan_fingerprint": "sha256:bb6d7e2717a01b8fdc40c17892cab6e96e531cf28d3dd484b246d38ab76998fa",
+    "prompt_tokens": 2048
+  },
+  "constraints": [
+    "dummy weights; system behavior only",
+    "disable radix cache, speculative decode, overlap schedule, and CUDA Graph",
+    "SWA chunk-cache owning path only",
+    "Rust owner is a persistent JSONL sidecar in this prototype"
+  ],
+  "date": "2026-08-17",
+  "full_token_capacity": 49888,
+  "gpu": "NVIDIA H20",
+  "median_owner_over_policy_overhead_percent": 0.6216866772293939,
+  "median_owner_over_policy_ratio": 1.006216866772294,
+  "output_digest": "76cf04ef40736dcfe5761952139ce6c1e73c99b41b1a0a7cf05ccead8be3333d",
+  "owner_over_policy_ratios": [
+    0.9887349261277056,
+    1.0090701202927082,
+    1.006216866772294
+  ],
+  "pairs": 3,
+  "schema": "orbitkv.h20-owner-summary.v1",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+  "swa_token_capacity": 36848
+}

@@ -1,0 +1,30 @@
+{
+  "claim_boundary": [
+    "isolated CUDA VMM physical-slot primitive",
+    "not yet used as SGLang tensor storage",
+    "64 fresh physical backing remaps at one stable virtual address"
+  ],
+  "compute_capability": [
+    9,
+    0
+  ],
+  "device_name": "NVIDIA H20",
+  "device_ordinal": 0,
+  "failed_checks": [],
+  "final_address": 140168963031040,
+  "first_address": 140168963031040,
+  "gpu_memory_used_mib_after": 0,
+  "gpu_memory_used_mib_before": 0,
+  "minimum_granularity_bytes": 2097152,
+  "passed_checks": [
+    "stable_virtual_address",
+    "all_patterns_verified",
+    "physical_backing_replaced"
+  ],
+  "recommended_granularity_bytes": 2097152,
+  "remap_cycles": 64,
+  "requested_bytes": 1048576,
+  "reserved_bytes": 2097152,
+  "schema": "orbitkv.cuda-vmm-smoke.v1",
+  "virtual_address_management": true
+}

@@ -1,11 +1,11 @@
 use std::env;
 use std::fs::File;
-use std::io::{BufReader, BufWriter};
+use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use orbitkv::{
-    CompiledKvPlan, KvPlanInput, compile_plan,
+    CompiledKvPlan, KvPlanInput, OwnerCommand, SglangOwner, compile_plan,
     trace::{read_jsonl, summarize_sglang_trace},
 };
 use serde::Serialize;
@@ -95,6 +95,16 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             };
             write_json(&policy)?;
         }
+        Some("emit-layout") => {
+            let plan_path = required(&mut args, "plan path")?;
+            require_end(&mut args)?;
+            write_json(&load_plan(plan_path)?.layout_program()?)?;
+        }
+        Some("serve-sglang-owner") => {
+            let plan_path = required(&mut args, "plan path")?;
+            require_end(&mut args)?;
+            serve_sglang_owner(&load_plan(plan_path)?)?;
+        }
         Some("check-sglang") => {
             let root = required(&mut args, "SGLang root")?;
             require_end(&mut args)?;
@@ -107,7 +117,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "usage: orbitkv <compile|emit-sglang-policy|analyze-sglang|check-sglang> ..."
+                "usage: orbitkv <compile|emit-layout|emit-sglang-policy|serve-sglang-owner|analyze-sglang|check-sglang> ..."
                     .into(),
             );
         }
@@ -204,5 +214,28 @@ fn require_end(args: &mut impl Iterator<Item = String>) -> Result<(), Box<dyn st
 fn write_json(value: &impl Serialize) -> Result<(), Box<dyn std::error::Error>> {
     serde_json::to_writer_pretty(BufWriter::new(std::io::stdout()), value)?;
     println!();
+    Ok(())
+}
+
+fn serve_sglang_owner(plan: &CompiledKvPlan) -> Result<(), Box<dyn std::error::Error>> {
+    let mut owner = SglangOwner::new(plan)?;
+    let stdin = std::io::stdin();
+    let mut stdout = BufWriter::new(std::io::stdout());
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = match serde_json::from_str::<OwnerCommand>(&line) {
+            Ok(command) => owner.execute(command),
+            Err(error) => orbitkv::OwnerResponse::Error {
+                code: "invalid_command",
+                message: error.to_string(),
+            },
+        };
+        serde_json::to_writer(&mut stdout, &response)?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()?;
+    }
     Ok(())
 }

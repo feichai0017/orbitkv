@@ -14,6 +14,75 @@ from typing import Any, Callable
 _EVENTS: queue.Queue[dict[str, Any] | None] = queue.Queue()
 _WRITER: threading.Thread | None = None
 _POLICY: dict[str, Any] | None = None
+_OWNER: "OwnerClient | None" = None
+
+
+class OwnerClient:
+    def __init__(self, orbitkv_bin: str, plan_path: str):
+        self._process = subprocess.Popen(
+            [orbitkv_bin, "serve-sglang-owner", plan_path],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        if self._process.stdin is None or self._process.stdout is None:
+            self._process.kill()
+            raise RuntimeError("OrbitKV owner did not expose command pipes")
+        self._stdin = self._process.stdin
+        self._stdout = self._process.stdout
+        self._lock = threading.Lock()
+
+    def command(self, command: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            if self._process.poll() is not None:
+                stderr = (
+                    self._process.stderr.read()
+                    if self._process.stderr is not None
+                    else ""
+                )
+                raise RuntimeError(
+                    f"OrbitKV owner exited with {self._process.returncode}: {stderr}"
+                )
+            self._stdin.write(
+                json.dumps(command, separators=(",", ":"), sort_keys=True)
+            )
+            self._stdin.write("\n")
+            self._stdin.flush()
+            line = self._stdout.readline()
+            if not line:
+                stderr = (
+                    self._process.stderr.read()
+                    if self._process.stderr is not None
+                    else ""
+                )
+                raise RuntimeError(f"OrbitKV owner closed its response stream: {stderr}")
+            response = json.loads(line)
+            if response.get("status") == "error":
+                raise RuntimeError(
+                    f"OrbitKV owner rejected command "
+                    f"[{response.get('code')}]: {response.get('message')}"
+                )
+            return response
+
+    def close(self) -> None:
+        if self._process.poll() is not None:
+            return
+        self._stdin.close()
+        try:
+            self._process.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            self._process.kill()
+            self._process.wait(timeout=5)
+
+
+def _owner_enabled() -> bool:
+    return os.environ.get("ORBITKV_SGLANG_OWNING", "0").lower() in (
+        "1",
+        "true",
+        "yes",
+    )
 
 
 def _trace_path() -> Path:
@@ -89,6 +158,15 @@ def _stop_writer() -> None:
     _WRITER = None
 
 
+def _stop_owner() -> None:
+    global _OWNER
+
+    if _OWNER is None:
+        return
+    _OWNER.close()
+    _OWNER = None
+
+
 def _emit(event: dict[str, Any]) -> None:
     _EVENTS.put(
         {
@@ -153,8 +231,164 @@ def _load_policy() -> dict[str, Any] | None:
     return policy
 
 
+def _require_owner() -> OwnerClient:
+    if _OWNER is None:
+        raise RuntimeError("OrbitKV owning mode is not initialized")
+    return _OWNER
+
+
+def _own_swa_reclamation(
+    _original_fn: Callable,
+    batch: Any,
+    req: Any,
+    pre_len: int,
+):
+    if batch.enable_overlap:
+        raise RuntimeError(
+            "OrbitKV owning mode currently requires disable_overlap_schedule"
+        )
+    if not batch.tree_cache.is_chunk_cache():
+        raise RuntimeError(
+            "OrbitKV owning mode currently requires disable_radix_cache"
+        )
+    if not batch.spec_algorithm.is_none():
+        raise RuntimeError(
+            "OrbitKV owning mode currently requires speculative decoding disabled"
+        )
+    if req.kv is None:
+        return None
+
+    owner = _require_owner()
+    response = owner.command(
+        {
+            "op": "plan_reclamation",
+            "request_id": str(req.rid),
+            "observed_evicted_seqlen": int(req.kv.swa_evicted_seqlen),
+            "semantic_frontier": int(pre_len),
+            "execution_epoch": int(
+                max(
+                    getattr(req, "decode_batch_idx", 0),
+                    getattr(req, "extend_batch_idx", 0),
+                )
+            ),
+            "cache_kind": "chunk",
+        }
+    )
+    certificate = response.get("certificate")
+    if certificate is None:
+        return None
+    if certificate.get("schema") != "orbitkv.sglang-retirement-certificate.v1":
+        raise RuntimeError(f"unsupported OrbitKV certificate: {certificate!r}")
+    if certificate.get("plan_fingerprint") != _POLICY.get("plan_fingerprint"):
+        raise RuntimeError(
+            "OrbitKV certificate fingerprint does not match the loaded policy"
+        )
+    if certificate.get("page_tokens") != batch.tree_cache.page_size:
+        raise RuntimeError(
+            "OrbitKV certificate page size does not match SGLang's physical pool"
+        )
+    token_start = int(certificate["token_start"])
+    token_end = int(certificate["token_end_exclusive"])
+    if token_start != int(req.kv.swa_evicted_seqlen):
+        raise RuntimeError(
+            "OrbitKV certificate does not begin at SGLang's committed SWA frontier"
+        )
+    if token_end <= token_start:
+        raise RuntimeError("OrbitKV certificate contains an empty retirement range")
+
+    _emit_owner_certificate(certificate)
+    free_slots = batch.req_to_token_pool.req_to_token[
+        req.req_pool_idx, token_start:token_end
+    ]
+    batch.token_to_kv_pool_allocator.free_swa(free_slots)
+    pending = getattr(batch, "_orbitkv_pending_certificates", None)
+    if pending is None:
+        raise RuntimeError(
+            "OrbitKV certificate was generated outside a managed free group"
+        )
+    pending.append((req, certificate))
+    return None
+
+
+def _commit_swa_reclamations(
+    original_fn: Callable,
+    batch: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    if getattr(batch, "_orbitkv_pending_certificates", None) is not None:
+        raise RuntimeError("nested OrbitKV reclamation group")
+    batch._orbitkv_pending_certificates = []
+    try:
+        result = original_fn(batch, *args, **kwargs)
+        pending = batch._orbitkv_pending_certificates
+        if pending:
+            certificates = [certificate for _, certificate in pending]
+            response = _require_owner().command(
+                {
+                    "op": "commit_reclamations",
+                    "certificate_ids": [
+                        int(certificate["certificate_id"])
+                        for certificate in certificates
+                    ],
+                }
+            )
+            committed = response.get("certificate_ids")
+            expected = [
+                int(certificate["certificate_id"]) for certificate in certificates
+            ]
+            if committed != expected:
+                raise RuntimeError(
+                    "OrbitKV owner returned a mismatched batch commit response"
+                )
+            for req, certificate in pending:
+                req.kv.swa_evicted_seqlen = int(
+                    certificate["token_end_exclusive"]
+                )
+            if _trace_allocations_enabled():
+                for _, certificate in pending:
+                    _emit(
+                        {
+                            "event": "retirement_committed",
+                            "request_id": certificate["request_id"],
+                            "certificate": certificate,
+                        }
+                    )
+        return result
+    finally:
+        batch._orbitkv_pending_certificates = None
+
+
+def _release_owned_request(
+    original_fn: Callable,
+    req: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    result = original_fn(req, *args, **kwargs)
+    if req is not None:
+        _require_owner().command(
+            {
+                "op": "release_request",
+                "request_id": str(req.rid),
+            }
+        )
+    return result
+
+
+def _emit_owner_certificate(certificate: dict[str, Any]) -> None:
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "retirement_certificate",
+                "request_id": certificate["request_id"],
+                "certificate": certificate,
+            }
+        )
+
+
 def register() -> None:
-    global _POLICY, _WRITER
+    global _OWNER, _POLICY, _WRITER
 
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
@@ -162,6 +396,34 @@ def register() -> None:
     if _POLICY is not None:
         os.environ["SGLANG_SWA_EVICTION_INTERVAL"] = str(
             _POLICY["swa_eviction_interval_tokens"]
+        )
+
+    if _owner_enabled():
+        if _POLICY is None:
+            raise RuntimeError(
+                "ORBITKV_SGLANG_OWNING requires ORBITKV_SGLANG_POLICY"
+            )
+        if _POLICY["page_tokens"] <= 1:
+            raise RuntimeError("OrbitKV owning mode requires a paged SGLang pool")
+        _OWNER = OwnerClient(
+            os.environ.get("ORBITKV_BIN", "orbitkv"),
+            os.environ["ORBITKV_SGLANG_POLICY"],
+        )
+        atexit.register(_stop_owner)
+        HookRegistry.register(
+            "sglang.srt.managers.schedule_batch.ScheduleBatch._evict_swa",
+            _own_swa_reclamation,
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.managers.schedule_batch.ScheduleBatch.maybe_evict_swa",
+            _commit_swa_reclamations,
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.mem_cache.common.release_kv_cache",
+            _release_owned_request,
+            HookType.AROUND,
         )
 
     trace_allocations = _trace_allocations_enabled()

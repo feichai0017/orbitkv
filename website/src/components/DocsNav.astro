@@ -1,0 +1,21 @@
+---
+interface Props {
+  active: "Architecture" | "Evidence";
+}
+
+const { active } = Astro.props;
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const items = [
+  { label: "Architecture", href: "/docs/" },
+  { label: "Evidence", href: "/evidence/" },
+];
+---
+
+<aside class="docs-sidebar" aria-label="Documentation">
+  <p>OrbitKV</p>
+  {items.map((item) => (
+    <a href={`${base}${item.href}`} aria-current={active === item.label ? "page" : undefined}>
+      {item.label}
+    </a>
+  ))}
+</aside>

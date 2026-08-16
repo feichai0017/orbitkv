@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -59,6 +60,7 @@ pub struct SglangBoundedClassPolicy {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct SglangPolicy {
     pub schema: &'static str,
+    pub plan_fingerprint: String,
     pub page_tokens: u64,
     pub swa_eviction_interval_tokens: u64,
     pub max_persistent_swa_token_slots_per_request: u64,
@@ -69,6 +71,63 @@ pub struct SglangPolicy {
 pub struct CompiledKvPlan {
     pub page_tokens: u64,
     pub classes: Vec<CompiledKvClass>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AddressProgram {
+    AppendOnly,
+    Periodic { period_blocks: u64 },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum RetirementProgram {
+    Never,
+    BlockEndPlus { offset_tokens: u64 },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ClassLayoutProgram {
+    pub name: String,
+    pub layers: Vec<u32>,
+    pub bytes_per_token_per_layer: u64,
+    pub address: AddressProgram,
+    pub retirement: RetirementProgram,
+    pub minimum_slots_per_request: Option<u64>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct LayoutProgram {
+    pub schema: &'static str,
+    pub plan_fingerprint: String,
+    pub page_tokens: u64,
+    pub classes: Vec<ClassLayoutProgram>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PhysicalBackend {
+    Paged,
+    CudaVmm,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BackendRequirements {
+    pub logical_bytes: u64,
+    pub cuda_vmm_supported: bool,
+    pub cuda_vmm_granularity_bytes: u64,
+    pub require_stable_virtual_address: bool,
+    pub maximum_rounding_amplification_milli: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BackendDecision {
+    pub backend: PhysicalBackend,
+    pub logical_bytes: u64,
+    pub physical_bytes: u64,
+    pub rounding_amplification_milli: u64,
+    pub reason: &'static str,
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -105,9 +164,90 @@ pub enum PlanError {
         "SGLang eviction interval {interval} must be a positive multiple of page_tokens {page_tokens}"
     )]
     InvalidSglangEvictionInterval { interval: u64, page_tokens: u64 },
+    #[error("backend logical_bytes must be positive")]
+    ZeroBackendBytes,
+    #[error("CUDA VMM granularity must be positive when VMM is supported")]
+    ZeroVmmGranularity,
 }
 
 impl CompiledKvPlan {
+    #[must_use]
+    pub fn fingerprint(&self) -> String {
+        let mut hash = Sha256::new();
+        hash.update(self.page_tokens.to_le_bytes());
+        hash.update((self.classes.len() as u64).to_le_bytes());
+        for class in &self.classes {
+            update_bytes(&mut hash, class.spec.name.as_bytes());
+            hash.update((class.spec.layers.len() as u64).to_le_bytes());
+            for &layer in &class.spec.layers {
+                hash.update(u64::from(layer).to_le_bytes());
+            }
+            hash.update(class.spec.bytes_per_token_per_layer.to_le_bytes());
+            hash.update(
+                match class.spec.retention {
+                    RetentionKind::Full => 0_u64,
+                    RetentionKind::Sliding => 1_u64,
+                }
+                .to_le_bytes(),
+            );
+            hash.update(class.spec.window_tokens.unwrap_or(0).to_le_bytes());
+            hash.update(class.slot_count.unwrap_or(0).to_le_bytes());
+        }
+        format!("sha256:{:x}", hash.finalize())
+    }
+
+    /// Emits the temporal address and retirement program consumed by a block
+    /// manager backend.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a compiled sliding class is missing its window or
+    /// finite slot count.
+    pub fn layout_program(&self) -> Result<LayoutProgram, PlanError> {
+        let classes = self
+            .classes
+            .iter()
+            .map(|class| {
+                let (address, retirement) = match class.spec.retention {
+                    RetentionKind::Full => (AddressProgram::AppendOnly, RetirementProgram::Never),
+                    RetentionKind::Sliding => {
+                        let window = class.spec.window_tokens.ok_or_else(|| {
+                            PlanError::InvalidCompiledClass {
+                                class: class.spec.name.clone(),
+                            }
+                        })?;
+                        let period_blocks =
+                            class
+                                .slot_count
+                                .ok_or_else(|| PlanError::InvalidCompiledClass {
+                                    class: class.spec.name.clone(),
+                                })?;
+                        (
+                            AddressProgram::Periodic { period_blocks },
+                            RetirementProgram::BlockEndPlus {
+                                offset_tokens: window - 1,
+                            },
+                        )
+                    }
+                };
+                Ok(ClassLayoutProgram {
+                    name: class.spec.name.clone(),
+                    layers: class.spec.layers.clone(),
+                    bytes_per_token_per_layer: class.spec.bytes_per_token_per_layer,
+                    address,
+                    retirement,
+                    minimum_slots_per_request: class.slot_count,
+                })
+            })
+            .collect::<Result<Vec<_>, PlanError>>()?;
+        Ok(LayoutProgram {
+            schema: "orbitkv.layout-program.v1",
+            plan_fingerprint: self.fingerprint(),
+            page_tokens: self.page_tokens,
+            classes,
+        })
+    }
+
     /// Calculates semantic and physical capacity for each KV class.
     ///
     /// # Errors
@@ -280,6 +420,7 @@ impl CompiledKvPlan {
             .unwrap_or(0);
         Ok(SglangPolicy {
             schema: "orbitkv.sglang-policy.v1",
+            plan_fingerprint: self.fingerprint(),
             page_tokens: self.page_tokens,
             swa_eviction_interval_tokens: eviction_interval_tokens,
             max_persistent_swa_token_slots_per_request,
@@ -329,6 +470,73 @@ impl CompiledKvPlan {
             resident_bytes,
         })
     }
+}
+
+/// Chooses a physical backend using explicit VMM rounding and address-stability
+/// costs.
+///
+/// # Errors
+///
+/// Returns an error for zero logical bytes, a zero VMM granularity on a
+/// VMM-capable device, or checked arithmetic overflow.
+pub fn choose_physical_backend(
+    requirements: &BackendRequirements,
+) -> Result<BackendDecision, PlanError> {
+    if requirements.logical_bytes == 0 {
+        return Err(PlanError::ZeroBackendBytes);
+    }
+    if !requirements.cuda_vmm_supported {
+        return Ok(BackendDecision {
+            backend: PhysicalBackend::Paged,
+            logical_bytes: requirements.logical_bytes,
+            physical_bytes: requirements.logical_bytes,
+            rounding_amplification_milli: 1000,
+            reason: "cuda_vmm_unsupported",
+        });
+    }
+    if requirements.cuda_vmm_granularity_bytes == 0 {
+        return Err(PlanError::ZeroVmmGranularity);
+    }
+    let physical_bytes = ceil_div(
+        requirements.logical_bytes,
+        requirements.cuda_vmm_granularity_bytes,
+    )?
+    .checked_mul(requirements.cuda_vmm_granularity_bytes)
+    .ok_or(PlanError::ArithmeticOverflow {
+        calculation: "VMM rounded physical bytes",
+    })?;
+    let rounding_amplification_milli =
+        physical_bytes
+            .checked_mul(1000)
+            .ok_or(PlanError::ArithmeticOverflow {
+                calculation: "VMM rounding amplification",
+            })?
+            / requirements.logical_bytes;
+    if !requirements.require_stable_virtual_address {
+        return Ok(BackendDecision {
+            backend: PhysicalBackend::Paged,
+            logical_bytes: requirements.logical_bytes,
+            physical_bytes: requirements.logical_bytes,
+            rounding_amplification_milli: 1000,
+            reason: "stable_virtual_address_not_required",
+        });
+    }
+    if rounding_amplification_milli > requirements.maximum_rounding_amplification_milli {
+        return Ok(BackendDecision {
+            backend: PhysicalBackend::Paged,
+            logical_bytes: requirements.logical_bytes,
+            physical_bytes: requirements.logical_bytes,
+            rounding_amplification_milli: 1000,
+            reason: "cuda_vmm_rounding_too_expensive",
+        });
+    }
+    Ok(BackendDecision {
+        backend: PhysicalBackend::CudaVmm,
+        logical_bytes: requirements.logical_bytes,
+        physical_bytes,
+        rounding_amplification_milli,
+        reason: "stable_virtual_address_within_rounding_budget",
+    })
 }
 
 /// Compiles checked Full and sliding-window classes into a KV block plan.
@@ -460,6 +668,11 @@ fn compact_ranges(blocks: &[u64]) -> Vec<BlockRange> {
     ranges
 }
 
+fn update_bytes(hash: &mut Sha256, bytes: &[u8]) {
+    hash.update((bytes.len() as u64).to_le_bytes());
+    hash.update(bytes);
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -540,5 +753,44 @@ mod tests {
             plan.sglang_policy_with_eviction_interval(24),
             Err(PlanError::InvalidSglangEvictionInterval { .. })
         ));
+        let layout = plan.layout_program().unwrap();
+        assert_eq!(layout.schema, "orbitkv.layout-program.v1");
+        assert_eq!(layout.plan_fingerprint, plan.fingerprint());
+        assert_eq!(layout.classes[0].address, AddressProgram::AppendOnly);
+        assert_eq!(
+            layout.classes[1].address,
+            AddressProgram::Periodic { period_blocks: 65 }
+        );
+        assert_eq!(
+            layout.classes[1].retirement,
+            RetirementProgram::BlockEndPlus {
+                offset_tokens: 1023
+            }
+        );
+    }
+
+    #[test]
+    fn vmm_backend_is_selected_only_when_rounding_is_affordable() {
+        let small = choose_physical_backend(&BackendRequirements {
+            logical_bytes: 64 * 1024,
+            cuda_vmm_supported: true,
+            cuda_vmm_granularity_bytes: 2 * 1024 * 1024,
+            require_stable_virtual_address: true,
+            maximum_rounding_amplification_milli: 1250,
+        })
+        .unwrap();
+        assert_eq!(small.backend, PhysicalBackend::Paged);
+        assert_eq!(small.reason, "cuda_vmm_rounding_too_expensive");
+
+        let large = choose_physical_backend(&BackendRequirements {
+            logical_bytes: 16 * 1024 * 1024,
+            cuda_vmm_supported: true,
+            cuda_vmm_granularity_bytes: 2 * 1024 * 1024,
+            require_stable_virtual_address: true,
+            maximum_rounding_amplification_milli: 1250,
+        })
+        .unwrap();
+        assert_eq!(large.backend, PhysicalBackend::CudaVmm);
+        assert_eq!(large.rounding_amplification_milli, 1000);
     }
 }

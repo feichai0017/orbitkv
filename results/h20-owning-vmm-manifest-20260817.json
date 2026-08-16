@@ -1,0 +1,57 @@
+{
+  "base_source_commit": "4ed69736afbac50a0c032f081e077dc32138772e",
+  "claim_boundary": [
+    "dummy-weight SGLang system fixture; no model-quality claim",
+    "owning adapter limited to SWA chunk cache without radix, speculation, overlap, or CUDA Graph",
+    "CUDA VMM is an isolated physical-slot primitive, not yet SGLang KV tensor storage",
+    "raw JSONL traces and engine logs retained only in the local validation workspace"
+  ],
+  "date": "2026-08-17",
+  "gpu": {
+    "compute_capability": [
+      9,
+      0
+    ],
+    "driver": "535.161.08",
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+  },
+  "records": {
+    "results/h20-cuda-vmm-20260817/smoke.json": "6f7ae5dbbf54fd058628cddfa6c6e8355cbae86b62c4bb48487a85a522fc5c5c",
+    "results/h20-owner-ab-20260817/matrix.json": "a4b014344bb76e902869c59b8ca6993cec3290be47b28bcb034f96db74646ede",
+    "results/h20-owner-ab-20260817/summary.json": "363e5eadcf5d337c36b093406e57946f6b892b9b6174dd1ccaf0d8885f5c521c"
+  },
+  "schema": "orbitkv.h20-owning-vmm-manifest.v1",
+  "software": {
+    "cuda_toolkit": "13.1",
+    "cudarc": "0.19.8",
+    "flashinfer": "0.6.17",
+    "python": "3.11.10",
+    "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+    "torch": "2.13.0+cu130",
+    "torch_cuda": "13.0"
+  },
+  "sources": {
+    "Cargo.toml": "5284131e4ad4279dfb733e88403bc22a698c1eab102adbcfffeb0020820a60db",
+    "crates/orbitkv-cuda/Cargo.toml": "acbde3854b44d0cff18dd0b4b8254ab98e367d3ea87ff3adb6117a621248e413",
+    "crates/orbitkv-cuda/src/bin/orbitkv-cuda.rs": "f0dc974511e846a221884060f3cba087e446563e253049e715b832b5a702cdc8",
+    "crates/orbitkv-cuda/src/lib.rs": "8a1e0400cf289bf4eaee740d88ec009b30efcb92c2e0e32ea0bc681761643769",
+    "integrations/sglang/bench_hybrid_shadow.py": "a0398d2a4752f8da5361ee37710cd4808832961f14b9506f50dcb4104f1a0e75",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "029bf9eeb44a05b6c5098d2aa5fbf1f5299231d8ed4f8b19109c5879f7c476a7",
+    "src/bin/orbitkv.rs": "93b0b909efc5bcdaf80d3705e78233a301d9525985acc9421f61a302e88ace50",
+    "src/manager.rs": "9f0063913edea559a767d89b661835fa027b91ecc7978d7517c5516cc3348687",
+    "src/plan.rs": "5004e906fba666f174324635cf8c3fe3a9965d481f759e5366e004c91320d937",
+    "src/sglang_owner.rs": "fdf873e7406e46aa1a817b653c1c25d040f34305591e4896652193350decf83d"
+  },
+  "website": {
+    "website/astro.config.mjs": "9461e1c7b16e95572f549eca82bc38dd0472b53d343760ca8505f0829a617780",
+    "website/package-lock.json": "534d1b950961a15ec20bed16cf9c2ac03595e61bddd48850ed3d8a80aeb5485e",
+    "website/package.json": "e24176430bc34ccb82d2bf126fa4b285cae64a5ca1884d82d2b3014b9779edfe",
+    "website/src/data/site.ts": "fcf4f06a2d2c2819ea4a4a3112a5fcdca6948fd70a361a65722566a0f9ca58d0",
+    "website/src/layouts/SiteLayout.astro": "03d162452039cd8a5b1298d9be6c73236ccc2d470539bccc46d442594bee864d",
+    "website/src/pages/docs/index.astro": "aa6d4b130ef04ecbb15469dd4e5bd3dde5570a87765ab9e12e268a2f71233050",
+    "website/src/pages/evidence.astro": "642bfbc88bf37960f5e47ad85272df1c2a849227ec111dfd1f7c03918e20ddb8",
+    "website/src/pages/index.astro": "5b36f76ccd559cffc1cf05f580d3c9daf2778ccfa947280fa113e80b398c9d38",
+    "website/src/styles/global.css": "93062622f3bd1f8b36ffe13bce605a25ffbc7f6c9027336df0f898a22aa8f0f6"
+  }
+}

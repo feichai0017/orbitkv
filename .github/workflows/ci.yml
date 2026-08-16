@@ -17,6 +17,33 @@ jobs:
       - run: cargo test --all-targets
       - run: cargo clippy --all-targets -- -D warnings
 
+  cuda-backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+      - run: cargo fmt --manifest-path crates/orbitkv-cuda/Cargo.toml --all -- --check
+      - run: cargo test --manifest-path crates/orbitkv-cuda/Cargo.toml --all-targets
+      - run: cargo clippy --manifest-path crates/orbitkv-cuda/Cargo.toml --all-targets -- -D warnings
+
+  website:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24.19.0"
+          cache: npm
+          cache-dependency-path: website/package-lock.json
+      - run: npm ci
+        working-directory: website
+      - run: npm run check
+        working-directory: website
+      - run: npm run build
+        working-directory: website
+
   sglang-plugin:
     runs-on: ubuntu-latest
     steps:

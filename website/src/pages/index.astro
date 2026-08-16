@@ -1,0 +1,187 @@
+---
+import SiteLayout from "../layouts/SiteLayout.astro";
+import {
+  architectureLanes,
+  compilerStages,
+  evidenceRows,
+  implemented,
+  metrics,
+  repositoryUrl,
+  roadmap,
+} from "../data/site";
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+---
+
+<SiteLayout active="Overview">
+  <section class="hero">
+    <div class="hero-copy">
+      <div class="hero-kicker">
+        <span class="release-dot" aria-hidden="true"></span>
+        <span>Rust 2024 · temporal physical design · NVIDIA H20</span>
+      </div>
+      <h1>Attention semantics.<br /><span>Compiled into state.</span></h1>
+      <p class="hero-lede">
+        OrbitKV derives when model state can die, synthesizes its physical
+        address plan, and authorizes block reuse only after semantic and GPU
+        execution frontiers agree.
+      </p>
+      <div class="hero-actions">
+        <a class="button primary" href={`${base}/docs/`}>Read the architecture</a>
+        <a class="button quiet" href={`${base}/evidence/`}>Inspect H20 evidence</a>
+      </div>
+      <ul class="hero-facts" aria-label="Project boundaries">
+        <li>Compiler-generated block plans</li>
+        <li>Proof-carrying reclamation</li>
+        <li>Cost-gated CUDA VMM</li>
+      </ul>
+    </div>
+
+    <div class="kernel-console" aria-label="OrbitKV layout program">
+      <div class="console-bar">
+        <span>orbitkv://layout/full-swa</span>
+        <span class="console-state"><i></i> verified</span>
+      </div>
+      <div class="console-grid" aria-hidden="true"></div>
+      <div class="console-body">
+        <div class="console-ident">
+          <span>RETENTION</span>
+          <strong>FULL 10 · SWA 52 · W1024 · P16</strong>
+        </div>
+        <div class="provider-switch" aria-label="Physical lowering">
+          <span class="selected">PAGED</span>
+          <span>CUDA VMM</span>
+        </div>
+        <div class="console-flow">
+          <div><small>analyze</small><strong>last_read(q, k)</strong><em>01</em></div>
+          <div><small>address</small><strong>append + periodic(65)</strong><em>02</em></div>
+          <div><small>view</small><strong>generation_checked</strong><em>03</em></div>
+          <div class="flow-active"><small>reclaim</small><strong>dead ∧ done ∧ committed</strong><em>04</em></div>
+        </div>
+      </div>
+      <div class="console-footer">
+        <span>fingerprint / sha256</span>
+        <span>frontier / bitemporal</span>
+      </div>
+    </div>
+  </section>
+
+  <section class="scope-strip" aria-label="Project boundary">
+    <div><span>ORBITKV OWNS</span><strong>state semantics · logical blocks · generations · reclamation proof</strong></div>
+    <div><span>ENGINE OWNS</span><strong>model execution · scheduling · attention kernels · request protocol</strong></div>
+  </section>
+
+  <section class="section" id="compiler">
+    <header class="section-heading">
+      <div><p class="eyebrow">Compilation pipeline</p><h2>A block manager emitted from semantics.</h2></div>
+      <p>
+        Ring, append-only log, pinned region, and VMM are lowering choices.
+        The checked lifetime program remains the source of truth.
+      </p>
+    </header>
+    <ol class="execution-chain">
+      {compilerStages.map((stage) => (
+        <li>
+          <span class="chain-key">{stage.key}</span>
+          <div><h3>{stage.name}</h3><p>{stage.detail}</p></div>
+        </li>
+      ))}
+    </ol>
+  </section>
+
+  <section class="section" id="implementation">
+    <header class="section-heading">
+      <div><p class="eyebrow">Current source</p><h2>Implemented, qualified, and open stay separate.</h2></div>
+      <p>
+        A row describes only its declared boundary. A VMM primitive does not
+        imply VMM-backed SGLang tensors, and dummy fixtures do not establish
+        model quality.
+      </p>
+    </header>
+    <div class="implementation-table">
+      {implemented.map((item, index) => (
+        <article>
+          <span>{String(index + 1).padStart(2, "0")}</span>
+          <h3>{item.name}</h3>
+          <p>{item.boundary}</p>
+          <code>{item.state}</code>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="section provider-section" id="architecture">
+    <header class="section-heading">
+      <div><p class="eyebrow">System architecture</p><h2>Safe compiler.<br />Explicit GPU boundary.</h2></div>
+      <p>
+        Core Rust forbids unsafe code. NVIDIA Driver API operations are isolated
+        in a separate backend crate and selected through an explicit cost model.
+      </p>
+    </header>
+    <div class="architecture-grid">
+      {architectureLanes.map((lane) => (
+        <article>
+          <span>{lane.id}</span>
+          <h3>{lane.name}</h3>
+          <p>{lane.detail}</p>
+          <ul>{lane.examples.map((example) => <li>{example}</li>)}</ul>
+        </article>
+      ))}
+    </div>
+  </section>
+
+  <section class="section performance-section" id="evidence">
+    <header class="section-heading">
+      <div><p class="eyebrow">Recorded systems evidence</p><h2>Capacity becomes admission.</h2></div>
+      <p>
+        Results use a dummy-weight hybrid system fixture on one NVIDIA H20.
+        They validate memory and serving behavior, not released-checkpoint quality.
+      </p>
+    </header>
+    <div class="metric-grid">
+      {metrics.map((item) => (
+        <article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>
+      ))}
+    </div>
+    <div class="evidence-table" role="table" aria-label="OrbitKV evidence summary">
+      <div class="evidence-row evidence-head" role="row">
+        <span role="columnheader">Result</span>
+        <span role="columnheader">Value</span>
+        <span role="columnheader">Contract</span>
+        <span role="columnheader">Boundary</span>
+      </div>
+      {evidenceRows.map((item) => (
+        <div class="evidence-row" role="row">
+          <strong role="cell">{item.result}</strong>
+          <code role="cell">{item.value}</code>
+          <span role="cell">{item.contract}</span>
+          <small role="cell">{item.boundary}</small>
+        </div>
+      ))}
+    </div>
+    <a class="text-link" href={`${base}/evidence/`}>Inspect methods and exclusions <span>→</span></a>
+  </section>
+
+  <section class="section roadmap-section" id="roadmap">
+    <header class="section-heading">
+      <div><p class="eyebrow">Next gates</p><h2>Move ownership closer to the GPU.</h2></div>
+      <p>
+        The next work removes prototype IPC, connects VMM generations to real
+        KV storage, and broadens Retention IR without weakening safety.
+      </p>
+    </header>
+    <div class="milestone-list">
+      {roadmap.map((item) => (
+        <article><span>{item.state}</span><div><h3>{item.name}</h3><p>{item.detail}</p></div></article>
+      ))}
+    </div>
+  </section>
+
+  <section class="closing-band">
+    <div><p class="eyebrow">Open source</p><h2>Compile lifetimes. Reuse with proof.</h2></div>
+    <div class="closing-actions">
+      <a class="button primary" href={`${base}/docs/`}>Architecture</a>
+      <a class="button quiet" href={repositoryUrl} target="_blank" rel="noreferrer">GitHub ↗</a>
+    </div>
+  </section>
+</SiteLayout>

@@ -1,0 +1,81 @@
+---
+import { homeUrl, navigation, repositoryUrl } from "../data/site";
+import "../styles/global.css";
+
+interface Props {
+  title?: string;
+  description?: string;
+  active?: string;
+}
+
+const {
+  title = "OrbitKV | Attention-state compiler",
+  description = "OrbitKV compiles attention retention semantics into lifetime-safe KV layouts, block ownership, and proof-carrying reclamation.",
+  active = "",
+} = Astro.props;
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, "");
+const local = (href: string) => `${base}${href}`;
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width" />
+    <meta name="generator" content={Astro.generator} />
+    <meta name="description" content={description} />
+    <meta name="theme-color" content="#07110f" />
+    <link rel="icon" type="image/svg+xml" href={local("/favicon.svg")} />
+    <link rel="canonical" href={canonical} />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="OrbitKV" />
+    <meta property="og:title" content={title} />
+    <meta property="og:description" content={description} />
+    <meta property="og:url" content={canonical} />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content={title} />
+    <meta name="twitter:description" content={description} />
+    <title>{title}</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#content">Skip to content</a>
+    <div class="site-shell">
+      <header class="site-header">
+        <a class="brand" href={local("/")} aria-label="OrbitKV home">
+          <span class="brand-mark" aria-hidden="true">◉</span>
+          <span class="brand-copy"><strong>ORBIT</strong><small>KV</small></span>
+        </a>
+
+        <nav aria-label="Primary navigation">
+          {navigation.map((item) => (
+            <a href={local(item.href)} aria-current={active === item.label ? "page" : undefined}>
+              {item.label}
+            </a>
+          ))}
+        </nav>
+
+        <a class="source-link" href={repositoryUrl} target="_blank" rel="noreferrer" aria-label="OrbitKV source on GitHub">
+          <span>GitHub</span><span aria-hidden="true">↗</span>
+        </a>
+      </header>
+
+      <main id="content"><slot /></main>
+
+      <footer class="site-footer">
+        <div class="footer-brand">
+          <span class="footer-glyph" aria-hidden="true">◉</span>
+          <div><strong>OrbitKV</strong><p>Compile attention semantics into state.</p></div>
+        </div>
+        <div class="footer-links">
+          <a href={local("/docs/")}>Architecture</a>
+          <a href={local("/evidence/")}>Evidence</a>
+          <a href={repositoryUrl}>Source</a>
+          <a href={homeUrl}>Site</a>
+        </div>
+        <p class="footer-note">Claims stay bound to source, workload, hardware, and evidence.</p>
+      </footer>
+    </div>
+  </body>
+</html>

@@ -1,0 +1,101 @@
+---
+import DocsNav from "../../components/DocsNav.astro";
+import SiteLayout from "../../layouts/SiteLayout.astro";
+import { architectureLanes, compilerStages, docs, repositoryUrl } from "../../data/site";
+---
+
+<SiteLayout
+  title="Architecture | OrbitKV"
+  description="OrbitKV compiler IR, physical design, block ownership, reclamation protocol, and NVIDIA backend boundaries."
+  active="Architecture"
+>
+  <header class="page-hero">
+    <p class="eyebrow">Architecture</p>
+    <h1>Temporal physical design for model state.</h1>
+    <p>
+      OrbitKV compiles future-read semantics into block lifetime, address,
+      immutable view, and reclamation programs.
+    </p>
+  </header>
+
+  <div class="docs-layout">
+    <DocsNav active="Architecture" />
+    <article class="prose">
+      <h2>Core contract</h2>
+      <pre><code>{`Attention / state retention semantics
+    -> LayoutProgram
+       - SHA-256 plan fingerprint
+       - address program
+       - retirement program
+       - minimum slot count
+    -> KvBlockManager
+       - request + class + ordinal identity
+       - physical slot + generation
+       - immutable KvView
+       - semantic and execution frontiers
+    -> RetirementCertificate
+       - SemanticDead
+       - ExecutionComplete
+       - backend commit required before reuse`}</code></pre>
+
+      <h2>Compiler stages</h2>
+      <ol class="lifecycle-list">
+        {compilerStages.map((stage) => (
+          <li><span>{stage.key}</span><div><strong>{stage.name}</strong><p>{stage.detail}</p></div></li>
+        ))}
+      </ol>
+
+      <h2>Layer boundaries</h2>
+      <div class="doc-grid">
+        {architectureLanes.map((lane) => (
+          <div class="doc-card">
+            <span>{lane.id}</span>
+            <h3>{lane.name}</h3>
+            <p>{lane.detail}</p>
+            <small>{lane.examples.join(" · ")}</small>
+          </div>
+        ))}
+      </div>
+
+      <h2>Why VMM is cost-gated</h2>
+      <p>
+        The recorded H20 requires a 2 MiB minimum CUDA VMM allocation. A small
+        logical region can therefore incur severe rounding amplification.
+        OrbitKV selects VMM only when stable virtual addresses are required and
+        rounded bytes remain below the configured threshold.
+      </p>
+      <pre><code>{`if !stable_address_required:
+    Paged
+elif !cuda_vmm_supported:
+    Paged
+elif rounded_vmm_bytes / logical_bytes > budget:
+    Paged
+else:
+    CudaVmm`}</code></pre>
+
+      <h2>Read the repository records</h2>
+      <div class="doc-grid">
+        {docs.map((item) => (
+          <div class="doc-card">
+            <span>{item.key}</span>
+            <h3>{item.name}</h3>
+            <p>{item.detail}</p>
+            <a href={item.href}>Open record →</a>
+          </div>
+        ))}
+      </div>
+
+      <div class="doc-note">
+        <strong>Current qualification boundary.</strong>
+        <p>
+          The owning SGLang path supports SWA chunk cache with radix cache,
+          speculative decoding, overlap scheduling, and CUDA Graph disabled.
+          Unsupported combinations fail closed.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/h20-owning-vmm-validation-20260817.md`}>
+          Full owning and VMM qualification
+        </a>
+      </div>
+    </article>
+  </div>
+</SiteLayout>
