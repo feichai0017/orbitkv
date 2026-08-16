@@ -1,122 +1,27 @@
-name: ci
+name: CI
 
 on:
   push:
-    branches: ["main"]
+    branches: [main]
   pull_request:
-
-env:
-  CARGO_TERM_COLOR: always
 
 jobs:
   rust:
-    name: rust
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          toolchain: 1.97.1
-          components: rustfmt, clippy
+          components: clippy,rustfmt
+      - run: cargo fmt --all -- --check
+      - run: cargo test --all-targets
+      - run: cargo clippy --all-targets -- -D warnings
 
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Reject removed product paths
-        shell: bash
-        run: |
-          for path in \
-            benchmarks \
-            python \
-            spikes \
-            crates/loom-infer \
-            crates/loom-infer-cuda \
-            crates/loom-infer-validation \
-            crates/loom-cuda \
-            crates/loom-cuda-bridge \
-            crates/loom-cuda-sys \
-            crates/loom-kernels \
-            crates/oxide-cuda \
-            crates/oxide-cuda-bridge \
-            crates/oxide-cuda-sys \
-            crates/oxide-kernels \
-            crates/oxide-infer-cuda-bridge \
-            crates/oxide-infer-cuda-sys \
-            crates/oxide-infer-cuda/src/bin
-          do
-            if [[ -e "$path" ]]; then
-              echo "removed product path exists: $path"
-              exit 1
-            fi
-          done
-
-          forbidden_sources="$(find crates -type f \
-            \( -name '*.cu' -o -name '*.cuh' -o -name '*.cpp' -o -name '*.py' \) \
-            -print)"
-          if [[ -n "$forbidden_sources" ]]; then
-            echo "$forbidden_sources"
-            echo "non-Rust product source exists under crates"
-            exit 1
-          fi
-
-      - name: Check
-        run: make check-rust check-tools PACKAGE_FLAGS=
-
-  cuda-host:
-    name: cuda-host
+  sglang-plugin:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v7
-
-      - name: Install CUDA toolkit
-        uses: Jimver/cuda-toolkit@v0.2.35
-        id: cuda-toolkit
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
         with:
-          cuda: "13.1.1"
-          method: network
-          sub-packages: '["nvcc", "cudart-dev"]'
-          non-cuda-sub-packages: '["libcublas-dev", "libcurand-dev"]'
-
-      - name: Install Rust
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: nightly-2026-04-03
-          components: clippy
-
-      - uses: Swatinem/rust-cache@v2
-
-      - name: Check CUDA host surface
-        env:
-          CUDA_TOOLKIT_PATH: ${{ steps.cuda-toolkit.outputs.CUDA_PATH }}
-        run: make cuda-check
-
-  website:
-    name: website
-    runs-on: ubuntu-latest
-    env:
-      NODE_ENV: development
-    defaults:
-      run:
-        working-directory: website
-    steps:
-      - uses: actions/checkout@v7
-
-      - uses: actions/setup-node@v7
-        with:
-          node-version: 24.19.0
-          cache: npm
-          cache-dependency-path: website/package-lock.json
-
-      - name: Install dependencies
-        run: npm ci --include=dev
-
-      - name: Check
-        run: npm run check
-
-      - name: Build
-        run: npm run build
-
-      - name: Audit
-        run: npm audit
+          python-version: "3.11"
+      - run: python -m compileall -q integrations/sglang/src

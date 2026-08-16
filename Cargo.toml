@@ -1,34 +1,20 @@
-[workspace]
-members = [
-    "crates/oxide-infer-cuda",
-    "crates/oxide-infer-lab",
-    "crates/oxide-infer",
-]
-default-members = [
-    "crates/oxide-infer",
-    "crates/oxide-infer-cuda",
-]
-resolver = "2"
-
-[workspace.package]
-version = "1.0.0-alpha.1"
+[package]
+name = "orbitkv"
+version = "0.1.0"
 edition = "2024"
+rust-version = "1.88"
+description = "Compile attention retention into safe and efficient KV-block plans."
 license = "MIT"
 repository = "https://github.com/feichai0017/oxide-infer"
-homepage = "https://feichai0017.github.io/oxide-infer/"
 
-[workspace.dependencies]
-half = "2.7"
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
-sha2 = "0.10"
-thiserror = "2.0"
+[dependencies]
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+thiserror = "2.0.17"
 
-[workspace.lints.rust]
-unsafe_op_in_unsafe_fn = "deny"
-unused_must_use = "deny"
+[lints.rust]
+unsafe_code = "forbid"
 
-[workspace.lints.clippy]
-dbg_macro = "deny"
-todo = "deny"
-undocumented_unsafe_blocks = "deny"
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

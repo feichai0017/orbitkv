@@ -1,0 +1,191 @@
+use std::env;
+use std::fs::File;
+use std::io::{BufReader, BufWriter};
+use std::path::Path;
+use std::process::{Command, ExitCode};
+
+use orbitkv::{
+    CompiledKvPlan, KvPlanInput, compile_plan,
+    trace::{read_jsonl, summarize_sglang_trace},
+};
+use serde::Serialize;
+
+const EXPECTED_SGLANG_REVISION: &str = "095ec6c997bfdd25d3864cb0ce77a6562a934b96";
+
+#[derive(Serialize)]
+struct CompileReport<'a> {
+    page_tokens: u64,
+    boundary: u64,
+    classes: &'a [orbitkv::CompiledKvClass],
+    capacity: Vec<orbitkv::ClassCapacity>,
+    resident_bytes: u64,
+    all_full_baseline_bytes: u64,
+    continuation_blocks: std::collections::BTreeMap<String, Vec<orbitkv::plan::BlockRange>>,
+}
+
+#[derive(Serialize)]
+struct SglangContractReport {
+    root: String,
+    revision: String,
+    expected_revision: &'static str,
+    allocator_methods: Vec<String>,
+    passed_checks: Vec<&'static str>,
+    failed_checks: Vec<&'static str>,
+    status: ContractStatus,
+}
+
+#[derive(Clone, Copy, Serialize)]
+#[serde(rename_all = "snake_case")]
+enum ContractStatus {
+    Pass,
+    Fail,
+}
+
+fn main() -> ExitCode {
+    match run() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(error) => {
+            eprintln!("orbitkv: {error}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+fn run() -> Result<(), Box<dyn std::error::Error>> {
+    let mut args = env::args().skip(1);
+    match args.next().as_deref() {
+        Some("compile") => {
+            let plan_path = required(&mut args, "plan path")?;
+            require_flag(&mut args, "--boundary")?;
+            let boundary = required(&mut args, "boundary")?.parse::<u64>()?;
+            require_end(&mut args)?;
+            let plan = load_plan(plan_path)?;
+            let report = CompileReport {
+                page_tokens: plan.page_tokens,
+                boundary,
+                classes: &plan.classes,
+                capacity: plan.capacity_at(boundary)?,
+                resident_bytes: plan.resident_bytes_at(boundary)?,
+                all_full_baseline_bytes: plan.all_full_baseline_bytes_at(boundary)?,
+                continuation_blocks: plan.continuation_ranges(boundary)?,
+            };
+            write_json(&report)?;
+        }
+        Some("analyze-sglang") => {
+            let plan_path = required(&mut args, "plan path")?;
+            let trace_path = required(&mut args, "trace path")?;
+            require_flag(&mut args, "--max-active-requests")?;
+            let max_active_requests = required(&mut args, "max active requests")?.parse::<u64>()?;
+            require_end(&mut args)?;
+            let plan = load_plan(plan_path)?;
+            let trace = read_jsonl(BufReader::new(File::open(trace_path)?))?;
+            write_json(&summarize_sglang_trace(&trace, &plan, max_active_requests)?)?;
+        }
+        Some("check-sglang") => {
+            let root = required(&mut args, "SGLang root")?;
+            require_end(&mut args)?;
+            let report = check_sglang(Path::new(&root))?;
+            let valid = matches!(report.status, ContractStatus::Pass);
+            write_json(&report)?;
+            if !valid {
+                return Err("SGLang contract check failed".into());
+            }
+        }
+        _ => {
+            return Err("usage: orbitkv <compile|analyze-sglang|check-sglang> ...".into());
+        }
+    }
+    Ok(())
+}
+
+fn load_plan(path: impl AsRef<Path>) -> Result<CompiledKvPlan, Box<dyn std::error::Error>> {
+    let input = serde_json::from_reader::<_, KvPlanInput>(BufReader::new(File::open(path)?))?;
+    Ok(compile_plan(input)?)
+}
+
+fn check_sglang(root: &Path) -> Result<SglangContractReport, Box<dyn std::error::Error>> {
+    let revision = String::from_utf8(
+        Command::new("git")
+            .args(["rev-parse", "HEAD"])
+            .current_dir(root)
+            .output()?
+            .stdout,
+    )?
+    .trim()
+    .to_owned();
+    let plugin_source =
+        std::fs::read_to_string(root.join("python/sglang/srt/plugins/__init__.py"))?;
+    let hook_source =
+        std::fs::read_to_string(root.join("python/sglang/srt/plugins/hook_registry.py"))?;
+    let allocator_source =
+        std::fs::read_to_string(root.join("python/sglang/srt/mem_cache/allocator/swa.py"))?;
+    let methods = ["alloc", "alloc_extend", "alloc_decode", "free", "free_swa"]
+        .into_iter()
+        .filter(|method| allocator_source.contains(&format!("    def {method}(")))
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    let plugin_group_present = plugin_source.contains("sglang.srt.plugins")
+        && plugin_source.contains("GENERAL_PLUGINS_GROUP");
+    let hook_registry_present =
+        hook_source.contains("class HookRegistry") && hook_source.contains("class HookType");
+    let revision_matches = revision == EXPECTED_SGLANG_REVISION;
+    let mut passed_checks = Vec::new();
+    let mut failed_checks = Vec::new();
+    for (name, passed) in [
+        ("revision", revision_matches),
+        ("plugin_group", plugin_group_present),
+        ("hook_registry", hook_registry_present),
+        ("allocator_methods", methods.len() == 5),
+    ] {
+        if passed {
+            passed_checks.push(name);
+        } else {
+            failed_checks.push(name);
+        }
+    }
+    let status = if failed_checks.is_empty() {
+        ContractStatus::Pass
+    } else {
+        ContractStatus::Fail
+    };
+    Ok(SglangContractReport {
+        root: root.display().to_string(),
+        revision,
+        expected_revision: EXPECTED_SGLANG_REVISION,
+        allocator_methods: methods,
+        passed_checks,
+        failed_checks,
+        status,
+    })
+}
+
+fn required(
+    args: &mut impl Iterator<Item = String>,
+    name: &str,
+) -> Result<String, Box<dyn std::error::Error>> {
+    args.next().ok_or_else(|| format!("missing {name}").into())
+}
+
+fn require_flag(
+    args: &mut impl Iterator<Item = String>,
+    expected: &str,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let actual = required(args, expected)?;
+    if actual != expected {
+        return Err(format!("expected {expected}, got {actual}").into());
+    }
+    Ok(())
+}
+
+fn require_end(args: &mut impl Iterator<Item = String>) -> Result<(), Box<dyn std::error::Error>> {
+    if let Some(argument) = args.next() {
+        return Err(format!("unexpected argument {argument}").into());
+    }
+    Ok(())
+}
+
+fn write_json(value: &impl Serialize) -> Result<(), Box<dyn std::error::Error>> {
+    serde_json::to_writer_pretty(BufWriter::new(std::io::stdout()), value)?;
+    println!();
+    Ok(())
+}

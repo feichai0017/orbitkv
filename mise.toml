@@ -1,6 +1,0 @@
-[tools]
-node = "24.19.0"
-
-[env]
-_.path = ["/usr/lib/llvm-21/bin"]
-LIBCLANG_PATH = "/usr/lib/llvm-21/lib"
