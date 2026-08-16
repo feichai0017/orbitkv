@@ -99,6 +99,38 @@ def _load_hook_registry(sglang_root: Path):
 
 
 class ShadowPluginTests(unittest.TestCase):
+    def test_loads_validated_policy_from_rust(self):
+        from orbitkv_sglang import plugin
+
+        orbitkv_bin = os.environ.get("ORBITKV_BIN")
+        orbitkv_plan = os.environ.get("ORBITKV_PLAN")
+        if not orbitkv_bin or not orbitkv_plan:
+            self.skipTest("ORBITKV_BIN and ORBITKV_PLAN are required")
+
+        old_values = {
+            name: os.environ.get(name)
+            for name in (
+                "ORBITKV_BIN",
+                "ORBITKV_SGLANG_POLICY",
+                "ORBITKV_SGLANG_EVICTION_INTERVAL",
+            )
+        }
+        try:
+            os.environ["ORBITKV_BIN"] = orbitkv_bin
+            os.environ["ORBITKV_SGLANG_POLICY"] = orbitkv_plan
+            os.environ["ORBITKV_SGLANG_EVICTION_INTERVAL"] = "32"
+            policy = plugin._load_policy()
+        finally:
+            for name, value in old_values.items():
+                if value is None:
+                    os.environ.pop(name, None)
+                else:
+                    os.environ[name] = value
+
+        self.assertEqual(policy["schema"], "orbitkv.sglang-policy.v1")
+        self.assertEqual(policy["swa_eviction_interval_tokens"], 32)
+        self.assertEqual(policy["max_persistent_swa_token_slots_per_request"], 1040)
+
     def test_real_sglang_hook_registry_preserves_allocator_results(self):
         root = Path(os.environ["ORBITKV_SGLANG_ROOT"])
         registry_module = _load_hook_registry(root)

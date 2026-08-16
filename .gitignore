@@ -4,6 +4,8 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .venv/
+.venv-sglang-h20/
 dist/
 build/
 *.jsonl
+*.log

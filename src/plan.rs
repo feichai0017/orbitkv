@@ -49,6 +49,23 @@ pub struct BlockRange {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SglangBoundedClassPolicy {
+    pub name: String,
+    pub window_tokens: u64,
+    pub block_slots: u64,
+    pub token_slots: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SglangPolicy {
+    pub schema: &'static str,
+    pub page_tokens: u64,
+    pub swa_eviction_interval_tokens: u64,
+    pub max_persistent_swa_token_slots_per_request: u64,
+    pub bounded_classes: Vec<SglangBoundedClassPolicy>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct CompiledKvPlan {
     pub page_tokens: u64,
     pub classes: Vec<CompiledKvClass>,
@@ -84,6 +101,10 @@ pub enum PlanError {
     ArithmeticOverflow { calculation: &'static str },
     #[error("compiled sliding class {class:?} is missing its window")]
     InvalidCompiledClass { class: String },
+    #[error(
+        "SGLang eviction interval {interval} must be a positive multiple of page_tokens {page_tokens}"
+    )]
+    InvalidSglangEvictionInterval { interval: u64, page_tokens: u64 },
 }
 
 impl CompiledKvPlan {
@@ -198,6 +219,72 @@ impl CompiledKvPlan {
             .into_iter()
             .map(|(name, blocks)| (name, compact_ranges(&blocks)))
             .collect())
+    }
+
+    /// Lowers bounded block lifetimes to `SGLang`'s page-granular SWA policy.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a checked slot calculation overflows or a compiled
+    /// sliding class is missing its window.
+    pub fn sglang_policy(&self) -> Result<SglangPolicy, PlanError> {
+        self.sglang_policy_with_eviction_interval(self.page_tokens)
+    }
+
+    /// Lowers bounded block lifetimes with an explicit `SGLang` reclamation
+    /// interval used by the physical-plan cost model.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the interval is not a positive page multiple, a
+    /// checked slot calculation overflows, or a sliding class is invalid.
+    pub fn sglang_policy_with_eviction_interval(
+        &self,
+        eviction_interval_tokens: u64,
+    ) -> Result<SglangPolicy, PlanError> {
+        if eviction_interval_tokens == 0
+            || !eviction_interval_tokens.is_multiple_of(self.page_tokens)
+        {
+            return Err(PlanError::InvalidSglangEvictionInterval {
+                interval: eviction_interval_tokens,
+                page_tokens: self.page_tokens,
+            });
+        }
+        let bounded_classes =
+            self.classes
+                .iter()
+                .filter_map(|class| class.slot_count.map(|slots| (class, slots)))
+                .map(|(class, block_slots)| {
+                    let window_tokens = class.spec.window_tokens.ok_or_else(|| {
+                        PlanError::InvalidCompiledClass {
+                            class: class.spec.name.clone(),
+                        }
+                    })?;
+                    let token_slots = block_slots.checked_mul(self.page_tokens).ok_or(
+                        PlanError::ArithmeticOverflow {
+                            calculation: "SGLang policy token slots",
+                        },
+                    )?;
+                    Ok(SglangBoundedClassPolicy {
+                        name: class.spec.name.clone(),
+                        window_tokens,
+                        block_slots,
+                        token_slots,
+                    })
+                })
+                .collect::<Result<Vec<_>, PlanError>>()?;
+        let max_persistent_swa_token_slots_per_request = bounded_classes
+            .iter()
+            .map(|class| class.token_slots)
+            .max()
+            .unwrap_or(0);
+        Ok(SglangPolicy {
+            schema: "orbitkv.sglang-policy.v1",
+            page_tokens: self.page_tokens,
+            swa_eviction_interval_tokens: eviction_interval_tokens,
+            max_persistent_swa_token_slots_per_request,
+            bounded_classes,
+        })
     }
 
     fn class_capacity_at(
@@ -439,5 +526,19 @@ mod tests {
         let baseline = plan.all_full_baseline_bytes_at(32_768).unwrap();
         assert_eq!(resident, 1_563_688_960);
         assert_eq!(baseline, 8_321_499_136);
+        let policy = plan.sglang_policy().unwrap();
+        assert_eq!(policy.swa_eviction_interval_tokens, 16);
+        assert_eq!(policy.max_persistent_swa_token_slots_per_request, 1040);
+        assert_eq!(policy.bounded_classes[0].block_slots, 65);
+        assert_eq!(
+            plan.sglang_policy_with_eviction_interval(64)
+                .unwrap()
+                .swa_eviction_interval_tokens,
+            64
+        );
+        assert!(matches!(
+            plan.sglang_policy_with_eviction_interval(24),
+            Err(PlanError::InvalidSglangEvictionInterval { .. })
+        ));
     }
 }

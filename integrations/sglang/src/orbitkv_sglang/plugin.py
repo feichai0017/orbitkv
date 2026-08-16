@@ -4,6 +4,7 @@ import atexit
 import json
 import os
 import queue
+import subprocess
 import threading
 import time
 from pathlib import Path
@@ -12,10 +13,19 @@ from typing import Any, Callable
 
 _EVENTS: queue.Queue[dict[str, Any] | None] = queue.Queue()
 _WRITER: threading.Thread | None = None
+_POLICY: dict[str, Any] | None = None
 
 
 def _trace_path() -> Path:
     return Path(os.environ.get("ORBITKV_TRACE_PATH", "/tmp/orbitkv-sglang.jsonl"))
+
+
+def _trace_allocations_enabled() -> bool:
+    return os.environ.get("ORBITKV_TRACE_ALLOCATIONS", "1").lower() not in (
+        "0",
+        "false",
+        "no",
+    )
 
 
 def _integer(value: Any) -> int | None:
@@ -45,15 +55,27 @@ def _writer_main() -> None:
     with path.open("a", encoding="utf-8") as stream:
         while True:
             event = _EVENTS.get()
-            if event is None:
-                stream.flush()
+            batch = [event]
+            while True:
+                try:
+                    batch.append(_EVENTS.get_nowait())
+                except queue.Empty:
+                    break
+
+            should_stop = False
+            for event in batch:
+                if event is None:
+                    should_stop = True
+                else:
+                    stream.write(
+                        json.dumps(event, separators=(",", ":"), sort_keys=True)
+                    )
+                    stream.write("\n")
                 _EVENTS.task_done()
-                return
-            stream.write(json.dumps(event, separators=(",", ":"), sort_keys=True))
-            stream.write("\n")
-            if event.get("event") == "plugin_loaded":
+            if batch:
                 stream.flush()
-            _EVENTS.task_done()
+            if should_stop:
+                return
 
 
 def _stop_writer() -> None:
@@ -111,12 +133,39 @@ def _allocator_event(
     return result
 
 
+def _load_policy() -> dict[str, Any] | None:
+    plan_path = os.environ.get("ORBITKV_SGLANG_POLICY")
+    if not plan_path:
+        return None
+    orbitkv_bin = os.environ.get("ORBITKV_BIN", "orbitkv")
+    command = [orbitkv_bin, "emit-sglang-policy", plan_path]
+    if eviction_interval := os.environ.get("ORBITKV_SGLANG_EVICTION_INTERVAL"):
+        command.extend(["--eviction-interval", eviction_interval])
+    completed = subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    policy = json.loads(completed.stdout)
+    if policy.get("schema") != "orbitkv.sglang-policy.v1":
+        raise ValueError(f"unsupported OrbitKV SGLang policy: {policy!r}")
+    return policy
+
+
 def register() -> None:
-    global _WRITER
+    global _POLICY, _WRITER
 
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
-    if _WRITER is None:
+    _POLICY = _load_policy()
+    if _POLICY is not None:
+        os.environ["SGLANG_SWA_EVICTION_INTERVAL"] = str(
+            _POLICY["swa_eviction_interval_tokens"]
+        )
+
+    trace_allocations = _trace_allocations_enabled()
+    if trace_allocations and _WRITER is None:
         _WRITER = threading.Thread(
             target=_writer_main,
             name="orbitkv-sglang-shadow",
@@ -125,31 +174,33 @@ def register() -> None:
         _WRITER.start()
         atexit.register(_stop_writer)
 
-    target = "sglang.srt.mem_cache.allocator.swa.SWATokenToKVPoolAllocator"
-    for method in ("alloc", "alloc_extend", "alloc_decode", "free", "free_swa"):
-        operation = method
+    if trace_allocations:
+        target = "sglang.srt.mem_cache.allocator.swa.SWATokenToKVPoolAllocator"
+        for method in ("alloc", "alloc_extend", "alloc_decode", "free", "free_swa"):
+            operation = method
 
-        def around(original_fn, allocator, *args, _operation=operation, **kwargs):
-            return _allocator_event(
-                original_fn,
-                allocator,
-                *args,
-                operation=_operation,
-                **kwargs,
+            def around(original_fn, allocator, *args, _operation=operation, **kwargs):
+                return _allocator_event(
+                    original_fn,
+                    allocator,
+                    *args,
+                    operation=_operation,
+                    **kwargs,
+                )
+
+            HookRegistry.register(
+                f"{target}.{method}",
+                around,
+                HookType.AROUND,
             )
 
-        HookRegistry.register(
-            f"{target}.{method}",
-            around,
-            HookType.AROUND,
+        _emit(
+            {
+                "event": "plugin_loaded",
+                "sglang_expected_revision": os.environ.get(
+                    "ORBITKV_SGLANG_REVISION",
+                    "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+                ),
+                "policy": _POLICY,
+            }
         )
-
-    _emit(
-        {
-            "event": "plugin_loaded",
-            "sglang_expected_revision": os.environ.get(
-                "ORBITKV_SGLANG_REVISION",
-                "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
-            ),
-        }
-    )

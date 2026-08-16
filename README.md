@@ -37,6 +37,8 @@ mask compilation.
 cargo test --all-targets
 cargo run -- check-sglang /path/to/sglang
 cargo run -- compile examples/full_swa.json --boundary 32768
+cargo run -- emit-sglang-policy examples/gpt_oss_hybrid_tiny.json \
+  --eviction-interval 32
 ```
 
 ## SGLang shadow validation
@@ -74,3 +76,15 @@ cargo run -- analyze-sglang \
 ```
 
 See `docs/sglang-e2e.md` for the staged experiment and replacement gates.
+
+## H20 result
+
+The first cost-aware SGLang policy was validated on an NVIDIA H20 using a
+dummy-weight hybrid system fixture with real alternating Full/SWA execution.
+Under a fixed KV budget, OrbitKV increased Full token capacity by 47.14% and
+reduced the median makespan of an eight-request long-context workload by
+28.25%, with identical output-token digests.
+
+These are systems results, not model-quality results. See
+`docs/h20-sglang-validation-20260817.md` and `results/README.md` for the
+workload, constraints, raw matrices, and claim boundaries.

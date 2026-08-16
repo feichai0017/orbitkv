@@ -81,6 +81,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             let trace = read_jsonl(BufReader::new(File::open(trace_path)?))?;
             write_json(&summarize_sglang_trace(&trace, &plan, max_active_requests)?)?;
         }
+        Some("emit-sglang-policy") => {
+            let plan_path = required(&mut args, "plan path")?;
+            let plan = load_plan(plan_path)?;
+            let policy = match args.next() {
+                None => plan.sglang_policy()?,
+                Some(flag) if flag == "--eviction-interval" => {
+                    let interval = required(&mut args, "eviction interval")?.parse::<u64>()?;
+                    require_end(&mut args)?;
+                    plan.sglang_policy_with_eviction_interval(interval)?
+                }
+                Some(argument) => return Err(format!("unexpected argument {argument}").into()),
+            };
+            write_json(&policy)?;
+        }
         Some("check-sglang") => {
             let root = required(&mut args, "SGLang root")?;
             require_end(&mut args)?;
@@ -92,7 +106,10 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             }
         }
         _ => {
-            return Err("usage: orbitkv <compile|analyze-sglang|check-sglang> ...".into());
+            return Err(
+                "usage: orbitkv <compile|emit-sglang-policy|analyze-sglang|check-sglang> ..."
+                    .into(),
+            );
         }
     }
     Ok(())
