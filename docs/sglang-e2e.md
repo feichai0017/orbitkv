@@ -34,6 +34,11 @@ answers:
    overlap headroom, or retained prefix locks?
 3. Which SGLang paths must a future owning adapter reproduce?
 
+The repository CI already validates registration and event ordering against
+SGLang's pinned real `HookRegistry`, then feeds the emitted JSONL into the Rust
+trace analyzer. GPU allocator behavior and serving performance remain separate
+gates below.
+
 ### A0: Isolated lifecycle
 
 Configuration:

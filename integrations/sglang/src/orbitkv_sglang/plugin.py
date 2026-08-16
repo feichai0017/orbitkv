@@ -57,11 +57,14 @@ def _writer_main() -> None:
 
 
 def _stop_writer() -> None:
+    global _WRITER
+
     if _WRITER is None:
         return
     _EVENTS.put(None)
     _EVENTS.join()
     _WRITER.join(timeout=5)
+    _WRITER = None
 
 
 def _emit(event: dict[str, Any]) -> None:

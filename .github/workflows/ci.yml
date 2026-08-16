@@ -21,7 +21,28 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
+      - run: cargo build --bin orbitkv
+      - name: Fetch pinned SGLang hook contract
+        run: |
+          git clone \
+            --filter=blob:none \
+            --no-checkout \
+            https://github.com/sgl-project/sglang.git \
+            /tmp/sglang
+          git -C /tmp/sglang sparse-checkout init --no-cone
+          printf '%s\n' \
+            python/sglang/srt/plugins/hook_registry.py \
+            > /tmp/sglang/.git/info/sparse-checkout
+          git -C /tmp/sglang checkout 095ec6c997bfdd25d3864cb0ce77a6562a934b96
       - run: python -m compileall -q integrations/sglang/src
+      - name: Test SGLang plugin and Rust trace analyzer
+        env:
+          PYTHONPATH: integrations/sglang/src
+          ORBITKV_SGLANG_ROOT: /tmp/sglang
+          ORBITKV_BIN: ${{ github.workspace }}/target/debug/orbitkv
+          ORBITKV_PLAN: ${{ github.workspace }}/examples/full_swa.json
+        run: python -m unittest discover -s integrations/sglang/tests -v

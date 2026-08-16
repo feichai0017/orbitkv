@@ -35,6 +35,10 @@ git diff --check
   block generation remained GPU-pinned.
 - The SGLang source contract check found the required plugin framework and
   `SWATokenToKVPoolAllocator` methods.
+- The thin Python plugin was applied by SGLang's pinned real `HookRegistry`
+  implementation to a controlled allocator contract. All five hook points
+  preserved allocator return values, emitted ordered JSONL events, and the Rust
+  CLI consumed the resulting trace.
 - The 10-Full/52-SWA, W=1024, P=16, T=32768 illustrative plan compiled to:
   - 2,048 Full blocks;
   - 65 physical SWA slots per request;
@@ -57,6 +61,8 @@ The current evidence supports:
 - `W-1` old-token continuation semantics at a pre-query boundary;
 - completion-safe reuse behavior in the reference simulator;
 - source compatibility of the shadow plugin with the pinned SGLang checkout.
+- cross-language plugin-to-Rust trace-analysis behavior through SGLang's real
+  plugin hook machinery.
 
 The current evidence does not support:
 
