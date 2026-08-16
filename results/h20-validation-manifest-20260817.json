@@ -1,0 +1,50 @@
+{
+  "claim_boundary": [
+    "dummy-weight fixtures; no model-quality claim",
+    "radix cache, speculative decode, overlap schedule, and CUDA Graph disabled",
+    "Triton attention and MoE backends",
+    "raw logs and JSONL traces retained only in the local run workspace"
+  ],
+  "date": "2026-08-17",
+  "gpu": {
+    "compute_capability": [
+      9,
+      0
+    ],
+    "driver": "535.161.08",
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+  },
+  "orbitkv_source_commit": "a5d0f73288b141c97cc98a2a777295b9944470e4",
+  "records": {
+    "results/h20-62l-memory-20260817/summary.json": "668b07ae1d1830c6f2964692d075344f2426ee7997c5ff67912017dbd1660e82",
+    "results/h20-admission-ab-20260817/matrix.json": "98a8bd93b83749821a3607f8c18ac1e83791b1681f4d7624019f66a1a948066b",
+    "results/h20-admission-ab-20260817/summary.json": "24b9bf7f7b9836bd44917546d195a21556e7f9ad1ba0176344286cc5737fadd8",
+    "results/h20-policy-ab-20260816/matrix.json": "0459f0fd5e781ad2b03ec66525aeaba098eaec7002214dc4c9cb7a762e46cbac",
+    "results/h20-policy-sweep-20260816/matrix.json": "61eb56209a24e8d92e1be7c01a25dce0a1f67dbe24a9f598ff77ac6b6bd4715e",
+    "results/h20-policy-sweep-20260816/summary.json": "0b458f671063345bbfe8e6f9c43adb7b466f8cd9c7474d227ff1ef5fc0767101",
+    "results/h20-policy32-notrace-ab-20260817/matrix.json": "a986d95391f04c3560ab1fe8dfae47f477e1d35623f8179e310a74b983cfa9fc",
+    "results/h20-policy32-notrace-ab-20260817/summary.json": "2b7b386dc20b15743321de8c0e8034e98edb27aa748899119d878b4512260f14",
+    "results/h20-shadow-ab-20260816/matrix.json": "91f640b1cfd14c71e17465e52d5a94af486fc5efc0ded1cfe33433b7e9f9a396"
+  },
+  "schema": "orbitkv.h20-validation-manifest.v1",
+  "software": {
+    "flashinfer": "0.6.17",
+    "python": "3.11.10",
+    "sglang_kernel": "0.4.6.post1",
+    "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+    "torch": "2.13.0+cu130",
+    "torch_cuda": "13.0",
+    "transformers": "5.12.1"
+  },
+  "sources": {
+    "examples/gpt_oss_hybrid_62l.json": "9423d855231133295d9901682d4dfb5cca80233537f1fc17c2fbb1be2c678f11",
+    "examples/gpt_oss_hybrid_tiny.json": "c7511529499c187470b8436a4fe2b2df156d3b43dd3a65bfa11bff4caa2e59af",
+    "fixtures/gpt-oss-hybrid-62l/config.json": "ed7221b6aed632370464a1eab60efd6288724c32edc17acd3740e155ee398656",
+    "fixtures/gpt-oss-hybrid-tiny/config.json": "f4c227c3d269827bd843f2a9f83eb562f83709df563bdfca5d22ca1d180ac537",
+    "integrations/sglang/bench_hybrid_shadow.py": "4c0e744ae8e73b58316d4162a6f960464d076bb9b448df991b4e6142bb715e11",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "cca55f12698ead9d8febc0fe950f4b642059546115757a7d8fb4bec8f1cb2aa1",
+    "src/bin/orbitkv.rs": "9308caaa9074ae54f383481d5da5fe5fa83e50058359b315b2e049c9dd808e80",
+    "src/plan.rs": "c7cb4f59ea5fae2be1c1039f81fe894678674c056a9a4dcffe0e48b302642fa6"
+  }
+}

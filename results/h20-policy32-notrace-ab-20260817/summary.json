@@ -1,0 +1,84 @@
+{
+  "bootstrap_95_overhead_percent": [
+    -7.305748557716507,
+    11.568922940169646
+  ],
+  "bootstrap_95_ratio": [
+    0.9269425144228349,
+    1.1156892294016965
+  ],
+  "orbitkv_source_commit": "a5d0f73288b141c97cc98a2a777295b9944470e4",
+  "output_digest": "323ec9d98b237be84e8797abeae825a2ea11934fba375d3ca716bcfc25fb812b",
+  "pair_median_overhead_percent": 0.09277703055978748,
+  "pair_median_ratio": 1.0009277703055979,
+  "pairs": [
+    {
+      "overhead_percent": -0.09305588676679077,
+      "policy_median_s": 1.5833648201078176,
+      "process": 0,
+      "ratio": 0.9990694411323321,
+      "stock_median_s": 1.5848396066576242
+    },
+    {
+      "overhead_percent": -12.756498570004904,
+      "policy_median_s": 1.5794724766165018,
+      "process": 1,
+      "ratio": 0.872435014299951,
+      "stock_median_s": 1.8104184847325087
+    },
+    {
+      "overhead_percent": 0.09277703055978748,
+      "policy_median_s": 1.5891869235783815,
+      "process": 2,
+      "ratio": 1.0009277703055979,
+      "stock_median_s": 1.5877138897776604
+    },
+    {
+      "overhead_percent": 12.08920757124774,
+      "policy_median_s": 1.7803330887109041,
+      "process": 3,
+      "ratio": 1.1208920757124774,
+      "stock_median_s": 1.5883180256932974
+    },
+    {
+      "overhead_percent": -7.305748557716507,
+      "policy_median_s": 1.5840633865445852,
+      "process": 4,
+      "ratio": 0.9269425144228349,
+      "stock_median_s": 1.7089122161269188
+    },
+    {
+      "overhead_percent": 1.6369040047259587,
+      "policy_median_s": 1.609162662178278,
+      "process": 5,
+      "ratio": 1.0163690400472596,
+      "stock_median_s": 1.5832464378327131
+    },
+    {
+      "overhead_percent": 3.1552849295882535,
+      "policy_median_s": 1.618922021239996,
+      "process": 6,
+      "ratio": 1.0315528492958825,
+      "stock_median_s": 1.569402888417244
+    },
+    {
+      "overhead_percent": -5.937293057204407,
+      "policy_median_s": 1.621725395321846,
+      "process": 7,
+      "ratio": 0.9406270694279559,
+      "stock_median_s": 1.7240896504372358
+    },
+    {
+      "overhead_percent": 11.568922940169646,
+      "policy_median_s": 1.7735513243824244,
+      "process": 8,
+      "ratio": 1.1156892294016965,
+      "stock_median_s": 1.5896463617682457
+    }
+  ],
+  "policy_swa_capacity_slots": 10768,
+  "schema": "orbitkv.h20-policy32-notrace-summary.v1",
+  "static_slot_reduction": 768,
+  "static_slot_reduction_percent": 6.657420249653259,
+  "stock_swa_capacity_slots": 11536
+}

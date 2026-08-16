@@ -1,0 +1,20 @@
+{
+  "constraints": [
+    "fixed full token capacity 32768",
+    "8 requests",
+    "dummy weights; system behavior only"
+  ],
+  "fixture": "gpt-oss-hybrid-62l dummy system fixture",
+  "gpu_after_load_reduction_mib": 0,
+  "orbitkv_source_commit": "a5d0f73288b141c97cc98a2a777295b9944470e4",
+  "output_digest": "9f2e1944e9b5247a8e2ed3447c76f8fc7890d660aefe89cd72ba91f232dbf63a",
+  "policy_gpu_after_load_mib": 2547,
+  "policy_kvcache_gib": 1.695,
+  "policy_swa_capacity": 10768,
+  "reported_kvcache_reduction_mib": 77.82399999999984,
+  "schema": "orbitkv.h20-62l-memory-summary.v1",
+  "stock_gpu_after_load_mib": 2547,
+  "stock_kvcache_gib": 1.771,
+  "stock_swa_capacity": 11536,
+  "swa_capacity_reduction_percent": 6.657420249653259
+}

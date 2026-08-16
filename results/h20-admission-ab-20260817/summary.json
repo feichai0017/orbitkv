@@ -1,0 +1,50 @@
+{
+  "constraints": [
+    "dummy weights; system behavior only",
+    "radix/speculation/overlap/CUDA Graph disabled",
+    "Triton attention and MoE",
+    "not a model-quality result"
+  ],
+  "decode_tokens": 32,
+  "fixture": "gpt-oss-hybrid-62l dummy system fixture",
+  "full_token_capacity_increase_percent": 47.14487966021708,
+  "gpu": "NVIDIA H20",
+  "kv_budget_gib": 4.608,
+  "median_makespan_reduction_percent": 28.24989419523145,
+  "orbitkv_source_commit": "a5d0f73288b141c97cc98a2a777295b9944470e4",
+  "output_digest": "76cf04ef40736dcfe5761952139ce6c1e73c99b41b1a0a7cf05ccead8be3333d",
+  "pairs": [
+    {
+      "makespan_reduction_percent": 32.691352144981224,
+      "policy_makespan_s": 6.380531221628189,
+      "policy_p95_request_s": 6.3792825266718864,
+      "process_index": 0,
+      "stock_makespan_s": 9.479511808604002,
+      "stock_p95_request_s": 9.478382006287575
+    },
+    {
+      "makespan_reduction_percent": 26.758490840781622,
+      "policy_makespan_s": 6.40885192155838,
+      "policy_p95_request_s": 6.4079918675124645,
+      "process_index": 1,
+      "stock_makespan_s": 8.750300198793411,
+      "stock_p95_request_s": 8.748769510537386
+    },
+    {
+      "makespan_reduction_percent": 28.24989419523145,
+      "policy_makespan_s": 6.277305044233799,
+      "policy_p95_request_s": 6.276382301002741,
+      "process_index": 2,
+      "stock_makespan_s": 8.748844303190708,
+      "stock_p95_request_s": 8.747386552393436
+    }
+  ],
+  "policy_full_token_capacity": 49888,
+  "policy_swa_token_capacity": 36848,
+  "prompt_tokens": 6000,
+  "requests": 8,
+  "schema": "orbitkv.h20-admission-summary.v1",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+  "stock_full_token_capacity": 33904,
+  "stock_swa_token_capacity": 39920
+}

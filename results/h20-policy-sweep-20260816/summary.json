@@ -1,0 +1,43 @@
+{
+  "candidates": [
+    {
+      "eviction_interval_tokens": 32,
+      "measured_peak_swa_slots": 10320,
+      "median_overhead_percent": 3.1574821641100925,
+      "output_digest": "323ec9d98b237be84e8797abeae825a2ea11934fba375d3ca716bcfc25fb812b",
+      "paired_ratios": [
+        1.031574821641101,
+        1.0052221247458641,
+        1.0351390012264223
+      ],
+      "pairs": 3,
+      "policy_swa_capacity_slots": 10768,
+      "static_slot_reduction_percent": 6.657420249653259,
+      "stock_swa_capacity_slots": 11536
+    },
+    {
+      "eviction_interval_tokens": 64,
+      "measured_peak_swa_slots": 10320,
+      "median_overhead_percent": 3.0264203720819616,
+      "output_digest": "323ec9d98b237be84e8797abeae825a2ea11934fba375d3ca716bcfc25fb812b",
+      "paired_ratios": [
+        1.0316035269292863,
+        1.0224101872707336,
+        1.0302642037208196
+      ],
+      "pairs": 3,
+      "policy_swa_capacity_slots": 11024,
+      "static_slot_reduction_percent": 4.438280166435506,
+      "stock_swa_capacity_slots": 11536
+    }
+  ],
+  "constraints": [
+    "8-layer dummy hybrid system fixture",
+    "8 requests x 2048 prompt + 128 decode",
+    "first iteration per process excluded",
+    "3 fresh-process pairs per candidate"
+  ],
+  "schema": "orbitkv.h20-policy-sweep-summary.v1",
+  "selected_interval_tokens": 32,
+  "selection_reason": "same measured peak as interval 64, greater static capacity reduction; interval 16 had worse tail overhead"
+}
