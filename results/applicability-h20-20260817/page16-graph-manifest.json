@@ -26,6 +26,7 @@
     "results/applicability-h20-20260817/mistral-state-plan-page16-graph.json": "487351d485587f729fcbdc996ac9f816ca4b4dbf16d75bbe861b78efe26ae6ac"
   },
   "schema": "orbitkv.mistral-page16-graph-manifest.v1",
+  "source_commit": "84599061a424b93befb3c7f6c8693f6014f81749",
   "software": {
     "flashinfer": "0.6.17",
     "python": "3.11.10",
