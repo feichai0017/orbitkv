@@ -70,6 +70,16 @@ def main() -> None:
     parser.add_argument("--mem-fraction-static", type=float, default=None)
     parser.add_argument("--trace", default="/tmp/orbitkv-hybrid-shadow.jsonl")
     parser.add_argument("--orbitkv-bin", default=str(Path(__file__).resolve().parents[2] / "target/debug/orbitkv"))
+    parser.add_argument(
+        "--orbitkv-owner-lib",
+        default=str(
+            Path(__file__).resolve().parents[2]
+            / "crates/orbitkv-ffi/target/debug/liborbitkv_ffi.so"
+        ),
+    )
+    parser.add_argument(
+        "--owner-transport", choices=("ffi", "sidecar"), default="ffi"
+    )
     parser.add_argument("--eviction-interval", type=int, default=16)
     parser.add_argument("--no-trace-allocations", action="store_true")
     args = parser.parse_args()
@@ -97,10 +107,17 @@ def main() -> None:
             os.environ["ORBITKV_SGLANG_OWNING"] = (
                 "1" if args.mode == "owner" else "0"
             )
+            os.environ["ORBITKV_OWNER_TRANSPORT"] = args.owner_transport
+            if args.owner_transport == "ffi":
+                os.environ["ORBITKV_OWNER_LIB"] = args.orbitkv_owner_lib
+            else:
+                os.environ.pop("ORBITKV_OWNER_LIB", None)
         else:
             os.environ.pop("ORBITKV_SGLANG_POLICY", None)
             os.environ.pop("ORBITKV_SGLANG_EVICTION_INTERVAL", None)
             os.environ.pop("ORBITKV_SGLANG_OWNING", None)
+            os.environ.pop("ORBITKV_OWNER_TRANSPORT", None)
+            os.environ.pop("ORBITKV_OWNER_LIB", None)
         Path(args.trace).unlink(missing_ok=True)
 
     engine_args = dict(
@@ -159,6 +176,9 @@ def main() -> None:
                 args.eviction_interval
                 if args.mode in ("policy", "owner")
                 else 128
+            ),
+            "owner_transport": (
+                args.owner_transport if args.mode == "owner" else None
             ),
             "load_seconds": loaded - started,
             "iteration_seconds": iteration_seconds,

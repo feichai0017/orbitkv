@@ -15,6 +15,7 @@ measurements, and end-to-end serving behavior.
 | `h20-admission-ab-20260817` | Fixed-budget long-request admission and makespan |
 | `h20-owner-ab-20260817` | Rust owning control plane versus the same generated policy |
 | `h20-cuda-vmm-20260817` | Isolated H20 CUDA VMM stable-address remap qualification |
+| `owner-ffi-20260817` | In-process C ABI transport microbenchmark and balanced H20 A/B |
 
 The reviewed interpretations are:
 

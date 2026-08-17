@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import ctypes
 import json
 import os
 import queue
@@ -18,6 +19,14 @@ _OWNER: "OwnerClient | None" = None
 
 
 class OwnerClient:
+    def command(self, command: dict[str, Any]) -> dict[str, Any]:
+        raise NotImplementedError
+
+    def close(self) -> None:
+        raise NotImplementedError
+
+
+class SidecarOwnerClient(OwnerClient):
     def __init__(self, orbitkv_bin: str, plan_path: str):
         self._process = subprocess.Popen(
             [orbitkv_bin, "serve-sglang-owner", plan_path],
@@ -67,14 +76,268 @@ class OwnerClient:
             return response
 
     def close(self) -> None:
-        if self._process.poll() is not None:
+        if self._process.poll() is None:
+            self._stdin.close()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait(timeout=5)
+        self._stdout.close()
+        if self._process.stderr is not None:
+            self._process.stderr.close()
+
+
+class _FfiCertificate(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+        ("certificate_id", ctypes.c_uint64),
+        ("page_tokens", ctypes.c_uint64),
+        ("token_start", ctypes.c_uint64),
+        ("token_end_exclusive", ctypes.c_uint64),
+        ("semantic_frontier", ctypes.c_uint64),
+        ("window_tokens", ctypes.c_uint64),
+        ("maximum_reclaimable_end", ctypes.c_uint64),
+        ("execution_epoch", ctypes.c_uint64),
+        ("plan_fingerprint", ctypes.c_uint8 * 32),
+    ]
+
+
+class _FfiOwnerStats(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("reserved", ctypes.c_uint32),
+        ("tracked_requests", ctypes.c_uint64),
+        ("pending_certificates", ctypes.c_uint64),
+        ("committed_reclamations", ctypes.c_uint64),
+        ("committed_tokens", ctypes.c_uint64),
+        ("plan_fingerprint", ctypes.c_uint8 * 32),
+    ]
+
+
+class FfiOwnerClient(OwnerClient):
+    ABI_VERSION = 1
+    STATUS_OK = 0
+    STATUS_NO_CERTIFICATE = 1
+
+    def __init__(self, library_path: str, plan_path: str, policy: dict[str, Any]):
+        self._library = ctypes.CDLL(library_path)
+        self._configure_signatures()
+        if self._library.orbitkv_owner_abi_version() != self.ABI_VERSION:
+            raise RuntimeError("unsupported OrbitKV owner ABI version")
+        self._error = ctypes.create_string_buffer(1024)
+        self._handle = ctypes.c_void_p()
+        plan = Path(plan_path).read_bytes()
+        plan_buffer = (ctypes.c_uint8 * len(plan)).from_buffer_copy(plan)
+        status = self._library.orbitkv_owner_create(
+            plan_buffer,
+            len(plan),
+            ctypes.byref(self._handle),
+            self._error,
+            len(self._error),
+        )
+        self._check(status, "create owner")
+        if not self._handle.value:
+            raise RuntimeError("OrbitKV FFI returned a null owner")
+        bounded = policy.get("bounded_classes", [])
+        if len(bounded) != 1:
+            self.close()
+            raise RuntimeError(
+                "OrbitKV FFI owner requires exactly one bounded SGLang class"
+            )
+        self._class_name = str(bounded[0]["name"])
+        self._policy_fingerprint = str(policy["plan_fingerprint"])
+        self._lock = threading.Lock()
+
+    def _configure_signatures(self) -> None:
+        library = self._library
+        library.orbitkv_owner_abi_version.argtypes = []
+        library.orbitkv_owner_abi_version.restype = ctypes.c_uint32
+        library.orbitkv_owner_create.argtypes = [
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_owner_create.restype = ctypes.c_int32
+        library.orbitkv_owner_plan_chunk_reclamation.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.c_uint64,
+            ctypes.c_uint64,
+            ctypes.c_uint64,
+            ctypes.POINTER(_FfiCertificate),
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_owner_plan_chunk_reclamation.restype = ctypes.c_int32
+        library.orbitkv_owner_commit_reclamations.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_owner_commit_reclamations.restype = ctypes.c_int32
+        library.orbitkv_owner_release_request.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_owner_release_request.restype = ctypes.c_int32
+        library.orbitkv_owner_stats.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(_FfiOwnerStats),
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_owner_stats.restype = ctypes.c_int32
+        library.orbitkv_owner_destroy.argtypes = [ctypes.c_void_p]
+        library.orbitkv_owner_destroy.restype = None
+
+    def _check(self, status: int, operation: str) -> None:
+        if status == self.STATUS_OK:
             return
-        self._stdin.close()
-        try:
-            self._process.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            self._process.kill()
-            self._process.wait(timeout=5)
+        message = self._error.value.decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"OrbitKV FFI {operation} failed with status {status}: {message}"
+        )
+
+    @staticmethod
+    def _request_buffer(request_id: str):
+        encoded = request_id.encode("utf-8")
+        return encoded, (ctypes.c_uint8 * len(encoded)).from_buffer_copy(encoded)
+
+    @staticmethod
+    def _fingerprint(value) -> str:
+        return f"sha256:{bytes(value).hex()}"
+
+    def command(self, command: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            if not self._handle.value:
+                raise RuntimeError("OrbitKV FFI owner is closed")
+            operation = command["op"]
+            if operation == "plan_reclamation":
+                return self._plan(command)
+            if operation == "commit_reclamations":
+                return self._commit(command)
+            if operation == "release_request":
+                return self._release(command)
+            if operation == "stats":
+                return self._stats()
+            raise RuntimeError(f"unsupported OrbitKV FFI command: {operation}")
+
+    def _plan(self, command: dict[str, Any]) -> dict[str, Any]:
+        if command.get("cache_kind") != "chunk":
+            raise RuntimeError("OrbitKV FFI owner only supports chunk cache")
+        encoded, request = self._request_buffer(str(command["request_id"]))
+        certificate = _FfiCertificate()
+        status = self._library.orbitkv_owner_plan_chunk_reclamation(
+            self._handle,
+            request,
+            len(encoded),
+            int(command["observed_evicted_seqlen"]),
+            int(command["semantic_frontier"]),
+            int(command["execution_epoch"]),
+            ctypes.byref(certificate),
+            self._error,
+            len(self._error),
+        )
+        if status == self.STATUS_NO_CERTIFICATE:
+            return {"status": "reclamation", "certificate": None}
+        self._check(status, "plan reclamation")
+        fingerprint = self._fingerprint(certificate.plan_fingerprint)
+        if fingerprint != self._policy_fingerprint:
+            raise RuntimeError(
+                "OrbitKV FFI certificate fingerprint does not match policy"
+            )
+        return {
+            "status": "reclamation",
+            "certificate": {
+                "schema": "orbitkv.sglang-retirement-certificate.v1",
+                "plan_fingerprint": fingerprint,
+                "certificate_id": certificate.certificate_id,
+                "request_id": str(command["request_id"]),
+                "class_name": self._class_name,
+                "page_tokens": certificate.page_tokens,
+                "token_start": certificate.token_start,
+                "token_end_exclusive": certificate.token_end_exclusive,
+                "semantic_proof": {
+                    "kind": "sliding_window",
+                    "semantic_frontier": certificate.semantic_frontier,
+                    "window_tokens": certificate.window_tokens,
+                    "maximum_reclaimable_end": (
+                        certificate.maximum_reclaimable_end
+                    ),
+                },
+                "execution_proof": {
+                    "kind": "non_overlap_scheduler_barrier",
+                    "execution_epoch": certificate.execution_epoch,
+                },
+            },
+        }
+
+    def _commit(self, command: dict[str, Any]) -> dict[str, Any]:
+        certificate_ids = [int(value) for value in command["certificate_ids"]]
+        values = (ctypes.c_uint64 * len(certificate_ids))(*certificate_ids)
+        status = self._library.orbitkv_owner_commit_reclamations(
+            self._handle,
+            values if certificate_ids else None,
+            len(certificate_ids),
+            self._error,
+            len(self._error),
+        )
+        self._check(status, "commit reclamations")
+        return {"status": "committed", "certificate_ids": certificate_ids}
+
+    def _release(self, command: dict[str, Any]) -> dict[str, Any]:
+        request_id = str(command["request_id"])
+        encoded, request = self._request_buffer(request_id)
+        status = self._library.orbitkv_owner_release_request(
+            self._handle,
+            request,
+            len(encoded),
+            self._error,
+            len(self._error),
+        )
+        self._check(status, "release request")
+        return {"status": "released", "request_id": request_id}
+
+    def _stats(self) -> dict[str, Any]:
+        stats = _FfiOwnerStats()
+        status = self._library.orbitkv_owner_stats(
+            self._handle,
+            ctypes.byref(stats),
+            self._error,
+            len(self._error),
+        )
+        self._check(status, "read stats")
+        return {
+            "status": "stats",
+            "stats": {
+                "plan_fingerprint": self._fingerprint(stats.plan_fingerprint),
+                "tracked_requests": stats.tracked_requests,
+                "pending_certificates": stats.pending_certificates,
+                "committed_reclamations": stats.committed_reclamations,
+                "committed_tokens": stats.committed_tokens,
+            },
+        }
+
+    def close(self) -> None:
+        with getattr(self, "_lock", threading.Lock()):
+            if getattr(self, "_handle", None) is None or not self._handle.value:
+                return
+            self._library.orbitkv_owner_destroy(self._handle)
+            self._handle = ctypes.c_void_p()
+
+
+def _owner_transport() -> str:
+    return os.environ.get("ORBITKV_OWNER_TRANSPORT", "ffi").lower()
 
 
 def _owner_enabled() -> bool:
@@ -405,10 +668,27 @@ def register() -> None:
             )
         if _POLICY["page_tokens"] <= 1:
             raise RuntimeError("OrbitKV owning mode requires a paged SGLang pool")
-        _OWNER = OwnerClient(
-            os.environ.get("ORBITKV_BIN", "orbitkv"),
-            os.environ["ORBITKV_SGLANG_POLICY"],
-        )
+        transport = _owner_transport()
+        if transport == "ffi":
+            library_path = os.environ.get("ORBITKV_OWNER_LIB")
+            if not library_path:
+                raise RuntimeError(
+                    "ORBITKV_OWNER_LIB is required for FFI owning mode"
+                )
+            _OWNER = FfiOwnerClient(
+                library_path,
+                os.environ["ORBITKV_SGLANG_POLICY"],
+                _POLICY,
+            )
+        elif transport == "sidecar":
+            _OWNER = SidecarOwnerClient(
+                os.environ.get("ORBITKV_BIN", "orbitkv"),
+                os.environ["ORBITKV_SGLANG_POLICY"],
+            )
+        else:
+            raise RuntimeError(
+                f"unsupported ORBITKV_OWNER_TRANSPORT: {transport}"
+            )
         atexit.register(_stop_owner)
         HookRegistry.register(
             "sglang.srt.managers.schedule_batch.ScheduleBatch._evict_swa",

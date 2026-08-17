@@ -1,0 +1,48 @@
+{
+  "abi_version": 1,
+  "claim_boundary": [
+    "dummy-weight SGLang system fixture; no model-quality claim",
+    "FFI and sidecar implement the same SWA chunk-cache certificate protocol",
+    "transport microbenchmark is not an end-to-end serving speedup claim",
+    "radix, speculation, overlap, and CUDA Graph remain disabled"
+  ],
+  "date": "2026-08-17",
+  "gpu": {
+    "compute_capability": [
+      9,
+      0
+    ],
+    "driver": "535.161.08",
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+  },
+  "records": {
+    "results/owner-ffi-20260817/h20-balanced-ab.json": "8511a475da370f9aba4e910c797f28a79738123b5a98b1e45706282f1740f55e",
+    "results/owner-ffi-20260817/summary.json": "006517977ceaa05b49e35417e325c319778f34e4520d941c2238bbbd593665a9",
+    "results/owner-ffi-20260817/transport.json": "246f9daa3ee5211f5f32a11d6c80701882dfbc05e0de75121eeb088d907d75e5"
+  },
+  "schema": "orbitkv.owner-ffi-manifest.v1",
+  "software": {
+    "python": "3.11.10",
+    "rust_edition": "2024",
+    "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+    "torch": "2.13.0+cu130"
+  },
+  "source_parent_commit": "b7a22b5b52a8bf476a58b9b5de17629322c974e4",
+  "sources": {
+    "crates/orbitkv-ffi/Cargo.toml": "d516d8213c366654abfee3c8e8ff1635ab827b8af3f749964a00c5a8d9159f8b",
+    "crates/orbitkv-ffi/include/orbitkv_owner.h": "b366570aec2b7f741cd8b681474908cbea14953747ab90b76f44698cf81fef33",
+    "crates/orbitkv-ffi/src/lib.rs": "26071375d21c4fb07bae43526b716150eefac0912dbad73c0ce60243b6a2eb4e",
+    "crates/orbitkv-ffi/tests/header_smoke.c": "46b6e97b7de5583fc971c5fd4d8a705c61516f12e2c32ce6136cbee5e3604f14",
+    "integrations/sglang/bench_hybrid_shadow.py": "8a55090e4751d917c73a3faee107c8676cee21ba599387ca03d78e89f1af8cc9",
+    "integrations/sglang/bench_owner_e2e_ab.py": "b5d84ac81a56a917b18cedcce3de45b9bf2ce2134d85ac8f88431def35d7ccc7",
+    "integrations/sglang/bench_owner_transport.py": "add169a3a23397619104e845da8b838566d6d3e378a1f464fe1e00d9614d465d",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "4b32257f2fd3cced8569daf599f81133799d053baaebcde670e3b0e3b31d208c",
+    "integrations/sglang/tests/test_shadow_plugin.py": "7531eb173b834037f192f537ad6b093aa135ef741ef53f2b87ccd8a5ef93bfc6"
+  },
+  "website": {
+    "website/src/data/site.ts": "56ae1b1fb3a1ccd5eaef9720442d027dcbcc85739d6cb35c2088dae13473a499",
+    "website/src/pages/evidence.astro": "0a2739c8869741fa7cf63aac0e37f25849688f926923389b968e5301e58e8baf",
+    "website/src/pages/index.astro": "8421675c2de05664c45271a10b226b440f010c6dd4589002e666d022cdc272c2"
+  }
+}

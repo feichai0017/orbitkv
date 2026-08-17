@@ -1,5 +1,5 @@
 {
-  "base_source_commit": "4ed69736afbac50a0c032f081e077dc32138772e",
+  "base_source_commit": "b7a22b5b52a8bf476a58b9b5de17629322c974e4",
   "claim_boundary": [
     "dummy-weight SGLang system fixture; no model-quality claim",
     "owning adapter limited to SWA chunk cache without radix, speculation, overlap, or CUDA Graph",

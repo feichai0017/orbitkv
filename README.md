@@ -23,7 +23,7 @@ The first executable slice supports:
 - a multi-request owning block manager with generation-checked handles;
 - immutable KV views, semantic/execution frontiers, and two-phase retirement
   certificates;
-- an owning SGLang SWA chunk-cache adapter backed by a persistent Rust process;
+- an owning SGLang SWA chunk-cache adapter backed by a typed in-process Rust C ABI;
 - a cost-gated NVIDIA CUDA VMM physical-slot backend.
 
 The compiler, lifecycle runtime, plan verifier, trace analyzer, and CLI are
@@ -45,6 +45,7 @@ cargo run -- emit-layout examples/full_swa.json
 cargo run -- emit-sglang-policy examples/gpt_oss_hybrid_tiny.json \
   --eviction-interval 32
 cargo run -- serve-sglang-owner examples/full_swa.json
+cargo build --manifest-path crates/orbitkv-ffi/Cargo.toml
 cargo run --manifest-path crates/orbitkv-cuda/Cargo.toml \
   --bin orbitkv-cuda -- vmm-smoke 1048576
 ```
@@ -70,6 +71,22 @@ export SGLANG_PLUGINS=orbitkv_shadow
 export ORBITKV_TRACE_PATH=/tmp/orbitkv-sglang.jsonl
 export ORBITKV_SGLANG_REVISION=095ec6c997bfdd25d3864cb0ce77a6562a934b96
 ```
+
+To enable the owning FFI path:
+
+```bash
+cargo build --release --bin orbitkv
+cargo build --release --manifest-path crates/orbitkv-ffi/Cargo.toml
+
+export ORBITKV_BIN="$PWD/target/release/orbitkv"
+export ORBITKV_SGLANG_POLICY="$PWD/examples/gpt_oss_hybrid_62l.json"
+export ORBITKV_SGLANG_OWNING=1
+export ORBITKV_OWNER_TRANSPORT=ffi
+export ORBITKV_OWNER_LIB="$PWD/crates/orbitkv-ffi/target/release/liborbitkv_ffi.so"
+```
+
+`ORBITKV_OWNER_TRANSPORT=sidecar` remains available as a protocol regression
+baseline, not the default production transport.
 
 For the first experiment, disable radix cache and speculative decoding. This
 isolates per-request Full growth and bounded SWA residency before prefix locks,
@@ -116,9 +133,16 @@ succeeds. Injected physical-free failures do not commit the certificate.
 
 Three fresh-process H20 Policy/Owner pairs on the same 62-layer admission
 workload produced a median Owner/Policy ratio of `1.0062x`, or `+0.62%`.
-Capacity and output digests were identical. This is a prototype control-plane
-result, not evidence for radix cache, overlap scheduling, or speculative
-decoding.
+Capacity and output digests were identical. This is not evidence for radix
+cache, overlap scheduling, or speculative decoding.
+
+The current adapter calls Rust through `orbitkv-ffi` instead of a JSONL
+sidecar. A release-build transport benchmark reduced median `plan + commit`
+latency from `31.03 µs` to `7.29 µs`, a `4.26x` control-plane speedup. Six
+fresh-process, alternating-order H20 pairs measured a median FFI/sidecar
+end-to-end ratio of `1.0030x` and mean ratio of `1.0008x`, with identical
+capacity and output digests. The microbenchmark speedup is not a serving
+speedup claim.
 
 ## NVIDIA physical backend
 

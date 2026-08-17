@@ -1,0 +1,121 @@
+{
+  "cycles_per_trial": 5000,
+  "ffi_plan_commit_ns_median": 7289.0,
+  "median_speedup": 4.256619563726162,
+  "plan_fingerprint": "sha256:a84fe804c2a7aab77633e3d9ddad5b8095bd593586e3a01ad305837cedf26db8",
+  "schema": "orbitkv.owner-transport-benchmark.v1",
+  "sidecar_plan_commit_ns_median": 31026.5,
+  "trials": [
+    {
+      "committed_reclamations": 5000,
+      "committed_tokens": 80000,
+      "cycles": 5000,
+      "plan_commit_ns_mean": 32445.88,
+      "plan_commit_ns_median": 31274.5,
+      "plan_commit_ns_p95": 41127,
+      "startup_ns": 257627,
+      "transport": "sidecar",
+      "trial": 0
+    },
+    {
+      "committed_reclamations": 5000,
+      "committed_tokens": 80000,
+      "cycles": 5000,
+      "plan_commit_ns_mean": 7546.4742,
+      "plan_commit_ns_median": 7328.0,
+      "plan_commit_ns_p95": 7978,
+      "startup_ns": 520436,
+      "transport": "ffi",
+      "trial": 0
+    },
+    {
+      "committed_reclamations": 5000,
+      "committed_tokens": 80000,
+      "cycles": 5000,
+      "plan_commit_ns_mean": 32499.104,
+      "plan_commit_ns_median": 31314.0,
+      "plan_commit_ns_p95": 41714,
+      "startup_ns": 321458,
+      "transport": "sidecar",
+      "trial": 1
+    },
+    {
+      "committed_reclamations": 5000,
+      "committed_tokens": 80000,
+      "cycles": 5000,
+      "plan_commit_ns_mean": 7460.1552,
+      "plan_commit_ns_median": 7242.0,
+      "plan_commit_ns_p95": 7820,
+      "startup_ns": 186219,
+      "transport": "ffi",
+      "trial": 1
+    },
+    {
+      "committed_reclamations": 5000,
+      "committed_tokens": 80000,
+      "cycles": 5000,
+      "plan_commit_ns_mean": 32245.0616,
+      "plan_commit_ns_median": 30916.5,
+      "plan_commit_ns_p95": 41083,
+      "startup_ns": 306141,
+      "transport": "sidecar",
+      "trial": 2
+    },
+    {
+      "committed_reclamations": 5000,
+      "committed_tokens": 80000,
+      "cycles": 5000,
+      "plan_commit_ns_mean": 7470.256,
+      "plan_commit_ns_median": 7265.0,
+      "plan_commit_ns_p95": 7866,
+      "startup_ns": 218941,
+      "transport": "ffi",
+      "trial": 2
+    },
+    {
+      "committed_reclamations": 5000,
+      "committed_tokens": 80000,
+      "cycles": 5000,
+      "plan_commit_ns_mean": 32357.6232,
+      "plan_commit_ns_median": 31026.5,
+      "plan_commit_ns_p95": 41858,
+      "startup_ns": 362943,
+      "transport": "sidecar",
+      "trial": 3
+    },
+    {
+      "committed_reclamations": 5000,
+      "committed_tokens": 80000,
+      "cycles": 5000,
+      "plan_commit_ns_mean": 7598.2092,
+      "plan_commit_ns_median": 7289.0,
+      "plan_commit_ns_p95": 7941,
+      "startup_ns": 211688,
+      "transport": "ffi",
+      "trial": 3
+    },
+    {
+      "committed_reclamations": 5000,
+      "committed_tokens": 80000,
+      "cycles": 5000,
+      "plan_commit_ns_mean": 31931.1728,
+      "plan_commit_ns_median": 30724.0,
+      "plan_commit_ns_p95": 41202,
+      "startup_ns": 375234,
+      "transport": "sidecar",
+      "trial": 4
+    },
+    {
+      "committed_reclamations": 5000,
+      "committed_tokens": 80000,
+      "cycles": 5000,
+      "plan_commit_ns_mean": 7577.372,
+      "plan_commit_ns_median": 7344.0,
+      "plan_commit_ns_p95": 7962,
+      "startup_ns": 228727,
+      "transport": "ffi",
+      "trial": 4
+    }
+  ],
+  "trials_per_transport": 5
+}

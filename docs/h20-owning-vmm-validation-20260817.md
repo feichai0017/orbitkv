@@ -15,7 +15,7 @@ allocator.
 
 ## Owning protocol
 
-The prototype executes:
+The owning adapter executes:
 
 ```text
 Rust Retention Plan
@@ -78,6 +78,47 @@ This shows that ownership and proof-carrying reclamation can preserve the
 capacity benefit without a visible large control-plane regression. Three pairs
 are not enough to claim a tight universal overhead bound.
 
+## In-process owner ABI
+
+The first prototype used a persistent JSONL subprocess. The current adapter
+uses `orbitkv-ffi`, a versioned C ABI loaded in the SGLang scheduler process.
+The ABI exposes fixed-layout functions for:
+
+```text
+create
+plan_chunk_reclamation
+commit_reclamations
+release_request
+stats
+destroy
+```
+
+`OrbitKvCertificateV1` carries the certificate id, token range, semantic
+proof fields, execution epoch, and binary SHA-256 plan fingerprint without
+JSON serialization. Panics are contained at the ABI boundary.
+
+A release-build host transport benchmark ran five trials of 5,000
+`plan + commit` cycles:
+
+| Transport | Median |
+| --- | ---: |
+| JSONL sidecar | 31.03 µs |
+| In-process FFI | 7.29 µs |
+
+Median control-plane speedup: **4.26x**.
+
+Six fresh-process H20 pairs alternated transport execution order:
+
+```text
+FFI / sidecar median ratio: 1.0030x
+FFI / sidecar mean ratio:   1.0008x
+```
+
+All pairs reported Full capacity 49,888, SWA capacity 36,848, zero
+retractions, and the same output digest. This establishes that FFI removes
+most transport overhead without changing serving semantics; it does not prove
+a measurable end-to-end serving speedup for this GPU-dominated workload.
+
 ## CUDA VMM result
 
 The `orbitkv-cuda` crate uses NVIDIA CUDA Driver API VMM operations:
@@ -136,16 +177,15 @@ It does not yet support:
 - radix/prefix cache, overlap, speculative, cancellation, or CUDA Graph
   qualification for the owning SGLang adapter;
 - VMM-backed SGLang KV tensors;
-- a production in-process Rust FFI path;
+- released-checkpoint qualification of the in-process Rust FFI path;
 - multi-GPU multicast or fabric-memory claims;
 - released-checkpoint model-quality claims.
 
 ## Next gate
 
-Replace JSONL sidecar calls with an in-process Rust ABI, connect
-`CudaVmmSlot` generations to `BlockHandle`, and expose a graph-stable KV
-descriptor backed by VMM regions. Then enable CUDA Graph and overlap one at a
-time while preserving:
+Connect `CudaVmmSlot` generations to `BlockHandle` and expose a graph-stable
+KV descriptor backed by VMM regions. Then enable CUDA Graph and overlap one at
+a time while preserving:
 
 ```text
 PhysicalReuse

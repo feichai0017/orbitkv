@@ -71,7 +71,7 @@ class FakeOwner:
                 "status": "reclamation",
                 "certificate": {
                     "schema": "orbitkv.sglang-retirement-certificate.v1",
-                    "plan_fingerprint": "fnv1a64:test",
+                    "plan_fingerprint": f"sha256:{'00' * 32}",
                     "certificate_id": 7,
                     "request_id": command["request_id"],
                     "class_name": "swa",
@@ -300,7 +300,7 @@ class ShadowPluginTests(unittest.TestCase):
         try:
             plugin._OWNER = owner
             plugin._POLICY = {
-                "plan_fingerprint": "fnv1a64:test",
+                "plan_fingerprint": f"sha256:{'00' * 32}",
                 "page_tokens": 16,
             }
             os.environ["ORBITKV_TRACE_ALLOCATIONS"] = "0"
@@ -342,7 +342,7 @@ class ShadowPluginTests(unittest.TestCase):
         try:
             plugin._OWNER = owner
             plugin._POLICY = {
-                "plan_fingerprint": "fnv1a64:test",
+                "plan_fingerprint": f"sha256:{'00' * 32}",
                 "page_tokens": 16,
             }
             os.environ["ORBITKV_TRACE_ALLOCATIONS"] = "0"
@@ -372,6 +372,70 @@ class ShadowPluginTests(unittest.TestCase):
             ["plan_reclamation"],
         )
         self.assertEqual(req.kv.swa_evicted_seqlen, 0)
+
+    def test_ffi_and_sidecar_owner_transports_are_equivalent(self):
+        from orbitkv_sglang import plugin
+
+        orbitkv_bin = os.environ.get("ORBITKV_BIN")
+        orbitkv_plan = os.environ.get("ORBITKV_PLAN")
+        owner_library = os.environ.get("ORBITKV_OWNER_LIB")
+        if not orbitkv_bin or not orbitkv_plan or not owner_library:
+            self.skipTest(
+                "ORBITKV_BIN, ORBITKV_PLAN, and ORBITKV_OWNER_LIB are required"
+            )
+
+        old_bin = os.environ.get("ORBITKV_BIN")
+        old_policy = os.environ.get("ORBITKV_SGLANG_POLICY")
+        try:
+            os.environ["ORBITKV_BIN"] = orbitkv_bin
+            os.environ["ORBITKV_SGLANG_POLICY"] = orbitkv_plan
+            policy = plugin._load_policy()
+        finally:
+            if old_bin is None:
+                os.environ.pop("ORBITKV_BIN", None)
+            else:
+                os.environ["ORBITKV_BIN"] = old_bin
+            if old_policy is None:
+                os.environ.pop("ORBITKV_SGLANG_POLICY", None)
+            else:
+                os.environ["ORBITKV_SGLANG_POLICY"] = old_policy
+
+        ffi = plugin.FfiOwnerClient(owner_library, orbitkv_plan, policy)
+        sidecar = plugin.SidecarOwnerClient(orbitkv_bin, orbitkv_plan)
+        try:
+            plan_command = {
+                "op": "plan_reclamation",
+                "request_id": "r0",
+                "observed_evicted_seqlen": 0,
+                "semantic_frontier": 2048,
+                "execution_epoch": 7,
+                "cache_kind": "chunk",
+            }
+            ffi_plan = ffi.command(plan_command)
+            sidecar_plan = sidecar.command(plan_command)
+            self.assertEqual(ffi_plan, sidecar_plan)
+            certificate_id = ffi_plan["certificate"]["certificate_id"]
+
+            commit_command = {
+                "op": "commit_reclamations",
+                "certificate_ids": [certificate_id],
+            }
+            self.assertEqual(
+                ffi.command(commit_command),
+                sidecar.command(commit_command),
+            )
+            self.assertEqual(
+                ffi.command({"op": "stats"}),
+                sidecar.command({"op": "stats"}),
+            )
+            release_command = {"op": "release_request", "request_id": "r0"}
+            self.assertEqual(
+                ffi.command(release_command),
+                sidecar.command(release_command),
+            )
+        finally:
+            ffi.close()
+            sidecar.close()
 
 
 if __name__ == "__main__":

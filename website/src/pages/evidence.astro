@@ -47,12 +47,14 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
       <div class="doc-note">
         <strong>Owning control plane.</strong>
         <p>
-          Three Policy/Owner pairs produced a median ratio of 1.0062x with
-          identical capacity and output digest. A traced smoke run emitted and
-          committed one SHA-256-bound certificate for <code>[0, 1024)</code>.
+          The in-process FFI reduced release-build <code>plan + commit</code>
+          median latency from 31.03 µs to 7.29 µs. Six alternating-order H20
+          pairs produced a median FFI/sidecar ratio of 1.0030x with identical
+          capacity and output digest. The 4.26x transport result is not a
+          serving speedup claim.
         </p>
-        <a href={`${repositoryUrl}/blob/main/results/h20-owner-ab-20260817/summary.json`}>
-          Owner summary
+        <a href={`${repositoryUrl}/blob/main/results/owner-ffi-20260817/summary.json`}>
+          Owner FFI summary
         </a>
       </div>
 

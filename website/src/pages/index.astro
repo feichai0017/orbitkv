@@ -114,8 +114,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <header class="section-heading">
       <div><p class="eyebrow">System architecture</p><h2>Safe compiler.<br />Explicit GPU boundary.</h2></div>
       <p>
-        Core Rust forbids unsafe code. NVIDIA Driver API operations are isolated
-        in a separate backend crate and selected through an explicit cost model.
+        Core Rust forbids unsafe code. The versioned owner ABI and NVIDIA Driver
+        API operations are isolated in boundary crates with explicit tests.
       </p>
     </header>
     <div class="architecture-grid">
@@ -166,8 +166,8 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <header class="section-heading">
       <div><p class="eyebrow">Next gates</p><h2>Move ownership closer to the GPU.</h2></div>
       <p>
-        The next work removes prototype IPC, connects VMM generations to real
-        KV storage, and broadens Retention IR without weakening safety.
+        The next work connects VMM generations to real KV storage and broadens
+        Retention IR without weakening the in-process ownership contract.
       </p>
     </header>
     <div class="milestone-list">

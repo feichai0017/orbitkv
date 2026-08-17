@@ -50,7 +50,7 @@ export const metrics = [
   { value: "−77.8 MiB", label: "KV pool", detail: "reported physical reduction at fixed token capacity" },
   { value: "+47.14%", label: "Full capacity", detail: "under the same 4.608 GiB KV budget" },
   { value: "−28.25%", label: "Makespan", detail: "median for eight 6K-token requests" },
-  { value: "+0.62%", label: "Owner overhead", detail: "median versus the same generated policy" },
+  { value: "4.26×", label: "Owner transport", detail: "release plan+commit median speedup with in-process FFI" },
   { value: "64×", label: "VMM remaps", detail: "fresh backing at one stable virtual address" },
   { value: "2 MiB", label: "VMM granularity", detail: "measured H20 minimum and recommended allocation unit" },
 ];
@@ -70,9 +70,15 @@ export const evidenceRows = [
   },
   {
     result: "Owning control",
-    value: "1.0062x",
-    contract: "proof-carrying Rust owner versus identical policy capacity",
-    boundary: "three fresh-process Policy/Owner pairs",
+    value: "1.0030x",
+    contract: "in-process FFI versus JSONL sidecar with identical capacity",
+    boundary: "six fresh-process alternating-order H20 pairs",
+  },
+  {
+    result: "Owner transport",
+    value: "4.26x",
+    contract: "release plan + commit control-path median",
+    boundary: "five host trials × 5,000 cycles; not a serving speedup",
   },
   {
     result: "CUDA VMM",
@@ -83,7 +89,7 @@ export const evidenceRows = [
 ];
 
 export const roadmap = [
-  { state: "NOW", name: "In-process Rust ABI", detail: "Replace JSONL sidecar calls without changing certificate semantics." },
+  { state: "DONE", name: "In-process Rust ABI", detail: "Versioned fixed-layout certificates without JSON serialization." },
   { state: "NEXT", name: "Graph-stable KV storage", detail: "Back real SGLang KV tensors with cost-approved VMM regions." },
   { state: "THEN", name: "Richer Retention IR", detail: "Compile sink, chunk, periodic-global, and per-head lifetime classes." },
 ];

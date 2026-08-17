@@ -1,0 +1,38 @@
+{
+  "abi_version": 1,
+  "constraints": [
+    "dummy weights; system behavior only",
+    "SWA chunk cache with radix, speculation, overlap, and CUDA Graph disabled",
+    "transport microbenchmark measures owner plan+commit only, not serving speed",
+    "H20 process-level ratios remain subject to fresh-process noise"
+  ],
+  "date": "2026-08-17",
+  "h20_balanced_ab": {
+    "full_token_capacity": 49888,
+    "mean_ffi_over_sidecar_ratio": 1.0008045018445209,
+    "median_ffi_over_sidecar_percent": 0.30022055726184327,
+    "median_ffi_over_sidecar_ratio": 1.0030022055726184,
+    "num_retractions": [
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0,
+      0
+    ],
+    "output_digest": "76cf04ef40736dcfe5761952139ce6c1e73c99b41b1a0a7cf05ccead8be3333d",
+    "pairs": 6,
+    "swa_token_capacity": 36848
+  },
+  "schema": "orbitkv.owner-ffi-summary.v1",
+  "transport_microbenchmark": {
+    "build": "release",
+    "cycles_per_trial": 5000,
+    "ffi_plan_commit_ns_median": 7289.0,
+    "median_speedup": 4.256619563726162,
+    "sidecar_plan_commit_ns_median": 31026.5,
+    "trials_per_transport": 5
+  }
+}
