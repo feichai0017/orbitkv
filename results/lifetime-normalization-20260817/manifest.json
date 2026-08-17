@@ -14,6 +14,7 @@
     "results/lifetime-normalization-20260817/summary.json": "f1f2e4de402ef3257a52ed43d16e3f5359061b969bd6fcda7c9f94b70e15250e"
   },
   "schema": "orbitkv.lifetime-normalization-manifest.v1",
+  "source_commit": "55d9fc2913f7ae9ea7757111a5c4bf50e47aa474",
   "sources": {
     "examples/multi_scale_head_windows.json": "021098935ff10f911a26ab230a2939b0ab708c787bfdea01c849c2b863b1002d",
     "src/bin/orbitkv.rs": "76f0dfa82ccb6a4f1c7ddde9465caa3b243b9941a1d7ebac59e328c8634148db",
