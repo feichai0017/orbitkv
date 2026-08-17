@@ -28,6 +28,7 @@
     "results/applicability-h20-20260817/mistral-state-plan-multireq.json": "1c91092d096c6973b2dc93a3fc2bf9d8799a6126d2d861bcf270b9ab5f932070"
   },
   "schema": "orbitkv.mistral-multireq-manifest.v1",
+  "source_commit": "1b231bc4121348e8c45562b25973532d17dd7d37",
   "software": {
     "flashinfer": "0.6.17",
     "python": "3.11.10",
