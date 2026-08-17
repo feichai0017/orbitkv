@@ -1,0 +1,172 @@
+{
+  "median_makespan_reduction_percent": 21.39590494337903,
+  "orbitkv_full_token_capacity": 59904,
+  "orbitkv_median_seconds": 6.138478185981512,
+  "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+  "pairs": [
+    {
+      "execution_order": [
+        "stock",
+        "owner"
+      ],
+      "makespan_reduction_percent": 48.25876651834633,
+      "orbitkv_num_retractions": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "orbitkv_request_e2e_seconds": [
+        7.313075598329306,
+        7.313098147511482,
+        7.313100699335337,
+        7.313101187348366,
+        7.313103079795837,
+        7.312845014035702,
+        7.312843702733517,
+        7.312854096293449
+      ],
+      "orbitkv_seconds": 7.3140804916620255,
+      "outputs_equal": true,
+      "pair": 0,
+      "stock_num_retractions": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "stock_request_e2e_seconds": [
+        11.706865392625332,
+        11.706877805292606,
+        11.70688072219491,
+        11.706885535269976,
+        11.70688934251666,
+        11.706624899059534,
+        11.70662309229374,
+        14.134608585387468
+      ],
+      "stock_seconds": 14.135883510112762
+    },
+    {
+      "execution_order": [
+        "owner",
+        "stock"
+      ],
+      "makespan_reduction_percent": 21.39590494337903,
+      "orbitkv_num_retractions": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "orbitkv_request_e2e_seconds": [
+        5.931409541517496,
+        5.931416749954224,
+        5.931418966501951,
+        5.93142206966877,
+        5.931440893560648,
+        5.931209221482277,
+        5.931208346039057,
+        5.9312206245958805
+      ],
+      "orbitkv_seconds": 5.932363118976355,
+      "outputs_equal": true,
+      "pair": 1,
+      "stock_num_retractions": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "stock_request_e2e_seconds": [
+        5.573107622563839,
+        5.573110971599817,
+        5.573113143444061,
+        5.573116689920425,
+        5.573120035231113,
+        5.572890356183052,
+        5.572886902838945,
+        7.546141937375069
+      ],
+      "stock_seconds": 7.547142568975687
+    },
+    {
+      "execution_order": [
+        "stock",
+        "owner"
+      ],
+      "makespan_reduction_percent": 18.30300637950575,
+      "orbitkv_num_retractions": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "orbitkv_request_e2e_seconds": [
+        6.137648724019527,
+        6.137649737298489,
+        6.137651655822992,
+        6.13765411823988,
+        6.137656070291996,
+        6.137444153428078,
+        6.137443173676729,
+        6.137453060597181
+      ],
+      "orbitkv_seconds": 6.138478185981512,
+      "outputs_equal": true,
+      "pair": 2,
+      "stock_num_retractions": [
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0,
+        0
+      ],
+      "stock_request_e2e_seconds": [
+        5.561513360589743,
+        5.5615235678851604,
+        5.561528068035841,
+        5.561532501131296,
+        5.561537083238363,
+        5.561292640864849,
+        5.561293978244066,
+        7.512635283172131
+      ],
+      "stock_seconds": 7.513713680207729
+    }
+  ],
+  "schema": "orbitkv.real-model-admission-ab.v1",
+  "stock_full_token_capacity": 47616,
+  "stock_median_seconds": 7.547142568975687,
+  "workload": {
+    "decode_tokens_per_request": 32,
+    "max_running_requests": 128,
+    "mem_fraction_static": 0.18,
+    "prompt_tokens_per_request": 6000,
+    "requests": 8,
+    "total_prompt_tokens": 48000
+  }
+}

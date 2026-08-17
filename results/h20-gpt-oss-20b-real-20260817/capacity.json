@@ -1,0 +1,92 @@
+{
+  "full_token_capacity_increase": 12288,
+  "full_token_capacity_increase_percent": 25.806451612903224,
+  "kv_budget_gib": 1.979,
+  "model_plan_validation": {
+    "bytes_per_token_per_layer": 2048,
+    "config": "/workspace/models/gpt-oss-20b/config.json",
+    "full_layers": [
+      1,
+      3,
+      5,
+      7,
+      9,
+      11,
+      13,
+      15,
+      17,
+      19,
+      21,
+      23
+    ],
+    "minimum_swa_cells": 9,
+    "page_tokens": 16,
+    "plan": "/workspace/orbitkv/examples/gpt_oss_20b_retention.json",
+    "schema": "orbitkv.model-plan-validation.v1",
+    "status": "pass",
+    "swa_layers": [
+      0,
+      2,
+      4,
+      6,
+      8,
+      10,
+      12,
+      14,
+      16,
+      18,
+      20,
+      22
+    ],
+    "window_tokens": 128
+  },
+  "orbitkv": {
+    "graph": {
+      "decode": 0.0,
+      "draft_decode": 0.0,
+      "draft_extend": 0.0,
+      "draft_prefill": 0.0,
+      "prefill": 0.0,
+      "target_verify": 0.0
+    },
+    "kvcache": 1.979,
+    "startup_available": 78.423,
+    "token_capacity": 59904,
+    "token_capacity_swa": 26512,
+    "weight": 14.986
+  },
+  "output_digest": "926fa4c78934eb34408394e07f400abf2c3dd3a761451555b6d2894706ef3d82",
+  "outputs_equal": true,
+  "retractions": {
+    "orbitkv": [
+      0
+    ],
+    "stock": [
+      0
+    ]
+  },
+  "schema": "orbitkv.real-model-capacity.v1",
+  "stock": {
+    "graph": {
+      "decode": 0.0,
+      "draft_decode": 0.0,
+      "draft_extend": 0.0,
+      "draft_prefill": 0.0,
+      "prefill": 0.0,
+      "target_verify": 0.0
+    },
+    "kvcache": 1.979,
+    "startup_available": 78.288,
+    "token_capacity": 47616,
+    "token_capacity_swa": 38800,
+    "weight": 14.986
+  },
+  "swa_token_capacity_decrease": 12288,
+  "workload": {
+    "decode_tokens": 1,
+    "max_running_requests": 128,
+    "mem_fraction_static": 0.18,
+    "prompt_tokens": 32,
+    "requests": 1
+  }
+}

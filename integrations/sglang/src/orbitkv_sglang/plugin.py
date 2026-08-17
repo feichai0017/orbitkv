@@ -15,6 +15,7 @@ from typing import Any, Callable
 _EVENTS: queue.Queue[dict[str, Any] | None] = queue.Queue()
 _WRITER: threading.Thread | None = None
 _POLICY: dict[str, Any] | None = None
+_PHYSICAL_PLAN: dict[str, Any] | None = None
 _OWNER: "OwnerClient | None" = None
 
 
@@ -475,6 +476,56 @@ def _allocator_event(
 
 
 def _load_policy() -> dict[str, Any] | None:
+    global _PHYSICAL_PLAN
+
+    physical_plan_path = os.environ.get("ORBITKV_SGLANG_PHYSICAL_PLAN")
+    if physical_plan_path:
+        artifact = json.loads(Path(physical_plan_path).read_text(encoding="utf-8"))
+        if artifact.get("schema") != "orbitkv.hf-physical-compilation.v1":
+            raise ValueError(f"unsupported OrbitKV physical artifact: {artifact!r}")
+        physical_plan = artifact.get("physical_plan")
+        if (
+            not isinstance(physical_plan, dict)
+            or physical_plan.get("schema") != "orbitkv.sglang-physical-plan.v1"
+        ):
+            raise ValueError(
+                f"unsupported OrbitKV SGLang physical plan: {physical_plan!r}"
+            )
+        selected = physical_plan.get("selected")
+        policy = selected.get("policy") if isinstance(selected, dict) else None
+        if (
+            not isinstance(policy, dict)
+            or policy.get("schema") != "orbitkv.sglang-policy.v1"
+        ):
+            raise ValueError(
+                f"OrbitKV physical plan does not contain a selected policy: {selected!r}"
+            )
+        if not str(physical_plan.get("physical_plan_fingerprint", "")).startswith(
+            "sha256:"
+        ):
+            raise ValueError("OrbitKV physical plan is missing its fingerprint")
+        if physical_plan.get("plan_fingerprint") != policy.get("plan_fingerprint"):
+            raise ValueError(
+                "OrbitKV physical plan semantic fingerprint does not match policy"
+            )
+        selected_interval = int(
+            physical_plan["selected_eviction_interval_tokens"]
+        )
+        if selected_interval != int(policy["swa_eviction_interval_tokens"]):
+            raise ValueError(
+                "OrbitKV physical plan interval does not match selected policy"
+            )
+        if legacy_interval := os.environ.get(
+            "ORBITKV_SGLANG_EVICTION_INTERVAL"
+        ):
+            if int(legacy_interval) != selected_interval:
+                raise ValueError(
+                    "legacy OrbitKV eviction interval conflicts with physical plan"
+                )
+        _PHYSICAL_PLAN = physical_plan
+        return policy
+
+    _PHYSICAL_PLAN = None
     plan_path = os.environ.get("ORBITKV_SGLANG_POLICY")
     if not plan_path:
         return None
@@ -492,6 +543,63 @@ def _load_policy() -> dict[str, Any] | None:
     if policy.get("schema") != "orbitkv.sglang-policy.v1":
         raise ValueError(f"unsupported OrbitKV SGLang policy: {policy!r}")
     return policy
+
+
+def _validate_physical_contract(batch: Any) -> None:
+    if _PHYSICAL_PLAN is None:
+        return
+    contract = _PHYSICAL_PLAN["contract"]
+    if (
+        contract.get("require_overlap_schedule_disabled")
+        and batch.enable_overlap
+    ):
+        raise RuntimeError(
+            "OrbitKV physical plan requires disable_overlap_schedule"
+        )
+    if (
+        contract.get("require_radix_cache_disabled")
+        and not batch.tree_cache.is_chunk_cache()
+    ):
+        raise RuntimeError("OrbitKV physical plan requires disable_radix_cache")
+    if (
+        contract.get("require_speculative_decoding_disabled")
+        and not batch.spec_algorithm.is_none()
+    ):
+        raise RuntimeError(
+            "OrbitKV physical plan requires speculative decoding disabled"
+        )
+    if contract.get("cache_kind") != "swa_chunk_cache":
+        raise RuntimeError("OrbitKV physical plan uses an unsupported cache kind")
+    if int(_POLICY["page_tokens"]) != int(batch.tree_cache.page_size):
+        raise RuntimeError(
+            "OrbitKV physical plan page size does not match SGLang"
+        )
+    selected_cost = _PHYSICAL_PLAN["selected"]["cost"]
+    allocator = batch.token_to_kv_pool_allocator
+    actual_full = getattr(allocator, "size_full", None)
+    actual_swa = getattr(allocator, "size_swa", None)
+    if actual_full is not None and int(actual_full) != int(
+        selected_cost["full_token_capacity"]
+    ):
+        raise RuntimeError(
+            "OrbitKV physical plan Full capacity does not match SGLang"
+        )
+    if actual_swa is not None and int(actual_swa) != int(
+        selected_cost["physical_swa_token_slots"]
+    ):
+        raise RuntimeError(
+            "OrbitKV physical plan SWA capacity does not match SGLang"
+        )
+
+
+def _run_with_physical_contract(
+    original_fn: Callable,
+    batch: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    _validate_physical_contract(batch)
+    return original_fn(batch, *args, **kwargs)
 
 
 def _require_owner() -> OwnerClient:
@@ -579,6 +687,7 @@ def _commit_swa_reclamations(
     *args: Any,
     **kwargs: Any,
 ):
+    _validate_physical_contract(batch)
     if getattr(batch, "_orbitkv_pending_certificates", None) is not None:
         raise RuntimeError("nested OrbitKV reclamation group")
     batch._orbitkv_pending_certificates = []
@@ -703,6 +812,12 @@ def register() -> None:
         HookRegistry.register(
             "sglang.srt.mem_cache.common.release_kv_cache",
             _release_owned_request,
+            HookType.AROUND,
+        )
+    elif _PHYSICAL_PLAN is not None:
+        HookRegistry.register(
+            "sglang.srt.managers.schedule_batch.ScheduleBatch.maybe_evict_swa",
+            _run_with_physical_contract,
             HookType.AROUND,
         )
 

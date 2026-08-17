@@ -1,0 +1,39 @@
+{
+  "schema": "orbitkv.sink-sliding-validation.v1",
+  "date": "2026-08-17",
+  "input_relation": "key_position < 4 OR query_position - key_position < 8",
+  "compiler_result": {
+    "source_state": "attention",
+    "derived_classes": [
+      "attention::sink",
+      "attention::local"
+    ],
+    "sink_address": "Pinned",
+    "local_address": "PeriodicFrom(period_blocks=3, origin_block=1)",
+    "dedicated_retention_kind_added": false
+  },
+  "proofs": [
+    "for page sizes 1, 2, 4, and 8 and windows 1 through 17, generated continuation blocks match exhaustive evaluation of the source may_read relation",
+    "all simultaneously live local blocks map to distinct compiler-generated cells",
+    "the reference ownership manager preserves the pinned sink while retiring and reusing local blocks through boundary 20",
+    "address evaluation outside a generated block domain fails closed",
+    "zero page size and non-page-aligned sink boundaries fail closed"
+  ],
+  "boundary_20": {
+    "sink_continuation_blocks": [
+      0
+    ],
+    "local_continuation_blocks": [
+      3,
+      4
+    ],
+    "resident_bytes": 8192,
+    "all_full_baseline_bytes": 10240
+  },
+  "claim_boundary": [
+    "host compiler, simulator, and reference-manager validation only",
+    "the compatibility SGLang policy rejects partitioned block domains",
+    "no H20 or end-to-end serving speedup is claimed for Sink + Sliding",
+    "the capacity example is deterministic block geometry, not a workload result"
+  ]
+}

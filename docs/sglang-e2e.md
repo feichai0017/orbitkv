@@ -30,10 +30,19 @@ query_position - key_position < W
     -> maximum delta W-1
     -> fixed window W
     -> block death and periodic cell count
+
+key_position < S OR query_position - key_position < W
+    -> pinned sink block domain
+    -> periodic local block domain
 ```
 
 Unsupported or insufficiently constrained relations lower to unbounded
 retention instead of guessing a finite death time.
+
+The partitioned Sink+Sliding plan is currently qualified in the Rust simulator
+and reference manager. `emit-sglang-policy` rejects partitioned block domains
+until the adapter owns separate bindings for the pinned and periodic
+components; it does not silently flatten them into one SWA policy.
 
 ## Stage A: Shadow measurement
 
@@ -145,6 +154,29 @@ instead of silently applying an unqualified execution proof. SGLang continues
 to own scheduling, model execution, attention kernels, request protocol, and
 the current physical tensor pools.
 
+The released-checkpoint gate is now complete for `openai/gpt-oss-20b`.
+Stock SGLang and OrbitKV loaded the same indexed MXFP4 shards with FA3
+attention. Under a fixed 1.979 GiB KV budget, OrbitKV increased Full capacity
+by 25.81%. A balanced four-way ablation showed that manually configured
+Stock32 reproduces the capacity and most of the makespan gain:
+
+```text
+Stock32 / Stock128 = 0.7828x
+Policy32 / Stock32 = 0.9969x
+Owner32 / Policy32 = 1.0218x
+Owner32 / Stock128 = 0.7970x
+```
+
+The plan is generated directly from the checkpoint config. A separate
+fixed-capacity experiment measured a `0.9992x` median Owner/Stock ratio. See
+`docs/h20-gpt-oss-20b-real-validation-20260817.md`.
+
+The generated Retention IR now feeds a physical-plan optimizer. Given the
+recorded 1.979 GiB per-rank KV budget and eight-request pressure workload, it
+evaluated intervals 16/32/64/128, selected 32, and emitted the selected SGLang
+policy plus an engine compatibility contract. Fresh SGLang processes matched
+all four predicted pool capacities exactly.
+
 The H20 comparison uses:
 
 1. generated OrbitKV policy with SGLang-owned reclamation decisions;
@@ -188,8 +220,9 @@ At least one:
 - materially lower retraction or offload frequency.
 
 The first owning adapter met the project target of less than 2% median
-control-plane overhead on the recorded three-pair workload. More samples and
-additional request distributions remain required.
+control-plane overhead on both the controlled fixture and the real-checkpoint
+fixed-capacity workload. Radix, overlap, speculative decoding, and CUDA Graph
+remain separate correctness and performance gates.
 
 ### Research gate
 

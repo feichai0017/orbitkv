@@ -53,6 +53,23 @@ pub struct RetentionProgramInput {
 pub enum InferredRetention {
     Unbounded,
     FixedWindow { window_tokens: u64 },
+    Partitioned { regions: Vec<InferredRegion> },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum AtomicRetention {
+    Unbounded,
+    FixedWindow { window_tokens: u64 },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct InferredRegion {
+    pub label: String,
+    pub start_token: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_token_exclusive: Option<u64>,
+    pub retention: AtomicRetention,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -268,6 +285,28 @@ impl DeltaBounds {
 ///
 /// Returns an error for arithmetic overflow or an unsatisfiable state.
 pub fn analyze_state(state: &RetentionStateDecl) -> Result<RetentionAnalysis, RetentionError> {
+    if let Some((sink_tokens, window_tokens)) = analyze_sink_and_window(&state.may_read)? {
+        return Ok(RetentionAnalysis {
+            state_name: state.name.clone(),
+            inferred: InferredRetention::Partitioned {
+                regions: vec![
+                    InferredRegion {
+                        label: "sink".into(),
+                        start_token: 0,
+                        end_token_exclusive: Some(sink_tokens),
+                        retention: AtomicRetention::Unbounded,
+                    },
+                    InferredRegion {
+                        label: "local".into(),
+                        start_token: sink_tokens,
+                        end_token_exclusive: None,
+                        retention: AtomicRetention::FixedWindow { window_tokens },
+                    },
+                ],
+            },
+            proven_query_key_delta_upper_bound: None,
+        });
+    }
     let bounds = analyze_predicate(&state.may_read)?;
     if !bounds.satisfiable {
         return Err(RetentionError::UnsatisfiableState(state.name.clone()));
@@ -292,6 +331,65 @@ pub fn analyze_state(state: &RetentionStateDecl) -> Result<RetentionAnalysis, Re
         inferred: InferredRetention::FixedWindow { window_tokens },
         proven_query_key_delta_upper_bound: Some(proven_query_key_delta_upper_bound),
     })
+}
+
+fn analyze_sink_and_window(predicate: &Predicate) -> Result<Option<(u64, u64)>, RetentionError> {
+    let Predicate::Or { terms } = predicate else {
+        return Ok(None);
+    };
+    let mut sink_tokens = None;
+    let mut window_tokens = None;
+    for term in terms {
+        if let Some(tokens) = key_prefix_tokens(term)? {
+            sink_tokens = Some(sink_tokens.map_or(tokens, |current: u64| current.max(tokens)));
+            continue;
+        }
+        let bounds = analyze_predicate(term)?;
+        let Some(upper) = bounds.upper else {
+            return Ok(None);
+        };
+        if upper < 0 {
+            continue;
+        }
+        let delta = u64::try_from(upper).map_err(|_| RetentionError::WindowOutOfRange)?;
+        let window = delta
+            .checked_add(1)
+            .ok_or(RetentionError::WindowOutOfRange)?;
+        window_tokens = Some(window_tokens.map_or(window, |current: u64| current.max(window)));
+    }
+    Ok(sink_tokens.zip(window_tokens))
+}
+
+fn key_prefix_tokens(predicate: &Predicate) -> Result<Option<u64>, RetentionError> {
+    let (lhs, rhs, strict) = match predicate {
+        Predicate::LessThan { lhs, rhs } => (lhs, rhs, true),
+        Predicate::LessEqual { lhs, rhs } => (lhs, rhs, false),
+        _ => return Ok(None),
+    };
+    let difference = lhs.affine()?.checked_sub(rhs.affine()?)?;
+    if difference.query != 0 || difference.key != 1 {
+        return Ok(None);
+    }
+    let upper = difference
+        .constant
+        .checked_neg()
+        .and_then(|value| {
+            if strict {
+                value.checked_sub(1)
+            } else {
+                Some(value)
+            }
+        })
+        .ok_or(RetentionError::ArithmeticOverflow)?;
+    if upper < 0 {
+        return Ok(None);
+    }
+    let upper = u64::try_from(upper).map_err(|_| RetentionError::WindowOutOfRange)?;
+    Ok(Some(
+        upper
+            .checked_add(1)
+            .ok_or(RetentionError::WindowOutOfRange)?,
+    ))
 }
 
 fn analyze_predicate(predicate: &Predicate) -> Result<DeltaBounds, RetentionError> {
@@ -475,6 +573,42 @@ mod tests {
         }))
         .unwrap();
         assert_eq!(analysis.inferred, InferredRetention::Unbounded);
+    }
+
+    #[test]
+    fn splits_sink_or_sliding_into_lifetime_regions() {
+        let analysis = analyze_state(&state(Predicate::Or {
+            terms: vec![
+                Predicate::LessThan {
+                    lhs: IntExpr::KeyPosition,
+                    rhs: IntExpr::Constant { value: 16 },
+                },
+                Predicate::LessThan {
+                    lhs: delta(),
+                    rhs: IntExpr::Constant { value: 32 },
+                },
+            ],
+        }))
+        .unwrap();
+        assert_eq!(
+            analysis.inferred,
+            InferredRetention::Partitioned {
+                regions: vec![
+                    InferredRegion {
+                        label: "sink".into(),
+                        start_token: 0,
+                        end_token_exclusive: Some(16),
+                        retention: AtomicRetention::Unbounded,
+                    },
+                    InferredRegion {
+                        label: "local".into(),
+                        start_token: 16,
+                        end_token_exclusive: None,
+                        retention: AtomicRetention::FixedWindow { window_tokens: 32 },
+                    },
+                ]
+            }
+        );
     }
 
     #[test]

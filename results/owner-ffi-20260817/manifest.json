@@ -22,6 +22,7 @@
     "results/owner-ffi-20260817/transport.json": "246f9daa3ee5211f5f32a11d6c80701882dfbc05e0de75121eeb088d907d75e5"
   },
   "schema": "orbitkv.owner-ffi-manifest.v1",
+  "source_commit": "b1adc44618c5b4627747e43439bdd5b4155ed4da",
   "software": {
     "python": "3.11.10",
     "rust_edition": "2024",

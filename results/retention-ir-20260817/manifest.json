@@ -20,6 +20,7 @@
     "results/retention-ir-20260817/summary.json": "326f7bc62fa36b7af3d6c932a06c32b8354ab4d0b8bc21f427210d49549d9bde"
   },
   "schema": "orbitkv.retention-ir-manifest.v1",
+  "source_commit": "b1adc44618c5b4627747e43439bdd5b4155ed4da",
   "source_parent_commit": "f6066482c75d78e08210c205cf27f11e319e35b5",
   "sources": {
     "crates/orbitkv-ffi/src/lib.rs": "3ef517d4f00ceba911608e51923ae96669e61cb82de7379dd0a7def48be773a5",

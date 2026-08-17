@@ -1,16 +1,26 @@
 #![forbid(unsafe_code)]
 
+pub mod hf_config;
 pub mod manager;
+pub mod optimizer;
 pub mod plan;
 pub mod retention;
 pub mod runtime;
 pub mod sglang_owner;
 pub mod trace;
 
+pub use hf_config::{
+    HfConfigError, HfLayerInference, HfRetentionCompilation, HfRetentionOptions, compile_hf_config,
+};
 pub use manager::{
     BlockHandle, BlockKey, BlockManagerConfig, ClassPoolConfig, ExecutionProof, KvBlockManager,
     KvView, ManagerError, ManagerStats, PhysicalReclamationReceipt, RetirementCertificate,
     SemanticProof, ViewBlock,
+};
+pub use optimizer::{
+    OptimizerError, PhysicalPlanObjective, SglangPhysicalCandidate, SglangPhysicalContract,
+    SglangPhysicalCost, SglangPhysicalOptimizationInput, SglangPhysicalPlan,
+    optimize_sglang_physical_plan,
 };
 pub use plan::{
     AddressProgram, BackendDecision, BackendRequirements, CellVersion, ClassCapacity,
@@ -20,8 +30,8 @@ pub use plan::{
     compile_retention_program,
 };
 pub use retention::{
-    InferredRetention, IntExpr, Predicate, RetentionAnalysis, RetentionError,
-    RetentionProgramInput, RetentionStateDecl, analyze_state,
+    AtomicRetention, InferredRegion, InferredRetention, IntExpr, Predicate, RetentionAnalysis,
+    RetentionError, RetentionProgramInput, RetentionStateDecl, analyze_state,
 };
 pub use runtime::{
     KvRuntimeSimulator, LogicalBlock, ResidentTemporalBlock, RuntimeError, Submission,

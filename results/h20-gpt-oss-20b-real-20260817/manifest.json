@@ -1,0 +1,81 @@
+{
+  "claim_boundary": [
+    "public openai/gpt-oss-20b MXFP4 checkpoint loaded with load_format=auto",
+    "Stock SGLang has no OrbitKV plugin or environment override",
+    "OrbitKV owns SWA reclamation decisions while SGLang retains kernels and physical KV pools",
+    "radix cache, overlap scheduling, speculative decoding, and CUDA Graph disabled",
+    "no model-quality improvement claim"
+  ],
+  "date": "2026-08-17",
+  "external_checkpoint": {
+    "config_sha256": "3a2a26ded679375b7928ddeca59764df7cea83220c1961035f6d6e232659e9ce",
+    "index_sha256": "0e085b977c4c9942f85938828e8c989ed7d5cdabf852e4da6a67c116cd502cd1",
+    "repository": "openai/gpt-oss-20b",
+    "revision": "6cee5e81ee83917806bbde320786a8fb61efebee",
+    "shards": {
+      "model-00000-of-00002.safetensors": "16d0f997dcfc4462089d536bffe51b4bcea2f872f5c430be09ef8ed392312427",
+      "model-00001-of-00002.safetensors": "4fbe328ab445455d6f58dc73852b85873bd626986310abd91cd4d2ce3245eaea",
+      "model-00002-of-00002.safetensors": "a18106b209e9ab35c3406db4f6f12a927364a058b21e9d1373d682e20674b303"
+    }
+  },
+  "gpu": {
+    "compute_capability": [
+      9,
+      0
+    ],
+    "driver": "535.161.08",
+    "name": "NVIDIA H20",
+    "total_memory_mib": 97871,
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+  },
+  "records": {
+    "results/h20-gpt-oss-20b-real-20260817/ablation.json": "4cdd22832af19028d804a4b7f988de04692545718af0bacb314d6debd38ec00a",
+    "results/h20-gpt-oss-20b-real-20260817/admission.json": "e55071ccca10cfe4fb997974cee7c8cdc5882a2ec9d5b7b1a7efeb5dc78fe724",
+    "results/h20-gpt-oss-20b-real-20260817/capacity.json": "670d901c7c6f9e5eb6fe8a949bbc1c03e4751a531934c0333f099877e7517ff8",
+    "results/h20-gpt-oss-20b-real-20260817/candidate-validation.json": "304886230ac57173e81d046569c07968857cba53ba2027e8f8ae8db928c4c332",
+    "results/h20-gpt-oss-20b-real-20260817/checkpoint.json": "52f04709b0a7bae7e63752568b4305746347c982b3a1e69470fc99bfc178f39e",
+    "results/h20-gpt-oss-20b-real-20260817/overhead.json": "9abcb596d50fecb862050fa6932ed1a1b044ebfb356ee958488aebdfcef8c6fe",
+    "results/h20-gpt-oss-20b-real-20260817/owner-trace.json": "44c94e72271ebf78d9f9c8e28638168e1bcf0b10a7f5b42e82498073c0bd8fbf",
+    "results/h20-gpt-oss-20b-real-20260817/physical-owner-smoke.json": "8c719cce3edeb8af84b6d5aa819d8c295cbc187cfa438b9ead941c724c023da7",
+    "results/h20-gpt-oss-20b-real-20260817/physical-plan.json": "65c2f030485ca972b1fc5b017e987066d263d44cbbf3af09e638ac4f6c10cf55"
+  },
+  "schema": "orbitkv.h20-gpt-oss-20b-real-manifest.v1",
+  "software": {
+    "cuda_toolkit": "13.0",
+    "flashinfer": "0.6.17",
+    "huggingface_hub": "1.27.0",
+    "python": "3.11.10",
+    "sglang": "0.0.0.dev1+g095ec6c99",
+    "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+    "torch": "2.13.0",
+    "transformers": "5.12.1",
+    "triton": "3.7.1"
+  },
+  "sources": {
+    ".github/workflows/ci.yml": "5c44b9a4243d9359832e2e1158083a170836c6907c75a76bda38386283cfc562",
+    "examples/gpt_oss_20b_retention.json": "9b7a588dae7f03da4faa1b5965842211f08726be55468bcca4d26015e6192eba",
+    "integrations/sglang/bench_hybrid_shadow.py": "b4b6c941cb118a2eb694013813e054497d29bcf748d52a50dd54da0c9eabc64d",
+    "integrations/sglang/bench_real_model_ab.py": "b4ccc745386fcadaa4688bae7126c4163446463f9743884e767d8eab63940bbf",
+    "integrations/sglang/bench_real_model_ablation.py": "c9ca9ea69f32d879678262089baf554df6b818568040d378b9144dff6b97318c",
+    "integrations/sglang/checkpoint_identity.py": "67c97699e4ee7c903ad77241591c0a1d73255464300c89e3e08909ed185dca97",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "1365024ca5580a82aa18ee27c10ee38ef2227dfacc606ef6cd6ec17a1102ec82",
+    "integrations/sglang/tests/test_real_model_bench.py": "ab11813418e2c8dd867d10d3cff2a83eeff004fb0809abb5b464fbfd0e2c8391",
+    "integrations/sglang/tests/test_shadow_plugin.py": "55aeb56c7433d24af7a9749133770771f81efc97057e97d739b0f191803b16e7",
+    "integrations/sglang/verify_physical_candidates.py": "703e8c22f875f21f0b5a73d03d52966f04d8d31c294d073f2a80d5766aa11dde",
+    "src/bin/orbitkv.rs": "0ff421cc20f50244c0fa03b35b6f4c5d5f174291b8a2f1ede01e3028dc5aaa62",
+    "src/hf_config.rs": "89dbc1b1d113309f5dc6bcb6465b90587c11c5fdd434bbeae1cfec02b8f240d6",
+    "src/lib.rs": "9bd8d5746e59b1053bc859b13f688fff7537b0a41046354fc1e0ab8cdef07ff2",
+    "src/optimizer.rs": "07b29260d0056dc91f7ca523d7c980d01de58ab2a2ce261601e5344a5086e650",
+    "tools/verify_real_model_results.py": "75d19dd39d1846f17887371853982ea327acb5583ccee88a769d924b23111970"
+  },
+  "website": {
+    "README.md": "6fd9d04b96a6d18025da8ba2e9ba28eac8a4a4081dd71b463070c1c29da89ccc",
+    "docs/h20-gpt-oss-20b-real-validation-20260817.md": "0b73fe578f84f20fb14ba068e5d1820c2d89ceda7a15d56e6e02ce76ff0aa5d0",
+    "docs/sglang-e2e.md": "007990a1a6db44aa3a31307f59847f00dcc6503e573f83d0dee0cad516dd8b1b",
+    "results/README.md": "4cb8d1d367fe991f683f68e54395b606a3c319127f7e6f7bd497025bb145f7ee",
+    "website/src/data/site.ts": "c21670f31724299b1b8790a3264e4a490e46190aff075f3e8b311cedb2fffcdc",
+    "website/src/pages/docs/index.astro": "18a919efb79a0554578eeefa829eb34137d3eac9c39be1b4b8f4b20fc8f42bbc",
+    "website/src/pages/evidence.astro": "3ebbabd6afc5dd188767798a791a434a348ba44bc1879fac106a13e017543eed",
+    "website/src/pages/index.astro": "6489657f9a8f73abb4576ab8049e40765aaeb00edf381c0535c6174851834596"
+  }
+}

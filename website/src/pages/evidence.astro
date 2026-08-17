@@ -28,6 +28,42 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
       </div>
 
       <div class="doc-note">
+        <strong>Public gpt-oss-20b checkpoint.</strong>
+        <p>
+          Stock SGLang and OrbitKV loaded the same complete 13.761 GB MXFP4
+          checkpoint with FA3 attention. Under the same 1.979 GiB KV budget,
+          interval 32 increased Full capacity from 47,616 to 59,904 tokens. A
+          balanced four-way ablation showed Stock32 reproduces that benefit:
+          Stock32/Stock128 was 0.7828x, Policy32/Stock32 was 0.9969x, and
+          Owner32/Policy32 was 1.0218x. The full OrbitKV owner path remained
+          20.30% below Stock128 with identical output-token digests. At fixed
+          Full capacity, OrbitKV allocated 288 MiB less KV with a 0.9992x
+          median ratio. The contribution is automatic state-plan synthesis and
+          proof-carrying ownership, not a proprietary interval or faster
+          attention kernel.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/docs/h20-gpt-oss-20b-real-validation-20260817.md`}>
+          Real-checkpoint validation
+        </a>
+      </div>
+
+      <div class="doc-note">
+        <strong>Physical policy compiler.</strong>
+        <p>
+          OrbitKV evaluated intervals 16, 32, 64, and 128 against the recorded
+          KV budget, eight-request admission target, and four-call reclamation
+          budget. It rejected 16 for excess reclaim calls, rejected 128 for a
+          second admission wave, and selected 32. Four fresh SGLang processes
+          matched every predicted Full and SWA pool capacity exactly. A real
+          Owner run consumed the complete artifact and passed its cache, page,
+          execution-mode, and pool-capacity contract.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/results/h20-gpt-oss-20b-real-20260817/candidate-validation.json`}>
+          Candidate validation
+        </a>
+      </div>
+
+      <div class="doc-note">
         <strong>Declarative Retention IR.</strong>
         <p>
           The relation <code>query_position - key_position &lt; 1024</code>
@@ -38,6 +74,21 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
         </p>
         <a href={`${repositoryUrl}/blob/main/results/retention-ir-20260817/analysis.json`}>
           Retention analysis
+        </a>
+      </div>
+
+      <div class="doc-note">
+        <strong>Lifetime normalization: Sink + Sliding.</strong>
+        <p>
+          One relation, <code>key &lt; 4 OR query - key &lt; 8</code>,
+          compiled into a one-cell pinned sink and a three-cell periodic local
+          region. Host exhaustive tests compare generated continuation sets
+          with the source relation across page sizes, windows, and boundaries,
+          while checking that live local blocks never collide. This is compiler
+          and reference-runtime evidence, not an H20 or SGLang speedup result.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/results/sink-sliding-20260817/summary.json`}>
+          Sink + Sliding proof summary
         </a>
       </div>
 
@@ -90,7 +141,7 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
 
       <h2>Current exclusions</h2>
       <ul>
-        <li>No released-checkpoint model-quality claim.</li>
+        <li>No released-checkpoint model-quality improvement claim.</li>
         <li>No radix/prefix-cache, speculative, overlap, or CUDA Graph qualification.</li>
         <li>No claim that VMM already backs SGLang KV tensors.</li>
         <li>No multi-GPU multicast or fabric-memory claim.</li>

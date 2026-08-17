@@ -361,6 +361,9 @@ impl KvBlockManager {
         let mut required = BTreeMap::<String, u64>::new();
         for ordinal in first_block..=last_block {
             for class_name in &class_names {
+                if !self.class_contains_block(class_name, ordinal)? {
+                    continue;
+                }
                 let logical = BlockKey {
                     request_id: request_id.to_owned(),
                     class_name: class_name.clone(),
@@ -394,6 +397,9 @@ impl KvBlockManager {
         let mut allocated = Vec::new();
         for ordinal in first_block..=last_block {
             for class_name in &class_names {
+                if !self.class_contains_block(class_name, ordinal)? {
+                    continue;
+                }
                 let logical = BlockKey {
                     request_id: request_id.to_owned(),
                     class_name: class_name.clone(),
@@ -431,6 +437,15 @@ impl KvBlockManager {
             .ok_or_else(|| ManagerError::UnknownRequest(request_id.to_owned()))?
             .materialized_boundary = boundary;
         Ok(allocated)
+    }
+
+    fn class_contains_block(&self, class_name: &str, ordinal: u64) -> Result<bool, ManagerError> {
+        Ok(self
+            .classes
+            .get(class_name)
+            .ok_or_else(|| ManagerError::UnknownClass(class_name.to_owned()))?
+            .block_domain
+            .contains(ordinal))
     }
 
     /// Advances the semantic frontier and emits certificates for blocks that
@@ -932,8 +947,9 @@ impl KvBlockManager {
 #[cfg(test)]
 mod tests {
     use crate::{
-        KvClassSpec, KvPlanInput, KvRuntimeSimulator, ResidentTemporalBlock, RetentionKind,
-        compile_plan,
+        IntExpr, KvClassSpec, KvPlanInput, KvRuntimeSimulator, Predicate, ResidentTemporalBlock,
+        RetentionKind, RetentionProgramInput, RetentionStateDecl, compile_plan,
+        compile_retention_program,
     };
 
     use super::*;
@@ -1221,5 +1237,78 @@ mod tests {
                 manager.commit_reclamation(&receipt).unwrap();
             }
         }
+    }
+
+    #[test]
+    fn sink_sliding_regions_share_layers_but_not_lifetimes() {
+        let plan = compile_retention_program(RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 4,
+            states: vec![RetentionStateDecl {
+                name: "attention".into(),
+                layers: vec![0],
+                bytes_per_token_per_layer: 128,
+                may_read: Predicate::Or {
+                    terms: vec![
+                        Predicate::LessThan {
+                            lhs: IntExpr::KeyPosition,
+                            rhs: IntExpr::Constant { value: 4 },
+                        },
+                        Predicate::LessThan {
+                            lhs: IntExpr::Sub {
+                                lhs: Box::new(IntExpr::QueryPosition),
+                                rhs: Box::new(IntExpr::KeyPosition),
+                            },
+                            rhs: IntExpr::Constant { value: 8 },
+                        },
+                    ],
+                },
+            }],
+        })
+        .unwrap();
+        let mut manager = KvBlockManager::new(
+            plan,
+            BlockManagerConfig {
+                pools: vec![
+                    ClassPoolConfig {
+                        class_name: "attention::sink".into(),
+                        slot_count: 1,
+                    },
+                    ClassPoolConfig {
+                        class_name: "attention::local".into(),
+                        slot_count: 3,
+                    },
+                ],
+            },
+        )
+        .unwrap();
+        manager.register_request("r0").unwrap();
+        for boundary in 1..=20 {
+            manager.materialize_to("r0", boundary).unwrap();
+            let certificates = manager.advance_semantic_frontier("r0", boundary).unwrap();
+            for certificate in certificates {
+                manager
+                    .commit_reclamation(&PhysicalReclamationReceipt {
+                        schema: "orbitkv.physical-reclamation-receipt.v1",
+                        certificate_id: certificate.certificate_id,
+                        physical: certificate.physical,
+                    })
+                    .unwrap();
+            }
+        }
+        let view = manager.submit_view("r0").unwrap();
+        let logical = view
+            .blocks
+            .iter()
+            .map(|block| (block.logical.class_name.as_str(), block.logical.ordinal))
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            logical,
+            BTreeSet::from([
+                ("attention::sink", 0),
+                ("attention::local", 3),
+                ("attention::local", 4),
+            ])
+        );
     }
 }

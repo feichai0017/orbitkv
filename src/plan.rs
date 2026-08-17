@@ -5,8 +5,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::retention::{
-    InferredRetention, IntExpr, Predicate, RetentionAnalysis, RetentionError,
-    RetentionProgramInput, RetentionStateDecl, analyze_state,
+    AtomicRetention, InferredRegion, InferredRetention, IntExpr, Predicate, RetentionAnalysis,
+    RetentionError, RetentionProgramInput, RetentionStateDecl, analyze_state,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -45,6 +45,10 @@ pub enum KvPlanSource {
 pub struct CompiledKvClass {
     pub spec: KvClassSpec,
     pub slot_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub source_state: Option<String>,
+    #[serde(default, skip_serializing_if = "BlockDomain::is_all")]
+    pub block_domain: BlockDomain,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -89,7 +93,14 @@ pub struct CompiledKvPlan {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AddressProgram {
     AppendOnly,
-    Periodic { period_blocks: u64 },
+    Pinned,
+    Periodic {
+        period_blocks: u64,
+    },
+    PeriodicFrom {
+        period_blocks: u64,
+        origin_block: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -107,6 +118,8 @@ pub struct ClassLayoutProgram {
     pub address: AddressProgram,
     pub retirement: RetirementProgram,
     pub minimum_slots_per_request: Option<u64>,
+    #[serde(default, skip_serializing_if = "BlockDomain::is_all")]
+    pub block_domain: BlockDomain,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -133,6 +146,13 @@ pub struct CellVersion {
 pub struct TemporalAddress {
     pub cell: LogicalCellId,
     pub version: CellVersion,
+}
+
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct BlockDomain {
+    pub start_block: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub end_block_exclusive: Option<u64>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -172,6 +192,8 @@ pub enum PlanError {
     EmptyLayers { class: String },
     #[error("{class}: layer ids must be unique")]
     DuplicateLayerInClass { class: String },
+    #[error("compiled class name {0:?} is duplicated")]
+    DuplicateClassName(String),
     #[error("{class}: bytes_per_token_per_layer must be positive")]
     ZeroBytesPerToken { class: String },
     #[error("{class}: full retention cannot have a window")]
@@ -202,6 +224,12 @@ pub enum PlanError {
     ZeroAddressPeriod,
     #[error("layout program does not contain class {0:?}")]
     UnknownLayoutClass(String),
+    #[error("logical block {ordinal} is outside class {class:?} block domain")]
+    AddressOutsideBlockDomain { class: String, ordinal: u64 },
+    #[error("sink boundary {sink_tokens} must be aligned to page_tokens {page_tokens}")]
+    SinkBoundaryNotPageAligned { sink_tokens: u64, page_tokens: u64 },
+    #[error("SGLang lowering does not support partitioned block domains")]
+    UnsupportedSglangBlockDomain,
     #[error("{class}: legacy window {window} does not fit Retention IR i64 constants")]
     LegacyWindowOutOfRange { class: String, window: u64 },
     #[error(transparent)]
@@ -221,12 +249,27 @@ impl AddressProgram {
         ordinal: u64,
     ) -> Result<TemporalAddress, PlanError> {
         let (cell_index, cycle) = match *self {
-            Self::AppendOnly => (ordinal, 0),
+            Self::AppendOnly | Self::Pinned => (ordinal, 0),
             Self::Periodic { period_blocks } => {
                 if period_blocks == 0 {
                     return Err(PlanError::ZeroAddressPeriod);
                 }
                 (ordinal % period_blocks, ordinal / period_blocks)
+            }
+            Self::PeriodicFrom {
+                period_blocks,
+                origin_block,
+            } => {
+                if period_blocks == 0 {
+                    return Err(PlanError::ZeroAddressPeriod);
+                }
+                let relative =
+                    ordinal
+                        .checked_sub(origin_block)
+                        .ok_or(PlanError::ArithmeticOverflow {
+                            calculation: "periodic address origin subtraction",
+                        })?;
+                (relative % period_blocks, relative / period_blocks)
             }
         };
         Ok(TemporalAddress {
@@ -237,6 +280,34 @@ impl AddressProgram {
             },
             version: CellVersion { cycle },
         })
+    }
+}
+
+impl BlockDomain {
+    #[must_use]
+    pub const fn all() -> Self {
+        Self {
+            start_block: 0,
+            end_block_exclusive: None,
+        }
+    }
+
+    #[must_use]
+    pub const fn is_all(&self) -> bool {
+        self.start_block == 0 && self.end_block_exclusive.is_none()
+    }
+
+    #[must_use]
+    pub fn contains(&self, ordinal: u64) -> bool {
+        ordinal >= self.start_block && self.end_block_exclusive.is_none_or(|end| ordinal < end)
+    }
+
+    #[must_use]
+    pub fn blocks_before(&self, end_exclusive: u64) -> u64 {
+        let end = self
+            .end_block_exclusive
+            .map_or(end_exclusive, |domain_end| domain_end.min(end_exclusive));
+        end.saturating_sub(self.start_block)
     }
 }
 
@@ -272,6 +343,12 @@ impl ClassLayoutProgram {
         request_id: &str,
         ordinal: u64,
     ) -> Result<TemporalAddress, PlanError> {
+        if !self.block_domain.contains(ordinal) {
+            return Err(PlanError::AddressOutsideBlockDomain {
+                class: self.name.clone(),
+                ordinal,
+            });
+        }
         self.address.evaluate(request_id, &self.name, ordinal)
     }
 }
@@ -327,6 +404,17 @@ impl CompiledKvPlan {
             );
             hash.update(class.spec.window_tokens.unwrap_or(0).to_le_bytes());
             hash.update(class.slot_count.unwrap_or(0).to_le_bytes());
+            if !class.block_domain.is_all() {
+                hash.update(1_u64.to_le_bytes());
+                hash.update(class.block_domain.start_block.to_le_bytes());
+                hash.update(
+                    class
+                        .block_domain
+                        .end_block_exclusive
+                        .unwrap_or(u64::MAX)
+                        .to_le_bytes(),
+                );
+            }
         }
         format!("sha256:{:x}", hash.finalize())
     }
@@ -344,6 +432,9 @@ impl CompiledKvPlan {
             .iter()
             .map(|class| {
                 let (address, retirement) = match class.spec.retention {
+                    RetentionKind::Full if class.block_domain.end_block_exclusive.is_some() => {
+                        (AddressProgram::Pinned, RetirementProgram::Never)
+                    }
                     RetentionKind::Full => (AddressProgram::AppendOnly, RetirementProgram::Never),
                     RetentionKind::Sliding => {
                         let window = class.spec.window_tokens.ok_or_else(|| {
@@ -357,8 +448,16 @@ impl CompiledKvPlan {
                                 .ok_or_else(|| PlanError::InvalidCompiledClass {
                                     class: class.spec.name.clone(),
                                 })?;
+                        let address = if class.block_domain.start_block == 0 {
+                            AddressProgram::Periodic { period_blocks }
+                        } else {
+                            AddressProgram::PeriodicFrom {
+                                period_blocks,
+                                origin_block: class.block_domain.start_block,
+                            }
+                        };
                         (
-                            AddressProgram::Periodic { period_blocks },
+                            address,
                             RetirementProgram::BlockEndPlus {
                                 offset_tokens: window - 1,
                             },
@@ -372,6 +471,7 @@ impl CompiledKvPlan {
                     address,
                     retirement,
                     minimum_slots_per_request: class.slot_count,
+                    block_domain: class.block_domain.clone(),
                 })
             })
             .collect::<Result<Vec<_>, PlanError>>()?;
@@ -425,7 +525,12 @@ impl CompiledKvPlan {
                 .ok_or(PlanError::ArithmeticOverflow {
                     calculation: "all-full token slots",
                 })?;
+        let mut seen_sources = BTreeSet::new();
         self.classes.iter().try_fold(0_u64, |total, class| {
+            let source = class.source_state.as_deref().unwrap_or(&class.spec.name);
+            if !seen_sources.insert(source.to_owned()) {
+                return Ok(total);
+            }
             let layer_count = u64::try_from(class.spec.layers.len()).map_err(|_| {
                 PlanError::ArithmeticOverflow {
                     calculation: "layer count",
@@ -457,25 +562,10 @@ impl CompiledKvPlan {
         self.classes
             .iter()
             .map(|class| {
-                let start_token = match class.spec.retention {
-                    RetentionKind::Full => 0,
-                    RetentionKind::Sliding => {
-                        let window = class.spec.window_tokens.ok_or_else(|| {
-                            PlanError::InvalidCompiledClass {
-                                class: class.spec.name.clone(),
-                            }
-                        })?;
-                        boundary.saturating_sub(window.saturating_sub(1))
-                    }
-                };
-                let blocks = if start_token >= boundary {
-                    Vec::new()
-                } else {
-                    let first = start_token / self.page_tokens;
-                    let last = (boundary - 1) / self.page_tokens;
-                    (first..=last).collect()
-                };
-                Ok((class.spec.name.clone(), blocks))
+                Ok((
+                    class.spec.name.clone(),
+                    self.class_live_blocks(class, boundary)?,
+                ))
             })
             .collect()
     }
@@ -530,6 +620,9 @@ impl CompiledKvPlan {
                 .iter()
                 .filter_map(|class| class.slot_count.map(|slots| (class, slots)))
                 .map(|(class, block_slots)| {
+                    if !class.block_domain.is_all() {
+                        return Err(PlanError::UnsupportedSglangBlockDomain);
+                    }
                     let window_tokens = class.spec.window_tokens.ok_or_else(|| {
                         PlanError::InvalidCompiledClass {
                             class: class.spec.name.clone(),
@@ -568,20 +661,43 @@ impl CompiledKvPlan {
         class: &CompiledKvClass,
         boundary: u64,
     ) -> Result<ClassCapacity, PlanError> {
-        let (semantic_live_tokens, slots) =
+        let domain_start = class
+            .block_domain
+            .start_block
+            .checked_mul(self.page_tokens)
+            .ok_or(PlanError::ArithmeticOverflow {
+                calculation: "class domain start token",
+            })?;
+        let domain_end = class
+            .block_domain
+            .end_block_exclusive
+            .map(|end| {
+                end.checked_mul(self.page_tokens)
+                    .ok_or(PlanError::ArithmeticOverflow {
+                        calculation: "class domain end token",
+                    })
+            })
+            .transpose()?
+            .unwrap_or(boundary);
+        let live_start =
             match class.spec.retention {
-                RetentionKind::Full => (boundary, ceil_div(boundary, self.page_tokens)?),
+                RetentionKind::Full => domain_start,
                 RetentionKind::Sliding => {
                     let window = class.spec.window_tokens.ok_or_else(|| {
                         PlanError::InvalidCompiledClass {
                             class: class.spec.name.clone(),
                         }
                     })?;
-                    let semantic = boundary.min(window.saturating_sub(1));
-                    let existing = ceil_div(boundary, self.page_tokens)?;
-                    (semantic, existing.min(class.slot_count.unwrap_or(0)))
+                    domain_start.max(boundary.saturating_sub(window.saturating_sub(1)))
                 }
             };
+        let live_end = boundary.min(domain_end);
+        let semantic_live_tokens = live_end.saturating_sub(live_start);
+        let existing_blocks = ceil_div(boundary, self.page_tokens)?;
+        let existing_domain_blocks = class.block_domain.blocks_before(existing_blocks);
+        let slots = class.slot_count.map_or(existing_domain_blocks, |capacity| {
+            existing_domain_blocks.min(capacity)
+        });
         let physical_token_slots =
             slots
                 .checked_mul(self.page_tokens)
@@ -604,6 +720,38 @@ impl CompiledKvPlan {
             physical_token_slots,
             resident_bytes,
         })
+    }
+
+    fn class_live_blocks(
+        &self,
+        class: &CompiledKvClass,
+        boundary: u64,
+    ) -> Result<Vec<u64>, PlanError> {
+        let start_token =
+            match class.spec.retention {
+                RetentionKind::Full => 0,
+                RetentionKind::Sliding => {
+                    let window = class.spec.window_tokens.ok_or_else(|| {
+                        PlanError::InvalidCompiledClass {
+                            class: class.spec.name.clone(),
+                        }
+                    })?;
+                    boundary.saturating_sub(window.saturating_sub(1))
+                }
+            };
+        if start_token >= boundary {
+            return Ok(Vec::new());
+        }
+        let first = (start_token / self.page_tokens).max(class.block_domain.start_block);
+        let last = (boundary - 1) / self.page_tokens;
+        let last = class
+            .block_domain
+            .end_block_exclusive
+            .map_or(last, |end| last.min(end.saturating_sub(1)));
+        if first > last {
+            return Ok(Vec::new());
+        }
+        Ok((first..=last).collect())
     }
 }
 
@@ -767,30 +915,41 @@ pub fn compile_retention_program(
     if program.schema != "orbitkv.retention-ir.v1" {
         return Err(RetentionError::UnsupportedSchema(program.schema).into());
     }
-    let classes = program
-        .states
-        .into_iter()
-        .map(|state| {
-            let RetentionAnalysis { inferred, .. } = analyze_state(&state)?;
-            let (retention, window_tokens) = match inferred {
-                InferredRetention::Unbounded => (RetentionKind::Full, None),
-                InferredRetention::FixedWindow { window_tokens } => {
-                    (RetentionKind::Sliding, Some(window_tokens))
-                }
-            };
-            Ok(KvClassSpec {
-                name: state.name,
-                layers: state.layers,
-                retention,
-                bytes_per_token_per_layer: state.bytes_per_token_per_layer,
-                window_tokens,
-            })
-        })
-        .collect::<Result<Vec<_>, PlanError>>()?;
-    compile_inferred_plan(KvPlanInput {
-        page_tokens: program.page_tokens,
-        classes,
-    })
+    if program.page_tokens == 0 {
+        return Err(PlanError::ZeroPageTokens);
+    }
+    let mut classes = Vec::new();
+    for state in program.states {
+        let RetentionAnalysis { inferred, .. } = analyze_state(&state)?;
+        match inferred {
+            InferredRetention::Unbounded => classes.push(InferredClassInput::atomic(
+                &state,
+                state.name.clone(),
+                RetentionKind::Full,
+                None,
+                BlockDomain::all(),
+                None,
+            )),
+            InferredRetention::FixedWindow { window_tokens } => {
+                classes.push(InferredClassInput::atomic(
+                    &state,
+                    state.name.clone(),
+                    RetentionKind::Sliding,
+                    Some(window_tokens),
+                    BlockDomain::all(),
+                    None,
+                ));
+            }
+            InferredRetention::Partitioned { regions } => {
+                classes.extend(lower_partitioned_state(
+                    &state,
+                    regions,
+                    program.page_tokens,
+                )?);
+            }
+        }
+    }
+    compile_inferred_classes(program.page_tokens, classes)
 }
 
 /// Compiles checked Full and sliding-window classes into a KV block plan.
@@ -803,9 +962,72 @@ pub fn compile_plan(input: KvPlanInput) -> Result<CompiledKvPlan, PlanError> {
     KvPlanSource::Legacy(input).compile()
 }
 
-fn compile_inferred_plan(input: KvPlanInput) -> Result<CompiledKvPlan, PlanError> {
-    validate_plan_input(&input)?;
-    compile_validated_plan(input)
+struct InferredClassInput {
+    spec: KvClassSpec,
+    source_state: Option<String>,
+    block_domain: BlockDomain,
+}
+
+impl InferredClassInput {
+    fn atomic(
+        state: &RetentionStateDecl,
+        name: String,
+        retention: RetentionKind,
+        window_tokens: Option<u64>,
+        block_domain: BlockDomain,
+        source_state: Option<String>,
+    ) -> Self {
+        Self {
+            spec: KvClassSpec {
+                name,
+                layers: state.layers.clone(),
+                retention,
+                bytes_per_token_per_layer: state.bytes_per_token_per_layer,
+                window_tokens,
+            },
+            source_state,
+            block_domain,
+        }
+    }
+}
+
+fn lower_partitioned_state(
+    state: &RetentionStateDecl,
+    regions: Vec<InferredRegion>,
+    page_tokens: u64,
+) -> Result<Vec<InferredClassInput>, PlanError> {
+    regions
+        .into_iter()
+        .map(|region| {
+            if !region.start_token.is_multiple_of(page_tokens)
+                || region
+                    .end_token_exclusive
+                    .is_some_and(|end| !end.is_multiple_of(page_tokens))
+            {
+                return Err(PlanError::SinkBoundaryNotPageAligned {
+                    sink_tokens: region.end_token_exclusive.unwrap_or(region.start_token),
+                    page_tokens,
+                });
+            }
+            let (retention, window_tokens) = match region.retention {
+                AtomicRetention::Unbounded => (RetentionKind::Full, None),
+                AtomicRetention::FixedWindow { window_tokens } => {
+                    (RetentionKind::Sliding, Some(window_tokens))
+                }
+            };
+            Ok(InferredClassInput::atomic(
+                state,
+                format!("{}::{}", state.name, region.label),
+                retention,
+                window_tokens,
+                BlockDomain {
+                    start_block: region.start_token / page_tokens,
+                    end_block_exclusive: region.end_token_exclusive.map(|end| end / page_tokens),
+                },
+                Some(state.name.clone()),
+            ))
+        })
+        .collect()
 }
 
 fn validate_plan_input(input: &KvPlanInput) -> Result<(), PlanError> {
@@ -832,34 +1054,70 @@ fn validate_plan_input(input: &KvPlanInput) -> Result<(), PlanError> {
     Ok(())
 }
 
-fn compile_validated_plan(input: KvPlanInput) -> Result<CompiledKvPlan, PlanError> {
-    let mut compiled = Vec::with_capacity(input.classes.len());
-    for class in input.classes {
-        let slot_count = match class.retention {
-            RetentionKind::Full => None,
-            RetentionKind::Sliding => {
-                let window =
-                    class
-                        .window_tokens
-                        .ok_or_else(|| PlanError::InvalidCompiledClass {
-                            class: class.name.clone(),
-                        })?;
-                Some(
-                    1_u64
-                        .checked_add(ceil_div(window - 1, input.page_tokens)?)
-                        .ok_or(PlanError::ArithmeticOverflow {
-                            calculation: "sliding slot count",
-                        })?,
-                )
+fn compile_inferred_classes(
+    page_tokens: u64,
+    classes: Vec<InferredClassInput>,
+) -> Result<CompiledKvPlan, PlanError> {
+    if page_tokens == 0 {
+        return Err(PlanError::ZeroPageTokens);
+    }
+    if classes.is_empty() {
+        return Err(PlanError::EmptyPlan);
+    }
+    let mut names = BTreeSet::new();
+    let mut claimed_layers = BTreeMap::<u32, String>::new();
+    let mut compiled = Vec::with_capacity(classes.len());
+    for class in classes {
+        validate_class(&class.spec)?;
+        if !names.insert(class.spec.name.clone()) {
+            return Err(PlanError::DuplicateClassName(class.spec.name));
+        }
+        let source = class
+            .source_state
+            .clone()
+            .unwrap_or_else(|| class.spec.name.clone());
+        for &layer in &class.spec.layers {
+            if let Some(first) = claimed_layers.get(&layer)
+                && first != &source
+            {
+                return Err(PlanError::LayerOverlap {
+                    layer,
+                    first: first.clone(),
+                    second: source.clone(),
+                });
             }
-        };
+            claimed_layers.insert(layer, source.clone());
+        }
+        let slot_count =
+            match class.spec.retention {
+                RetentionKind::Full => class
+                    .block_domain
+                    .end_block_exclusive
+                    .map(|end| end.saturating_sub(class.block_domain.start_block)),
+                RetentionKind::Sliding => {
+                    let window = class.spec.window_tokens.ok_or_else(|| {
+                        PlanError::InvalidCompiledClass {
+                            class: class.spec.name.clone(),
+                        }
+                    })?;
+                    Some(
+                        1_u64
+                            .checked_add(ceil_div(window - 1, page_tokens)?)
+                            .ok_or(PlanError::ArithmeticOverflow {
+                                calculation: "sliding slot count",
+                            })?,
+                    )
+                }
+            };
         compiled.push(CompiledKvClass {
-            spec: class,
+            spec: class.spec,
             slot_count,
+            source_state: class.source_state,
+            block_domain: class.block_domain,
         });
     }
     Ok(CompiledKvPlan {
-        page_tokens: input.page_tokens,
+        page_tokens,
         classes: compiled,
     })
 }
@@ -1122,5 +1380,217 @@ mod tests {
             retention_plan.layout_program().unwrap()
         );
         assert_eq!(legacy_plan.fingerprint(), retention_plan.fingerprint());
+    }
+
+    #[test]
+    fn sink_sliding_relation_synthesizes_pinned_and_periodic_regions() {
+        let program = RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 4,
+            states: vec![RetentionStateDecl {
+                name: "attention".into(),
+                layers: vec![0],
+                bytes_per_token_per_layer: 128,
+                may_read: Predicate::Or {
+                    terms: vec![
+                        Predicate::LessThan {
+                            lhs: IntExpr::KeyPosition,
+                            rhs: IntExpr::Constant { value: 4 },
+                        },
+                        Predicate::LessThan {
+                            lhs: IntExpr::Sub {
+                                lhs: Box::new(IntExpr::QueryPosition),
+                                rhs: Box::new(IntExpr::KeyPosition),
+                            },
+                            rhs: IntExpr::Constant { value: 8 },
+                        },
+                    ],
+                },
+            }],
+        };
+        let plan = compile_retention_program(program).unwrap();
+        assert_eq!(plan.classes.len(), 2);
+        assert_eq!(plan.classes[0].spec.name, "attention::sink");
+        assert_eq!(plan.classes[0].slot_count, Some(1));
+        assert_eq!(
+            plan.classes[0].block_domain,
+            BlockDomain {
+                start_block: 0,
+                end_block_exclusive: Some(1)
+            }
+        );
+        assert_eq!(plan.classes[1].spec.name, "attention::local");
+        assert_eq!(plan.classes[1].slot_count, Some(3));
+        assert_eq!(plan.classes[1].block_domain.start_block, 1);
+
+        let layout = plan.layout_program().unwrap();
+        assert_eq!(layout.classes[0].address, AddressProgram::Pinned);
+        assert_eq!(
+            layout.classes[1].address,
+            AddressProgram::PeriodicFrom {
+                period_blocks: 3,
+                origin_block: 1
+            }
+        );
+        let continuation = plan.continuation_blocks(20).unwrap();
+        assert_eq!(continuation["attention::sink"], vec![0]);
+        assert_eq!(continuation["attention::local"], vec![3, 4]);
+        let capacity = plan.capacity_at(20).unwrap();
+        assert_eq!(capacity[0].semantic_live_tokens, 4);
+        assert_eq!(capacity[0].physical_token_slots, 4);
+        assert_eq!(capacity[1].semantic_live_tokens, 7);
+        assert_eq!(capacity[1].physical_token_slots, 12);
+        assert_eq!(plan.all_full_baseline_bytes_at(20).unwrap(), 20 * 128);
+        assert_eq!(
+            plan.sglang_policy(),
+            Err(PlanError::UnsupportedSglangBlockDomain)
+        );
+
+        assert!(matches!(
+            layout.temporal_address("request", "attention::sink", 1),
+            Err(PlanError::AddressOutsideBlockDomain {
+                class,
+                ordinal: 1
+            }) if class == "attention::sink"
+        ));
+        assert!(matches!(
+            layout.temporal_address("request", "attention::local", 0),
+            Err(PlanError::AddressOutsideBlockDomain {
+                class,
+                ordinal: 0
+            }) if class == "attention::local"
+        ));
+    }
+
+    #[test]
+    fn sink_boundary_must_align_with_reclamation_page() {
+        let program = RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 4,
+            states: vec![RetentionStateDecl {
+                name: "attention".into(),
+                layers: vec![0],
+                bytes_per_token_per_layer: 128,
+                may_read: Predicate::Or {
+                    terms: vec![
+                        Predicate::LessThan {
+                            lhs: IntExpr::KeyPosition,
+                            rhs: IntExpr::Constant { value: 3 },
+                        },
+                        Predicate::LessThan {
+                            lhs: IntExpr::Sub {
+                                lhs: Box::new(IntExpr::QueryPosition),
+                                rhs: Box::new(IntExpr::KeyPosition),
+                            },
+                            rhs: IntExpr::Constant { value: 8 },
+                        },
+                    ],
+                },
+            }],
+        };
+        assert!(matches!(
+            compile_retention_program(program),
+            Err(PlanError::SinkBoundaryNotPageAligned {
+                sink_tokens: 3,
+                page_tokens: 4
+            })
+        ));
+    }
+
+    #[test]
+    fn partitioned_retention_rejects_zero_page_tokens_before_lowering() {
+        let program = RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 0,
+            states: vec![RetentionStateDecl {
+                name: "attention".into(),
+                layers: vec![0],
+                bytes_per_token_per_layer: 128,
+                may_read: Predicate::True,
+            }],
+        };
+        assert_eq!(
+            compile_retention_program(program),
+            Err(PlanError::ZeroPageTokens)
+        );
+    }
+
+    #[test]
+    fn sink_sliding_continuation_matches_declared_relation_exhaustively() {
+        for page_tokens in [1_u64, 2, 4, 8] {
+            for window_tokens in 1_u64..=17 {
+                let sink_tokens = 2 * page_tokens;
+                let declaration = RetentionStateDecl {
+                    name: "attention".into(),
+                    layers: vec![0],
+                    bytes_per_token_per_layer: 128,
+                    may_read: Predicate::Or {
+                        terms: vec![
+                            Predicate::LessThan {
+                                lhs: IntExpr::KeyPosition,
+                                rhs: IntExpr::Constant {
+                                    value: i64::try_from(sink_tokens).unwrap(),
+                                },
+                            },
+                            Predicate::LessThan {
+                                lhs: IntExpr::Sub {
+                                    lhs: Box::new(IntExpr::QueryPosition),
+                                    rhs: Box::new(IntExpr::KeyPosition),
+                                },
+                                rhs: IntExpr::Constant {
+                                    value: i64::try_from(window_tokens).unwrap(),
+                                },
+                            },
+                        ],
+                    },
+                };
+                let plan = compile_retention_program(RetentionProgramInput {
+                    schema: "orbitkv.retention-ir.v1".into(),
+                    page_tokens,
+                    states: vec![declaration.clone()],
+                })
+                .unwrap();
+                let layout = plan.layout_program().unwrap();
+
+                for boundary in 0_u64..=8 * page_tokens + 2 * window_tokens {
+                    let continuation = plan.continuation_blocks(boundary).unwrap();
+                    let mut expected_sink = BTreeSet::new();
+                    let mut expected_local = BTreeSet::new();
+                    for key in 0..boundary {
+                        if !declaration.may_read.may_read(
+                            i64::try_from(boundary).unwrap(),
+                            i64::try_from(key).unwrap(),
+                        ) {
+                            continue;
+                        }
+                        let block = key / page_tokens;
+                        if key < sink_tokens {
+                            expected_sink.insert(block);
+                        } else {
+                            expected_local.insert(block);
+                        }
+                    }
+                    assert_eq!(
+                        continuation["attention::sink"],
+                        expected_sink.into_iter().collect::<Vec<_>>()
+                    );
+                    assert_eq!(
+                        continuation["attention::local"],
+                        expected_local.iter().copied().collect::<Vec<_>>()
+                    );
+
+                    let mut live_cells = BTreeSet::new();
+                    for ordinal in expected_local {
+                        let address = layout
+                            .temporal_address("request", "attention::local", ordinal)
+                            .unwrap();
+                        assert!(
+                            live_cells.insert(address.cell.cell_index),
+                            "live local blocks collided at page={page_tokens}, window={window_tokens}, boundary={boundary}"
+                        );
+                    }
+                }
+            }
+        }
     }
 }

@@ -19,6 +19,7 @@
     "results/h20-generation-vmm-20260817/lifecycle.json": "03cec5b900ef1e1bbc1a7aefa9a7977610568e29765f21cddf3de74c1cad91b2"
   },
   "schema": "orbitkv.h20-generation-vmm-manifest.v1",
+  "source_commit": "b1adc44618c5b4627747e43439bdd5b4155ed4da",
   "source_parent_commit": "d153b875d141d6629272dbc90ae099fa2137f7c9",
   "sources": {
     "crates/orbitkv-cuda/Cargo.toml": "0e75d1ea768149e2047ea235f3b35e7066a359c7154be8f882c89add5e84c8d3",

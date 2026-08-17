@@ -14,6 +14,8 @@ DEFAULT_MANIFESTS = (
     ROOT / "results/owner-ffi-20260817/manifest.json",
     ROOT / "results/h20-generation-vmm-20260817/manifest.json",
     ROOT / "results/retention-ir-20260817/manifest.json",
+    ROOT / "results/sink-sliding-20260817/manifest.json",
+    ROOT / "results/h20-gpt-oss-20b-real-20260817/manifest.json",
 )
 
 
@@ -21,7 +23,7 @@ def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def git_blob(commit: str, relative_path: str) -> bytes:
+def git_repository_args() -> list[str]:
     repository_args = ["-C", str(ROOT)]
     if subprocess.run(
         ["git", *repository_args, "rev-parse", "--verify", "HEAD"],
@@ -35,19 +37,25 @@ def git_blob(commit: str, relative_path: str) -> bytes:
             f"--git-dir={LOCAL_PUBLISH_GIT}",
             f"--work-tree={ROOT}",
         ]
+    return repository_args
+
+
+def git_blob(commit: str, relative_path: str) -> bytes:
     return subprocess.check_output(
         [
             "git",
-            *repository_args,
+            *git_repository_args(),
             "show",
             f"{commit}:{relative_path}",
-        ],
+        ]
     )
 
 
 def verify_manifest(path: Path) -> int:
     manifest = json.loads(path.read_text(encoding="utf-8"))
-    historical_commit = manifest.get("base_source_commit")
+    historical_commit = manifest.get("base_source_commit") or manifest.get(
+        "source_commit"
+    )
     checked = 0
     for section in ("records", "sources", "website"):
         for relative_path, expected in manifest.get(section, {}).items():

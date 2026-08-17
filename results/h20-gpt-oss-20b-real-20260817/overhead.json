@@ -1,0 +1,92 @@
+{
+  "fixed_capacity_kv_bytes_saved": 301989888,
+  "fixed_capacity_kv_mib_saved": 288,
+  "median_orbitkv_over_stock_percent": -0.07865089695718863,
+  "median_orbitkv_over_stock_ratio": 0.9992134910304281,
+  "orbitkv_median_seconds": 5.668245323002338,
+  "output_digest": "36096049fe39f0c81ff91976fbb478b5c06657b7435bb18f228da64b9c4aed36",
+  "pairs": [
+    {
+      "execution_order": [
+        "stock",
+        "owner"
+      ],
+      "orbitkv_num_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "orbitkv_over_stock_ratio": 0.9992134910304281,
+      "orbitkv_seconds": 5.668245323002338,
+      "outputs_equal": true,
+      "pair": 0,
+      "stock_num_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "stock_seconds": 5.672706957906485
+    },
+    {
+      "execution_order": [
+        "owner",
+        "stock"
+      ],
+      "orbitkv_num_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "orbitkv_over_stock_ratio": 0.994792718891563,
+      "orbitkv_seconds": 5.648303110152483,
+      "outputs_equal": true,
+      "pair": 1,
+      "stock_num_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "stock_seconds": 5.677869372069836
+    },
+    {
+      "execution_order": [
+        "stock",
+        "owner"
+      ],
+      "orbitkv_num_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "orbitkv_over_stock_ratio": 0.9996601919717232,
+      "orbitkv_seconds": 5.678290709853172,
+      "outputs_equal": true,
+      "pair": 2,
+      "stock_num_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "stock_seconds": 5.680220894515514
+    }
+  ],
+  "schema": "orbitkv.real-model-fixed-capacity-ab.v1",
+  "orbitkv_reported_kv_gib": 1.697,
+  "orbitkv_swa_token_capacity": 26512,
+  "stock_reported_kv_gib": 1.979,
+  "stock_swa_token_capacity": 38800,
+  "stock_median_seconds": 5.677869372069836,
+  "workload": {
+    "decode_tokens_per_request": 64,
+    "fixed_full_token_capacity": 47616,
+    "max_running_requests": 128,
+    "prompt_tokens_per_request": 4096,
+    "requests": 4
+  }
+}

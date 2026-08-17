@@ -1,0 +1,140 @@
+{
+  "all_certificates_committed": true,
+  "certificates": [
+    {
+      "certificate_id": 1,
+      "class_name": "swa",
+      "execution_proof": {
+        "execution_epoch": 1,
+        "kind": "non_overlap_scheduler_barrier"
+      },
+      "page_tokens": 16,
+      "plan_fingerprint": "sha256:dfbeded59980b8784b79097e96ae51addbee8cd8ffb19977b6e5aa1df2c1c756",
+      "request_id": "36e95cd1ec824d74bba7a33c0d7ce5eb",
+      "schema": "orbitkv.sglang-retirement-certificate.v1",
+      "semantic_proof": {
+        "kind": "sliding_window",
+        "maximum_reclaimable_end": 385,
+        "semantic_frontier": 513,
+        "window_tokens": 128
+      },
+      "token_end_exclusive": 384,
+      "token_start": 0
+    },
+    {
+      "certificate_id": 2,
+      "class_name": "swa",
+      "execution_proof": {
+        "execution_epoch": 1,
+        "kind": "non_overlap_scheduler_barrier"
+      },
+      "page_tokens": 16,
+      "plan_fingerprint": "sha256:dfbeded59980b8784b79097e96ae51addbee8cd8ffb19977b6e5aa1df2c1c756",
+      "request_id": "dcaa256b0ca74ac1a01048fd8d8f2e51",
+      "schema": "orbitkv.sglang-retirement-certificate.v1",
+      "semantic_proof": {
+        "kind": "sliding_window",
+        "maximum_reclaimable_end": 385,
+        "semantic_frontier": 513,
+        "window_tokens": 128
+      },
+      "token_end_exclusive": 384,
+      "token_start": 0
+    }
+  ],
+  "checkpoint": {
+    "config_sha256": "3a2a26ded679375b7928ddeca59764df7cea83220c1961035f6d6e232659e9ce",
+    "index_files": [
+      {
+        "bytes": 36355,
+        "name": "model.safetensors.index.json",
+        "sha256": "0e085b977c4c9942f85938828e8c989ed7d5cdabf852e4da6a67c116cd502cd1"
+      }
+    ],
+    "indexed_weight_bytes": 13761264768,
+    "indexed_weight_container_overhead_bytes": 52136,
+    "indexed_weight_files": [
+      "model-00000-of-00002.safetensors",
+      "model-00001-of-00002.safetensors",
+      "model-00002-of-00002.safetensors"
+    ],
+    "indexed_weights_complete": true,
+    "load_format": "auto",
+    "missing_indexed_weights": [],
+    "observed_indexed_weight_bytes": 13761316904,
+    "weight_bytes": 13761316904,
+    "weight_files": [
+      {
+        "bytes": 4792272488,
+        "name": "model-00000-of-00002.safetensors"
+      },
+      {
+        "bytes": 4798702184,
+        "name": "model-00001-of-00002.safetensors"
+      },
+      {
+        "bytes": 4170342232,
+        "name": "model-00002-of-00002.safetensors"
+      }
+    ]
+  },
+  "committed_certificate_ids": [
+    1,
+    2
+  ],
+  "event_counts": {
+    "alloc_decode": 15,
+    "alloc_extend": 1,
+    "free": 3,
+    "free_swa": 4,
+    "plugin_loaded": 2,
+    "retirement_certificate": 2,
+    "retirement_committed": 2
+  },
+  "events": 29,
+  "num_retractions": [
+    0,
+    0
+  ],
+  "output_digest": "722941c6d80580cffe46601f88201db5d4f54e81daac664a5ff0c346b8e03c21",
+  "resolved_runtime": {
+    "attention_backend": "fa3",
+    "chunked_prefill_size": 2048,
+    "disable_hybrid_swa_memory": false,
+    "disable_overlap_schedule": true,
+    "disable_radix_cache": true,
+    "dtype": "bfloat16",
+    "effective_max_running_requests_per_dp": 16,
+    "kv_cache_dtype": "auto",
+    "max_running_requests": 16,
+    "moe_runner_backend": "triton_kernel",
+    "page_size": 16
+  },
+  "schema": "orbitkv.real-model-owner-trace.v1",
+  "server_memory": {
+    "graph": {
+      "decode": 0.0,
+      "draft_decode": 0.0,
+      "draft_extend": 0.0,
+      "draft_prefill": 0.0,
+      "prefill": 0.0,
+      "target_verify": 0.0
+    },
+    "kvcache": 0.305,
+    "startup_available": 79.507,
+    "token_capacity": 8192,
+    "token_capacity_swa": 5120,
+    "weight": 14.986
+  },
+  "trace_summary": {
+    "events": 29,
+    "minimum_expected_swa_slots": 288,
+    "peak_full_used_tokens": 1056,
+    "peak_swa_used_tokens": 1056
+  },
+  "workload": {
+    "decode_tokens_per_request": 16,
+    "prompt_tokens_per_request": 512,
+    "requests": 2
+  }
+}

@@ -1,0 +1,559 @@
+{
+  "claim_boundary": [
+    "capacity and most makespan benefit are reproducible by manually setting Stock SGLang interval 32",
+    "OrbitKV contribution is automatic HF-config compilation plus auditable proof-carrying ownership",
+    "Policy32 versus Stock32 timing is noise-level and not claimed as a speedup",
+    "Owner32 versus Policy32 median overhead is measured on this workload only"
+  ],
+  "compiler": {
+    "compilation": {
+      "architecture": "GptOssForCausalLM",
+      "bytes_per_token_per_layer": 2048,
+      "head_dim": 64,
+      "layer_inference": "explicit_layer_types",
+      "program": {
+        "page_tokens": 16,
+        "schema": "orbitkv.retention-ir.v1",
+        "states": [
+          {
+            "bytes_per_token_per_layer": 2048,
+            "layers": [
+              1,
+              3,
+              5,
+              7,
+              9,
+              11,
+              13,
+              15,
+              17,
+              19,
+              21,
+              23
+            ],
+            "may_read": {
+              "op": "true"
+            },
+            "name": "full"
+          },
+          {
+            "bytes_per_token_per_layer": 2048,
+            "layers": [
+              0,
+              2,
+              4,
+              6,
+              8,
+              10,
+              12,
+              14,
+              16,
+              18,
+              20,
+              22
+            ],
+            "may_read": {
+              "lhs": {
+                "lhs": {
+                  "op": "query_position"
+                },
+                "op": "sub",
+                "rhs": {
+                  "op": "key_position"
+                }
+              },
+              "op": "less_than",
+              "rhs": {
+                "op": "constant",
+                "value": 128
+              }
+            },
+            "name": "swa"
+          }
+        ]
+      },
+      "schema": "orbitkv.hf-retention-compilation.v1"
+    },
+    "layout": {
+      "classes": [
+        {
+          "address": {
+            "kind": "append_only"
+          },
+          "bytes_per_token_per_layer": 2048,
+          "layers": [
+            1,
+            3,
+            5,
+            7,
+            9,
+            11,
+            13,
+            15,
+            17,
+            19,
+            21,
+            23
+          ],
+          "minimum_slots_per_request": null,
+          "name": "full",
+          "retirement": {
+            "kind": "never"
+          }
+        },
+        {
+          "address": {
+            "kind": "periodic",
+            "period_blocks": 9
+          },
+          "bytes_per_token_per_layer": 2048,
+          "layers": [
+            0,
+            2,
+            4,
+            6,
+            8,
+            10,
+            12,
+            14,
+            16,
+            18,
+            20,
+            22
+          ],
+          "minimum_slots_per_request": 9,
+          "name": "swa",
+          "retirement": {
+            "kind": "block_end_plus",
+            "offset_tokens": 127
+          }
+        }
+      ],
+      "page_tokens": 16,
+      "plan_fingerprint": "sha256:dfbeded59980b8784b79097e96ae51addbee8cd8ffb19977b6e5aa1df2c1c756",
+      "schema": "orbitkv.layout-program.v1"
+    }
+  },
+  "contribution_ratios": {
+    "compiler_policy_policy32_over_stock32": [
+      0.999134702714102,
+      0.9945806893617624,
+      0.9083880616390893,
+      1.0394431471260452
+    ],
+    "ownership_owner32_over_policy32": [
+      1.0727690806286896,
+      1.024445469311552,
+      1.019215539542722,
+      0.9605903401038245
+    ],
+    "physical_policy_stock32_over_stock128": [
+      0.777127110515955,
+      0.782589702467765,
+      0.8605129822461621,
+      0.7829980286018561
+    ]
+  },
+  "median_contribution_percent": {
+    "compiler_policy_policy32_over_stock32": -0.3142303962067827,
+    "ownership_owner32_over_policy32": 2.1830504427136965,
+    "physical_policy_stock32_over_stock128": -21.720613446518943
+  },
+  "median_contribution_ratios": {
+    "compiler_policy_policy32_over_stock32": 0.9968576960379322,
+    "ownership_owner32_over_policy32": 1.021830504427137,
+    "physical_policy_stock32_over_stock128": 0.7827938655348106
+  },
+  "median_owner32_over_stock128_percent": -20.296208987487496,
+  "median_owner32_over_stock128_ratio": 0.797037910125125,
+  "method": {
+    "balanced_execution_orders": true,
+    "modes": {
+      "owner32": "same compiled plan with Rust proof-carrying reclamation over FFI",
+      "policy32": "Rust-compiled plan injected as interval-32 policy; SGLang owns reclamation",
+      "stock128": "Stock SGLang, default interval 128, no OrbitKV plugin",
+      "stock32": "Stock SGLang, manually configured interval 32, no OrbitKV plugin"
+    },
+    "rounds": 4
+  },
+  "mode_median_seconds": {
+    "owner32": 6.029768902808428,
+    "policy32": 5.908080982044339,
+    "stock128": 7.573817741125822,
+    "stock32": 5.928737306967378
+  },
+  "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+  "owner32_over_stock128_ratios": [
+    0.8329565566246012,
+    0.7973757027237924,
+    0.7967001175264575,
+    0.7818071247877008
+  ],
+  "rounds": [
+    {
+      "execution_order": [
+        "stock128",
+        "stock32",
+        "policy32",
+        "owner32"
+      ],
+      "round": 0,
+      "runs": {
+        "owner32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": "ffi",
+          "reported_kv_gib": 1.979,
+          "seconds": 6.342442587018013,
+          "swa_token_capacity": 26512
+        },
+        "policy32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 5.912216059863567,
+          "swa_token_capacity": 26512
+        },
+        "stock128": {
+          "completion_tokens": 256,
+          "eviction_interval": 128,
+          "full_token_capacity": 47616,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 7.614373806864023,
+          "swa_token_capacity": 38800
+        },
+        "stock32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 5.917336314916611,
+          "swa_token_capacity": 26512
+        }
+      }
+    },
+    {
+      "execution_order": [
+        "owner32",
+        "policy32",
+        "stock32",
+        "stock128"
+      ],
+      "round": 1,
+      "runs": {
+        "owner32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": "ffi",
+          "reported_kv_gib": 1.979,
+          "seconds": 6.042144395411015,
+          "swa_token_capacity": 26512
+        },
+        "policy32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 5.897965852171183,
+          "swa_token_capacity": 26512
+        },
+        "stock128": {
+          "completion_tokens": 256,
+          "eviction_interval": 128,
+          "full_token_capacity": 47616,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 7.5775376334786415,
+          "swa_token_capacity": 38800
+        },
+        "stock32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 5.930102922022343,
+          "swa_token_capacity": 26512
+        }
+      }
+    },
+    {
+      "execution_order": [
+        "stock32",
+        "owner32",
+        "stock128",
+        "policy32"
+      ],
+      "round": 2,
+      "runs": {
+        "owner32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": "ffi",
+          "reported_kv_gib": 1.979,
+          "seconds": 6.017393410205841,
+          "swa_token_capacity": 26512
+        },
+        "policy32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 5.903945904225111,
+          "swa_token_capacity": 26512
+        },
+        "stock128": {
+          "completion_tokens": 256,
+          "eviction_interval": 128,
+          "full_token_capacity": 47616,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 7.552896350622177,
+          "swa_token_capacity": 38800
+        },
+        "stock32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 6.499365363270044,
+          "swa_token_capacity": 26512
+        }
+      }
+    },
+    {
+      "execution_order": [
+        "policy32",
+        "stock128",
+        "owner32",
+        "stock32"
+      ],
+      "round": 3,
+      "runs": {
+        "owner32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": "ffi",
+          "reported_kv_gib": 1.979,
+          "seconds": 5.91835643351078,
+          "swa_token_capacity": 26512
+        },
+        "policy32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 6.16116588562727,
+          "swa_token_capacity": 26512
+        },
+        "stock128": {
+          "completion_tokens": 256,
+          "eviction_interval": 128,
+          "full_token_capacity": 47616,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 7.570097848773003,
+          "swa_token_capacity": 38800
+        },
+        "stock32": {
+          "completion_tokens": 256,
+          "eviction_interval": 32,
+          "full_token_capacity": 59904,
+          "num_retractions": [
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0
+          ],
+          "output_digest": "5c9dddcf946496dd4e77d6ad5aec1026f2e947acdf5d7249a75d813ac12401dd",
+          "owner_transport": null,
+          "reported_kv_gib": 1.979,
+          "seconds": 5.927371691912413,
+          "swa_token_capacity": 26512
+        }
+      }
+    }
+  ],
+  "schema": "orbitkv.real-model-four-way-ablation-summary.v1"
+}

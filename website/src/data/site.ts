@@ -38,9 +38,12 @@ export const architectureLanes = [
 ];
 
 export const implemented = [
-  { name: "Retention IR", boundary: "affine q/k AST · exact q-k bound inference · safe fallback", state: "Implemented" },
+  { name: "HF config frontend", boundary: "explicit Full/SWA layer_types · KV geometry derivation · fail-closed fallback", state: "Implemented" },
+  { name: "Retention IR", boundary: "affine q/k AST · difference bounds · sink/local partition · safe fallback", state: "Implemented" },
   { name: "Full retention", boundary: "append-only lifetime · no semantic retirement", state: "Implemented" },
   { name: "Sliding retention", boundary: "optimal equal-size interval coloring", state: "Implemented" },
+  { name: "Sink + sliding", boundary: "one may_read OR relation · pinned + periodic regions · host exhaustive proof", state: "Implemented" },
+  { name: "Physical optimizer", boundary: "KV budget · admission waves · reclaim budget · engine contract", state: "H20 validated" },
   { name: "Owning manager", boundary: "multi-request identity · generations · immutable views", state: "Implemented" },
   { name: "Reclamation proof", boundary: "semantic proof · execution proof · backend commit", state: "Implemented" },
   { name: "SGLang adapter", boundary: "SWA chunk cache · no radix/spec/overlap", state: "H20 validated" },
@@ -49,9 +52,11 @@ export const implemented = [
 
 export const metrics = [
   { value: "q-k < W", label: "Retention IR", detail: "declarative relation lowered to window, death, and periodic cells" },
-  { value: "−77.8 MiB", label: "KV pool", detail: "reported physical reduction at fixed token capacity" },
-  { value: "+47.14%", label: "Full capacity", detail: "under the same 4.608 GiB KV budget" },
-  { value: "−28.25%", label: "Makespan", detail: "median for eight 6K-token requests" },
+  { value: "+25.81%", label: "Full capacity", detail: "real gpt-oss-20b, same 1.979 GiB KV budget" },
+  { value: "−20.30%", label: "Owner vs Stock", detail: "balanced four-way real-checkpoint ablation" },
+  { value: "+2.18%", label: "Owner cost", detail: "Owner32 versus Policy32 on the pressure workload" },
+  { value: "4 / 4", label: "Plan predictions", detail: "16/32/64/128 Full and SWA capacities matched SGLang" },
+  { value: "−288 MiB", label: "Fixed-capacity KV", detail: "same 47,616 Full tokens; median Owner/Stock 0.9992x" },
   { value: "4.26×", label: "Owner transport", detail: "release plan+commit median speedup with in-process FFI" },
   { value: "64×", label: "VMM remaps", detail: "fresh backing at one stable virtual address" },
   { value: "63 / 63", label: "Stale generations", detail: "old physical handles rejected after VMM slot reuse" },
@@ -60,13 +65,61 @@ export const metrics = [
 
 export const evidenceRows = [
   {
-    result: "Admission",
+    result: "Real checkpoint capacity",
+    value: "+25.81%",
+    contract: "openai/gpt-oss-20b, Full capacity 47,616 to 59,904",
+    boundary: "same 1.979 GiB KV budget; no radix/spec/overlap/Graph",
+  },
+  {
+    result: "Real checkpoint makespan",
+    value: "−20.30%",
+    contract: "Owner32 vs Stock128, four balanced execution orders",
+    boundary: "8 x 6000 prompt + 32 decode; identical output-token digests",
+  },
+  {
+    result: "Physical policy attribution",
+    value: "−21.72%",
+    contract: "manual Stock32 versus unmodified Stock128",
+    boundary: "capacity gain is reproducible without the OrbitKV plugin",
+  },
+  {
+    result: "Proof-carrying owner cost",
+    value: "+2.18%",
+    contract: "Owner32 versus Policy32 with the same compiled plan and capacity",
+    boundary: "pressure workload only; outputs identical",
+  },
+  {
+    result: "Physical-plan synthesis",
+    value: "32 tokens",
+    contract: "selected from 16/32/64/128 under admission and reclaim-call constraints",
+    boundary: "non-overlap SWA ChunkCache contract",
+  },
+  {
+    result: "Capacity prediction",
+    value: "4 / 4",
+    contract: "predicted Full/SWA pools matched fresh SGLang processes exactly",
+    boundary: "gpt-oss-20b, one H20, recorded 1.979 GiB KV budget",
+  },
+  {
+    result: "Real fixed-capacity control",
+    value: "−288 MiB",
+    contract: "4 requests x 4096 prompt + 64 decode, same Full capacity",
+    boundary: "median Owner/Stock 0.9992x; not a speedup claim",
+  },
+  {
+    result: "Sink + Sliding synthesis",
+    value: "2 regions",
+    contract: "one may_read OR relation to pinned sink plus periodic local cells",
+    boundary: "host exhaustive proof; SGLang partition lowering not yet enabled",
+  },
+  {
+    result: "Fixture admission",
     value: "+47.14%",
     contract: "10 Full + 52 SWA layers, fixed 4.608 GiB KV budget",
     boundary: "dummy weights; no radix/spec/overlap/Graph",
   },
   {
-    result: "Long-context makespan",
+    result: "Fixture makespan",
     value: "−28.25%",
     contract: "8 requests × 6000 prompt + 32 decode",
     boundary: "three fresh-process Stock/OrbitKV pairs",
@@ -99,8 +152,11 @@ export const evidenceRows = [
 
 export const roadmap = [
   { state: "DONE", name: "In-process Rust ABI", detail: "Versioned fixed-layout certificates without JSON serialization." },
+  { state: "DONE", name: "HF model frontend", detail: "Compile explicit Full/SWA layer types and KV geometry into Retention IR." },
+  { state: "DONE", name: "Physical-plan optimizer", detail: "Select a constrained SGLang policy from budget and workload candidates." },
+  { state: "DONE", name: "Lifetime partitioning", detail: "Compile sink plus local semantics into pinned and periodic block regions." },
   { state: "NEXT", name: "Graph-stable KV storage", detail: "Back real SGLang KV tensors with cost-approved VMM regions." },
-  { state: "THEN", name: "Richer Retention IR", detail: "Compile sink, chunk, periodic-global, and per-head lifetime classes." },
+  { state: "THEN", name: "Richer Retention IR", detail: "Compile chunk, periodic-global, and per-head lifetime classes." },
 ];
 
 export const docs = [
@@ -127,5 +183,17 @@ export const docs = [
     name: "Evidence index",
     detail: "Raw matrices, summaries, manifests, hashes, and exclusions.",
     href: `${repositoryUrl}/tree/main/results`,
+  },
+  {
+    key: "05 / NORMALIZE",
+    name: "Sink + Sliding proof",
+    detail: "Exhaustive retention equivalence, periodic-cell safety, and adapter boundary.",
+    href: `${repositoryUrl}/blob/main/results/sink-sliding-20260817/summary.json`,
+  },
+  {
+    key: "06 / REAL MODEL",
+    name: "gpt-oss-20b validation",
+    detail: "Released checkpoint capacity, admission, overhead, and reclamation certificates.",
+    href: `${repositoryUrl}/blob/main/docs/h20-gpt-oss-20b-real-validation-20260817.md`,
   },
 ];

@@ -262,6 +262,9 @@ impl KvRuntimeSimulator {
     fn materialize_block(&mut self, ordinal: u64) -> Result<(), RuntimeError> {
         let classes = self.plan.classes.clone();
         for class in classes {
+            if !class.block_domain.contains(ordinal) {
+                continue;
+            }
             let logical = LogicalBlock {
                 class_name: class.spec.name.clone(),
                 ordinal,
@@ -388,7 +391,10 @@ impl KvRuntimeSimulator {
 
 #[cfg(test)]
 mod tests {
-    use crate::{KvClassSpec, KvPlanInput, RetentionKind, compile_plan};
+    use crate::{
+        IntExpr, KvClassSpec, KvPlanInput, Predicate, RetentionKind, RetentionProgramInput,
+        RetentionStateDecl, compile_plan, compile_retention_program,
+    };
 
     use super::*;
 
@@ -401,6 +407,34 @@ mod tests {
                 retention: RetentionKind::Sliding,
                 bytes_per_token_per_layer: 128,
                 window_tokens: Some(32),
+            }],
+        })
+        .unwrap()
+    }
+
+    fn sink_sliding_plan() -> CompiledKvPlan {
+        compile_retention_program(RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 4,
+            states: vec![RetentionStateDecl {
+                name: "attention".into(),
+                layers: vec![0],
+                bytes_per_token_per_layer: 128,
+                may_read: Predicate::Or {
+                    terms: vec![
+                        Predicate::LessThan {
+                            lhs: IntExpr::KeyPosition,
+                            rhs: IntExpr::Constant { value: 4 },
+                        },
+                        Predicate::LessThan {
+                            lhs: IntExpr::Sub {
+                                lhs: Box::new(IntExpr::QueryPosition),
+                                rhs: Box::new(IntExpr::KeyPosition),
+                            },
+                            rhs: IntExpr::Constant { value: 8 },
+                        },
+                    ],
+                },
             }],
         })
         .unwrap()
@@ -461,5 +495,53 @@ mod tests {
         runtime.append_to(128).unwrap();
         assert_eq!(runtime.resident_blocks().len(), 8);
         assert!(runtime.retiring_blocks().is_empty());
+    }
+
+    #[test]
+    fn sink_sliding_simulator_preserves_pinned_and_recycles_periodic_regions() {
+        let mut runtime = KvRuntimeSimulator::new(sink_sliding_plan()).unwrap();
+        runtime.append_to(20).unwrap();
+        assert_eq!(
+            runtime
+                .live_blocks()
+                .unwrap()
+                .into_iter()
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from([
+                LogicalBlock {
+                    class_name: "attention::sink".into(),
+                    ordinal: 0,
+                },
+                LogicalBlock {
+                    class_name: "attention::local".into(),
+                    ordinal: 3,
+                },
+                LogicalBlock {
+                    class_name: "attention::local".into(),
+                    ordinal: 4,
+                },
+            ])
+        );
+        let temporal = runtime
+            .resident_temporal_blocks("request")
+            .unwrap()
+            .into_iter()
+            .map(|block| {
+                (
+                    block.logical.class_name,
+                    block.logical.ordinal,
+                    block.temporal.cell.cell_index,
+                    block.temporal.version.cycle,
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        assert_eq!(
+            temporal,
+            BTreeSet::from([
+                ("attention::sink".into(), 0, 0, 0),
+                ("attention::local".into(), 3, 2, 0),
+                ("attention::local".into(), 4, 0, 1),
+            ])
+        );
     }
 }

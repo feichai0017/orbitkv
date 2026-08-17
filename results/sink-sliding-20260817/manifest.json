@@ -1,0 +1,24 @@
+{
+  "claim_boundary": [
+    "affine Sink + Sliding relation with a page-aligned sink prefix",
+    "host compiler, simulator, and reference-manager validation only",
+    "SGLang compatibility policy rejects partitioned block domains",
+    "no H20 or end-to-end speedup claim"
+  ],
+  "date": "2026-08-17",
+  "records": {
+    "results/sink-sliding-20260817/analysis.json": "f9bf93dbb528a770d088e2c11ceb7cb5d5e6fba4a85f43623da626b91dc508c5",
+    "results/sink-sliding-20260817/capacity-boundary-20.json": "7802c770bbb7b0c9633d7679e00e7953c616828fe29b2a2738ec01d8d0d541ff",
+    "results/sink-sliding-20260817/summary.json": "7efa439a7a7f764cb6567aa8097caa3b5acbc16add7607fc4bd89e63b32b00bf"
+  },
+  "schema": "orbitkv.sink-sliding-manifest.v1",
+  "sources": {
+    "examples/sink_sliding_retention.json": "8c9d74229b5483dd2c1de7a28c992473e8e25451ebed4c333e5ab1bf80ab26d9",
+    "src/lib.rs": "9bd8d5746e59b1053bc859b13f688fff7537b0a41046354fc1e0ab8cdef07ff2",
+    "src/manager.rs": "0fd2c8bdabf0ab3496ad7b8c64491e78f46c443faeabaf53d1aa0c9f71eb12b2",
+    "src/plan.rs": "58c152cdbd5695b847f33377a1de0d40444407ce5b1d18a1c18a989454133b47",
+    "src/retention.rs": "b8262ad7ea9d72ff35d0da77281ba6fb560c2596db95acb878776407594732fd",
+    "src/runtime.rs": "5474fae0b6a97802d121dac2a51d93ba95f41e388ea012d5deae8d17d6a7bf89",
+    "tests/retention_cli.rs": "11df4ec4c2ee627fe0de9d02fe75055caa9b7c9b0186d731759e59568a0f0bbb"
+  }
+}

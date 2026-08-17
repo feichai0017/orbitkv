@@ -10,16 +10,20 @@ fn root() -> PathBuf {
 }
 
 fn run(arguments: &[&str]) -> serde_json::Value {
-    let output = Command::new(binary())
-        .args(arguments)
-        .output()
-        .expect("run orbitkv CLI");
+    let output = output(arguments);
     assert!(
         output.status.success(),
         "orbitkv failed: {}",
         String::from_utf8_lossy(&output.stderr)
     );
     serde_json::from_slice(&output.stdout).expect("valid JSON output")
+}
+
+fn output(arguments: &[&str]) -> std::process::Output {
+    Command::new(binary())
+        .args(arguments)
+        .output()
+        .expect("run orbitkv CLI")
 }
 
 #[test]
@@ -47,5 +51,123 @@ fn retention_analysis_reports_derived_window_and_address() {
     assert_eq!(
         report["layout"]["classes"][1]["address"]["period_blocks"],
         65
+    );
+}
+
+#[test]
+fn sink_sliding_relation_emits_two_regions_without_new_retention_kind() {
+    let source = root().join("examples/sink_sliding_retention.json");
+    let report = run(&["analyze-retention", source.to_str().unwrap()]);
+    let regions = &report["analyses"][0]["inferred"]["regions"];
+    assert_eq!(regions[0]["label"], "sink");
+    assert_eq!(regions[0]["retention"]["kind"], "unbounded");
+    assert_eq!(regions[1]["label"], "local");
+    assert_eq!(regions[1]["retention"]["window_tokens"], 8);
+    assert_eq!(report["layout"]["classes"][0]["address"]["kind"], "pinned");
+    assert_eq!(
+        report["layout"]["classes"][1]["address"]["kind"],
+        "periodic_from"
+    );
+    assert_eq!(
+        report["layout"]["classes"][1]["address"]["period_blocks"],
+        3
+    );
+}
+
+#[test]
+fn sink_sliding_sglang_lowering_fails_closed() {
+    let source = root().join("examples/sink_sliding_retention.json");
+    let output = output(&["emit-sglang-policy", source.to_str().unwrap()]);
+    assert!(!output.status.success());
+    assert_eq!(output.stdout, b"");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr).trim(),
+        "orbitkv: SGLang lowering does not support partitioned block domains"
+    );
+}
+
+#[test]
+fn hf_config_frontend_compiles_hybrid_fixture() {
+    let config = root().join("fixtures/gpt-oss-hybrid-tiny/config.json");
+    let report = run(&[
+        "compile-hf-config",
+        config.to_str().unwrap(),
+        "--page-tokens",
+        "16",
+        "--kv-dtype-bytes",
+        "2",
+    ]);
+    assert_eq!(
+        report["compilation"]["layer_inference"],
+        "explicit_layer_types"
+    );
+    assert_eq!(report["compilation"]["bytes_per_token_per_layer"], 512);
+    assert_eq!(
+        report["compilation"]["program"]["states"][0]["name"],
+        "full"
+    );
+    assert_eq!(
+        report["compilation"]["program"]["states"][0]["layers"],
+        serde_json::json!([1, 3, 5, 7])
+    );
+    assert_eq!(report["compilation"]["program"]["states"][1]["name"], "swa");
+    assert_eq!(
+        report["layout"]["classes"][1]["address"]["period_blocks"],
+        65
+    );
+    let legacy = root().join("examples/gpt_oss_hybrid_tiny.json");
+    assert_eq!(
+        report["layout"],
+        run(&["emit-layout", legacy.to_str().unwrap()])
+    );
+}
+
+#[test]
+fn hf_physical_optimizer_selects_capacity_plan() {
+    let config = root().join("fixtures/gpt-oss-hybrid-tiny/config.json");
+    let report = run(&[
+        "compile-hf-physical-plan",
+        config.to_str().unwrap(),
+        "--page-tokens",
+        "16",
+        "--kv-dtype-bytes",
+        "2",
+        "--available-kv-bytes",
+        "120881152",
+        "--max-running-requests",
+        "8",
+        "--attention-dp-size",
+        "1",
+        "--chunked-prefill-tokens",
+        "2048",
+        "--workload-requests",
+        "8",
+        "--prompt-tokens",
+        "6000",
+        "--decode-tokens",
+        "32",
+        "--candidate-intervals",
+        "16,32,64,128",
+        "--max-reclamation-calls",
+        "4",
+        "--min-admitted-requests",
+        "8",
+        "--objective",
+        "capacity",
+    ]);
+    assert_eq!(
+        report["physical_plan"]["selected_eviction_interval_tokens"],
+        32
+    );
+    let candidates = report["physical_plan"]["candidates"].as_array().unwrap();
+    assert_eq!(candidates[0]["eviction_interval_tokens"], 16);
+    assert_eq!(candidates[0]["feasible"], false);
+    assert_eq!(
+        candidates[0]["rejection_reasons"][0],
+        "estimated reclamation calls 5 exceed maximum 4"
+    );
+    assert_eq!(
+        report["physical_plan"]["selected"]["cost"]["admission_waves"],
+        1
     );
 }

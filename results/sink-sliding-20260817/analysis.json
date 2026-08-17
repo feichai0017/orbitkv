@@ -1,0 +1,83 @@
+{
+  "schema": "orbitkv.retention-analysis.v1",
+  "source_schema": "orbitkv.retention-ir.v1",
+  "page_tokens": 4,
+  "analyses": [
+    {
+      "state_name": "attention",
+      "inferred": {
+        "kind": "partitioned",
+        "regions": [
+          {
+            "label": "sink",
+            "start_token": 0,
+            "end_token_exclusive": 4,
+            "retention": {
+              "kind": "unbounded"
+            }
+          },
+          {
+            "label": "local",
+            "start_token": 4,
+            "retention": {
+              "kind": "fixed_window",
+              "window_tokens": 8
+            }
+          }
+        ]
+      },
+      "proven_query_key_delta_upper_bound": null
+    }
+  ],
+  "layout": {
+    "schema": "orbitkv.layout-program.v1",
+    "plan_fingerprint": "sha256:6670407a9ff400e828cc6f9aeb1aa642a2912c77977c9566fd7f2661516fb0f1",
+    "page_tokens": 4,
+    "classes": [
+      {
+        "name": "attention::sink",
+        "layers": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "bytes_per_token_per_layer": 128,
+        "address": {
+          "kind": "pinned"
+        },
+        "retirement": {
+          "kind": "never"
+        },
+        "minimum_slots_per_request": 1,
+        "block_domain": {
+          "start_block": 0,
+          "end_block_exclusive": 1
+        }
+      },
+      {
+        "name": "attention::local",
+        "layers": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "bytes_per_token_per_layer": 128,
+        "address": {
+          "kind": "periodic_from",
+          "period_blocks": 3,
+          "origin_block": 1
+        },
+        "retirement": {
+          "kind": "block_end_plus",
+          "offset_tokens": 7
+        },
+        "minimum_slots_per_request": 3,
+        "block_domain": {
+          "start_block": 1
+        }
+      }
+    ]
+  }
+}

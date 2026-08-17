@@ -224,6 +224,11 @@ It does not yet support:
 - multi-GPU multicast or fabric-memory claims;
 - released-checkpoint model-quality claims.
 
+Status update on 2026-08-17: the first released-checkpoint qualification was
+completed on `openai/gpt-oss-20b`; see
+`docs/h20-gpt-oss-20b-real-validation-20260817.md`. VMM-backed SGLang KV
+tensors and model-quality evaluation remain outside the qualified boundary.
+
 ## Next gate
 
 Connect `CudaVmmSlot` generations to `BlockHandle` and expose a graph-stable

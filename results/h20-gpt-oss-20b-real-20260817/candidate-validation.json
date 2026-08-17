@@ -1,0 +1,148 @@
+{
+  "candidates": [
+    {
+      "actual_full_token_capacity": 61952,
+      "actual_swa_token_capacity": 24464,
+      "admission_waves": 1,
+      "estimated_reclamation_calls_per_request": 5,
+      "feasible": false,
+      "interval": 16,
+      "num_retractions": [
+        0
+      ],
+      "predicted_full_token_capacity": 61952,
+      "predicted_swa_token_capacity": 24464,
+      "prediction_matches": true,
+      "rejection_reasons": [
+        "estimated reclamation calls 5 exceed maximum 4"
+      ]
+    },
+    {
+      "actual_full_token_capacity": 59904,
+      "actual_swa_token_capacity": 26512,
+      "admission_waves": 1,
+      "estimated_reclamation_calls_per_request": 4,
+      "feasible": true,
+      "interval": 32,
+      "num_retractions": [
+        0
+      ],
+      "predicted_full_token_capacity": 59904,
+      "predicted_swa_token_capacity": 26512,
+      "prediction_matches": true,
+      "rejection_reasons": []
+    },
+    {
+      "actual_full_token_capacity": 55808,
+      "actual_swa_token_capacity": 30608,
+      "admission_waves": 1,
+      "estimated_reclamation_calls_per_request": 4,
+      "feasible": true,
+      "interval": 64,
+      "num_retractions": [
+        0
+      ],
+      "predicted_full_token_capacity": 55808,
+      "predicted_swa_token_capacity": 30608,
+      "prediction_matches": true,
+      "rejection_reasons": []
+    },
+    {
+      "actual_full_token_capacity": 47616,
+      "actual_swa_token_capacity": 38800,
+      "admission_waves": 2,
+      "estimated_reclamation_calls_per_request": 4,
+      "feasible": false,
+      "interval": 128,
+      "num_retractions": [
+        0
+      ],
+      "predicted_full_token_capacity": 47616,
+      "predicted_swa_token_capacity": 38800,
+      "prediction_matches": true,
+      "rejection_reasons": [
+        "admitted requests 7 below minimum 8"
+      ]
+    }
+  ],
+  "checkpoint": {
+    "config_sha256": "3a2a26ded679375b7928ddeca59764df7cea83220c1961035f6d6e232659e9ce",
+    "index_files": [
+      {
+        "bytes": 36355,
+        "name": "model.safetensors.index.json",
+        "sha256": "0e085b977c4c9942f85938828e8c989ed7d5cdabf852e4da6a67c116cd502cd1"
+      }
+    ],
+    "indexed_weight_bytes": 13761264768,
+    "indexed_weight_container_overhead_bytes": 52136,
+    "indexed_weight_files": [
+      "model-00000-of-00002.safetensors",
+      "model-00001-of-00002.safetensors",
+      "model-00002-of-00002.safetensors"
+    ],
+    "indexed_weights_complete": true,
+    "load_format": "auto",
+    "missing_indexed_weights": [],
+    "observed_indexed_weight_bytes": 13761316904,
+    "weight_bytes": 13761316904,
+    "weight_files": [
+      {
+        "bytes": 4792272488,
+        "name": "model-00000-of-00002.safetensors"
+      },
+      {
+        "bytes": 4798702184,
+        "name": "model-00001-of-00002.safetensors"
+      },
+      {
+        "bytes": 4170342232,
+        "name": "model-00002-of-00002.safetensors"
+      }
+    ]
+  },
+  "contract": {
+    "cache_kind": "swa_chunk_cache",
+    "chunks_in_flight": 1,
+    "disaggregation_mode": "none",
+    "require_overlap_schedule_disabled": true,
+    "require_radix_cache_disabled": true,
+    "require_speculative_decoding_disabled": true
+  },
+  "input": {
+    "attention_data_parallel_size": 1,
+    "available_kv_bytes": 2123759616,
+    "candidate_eviction_intervals": [
+      16,
+      32,
+      64,
+      128
+    ],
+    "chunked_prefill_tokens": 2048,
+    "decode_tokens_per_request": 32,
+    "max_running_requests": 128,
+    "maximum_reclamation_calls_per_request": 4,
+    "minimum_admitted_requests": 8,
+    "objective": "capacity_under_reclamation_budget",
+    "prompt_tokens_per_request": 6000,
+    "workload_requests": 8
+  },
+  "objective": "capacity_under_reclamation_budget",
+  "output_digest": "926fa4c78934eb34408394e07f400abf2c3dd3a761451555b6d2894706ef3d82",
+  "physical_plan_fingerprint": "sha256:2b7b2a3b2fe1139cd55854a26ed51e4284141b80bc37836b955bb491e72c8368",
+  "resolved_runtime": {
+    "attention_backend": "fa3",
+    "chunked_prefill_size": 2048,
+    "disable_hybrid_swa_memory": false,
+    "disable_overlap_schedule": true,
+    "disable_radix_cache": true,
+    "dtype": "bfloat16",
+    "effective_max_running_requests_per_dp": 128,
+    "kv_cache_dtype": "auto",
+    "max_running_requests": 128,
+    "moe_runner_backend": "triton_kernel",
+    "page_size": 16
+  },
+  "schema": "orbitkv.sglang-physical-candidate-validation-summary.v1",
+  "selected_eviction_interval_tokens": 32
+}

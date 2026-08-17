@@ -1,0 +1,52 @@
+{
+  "config_sha256": "3a2a26ded679375b7928ddeca59764df7cea83220c1961035f6d6e232659e9ce",
+  "index_files": [
+    {
+      "bytes": 36355,
+      "name": "model.safetensors.index.json",
+      "sha256": "0e085b977c4c9942f85938828e8c989ed7d5cdabf852e4da6a67c116cd502cd1"
+    }
+  ],
+  "indexed_weight_bytes": 13761264768,
+  "indexed_weight_container_overhead_bytes": 52136,
+  "indexed_weight_files": [
+    "model-00000-of-00002.safetensors",
+    "model-00001-of-00002.safetensors",
+    "model-00002-of-00002.safetensors"
+  ],
+  "indexed_weights_complete": true,
+  "load_format": "auto",
+  "missing_indexed_weights": [],
+  "observed_indexed_weight_bytes": 13761316904,
+  "repository": "openai/gpt-oss-20b",
+  "resolved_runtime": {
+    "attention_backend": "fa3",
+    "chunked_prefill_size": 2048,
+    "disable_hybrid_swa_memory": false,
+    "disable_overlap_schedule": true,
+    "disable_radix_cache": true,
+    "dtype": "bfloat16",
+    "effective_max_running_requests_per_dp": 128,
+    "kv_cache_dtype": "auto",
+    "max_running_requests": 128,
+    "moe_runner_backend": "triton_kernel",
+    "page_size": 16
+  },
+  "revision": "6cee5e81ee83917806bbde320786a8fb61efebee",
+  "schema": "orbitkv.real-checkpoint.v1",
+  "weight_bytes": 13761316904,
+  "weight_files": [
+    {
+      "bytes": 4792272488,
+      "name": "model-00000-of-00002.safetensors"
+    },
+    {
+      "bytes": 4798702184,
+      "name": "model-00001-of-00002.safetensors"
+    },
+    {
+      "bytes": 4170342232,
+      "name": "model-00002-of-00002.safetensors"
+    }
+  ]
+}

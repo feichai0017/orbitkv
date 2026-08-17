@@ -10,6 +10,8 @@ from pathlib import Path
 
 import sglang as sgl
 
+from checkpoint_identity import checkpoint_identity
+
 
 DEFAULT_MODEL_PATH = (
     Path(__file__).resolve().parents[2] / "fixtures/gpt-oss-hybrid-tiny"
@@ -47,6 +49,32 @@ def extract_memory(info: dict) -> dict:
     return state.get("memory_usage", {})
 
 
+def extract_runtime(info: dict) -> dict:
+    states = info.get("internal_states", [])
+    state = states[0] if states else {}
+    fields = (
+        "attention_backend",
+        "prefill_attention_backend",
+        "decode_attention_backend",
+        "moe_runner_backend",
+        "quantization",
+        "dtype",
+        "kv_cache_dtype",
+        "page_size",
+        "chunked_prefill_size",
+        "disable_hybrid_swa_memory",
+        "disable_radix_cache",
+        "disable_overlap_schedule",
+        "max_running_requests",
+        "effective_max_running_requests_per_dp",
+    )
+    return {
+        field: state.get(field, info.get(field))
+        for field in fields
+        if state.get(field, info.get(field)) is not None
+    }
+
+
 def token_digest(outputs: list[dict]) -> str:
     digest = hashlib.sha256()
     for output in outputs:
@@ -57,10 +85,13 @@ def token_digest(outputs: list[dict]) -> str:
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--mode", choices=("stock", "shadow", "policy", "owner"), required=True
+        "--mode",
+        choices=("stock", "native_policy", "shadow", "policy", "owner"),
+        required=True,
     )
     parser.add_argument("--model", default=str(DEFAULT_MODEL_PATH))
     parser.add_argument("--plan", default=str(DEFAULT_PLAN_PATH))
+    parser.add_argument("--physical-plan")
     parser.add_argument("--requests", type=int, default=8)
     parser.add_argument("--max-running-requests", type=int, default=None)
     parser.add_argument("--prompt-tokens", type=int, default=2048)
@@ -68,6 +99,10 @@ def main() -> None:
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--max-total-tokens", type=int, default=65536)
     parser.add_argument("--mem-fraction-static", type=float, default=None)
+    parser.add_argument("--load-format", choices=("auto", "dummy"), default="dummy")
+    parser.add_argument("--context-length", type=int, default=8192)
+    parser.add_argument("--attention-backend", default="triton")
+    parser.add_argument("--moe-runner-backend", default="triton")
     parser.add_argument("--trace", default="/tmp/orbitkv-hybrid-shadow.jsonl")
     parser.add_argument("--orbitkv-bin", default=str(Path(__file__).resolve().parents[2] / "target/debug/orbitkv"))
     parser.add_argument(
@@ -87,11 +122,24 @@ def main() -> None:
     plan_path = Path(args.plan).resolve()
     max_running_requests = args.max_running_requests or args.requests
 
-    if args.mode == "stock":
-        os.environ["SGLANG_PLUGINS"] = "__orbitkv_disabled__"
+    if args.mode in ("stock", "native_policy"):
+        os.environ.pop("SGLANG_PLUGINS", None)
+        if args.mode == "native_policy":
+            os.environ["SGLANG_SWA_EVICTION_INTERVAL"] = str(
+                args.eviction_interval
+            )
+        else:
+            os.environ.pop("SGLANG_SWA_EVICTION_INTERVAL", None)
         os.environ.pop("ORBITKV_TRACE_PATH", None)
         os.environ.pop("ORBITKV_SGLANG_POLICY", None)
+        os.environ.pop("ORBITKV_SGLANG_PHYSICAL_PLAN", None)
+        os.environ.pop("ORBITKV_SGLANG_EVICTION_INTERVAL", None)
         os.environ.pop("ORBITKV_SGLANG_OWNING", None)
+        os.environ.pop("ORBITKV_OWNER_TRANSPORT", None)
+        os.environ.pop("ORBITKV_OWNER_LIB", None)
+        os.environ.pop("ORBITKV_BIN", None)
+        os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
+        os.environ.pop("ORBITKV_SGLANG_REVISION", None)
     else:
         os.environ["SGLANG_PLUGINS"] = "orbitkv_shadow"
         os.environ["ORBITKV_TRACE_PATH"] = args.trace
@@ -101,9 +149,16 @@ def main() -> None:
         )
         if args.mode in ("policy", "owner"):
             os.environ["ORBITKV_SGLANG_POLICY"] = str(plan_path)
-            os.environ["ORBITKV_SGLANG_EVICTION_INTERVAL"] = str(
-                args.eviction_interval
-            )
+            if args.physical_plan:
+                os.environ["ORBITKV_SGLANG_PHYSICAL_PLAN"] = str(
+                    Path(args.physical_plan).resolve()
+                )
+                os.environ.pop("ORBITKV_SGLANG_EVICTION_INTERVAL", None)
+            else:
+                os.environ.pop("ORBITKV_SGLANG_PHYSICAL_PLAN", None)
+                os.environ["ORBITKV_SGLANG_EVICTION_INTERVAL"] = str(
+                    args.eviction_interval
+                )
             os.environ["ORBITKV_SGLANG_OWNING"] = (
                 "1" if args.mode == "owner" else "0"
             )
@@ -114,6 +169,7 @@ def main() -> None:
                 os.environ.pop("ORBITKV_OWNER_LIB", None)
         else:
             os.environ.pop("ORBITKV_SGLANG_POLICY", None)
+            os.environ.pop("ORBITKV_SGLANG_PHYSICAL_PLAN", None)
             os.environ.pop("ORBITKV_SGLANG_EVICTION_INTERVAL", None)
             os.environ.pop("ORBITKV_SGLANG_OWNING", None)
             os.environ.pop("ORBITKV_OWNER_TRANSPORT", None)
@@ -122,13 +178,12 @@ def main() -> None:
 
     engine_args = dict(
         model_path=str(model_path),
-        load_format="dummy",
+        load_format=args.load_format,
         skip_tokenizer_init=True,
         trust_remote_code=False,
-        context_length=8192,
+        context_length=args.context_length,
         page_size=16,
-        attention_backend="triton",
-        moe_runner_backend="triton",
+        moe_runner_backend=args.moe_runner_backend,
         disable_cuda_graph=True,
         disable_overlap_schedule=True,
         disable_radix_cache=True,
@@ -141,11 +196,18 @@ def main() -> None:
         engine_args["max_total_tokens"] = args.max_total_tokens
     if args.mem_fraction_static is not None:
         engine_args["mem_fraction_static"] = args.mem_fraction_static
+    if args.attention_backend != "auto":
+        engine_args["attention_backend"] = args.attention_backend
     prompts = [
         [((request * 131 + position) % 1000) + 3 for position in range(args.prompt_tokens)]
         for request in range(args.requests)
     ]
     sampling = {"temperature": 0, "max_new_tokens": args.decode_tokens}
+    physical_plan = None
+    if args.physical_plan:
+        physical_plan = json.loads(
+            Path(args.physical_plan).read_text(encoding="utf-8")
+        )["physical_plan"]
 
     before = gpu_snapshot()
     started = time.perf_counter()
@@ -165,7 +227,9 @@ def main() -> None:
             "mode": args.mode,
             "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
             "model": str(model_path),
+            "checkpoint": checkpoint_identity(model_path, args.load_format),
             "plan": str(plan_path),
+            "physical_plan": physical_plan,
             "engine_args": engine_args,
             "requests": args.requests,
             "max_running_requests": max_running_requests,
@@ -174,7 +238,7 @@ def main() -> None:
             "iterations": args.iterations,
             "eviction_interval": (
                 args.eviction_interval
-                if args.mode in ("policy", "owner")
+                if args.mode in ("native_policy", "policy", "owner")
                 else 128
             ),
             "owner_transport": (
@@ -192,6 +256,7 @@ def main() -> None:
             "request_e2e_seconds": [
                 output["meta_info"].get("e2e_latency") for output in outputs
             ],
+            "resolved_runtime": extract_runtime(info),
             "server_memory": extract_memory(info),
             "gpu_before": before,
             "gpu_after_load": after_load,

@@ -44,14 +44,31 @@ import { architectureLanes, compilerStages, docs, repositoryUrl } from "../../da
         AST. Legacy Full/SWA JSON is desugared into the same relation before
         lifetime and address synthesis.
       </p>
+      <p>
+        A Rust HF-config frontend now derives explicit Full/SWA layer classes,
+        KV bytes per token, Retention IR, and the final layout directly from a
+        checkpoint <code>config.json</code>. Unknown explicit layer types fail
+        closed; missing <code>layer_types</code> falls back to all-Full rather
+        than guessing a finite lifetime.
+      </p>
       <pre><code>{`q - k < 1024
     -> proven q-k upper bound = 1023
     -> fixed window = 1024
     -> block death = block_end + 1023
     -> periodic cells = 65 at page size 16`}</code></pre>
+      <pre><code>{`k < S OR q - k < W
+    -> sink domain [0, S): pinned cells, never retired
+    -> local domain [S, +inf): periodic cells, finite death
+    -> no dedicated SinkSliding manager type`}</code></pre>
       <p>
         Relations that do not prove a finite query-key distance safely lower
         to unbounded retention and append-only storage.
+      </p>
+      <p>
+        Sink boundaries must align to reclamation pages. The generated address
+        program rejects blocks outside each region. This normalization is
+        exercised by the Rust simulator and owning manager; SGLang policy
+        lowering still fails closed for partitioned domains.
       </p>
 
       <h2>Compiler stages</h2>
@@ -60,6 +77,25 @@ import { architectureLanes, compilerStages, docs, repositoryUrl } from "../../da
           <li><span>{stage.key}</span><div><strong>{stage.name}</strong><p>{stage.detail}</p></div></li>
         ))}
       </ol>
+
+      <h2>Physical-plan optimization</h2>
+      <p>
+        The first engine optimizer consumes a compiled lifetime plan, per-rank
+        KV budget, attention DP size, chunk size, admission target, and
+        reclamation-call budget. It evaluates page-aligned SGLang SWA
+        intervals, emits every cost and rejection reason, and selects a policy
+        only inside an explicit runtime contract.
+      </p>
+      <pre><code>{`16  -> reject: 5 reclamation calls > budget 4
+32  -> select: 59,904 Full slots, 1 admission wave
+64  -> feasible: 55,808 Full slots, 1 admission wave
+128 -> reject: only 7 of 8 requests admitted`}</code></pre>
+      <p>
+        The artifact records that the current lowering requires SWA ChunkCache
+        with radix cache, overlap scheduling, speculative decoding, and
+        disaggregation disabled. The SGLang plugin validates this contract and
+        both pool capacities before using the plan.
+      </p>
 
       <h2>Layer boundaries</h2>
       <div class="doc-grid">

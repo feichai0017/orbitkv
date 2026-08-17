@@ -18,6 +18,8 @@ measurements, and end-to-end serving behavior.
 | `owner-ffi-20260817` | In-process C ABI transport microbenchmark and balanced H20 A/B |
 | `h20-generation-vmm-20260817` | Layout-driven cell versions, CUDA events, VMM generation receipts |
 | `retention-ir-20260817` | Declarative may-read analysis, legacy equivalence, H20 owner smoke |
+| `sink-sliding-20260817` | Host proof that one sink/local relation lowers to pinned + periodic regions |
+| `h20-gpt-oss-20b-real-20260817` | Real `openai/gpt-oss-20b` HF-plan compilation, four-way attribution, capacity, overhead, and certificate evidence |
 
 The reviewed interpretations are:
 
@@ -27,6 +29,24 @@ The reviewed interpretations are:
 The owning record is end-to-end SGLang evidence for the strict SWA chunk-cache,
 non-overlap, non-speculative path. The VMM record is isolated physical-backend
 qualification; it is not evidence that SGLang KV tensors already use VMM.
+
+The Sink+Sliding record is compiler, simulator, and reference-manager evidence.
+It is not an H20 or SGLang performance result: the current compatibility policy
+fails closed on partitioned block domains.
+
+The `gpt-oss-20b` record uses the complete public MXFP4 checkpoint with
+`load_format=auto`. It is the primary released-checkpoint systems result. It
+does not claim model-quality improvement or qualification of radix cache,
+overlap scheduling, speculative decoding, or CUDA Graph.
+
+Its balanced four-way ablation separates Stock128, manually configured
+Stock32, compiler-generated Policy32, and proof-carrying Owner32. The record
+therefore attributes the capacity gain to the physical interval policy while
+separately measuring automatic plan injection and ownership cost.
+
+The same directory also records the generated PhysicalPlan, four-candidate
+prediction-versus-SGLang validation, and an Owner smoke that consumed the
+artifact and checked its runtime pool contract.
 
 Raw logs and JSONL allocator traces are intentionally excluded from Git. Matrix
 records include exact commands, source paths, environment fields, output

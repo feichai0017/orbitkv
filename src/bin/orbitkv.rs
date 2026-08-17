@@ -5,7 +5,10 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use orbitkv::{
-    CompiledKvPlan, KvPlanSource, OwnerCommand, RetentionAnalysis, SglangOwner, analyze_state,
+    CompiledKvPlan, HfRetentionCompilation, HfRetentionOptions, KvPlanSource, OwnerCommand,
+    PhysicalPlanObjective, RetentionAnalysis, SglangOwner, SglangPhysicalOptimizationInput,
+    SglangPhysicalPlan, analyze_state, compile_hf_config, compile_retention_program,
+    optimize_sglang_physical_plan,
     trace::{read_jsonl, summarize_sglang_trace},
 };
 use serde::Serialize;
@@ -43,6 +46,20 @@ struct RetentionReport {
     layout: orbitkv::LayoutProgram,
 }
 
+#[derive(Serialize)]
+struct HfCompileReport {
+    compilation: HfRetentionCompilation,
+    layout: orbitkv::LayoutProgram,
+}
+
+#[derive(Serialize)]
+struct HfPhysicalPlanReport {
+    schema: &'static str,
+    compilation: HfRetentionCompilation,
+    layout: orbitkv::LayoutProgram,
+    physical_plan: SglangPhysicalPlan,
+}
+
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum ContractStatus {
@@ -63,6 +80,12 @@ fn main() -> ExitCode {
 fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
+        Some("compile-hf-physical-plan") => {
+            compile_hf_physical_plan_command(&mut args)?;
+        }
+        Some("compile-hf-config") => {
+            compile_hf_config_command(&mut args)?;
+        }
         Some("compile") => {
             let plan_path = required(&mut args, "plan path")?;
             require_flag(&mut args, "--boundary")?;
@@ -145,12 +168,125 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "usage: orbitkv <compile|analyze-retention|emit-layout|emit-sglang-policy|serve-sglang-owner|analyze-sglang|check-sglang> ..."
+                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile|analyze-retention|emit-layout|emit-sglang-policy|serve-sglang-owner|analyze-sglang|check-sglang> ..."
                     .into(),
             );
         }
     }
     Ok(())
+}
+
+fn compile_hf_physical_plan_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = required(args, "HF config path")?;
+    let page_tokens = required_flagged_u64(args, "--page-tokens", "page tokens")?;
+    let kv_dtype_bytes = required_flagged_u64(args, "--kv-dtype-bytes", "KV dtype bytes")?;
+    let available_kv_bytes =
+        required_flagged_u64(args, "--available-kv-bytes", "available KV bytes")?;
+    let max_running_requests =
+        required_flagged_u64(args, "--max-running-requests", "max running requests")?;
+    let attention_data_parallel_size =
+        required_flagged_u64(args, "--attention-dp-size", "attention DP size")?;
+    let chunked_prefill_tokens =
+        required_flagged_u64(args, "--chunked-prefill-tokens", "chunked prefill tokens")?;
+    let workload_requests = required_flagged_u64(args, "--workload-requests", "workload requests")?;
+    let prompt_tokens_per_request = required_flagged_u64(args, "--prompt-tokens", "prompt tokens")?;
+    let decode_tokens_per_request = required_flagged_u64(args, "--decode-tokens", "decode tokens")?;
+    require_flag(args, "--candidate-intervals")?;
+    let candidate_eviction_intervals = parse_intervals(&required(args, "candidate intervals")?)?;
+    let maximum_reclamation_calls_per_request =
+        required_flagged_u64(args, "--max-reclamation-calls", "max reclamation calls")?;
+    let minimum_admitted_requests =
+        required_flagged_u64(args, "--min-admitted-requests", "minimum admitted requests")?;
+    require_flag(args, "--objective")?;
+    let objective = parse_objective(&required(args, "physical-plan objective")?)?;
+    require_end(args)?;
+
+    let compilation = compile_hf_config(
+        &std::fs::read(config_path)?,
+        HfRetentionOptions {
+            page_tokens,
+            kv_dtype_bytes,
+        },
+    )?;
+    let plan = compile_retention_program(compilation.program.clone())?;
+    let layout = plan.layout_program()?;
+    let physical_plan = optimize_sglang_physical_plan(
+        &plan,
+        &SglangPhysicalOptimizationInput {
+            available_kv_bytes,
+            max_running_requests,
+            attention_data_parallel_size,
+            chunked_prefill_tokens,
+            workload_requests,
+            prompt_tokens_per_request,
+            decode_tokens_per_request,
+            candidate_eviction_intervals,
+            maximum_reclamation_calls_per_request: Some(maximum_reclamation_calls_per_request),
+            minimum_admitted_requests: Some(minimum_admitted_requests),
+            objective,
+        },
+    )?;
+    write_json(&HfPhysicalPlanReport {
+        schema: "orbitkv.hf-physical-compilation.v1",
+        compilation,
+        layout,
+        physical_plan,
+    })
+}
+
+fn compile_hf_config_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = required(args, "HF config path")?;
+    require_flag(args, "--page-tokens")?;
+    let page_tokens = required(args, "page tokens")?.parse::<u64>()?;
+    require_flag(args, "--kv-dtype-bytes")?;
+    let kv_dtype_bytes = required(args, "KV dtype bytes")?.parse::<u64>()?;
+    require_end(args)?;
+    let compilation = compile_hf_config(
+        &std::fs::read(config_path)?,
+        HfRetentionOptions {
+            page_tokens,
+            kv_dtype_bytes,
+        },
+    )?;
+    let layout = compile_retention_program(compilation.program.clone())?.layout_program()?;
+    write_json(&HfCompileReport {
+        compilation,
+        layout,
+    })
+}
+
+fn required_flagged_u64(
+    args: &mut impl Iterator<Item = String>,
+    flag: &str,
+    name: &str,
+) -> Result<u64, Box<dyn std::error::Error>> {
+    require_flag(args, flag)?;
+    Ok(required(args, name)?.parse::<u64>()?)
+}
+
+fn parse_intervals(value: &str) -> Result<Vec<u64>, Box<dyn std::error::Error>> {
+    let intervals = value
+        .split(',')
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(str::parse::<u64>)
+        .collect::<Result<Vec<_>, _>>()?;
+    if intervals.is_empty() {
+        return Err("candidate intervals must not be empty".into());
+    }
+    Ok(intervals)
+}
+
+fn parse_objective(value: &str) -> Result<PhysicalPlanObjective, Box<dyn std::error::Error>> {
+    match value {
+        "capacity" => Ok(PhysicalPlanObjective::CapacityUnderReclamationBudget),
+        "reclamation" => Ok(PhysicalPlanObjective::ReclamationUnderAdmissionTarget),
+        _ => Err(format!("unsupported physical-plan objective {value:?}").into()),
+    }
 }
 
 fn load_plan(path: impl AsRef<Path>) -> Result<CompiledKvPlan, Box<dyn std::error::Error>> {

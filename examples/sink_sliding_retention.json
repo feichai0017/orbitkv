@@ -1,0 +1,42 @@
+{
+  "schema": "orbitkv.retention-ir.v1",
+  "page_tokens": 4,
+  "states": [
+    {
+      "name": "attention",
+      "layers": [0, 1, 2, 3],
+      "bytes_per_token_per_layer": 128,
+      "may_read": {
+        "op": "or",
+        "terms": [
+          {
+            "op": "less_than",
+            "lhs": {
+              "op": "key_position"
+            },
+            "rhs": {
+              "op": "constant",
+              "value": 4
+            }
+          },
+          {
+            "op": "less_than",
+            "lhs": {
+              "op": "sub",
+              "lhs": {
+                "op": "query_position"
+              },
+              "rhs": {
+                "op": "key_position"
+              }
+            },
+            "rhs": {
+              "op": "constant",
+              "value": 8
+            }
+          }
+        ]
+      }
+    }
+  ]
+}

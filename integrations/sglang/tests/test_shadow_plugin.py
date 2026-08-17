@@ -124,6 +124,8 @@ class FakeOwningAllocator:
     def __init__(self, events, fail_free=False):
         self.events = events
         self.fail_free = fail_free
+        self.size_full = 4096
+        self.size_swa = 2048
 
     def free_swa(self, value):
         self.events.append(("physical_free", value.numel()))
@@ -190,6 +192,84 @@ def _load_hook_registry(sglang_root: Path):
 
 
 class ShadowPluginTests(unittest.TestCase):
+    def test_loads_and_enforces_compiled_physical_plan(self):
+        from orbitkv_sglang import plugin
+
+        orbitkv_bin = os.environ.get("ORBITKV_BIN")
+        if not orbitkv_bin:
+            self.skipTest("ORBITKV_BIN is required")
+        config = Path(__file__).resolve().parents[3] / (
+            "fixtures/gpt-oss-hybrid-tiny/config.json"
+        )
+        command = [
+            orbitkv_bin,
+            "compile-hf-physical-plan",
+            str(config),
+            "--page-tokens",
+            "16",
+            "--kv-dtype-bytes",
+            "2",
+            "--available-kv-bytes",
+            "120881152",
+            "--max-running-requests",
+            "8",
+            "--attention-dp-size",
+            "1",
+            "--chunked-prefill-tokens",
+            "2048",
+            "--workload-requests",
+            "8",
+            "--prompt-tokens",
+            "6000",
+            "--decode-tokens",
+            "32",
+            "--candidate-intervals",
+            "16,32,64,128",
+            "--max-reclamation-calls",
+            "4",
+            "--min-admitted-requests",
+            "8",
+            "--objective",
+            "capacity",
+        ]
+        artifact = json.loads(subprocess.check_output(command, text=True))
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "physical-plan.json"
+            path.write_text(json.dumps(artifact), encoding="utf-8")
+            old_path = os.environ.get("ORBITKV_SGLANG_PHYSICAL_PLAN")
+            old_interval = os.environ.get("ORBITKV_SGLANG_EVICTION_INTERVAL")
+            old_physical = plugin._PHYSICAL_PLAN
+            old_policy = plugin._POLICY
+            try:
+                os.environ["ORBITKV_SGLANG_PHYSICAL_PLAN"] = str(path)
+                os.environ.pop("ORBITKV_SGLANG_EVICTION_INTERVAL", None)
+                policy = plugin._load_policy()
+                plugin._POLICY = policy
+                self.assertEqual(policy["swa_eviction_interval_tokens"], 32)
+                selected_cost = artifact["physical_plan"]["selected"]["cost"]
+                allocator = FakeOwningAllocator([])
+                allocator.size_full = selected_cost["full_token_capacity"]
+                allocator.size_swa = selected_cost["physical_swa_token_slots"]
+                batch = FakeOwningBatch(allocator)
+                plugin._validate_physical_contract(batch)
+
+                allocator.size_full += 16
+                with self.assertRaisesRegex(
+                    RuntimeError, "Full capacity does not match"
+                ):
+                    plugin._validate_physical_contract(batch)
+            finally:
+                plugin._PHYSICAL_PLAN = old_physical
+                plugin._POLICY = old_policy
+                if old_path is None:
+                    os.environ.pop("ORBITKV_SGLANG_PHYSICAL_PLAN", None)
+                else:
+                    os.environ["ORBITKV_SGLANG_PHYSICAL_PLAN"] = old_path
+                if old_interval is None:
+                    os.environ.pop("ORBITKV_SGLANG_EVICTION_INTERVAL", None)
+                else:
+                    os.environ["ORBITKV_SGLANG_EVICTION_INTERVAL"] = old_interval
+
     def test_loads_validated_policy_from_rust(self):
         from orbitkv_sglang import plugin
 

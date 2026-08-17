@@ -165,3 +165,8 @@ resident bytes
 
 Then repeat the experiment on a released hybrid model and enable radix cache,
 overlap scheduling, and CUDA Graph one at a time.
+
+Status update on 2026-08-17: the released-checkpoint step was completed with
+`openai/gpt-oss-20b` and the typed in-process owner ABI. See
+`docs/h20-gpt-oss-20b-real-validation-20260817.md`. Radix cache, overlap
+scheduling, and CUDA Graph remain unqualified.

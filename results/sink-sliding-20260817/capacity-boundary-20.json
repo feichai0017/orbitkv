@@ -1,0 +1,75 @@
+{
+  "page_tokens": 4,
+  "boundary": 20,
+  "classes": [
+    {
+      "spec": {
+        "name": "attention::sink",
+        "layers": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "retention": "full",
+        "bytes_per_token_per_layer": 128,
+        "window_tokens": null
+      },
+      "slot_count": 1,
+      "source_state": "attention",
+      "block_domain": {
+        "start_block": 0,
+        "end_block_exclusive": 1
+      }
+    },
+    {
+      "spec": {
+        "name": "attention::local",
+        "layers": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "retention": "sliding",
+        "bytes_per_token_per_layer": 128,
+        "window_tokens": 8
+      },
+      "slot_count": 3,
+      "source_state": "attention",
+      "block_domain": {
+        "start_block": 1
+      }
+    }
+  ],
+  "capacity": [
+    {
+      "name": "attention::sink",
+      "semantic_live_tokens": 4,
+      "physical_token_slots": 4,
+      "resident_bytes": 2048
+    },
+    {
+      "name": "attention::local",
+      "semantic_live_tokens": 7,
+      "physical_token_slots": 12,
+      "resident_bytes": 6144
+    }
+  ],
+  "resident_bytes": 8192,
+  "all_full_baseline_bytes": 10240,
+  "continuation_blocks": {
+    "attention::local": [
+      {
+        "start": 3,
+        "end_exclusive": 5
+      }
+    ],
+    "attention::sink": [
+      {
+        "start": 0,
+        "end_exclusive": 1
+      }
+    ]
+  }
+}
