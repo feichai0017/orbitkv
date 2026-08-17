@@ -562,7 +562,7 @@ def _load_state_plan() -> dict[str, Any] | None:
     if mode not in ("execute", "kernel_reference"):
         raise ValueError(f"unsupported OrbitKV state-plan mode: {mode!r}")
     artifact = json.loads(Path(path).read_text(encoding="utf-8"))
-    if artifact.get("schema") != "orbitkv.hf-state-plan.v2":
+    if artifact.get("schema") != "orbitkv.hf-state-plan.v3":
         raise ValueError(f"unsupported OrbitKV state plan: {artifact!r}")
     lowering = artifact.get("sglang_lowering")
     if (
@@ -575,7 +575,7 @@ def _load_state_plan() -> dict[str, Any] | None:
     if (
         not isinstance(contract, dict)
         or contract.get("schema")
-        != "orbitkv.sglang-uniform-swa-contract.v2"
+        != "orbitkv.sglang-uniform-swa-contract.v3"
     ):
         raise ValueError("OrbitKV state plan has an invalid uniform-SWA contract")
     layout = artifact.get("layout")
@@ -586,8 +586,10 @@ def _load_state_plan() -> dict[str, Any] | None:
     expected_contract_fingerprint = _uniform_swa_contract_fingerprint(contract)
     if contract.get("contract_fingerprint") != expected_contract_fingerprint:
         raise ValueError("OrbitKV uniform-SWA contract fingerprint does not match")
-    if int(contract.get("page_tokens", 0)) != 1:
-        raise ValueError("OrbitKV uniform-SWA SGLang lowering requires page_tokens=1")
+    if int(contract.get("page_tokens", 0)) not in (1, 16):
+        raise ValueError(
+            "OrbitKV uniform-SWA SGLang lowering requires page_tokens 1 or 16"
+        )
     for field in (
         "maximum_running_requests",
         "chunked_prefill_tokens",
@@ -596,6 +598,8 @@ def _load_state_plan() -> dict[str, Any] | None:
         "per_request_resident_tokens",
         "global_staging_tokens",
         "minimum_pool_tokens",
+        "maximum_context_tokens",
+        "logical_index_tokens",
     ):
         if int(contract.get(field, 0)) <= 0:
             raise ValueError(
@@ -622,6 +626,20 @@ def _load_state_plan() -> dict[str, Any] | None:
         raise ValueError("OrbitKV uniform-SWA minimum pool does not match")
     if int(contract["kernel_window_left"]) != int(contract["window_tokens"]) - 1:
         raise ValueError("OrbitKV uniform-SWA kernel window does not match")
+    backend = contract.get("physical_backend")
+    if backend == "direct_periodic":
+        expected_logical = expected_minimum
+    elif backend == "paged_periodic":
+        page = int(contract["page_tokens"])
+        context = int(contract["maximum_context_tokens"])
+        aligned_context = (context + page - 1) // page * page
+        expected_logical = aligned_context * int(
+            contract["maximum_running_requests"]
+        )
+    else:
+        raise ValueError("OrbitKV uniform-SWA physical backend is unsupported")
+    if int(contract["logical_index_tokens"]) != expected_logical:
+        raise ValueError("OrbitKV uniform-SWA logical index budget does not match")
     if contract.get("scheduler_admission") != "pure_swa_live_state":
         raise ValueError("OrbitKV uniform-SWA scheduler admission is unsupported")
     os.environ["SGLANG_SWA_EVICTION_INTERVAL"] = str(
@@ -648,6 +666,7 @@ def _uniform_swa_contract_fingerprint(contract: dict[str, Any]) -> str:
         contract["head_dim"],
         contract["window_tokens"],
         contract["page_tokens"],
+        contract["maximum_context_tokens"],
         contract["maximum_running_requests"],
         contract["chunked_prefill_tokens"],
         contract["eviction_interval_tokens"],
@@ -663,6 +682,117 @@ def _sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return f"sha256:{digest.hexdigest()}"
+
+
+def _build_paged_periodic_allocator():
+    from sglang.srt.mem_cache.allocator.swa import (
+        PureSWATokenToKVPoolAllocator as OriginalPureSwaAllocator,
+    )
+    from sglang.srt.mem_cache.base_swa_memory_pool import BaseSWAKVPool
+
+    class OrbitKvPagedPeriodicAllocator(OriginalPureSwaAllocator):
+        def __init__(
+            self,
+            size_swa,
+            page_size,
+            dtype,
+            device,
+            kvcache,
+            need_sort,
+        ):
+            contract = _UNIFORM_SWA_CONTRACT
+            if contract is None or contract["physical_backend"] != "paged_periodic":
+                raise RuntimeError(
+                    "OrbitKV paged-periodic allocator requires its compiled contract"
+                )
+            if int(page_size) != int(contract["page_tokens"]) or int(page_size) <= 1:
+                raise RuntimeError(
+                    "OrbitKV paged-periodic allocator page size does not match"
+                )
+            if not isinstance(kvcache, BaseSWAKVPool):
+                raise RuntimeError(
+                    "OrbitKV paged-periodic allocator requires an SWA KV pool"
+                )
+            logical_index_tokens = int(contract["logical_index_tokens"])
+            if logical_index_tokens % int(page_size) != 0:
+                raise RuntimeError(
+                    "OrbitKV paged-periodic logical index space is not page aligned"
+                )
+            if int(size_swa) < int(contract["minimum_pool_tokens"]):
+                raise RuntimeError(
+                    "OrbitKV paged-periodic physical pool is below the compiled minimum"
+                )
+            super(OriginalPureSwaAllocator, self).__init__(
+                logical_index_tokens,
+                int(size_swa),
+                int(page_size),
+                dtype,
+                device,
+                kvcache,
+                need_sort,
+            )
+            self.logical_index_tokens = logical_index_tokens
+            self.physical_swa_tokens = int(size_swa)
+
+        def translate_loc_from_full_to_swa(self, kv_indices):
+            return super(
+                OriginalPureSwaAllocator, self
+            ).translate_loc_from_full_to_swa(kv_indices)
+
+        def new_pages_available(self, num_full_pages, num_swa_pages):
+            return super(
+                OriginalPureSwaAllocator, self
+            ).new_pages_available(num_full_pages, num_swa_pages)
+
+        def alloc_extend(self, *args, **kwargs):
+            return super(OriginalPureSwaAllocator, self).alloc_extend(
+                *args, **kwargs
+            )
+
+        def alloc_decode(self, *args, **kwargs):
+            return super(OriginalPureSwaAllocator, self).alloc_decode(
+                *args, **kwargs
+            )
+
+        def free(self, free_index):
+            return super(OriginalPureSwaAllocator, self).free(free_index)
+
+        def free_swa(self, free_index):
+            return super(OriginalPureSwaAllocator, self).free_swa(free_index)
+
+        def free_group_begin(self):
+            return super(
+                OriginalPureSwaAllocator, self
+            ).free_group_begin()
+
+        def free_group_end(self):
+            return super(OriginalPureSwaAllocator, self).free_group_end()
+
+        def clear(self):
+            return super(OriginalPureSwaAllocator, self).clear()
+
+        def resize(self, config):
+            return super(OriginalPureSwaAllocator, self).resize(config)
+
+    OrbitKvPagedPeriodicAllocator.__name__ = (
+        "OrbitKvPagedPeriodicAllocator"
+    )
+    return OrbitKvPagedPeriodicAllocator
+
+
+def _finish_paged_periodic_request(
+    original_fn: Callable,
+    cache: Any,
+    req: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    contract = _UNIFORM_SWA_CONTRACT
+    if contract is None or contract["physical_backend"] != "paged_periodic":
+        return original_fn(cache, req, *args, **kwargs)
+    from sglang.srt.mem_cache.chunk_cache import ChunkCache
+
+    return ChunkCache.cache_finished_req(cache, req, *args, **kwargs)
 
 
 def _activate_uniform_swa_model_config(
@@ -775,15 +905,27 @@ def _validate_uniform_swa_runtime(
                 "OrbitKV kernel reference must retain the ordinary KV allocator"
             )
         return result
-    if type(allocator).__name__ != "PureSWATokenToKVPoolAllocator":
+    backend = contract["physical_backend"]
+    expected_allocator = (
+        "PureSWATokenToKVPoolAllocator"
+        if backend == "direct_periodic"
+        else "OrbitKvPagedPeriodicAllocator"
+    )
+    if type(allocator).__name__ != expected_allocator:
         raise RuntimeError(
-            "OrbitKV uniform-SWA plan did not produce PureSWATokenToKVPoolAllocator"
+            "OrbitKV uniform-SWA plan did not produce its compiled allocator"
         )
     if int(allocator.page_size) != int(contract["page_tokens"]):
         raise RuntimeError("OrbitKV uniform-SWA allocator page size mismatch")
     if int(allocator.size_swa) < int(contract["minimum_pool_tokens"]):
         raise RuntimeError(
             "OrbitKV uniform-SWA pool is smaller than the compiled minimum"
+        )
+    if backend == "paged_periodic" and int(allocator.size_full) != int(
+        contract["logical_index_tokens"]
+    ):
+        raise RuntimeError(
+            "OrbitKV paged-periodic logical index capacity does not match"
         )
     return result
 
@@ -1155,6 +1297,17 @@ def register() -> None:
         )
 
     if _UNIFORM_SWA_CONTRACT is not None:
+        if _UNIFORM_SWA_CONTRACT["physical_backend"] == "paged_periodic":
+            HookRegistry.register(
+                "sglang.srt.mem_cache.allocator.swa.PureSWATokenToKVPoolAllocator",
+                _build_paged_periodic_allocator(),
+                HookType.REPLACE,
+            )
+            HookRegistry.register(
+                "sglang.srt.mem_cache.chunk_cache.PureSWAChunkCache.cache_finished_req",
+                _finish_paged_periodic_request,
+                HookType.AROUND,
+            )
         HookRegistry.register(
             "sglang.srt.configs.model_config.ModelConfig._derive_hybrid_model",
             _activate_uniform_swa_model_config,

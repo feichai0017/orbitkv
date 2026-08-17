@@ -26,6 +26,8 @@ def main() -> None:
     state_plan = load("mistral-state-plan.json")
     multireq = load("mistral-multireq.json")
     multireq_state_plan = load("mistral-state-plan-multireq.json")
+    page16 = load("mistral-page16.json")
+    page16_state_plan = load("mistral-state-plan-page16.json")
 
     models = {
         model["architecture"]: model for model in applicability["models"]
@@ -163,9 +165,84 @@ def main() -> None:
         raise RuntimeError("below-minimum boundary differs")
     if multireq["below_minimum"]["status"] != "rejected_at_startup":
         raise RuntimeError("below-minimum plan did not fail closed")
+
+    page16_contract = page16["compiled_contract"]
+    if page16_contract["physical_backend"] != "paged_periodic":
+        raise RuntimeError("page-16 backend is not paged periodic")
+    if page16_contract["page_tokens"] != 16:
+        raise RuntimeError("page-16 contract page size differs")
+    page16_per_request = (
+        page16_contract["window_tokens"]
+        + page16_contract["eviction_interval_tokens"]
+        + page16_contract["page_tokens"]
+        + page16_contract["decode_headroom_tokens"]
+    )
+    page16_staging = (
+        page16_contract["chunked_prefill_tokens"]
+        + page16_contract["page_tokens"]
+    )
+    page16_minimum = (
+        page16_per_request * page16_contract["maximum_running_requests"]
+        + page16_staging
+    )
+    if page16_contract["minimum_pool_tokens"] != page16_minimum:
+        raise RuntimeError("page-16 minimum pool differs")
+    aligned_context = (
+        (
+            page16_contract["maximum_context_tokens"]
+            + page16_contract["page_tokens"]
+            - 1
+        )
+        // page16_contract["page_tokens"]
+        * page16_contract["page_tokens"]
+    )
+    expected_logical = (
+        aligned_context * page16_contract["maximum_running_requests"]
+    )
+    if page16_contract["logical_index_tokens"] != expected_logical:
+        raise RuntimeError("page-16 logical index capacity differs")
+    state_contract = page16_state_plan["sglang_lowering"]["contract"]
+    for key, value in page16_contract.items():
+        if state_contract.get(key) != value:
+            raise RuntimeError(f"page-16 state plan contract differs at {key}")
+    if not state_contract["contract_fingerprint"].startswith("sha256:"):
+        raise RuntimeError("page-16 contract fingerprint is missing")
+    close(
+        page16["slot_reduction_percent"],
+        (1 - page16_minimum / page16["reference_pool_tokens"]) * 100,
+    )
+    page16_ratios = []
+    for pair in page16["pairs"]:
+        if pair["execute_token_slots"] != page16_minimum:
+            raise RuntimeError("page-16 execute pool differs")
+        if pair["reference_token_slots"] != page16["reference_pool_tokens"]:
+            raise RuntimeError("page-16 reference pool differs")
+        if pair["execute_output_digest"] != pair["reference_output_digest"]:
+            raise RuntimeError("page-16 output digest differs")
+        if pair["execute_config_sha256"] != pair["reference_config_sha256"]:
+            raise RuntimeError("page-16 checkpoint config differs")
+        if pair["execute_completion_tokens"] != pair["reference_completion_tokens"]:
+            raise RuntimeError("page-16 completion count differs")
+        if any(pair["execute_retractions"] + pair["reference_retractions"]):
+            raise RuntimeError("page-16 run retracted a request")
+        ratio = pair["execute_seconds"] / pair["reference_seconds"]
+        close(pair["execute_over_reference_ratio"], ratio)
+        page16_ratios.append(ratio)
+    close(
+        page16["median_execute_over_reference_ratio"],
+        statistics.median(page16_ratios),
+    )
+    close(
+        page16["median_execute_over_reference_percent"],
+        (statistics.median(page16_ratios) - 1) * 100,
+    )
+    if page16["below_minimum"]["pool_tokens"] != page16_minimum - 16:
+        raise RuntimeError("page-16 below-minimum boundary differs")
+    if page16["below_minimum"]["status"] != "rejected_at_startup":
+        raise RuntimeError("page-16 below-minimum plan did not fail closed")
     print(
         "verified applicability records: "
-        "Qwen safe fallback, Mistral single and multi-request bounded execution, "
+        "Qwen safe fallback, Mistral direct and paged bounded execution, "
         "GPT-OSS hybrid plan"
     )
 

@@ -60,6 +60,42 @@ class FakeSWATokenToKVPoolAllocator:
         self.swa_available += value.numel()
 
 
+class FakeBaseSWAKVPool:
+    pass
+
+
+class FakeGeneralSwaAllocator:
+    def __init__(
+        self,
+        size,
+        size_swa,
+        page_size,
+        dtype,
+        device,
+        kvcache,
+        need_sort,
+    ):
+        self._size_full = size
+        self._size_swa = size_swa
+        self.page_size = page_size
+        self.dtype = dtype
+        self.device = device
+        self._kvcache = kvcache
+        self.need_sort = need_sort
+
+    @property
+    def size_full(self):
+        return self._size_full
+
+    @property
+    def size_swa(self):
+        return self._size_swa
+
+
+class FakePureSwaAllocator(FakeGeneralSwaAllocator):
+    pass
+
+
 class FakeOwner:
     def __init__(self):
         self.commands = []
@@ -181,11 +217,16 @@ def _load_hook_registry(sglang_root: Path):
         "sglang.srt.mem_cache",
         "sglang.srt.mem_cache.allocator",
         "sglang.srt.mem_cache.allocator.swa",
+        "sglang.srt.mem_cache.base_swa_memory_pool",
     ):
         _module(name)
 
     allocator_module = sys.modules["sglang.srt.mem_cache.allocator.swa"]
     allocator_module.SWATokenToKVPoolAllocator = FakeSWATokenToKVPoolAllocator
+    allocator_module.PureSWATokenToKVPoolAllocator = FakePureSwaAllocator
+    sys.modules[
+        "sglang.srt.mem_cache.base_swa_memory_pool"
+    ].BaseSWAKVPool = FakeBaseSWAKVPool
 
     path = sglang_root / "python/sglang/srt/plugins/hook_registry.py"
     spec = importlib.util.spec_from_file_location(
@@ -201,6 +242,44 @@ def _load_hook_registry(sglang_root: Path):
 
 
 class ShadowPluginTests(unittest.TestCase):
+    def test_paged_periodic_allocator_separates_logical_and_physical_slots(self):
+        root = Path(os.environ["ORBITKV_SGLANG_ROOT"])
+        _load_hook_registry(root)
+
+        from orbitkv_sglang import plugin
+
+        old_contract = plugin._UNIFORM_SWA_CONTRACT
+        try:
+            plugin._UNIFORM_SWA_CONTRACT = {
+                "physical_backend": "paged_periodic",
+                "page_tokens": 16,
+                "logical_index_tokens": 32_768,
+                "minimum_pool_tokens": 19_152,
+            }
+            allocator_type = plugin._build_paged_periodic_allocator()
+            allocator = allocator_type(
+                19_152,
+                16,
+                "bf16",
+                "cpu",
+                FakeBaseSWAKVPool(),
+                False,
+            )
+            self.assertEqual(allocator.size_full, 32_768)
+            self.assertEqual(allocator.size_swa, 19_152)
+            self.assertEqual(allocator.page_size, 16)
+            with self.assertRaisesRegex(RuntimeError, "below the compiled minimum"):
+                allocator_type(
+                    19_136,
+                    16,
+                    "bf16",
+                    "cpu",
+                    FakeBaseSWAKVPool(),
+                    False,
+                )
+        finally:
+            plugin._UNIFORM_SWA_CONTRACT = old_contract
+
     def test_uniform_swa_state_plan_binds_model_kernel_and_allocator(self):
         from orbitkv_sglang import plugin
 
@@ -424,7 +503,7 @@ class ShadowPluginTests(unittest.TestCase):
                 )
                 self.assertEqual(adder.rem_total_token_offset, 2048)
                 with self.assertRaisesRegex(
-                    RuntimeError, "did not produce PureSWAToken"
+                    RuntimeError, "did not produce its compiled allocator"
                 ):
                     plugin._validate_uniform_swa_runtime(
                         lambda *_args, **_kwargs: types.SimpleNamespace(

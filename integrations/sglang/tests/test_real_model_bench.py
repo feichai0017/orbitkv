@@ -80,6 +80,7 @@ class RealModelBenchTests(unittest.TestCase):
                 "prompt_tokens": 12000,
                 "decode_tokens": 32,
                 "context_length": 16384,
+                "page_size": 16,
                 "chunked_prefill_tokens": 2048,
                 "eviction_interval": 128,
                 "execute_pool_tokens": 19077,

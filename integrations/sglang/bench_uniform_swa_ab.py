@@ -19,7 +19,7 @@ def compile_state_plan(args, path: Path) -> dict:
         "compile-hf-state-plan",
         str(Path(args.model) / "config.json"),
         "--page-tokens",
-        "1",
+        str(args.page_size),
         "--kv-dtype-bytes",
         str(args.kv_dtype_bytes),
         "--boundary",
@@ -72,7 +72,7 @@ def run_once(args, mode: str, state_plan: Path) -> dict:
         "--context-length",
         str(args.context_length),
         "--page-size",
-        "1",
+        str(args.page_size),
         "--attention-backend",
         args.attention_backend,
         "--moe-runner-backend",
@@ -121,6 +121,7 @@ def main() -> None:
     parser.add_argument("--prompt-tokens", type=int, default=12000)
     parser.add_argument("--decode-tokens", type=int, default=32)
     parser.add_argument("--context-length", type=int, default=16384)
+    parser.add_argument("--page-size", type=int, default=1)
     parser.add_argument("--chunked-prefill-tokens", type=int, default=2048)
     parser.add_argument("--eviction-interval", type=int, default=128)
     parser.add_argument("--execute-pool-tokens", type=int, default=19077)

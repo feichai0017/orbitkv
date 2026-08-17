@@ -24,8 +24,8 @@ Unsupported or unprovable semantics fail closed.
 | --- | ---: | --- |
 | GPT-OSS Full capacity | +25.81% | same 1.979 GiB KV budget |
 | GPT-OSS Owner vs Stock128 | -20.30% | 8×6K prompt workload |
-| Mistral KV slots | -61.846% | 4×12K prompts, same output digest |
-| Mistral median runtime | 0.9662× | 19,077 slots vs 50,000 reference |
+| Mistral KV slots | -61.696% | page16, 4×12K, same output digest |
+| Mistral median runtime | 0.9997× | 19,152 slots vs 50,000 reference |
 | Physical-plan predictions | 4/4 | intervals 16/32/64/128 |
 | Multi-scale head KV | -42.105% | exact geometry |
 
@@ -70,8 +70,8 @@ cargo run -- compile-hf-physical-plan /path/to/config.json \
 ## Boundaries
 
 The qualified SGLang paths disable radix cache, overlap, speculation,
-disaggregation, and CUDA Graph. Uniform-SWA execution is currently page-size 1
-and qualified up to four requests. Per-head, Sink+Sliding, and Same-Chunk layouts remain
+disaggregation, and CUDA Graph. Uniform-SWA execution supports page sizes 1 and
+16, qualified up to four requests. Per-head, Sink+Sliding, and Same-Chunk layouts remain
 compiler/reference-manager results. VMM does not yet back SGLang KV tensors.
 
 See:

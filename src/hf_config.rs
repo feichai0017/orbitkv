@@ -30,6 +30,13 @@ pub struct HfStatePlanOptions {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum UniformSwaPhysicalBackend {
+    DirectPeriodic,
+    PagedPeriodic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum HfLayerInference {
     ExplicitLayerTypes,
     ArchitectureUniformSliding,
@@ -62,6 +69,8 @@ pub struct SglangUniformSwaContract {
     pub window_tokens: u64,
     pub kernel_window_left: u64,
     pub page_tokens: u64,
+    pub physical_backend: UniformSwaPhysicalBackend,
+    pub maximum_context_tokens: u64,
     pub maximum_running_requests: u64,
     pub chunked_prefill_tokens: u64,
     pub eviction_interval_tokens: u64,
@@ -69,8 +78,16 @@ pub struct SglangUniformSwaContract {
     pub per_request_resident_tokens: u64,
     pub global_staging_tokens: u64,
     pub minimum_pool_tokens: u64,
+    pub logical_index_tokens: u64,
     pub scheduler_admission: &'static str,
     pub required_disabled_features: [&'static str; 5],
+}
+
+struct UniformSwaBudget {
+    per_request_resident: u64,
+    global_staging: u64,
+    minimum_pool: u64,
+    logical_index: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -156,6 +173,12 @@ pub enum HfStatePlanError {
     ZeroRuntimeOption(&'static str),
     #[error("integer overflow while deriving SGLang uniform-SWA {0}")]
     RuntimeArithmeticOverflow(&'static str),
+    #[error("SGLang uniform-SWA {name}={value} must be divisible by page_tokens={page_tokens}")]
+    RuntimeOptionNotPageAligned {
+        name: &'static str,
+        value: u64,
+        page_tokens: u64,
+    },
 }
 
 /// Compiles a constrained Hugging Face model config into declarative
@@ -260,10 +283,14 @@ pub fn compile_hf_state_plan(
     let plan = compile_retention_program(compilation.program.clone())?;
     let layout = plan.layout_program()?;
     let applicability = plan.applicability_report(options.boundary_tokens)?;
-    let sglang_lowering =
-        lower_uniform_swa_to_sglang(&compilation, &layout, options.sglang_uniform_swa)?;
+    let sglang_lowering = lower_uniform_swa_to_sglang(
+        &compilation,
+        &layout,
+        options.boundary_tokens,
+        options.sglang_uniform_swa,
+    )?;
     Ok(HfStatePlan {
-        schema: "orbitkv.hf-state-plan.v2",
+        schema: "orbitkv.hf-state-plan.v3",
         compilation,
         layout,
         applicability,
@@ -288,6 +315,7 @@ fn validate_state_plan_options(options: SglangUniformSwaOptions) -> Result<(), H
 fn lower_uniform_swa_to_sglang(
     compilation: &HfRetentionCompilation,
     layout: &LayoutProgram,
+    maximum_context_tokens: u64,
     options: SglangUniformSwaOptions,
 ) -> Result<HfSglangLowering, HfStatePlanError> {
     if compilation.layer_inference != HfLayerInference::ArchitectureUniformSliding {
@@ -295,11 +323,11 @@ fn lower_uniform_swa_to_sglang(
             reason: "SGLang uniform-SWA lowering requires architecture-proven all-layer SWA",
         });
     }
-    if layout.page_tokens != 1 {
+    let Some(physical_backend) = uniform_swa_backend(layout.page_tokens) else {
         return Ok(HfSglangLowering::Unsupported {
-            reason: "SGLang PureSWA allocator requires page_tokens=1",
+            reason: "SGLang uniform-SWA lowering supports page_tokens 1 or 16",
         });
-    }
+    };
     let Some(architecture) = compilation.architecture.as_deref() else {
         return Ok(HfSglangLowering::Unsupported {
             reason: "SGLang uniform-SWA lowering requires an explicit architecture",
@@ -320,48 +348,26 @@ fn lower_uniform_swa_to_sglang(
             reason: "uniform-SWA lowering requires exactly one SWA class",
         });
     }
-    let Some(window_tokens) =
-        compilation
-            .program
-            .states
-            .first()
-            .and_then(|state| match &state.may_read {
-                Predicate::LessThan {
-                    rhs: IntExpr::Constant { value },
-                    ..
-                } => u64::try_from(*value).ok(),
-                _ => None,
-            })
-    else {
-        return Ok(HfSglangLowering::Unsupported {
-            reason: "uniform-SWA lowering requires a constant positive window",
-        });
-    };
-    let per_request_resident_tokens = window_tokens
-        .checked_add(options.eviction_interval_tokens)
-        .and_then(|value| value.checked_add(layout.page_tokens))
-        .and_then(|value| value.checked_add(options.decode_headroom_tokens))
-        .ok_or(HfStatePlanError::RuntimeArithmeticOverflow(
-            "per-request resident tokens",
-        ))?;
-    let global_staging_tokens = options
-        .chunked_prefill_tokens
-        .checked_add(layout.page_tokens)
-        .ok_or(HfStatePlanError::RuntimeArithmeticOverflow(
-            "global staging tokens",
-        ))?;
-    let minimum_pool_tokens = per_request_resident_tokens
-        .checked_mul(options.maximum_running_requests)
-        .and_then(|value| value.checked_add(global_staging_tokens))
-        .ok_or(HfStatePlanError::RuntimeArithmeticOverflow(
-            "minimum pool tokens",
-        ))?;
-    let contract_fingerprint =
-        uniform_swa_contract_fingerprint(compilation, layout, window_tokens, options);
+    let window_tokens = window_tokens_from_compilation(compilation)?;
+    validate_uniform_swa_page_alignment(layout.page_tokens, window_tokens, options)?;
+    let budget = synthesize_uniform_swa_budget(
+        layout.page_tokens,
+        maximum_context_tokens,
+        window_tokens,
+        physical_backend,
+        options,
+    )?;
+    let contract_fingerprint = uniform_swa_contract_fingerprint(
+        compilation,
+        layout,
+        window_tokens,
+        options,
+        maximum_context_tokens,
+    );
     Ok(HfSglangLowering::Enabled {
         kind: "uniform_swa",
         contract: Box::new(SglangUniformSwaContract {
-            schema: "orbitkv.sglang-uniform-swa-contract.v2",
+            schema: "orbitkv.sglang-uniform-swa-contract.v3",
             plan_fingerprint: layout.plan_fingerprint.clone(),
             contract_fingerprint,
             config_sha256: compilation.config_sha256.clone(),
@@ -372,13 +378,16 @@ fn lower_uniform_swa_to_sglang(
             window_tokens,
             kernel_window_left: window_tokens - 1,
             page_tokens: layout.page_tokens,
+            physical_backend,
+            maximum_context_tokens,
             maximum_running_requests: options.maximum_running_requests,
             chunked_prefill_tokens: options.chunked_prefill_tokens,
             eviction_interval_tokens: options.eviction_interval_tokens,
             decode_headroom_tokens: options.decode_headroom_tokens,
-            per_request_resident_tokens,
-            global_staging_tokens,
-            minimum_pool_tokens,
+            per_request_resident_tokens: budget.per_request_resident,
+            global_staging_tokens: budget.global_staging,
+            minimum_pool_tokens: budget.minimum_pool,
+            logical_index_tokens: budget.logical_index,
             scheduler_admission: "pure_swa_live_state",
             required_disabled_features: [
                 "radix_cache",
@@ -391,11 +400,108 @@ fn lower_uniform_swa_to_sglang(
     })
 }
 
+fn uniform_swa_backend(page_tokens: u64) -> Option<UniformSwaPhysicalBackend> {
+    match page_tokens {
+        1 => Some(UniformSwaPhysicalBackend::DirectPeriodic),
+        16 => Some(UniformSwaPhysicalBackend::PagedPeriodic),
+        _ => None,
+    }
+}
+
+fn validate_uniform_swa_page_alignment(
+    page_tokens: u64,
+    window_tokens: u64,
+    options: SglangUniformSwaOptions,
+) -> Result<(), HfStatePlanError> {
+    if page_tokens == 1 {
+        return Ok(());
+    }
+    for (name, value) in [
+        ("window_tokens", window_tokens),
+        ("chunked_prefill_tokens", options.chunked_prefill_tokens),
+        ("eviction_interval_tokens", options.eviction_interval_tokens),
+        ("decode_headroom_tokens", options.decode_headroom_tokens),
+    ] {
+        if !value.is_multiple_of(page_tokens) {
+            return Err(HfStatePlanError::RuntimeOptionNotPageAligned {
+                name,
+                value,
+                page_tokens,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn synthesize_uniform_swa_budget(
+    page_tokens: u64,
+    maximum_context_tokens: u64,
+    window_tokens: u64,
+    backend: UniformSwaPhysicalBackend,
+    options: SglangUniformSwaOptions,
+) -> Result<UniformSwaBudget, HfStatePlanError> {
+    let per_request_resident_tokens = window_tokens
+        .checked_add(options.eviction_interval_tokens)
+        .and_then(|value| value.checked_add(page_tokens))
+        .and_then(|value| value.checked_add(options.decode_headroom_tokens))
+        .ok_or(HfStatePlanError::RuntimeArithmeticOverflow(
+            "per-request resident tokens",
+        ))?;
+    let global_staging_tokens = options
+        .chunked_prefill_tokens
+        .checked_add(page_tokens)
+        .ok_or(HfStatePlanError::RuntimeArithmeticOverflow(
+            "global staging tokens",
+        ))?;
+    let minimum_pool_tokens = per_request_resident_tokens
+        .checked_mul(options.maximum_running_requests)
+        .and_then(|value| value.checked_add(global_staging_tokens))
+        .ok_or(HfStatePlanError::RuntimeArithmeticOverflow(
+            "minimum pool tokens",
+        ))?;
+    let logical_index_tokens = match backend {
+        UniformSwaPhysicalBackend::DirectPeriodic => minimum_pool_tokens,
+        UniformSwaPhysicalBackend::PagedPeriodic => {
+            checked_ceil_align(maximum_context_tokens, page_tokens)?
+                .checked_mul(options.maximum_running_requests)
+                .ok_or(HfStatePlanError::RuntimeArithmeticOverflow(
+                    "logical index tokens",
+                ))?
+        }
+    };
+    Ok(UniformSwaBudget {
+        per_request_resident: per_request_resident_tokens,
+        global_staging: global_staging_tokens,
+        minimum_pool: minimum_pool_tokens,
+        logical_index: logical_index_tokens,
+    })
+}
+
+fn window_tokens_from_compilation(
+    compilation: &HfRetentionCompilation,
+) -> Result<u64, HfStatePlanError> {
+    compilation
+        .program
+        .states
+        .first()
+        .and_then(|state| match &state.may_read {
+            Predicate::LessThan {
+                rhs: IntExpr::Constant { value },
+                ..
+            } => u64::try_from(*value).ok(),
+            _ => None,
+        })
+        .ok_or(HfStatePlanError::RuntimeArithmeticOverflow(
+            "constant positive window",
+        ))
+}
+
 fn uniform_swa_contract_fingerprint(
     compilation: &HfRetentionCompilation,
     layout: &LayoutProgram,
     window_tokens: u64,
     options: SglangUniformSwaOptions,
+    maximum_context_tokens: u64,
 ) -> String {
     let mut hash = Sha256::new();
     for value in [
@@ -412,6 +518,7 @@ fn uniform_swa_contract_fingerprint(
         compilation.head_dim,
         window_tokens,
         layout.page_tokens,
+        maximum_context_tokens,
         options.maximum_running_requests,
         options.chunked_prefill_tokens,
         options.eviction_interval_tokens,
@@ -420,6 +527,15 @@ fn uniform_swa_contract_fingerprint(
         hash.update(value.to_le_bytes());
     }
     format!("sha256:{:x}", hash.finalize())
+}
+
+fn checked_ceil_align(value: u64, alignment: u64) -> Result<u64, HfStatePlanError> {
+    value
+        .checked_add(alignment - 1)
+        .map(|sum| sum / alignment * alignment)
+        .ok_or(HfStatePlanError::RuntimeArithmeticOverflow(
+            "page-aligned context tokens",
+        ))
 }
 
 fn derive_head_dim(config: &HfModelConfig) -> Result<u64, HfConfigError> {
@@ -650,14 +766,20 @@ mod tests {
         assert_eq!(contract.window_tokens, 4096);
         assert_eq!(contract.kernel_window_left, 4095);
         assert_eq!(contract.page_tokens, 1);
+        assert_eq!(
+            contract.physical_backend,
+            UniformSwaPhysicalBackend::DirectPeriodic
+        );
+        assert_eq!(contract.maximum_context_tokens, 8192);
         assert_eq!(contract.maximum_running_requests, 4);
         assert_eq!(contract.per_request_resident_tokens, 4257);
         assert_eq!(contract.global_staging_tokens, 2049);
         assert_eq!(contract.minimum_pool_tokens, 19_077);
+        assert_eq!(contract.logical_index_tokens, 19_077);
         assert!(contract.contract_fingerprint.starts_with("sha256:"));
         assert!(contract.config_sha256.starts_with("sha256:"));
 
-        let unsupported = compile_hf_state_plan(
+        let paged = compile_hf_state_plan(
             config,
             HfStatePlanOptions {
                 retention: HfRetentionOptions {
@@ -674,12 +796,18 @@ mod tests {
             },
         )
         .unwrap();
+        let HfSglangLowering::Enabled { contract, .. } = paged.sglang_lowering else {
+            panic!("page-16 Mistral plan must lower");
+        };
+        assert_eq!(contract.page_tokens, 16);
         assert_eq!(
-            unsupported.sglang_lowering,
-            HfSglangLowering::Unsupported {
-                reason: "SGLang PureSWA allocator requires page_tokens=1"
-            }
+            contract.physical_backend,
+            UniformSwaPhysicalBackend::PagedPeriodic
         );
+        assert_eq!(contract.per_request_resident_tokens, 4272);
+        assert_eq!(contract.global_staging_tokens, 2064);
+        assert_eq!(contract.minimum_pool_tokens, 19_152);
+        assert_eq!(contract.logical_index_tokens, 32_768);
     }
 
     #[test]
@@ -712,6 +840,41 @@ mod tests {
             Err(HfStatePlanError::ZeroRuntimeOption(
                 "maximum_running_requests"
             ))
+        );
+    }
+
+    #[test]
+    fn paged_uniform_swa_requires_page_aligned_runtime_budget() {
+        let config = br#"{
+            "architectures": ["MistralForCausalLM"],
+            "num_hidden_layers": 2,
+            "sliding_window": 4096,
+            "num_key_value_heads": 8,
+            "hidden_size": 4096,
+            "num_attention_heads": 32
+        }"#;
+        assert_eq!(
+            compile_hf_state_plan(
+                config,
+                HfStatePlanOptions {
+                    retention: HfRetentionOptions {
+                        page_tokens: 16,
+                        kv_dtype_bytes: 2,
+                    },
+                    boundary_tokens: 8192,
+                    sglang_uniform_swa: SglangUniformSwaOptions {
+                        maximum_running_requests: 4,
+                        chunked_prefill_tokens: 2048,
+                        eviction_interval_tokens: 127,
+                        decode_headroom_tokens: 32,
+                    },
+                },
+            ),
+            Err(HfStatePlanError::RuntimeOptionNotPageAligned {
+                name: "eviction_interval_tokens",
+                value: 127,
+                page_tokens: 16,
+            })
         );
     }
 

@@ -1,0 +1,50 @@
+{
+  "claim_boundary": [
+    "real Mistral-7B-v0.1 checkpoint loaded with load_format=auto",
+    "four requests with 12K prompt and 32 decode tokens each",
+    "page size 16; radix cache, overlap, speculation, disaggregation, and CUDA Graph disabled",
+    "kernel reference uses the same compiled attention window with ordinary 50K KV slots",
+    "three alternating-order pairs",
+    "no model-quality claim"
+  ],
+  "date": "2026-08-18",
+  "external_checkpoint": {
+    "config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+    "index_sha256": "c94ab46aaf5fcca44720c10bcc498c1b0d9759d47534a396e3512edc451ebd06",
+    "indexed_weight_bytes": 14483464192,
+    "name": "Mistral-7B-v0.1"
+  },
+  "gpu": {
+    "compute_capability": [9, 0],
+    "driver": "535.161.08",
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+  },
+  "records": {
+    "results/applicability-h20-20260817/mistral-page16.json": "af4dcb97c905f76fb8dcce50d03c60feedd2d75abeb3883d9538b9185b93be76",
+    "results/applicability-h20-20260817/mistral-state-plan-page16.json": "2d3504680e7bce4e88d18ab948919e6e826daf0652bd1b0e5b288c4f8836693b"
+  },
+  "schema": "orbitkv.mistral-page16-manifest.v1",
+  "software": {
+    "flashinfer": "0.6.17",
+    "python": "3.11.10",
+    "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+    "torch": "2.13.0",
+    "transformers": "5.12.1",
+    "triton": "3.7.1"
+  },
+  "sources": {
+    "integrations/sglang/bench_uniform_swa_ab.py": "646825ddeaf5db234bc1174ef6ccdcad7beb5fcc705829c2f11b5cbea80c140b",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "b3ea5a9f8c18bdf1593a0f874f974cf4e6e9a4c520843d23a3127f37fc477989",
+    "integrations/sglang/tests/test_real_model_bench.py": "1ff16e090674e37383e127fef941622033796dd8d9c44c9d3b6f9afb63e06582",
+    "integrations/sglang/tests/test_shadow_plugin.py": "d23ced3327c342b68245b6cbd000bdd206135db54cc708ceb0fb3eabdfdbaa3a",
+    "src/hf_config.rs": "c9ff9ac6728afe3868c405756cc2741bed146a5f6dad6e08a12d735b2460e6e3",
+    "tests/retention_cli.rs": "3b056ae9f03d1f6f762aebb3bcaa72dba068c95071e97eba6c6dec6dd146880d",
+    "tools/verify_applicability_results.py": "c037f22dd9fb90d77c0ffd833bf10664d0a35d11f4c305d8b4b64d75b7f572bc"
+  },
+  "website": {
+    "README.md": "29a55dc1b6458563ddb2e3b9a862ab5fcb11c9306ce9b54c39004d91551266b0",
+    "results/README.md": "468167458d142802d37173463620489c6aea7bcc20a877132a48ab6e9c9621cb",
+    "website/src/data/site.ts": "73c8004378ea1ffcefc4fbcf9eb0125fb907bf2b453b5a16fcf41b57d6881154"
+  }
+}

@@ -197,7 +197,7 @@ fn hf_state_plan_emits_uniform_swa_execution_contract() {
         "--decode-headroom-tokens",
         "32",
     ]);
-    assert_eq!(report["schema"], "orbitkv.hf-state-plan.v2");
+    assert_eq!(report["schema"], "orbitkv.hf-state-plan.v3");
     assert_eq!(report["sglang_lowering"]["status"], "enabled");
     assert_eq!(report["sglang_lowering"]["kind"], "uniform_swa");
     assert_eq!(
@@ -217,8 +217,48 @@ fn hf_state_plan_emits_uniform_swa_execution_contract() {
         19_077
     );
     assert_eq!(
+        report["sglang_lowering"]["contract"]["physical_backend"],
+        "direct_periodic"
+    );
+    assert_eq!(
         report["layout"]["classes"][0]["address"]["kind"],
         "periodic"
+    );
+}
+
+#[test]
+fn hf_state_plan_emits_paged_periodic_execution_contract() {
+    let config = root().join("fixtures/mistral-uniform-swa-tiny/config.json");
+    let report = run(&[
+        "compile-hf-state-plan",
+        config.to_str().unwrap(),
+        "--page-tokens",
+        "16",
+        "--kv-dtype-bytes",
+        "2",
+        "--boundary",
+        "8192",
+        "--max-running-requests",
+        "4",
+        "--chunked-prefill-tokens",
+        "2048",
+        "--eviction-interval",
+        "128",
+        "--decode-headroom-tokens",
+        "32",
+    ]);
+    assert_eq!(report["schema"], "orbitkv.hf-state-plan.v3");
+    assert_eq!(
+        report["sglang_lowering"]["contract"]["physical_backend"],
+        "paged_periodic"
+    );
+    assert_eq!(
+        report["sglang_lowering"]["contract"]["minimum_pool_tokens"],
+        19_152
+    );
+    assert_eq!(
+        report["sglang_lowering"]["contract"]["logical_index_tokens"],
+        32_768
     );
 }
 

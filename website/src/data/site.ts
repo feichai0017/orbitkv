@@ -15,8 +15,8 @@ export const compilerStages = [
 ];
 
 export const metrics = [
-  { value: "−61.846%", label: "Mistral KV", detail: "4 x 12K prompts with 19,077 physical slots" },
-  { value: "0.9662×", label: "Median runtime", detail: "19,077 PureSWA versus 50,000-slot reference" },
+  { value: "−61.696%", label: "Mistral KV", detail: "page16, 4 x 12K prompts with 19,152 physical slots" },
+  { value: "0.9997×", label: "Median runtime", detail: "19,152 Paged Periodic versus 50,000-slot reference" },
   { value: "+25.81%", label: "Full capacity", detail: "real gpt-oss-20b, same 1.979 GiB KV budget" },
   { value: "−20.30%", label: "Owner vs Stock", detail: "balanced four-way real-checkpoint ablation" },
   { value: "−42.105%", label: "Head-stripe KV", detail: "exact multi-scale-window reduction versus max-window allocation" },
@@ -25,9 +25,9 @@ export const metrics = [
 export const evidenceRows = [
   {
     result: "Uniform SWA execution",
-    value: "−61.846%",
-    contract: "Mistral-7B, 4 x 12K prompts, 19,077 slots versus 50,000",
-    boundary: "one H20; page 1; three balanced pairs; identical output digests",
+    value: "−61.696%",
+    contract: "Mistral-7B, page16, 4 x 12K prompts, 19,152 slots versus 50,000",
+    boundary: "one H20; three balanced pairs; identical output digests",
   },
   {
     result: "Real checkpoint capacity",
