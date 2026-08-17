@@ -25,6 +25,7 @@
     "results/applicability-h20-20260817/mistral-state-plan-page16.json": "2d3504680e7bce4e88d18ab948919e6e826daf0652bd1b0e5b288c4f8836693b"
   },
   "schema": "orbitkv.mistral-page16-manifest.v1",
+  "source_commit": "d8a71b4493fad7d5797213a7955d89842f22c6c7",
   "software": {
     "flashinfer": "0.6.17",
     "python": "3.11.10",
