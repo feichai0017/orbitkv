@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import queue
+import struct
 import subprocess
 import threading
 import time
@@ -561,7 +562,7 @@ def _load_state_plan() -> dict[str, Any] | None:
     if mode not in ("execute", "kernel_reference"):
         raise ValueError(f"unsupported OrbitKV state-plan mode: {mode!r}")
     artifact = json.loads(Path(path).read_text(encoding="utf-8"))
-    if artifact.get("schema") != "orbitkv.hf-state-plan.v1":
+    if artifact.get("schema") != "orbitkv.hf-state-plan.v2":
         raise ValueError(f"unsupported OrbitKV state plan: {artifact!r}")
     lowering = artifact.get("sglang_lowering")
     if (
@@ -574,7 +575,7 @@ def _load_state_plan() -> dict[str, Any] | None:
     if (
         not isinstance(contract, dict)
         or contract.get("schema")
-        != "orbitkv.sglang-uniform-swa-contract.v1"
+        != "orbitkv.sglang-uniform-swa-contract.v2"
     ):
         raise ValueError("OrbitKV state plan has an invalid uniform-SWA contract")
     layout = artifact.get("layout")
@@ -582,11 +583,78 @@ def _load_state_plan() -> dict[str, Any] | None:
         raise ValueError("OrbitKV state plan is missing its layout")
     if contract.get("plan_fingerprint") != layout.get("plan_fingerprint"):
         raise ValueError("OrbitKV state-plan fingerprint does not match its layout")
+    expected_contract_fingerprint = _uniform_swa_contract_fingerprint(contract)
+    if contract.get("contract_fingerprint") != expected_contract_fingerprint:
+        raise ValueError("OrbitKV uniform-SWA contract fingerprint does not match")
     if int(contract.get("page_tokens", 0)) != 1:
         raise ValueError("OrbitKV uniform-SWA SGLang lowering requires page_tokens=1")
+    for field in (
+        "maximum_running_requests",
+        "chunked_prefill_tokens",
+        "eviction_interval_tokens",
+        "decode_headroom_tokens",
+        "per_request_resident_tokens",
+        "global_staging_tokens",
+        "minimum_pool_tokens",
+    ):
+        if int(contract.get(field, 0)) <= 0:
+            raise ValueError(
+                f"OrbitKV uniform-SWA contract has invalid {field}"
+            )
+    expected_per_request = (
+        int(contract["window_tokens"])
+        + int(contract["eviction_interval_tokens"])
+        + int(contract["page_tokens"])
+        + int(contract["decode_headroom_tokens"])
+    )
+    if int(contract["per_request_resident_tokens"]) != expected_per_request:
+        raise ValueError("OrbitKV uniform-SWA per-request budget does not match")
+    expected_staging = int(contract["chunked_prefill_tokens"]) + int(
+        contract["page_tokens"]
+    )
+    if int(contract["global_staging_tokens"]) != expected_staging:
+        raise ValueError("OrbitKV uniform-SWA staging budget does not match")
+    expected_minimum = (
+        expected_per_request * int(contract["maximum_running_requests"])
+        + expected_staging
+    )
+    if int(contract["minimum_pool_tokens"]) != expected_minimum:
+        raise ValueError("OrbitKV uniform-SWA minimum pool does not match")
+    if int(contract["kernel_window_left"]) != int(contract["window_tokens"]) - 1:
+        raise ValueError("OrbitKV uniform-SWA kernel window does not match")
+    if contract.get("scheduler_admission") != "pure_swa_live_state":
+        raise ValueError("OrbitKV uniform-SWA scheduler admission is unsupported")
+    os.environ["SGLANG_SWA_EVICTION_INTERVAL"] = str(
+        contract["eviction_interval_tokens"]
+    )
     _STATE_PLAN_MODE = mode
     _UNIFORM_SWA_CONTRACT = contract
     return artifact
+
+
+def _uniform_swa_contract_fingerprint(contract: dict[str, Any]) -> str:
+    digest = hashlib.sha256()
+    for value in (
+        contract["plan_fingerprint"],
+        contract["config_sha256"],
+        contract["architecture"],
+    ):
+        encoded = value.encode()
+        digest.update(struct.pack("<Q", len(encoded)))
+        digest.update(encoded)
+    for value in (
+        contract["num_hidden_layers"],
+        contract["num_key_value_heads"],
+        contract["head_dim"],
+        contract["window_tokens"],
+        contract["page_tokens"],
+        contract["maximum_running_requests"],
+        contract["chunked_prefill_tokens"],
+        contract["eviction_interval_tokens"],
+        contract["decode_headroom_tokens"],
+    ):
+        digest.update(struct.pack("<Q", int(value)))
+    return f"sha256:{digest.hexdigest()}"
 
 
 def _sha256_file(path: Path) -> str:
@@ -687,6 +755,8 @@ def _validate_uniform_swa_runtime(
         "speculative_decoding_disabled": configurator.spec_algorithm.is_none(),
         "page_tokens": int(configurator.page_size)
         == int(contract["page_tokens"]),
+        "chunked_prefill_tokens": int(server_args.chunked_prefill_size)
+        == int(contract["chunked_prefill_tokens"]),
     }
     if _STATE_PLAN_MODE == "execute":
         required["maximum_running_requests"] = int(
@@ -711,14 +781,9 @@ def _validate_uniform_swa_runtime(
         )
     if int(allocator.page_size) != int(contract["page_tokens"]):
         raise RuntimeError("OrbitKV uniform-SWA allocator page size mismatch")
-    minimum_pool_tokens = (
-        int(contract["kernel_window_left"])
-        + int(server_args.chunked_prefill_size)
-        + int(contract["page_tokens"])
-    )
-    if int(allocator.size_swa) < minimum_pool_tokens:
+    if int(allocator.size_swa) < int(contract["minimum_pool_tokens"]):
         raise RuntimeError(
-            "OrbitKV uniform-SWA pool cannot cover window and prefill staging"
+            "OrbitKV uniform-SWA pool is smaller than the compiled minimum"
         )
     return result
 

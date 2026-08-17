@@ -19,6 +19,7 @@ DEFAULT_MANIFESTS = (
     ROOT / "results/chunked-local-20260817/manifest.json",
     ROOT / "results/lifetime-normalization-20260817/manifest.json",
     ROOT / "results/applicability-h20-20260817/manifest.json",
+    ROOT / "results/applicability-h20-20260817/multireq-manifest.json",
 )
 
 

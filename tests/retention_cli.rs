@@ -188,8 +188,16 @@ fn hf_state_plan_emits_uniform_swa_execution_contract() {
         "2",
         "--boundary",
         "8192",
+        "--max-running-requests",
+        "4",
+        "--chunked-prefill-tokens",
+        "2048",
+        "--eviction-interval",
+        "128",
+        "--decode-headroom-tokens",
+        "32",
     ]);
-    assert_eq!(report["schema"], "orbitkv.hf-state-plan.v1");
+    assert_eq!(report["schema"], "orbitkv.hf-state-plan.v2");
     assert_eq!(report["sglang_lowering"]["status"], "enabled");
     assert_eq!(report["sglang_lowering"]["kind"], "uniform_swa");
     assert_eq!(
@@ -199,6 +207,14 @@ fn hf_state_plan_emits_uniform_swa_execution_contract() {
     assert_eq!(
         report["sglang_lowering"]["contract"]["kernel_window_left"],
         4095
+    );
+    assert_eq!(
+        report["sglang_lowering"]["contract"]["maximum_running_requests"],
+        4
+    );
+    assert_eq!(
+        report["sglang_lowering"]["contract"]["minimum_pool_tokens"],
+        19_077
     );
     assert_eq!(
         report["layout"]["classes"][0]["address"]["kind"],

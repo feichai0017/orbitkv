@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import math
+import statistics
 from pathlib import Path
 
 
@@ -23,6 +24,8 @@ def main() -> None:
     mistral = load("mistral-e2e.json")
     qwen = load("qwen-noop.json")
     state_plan = load("mistral-state-plan.json")
+    multireq = load("mistral-multireq.json")
+    multireq_state_plan = load("mistral-state-plan-multireq.json")
 
     models = {
         model["architecture"]: model for model in applicability["models"]
@@ -88,9 +91,81 @@ def main() -> None:
         qwen["shadow_over_stock_ratio"],
         qwen["shadow"]["iteration_seconds"] / qwen["stock"]["iteration_seconds"],
     )
+
+    contract = multireq["compiled_contract"]
+    expected_per_request = (
+        contract["window_tokens"]
+        + contract["eviction_interval_tokens"]
+        + contract["page_tokens"]
+        + contract["decode_headroom_tokens"]
+    )
+    if contract["per_request_resident_tokens"] != expected_per_request:
+        raise RuntimeError("multi-request per-request budget differs")
+    expected_staging = (
+        contract["chunked_prefill_tokens"] + contract["page_tokens"]
+    )
+    if contract["global_staging_tokens"] != expected_staging:
+        raise RuntimeError("multi-request staging budget differs")
+    expected_minimum = (
+        expected_per_request * contract["maximum_running_requests"]
+        + expected_staging
+    )
+    if contract["minimum_pool_tokens"] != expected_minimum:
+        raise RuntimeError("multi-request minimum pool differs")
+    state_contract = multireq_state_plan["sglang_lowering"]["contract"]
+    if state_contract["minimum_pool_tokens"] != expected_minimum:
+        raise RuntimeError("multi-request state plan minimum differs")
+    if not state_contract["contract_fingerprint"].startswith("sha256:"):
+        raise RuntimeError("multi-request contract fingerprint is missing")
+    if (
+        state_contract["plan_fingerprint"]
+        != multireq_state_plan["layout"]["plan_fingerprint"]
+    ):
+        raise RuntimeError("multi-request plan fingerprint differs")
+    close(
+        multireq["slot_reduction_percent"],
+        (1 - expected_minimum / multireq["reference_pool_tokens"]) * 100,
+    )
+    ratios = []
+    for pair in multireq["pairs"]:
+        if pair["execute_token_slots"] != expected_minimum:
+            raise RuntimeError("multi-request execute pool differs")
+        if pair["reference_token_slots"] != multireq["reference_pool_tokens"]:
+            raise RuntimeError("multi-request reference pool differs")
+        if any(pair["execute_retractions"] + pair["reference_retractions"]):
+            raise RuntimeError("multi-request run retracted a request")
+        if pair["execute_output_digest"] != pair["reference_output_digest"]:
+            raise RuntimeError("multi-request output digest differs")
+        if (
+            pair["execute_config_sha256"]
+            != pair["reference_config_sha256"]
+            or pair["execute_config_sha256"] != multireq["checkpoint"]["config_sha256"]
+        ):
+            raise RuntimeError("multi-request checkpoint config differs")
+        if pair["execute_completion_tokens"] != pair["reference_completion_tokens"]:
+            raise RuntimeError("multi-request completion count differs")
+        if pair["execute_completion_tokens"] != 128:
+            raise RuntimeError("multi-request completion count differs")
+        ratio = pair["execute_seconds"] / pair["reference_seconds"]
+        close(pair["execute_over_reference_ratio"], ratio)
+        ratios.append(ratio)
+    close(
+        multireq["median_execute_over_reference_ratio"],
+        statistics.median(ratios),
+    )
+    close(
+        multireq["median_execute_over_reference_percent"],
+        (statistics.median(ratios) - 1) * 100,
+    )
+    if not multireq["checkpoint"]["indexed_weights_complete"]:
+        raise RuntimeError("multi-request checkpoint shards are incomplete")
+    if multireq["below_minimum"]["pool_tokens"] != expected_minimum - 1:
+        raise RuntimeError("below-minimum boundary differs")
+    if multireq["below_minimum"]["status"] != "rejected_at_startup":
+        raise RuntimeError("below-minimum plan did not fail closed")
     print(
         "verified applicability records: "
-        "Qwen safe fallback, Mistral 12K/8K bounded execution, "
+        "Qwen safe fallback, Mistral single and multi-request bounded execution, "
         "GPT-OSS hybrid plan"
     )
 

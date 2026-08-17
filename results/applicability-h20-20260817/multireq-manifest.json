@@ -1,0 +1,56 @@
+{
+  "claim_boundary": [
+    "real Mistral-7B-v0.1 checkpoint loaded with load_format=auto",
+    "four requests with 12K prompt and 32 decode tokens each",
+    "page size 1; radix cache, overlap, speculation, disaggregation, and CUDA Graph disabled",
+    "kernel reference uses the same compiled attention window with ordinary 50K KV slots",
+    "three alternating-order pairs",
+    "no model-quality claim"
+  ],
+  "date": "2026-08-17",
+  "external_checkpoint": {
+    "config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+    "index_sha256": "c94ab46aaf5fcca44720c10bcc498c1b0d9759d47534a396e3512edc451ebd06",
+    "indexed_weight_bytes": 14483464192,
+    "name": "Mistral-7B-v0.1"
+  },
+  "gpu": {
+    "compute_capability": [
+      9,
+      0
+    ],
+    "driver": "535.161.08",
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+  },
+  "records": {
+    "results/applicability-h20-20260817/mistral-multireq.json": "7bb65f5ef1ab09fee38cd9d8862a6632c085a22bd16db885ef44db3d58750aec",
+    "results/applicability-h20-20260817/mistral-state-plan-multireq.json": "1c91092d096c6973b2dc93a3fc2bf9d8799a6126d2d861bcf270b9ab5f932070"
+  },
+  "schema": "orbitkv.mistral-multireq-manifest.v1",
+  "software": {
+    "flashinfer": "0.6.17",
+    "python": "3.11.10",
+    "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+    "torch": "2.13.0",
+    "transformers": "5.12.1",
+    "triton": "3.7.1"
+  },
+  "sources": {
+    ".github/workflows/ci.yml": "d07f757b9b46c9f2a6485bc8bdd0e37b613157eb3f3b054e695f083a2268ce88",
+    "integrations/sglang/bench_uniform_swa_ab.py": "5ff8ff13e05bda85583fbad1f372e45a2204550e5e9638e98f3a8a25f86eb063",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "ec2bcee98a8afdd3175ce85dc80db493cfcc06e3f23b85f269c3461fff3cd282",
+    "integrations/sglang/tests/test_real_model_bench.py": "bdc5aa5e8ff9614df17395abdd2516d5bdadfafcbbe4c4b8942b138a6805b338",
+    "integrations/sglang/tests/test_shadow_plugin.py": "bbcb6fa00ed79190b5f9bb07e3e579abbac8756d26b696285362d3fd134817f8",
+    "src/bin/orbitkv.rs": "cd65d223d920784da21b37690c57f22d538efa1ef118542f74caed4dae29de89",
+    "src/hf_config.rs": "726f8ae5404c0afe4b448c4411dabfaeff89846c944c10a119c7f04ad762c5db",
+    "src/lib.rs": "c322d6a03c7c904fb1ec5d232af9c7ca81ae628d823006d32193f3e72c1312c7",
+    "tests/retention_cli.rs": "9651d850767689190f02ef8e2a509195ca06d2f692814b61337e55f47985584e",
+    "tools/verify_applicability_results.py": "8eb5109e1a20551b59a066f17ecc82a312dbde8266dc3eb8dbd59640bb302bc1"
+  },
+  "website": {
+    "README.md": "b1f9e355f86ac97131fa575265c9b17a1dcdc17b6846d586a0836ad4e75fcd70",
+    "results/README.md": "cefae496d2d04da5a6b4a5e018defa02b0b0aee9708c6b67c6b1f09761ddd941",
+    "website/src/data/site.ts": "64c75c883b875b54537b601c6f442b558ab604c02782bb3424bd74eca0868872"
+  }
+}

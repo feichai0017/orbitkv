@@ -1,0 +1,195 @@
+{
+  "applicability": {
+    "all_full_baseline_bytes": 2147483648,
+    "applicability": "uniform_bounded",
+    "boundary_tokens": 16384,
+    "bounded_class_count": 1,
+    "bounded_resident_bytes": 536870912,
+    "bounded_resident_fraction_milli": 1000,
+    "claim_boundary": [
+      "static equal-page KV geometry at the requested logical boundary",
+      "not a kernel, scheduler, admission, or end-to-end speedup prediction",
+      "unsupported retention semantics must fail closed before this report"
+    ],
+    "classes": [
+      {
+        "layer_count": 32,
+        "name": "swa",
+        "physical_token_slots": 4096,
+        "resident_bytes": 536870912,
+        "retention": "sliding",
+        "semantic_live_tokens": 4095
+      }
+    ],
+    "generated_layouts": [
+      "periodic"
+    ],
+    "lifetime_class_count": 1,
+    "page_tokens": 1,
+    "physical_resident_bytes": 536870912,
+    "physical_to_semantic_amplification_milli": 1000,
+    "plan_fingerprint": "sha256:5c1faa2cff4d8cefe239508d423b2693aeb9fef755a5fe716c942b0b60ffa1eb",
+    "reclaimable_baseline_bytes": 1610612736,
+    "schema": "orbitkv.applicability-report.v1",
+    "semantically_live_bytes": 536739840,
+    "static_reduction_percent_milli": 75000,
+    "unbounded_class_count": 0
+  },
+  "compilation": {
+    "architecture": "MistralForCausalLM",
+    "bytes_per_token_per_layer": 4096,
+    "config_sha256": "sha256:cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+    "head_dim": 128,
+    "layer_inference": "architecture_uniform_sliding",
+    "num_hidden_layers": 32,
+    "num_key_value_heads": 8,
+    "program": {
+      "page_tokens": 1,
+      "schema": "orbitkv.retention-ir.v1",
+      "states": [
+        {
+          "bytes_per_token_per_layer": 4096,
+          "layers": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30,
+            31
+          ],
+          "may_read": {
+            "lhs": {
+              "lhs": {
+                "op": "query_position"
+              },
+              "op": "sub",
+              "rhs": {
+                "op": "key_position"
+              }
+            },
+            "op": "less_than",
+            "rhs": {
+              "op": "constant",
+              "value": 4096
+            }
+          },
+          "name": "swa"
+        }
+      ]
+    },
+    "schema": "orbitkv.hf-retention-compilation.v1"
+  },
+  "layout": {
+    "classes": [
+      {
+        "address": {
+          "kind": "periodic",
+          "period_blocks": 4096
+        },
+        "bytes_per_token_per_layer": 4096,
+        "layers": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23,
+          24,
+          25,
+          26,
+          27,
+          28,
+          29,
+          30,
+          31
+        ],
+        "minimum_slots_per_request": 4096,
+        "name": "swa",
+        "retirement": {
+          "kind": "block_end_plus",
+          "offset_tokens": 4095
+        }
+      }
+    ],
+    "page_tokens": 1,
+    "plan_fingerprint": "sha256:5c1faa2cff4d8cefe239508d423b2693aeb9fef755a5fe716c942b0b60ffa1eb",
+    "schema": "orbitkv.layout-program.v1"
+  },
+  "schema": "orbitkv.hf-state-plan.v2",
+  "sglang_lowering": {
+    "contract": {
+      "architecture": "MistralForCausalLM",
+      "chunked_prefill_tokens": 2048,
+      "config_sha256": "sha256:cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+      "contract_fingerprint": "sha256:ff81f39e7d2ef53b8011e684ad5f222df6e60a5351114595a0bf56546638b622",
+      "decode_headroom_tokens": 32,
+      "eviction_interval_tokens": 128,
+      "global_staging_tokens": 2049,
+      "head_dim": 128,
+      "kernel_window_left": 4095,
+      "maximum_running_requests": 4,
+      "minimum_pool_tokens": 19077,
+      "num_hidden_layers": 32,
+      "num_key_value_heads": 8,
+      "page_tokens": 1,
+      "per_request_resident_tokens": 4257,
+      "plan_fingerprint": "sha256:5c1faa2cff4d8cefe239508d423b2693aeb9fef755a5fe716c942b0b60ffa1eb",
+      "required_disabled_features": [
+        "radix_cache",
+        "overlap_schedule",
+        "speculative_decoding",
+        "disaggregation",
+        "cuda_graph"
+      ],
+      "scheduler_admission": "pure_swa_live_state",
+      "schema": "orbitkv.sglang-uniform-swa-contract.v2",
+      "window_tokens": 4096
+    },
+    "kind": "uniform_swa",
+    "status": "enabled"
+  }
+}

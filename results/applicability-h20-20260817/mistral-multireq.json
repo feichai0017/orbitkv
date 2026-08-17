@@ -1,0 +1,152 @@
+{
+  "below_minimum": {
+    "error": "OrbitKV uniform-SWA pool is smaller than the compiled minimum",
+    "pool_tokens": 19076,
+    "status": "rejected_at_startup"
+  },
+  "checkpoint": {
+    "config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+    "index_sha256": "c94ab46aaf5fcca44720c10bcc498c1b0d9759d47534a396e3512edc451ebd06",
+    "indexed_weight_bytes": 14483464192,
+    "indexed_weights_complete": true,
+    "observed_weight_bytes": 14483498040
+  },
+  "claim_boundary": [
+    "real Mistral-7B-v0.1 checkpoint on one NVIDIA H20",
+    "four requests with 12K prompt and 32 decode tokens each",
+    "page size 1; radix cache, overlap, speculation, disaggregation, and CUDA Graph disabled",
+    "kernel reference uses the same compiled attention window with ordinary 50K KV slots",
+    "three alternating-order pairs; no model-quality claim"
+  ],
+  "compiled_contract": {
+    "chunked_prefill_tokens": 2048,
+    "contract_fingerprint": "sha256:ff81f39e7d2ef53b8011e684ad5f222df6e60a5351114595a0bf56546638b622",
+    "decode_headroom_tokens": 32,
+    "eviction_interval_tokens": 128,
+    "global_staging_tokens": 2049,
+    "maximum_running_requests": 4,
+    "minimum_pool_tokens": 19077,
+    "page_tokens": 1,
+    "per_request_resident_tokens": 4257,
+    "plan_fingerprint": "sha256:5c1faa2cff4d8cefe239508d423b2693aeb9fef755a5fe716c942b0b60ffa1eb",
+    "scheduler_admission": "pure_swa_live_state",
+    "window_tokens": 4096
+  },
+  "date": "2026-08-17",
+  "execute_over_reference_ratios": [
+    0.9388291544168431,
+    0.9662122650391363,
+    0.967480785187056
+  ],
+  "median_execute_over_reference_percent": -3.3787734960863736,
+  "median_execute_over_reference_ratio": 0.9662122650391363,
+  "pairs": [
+    {
+      "execute_completion_tokens": 128,
+      "execute_config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+      "execute_kv_gib": 2.329,
+      "execute_output_digest": "1c146d30a6f45f58189b323f1deab0baf94b5e20f53b1d03749be2eae2f704fa",
+      "execute_over_reference_ratio": 0.9388291544168431,
+      "execute_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "execute_seconds": 8.735676255077124,
+      "execute_token_slots": 19077,
+      "execution_order": [
+        "state_plan",
+        "kernel_reference"
+      ],
+      "pair": 0,
+      "reference_completion_tokens": 128,
+      "reference_config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+      "reference_kv_gib": 6.104,
+      "reference_output_digest": "1c146d30a6f45f58189b323f1deab0baf94b5e20f53b1d03749be2eae2f704fa",
+      "reference_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "reference_seconds": 9.304862566292286,
+      "reference_token_slots": 50000
+    },
+    {
+      "execute_completion_tokens": 128,
+      "execute_config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+      "execute_kv_gib": 2.329,
+      "execute_output_digest": "1c146d30a6f45f58189b323f1deab0baf94b5e20f53b1d03749be2eae2f704fa",
+      "execute_over_reference_ratio": 0.9662122650391363,
+      "execute_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "execute_seconds": 8.741691894829273,
+      "execute_token_slots": 19077,
+      "execution_order": [
+        "kernel_reference",
+        "state_plan"
+      ],
+      "pair": 1,
+      "reference_completion_tokens": 128,
+      "reference_config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+      "reference_kv_gib": 6.104,
+      "reference_output_digest": "1c146d30a6f45f58189b323f1deab0baf94b5e20f53b1d03749be2eae2f704fa",
+      "reference_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "reference_seconds": 9.047382455319166,
+      "reference_token_slots": 50000
+    },
+    {
+      "execute_completion_tokens": 128,
+      "execute_config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+      "execute_kv_gib": 2.329,
+      "execute_output_digest": "1c146d30a6f45f58189b323f1deab0baf94b5e20f53b1d03749be2eae2f704fa",
+      "execute_over_reference_ratio": 0.967480785187056,
+      "execute_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "execute_seconds": 8.7380327321589,
+      "execute_token_slots": 19077,
+      "execution_order": [
+        "state_plan",
+        "kernel_reference"
+      ],
+      "pair": 2,
+      "reference_completion_tokens": 128,
+      "reference_config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+      "reference_kv_gib": 6.104,
+      "reference_output_digest": "1c146d30a6f45f58189b323f1deab0baf94b5e20f53b1d03749be2eae2f704fa",
+      "reference_retractions": [
+        0,
+        0,
+        0,
+        0
+      ],
+      "reference_seconds": 9.031737752258778,
+      "reference_token_slots": 50000
+    }
+  ],
+  "reference_pool_tokens": 50000,
+  "schema": "orbitkv.mistral-uniform-swa-multireq-h20.v1",
+  "slot_reduction_percent": 61.846000000000004,
+  "workload": {
+    "chunked_prefill_tokens": 2048,
+    "context_length": 16384,
+    "decode_tokens_per_request": 32,
+    "logical_prompt_tokens": 48000,
+    "prompt_tokens_per_request": 12000,
+    "requests": 4
+  }
+}

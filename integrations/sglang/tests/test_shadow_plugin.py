@@ -122,7 +122,7 @@ class FakeSpecAlgorithm:
 
 class PureSWATokenToKVPoolAllocator:
     page_size = 1
-    size_swa = 8192
+    size_swa = 20_000
 
 
 class WrongUniformAllocator:
@@ -221,6 +221,14 @@ class ShadowPluginTests(unittest.TestCase):
                     "2",
                     "--boundary",
                     "8192",
+                    "--max-running-requests",
+                    "4",
+                    "--chunked-prefill-tokens",
+                    "2048",
+                    "--eviction-interval",
+                    "128",
+                    "--decode-headroom-tokens",
+                    "32",
                 ],
                 text=True,
             )
@@ -237,6 +245,19 @@ class ShadowPluginTests(unittest.TestCase):
             old_mode = plugin._STATE_PLAN_MODE
             try:
                 os.environ["ORBITKV_SGLANG_STATE_PLAN"] = str(artifact_path)
+                plugin._load_state_plan()
+                tampered = json.loads(json.dumps(artifact))
+                tampered["sglang_lowering"]["contract"][
+                    "maximum_running_requests"
+                ] += 1
+                artifact_path.write_text(
+                    json.dumps(tampered), encoding="utf-8"
+                )
+                with self.assertRaisesRegex(ValueError, "fingerprint"):
+                    plugin._load_state_plan()
+                artifact_path.write_text(
+                    json.dumps(artifact), encoding="utf-8"
+                )
                 plugin._load_state_plan()
                 model_config = types.SimpleNamespace(
                     model_path=str(model),
@@ -292,6 +313,36 @@ class ShadowPluginTests(unittest.TestCase):
                     configurator,
                 )
                 self.assertIs(returned, result)
+                too_many_requests = types.SimpleNamespace(
+                    server_args=types.SimpleNamespace(
+                        disable_radix_cache=True,
+                        disable_overlap_schedule=True,
+                        disable_cuda_graph=True,
+                        disaggregation_mode="null",
+                        max_running_requests=5,
+                        chunked_prefill_size=2048,
+                    ),
+                    spec_algorithm=FakeSpecAlgorithm(),
+                    page_size=1,
+                )
+                with self.assertRaisesRegex(
+                    RuntimeError, "maximum_running_requests"
+                ):
+                    plugin._validate_uniform_swa_runtime(
+                        lambda *_args, **_kwargs: result,
+                        too_many_requests,
+                    )
+                with self.assertRaisesRegex(
+                    RuntimeError, "compiled minimum"
+                ):
+                    below_minimum_allocator = PureSWATokenToKVPoolAllocator()
+                    below_minimum_allocator.size_swa = 19_076
+                    plugin._validate_uniform_swa_runtime(
+                        lambda *_args, **_kwargs: types.SimpleNamespace(
+                            token_to_kv_pool_allocator=below_minimum_allocator
+                        ),
+                        configurator,
+                    )
 
                 worker = types.SimpleNamespace(
                     model_config=types.SimpleNamespace(context_len=16384)

@@ -5,10 +5,11 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use orbitkv::{
-    ApplicabilityReport, CompiledKvPlan, HfRetentionCompilation, HfRetentionOptions, KvPlanSource,
-    OwnerCommand, PhysicalPlanObjective, RetentionAnalysis, SglangOwner,
-    SglangPhysicalOptimizationInput, SglangPhysicalPlan, analyze_state, compile_hf_config,
-    compile_hf_state_plan, compile_retention_program, optimize_sglang_physical_plan,
+    ApplicabilityReport, CompiledKvPlan, HfRetentionCompilation, HfRetentionOptions,
+    HfStatePlanOptions, KvPlanSource, OwnerCommand, PhysicalPlanObjective, RetentionAnalysis,
+    SglangOwner, SglangPhysicalOptimizationInput, SglangPhysicalPlan, SglangUniformSwaOptions,
+    analyze_state, compile_hf_config, compile_hf_state_plan, compile_retention_program,
+    optimize_sglang_physical_plan,
     trace::{read_jsonl, summarize_sglang_trace},
 };
 use serde::Serialize;
@@ -187,14 +188,30 @@ fn compile_hf_state_plan_command(
     let page_tokens = required_flagged_u64(args, "--page-tokens", "page tokens")?;
     let kv_dtype_bytes = required_flagged_u64(args, "--kv-dtype-bytes", "KV dtype bytes")?;
     let boundary = required_flagged_u64(args, "--boundary", "boundary")?;
+    let maximum_running_requests =
+        required_flagged_u64(args, "--max-running-requests", "max running requests")?;
+    let chunked_prefill_tokens =
+        required_flagged_u64(args, "--chunked-prefill-tokens", "chunked prefill tokens")?;
+    let eviction_interval_tokens =
+        required_flagged_u64(args, "--eviction-interval", "eviction interval")?;
+    let decode_headroom_tokens =
+        required_flagged_u64(args, "--decode-headroom-tokens", "decode headroom tokens")?;
     require_end(args)?;
     write_json(&compile_hf_state_plan(
         &std::fs::read(config_path)?,
-        HfRetentionOptions {
-            page_tokens,
-            kv_dtype_bytes,
+        HfStatePlanOptions {
+            retention: HfRetentionOptions {
+                page_tokens,
+                kv_dtype_bytes,
+            },
+            boundary_tokens: boundary,
+            sglang_uniform_swa: SglangUniformSwaOptions {
+                maximum_running_requests,
+                chunked_prefill_tokens,
+                eviction_interval_tokens,
+                decode_headroom_tokens,
+            },
         },
-        boundary,
     )?)
 }
 

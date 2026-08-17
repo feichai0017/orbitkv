@@ -16,7 +16,7 @@ Other directories are earlier calibration runs retained for auditability.
 Boundaries:
 
 - GPT-OSS is a real checkpoint systems result, not a model-quality claim.
-- Mistral uniform-SWA execution is qualified only for one request and page 1.
+- Mistral uniform-SWA execution is qualified for page 1 and up to four requests.
 - Per-head, Sink+Sliding, and Same-Chunk records are host compiler/Manager
   proofs, not GPU performance results.
 - VMM does not yet back SGLang KV tensors.

@@ -5,11 +5,13 @@ import json
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 ROOT = Path(__file__).resolve().parents[3]
 IDENTITY = ROOT / "integrations/sglang/checkpoint_identity.py"
 ABLATION = ROOT / "integrations/sglang/bench_real_model_ablation.py"
+UNIFORM_SWA = ROOT / "integrations/sglang/bench_uniform_swa_ab.py"
 
 
 def load_module(name: str, path: Path):
@@ -64,6 +66,61 @@ class RealModelBenchTests(unittest.TestCase):
             set(ablation.EXECUTION_ORDERS[0]),
             {"stock128", "stock32", "policy32", "owner32"},
         )
+
+    def test_uniform_swa_runner_uses_mode_specific_pool_sizes(self):
+        runner = load_module("orbitkv_uniform_swa_ab", UNIFORM_SWA)
+        args = type(
+            "Args",
+            (),
+            {
+                "python": "python",
+                "orbitkv_bin": "orbitkv",
+                "model": "/tmp/model",
+                "requests": 4,
+                "prompt_tokens": 12000,
+                "decode_tokens": 32,
+                "context_length": 16384,
+                "chunked_prefill_tokens": 2048,
+                "eviction_interval": 128,
+                "execute_pool_tokens": 19077,
+                "reference_pool_tokens": 50000,
+                "attention_backend": "flashinfer",
+                "sglang_revision": "revision",
+                "timeout": 30,
+            },
+        )()
+        calls = []
+
+        def fake_run(command, **_kwargs):
+            calls.append(command)
+            mode = command[command.index("--mode") + 1]
+            capacity = 19077 if mode == "state_plan" else 50000
+            record = {
+                "checkpoint": {"identity": "same"},
+                "output_digest": "digest",
+                "completion_tokens": 128,
+                "num_retractions": [0, 0, 0, 0],
+                "iteration_seconds": [8.0],
+                "server_memory": {"token_capacity": capacity},
+            }
+            return type(
+                "Completed",
+                (),
+                {"stdout": json.dumps(record) + "\n", "stderr": ""},
+            )()
+
+        with mock.patch.object(runner.subprocess, "run", side_effect=fake_run):
+            execute = runner.run_once(
+                args, "state_plan", Path("/tmp/state-plan.json")
+            )
+            reference = runner.run_once(
+                args, "kernel_reference", Path("/tmp/state-plan.json")
+            )
+
+        self.assertEqual(execute["server_memory"]["token_capacity"], 19077)
+        self.assertEqual(reference["server_memory"]["token_capacity"], 50000)
+        self.assertIn("19077", calls[0])
+        self.assertIn("50000", calls[1])
 
 
 if __name__ == "__main__":
