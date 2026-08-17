@@ -20,94 +20,14 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
-      <h2>Current H20 results</h2>
+      <h2>Primary results</h2>
       <div class="metric-grid compact">
         {metrics.map((item) => (
           <article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>
         ))}
       </div>
 
-      <div class="doc-note">
-        <strong>Public gpt-oss-20b checkpoint.</strong>
-        <p>
-          Stock SGLang and OrbitKV loaded the same complete 13.761 GB MXFP4
-          checkpoint with FA3 attention. Under the same 1.979 GiB KV budget,
-          interval 32 increased Full capacity from 47,616 to 59,904 tokens. A
-          balanced four-way ablation showed Stock32 reproduces that benefit:
-          Stock32/Stock128 was 0.7828x, Policy32/Stock32 was 0.9969x, and
-          Owner32/Policy32 was 1.0218x. The full OrbitKV owner path remained
-          20.30% below Stock128 with identical output-token digests. At fixed
-          Full capacity, OrbitKV allocated 288 MiB less KV with a 0.9992x
-          median ratio. The contribution is automatic state-plan synthesis and
-          proof-carrying ownership, not a proprietary interval or faster
-          attention kernel.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/h20-gpt-oss-20b-real-validation-20260817.md`}>
-          Real-checkpoint validation
-        </a>
-      </div>
-
-      <div class="doc-note">
-        <strong>Physical policy compiler.</strong>
-        <p>
-          OrbitKV evaluated intervals 16, 32, 64, and 128 against the recorded
-          KV budget, eight-request admission target, and four-call reclamation
-          budget. It rejected 16 for excess reclaim calls, rejected 128 for a
-          second admission wave, and selected 32. Four fresh SGLang processes
-          matched every predicted Full and SWA pool capacity exactly. A real
-          Owner run consumed the complete artifact and passed its cache, page,
-          execution-mode, and pool-capacity contract.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/results/h20-gpt-oss-20b-real-20260817/candidate-validation.json`}>
-          Candidate validation
-        </a>
-      </div>
-
-      <div class="doc-note">
-        <strong>Declarative Retention IR.</strong>
-        <p>
-          The relation <code>query_position - key_position &lt; 1024</code>
-          inferred a proven delta upper bound of 1023, a 1,024-token lifetime,
-          and a 65-cell periodic layout at page size 16. Legacy Full/SWA JSON
-          and the Retention IR emitted byte-identical artifacts, and the
-          declarative plan completed a real H20 SGLang owner smoke.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/results/retention-ir-20260817/analysis.json`}>
-          Retention analysis
-        </a>
-      </div>
-
-      <div class="doc-note">
-        <strong>Lifetime normalization: Sink + Sliding.</strong>
-        <p>
-          One relation, <code>key &lt; 4 OR query - key &lt; 8</code>,
-          compiled into a one-cell pinned sink and a three-cell periodic local
-          region. Host exhaustive tests compare generated continuation sets
-          with the source relation across page sizes, windows, and boundaries,
-          while checking that live local blocks never collide. This is compiler
-          and reference-runtime evidence, not an H20 or SGLang speedup result.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/results/sink-sliding-20260817/summary.json`}>
-          Sink + Sliding proof summary
-        </a>
-      </div>
-
-      <div class="doc-note">
-        <strong>Address synthesis: Chunked Local.</strong>
-        <p>
-          The relation <code>floor(q / 16) == floor(k / 16)</code>
-          compiled into a four-cell resettable arena at page size four. Every
-          block in an epoch receives the same chunk-end retirement boundary.
-          Simulator and Manager tests hold old epoch cells until reader
-          completion and backend commit. This is host-only compiler/runtime
-          evidence, not an SGLang performance result.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/results/chunked-local-20260817/summary.json`}>
-          Chunked Local proof summary
-        </a>
-      </div>
-
-      <h2>Evidence ledger</h2>
+      <h2>Evidence</h2>
       <table class="evidence-table-native">
         <thead>
           <tr><th>Result</th><th>Value</th><th>Contract</th><th>Boundary</th></tr>
@@ -124,37 +44,7 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
         </tbody>
       </table>
 
-      <div class="doc-note">
-        <strong>Owning control plane.</strong>
-        <p>
-          The in-process FFI reduced release-build <code>plan + commit</code>
-          median latency from 31.03 µs to 7.29 µs. Six alternating-order H20
-          pairs produced a median FFI/sidecar ratio of 1.0030x with identical
-          capacity and output digest. The 4.26x transport result is not a
-          serving speedup claim.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/results/owner-ffi-20260817/summary.json`}>
-          Owner FFI summary
-        </a>
-      </div>
-
-      <div class="doc-note">
-        <strong>CUDA VMM physical primitive.</strong>
-        <p>
-          Sixty-four fresh physical backings were mapped at one stable virtual
-          address. Every pattern passed, and GPU memory returned to the pre-test
-          value. The pinned SGLang revision already has monotonic post-capture
-          VMM backing; OrbitKV adds generation-aware reclaim/remap receipts.
-          A separate closed-loop test passed 64 CUDA Events, 64 data checks,
-          63 stale-generation rejections, and 65 manager receipt commits. This
-          is not yet SGLang KV tensor storage.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/results/h20-cuda-vmm-20260817/smoke.json`}>
-          VMM smoke record
-        </a>
-      </div>
-
-      <h2>Current exclusions</h2>
+      <h2>Exclusions</h2>
       <ul>
         <li>No released-checkpoint model-quality improvement claim.</li>
         <li>No radix/prefix-cache, speculative, overlap, or CUDA Graph qualification.</li>

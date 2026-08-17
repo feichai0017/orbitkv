@@ -1,0 +1,81 @@
+{
+  "schema": "orbitkv.retention-ir.v1",
+  "page_tokens": 16,
+  "states": [
+    {
+      "name": "heads_w512",
+      "layers": [0],
+      "kv_head_range": {
+        "start": 0,
+        "end_exclusive": 8
+      },
+      "bytes_per_token_per_layer": 4096,
+      "may_read": {
+        "op": "less_than",
+        "lhs": {
+          "op": "sub",
+          "lhs": {
+            "op": "query_position"
+          },
+          "rhs": {
+            "op": "key_position"
+          }
+        },
+        "rhs": {
+          "op": "constant",
+          "value": 512
+        }
+      }
+    },
+    {
+      "name": "heads_w2048",
+      "layers": [0],
+      "kv_head_range": {
+        "start": 8,
+        "end_exclusive": 16
+      },
+      "bytes_per_token_per_layer": 4096,
+      "may_read": {
+        "op": "less_than",
+        "lhs": {
+          "op": "sub",
+          "lhs": {
+            "op": "query_position"
+          },
+          "rhs": {
+            "op": "key_position"
+          }
+        },
+        "rhs": {
+          "op": "constant",
+          "value": 2048
+        }
+      }
+    },
+    {
+      "name": "heads_w8192",
+      "layers": [0],
+      "kv_head_range": {
+        "start": 16,
+        "end_exclusive": 32
+      },
+      "bytes_per_token_per_layer": 8192,
+      "may_read": {
+        "op": "less_than",
+        "lhs": {
+          "op": "sub",
+          "lhs": {
+            "op": "query_position"
+          },
+          "rhs": {
+            "op": "key_position"
+          }
+        },
+        "rhs": {
+          "op": "constant",
+          "value": 8192
+        }
+      }
+    }
+  ]
+}

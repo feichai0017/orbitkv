@@ -1,0 +1,67 @@
+{
+  "schema": "orbitkv.layout-program.v1",
+  "plan_fingerprint": "sha256:f1ba6409a3af9e1c4ef294772b3105d6dc28898871677ce48ef1791680f6af77",
+  "page_tokens": 16,
+  "classes": [
+    {
+      "name": "heads_w512",
+      "layers": [
+        0
+      ],
+      "kv_head_range": {
+        "start": 0,
+        "end_exclusive": 8
+      },
+      "bytes_per_token_per_layer": 4096,
+      "address": {
+        "kind": "periodic",
+        "period_blocks": 33
+      },
+      "retirement": {
+        "kind": "block_end_plus",
+        "offset_tokens": 511
+      },
+      "minimum_slots_per_request": 33
+    },
+    {
+      "name": "heads_w2048",
+      "layers": [
+        0
+      ],
+      "kv_head_range": {
+        "start": 8,
+        "end_exclusive": 16
+      },
+      "bytes_per_token_per_layer": 4096,
+      "address": {
+        "kind": "periodic",
+        "period_blocks": 129
+      },
+      "retirement": {
+        "kind": "block_end_plus",
+        "offset_tokens": 2047
+      },
+      "minimum_slots_per_request": 129
+    },
+    {
+      "name": "heads_w8192",
+      "layers": [
+        0
+      ],
+      "kv_head_range": {
+        "start": 16,
+        "end_exclusive": 32
+      },
+      "bytes_per_token_per_layer": 8192,
+      "address": {
+        "kind": "periodic",
+        "period_blocks": 513
+      },
+      "retirement": {
+        "kind": "block_end_plus",
+        "offset_tokens": 8191
+      },
+      "minimum_slots_per_request": 513
+    }
+  ]
+}

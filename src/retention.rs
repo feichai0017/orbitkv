@@ -37,9 +37,18 @@ pub enum Predicate {
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct KvHeadRange {
+    pub start: u32,
+    pub end_exclusive: u32,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct RetentionStateDecl {
     pub name: String,
     pub layers: Vec<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub kv_head_range: Option<KvHeadRange>,
     pub bytes_per_token_per_layer: u64,
     pub may_read: Predicate,
 }
@@ -580,6 +589,7 @@ mod tests {
         RetentionStateDecl {
             name: "state".into(),
             layers: vec![0],
+            kv_head_range: None,
             bytes_per_token_per_layer: 128,
             may_read: predicate,
         }

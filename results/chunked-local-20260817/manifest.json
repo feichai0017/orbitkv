@@ -13,6 +13,7 @@
     "results/chunked-local-20260817/summary.json": "d87fe66062cd2268b4cc216b4773b3f2377818f8c7d67e6101fbf9fc9fde98cb"
   },
   "schema": "orbitkv.chunked-local-manifest.v1",
+  "source_commit": "789b7f6cf2ed78263dc13ddc181615e743a2e675",
   "sources": {
     "examples/chunked_local_retention.json": "566c1c2038aaf25733dd2805758b071283748908e3fd7d5439cff12c778a6b98",
     "src/lib.rs": "9bd8d5746e59b1053bc859b13f688fff7537b0a41046354fc1e0ab8cdef07ff2",

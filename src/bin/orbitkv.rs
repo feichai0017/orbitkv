@@ -122,6 +122,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 layout: plan.layout_program()?,
             })?;
         }
+        Some("analyze-lifetime-normalization") => {
+            analyze_lifetime_normalization_command(&mut args)?;
+        }
         Some("analyze-sglang") => {
             let plan_path = required(&mut args, "plan path")?;
             let trace_path = required(&mut args, "trace path")?;
@@ -168,12 +171,20 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile|analyze-retention|emit-layout|emit-sglang-policy|serve-sglang-owner|analyze-sglang|check-sglang> ..."
+                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile|analyze-retention|analyze-lifetime-normalization|emit-layout|emit-sglang-policy|serve-sglang-owner|analyze-sglang|check-sglang> ..."
                     .into(),
             );
         }
     }
     Ok(())
+}
+
+fn analyze_lifetime_normalization_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan_path = required(args, "plan path")?;
+    require_end(args)?;
+    write_json(&load_plan(plan_path)?.lifetime_normalization_report()?)
 }
 
 fn compile_hf_physical_plan_command(

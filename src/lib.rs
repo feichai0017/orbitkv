@@ -25,13 +25,14 @@ pub use optimizer::{
 pub use plan::{
     AddressProgram, BackendDecision, BackendRequirements, CellVersion, ClassCapacity,
     ClassLayoutProgram, CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, KvPlanSource,
-    LayoutProgram, LogicalCellId, PhysicalBackend, PlanError, RetentionKind, RetirementProgram,
-    SglangBoundedClassPolicy, SglangPolicy, TemporalAddress, choose_physical_backend, compile_plan,
+    LayoutProgram, LifetimeNormalizationReport, LifetimeNormalizedClass, LogicalCellId,
+    PhysicalBackend, PlanError, RetentionKind, RetirementProgram, SglangBoundedClassPolicy,
+    SglangPolicy, TemporalAddress, choose_physical_backend, compile_plan,
     compile_retention_program,
 };
 pub use retention::{
-    AtomicRetention, InferredRegion, InferredRetention, IntExpr, Predicate, RetentionAnalysis,
-    RetentionError, RetentionProgramInput, RetentionStateDecl, analyze_state,
+    AtomicRetention, InferredRegion, InferredRetention, IntExpr, KvHeadRange, Predicate,
+    RetentionAnalysis, RetentionError, RetentionProgramInput, RetentionStateDecl, analyze_state,
 };
 pub use runtime::{
     KvRuntimeSimulator, LogicalBlock, ResidentTemporalBlock, RuntimeError, Submission,

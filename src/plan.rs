@@ -5,8 +5,8 @@ use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use crate::retention::{
-    AtomicRetention, InferredRegion, InferredRetention, IntExpr, Predicate, RetentionAnalysis,
-    RetentionError, RetentionProgramInput, RetentionStateDecl, analyze_state,
+    AtomicRetention, InferredRegion, InferredRetention, IntExpr, KvHeadRange, Predicate,
+    RetentionAnalysis, RetentionError, RetentionProgramInput, RetentionStateDecl, analyze_state,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -47,6 +47,8 @@ pub struct CompiledKvClass {
     pub spec: KvClassSpec,
     pub slot_count: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub kv_head_range: Option<KvHeadRange>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub chunk_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_state: Option<String>,
@@ -60,6 +62,38 @@ pub struct ClassCapacity {
     pub semantic_live_tokens: u64,
     pub physical_token_slots: u64,
     pub resident_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct LifetimeNormalizedClass {
+    pub name: String,
+    pub layers: Vec<u32>,
+    pub kv_head_range: KvHeadRange,
+    pub head_count: u64,
+    pub slot_count: u64,
+    pub bytes_per_head_per_token: u64,
+    pub normalized_bytes_per_request: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct LifetimeNormalizationReport {
+    pub schema: &'static str,
+    pub plan_fingerprint: String,
+    pub page_tokens: u64,
+    pub normalized_classes: Vec<LifetimeNormalizedClass>,
+    pub normalized_bytes_per_request: u64,
+    pub max_window_baseline_bytes_per_request: u64,
+    pub savings_bytes_per_request: u64,
+    pub savings_percent_milli: u64,
+    pub retention_amplification_milli: u64,
+}
+
+type HeadStripe = (KvHeadRange, u64, u64);
+
+struct NormalizedHeadGeometry {
+    classes: Vec<LifetimeNormalizedClass>,
+    per_layer: BTreeMap<u32, Vec<HeadStripe>>,
+    bytes_per_request: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -121,6 +155,8 @@ pub enum RetirementProgram {
 pub struct ClassLayoutProgram {
     pub name: String,
     pub layers: Vec<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kv_head_range: Option<KvHeadRange>,
     pub bytes_per_token_per_layer: u64,
     pub address: AddressProgram,
     pub retirement: RetirementProgram,
@@ -212,6 +248,26 @@ pub enum PlanError {
         layer: u32,
         first: String,
         second: String,
+    },
+    #[error("KV head ranges overlap in layer {layer}: {first:?} conflicts with {second:?}")]
+    KvHeadOverlap {
+        layer: u32,
+        first: String,
+        second: String,
+    },
+    #[error("{state}: KV head range must be non-empty")]
+    EmptyKvHeadRange { state: String },
+    #[error("lifetime normalization requires KV head ranges on every class")]
+    MissingKvHeadGeometry,
+    #[error("lifetime normalization requires a uniform byte width per KV head in layer {layer}")]
+    InconsistentKvHeadWidth { layer: u32 },
+    #[error(
+        "lifetime normalization requires contiguous KV head coverage in layer {layer}, expected head {expected}, found {actual}"
+    )]
+    KvHeadCoverageGap {
+        layer: u32,
+        expected: u32,
+        actual: u32,
     },
     #[error("boundary must be non-negative")]
     InvalidBoundary,
@@ -444,6 +500,11 @@ impl CompiledKvPlan {
                 hash.update(chunk_tokens.to_le_bytes());
             }
             hash.update(class.slot_count.unwrap_or(0).to_le_bytes());
+            if let Some(range) = &class.kv_head_range {
+                hash.update(1_u64.to_le_bytes());
+                hash.update(u64::from(range.start).to_le_bytes());
+                hash.update(u64::from(range.end_exclusive).to_le_bytes());
+            }
             if !class.block_domain.is_all() {
                 hash.update(1_u64.to_le_bytes());
                 hash.update(class.block_domain.start_block.to_le_bytes());
@@ -524,6 +585,7 @@ impl CompiledKvPlan {
                 Ok(ClassLayoutProgram {
                     name: class.spec.name.clone(),
                     layers: class.spec.layers.clone(),
+                    kv_head_range: class.kv_head_range.clone(),
                     bytes_per_token_per_layer: class.spec.bytes_per_token_per_layer,
                     address,
                     retirement,
@@ -643,6 +705,151 @@ impl CompiledKvPlan {
             .collect())
     }
 
+    /// Compares lifetime-normalized head stripes against a baseline that uses
+    /// each layer's maximum slot count for every KV head.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless every class has a non-overlapping, contiguous
+    /// KV-head range, every class is bounded, and byte width per head is
+    /// uniform within each layer.
+    pub fn lifetime_normalization_report(&self) -> Result<LifetimeNormalizationReport, PlanError> {
+        let geometry = self.normalized_head_stripes()?;
+        let max_window_baseline_bytes_per_request =
+            self.max_window_baseline_bytes(geometry.per_layer)?;
+        let savings_bytes_per_request =
+            max_window_baseline_bytes_per_request - geometry.bytes_per_request;
+        let savings_percent_milli = savings_bytes_per_request.checked_mul(100_000).ok_or(
+            PlanError::ArithmeticOverflow {
+                calculation: "lifetime-normalization savings percent",
+            },
+        )? / max_window_baseline_bytes_per_request;
+        let retention_amplification_milli = max_window_baseline_bytes_per_request
+            .checked_mul(1000)
+            .ok_or(PlanError::ArithmeticOverflow {
+                calculation: "retention amplification",
+            })?
+            / geometry.bytes_per_request;
+        Ok(LifetimeNormalizationReport {
+            schema: "orbitkv.lifetime-normalization.v1",
+            plan_fingerprint: self.fingerprint(),
+            page_tokens: self.page_tokens,
+            normalized_classes: geometry.classes,
+            normalized_bytes_per_request: geometry.bytes_per_request,
+            max_window_baseline_bytes_per_request,
+            savings_bytes_per_request,
+            savings_percent_milli,
+            retention_amplification_milli,
+        })
+    }
+
+    fn normalized_head_stripes(&self) -> Result<NormalizedHeadGeometry, PlanError> {
+        let mut normalized_classes = Vec::with_capacity(self.classes.len());
+        let mut normalized_bytes_per_request = 0_u64;
+        let mut per_layer = BTreeMap::<u32, Vec<HeadStripe>>::new();
+        for class in &self.classes {
+            let range = class
+                .kv_head_range
+                .clone()
+                .ok_or(PlanError::MissingKvHeadGeometry)?;
+            let head_count = u64::from(range.end_exclusive - range.start);
+            let slot_count = class
+                .slot_count
+                .ok_or_else(|| PlanError::InvalidCompiledClass {
+                    class: class.spec.name.clone(),
+                })?;
+            if !class
+                .spec
+                .bytes_per_token_per_layer
+                .is_multiple_of(head_count)
+            {
+                return Err(PlanError::InconsistentKvHeadWidth {
+                    layer: class.spec.layers[0],
+                });
+            }
+            let bytes_per_head_per_token = class.spec.bytes_per_token_per_layer / head_count;
+            let class_bytes = slot_count
+                .checked_mul(self.page_tokens)
+                .and_then(|value| value.checked_mul(class.spec.bytes_per_token_per_layer))
+                .and_then(|value| value.checked_mul(u64::try_from(class.spec.layers.len()).ok()?))
+                .ok_or(PlanError::ArithmeticOverflow {
+                    calculation: "lifetime-normalized class bytes",
+                })?;
+            normalized_bytes_per_request = normalized_bytes_per_request
+                .checked_add(class_bytes)
+                .ok_or(PlanError::ArithmeticOverflow {
+                    calculation: "lifetime-normalized total bytes",
+                })?;
+            normalized_classes.push(LifetimeNormalizedClass {
+                name: class.spec.name.clone(),
+                layers: class.spec.layers.clone(),
+                kv_head_range: range.clone(),
+                head_count,
+                slot_count,
+                bytes_per_head_per_token,
+                normalized_bytes_per_request: class_bytes,
+            });
+            for &layer in &class.spec.layers {
+                per_layer.entry(layer).or_default().push((
+                    range.clone(),
+                    slot_count,
+                    bytes_per_head_per_token,
+                ));
+            }
+        }
+        Ok(NormalizedHeadGeometry {
+            classes: normalized_classes,
+            per_layer,
+            bytes_per_request: normalized_bytes_per_request,
+        })
+    }
+
+    fn max_window_baseline_bytes(
+        &self,
+        per_layer: BTreeMap<u32, Vec<HeadStripe>>,
+    ) -> Result<u64, PlanError> {
+        per_layer
+            .into_iter()
+            .try_fold(0_u64, |total, (layer, mut stripes)| {
+                stripes.sort_by_key(|(range, _, _)| range.start);
+                let mut expected_head = 0_u32;
+                let mut total_heads = 0_u64;
+                let mut maximum_slots = 0_u64;
+                let expected_width = stripes[0].2;
+                for (range, slots, width) in stripes {
+                    if range.start != expected_head {
+                        return Err(PlanError::KvHeadCoverageGap {
+                            layer,
+                            expected: expected_head,
+                            actual: range.start,
+                        });
+                    }
+                    if width != expected_width {
+                        return Err(PlanError::InconsistentKvHeadWidth { layer });
+                    }
+                    total_heads = total_heads
+                        .checked_add(u64::from(range.end_exclusive - range.start))
+                        .ok_or(PlanError::ArithmeticOverflow {
+                            calculation: "KV head count",
+                        })?;
+                    maximum_slots = maximum_slots.max(slots);
+                    expected_head = range.end_exclusive;
+                }
+                let layer_bytes = maximum_slots
+                    .checked_mul(self.page_tokens)
+                    .and_then(|value| value.checked_mul(total_heads))
+                    .and_then(|value| value.checked_mul(expected_width))
+                    .ok_or(PlanError::ArithmeticOverflow {
+                        calculation: "max-window baseline bytes",
+                    })?;
+                total
+                    .checked_add(layer_bytes)
+                    .ok_or(PlanError::ArithmeticOverflow {
+                        calculation: "total max-window baseline bytes",
+                    })
+            })
+    }
+
     /// Lowers bounded block lifetimes to `SGLang`'s page-granular SWA policy.
     ///
     /// # Errors
@@ -676,6 +883,15 @@ impl CompiledKvPlan {
             .classes
             .iter()
             .find(|class| class.spec.retention == RetentionKind::Chunked)
+        {
+            return Err(PlanError::UnsupportedSglangRetention(
+                class.spec.name.clone(),
+            ));
+        }
+        if let Some(class) = self
+            .classes
+            .iter()
+            .find(|class| class.kv_head_range.is_some())
         {
             return Err(PlanError::UnsupportedSglangRetention(
                 class.spec.name.clone(),
@@ -934,6 +1150,7 @@ impl KvClassSpec {
         Ok(RetentionStateDecl {
             name: self.name.clone(),
             layers: self.layers.clone(),
+            kv_head_range: None,
             bytes_per_token_per_layer: self.bytes_per_token_per_layer,
             may_read,
         })
@@ -1005,6 +1222,7 @@ pub fn compile_retention_program(
     }
     let mut classes = Vec::new();
     for state in program.states {
+        validate_head_range(&state)?;
         let RetentionAnalysis { inferred, .. } = analyze_state(&state)?;
         match inferred {
             InferredRetention::Unbounded => classes.push(InferredClassInput::atomic(
@@ -1058,6 +1276,7 @@ pub fn compile_plan(input: KvPlanInput) -> Result<CompiledKvPlan, PlanError> {
 
 struct InferredClassInput {
     spec: KvClassSpec,
+    kv_head_range: Option<KvHeadRange>,
     chunk_tokens: Option<u64>,
     source_state: Option<String>,
     block_domain: BlockDomain,
@@ -1080,6 +1299,7 @@ impl InferredClassInput {
                 bytes_per_token_per_layer: state.bytes_per_token_per_layer,
                 window_tokens,
             },
+            kv_head_range: state.kv_head_range.clone(),
             chunk_tokens: None,
             source_state,
             block_domain,
@@ -1095,6 +1315,7 @@ impl InferredClassInput {
                 bytes_per_token_per_layer: state.bytes_per_token_per_layer,
                 window_tokens: None,
             },
+            kv_head_range: state.kv_head_range.clone(),
             chunk_tokens: Some(chunk_tokens),
             source_state: None,
             block_domain: BlockDomain::all(),
@@ -1176,7 +1397,7 @@ fn compile_inferred_classes(
         return Err(PlanError::EmptyPlan);
     }
     let mut names = BTreeSet::new();
-    let mut claimed_layers = BTreeMap::<u32, String>::new();
+    let mut claimed_layers = BTreeMap::<u32, Vec<(String, Option<KvHeadRange>)>>::new();
     let mut compiled = Vec::with_capacity(classes.len());
     for class in classes {
         validate_class(&class.spec)?;
@@ -1188,16 +1409,25 @@ fn compile_inferred_classes(
             .clone()
             .unwrap_or_else(|| class.spec.name.clone());
         for &layer in &class.spec.layers {
-            if let Some(first) = claimed_layers.get(&layer)
-                && first != &source
-            {
+            let claims = claimed_layers.entry(layer).or_default();
+            if let Some((first, _)) = claims.iter().find(|(first, range)| {
+                first != &source
+                    && head_ranges_overlap(range.as_ref(), class.kv_head_range.as_ref())
+            }) {
+                if class.kv_head_range.is_some() {
+                    return Err(PlanError::KvHeadOverlap {
+                        layer,
+                        first: first.clone(),
+                        second: source.clone(),
+                    });
+                }
                 return Err(PlanError::LayerOverlap {
                     layer,
                     first: first.clone(),
                     second: source.clone(),
                 });
             }
-            claimed_layers.insert(layer, source.clone());
+            claims.push((source.clone(), class.kv_head_range.clone()));
         }
         let slot_count =
             match class.spec.retention {
@@ -1238,6 +1468,7 @@ fn compile_inferred_classes(
         compiled.push(CompiledKvClass {
             spec: class.spec,
             slot_count,
+            kv_head_range: class.kv_head_range,
             chunk_tokens: class.chunk_tokens,
             source_state: class.source_state,
             block_domain: class.block_domain,
@@ -1283,6 +1514,26 @@ fn validate_class(class: &KvClassSpec) -> Result<(), PlanError> {
             })
         }
         _ => Ok(()),
+    }
+}
+
+fn validate_head_range(state: &RetentionStateDecl) -> Result<(), PlanError> {
+    if state
+        .kv_head_range
+        .as_ref()
+        .is_some_and(|range| range.start >= range.end_exclusive)
+    {
+        return Err(PlanError::EmptyKvHeadRange {
+            state: state.name.clone(),
+        });
+    }
+    Ok(())
+}
+
+fn head_ranges_overlap(lhs: Option<&KvHeadRange>, rhs: Option<&KvHeadRange>) -> bool {
+    match (lhs, rhs) {
+        (Some(lhs), Some(rhs)) => lhs.start < rhs.end_exclusive && rhs.start < lhs.end_exclusive,
+        _ => true,
     }
 }
 
@@ -1519,6 +1770,7 @@ mod tests {
             states: vec![RetentionStateDecl {
                 name: "attention".into(),
                 layers: vec![0],
+                kv_head_range: None,
                 bytes_per_token_per_layer: 128,
                 may_read: Predicate::Or {
                     terms: vec![
@@ -1599,6 +1851,7 @@ mod tests {
             states: vec![RetentionStateDecl {
                 name: "attention".into(),
                 layers: vec![0],
+                kv_head_range: None,
                 bytes_per_token_per_layer: 128,
                 may_read: Predicate::Or {
                     terms: vec![
@@ -1634,6 +1887,7 @@ mod tests {
             states: vec![RetentionStateDecl {
                 name: "chunked".into(),
                 layers: vec![0],
+                kv_head_range: None,
                 bytes_per_token_per_layer: 128,
                 may_read: Predicate::Equal {
                     lhs: IntExpr::FloorDiv {
@@ -1693,6 +1947,7 @@ mod tests {
             states: vec![RetentionStateDecl {
                 name: "chunked".into(),
                 layers: vec![0],
+                kv_head_range: None,
                 bytes_per_token_per_layer: 128,
                 may_read: Predicate::Equal {
                     lhs: IntExpr::FloorDiv {
@@ -1716,6 +1971,84 @@ mod tests {
     }
 
     #[test]
+    fn lifetime_normalization_matches_multi_scale_head_theory() {
+        let state =
+            |name: &str, start: u32, end_exclusive: u32, window: i64| -> RetentionStateDecl {
+                RetentionStateDecl {
+                    name: name.into(),
+                    layers: vec![0],
+                    kv_head_range: Some(KvHeadRange {
+                        start,
+                        end_exclusive,
+                    }),
+                    bytes_per_token_per_layer: u64::from(end_exclusive - start) * 512,
+                    may_read: Predicate::LessThan {
+                        lhs: IntExpr::Sub {
+                            lhs: Box::new(IntExpr::QueryPosition),
+                            rhs: Box::new(IntExpr::KeyPosition),
+                        },
+                        rhs: IntExpr::Constant { value: window },
+                    },
+                }
+            };
+        let plan = compile_retention_program(RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 16,
+            states: vec![
+                state("w512", 0, 8, 512),
+                state("w2048", 8, 16, 2048),
+                state("w8192", 16, 32, 8192),
+            ],
+        })
+        .unwrap();
+        assert_eq!(plan.classes[0].slot_count, Some(33));
+        assert_eq!(plan.classes[1].slot_count, Some(129));
+        assert_eq!(plan.classes[2].slot_count, Some(513));
+        let report = plan.lifetime_normalization_report().unwrap();
+        let unit_bytes = 16 * 512;
+        assert_eq!(report.normalized_bytes_per_request, 9504 * unit_bytes);
+        assert_eq!(
+            report.max_window_baseline_bytes_per_request,
+            16416 * unit_bytes
+        );
+        assert_eq!(report.savings_bytes_per_request, 6912 * unit_bytes);
+        assert_eq!(report.savings_percent_milli, 42_105);
+        assert_eq!(report.retention_amplification_milli, 1727);
+    }
+
+    #[test]
+    fn overlapping_head_ranges_fail_closed() {
+        let state = |name: &str, start: u32, end_exclusive: u32| RetentionStateDecl {
+            name: name.into(),
+            layers: vec![0],
+            kv_head_range: Some(KvHeadRange {
+                start,
+                end_exclusive,
+            }),
+            bytes_per_token_per_layer: u64::from(end_exclusive - start) * 512,
+            may_read: Predicate::LessThan {
+                lhs: IntExpr::Sub {
+                    lhs: Box::new(IntExpr::QueryPosition),
+                    rhs: Box::new(IntExpr::KeyPosition),
+                },
+                rhs: IntExpr::Constant { value: 512 },
+            },
+        };
+        assert!(matches!(
+            compile_retention_program(RetentionProgramInput {
+                schema: "orbitkv.retention-ir.v1".into(),
+                page_tokens: 16,
+                states: vec![state("a", 0, 8), state("b", 4, 12)],
+            }),
+            Err(PlanError::KvHeadOverlap {
+                layer: 0,
+                first,
+                second
+            }) if first == "a" && second == "b"
+        ));
+    }
+
+    #[test]
     fn partitioned_retention_rejects_zero_page_tokens_before_lowering() {
         let program = RetentionProgramInput {
             schema: "orbitkv.retention-ir.v1".into(),
@@ -1723,6 +2056,7 @@ mod tests {
             states: vec![RetentionStateDecl {
                 name: "attention".into(),
                 layers: vec![0],
+                kv_head_range: None,
                 bytes_per_token_per_layer: 128,
                 may_read: Predicate::True,
             }],
@@ -1741,6 +2075,7 @@ mod tests {
                 let declaration = RetentionStateDecl {
                     name: "attention".into(),
                     layers: vec![0],
+                    kv_head_range: None,
                     bytes_per_token_per_layer: 128,
                     may_read: Predicate::Or {
                         terms: vec![

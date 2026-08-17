@@ -1,0 +1,54 @@
+{
+  "schema": "orbitkv.lifetime-normalization.v1",
+  "plan_fingerprint": "sha256:f1ba6409a3af9e1c4ef294772b3105d6dc28898871677ce48ef1791680f6af77",
+  "page_tokens": 16,
+  "normalized_classes": [
+    {
+      "name": "heads_w512",
+      "layers": [
+        0
+      ],
+      "kv_head_range": {
+        "start": 0,
+        "end_exclusive": 8
+      },
+      "head_count": 8,
+      "slot_count": 33,
+      "bytes_per_head_per_token": 512,
+      "normalized_bytes_per_request": 2162688
+    },
+    {
+      "name": "heads_w2048",
+      "layers": [
+        0
+      ],
+      "kv_head_range": {
+        "start": 8,
+        "end_exclusive": 16
+      },
+      "head_count": 8,
+      "slot_count": 129,
+      "bytes_per_head_per_token": 512,
+      "normalized_bytes_per_request": 8454144
+    },
+    {
+      "name": "heads_w8192",
+      "layers": [
+        0
+      ],
+      "kv_head_range": {
+        "start": 16,
+        "end_exclusive": 32
+      },
+      "head_count": 16,
+      "slot_count": 513,
+      "bytes_per_head_per_token": 512,
+      "normalized_bytes_per_request": 67239936
+    }
+  ],
+  "normalized_bytes_per_request": 77856768,
+  "max_window_baseline_bytes_per_request": 134479872,
+  "savings_bytes_per_request": 56623104,
+  "savings_percent_milli": 42105,
+  "retention_amplification_milli": 1727
+}

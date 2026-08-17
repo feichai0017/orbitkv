@@ -120,6 +120,7 @@ pub fn compile_hf_config(
         states.push(RetentionStateDecl {
             name: "full".into(),
             layers: full_layers,
+            kv_head_range: None,
             bytes_per_token_per_layer,
             may_read: Predicate::True,
         });
@@ -133,6 +134,7 @@ pub fn compile_hf_config(
         states.push(RetentionStateDecl {
             name: "swa".into(),
             layers: sliding_layers,
+            kv_head_range: None,
             bytes_per_token_per_layer,
             may_read: Predicate::LessThan {
                 lhs: IntExpr::Sub {

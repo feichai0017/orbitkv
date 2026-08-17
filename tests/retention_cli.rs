@@ -197,3 +197,23 @@ fn chunked_local_relation_emits_resettable_arena() {
             .contains("SGLang lowering does not support retention class")
     );
 }
+
+#[test]
+fn multi_scale_heads_report_lifetime_normalization_savings() {
+    let source = root().join("examples/multi_scale_head_windows.json");
+    let report = run(&["analyze-lifetime-normalization", source.to_str().unwrap()]);
+    assert_eq!(report["schema"], "orbitkv.lifetime-normalization.v1");
+    assert_eq!(report["normalized_classes"].as_array().unwrap().len(), 3);
+    assert_eq!(report["savings_percent_milli"], 42_105);
+    assert_eq!(report["retention_amplification_milli"], 1727);
+    assert_eq!(
+        report["normalized_classes"][0]["kv_head_range"],
+        serde_json::json!({"start": 0, "end_exclusive": 8})
+    );
+    let output = output(&["emit-sglang-policy", source.to_str().unwrap()]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("SGLang lowering does not support retention class")
+    );
+}

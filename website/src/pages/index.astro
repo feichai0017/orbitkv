@@ -1,10 +1,8 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
 import {
-  architectureLanes,
   compilerStages,
   evidenceRows,
-  implemented,
   metrics,
   repositoryUrl,
   roadmap,
@@ -80,54 +78,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       </p>
     </header>
     <ol class="execution-chain">
-      {compilerStages.map((stage) => (
+      {compilerStages.slice(0, 4).map((stage) => (
         <li>
           <span class="chain-key">{stage.key}</span>
           <div><h3>{stage.name}</h3><p>{stage.detail}</p></div>
         </li>
       ))}
     </ol>
-  </section>
-
-  <section class="section" id="implementation">
-    <header class="section-heading">
-      <div><p class="eyebrow">Current source</p><h2>Implemented, qualified, and open stay separate.</h2></div>
-      <p>
-        A row describes only its declared boundary. A VMM primitive does not
-        imply VMM-backed SGLang tensors, and dummy fixtures do not establish
-        model quality.
-      </p>
-    </header>
-    <div class="implementation-table">
-      {implemented.map((item, index) => (
-        <article>
-          <span>{String(index + 1).padStart(2, "0")}</span>
-          <h3>{item.name}</h3>
-          <p>{item.boundary}</p>
-          <code>{item.state}</code>
-        </article>
-      ))}
-    </div>
-  </section>
-
-  <section class="section provider-section" id="architecture">
-    <header class="section-heading">
-      <div><p class="eyebrow">System architecture</p><h2>Safe compiler.<br />Explicit GPU boundary.</h2></div>
-      <p>
-        Core Rust forbids unsafe code. The versioned owner ABI and NVIDIA Driver
-        API operations are isolated in boundary crates with explicit tests.
-      </p>
-    </header>
-    <div class="architecture-grid">
-      {architectureLanes.map((lane) => (
-        <article>
-          <span>{lane.id}</span>
-          <h3>{lane.name}</h3>
-          <p>{lane.detail}</p>
-          <ul>{lane.examples.map((example) => <li>{example}</li>)}</ul>
-        </article>
-      ))}
-    </div>
   </section>
 
   <section class="section performance-section" id="evidence">
@@ -151,7 +108,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <span role="columnheader">Contract</span>
         <span role="columnheader">Boundary</span>
       </div>
-      {evidenceRows.map((item) => (
+      {evidenceRows.slice(0, 4).map((item) => (
         <div class="evidence-row" role="row">
           <strong role="cell">{item.result}</strong>
           <code role="cell">{item.value}</code>
@@ -172,7 +129,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       </p>
     </header>
     <div class="milestone-list">
-      {roadmap.map((item) => (
+      {roadmap.slice(-2).map((item) => (
         <article><span>{item.state}</span><div><h3>{item.name}</h3><p>{item.detail}</p></div></article>
       ))}
     </div>

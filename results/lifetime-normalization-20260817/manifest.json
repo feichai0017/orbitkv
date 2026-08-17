@@ -1,0 +1,35 @@
+{
+  "claim_boundary": [
+    "disjoint KV-head ranges in one layer",
+    "fixed-window retention with equal-size pages",
+    "exact geometry and reference-manager validation",
+    "max-window allocation used as the physical baseline",
+    "SGLang lowering rejects head-aware plans",
+    "no released-model or GPU performance claim"
+  ],
+  "date": "2026-08-17",
+  "records": {
+    "results/lifetime-normalization-20260817/layout.json": "4a67c1d7aa3f75bc6552e2e8866956819f3b4ffedde79409db33f321325bafc4",
+    "results/lifetime-normalization-20260817/report.json": "a4bfea5f061a9bf5e29d2a28dba46520f8be3bc7da05e7009f52b9037ea481ea",
+    "results/lifetime-normalization-20260817/summary.json": "f1f2e4de402ef3257a52ed43d16e3f5359061b969bd6fcda7c9f94b70e15250e"
+  },
+  "schema": "orbitkv.lifetime-normalization-manifest.v1",
+  "sources": {
+    "examples/multi_scale_head_windows.json": "021098935ff10f911a26ab230a2939b0ab708c787bfdea01c849c2b863b1002d",
+    "src/bin/orbitkv.rs": "76f0dfa82ccb6a4f1c7ddde9465caa3b243b9941a1d7ebac59e328c8634148db",
+    "src/lib.rs": "a5fcbefd4e38fd706f6d5f0631caec588e56a8a54f20e111d6b89c2e716d1848",
+    "src/manager.rs": "30c727fc6debbebc9761a331344b4d666135f92fb5809df6326fb8172c12fd41",
+    "src/plan.rs": "e24e458476c4ce0eb9e86ce45d0128cbbec2f93d843424f702f3b43d6384539e",
+    "src/retention.rs": "b048b674e2b186d27f01e86d8942babca17c371a3d36769c6bcff8ca247b9a83",
+    "tests/retention_cli.rs": "7aa38da859c5dba1f50c4a3ae9201f6aa2cc2a08de15a70d3bd5fd865f556166"
+  },
+  "website": {
+    "README.md": "539a3b14cc9b16e719e9de6704dfc7d7eec73f23f4b245e4a51ed5ef41151c43",
+    "docs/sglang-e2e.md": "1df2755a98b6bed19f42fe7718ee2e2b73205888ef1093366935d438b18c806f",
+    "results/README.md": "3a827dbec8d21e38b5d87ef53bca7c64006c8b6ffdfc7ea24b1ab73cfe0f904f",
+    "website/src/data/site.ts": "2426b01d22b3923f337db64386fef244d4566b75fa7848384151c65f47f93a67",
+    "website/src/pages/index.astro": "70c18b73edb6f45f91c2a7068c6c39a26e62e870545d4e6fca6e610f7d20952c",
+    "website/src/pages/docs/index.astro": "90b583382d8fb1c20989fe596642d01e679f25fb01630fb3f02aa4ec8cc3d6f0",
+    "website/src/pages/evidence.astro": "e7a819f0f7d2f70113f6d21ac7220f2d29837441813f8c4af810fc483c5297a0"
+  }
+}

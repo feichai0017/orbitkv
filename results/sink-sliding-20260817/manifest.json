@@ -12,6 +12,7 @@
     "results/sink-sliding-20260817/summary.json": "7efa439a7a7f764cb6567aa8097caa3b5acbc16add7607fc4bd89e63b32b00bf"
   },
   "schema": "orbitkv.sink-sliding-manifest.v1",
+  "source_commit": "789b7f6cf2ed78263dc13ddc181615e743a2e675",
   "sources": {
     "examples/sink_sliding_retention.json": "8c9d74229b5483dd2c1de7a28c992473e8e25451ebed4c333e5ab1bf80ab26d9",
     "src/lib.rs": "9bd8d5746e59b1053bc859b13f688fff7537b0a41046354fc1e0ab8cdef07ff2",

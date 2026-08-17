@@ -1,7 +1,7 @@
 ---
 import DocsNav from "../../components/DocsNav.astro";
 import SiteLayout from "../../layouts/SiteLayout.astro";
-import { architectureLanes, compilerStages, docs, repositoryUrl } from "../../data/site";
+import { docs, repositoryUrl } from "../../data/site";
 ---
 
 <SiteLayout
@@ -21,120 +21,38 @@ import { architectureLanes, compilerStages, docs, repositoryUrl } from "../../da
   <div class="docs-layout">
     <DocsNav active="Architecture" />
     <article class="prose">
-      <h2>Core contract</h2>
+      <h2>Pipeline</h2>
       <pre><code>{`Attention / state retention semantics
+    -> Retention IR
+    -> Lifetime / head stripes
     -> LayoutProgram
-       - SHA-256 plan fingerprint
-       - address program
-       - retirement program
-       - minimum slot count
-    -> KvBlockManager
-       - request + class + ordinal identity
-       - physical slot + generation
-       - immutable KvView
-       - semantic and execution frontiers
-    -> RetirementCertificate
-       - SemanticDead
-       - ExecutionComplete
-       - backend commit required before reuse`}</code></pre>
+    -> PhysicalPlan
+    -> immutable KVView
+    -> SemanticDead ∧ ExecutionComplete
+    -> backend commit
+    -> reuse`}</code></pre>
 
-      <h2>Declarative Retention IR</h2>
-      <p>
-        The first frontend accepts an affine <code>may_read(query, key)</code>
-        AST. Legacy Full/SWA JSON is desugared into the same relation before
-        lifetime and address synthesis.
-      </p>
-      <p>
-        A Rust HF-config frontend now derives explicit Full/SWA layer classes,
-        KV bytes per token, Retention IR, and the final layout directly from a
-        checkpoint <code>config.json</code>. Unknown explicit layer types fail
-        closed; missing <code>layer_types</code> falls back to all-Full rather
-        than guessing a finite lifetime.
-      </p>
-      <pre><code>{`q - k < 1024
-    -> proven q-k upper bound = 1023
-    -> fixed window = 1024
-    -> block death = block_end + 1023
-    -> periodic cells = 65 at page size 16`}</code></pre>
-      <pre><code>{`k < S OR q - k < W
-    -> sink domain [0, S): pinned cells, never retired
-    -> local domain [S, +inf): periodic cells, finite death
-    -> no dedicated SinkSliding manager type`}</code></pre>
-      <pre><code>{`floor(q / C) == floor(k / C)
-    -> all blocks in one chunk share an epoch-end death
-    -> cell = block mod (C / P)
-    -> ResettableArena, not a sliding ring`}</code></pre>
-      <p>
-        Relations that do not prove a finite query-key distance safely lower
-        to unbounded retention and append-only storage.
-      </p>
-      <p>
-        Sink boundaries must align to reclamation pages. The generated address
-        program rejects blocks outside each region. This normalization is
-        exercised by the Rust simulator and owning manager; SGLang policy
-        lowering still fails closed for partitioned domains.
-      </p>
-      <p>
-        Chunk sizes must also align to reclamation pages. This rule applies only
-        to the explicit same-chunk relation; OrbitKV does not assume that every
-        model field named <code>attention_chunk_size</code> has this semantic.
-      </p>
+      <h2>Generated layouts</h2>
+      <table class="evidence-table-native">
+        <thead><tr><th>Semantics</th><th>Layout</th></tr></thead>
+        <tbody>
+          <tr><td>Full</td><td><code>AppendOnly</code></td></tr>
+          <tr><td>Sliding</td><td><code>Periodic</code></td></tr>
+          <tr><td>Sink + Sliding</td><td><code>Pinned + Periodic</code></td></tr>
+          <tr><td>Same Chunk</td><td><code>ResettableArena</code></td></tr>
+          <tr><td>Per-head windows</td><td>Lifetime-normalized stripes</td></tr>
+        </tbody>
+      </table>
 
-      <h2>Compiler stages</h2>
-      <ol class="lifecycle-list">
-        {compilerStages.map((stage) => (
-          <li><span>{stage.key}</span><div><strong>{stage.name}</strong><p>{stage.detail}</p></div></li>
-        ))}
-      </ol>
+      <h2>Safety</h2>
+      <ul>
+        <li>Logical identity is separate from physical slot and generation.</li>
+        <li>Address programs are the only logical addressing authority.</li>
+        <li>Reuse requires semantic death, reader completion, and backend commit.</li>
+        <li>Unsupported semantics and engine contracts fail closed.</li>
+      </ul>
 
-      <h2>Physical-plan optimization</h2>
-      <p>
-        The first engine optimizer consumes a compiled lifetime plan, per-rank
-        KV budget, attention DP size, chunk size, admission target, and
-        reclamation-call budget. It evaluates page-aligned SGLang SWA
-        intervals, emits every cost and rejection reason, and selects a policy
-        only inside an explicit runtime contract.
-      </p>
-      <pre><code>{`16  -> reject: 5 reclamation calls > budget 4
-32  -> select: 59,904 Full slots, 1 admission wave
-64  -> feasible: 55,808 Full slots, 1 admission wave
-128 -> reject: only 7 of 8 requests admitted`}</code></pre>
-      <p>
-        The artifact records that the current lowering requires SWA ChunkCache
-        with radix cache, overlap scheduling, speculative decoding, and
-        disaggregation disabled. The SGLang plugin validates this contract and
-        both pool capacities before using the plan.
-      </p>
-
-      <h2>Layer boundaries</h2>
-      <div class="doc-grid">
-        {architectureLanes.map((lane) => (
-          <div class="doc-card">
-            <span>{lane.id}</span>
-            <h3>{lane.name}</h3>
-            <p>{lane.detail}</p>
-            <small>{lane.examples.join(" · ")}</small>
-          </div>
-        ))}
-      </div>
-
-      <h2>Why VMM is cost-gated</h2>
-      <p>
-        The recorded H20 requires a 2 MiB minimum CUDA VMM allocation. A small
-        logical region can therefore incur severe rounding amplification.
-        OrbitKV selects VMM only when stable virtual addresses are required and
-        rounded bytes remain below the configured threshold.
-      </p>
-      <pre><code>{`if !stable_address_required:
-    Paged
-elif !cuda_vmm_supported:
-    Paged
-elif rounded_vmm_bytes / logical_bytes > budget:
-    Paged
-else:
-    CudaVmm`}</code></pre>
-
-      <h2>Read the repository records</h2>
+      <h2>Records</h2>
       <div class="doc-grid">
         {docs.map((item) => (
           <div class="doc-card">
@@ -147,11 +65,10 @@ else:
       </div>
 
       <div class="doc-note">
-        <strong>Current qualification boundary.</strong>
+        <strong>Boundary.</strong>
         <p>
-          The owning SGLang path supports SWA chunk cache with radix cache,
-          speculative decoding, overlap scheduling, and CUDA Graph disabled.
-          Unsupported combinations fail closed.
+          SGLang ownership is qualified only for SWA ChunkCache with radix,
+          speculative decoding, overlap, disaggregation, and CUDA Graph disabled.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/h20-owning-vmm-validation-20260817.md`}>
           Full owning and VMM qualification

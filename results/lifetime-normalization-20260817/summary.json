@@ -1,0 +1,35 @@
+{
+  "schema": "orbitkv.lifetime-normalization-validation.v1",
+  "date": "2026-08-17",
+  "geometry": {
+    "layer_count": 1,
+    "kv_heads": 32,
+    "bytes_per_head_per_token": 512,
+    "page_tokens": 16,
+    "head_groups": [
+      {"heads": 8, "window_tokens": 512, "minimum_slots": 33},
+      {"heads": 8, "window_tokens": 2048, "minimum_slots": 129},
+      {"heads": 16, "window_tokens": 8192, "minimum_slots": 513}
+    ]
+  },
+  "normalized_head_block_units": 9504,
+  "max_window_baseline_head_block_units": 16416,
+  "normalized_bytes_per_request": 77856768,
+  "max_window_baseline_bytes_per_request": 134479872,
+  "savings_bytes_per_request": 56623104,
+  "savings_percent": 42.105,
+  "retention_amplification": 1.727,
+  "proofs": [
+    "disjoint KV head ranges may share a layer without physical ownership overlap",
+    "each head group receives the exact optimal equal-size interval slot count",
+    "the max-window baseline is reconstructed from the widest lifetime in each layer",
+    "the reference manager materializes and retires all three head lifetime stripes independently",
+    "overlapping head ranges and incomplete geometry fail closed"
+  ],
+  "claim_boundary": [
+    "exact compiler and reference-manager geometry result",
+    "no token deletion, quantization, approximation, or training",
+    "SGLang compatibility lowering rejects head-aware plans",
+    "no released-model or GPU performance claim"
+  ]
+}

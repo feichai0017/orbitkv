@@ -419,6 +419,7 @@ mod tests {
             states: vec![RetentionStateDecl {
                 name: "attention".into(),
                 layers: vec![0],
+                kv_head_range: None,
                 bytes_per_token_per_layer: 128,
                 may_read: Predicate::Or {
                     terms: vec![
@@ -553,6 +554,7 @@ mod tests {
             states: vec![RetentionStateDecl {
                 name: "chunked".into(),
                 layers: vec![0],
+                kv_head_range: None,
                 bytes_per_token_per_layer: 128,
                 may_read: Predicate::Equal {
                     lhs: IntExpr::FloorDiv {

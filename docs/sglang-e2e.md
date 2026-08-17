@@ -53,6 +53,12 @@ manager only. The SGLang policy rejects it rather than treating it as SWA.
 SGLang's `attention_chunk_size` can describe chunk-relative sliding behavior,
 so the HF frontend does not infer same-chunk retention from that field alone.
 
+Per-head lifetime plans are likewise kept above the current SGLang compatibility
+backend. OrbitKV can compile and manage disjoint KV-head ranges in the same
+layer, but SGLang currently exposes one shared SWA allocation class. The
+adapter therefore rejects head-aware plans rather than silently widening every
+head to the maximum window.
+
 ## Stage A: Shadow measurement
 
 The `orbitkv_shadow` plugin hooks the existing

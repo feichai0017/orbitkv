@@ -1271,6 +1271,7 @@ mod tests {
             states: vec![RetentionStateDecl {
                 name: "attention".into(),
                 layers: vec![0],
+                kv_head_range: None,
                 bytes_per_token_per_layer: 128,
                 may_read: Predicate::Or {
                     terms: vec![
@@ -1344,6 +1345,7 @@ mod tests {
             states: vec![RetentionStateDecl {
                 name: "chunked".into(),
                 layers: vec![0],
+                kv_head_range: None,
                 bytes_per_token_per_layer: 128,
                 may_read: Predicate::Equal {
                     lhs: IntExpr::FloorDiv {
@@ -1403,5 +1405,75 @@ mod tests {
         assert_eq!(next[0].temporal.cell.cell_index, 0);
         assert_eq!(next[0].temporal.version.cycle, 1);
         assert_eq!(next[0].physical.generation, 2);
+    }
+
+    #[test]
+    fn manager_materializes_disjoint_head_lifetime_stripes() {
+        let state =
+            |name: &str, start: u32, end_exclusive: u32, window: i64| -> RetentionStateDecl {
+                RetentionStateDecl {
+                    name: name.into(),
+                    layers: vec![0],
+                    kv_head_range: Some(crate::KvHeadRange {
+                        start,
+                        end_exclusive,
+                    }),
+                    bytes_per_token_per_layer: u64::from(end_exclusive - start) * 512,
+                    may_read: Predicate::LessThan {
+                        lhs: IntExpr::Sub {
+                            lhs: Box::new(IntExpr::QueryPosition),
+                            rhs: Box::new(IntExpr::KeyPosition),
+                        },
+                        rhs: IntExpr::Constant { value: window },
+                    },
+                }
+            };
+        let plan = compile_retention_program(RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 16,
+            states: vec![
+                state("w512", 0, 8, 512),
+                state("w2048", 8, 16, 2048),
+                state("w8192", 16, 32, 8192),
+            ],
+        })
+        .unwrap();
+        let pools = plan
+            .classes
+            .iter()
+            .map(|class| ClassPoolConfig {
+                class_name: class.spec.name.clone(),
+                slot_count: class.slot_count.unwrap(),
+            })
+            .collect();
+        let mut manager = KvBlockManager::new(plan, BlockManagerConfig { pools }).unwrap();
+        manager.register_request("r0").unwrap();
+        for boundary in 1..=64 {
+            manager.materialize_to("r0", boundary).unwrap();
+            for certificate in manager.advance_semantic_frontier("r0", boundary).unwrap() {
+                manager
+                    .commit_reclamation(&PhysicalReclamationReceipt {
+                        schema: "orbitkv.physical-reclamation-receipt.v1",
+                        certificate_id: certificate.certificate_id,
+                        physical: certificate.physical,
+                    })
+                    .unwrap();
+            }
+        }
+        let view = manager.submit_view("r0").unwrap();
+        let by_class = view.blocks.into_iter().fold(
+            BTreeMap::<String, Vec<u64>>::new(),
+            |mut classes, block| {
+                classes
+                    .entry(block.logical.class_name)
+                    .or_default()
+                    .push(block.logical.ordinal);
+                classes
+            },
+        );
+        assert_eq!(by_class["w512"], vec![0, 1, 2, 3]);
+        assert_eq!(by_class["w2048"], vec![0, 1, 2, 3]);
+        assert_eq!(by_class["w8192"], vec![0, 1, 2, 3]);
+        assert_eq!(manager.stats().resident_blocks, 12);
     }
 }
