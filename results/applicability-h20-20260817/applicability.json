@@ -1,0 +1,52 @@
+{
+  "schema": "orbitkv.applicability-comparison.v1",
+  "date": "2026-08-17",
+  "boundary_tokens": 32768,
+  "models": [
+    {
+      "architecture": "Qwen2ForCausalLM",
+      "config_sha256": "sha256:7463bb0ea78315365e6c6b74de4e73bbcc8359dfb0c5a737584e077d42c0b03c",
+      "layer_inference": "fallback_all_full",
+      "applicability": "safe_fallback",
+      "generated_layouts": [
+        "append_only"
+      ],
+      "physical_resident_bytes": 1879048192,
+      "all_full_baseline_bytes": 1879048192,
+      "static_reduction_percent_milli": 0,
+      "plan_fingerprint": "sha256:17c6c645fa96c84ab2cf9931070a3a4a482abe0761a2b75a2c567048e025ea39"
+    },
+    {
+      "architecture": "MistralForCausalLM",
+      "config_sha256": "sha256:cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+      "layer_inference": "architecture_uniform_sliding",
+      "applicability": "uniform_bounded",
+      "generated_layouts": [
+        "periodic"
+      ],
+      "physical_resident_bytes": 536870912,
+      "all_full_baseline_bytes": 4294967296,
+      "static_reduction_percent_milli": 87500,
+      "plan_fingerprint": "sha256:5c1faa2cff4d8cefe239508d423b2693aeb9fef755a5fe716c942b0b60ffa1eb"
+    },
+    {
+      "architecture": "GptOssForCausalLM",
+      "config_sha256": "sha256:3a2a26ded679375b7928ddeca59764df7cea83220c1961035f6d6e232659e9ce",
+      "layer_inference": "explicit_layer_types",
+      "applicability": "hybrid_lifetimes",
+      "generated_layouts": [
+        "append_only",
+        "periodic"
+      ],
+      "physical_resident_bytes": 808845312,
+      "all_full_baseline_bytes": 1610612736,
+      "static_reduction_percent_milli": 49780,
+      "plan_fingerprint": "sha256:dfbeded59980b8784b79097e96ae51addbee8cd8ffb19977b6e5aa1df2c1c756"
+    }
+  ],
+  "claim_boundary": [
+    "static compiler geometry at 32K tokens",
+    "not an end-to-end performance prediction",
+    "unknown semantics fail closed"
+  ]
+}

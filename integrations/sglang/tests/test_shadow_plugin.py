@@ -120,6 +120,15 @@ class FakeSpecAlgorithm:
         return True
 
 
+class PureSWATokenToKVPoolAllocator:
+    page_size = 1
+    size_swa = 8192
+
+
+class WrongUniformAllocator:
+    page_size = 1
+
+
 class FakeOwningAllocator:
     def __init__(self, events, fail_free=False):
         self.events = events
@@ -192,6 +201,237 @@ def _load_hook_registry(sglang_root: Path):
 
 
 class ShadowPluginTests(unittest.TestCase):
+    def test_uniform_swa_state_plan_binds_model_kernel_and_allocator(self):
+        from orbitkv_sglang import plugin
+
+        orbitkv_bin = os.environ.get("ORBITKV_BIN")
+        if not orbitkv_bin:
+            self.skipTest("ORBITKV_BIN is required")
+        root = Path(__file__).resolve().parents[3]
+        config = root / "fixtures/mistral-uniform-swa-tiny/config.json"
+        artifact = json.loads(
+            subprocess.check_output(
+                [
+                    orbitkv_bin,
+                    "compile-hf-state-plan",
+                    str(config),
+                    "--page-tokens",
+                    "1",
+                    "--kv-dtype-bytes",
+                    "2",
+                    "--boundary",
+                    "8192",
+                ],
+                text=True,
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            model = Path(directory) / "model"
+            model.mkdir()
+            model_config_path = model / "config.json"
+            model_config_path.write_bytes(config.read_bytes())
+            artifact_path = Path(directory) / "state-plan.json"
+            artifact_path.write_text(json.dumps(artifact), encoding="utf-8")
+            old_path = os.environ.get("ORBITKV_SGLANG_STATE_PLAN")
+            old_contract = plugin._UNIFORM_SWA_CONTRACT
+            old_mode = plugin._STATE_PLAN_MODE
+            try:
+                os.environ["ORBITKV_SGLANG_STATE_PLAN"] = str(artifact_path)
+                plugin._load_state_plan()
+                model_config = types.SimpleNamespace(
+                    model_path=str(model),
+                    hf_config=types.SimpleNamespace(
+                        architectures=["MistralForCausalLM"]
+                    ),
+                    hf_text_config=types.SimpleNamespace(num_hidden_layers=4),
+                    sliding_window_size=4096,
+                    is_hybrid_swa=False,
+                )
+                plugin._activate_uniform_swa_model_config(
+                    lambda *_args, **_kwargs: None,
+                    model_config,
+                )
+                self.assertTrue(model_config.is_hybrid_swa)
+                self.assertFalse(model_config.is_deepseek_v4_arch)
+                self.assertEqual(model_config.sliding_window_size, 4095)
+                self.assertEqual(model_config.swa_attention_layer_ids, [0, 1, 2, 3])
+                self.assertEqual(model_config.full_attention_layer_ids, [])
+
+                attention = types.SimpleNamespace(
+                    total_num_kv_heads=8,
+                    head_dim=128,
+                    attn=types.SimpleNamespace(sliding_window_size=-1),
+                )
+                plugin._activate_uniform_swa_kernel(
+                    lambda *_args, **_kwargs: None,
+                    attention,
+                    types.SimpleNamespace(
+                        architectures=["MistralForCausalLM"]
+                    ),
+                )
+                self.assertEqual(attention.attn.sliding_window_size, 4095)
+
+                server_args = types.SimpleNamespace(
+                    disable_radix_cache=True,
+                    disable_overlap_schedule=True,
+                    disable_cuda_graph=True,
+                    disaggregation_mode="null",
+                    max_running_requests=1,
+                    chunked_prefill_size=2048,
+                )
+                configurator = types.SimpleNamespace(
+                    server_args=server_args,
+                    spec_algorithm=FakeSpecAlgorithm(),
+                    page_size=1,
+                )
+                result = types.SimpleNamespace(
+                    token_to_kv_pool_allocator=PureSWATokenToKVPoolAllocator()
+                )
+                returned = plugin._validate_uniform_swa_runtime(
+                    lambda *_args, **_kwargs: result,
+                    configurator,
+                )
+                self.assertIs(returned, result)
+
+                worker = types.SimpleNamespace(
+                    model_config=types.SimpleNamespace(context_len=16384)
+                )
+                worker_info = plugin._expand_uniform_swa_worker_info(
+                    lambda *_args, **_kwargs: (
+                        8192,
+                        16384,
+                        1,
+                        1,
+                        8191,
+                        8186,
+                        0,
+                        "cuda",
+                        None,
+                        1,
+                        16384,
+                        8192,
+                    ),
+                    worker,
+                )
+                self.assertEqual(worker_info[4], 16383)
+                self.assertEqual(worker_info[5], 16378)
+
+                request = types.SimpleNamespace(
+                    origin_input_ids=list(range(12000)),
+                    sampling_params=types.SimpleNamespace(
+                        max_new_tokens=8,
+                        min_new_tokens=4,
+                    ),
+                )
+                scheduler = types.SimpleNamespace(
+                    max_new_tokens_limit=None,
+                    max_req_len=16383,
+                )
+                plugin._init_uniform_swa_max_new_tokens(
+                    lambda _scheduler, req: setattr(
+                        req.sampling_params, "max_new_tokens", 0
+                    ),
+                    scheduler,
+                    request,
+                )
+                self.assertEqual(request.sampling_params.max_new_tokens, 8)
+                self.assertEqual(request.sampling_params.min_new_tokens, 4)
+
+                admission_request = types.SimpleNamespace(
+                    full_untruncated_fill_ids=list(range(12000)),
+                    prefix_indices=[],
+                    sampling_params=types.SimpleNamespace(max_new_tokens=8),
+                )
+                class FakePureSwaAdder:
+                    is_all_swa = True
+                    max_running_requests = 1
+                    page_size = 1
+
+                    def __init__(self):
+                        self.rem_total_token_offset = 0
+
+                    @property
+                    def rem_total_tokens(self):
+                        return 8192 - self.rem_total_token_offset
+
+                adder = FakePureSwaAdder()
+
+                def admit(current_adder, *_args, **_kwargs):
+                    self.assertGreater(current_adder.rem_total_tokens, 12009)
+                    current_adder.rem_total_token_offset += 2048
+                    return "admitted"
+
+                self.assertEqual(
+                    plugin._admit_uniform_swa_request(
+                        admit,
+                        adder,
+                        admission_request,
+                        False,
+                        None,
+                    ),
+                    "admitted",
+                )
+                self.assertEqual(adder.rem_total_token_offset, 2048)
+                with self.assertRaisesRegex(
+                    RuntimeError, "did not produce PureSWAToken"
+                ):
+                    plugin._validate_uniform_swa_runtime(
+                        lambda *_args, **_kwargs: types.SimpleNamespace(
+                            token_to_kv_pool_allocator=WrongUniformAllocator()
+                        ),
+                        configurator,
+                    )
+
+                model_config_path.write_text("{}", encoding="utf-8")
+                with self.assertRaisesRegex(RuntimeError, "config hash"):
+                    plugin._activate_uniform_swa_model_config(
+                        lambda *_args, **_kwargs: None,
+                        model_config,
+                    )
+
+                model_config_path.write_bytes(config.read_bytes())
+                plugin._STATE_PLAN_MODE = "kernel_reference"
+                reference_model_config = types.SimpleNamespace(
+                    model_path=str(model),
+                    hf_config=types.SimpleNamespace(
+                        architectures=["MistralForCausalLM"]
+                    ),
+                    hf_text_config=types.SimpleNamespace(num_hidden_layers=4),
+                    sliding_window_size=4096,
+                    is_hybrid_swa=False,
+                )
+                plugin._activate_uniform_swa_model_config(
+                    lambda *_args, **_kwargs: None,
+                    reference_model_config,
+                )
+                self.assertFalse(reference_model_config.is_hybrid_swa)
+                self.assertEqual(reference_model_config.sliding_window_size, 4095)
+                self.assertEqual(
+                    plugin._resolve_uniform_swa_window(
+                        lambda *_args, **_kwargs: None,
+                        object(),
+                        reference_model_config,
+                    ),
+                    4095,
+                )
+                reference_result = types.SimpleNamespace(
+                    token_to_kv_pool_allocator=WrongUniformAllocator()
+                )
+                self.assertIs(
+                    plugin._validate_uniform_swa_runtime(
+                        lambda *_args, **_kwargs: reference_result,
+                        configurator,
+                    ),
+                    reference_result,
+                )
+            finally:
+                plugin._STATE_PLAN_MODE = old_mode
+                plugin._UNIFORM_SWA_CONTRACT = old_contract
+                if old_path is None:
+                    os.environ.pop("ORBITKV_SGLANG_STATE_PLAN", None)
+                else:
+                    os.environ["ORBITKV_SGLANG_STATE_PLAN"] = old_path
+
     def test_loads_and_enforces_compiled_physical_plan(self):
         from orbitkv_sglang import plugin
 

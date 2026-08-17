@@ -15,14 +15,20 @@ export const compilerStages = [
 ];
 
 export const metrics = [
+  { value: "−50.00%", label: "Mistral KV", detail: "12K logical prompt with 8K physical slots" },
+  { value: "1.0028×", label: "Warm runtime", detail: "8K PureSWA versus 16K semantic reference" },
   { value: "+25.81%", label: "Full capacity", detail: "real gpt-oss-20b, same 1.979 GiB KV budget" },
   { value: "−20.30%", label: "Owner vs Stock", detail: "balanced four-way real-checkpoint ablation" },
-  { value: "4 / 4", label: "Plan predictions", detail: "16/32/64/128 Full and SWA capacities matched SGLang" },
   { value: "−42.105%", label: "Head-stripe KV", detail: "exact multi-scale-window reduction versus max-window allocation" },
-  { value: "1.727×", label: "Retention Amplification", detail: "max-window bytes divided by lifetime-normalized bytes" },
 ];
 
 export const evidenceRows = [
+  {
+    result: "Uniform SWA execution",
+    value: "−50.00%",
+    contract: "Mistral-7B, 12K prompt, 8K physical KV versus 16K reference",
+    boundary: "one H20; page 1; one request; identical output digest",
+  },
   {
     result: "Real checkpoint capacity",
     value: "+25.81%",
@@ -74,13 +80,19 @@ export const docs = [
     href: `${repositoryUrl}/blob/main/docs/h20-gpt-oss-20b-real-validation-20260817.md`,
   },
   {
-    key: "03 / NORMAL FORM",
+    key: "03 / APPLICABILITY",
+    name: "Three-model applicability",
+    detail: "Qwen fallback, Mistral bounded execution, and GPT-OSS Hybrid plans.",
+    href: `${repositoryUrl}/blob/main/results/applicability-h20-20260817/applicability.json`,
+  },
+  {
+    key: "04 / NORMAL FORM",
     name: "Lifetime Normalization",
     detail: "Per-head multi-scale windows, max-window baseline, and exact retention amplification.",
     href: `${repositoryUrl}/blob/main/results/lifetime-normalization-20260817/summary.json`,
   },
   {
-    key: "04 / RECORDS",
+    key: "05 / RECORDS",
     name: "Evidence index",
     detail: "Summaries, manifests, and historical runs.",
     href: `${repositoryUrl}/tree/main/results`,

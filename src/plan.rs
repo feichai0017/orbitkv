@@ -9,7 +9,7 @@ use crate::retention::{
     RetentionAnalysis, RetentionError, RetentionProgramInput, RetentionStateDecl, analyze_state,
 };
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionKind {
     Full,
@@ -88,12 +88,64 @@ pub struct LifetimeNormalizationReport {
     pub retention_amplification_milli: u64,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ApplicabilityClass {
+    SafeFallback,
+    UniformBounded,
+    HybridLifetimes,
+    RegionSpecialization,
+    LifetimeNormalization,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ApplicabilityClassGeometry {
+    pub name: String,
+    pub retention: RetentionKind,
+    pub layer_count: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kv_head_range: Option<KvHeadRange>,
+    pub semantic_live_tokens: u64,
+    pub physical_token_slots: u64,
+    pub resident_bytes: u64,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct ApplicabilityReport {
+    pub schema: &'static str,
+    pub plan_fingerprint: String,
+    pub page_tokens: u64,
+    pub boundary_tokens: u64,
+    pub applicability: ApplicabilityClass,
+    pub lifetime_class_count: u64,
+    pub bounded_class_count: u64,
+    pub unbounded_class_count: u64,
+    pub generated_layouts: Vec<&'static str>,
+    pub classes: Vec<ApplicabilityClassGeometry>,
+    pub semantically_live_bytes: u64,
+    pub physical_resident_bytes: u64,
+    pub all_full_baseline_bytes: u64,
+    pub reclaimable_baseline_bytes: u64,
+    pub static_reduction_percent_milli: u64,
+    pub bounded_resident_bytes: u64,
+    pub bounded_resident_fraction_milli: u64,
+    pub physical_to_semantic_amplification_milli: Option<u64>,
+    pub claim_boundary: [&'static str; 3],
+}
+
 type HeadStripe = (KvHeadRange, u64, u64);
 
 struct NormalizedHeadGeometry {
     classes: Vec<LifetimeNormalizedClass>,
     per_layer: BTreeMap<u32, Vec<HeadStripe>>,
     bytes_per_request: u64,
+}
+
+struct ApplicabilityGeometry {
+    classes: Vec<ApplicabilityClassGeometry>,
+    semantically_live_bytes: u64,
+    physical_resident_bytes: u64,
+    bounded_resident_bytes: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -740,6 +792,186 @@ impl CompiledKvPlan {
             savings_bytes_per_request,
             savings_percent_milli,
             retention_amplification_milli,
+        })
+    }
+
+    /// Summarizes whether compiled lifetime semantics create a static KV
+    /// residency opportunity at one logical boundary.
+    ///
+    /// The report is a block-geometry result. It deliberately does not predict
+    /// kernel time, scheduler behavior, or end-to-end throughput.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if checked byte, layer, or percentage calculations
+    /// overflow.
+    pub fn applicability_report(&self, boundary: u64) -> Result<ApplicabilityReport, PlanError> {
+        let layout = self.layout_program()?;
+        let capacities = self.capacity_at(boundary)?;
+        let bounded_class_count = u64::try_from(
+            self.classes
+                .iter()
+                .filter(|class| class.spec.retention != RetentionKind::Full)
+                .count(),
+        )
+        .map_err(|_| PlanError::ArithmeticOverflow {
+            calculation: "bounded class count",
+        })?;
+        let lifetime_class_count =
+            u64::try_from(self.classes.len()).map_err(|_| PlanError::ArithmeticOverflow {
+                calculation: "lifetime class count",
+            })?;
+        let unbounded_class_count = lifetime_class_count - bounded_class_count;
+        let applicability = self.classify_applicability(bounded_class_count, unbounded_class_count);
+        let generated_layouts = layout_kinds(&layout);
+        let geometry = self.applicability_geometry(capacities)?;
+        let all_full_baseline_bytes = self.all_full_baseline_bytes_at(boundary)?;
+        let reclaimable_baseline_bytes =
+            all_full_baseline_bytes.saturating_sub(geometry.physical_resident_bytes);
+        let static_reduction_percent_milli = checked_scaled_ratio(
+            reclaimable_baseline_bytes,
+            100_000,
+            all_full_baseline_bytes,
+            "applicability reduction percent",
+        )?
+        .unwrap_or(0);
+        let bounded_resident_fraction_milli = checked_scaled_ratio(
+            geometry.bounded_resident_bytes,
+            1000,
+            geometry.physical_resident_bytes,
+            "bounded resident fraction",
+        )?
+        .unwrap_or(0);
+        let physical_to_semantic_amplification_milli = checked_scaled_ratio(
+            geometry.physical_resident_bytes,
+            1000,
+            geometry.semantically_live_bytes,
+            "physical to semantic amplification",
+        )?;
+        Ok(ApplicabilityReport {
+            schema: "orbitkv.applicability-report.v1",
+            plan_fingerprint: self.fingerprint(),
+            page_tokens: self.page_tokens,
+            boundary_tokens: boundary,
+            applicability,
+            lifetime_class_count,
+            bounded_class_count,
+            unbounded_class_count,
+            generated_layouts,
+            classes: geometry.classes,
+            semantically_live_bytes: geometry.semantically_live_bytes,
+            physical_resident_bytes: geometry.physical_resident_bytes,
+            all_full_baseline_bytes,
+            reclaimable_baseline_bytes,
+            static_reduction_percent_milli,
+            bounded_resident_bytes: geometry.bounded_resident_bytes,
+            bounded_resident_fraction_milli,
+            physical_to_semantic_amplification_milli,
+            claim_boundary: [
+                "static equal-page KV geometry at the requested logical boundary",
+                "not a kernel, scheduler, admission, or end-to-end speedup prediction",
+                "unsupported retention semantics must fail closed before this report",
+            ],
+        })
+    }
+
+    fn classify_applicability(
+        &self,
+        bounded_class_count: u64,
+        unbounded_class_count: u64,
+    ) -> ApplicabilityClass {
+        if self
+            .classes
+            .iter()
+            .any(|class| class.kv_head_range.is_some())
+        {
+            return ApplicabilityClass::LifetimeNormalization;
+        }
+        if self
+            .classes
+            .iter()
+            .any(|class| !class.block_domain.is_all())
+        {
+            return ApplicabilityClass::RegionSpecialization;
+        }
+        if bounded_class_count == 0 {
+            return ApplicabilityClass::SafeFallback;
+        }
+        let bounded_signatures = self
+            .classes
+            .iter()
+            .filter(|class| class.spec.retention != RetentionKind::Full)
+            .map(|class| {
+                (
+                    class.spec.retention,
+                    class.spec.window_tokens,
+                    class.chunk_tokens,
+                )
+            })
+            .collect::<BTreeSet<_>>();
+        if unbounded_class_count == 0 && bounded_signatures.len() == 1 {
+            ApplicabilityClass::UniformBounded
+        } else {
+            ApplicabilityClass::HybridLifetimes
+        }
+    }
+
+    fn applicability_geometry(
+        &self,
+        capacities: Vec<ClassCapacity>,
+    ) -> Result<ApplicabilityGeometry, PlanError> {
+        let mut semantically_live_bytes = 0_u64;
+        let mut classes = Vec::with_capacity(self.classes.len());
+        for (class, capacity) in self.classes.iter().zip(capacities) {
+            let layer_count = u64::try_from(class.spec.layers.len()).map_err(|_| {
+                PlanError::ArithmeticOverflow {
+                    calculation: "applicability layer count",
+                }
+            })?;
+            let semantic_bytes = capacity
+                .semantic_live_tokens
+                .checked_mul(class.spec.bytes_per_token_per_layer)
+                .and_then(|value| value.checked_mul(layer_count))
+                .ok_or(PlanError::ArithmeticOverflow {
+                    calculation: "semantically live bytes",
+                })?;
+            semantically_live_bytes = semantically_live_bytes.checked_add(semantic_bytes).ok_or(
+                PlanError::ArithmeticOverflow {
+                    calculation: "total semantically live bytes",
+                },
+            )?;
+            classes.push(ApplicabilityClassGeometry {
+                name: class.spec.name.clone(),
+                retention: class.spec.retention,
+                layer_count,
+                kv_head_range: class.kv_head_range.clone(),
+                semantic_live_tokens: capacity.semantic_live_tokens,
+                physical_token_slots: capacity.physical_token_slots,
+                resident_bytes: capacity.resident_bytes,
+            });
+        }
+        let physical_resident_bytes = classes.iter().try_fold(0_u64, |total, class| {
+            total
+                .checked_add(class.resident_bytes)
+                .ok_or(PlanError::ArithmeticOverflow {
+                    calculation: "applicability resident bytes",
+                })
+        })?;
+        let bounded_resident_bytes = classes
+            .iter()
+            .filter(|class| class.retention != RetentionKind::Full)
+            .try_fold(0_u64, |total, class| {
+                total
+                    .checked_add(class.resident_bytes)
+                    .ok_or(PlanError::ArithmeticOverflow {
+                        calculation: "bounded resident bytes",
+                    })
+            })?;
+        Ok(ApplicabilityGeometry {
+            classes,
+            semantically_live_bytes,
+            physical_resident_bytes,
+            bounded_resident_bytes,
         })
     }
 
@@ -1537,6 +1769,34 @@ fn head_ranges_overlap(lhs: Option<&KvHeadRange>, rhs: Option<&KvHeadRange>) -> 
     }
 }
 
+fn layout_kinds(layout: &LayoutProgram) -> Vec<&'static str> {
+    let mut kinds = Vec::new();
+    for class in &layout.classes {
+        let kind = match class.address {
+            AddressProgram::AppendOnly => "append_only",
+            AddressProgram::Pinned => "pinned",
+            AddressProgram::Periodic { .. } | AddressProgram::PeriodicFrom { .. } => "periodic",
+            AddressProgram::ResettableArena { .. } => "resettable_arena",
+        };
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
+    }
+    kinds
+}
+
+fn checked_scaled_ratio(
+    numerator: u64,
+    scale: u64,
+    denominator: u64,
+    calculation: &'static str,
+) -> Result<Option<u64>, PlanError> {
+    numerator
+        .checked_mul(scale)
+        .ok_or(PlanError::ArithmeticOverflow { calculation })
+        .map(|scaled| scaled.checked_div(denominator))
+}
+
 fn ceil_div(value: u64, divisor: u64) -> Result<u64, PlanError> {
     if value == 0 {
         return Ok(0);
@@ -1612,6 +1872,63 @@ mod tests {
                 assert_eq!(plan.classes[0].slot_count, Some(maximum));
             }
         }
+    }
+
+    #[test]
+    fn applicability_distinguishes_full_uniform_and_hybrid_lifetimes() {
+        let full = compile_plan(KvPlanInput {
+            page_tokens: 16,
+            classes: vec![KvClassSpec {
+                name: "full".into(),
+                layers: vec![0, 1],
+                retention: RetentionKind::Full,
+                bytes_per_token_per_layer: 128,
+                window_tokens: None,
+            }],
+        })
+        .unwrap()
+        .applicability_report(8192)
+        .unwrap();
+        assert_eq!(full.applicability, ApplicabilityClass::SafeFallback);
+        assert_eq!(full.static_reduction_percent_milli, 0);
+        assert_eq!(full.generated_layouts, vec!["append_only"]);
+        assert_eq!(full.bounded_class_count, 0);
+
+        let sliding = compile_plan(sliding_input(4096, 16))
+            .unwrap()
+            .applicability_report(8192)
+            .unwrap();
+        assert_eq!(sliding.applicability, ApplicabilityClass::UniformBounded);
+        assert_eq!(sliding.generated_layouts, vec!["periodic"]);
+        assert_eq!(sliding.bounded_class_count, 1);
+        assert!(sliding.static_reduction_percent_milli > 49_000);
+
+        let hybrid = compile_plan(KvPlanInput {
+            page_tokens: 16,
+            classes: vec![
+                KvClassSpec {
+                    name: "full".into(),
+                    layers: vec![0],
+                    retention: RetentionKind::Full,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: None,
+                },
+                KvClassSpec {
+                    name: "swa".into(),
+                    layers: vec![1],
+                    retention: RetentionKind::Sliding,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: Some(1024),
+                },
+            ],
+        })
+        .unwrap()
+        .applicability_report(8192)
+        .unwrap();
+        assert_eq!(hybrid.applicability, ApplicabilityClass::HybridLifetimes);
+        assert_eq!(hybrid.generated_layouts, vec!["append_only", "periodic"]);
+        assert_eq!(hybrid.bounded_class_count, 1);
+        assert_eq!(hybrid.unbounded_class_count, 1);
     }
 
     #[test]

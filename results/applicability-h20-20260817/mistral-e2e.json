@@ -1,0 +1,60 @@
+{
+  "schema": "orbitkv.mistral-uniform-swa-h20.v1",
+  "date": "2026-08-17",
+  "checkpoint": {
+    "config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+    "index_sha256": "c94ab46aaf5fcca44720c10bcc498c1b0d9759d47534a396e3512edc451ebd06",
+    "indexed_weight_bytes": 14483464192,
+    "observed_weight_bytes": 14483498040,
+    "indexed_weights_complete": true
+  },
+  "workload": {
+    "requests": 1,
+    "prompt_tokens": 12000,
+    "decode_tokens": 8,
+    "context_length": 16384,
+    "chunked_prefill_tokens": 2048
+  },
+  "execute": {
+    "mode": "state_plan",
+    "physical_kv_token_slots": 8192,
+    "kv_gib": 1,
+    "iteration_seconds": 3.1082380041480064,
+    "output_digest": "6fd58be4add84f0bb1b0d68f900f88057f6d5edcbc8e2f6341a9a0e00f3c28ef",
+    "completion_tokens": 8,
+    "num_retractions": [
+      0
+    ],
+    "token_capacity_swa": 8192
+  },
+  "kernel_reference": {
+    "mode": "kernel_reference",
+    "physical_kv_token_slots": 16384,
+    "kv_gib": 2,
+    "iteration_seconds": 3.0996201410889626,
+    "output_digest": "6fd58be4add84f0bb1b0d68f900f88057f6d5edcbc8e2f6341a9a0e00f3c28ef",
+    "completion_tokens": 8,
+    "num_retractions": [
+      0
+    ]
+  },
+  "digest_match": true,
+  "checkpoint_match": true,
+  "kv_gib_saved": 1,
+  "kv_reduction_percent": 50,
+  "warm_execute_over_reference_ratio": 1.0027802965094994,
+  "stock_same_pool_long_prompt": {
+    "physical_kv_token_slots": 8192,
+    "prompt_tokens": 12000,
+    "status": "rejected",
+    "maximum_allowed_input_tokens": 8186,
+    "error": "Input length exceeds the maximum allowed length"
+  },
+  "claim_boundary": [
+    "real Mistral-7B-v0.1 checkpoint on one NVIDIA H20",
+    "radix cache, overlap, speculative decoding, disaggregation, and CUDA Graph disabled",
+    "maximum_running_requests=1 and page_size=1",
+    "kernel_reference uses the same compiled window with ordinary 16K paged KV",
+    "no model-quality or multi-request qualification claim"
+  ]
+}

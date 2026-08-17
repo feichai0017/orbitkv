@@ -86,12 +86,21 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--mode",
-        choices=("stock", "native_policy", "shadow", "policy", "owner"),
+        choices=(
+            "stock",
+            "native_policy",
+            "shadow",
+            "kernel_reference",
+            "state_plan",
+            "policy",
+            "owner",
+        ),
         required=True,
     )
     parser.add_argument("--model", default=str(DEFAULT_MODEL_PATH))
     parser.add_argument("--plan", default=str(DEFAULT_PLAN_PATH))
     parser.add_argument("--physical-plan")
+    parser.add_argument("--state-plan")
     parser.add_argument("--requests", type=int, default=8)
     parser.add_argument("--max-running-requests", type=int, default=None)
     parser.add_argument("--prompt-tokens", type=int, default=2048)
@@ -101,6 +110,7 @@ def main() -> None:
     parser.add_argument("--mem-fraction-static", type=float, default=None)
     parser.add_argument("--load-format", choices=("auto", "dummy"), default="dummy")
     parser.add_argument("--context-length", type=int, default=8192)
+    parser.add_argument("--page-size", type=int, default=16)
     parser.add_argument("--attention-backend", default="triton")
     parser.add_argument("--moe-runner-backend", default="triton")
     parser.add_argument("--trace", default="/tmp/orbitkv-hybrid-shadow.jsonl")
@@ -133,6 +143,8 @@ def main() -> None:
         os.environ.pop("ORBITKV_TRACE_PATH", None)
         os.environ.pop("ORBITKV_SGLANG_POLICY", None)
         os.environ.pop("ORBITKV_SGLANG_PHYSICAL_PLAN", None)
+        os.environ.pop("ORBITKV_SGLANG_STATE_PLAN", None)
+        os.environ.pop("ORBITKV_SGLANG_STATE_PLAN_MODE", None)
         os.environ.pop("ORBITKV_SGLANG_EVICTION_INTERVAL", None)
         os.environ.pop("ORBITKV_SGLANG_OWNING", None)
         os.environ.pop("ORBITKV_OWNER_TRANSPORT", None)
@@ -144,6 +156,22 @@ def main() -> None:
         os.environ["SGLANG_PLUGINS"] = "orbitkv_shadow"
         os.environ["ORBITKV_TRACE_PATH"] = args.trace
         os.environ["ORBITKV_BIN"] = args.orbitkv_bin
+        if args.mode in ("kernel_reference", "state_plan"):
+            if not args.state_plan:
+                raise ValueError(
+                    "--state-plan is required in kernel_reference/state_plan mode"
+                )
+            os.environ["ORBITKV_SGLANG_STATE_PLAN"] = str(
+                Path(args.state_plan).resolve()
+            )
+            os.environ["ORBITKV_SGLANG_STATE_PLAN_MODE"] = (
+                "kernel_reference"
+                if args.mode == "kernel_reference"
+                else "execute"
+            )
+        else:
+            os.environ.pop("ORBITKV_SGLANG_STATE_PLAN", None)
+            os.environ.pop("ORBITKV_SGLANG_STATE_PLAN_MODE", None)
         os.environ["ORBITKV_TRACE_ALLOCATIONS"] = (
             "0" if args.no_trace_allocations else "1"
         )
@@ -182,7 +210,7 @@ def main() -> None:
         skip_tokenizer_init=True,
         trust_remote_code=False,
         context_length=args.context_length,
-        page_size=16,
+        page_size=args.page_size,
         moe_runner_backend=args.moe_runner_backend,
         disable_cuda_graph=True,
         disable_overlap_schedule=True,
@@ -230,6 +258,9 @@ def main() -> None:
             "checkpoint": checkpoint_identity(model_path, args.load_format),
             "plan": str(plan_path),
             "physical_plan": physical_plan,
+            "state_plan": (
+                str(Path(args.state_plan).resolve()) if args.state_plan else None
+            ),
             "engine_args": engine_args,
             "requests": args.requests,
             "max_running_requests": max_running_requests,

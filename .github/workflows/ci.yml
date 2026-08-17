@@ -20,6 +20,7 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       - run: python tools/verify_manifests.py
       - run: python tools/verify_real_model_results.py
+      - run: python tools/verify_applicability_results.py
 
   cuda-backend:
     runs-on: ubuntu-latest

@@ -10,7 +10,9 @@ pub mod sglang_owner;
 pub mod trace;
 
 pub use hf_config::{
-    HfConfigError, HfLayerInference, HfRetentionCompilation, HfRetentionOptions, compile_hf_config,
+    HfConfigError, HfLayerInference, HfRetentionCompilation, HfRetentionOptions, HfSglangLowering,
+    HfStatePlan, HfStatePlanError, SglangUniformSwaContract, compile_hf_config,
+    compile_hf_state_plan,
 };
 pub use manager::{
     BlockHandle, BlockKey, BlockManagerConfig, ClassPoolConfig, ExecutionProof, KvBlockManager,
@@ -23,12 +25,12 @@ pub use optimizer::{
     optimize_sglang_physical_plan,
 };
 pub use plan::{
-    AddressProgram, BackendDecision, BackendRequirements, CellVersion, ClassCapacity,
-    ClassLayoutProgram, CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, KvPlanSource,
-    LayoutProgram, LifetimeNormalizationReport, LifetimeNormalizedClass, LogicalCellId,
-    PhysicalBackend, PlanError, RetentionKind, RetirementProgram, SglangBoundedClassPolicy,
-    SglangPolicy, TemporalAddress, choose_physical_backend, compile_plan,
-    compile_retention_program,
+    AddressProgram, ApplicabilityClass, ApplicabilityClassGeometry, ApplicabilityReport,
+    BackendDecision, BackendRequirements, CellVersion, ClassCapacity, ClassLayoutProgram,
+    CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, KvPlanSource, LayoutProgram,
+    LifetimeNormalizationReport, LifetimeNormalizedClass, LogicalCellId, PhysicalBackend,
+    PlanError, RetentionKind, RetirementProgram, SglangBoundedClassPolicy, SglangPolicy,
+    TemporalAddress, choose_physical_backend, compile_plan, compile_retention_program,
 };
 pub use retention::{
     AtomicRetention, InferredRegion, InferredRetention, IntExpr, KvHeadRange, Predicate,

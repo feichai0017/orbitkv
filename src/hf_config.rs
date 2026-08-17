@@ -1,7 +1,11 @@
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{IntExpr, Predicate, RetentionProgramInput, RetentionStateDecl};
+use crate::{
+    ApplicabilityReport, IntExpr, LayoutProgram, PlanError, Predicate, RetentionProgramInput,
+    RetentionStateDecl, compile_retention_program,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct HfRetentionOptions {
@@ -13,17 +17,59 @@ pub struct HfRetentionOptions {
 #[serde(rename_all = "snake_case")]
 pub enum HfLayerInference {
     ExplicitLayerTypes,
+    ArchitectureUniformSliding,
     FallbackAllFull,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct HfRetentionCompilation {
     pub schema: &'static str,
+    pub config_sha256: String,
     pub architecture: Option<String>,
     pub layer_inference: HfLayerInference,
+    pub num_hidden_layers: u64,
+    pub num_key_value_heads: u64,
     pub head_dim: u64,
     pub bytes_per_token_per_layer: u64,
     pub program: RetentionProgramInput,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SglangUniformSwaContract {
+    pub schema: &'static str,
+    pub plan_fingerprint: String,
+    pub config_sha256: String,
+    pub architecture: String,
+    pub num_hidden_layers: u64,
+    pub num_key_value_heads: u64,
+    pub head_dim: u64,
+    pub window_tokens: u64,
+    pub kernel_window_left: u64,
+    pub page_tokens: u64,
+    pub maximum_running_requests: u64,
+    pub scheduler_admission: &'static str,
+    pub required_disabled_features: [&'static str; 5],
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+pub enum HfSglangLowering {
+    Enabled {
+        kind: &'static str,
+        contract: Box<SglangUniformSwaContract>,
+    },
+    Unsupported {
+        reason: &'static str,
+    },
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct HfStatePlan {
+    pub schema: &'static str,
+    pub compilation: HfRetentionCompilation,
+    pub layout: LayoutProgram,
+    pub applicability: ApplicabilityReport,
+    pub sglang_lowering: HfSglangLowering,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -35,6 +81,8 @@ struct HfModelConfig {
     layer_types: Option<Vec<String>>,
     #[serde(default)]
     sliding_window: Option<u64>,
+    #[serde(default)]
+    use_sliding_window: Option<bool>,
     num_key_value_heads: u64,
     #[serde(default)]
     head_dim: Option<u64>,
@@ -76,13 +124,22 @@ pub enum HfConfigError {
     Json(String),
 }
 
+#[derive(Clone, Debug, Error, Eq, PartialEq)]
+pub enum HfStatePlanError {
+    #[error(transparent)]
+    Config(#[from] HfConfigError),
+    #[error(transparent)]
+    Plan(#[from] PlanError),
+}
+
 /// Compiles a constrained Hugging Face model config into declarative
 /// Retention IR.
 ///
 /// Explicit `full_attention` and `sliding_attention` entries are grouped by
-/// lifetime. Configs without `layer_types` safely fall back to unbounded Full
-/// retention for every layer instead of guessing that a model-wide
-/// `sliding_window` applies uniformly.
+/// lifetime. A small architecture allowlist recognizes model families whose
+/// config contract defines one uniform sliding window across every layer.
+/// Other configs without `layer_types` safely fall back to unbounded Full
+/// retention instead of guessing from a model-wide `sliding_window` field.
 ///
 /// # Errors
 ///
@@ -147,8 +204,11 @@ pub fn compile_hf_config(
     }
     Ok(HfRetentionCompilation {
         schema: "orbitkv.hf-retention-compilation.v1",
+        config_sha256: format!("sha256:{:x}", Sha256::digest(config_json)),
         architecture: config.architectures.first().cloned(),
         layer_inference,
+        num_hidden_layers: config.num_hidden_layers,
+        num_key_value_heads: config.num_key_value_heads,
         head_dim,
         bytes_per_token_per_layer,
         program: RetentionProgramInput {
@@ -157,6 +217,108 @@ pub fn compile_hf_config(
             states,
         },
     })
+}
+
+/// Compiles one HF config into a portable state plan and an optional strict
+/// `SGLang` lowering contract.
+///
+/// # Errors
+///
+/// Returns an error when HF retention compilation or plan synthesis fails.
+pub fn compile_hf_state_plan(
+    config_json: &[u8],
+    options: HfRetentionOptions,
+    boundary: u64,
+) -> Result<HfStatePlan, HfStatePlanError> {
+    let compilation = compile_hf_config(config_json, options)?;
+    let plan = compile_retention_program(compilation.program.clone())?;
+    let layout = plan.layout_program()?;
+    let applicability = plan.applicability_report(boundary)?;
+    let sglang_lowering = lower_uniform_swa_to_sglang(&compilation, &layout);
+    Ok(HfStatePlan {
+        schema: "orbitkv.hf-state-plan.v1",
+        compilation,
+        layout,
+        applicability,
+        sglang_lowering,
+    })
+}
+
+fn lower_uniform_swa_to_sglang(
+    compilation: &HfRetentionCompilation,
+    layout: &LayoutProgram,
+) -> HfSglangLowering {
+    if compilation.layer_inference != HfLayerInference::ArchitectureUniformSliding {
+        return HfSglangLowering::Unsupported {
+            reason: "SGLang uniform-SWA lowering requires architecture-proven all-layer SWA",
+        };
+    }
+    if layout.page_tokens != 1 {
+        return HfSglangLowering::Unsupported {
+            reason: "SGLang PureSWA allocator requires page_tokens=1",
+        };
+    }
+    let Some(architecture) = compilation.architecture.as_deref() else {
+        return HfSglangLowering::Unsupported {
+            reason: "SGLang uniform-SWA lowering requires an explicit architecture",
+        };
+    };
+    if architecture != "MistralForCausalLM" {
+        return HfSglangLowering::Unsupported {
+            reason: "architecture is not qualified for SGLang uniform-SWA lowering",
+        };
+    }
+    let Some(class) = layout.classes.first() else {
+        return HfSglangLowering::Unsupported {
+            reason: "uniform-SWA lowering requires one generated class",
+        };
+    };
+    if layout.classes.len() != 1 || class.name != "swa" {
+        return HfSglangLowering::Unsupported {
+            reason: "uniform-SWA lowering requires exactly one SWA class",
+        };
+    }
+    let Some(window_tokens) =
+        compilation
+            .program
+            .states
+            .first()
+            .and_then(|state| match &state.may_read {
+                Predicate::LessThan {
+                    rhs: IntExpr::Constant { value },
+                    ..
+                } => u64::try_from(*value).ok(),
+                _ => None,
+            })
+    else {
+        return HfSglangLowering::Unsupported {
+            reason: "uniform-SWA lowering requires a constant positive window",
+        };
+    };
+    HfSglangLowering::Enabled {
+        kind: "uniform_swa",
+        contract: Box::new(SglangUniformSwaContract {
+            schema: "orbitkv.sglang-uniform-swa-contract.v1",
+            plan_fingerprint: layout.plan_fingerprint.clone(),
+            config_sha256: compilation.config_sha256.clone(),
+            architecture: architecture.to_owned(),
+            num_hidden_layers: compilation.num_hidden_layers,
+            num_key_value_heads: compilation.num_key_value_heads,
+            head_dim: compilation.head_dim,
+            window_tokens,
+            kernel_window_left: window_tokens - 1,
+            page_tokens: layout.page_tokens,
+            maximum_running_requests: 1,
+            scheduler_admission: "pure_swa_live_state",
+            required_disabled_features: [
+                "radix_cache",
+                "overlap_schedule",
+                "speculative_decoding",
+                "disaggregation",
+                "cuda_graph",
+            ],
+        }),
+    }
 }
 
 fn derive_head_dim(config: &HfModelConfig) -> Result<u64, HfConfigError> {
@@ -182,6 +344,13 @@ fn derive_layers(
     config: &HfModelConfig,
 ) -> Result<(HfLayerInference, Vec<u32>, Vec<u32>), HfConfigError> {
     let Some(layer_types) = &config.layer_types else {
+        if is_uniform_sliding_architecture(config) {
+            return Ok((
+                HfLayerInference::ArchitectureUniformSliding,
+                Vec::new(),
+                layer_range(config.num_hidden_layers)?,
+            ));
+        }
         return Ok((
             HfLayerInference::FallbackAllFull,
             layer_range(config.num_hidden_layers)?,
@@ -214,6 +383,15 @@ fn derive_layers(
         full_layers,
         sliding_layers,
     ))
+}
+
+fn is_uniform_sliding_architecture(config: &HfModelConfig) -> bool {
+    config.use_sliding_window != Some(false)
+        && config.sliding_window.is_some_and(|window| window > 0)
+        && matches!(
+            config.architectures.first().map(String::as_str),
+            Some("MistralForCausalLM")
+        )
 }
 
 fn layer_range(count: u64) -> Result<Vec<u32>, HfConfigError> {
@@ -299,6 +477,112 @@ mod tests {
         assert_eq!(compilation.head_dim, 128);
         assert_eq!(compilation.program.states.len(), 1);
         assert_eq!(compilation.program.states[0].layers, vec![0, 1]);
+        assert_eq!(compilation.program.states[0].may_read, Predicate::True);
+    }
+
+    #[test]
+    fn allowlisted_mistral_config_infers_uniform_sliding() {
+        let config = br#"{
+            "architectures": ["MistralForCausalLM"],
+            "num_hidden_layers": 2,
+            "sliding_window": 4096,
+            "num_key_value_heads": 8,
+            "hidden_size": 4096,
+            "num_attention_heads": 32
+        }"#;
+        let compilation = compile_hf_config(
+            config,
+            HfRetentionOptions {
+                page_tokens: 16,
+                kv_dtype_bytes: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            compilation.layer_inference,
+            HfLayerInference::ArchitectureUniformSliding
+        );
+        assert_eq!(compilation.program.states.len(), 1);
+        assert_eq!(compilation.program.states[0].name, "swa");
+        assert_eq!(compilation.program.states[0].layers, vec![0, 1]);
+        assert_eq!(
+            analyze_state(&compilation.program.states[0])
+                .unwrap()
+                .inferred,
+            InferredRetention::FixedWindow {
+                window_tokens: 4096
+            }
+        );
+    }
+
+    #[test]
+    fn uniform_swa_state_plan_enables_only_qualified_page_one_lowering() {
+        let config = br#"{
+            "architectures": ["MistralForCausalLM"],
+            "num_hidden_layers": 2,
+            "sliding_window": 4096,
+            "num_key_value_heads": 8,
+            "hidden_size": 4096,
+            "num_attention_heads": 32
+        }"#;
+        let enabled = compile_hf_state_plan(
+            config,
+            HfRetentionOptions {
+                page_tokens: 1,
+                kv_dtype_bytes: 2,
+            },
+            8192,
+        )
+        .unwrap();
+        let HfSglangLowering::Enabled { kind, contract } = enabled.sglang_lowering else {
+            panic!("qualified Mistral plan must lower");
+        };
+        assert_eq!(kind, "uniform_swa");
+        assert_eq!(contract.window_tokens, 4096);
+        assert_eq!(contract.kernel_window_left, 4095);
+        assert_eq!(contract.page_tokens, 1);
+        assert!(contract.config_sha256.starts_with("sha256:"));
+
+        let unsupported = compile_hf_state_plan(
+            config,
+            HfRetentionOptions {
+                page_tokens: 16,
+                kv_dtype_bytes: 2,
+            },
+            8192,
+        )
+        .unwrap();
+        assert_eq!(
+            unsupported.sglang_lowering,
+            HfSglangLowering::Unsupported {
+                reason: "SGLang PureSWA allocator requires page_tokens=1"
+            }
+        );
+    }
+
+    #[test]
+    fn non_allowlisted_window_field_still_falls_back_to_full() {
+        let config = br#"{
+            "architectures": ["Qwen2ForCausalLM"],
+            "num_hidden_layers": 2,
+            "sliding_window": 131072,
+            "use_sliding_window": false,
+            "num_key_value_heads": 4,
+            "hidden_size": 3584,
+            "num_attention_heads": 28
+        }"#;
+        let compilation = compile_hf_config(
+            config,
+            HfRetentionOptions {
+                page_tokens: 16,
+                kv_dtype_bytes: 2,
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            compilation.layer_inference,
+            HfLayerInference::FallbackAllFull
+        );
         assert_eq!(compilation.program.states[0].may_read, Predicate::True);
     }
 

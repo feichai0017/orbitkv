@@ -18,6 +18,7 @@ DEFAULT_MANIFESTS = (
     ROOT / "results/h20-gpt-oss-20b-real-20260817/manifest.json",
     ROOT / "results/chunked-local-20260817/manifest.json",
     ROOT / "results/lifetime-normalization-20260817/manifest.json",
+    ROOT / "results/applicability-h20-20260817/manifest.json",
 )
 
 

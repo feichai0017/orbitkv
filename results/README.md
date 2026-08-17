@@ -2,6 +2,7 @@
 
 | Record | Scope |
 | --- | --- |
+| `applicability-h20-20260817` | Qwen Full fallback, Mistral bounded state, GPT-OSS Hybrid |
 | `h20-gpt-oss-20b-real-20260817` | Primary real-checkpoint SGLang result |
 | `lifetime-normalization-20260817` | Per-head windows and Retention Amplification |
 | `chunked-local-20260817` | Same-chunk → ResettableArena |
@@ -15,6 +16,7 @@ Other directories are earlier calibration runs retained for auditability.
 Boundaries:
 
 - GPT-OSS is a real checkpoint systems result, not a model-quality claim.
+- Mistral uniform-SWA execution is qualified only for one request and page 1.
 - Per-head, Sink+Sliding, and Same-Chunk records are host compiler/Manager
   proofs, not GPU performance results.
 - VMM does not yet back SGLang KV tensors.

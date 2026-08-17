@@ -1,0 +1,39 @@
+{
+  "schema": "orbitkv.qwen-full-fallback-h20.v1",
+  "date": "2026-08-17",
+  "checkpoint": {
+    "config_sha256": "7463bb0ea78315365e6c6b74de4e73bbcc8359dfb0c5a737584e077d42c0b03c",
+    "index_sha256": "624bf7c47cd12468fdc16e38a47cf4f19e0415b859a223ba3c027eed2f0e1028",
+    "indexed_weight_bytes": 15231233024,
+    "indexed_weights_complete": true
+  },
+  "workload": {
+    "requests": 1,
+    "prompt_tokens": 512,
+    "decode_tokens": 8,
+    "max_total_tokens": 8192
+  },
+  "stock": {
+    "iteration_seconds": 1.3918120190501213,
+    "output_digest": "e7716c10bd1c00aa895aa1a0853c6e1308ee98052f7379771528461f56122e0f",
+    "completion_tokens": 8,
+    "token_capacity": 8192,
+    "kv_gib": 0.438
+  },
+  "shadow": {
+    "iteration_seconds": 1.3892188630998135,
+    "output_digest": "e7716c10bd1c00aa895aa1a0853c6e1308ee98052f7379771528461f56122e0f",
+    "completion_tokens": 8,
+    "token_capacity": 8192,
+    "kv_gib": 0.438
+  },
+  "digest_match": true,
+  "checkpoint_match": true,
+  "capacity_match": true,
+  "shadow_over_stock_ratio": 0.9981368490034469,
+  "claim_boundary": [
+    "real Qwen2.5-7B-Instruct checkpoint on one NVIDIA H20",
+    "OrbitKV shadow observes but does not replace the Full-attention allocator",
+    "single smoke pair, not a performance claim"
+  ]
+}

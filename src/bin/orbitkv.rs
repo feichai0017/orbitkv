@@ -5,10 +5,10 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use orbitkv::{
-    CompiledKvPlan, HfRetentionCompilation, HfRetentionOptions, KvPlanSource, OwnerCommand,
-    PhysicalPlanObjective, RetentionAnalysis, SglangOwner, SglangPhysicalOptimizationInput,
-    SglangPhysicalPlan, analyze_state, compile_hf_config, compile_retention_program,
-    optimize_sglang_physical_plan,
+    ApplicabilityReport, CompiledKvPlan, HfRetentionCompilation, HfRetentionOptions, KvPlanSource,
+    OwnerCommand, PhysicalPlanObjective, RetentionAnalysis, SglangOwner,
+    SglangPhysicalOptimizationInput, SglangPhysicalPlan, analyze_state, compile_hf_config,
+    compile_hf_state_plan, compile_retention_program, optimize_sglang_physical_plan,
     trace::{read_jsonl, summarize_sglang_trace},
 };
 use serde::Serialize;
@@ -60,6 +60,14 @@ struct HfPhysicalPlanReport {
     physical_plan: SglangPhysicalPlan,
 }
 
+#[derive(Serialize)]
+struct HfApplicabilityReport {
+    schema: &'static str,
+    compilation: HfRetentionCompilation,
+    layout: orbitkv::LayoutProgram,
+    applicability: ApplicabilityReport,
+}
+
 #[derive(Clone, Copy, Serialize)]
 #[serde(rename_all = "snake_case")]
 enum ContractStatus {
@@ -86,6 +94,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("compile-hf-config") => {
             compile_hf_config_command(&mut args)?;
         }
+        Some("compile-hf-state-plan") => {
+            compile_hf_state_plan_command(&mut args)?;
+        }
+        Some("analyze-hf-applicability") => {
+            analyze_hf_applicability_command(&mut args)?;
+        }
         Some("compile") => {
             let plan_path = required(&mut args, "plan path")?;
             require_flag(&mut args, "--boundary")?;
@@ -104,26 +118,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             write_json(&report)?;
         }
         Some("analyze-retention") => {
-            let plan_path = required(&mut args, "plan path")?;
-            require_end(&mut args)?;
-            let source = load_source(plan_path)?;
-            let program = source.clone().into_retention_program()?;
-            let analyses = program
-                .states
-                .iter()
-                .map(analyze_state)
-                .collect::<Result<Vec<_>, _>>()?;
-            let plan = source.compile()?;
-            write_json(&RetentionReport {
-                schema: "orbitkv.retention-analysis.v1",
-                source_schema: program.schema,
-                page_tokens: program.page_tokens,
-                analyses,
-                layout: plan.layout_program()?,
-            })?;
+            analyze_retention_command(&mut args)?;
         }
         Some("analyze-lifetime-normalization") => {
             analyze_lifetime_normalization_command(&mut args)?;
+        }
+        Some("analyze-applicability") => {
+            analyze_applicability_command(&mut args)?;
         }
         Some("analyze-sglang") => {
             let plan_path = required(&mut args, "plan path")?;
@@ -171,12 +172,85 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile|analyze-retention|analyze-lifetime-normalization|emit-layout|emit-sglang-policy|serve-sglang-owner|analyze-sglang|check-sglang> ..."
+                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile-hf-state-plan|compile|analyze-hf-applicability|analyze-retention|analyze-lifetime-normalization|analyze-applicability|emit-layout|emit-sglang-policy|serve-sglang-owner|analyze-sglang|check-sglang> ..."
                     .into(),
             );
         }
     }
     Ok(())
+}
+
+fn compile_hf_state_plan_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = required(args, "HF config path")?;
+    let page_tokens = required_flagged_u64(args, "--page-tokens", "page tokens")?;
+    let kv_dtype_bytes = required_flagged_u64(args, "--kv-dtype-bytes", "KV dtype bytes")?;
+    let boundary = required_flagged_u64(args, "--boundary", "boundary")?;
+    require_end(args)?;
+    write_json(&compile_hf_state_plan(
+        &std::fs::read(config_path)?,
+        HfRetentionOptions {
+            page_tokens,
+            kv_dtype_bytes,
+        },
+        boundary,
+    )?)
+}
+
+fn analyze_retention_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan_path = required(args, "plan path")?;
+    require_end(args)?;
+    let source = load_source(plan_path)?;
+    let program = source.clone().into_retention_program()?;
+    let analyses = program
+        .states
+        .iter()
+        .map(analyze_state)
+        .collect::<Result<Vec<_>, _>>()?;
+    let plan = source.compile()?;
+    write_json(&RetentionReport {
+        schema: "orbitkv.retention-analysis.v1",
+        source_schema: program.schema,
+        page_tokens: program.page_tokens,
+        analyses,
+        layout: plan.layout_program()?,
+    })
+}
+
+fn analyze_applicability_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan_path = required(args, "plan path")?;
+    let boundary = required_flagged_u64(args, "--boundary", "boundary")?;
+    require_end(args)?;
+    write_json(&load_plan(plan_path)?.applicability_report(boundary)?)
+}
+
+fn analyze_hf_applicability_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let config_path = required(args, "HF config path")?;
+    let page_tokens = required_flagged_u64(args, "--page-tokens", "page tokens")?;
+    let kv_dtype_bytes = required_flagged_u64(args, "--kv-dtype-bytes", "KV dtype bytes")?;
+    let boundary = required_flagged_u64(args, "--boundary", "boundary")?;
+    require_end(args)?;
+    let compilation = compile_hf_config(
+        &std::fs::read(config_path)?,
+        HfRetentionOptions {
+            page_tokens,
+            kv_dtype_bytes,
+        },
+    )?;
+    let plan = compile_retention_program(compilation.program.clone())?;
+    write_json(&HfApplicabilityReport {
+        schema: "orbitkv.hf-applicability-compilation.v1",
+        layout: plan.layout_program()?,
+        applicability: plan.applicability_report(boundary)?,
+        compilation,
+    })
 }
 
 fn analyze_lifetime_normalization_command(

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import atexit
 import ctypes
+import hashlib
 import json
 import os
 import queue
@@ -16,6 +17,9 @@ _EVENTS: queue.Queue[dict[str, Any] | None] = queue.Queue()
 _WRITER: threading.Thread | None = None
 _POLICY: dict[str, Any] | None = None
 _PHYSICAL_PLAN: dict[str, Any] | None = None
+_STATE_PLAN: dict[str, Any] | None = None
+_UNIFORM_SWA_CONTRACT: dict[str, Any] | None = None
+_STATE_PLAN_MODE: str | None = None
 _OWNER: "OwnerClient | None" = None
 
 
@@ -545,6 +549,269 @@ def _load_policy() -> dict[str, Any] | None:
     return policy
 
 
+def _load_state_plan() -> dict[str, Any] | None:
+    global _STATE_PLAN_MODE, _UNIFORM_SWA_CONTRACT
+
+    path = os.environ.get("ORBITKV_SGLANG_STATE_PLAN")
+    if not path:
+        _STATE_PLAN_MODE = None
+        _UNIFORM_SWA_CONTRACT = None
+        return None
+    mode = os.environ.get("ORBITKV_SGLANG_STATE_PLAN_MODE", "execute")
+    if mode not in ("execute", "kernel_reference"):
+        raise ValueError(f"unsupported OrbitKV state-plan mode: {mode!r}")
+    artifact = json.loads(Path(path).read_text(encoding="utf-8"))
+    if artifact.get("schema") != "orbitkv.hf-state-plan.v1":
+        raise ValueError(f"unsupported OrbitKV state plan: {artifact!r}")
+    lowering = artifact.get("sglang_lowering")
+    if (
+        not isinstance(lowering, dict)
+        or lowering.get("status") != "enabled"
+        or lowering.get("kind") != "uniform_swa"
+    ):
+        raise ValueError("OrbitKV state plan has no enabled uniform-SWA lowering")
+    contract = lowering.get("contract")
+    if (
+        not isinstance(contract, dict)
+        or contract.get("schema")
+        != "orbitkv.sglang-uniform-swa-contract.v1"
+    ):
+        raise ValueError("OrbitKV state plan has an invalid uniform-SWA contract")
+    layout = artifact.get("layout")
+    if not isinstance(layout, dict):
+        raise ValueError("OrbitKV state plan is missing its layout")
+    if contract.get("plan_fingerprint") != layout.get("plan_fingerprint"):
+        raise ValueError("OrbitKV state-plan fingerprint does not match its layout")
+    if int(contract.get("page_tokens", 0)) != 1:
+        raise ValueError("OrbitKV uniform-SWA SGLang lowering requires page_tokens=1")
+    _STATE_PLAN_MODE = mode
+    _UNIFORM_SWA_CONTRACT = contract
+    return artifact
+
+
+def _sha256_file(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return f"sha256:{digest.hexdigest()}"
+
+
+def _activate_uniform_swa_model_config(
+    original_fn: Callable,
+    model_config: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    result = original_fn(model_config, *args, **kwargs)
+    contract = _UNIFORM_SWA_CONTRACT
+    if contract is None:
+        return result
+    architecture = model_config.hf_config.architectures[0]
+    if architecture != contract["architecture"]:
+        raise RuntimeError(
+            "OrbitKV uniform-SWA architecture does not match SGLang model"
+        )
+    config_path = Path(model_config.model_path) / "config.json"
+    if not config_path.is_file():
+        raise RuntimeError("OrbitKV uniform-SWA model config.json is missing")
+    if _sha256_file(config_path) != contract["config_sha256"]:
+        raise RuntimeError(
+            "OrbitKV uniform-SWA config hash does not match SGLang model"
+        )
+    num_layers = int(model_config.hf_text_config.num_hidden_layers)
+    if num_layers != int(contract["num_hidden_layers"]):
+        raise RuntimeError("OrbitKV uniform-SWA layer count does not match SGLang")
+    if int(model_config.sliding_window_size) != int(contract["window_tokens"]):
+        raise RuntimeError("OrbitKV uniform-SWA window does not match SGLang")
+    model_config.sliding_window_size = int(contract["kernel_window_left"])
+    if _STATE_PLAN_MODE == "kernel_reference":
+        return result
+    model_config.is_hybrid_swa = True
+    model_config.is_deepseek_v4_arch = False
+    model_config.swa_attention_layer_ids = list(range(num_layers))
+    model_config.full_attention_layer_ids = []
+    return result
+
+
+def _activate_uniform_swa_kernel(
+    original_fn: Callable,
+    attention: Any,
+    config: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    result = original_fn(attention, config, *args, **kwargs)
+    contract = _UNIFORM_SWA_CONTRACT
+    if contract is None:
+        return result
+    architectures = getattr(config, "architectures", None) or []
+    if contract["architecture"] not in architectures:
+        raise RuntimeError(
+            "OrbitKV uniform-SWA kernel config does not match the compiled architecture"
+        )
+    if int(attention.total_num_kv_heads) != int(contract["num_key_value_heads"]):
+        raise RuntimeError("OrbitKV uniform-SWA KV head count does not match kernel")
+    if int(attention.head_dim) != int(contract["head_dim"]):
+        raise RuntimeError("OrbitKV uniform-SWA head dimension does not match kernel")
+    attention.attn.sliding_window_size = int(contract["kernel_window_left"])
+    return result
+
+
+def _validate_uniform_swa_runtime(
+    original_fn: Callable,
+    configurator: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    contract = _UNIFORM_SWA_CONTRACT
+    if contract is None:
+        return original_fn(configurator, *args, **kwargs)
+    server_args = configurator.server_args
+    expected_disabled = {
+        "radix_cache",
+        "overlap_schedule",
+        "speculative_decoding",
+        "disaggregation",
+        "cuda_graph",
+    }
+    if set(contract.get("required_disabled_features", [])) != expected_disabled:
+        raise RuntimeError(
+            "OrbitKV uniform-SWA disabled-feature contract is unsupported"
+        )
+    required = {
+        "disable_radix_cache": bool(server_args.disable_radix_cache),
+        "disable_overlap_schedule": bool(server_args.disable_overlap_schedule),
+        "disable_cuda_graph": bool(server_args.disable_cuda_graph),
+        "disaggregation_disabled": server_args.disaggregation_mode == "null",
+        "speculative_decoding_disabled": configurator.spec_algorithm.is_none(),
+        "page_tokens": int(configurator.page_size)
+        == int(contract["page_tokens"]),
+    }
+    if _STATE_PLAN_MODE == "execute":
+        required["maximum_running_requests"] = int(
+            server_args.max_running_requests
+        ) <= int(contract["maximum_running_requests"])
+    failed = [name for name, passed in required.items() if not passed]
+    if failed:
+        raise RuntimeError(
+            "OrbitKV uniform-SWA runtime contract failed: " + ", ".join(failed)
+        )
+    result = original_fn(configurator, *args, **kwargs)
+    allocator = result.token_to_kv_pool_allocator
+    if _STATE_PLAN_MODE == "kernel_reference":
+        if type(allocator).__name__ == "PureSWATokenToKVPoolAllocator":
+            raise RuntimeError(
+                "OrbitKV kernel reference must retain the ordinary KV allocator"
+            )
+        return result
+    if type(allocator).__name__ != "PureSWATokenToKVPoolAllocator":
+        raise RuntimeError(
+            "OrbitKV uniform-SWA plan did not produce PureSWATokenToKVPoolAllocator"
+        )
+    if int(allocator.page_size) != int(contract["page_tokens"]):
+        raise RuntimeError("OrbitKV uniform-SWA allocator page size mismatch")
+    minimum_pool_tokens = (
+        int(contract["kernel_window_left"])
+        + int(server_args.chunked_prefill_size)
+        + int(contract["page_tokens"])
+    )
+    if int(allocator.size_swa) < minimum_pool_tokens:
+        raise RuntimeError(
+            "OrbitKV uniform-SWA pool cannot cover window and prefill staging"
+        )
+    return result
+
+
+def _resolve_uniform_swa_window(
+    original_fn: Callable,
+    model: Any,
+    model_config: Any,
+):
+    result = original_fn(model, model_config)
+    if _UNIFORM_SWA_CONTRACT is None:
+        return result
+    return int(_UNIFORM_SWA_CONTRACT["kernel_window_left"])
+
+
+def _expand_uniform_swa_worker_info(
+    original_fn: Callable,
+    worker: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    result = original_fn(worker, *args, **kwargs)
+    if _UNIFORM_SWA_CONTRACT is None or _STATE_PLAN_MODE != "execute":
+        return result
+    values = list(result)
+    max_request_len = int(worker.model_config.context_len) - 1
+    values[4] = max_request_len
+    values[5] = max_request_len - 5
+    return tuple(values)
+
+
+def _init_uniform_swa_max_new_tokens(
+    original_fn: Callable,
+    scheduler: Any,
+    req: Any,
+):
+    if _UNIFORM_SWA_CONTRACT is None or _STATE_PLAN_MODE != "execute":
+        return original_fn(scheduler, req)
+    requested = req.sampling_params.max_new_tokens
+    requested_minimum = req.sampling_params.min_new_tokens
+    result = original_fn(scheduler, req)
+    if requested is None:
+        requested = 1 << 30
+    if (
+        scheduler.max_new_tokens_limit is not None
+        and scheduler.max_new_tokens_limit > 0
+    ):
+        requested = min(requested, scheduler.max_new_tokens_limit)
+    req.sampling_params.max_new_tokens = max(
+        0,
+        min(
+            requested,
+            scheduler.max_req_len - len(req.origin_input_ids) - 1,
+        ),
+    )
+    req.sampling_params.min_new_tokens = min(
+        requested_minimum,
+        req.sampling_params.max_new_tokens,
+    )
+    return result
+
+
+def _admit_uniform_swa_request(
+    original_fn: Callable,
+    adder: Any,
+    req: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    if _UNIFORM_SWA_CONTRACT is None or _STATE_PLAN_MODE != "execute":
+        return original_fn(adder, req, *args, **kwargs)
+    if not adder.is_all_swa:
+        raise RuntimeError("OrbitKV uniform-SWA admission requires PureSWA")
+    if int(adder.max_running_requests or 0) > int(
+        _UNIFORM_SWA_CONTRACT["maximum_running_requests"]
+    ):
+        raise RuntimeError(
+            "OrbitKV uniform-SWA admission exceeds compiled request concurrency"
+        )
+    candidate_tokens = (
+        len(req.full_untruncated_fill_ids)
+        - len(req.prefix_indices)
+        + int(req.sampling_params.max_new_tokens)
+        + int(adder.page_size)
+    )
+    boost = max(0, candidate_tokens - int(adder.rem_total_tokens) + 1)
+    adder.rem_total_token_offset -= boost
+    try:
+        return original_fn(adder, req, *args, **kwargs)
+    finally:
+        adder.rem_total_token_offset += boost
+
+
 def _validate_physical_contract(batch: Any) -> None:
     if _PHYSICAL_PLAN is None:
         return
@@ -760,10 +1027,11 @@ def _emit_owner_certificate(certificate: dict[str, Any]) -> None:
 
 
 def register() -> None:
-    global _OWNER, _POLICY, _WRITER
+    global _OWNER, _POLICY, _STATE_PLAN, _WRITER
 
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
+    _STATE_PLAN = _load_state_plan()
     _POLICY = _load_policy()
     if _POLICY is not None:
         os.environ["SGLANG_SWA_EVICTION_INTERVAL"] = str(
@@ -818,6 +1086,43 @@ def register() -> None:
         HookRegistry.register(
             "sglang.srt.managers.schedule_batch.ScheduleBatch.maybe_evict_swa",
             _run_with_physical_contract,
+            HookType.AROUND,
+        )
+
+    if _UNIFORM_SWA_CONTRACT is not None:
+        HookRegistry.register(
+            "sglang.srt.configs.model_config.ModelConfig._derive_hybrid_model",
+            _activate_uniform_swa_model_config,
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.models.llama.LlamaAttention.__init__",
+            _activate_uniform_swa_kernel,
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.model_executor.model_runner_components.load_model_utils.resolve_sliding_window_size",
+            _resolve_uniform_swa_window,
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.mem_cache.kv_cache_configurator.KVCacheConfigurator.configure",
+            _validate_uniform_swa_runtime,
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.managers.tp_worker.TpModelWorker.get_worker_info",
+            _expand_uniform_swa_worker_info,
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.managers.scheduler.Scheduler.init_req_max_new_tokens",
+            _init_uniform_swa_max_new_tokens,
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req",
+            _admit_uniform_swa_request,
             HookType.AROUND,
         )
 

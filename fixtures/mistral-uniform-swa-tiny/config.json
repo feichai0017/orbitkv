@@ -1,0 +1,10 @@
+{
+  "architectures": [
+    "MistralForCausalLM"
+  ],
+  "num_hidden_layers": 4,
+  "sliding_window": 4096,
+  "num_key_value_heads": 8,
+  "hidden_size": 4096,
+  "num_attention_heads": 32
+}

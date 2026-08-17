@@ -1,0 +1,69 @@
+{
+  "claim_boundary": [
+    "real Qwen2.5-7B-Instruct and Mistral-7B-v0.1 checkpoints loaded with load_format=auto",
+    "Mistral uniform-SWA execution uses page size 1 and maximum_running_requests=1",
+    "radix cache, overlap scheduling, speculative decoding, disaggregation, and CUDA Graph disabled",
+    "Mistral kernel reference uses the same compiled attention window with ordinary 16K KV",
+    "GPT-OSS entry reuses the separately manifested released-checkpoint result",
+    "no model-quality or multi-request qualification claim"
+  ],
+  "date": "2026-08-17",
+  "external_checkpoints": {
+    "mistral": {
+      "config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+      "index_sha256": "c94ab46aaf5fcca44720c10bcc498c1b0d9759d47534a396e3512edc451ebd06",
+      "indexed_weight_bytes": 14483464192,
+      "name": "Mistral-7B-v0.1"
+    },
+    "qwen": {
+      "config_sha256": "7463bb0ea78315365e6c6b74de4e73bbcc8359dfb0c5a737584e077d42c0b03c",
+      "index_sha256": "624bf7c47cd12468fdc16e38a47cf4f19e0415b859a223ba3c027eed2f0e1028",
+      "indexed_weight_bytes": 15231233024,
+      "name": "Qwen2.5-7B-Instruct"
+    }
+  },
+  "gpu": {
+    "compute_capability": [
+      9,
+      0
+    ],
+    "driver": "535.161.08",
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+  },
+  "records": {
+    "results/applicability-h20-20260817/applicability.json": "20ed4492b019a42bd1f849a0caf057d9e6b93b2b509e3534f6b553bca81d31cb",
+    "results/applicability-h20-20260817/mistral-e2e.json": "336dce76941f07eba0765d071b03134000cdb7ce565da1bfa1196c88c206b99a",
+    "results/applicability-h20-20260817/mistral-state-plan.json": "6778bdab064e37e47c9ffb892256fc69d4b38e153f956ba5970251a87835759c",
+    "results/applicability-h20-20260817/qwen-noop.json": "b509531d259eb1615f6bc668c1c54ca39c3e04c1e08ee726d7b746e6dc8250af"
+  },
+  "schema": "orbitkv.applicability-h20-manifest.v1",
+  "software": {
+    "flashinfer": "0.6.17",
+    "python": "3.11.10",
+    "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+    "torch": "2.13.0",
+    "transformers": "5.12.1",
+    "triton": "3.7.1"
+  },
+  "sources": {
+    ".github/workflows/ci.yml": "a7359bfb277ebc3058ed0e74c4020c5ab2a01556470881838edd5b311714ceed",
+    "fixtures/mistral-uniform-swa-tiny/config.json": "08d14a328b9f1f57619081ab1380c964c531b5fff14bb2169ee08c2d605bc14d",
+    "fixtures/qwen2.5-full-tiny/config.json": "09a6ab0cf0fe19737878c2862f4d34b8fafe3e4ea9831f0f1022852d5f72beac",
+    "integrations/sglang/bench_hybrid_shadow.py": "515d6797ed4bf0806ffb9ae1a2fd69a0aadd9b7e81e78f8782040be9782cc3a8",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "7eb4d9f2c8dacec20878f9636f0504fc00c8c5eaf18ac0c761fe21894bc161b3",
+    "integrations/sglang/tests/test_shadow_plugin.py": "70404a6d0e23bb84c499d547f8afe5f4ed8e426014d9e8632d38ec319b07fd03",
+    "src/bin/orbitkv.rs": "ad946c611d57674c3893a5ffd7cdf18e19907eb190eff58f2c19de08a0079dd1",
+    "src/hf_config.rs": "66f7c50e7f234fda96541d310e4bd71cd6f38922d92c99e00846708a37be1fd2",
+    "src/lib.rs": "9c511516962e4353e8c3586de85e6dddac8df0c4dd863e1818f6d9acf205df43",
+    "src/plan.rs": "ca25de0f2fa0e02564507c0091d9ad2f460c14b3d481d7432c222984904943e6",
+    "tests/retention_cli.rs": "986ac0340d5ffef2b2ebd03b0341d2cc7a21e5c7988a7a4ab5e2e7e4ac73d4af",
+    "tools/verify_applicability_results.py": "d6b767ac499c2f5dd33b6fa7b9a2dd80588f863d7097f0a3b9354d3060e913ad",
+    "tools/verify_manifests.py": "a837d041944c369cae8071a3c0e976479d0fb8f533bfddd456330c3902e0be6c"
+  },
+  "website": {
+    "README.md": "5293f9bcda11d46ff25625c85695221722cdb5d23a9d3648131e599f3fd951ab",
+    "results/README.md": "2e6746ffc4eb4ae4c6af6135565496ae7245b4d4deed7b687ade6dcc22cbf82f",
+    "website/src/data/site.ts": "f1b971dc68960608dad3453f7a52a0f49e80aa2264c3c38dd9444df23c85fa91"
+  }
+}

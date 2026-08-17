@@ -11,7 +11,7 @@ reclamation. SGLang is the first external validator.
 - Retention IR for Full, Sliding, Sink+Sliding, and Same-Chunk attention.
 - `AppendOnly`, `Periodic`, `Pinned`, and `ResettableArena` address programs.
 - Per-head lifetime stripes and Retention Amplification analysis.
-- HF Full/SWA config frontend.
+- HF applicability report and executable StatePlan.
 - SGLang physical-plan optimizer and runtime contract.
 - Generation-checked ownership and two-phase reclamation.
 - CUDA VMM physical-slot primitive.
@@ -24,9 +24,10 @@ Unsupported or unprovable semantics fail closed.
 | --- | ---: | --- |
 | GPT-OSS Full capacity | +25.81% | same 1.979 GiB KV budget |
 | GPT-OSS Owner vs Stock128 | -20.30% | 8×6K prompt workload |
+| Mistral KV memory | -50.00% | 12K prompt, same output digest |
+| Mistral warm runtime | 1.0028× | 8K KV vs 16K reference |
 | Physical-plan predictions | 4/4 | intervals 16/32/64/128 |
 | Multi-scale head KV | -42.105% | exact geometry |
-| Retention Amplification | 1.727× | max-window baseline |
 
 All GPT-OSS output-token digests matched. The capacity gain is reproducible by
 manually setting SGLang interval 32; OrbitKV contributes automatic plan
@@ -45,6 +46,9 @@ cargo run -- analyze-lifetime-normalization \
 
 cargo run -- compile-hf-config /path/to/config.json \
   --page-tokens 16 --kv-dtype-bytes 2
+
+cargo run -- compile-hf-state-plan /path/to/config.json \
+  --page-tokens 1 --kv-dtype-bytes 2 --boundary 32768
 ```
 
 Physical-plan compilation:
@@ -63,10 +67,10 @@ cargo run -- compile-hf-physical-plan /path/to/config.json \
 
 ## Boundaries
 
-The qualified SGLang path uses SWA ChunkCache with radix cache, overlap,
-speculative decoding, disaggregation, and CUDA Graph disabled. Per-head,
-Sink+Sliding, and Same-Chunk layouts are currently compiler/reference-manager
-results, not SGLang GPU results. VMM does not yet back SGLang KV tensors.
+The qualified SGLang paths disable radix cache, overlap, speculation,
+disaggregation, and CUDA Graph. Uniform-SWA execution is currently page-size 1
+and single-request only. Per-head, Sink+Sliding, and Same-Chunk layouts remain
+compiler/reference-manager results. VMM does not yet back SGLang KV tensors.
 
 See:
 

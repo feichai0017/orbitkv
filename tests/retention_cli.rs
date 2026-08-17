@@ -123,6 +123,90 @@ fn hf_config_frontend_compiles_hybrid_fixture() {
 }
 
 #[test]
+fn hf_applicability_reports_full_uniform_and_hybrid_models() {
+    let cases = [
+        (
+            "fixtures/qwen2.5-full-tiny/config.json",
+            "fallback_all_full",
+            "safe_fallback",
+            serde_json::json!(["append_only"]),
+            0,
+        ),
+        (
+            "fixtures/mistral-uniform-swa-tiny/config.json",
+            "architecture_uniform_sliding",
+            "uniform_bounded",
+            serde_json::json!(["periodic"]),
+            49_000,
+        ),
+        (
+            "fixtures/gpt-oss-hybrid-tiny/config.json",
+            "explicit_layer_types",
+            "hybrid_lifetimes",
+            serde_json::json!(["append_only", "periodic"]),
+            43_000,
+        ),
+    ];
+    for (path, inference, applicability, layouts, minimum_reduction) in cases {
+        let config = root().join(path);
+        let report = run(&[
+            "analyze-hf-applicability",
+            config.to_str().unwrap(),
+            "--page-tokens",
+            "16",
+            "--kv-dtype-bytes",
+            "2",
+            "--boundary",
+            "8192",
+        ]);
+        assert_eq!(report["schema"], "orbitkv.hf-applicability-compilation.v1");
+        assert_eq!(report["compilation"]["layer_inference"], inference);
+        assert_eq!(report["applicability"]["applicability"], applicability);
+        assert_eq!(report["applicability"]["generated_layouts"], layouts);
+        assert!(
+            report["applicability"]["static_reduction_percent_milli"]
+                .as_u64()
+                .unwrap()
+                >= minimum_reduction
+        );
+        assert_eq!(
+            report["applicability"]["claim_boundary"][1],
+            "not a kernel, scheduler, admission, or end-to-end speedup prediction"
+        );
+    }
+}
+
+#[test]
+fn hf_state_plan_emits_uniform_swa_execution_contract() {
+    let config = root().join("fixtures/mistral-uniform-swa-tiny/config.json");
+    let report = run(&[
+        "compile-hf-state-plan",
+        config.to_str().unwrap(),
+        "--page-tokens",
+        "1",
+        "--kv-dtype-bytes",
+        "2",
+        "--boundary",
+        "8192",
+    ]);
+    assert_eq!(report["schema"], "orbitkv.hf-state-plan.v1");
+    assert_eq!(report["sglang_lowering"]["status"], "enabled");
+    assert_eq!(report["sglang_lowering"]["kind"], "uniform_swa");
+    assert_eq!(
+        report["sglang_lowering"]["contract"]["architecture"],
+        "MistralForCausalLM"
+    );
+    assert_eq!(
+        report["sglang_lowering"]["contract"]["kernel_window_left"],
+        4095
+    );
+    assert_eq!(
+        report["layout"]["classes"][0]["address"]["kind"],
+        "periodic"
+    );
+}
+
+#[test]
 fn hf_physical_optimizer_selects_capacity_plan() {
     let config = root().join("fixtures/gpt-oss-hybrid-tiny/config.json");
     let report = run(&[
