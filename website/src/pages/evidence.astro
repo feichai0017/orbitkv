@@ -63,7 +63,11 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
         <p>
           Sixty-four fresh physical backings were mapped at one stable virtual
           address. Every pattern passed, and GPU memory returned to the pre-test
-          value. This is not yet SGLang KV tensor storage.
+          value. The pinned SGLang revision already has monotonic post-capture
+          VMM backing; OrbitKV adds generation-aware reclaim/remap receipts.
+          A separate closed-loop test passed 64 CUDA Events, 64 data checks,
+          63 stale-generation rejections, and 65 manager receipt commits. This
+          is not yet SGLang KV tensor storage.
         </p>
         <a href={`${repositoryUrl}/blob/main/results/h20-cuda-vmm-20260817/smoke.json`}>
           VMM smoke record

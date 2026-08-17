@@ -1,0 +1,33 @@
+{
+  "committed_reclamations": 65,
+  "completed_submissions": 64,
+  "cycles": 64,
+  "device_ordinal": 0,
+  "failed_checks": [],
+  "gpu_memory_used_mib_after": 0,
+  "gpu_memory_used_mib_before": 0,
+  "maximum_physical_generation": 33,
+  "maximum_temporal_cycle": 32,
+  "passed_checks": [
+    "stable_virtual_address",
+    "temporal_cycle_progress",
+    "physical_generation_progress",
+    "cuda_event_completion",
+    "receipt_commit",
+    "data_patterns",
+    "stale_generation_rejected",
+    "manager_empty",
+    "no_pending_events"
+  ],
+  "physical_generation_checks": 63,
+  "schema": "orbitkv.cuda-generation-lifecycle.v1",
+  "slot_bytes": 2097152,
+  "slot_count": 2,
+  "stable_addresses": {
+    "0": 140138562715648,
+    "1": 140138564812800
+  },
+  "stale_generation_rejections": 63,
+  "temporal_cycle_checks": 64,
+  "verified_patterns": 64
+}

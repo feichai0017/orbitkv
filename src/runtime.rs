@@ -2,7 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use thiserror::Error;
 
-use crate::{CompiledKvClass, CompiledKvPlan, PlanError, RetentionKind};
+use crate::{
+    CellVersion, CompiledKvClass, CompiledKvPlan, LayoutProgram, PlanError, RetentionKind,
+    TemporalAddress,
+};
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub struct LogicalBlock {
@@ -16,9 +19,15 @@ pub struct Submission {
     pub blocks: BTreeSet<LogicalBlock>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd)]
+pub struct ResidentTemporalBlock {
+    pub logical: LogicalBlock,
+    pub temporal: TemporalAddress,
+}
+
 #[derive(Clone, Debug, Default)]
 struct BlockState {
-    generation: u64,
+    version: Option<CellVersion>,
     logical: Option<LogicalBlock>,
     gpu_pins: BTreeSet<u64>,
     retiring: bool,
@@ -48,12 +57,15 @@ pub enum RuntimeError {
     BlockOrdinalTooLarge(u64),
     #[error("full-retention block became semantically dead: {0:?}")]
     FullBlockRetired(LogicalBlock),
+    #[error("simulator stored the wrong temporal version for {0:?}")]
+    TemporalVersionMismatch(LogicalBlock),
     #[error(transparent)]
     Plan(#[from] PlanError),
 }
 
 pub struct KvRuntimeSimulator {
     plan: CompiledKvPlan,
+    layout: LayoutProgram,
     boundary: u64,
     next_submission: u64,
     classes: BTreeMap<String, CompiledKvClass>,
@@ -70,6 +82,7 @@ impl KvRuntimeSimulator {
     /// Returns an error if a compiled slot count cannot fit the host address
     /// space.
     pub fn new(plan: CompiledKvPlan) -> Result<Self, RuntimeError> {
+        let layout = plan.layout_program()?;
         let mut classes = BTreeMap::new();
         let mut bounded_slots = BTreeMap::new();
         let mut append_slots = BTreeMap::new();
@@ -85,6 +98,7 @@ impl KvRuntimeSimulator {
         }
         Ok(Self {
             plan,
+            layout,
             boundary: 0,
             next_submission: 1,
             classes,
@@ -201,6 +215,39 @@ impl KvRuntimeSimulator {
             .collect()
     }
 
+    /// Returns actual resident blocks with their compiler-defined cells and
+    /// versions.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the simulator's stored version diverges from the
+    /// address program.
+    pub fn resident_temporal_blocks(
+        &self,
+        request_id: &str,
+    ) -> Result<Vec<ResidentTemporalBlock>, RuntimeError> {
+        self.bounded_slots
+            .values()
+            .chain(self.append_slots.values())
+            .flat_map(|states| states.iter())
+            .filter_map(|state| state.logical.as_ref().map(|logical| (state, logical)))
+            .map(|(state, logical)| {
+                let temporal = self.layout.temporal_address(
+                    request_id,
+                    &logical.class_name,
+                    logical.ordinal,
+                )?;
+                if state.version != Some(temporal.version) {
+                    return Err(RuntimeError::TemporalVersionMismatch(logical.clone()));
+                }
+                Ok(ResidentTemporalBlock {
+                    logical: logical.clone(),
+                    temporal,
+                })
+            })
+            .collect()
+    }
+
     #[must_use]
     pub fn retiring_blocks(&self) -> Vec<LogicalBlock> {
         self.bounded_slots
@@ -219,6 +266,9 @@ impl KvRuntimeSimulator {
                 class_name: class.spec.name.clone(),
                 ordinal,
             };
+            let address =
+                self.layout
+                    .temporal_address("simulator", &logical.class_name, ordinal)?;
             let state = self.slot_for_mut(&class, ordinal)?;
             if state.logical.as_ref() == Some(&logical) {
                 continue;
@@ -231,10 +281,7 @@ impl KvRuntimeSimulator {
                     return Err(RuntimeError::SlotCollision(previous.clone()));
                 }
             }
-            state.generation = state
-                .generation
-                .checked_add(1)
-                .ok_or_else(|| RuntimeError::BlockGenerationExhausted(logical.clone()))?;
+            state.version = Some(address.version);
             state.logical = Some(logical);
             state.retiring = false;
         }
@@ -281,7 +328,11 @@ impl KvRuntimeSimulator {
         ordinal: u64,
     ) -> Result<&mut BlockState, RuntimeError> {
         if let Some(slot_count) = class.slot_count {
-            let slot = usize::try_from(ordinal % slot_count)
+            let address = self
+                .layout
+                .temporal_address("simulator", &class.spec.name, ordinal)?;
+            debug_assert!(address.cell.cell_index < slot_count);
+            let slot = usize::try_from(address.cell.cell_index)
                 .map_err(|_| RuntimeError::BlockOrdinalTooLarge(ordinal))?;
             Ok(&mut self
                 .bounded_slots
@@ -320,7 +371,11 @@ impl KvRuntimeSimulator {
             .get(&logical.class_name)
             .ok_or_else(|| RuntimeError::UnknownClass(logical.class_name.clone()))?;
         if let Some(slot_count) = class.slot_count {
-            let slot = usize::try_from(logical.ordinal % slot_count)
+            let address =
+                self.layout
+                    .temporal_address("simulator", &logical.class_name, logical.ordinal)?;
+            debug_assert!(address.cell.cell_index < slot_count);
+            let slot = usize::try_from(address.cell.cell_index)
                 .map_err(|_| RuntimeError::BlockOrdinalTooLarge(logical.ordinal))?;
             Ok(self.bounded_slots[&logical.class_name].get(slot))
         } else {

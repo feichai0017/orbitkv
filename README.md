@@ -159,6 +159,18 @@ On the recorded H20:
 - every data pattern was verified;
 - GPU memory returned to the pre-test value.
 
+The pinned SGLang validator already implements post-capture VMM backing that
+reserves stable addresses and monotonically commits the final KV span.
+OrbitKV's additional contract is generation-aware reclamation: a compiled
+logical cell/cycle is bound to a physical generation, real CUDA Event
+completion gates retirement, VMM unmap returns a generation-matched receipt,
+and the core manager commits before the stable address can host the next
+generation.
+
+A 64-cycle H20 closed-loop test passed 64 CUDA Event completions, 64 data
+pattern checks, 63 stale-generation rejections, and 65 receipt commits, with
+zero final manager residency and no GPU-memory delta.
+
 The optimizer therefore rejects VMM for small regions whose 2 MiB rounding
 amplification is too expensive. VMM is selected only when stable addresses are
 required and the rounded physical cost fits the configured budget. The next

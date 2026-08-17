@@ -52,6 +52,7 @@ export const metrics = [
   { value: "−28.25%", label: "Makespan", detail: "median for eight 6K-token requests" },
   { value: "4.26×", label: "Owner transport", detail: "release plan+commit median speedup with in-process FFI" },
   { value: "64×", label: "VMM remaps", detail: "fresh backing at one stable virtual address" },
+  { value: "63 / 63", label: "Stale generations", detail: "old physical handles rejected after VMM slot reuse" },
   { value: "2 MiB", label: "VMM granularity", detail: "measured H20 minimum and recommended allocation unit" },
 ];
 
@@ -85,6 +86,12 @@ export const evidenceRows = [
     value: "64 / 64",
     contract: "fresh backing remap and data verification at stable VA",
     boundary: "isolated physical primitive; not SGLang tensor storage",
+  },
+  {
+    result: "Generation lifecycle",
+    value: "64 / 64",
+    contract: "temporal cell cycle, CUDA Event, VMM receipt, manager commit",
+    boundary: "closed-loop core/backend test; not SGLang tensor storage",
   },
 ];
 

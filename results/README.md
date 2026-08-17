@@ -16,6 +16,7 @@ measurements, and end-to-end serving behavior.
 | `h20-owner-ab-20260817` | Rust owning control plane versus the same generated policy |
 | `h20-cuda-vmm-20260817` | Isolated H20 CUDA VMM stable-address remap qualification |
 | `owner-ffi-20260817` | In-process C ABI transport microbenchmark and balanced H20 A/B |
+| `h20-generation-vmm-20260817` | Layout-driven cell versions, CUDA events, VMM generation receipts |
 
 The reviewed interpretations are:
 

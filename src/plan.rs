@@ -105,6 +105,24 @@ pub struct LayoutProgram {
     pub classes: Vec<ClassLayoutProgram>,
 }
 
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct LogicalCellId {
+    pub request_id: String,
+    pub class_name: String,
+    pub cell_index: u64,
+}
+
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct CellVersion {
+    pub cycle: u64,
+}
+
+#[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct TemporalAddress {
+    pub cell: LogicalCellId,
+    pub version: CellVersion,
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PhysicalBackend {
@@ -168,6 +186,107 @@ pub enum PlanError {
     ZeroBackendBytes,
     #[error("CUDA VMM granularity must be positive when VMM is supported")]
     ZeroVmmGranularity,
+    #[error("periodic address program must have a positive period")]
+    ZeroAddressPeriod,
+    #[error("layout program does not contain class {0:?}")]
+    UnknownLayoutClass(String),
+}
+
+impl AddressProgram {
+    /// Maps one logical block ordinal to its compiler-defined cell and version.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a periodic program has a zero period.
+    pub fn evaluate(
+        &self,
+        request_id: &str,
+        class_name: &str,
+        ordinal: u64,
+    ) -> Result<TemporalAddress, PlanError> {
+        let (cell_index, cycle) = match *self {
+            Self::AppendOnly => (ordinal, 0),
+            Self::Periodic { period_blocks } => {
+                if period_blocks == 0 {
+                    return Err(PlanError::ZeroAddressPeriod);
+                }
+                (ordinal % period_blocks, ordinal / period_blocks)
+            }
+        };
+        Ok(TemporalAddress {
+            cell: LogicalCellId {
+                request_id: request_id.to_owned(),
+                class_name: class_name.to_owned(),
+                cell_index,
+            },
+            version: CellVersion { cycle },
+        })
+    }
+}
+
+impl RetirementProgram {
+    /// Evaluates the semantic death boundary of one logical block.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if block or token arithmetic overflows.
+    pub fn death_boundary(&self, page_tokens: u64, ordinal: u64) -> Result<Option<u64>, PlanError> {
+        match *self {
+            Self::Never => Ok(None),
+            Self::BlockEndPlus { offset_tokens } => ordinal
+                .checked_add(1)
+                .and_then(|block_end| block_end.checked_mul(page_tokens))
+                .and_then(|block_end| block_end.checked_add(offset_tokens))
+                .map(Some)
+                .ok_or(PlanError::ArithmeticOverflow {
+                    calculation: "retirement program death boundary",
+                }),
+        }
+    }
+}
+
+impl ClassLayoutProgram {
+    /// Evaluates this class's temporal address for one request block.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the address program is invalid.
+    pub fn temporal_address(
+        &self,
+        request_id: &str,
+        ordinal: u64,
+    ) -> Result<TemporalAddress, PlanError> {
+        self.address.evaluate(request_id, &self.name, ordinal)
+    }
+}
+
+impl LayoutProgram {
+    /// Looks up and evaluates one class address program.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown class or invalid address program.
+    pub fn temporal_address(
+        &self,
+        request_id: &str,
+        class_name: &str,
+        ordinal: u64,
+    ) -> Result<TemporalAddress, PlanError> {
+        self.class(class_name)?
+            .temporal_address(request_id, ordinal)
+    }
+
+    /// Returns one compiled class layout.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the class does not exist.
+    pub fn class(&self, class_name: &str) -> Result<&ClassLayoutProgram, PlanError> {
+        self.classes
+            .iter()
+            .find(|class| class.name == class_name)
+            .ok_or_else(|| PlanError::UnknownLayoutClass(class_name.to_owned()))
+    }
 }
 
 impl CompiledKvPlan {
@@ -792,5 +911,34 @@ mod tests {
         .unwrap();
         assert_eq!(large.backend, PhysicalBackend::CudaVmm);
         assert_eq!(large.rounding_amplification_milli, 1000);
+    }
+
+    #[test]
+    fn periodic_address_program_derives_cell_and_cycle() {
+        let address = AddressProgram::Periodic { period_blocks: 65 }
+            .evaluate("request-7", "swa", 131)
+            .unwrap();
+        assert_eq!(address.cell.request_id, "request-7");
+        assert_eq!(address.cell.class_name, "swa");
+        assert_eq!(address.cell.cell_index, 1);
+        assert_eq!(address.version.cycle, 2);
+    }
+
+    #[test]
+    fn retirement_program_matches_sliding_death_formula() {
+        assert_eq!(
+            RetirementProgram::BlockEndPlus {
+                offset_tokens: 1023
+            }
+            .death_boundary(16, 0)
+            .unwrap(),
+            Some(1039)
+        );
+        assert_eq!(
+            RetirementProgram::Never
+                .death_boundary(16, u64::MAX)
+                .unwrap(),
+            None
+        );
     }
 }

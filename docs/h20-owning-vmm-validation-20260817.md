@@ -161,6 +161,41 @@ rounded VMM bytes / logical bytes <= configured threshold
 Small regions fall back to the paged backend instead of paying large rounding
 amplification.
 
+## Generation-aware VMM lifecycle
+
+The pinned SGLang revision already contains a post-capture CUDA VMM backing
+arena. That implementation reserves stable VA and monotonically commits the
+final KV span after graph capture. OrbitKV does not claim stable VA reservation
+itself as a new contribution.
+
+OrbitKV's distinct physical contract is:
+
+```text
+compiled logical cell + deterministic cycle
+    -> generation-checked physical binding
+    -> CUDA event execution completion
+    -> semantic retirement certificate
+    -> generation-matched VMM unmap receipt
+    -> manager commit
+    -> next generation may reuse the stable VA
+```
+
+An H20 lifecycle test used a two-cell `Sliding(W=2)` address program for 64
+cycles. It verified:
+
+- 64 CUDA submission events completed;
+- 64 device-memory patterns were read back correctly;
+- 63 stale-generation handles were rejected after slot reuse;
+- 65 physical reclamation receipts were committed, including final request
+  release;
+- temporal cycle and physical generation progressed consistently;
+- each physical slot retained one stable virtual address across generations;
+- manager residency and pending events returned to zero;
+- GPU memory before and after remained 0 MiB.
+
+This is a closed-loop core-manager/CUDA-backend qualification. It is not yet a
+replacement for SGLang's real KV tensor storage.
+
 ## Claim boundary
 
 This evidence supports:
@@ -170,6 +205,8 @@ This evidence supports:
 - low measured prototype control-plane overhead for the tested workload;
 - functioning H20 CUDA VMM reserve/map/remap/unmap/release lifecycle;
 - stable virtual addresses across fresh physical backing generations;
+- generation-aware VMM reclaim/remap driven by manager certificates and CUDA
+  event completion;
 - cost-aware rejection of VMM for inefficient small regions.
 
 It does not yet support:

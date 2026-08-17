@@ -3,7 +3,9 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::Serialize;
 use thiserror::Error;
 
-use crate::{CompiledKvClass, CompiledKvPlan, PlanError, RetentionKind};
+use crate::{
+    CompiledKvClass, CompiledKvPlan, LayoutProgram, LogicalCellId, PlanError, TemporalAddress,
+};
 
 #[derive(Clone, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct BlockKey {
@@ -22,6 +24,7 @@ pub struct BlockHandle {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct ViewBlock {
     pub logical: BlockKey,
+    pub temporal: TemporalAddress,
     pub physical: BlockHandle,
 }
 
@@ -57,11 +60,19 @@ pub struct RetirementCertificate {
     pub plan_fingerprint: String,
     pub certificate_id: u64,
     pub logical: BlockKey,
+    pub temporal: TemporalAddress,
     pub physical: BlockHandle,
     pub token_start: u64,
     pub token_end_exclusive: u64,
     pub semantic_proof: SemanticProof,
     pub execution_proof: ExecutionProof,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PhysicalReclamationReceipt {
+    pub schema: &'static str,
+    pub certificate_id: u64,
+    pub physical: BlockHandle,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -98,6 +109,7 @@ enum SlotPhase {
 struct SlotState {
     generation: u64,
     occupant: Option<BlockKey>,
+    temporal: Option<TemporalAddress>,
     readers: BTreeSet<u64>,
     phase: SlotPhase,
     pending_certificate: Option<u64>,
@@ -122,6 +134,13 @@ struct SubmissionState {
     blocks: Vec<ViewBlock>,
 }
 
+#[derive(Clone, Debug)]
+struct CellBinding {
+    logical: BlockKey,
+    version: crate::CellVersion,
+    physical: BlockHandle,
+}
+
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum ManagerError {
     #[error("unknown KV class {0:?}")]
@@ -132,6 +151,12 @@ pub enum ManagerError {
     DuplicatePool(String),
     #[error("physical pool {class:?} must contain at least one slot")]
     EmptyPool { class: String },
+    #[error("physical pool {class:?} has {configured} slots, below compiled minimum {minimum}")]
+    InsufficientPoolSlots {
+        class: String,
+        configured: u64,
+        minimum: u64,
+    },
     #[error("physical slot count does not fit the host address space for {0:?}")]
     SlotCountTooLarge(String),
     #[error("request {0:?} already exists")]
@@ -168,12 +193,16 @@ pub enum ManagerError {
     BlockNotResident(BlockKey),
     #[error("logical block handle is stale: {0:?}")]
     StaleHandle(BlockHandle),
+    #[error("logical cell is still bound to another version: {0:?}")]
+    LogicalCellCollision(LogicalCellId),
     #[error("unknown submission {0}")]
     UnknownSubmission(u64),
     #[error("unknown retirement certificate {0}")]
     UnknownCertificate(u64),
     #[error("retirement certificate {0} no longer matches its physical slot")]
     StaleCertificate(u64),
+    #[error("physical reclamation receipt does not match certificate {0}")]
+    MismatchedReclamationReceipt(u64),
     #[error("submission generation exhausted")]
     SubmissionGenerationExhausted,
     #[error("certificate generation exhausted")]
@@ -188,11 +217,13 @@ pub enum ManagerError {
 
 pub struct KvBlockManager {
     plan: CompiledKvPlan,
+    layout: LayoutProgram,
     fingerprint: String,
     classes: BTreeMap<String, CompiledKvClass>,
     pools: BTreeMap<String, ClassPool>,
     requests: BTreeMap<String, RequestState>,
     block_handles: BTreeMap<BlockKey, BlockHandle>,
+    cell_bindings: BTreeMap<LogicalCellId, CellBinding>,
     submissions: BTreeMap<u64, SubmissionState>,
     completed_out_of_order: BTreeSet<u64>,
     completed_through: u64,
@@ -209,6 +240,7 @@ impl KvBlockManager {
     /// Returns an error for missing, duplicate, empty, unknown, or
     /// host-unrepresentable pool configurations.
     pub fn new(plan: CompiledKvPlan, config: BlockManagerConfig) -> Result<Self, ManagerError> {
+        let layout = plan.layout_program()?;
         let classes = plan
             .classes
             .iter()
@@ -234,6 +266,15 @@ impl KvBlockManager {
             let config = configured
                 .remove(class_name)
                 .ok_or_else(|| ManagerError::MissingPool(class_name.clone()))?;
+            if let Some(minimum) = classes[class_name].slot_count
+                && config.slot_count < minimum
+            {
+                return Err(ManagerError::InsufficientPoolSlots {
+                    class: class_name.clone(),
+                    configured: config.slot_count,
+                    minimum,
+                });
+            }
             let count = usize::try_from(config.slot_count)
                 .map_err(|_| ManagerError::SlotCountTooLarge(class_name.clone()))?;
             pools.insert(
@@ -247,11 +288,13 @@ impl KvBlockManager {
         let fingerprint = plan.fingerprint();
         Ok(Self {
             plan,
+            layout,
             fingerprint,
             classes,
             pools,
             requests: BTreeMap::new(),
             block_handles: BTreeMap::new(),
+            cell_bindings: BTreeMap::new(),
             submissions: BTreeMap::new(),
             completed_out_of_order: BTreeSet::new(),
             completed_through: 0,
@@ -357,13 +400,19 @@ impl KvBlockManager {
                     ordinal,
                 };
                 if let Some(handle) = self.block_handles.get(&logical) {
+                    let temporal = self.layout.temporal_address(
+                        request_id,
+                        &logical.class_name,
+                        logical.ordinal,
+                    )?;
                     allocated.push(ViewBlock {
                         logical,
+                        temporal,
                         physical: handle.clone(),
                     });
                     continue;
                 }
-                let handle = self.allocate(logical.clone())?;
+                let (temporal, handle) = self.allocate(logical.clone())?;
                 self.requests
                     .get_mut(request_id)
                     .ok_or_else(|| ManagerError::UnknownRequest(request_id.to_owned()))?
@@ -372,6 +421,7 @@ impl KvBlockManager {
                 self.block_handles.insert(logical.clone(), handle.clone());
                 allocated.push(ViewBlock {
                     logical,
+                    temporal,
                     physical: handle,
                 });
             }
@@ -453,7 +503,17 @@ impl KvBlockManager {
                     .cloned()
                     .ok_or_else(|| ManagerError::BlockNotResident(logical.clone()))?;
                 self.validate_handle(&logical, &physical)?;
-                blocks.push(ViewBlock { logical, physical });
+                let temporal = self.layout.temporal_address(
+                    request_id,
+                    &logical.class_name,
+                    logical.ordinal,
+                )?;
+                self.validate_temporal_binding(&logical, &temporal, &physical)?;
+                blocks.push(ViewBlock {
+                    logical,
+                    temporal,
+                    physical,
+                });
             }
         }
         let submission_id = self.next_submission_id;
@@ -541,12 +601,21 @@ impl KvBlockManager {
     ///
     /// Returns an error for an unknown, stale, pinned, or mismatched
     /// certificate. Failure leaves the slot unavailable.
-    pub fn commit_reclamation(&mut self, certificate_id: u64) -> Result<(), ManagerError> {
+    pub fn commit_reclamation(
+        &mut self,
+        receipt: &PhysicalReclamationReceipt,
+    ) -> Result<(), ManagerError> {
+        let certificate_id = receipt.certificate_id;
         let certificate = self
             .pending_certificates
             .get(&certificate_id)
             .cloned()
             .ok_or(ManagerError::UnknownCertificate(certificate_id))?;
+        if receipt.schema != "orbitkv.physical-reclamation-receipt.v1"
+            || receipt.physical != certificate.physical
+        {
+            return Err(ManagerError::MismatchedReclamationReceipt(certificate_id));
+        }
         self.validate_handle(&certificate.logical, &certificate.physical)?;
         {
             let slot = self.slot_mut(&certificate.physical)?;
@@ -557,6 +626,7 @@ impl KvBlockManager {
                 return Err(ManagerError::StaleCertificate(certificate_id));
             }
             slot.occupant = None;
+            slot.temporal = None;
             slot.phase = SlotPhase::Free;
             slot.pending_certificate = None;
         }
@@ -568,6 +638,17 @@ impl KvBlockManager {
             .free
             .insert(slot_index);
         self.block_handles.remove(&certificate.logical);
+        if self
+            .cell_bindings
+            .get(&certificate.temporal.cell)
+            .is_some_and(|binding| {
+                binding.logical == certificate.logical
+                    && binding.version == certificate.temporal.version
+                    && binding.physical == certificate.physical
+            })
+        {
+            self.cell_bindings.remove(&certificate.temporal.cell);
+        }
         if let Some(request) = self.requests.get_mut(&certificate.logical.request_id) {
             request.blocks.remove(&certificate.logical);
         }
@@ -601,7 +682,18 @@ impl KvBlockManager {
         }
     }
 
-    fn allocate(&mut self, logical: BlockKey) -> Result<BlockHandle, ManagerError> {
+    fn allocate(
+        &mut self,
+        logical: BlockKey,
+    ) -> Result<(TemporalAddress, BlockHandle), ManagerError> {
+        let temporal = self.layout.temporal_address(
+            &logical.request_id,
+            &logical.class_name,
+            logical.ordinal,
+        )?;
+        if self.cell_bindings.contains_key(&temporal.cell) {
+            return Err(ManagerError::LogicalCellCollision(temporal.cell.clone()));
+        }
         let pool = self
             .pools
             .get_mut(&logical.class_name)
@@ -620,12 +712,22 @@ impl KvBlockManager {
             .checked_add(1)
             .ok_or_else(|| ManagerError::BlockGenerationExhausted(logical.clone()))?;
         slot.occupant = Some(logical.clone());
+        slot.temporal = Some(temporal.clone());
         slot.phase = SlotPhase::Active;
-        Ok(BlockHandle {
-            class_name: logical.class_name,
+        let handle = BlockHandle {
+            class_name: logical.class_name.clone(),
             slot: slot_index as u64,
             generation: slot.generation,
-        })
+        };
+        self.cell_bindings.insert(
+            temporal.cell.clone(),
+            CellBinding {
+                logical,
+                version: temporal.version,
+                physical: handle.clone(),
+            },
+        );
+        Ok((temporal, handle))
     }
 
     fn mark_request_retirements(
@@ -707,6 +809,11 @@ impl KvBlockManager {
             plan_fingerprint: self.fingerprint.clone(),
             certificate_id,
             logical: logical.clone(),
+            temporal: self.layout.temporal_address(
+                &logical.request_id,
+                &logical.class_name,
+                logical.ordinal,
+            )?,
             physical: handle.clone(),
             token_start,
             token_end_exclusive,
@@ -738,29 +845,11 @@ impl KvBlockManager {
     }
 
     fn death_boundary(&self, logical: &BlockKey) -> Result<Option<u64>, ManagerError> {
-        let class = self
-            .classes
-            .get(&logical.class_name)
-            .ok_or_else(|| ManagerError::UnknownClass(logical.class_name.clone()))?;
-        match class.spec.retention {
-            RetentionKind::Full => Ok(None),
-            RetentionKind::Sliding => {
-                let window = class.spec.window_tokens.ok_or_else(|| {
-                    ManagerError::Plan(PlanError::InvalidCompiledClass {
-                        class: class.spec.name.clone(),
-                    })
-                })?;
-                let block_end = logical
-                    .ordinal
-                    .checked_add(1)
-                    .and_then(|ordinal| ordinal.checked_mul(self.plan.page_tokens))
-                    .ok_or(ManagerError::ArithmeticOverflow("block death boundary"))?;
-                let death = block_end
-                    .checked_add(window - 1)
-                    .ok_or(ManagerError::ArithmeticOverflow("block death boundary"))?;
-                Ok(Some(death))
-            }
-        }
+        Ok(self
+            .layout
+            .class(&logical.class_name)?
+            .retirement
+            .death_boundary(self.layout.page_tokens, logical.ordinal)?)
     }
 
     fn validate_handle(
@@ -770,6 +859,34 @@ impl KvBlockManager {
     ) -> Result<(), ManagerError> {
         let slot = self.slot(handle)?;
         if slot.generation != handle.generation || slot.occupant.as_ref() != Some(logical) {
+            return Err(ManagerError::StaleHandle(handle.clone()));
+        }
+        let temporal = self.layout.temporal_address(
+            &logical.request_id,
+            &logical.class_name,
+            logical.ordinal,
+        )?;
+        if slot.temporal.as_ref() != Some(&temporal) {
+            return Err(ManagerError::StaleHandle(handle.clone()));
+        }
+        self.validate_temporal_binding(logical, &temporal, handle)?;
+        Ok(())
+    }
+
+    fn validate_temporal_binding(
+        &self,
+        logical: &BlockKey,
+        temporal: &TemporalAddress,
+        handle: &BlockHandle,
+    ) -> Result<(), ManagerError> {
+        let binding = self
+            .cell_bindings
+            .get(&temporal.cell)
+            .ok_or_else(|| ManagerError::StaleHandle(handle.clone()))?;
+        if binding.logical != *logical
+            || binding.version != temporal.version
+            || binding.physical != *handle
+        {
             return Err(ManagerError::StaleHandle(handle.clone()));
         }
         Ok(())
@@ -814,7 +931,10 @@ impl KvBlockManager {
 
 #[cfg(test)]
 mod tests {
-    use crate::{KvClassSpec, KvPlanInput, compile_plan};
+    use crate::{
+        KvClassSpec, KvPlanInput, KvRuntimeSimulator, ResidentTemporalBlock, RetentionKind,
+        compile_plan,
+    };
 
     use super::*;
 
@@ -880,9 +1000,12 @@ mod tests {
             Err(ManagerError::PoolExhausted { .. })
         ));
         let old = certificates[0].physical.clone();
-        manager
-            .commit_reclamation(certificates[0].certificate_id)
-            .unwrap();
+        let receipt = PhysicalReclamationReceipt {
+            schema: "orbitkv.physical-reclamation-receipt.v1",
+            certificate_id: certificates[0].certificate_id,
+            physical: certificates[0].physical.clone(),
+        };
+        manager.commit_reclamation(&receipt).unwrap();
         let allocated = manager.materialize_to("r0", 64).unwrap();
         let new = allocated
             .iter()
@@ -926,7 +1049,7 @@ mod tests {
 
     #[test]
     fn request_release_retires_full_and_sliding_blocks() {
-        let mut manager = manager(2, 2);
+        let mut manager = manager(2, 3);
         manager.register_request("r0").unwrap();
         manager.materialize_to("r0", 16).unwrap();
         manager.advance_semantic_frontier("r0", 16).unwrap();
@@ -938,11 +1061,37 @@ mod tests {
             })
         );
         for certificate in certificates {
-            manager
-                .commit_reclamation(certificate.certificate_id)
-                .unwrap();
+            let receipt = PhysicalReclamationReceipt {
+                schema: "orbitkv.physical-reclamation-receipt.v1",
+                certificate_id: certificate.certificate_id,
+                physical: certificate.physical,
+            };
+            manager.commit_reclamation(&receipt).unwrap();
         }
         assert_eq!(manager.stats().resident_blocks, 0);
+    }
+
+    #[test]
+    fn mismatched_physical_receipt_fails_closed() {
+        let mut manager = manager(8, 3);
+        manager.register_request("r0").unwrap();
+        manager.materialize_to("r0", 48).unwrap();
+        let certificate = manager
+            .advance_semantic_frontier("r0", 47)
+            .unwrap()
+            .remove(0);
+        let mut wrong = certificate.physical.clone();
+        wrong.generation += 1;
+        assert!(matches!(
+            manager.commit_reclamation(&PhysicalReclamationReceipt {
+                schema: "orbitkv.physical-reclamation-receipt.v1",
+                certificate_id: certificate.certificate_id,
+                physical: wrong,
+            }),
+            Err(ManagerError::MismatchedReclamationReceipt(_))
+        ));
+        assert_eq!(manager.stats().pending_certificates, 1);
+        assert_eq!(manager.stats().free_slots["swa"], 0);
     }
 
     #[test]
@@ -964,6 +1113,113 @@ mod tests {
                 .unwrap()
                 .physical;
             assert_ne!(first_handle.slot, second_handle.slot);
+        }
+    }
+
+    #[test]
+    fn physical_pool_cannot_undercut_compiled_live_cell_bound() {
+        assert!(matches!(
+            KvBlockManager::new(
+                hybrid_plan(),
+                BlockManagerConfig {
+                    pools: vec![
+                        ClassPoolConfig {
+                            class_name: "full".into(),
+                            slot_count: 1,
+                        },
+                        ClassPoolConfig {
+                            class_name: "swa".into(),
+                            slot_count: 2,
+                        },
+                    ],
+                },
+            ),
+            Err(ManagerError::InsufficientPoolSlots {
+                class,
+                configured: 2,
+                minimum: 3,
+            }) if class == "swa"
+        ));
+    }
+
+    #[test]
+    fn compiler_simulator_and_manager_agree_on_temporal_addresses() {
+        let plan = compile_plan(KvPlanInput {
+            page_tokens: 4,
+            classes: vec![KvClassSpec {
+                name: "swa".into(),
+                layers: vec![0],
+                retention: RetentionKind::Sliding,
+                bytes_per_token_per_layer: 128,
+                window_tokens: Some(9),
+            }],
+        })
+        .unwrap();
+        let layout = plan.layout_program().unwrap();
+        let slot_count = plan.classes[0].slot_count.unwrap();
+        let mut simulator = KvRuntimeSimulator::new(plan.clone()).unwrap();
+        let mut manager = KvBlockManager::new(
+            plan,
+            BlockManagerConfig {
+                pools: vec![ClassPoolConfig {
+                    class_name: "swa".into(),
+                    slot_count,
+                }],
+            },
+        )
+        .unwrap();
+        manager.register_request("r0").unwrap();
+
+        for boundary in 1..=48 {
+            let allocated = manager.materialize_to("r0", boundary).unwrap();
+            for block in allocated {
+                assert_eq!(
+                    block.temporal,
+                    layout
+                        .temporal_address("r0", &block.logical.class_name, block.logical.ordinal)
+                        .unwrap()
+                );
+            }
+            let certificates = manager.advance_semantic_frontier("r0", boundary).unwrap();
+            for certificate in certificates {
+                let receipt = PhysicalReclamationReceipt {
+                    schema: "orbitkv.physical-reclamation-receipt.v1",
+                    certificate_id: certificate.certificate_id,
+                    physical: certificate.physical,
+                };
+                manager.commit_reclamation(&receipt).unwrap();
+            }
+            simulator.append_to(boundary).unwrap();
+
+            let manager_live = manager
+                .submit_view("r0")
+                .unwrap()
+                .blocks
+                .into_iter()
+                .map(|block| ResidentTemporalBlock {
+                    logical: crate::LogicalBlock {
+                        class_name: block.logical.class_name,
+                        ordinal: block.logical.ordinal,
+                    },
+                    temporal: block.temporal,
+                })
+                .collect::<BTreeSet<_>>();
+            let simulator_live = simulator
+                .resident_temporal_blocks("r0")
+                .unwrap()
+                .into_iter()
+                .collect::<BTreeSet<_>>();
+            assert_eq!(manager_live, simulator_live);
+            let submission_id = manager.next_submission_id - 1;
+            let certificates = manager.complete_submission(submission_id).unwrap();
+            for certificate in certificates {
+                let receipt = PhysicalReclamationReceipt {
+                    schema: "orbitkv.physical-reclamation-receipt.v1",
+                    certificate_id: certificate.certificate_id,
+                    physical: certificate.physical,
+                };
+                manager.commit_reclamation(&receipt).unwrap();
+            }
         }
     }
 }
