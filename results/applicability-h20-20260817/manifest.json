@@ -38,6 +38,7 @@
     "results/applicability-h20-20260817/qwen-noop.json": "b509531d259eb1615f6bc668c1c54ca39c3e04c1e08ee726d7b746e6dc8250af"
   },
   "schema": "orbitkv.applicability-h20-manifest.v1",
+  "source_commit": "6381a67efa54ec5aadf9fa5192b236841200d649",
   "software": {
     "flashinfer": "0.6.17",
     "python": "3.11.10",
