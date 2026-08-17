@@ -5,7 +5,7 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use orbitkv::{
-    CompiledKvPlan, KvPlanInput, OwnerCommand, SglangOwner, compile_plan,
+    CompiledKvPlan, KvPlanSource, OwnerCommand, RetentionAnalysis, SglangOwner, analyze_state,
     trace::{read_jsonl, summarize_sglang_trace},
 };
 use serde::Serialize;
@@ -32,6 +32,15 @@ struct SglangContractReport {
     passed_checks: Vec<&'static str>,
     failed_checks: Vec<&'static str>,
     status: ContractStatus,
+}
+
+#[derive(Serialize)]
+struct RetentionReport {
+    schema: &'static str,
+    source_schema: String,
+    page_tokens: u64,
+    analyses: Vec<RetentionAnalysis>,
+    layout: orbitkv::LayoutProgram,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -70,6 +79,25 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
                 continuation_blocks: plan.continuation_ranges(boundary)?,
             };
             write_json(&report)?;
+        }
+        Some("analyze-retention") => {
+            let plan_path = required(&mut args, "plan path")?;
+            require_end(&mut args)?;
+            let source = load_source(plan_path)?;
+            let program = source.clone().into_retention_program()?;
+            let analyses = program
+                .states
+                .iter()
+                .map(analyze_state)
+                .collect::<Result<Vec<_>, _>>()?;
+            let plan = source.compile()?;
+            write_json(&RetentionReport {
+                schema: "orbitkv.retention-analysis.v1",
+                source_schema: program.schema,
+                page_tokens: program.page_tokens,
+                analyses,
+                layout: plan.layout_program()?,
+            })?;
         }
         Some("analyze-sglang") => {
             let plan_path = required(&mut args, "plan path")?;
@@ -117,7 +145,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "usage: orbitkv <compile|emit-layout|emit-sglang-policy|serve-sglang-owner|analyze-sglang|check-sglang> ..."
+                "usage: orbitkv <compile|analyze-retention|emit-layout|emit-sglang-policy|serve-sglang-owner|analyze-sglang|check-sglang> ..."
                     .into(),
             );
         }
@@ -126,8 +154,13 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
 }
 
 fn load_plan(path: impl AsRef<Path>) -> Result<CompiledKvPlan, Box<dyn std::error::Error>> {
-    let input = serde_json::from_reader::<_, KvPlanInput>(BufReader::new(File::open(path)?))?;
-    Ok(compile_plan(input)?)
+    Ok(load_source(path)?.compile()?)
+}
+
+fn load_source(path: impl AsRef<Path>) -> Result<KvPlanSource, Box<dyn std::error::Error>> {
+    Ok(serde_json::from_reader::<_, KvPlanSource>(BufReader::new(
+        File::open(path)?,
+    ))?)
 }
 
 fn check_sglang(root: &Path) -> Result<SglangContractReport, Box<dyn std::error::Error>> {

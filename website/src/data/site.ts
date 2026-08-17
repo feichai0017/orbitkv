@@ -8,8 +8,8 @@ export const navigation = [
 ];
 
 export const compilerStages = [
-  { key: "01", name: "Retention IR", detail: "Declare future reads for each persistent state class." },
-  { key: "02", name: "Lifetime", detail: "Derive block birth, last read, and exact semantic death." },
+  { key: "01", name: "Retention IR", detail: "Declare affine may_read(query, key) relations for persistent state." },
+  { key: "02", name: "Lifetime", detail: "Prove unbounded or fixed-window death from query-key distance constraints." },
   { key: "03", name: "Normalize", detail: "Partition state by retirement predicate, not token birth alone." },
   { key: "04", name: "Synthesize", detail: "Emit append-only or periodic address programs and minimum slots." },
   { key: "05", name: "Submit", detail: "Freeze immutable, generation-checked KV views for GPU readers." },
@@ -38,6 +38,7 @@ export const architectureLanes = [
 ];
 
 export const implemented = [
+  { name: "Retention IR", boundary: "affine q/k AST · exact q-k bound inference · safe fallback", state: "Implemented" },
   { name: "Full retention", boundary: "append-only lifetime · no semantic retirement", state: "Implemented" },
   { name: "Sliding retention", boundary: "optimal equal-size interval coloring", state: "Implemented" },
   { name: "Owning manager", boundary: "multi-request identity · generations · immutable views", state: "Implemented" },
@@ -47,6 +48,7 @@ export const implemented = [
 ];
 
 export const metrics = [
+  { value: "q-k < W", label: "Retention IR", detail: "declarative relation lowered to window, death, and periodic cells" },
   { value: "−77.8 MiB", label: "KV pool", detail: "reported physical reduction at fixed token capacity" },
   { value: "+47.14%", label: "Full capacity", detail: "under the same 4.608 GiB KV budget" },
   { value: "−28.25%", label: "Makespan", detail: "median for eight 6K-token requests" },

@@ -12,6 +12,29 @@ The validation target is initially pinned to:
 095ec6c997bfdd25d3864cb0ce77a6562a934b96
 ```
 
+## Retention frontend
+
+OrbitKV now accepts a declarative `orbitkv.retention-ir.v1` program whose
+`may_read` predicate is an affine AST over query and key positions. Legacy
+Full/SWA JSON is syntax sugar and compiles through the same IR.
+
+The first analyzer recognizes exact difference constraints on
+`query_position - key_position`. It derives:
+
+```text
+true
+    -> unbounded lifetime
+    -> append-only address program
+
+query_position - key_position < W
+    -> maximum delta W-1
+    -> fixed window W
+    -> block death and periodic cell count
+```
+
+Unsupported or insufficiently constrained relations lower to unbounded
+retention instead of guessing a finite death time.
+
 ## Stage A: Shadow measurement
 
 The `orbitkv_shadow` plugin hooks the existing

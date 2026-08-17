@@ -27,6 +27,20 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
         ))}
       </div>
 
+      <div class="doc-note">
+        <strong>Declarative Retention IR.</strong>
+        <p>
+          The relation <code>query_position - key_position &lt; 1024</code>
+          inferred a proven delta upper bound of 1023, a 1,024-token lifetime,
+          and a 65-cell periodic layout at page size 16. Legacy Full/SWA JSON
+          and the Retention IR emitted byte-identical artifacts, and the
+          declarative plan completed a real H20 SGLang owner smoke.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/results/retention-ir-20260817/analysis.json`}>
+          Retention analysis
+        </a>
+      </div>
+
       <h2>Evidence ledger</h2>
       <table class="evidence-table-native">
         <thead>

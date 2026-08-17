@@ -1,0 +1,37 @@
+{
+  "claim_boundary": [
+    "difference-constraint Retention IR subset",
+    "Full and fixed-window inference only",
+    "unsupported relations lower to unbounded",
+    "dummy-weight SGLang smoke"
+  ],
+  "date": "2026-08-17",
+  "gpu": {
+    "compute_capability": [
+      9,
+      0
+    ],
+    "driver": "535.161.08",
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+  },
+  "records": {
+    "results/retention-ir-20260817/analysis.json": "642dba4adca8e32073b80290c0a4de302001e4d91e0a006835c26b6d041ac8a7",
+    "results/retention-ir-20260817/summary.json": "326f7bc62fa36b7af3d6c932a06c32b8354ab4d0b8bc21f427210d49549d9bde"
+  },
+  "schema": "orbitkv.retention-ir-manifest.v1",
+  "source_parent_commit": "f6066482c75d78e08210c205cf27f11e319e35b5",
+  "sources": {
+    "crates/orbitkv-ffi/src/lib.rs": "3ef517d4f00ceba911608e51923ae96669e61cb82de7379dd0a7def48be773a5",
+    "examples/full_swa_retention.json": "756bd020199482c14b76b1fe1d483804888fd2cbacf598cb165880457a03ad3d",
+    "src/bin/orbitkv.rs": "32e2087f4a6729887cd275dd122e1118d6f8c8306a6b5bf5de8f11f6dcd36246",
+    "src/lib.rs": "af32f3e9ffc1385bcd61e7edbf36bbd7d072e53424054a3d1df8849b0a361755",
+    "src/plan.rs": "8b72c6fd3f616e153033c3fe58e2dabccf999e6ee8c59a249da135bca9dda24d",
+    "src/retention.rs": "893ef97bf3b8f8197766efe42e204134df1f751278423aecb41e7f6958065010",
+    "tests/retention_cli.rs": "7f17d5342fea4bbe61281b9a2e654afdc34902d37c0e23245f7784183e9dc2c4"
+  },
+  "website": {
+    "website/src/data/site.ts": "fb104ea49e9df563624572ada12d608863e6f38844a3ccb2a0690ee350b83f8f",
+    "website/src/pages/docs/index.astro": "5dd59ac3e50a323faa09618eedca248b3357114d65937258de445b33952f4280"
+  }
+}

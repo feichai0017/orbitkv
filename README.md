@@ -14,6 +14,9 @@ validator and performance baseline.
 
 The first executable slice supports:
 
+- a declarative affine Retention IR over `query_position` and `key_position`;
+- automatic inference of unbounded or fixed-window lifetimes from
+  `may_read(query, key)`;
 - full-attention KV classes;
 - sliding-window KV classes;
 - block-atomic lifetime lifting;
@@ -41,6 +44,7 @@ implementation gates, not implied features.
 cargo test --all-targets
 cargo run -- check-sglang /path/to/sglang
 cargo run -- compile examples/full_swa.json --boundary 32768
+cargo run -- analyze-retention examples/full_swa_retention.json
 cargo run -- emit-layout examples/full_swa.json
 cargo run -- emit-sglang-policy examples/gpt_oss_hybrid_tiny.json \
   --eviction-interval 32
@@ -49,6 +53,25 @@ cargo build --manifest-path crates/orbitkv-ffi/Cargo.toml
 cargo run --manifest-path crates/orbitkv-cuda/Cargo.toml \
   --bin orbitkv-cuda -- vmm-smoke 1048576
 ```
+
+`examples/full_swa.json` is legacy syntax. It is desugared into the same
+Retention IR as `examples/full_swa_retention.json`; both frontends emit
+byte-identical layout and SGLang policy artifacts with the same fingerprint.
+
+The first analyzer operates in the implicit autoregressive domain
+`0 <= key_position <= query_position` and proves finite lifetimes from affine
+bounds on `query_position - key_position`. For example:
+
+```text
+may_read(q, k) = q - k < 1024
+    -> proven q-k upper bound = 1023
+    -> fixed window = 1024
+    -> 65 logical cells at page size 16
+    -> periodic address program
+```
+
+If the analyzer cannot prove a finite bound, it fails closed to unbounded
+retention and an append-only layout.
 
 ## SGLang validation
 

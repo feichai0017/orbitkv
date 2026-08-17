@@ -38,6 +38,22 @@ import { architectureLanes, compilerStages, docs, repositoryUrl } from "../../da
        - ExecutionComplete
        - backend commit required before reuse`}</code></pre>
 
+      <h2>Declarative Retention IR</h2>
+      <p>
+        The first frontend accepts an affine <code>may_read(query, key)</code>
+        AST. Legacy Full/SWA JSON is desugared into the same relation before
+        lifetime and address synthesis.
+      </p>
+      <pre><code>{`q - k < 1024
+    -> proven q-k upper bound = 1023
+    -> fixed window = 1024
+    -> block death = block_end + 1023
+    -> periodic cells = 65 at page size 16`}</code></pre>
+      <p>
+        Relations that do not prove a finite query-key distance safely lower
+        to unbounded retention and append-only storage.
+      </p>
+
       <h2>Compiler stages</h2>
       <ol class="lifecycle-list">
         {compilerStages.map((stage) => (

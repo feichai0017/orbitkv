@@ -4,6 +4,11 @@ use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
+use crate::retention::{
+    InferredRetention, IntExpr, Predicate, RetentionAnalysis, RetentionError,
+    RetentionProgramInput, RetentionStateDecl, analyze_state,
+};
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RetentionKind {
@@ -27,6 +32,13 @@ pub struct KvClassSpec {
 pub struct KvPlanInput {
     pub page_tokens: u64,
     pub classes: Vec<KvClassSpec>,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[serde(untagged)]
+pub enum KvPlanSource {
+    Retention(RetentionProgramInput),
+    Legacy(KvPlanInput),
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -190,6 +202,10 @@ pub enum PlanError {
     ZeroAddressPeriod,
     #[error("layout program does not contain class {0:?}")]
     UnknownLayoutClass(String),
+    #[error("{class}: legacy window {window} does not fit Retention IR i64 constants")]
+    LegacyWindowOutOfRange { class: String, window: u64 },
+    #[error(transparent)]
+    Retention(#[from] RetentionError),
 }
 
 impl AddressProgram {
@@ -658,6 +674,125 @@ pub fn choose_physical_backend(
     })
 }
 
+impl KvClassSpec {
+    /// Desugars a validated legacy class into the declarative Retention IR.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a sliding window does not fit the IR constant type.
+    pub fn to_retention_state(&self) -> Result<RetentionStateDecl, PlanError> {
+        let may_read = match self.retention {
+            RetentionKind::Full => Predicate::True,
+            RetentionKind::Sliding => Predicate::LessThan {
+                lhs: IntExpr::Sub {
+                    lhs: Box::new(IntExpr::QueryPosition),
+                    rhs: Box::new(IntExpr::KeyPosition),
+                },
+                rhs: IntExpr::Constant {
+                    value: i64::try_from(self.window_tokens.unwrap_or(0)).map_err(|_| {
+                        PlanError::LegacyWindowOutOfRange {
+                            class: self.name.clone(),
+                            window: self.window_tokens.unwrap_or(0),
+                        }
+                    })?,
+                },
+            },
+        };
+        Ok(RetentionStateDecl {
+            name: self.name.clone(),
+            layers: self.layers.clone(),
+            bytes_per_token_per_layer: self.bytes_per_token_per_layer,
+            may_read,
+        })
+    }
+}
+
+impl KvPlanInput {
+    /// Desugars validated legacy syntax into the declarative Retention IR.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a legacy window cannot be represented by the IR.
+    pub fn to_retention_program(&self) -> Result<RetentionProgramInput, PlanError> {
+        Ok(RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: self.page_tokens,
+            states: self
+                .classes
+                .iter()
+                .map(KvClassSpec::to_retention_state)
+                .collect::<Result<Vec<_>, PlanError>>()?,
+        })
+    }
+}
+
+impl KvPlanSource {
+    /// Converts either frontend into the declarative Retention IR.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a legacy class is invalid or cannot be represented.
+    pub fn into_retention_program(self) -> Result<RetentionProgramInput, PlanError> {
+        match self {
+            Self::Retention(program) => Ok(program),
+            Self::Legacy(input) => {
+                validate_plan_input(&input)?;
+                input.to_retention_program()
+            }
+        }
+    }
+
+    /// Compiles either the declarative Retention IR or the legacy Full/SWA
+    /// syntax through the same lifetime compiler.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unsupported schema, invalid legacy input, or
+    /// failed lifetime inference.
+    pub fn compile(self) -> Result<CompiledKvPlan, PlanError> {
+        compile_retention_program(self.into_retention_program()?)
+    }
+}
+
+/// Compiles declarative `may_read(query, key)` relations into the current
+/// executable lifetime and layout plan.
+///
+/// # Errors
+///
+/// Returns an error for an unsupported schema, invalid state geometry, or
+/// failed lifetime analysis.
+pub fn compile_retention_program(
+    program: RetentionProgramInput,
+) -> Result<CompiledKvPlan, PlanError> {
+    if program.schema != "orbitkv.retention-ir.v1" {
+        return Err(RetentionError::UnsupportedSchema(program.schema).into());
+    }
+    let classes = program
+        .states
+        .into_iter()
+        .map(|state| {
+            let RetentionAnalysis { inferred, .. } = analyze_state(&state)?;
+            let (retention, window_tokens) = match inferred {
+                InferredRetention::Unbounded => (RetentionKind::Full, None),
+                InferredRetention::FixedWindow { window_tokens } => {
+                    (RetentionKind::Sliding, Some(window_tokens))
+                }
+            };
+            Ok(KvClassSpec {
+                name: state.name,
+                layers: state.layers,
+                retention,
+                bytes_per_token_per_layer: state.bytes_per_token_per_layer,
+                window_tokens,
+            })
+        })
+        .collect::<Result<Vec<_>, PlanError>>()?;
+    compile_inferred_plan(KvPlanInput {
+        page_tokens: program.page_tokens,
+        classes,
+    })
+}
+
 /// Compiles checked Full and sliding-window classes into a KV block plan.
 ///
 /// # Errors
@@ -665,6 +800,15 @@ pub fn choose_physical_backend(
 /// Returns an error for invalid class geometry, overlapping layers, zero sizes,
 /// or checked arithmetic overflow.
 pub fn compile_plan(input: KvPlanInput) -> Result<CompiledKvPlan, PlanError> {
+    KvPlanSource::Legacy(input).compile()
+}
+
+fn compile_inferred_plan(input: KvPlanInput) -> Result<CompiledKvPlan, PlanError> {
+    validate_plan_input(&input)?;
+    compile_validated_plan(input)
+}
+
+fn validate_plan_input(input: &KvPlanInput) -> Result<(), PlanError> {
     if input.page_tokens == 0 {
         return Err(PlanError::ZeroPageTokens);
     }
@@ -673,18 +817,24 @@ pub fn compile_plan(input: KvPlanInput) -> Result<CompiledKvPlan, PlanError> {
     }
 
     let mut claimed_layers = BTreeMap::<u32, String>::new();
-    let mut compiled = Vec::with_capacity(input.classes.len());
-    for class in input.classes {
-        validate_class(&class)?;
+    for class in &input.classes {
+        validate_class(class)?;
         for &layer in &class.layers {
             if let Some(first) = claimed_layers.insert(layer, class.name.clone()) {
                 return Err(PlanError::LayerOverlap {
                     layer,
                     first,
-                    second: class.name,
+                    second: class.name.clone(),
                 });
             }
         }
+    }
+    Ok(())
+}
+
+fn compile_validated_plan(input: KvPlanInput) -> Result<CompiledKvPlan, PlanError> {
+    let mut compiled = Vec::with_capacity(input.classes.len());
+    for class in input.classes {
         let slot_count = match class.retention {
             RetentionKind::Full => None,
             RetentionKind::Sliding => {
@@ -940,5 +1090,37 @@ mod tests {
                 .unwrap(),
             None
         );
+    }
+
+    #[test]
+    fn legacy_and_retention_ir_compile_identically() {
+        let legacy = KvPlanInput {
+            page_tokens: 16,
+            classes: vec![
+                KvClassSpec {
+                    name: "full".into(),
+                    layers: vec![0],
+                    retention: RetentionKind::Full,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: None,
+                },
+                KvClassSpec {
+                    name: "swa".into(),
+                    layers: vec![1],
+                    retention: RetentionKind::Sliding,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: Some(1024),
+                },
+            ],
+        };
+        let legacy_plan = compile_plan(legacy.clone()).unwrap();
+        let retention_plan =
+            compile_retention_program(legacy.to_retention_program().unwrap()).unwrap();
+        assert_eq!(legacy_plan, retention_plan);
+        assert_eq!(
+            legacy_plan.layout_program().unwrap(),
+            retention_plan.layout_program().unwrap()
+        );
+        assert_eq!(legacy_plan.fingerprint(), retention_plan.fingerprint());
     }
 }

@@ -13,6 +13,7 @@ DEFAULT_MANIFESTS = (
     ROOT / "results/h20-owning-vmm-manifest-20260817.json",
     ROOT / "results/owner-ffi-20260817/manifest.json",
     ROOT / "results/h20-generation-vmm-20260817/manifest.json",
+    ROOT / "results/retention-ir-20260817/manifest.json",
 )
 
 

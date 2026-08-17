@@ -17,6 +17,7 @@ measurements, and end-to-end serving behavior.
 | `h20-cuda-vmm-20260817` | Isolated H20 CUDA VMM stable-address remap qualification |
 | `owner-ffi-20260817` | In-process C ABI transport microbenchmark and balanced H20 A/B |
 | `h20-generation-vmm-20260817` | Layout-driven cell versions, CUDA events, VMM generation receipts |
+| `retention-ir-20260817` | Declarative may-read analysis, legacy equivalence, H20 owner smoke |
 
 The reviewed interpretations are:
 

@@ -13,6 +13,12 @@ The VMM primitive is not yet used as SGLang tensor storage. The owning SGLang
 adapter still executes physical frees through SGLang's existing paged
 allocator.
 
+The owner now accepts both the legacy Full/SWA syntax and a declarative
+`orbitkv.retention-ir.v1` relation. The H20 owner path was smoke-tested with
+the declarative relation `query_position - key_position < 1024`; it inferred
+the same 1,024-token window, 65-cell periodic layout, plan fingerprint, and
+SGLang policy as the legacy frontend.
+
 ## Owning protocol
 
 The owning adapter executes:

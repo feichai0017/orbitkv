@@ -1,0 +1,26 @@
+{
+  "artifacts_byte_identical": true,
+  "constraints": [
+    "first analyzer recognizes affine query-key difference bounds",
+    "implicit autoregressive domain 0 <= key <= query",
+    "unsupported relations fail closed to unbounded retention",
+    "dummy weights; no model-quality claim"
+  ],
+  "date": "2026-08-17",
+  "h20_smoke": {
+    "decode_tokens": 8,
+    "fixture": "gpt-oss-hybrid-62l dummy system fixture",
+    "full_token_capacity": 16384,
+    "num_retractions": [
+      0
+    ],
+    "output_digest": "f46ba49b317c26da652a8612ee6270dde067603c14cc3bcce329894849421367",
+    "plan": "examples/full_swa_retention.json",
+    "prompt_tokens": 2048,
+    "requests": 1,
+    "swa_token_capacity": 3152
+  },
+  "legacy_layout_sha256": "821370a2d7a53b6315bd8772d97780ea84d12d608cc16d868e2afb64c1fa5292",
+  "retention_layout_sha256": "821370a2d7a53b6315bd8772d97780ea84d12d608cc16d868e2afb64c1fa5292",
+  "schema": "orbitkv.retention-ir-validation.v1"
+}

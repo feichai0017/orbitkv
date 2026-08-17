@@ -1,0 +1,46 @@
+{
+  "schema": "orbitkv.retention-ir.v1",
+  "page_tokens": 16,
+  "states": [
+    {
+      "name": "full",
+      "layers": [0, 6, 12, 18, 24, 30, 36, 42, 48, 54],
+      "bytes_per_token_per_layer": 4096,
+      "may_read": {
+        "op": "true"
+      }
+    },
+    {
+      "name": "swa",
+      "layers": [
+        1, 2, 3, 4, 5,
+        7, 8, 9, 10, 11,
+        13, 14, 15, 16, 17,
+        19, 20, 21, 22, 23,
+        25, 26, 27, 28, 29,
+        31, 32, 33, 34, 35,
+        37, 38, 39, 40, 41,
+        43, 44, 45, 46, 47,
+        49, 50, 51, 52, 53,
+        55, 56, 57, 58, 59, 60, 61
+      ],
+      "bytes_per_token_per_layer": 4096,
+      "may_read": {
+        "op": "less_than",
+        "lhs": {
+          "op": "sub",
+          "lhs": {
+            "op": "query_position"
+          },
+          "rhs": {
+            "op": "key_position"
+          }
+        },
+        "rhs": {
+          "op": "constant",
+          "value": 1024
+        }
+      }
+    }
+  ]
+}

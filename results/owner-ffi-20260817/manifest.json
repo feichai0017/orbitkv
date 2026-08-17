@@ -32,7 +32,7 @@
   "sources": {
     "crates/orbitkv-ffi/Cargo.toml": "d516d8213c366654abfee3c8e8ff1635ab827b8af3f749964a00c5a8d9159f8b",
     "crates/orbitkv-ffi/include/orbitkv_owner.h": "b366570aec2b7f741cd8b681474908cbea14953747ab90b76f44698cf81fef33",
-    "crates/orbitkv-ffi/src/lib.rs": "26071375d21c4fb07bae43526b716150eefac0912dbad73c0ce60243b6a2eb4e",
+    "crates/orbitkv-ffi/src/lib.rs": "3ef517d4f00ceba911608e51923ae96669e61cb82de7379dd0a7def48be773a5",
     "crates/orbitkv-ffi/tests/header_smoke.c": "46b6e97b7de5583fc971c5fd4d8a705c61516f12e2c32ce6136cbee5e3604f14",
     "integrations/sglang/bench_hybrid_shadow.py": "8a55090e4751d917c73a3faee107c8676cee21ba599387ca03d78e89f1af8cc9",
     "integrations/sglang/bench_owner_e2e_ab.py": "b5d84ac81a56a917b18cedcce3de45b9bf2ce2134d85ac8f88431def35d7ccc7",
@@ -41,8 +41,8 @@
     "integrations/sglang/tests/test_shadow_plugin.py": "7531eb173b834037f192f537ad6b093aa135ef741ef53f2b87ccd8a5ef93bfc6"
   },
   "website": {
-    "website/src/data/site.ts": "5aa412879967dfcdb7c6f6b216e113fc3001fac84f3b617c66d9bac26286b9f4",
-    "website/src/pages/evidence.astro": "cc16c6dcb62500dc38cee8c5b5f9638cdf8e99398d658619b7611767a406add1",
+    "website/src/data/site.ts": "fb104ea49e9df563624572ada12d608863e6f38844a3ccb2a0690ee350b83f8f",
+    "website/src/pages/evidence.astro": "776f5616d2b59e3ad90c4095378393057b2903c3129844602d932c23d9b8e0d5",
     "website/src/pages/index.astro": "8421675c2de05664c45271a10b226b440f010c6dd4589002e666d022cdc272c2"
   }
 }

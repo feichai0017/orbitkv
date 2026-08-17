@@ -2,6 +2,7 @@
 
 pub mod manager;
 pub mod plan;
+pub mod retention;
 pub mod runtime;
 pub mod sglang_owner;
 pub mod trace;
@@ -13,9 +14,14 @@ pub use manager::{
 };
 pub use plan::{
     AddressProgram, BackendDecision, BackendRequirements, CellVersion, ClassCapacity,
-    ClassLayoutProgram, CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, LayoutProgram,
-    LogicalCellId, PhysicalBackend, PlanError, RetentionKind, RetirementProgram,
+    ClassLayoutProgram, CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, KvPlanSource,
+    LayoutProgram, LogicalCellId, PhysicalBackend, PlanError, RetentionKind, RetirementProgram,
     SglangBoundedClassPolicy, SglangPolicy, TemporalAddress, choose_physical_backend, compile_plan,
+    compile_retention_program,
+};
+pub use retention::{
+    InferredRetention, IntExpr, Predicate, RetentionAnalysis, RetentionError,
+    RetentionProgramInput, RetentionStateDecl, analyze_state,
 };
 pub use runtime::{
     KvRuntimeSimulator, LogicalBlock, ResidentTemporalBlock, RuntimeError, Submission,

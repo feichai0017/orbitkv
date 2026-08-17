@@ -4,8 +4,8 @@ use std::slice;
 use std::sync::Mutex;
 
 use orbitkv::{
-    CacheKind, KvPlanInput, OwnerCommand, OwnerResponse, SglangExecutionProof, SglangOwner,
-    SglangSemanticProof, compile_plan,
+    CacheKind, KvPlanSource, OwnerCommand, OwnerResponse, SglangExecutionProof, SglangOwner,
+    SglangSemanticProof,
 };
 
 pub const ORBITKV_OWNER_ABI_VERSION: u32 = 1;
@@ -78,14 +78,15 @@ pub unsafe extern "C" fn orbitkv_owner_create(
             out_owner.write(std::ptr::null_mut());
         }
         let bytes = unsafe { slice::from_raw_parts(plan_json, plan_json_len) };
-        let input = serde_json::from_slice::<KvPlanInput>(bytes).map_err(|error| {
+        let source = serde_json::from_slice::<KvPlanSource>(bytes).map_err(|error| {
             (
                 ORBITKV_STATUS_INVALID_ARGUMENT,
                 format!("invalid retention plan JSON: {error}"),
             )
         })?;
-        let plan =
-            compile_plan(input).map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?;
+        let plan = source
+            .compile()
+            .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?;
         let owner = SglangOwner::new(&plan)
             .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?;
         let handle = Box::new(OrbitKvOwnerHandle {
