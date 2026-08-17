@@ -110,6 +110,8 @@ struct PendingState {
 pub enum OwnerError {
     #[error("SGLang owner requires exactly one sliding class, found {0}")]
     SlidingClassCount(usize),
+    #[error("SGLang owner does not support retention class {0:?}")]
+    UnsupportedRetention(String),
     #[error("compiled sliding class {0:?} is missing its window")]
     MissingWindow(String),
     #[error(
@@ -164,6 +166,13 @@ impl SglangOwner {
     ///
     /// Returns an error if the plan cannot be lowered to that contract.
     pub fn new(plan: &CompiledKvPlan) -> Result<Self, OwnerError> {
+        if let Some(class) = plan
+            .classes
+            .iter()
+            .find(|class| class.spec.retention == RetentionKind::Chunked)
+        {
+            return Err(OwnerError::UnsupportedRetention(class.spec.name.clone()));
+        }
         let sliding = plan
             .classes
             .iter()
@@ -382,6 +391,7 @@ impl OwnerError {
     const fn code(&self) -> &'static str {
         match self {
             Self::SlidingClassCount(_) => "sliding_class_count",
+            Self::UnsupportedRetention(_) => "unsupported_retention",
             Self::MissingWindow(_) => "missing_window",
             Self::FrontierMismatch { .. } => "frontier_mismatch",
             Self::PendingCertificate { .. } => "pending_certificate",

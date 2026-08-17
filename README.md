@@ -22,6 +22,9 @@ The first executable slice supports:
 - automatic lifetime partitioning for `key < S OR q - k < W`, lowered into a
   pinned sink region and a periodic local region without a dedicated
   `SinkSliding` manager type;
+- same-chunk attention from
+  `floor(query_position / C) == floor(key_position / C)`, lowered into a
+  resettable arena with epoch-end retirement;
 - full-attention KV classes;
 - sliding-window KV classes;
 - block-atomic lifetime lifting;
@@ -68,6 +71,7 @@ cargo run -- compile-hf-physical-plan /path/to/config.json \
   --objective capacity
 cargo run -- analyze-retention examples/full_swa_retention.json
 cargo run -- analyze-retention examples/sink_sliding_retention.json
+cargo run -- analyze-retention examples/chunked_local_retention.json
 cargo run -- emit-layout examples/full_swa.json
 cargo run -- emit-sglang-policy examples/gpt_oss_hybrid_tiny.json \
   --eviction-interval 32
@@ -151,6 +155,23 @@ This partitioned plan is currently executed by the Rust reference simulator
 and owning block manager. The compatibility SGLang policy intentionally rejects
 partitioned block domains until the adapter can bind the pinned and periodic
 components separately.
+
+The second non-enumerated pattern synthesizes a different address machine:
+
+```text
+floor(q / C) == floor(k / C)
+    -> every block in one chunk dies at the same chunk boundary
+    -> cell(block) = block mod (C / P)
+    -> epoch(block) = block div (C / P)
+    -> ResettableArena
+```
+
+For `C=16` and `P=4`, the compiler emits four cells. The reference simulator
+and owning manager prove that a new epoch cannot reuse an arena cell until the
+old epoch is semantically dead, all readers have completed, and the physical
+backend commits reclamation. This explicit same-chunk relation must not be
+confused with every model field named `attention_chunk_size`, whose semantics
+can instead be a chunk-relative sliding window.
 
 ## SGLang validation
 

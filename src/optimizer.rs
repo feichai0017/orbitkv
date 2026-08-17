@@ -267,6 +267,15 @@ fn plan_geometry(plan: &CompiledKvPlan) -> Result<PlanGeometry, OptimizerError> 
     {
         return Err(OptimizerError::PartitionedBlockDomain);
     }
+    if let Some(class) = plan
+        .classes
+        .iter()
+        .find(|class| class.spec.retention == RetentionKind::Chunked)
+    {
+        return Err(OptimizerError::Plan(PlanError::UnsupportedSglangRetention(
+            class.spec.name.clone(),
+        )));
+    }
     let full = plan
         .classes
         .iter()

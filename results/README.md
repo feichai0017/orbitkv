@@ -19,6 +19,7 @@ measurements, and end-to-end serving behavior.
 | `h20-generation-vmm-20260817` | Layout-driven cell versions, CUDA events, VMM generation receipts |
 | `retention-ir-20260817` | Declarative may-read analysis, legacy equivalence, H20 owner smoke |
 | `sink-sliding-20260817` | Host proof that one sink/local relation lowers to pinned + periodic regions |
+| `chunked-local-20260817` | Host proof that same-chunk semantics lower to a resettable epoch arena |
 | `h20-gpt-oss-20b-real-20260817` | Real `openai/gpt-oss-20b` HF-plan compilation, four-way attribution, capacity, overhead, and certificate evidence |
 
 The reviewed interpretations are:
@@ -33,6 +34,10 @@ qualification; it is not evidence that SGLang KV tensors already use VMM.
 The Sink+Sliding record is compiler, simulator, and reference-manager evidence.
 It is not an H20 or SGLang performance result: the current compatibility policy
 fails closed on partitioned block domains.
+
+The Chunked Local record is also host-only compiler/runtime evidence. It covers
+an explicit same-chunk relation and does not claim that arbitrary HF
+`attention_chunk_size` fields have identical retention semantics.
 
 The `gpt-oss-20b` record uses the complete public MXFP4 checkpoint with
 `load_format=auto`. It is the primary released-checkpoint systems result. It

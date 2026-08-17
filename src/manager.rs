@@ -45,6 +45,11 @@ pub enum SemanticProof {
         semantic_frontier: u64,
         death_boundary: u64,
     },
+    ChunkEpoch {
+        semantic_frontier: u64,
+        death_boundary: u64,
+        chunk_tokens: u64,
+    },
     RequestReleased,
 }
 
@@ -812,11 +817,30 @@ impl KvBlockManager {
         let semantic_proof = if request.released {
             SemanticProof::RequestReleased
         } else {
-            SemanticProof::SlidingWindow {
-                semantic_frontier: request.semantic_frontier,
-                death_boundary: self
-                    .death_boundary(logical)?
-                    .ok_or_else(|| ManagerError::CannotMaterializeDead(logical.clone()))?,
+            let death_boundary = self
+                .death_boundary(logical)?
+                .ok_or_else(|| ManagerError::CannotMaterializeDead(logical.clone()))?;
+            let class = self
+                .classes
+                .get(&logical.class_name)
+                .ok_or_else(|| ManagerError::UnknownClass(logical.class_name.clone()))?;
+            match class.spec.retention {
+                crate::RetentionKind::Sliding => SemanticProof::SlidingWindow {
+                    semantic_frontier: request.semantic_frontier,
+                    death_boundary,
+                },
+                crate::RetentionKind::Chunked => SemanticProof::ChunkEpoch {
+                    semantic_frontier: request.semantic_frontier,
+                    death_boundary,
+                    chunk_tokens: class.chunk_tokens.ok_or_else(|| {
+                        ManagerError::Plan(PlanError::InvalidCompiledChunk {
+                            class: logical.class_name.clone(),
+                        })
+                    })?,
+                },
+                crate::RetentionKind::Full => {
+                    return Err(ManagerError::CannotMaterializeDead(logical.clone()));
+                }
             }
         };
         let certificate = RetirementCertificate {
@@ -1310,5 +1334,74 @@ mod tests {
                 ("attention::local", 4),
             ])
         );
+    }
+
+    #[test]
+    fn chunk_epoch_certificate_gates_resettable_arena_reuse() {
+        let plan = compile_retention_program(RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 4,
+            states: vec![RetentionStateDecl {
+                name: "chunked".into(),
+                layers: vec![0],
+                bytes_per_token_per_layer: 128,
+                may_read: Predicate::Equal {
+                    lhs: IntExpr::FloorDiv {
+                        value: Box::new(IntExpr::QueryPosition),
+                        divisor: 16,
+                    },
+                    rhs: IntExpr::FloorDiv {
+                        value: Box::new(IntExpr::KeyPosition),
+                        divisor: 16,
+                    },
+                },
+            }],
+        })
+        .unwrap();
+        let mut manager = KvBlockManager::new(
+            plan,
+            BlockManagerConfig {
+                pools: vec![ClassPoolConfig {
+                    class_name: "chunked".into(),
+                    slot_count: 4,
+                }],
+            },
+        )
+        .unwrap();
+        manager.register_request("r0").unwrap();
+        for boundary in 1..=16 {
+            manager.materialize_to("r0", boundary).unwrap();
+            let certificates = manager.advance_semantic_frontier("r0", boundary).unwrap();
+            if boundary < 16 {
+                assert!(certificates.is_empty());
+                continue;
+            }
+            assert_eq!(certificates.len(), 4);
+            for certificate in &certificates {
+                assert_eq!(
+                    certificate.semantic_proof,
+                    SemanticProof::ChunkEpoch {
+                        semantic_frontier: 16,
+                        death_boundary: 16,
+                        chunk_tokens: 16,
+                    }
+                );
+            }
+            for certificate in certificates {
+                manager
+                    .commit_reclamation(&PhysicalReclamationReceipt {
+                        schema: "orbitkv.physical-reclamation-receipt.v1",
+                        certificate_id: certificate.certificate_id,
+                        physical: certificate.physical,
+                    })
+                    .unwrap();
+            }
+        }
+        let next = manager.materialize_to("r0", 17).unwrap();
+        assert_eq!(next.len(), 1);
+        assert_eq!(next[0].logical.ordinal, 4);
+        assert_eq!(next[0].temporal.cell.cell_index, 0);
+        assert_eq!(next[0].temporal.version.cycle, 1);
+        assert_eq!(next[0].physical.generation, 2);
     }
 }

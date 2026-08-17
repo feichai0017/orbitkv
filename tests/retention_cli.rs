@@ -171,3 +171,29 @@ fn hf_physical_optimizer_selects_capacity_plan() {
         1
     );
 }
+
+#[test]
+fn chunked_local_relation_emits_resettable_arena() {
+    let source = root().join("examples/chunked_local_retention.json");
+    let report = run(&["analyze-retention", source.to_str().unwrap()]);
+    assert_eq!(report["analyses"][0]["inferred"]["kind"], "chunked");
+    assert_eq!(report["analyses"][0]["inferred"]["chunk_tokens"], 16);
+    assert_eq!(
+        report["layout"]["classes"][0]["address"]["kind"],
+        "resettable_arena"
+    );
+    assert_eq!(
+        report["layout"]["classes"][0]["address"]["blocks_per_epoch"],
+        4
+    );
+    assert_eq!(
+        report["layout"]["classes"][0]["retirement"]["kind"],
+        "epoch_end"
+    );
+    let output = output(&["emit-sglang-policy", source.to_str().unwrap()]);
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("SGLang lowering does not support retention class")
+    );
+}

@@ -34,6 +34,10 @@ query_position - key_position < W
 key_position < S OR query_position - key_position < W
     -> pinned sink block domain
     -> periodic local block domain
+
+floor(query_position / C) == floor(key_position / C)
+    -> resettable arena
+    -> epoch-end retirement
 ```
 
 Unsupported or insufficiently constrained relations lower to unbounded
@@ -43,6 +47,11 @@ The partitioned Sink+Sliding plan is currently qualified in the Rust simulator
 and reference manager. `emit-sglang-policy` rejects partitioned block domains
 until the adapter owns separate bindings for the pinned and periodic
 components; it does not silently flatten them into one SWA policy.
+
+The same-chunk plan is also qualified in the Rust simulator and reference
+manager only. The SGLang policy rejects it rather than treating it as SWA.
+SGLang's `attention_chunk_size` can describe chunk-relative sliding behavior,
+so the HF frontend does not infer same-chunk retention from that field alone.
 
 ## Stage A: Shadow measurement
 

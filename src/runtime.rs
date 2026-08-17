@@ -544,4 +544,59 @@ mod tests {
             ])
         );
     }
+
+    #[test]
+    fn chunked_arena_waits_for_readers_before_epoch_reuse() {
+        let plan = compile_retention_program(RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 4,
+            states: vec![RetentionStateDecl {
+                name: "chunked".into(),
+                layers: vec![0],
+                bytes_per_token_per_layer: 128,
+                may_read: Predicate::Equal {
+                    lhs: IntExpr::FloorDiv {
+                        value: Box::new(IntExpr::QueryPosition),
+                        divisor: 16,
+                    },
+                    rhs: IntExpr::FloorDiv {
+                        value: Box::new(IntExpr::KeyPosition),
+                        divisor: 16,
+                    },
+                },
+            }],
+        })
+        .unwrap();
+        let mut runtime = KvRuntimeSimulator::new(plan).unwrap();
+        runtime.append_to(15).unwrap();
+        let submission = runtime.submit_view().unwrap();
+        runtime.append_to(16).unwrap();
+        assert!(matches!(
+            runtime.append_to(17),
+            Err(RuntimeError::UnsafeReuse(_))
+        ));
+        runtime.complete(submission.submission_id).unwrap();
+        runtime.append_to(31).unwrap();
+        assert_eq!(
+            runtime.live_blocks().unwrap(),
+            vec![
+                LogicalBlock {
+                    class_name: "chunked".into(),
+                    ordinal: 4
+                },
+                LogicalBlock {
+                    class_name: "chunked".into(),
+                    ordinal: 5
+                },
+                LogicalBlock {
+                    class_name: "chunked".into(),
+                    ordinal: 6
+                },
+                LogicalBlock {
+                    class_name: "chunked".into(),
+                    ordinal: 7
+                }
+            ]
+        );
+    }
 }

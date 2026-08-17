@@ -1,0 +1,24 @@
+{
+  "schema": "orbitkv.chunked-local-validation.v1",
+  "date": "2026-08-17",
+  "input_relation": "floor(query_position / 16) == floor(key_position / 16)",
+  "compiler_result": {
+    "inferred_retention": "Chunked(16)",
+    "address_program": "ResettableArena(blocks_per_epoch=4)",
+    "retirement_program": "EpochEnd(blocks_per_epoch=4)",
+    "minimum_slots_per_request": 4
+  },
+  "proofs": [
+    "exhaustive predicate evaluation matches same-chunk membership",
+    "all blocks in one chunk share the exact chunk-end death boundary",
+    "the simulator blocks arena-cell reuse while an old epoch view has readers",
+    "the owning manager emits ChunkEpoch certificates and reuses only after backend commit",
+    "the next epoch derives cycle generation from the logical block ordinal"
+  ],
+  "claim_boundary": [
+    "host compiler, simulator, and reference-manager validation only",
+    "the relation is explicit same-chunk attention, not arbitrary attention_chunk_size semantics",
+    "the SGLang compatibility backend rejects this retention class",
+    "no GPU or end-to-end performance claim"
+  ]
+}

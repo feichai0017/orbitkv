@@ -17,6 +17,10 @@ pub enum IntExpr {
         lhs: Box<IntExpr>,
         rhs: Box<IntExpr>,
     },
+    FloorDiv {
+        value: Box<IntExpr>,
+        divisor: i64,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -53,6 +57,7 @@ pub struct RetentionProgramInput {
 pub enum InferredRetention {
     Unbounded,
     FixedWindow { window_tokens: u64 },
+    Chunked { chunk_tokens: u64 },
     Partitioned { regions: Vec<InferredRegion> },
 }
 
@@ -84,6 +89,7 @@ struct AffineForm {
     query: i64,
     key: i64,
     constant: i64,
+    non_affine: bool,
 }
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -103,6 +109,10 @@ pub enum RetentionError {
     ArithmeticOverflow,
     #[error("fixed retention window does not fit u64")]
     WindowOutOfRange,
+    #[error("floor division requires a positive divisor")]
+    InvalidFloorDivisor,
+    #[error("chunk size does not fit u64")]
+    ChunkOutOfRange,
 }
 
 impl IntExpr {
@@ -122,6 +132,16 @@ impl IntExpr {
             }),
             Self::Add { lhs, rhs } => lhs.affine()?.checked_add(rhs.affine()?),
             Self::Sub { lhs, rhs } => lhs.affine()?.checked_sub(rhs.affine()?),
+            Self::FloorDiv { value, divisor } => {
+                if *divisor <= 0 {
+                    return Err(RetentionError::InvalidFloorDivisor);
+                }
+                value.affine()?;
+                Ok(AffineForm {
+                    non_affine: true,
+                    ..AffineForm::default()
+                })
+            }
         }
     }
 
@@ -137,6 +157,16 @@ impl IntExpr {
             Self::Sub { lhs, rhs } => lhs
                 .evaluate(query_position, key_position)?
                 .checked_sub(rhs.evaluate(query_position, key_position)?),
+            Self::FloorDiv { value, divisor } => {
+                if *divisor <= 0 {
+                    return None;
+                }
+                Some(
+                    value
+                        .evaluate(query_position, key_position)?
+                        .div_euclid(*divisor),
+                )
+            }
         }
     }
 }
@@ -198,6 +228,7 @@ impl AffineForm {
                 .constant
                 .checked_add(rhs.constant)
                 .ok_or(RetentionError::ArithmeticOverflow)?,
+            non_affine: self.non_affine || rhs.non_affine,
         })
     }
 
@@ -215,11 +246,12 @@ impl AffineForm {
                 .constant
                 .checked_sub(rhs.constant)
                 .ok_or(RetentionError::ArithmeticOverflow)?,
+            non_affine: self.non_affine || rhs.non_affine,
         })
     }
 
     fn as_delta(self) -> Option<(i64, i64)> {
-        if self.query == -self.key {
+        if !self.non_affine && self.query == -self.key {
             Some((self.query, self.constant))
         } else {
             None
@@ -285,6 +317,13 @@ impl DeltaBounds {
 ///
 /// Returns an error for arithmetic overflow or an unsatisfiable state.
 pub fn analyze_state(state: &RetentionStateDecl) -> Result<RetentionAnalysis, RetentionError> {
+    if let Some(chunk_tokens) = analyze_same_chunk(&state.may_read)? {
+        return Ok(RetentionAnalysis {
+            state_name: state.name.clone(),
+            inferred: InferredRetention::Chunked { chunk_tokens },
+            proven_query_key_delta_upper_bound: Some(chunk_tokens - 1),
+        });
+    }
     if let Some((sink_tokens, window_tokens)) = analyze_sink_and_window(&state.may_read)? {
         return Ok(RetentionAnalysis {
             state_name: state.name.clone(),
@@ -331,6 +370,40 @@ pub fn analyze_state(state: &RetentionStateDecl) -> Result<RetentionAnalysis, Re
         inferred: InferredRetention::FixedWindow { window_tokens },
         proven_query_key_delta_upper_bound: Some(proven_query_key_delta_upper_bound),
     })
+}
+
+fn analyze_same_chunk(predicate: &Predicate) -> Result<Option<u64>, RetentionError> {
+    let Predicate::Equal { lhs, rhs } = predicate else {
+        return Ok(None);
+    };
+    let lhs_divisor = chunk_divisor(lhs, &IntExpr::QueryPosition)?;
+    let rhs_divisor = chunk_divisor(rhs, &IntExpr::KeyPosition)?;
+    match (lhs_divisor, rhs_divisor) {
+        (Some(lhs), Some(rhs)) if lhs == rhs => u64::try_from(lhs)
+            .map(Some)
+            .map_err(|_| RetentionError::ChunkOutOfRange),
+        (Some(_), Some(_)) => Ok(None),
+        _ => {
+            let lhs_divisor = chunk_divisor(lhs, &IntExpr::KeyPosition)?;
+            let rhs_divisor = chunk_divisor(rhs, &IntExpr::QueryPosition)?;
+            match (lhs_divisor, rhs_divisor) {
+                (Some(lhs), Some(rhs)) if lhs == rhs => u64::try_from(lhs)
+                    .map(Some)
+                    .map_err(|_| RetentionError::ChunkOutOfRange),
+                _ => Ok(None),
+            }
+        }
+    }
+}
+
+fn chunk_divisor(expression: &IntExpr, expected: &IntExpr) -> Result<Option<i64>, RetentionError> {
+    let IntExpr::FloorDiv { value, divisor } = expression else {
+        return Ok(None);
+    };
+    if *divisor <= 0 {
+        return Err(RetentionError::InvalidFloorDivisor);
+    }
+    Ok((value.as_ref() == expected).then_some(*divisor))
 }
 
 fn analyze_sink_and_window(predicate: &Predicate) -> Result<Option<(u64, u64)>, RetentionError> {
@@ -636,5 +709,51 @@ mod tests {
                 }
             );
         }
+    }
+
+    #[test]
+    fn infers_same_chunk_lifetime_from_floor_division() {
+        let declaration = state(Predicate::Equal {
+            lhs: IntExpr::FloorDiv {
+                value: Box::new(IntExpr::QueryPosition),
+                divisor: 16,
+            },
+            rhs: IntExpr::FloorDiv {
+                value: Box::new(IntExpr::KeyPosition),
+                divisor: 16,
+            },
+        });
+        let analysis = analyze_state(&declaration).unwrap();
+        assert_eq!(
+            analysis.inferred,
+            InferredRetention::Chunked { chunk_tokens: 16 }
+        );
+        assert_eq!(analysis.proven_query_key_delta_upper_bound, Some(15));
+        for query in 0..64_i64 {
+            for key in 0..=query {
+                assert_eq!(
+                    declaration.may_read.may_read(query, key),
+                    query / 16 == key / 16
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_floor_divisor_fails_closed() {
+        let declaration = state(Predicate::Equal {
+            lhs: IntExpr::FloorDiv {
+                value: Box::new(IntExpr::QueryPosition),
+                divisor: 0,
+            },
+            rhs: IntExpr::FloorDiv {
+                value: Box::new(IntExpr::KeyPosition),
+                divisor: 0,
+            },
+        });
+        assert_eq!(
+            analyze_state(&declaration),
+            Err(RetentionError::InvalidFloorDivisor)
+        );
     }
 }

@@ -92,6 +92,21 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
         </a>
       </div>
 
+      <div class="doc-note">
+        <strong>Address synthesis: Chunked Local.</strong>
+        <p>
+          The relation <code>floor(q / 16) == floor(k / 16)</code>
+          compiled into a four-cell resettable arena at page size four. Every
+          block in an epoch receives the same chunk-end retirement boundary.
+          Simulator and Manager tests hold old epoch cells until reader
+          completion and backend commit. This is host-only compiler/runtime
+          evidence, not an SGLang performance result.
+        </p>
+        <a href={`${repositoryUrl}/blob/main/results/chunked-local-20260817/summary.json`}>
+          Chunked Local proof summary
+        </a>
+      </div>
+
       <h2>Evidence ledger</h2>
       <table class="evidence-table-native">
         <thead>

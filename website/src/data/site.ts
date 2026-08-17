@@ -43,6 +43,7 @@ export const implemented = [
   { name: "Full retention", boundary: "append-only lifetime · no semantic retirement", state: "Implemented" },
   { name: "Sliding retention", boundary: "optimal equal-size interval coloring", state: "Implemented" },
   { name: "Sink + sliding", boundary: "one may_read OR relation · pinned + periodic regions · host exhaustive proof", state: "Implemented" },
+  { name: "Chunked local", boundary: "same-chunk relation · resettable arena · epoch certificates", state: "Implemented" },
   { name: "Physical optimizer", boundary: "KV budget · admission waves · reclaim budget · engine contract", state: "H20 validated" },
   { name: "Owning manager", boundary: "multi-request identity · generations · immutable views", state: "Implemented" },
   { name: "Reclamation proof", boundary: "semantic proof · execution proof · backend commit", state: "Implemented" },
@@ -113,6 +114,12 @@ export const evidenceRows = [
     boundary: "host exhaustive proof; SGLang partition lowering not yet enabled",
   },
   {
+    result: "Chunked Local synthesis",
+    value: "Resettable",
+    contract: "floor(q/C) == floor(k/C) to epoch arena and chunk-end death",
+    boundary: "host exhaustive proof; SGLang lowering not yet enabled",
+  },
+  {
     result: "Fixture admission",
     value: "+47.14%",
     contract: "10 Full + 52 SWA layers, fixed 4.608 GiB KV budget",
@@ -156,7 +163,7 @@ export const roadmap = [
   { state: "DONE", name: "Physical-plan optimizer", detail: "Select a constrained SGLang policy from budget and workload candidates." },
   { state: "DONE", name: "Lifetime partitioning", detail: "Compile sink plus local semantics into pinned and periodic block regions." },
   { state: "NEXT", name: "Graph-stable KV storage", detail: "Back real SGLang KV tensors with cost-approved VMM regions." },
-  { state: "THEN", name: "Richer Retention IR", detail: "Compile chunk, periodic-global, and per-head lifetime classes." },
+  { state: "THEN", name: "Richer Retention IR", detail: "Compile periodic-global, per-head lifetime classes, and recurrent state." },
 ];
 
 export const docs = [
@@ -195,5 +202,11 @@ export const docs = [
     name: "gpt-oss-20b validation",
     detail: "Released checkpoint capacity, admission, overhead, and reclamation certificates.",
     href: `${repositoryUrl}/blob/main/docs/h20-gpt-oss-20b-real-validation-20260817.md`,
+  },
+  {
+    key: "07 / CHUNKED",
+    name: "Chunked Local proof",
+    detail: "Same-chunk inference, resettable arena synthesis, and epoch reuse safety.",
+    href: `${repositoryUrl}/blob/main/results/chunked-local-20260817/summary.json`,
   },
 ];

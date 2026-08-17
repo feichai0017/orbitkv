@@ -40,6 +40,7 @@
     "results/h20-gpt-oss-20b-real-20260817/physical-plan.json": "65c2f030485ca972b1fc5b017e987066d263d44cbbf3af09e638ac4f6c10cf55"
   },
   "schema": "orbitkv.h20-gpt-oss-20b-real-manifest.v1",
+  "source_commit": "02bdf2f2b466fbeda8112db00eb49c044439a08c",
   "software": {
     "cuda_toolkit": "13.0",
     "flashinfer": "0.6.17",

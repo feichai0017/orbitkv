@@ -60,6 +60,10 @@ import { architectureLanes, compilerStages, docs, repositoryUrl } from "../../da
     -> sink domain [0, S): pinned cells, never retired
     -> local domain [S, +inf): periodic cells, finite death
     -> no dedicated SinkSliding manager type`}</code></pre>
+      <pre><code>{`floor(q / C) == floor(k / C)
+    -> all blocks in one chunk share an epoch-end death
+    -> cell = block mod (C / P)
+    -> ResettableArena, not a sliding ring`}</code></pre>
       <p>
         Relations that do not prove a finite query-key distance safely lower
         to unbounded retention and append-only storage.
@@ -69,6 +73,11 @@ import { architectureLanes, compilerStages, docs, repositoryUrl } from "../../da
         program rejects blocks outside each region. This normalization is
         exercised by the Rust simulator and owning manager; SGLang policy
         lowering still fails closed for partitioned domains.
+      </p>
+      <p>
+        Chunk sizes must also align to reclamation pages. This rule applies only
+        to the explicit same-chunk relation; OrbitKV does not assume that every
+        model field named <code>attention_chunk_size</code> has this semantic.
       </p>
 
       <h2>Compiler stages</h2>

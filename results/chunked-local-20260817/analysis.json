@@ -1,0 +1,41 @@
+{
+  "schema": "orbitkv.retention-analysis.v1",
+  "source_schema": "orbitkv.retention-ir.v1",
+  "page_tokens": 4,
+  "analyses": [
+    {
+      "state_name": "chunked_attention",
+      "inferred": {
+        "kind": "chunked",
+        "chunk_tokens": 16
+      },
+      "proven_query_key_delta_upper_bound": 15
+    }
+  ],
+  "layout": {
+    "schema": "orbitkv.layout-program.v1",
+    "plan_fingerprint": "sha256:a66fa55b9b9d6d21f0ec8eded7551af6efe68e0446af7eddb9bc69d4b385fac4",
+    "page_tokens": 4,
+    "classes": [
+      {
+        "name": "chunked_attention",
+        "layers": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "bytes_per_token_per_layer": 128,
+        "address": {
+          "kind": "resettable_arena",
+          "blocks_per_epoch": 4
+        },
+        "retirement": {
+          "kind": "epoch_end",
+          "blocks_per_epoch": 4
+        },
+        "minimum_slots_per_request": 4
+      }
+    ]
+  }
+}

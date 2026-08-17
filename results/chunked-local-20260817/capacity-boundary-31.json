@@ -1,0 +1,40 @@
+{
+  "page_tokens": 4,
+  "boundary": 31,
+  "classes": [
+    {
+      "spec": {
+        "name": "chunked_attention",
+        "layers": [
+          0,
+          1,
+          2,
+          3
+        ],
+        "retention": "chunked",
+        "bytes_per_token_per_layer": 128,
+        "window_tokens": null
+      },
+      "slot_count": 4,
+      "chunk_tokens": 16
+    }
+  ],
+  "capacity": [
+    {
+      "name": "chunked_attention",
+      "semantic_live_tokens": 15,
+      "physical_token_slots": 16,
+      "resident_bytes": 8192
+    }
+  ],
+  "resident_bytes": 8192,
+  "all_full_baseline_bytes": 16384,
+  "continuation_blocks": {
+    "chunked_attention": [
+      {
+        "start": 4,
+        "end_exclusive": 8
+      }
+    ]
+  }
+}

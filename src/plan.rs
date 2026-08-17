@@ -14,6 +14,7 @@ use crate::retention::{
 pub enum RetentionKind {
     Full,
     Sliding,
+    Chunked,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -45,6 +46,8 @@ pub enum KvPlanSource {
 pub struct CompiledKvClass {
     pub spec: KvClassSpec,
     pub slot_count: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub chunk_tokens: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source_state: Option<String>,
     #[serde(default, skip_serializing_if = "BlockDomain::is_all")]
@@ -101,6 +104,9 @@ pub enum AddressProgram {
         period_blocks: u64,
         origin_block: u64,
     },
+    ResettableArena {
+        blocks_per_epoch: u64,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -108,6 +114,7 @@ pub enum AddressProgram {
 pub enum RetirementProgram {
     Never,
     BlockEndPlus { offset_tokens: u64 },
+    EpochEnd { blocks_per_epoch: u64 },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -212,6 +219,8 @@ pub enum PlanError {
     ArithmeticOverflow { calculation: &'static str },
     #[error("compiled sliding class {class:?} is missing its window")]
     InvalidCompiledClass { class: String },
+    #[error("compiled chunked class {class:?} is missing its chunk size")]
+    InvalidCompiledChunk { class: String },
     #[error(
         "SGLang eviction interval {interval} must be a positive multiple of page_tokens {page_tokens}"
     )]
@@ -230,6 +239,12 @@ pub enum PlanError {
     SinkBoundaryNotPageAligned { sink_tokens: u64, page_tokens: u64 },
     #[error("SGLang lowering does not support partitioned block domains")]
     UnsupportedSglangBlockDomain,
+    #[error("SGLang lowering does not support retention class {0:?}")]
+    UnsupportedSglangRetention(String),
+    #[error("legacy syntax cannot declare chunked retention; use Retention IR")]
+    LegacyChunkedUnsupported,
+    #[error("chunk size {chunk_tokens} must be aligned to page_tokens {page_tokens}")]
+    ChunkNotPageAligned { chunk_tokens: u64, page_tokens: u64 },
     #[error("{class}: legacy window {window} does not fit Retention IR i64 constants")]
     LegacyWindowOutOfRange { class: String, window: u64 },
     #[error(transparent)]
@@ -270,6 +285,12 @@ impl AddressProgram {
                             calculation: "periodic address origin subtraction",
                         })?;
                 (relative % period_blocks, relative / period_blocks)
+            }
+            Self::ResettableArena { blocks_per_epoch } => {
+                if blocks_per_epoch == 0 {
+                    return Err(PlanError::ZeroAddressPeriod);
+                }
+                (ordinal % blocks_per_epoch, ordinal / blocks_per_epoch)
             }
         };
         Ok(TemporalAddress {
@@ -328,6 +349,20 @@ impl RetirementProgram {
                 .ok_or(PlanError::ArithmeticOverflow {
                     calculation: "retirement program death boundary",
                 }),
+            Self::EpochEnd { blocks_per_epoch } => {
+                if blocks_per_epoch == 0 {
+                    return Err(PlanError::ZeroAddressPeriod);
+                }
+                ordinal
+                    .checked_div(blocks_per_epoch)
+                    .and_then(|epoch| epoch.checked_add(1))
+                    .and_then(|epoch| epoch.checked_mul(blocks_per_epoch))
+                    .and_then(|end_block| end_block.checked_mul(page_tokens))
+                    .map(Some)
+                    .ok_or(PlanError::ArithmeticOverflow {
+                        calculation: "epoch retirement boundary",
+                    })
+            }
         }
     }
 }
@@ -399,10 +434,15 @@ impl CompiledKvPlan {
                 match class.spec.retention {
                     RetentionKind::Full => 0_u64,
                     RetentionKind::Sliding => 1_u64,
+                    RetentionKind::Chunked => 2_u64,
                 }
                 .to_le_bytes(),
             );
             hash.update(class.spec.window_tokens.unwrap_or(0).to_le_bytes());
+            if let Some(chunk_tokens) = class.chunk_tokens {
+                hash.update(1_u64.to_le_bytes());
+                hash.update(chunk_tokens.to_le_bytes());
+            }
             hash.update(class.slot_count.unwrap_or(0).to_le_bytes());
             if !class.block_domain.is_all() {
                 hash.update(1_u64.to_le_bytes());
@@ -461,6 +501,23 @@ impl CompiledKvPlan {
                             RetirementProgram::BlockEndPlus {
                                 offset_tokens: window - 1,
                             },
+                        )
+                    }
+                    RetentionKind::Chunked => {
+                        class
+                            .chunk_tokens
+                            .ok_or_else(|| PlanError::InvalidCompiledChunk {
+                                class: class.spec.name.clone(),
+                            })?;
+                        let blocks_per_epoch =
+                            class
+                                .slot_count
+                                .ok_or_else(|| PlanError::InvalidCompiledChunk {
+                                    class: class.spec.name.clone(),
+                                })?;
+                        (
+                            AddressProgram::ResettableArena { blocks_per_epoch },
+                            RetirementProgram::EpochEnd { blocks_per_epoch },
                         )
                     }
                 };
@@ -615,6 +672,15 @@ impl CompiledKvPlan {
                 page_tokens: self.page_tokens,
             });
         }
+        if let Some(class) = self
+            .classes
+            .iter()
+            .find(|class| class.spec.retention == RetentionKind::Chunked)
+        {
+            return Err(PlanError::UnsupportedSglangRetention(
+                class.spec.name.clone(),
+            ));
+        }
         let bounded_classes =
             self.classes
                 .iter()
@@ -679,18 +745,27 @@ impl CompiledKvPlan {
             })
             .transpose()?
             .unwrap_or(boundary);
-        let live_start =
-            match class.spec.retention {
-                RetentionKind::Full => domain_start,
-                RetentionKind::Sliding => {
-                    let window = class.spec.window_tokens.ok_or_else(|| {
-                        PlanError::InvalidCompiledClass {
+        let live_start = match class.spec.retention {
+            RetentionKind::Full => domain_start,
+            RetentionKind::Sliding => {
+                let window =
+                    class
+                        .spec
+                        .window_tokens
+                        .ok_or_else(|| PlanError::InvalidCompiledClass {
                             class: class.spec.name.clone(),
-                        }
+                        })?;
+                domain_start.max(boundary.saturating_sub(window.saturating_sub(1)))
+            }
+            RetentionKind::Chunked => {
+                let chunk = class
+                    .chunk_tokens
+                    .ok_or_else(|| PlanError::InvalidCompiledChunk {
+                        class: class.spec.name.clone(),
                     })?;
-                    domain_start.max(boundary.saturating_sub(window.saturating_sub(1)))
-                }
-            };
+                boundary / chunk * chunk
+            }
+        };
         let live_end = boundary.min(domain_end);
         let semantic_live_tokens = live_end.saturating_sub(live_start);
         let existing_blocks = ceil_div(boundary, self.page_tokens)?;
@@ -727,18 +802,27 @@ impl CompiledKvPlan {
         class: &CompiledKvClass,
         boundary: u64,
     ) -> Result<Vec<u64>, PlanError> {
-        let start_token =
-            match class.spec.retention {
-                RetentionKind::Full => 0,
-                RetentionKind::Sliding => {
-                    let window = class.spec.window_tokens.ok_or_else(|| {
-                        PlanError::InvalidCompiledClass {
+        let start_token = match class.spec.retention {
+            RetentionKind::Full => 0,
+            RetentionKind::Sliding => {
+                let window =
+                    class
+                        .spec
+                        .window_tokens
+                        .ok_or_else(|| PlanError::InvalidCompiledClass {
                             class: class.spec.name.clone(),
-                        }
+                        })?;
+                boundary.saturating_sub(window.saturating_sub(1))
+            }
+            RetentionKind::Chunked => {
+                let chunk = class
+                    .chunk_tokens
+                    .ok_or_else(|| PlanError::InvalidCompiledChunk {
+                        class: class.spec.name.clone(),
                     })?;
-                    boundary.saturating_sub(window.saturating_sub(1))
-                }
-            };
+                boundary / chunk * chunk
+            }
+        };
         if start_token >= boundary {
             return Ok(Vec::new());
         }
@@ -845,6 +929,7 @@ impl KvClassSpec {
                     })?,
                 },
             },
+            RetentionKind::Chunked => return Err(PlanError::LegacyChunkedUnsupported),
         };
         Ok(RetentionStateDecl {
             name: self.name.clone(),
@@ -940,6 +1025,15 @@ pub fn compile_retention_program(
                     None,
                 ));
             }
+            InferredRetention::Chunked { chunk_tokens } => {
+                if !chunk_tokens.is_multiple_of(program.page_tokens) {
+                    return Err(PlanError::ChunkNotPageAligned {
+                        chunk_tokens,
+                        page_tokens: program.page_tokens,
+                    });
+                }
+                classes.push(InferredClassInput::chunked(&state, chunk_tokens));
+            }
             InferredRetention::Partitioned { regions } => {
                 classes.extend(lower_partitioned_state(
                     &state,
@@ -964,6 +1058,7 @@ pub fn compile_plan(input: KvPlanInput) -> Result<CompiledKvPlan, PlanError> {
 
 struct InferredClassInput {
     spec: KvClassSpec,
+    chunk_tokens: Option<u64>,
     source_state: Option<String>,
     block_domain: BlockDomain,
 }
@@ -985,8 +1080,24 @@ impl InferredClassInput {
                 bytes_per_token_per_layer: state.bytes_per_token_per_layer,
                 window_tokens,
             },
+            chunk_tokens: None,
             source_state,
             block_domain,
+        }
+    }
+
+    fn chunked(state: &RetentionStateDecl, chunk_tokens: u64) -> Self {
+        Self {
+            spec: KvClassSpec {
+                name: state.name.clone(),
+                layers: state.layers.clone(),
+                retention: RetentionKind::Chunked,
+                bytes_per_token_per_layer: state.bytes_per_token_per_layer,
+                window_tokens: None,
+            },
+            chunk_tokens: Some(chunk_tokens),
+            source_state: None,
+            block_domain: BlockDomain::all(),
         }
     }
 }
@@ -1108,10 +1219,26 @@ fn compile_inferred_classes(
                             })?,
                     )
                 }
+                RetentionKind::Chunked => {
+                    let chunk_tokens =
+                        class
+                            .chunk_tokens
+                            .ok_or_else(|| PlanError::InvalidCompiledChunk {
+                                class: class.spec.name.clone(),
+                            })?;
+                    if !chunk_tokens.is_multiple_of(page_tokens) {
+                        return Err(PlanError::ChunkNotPageAligned {
+                            chunk_tokens,
+                            page_tokens,
+                        });
+                    }
+                    Some(chunk_tokens / page_tokens)
+                }
             };
         compiled.push(CompiledKvClass {
             spec: class.spec,
             slot_count,
+            chunk_tokens: class.chunk_tokens,
             source_state: class.source_state,
             block_domain: class.block_domain,
         });
@@ -1145,9 +1272,11 @@ fn validate_class(class: &KvClassSpec) -> Result<(), PlanError> {
         });
     }
     match class.retention {
-        RetentionKind::Full if class.window_tokens.is_some() => Err(PlanError::FullHasWindow {
-            class: class.name.clone(),
-        }),
+        RetentionKind::Full | RetentionKind::Chunked if class.window_tokens.is_some() => {
+            Err(PlanError::FullHasWindow {
+                class: class.name.clone(),
+            })
+        }
         RetentionKind::Sliding if class.window_tokens.is_none_or(|window| window == 0) => {
             Err(PlanError::SlidingWithoutWindow {
                 class: class.name.clone(),
@@ -1495,6 +1624,95 @@ mod tests {
                 page_tokens: 4
             })
         ));
+    }
+
+    #[test]
+    fn same_chunk_relation_synthesizes_resettable_arena() {
+        let program = RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 4,
+            states: vec![RetentionStateDecl {
+                name: "chunked".into(),
+                layers: vec![0],
+                bytes_per_token_per_layer: 128,
+                may_read: Predicate::Equal {
+                    lhs: IntExpr::FloorDiv {
+                        value: Box::new(IntExpr::QueryPosition),
+                        divisor: 16,
+                    },
+                    rhs: IntExpr::FloorDiv {
+                        value: Box::new(IntExpr::KeyPosition),
+                        divisor: 16,
+                    },
+                },
+            }],
+        };
+        let plan = compile_retention_program(program).unwrap();
+        assert_eq!(plan.classes[0].spec.retention, RetentionKind::Chunked);
+        assert_eq!(plan.classes[0].chunk_tokens, Some(16));
+        assert_eq!(plan.classes[0].slot_count, Some(4));
+        let layout = plan.layout_program().unwrap();
+        assert_eq!(
+            layout.classes[0].address,
+            AddressProgram::ResettableArena {
+                blocks_per_epoch: 4
+            }
+        );
+        assert_eq!(
+            layout.classes[0].retirement,
+            RetirementProgram::EpochEnd {
+                blocks_per_epoch: 4
+            }
+        );
+        for ordinal in 0..4 {
+            assert_eq!(
+                layout.classes[0]
+                    .retirement
+                    .death_boundary(4, ordinal)
+                    .unwrap(),
+                Some(16)
+            );
+        }
+        assert_eq!(
+            layout.classes[0].retirement.death_boundary(4, 4).unwrap(),
+            Some(32)
+        );
+        assert_eq!(plan.continuation_blocks(20).unwrap()["chunked"], vec![4]);
+        assert_eq!(plan.capacity_at(20).unwrap()[0].semantic_live_tokens, 4);
+        assert!(matches!(
+            plan.sglang_policy(),
+            Err(PlanError::UnsupportedSglangRetention(class)) if class == "chunked"
+        ));
+    }
+
+    #[test]
+    fn chunk_size_must_align_with_reclamation_page() {
+        let program = RetentionProgramInput {
+            schema: "orbitkv.retention-ir.v1".into(),
+            page_tokens: 4,
+            states: vec![RetentionStateDecl {
+                name: "chunked".into(),
+                layers: vec![0],
+                bytes_per_token_per_layer: 128,
+                may_read: Predicate::Equal {
+                    lhs: IntExpr::FloorDiv {
+                        value: Box::new(IntExpr::QueryPosition),
+                        divisor: 10,
+                    },
+                    rhs: IntExpr::FloorDiv {
+                        value: Box::new(IntExpr::KeyPosition),
+                        divisor: 10,
+                    },
+                },
+            }],
+        };
+        assert_eq!(
+            compile_retention_program(program),
+            Err(PlanError::ChunkNotPageAligned {
+                chunk_tokens: 10,
+                page_tokens: 4
+            })
+        );
     }
 
     #[test]

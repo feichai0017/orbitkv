@@ -1,0 +1,35 @@
+{
+  "claim_boundary": [
+    "explicit same-chunk relation floor(q/C) == floor(k/C)",
+    "chunk size aligned to the reclamation page",
+    "host compiler, simulator, and reference-manager validation only",
+    "SGLang lowering rejects Chunked retention",
+    "no GPU or end-to-end performance claim"
+  ],
+  "date": "2026-08-17",
+  "records": {
+    "results/chunked-local-20260817/analysis.json": "bc6a466a056db8e861bd6e0361c6b7e3de1eedfb5a3cf46cc688e0e96678f931",
+    "results/chunked-local-20260817/capacity-boundary-31.json": "73720f40ef16bfae5b86fc93b1865427279936809806fe9c94f7c8748c9dc6a5",
+    "results/chunked-local-20260817/summary.json": "d87fe66062cd2268b4cc216b4773b3f2377818f8c7d67e6101fbf9fc9fde98cb"
+  },
+  "schema": "orbitkv.chunked-local-manifest.v1",
+  "sources": {
+    "examples/chunked_local_retention.json": "566c1c2038aaf25733dd2805758b071283748908e3fd7d5439cff12c778a6b98",
+    "src/lib.rs": "9bd8d5746e59b1053bc859b13f688fff7537b0a41046354fc1e0ab8cdef07ff2",
+    "src/manager.rs": "67adcfe7784bd0947a1793428c770122715764bd5a7deb95e21e55ff1148c0cf",
+    "src/optimizer.rs": "84611c450928242f8d4fd04d5564d7c36c4ef65516d2cc005946d96fee5341d6",
+    "src/plan.rs": "52d367d0a2877fe9f6c887e0dd3be42c969fdff97b5750bc33c5529e6682a5a0",
+    "src/retention.rs": "b32472a282d1e4ac90db28fa130c8f47ab481586f6d0061dc858a822b6a5c273",
+    "src/runtime.rs": "ecc7ebbd87ba0ea350865f521eb8e31d985108488374077c8d90cda99df8c2e8",
+    "src/sglang_owner.rs": "220ac89b7e1226c647e24a9df6b174c71bd6cad84c68f3f63af18f2e7d136b79",
+    "tests/retention_cli.rs": "26e69f67a2fa6ec18a984737e7f8372bb359fe7b9d57e464bd8eea82f0c6f5e6"
+  },
+  "website": {
+    "README.md": "dc211fb4346100ec12e0984bda1f33555ba2b321e8a03a1edb524c50308b7cb4",
+    "docs/sglang-e2e.md": "f8434bf0f2238b4ea180a0a3c9170a156fe3563822f1ff15d1f4bc12be98781c",
+    "results/README.md": "f66fee731d1884d41d387ff9d3c183f5be42e08db08f43a9becbfbb443837fb0",
+    "website/src/data/site.ts": "382c166e6ef6be195c37dcd644794c3a4f5af4b2688aee08c7e33f2dac76255a",
+    "website/src/pages/docs/index.astro": "71c263832b15eb08d97f0e725c801cd4ff636d52cbb424bf41d7cc005efe885a",
+    "website/src/pages/evidence.astro": "254eb4d8f5e07a8d527d510f7fa65e8d133845104612051f777b989eb194f899"
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "schema": "orbitkv.retention-ir.v1",
+  "page_tokens": 4,
+  "states": [
+    {
+      "name": "chunked_attention",
+      "layers": [0, 1, 2, 3],
+      "bytes_per_token_per_layer": 128,
+      "may_read": {
+        "op": "equal",
+        "lhs": {
+          "op": "floor_div",
+          "value": {
+            "op": "query_position"
+          },
+          "divisor": 16
+        },
+        "rhs": {
+          "op": "floor_div",
+          "value": {
+            "op": "key_position"
+          },
+          "divisor": 16
+        }
+      }
+    }
+  ]
+}
