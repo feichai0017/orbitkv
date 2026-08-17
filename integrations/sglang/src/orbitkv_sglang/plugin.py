@@ -562,7 +562,7 @@ def _load_state_plan() -> dict[str, Any] | None:
     if mode not in ("execute", "kernel_reference"):
         raise ValueError(f"unsupported OrbitKV state-plan mode: {mode!r}")
     artifact = json.loads(Path(path).read_text(encoding="utf-8"))
-    if artifact.get("schema") != "orbitkv.hf-state-plan.v3":
+    if artifact.get("schema") != "orbitkv.hf-state-plan.v4":
         raise ValueError(f"unsupported OrbitKV state plan: {artifact!r}")
     lowering = artifact.get("sglang_lowering")
     if (
@@ -575,7 +575,7 @@ def _load_state_plan() -> dict[str, Any] | None:
     if (
         not isinstance(contract, dict)
         or contract.get("schema")
-        != "orbitkv.sglang-uniform-swa-contract.v3"
+        != "orbitkv.sglang-uniform-swa-contract.v4"
     ):
         raise ValueError("OrbitKV state plan has an invalid uniform-SWA contract")
     layout = artifact.get("layout")
@@ -642,6 +642,21 @@ def _load_state_plan() -> dict[str, Any] | None:
         raise ValueError("OrbitKV uniform-SWA logical index budget does not match")
     if contract.get("scheduler_admission") != "pure_swa_live_state":
         raise ValueError("OrbitKV uniform-SWA scheduler admission is unsupported")
+    graph_mode = contract.get("cuda_graph_mode")
+    capture_sizes = contract.get("decode_cuda_graph_batch_sizes")
+    if graph_mode == "disabled":
+        if capture_sizes != []:
+            raise ValueError("disabled CUDA Graph contract has capture sizes")
+    elif graph_mode == "decode":
+        expected_sizes = list(
+            range(1, int(contract["maximum_running_requests"]) + 1)
+        )
+        if contract["physical_backend"] != "paged_periodic":
+            raise ValueError("decode CUDA Graph requires paged periodic")
+        if capture_sizes != expected_sizes:
+            raise ValueError("decode CUDA Graph capture sizes do not match")
+    else:
+        raise ValueError("OrbitKV uniform-SWA CUDA Graph mode is unsupported")
     os.environ["SGLANG_SWA_EVICTION_INTERVAL"] = str(
         contract["eviction_interval_tokens"]
     )
@@ -656,6 +671,7 @@ def _uniform_swa_contract_fingerprint(contract: dict[str, Any]) -> str:
         contract["plan_fingerprint"],
         contract["config_sha256"],
         contract["architecture"],
+        contract["cuda_graph_mode"],
     ):
         encoded = value.encode()
         digest.update(struct.pack("<Q", len(encoded)))
@@ -673,6 +689,8 @@ def _uniform_swa_contract_fingerprint(contract: dict[str, Any]) -> str:
         contract["decode_headroom_tokens"],
     ):
         digest.update(struct.pack("<Q", int(value)))
+    for batch_size in contract["decode_cuda_graph_batch_sizes"]:
+        digest.update(struct.pack("<Q", int(batch_size)))
     return f"sha256:{digest.hexdigest()}"
 
 
@@ -866,12 +884,17 @@ def _validate_uniform_swa_runtime(
     if contract is None:
         return original_fn(configurator, *args, **kwargs)
     server_args = configurator.server_args
+    graph_mode = contract["cuda_graph_mode"]
     expected_disabled = {
         "radix_cache",
         "overlap_schedule",
         "speculative_decoding",
         "disaggregation",
-        "cuda_graph",
+        (
+            "cuda_graph"
+            if graph_mode == "disabled"
+            else "prefill_cuda_graph"
+        ),
     }
     if set(contract.get("required_disabled_features", [])) != expected_disabled:
         raise RuntimeError(
@@ -880,7 +903,6 @@ def _validate_uniform_swa_runtime(
     required = {
         "disable_radix_cache": bool(server_args.disable_radix_cache),
         "disable_overlap_schedule": bool(server_args.disable_overlap_schedule),
-        "disable_cuda_graph": bool(server_args.disable_cuda_graph),
         "disaggregation_disabled": server_args.disaggregation_mode == "null",
         "speculative_decoding_disabled": configurator.spec_algorithm.is_none(),
         "page_tokens": int(configurator.page_size)
@@ -888,10 +910,23 @@ def _validate_uniform_swa_runtime(
         "chunked_prefill_tokens": int(server_args.chunked_prefill_size)
         == int(contract["chunked_prefill_tokens"]),
     }
-    if _STATE_PLAN_MODE == "execute":
-        required["maximum_running_requests"] = int(
-            server_args.max_running_requests
-        ) <= int(contract["maximum_running_requests"])
+    required["maximum_running_requests"] = int(
+        server_args.max_running_requests
+    ) <= int(contract["maximum_running_requests"])
+    graph_config = server_args.cuda_graph_config
+    if graph_mode == "disabled":
+        required["cuda_graph_disabled"] = (
+            graph_config.decode.backend == "disabled"
+            and graph_config.prefill.backend == "disabled"
+        )
+    else:
+        required["decode_cuda_graph"] = graph_config.decode.backend == "full"
+        required["prefill_cuda_graph_disabled"] = (
+            graph_config.prefill.backend == "disabled"
+        )
+        required["decode_cuda_graph_batch_sizes"] = list(
+            graph_config.decode.bs
+        ) == list(contract["decode_cuda_graph_batch_sizes"])
     failed = [name for name, passed in required.items() if not passed]
     if failed:
         raise RuntimeError(
@@ -928,6 +963,23 @@ def _validate_uniform_swa_runtime(
             "OrbitKV paged-periodic logical index capacity does not match"
         )
     return result
+
+
+def _record_decode_graph_replay(
+    original_fn: Callable,
+    runner: Any,
+    forward_batch: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    _emit(
+        {
+            "event": "decode_graph_replay",
+            "batch_size": int(forward_batch.batch_size),
+            "forward_mode": str(forward_batch.forward_mode),
+        }
+    )
+    return original_fn(runner, forward_batch, *args, **kwargs)
 
 
 def _resolve_uniform_swa_window(
@@ -1343,9 +1395,19 @@ def register() -> None:
             _admit_uniform_swa_request,
             HookType.AROUND,
         )
+        if _UNIFORM_SWA_CONTRACT["cuda_graph_mode"] == "decode":
+            HookRegistry.register(
+                "sglang.srt.model_executor.runner.decode_cuda_graph_runner.DecodeCudaGraphRunner.execute",
+                _record_decode_graph_replay,
+                HookType.AROUND,
+            )
 
     trace_allocations = _trace_allocations_enabled()
-    if trace_allocations and _WRITER is None:
+    trace_graph_replays = (
+        _UNIFORM_SWA_CONTRACT is not None
+        and _UNIFORM_SWA_CONTRACT["cuda_graph_mode"] == "decode"
+    )
+    if (trace_allocations or trace_graph_replays) and _WRITER is None:
         _WRITER = threading.Thread(
             target=_writer_main,
             name="orbitkv-sglang-shadow",

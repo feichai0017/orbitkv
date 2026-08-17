@@ -156,6 +156,16 @@ class FakeSpecAlgorithm:
         return True
 
 
+def fake_cuda_graph_config(decode="disabled", prefill="disabled", batch_sizes=None):
+    return types.SimpleNamespace(
+        decode=types.SimpleNamespace(
+            backend=decode,
+            bs=[] if batch_sizes is None else batch_sizes,
+        ),
+        prefill=types.SimpleNamespace(backend=prefill),
+    )
+
+
 class PureSWATokenToKVPoolAllocator:
     page_size = 1
     size_swa = 20_000
@@ -163,6 +173,13 @@ class PureSWATokenToKVPoolAllocator:
 
 class WrongUniformAllocator:
     page_size = 1
+
+
+class OrbitKvPagedPeriodicAllocator:
+    def __init__(self, page_size, size_swa, size_full):
+        self.page_size = page_size
+        self.size_swa = size_swa
+        self.size_full = size_full
 
 
 class FakeOwningAllocator:
@@ -242,6 +259,98 @@ def _load_hook_registry(sglang_root: Path):
 
 
 class ShadowPluginTests(unittest.TestCase):
+    def test_decode_graph_contract_validates_runtime_and_records_replay(self):
+        from orbitkv_sglang import plugin
+
+        orbitkv_bin = os.environ.get("ORBITKV_BIN")
+        if not orbitkv_bin:
+            self.skipTest("ORBITKV_BIN is required")
+        root = Path(__file__).resolve().parents[3]
+        config = root / "fixtures/mistral-uniform-swa-tiny/config.json"
+        artifact = json.loads(
+            subprocess.check_output(
+                [
+                    orbitkv_bin,
+                    "compile-hf-state-plan",
+                    str(config),
+                    "--page-tokens",
+                    "16",
+                    "--kv-dtype-bytes",
+                    "2",
+                    "--boundary",
+                    "8192",
+                    "--max-running-requests",
+                    "4",
+                    "--chunked-prefill-tokens",
+                    "2048",
+                    "--eviction-interval",
+                    "128",
+                    "--decode-headroom-tokens",
+                    "32",
+                    "--cuda-graph-mode",
+                    "decode",
+                ],
+                text=True,
+            )
+        )
+        contract = artifact["sglang_lowering"]["contract"]
+        old_contract = plugin._UNIFORM_SWA_CONTRACT
+        old_mode = plugin._STATE_PLAN_MODE
+        try:
+            plugin._UNIFORM_SWA_CONTRACT = contract
+            plugin._STATE_PLAN_MODE = "execute"
+            server_args = types.SimpleNamespace(
+                disable_radix_cache=True,
+                disable_overlap_schedule=True,
+                disaggregation_mode="null",
+                max_running_requests=4,
+                chunked_prefill_size=2048,
+                cuda_graph_config=fake_cuda_graph_config(
+                    decode="full",
+                    prefill="disabled",
+                    batch_sizes=[1, 2, 3, 4],
+                ),
+            )
+            configurator = types.SimpleNamespace(
+                server_args=server_args,
+                spec_algorithm=FakeSpecAlgorithm(),
+                page_size=16,
+            )
+            allocator = OrbitKvPagedPeriodicAllocator(
+                page_size=16,
+                size_swa=contract["minimum_pool_tokens"],
+                size_full=contract["logical_index_tokens"],
+            )
+            result = types.SimpleNamespace(token_to_kv_pool_allocator=allocator)
+            self.assertIs(
+                plugin._validate_uniform_swa_runtime(
+                    lambda *_args, **_kwargs: result,
+                    configurator,
+                ),
+                result,
+            )
+
+            events = []
+            original_emit = plugin._emit
+            plugin._emit = events.append
+            try:
+                replay_result = plugin._record_decode_graph_replay(
+                    lambda *_args, **_kwargs: "replayed",
+                    object(),
+                    types.SimpleNamespace(
+                        batch_size=4,
+                        forward_mode="DECODE",
+                    ),
+                )
+            finally:
+                plugin._emit = original_emit
+            self.assertEqual(replay_result, "replayed")
+            self.assertEqual(events[0]["event"], "decode_graph_replay")
+            self.assertEqual(events[0]["batch_size"], 4)
+        finally:
+            plugin._UNIFORM_SWA_CONTRACT = old_contract
+            plugin._STATE_PLAN_MODE = old_mode
+
     def test_paged_periodic_allocator_separates_logical_and_physical_slots(self):
         root = Path(os.environ["ORBITKV_SGLANG_ROOT"])
         _load_hook_registry(root)
@@ -308,6 +417,8 @@ class ShadowPluginTests(unittest.TestCase):
                     "128",
                     "--decode-headroom-tokens",
                     "32",
+                    "--cuda-graph-mode",
+                    "disabled",
                 ],
                 text=True,
             )
@@ -378,6 +489,7 @@ class ShadowPluginTests(unittest.TestCase):
                     disaggregation_mode="null",
                     max_running_requests=1,
                     chunked_prefill_size=2048,
+                    cuda_graph_config=fake_cuda_graph_config(),
                 )
                 configurator = types.SimpleNamespace(
                     server_args=server_args,
@@ -400,6 +512,7 @@ class ShadowPluginTests(unittest.TestCase):
                         disaggregation_mode="null",
                         max_running_requests=5,
                         chunked_prefill_size=2048,
+                        cuda_graph_config=fake_cuda_graph_config(),
                     ),
                     spec_algorithm=FakeSpecAlgorithm(),
                     page_size=1,

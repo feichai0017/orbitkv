@@ -19,6 +19,7 @@ pub struct SglangUniformSwaOptions {
     pub chunked_prefill_tokens: u64,
     pub eviction_interval_tokens: u64,
     pub decode_headroom_tokens: u64,
+    pub cuda_graph_mode: UniformSwaCudaGraphMode,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -33,6 +34,22 @@ pub struct HfStatePlanOptions {
 pub enum UniformSwaPhysicalBackend {
     DirectPeriodic,
     PagedPeriodic,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum UniformSwaCudaGraphMode {
+    Disabled,
+    Decode,
+}
+
+impl UniformSwaCudaGraphMode {
+    const fn as_str(self) -> &'static str {
+        match self {
+            Self::Disabled => "disabled",
+            Self::Decode => "decode",
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -80,7 +97,9 @@ pub struct SglangUniformSwaContract {
     pub minimum_pool_tokens: u64,
     pub logical_index_tokens: u64,
     pub scheduler_admission: &'static str,
-    pub required_disabled_features: [&'static str; 5],
+    pub cuda_graph_mode: UniformSwaCudaGraphMode,
+    pub decode_cuda_graph_batch_sizes: Vec<u64>,
+    pub required_disabled_features: Vec<&'static str>,
 }
 
 struct UniformSwaBudget {
@@ -88,6 +107,11 @@ struct UniformSwaBudget {
     global_staging: u64,
     minimum_pool: u64,
     logical_index: u64,
+}
+
+struct UniformSwaGraphPolicy {
+    capture_batch_sizes: Vec<u64>,
+    required_disabled_features: Vec<&'static str>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -179,6 +203,8 @@ pub enum HfStatePlanError {
         value: u64,
         page_tokens: u64,
     },
+    #[error("decode CUDA Graph requires the paged-periodic physical backend")]
+    DecodeCudaGraphRequiresPagedPeriodic,
 }
 
 /// Compiles a constrained Hugging Face model config into declarative
@@ -290,7 +316,7 @@ pub fn compile_hf_state_plan(
         options.sglang_uniform_swa,
     )?;
     Ok(HfStatePlan {
-        schema: "orbitkv.hf-state-plan.v3",
+        schema: "orbitkv.hf-state-plan.v4",
         compilation,
         layout,
         applicability,
@@ -350,6 +376,11 @@ fn lower_uniform_swa_to_sglang(
     }
     let window_tokens = window_tokens_from_compilation(compilation)?;
     validate_uniform_swa_page_alignment(layout.page_tokens, window_tokens, options)?;
+    if options.cuda_graph_mode == UniformSwaCudaGraphMode::Decode
+        && physical_backend != UniformSwaPhysicalBackend::PagedPeriodic
+    {
+        return Err(HfStatePlanError::DecodeCudaGraphRequiresPagedPeriodic);
+    }
     let budget = synthesize_uniform_swa_budget(
         layout.page_tokens,
         maximum_context_tokens,
@@ -364,10 +395,11 @@ fn lower_uniform_swa_to_sglang(
         options,
         maximum_context_tokens,
     );
+    let graph_policy = synthesize_uniform_swa_graph_policy(options);
     Ok(HfSglangLowering::Enabled {
         kind: "uniform_swa",
         contract: Box::new(SglangUniformSwaContract {
-            schema: "orbitkv.sglang-uniform-swa-contract.v3",
+            schema: "orbitkv.sglang-uniform-swa-contract.v4",
             plan_fingerprint: layout.plan_fingerprint.clone(),
             contract_fingerprint,
             config_sha256: compilation.config_sha256.clone(),
@@ -389,15 +421,36 @@ fn lower_uniform_swa_to_sglang(
             minimum_pool_tokens: budget.minimum_pool,
             logical_index_tokens: budget.logical_index,
             scheduler_admission: "pure_swa_live_state",
-            required_disabled_features: [
+            cuda_graph_mode: options.cuda_graph_mode,
+            decode_cuda_graph_batch_sizes: graph_policy.capture_batch_sizes,
+            required_disabled_features: graph_policy.required_disabled_features,
+        }),
+    })
+}
+
+fn synthesize_uniform_swa_graph_policy(options: SglangUniformSwaOptions) -> UniformSwaGraphPolicy {
+    match options.cuda_graph_mode {
+        UniformSwaCudaGraphMode::Disabled => UniformSwaGraphPolicy {
+            capture_batch_sizes: Vec::new(),
+            required_disabled_features: vec![
                 "radix_cache",
                 "overlap_schedule",
                 "speculative_decoding",
                 "disaggregation",
                 "cuda_graph",
             ],
-        }),
-    })
+        },
+        UniformSwaCudaGraphMode::Decode => UniformSwaGraphPolicy {
+            capture_batch_sizes: (1..=options.maximum_running_requests).collect(),
+            required_disabled_features: vec![
+                "radix_cache",
+                "overlap_schedule",
+                "speculative_decoding",
+                "disaggregation",
+                "prefill_cuda_graph",
+            ],
+        },
+    }
 }
 
 fn uniform_swa_backend(page_tokens: u64) -> Option<UniformSwaPhysicalBackend> {
@@ -508,6 +561,7 @@ fn uniform_swa_contract_fingerprint(
         layout.plan_fingerprint.as_bytes(),
         compilation.config_sha256.as_bytes(),
         compilation.architecture.as_deref().unwrap_or("").as_bytes(),
+        options.cuda_graph_mode.as_str().as_bytes(),
     ] {
         hash.update((value.len() as u64).to_le_bytes());
         hash.update(value);
@@ -525,6 +579,11 @@ fn uniform_swa_contract_fingerprint(
         options.decode_headroom_tokens,
     ] {
         hash.update(value.to_le_bytes());
+    }
+    if options.cuda_graph_mode == UniformSwaCudaGraphMode::Decode {
+        for batch_size in 1..=options.maximum_running_requests {
+            hash.update(batch_size.to_le_bytes());
+        }
     }
     format!("sha256:{:x}", hash.finalize())
 }
@@ -755,6 +814,7 @@ mod tests {
                     chunked_prefill_tokens: 2048,
                     eviction_interval_tokens: 128,
                     decode_headroom_tokens: 32,
+                    cuda_graph_mode: UniformSwaCudaGraphMode::Disabled,
                 },
             },
         )
@@ -792,6 +852,7 @@ mod tests {
                     chunked_prefill_tokens: 2048,
                     eviction_interval_tokens: 128,
                     decode_headroom_tokens: 32,
+                    cuda_graph_mode: UniformSwaCudaGraphMode::Disabled,
                 },
             },
         )
@@ -834,6 +895,7 @@ mod tests {
                         chunked_prefill_tokens: 2048,
                         eviction_interval_tokens: 128,
                         decode_headroom_tokens: 32,
+                        cuda_graph_mode: UniformSwaCudaGraphMode::Disabled,
                     },
                 },
             ),
@@ -867,6 +929,7 @@ mod tests {
                         chunked_prefill_tokens: 2048,
                         eviction_interval_tokens: 127,
                         decode_headroom_tokens: 32,
+                        cuda_graph_mode: UniformSwaCudaGraphMode::Disabled,
                     },
                 },
             ),
@@ -875,6 +938,72 @@ mod tests {
                 value: 127,
                 page_tokens: 16,
             })
+        );
+    }
+
+    #[test]
+    fn decode_cuda_graph_is_compiled_only_for_paged_periodic() {
+        let config = br#"{
+            "architectures": ["MistralForCausalLM"],
+            "num_hidden_layers": 2,
+            "sliding_window": 4096,
+            "num_key_value_heads": 8,
+            "hidden_size": 4096,
+            "num_attention_heads": 32
+        }"#;
+        let graph_plan = compile_hf_state_plan(
+            config,
+            HfStatePlanOptions {
+                retention: HfRetentionOptions {
+                    page_tokens: 16,
+                    kv_dtype_bytes: 2,
+                },
+                boundary_tokens: 8192,
+                sglang_uniform_swa: SglangUniformSwaOptions {
+                    maximum_running_requests: 4,
+                    chunked_prefill_tokens: 2048,
+                    eviction_interval_tokens: 128,
+                    decode_headroom_tokens: 32,
+                    cuda_graph_mode: UniformSwaCudaGraphMode::Decode,
+                },
+            },
+        )
+        .unwrap();
+        let HfSglangLowering::Enabled { contract, .. } = graph_plan.sglang_lowering else {
+            panic!("page-16 decode graph plan must lower");
+        };
+        assert_eq!(contract.cuda_graph_mode, UniformSwaCudaGraphMode::Decode);
+        assert_eq!(contract.decode_cuda_graph_batch_sizes, vec![1, 2, 3, 4]);
+        assert_eq!(
+            contract.required_disabled_features,
+            vec![
+                "radix_cache",
+                "overlap_schedule",
+                "speculative_decoding",
+                "disaggregation",
+                "prefill_cuda_graph",
+            ]
+        );
+
+        assert_eq!(
+            compile_hf_state_plan(
+                config,
+                HfStatePlanOptions {
+                    retention: HfRetentionOptions {
+                        page_tokens: 1,
+                        kv_dtype_bytes: 2,
+                    },
+                    boundary_tokens: 8192,
+                    sglang_uniform_swa: SglangUniformSwaOptions {
+                        maximum_running_requests: 4,
+                        chunked_prefill_tokens: 2048,
+                        eviction_interval_tokens: 128,
+                        decode_headroom_tokens: 32,
+                        cuda_graph_mode: UniformSwaCudaGraphMode::Decode,
+                    },
+                },
+            ),
+            Err(HfStatePlanError::DecodeCudaGraphRequiresPagedPeriodic)
         );
     }
 

@@ -8,8 +8,8 @@ use orbitkv::{
     ApplicabilityReport, CompiledKvPlan, HfRetentionCompilation, HfRetentionOptions,
     HfStatePlanOptions, KvPlanSource, OwnerCommand, PhysicalPlanObjective, RetentionAnalysis,
     SglangOwner, SglangPhysicalOptimizationInput, SglangPhysicalPlan, SglangUniformSwaOptions,
-    analyze_state, compile_hf_config, compile_hf_state_plan, compile_retention_program,
-    optimize_sglang_physical_plan,
+    UniformSwaCudaGraphMode, analyze_state, compile_hf_config, compile_hf_state_plan,
+    compile_retention_program, optimize_sglang_physical_plan,
     trace::{read_jsonl, summarize_sglang_trace},
 };
 use serde::Serialize;
@@ -196,6 +196,8 @@ fn compile_hf_state_plan_command(
         required_flagged_u64(args, "--eviction-interval", "eviction interval")?;
     let decode_headroom_tokens =
         required_flagged_u64(args, "--decode-headroom-tokens", "decode headroom tokens")?;
+    require_flag(args, "--cuda-graph-mode")?;
+    let cuda_graph_mode = parse_cuda_graph_mode(&required(args, "CUDA Graph mode")?)?;
     require_end(args)?;
     write_json(&compile_hf_state_plan(
         &std::fs::read(config_path)?,
@@ -210,9 +212,20 @@ fn compile_hf_state_plan_command(
                 chunked_prefill_tokens,
                 eviction_interval_tokens,
                 decode_headroom_tokens,
+                cuda_graph_mode,
             },
         },
     )?)
+}
+
+fn parse_cuda_graph_mode(
+    value: &str,
+) -> Result<UniformSwaCudaGraphMode, Box<dyn std::error::Error>> {
+    match value {
+        "disabled" => Ok(UniformSwaCudaGraphMode::Disabled),
+        "decode" => Ok(UniformSwaCudaGraphMode::Decode),
+        _ => Err(format!("unsupported CUDA Graph mode {value:?}").into()),
+    }
 }
 
 fn analyze_retention_command(

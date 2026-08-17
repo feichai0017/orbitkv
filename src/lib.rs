@@ -12,7 +12,7 @@ pub mod trace;
 pub use hf_config::{
     HfConfigError, HfLayerInference, HfRetentionCompilation, HfRetentionOptions, HfSglangLowering,
     HfStatePlan, HfStatePlanError, HfStatePlanOptions, SglangUniformSwaContract,
-    SglangUniformSwaOptions, compile_hf_config, compile_hf_state_plan,
+    SglangUniformSwaOptions, UniformSwaCudaGraphMode, compile_hf_config, compile_hf_state_plan,
 };
 pub use manager::{
     BlockHandle, BlockKey, BlockManagerConfig, ClassPoolConfig, ExecutionProof, KvBlockManager,

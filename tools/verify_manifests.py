@@ -21,6 +21,7 @@ DEFAULT_MANIFESTS = (
     ROOT / "results/applicability-h20-20260817/manifest.json",
     ROOT / "results/applicability-h20-20260817/multireq-manifest.json",
     ROOT / "results/applicability-h20-20260817/page16-manifest.json",
+    ROOT / "results/applicability-h20-20260817/page16-graph-manifest.json",
 )
 
 

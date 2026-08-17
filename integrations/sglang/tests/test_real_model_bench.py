@@ -86,6 +86,7 @@ class RealModelBenchTests(unittest.TestCase):
                 "execute_pool_tokens": 19077,
                 "reference_pool_tokens": 50000,
                 "attention_backend": "flashinfer",
+                "cuda_graph_mode": "disabled",
                 "sglang_revision": "revision",
                 "timeout": 30,
             },

@@ -32,6 +32,8 @@ def compile_state_plan(args, path: Path) -> dict:
         str(args.eviction_interval),
         "--decode-headroom-tokens",
         str(args.decode_tokens),
+        "--cuda-graph-mode",
+        args.cuda_graph_mode,
     ]
     artifact = json.loads(subprocess.check_output(command, text=True))
     path.write_text(json.dumps(artifact, indent=2, sort_keys=True), encoding="utf-8")
@@ -79,6 +81,8 @@ def run_once(args, mode: str, state_plan: Path) -> dict:
         "auto",
         "--eviction-interval",
         str(args.eviction_interval),
+        "--cuda-graph-mode",
+        args.cuda_graph_mode,
         "--no-trace-allocations",
         "--orbitkv-bin",
         args.orbitkv_bin,
@@ -88,6 +92,12 @@ def run_once(args, mode: str, state_plan: Path) -> dict:
         f"{ROOT / 'integrations/sglang/src'}:/workspace/sglang/python"
     )
     environment["ORBITKV_SGLANG_REVISION"] = args.sglang_revision
+    trace_path = Path(tempfile.gettempdir()) / (
+        f"orbitkv-{mode}-{os.getpid()}.jsonl"
+    )
+    trace_path.unlink(missing_ok=True)
+    environment["ORBITKV_TRACE_PATH"] = str(trace_path)
+    command.extend(["--trace", str(trace_path)])
     completed = subprocess.run(
         command,
         cwd=ROOT,
@@ -104,7 +114,20 @@ def run_once(args, mode: str, state_plan: Path) -> dict:
     ]
     if not records:
         raise RuntimeError(f"no JSON output for {mode}: {completed.stderr}")
-    return records[-1]
+    result = records[-1]
+    trace_events = (
+        [
+            json.loads(line)
+            for line in trace_path.read_text(encoding="utf-8").splitlines()
+        ]
+        if trace_path.is_file()
+        else []
+    )
+    result["decode_graph_replay_events"] = sum(
+        event.get("event") == "decode_graph_replay" for event in trace_events
+    )
+    trace_path.unlink(missing_ok=True)
+    return result
 
 
 def main() -> None:
@@ -128,6 +151,9 @@ def main() -> None:
     parser.add_argument("--reference-pool-tokens", type=int, default=50000)
     parser.add_argument("--kv-dtype-bytes", type=int, default=2)
     parser.add_argument("--attention-backend", default="flashinfer")
+    parser.add_argument(
+        "--cuda-graph-mode", choices=("disabled", "decode"), default="disabled"
+    )
     parser.add_argument("--timeout", type=int, default=900)
     parser.add_argument(
         "--sglang-revision",

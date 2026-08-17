@@ -126,6 +126,9 @@ def main() -> None:
         "--owner-transport", choices=("ffi", "sidecar"), default="ffi"
     )
     parser.add_argument("--eviction-interval", type=int, default=16)
+    parser.add_argument(
+        "--cuda-graph-mode", choices=("disabled", "decode"), default="disabled"
+    )
     parser.add_argument("--no-trace-allocations", action="store_true")
     args = parser.parse_args()
     model_path = Path(args.model).resolve()
@@ -212,7 +215,6 @@ def main() -> None:
         context_length=args.context_length,
         page_size=args.page_size,
         moe_runner_backend=args.moe_runner_backend,
-        disable_cuda_graph=True,
         disable_overlap_schedule=True,
         disable_radix_cache=True,
         chunked_prefill_size=2048,
@@ -220,6 +222,17 @@ def main() -> None:
         random_seed=20260816,
         log_level="error",
     )
+    if args.cuda_graph_mode == "disabled":
+        engine_args["disable_cuda_graph"] = True
+    else:
+        engine_args["cuda_graph_config"] = {
+            "decode": {
+                "backend": "full",
+                "bs": list(range(1, max_running_requests + 1)),
+                "max_bs": max_running_requests,
+            },
+            "prefill": {"backend": "disabled"},
+        }
     if args.max_total_tokens > 0:
         engine_args["max_total_tokens"] = args.max_total_tokens
     if args.mem_fraction_static is not None:
@@ -261,6 +274,7 @@ def main() -> None:
             "state_plan": (
                 str(Path(args.state_plan).resolve()) if args.state_plan else None
             ),
+            "cuda_graph_mode": args.cuda_graph_mode,
             "engine_args": engine_args,
             "requests": args.requests,
             "max_running_requests": max_running_requests,

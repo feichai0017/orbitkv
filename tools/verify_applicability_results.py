@@ -28,6 +28,8 @@ def main() -> None:
     multireq_state_plan = load("mistral-state-plan-multireq.json")
     page16 = load("mistral-page16.json")
     page16_state_plan = load("mistral-state-plan-page16.json")
+    graph = load("mistral-page16-graph.json")
+    graph_state_plan = load("mistral-state-plan-page16-graph.json")
 
     models = {
         model["architecture"]: model for model in applicability["models"]
@@ -240,9 +242,76 @@ def main() -> None:
         raise RuntimeError("page-16 below-minimum boundary differs")
     if page16["below_minimum"]["status"] != "rejected_at_startup":
         raise RuntimeError("page-16 below-minimum plan did not fail closed")
+
+    graph_contract = graph["compiled_contract"]
+    if graph_contract["physical_backend"] != "paged_periodic":
+        raise RuntimeError("Graph backend is not paged periodic")
+    if graph_contract["cuda_graph_mode"] != "decode":
+        raise RuntimeError("Graph contract does not select decode")
+    expected_capture_sizes = list(
+        range(1, graph_contract["maximum_running_requests"] + 1)
+    )
+    if graph_contract["decode_cuda_graph_batch_sizes"] != expected_capture_sizes:
+        raise RuntimeError("Graph capture batch sizes differ")
+    if graph_contract["required_disabled_features"] != [
+        "radix_cache",
+        "overlap_schedule",
+        "speculative_decoding",
+        "disaggregation",
+        "prefill_cuda_graph",
+    ]:
+        raise RuntimeError("Graph disabled-feature contract differs")
+    graph_state_contract = graph_state_plan["sglang_lowering"]["contract"]
+    for key, value in graph_contract.items():
+        if graph_state_contract.get(key) != value:
+            raise RuntimeError(f"Graph state plan contract differs at {key}")
+    if graph_state_plan["schema"] != "orbitkv.hf-state-plan.v4":
+        raise RuntimeError("Graph state plan schema differs")
+    close(
+        graph["slot_reduction_percent"],
+        (
+            1
+            - graph_contract["minimum_pool_tokens"]
+            / graph["reference_pool_tokens"]
+        )
+        * 100,
+    )
+    graph_ratios = []
+    for pair in graph["pairs"]:
+        if pair["execute_output_digest"] != pair["reference_output_digest"]:
+            raise RuntimeError("Graph output digest differs")
+        if pair["execute_config_sha256"] != pair["reference_config_sha256"]:
+            raise RuntimeError("Graph checkpoint config differs")
+        if pair["execute_completion_tokens"] != pair["reference_completion_tokens"]:
+            raise RuntimeError("Graph completion count differs")
+        if any(pair["execute_retractions"] + pair["reference_retractions"]):
+            raise RuntimeError("Graph run retracted a request")
+        if pair["execute_decode_graph_replays"] <= 0:
+            raise RuntimeError("OrbitKV decode Graph did not replay")
+        if pair["reference_decode_graph_replays"] <= 0:
+            raise RuntimeError("reference decode Graph did not replay")
+        if pair["execute_decode_graph_gib"] <= 0:
+            raise RuntimeError("OrbitKV decode Graph allocated no graph memory")
+        if pair["reference_decode_graph_gib"] <= 0:
+            raise RuntimeError("reference decode Graph allocated no graph memory")
+        if pair["execute_prefill_graph_gib"] != 0:
+            raise RuntimeError("OrbitKV unexpectedly enabled prefill Graph")
+        if pair["reference_prefill_graph_gib"] != 0:
+            raise RuntimeError("reference unexpectedly enabled prefill Graph")
+        ratio = pair["execute_seconds"] / pair["reference_seconds"]
+        close(pair["execute_over_reference_ratio"], ratio)
+        graph_ratios.append(ratio)
+    close(
+        graph["median_execute_over_reference_ratio"],
+        statistics.median(graph_ratios),
+    )
+    close(
+        graph["median_execute_over_reference_percent"],
+        (statistics.median(graph_ratios) - 1) * 100,
+    )
     print(
         "verified applicability records: "
-        "Qwen safe fallback, Mistral direct and paged bounded execution, "
+        "Qwen fallback, Mistral direct/paged/Graph execution, "
         "GPT-OSS hybrid plan"
     )
 
