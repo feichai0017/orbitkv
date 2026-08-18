@@ -1,6 +1,8 @@
 #![forbid(unsafe_code)]
 
+pub mod capsule;
 pub mod hf_config;
+pub mod holt_store;
 pub mod manager;
 pub mod optimizer;
 pub mod plan;
@@ -9,11 +11,16 @@ pub mod runtime;
 pub mod sglang_owner;
 pub mod trace;
 
+pub use capsule::{
+    CapsuleComponent, CapsuleError, CapsuleIdentity, CapsuleManifest, ContentDigest, PrefixChunk,
+    PrefixPath,
+};
 pub use hf_config::{
     HfConfigError, HfLayerInference, HfRetentionCompilation, HfRetentionOptions, HfSglangLowering,
     HfStatePlan, HfStatePlanError, HfStatePlanOptions, SglangUniformSwaContract,
     SglangUniformSwaOptions, UniformSwaCudaGraphMode, compile_hf_config, compile_hf_state_plan,
 };
+pub use holt_store::{CapsulePublish, HoltCapsuleError, HoltCapsuleStore, RestoredCapsule};
 pub use manager::{
     BlockHandle, BlockKey, BlockManagerConfig, ClassPoolConfig, ExecutionProof, KvBlockManager,
     KvView, ManagerError, ManagerStats, PhysicalReclamationReceipt, RetirementCertificate,

@@ -14,9 +14,14 @@ reclamation. SGLang is the first external validator.
 - HF applicability report and executable StatePlan.
 - SGLang physical-plan optimizer and runtime contract.
 - Generation-checked ownership and two-phase reclamation.
+- Continuation Capsule schema and Holt 0.9.2 persistent prefix catalog.
 - CUDA VMM physical-slot primitive.
 
 Unsupported or unprovable semantics fail closed.
+
+Capsule metadata is conditionally published into one Holt tree after its
+immutable, content-addressed KV payload is durable. Payloads are files rather
+than Holt values, so they are not constrained by Holt's metadata-size limit.
 
 ## Key results
 
@@ -74,6 +79,8 @@ The qualified SGLang paths disable radix cache, overlap, speculation, and
 disaggregation. Page16 Paged Periodic also qualifies decode CUDA Graph replay
 with eager prefill, up to four requests. Per-head, Sink+Sliding, and Same-Chunk layouts remain
 compiler/reference-manager results. VMM does not yet back SGLang KV tensors.
+Capsule persistence is engine-neutral; SGLang export and hydration are not yet
+qualified.
 
 See:
 

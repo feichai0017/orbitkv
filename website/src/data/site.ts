@@ -62,8 +62,8 @@ export const evidenceRows = [
 ];
 
 export const roadmap = [
-  { state: "NEXT", name: "Graph-stable KV storage", detail: "Back real SGLang KV tensors with cost-approved VMM regions." },
-  { state: "THEN", name: "Recurrent and prefix state", detail: "Compile Mamba state and continuation capsules." },
+  { state: "NEXT", name: "Capsule engine path", detail: "Export and hydrate SGLang KV state through the Holt catalog." },
+  { state: "THEN", name: "Graph-stable KV storage", detail: "Back real SGLang KV tensors with cost-approved VMM regions." },
 ];
 
 export const docs = [

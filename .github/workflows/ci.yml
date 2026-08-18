@@ -16,8 +16,8 @@ jobs:
         with:
           components: clippy,rustfmt
       - run: cargo fmt --all -- --check
-      - run: cargo test --all-targets
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo test --locked --all-targets
+      - run: cargo clippy --locked --all-targets -- -D warnings
       - run: python tools/verify_manifests.py
       - run: python tools/verify_real_model_results.py
       - run: python tools/verify_applicability_results.py
@@ -30,8 +30,8 @@ jobs:
         with:
           components: clippy,rustfmt
       - run: cargo fmt --manifest-path crates/orbitkv-cuda/Cargo.toml --all -- --check
-      - run: cargo test --manifest-path crates/orbitkv-cuda/Cargo.toml --all-targets
-      - run: cargo clippy --manifest-path crates/orbitkv-cuda/Cargo.toml --all-targets -- -D warnings
+      - run: cargo test --locked --manifest-path crates/orbitkv-cuda/Cargo.toml --all-targets
+      - run: cargo clippy --locked --manifest-path crates/orbitkv-cuda/Cargo.toml --all-targets -- -D warnings
 
   ffi:
     runs-on: ubuntu-latest
@@ -41,9 +41,9 @@ jobs:
         with:
           components: clippy,rustfmt
       - run: cargo fmt --manifest-path crates/orbitkv-ffi/Cargo.toml --all -- --check
-      - run: cargo test --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets
-      - run: cargo clippy --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets -- -D warnings
-      - run: cargo build --manifest-path crates/orbitkv-ffi/Cargo.toml
+      - run: cargo test --locked --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets
+      - run: cargo clippy --locked --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets -- -D warnings
+      - run: cargo build --locked --manifest-path crates/orbitkv-ffi/Cargo.toml
       - name: Test C header and dynamic ABI
         run: |
           cc \
@@ -83,8 +83,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: cargo build --bin orbitkv
-      - run: cargo build --manifest-path crates/orbitkv-ffi/Cargo.toml
+      - run: cargo build --locked --bin orbitkv
+      - run: cargo build --locked --manifest-path crates/orbitkv-ffi/Cargo.toml
       - name: Fetch pinned SGLang hook contract
         run: |
           git clone \

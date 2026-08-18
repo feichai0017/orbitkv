@@ -52,6 +52,14 @@ import { docs, repositoryUrl } from "../../data/site";
         <li>Unsupported semantics and engine contracts fail closed.</li>
       </ul>
 
+      <h2>Persistent capsules</h2>
+      <p>
+        Holt 0.9.2 is the sole persistent prefix catalog. OrbitKV durably writes
+        immutable, content-addressed KV payload files first, then atomically
+        publishes their Capsule manifests into one Holt tree. Restore validates model,
+        tokenizer, adapter, StatePlan, prefix, payload, and component checksums.
+      </p>
+
       <h2>Records</h2>
       <div class="doc-grid">
         {docs.map((item) => (
@@ -69,6 +77,8 @@ import { docs, repositoryUrl } from "../../data/site";
         <p>
           SGLang ownership is qualified only for SWA ChunkCache with radix,
           speculative decoding, overlap, disaggregation, and CUDA Graph disabled.
+          Capsule persistence is host-qualified; SGLang export and hydration are
+          not yet connected.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/h20-owning-vmm-validation-20260817.md`}>
           Full owning and VMM qualification
