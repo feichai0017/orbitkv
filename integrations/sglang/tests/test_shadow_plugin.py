@@ -11,7 +11,10 @@ import types
 import unittest
 from pathlib import Path
 
-import torch
+try:
+    import torch
+except ImportError:
+    torch = None
 
 
 class FakeTensor:
@@ -1360,6 +1363,8 @@ class ShadowPluginTests(unittest.TestCase):
         self.assertEqual(publish["components"][0]["length_bytes"], 32)
 
     def test_capsule_hydration_commits_only_after_admission(self):
+        if torch is None:
+            self.skipTest("torch is unavailable")
         from orbitkv_sglang import plugin
         from orbitkv_sglang.capsule_wire import encode_cpu_tensors
 
@@ -1427,6 +1432,8 @@ class ShadowPluginTests(unittest.TestCase):
         self.assertEqual(capsules.commands[0]["token_ids"], list(range(64)))
 
     def test_capsule_hydration_rolls_back_rejected_admission(self):
+        if torch is None:
+            self.skipTest("torch is unavailable")
         from orbitkv_sglang import plugin
         from orbitkv_sglang.capsule_wire import encode_cpu_tensors
 
@@ -1486,6 +1493,8 @@ class ShadowPluginTests(unittest.TestCase):
         self.assertEqual(len(req.prefix_indices), 0)
 
     def test_pure_swa_capsule_hydrates_only_live_tail(self):
+        if torch is None:
+            self.skipTest("torch is unavailable")
         from orbitkv_sglang import plugin
         from orbitkv_sglang.capsule_wire import encode_cpu_tensors
 
