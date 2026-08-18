@@ -5,14 +5,16 @@ use std::path::Path;
 use std::process::{Command, ExitCode};
 
 use orbitkv::{
-    ApplicabilityReport, CompiledKvPlan, HfRetentionCompilation, HfRetentionOptions,
-    HfStatePlanOptions, KvPlanSource, OwnerCommand, PhysicalPlanObjective, RetentionAnalysis,
-    SglangOwner, SglangPhysicalOptimizationInput, SglangPhysicalPlan, SglangUniformSwaOptions,
-    UniformSwaCudaGraphMode, analyze_state, compile_hf_config, compile_hf_state_plan,
-    compile_retention_program, optimize_sglang_physical_plan,
+    ApplicabilityReport, CapsuleComponentSpec, CapsuleIdentity, CapsuleManifest, CompiledKvPlan,
+    ContentDigest, HfRetentionCompilation, HfRetentionOptions, HfStatePlanOptions,
+    HoltCapsuleStore, KvPlanSource, OwnerCommand, PhysicalPlanObjective, PrefixPath,
+    RetentionAnalysis, SglangOwner, SglangPhysicalOptimizationInput, SglangPhysicalPlan,
+    SglangUniformSwaOptions, UniformSwaCudaGraphMode, analyze_state, build_capsule_components,
+    compile_hf_config, compile_hf_state_plan, compile_retention_program,
+    optimize_sglang_physical_plan,
     trace::{read_jsonl, summarize_sglang_trace},
 };
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 const EXPECTED_SGLANG_REVISION: &str = "095ec6c997bfdd25d3864cb0ce77a6562a934b96";
 
@@ -74,6 +76,48 @@ struct HfApplicabilityReport {
 enum ContractStatus {
     Pass,
     Fail,
+}
+
+#[derive(Deserialize)]
+#[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
+enum CapsuleCommand {
+    Publish {
+        identity: CapsuleIdentity,
+        chunk_tokens: u32,
+        token_ids: Vec<u32>,
+        live_token_count: u64,
+        payload_path: String,
+        components: Vec<CapsuleComponentSpec>,
+        created_unix_ms: u64,
+    },
+    Restore {
+        identity: CapsuleIdentity,
+        chunk_tokens: u32,
+        token_ids: Vec<u32>,
+    },
+    Checkpoint,
+}
+
+#[derive(Serialize)]
+#[serde(tag = "status", rename_all = "snake_case")]
+enum CapsuleResponse {
+    Published {
+        capsule_id: ContentDigest,
+        payload_digest: ContentDigest,
+        prefix_token_count: u64,
+        payload_bytes: u64,
+        created: bool,
+    },
+    Restored {
+        manifest: Box<CapsuleManifest>,
+        payload_path: String,
+    },
+    Miss,
+    Checkpointed,
+    Error {
+        code: &'static str,
+        message: String,
+    },
 }
 
 fn main() -> ExitCode {
@@ -161,6 +205,11 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             require_end(&mut args)?;
             serve_sglang_owner(&load_plan(plan_path)?)?;
         }
+        Some("serve-capsules") => {
+            let root = required(&mut args, "capsule store root")?;
+            require_end(&mut args)?;
+            serve_capsules(Path::new(&root))?;
+        }
         Some("check-sglang") => {
             let root = required(&mut args, "SGLang root")?;
             require_end(&mut args)?;
@@ -173,12 +222,112 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile-hf-state-plan|compile|analyze-hf-applicability|analyze-retention|analyze-lifetime-normalization|analyze-applicability|emit-layout|emit-sglang-policy|serve-sglang-owner|analyze-sglang|check-sglang> ..."
+                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile-hf-state-plan|compile|analyze-hf-applicability|analyze-retention|analyze-lifetime-normalization|analyze-applicability|emit-layout|emit-sglang-policy|serve-sglang-owner|serve-capsules|analyze-sglang|check-sglang> ..."
                     .into(),
             );
         }
     }
     Ok(())
+}
+
+fn serve_capsules(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
+    let store = HoltCapsuleStore::open(root)?;
+    let stdin = std::io::stdin();
+    let mut stdout = BufWriter::new(std::io::stdout());
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = match serde_json::from_str::<CapsuleCommand>(&line) {
+            Ok(command) => execute_capsule_command(&store, root, command),
+            Err(error) => CapsuleResponse::Error {
+                code: "invalid_command",
+                message: error.to_string(),
+            },
+        };
+        serde_json::to_writer(&mut stdout, &response)?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()?;
+    }
+    Ok(())
+}
+
+fn execute_capsule_command(
+    store: &HoltCapsuleStore,
+    root: &Path,
+    command: CapsuleCommand,
+) -> CapsuleResponse {
+    match execute_capsule_command_inner(store, root, command) {
+        Ok(response) => response,
+        Err(error) => CapsuleResponse::Error {
+            code: "capsule_operation_failed",
+            message: error.to_string(),
+        },
+    }
+}
+
+fn execute_capsule_command_inner(
+    store: &HoltCapsuleStore,
+    root: &Path,
+    command: CapsuleCommand,
+) -> Result<CapsuleResponse, Box<dyn std::error::Error>> {
+    match command {
+        CapsuleCommand::Publish {
+            identity,
+            chunk_tokens,
+            token_ids,
+            live_token_count,
+            payload_path,
+            components,
+            created_unix_ms,
+        } => {
+            let path = PrefixPath::from_token_ids(identity, chunk_tokens, &token_ids)?;
+            let payload = std::fs::read(payload_path)?;
+            let components = build_capsule_components(&payload, &components)?;
+            let manifest = CapsuleManifest::new(
+                &path,
+                live_token_count,
+                &payload,
+                components,
+                created_unix_ms,
+            )?;
+            let publication = store.publish(&path, &manifest, &payload)?;
+            Ok(CapsuleResponse::Published {
+                capsule_id: manifest.capsule_id,
+                payload_digest: manifest.payload_digest,
+                prefix_token_count: manifest.prefix_token_count,
+                payload_bytes: manifest.payload_bytes,
+                created: matches!(publication, orbitkv::CapsulePublish::Published),
+            })
+        }
+        CapsuleCommand::Restore {
+            identity,
+            chunk_tokens,
+            token_ids,
+        } => {
+            let path = PrefixPath::from_token_ids(identity, chunk_tokens, &token_ids)?;
+            let Some(restored) = store.restore_deepest(&path)? else {
+                return Ok(CapsuleResponse::Miss);
+            };
+            let payload_path = capsule_payload_path(root, restored.manifest.payload_digest);
+            Ok(CapsuleResponse::Restored {
+                manifest: Box::new(restored.manifest),
+                payload_path: payload_path.display().to_string(),
+            })
+        }
+        CapsuleCommand::Checkpoint => {
+            store.checkpoint()?;
+            Ok(CapsuleResponse::Checkpointed)
+        }
+    }
+}
+
+fn capsule_payload_path(root: &Path, digest: ContentDigest) -> std::path::PathBuf {
+    let hex = digest.to_hex();
+    root.join("objects")
+        .join(&hex[..2])
+        .join(format!("{}.capsule", &hex[2..]))
 }
 
 fn compile_hf_state_plan_command(

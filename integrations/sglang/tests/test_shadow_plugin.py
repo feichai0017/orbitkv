@@ -136,10 +136,27 @@ class FakeOwner:
         raise AssertionError(command)
 
 
+class FakeCapsules:
+    def __init__(self, events):
+        self.events = events
+        self.commands = []
+
+    def command(self, command):
+        self.events.append(("capsule_publish", None))
+        self.commands.append(command)
+        return {
+            "status": "published",
+            "prefix_token_count": len(command["token_ids"]),
+            "payload_bytes": Path(command["payload_path"]).stat().st_size,
+            "created": True,
+        }
+
+
 class FakeReqToToken:
     def __getitem__(self, key):
         _, token_range = key
-        return FakeTensor(token_range.stop - token_range.start)
+        start = 0 if token_range.start is None else token_range.start
+        return FakeTensor(token_range.stop - start)
 
 
 class FakeTreeCache:
@@ -203,6 +220,16 @@ class FakeOwningReq:
 
     def __init__(self):
         self.kv = types.SimpleNamespace(swa_evicted_seqlen=0)
+        self.kv_committed_len = 4
+        self.origin_input_ids = [1, 2, 3, 4]
+        self.output_ids = []
+        self.mamba_pool_idx = None
+
+    def effective_kv_committed_len(self):
+        return self.kv_committed_len
+
+    def finished(self):
+        return True
 
 
 class FakeOwningBatch:
@@ -213,6 +240,16 @@ class FakeOwningBatch:
 
     def __init__(self, allocator):
         self.token_to_kv_pool_allocator = allocator
+
+
+class FakeCapsuleAllocator(FakeOwningAllocator):
+    def __init__(self, events):
+        super().__init__(events)
+        self._kvcache = types.SimpleNamespace(full_kv_pool=object())
+
+    def get_cpu_copy(self, indices, mamba_indices=None):
+        self.events.append(("cpu_copy", indices.numel()))
+        return {"fake": True}
 
 
 def _module(name: str, *, package: bool = True) -> types.ModuleType:
@@ -935,6 +972,108 @@ class ShadowPluginTests(unittest.TestCase):
             ["plan_reclamation"],
         )
         self.assertEqual(req.kv.swa_evicted_seqlen, 0)
+
+    def test_capsule_exports_before_physical_release(self):
+        from orbitkv_sglang import plugin
+
+        events = []
+        owner = FakeOwner()
+        capsules = FakeCapsules(events)
+        allocator = FakeCapsuleAllocator(events)
+        tree_cache = types.SimpleNamespace(
+            is_chunk_cache=lambda: True,
+            req_to_token_pool=types.SimpleNamespace(req_to_token=FakeReqToToken()),
+            token_to_kv_pool_allocator=allocator,
+        )
+        req = FakeOwningReq()
+        old_capsules = plugin._CAPSULES
+        old_owner = plugin._OWNER
+        old_encoder = plugin._encode_capsule_payload
+        environment = {
+            "ORBITKV_CAPSULE_STORE": tempfile.mkdtemp(),
+            "ORBITKV_CAPSULE_CHUNK_TOKENS": "4",
+            "ORBITKV_TRACE_ALLOCATIONS": "0",
+            "ORBITKV_CAPSULE_IDENTITY": json.dumps(
+                {
+                    "namespace": "dGVuYW50",
+                    "model_fingerprint": f"sha256:{'01' * 32}",
+                    "tokenizer_fingerprint": f"sha256:{'02' * 32}",
+                    "adapter_fingerprint": f"sha256:{'03' * 32}",
+                    "state_plan_fingerprint": f"sha256:{'04' * 32}",
+                }
+            ),
+        }
+        old_environment = {key: os.environ.get(key) for key in environment}
+        try:
+            plugin._CAPSULES = capsules
+            plugin._OWNER = owner
+            plugin._encode_capsule_payload = lambda value: b"wire"
+            os.environ.update(environment)
+
+            def original(released_req, released_cache):
+                self.assertIs(released_req, req)
+                self.assertIs(released_cache, tree_cache)
+                events.append(("physical_release", None))
+                return "released"
+
+            result = plugin._release_owned_request(
+                original,
+                req,
+                tree_cache,
+            )
+        finally:
+            plugin._CAPSULES = old_capsules
+            plugin._OWNER = old_owner
+            plugin._encode_capsule_payload = old_encoder
+            for key, value in old_environment.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual(result, "released")
+        self.assertEqual(
+            events,
+            [
+                ("cpu_copy", 4),
+                ("capsule_publish", None),
+                ("physical_release", None),
+            ],
+        )
+        self.assertEqual(
+            [command["op"] for command in owner.commands],
+            ["release_request"],
+        )
+        command = capsules.commands[0]
+        self.assertEqual(command["token_ids"], [1, 2, 3, 4])
+        self.assertEqual(command["components"][0]["length_bytes"], 4)
+
+    def test_capsule_skips_non_insert_release(self):
+        from orbitkv_sglang import plugin
+
+        req = FakeOwningReq()
+        capsules = FakeCapsules([])
+        owner = FakeOwner()
+        old_capsules = plugin._CAPSULES
+        old_owner = plugin._OWNER
+        try:
+            plugin._CAPSULES = capsules
+            plugin._OWNER = owner
+            result = plugin._release_owned_request(
+                lambda *_args, **_kwargs: "released",
+                req,
+                types.SimpleNamespace(),
+                is_insert=False,
+            )
+        finally:
+            plugin._CAPSULES = old_capsules
+            plugin._OWNER = old_owner
+        self.assertEqual(result, "released")
+        self.assertEqual(capsules.commands, [])
+        self.assertEqual(
+            [command["op"] for command in owner.commands],
+            ["release_request"],
+        )
 
     def test_ffi_and_sidecar_owner_transports_are_equivalent(self):
         from orbitkv_sglang import plugin

@@ -12,8 +12,8 @@ pub mod sglang_owner;
 pub mod trace;
 
 pub use capsule::{
-    CapsuleComponent, CapsuleError, CapsuleIdentity, CapsuleManifest, ContentDigest, PrefixChunk,
-    PrefixPath,
+    CapsuleComponent, CapsuleComponentSpec, CapsuleError, CapsuleIdentity, CapsuleManifest,
+    ContentDigest, PrefixChunk, PrefixPath, build_capsule_components,
 };
 pub use hf_config::{
     HfConfigError, HfLayerInference, HfRetentionCompilation, HfRetentionOptions, HfSglangLowering,

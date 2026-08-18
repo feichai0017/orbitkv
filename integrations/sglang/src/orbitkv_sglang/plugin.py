@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import atexit
+import base64
 import ctypes
 import hashlib
 import json
@@ -13,7 +14,6 @@ import time
 from pathlib import Path
 from typing import Any, Callable
 
-
 _EVENTS: queue.Queue[dict[str, Any] | None] = queue.Queue()
 _WRITER: threading.Thread | None = None
 _POLICY: dict[str, Any] | None = None
@@ -22,6 +22,66 @@ _STATE_PLAN: dict[str, Any] | None = None
 _UNIFORM_SWA_CONTRACT: dict[str, Any] | None = None
 _STATE_PLAN_MODE: str | None = None
 _OWNER: "OwnerClient | None" = None
+_CAPSULES: "CapsuleClient | None" = None
+_CAPSULES_LOCK = threading.Lock()
+
+
+class CapsuleClient:
+    def __init__(self, orbitkv_bin: str, root: str):
+        self._process = subprocess.Popen(
+            [orbitkv_bin, "serve-capsules", root],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        if self._process.stdin is None or self._process.stdout is None:
+            self._process.kill()
+            raise RuntimeError("OrbitKV Capsule store did not expose command pipes")
+        self._stdin = self._process.stdin
+        self._stdout = self._process.stdout
+        self._lock = threading.Lock()
+
+    def command(self, command: dict[str, Any]) -> dict[str, Any]:
+        with self._lock:
+            if self._process.poll() is not None:
+                stderr = (
+                    self._process.stderr.read()
+                    if self._process.stderr is not None
+                    else ""
+                )
+                raise RuntimeError(
+                    f"OrbitKV Capsule store exited with "
+                    f"{self._process.returncode}: {stderr}"
+                )
+            self._stdin.write(
+                json.dumps(command, separators=(",", ":"), sort_keys=True)
+            )
+            self._stdin.write("\n")
+            self._stdin.flush()
+            line = self._stdout.readline()
+            if not line:
+                raise RuntimeError("OrbitKV Capsule store closed its response stream")
+            response = json.loads(line)
+            if response.get("status") == "error":
+                raise RuntimeError(
+                    f"OrbitKV Capsule store rejected command "
+                    f"[{response.get('code')}]: {response.get('message')}"
+                )
+            return response
+
+    def close(self) -> None:
+        if self._process.poll() is None:
+            self._stdin.close()
+            try:
+                self._process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                self._process.kill()
+                self._process.wait(timeout=5)
+        self._stdout.close()
+        if self._process.stderr is not None:
+            self._process.stderr.close()
 
 
 class OwnerClient:
@@ -354,6 +414,56 @@ def _owner_enabled() -> bool:
     )
 
 
+def _capsules_enabled() -> bool:
+    return "ORBITKV_CAPSULE_STORE" in os.environ
+
+
+def _capsule_identity() -> dict[str, Any]:
+    encoded = os.environ.get("ORBITKV_CAPSULE_IDENTITY")
+    if not encoded:
+        raise RuntimeError("ORBITKV_CAPSULE_IDENTITY is required")
+    identity = json.loads(encoded)
+    required = {
+        "namespace",
+        "model_fingerprint",
+        "tokenizer_fingerprint",
+        "adapter_fingerprint",
+        "state_plan_fingerprint",
+    }
+    if set(identity) != required:
+        raise RuntimeError("OrbitKV Capsule identity fields are incomplete")
+    namespace = identity["namespace"]
+    if isinstance(namespace, str):
+        identity["namespace"] = list(base64.b64decode(namespace, validate=True))
+    for field in (
+        "model_fingerprint",
+        "tokenizer_fingerprint",
+        "adapter_fingerprint",
+        "state_plan_fingerprint",
+    ):
+        value = identity[field]
+        if isinstance(value, str):
+            value = value.removeprefix("sha256:")
+            decoded = bytes.fromhex(value)
+            if len(decoded) != 32:
+                raise RuntimeError(f"OrbitKV Capsule {field} must be SHA-256")
+            identity[field] = list(decoded)
+    return identity
+
+
+def _capsule_chunk_tokens() -> int:
+    chunk_tokens = int(os.environ.get("ORBITKV_CAPSULE_CHUNK_TOKENS", "256"))
+    if chunk_tokens <= 0:
+        raise RuntimeError("ORBITKV_CAPSULE_CHUNK_TOKENS must be positive")
+    return chunk_tokens
+
+
+def _encode_capsule_payload(value: Any) -> bytes:
+    from .capsule_wire import encode_cpu_tensors
+
+    return encode_cpu_tensors(value)
+
+
 def _trace_path() -> Path:
     return Path(os.environ.get("ORBITKV_TRACE_PATH", "/tmp/orbitkv-sglang.jsonl"))
 
@@ -434,6 +544,113 @@ def _stop_owner() -> None:
         return
     _OWNER.close()
     _OWNER = None
+
+
+def _stop_capsules() -> None:
+    global _CAPSULES
+
+    if _CAPSULES is None:
+        return
+    _CAPSULES.close()
+    _CAPSULES = None
+
+
+def _require_capsules() -> CapsuleClient:
+    global _CAPSULES
+
+    with _CAPSULES_LOCK:
+        if _CAPSULES is None:
+            _CAPSULES = CapsuleClient(
+                os.environ.get("ORBITKV_BIN", "orbitkv"),
+                os.environ["ORBITKV_CAPSULE_STORE"],
+            )
+        return _CAPSULES
+
+
+def _export_capsule_before_release(
+    req: Any,
+    tree_cache: Any,
+    *,
+    is_insert: bool,
+) -> dict[str, Any] | None:
+    if (
+        not _capsules_enabled()
+        or req is None
+        or req.req_pool_idx is None
+        or req.kv is None
+    ):
+        return None
+    if not is_insert or not req.finished():
+        return None
+    if not tree_cache.is_chunk_cache():
+        raise RuntimeError("OrbitKV Capsule export currently requires ChunkCache")
+    committed = int(req.effective_kv_committed_len())
+    chunk_tokens = _capsule_chunk_tokens()
+    aligned = (committed // chunk_tokens) * chunk_tokens
+    if aligned == 0:
+        return None
+    fill_ids = [
+        int(token)
+        for token in list(req.origin_input_ids) + list(req.output_ids)
+    ][:aligned]
+    if len(fill_ids) != aligned:
+        raise RuntimeError("OrbitKV Capsule token identity is shorter than committed KV")
+    indices = tree_cache.req_to_token_pool.req_to_token[
+        req.req_pool_idx, :aligned
+    ]
+    kvcache = getattr(tree_cache.token_to_kv_pool_allocator, "_kvcache", None)
+    if (
+        int(req.kv.swa_evicted_seqlen) > 0
+        and getattr(kvcache, "full_kv_pool", None) is None
+    ):
+        raise RuntimeError(
+            "OrbitKV Capsule export cannot read evicted pure-SWA slots"
+        )
+    kv_cache_cpu = tree_cache.token_to_kv_pool_allocator.get_cpu_copy(
+        indices, mamba_indices=req.mamba_pool_idx
+    )
+    payload = _encode_capsule_payload(kv_cache_cpu)
+    maximum_payload = int(
+        os.environ.get("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES", str(64 * 1024 * 1024))
+    )
+    if len(payload) > maximum_payload:
+        raise RuntimeError(
+            f"OrbitKV Capsule payload exceeds configured limit: "
+            f"{len(payload)} > {maximum_payload}"
+        )
+    root = Path(os.environ["ORBITKV_CAPSULE_STORE"])
+    staging = root / "staging"
+    staging.mkdir(parents=True, exist_ok=True)
+    payload_path = staging / f"{req.rid}.{time.time_ns()}.payload"
+    payload_path.write_bytes(payload)
+    try:
+        response = _require_capsules().command(
+            {
+                "op": "publish",
+                "identity": _capsule_identity(),
+                "chunk_tokens": chunk_tokens,
+                "token_ids": fill_ids,
+                "live_token_count": aligned,
+                "payload_path": str(payload_path),
+                "components": [
+                    {"state_class": "sglang-kv", "length_bytes": len(payload)}
+                ],
+                "created_unix_ms": time.time_ns() // 1_000_000,
+            }
+        )
+    finally:
+        payload_path.unlink(missing_ok=True)
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "capsule_published",
+                "request_id": str(req.rid),
+                "prefix_token_count": int(response["prefix_token_count"]),
+                "payload_bytes": int(response["payload_bytes"]),
+                "created": bool(response["created"]),
+            }
+        )
+    return response
 
 
 def _emit(event: dict[str, Any]) -> None:
@@ -1260,10 +1477,13 @@ def _commit_swa_reclamations(
 def _release_owned_request(
     original_fn: Callable,
     req: Any,
+    tree_cache: Any,
     *args: Any,
     **kwargs: Any,
 ):
-    result = original_fn(req, *args, **kwargs)
+    is_insert = bool(kwargs.get("is_insert", args[0] if args else True))
+    _export_capsule_before_release(req, tree_cache, is_insert=is_insert)
+    result = original_fn(req, tree_cache, *args, **kwargs)
     if req is not None:
         _require_owner().command(
             {
@@ -1286,7 +1506,7 @@ def _emit_owner_certificate(certificate: dict[str, Any]) -> None:
 
 
 def register() -> None:
-    global _OWNER, _POLICY, _STATE_PLAN, _WRITER
+    global _CAPSULES, _OWNER, _POLICY, _STATE_PLAN, _WRITER
 
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
@@ -1296,6 +1516,13 @@ def register() -> None:
         os.environ["SGLANG_SWA_EVICTION_INTERVAL"] = str(
             _POLICY["swa_eviction_interval_tokens"]
         )
+
+    if _capsules_enabled():
+        if not _owner_enabled():
+            raise RuntimeError(
+                "OrbitKV Capsule export currently requires owning mode"
+            )
+        atexit.register(_stop_capsules)
 
     if _owner_enabled():
         if _POLICY is None:

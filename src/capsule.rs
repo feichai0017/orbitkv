@@ -71,6 +71,12 @@ pub struct CapsuleManifest {
     pub created_unix_ms: u64,
 }
 
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct CapsuleComponentSpec {
+    pub state_class: String,
+    pub length_bytes: u64,
+}
+
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
 pub enum CapsuleError {
     #[error("capsule namespace is too long")]
@@ -396,6 +402,50 @@ impl CapsuleManifest {
         }
         validate_components(payload, &self.components)
     }
+}
+
+/// Builds dense component metadata from ordered component lengths.
+///
+/// # Errors
+///
+/// Returns an error when lengths overflow, do not cover the payload, or name
+/// an empty component.
+pub fn build_capsule_components(
+    payload: &[u8],
+    specs: &[CapsuleComponentSpec],
+) -> Result<Vec<CapsuleComponent>, CapsuleError> {
+    if specs.is_empty() {
+        return Err(CapsuleError::EmptyComponents);
+    }
+    let mut offset_bytes = 0_u64;
+    let mut components = Vec::with_capacity(specs.len());
+    for spec in specs {
+        if spec.state_class.is_empty() {
+            return Err(CapsuleError::InvalidComponentCoverage);
+        }
+        let end = offset_bytes
+            .checked_add(spec.length_bytes)
+            .ok_or(CapsuleError::InvalidComponentCoverage)?;
+        let start =
+            usize::try_from(offset_bytes).map_err(|_| CapsuleError::InvalidComponentCoverage)?;
+        let end_usize = usize::try_from(end).map_err(|_| CapsuleError::InvalidComponentCoverage)?;
+        let bytes = payload
+            .get(start..end_usize)
+            .ok_or(CapsuleError::InvalidComponentCoverage)?;
+        components.push(CapsuleComponent {
+            state_class: spec.state_class.clone(),
+            offset_bytes,
+            length_bytes: spec.length_bytes,
+            checksum: ContentDigest::sha256(bytes),
+        });
+        offset_bytes = end;
+    }
+    if offset_bytes
+        != u64::try_from(payload.len()).map_err(|_| CapsuleError::InvalidComponentCoverage)?
+    {
+        return Err(CapsuleError::InvalidComponentCoverage);
+    }
+    Ok(components)
 }
 
 fn capsule_id(

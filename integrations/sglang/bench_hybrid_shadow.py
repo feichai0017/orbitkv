@@ -130,6 +130,14 @@ def main() -> None:
         "--cuda-graph-mode", choices=("disabled", "decode"), default="disabled"
     )
     parser.add_argument("--no-trace-allocations", action="store_true")
+    parser.add_argument("--capsule-store")
+    parser.add_argument("--capsule-identity")
+    parser.add_argument("--capsule-chunk-tokens", type=int, default=256)
+    parser.add_argument(
+        "--capsule-max-payload-bytes",
+        type=int,
+        default=64 * 1024 * 1024,
+    )
     args = parser.parse_args()
     model_path = Path(args.model).resolve()
     plan_path = Path(args.plan).resolve()
@@ -155,6 +163,10 @@ def main() -> None:
         os.environ.pop("ORBITKV_BIN", None)
         os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
         os.environ.pop("ORBITKV_SGLANG_REVISION", None)
+        os.environ.pop("ORBITKV_CAPSULE_STORE", None)
+        os.environ.pop("ORBITKV_CAPSULE_IDENTITY", None)
+        os.environ.pop("ORBITKV_CAPSULE_CHUNK_TOKENS", None)
+        os.environ.pop("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES", None)
     else:
         os.environ["SGLANG_PLUGINS"] = "orbitkv_shadow"
         os.environ["ORBITKV_TRACE_PATH"] = args.trace
@@ -178,6 +190,24 @@ def main() -> None:
         os.environ["ORBITKV_TRACE_ALLOCATIONS"] = (
             "0" if args.no_trace_allocations else "1"
         )
+        if args.capsule_store:
+            if not args.capsule_identity:
+                raise ValueError("--capsule-identity is required with --capsule-store")
+            os.environ["ORBITKV_CAPSULE_STORE"] = str(
+                Path(args.capsule_store).resolve()
+            )
+            os.environ["ORBITKV_CAPSULE_IDENTITY"] = args.capsule_identity
+            os.environ["ORBITKV_CAPSULE_CHUNK_TOKENS"] = str(
+                args.capsule_chunk_tokens
+            )
+            os.environ["ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES"] = str(
+                args.capsule_max_payload_bytes
+            )
+        else:
+            os.environ.pop("ORBITKV_CAPSULE_STORE", None)
+            os.environ.pop("ORBITKV_CAPSULE_IDENTITY", None)
+            os.environ.pop("ORBITKV_CAPSULE_CHUNK_TOKENS", None)
+            os.environ.pop("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES", None)
         if args.mode in ("policy", "owner"):
             os.environ["ORBITKV_SGLANG_POLICY"] = str(plan_path)
             if args.physical_plan:
