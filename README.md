@@ -23,6 +23,15 @@ Capsule metadata is conditionally published into one Holt tree after its
 immutable, content-addressed KV payload is durable. Payloads are files rather
 than Holt values, so they are not constrained by Holt's metadata-size limit.
 
+Coverage is intentionally tiered:
+
+- Compiler/reference runtime: causal Full, fixed Sliding, Dilated Local,
+  Sink+Sliding, Same-Chunk, Full+Local hybrids, and per-layer/per-head fixed
+  windows.
+- SGLang-qualified execution: uniform SWA and Full+SWA hybrid plans.
+- Safe fallback: dynamic/content-dependent sparse attention, periodic sparse
+  globals, cross-attention, recurrent/SSM state, and unrecognized masks.
+
 ## Key results
 
 | Result | Value | Boundary |

@@ -21,6 +21,10 @@ pub enum IntExpr {
         value: Box<IntExpr>,
         divisor: i64,
     },
+    Mod {
+        value: Box<IntExpr>,
+        modulus: i64,
+    },
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -120,6 +124,8 @@ pub enum RetentionError {
     WindowOutOfRange,
     #[error("floor division requires a positive divisor")]
     InvalidFloorDivisor,
+    #[error("modulo requires a positive modulus")]
+    InvalidModulus,
     #[error("chunk size does not fit u64")]
     ChunkOutOfRange,
 }
@@ -151,6 +157,16 @@ impl IntExpr {
                     ..AffineForm::default()
                 })
             }
+            Self::Mod { value, modulus } => {
+                if *modulus <= 0 {
+                    return Err(RetentionError::InvalidModulus);
+                }
+                value.affine()?;
+                Ok(AffineForm {
+                    non_affine: true,
+                    ..AffineForm::default()
+                })
+            }
         }
     }
 
@@ -174,6 +190,16 @@ impl IntExpr {
                     value
                         .evaluate(query_position, key_position)?
                         .div_euclid(*divisor),
+                )
+            }
+            Self::Mod { value, modulus } => {
+                if *modulus <= 0 {
+                    return None;
+                }
+                Some(
+                    value
+                        .evaluate(query_position, key_position)?
+                        .rem_euclid(*modulus),
                 )
             }
         }
@@ -333,6 +359,16 @@ pub fn analyze_state(state: &RetentionStateDecl) -> Result<RetentionAnalysis, Re
             proven_query_key_delta_upper_bound: Some(chunk_tokens - 1),
         });
     }
+    if let Some(maximum_delta) = analyze_dilated_window(&state.may_read)? {
+        let window_tokens = maximum_delta
+            .checked_add(1)
+            .ok_or(RetentionError::WindowOutOfRange)?;
+        return Ok(RetentionAnalysis {
+            state_name: state.name.clone(),
+            inferred: InferredRetention::FixedWindow { window_tokens },
+            proven_query_key_delta_upper_bound: Some(maximum_delta),
+        });
+    }
     if let Some((sink_tokens, window_tokens)) = analyze_sink_and_window(&state.may_read)? {
         return Ok(RetentionAnalysis {
             state_name: state.name.clone(),
@@ -379,6 +415,70 @@ pub fn analyze_state(state: &RetentionStateDecl) -> Result<RetentionAnalysis, Re
         inferred: InferredRetention::FixedWindow { window_tokens },
         proven_query_key_delta_upper_bound: Some(proven_query_key_delta_upper_bound),
     })
+}
+
+fn analyze_dilated_window(predicate: &Predicate) -> Result<Option<u64>, RetentionError> {
+    let Predicate::And { terms } = predicate else {
+        return Ok(None);
+    };
+    let mut modulus = None;
+    for term in terms {
+        if let Some(term_modulus) = zero_delta_modulus(term)?
+            && modulus.replace(term_modulus).is_some()
+        {
+            return Ok(None);
+        }
+    }
+    let Some(modulus) = modulus else {
+        return Ok(None);
+    };
+    let bounds = analyze_predicate(predicate)?;
+    if !bounds.satisfiable {
+        return Ok(None);
+    }
+    let Some(upper) = bounds.upper else {
+        return Ok(None);
+    };
+    if upper < 0 {
+        return Ok(None);
+    }
+    let maximum_delta = upper - upper.rem_euclid(modulus);
+    if bounds.lower.is_some_and(|lower| maximum_delta < lower) {
+        return Ok(None);
+    }
+    u64::try_from(maximum_delta)
+        .map(Some)
+        .map_err(|_| RetentionError::WindowOutOfRange)
+}
+
+fn zero_delta_modulus(predicate: &Predicate) -> Result<Option<i64>, RetentionError> {
+    let Predicate::Equal { lhs, rhs } = predicate else {
+        return Ok(None);
+    };
+    if is_zero_constant(rhs) {
+        return delta_modulus(lhs);
+    }
+    if is_zero_constant(lhs) {
+        return delta_modulus(rhs);
+    }
+    Ok(None)
+}
+
+fn delta_modulus(expression: &IntExpr) -> Result<Option<i64>, RetentionError> {
+    let IntExpr::Mod { value, modulus } = expression else {
+        return Ok(None);
+    };
+    if *modulus <= 0 {
+        return Err(RetentionError::InvalidModulus);
+    }
+    let Some((coefficient, constant)) = value.affine()?.as_delta() else {
+        return Ok(None);
+    };
+    Ok((coefficient == 1 && constant == 0).then_some(*modulus))
+}
+
+const fn is_zero_constant(expression: &IntExpr) -> bool {
+    matches!(expression, IntExpr::Constant { value: 0 })
 }
 
 fn analyze_same_chunk(predicate: &Predicate) -> Result<Option<u64>, RetentionError> {
@@ -747,6 +847,61 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn infers_dilated_window_last_read_exactly() {
+        for window in 1..=65_i64 {
+            for dilation in 1..=17_i64 {
+                let declaration = state(Predicate::And {
+                    terms: vec![
+                        Predicate::LessThan {
+                            lhs: delta(),
+                            rhs: IntExpr::Constant { value: window },
+                        },
+                        Predicate::Equal {
+                            lhs: IntExpr::Mod {
+                                value: Box::new(delta()),
+                                modulus: dilation,
+                            },
+                            rhs: IntExpr::Constant { value: 0 },
+                        },
+                    ],
+                });
+                let analysis = analyze_state(&declaration).unwrap();
+                let maximum_delta = (0..=window * 3)
+                    .flat_map(|query| (0..=query).map(move |key| (query, key)))
+                    .filter(|&(query, key)| declaration.may_read.may_read(query, key))
+                    .map(|(query, key)| query - key)
+                    .max()
+                    .unwrap();
+                assert_eq!(
+                    analysis.proven_query_key_delta_upper_bound,
+                    Some(u64::try_from(maximum_delta).unwrap())
+                );
+                assert_eq!(
+                    analysis.inferred,
+                    InferredRetention::FixedWindow {
+                        window_tokens: u64::try_from(maximum_delta + 1).unwrap()
+                    }
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn invalid_modulus_fails_closed() {
+        let declaration = state(Predicate::Equal {
+            lhs: IntExpr::Mod {
+                value: Box::new(delta()),
+                modulus: 0,
+            },
+            rhs: IntExpr::Constant { value: 0 },
+        });
+        assert_eq!(
+            analyze_state(&declaration),
+            Err(RetentionError::InvalidModulus)
+        );
     }
 
     #[test]

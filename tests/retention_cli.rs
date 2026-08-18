@@ -385,6 +385,29 @@ fn chunked_local_relation_emits_resettable_arena() {
 }
 
 #[test]
+fn dilated_local_relation_reuses_periodic_address_machine() {
+    let source = root().join("examples/dilated_local_retention.json");
+    let report = run(&["analyze-retention", source.to_str().unwrap()]);
+    assert_eq!(
+        report["analyses"][0]["proven_query_key_delta_upper_bound"],
+        126
+    );
+    assert_eq!(report["analyses"][0]["inferred"]["window_tokens"], 127);
+    assert_eq!(
+        report["layout"]["classes"][0]["address"]["kind"],
+        "periodic"
+    );
+    assert_eq!(
+        report["layout"]["classes"][0]["address"]["period_blocks"],
+        9
+    );
+    assert_eq!(
+        report["layout"]["classes"][0]["retirement"]["offset_tokens"],
+        126
+    );
+}
+
+#[test]
 fn multi_scale_heads_report_lifetime_normalization_savings() {
     let source = root().join("examples/multi_scale_head_windows.json");
     let report = run(&["analyze-lifetime-normalization", source.to_str().unwrap()]);
