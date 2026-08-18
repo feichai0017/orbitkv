@@ -487,6 +487,14 @@ def _pure_swa_capsule() -> bool:
     )
 
 
+def _hybrid_swa_capsule() -> bool:
+    return (
+        _POLICY is not None
+        and len(_POLICY.get("unbounded_classes", ())) == 1
+        and len(_POLICY.get("bounded_classes", ())) == 1
+    )
+
+
 def _encode_capsule_payload(value: Any) -> bytes:
     from .capsule_wire import encode_cpu_tensors
 
@@ -506,6 +514,91 @@ def _capsule_payload_limit() -> int:
     if maximum_payload <= 0:
         raise RuntimeError("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES must be positive")
     return maximum_payload
+
+
+def _capsule_live_start(prefix_tokens: int) -> int:
+    if not (_pure_swa_capsule() or _hybrid_swa_capsule()):
+        return 0
+    page_tokens = int(_POLICY["page_tokens"])
+    live_start = max(0, prefix_tokens - _bounded_window_tokens())
+    return live_start // page_tokens * page_tokens
+
+
+def _hybrid_capsule_cpu_copy(
+    allocator: Any,
+    indices: Any,
+    live_start: int,
+) -> dict[str, Any]:
+    import torch
+
+    kvcache = getattr(allocator, "_kvcache", None)
+    full_pool = getattr(kvcache, "full_kv_pool", None)
+    swa_pool = getattr(kvcache, "swa_kv_pool", None)
+    mapping = getattr(kvcache, "full_to_swa_index_mapping", None)
+    if full_pool is None or swa_pool is None or mapping is None:
+        raise RuntimeError("OrbitKV Hybrid Capsule requires separate Full and SWA pools")
+    full_cpu = full_pool.get_cpu_copy(indices)
+    tail_indices = indices[live_start:]
+    swa_indices = mapping[tail_indices]
+    if swa_indices.numel() != tail_indices.numel() or not bool(
+        torch.all(swa_indices > 0).item()
+    ):
+        raise RuntimeError("OrbitKV Hybrid Capsule live SWA tail is incomplete")
+    swa_cpu = swa_pool.get_cpu_copy(swa_indices)
+    swa_mask = torch.zeros((len(indices),), dtype=torch.bool)
+    swa_mask[live_start:] = True
+    return {"full": full_cpu, "swa": swa_cpu, "swa_mask": swa_mask}
+
+
+def _encode_capsule_components(
+    kv_cache_cpu: Any,
+    prefix_tokens: int,
+    live_start: int,
+) -> tuple[bytes, list[dict[str, Any]]]:
+    if _hybrid_swa_capsule():
+        if not isinstance(kv_cache_cpu, dict) or set(kv_cache_cpu) != {
+            "full",
+            "swa",
+            "swa_mask",
+        }:
+            raise RuntimeError("OrbitKV Hybrid Capsule CPU state is malformed")
+        full_payload = _encode_capsule_payload(kv_cache_cpu["full"])
+        swa_payload = _encode_capsule_payload(
+            {
+                "swa": kv_cache_cpu["swa"],
+                "swa_mask": kv_cache_cpu["swa_mask"],
+            }
+        )
+        return (
+            full_payload + swa_payload,
+            [
+                {
+                    "state_class": "full-kv",
+                    "length_bytes": len(full_payload),
+                    "token_start": 0,
+                    "token_end_exclusive": prefix_tokens,
+                },
+                {
+                    "state_class": "swa-kv",
+                    "length_bytes": len(swa_payload),
+                    "token_start": live_start,
+                    "token_end_exclusive": prefix_tokens,
+                },
+            ],
+        )
+    payload = _encode_capsule_payload(kv_cache_cpu)
+    state_class = "swa-kv" if _pure_swa_capsule() else "sglang-kv"
+    return (
+        payload,
+        [
+            {
+                "state_class": state_class,
+                "length_bytes": len(payload),
+                "token_start": live_start,
+                "token_end_exclusive": prefix_tokens,
+            }
+        ],
+    )
 
 
 def _trace_path() -> Path:
@@ -672,26 +765,37 @@ def _export_capsule_before_release(
             return existing
     elif existing.get("status") != "miss":
         raise RuntimeError("OrbitKV Capsule catalog returned an invalid status")
-    live_start = 0
-    if _pure_swa_capsule():
-        live_start = max(0, aligned - _bounded_window_tokens())
-        live_start = live_start // int(_POLICY["page_tokens"]) * int(
-            _POLICY["page_tokens"]
-        )
-    indices = tree_cache.req_to_token_pool.req_to_token[
-        req.req_pool_idx, live_start:aligned
+    live_start = _capsule_live_start(aligned)
+    full_indices = tree_cache.req_to_token_pool.req_to_token[
+        req.req_pool_idx, :aligned
     ]
     kvcache = getattr(tree_cache.token_to_kv_pool_allocator, "_kvcache", None)
-    if int(req.kv.swa_evicted_seqlen) > live_start and getattr(
-        kvcache, "full_kv_pool", None
-    ) is None:
+    if (
+        _pure_swa_capsule()
+        and int(req.kv.swa_evicted_seqlen) > live_start
+        and getattr(kvcache, "full_kv_pool", None) is None
+    ):
         raise RuntimeError(
             "OrbitKV Capsule export cannot read evicted pure-SWA slots"
         )
-    kv_cache_cpu = tree_cache.token_to_kv_pool_allocator.get_cpu_copy(
-        indices, mamba_indices=req.mamba_pool_idx
+    if _hybrid_swa_capsule():
+        kv_cache_cpu = _hybrid_capsule_cpu_copy(
+            tree_cache.token_to_kv_pool_allocator,
+            full_indices,
+            live_start,
+        )
+    else:
+        indices = (
+            full_indices[live_start:] if _pure_swa_capsule() else full_indices
+        )
+        kv_cache_cpu = tree_cache.token_to_kv_pool_allocator.get_cpu_copy(
+            indices, mamba_indices=req.mamba_pool_idx
+        )
+    payload, components = _encode_capsule_components(
+        kv_cache_cpu,
+        aligned,
+        live_start,
     )
-    payload = _encode_capsule_payload(kv_cache_cpu)
     maximum_payload = _capsule_payload_limit()
     if len(payload) > maximum_payload:
         raise RuntimeError(
@@ -710,11 +814,11 @@ def _export_capsule_before_release(
                 "identity": _capsule_identity(),
                 "chunk_tokens": chunk_tokens,
                 "token_ids": fill_ids,
-                "live_token_count": aligned - live_start,
+                "live_token_count": (
+                    aligned if _hybrid_swa_capsule() else aligned - live_start
+                ),
                 "payload_path": str(payload_path),
-                "components": [
-                    {"state_class": "sglang-kv", "length_bytes": len(payload)}
-                ],
+                "components": components,
                 "created_unix_ms": time.time_ns() // 1_000_000,
             }
         )
@@ -753,14 +857,8 @@ def _read_capsule_payload(response: dict[str, Any]) -> tuple[Any, int, int]:
     if payload_bytes <= 0 or payload_bytes > _capsule_payload_limit():
         raise RuntimeError("OrbitKV Capsule restore payload size is invalid")
     components = manifest.get("components")
-    if (
-        not isinstance(components, list)
-        or len(components) != 1
-        or components[0].get("state_class") != "sglang-kv"
-        or int(components[0].get("offset_bytes", -1)) != 0
-        or int(components[0].get("length_bytes", -1)) != payload_bytes
-    ):
-        raise RuntimeError("OrbitKV Capsule SGLang component is invalid")
+    if not isinstance(components, list) or not components:
+        raise RuntimeError("OrbitKV Capsule SGLang components are invalid")
     payload_path = Path(str(response.get("payload_path", "")))
     if not payload_path.is_file() or payload_path.stat().st_size != payload_bytes:
         raise RuntimeError("OrbitKV Capsule payload object is missing or truncated")
@@ -772,7 +870,98 @@ def _read_capsule_payload(response: dict[str, Any]) -> tuple[Any, int, int]:
         or hashlib.sha256(payload).digest() != expected_digest
     ):
         raise RuntimeError("OrbitKV Capsule payload checksum does not match")
-    return _decode_capsule_payload(payload), prefix_tokens, live_tokens
+    decoded = _decode_capsule_components(
+        payload,
+        components,
+        prefix_tokens,
+        live_tokens,
+    )
+    return decoded, prefix_tokens, live_tokens
+
+
+def _decode_capsule_components(
+    payload: bytearray,
+    components: list[dict[str, Any]],
+    prefix_tokens: int,
+    live_tokens: int,
+) -> Any:
+    expected_offset = 0
+    decoded: dict[str, Any] = {}
+    ranges: dict[str, tuple[int | None, int | None]] = {}
+    for component in components:
+        state_class = component.get("state_class")
+        if not isinstance(state_class, str) or not state_class:
+            raise RuntimeError("OrbitKV Capsule component name is invalid")
+        offset = int(component.get("offset_bytes", -1))
+        length = int(component.get("length_bytes", -1))
+        if offset != expected_offset or length <= 0:
+            raise RuntimeError("OrbitKV Capsule component coverage is invalid")
+        end = offset + length
+        if end > len(payload):
+            raise RuntimeError("OrbitKV Capsule component exceeds its payload")
+        checksum = bytes(component.get("checksum", ()))
+        component_payload = memoryview(payload)[offset:end]
+        if (
+            len(checksum) != hashlib.sha256().digest_size
+            or hashlib.sha256(component_payload).digest() != checksum
+        ):
+            raise RuntimeError("OrbitKV Capsule component checksum does not match")
+        token_start = component.get("token_start")
+        token_end = component.get("token_end_exclusive")
+        if (token_start is None) != (token_end is None):
+            raise RuntimeError("OrbitKV Capsule component token range is incomplete")
+        if token_start is not None:
+            token_start = int(token_start)
+            token_end = int(token_end)
+            if not 0 <= token_start < token_end <= prefix_tokens:
+                raise RuntimeError("OrbitKV Capsule component token range is invalid")
+        if state_class in decoded:
+            raise RuntimeError("OrbitKV Capsule component name is duplicated")
+        decoded[state_class] = _decode_capsule_payload(component_payload)
+        ranges[state_class] = (token_start, token_end)
+        expected_offset = end
+    if expected_offset != len(payload):
+        raise RuntimeError("OrbitKV Capsule components do not cover the payload")
+
+    if set(decoded) == {"full-kv", "swa-kv"}:
+        if not _hybrid_swa_capsule() or live_tokens != prefix_tokens:
+            raise RuntimeError("OrbitKV Hybrid Capsule does not match its state plan")
+        expected_live_start = _capsule_live_start(prefix_tokens)
+        if ranges["full-kv"] != (0, prefix_tokens) or ranges["swa-kv"] != (
+            expected_live_start,
+            prefix_tokens,
+        ):
+            raise RuntimeError("OrbitKV Hybrid Capsule component ranges do not match")
+        swa_component = decoded["swa-kv"]
+        if (
+            not isinstance(swa_component, dict)
+            or set(swa_component) != {"swa", "swa_mask"}
+        ):
+            raise RuntimeError("OrbitKV Hybrid SWA component is malformed")
+        swa_mask = swa_component["swa_mask"]
+        if (
+            _tensor_numel(swa_mask) != prefix_tokens
+            or bool(swa_mask[:expected_live_start].any().item())
+            or not bool(swa_mask[expected_live_start:].all().item())
+        ):
+            raise RuntimeError("OrbitKV Hybrid SWA component mask is invalid")
+        return {
+            "full": decoded["full-kv"],
+            "swa": swa_component["swa"],
+            "swa_mask": swa_mask,
+        }
+
+    if len(decoded) != 1:
+        raise RuntimeError("OrbitKV Capsule component set is unsupported")
+    state_class, value = next(iter(decoded.items()))
+    if state_class not in ("sglang-kv", "swa-kv"):
+        raise RuntimeError("OrbitKV Capsule state class is unsupported")
+    token_range = ranges[state_class]
+    if token_range != (None, None):
+        expected_start = prefix_tokens - live_tokens
+        if token_range != (expected_start, prefix_tokens):
+            raise RuntimeError("OrbitKV Capsule token range does not match live state")
+    return value
 
 
 def _allocate_capsule_slots(allocator: Any, prefix_tokens: int):

@@ -56,6 +56,10 @@ pub struct CapsuleComponent {
     pub offset_bytes: u64,
     pub length_bytes: u64,
     pub checksum: ContentDigest,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_start: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub token_end_exclusive: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -75,6 +79,10 @@ pub struct CapsuleManifest {
 pub struct CapsuleComponentSpec {
     pub state_class: String,
     pub length_bytes: u64,
+    #[serde(default)]
+    pub token_start: Option<u64>,
+    #[serde(default)]
+    pub token_end_exclusive: Option<u64>,
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -99,6 +107,8 @@ pub enum CapsuleError {
     InvalidComponentCoverage,
     #[error("capsule component checksum differs from payload bytes")]
     ComponentChecksumMismatch,
+    #[error("capsule component token range is invalid")]
+    InvalidComponentTokenRange,
     #[error("capsule manifest identity differs from its prefix key")]
     IdentityMismatch,
     #[error("capsule manifest prefix boundary differs from its prefix key")]
@@ -341,6 +351,7 @@ impl CapsuleManifest {
         created_unix_ms: u64,
     ) -> Result<Self, CapsuleError> {
         validate_components(payload, &components)?;
+        validate_component_ranges(path.token_count(), &components)?;
         let payload_digest = ContentDigest::sha256(payload);
         Ok(Self {
             schema: CAPSULE_SCHEMA.into(),
@@ -371,6 +382,7 @@ impl CapsuleManifest {
         if self.prefix_token_count != path.token_count() {
             return Err(CapsuleError::PrefixBoundaryMismatch);
         }
+        validate_component_ranges(path.token_count(), &self.components)?;
         if self.capsule_id
             != capsule_id(
                 path,
@@ -437,6 +449,8 @@ pub fn build_capsule_components(
             offset_bytes,
             length_bytes: spec.length_bytes,
             checksum: ContentDigest::sha256(bytes),
+            token_start: spec.token_start,
+            token_end_exclusive: spec.token_end_exclusive,
         });
         offset_bytes = end;
     }
@@ -468,8 +482,27 @@ fn capsule_id(
         material.extend_from_slice(&component.offset_bytes.to_le_bytes());
         material.extend_from_slice(&component.length_bytes.to_le_bytes());
         material.extend_from_slice(&component.checksum.0);
+        if let (Some(start), Some(end)) = (component.token_start, component.token_end_exclusive) {
+            material.extend_from_slice(b"orbitkv-component-token-range-v1");
+            material.extend_from_slice(&start.to_le_bytes());
+            material.extend_from_slice(&end.to_le_bytes());
+        }
     }
     Ok(ContentDigest::sha256(&material))
+}
+
+fn validate_component_ranges(
+    prefix_token_count: u64,
+    components: &[CapsuleComponent],
+) -> Result<(), CapsuleError> {
+    for component in components {
+        match (component.token_start, component.token_end_exclusive) {
+            (None, None) => {}
+            (Some(start), Some(end)) if start < end && end <= prefix_token_count => {}
+            _ => return Err(CapsuleError::InvalidComponentTokenRange),
+        }
+    }
+    Ok(())
 }
 
 fn validate_components(
@@ -542,15 +575,52 @@ mod tests {
                 offset_bytes: 0,
                 length_bytes: 4,
                 checksum: ContentDigest::sha256(&payload[..4]),
+                token_start: None,
+                token_end_exclusive: None,
             },
             CapsuleComponent {
                 state_class: "v".into(),
                 offset_bytes: 4,
                 length_bytes: 4,
                 checksum: ContentDigest::sha256(&payload[4..]),
+                token_start: None,
+                token_end_exclusive: None,
             },
         ];
         let manifest = CapsuleManifest::new(&path, 4, payload, components, 1).unwrap();
         manifest.validate_for_path(&path).unwrap();
+    }
+
+    #[test]
+    fn component_token_ranges_are_authenticated_and_bounded() {
+        let path = PrefixPath::from_token_ids(identity(), 4, &[1, 2, 3, 4]).unwrap();
+        let payload = b"abcdefgh";
+        let components = build_capsule_components(
+            payload,
+            &[
+                CapsuleComponentSpec {
+                    state_class: "full-kv".into(),
+                    length_bytes: 4,
+                    token_start: Some(0),
+                    token_end_exclusive: Some(4),
+                },
+                CapsuleComponentSpec {
+                    state_class: "swa-kv".into(),
+                    length_bytes: 4,
+                    token_start: Some(2),
+                    token_end_exclusive: Some(4),
+                },
+            ],
+        )
+        .unwrap();
+        let manifest = CapsuleManifest::new(&path, 4, payload, components, 1).unwrap();
+        manifest.validate(&path, payload).unwrap();
+
+        let mut invalid = manifest.clone();
+        invalid.components[1].token_end_exclusive = Some(5);
+        assert_eq!(
+            invalid.validate_for_path(&path),
+            Err(CapsuleError::InvalidComponentTokenRange)
+        );
     }
 }

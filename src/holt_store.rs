@@ -343,6 +343,8 @@ mod tests {
             offset_bytes: 0,
             length_bytes: u64::try_from(payload.len()).unwrap(),
             checksum: ContentDigest::sha256(payload),
+            token_start: None,
+            token_end_exclusive: None,
         }];
         let manifest =
             CapsuleManifest::new(&path, path.token_count(), payload, components, 1).unwrap();
