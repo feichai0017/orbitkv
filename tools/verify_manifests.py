@@ -25,6 +25,7 @@ DEFAULT_MANIFESTS = (
     ROOT / "results/h20-capsule-export-20260818/manifest.json",
     ROOT / "results/h20-live-tail-capsule-20260818/manifest.json",
     ROOT / "results/h20-hybrid-capsule-20260818/manifest.json",
+    ROOT / "results/h20-runtime-state-plan-20260819/manifest.json",
 )
 
 

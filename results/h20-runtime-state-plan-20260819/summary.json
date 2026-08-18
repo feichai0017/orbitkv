@@ -1,0 +1,70 @@
+{
+  "artifact_fingerprint": "sha256:e2c1bd2aeeaebf39a15e07c4e2b1b6827f03f3d2aa6582c297e8de41438f352a",
+  "benchmark_runtime_state_plan": {
+    "artifact_fingerprint": "sha256:e2c1bd2aeeaebf39a15e07c4e2b1b6827f03f3d2aa6582c297e8de41438f352a",
+    "path": "/tmp/orbitkv-runtime-state-plan-final.json",
+    "plan_fingerprint": "sha256:dfbeded59980b8784b79097e96ae51addbee8cd8ffb19977b6e5aa1df2c1c756"
+  },
+  "cached_tokens": [
+    1024
+  ],
+  "capsule_events": [
+    {
+      "event": "capsule_miss",
+      "query_token_count": 1023,
+      "request_id": "792841c0c7d94afc86c0005db9bfe219",
+      "schema": "orbitkv.sglang-shadow.v1",
+      "timestamp_ns": 1787075844289703571
+    },
+    {
+      "created": true,
+      "event": "capsule_published",
+      "payload_bytes": 28315134,
+      "prefix_token_count": 1024,
+      "request_id": "792841c0c7d94afc86c0005db9bfe219",
+      "schema": "orbitkv.sglang-shadow.v1",
+      "timestamp_ns": 1787075845956766868
+    },
+    {
+      "duration_ns": {
+        "allocation": 674198,
+        "load": 4469475,
+        "lookup": 385045,
+        "payload_decode": 67647863,
+        "total": 73176581
+      },
+      "event": "capsule_hydrated",
+      "live_token_count": 1024,
+      "prefix_token_count": 1024,
+      "request_id": "811bd7d361df47bbb87090190cfb5117",
+      "schema": "orbitkv.sglang-shadow.v1",
+      "timestamp_ns": 1787075846047807610
+    }
+  ],
+  "checkpoint_weight_bytes": 13761316904,
+  "claim_boundary": [
+    "artifact wiring and identity smoke, not a new performance claim",
+    "owner, policy, and Capsule limits came from one runtime StatePlan",
+    "deployment paths and model identity remained external resources"
+  ],
+  "date": "2026-08-19",
+  "external_resources": [
+    "ORBITKV_CAPSULE_STORE",
+    "ORBITKV_CAPSULE_IDENTITY",
+    "ORBITKV_OWNER_LIB"
+  ],
+  "gpu": "NVIDIA H20",
+  "model": "/workspace/models/gpt-oss-20b",
+  "output_digest": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97",
+  "plan_fingerprint": "sha256:dfbeded59980b8784b79097e96ae51addbee8cd8ffb19977b6e5aa1df2c1c756",
+  "plugin_runtime_state_plan_fingerprints": [
+    "sha256:e2c1bd2aeeaebf39a15e07c4e2b1b6827f03f3d2aa6582c297e8de41438f352a"
+  ],
+  "request_e2e_seconds": [
+    0.1805802434682846
+  ],
+  "schema": "orbitkv.h20-runtime-state-plan-smoke.v1",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+  "single_semantic_entrypoint": "ORBITKV_RUNTIME_STATE_PLAN",
+  "source_commit": "894e014"
+}

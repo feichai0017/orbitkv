@@ -1,0 +1,29 @@
+{
+  "claim_boundary": [
+    "one semantic artifact entrypoint",
+    "real GPT-OSS 20B and pinned SGLang H20 smoke",
+    "deployment resources remain external"
+  ],
+  "date": "2026-08-19",
+  "records": {
+    "results/h20-runtime-state-plan-20260819/README.md": "f9de926e7aec19657ce4df43347465a0d955c3c2c2bab141b4bc9b23d2160206",
+    "results/h20-runtime-state-plan-20260819/runtime-state-plan.json": "5a02ab6cbb4156b30c19bdb3081daf11f37a20b79713c4f513a6dd6d821793b8",
+    "results/h20-runtime-state-plan-20260819/summary.json": "555f05711ddedc13b27a1b6928d969e12f23e8c8194ff244b4d64e08fdafd69b"
+  },
+  "schema": "orbitkv.h20-runtime-state-plan-manifest.v1",
+  "source_commit": "894e014",
+  "sources": {
+    "crates/orbitkv-ffi/src/lib.rs": "ef61f2bd6a6594bbf044c81dab6d086a462e1c7c3acaac81eb852604c9a9b0dd",
+    "integrations/sglang/bench_hybrid_shadow.py": "0ae040cb1a59c47ce820c4fd83c33818ff766162b1eec7e457dc1fcc9aad8b6a",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "830913c673f555e49caaf021b4d3b2fb9b02d43090e9de1d7f1a58aae54113d8",
+    "integrations/sglang/tests/test_shadow_plugin.py": "3e0f940f67099ca9e9985d1f129a06fd983a08757e1dea1ae92fde3809736bb8",
+    "src/bin/orbitkv.rs": "59e3254f83f557d276ba18c6d6c5d8723a171e34568b0e9ad6cd1ab69b9ed3d4",
+    "src/lib.rs": "350b2f70226e7b9631267aea5a11d0436b2f8e588f22ef25ddf9d8e69316241a",
+    "src/plan.rs": "93d319e7d436ea0ac63b3bbbf942eb3ae50ca4520850659116cf18ef297c08fb",
+    "src/state_plan.rs": "ddf85783a31a0803360603da4ef08f8da19467e3b327f11332988c81c388c403",
+    "tests/retention_cli.rs": "359aaffb50883cd4320e0c98d1316367a9852145ba69ce309786e550d8314194"
+  },
+  "workspace_sections": [
+    "records"
+  ]
+}
