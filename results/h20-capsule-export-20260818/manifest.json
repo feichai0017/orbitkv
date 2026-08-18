@@ -1,0 +1,27 @@
+{
+  "claim_boundary": [
+    "real checkpoint export and host restore",
+    "no hydration or TTFT claim"
+  ],
+  "date": "2026-08-18",
+  "records": {
+    "results/h20-capsule-export-20260818/README.md": "4573a38a7eccd8d6ccc6dca9fbfbe517141b26dd4df9a0b1e8763e86e686e55f",
+    "results/h20-capsule-export-20260818/ab.json": "cc6ca4a9761180b3da082c73a1b614f8978c90c2ca82e3b561b3936dd5ac5849",
+    "results/h20-capsule-export-20260818/restore.json": "850e93d406a0b242b275c9ad0edc5a3b1bfda4d26498102f5745969ecdecef99",
+    "results/h20-capsule-export-20260818/summary.json": "4ebfa237cec18a0e6c4e3a581975789bf0ce284719c7f99191787044a05646db"
+  },
+  "schema": "orbitkv.h20-capsule-export-manifest.v1",
+  "source_commit": "d576505",
+  "workspace_sections": [
+    "records"
+  ],
+  "sources": {
+    "integrations/sglang/bench_hybrid_shadow.py": "be7a4b3d4fccc2eef1daac2f7ae12ddbd425292aa25b2feca985b26ef69d4330",
+    "integrations/sglang/src/orbitkv_sglang/capsule_wire.py": "de8212f7732120753f84b5be9be274f4a9d66d50449988d7048cbb23328c1a34",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "1797ca16c44cf7e96823dbc0a1d4fa4a4f87b28d4f35f39bdee3bdc1cf445d46",
+    "src/bin/orbitkv.rs": "a5754e4f6d84d8648fcd53f84d97ec39de5d51d3064296cf2048b696f6f0055f",
+    "src/capsule.rs": "34cf76cd00428478cb686305fa593feffb76ca94959aa4ef003677efe9ad10da",
+    "src/holt_store.rs": "a3e244e0e241279fa0db12e6d13814e7e7249647076e725969d927cb36f5e229",
+    "tests/capsule_cli.rs": "00f0cc77607bd2fd9553f4abb3f7eea07f45a005518dbfa4cb4eeb8189de15e0"
+  }
+}

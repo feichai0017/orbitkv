@@ -1,0 +1,108 @@
+{
+  "capsule": {
+    "dtype": "torch.bfloat16",
+    "k_shape": [
+      64,
+      2,
+      128
+    ],
+    "layers": 12,
+    "live_token_count": 64,
+    "payload_bytes": 787680,
+    "payload_sha256": "308f1e60ce113b85552c448d19d05c843cad1e90a0e6dcb86a2ee0484f1238bd",
+    "prefix_token_count": 64,
+    "v_shape": [
+      64,
+      2,
+      128
+    ]
+  },
+  "checkpoint": {
+    "config_sha256": "6c8db61d5aa815f3d6665fb7b2adf63602895bc5ab727f76652f30cd2bc4f39a",
+    "index_files": [],
+    "indexed_weight_bytes": null,
+    "indexed_weight_container_overhead_bytes": null,
+    "indexed_weight_files": [],
+    "indexed_weights_complete": true,
+    "load_format": "auto",
+    "missing_indexed_weights": [],
+    "observed_indexed_weight_bytes": 0,
+    "weight_bytes": 496060688,
+    "weight_files": [
+      {
+        "bytes": 496060688,
+        "name": "model.safetensors"
+      }
+    ]
+  },
+  "claim_boundary": [
+    "real SGLang engine and real 496060688-byte safetensors checkpoint",
+    "GPU KV copied through SGLang get_cpu_copy before release",
+    "pickle-free tensor wire payload persisted through Holt 0.9.2",
+    "longest-prefix restore and payload checksum verified on host",
+    "export only: no request hydration or TTFT reduction claim",
+    "single request, 64-token prefix, 1 decode token, three paired rounds"
+  ],
+  "date": "2026-08-18",
+  "export_ab": {
+    "checkpoint_weight_bytes": 496060688,
+    "median_overhead_percent": 1.5542547932825057,
+    "median_ratio": 1.015542547932825,
+    "model": "/workspace/models/tiny-mistral-248m-v3-d128-swa1024-fixture",
+    "pairs": [
+      {
+        "baseline_seconds": 1.1019919998943806,
+        "capsule_seconds": 1.1191197633743286,
+        "digest": "1db920f37108459d000a18ca1a1843c2e7c63eceb1102df130f06a6bf86e3300",
+        "order": [
+          "baseline",
+          "capsule"
+        ],
+        "pair": 0,
+        "ratio": 1.015542547932825
+      },
+      {
+        "baseline_seconds": 1.1165901981294155,
+        "capsule_seconds": 1.1201859414577484,
+        "digest": "1db920f37108459d000a18ca1a1843c2e7c63eceb1102df130f06a6bf86e3300",
+        "order": [
+          "capsule",
+          "baseline"
+        ],
+        "pair": 1,
+        "ratio": 1.0032202891753454
+      },
+      {
+        "baseline_seconds": 1.1075186617672443,
+        "capsule_seconds": 1.2868414707481861,
+        "digest": "1db920f37108459d000a18ca1a1843c2e7c63eceb1102df130f06a6bf86e3300",
+        "order": [
+          "baseline",
+          "capsule"
+        ],
+        "pair": 2,
+        "ratio": 1.1619140292361305
+      }
+    ],
+    "schema": "orbitkv.sglang-capsule-export-ab.v1",
+    "workload": {
+      "decode_tokens": 1,
+      "prompt_tokens": 64,
+      "requests": 1
+    }
+  },
+  "gpu": "NVIDIA H20",
+  "model": "/workspace/models/tiny-mistral-248m-v3-d128-swa1024-fixture",
+  "num_retractions": [
+    0
+  ],
+  "output_digest": "1db920f37108459d000a18ca1a1843c2e7c63eceb1102df130f06a6bf86e3300",
+  "schema": "orbitkv.h20-capsule-export-validation.v1",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+  "source_commit": "d576505",
+  "workload": {
+    "decode_tokens": 1,
+    "prompt_tokens": 64,
+    "requests": 1
+  }
+}

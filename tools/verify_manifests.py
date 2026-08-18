@@ -22,6 +22,7 @@ DEFAULT_MANIFESTS = (
     ROOT / "results/applicability-h20-20260817/multireq-manifest.json",
     ROOT / "results/applicability-h20-20260817/page16-manifest.json",
     ROOT / "results/applicability-h20-20260817/page16-graph-manifest.json",
+    ROOT / "results/h20-capsule-export-20260818/manifest.json",
 )
 
 
@@ -62,10 +63,11 @@ def verify_manifest(path: Path) -> int:
     historical_commit = manifest.get("base_source_commit") or manifest.get(
         "source_commit"
     )
+    workspace_sections = set(manifest.get("workspace_sections", ()))
     checked = 0
     for section in ("records", "sources", "website"):
         for relative_path, expected in manifest.get(section, {}).items():
-            if historical_commit is not None:
+            if historical_commit is not None and section not in workspace_sections:
                 data = git_blob(historical_commit, relative_path)
             else:
                 data = (ROOT / relative_path).read_bytes()

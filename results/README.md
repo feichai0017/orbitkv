@@ -2,6 +2,7 @@
 
 | Record | Scope |
 | --- | --- |
+| `h20-capsule-export-20260818` | Real-checkpoint KV export and host restore |
 | `applicability-h20-20260817` | Qwen Full fallback, Mistral bounded state, GPT-OSS Hybrid |
 | `h20-gpt-oss-20b-real-20260817` | Primary real-checkpoint SGLang result |
 | `lifetime-normalization-20260817` | Per-head windows and Retention Amplification |
@@ -19,5 +20,7 @@ Boundaries:
 - Mistral page16 execution qualifies decode CUDA Graph replay with eager prefill.
 - Per-head, Sink+Sliding, and Same-Chunk records are host compiler/Manager
   proofs, not GPU performance results.
+- Capsule evidence covers export and host restore, not request hydration or
+  TTFT improvement.
 - VMM does not yet back SGLang KV tensors.
 - Every primary record includes a hash manifest.

@@ -1,0 +1,47 @@
+{
+  "checkpoint_weight_bytes": 496060688,
+  "median_overhead_percent": 1.5542547932825057,
+  "median_ratio": 1.015542547932825,
+  "model": "/workspace/models/tiny-mistral-248m-v3-d128-swa1024-fixture",
+  "pairs": [
+    {
+      "baseline_seconds": 1.1019919998943806,
+      "capsule_seconds": 1.1191197633743286,
+      "digest": "1db920f37108459d000a18ca1a1843c2e7c63eceb1102df130f06a6bf86e3300",
+      "order": [
+        "baseline",
+        "capsule"
+      ],
+      "pair": 0,
+      "ratio": 1.015542547932825
+    },
+    {
+      "baseline_seconds": 1.1165901981294155,
+      "capsule_seconds": 1.1201859414577484,
+      "digest": "1db920f37108459d000a18ca1a1843c2e7c63eceb1102df130f06a6bf86e3300",
+      "order": [
+        "capsule",
+        "baseline"
+      ],
+      "pair": 1,
+      "ratio": 1.0032202891753454
+    },
+    {
+      "baseline_seconds": 1.1075186617672443,
+      "capsule_seconds": 1.2868414707481861,
+      "digest": "1db920f37108459d000a18ca1a1843c2e7c63eceb1102df130f06a6bf86e3300",
+      "order": [
+        "baseline",
+        "capsule"
+      ],
+      "pair": 2,
+      "ratio": 1.1619140292361305
+    }
+  ],
+  "schema": "orbitkv.sglang-capsule-export-ab.v1",
+  "workload": {
+    "decode_tokens": 1,
+    "prompt_tokens": 64,
+    "requests": 1
+  }
+}
