@@ -1,5 +1,8 @@
 # Validation Records
 
+Capability levels and unsupported paths are defined only in
+`docs/capability-matrix.md`. This index lists evidence snapshots.
+
 | Record | Scope |
 | --- | --- |
 | `h20-hybrid-capsule-20260818` | GPT-OSS Full+SWA component restore crossover |
@@ -22,8 +25,8 @@ Boundaries:
 - Mistral page16 execution qualifies decode CUDA Graph replay with eager prefill.
 - Per-head, Sink+Sliding, and Same-Chunk records are host compiler/Manager
   proofs, not GPU performance results.
-- Capsule evidence covers export and host restore, not request hydration or
-  TTFT improvement.
+- `h20-capsule-export-20260818` covers export and host restore only; later
+  live-tail and Hybrid records qualify selected hydration paths.
 - Live-tail Capsule hydration is qualified only for compiler-proven pure SWA.
 - Hybrid Capsule restore is beneficial only beyond the measured host-restore
   crossover; short prefixes should use cold prefill.

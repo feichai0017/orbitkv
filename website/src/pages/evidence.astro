@@ -47,14 +47,19 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
       <h2>Exclusions</h2>
       <ul>
         <li>No released-checkpoint model-quality improvement claim.</li>
-        <li>No radix/prefix-cache, speculative, overlap, or CUDA Graph qualification.</li>
+        <li>No radix/prefix-cache, speculative, overlap, or disaggregation qualification.</li>
+        <li>Decode CUDA Graph is qualified only for the recorded page16 pure-SWA path.</li>
         <li>No claim that VMM already backs SGLang KV tensors.</li>
         <li>No multi-GPU multicast or fabric-memory claim.</li>
         <li>One H20 does not qualify other NVIDIA architectures.</li>
       </ul>
 
       <p>
-        The complete result index and source hashes are in{" "}
+        The normative levels and complete exclusions are in{" "}
+        <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>
+          the Capability Matrix
+        </a>
+        . The complete result index and source hashes are in{" "}
         <a href={`${repositoryUrl}/tree/main/results`}>results/</a>.
       </p>
     </article>

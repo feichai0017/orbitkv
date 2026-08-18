@@ -15,14 +15,25 @@ export const compilerStages = [
 ];
 
 export const metrics = [
+  { value: "−37.65%", label: "Pure-SWA Capsule", detail: "16K logical prefix restored from a fixed 1K live tail" },
+  { value: "−19.74%", label: "Hybrid Capsule", detail: "gpt-oss-20b at 16K; Full history plus 128-token SWA tail" },
   { value: "−61.696%", label: "Mistral KV", detail: "page16, 4 x 12K prompts with 19,152 physical slots" },
-  { value: "0.9855×", label: "Median runtime", detail: "decode Graph replay with identical output digests" },
   { value: "+25.81%", label: "Full capacity", detail: "real gpt-oss-20b, same 1.979 GiB KV budget" },
-  { value: "−20.30%", label: "Owner vs Stock", detail: "balanced four-way real-checkpoint ablation" },
-  { value: "−42.105%", label: "Head-stripe KV", detail: "exact multi-scale-window reduction versus max-window allocation" },
 ];
 
 export const evidenceRows = [
+  {
+    result: "Hybrid continuation",
+    value: "−19.74%",
+    contract: "gpt-oss-20b, 16K Full history + 128-token SWA tail",
+    boundary: "one H20; single request; one decode token; three paired runs",
+  },
+  {
+    result: "Pure-SWA continuation",
+    value: "−37.65%",
+    contract: "16K logical prefix restored from a fixed 1K live-state payload",
+    boundary: "TinyMistral checkpoint; one H20; three paired runs",
+  },
   {
     result: "Uniform SWA execution",
     value: "−61.696%",
@@ -62,11 +73,17 @@ export const evidenceRows = [
 ];
 
 export const roadmap = [
-  { state: "NEXT", name: "Capsule engine path", detail: "Export and hydrate SGLang KV state through the Holt catalog." },
-  { state: "THEN", name: "Graph-stable KV storage", detail: "Back real SGLang KV tensors with cost-approved VMM regions." },
+  { state: "NEXT", name: "One StatePlan artifact", detail: "Make semantics, layout, ownership, Capsule, and engine contracts consume one identity." },
+  { state: "THEN", name: "Transactional binding", detail: "Generalize prepare, physical bind or hydrate, commit, and rollback below the adapter." },
 ];
 
 export const docs = [
+  {
+    key: "00 / CAPABILITIES",
+    name: "Capability Matrix",
+    detail: "Normative L1-L5 implementation, qualification, and exclusion boundary.",
+    href: `${repositoryUrl}/blob/main/docs/capability-matrix.md`,
+  },
   {
     key: "01 / DESIGN",
     name: "End-to-end plan",
@@ -92,7 +109,13 @@ export const docs = [
     href: `${repositoryUrl}/blob/main/results/lifetime-normalization-20260817/summary.json`,
   },
   {
-    key: "05 / RECORDS",
+    key: "05 / CAPSULE",
+    name: "Hybrid Capsule crossover",
+    detail: "Full-history and SWA-tail components, including short-prefix losses and the 16K win.",
+    href: `${repositoryUrl}/tree/main/results/h20-hybrid-capsule-20260818`,
+  },
+  {
+    key: "06 / RECORDS",
     name: "Evidence index",
     detail: "Summaries, manifests, and historical runs.",
     href: `${repositoryUrl}/tree/main/results`,

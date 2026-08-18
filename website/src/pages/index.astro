@@ -27,11 +27,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div class="hero-actions">
         <a class="button primary" href={`${base}/docs/`}>Read the architecture</a>
         <a class="button quiet" href={`${base}/evidence/`}>Inspect H20 evidence</a>
+        <a class="button quiet" href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>Capability matrix ↗</a>
       </div>
       <ul class="hero-facts" aria-label="Project boundaries">
         <li>Compiler-generated block plans</li>
         <li>Proof-carrying reclamation</li>
-        <li>Cost-gated CUDA VMM</li>
+        <li>Explicit L1–L5 qualification</li>
       </ul>
     </div>
 
@@ -122,10 +123,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="section roadmap-section" id="roadmap">
     <header class="section-heading">
-      <div><p class="eyebrow">Next gates</p><h2>Move ownership closer to the GPU.</h2></div>
+      <div><p class="eyebrow">Next gates</p><h2>Make one plan own the full lifecycle.</h2></div>
       <p>
-        The next work connects VMM generations to real KV storage and broadens
-        Retention IR without weakening the in-process ownership contract.
+        The next work unifies semantic, layout, ownership, Capsule, and engine
+        identities, then moves binding transactions below the adapter.
       </p>
     </header>
     <div class="milestone-list">

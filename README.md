@@ -6,31 +6,23 @@ OrbitKV is a Rust attention-state compiler and KV block manager. It generates
 address programs, memory policies, immutable views, and proof-carrying
 reclamation. SGLang is the first external validator.
 
-## Implemented
+## Capability boundary
 
-- Retention IR for Full, Sliding, Sink+Sliding, and Same-Chunk attention.
-- `AppendOnly`, `Periodic`, `Pinned`, and `ResettableArena` address programs.
-- Per-head lifetime stripes and Retention Amplification analysis.
-- HF applicability report and executable StatePlan.
-- SGLang physical-plan optimizer and runtime contract.
-- Generation-checked ownership and two-phase reclamation.
-- Continuation Capsule schema and Holt 0.9.2 persistent prefix catalog.
-- CUDA VMM physical-slot primitive.
+OrbitKV separates compiler support, reference execution, GPU primitives,
+engine end-to-end qualification, and production qualification. The normative
+matrix is [`docs/capability-matrix.md`](docs/capability-matrix.md).
 
-Unsupported or unprovable semantics fail closed.
+Current L4 paths include pinned-SGLang Full+SWA ownership, page16 pure-SWA
+paged-periodic execution, and pure-SWA plus Full+SWA Continuation Capsule
+hydration. Sink+Sliding, Same-Chunk, and per-head lifetime normalization remain
+L2 reference-runtime capabilities. CUDA VMM remains an L3 primitive and does
+not back SGLang KV tensors.
 
 Capsule metadata is conditionally published into one Holt tree after its
 immutable, content-addressed KV payload is durable. Payloads are files rather
 than Holt values, so they are not constrained by Holt's metadata-size limit.
-
-Coverage is intentionally tiered:
-
-- Compiler/reference runtime: causal Full, fixed Sliding, Dilated Local,
-  Sink+Sliding, Same-Chunk, Full+Local hybrids, and per-layer/per-head fixed
-  windows.
-- SGLang-qualified execution: uniform SWA and Full+SWA hybrid plans.
-- Safe fallback: dynamic/content-dependent sparse attention, periodic sparse
-  globals, cross-attention, recurrent/SSM state, and unrecognized masks.
+Unsupported or unprovable semantics fail closed or fall back to unbounded Full
+state.
 
 ## Key results
 
@@ -40,6 +32,8 @@ Coverage is intentionally tiered:
 | GPT-OSS Owner vs Stock128 | -20.30% | 8×6K prompt workload |
 | Mistral KV slots | -61.696% | page16, 4×12K, same output digest |
 | Mistral median runtime | 0.9855× | decode Graph, same output digest |
+| Pure-SWA Capsule | -37.65% | 16K logical prefix, 1K live tail |
+| Hybrid Capsule | -19.74% | GPT-OSS 20B, 16K Full + 128-token SWA tail |
 | Physical-plan predictions | 4/4 | intervals 16/32/64/128 |
 | Multi-scale head KV | -42.105% | exact geometry |
 
@@ -86,13 +80,14 @@ cargo run -- compile-hf-physical-plan /path/to/config.json \
 
 The qualified SGLang paths disable radix cache, overlap, speculation, and
 disaggregation. Page16 Paged Periodic also qualifies decode CUDA Graph replay
-with eager prefill, up to four requests. Per-head, Sink+Sliding, and Same-Chunk layouts remain
-compiler/reference-manager results. VMM does not yet back SGLang KV tensors.
-Capsule persistence is engine-neutral; SGLang export and hydration are not yet
-qualified.
+with eager prefill, up to four requests. Capsule results are single-request,
+one-decode-token experiments. Hybrid host-file restore is slower than cold
+prefill at 1K and 4K, and faster at 16K. See the capability matrix for all
+levels and exclusions.
 
 See:
 
 - `docs/h20-gpt-oss-20b-real-validation-20260817.md`
+- `docs/capability-matrix.md`
 - `docs/sglang-e2e.md`
 - `results/README.md`

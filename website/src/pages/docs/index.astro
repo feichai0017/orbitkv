@@ -59,6 +59,21 @@ import { docs, repositoryUrl } from "../../data/site";
         publishes their Capsule manifests into one Holt tree. Restore validates model,
         tokenizer, adapter, StatePlan, prefix, payload, and component checksums.
       </p>
+      <p>
+        SGLang end-to-end qualification now covers compiler-proven pure-SWA
+        live tails and GPT-OSS Full+SWA components. Hybrid restore keeps the
+        complete Full history while moving only the final SWA window.
+      </p>
+
+      <h2>Capability levels</h2>
+      <p>
+        OrbitKV reports compiler, reference-runtime, GPU-primitive, engine-E2E,
+        and production qualification separately. The{" "}
+        <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>
+          Capability Matrix
+        </a>{" "}
+        is the normative boundary.
+      </p>
 
       <h2>Records</h2>
       <div class="doc-grid">
@@ -75,10 +90,11 @@ import { docs, repositoryUrl } from "../../data/site";
       <div class="doc-note">
         <strong>Boundary.</strong>
         <p>
-          SGLang ownership is qualified only for SWA ChunkCache with radix,
-          speculative decoding, overlap, disaggregation, and CUDA Graph disabled.
-          Capsule persistence is host-qualified; SGLang export and hydration are
-          not yet connected.
+          The owning SGLang paths require ChunkCache with radix, speculation,
+          overlap, and disaggregation disabled. Page16 pure SWA separately
+          qualifies decode CUDA Graph. Capsule hydration is L4 only for the
+          recorded pure-SWA and Full+SWA single-request workloads. VMM remains
+          an isolated L3 primitive.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/h20-owning-vmm-validation-20260817.md`}>
           Full owning and VMM qualification

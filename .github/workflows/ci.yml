@@ -19,6 +19,7 @@ jobs:
       - run: cargo test --locked --all-targets
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: python tools/verify_manifests.py
+      - run: python tools/verify_capability_matrix.py
       - run: python tools/verify_real_model_results.py
       - run: python tools/verify_applicability_results.py
 

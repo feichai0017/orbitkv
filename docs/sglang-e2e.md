@@ -1,5 +1,9 @@
 # SGLang End-to-End Validation
 
+Current capability levels and exclusions are maintained in
+`docs/capability-matrix.md`. This document is a chronological design and
+validation record; where status wording differs, the matrix is authoritative.
+
 ## Boundary
 
 OrbitKV is the project under test. SGLang remains an unmodified external
