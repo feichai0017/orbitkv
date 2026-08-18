@@ -2,6 +2,7 @@
 
 | Record | Scope |
 | --- | --- |
+| `h20-hybrid-capsule-20260818` | GPT-OSS Full+SWA component restore crossover |
 | `h20-live-tail-capsule-20260818` | Pure-SWA minimal-state hydration and E2E A/B |
 | `h20-capsule-export-20260818` | Real-checkpoint KV export and host restore |
 | `applicability-h20-20260817` | Qwen Full fallback, Mistral bounded state, GPT-OSS Hybrid |
@@ -24,5 +25,7 @@ Boundaries:
 - Capsule evidence covers export and host restore, not request hydration or
   TTFT improvement.
 - Live-tail Capsule hydration is qualified only for compiler-proven pure SWA.
+- Hybrid Capsule restore is beneficial only beyond the measured host-restore
+  crossover; short prefixes should use cold prefill.
 - VMM does not yet back SGLang KV tensors.
 - Every primary record includes a hash manifest.

@@ -1,0 +1,25 @@
+{
+  "claim_boundary": [
+    "real GPT-OSS 20B checkpoint and pinned SGLang revision",
+    "Full and SWA component token ranges authenticated",
+    "three paired rounds at 1K, 4K, and 16K",
+    "host-file payload backend only"
+  ],
+  "date": "2026-08-18",
+  "records": {
+    "results/h20-hybrid-capsule-20260818/README.md": "2b50fb8b0da2ec0d4a6bcc6368e437a2dd8b4a6573667356ef78b499b47370ef",
+    "results/h20-hybrid-capsule-20260818/summary.json": "a2360da96c010010ba327006046aa0ae02ace641ca95972adb8ee43ba7db4cbe"
+  },
+  "schema": "orbitkv.h20-hybrid-capsule-manifest.v1",
+  "source_commit": "06bc697277c32ea7a0405518f7ff2d955e26f2f8",
+  "sources": {
+    "examples/gpt_oss_20b_retention.json": "9b7a588dae7f03da4faa1b5965842211f08726be55468bcca4d26015e6192eba",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "dabe528042a477992dc823154eca449e83f4aa84979b07327d78fc86ce7993d9",
+    "integrations/sglang/tests/test_shadow_plugin.py": "0a4efea4fdb0a26008260ec8c8abbe08e1f1b4576226b9b153d59dbb2cad54f7",
+    "src/capsule.rs": "aa5d9ca4473bda07949e2af78d51f541a241640eb7ad49d8e7f289530c7374a4",
+    "src/holt_store.rs": "c449f75f4848a7c7a8fa550e8749e6e31c08cb547ca235485d821f3e9f4e70d3"
+  },
+  "workspace_sections": [
+    "records"
+  ]
+}
