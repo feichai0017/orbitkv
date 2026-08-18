@@ -8,9 +8,11 @@ use orbitkv::{
     ApplicabilityReport, CapsuleComponentSpec, CapsuleIdentity, CapsuleManifest, CompiledKvPlan,
     ContentDigest, HfRetentionCompilation, HfRetentionOptions, HfStatePlanOptions,
     HoltCapsuleStore, KvPlanSource, OwnerCommand, PhysicalPlanObjective, PrefixPath,
-    RetentionAnalysis, SglangOwner, SglangPhysicalOptimizationInput, SglangPhysicalPlan,
-    SglangUniformSwaOptions, UniformSwaCudaGraphMode, analyze_state, build_capsule_components,
-    compile_hf_config, compile_hf_state_plan, compile_retention_program,
+    RetentionAnalysis, RuntimeCapsuleContract, RuntimeExecutionContract, RuntimeExecutionMode,
+    RuntimeOwnerTransport, RuntimeStatePlan, RuntimeStatePlanOptions, RuntimeUniformStatePlanMode,
+    SglangOwner, SglangPhysicalOptimizationInput, SglangPhysicalPlan, SglangUniformSwaOptions,
+    UniformSwaCudaGraphMode, analyze_state, build_capsule_components, compile_hf_config,
+    compile_hf_state_plan, compile_retention_program, compile_runtime_state_plan,
     optimize_sglang_physical_plan,
     trace::{read_jsonl, summarize_sglang_trace},
 };
@@ -142,6 +144,12 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("compile-hf-state-plan") => {
             compile_hf_state_plan_command(&mut args)?;
         }
+        Some("compile-runtime-state-plan") => {
+            compile_runtime_state_plan_command(&mut args)?;
+        }
+        Some("validate-runtime-state-plan") => {
+            validate_runtime_state_plan_command(&mut args)?;
+        }
         Some("analyze-hf-applicability") => {
             analyze_hf_applicability_command(&mut args)?;
         }
@@ -172,14 +180,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             analyze_applicability_command(&mut args)?;
         }
         Some("analyze-sglang") => {
-            let plan_path = required(&mut args, "plan path")?;
-            let trace_path = required(&mut args, "trace path")?;
-            require_flag(&mut args, "--max-active-requests")?;
-            let max_active_requests = required(&mut args, "max active requests")?.parse::<u64>()?;
-            require_end(&mut args)?;
-            let plan = load_plan(plan_path)?;
-            let trace = read_jsonl(BufReader::new(File::open(trace_path)?))?;
-            write_json(&summarize_sglang_trace(&trace, &plan, max_active_requests)?)?;
+            analyze_sglang_command(&mut args)?;
         }
         Some("emit-sglang-policy") => {
             let plan_path = required(&mut args, "plan path")?;
@@ -203,7 +204,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("serve-sglang-owner") => {
             let plan_path = required(&mut args, "plan path")?;
             require_end(&mut args)?;
-            serve_sglang_owner(&load_plan(plan_path)?)?;
+            serve_sglang_owner(&load_owner_plan(plan_path)?)?;
         }
         Some("serve-capsules") => {
             let root = required(&mut args, "capsule store root")?;
@@ -222,12 +223,118 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile-hf-state-plan|compile|analyze-hf-applicability|analyze-retention|analyze-lifetime-normalization|analyze-applicability|emit-layout|emit-sglang-policy|serve-sglang-owner|serve-capsules|analyze-sglang|check-sglang> ..."
+                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile-hf-state-plan|compile-runtime-state-plan|validate-runtime-state-plan|compile|analyze-hf-applicability|analyze-retention|analyze-lifetime-normalization|analyze-applicability|emit-layout|emit-sglang-policy|serve-sglang-owner|serve-capsules|analyze-sglang|check-sglang> ..."
                     .into(),
             );
         }
     }
     Ok(())
+}
+
+fn analyze_sglang_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan_path = required(args, "plan path")?;
+    let trace_path = required(args, "trace path")?;
+    require_flag(args, "--max-active-requests")?;
+    let max_active_requests = required(args, "max active requests")?.parse::<u64>()?;
+    require_end(args)?;
+    let plan = load_plan(plan_path)?;
+    let trace = read_jsonl(BufReader::new(File::open(trace_path)?))?;
+    write_json(&summarize_sglang_trace(&trace, &plan, max_active_requests)?)
+}
+
+fn validate_runtime_state_plan_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = required(args, "runtime StatePlan path")?;
+    require_end(args)?;
+    let artifact = serde_json::from_slice::<RuntimeStatePlan>(&std::fs::read(path)?)?;
+    artifact.validate()?;
+    write_json(&artifact)
+}
+
+fn compile_runtime_state_plan_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan_path = required(args, "plan path")?;
+    let eviction_interval_tokens =
+        required_flagged_u64(args, "--eviction-interval", "eviction interval")?;
+    require_flag(args, "--execution-mode")?;
+    let execution_mode = match required(args, "execution mode")?.as_str() {
+        "policy" => RuntimeExecutionMode::Policy,
+        "owner" => RuntimeExecutionMode::Owner,
+        value => return Err(format!("unsupported execution mode {value:?}").into()),
+    };
+    require_flag(args, "--owner-transport")?;
+    let owner_transport = match required(args, "owner transport")?.as_str() {
+        "none" => None,
+        "ffi" => Some(RuntimeOwnerTransport::Ffi),
+        "sidecar" => Some(RuntimeOwnerTransport::Sidecar),
+        value => return Err(format!("unsupported owner transport {value:?}").into()),
+    };
+    require_flag(args, "--capsule-enabled")?;
+    let capsule_enabled = parse_bool(&required(args, "capsule enabled")?)?;
+    let capsule_chunk_tokens =
+        required_flagged_u64(args, "--capsule-chunk-tokens", "Capsule chunk tokens")?;
+    let capsule_maximum_payload_bytes =
+        required_flagged_u64(args, "--capsule-max-payload-bytes", "Capsule payload limit")?;
+    let mut physical_plan = None;
+    let mut uniform_state_plan = None;
+    let mut uniform_state_plan_mode = None;
+    while let Some(flag) = args.next() {
+        match flag.as_str() {
+            "--physical-plan" => {
+                let path = required(args, "physical plan path")?;
+                physical_plan = Some(serde_json::from_slice(&std::fs::read(path)?)?);
+            }
+            "--uniform-state-plan" => {
+                let path = required(args, "uniform state plan path")?;
+                uniform_state_plan = Some(serde_json::from_slice(&std::fs::read(path)?)?);
+            }
+            "--uniform-state-plan-mode" => {
+                uniform_state_plan_mode =
+                    Some(match required(args, "uniform state plan mode")?.as_str() {
+                        "execute" => RuntimeUniformStatePlanMode::Execute,
+                        "kernel_reference" => RuntimeUniformStatePlanMode::KernelReference,
+                        value => {
+                            return Err(
+                                format!("unsupported uniform state plan mode {value:?}").into()
+                            );
+                        }
+                    });
+            }
+            argument => return Err(format!("unexpected argument {argument}").into()),
+        }
+    }
+    let artifact = compile_runtime_state_plan(
+        load_source(plan_path)?,
+        RuntimeStatePlanOptions {
+            eviction_interval_tokens,
+            physical_plan,
+            uniform_state_plan,
+            execution: RuntimeExecutionContract {
+                mode: execution_mode,
+                owner_transport,
+                uniform_state_plan_mode,
+            },
+            capsule: RuntimeCapsuleContract {
+                enabled: capsule_enabled,
+                chunk_tokens: capsule_chunk_tokens,
+                maximum_payload_bytes: capsule_maximum_payload_bytes,
+            },
+        },
+    )?;
+    artifact.validate()?;
+    write_json(&artifact)
+}
+
+fn parse_bool(value: &str) -> Result<bool, Box<dyn std::error::Error>> {
+    match value {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        _ => Err(format!("expected true or false, got {value:?}").into()),
+    }
 }
 
 fn serve_capsules(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
@@ -562,6 +669,18 @@ fn load_source(path: impl AsRef<Path>) -> Result<KvPlanSource, Box<dyn std::erro
     Ok(serde_json::from_reader::<_, KvPlanSource>(BufReader::new(
         File::open(path)?,
     ))?)
+}
+
+fn load_owner_plan(path: impl AsRef<Path>) -> Result<CompiledKvPlan, Box<dyn std::error::Error>> {
+    let bytes = std::fs::read(path)?;
+    if let Ok(artifact) = serde_json::from_slice::<RuntimeStatePlan>(&bytes) {
+        artifact.validate()?;
+        if artifact.execution.mode != RuntimeExecutionMode::Owner {
+            return Err("runtime StatePlan execution mode is not owner".into());
+        }
+        return Ok(artifact.semantic_source.compile()?);
+    }
+    Ok(serde_json::from_slice::<KvPlanSource>(&bytes)?.compile()?)
 }
 
 fn check_sglang(root: &Path) -> Result<SglangContractReport, Box<dyn std::error::Error>> {

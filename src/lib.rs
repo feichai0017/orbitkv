@@ -9,6 +9,7 @@ pub mod plan;
 pub mod retention;
 pub mod runtime;
 pub mod sglang_owner;
+pub mod state_plan;
 pub mod trace;
 
 pub use capsule::{
@@ -49,5 +50,10 @@ pub use runtime::{
 pub use sglang_owner::{
     CacheKind, OwnerCommand, OwnerError, OwnerResponse, OwnerStats, SglangExecutionProof,
     SglangOwner, SglangRetirementCertificate, SglangSemanticProof,
+};
+pub use state_plan::{
+    RuntimeCapsuleContract, RuntimeExecutionContract, RuntimeExecutionMode, RuntimeOwnerTransport,
+    RuntimeStatePlan, RuntimeStatePlanError, RuntimeStatePlanOptions, RuntimeUniformStatePlanMode,
+    compile_runtime_state_plan,
 };
 pub use trace::{SglangTraceEvent, TraceError, TraceSummary, summarize_sglang_trace};

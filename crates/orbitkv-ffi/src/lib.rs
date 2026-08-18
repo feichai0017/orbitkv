@@ -4,8 +4,8 @@ use std::slice;
 use std::sync::Mutex;
 
 use orbitkv::{
-    CacheKind, KvPlanSource, OwnerCommand, OwnerResponse, SglangExecutionProof, SglangOwner,
-    SglangSemanticProof,
+    CacheKind, KvPlanSource, OwnerCommand, OwnerResponse, RuntimeExecutionMode, RuntimeStatePlan,
+    SglangExecutionProof, SglangOwner, SglangSemanticProof,
 };
 
 pub const ORBITKV_OWNER_ABI_VERSION: u32 = 1;
@@ -52,7 +52,7 @@ pub extern "C" fn orbitkv_owner_abi_version() -> u32 {
     ORBITKV_OWNER_ABI_VERSION
 }
 
-/// Creates an owner from a UTF-8 JSON retention plan.
+/// Creates an owner from a UTF-8 JSON runtime `StatePlan` or legacy retention plan.
 ///
 /// # Safety
 ///
@@ -78,15 +78,31 @@ pub unsafe extern "C" fn orbitkv_owner_create(
             out_owner.write(std::ptr::null_mut());
         }
         let bytes = unsafe { slice::from_raw_parts(plan_json, plan_json_len) };
-        let source = serde_json::from_slice::<KvPlanSource>(bytes).map_err(|error| {
-            (
-                ORBITKV_STATUS_INVALID_ARGUMENT,
-                format!("invalid retention plan JSON: {error}"),
-            )
-        })?;
-        let plan = source
-            .compile()
-            .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?;
+        let plan = if let Ok(artifact) = serde_json::from_slice::<RuntimeStatePlan>(bytes) {
+            artifact
+                .validate()
+                .map_err(|error| (ORBITKV_STATUS_INVALID_ARGUMENT, error.to_string()))?;
+            if artifact.execution.mode != RuntimeExecutionMode::Owner {
+                return Err((
+                    ORBITKV_STATUS_INVALID_ARGUMENT,
+                    "runtime StatePlan execution mode is not owner".to_owned(),
+                ));
+            }
+            artifact
+                .semantic_source
+                .compile()
+                .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?
+        } else {
+            let source = serde_json::from_slice::<KvPlanSource>(bytes).map_err(|error| {
+                (
+                    ORBITKV_STATUS_INVALID_ARGUMENT,
+                    format!("invalid runtime StatePlan or retention plan JSON: {error}"),
+                )
+            })?;
+            source
+                .compile()
+                .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?
+        };
         let owner = SglangOwner::new(&plan)
             .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?;
         let handle = Box::new(OrbitKvOwnerHandle {
@@ -449,6 +465,12 @@ unsafe fn clear_error(error_buffer: *mut c_char, error_buffer_len: usize) {
 
 #[cfg(test)]
 mod tests {
+    use orbitkv::{
+        KvClassSpec, KvPlanInput, RetentionKind, RuntimeCapsuleContract, RuntimeExecutionContract,
+        RuntimeExecutionMode, RuntimeOwnerTransport, RuntimeStatePlanOptions,
+        compile_runtime_state_plan,
+    };
+
     use super::*;
 
     const PLAN: &[u8] = br#"{
@@ -579,6 +601,66 @@ mod tests {
         );
         assert!(handle.is_null());
         assert_ne!(error[0], 0);
+    }
+
+    #[test]
+    fn owner_accepts_the_unified_runtime_state_plan() {
+        let artifact = compile_runtime_state_plan(
+            KvPlanSource::Legacy(KvPlanInput {
+                page_tokens: 16,
+                classes: vec![
+                    KvClassSpec {
+                        name: "full".into(),
+                        layers: vec![0],
+                        retention: RetentionKind::Full,
+                        bytes_per_token_per_layer: 128,
+                        window_tokens: None,
+                    },
+                    KvClassSpec {
+                        name: "swa".into(),
+                        layers: vec![1],
+                        retention: RetentionKind::Sliding,
+                        bytes_per_token_per_layer: 128,
+                        window_tokens: Some(32),
+                    },
+                ],
+            }),
+            RuntimeStatePlanOptions {
+                eviction_interval_tokens: 16,
+                physical_plan: None,
+                uniform_state_plan: None,
+                execution: RuntimeExecutionContract {
+                    mode: RuntimeExecutionMode::Owner,
+                    owner_transport: Some(RuntimeOwnerTransport::Ffi),
+                    uniform_state_plan_mode: None,
+                },
+                capsule: RuntimeCapsuleContract {
+                    enabled: true,
+                    chunk_tokens: 16,
+                    maximum_payload_bytes: 1 << 20,
+                },
+            },
+        )
+        .unwrap();
+        let bytes = serde_json::to_vec(&artifact).unwrap();
+        let mut handle = std::ptr::null_mut();
+        let mut error = [0_i8; 256];
+        assert_eq!(
+            unsafe {
+                orbitkv_owner_create(
+                    bytes.as_ptr(),
+                    bytes.len(),
+                    &raw mut handle,
+                    error.as_mut_ptr(),
+                    error.len(),
+                )
+            },
+            ORBITKV_STATUS_OK
+        );
+        assert!(!handle.is_null());
+        unsafe {
+            orbitkv_owner_destroy(handle);
+        }
     }
 
     #[test]

@@ -26,6 +26,7 @@ result summaries link here rather than defining independent support claims.
 | Same-Chunk retention | L2 | `ResettableArena`; epoch retirement in reference runtime | `results/chunked-local-20260817/` |
 | Per-head fixed windows | L2 | Lifetime-normalized stripes and exact Retention Amplification | `results/lifetime-normalization-20260817/` |
 | HF Full/SWA frontend | L4 | Explicit layer types and allowlisted uniform SWA; unknown semantics fall back to Full | `results/applicability-h20-20260817/` |
+| Unified runtime StatePlan artifact | L4 | One fingerprinted JSON drives semantic source, layout, SGLang policy, owner mode, and Capsule limits; deployment paths remain external | `tests/retention_cli.rs`, `integrations/sglang/tests/test_shadow_plugin.py` |
 | SGLang physical-plan optimizer | L4 | Non-overlap Full+SWA ChunkCache; one Full domain and one Sliding domain | `results/h20-gpt-oss-20b-real-20260817/` |
 | Proof-carrying reclamation | L4 | Non-overlap SGLang ChunkCache; FFI owner; radix/speculation/disaggregation disabled | `results/owner-ffi-20260817/`, `results/h20-gpt-oss-20b-real-20260817/` |
 | Paged-periodic pure SWA | L4 | Mistral, page size 16, eager prefill; decode CUDA Graph qualified | `results/applicability-h20-20260817/page16-graph-manifest.json` |
@@ -40,7 +41,7 @@ result summaries link here rather than defining independent support claims.
 
 The following remain below L4:
 
-- One unified StatePlan artifact for semantics, layout, ownership, Capsule, and engine policy.
+- One runtime resource manifest for deployment paths, model identity, and external service endpoints.
 - Radix/Prefix component-aware ownership and shared-page lifecycle.
 - Overlap scheduling and real multi-stream CUDA-event execution frontiers.
 - Speculative decoding, fork, rollback, beam/tree state, and COW.

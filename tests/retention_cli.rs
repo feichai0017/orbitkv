@@ -38,6 +38,53 @@ fn legacy_and_retention_frontends_emit_identical_artifacts() {
 }
 
 #[test]
+fn runtime_state_plan_is_one_validated_owner_artifact() {
+    let plan = root().join("examples/gpt_oss_hybrid_tiny.json");
+    let artifact = run(&[
+        "compile-runtime-state-plan",
+        plan.to_str().unwrap(),
+        "--eviction-interval",
+        "32",
+        "--execution-mode",
+        "owner",
+        "--owner-transport",
+        "ffi",
+        "--capsule-enabled",
+        "true",
+        "--capsule-chunk-tokens",
+        "128",
+        "--capsule-max-payload-bytes",
+        "1073741824",
+    ]);
+    assert_eq!(artifact["schema"], "orbitkv.runtime-state-plan.v1");
+    assert_eq!(artifact["execution"]["mode"], "owner");
+    assert_eq!(artifact["execution"]["owner_transport"], "ffi");
+    assert_eq!(artifact["capsule"]["enabled"], true);
+    assert_eq!(
+        artifact["plan_fingerprint"],
+        artifact["layout"]["plan_fingerprint"]
+    );
+    assert_eq!(
+        artifact["plan_fingerprint"],
+        artifact["sglang_policy"]["plan_fingerprint"]
+    );
+    assert!(
+        artifact["artifact_fingerprint"]
+            .as_str()
+            .unwrap()
+            .starts_with("sha256:")
+    );
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("runtime-state-plan.json");
+    std::fs::write(&path, serde_json::to_vec(&artifact).unwrap()).unwrap();
+    assert_eq!(
+        run(&["validate-runtime-state-plan", path.to_str().unwrap()]),
+        artifact
+    );
+}
+
+#[test]
 fn retention_analysis_reports_derived_window_and_address() {
     let retention = root().join("examples/full_swa_retention.json");
     let report = run(&["analyze-retention", retention.to_str().unwrap()]);

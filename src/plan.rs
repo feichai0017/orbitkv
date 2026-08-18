@@ -35,7 +35,7 @@ pub struct KvPlanInput {
     pub classes: Vec<KvClassSpec>,
 }
 
-#[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(untagged)]
 pub enum KvPlanSource {
     Retention(RetentionProgramInput),

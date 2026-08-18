@@ -62,6 +62,17 @@ cargo run -- compile-hf-state-plan /path/to/config.json \
   --cuda-graph-mode disabled
 ```
 
+Unified runtime artifact:
+
+```bash
+cargo run -- compile-runtime-state-plan examples/gpt_oss_20b_retention.json \
+  --eviction-interval 32 \
+  --execution-mode owner --owner-transport ffi \
+  --capsule-enabled true --capsule-chunk-tokens 128 \
+  --capsule-max-payload-bytes 1073741824 \
+  > runtime-state-plan.json
+```
+
 Physical-plan compilation:
 
 ```bash

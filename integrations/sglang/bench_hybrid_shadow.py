@@ -101,6 +101,7 @@ def main() -> None:
     parser.add_argument("--plan", default=str(DEFAULT_PLAN_PATH))
     parser.add_argument("--physical-plan")
     parser.add_argument("--state-plan")
+    parser.add_argument("--runtime-state-plan")
     parser.add_argument("--requests", type=int, default=8)
     parser.add_argument("--max-running-requests", type=int, default=None)
     parser.add_argument("--prompt-tokens", type=int, default=2048)
@@ -144,6 +145,11 @@ def main() -> None:
     model_path = Path(args.model).resolve()
     plan_path = Path(args.plan).resolve()
     max_running_requests = args.max_running_requests or args.requests
+    runtime_state_plan = (
+        json.loads(Path(args.runtime_state_plan).read_text(encoding="utf-8"))
+        if args.runtime_state_plan
+        else None
+    )
 
     if args.mode in ("stock", "native_policy"):
         os.environ.pop("SGLANG_PLUGINS", None)
@@ -155,6 +161,7 @@ def main() -> None:
             os.environ.pop("SGLANG_SWA_EVICTION_INTERVAL", None)
         os.environ.pop("ORBITKV_TRACE_PATH", None)
         os.environ.pop("ORBITKV_SGLANG_POLICY", None)
+        os.environ.pop("ORBITKV_RUNTIME_STATE_PLAN", None)
         os.environ.pop("ORBITKV_SGLANG_PHYSICAL_PLAN", None)
         os.environ.pop("ORBITKV_SGLANG_STATE_PLAN", None)
         os.environ.pop("ORBITKV_SGLANG_STATE_PLAN_MODE", None)
@@ -173,7 +180,24 @@ def main() -> None:
         os.environ["SGLANG_PLUGINS"] = "orbitkv_shadow"
         os.environ["ORBITKV_TRACE_PATH"] = args.trace
         os.environ["ORBITKV_BIN"] = args.orbitkv_bin
-        if args.mode in ("kernel_reference", "state_plan") or args.state_plan:
+        if args.runtime_state_plan:
+            os.environ["ORBITKV_RUNTIME_STATE_PLAN"] = str(
+                Path(args.runtime_state_plan).resolve()
+            )
+            for name in (
+                "ORBITKV_SGLANG_POLICY",
+                "ORBITKV_SGLANG_PHYSICAL_PLAN",
+                "ORBITKV_SGLANG_STATE_PLAN",
+                "ORBITKV_SGLANG_STATE_PLAN_MODE",
+                "ORBITKV_SGLANG_EVICTION_INTERVAL",
+                "ORBITKV_SGLANG_OWNING",
+                "ORBITKV_OWNER_TRANSPORT",
+                "ORBITKV_CAPSULE_CHUNK_TOKENS",
+                "ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES",
+            ):
+                os.environ.pop(name, None)
+        elif args.mode in ("kernel_reference", "state_plan") or args.state_plan:
+            os.environ.pop("ORBITKV_RUNTIME_STATE_PLAN", None)
             if not args.state_plan:
                 raise ValueError(
                     "--state-plan is required in kernel_reference/state_plan mode"
@@ -187,6 +211,7 @@ def main() -> None:
                 else "execute"
             )
         else:
+            os.environ.pop("ORBITKV_RUNTIME_STATE_PLAN", None)
             os.environ.pop("ORBITKV_SGLANG_STATE_PLAN", None)
             os.environ.pop("ORBITKV_SGLANG_STATE_PLAN_MODE", None)
         os.environ["ORBITKV_TRACE_ALLOCATIONS"] = (
@@ -199,18 +224,27 @@ def main() -> None:
                 Path(args.capsule_store).resolve()
             )
             os.environ["ORBITKV_CAPSULE_IDENTITY"] = args.capsule_identity
-            os.environ["ORBITKV_CAPSULE_CHUNK_TOKENS"] = str(
-                args.capsule_chunk_tokens
-            )
-            os.environ["ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES"] = str(
-                args.capsule_max_payload_bytes
-            )
+            if not args.runtime_state_plan:
+                os.environ["ORBITKV_CAPSULE_CHUNK_TOKENS"] = str(
+                    args.capsule_chunk_tokens
+                )
+                os.environ["ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES"] = str(
+                    args.capsule_max_payload_bytes
+                )
         else:
             os.environ.pop("ORBITKV_CAPSULE_STORE", None)
             os.environ.pop("ORBITKV_CAPSULE_IDENTITY", None)
             os.environ.pop("ORBITKV_CAPSULE_CHUNK_TOKENS", None)
             os.environ.pop("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES", None)
-        if args.mode in ("policy", "owner"):
+        if args.runtime_state_plan:
+            runtime_owner_transport = runtime_state_plan["execution"].get(
+                "owner_transport"
+            )
+            if runtime_owner_transport == "ffi":
+                os.environ["ORBITKV_OWNER_LIB"] = args.orbitkv_owner_lib
+            else:
+                os.environ.pop("ORBITKV_OWNER_LIB", None)
+        elif args.mode in ("policy", "owner"):
             os.environ["ORBITKV_SGLANG_POLICY"] = str(plan_path)
             if args.physical_plan:
                 os.environ["ORBITKV_SGLANG_PHYSICAL_PLAN"] = str(
@@ -326,6 +360,17 @@ def main() -> None:
             "physical_plan": physical_plan,
             "state_plan": (
                 str(Path(args.state_plan).resolve()) if args.state_plan else None
+            ),
+            "runtime_state_plan": (
+                {
+                    "path": str(Path(args.runtime_state_plan).resolve()),
+                    "artifact_fingerprint": runtime_state_plan[
+                        "artifact_fingerprint"
+                    ],
+                    "plan_fingerprint": runtime_state_plan["plan_fingerprint"],
+                }
+                if runtime_state_plan is not None
+                else None
             ),
             "cuda_graph_mode": args.cuda_graph_mode,
             "engine_args": engine_args,

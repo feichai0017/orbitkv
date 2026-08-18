@@ -500,6 +500,74 @@ def _load_hook_registry(sglang_root: Path):
 
 
 class ShadowPluginTests(unittest.TestCase):
+    def test_runtime_state_plan_is_the_single_plugin_contract(self):
+        from orbitkv_sglang import plugin
+
+        orbitkv_bin = os.environ.get("ORBITKV_BIN")
+        if not orbitkv_bin:
+            self.skipTest("ORBITKV_BIN is required")
+        root = Path(__file__).resolve().parents[3]
+        plan = root / "examples/gpt_oss_hybrid_tiny.json"
+        artifact = json.loads(
+            subprocess.check_output(
+                [
+                    orbitkv_bin,
+                    "compile-runtime-state-plan",
+                    str(plan),
+                    "--eviction-interval",
+                    "32",
+                    "--execution-mode",
+                    "owner",
+                    "--owner-transport",
+                    "ffi",
+                    "--capsule-enabled",
+                    "true",
+                    "--capsule-chunk-tokens",
+                    "128",
+                    "--capsule-max-payload-bytes",
+                    "1073741824",
+                ],
+                text=True,
+            )
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "runtime-state-plan.json"
+            path.write_text(json.dumps(artifact), encoding="utf-8")
+            old_runtime = os.environ.get("ORBITKV_RUNTIME_STATE_PLAN")
+            old_policy = os.environ.get("ORBITKV_SGLANG_POLICY")
+            old_bin = os.environ.get("ORBITKV_BIN")
+            old_loaded = plugin._RUNTIME_STATE_PLAN
+            try:
+                os.environ["ORBITKV_BIN"] = orbitkv_bin
+                os.environ["ORBITKV_RUNTIME_STATE_PLAN"] = str(path)
+                os.environ.pop("ORBITKV_SGLANG_POLICY", None)
+                loaded = plugin._load_runtime_state_plan()
+                plugin._RUNTIME_STATE_PLAN = loaded
+                self.assertEqual(
+                    loaded["artifact_fingerprint"],
+                    artifact["artifact_fingerprint"],
+                )
+                self.assertTrue(plugin._owner_enabled())
+                self.assertEqual(plugin._owner_transport(), "ffi")
+                self.assertTrue(plugin._capsules_enabled())
+                self.assertEqual(plugin._capsule_chunk_tokens(), 128)
+                self.assertEqual(plugin._capsule_payload_limit(), 1073741824)
+
+                os.environ["ORBITKV_SGLANG_POLICY"] = str(plan)
+                with self.assertRaisesRegex(RuntimeError, "conflicts with legacy"):
+                    plugin._load_runtime_state_plan()
+            finally:
+                plugin._RUNTIME_STATE_PLAN = old_loaded
+                for name, value in (
+                    ("ORBITKV_RUNTIME_STATE_PLAN", old_runtime),
+                    ("ORBITKV_SGLANG_POLICY", old_policy),
+                    ("ORBITKV_BIN", old_bin),
+                ):
+                    if value is None:
+                        os.environ.pop(name, None)
+                    else:
+                        os.environ[name] = value
+
     def test_decode_graph_contract_validates_runtime_and_records_replay(self):
         from orbitkv_sglang import plugin
 

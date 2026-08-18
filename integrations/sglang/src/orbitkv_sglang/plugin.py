@@ -19,6 +19,7 @@ _WRITER: threading.Thread | None = None
 _POLICY: dict[str, Any] | None = None
 _PHYSICAL_PLAN: dict[str, Any] | None = None
 _STATE_PLAN: dict[str, Any] | None = None
+_RUNTIME_STATE_PLAN: dict[str, Any] | None = None
 _UNIFORM_SWA_CONTRACT: dict[str, Any] | None = None
 _STATE_PLAN_MODE: str | None = None
 _OWNER: "OwnerClient | None" = None
@@ -410,10 +411,17 @@ class FfiOwnerClient(OwnerClient):
 
 
 def _owner_transport() -> str:
+    if _RUNTIME_STATE_PLAN is not None:
+        transport = _RUNTIME_STATE_PLAN["execution"].get("owner_transport")
+        if transport is None:
+            raise RuntimeError("OrbitKV runtime StatePlan has no owner transport")
+        return str(transport)
     return os.environ.get("ORBITKV_OWNER_TRANSPORT", "ffi").lower()
 
 
 def _owner_enabled() -> bool:
+    if _RUNTIME_STATE_PLAN is not None:
+        return _RUNTIME_STATE_PLAN["execution"]["mode"] == "owner"
     return os.environ.get("ORBITKV_SGLANG_OWNING", "0").lower() in (
         "1",
         "true",
@@ -422,6 +430,8 @@ def _owner_enabled() -> bool:
 
 
 def _capsules_enabled() -> bool:
+    if _RUNTIME_STATE_PLAN is not None:
+        return bool(_RUNTIME_STATE_PLAN["capsule"]["enabled"])
     return "ORBITKV_CAPSULE_STORE" in os.environ
 
 
@@ -455,11 +465,22 @@ def _capsule_identity() -> dict[str, Any]:
             if len(decoded) != 32:
                 raise RuntimeError(f"OrbitKV Capsule {field} must be SHA-256")
             identity[field] = list(decoded)
+    if _RUNTIME_STATE_PLAN is not None:
+        expected = _RUNTIME_STATE_PLAN["artifact_fingerprint"]
+        expected_bytes = bytes.fromhex(str(expected).removeprefix("sha256:"))
+        if bytes(identity["state_plan_fingerprint"]) != expected_bytes:
+            raise RuntimeError(
+                "OrbitKV Capsule identity does not match the runtime StatePlan"
+            )
     return identity
 
 
 def _capsule_chunk_tokens() -> int:
-    chunk_tokens = int(os.environ.get("ORBITKV_CAPSULE_CHUNK_TOKENS", "256"))
+    chunk_tokens = int(
+        _RUNTIME_STATE_PLAN["capsule"]["chunk_tokens"]
+        if _RUNTIME_STATE_PLAN is not None
+        else os.environ.get("ORBITKV_CAPSULE_CHUNK_TOKENS", "256")
+    )
     if chunk_tokens <= 0:
         raise RuntimeError("ORBITKV_CAPSULE_CHUNK_TOKENS must be positive")
     return chunk_tokens
@@ -509,7 +530,11 @@ def _decode_capsule_payload(payload: bytes) -> Any:
 
 def _capsule_payload_limit() -> int:
     maximum_payload = int(
-        os.environ.get("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES", str(64 * 1024 * 1024))
+        _RUNTIME_STATE_PLAN["capsule"]["maximum_payload_bytes"]
+        if _RUNTIME_STATE_PLAN is not None
+        else os.environ.get(
+            "ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES", str(64 * 1024 * 1024)
+        )
     )
     if maximum_payload <= 0:
         raise RuntimeError("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES must be positive")
@@ -1221,6 +1246,32 @@ def _load_policy() -> dict[str, Any] | None:
     physical_plan_path = os.environ.get("ORBITKV_SGLANG_PHYSICAL_PLAN")
     if physical_plan_path:
         artifact = json.loads(Path(physical_plan_path).read_text(encoding="utf-8"))
+        return _load_physical_plan_value(artifact)
+
+    _PHYSICAL_PLAN = None
+    plan_path = os.environ.get("ORBITKV_SGLANG_POLICY")
+    if not plan_path:
+        return None
+    orbitkv_bin = os.environ.get("ORBITKV_BIN", "orbitkv")
+    command = [orbitkv_bin, "emit-sglang-policy", plan_path]
+    if eviction_interval := os.environ.get("ORBITKV_SGLANG_EVICTION_INTERVAL"):
+        command.extend(["--eviction-interval", eviction_interval])
+    completed = subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    policy = json.loads(completed.stdout)
+    if policy.get("schema") != "orbitkv.sglang-policy.v1":
+        raise ValueError(f"unsupported OrbitKV SGLang policy: {policy!r}")
+    return policy
+
+
+def _load_physical_plan_value(artifact: dict[str, Any]) -> dict[str, Any]:
+    global _PHYSICAL_PLAN
+
+    if artifact:
         if artifact.get("schema") != "orbitkv.hf-physical-compilation.v1":
             raise ValueError(f"unsupported OrbitKV physical artifact: {artifact!r}")
         physical_plan = artifact.get("physical_plan")
@@ -1264,25 +1315,47 @@ def _load_policy() -> dict[str, Any] | None:
                 )
         _PHYSICAL_PLAN = physical_plan
         return policy
+    raise ValueError("OrbitKV physical artifact is missing")
 
-    _PHYSICAL_PLAN = None
-    plan_path = os.environ.get("ORBITKV_SGLANG_POLICY")
-    if not plan_path:
+
+def _load_runtime_state_plan() -> dict[str, Any] | None:
+    path = os.environ.get("ORBITKV_RUNTIME_STATE_PLAN")
+    if not path:
         return None
-    orbitkv_bin = os.environ.get("ORBITKV_BIN", "orbitkv")
-    command = [orbitkv_bin, "emit-sglang-policy", plan_path]
-    if eviction_interval := os.environ.get("ORBITKV_SGLANG_EVICTION_INTERVAL"):
-        command.extend(["--eviction-interval", eviction_interval])
+    conflicts = [
+        name
+        for name in (
+            "ORBITKV_SGLANG_POLICY",
+            "ORBITKV_SGLANG_PHYSICAL_PLAN",
+            "ORBITKV_SGLANG_STATE_PLAN",
+            "ORBITKV_SGLANG_STATE_PLAN_MODE",
+            "ORBITKV_SGLANG_EVICTION_INTERVAL",
+            "ORBITKV_SGLANG_OWNING",
+            "ORBITKV_OWNER_TRANSPORT",
+            "ORBITKV_CAPSULE_CHUNK_TOKENS",
+            "ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES",
+        )
+        if name in os.environ
+    ]
+    if conflicts:
+        raise RuntimeError(
+            "ORBITKV_RUNTIME_STATE_PLAN conflicts with legacy runtime settings: "
+            + ", ".join(conflicts)
+        )
     completed = subprocess.run(
-        command,
+        [
+            os.environ.get("ORBITKV_BIN", "orbitkv"),
+            "validate-runtime-state-plan",
+            str(Path(path).resolve()),
+        ],
         check=True,
         capture_output=True,
         text=True,
     )
-    policy = json.loads(completed.stdout)
-    if policy.get("schema") != "orbitkv.sglang-policy.v1":
-        raise ValueError(f"unsupported OrbitKV SGLang policy: {policy!r}")
-    return policy
+    artifact = json.loads(completed.stdout)
+    if artifact.get("schema") != "orbitkv.runtime-state-plan.v1":
+        raise RuntimeError("OrbitKV runtime StatePlan schema is unsupported")
+    return artifact
 
 
 def _load_state_plan() -> dict[str, Any] | None:
@@ -1294,9 +1367,18 @@ def _load_state_plan() -> dict[str, Any] | None:
         _UNIFORM_SWA_CONTRACT = None
         return None
     mode = os.environ.get("ORBITKV_SGLANG_STATE_PLAN_MODE", "execute")
+    artifact = json.loads(Path(path).read_text(encoding="utf-8"))
+    return _load_state_plan_value(artifact, mode)
+
+
+def _load_state_plan_value(
+    artifact: dict[str, Any],
+    mode: str,
+) -> dict[str, Any]:
+    global _STATE_PLAN_MODE, _UNIFORM_SWA_CONTRACT
+
     if mode not in ("execute", "kernel_reference"):
         raise ValueError(f"unsupported OrbitKV state-plan mode: {mode!r}")
-    artifact = json.loads(Path(path).read_text(encoding="utf-8"))
     if artifact.get("schema") != "orbitkv.hf-state-plan.v4":
         raise ValueError(f"unsupported OrbitKV state plan: {artifact!r}")
     lowering = artifact.get("sglang_lowering")
@@ -2024,12 +2106,43 @@ def _emit_owner_certificate(certificate: dict[str, Any]) -> None:
 
 
 def register() -> None:
-    global _CAPSULES, _OWNER, _POLICY, _STATE_PLAN, _WRITER
+    global _CAPSULES, _OWNER, _PHYSICAL_PLAN, _POLICY, _RUNTIME_STATE_PLAN
+    global _STATE_PLAN, _STATE_PLAN_MODE, _UNIFORM_SWA_CONTRACT, _WRITER
 
     from sglang.srt.plugins.hook_registry import HookRegistry, HookType
 
-    _STATE_PLAN = _load_state_plan()
-    _POLICY = _load_policy()
+    _RUNTIME_STATE_PLAN = _load_runtime_state_plan()
+    if _RUNTIME_STATE_PLAN is None:
+        _STATE_PLAN = _load_state_plan()
+        _POLICY = _load_policy()
+        owner_plan_path = os.environ.get("ORBITKV_SGLANG_POLICY")
+    else:
+        embedded_uniform = _RUNTIME_STATE_PLAN.get("uniform_state_plan")
+        uniform_mode = _RUNTIME_STATE_PLAN["execution"].get(
+            "uniform_state_plan_mode"
+        )
+        if embedded_uniform is None:
+            _STATE_PLAN = None
+            _STATE_PLAN_MODE = None
+            _UNIFORM_SWA_CONTRACT = None
+        else:
+            _STATE_PLAN = _load_state_plan_value(
+                embedded_uniform,
+                str(uniform_mode or "execute"),
+            )
+        embedded_physical = _RUNTIME_STATE_PLAN.get("physical_plan")
+        if embedded_physical is None:
+            _PHYSICAL_PLAN = None
+            _POLICY = _RUNTIME_STATE_PLAN["sglang_policy"]
+        else:
+            _POLICY = _load_physical_plan_value(embedded_physical)
+        if (
+            _POLICY.get("schema") != "orbitkv.sglang-policy.v1"
+            or _POLICY.get("plan_fingerprint")
+            != _RUNTIME_STATE_PLAN.get("plan_fingerprint")
+        ):
+            raise RuntimeError("OrbitKV runtime StatePlan policy is invalid")
+        owner_plan_path = os.environ["ORBITKV_RUNTIME_STATE_PLAN"]
     if _POLICY is not None:
         if (
             _UNIFORM_SWA_CONTRACT is not None
@@ -2048,6 +2161,11 @@ def register() -> None:
             raise RuntimeError(
                 "OrbitKV Capsule export currently requires owning mode"
             )
+        if "ORBITKV_CAPSULE_STORE" not in os.environ:
+            raise RuntimeError(
+                "ORBITKV_CAPSULE_STORE is required by the runtime StatePlan"
+            )
+        _capsule_identity()
         atexit.register(_stop_capsules)
 
     if _owner_enabled():
@@ -2066,13 +2184,13 @@ def register() -> None:
                 )
             _OWNER = FfiOwnerClient(
                 library_path,
-                os.environ["ORBITKV_SGLANG_POLICY"],
+                owner_plan_path,
                 _POLICY,
             )
         elif transport == "sidecar":
             _OWNER = SidecarOwnerClient(
                 os.environ.get("ORBITKV_BIN", "orbitkv"),
-                os.environ["ORBITKV_SGLANG_POLICY"],
+                owner_plan_path,
             )
         else:
             raise RuntimeError(
@@ -2205,6 +2323,11 @@ def register() -> None:
                 "sglang_expected_revision": os.environ.get(
                     "ORBITKV_SGLANG_REVISION",
                     "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+                ),
+                "runtime_state_plan_fingerprint": (
+                    _RUNTIME_STATE_PLAN.get("artifact_fingerprint")
+                    if _RUNTIME_STATE_PLAN is not None
+                    else None
                 ),
                 "policy": _POLICY,
             }
