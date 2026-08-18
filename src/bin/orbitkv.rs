@@ -250,6 +250,7 @@ fn serve_capsules(root: &Path) -> Result<(), Box<dyn std::error::Error>> {
         stdout.write_all(b"\n")?;
         stdout.flush()?;
     }
+    store.checkpoint()?;
     Ok(())
 }
 
@@ -307,12 +308,12 @@ fn execute_capsule_command_inner(
             token_ids,
         } => {
             let path = PrefixPath::from_token_ids(identity, chunk_tokens, &token_ids)?;
-            let Some(restored) = store.restore_deepest(&path)? else {
+            let Some((_, manifest)) = store.lookup_deepest(&path)? else {
                 return Ok(CapsuleResponse::Miss);
             };
-            let payload_path = capsule_payload_path(root, restored.manifest.payload_digest);
+            let payload_path = capsule_payload_path(root, manifest.payload_digest);
             Ok(CapsuleResponse::Restored {
-                manifest: Box::new(restored.manifest),
+                manifest: Box::new(manifest),
                 payload_path: payload_path.display().to_string(),
             })
         }

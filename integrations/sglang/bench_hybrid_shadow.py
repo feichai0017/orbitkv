@@ -105,6 +105,8 @@ def main() -> None:
     parser.add_argument("--max-running-requests", type=int, default=None)
     parser.add_argument("--prompt-tokens", type=int, default=2048)
     parser.add_argument("--decode-tokens", type=int, default=128)
+    parser.add_argument("--continuation-suffix-token", type=int)
+    parser.add_argument("--skip-seed", action="store_true")
     parser.add_argument("--iterations", type=int, default=3)
     parser.add_argument("--max-total-tokens", type=int, default=65536)
     parser.add_argument("--mem-fraction-static", type=float, default=None)
@@ -171,7 +173,7 @@ def main() -> None:
         os.environ["SGLANG_PLUGINS"] = "orbitkv_shadow"
         os.environ["ORBITKV_TRACE_PATH"] = args.trace
         os.environ["ORBITKV_BIN"] = args.orbitkv_bin
-        if args.mode in ("kernel_reference", "state_plan"):
+        if args.mode in ("kernel_reference", "state_plan") or args.state_plan:
             if not args.state_plan:
                 raise ValueError(
                     "--state-plan is required in kernel_reference/state_plan mode"
@@ -274,6 +276,11 @@ def main() -> None:
         for request in range(args.requests)
     ]
     sampling = {"temperature": 0, "max_new_tokens": args.decode_tokens}
+    continuation_prompts = None
+    if args.continuation_suffix_token is not None:
+        continuation_prompts = [
+            [*prompt, args.continuation_suffix_token] for prompt in prompts
+        ]
     physical_plan = None
     if args.physical_plan:
         physical_plan = json.loads(
@@ -288,9 +295,25 @@ def main() -> None:
         after_load = gpu_snapshot()
         iteration_seconds = []
         outputs = []
+        seed_seconds = None
+        seed_outputs = None
+        if continuation_prompts is not None and not args.skip_seed:
+            seed_started = time.perf_counter()
+            seed_outputs = engine.generate(
+                input_ids=prompts,
+                sampling_params={"temperature": 0, "max_new_tokens": 1},
+            )
+            seed_seconds = time.perf_counter() - seed_started
         for _ in range(args.iterations):
             iteration_started = time.perf_counter()
-            outputs = engine.generate(input_ids=prompts, sampling_params=sampling)
+            outputs = engine.generate(
+                input_ids=(
+                    continuation_prompts
+                    if continuation_prompts is not None
+                    else prompts
+                ),
+                sampling_params=sampling,
+            )
             iteration_seconds.append(time.perf_counter() - iteration_started)
         after_workload = gpu_snapshot()
         result = {
@@ -311,6 +334,14 @@ def main() -> None:
             "prompt_tokens": args.prompt_tokens,
             "decode_tokens": args.decode_tokens,
             "iterations": args.iterations,
+            "workload": (
+                "continuation" if continuation_prompts is not None else "standard"
+            ),
+            "continuation_suffix_token": args.continuation_suffix_token,
+            "seed_seconds": seed_seconds,
+            "seed_output_digest": (
+                token_digest(seed_outputs) if seed_outputs is not None else None
+            ),
             "eviction_interval": (
                 args.eviction_interval
                 if args.mode in ("native_policy", "policy", "owner")
@@ -330,6 +361,9 @@ def main() -> None:
             ],
             "request_e2e_seconds": [
                 output["meta_info"].get("e2e_latency") for output in outputs
+            ],
+            "cached_tokens": [
+                output["meta_info"].get("cached_tokens", 0) for output in outputs
             ],
             "resolved_runtime": extract_runtime(info),
             "server_memory": extract_memory(info),

@@ -169,6 +169,7 @@ pub struct SglangPolicy {
     pub page_tokens: u64,
     pub swa_eviction_interval_tokens: u64,
     pub max_persistent_swa_token_slots_per_request: u64,
+    pub unbounded_classes: Vec<String>,
     pub bounded_classes: Vec<SglangBoundedClassPolicy>,
 }
 
@@ -1160,12 +1161,19 @@ impl CompiledKvPlan {
             .map(|class| class.token_slots)
             .max()
             .unwrap_or(0);
+        let unbounded_classes = self
+            .classes
+            .iter()
+            .filter(|class| class.spec.retention == RetentionKind::Full)
+            .map(|class| class.spec.name.clone())
+            .collect();
         Ok(SglangPolicy {
             schema: "orbitkv.sglang-policy.v1",
             plan_fingerprint: self.fingerprint(),
             page_tokens: self.page_tokens,
             swa_eviction_interval_tokens: eviction_interval_tokens,
             max_persistent_swa_token_slots_per_request,
+            unbounded_classes,
             bounded_classes,
         })
     }
@@ -1966,6 +1974,7 @@ mod tests {
         let policy = plan.sglang_policy().unwrap();
         assert_eq!(policy.swa_eviction_interval_tokens, 16);
         assert_eq!(policy.max_persistent_swa_token_slots_per_request, 1040);
+        assert_eq!(policy.unbounded_classes, ["full"]);
         assert_eq!(policy.bounded_classes[0].block_slots, 65);
         assert_eq!(
             plan.sglang_policy_with_eviction_interval(64)

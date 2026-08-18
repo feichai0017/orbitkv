@@ -62,7 +62,14 @@ class CapsuleClient:
             self._stdin.flush()
             line = self._stdout.readline()
             if not line:
-                raise RuntimeError("OrbitKV Capsule store closed its response stream")
+                stderr = (
+                    self._process.stderr.read()
+                    if self._process.stderr is not None
+                    else ""
+                )
+                raise RuntimeError(
+                    f"OrbitKV Capsule store closed its response stream: {stderr}"
+                )
             response = json.loads(line)
             if response.get("status") == "error":
                 raise RuntimeError(
@@ -458,10 +465,47 @@ def _capsule_chunk_tokens() -> int:
     return chunk_tokens
 
 
+def _bounded_window_tokens() -> int:
+    if _POLICY is None:
+        raise RuntimeError("OrbitKV Capsule hydration requires an SGLang policy")
+    bounded = _POLICY.get("bounded_classes", ())
+    if len(bounded) != 1:
+        raise RuntimeError(
+            "OrbitKV Capsule hydration requires exactly one bounded KV class"
+        )
+    window_tokens = int(bounded[0].get("window_tokens", 0))
+    if window_tokens <= 0:
+        raise RuntimeError("OrbitKV Capsule policy has an invalid window")
+    return window_tokens
+
+
+def _pure_swa_capsule() -> bool:
+    return (
+        _POLICY is not None
+        and _POLICY.get("unbounded_classes") == []
+        and len(_POLICY.get("bounded_classes", ())) == 1
+    )
+
+
 def _encode_capsule_payload(value: Any) -> bytes:
     from .capsule_wire import encode_cpu_tensors
 
     return encode_cpu_tensors(value)
+
+
+def _decode_capsule_payload(payload: bytes) -> Any:
+    from .capsule_wire import decode_cpu_tensors
+
+    return decode_cpu_tensors(payload)
+
+
+def _capsule_payload_limit() -> int:
+    maximum_payload = int(
+        os.environ.get("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES", str(64 * 1024 * 1024))
+    )
+    if maximum_payload <= 0:
+        raise RuntimeError("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES must be positive")
+    return maximum_payload
 
 
 def _trace_path() -> Path:
@@ -589,20 +633,58 @@ def _export_capsule_before_release(
     aligned = (committed // chunk_tokens) * chunk_tokens
     if aligned == 0:
         return None
+    hydrated_prefix = int(getattr(req, "_orbitkv_capsule_prefix_tokens", 0))
+    if hydrated_prefix and aligned <= hydrated_prefix:
+        return None
     fill_ids = [
         int(token)
         for token in list(req.origin_input_ids) + list(req.output_ids)
     ][:aligned]
     if len(fill_ids) != aligned:
         raise RuntimeError("OrbitKV Capsule token identity is shorter than committed KV")
+    existing = _require_capsules().command(
+        {
+            "op": "restore",
+            "identity": _capsule_identity(),
+            "chunk_tokens": chunk_tokens,
+            "token_ids": fill_ids,
+        }
+    )
+    if existing.get("status") == "restored":
+        manifest = existing.get("manifest")
+        if (
+            not isinstance(manifest, dict)
+            or manifest.get("schema") != "orbitkv.continuation-capsule.v1"
+        ):
+            raise RuntimeError("OrbitKV Capsule catalog returned an invalid manifest")
+        existing_boundary = int(manifest.get("prefix_token_count", 0))
+        if existing_boundary > aligned:
+            raise RuntimeError("OrbitKV Capsule catalog exceeded the query boundary")
+        if existing_boundary == aligned:
+            if _trace_allocations_enabled():
+                _emit(
+                    {
+                        "event": "capsule_reused",
+                        "request_id": str(req.rid),
+                        "prefix_token_count": aligned,
+                    }
+                )
+            return existing
+    elif existing.get("status") != "miss":
+        raise RuntimeError("OrbitKV Capsule catalog returned an invalid status")
+    live_start = 0
+    if _pure_swa_capsule():
+        live_start = max(0, aligned - _bounded_window_tokens())
+        live_start = live_start // int(_POLICY["page_tokens"]) * int(
+            _POLICY["page_tokens"]
+        )
     indices = tree_cache.req_to_token_pool.req_to_token[
-        req.req_pool_idx, :aligned
+        req.req_pool_idx, live_start:aligned
     ]
     kvcache = getattr(tree_cache.token_to_kv_pool_allocator, "_kvcache", None)
-    if (
-        int(req.kv.swa_evicted_seqlen) > 0
-        and getattr(kvcache, "full_kv_pool", None) is None
-    ):
+    if int(req.kv.swa_evicted_seqlen) > live_start and getattr(
+        kvcache, "full_kv_pool", None
+    ) is None:
         raise RuntimeError(
             "OrbitKV Capsule export cannot read evicted pure-SWA slots"
         )
@@ -610,9 +692,7 @@ def _export_capsule_before_release(
         indices, mamba_indices=req.mamba_pool_idx
     )
     payload = _encode_capsule_payload(kv_cache_cpu)
-    maximum_payload = int(
-        os.environ.get("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES", str(64 * 1024 * 1024))
-    )
+    maximum_payload = _capsule_payload_limit()
     if len(payload) > maximum_payload:
         raise RuntimeError(
             f"OrbitKV Capsule payload exceeds configured limit: "
@@ -630,7 +710,7 @@ def _export_capsule_before_release(
                 "identity": _capsule_identity(),
                 "chunk_tokens": chunk_tokens,
                 "token_ids": fill_ids,
-                "live_token_count": aligned,
+                "live_token_count": aligned - live_start,
                 "payload_path": str(payload_path),
                 "components": [
                     {"state_class": "sglang-kv", "length_bytes": len(payload)}
@@ -651,6 +731,255 @@ def _export_capsule_before_release(
             }
         )
     return response
+
+
+def _read_capsule_payload(response: dict[str, Any]) -> tuple[Any, int, int]:
+    manifest = response.get("manifest")
+    if (
+        response.get("status") != "restored"
+        or not isinstance(manifest, dict)
+        or manifest.get("schema") != "orbitkv.continuation-capsule.v1"
+    ):
+        raise RuntimeError("OrbitKV Capsule restore returned an invalid manifest")
+    prefix_tokens = int(manifest.get("prefix_token_count", 0))
+    live_tokens = int(manifest.get("live_token_count", 0))
+    payload_bytes = int(manifest.get("payload_bytes", 0))
+    if prefix_tokens <= 0 or live_tokens <= 0 or live_tokens > prefix_tokens:
+        raise RuntimeError("OrbitKV SGLang Capsule has an invalid live-state range")
+    if live_tokens != prefix_tokens and not _pure_swa_capsule():
+        raise RuntimeError("OrbitKV partial Capsule requires a pure-SWA state plan")
+    if live_tokens % int(_POLICY["page_tokens"]) != 0:
+        raise RuntimeError("OrbitKV Capsule live state is not page aligned")
+    if payload_bytes <= 0 or payload_bytes > _capsule_payload_limit():
+        raise RuntimeError("OrbitKV Capsule restore payload size is invalid")
+    components = manifest.get("components")
+    if (
+        not isinstance(components, list)
+        or len(components) != 1
+        or components[0].get("state_class") != "sglang-kv"
+        or int(components[0].get("offset_bytes", -1)) != 0
+        or int(components[0].get("length_bytes", -1)) != payload_bytes
+    ):
+        raise RuntimeError("OrbitKV Capsule SGLang component is invalid")
+    payload_path = Path(str(response.get("payload_path", "")))
+    if not payload_path.is_file() or payload_path.stat().st_size != payload_bytes:
+        raise RuntimeError("OrbitKV Capsule payload object is missing or truncated")
+    with payload_path.open("rb") as stream:
+        payload = bytearray(stream.read())
+    expected_digest = bytes(manifest.get("payload_digest", ()))
+    if (
+        len(expected_digest) != hashlib.sha256().digest_size
+        or hashlib.sha256(payload).digest() != expected_digest
+    ):
+        raise RuntimeError("OrbitKV Capsule payload checksum does not match")
+    return _decode_capsule_payload(payload), prefix_tokens, live_tokens
+
+
+def _allocate_capsule_slots(allocator: Any, prefix_tokens: int):
+    import torch
+
+    page_tokens = int(allocator.page_size)
+    if prefix_tokens <= 0 or prefix_tokens % page_tokens != 0:
+        raise RuntimeError("OrbitKV Capsule prefix is not allocator-page aligned")
+    if page_tokens == 1:
+        return allocator.alloc(prefix_tokens)
+    device = allocator.device
+    prefix_lens = torch.zeros((1,), dtype=torch.int64, device=device)
+    prefix_lens_cpu = torch.zeros((1,), dtype=torch.int64)
+    seq_lens = torch.tensor([prefix_tokens], dtype=torch.int64, device=device)
+    seq_lens_cpu = torch.tensor([prefix_tokens], dtype=torch.int64)
+    last_loc = torch.full((1,), -1, dtype=torch.int64, device=device)
+    if _pure_swa_capsule():
+        return allocator.alloc_extend(
+            prefix_lens,
+            prefix_lens_cpu,
+            seq_lens,
+            seq_lens_cpu,
+            last_loc,
+            prefix_tokens,
+        )
+    allocate_tail = getattr(allocator, "alloc_extend_swa_tail", None)
+    kvcache = getattr(allocator, "_kvcache", None)
+    if allocate_tail is not None and getattr(kvcache, "full_kv_pool", None) is not None:
+        return allocate_tail(
+            prefix_lens,
+            prefix_lens_cpu,
+            seq_lens,
+            seq_lens_cpu,
+            last_loc,
+            prefix_tokens,
+            min(prefix_tokens, _bounded_window_tokens()),
+        )
+    return allocator.alloc_extend(
+        prefix_lens,
+        prefix_lens_cpu,
+        seq_lens,
+        seq_lens_cpu,
+        last_loc,
+        prefix_tokens,
+    )
+
+
+def _try_hydrate_capsule(req: Any, tree_cache: Any):
+    if not _capsules_enabled() or getattr(req, "_orbitkv_capsule_miss", False):
+        return None
+    if not tree_cache.is_chunk_cache():
+        raise RuntimeError("OrbitKV Capsule hydration currently requires ChunkCache")
+    if (
+        req.req_pool_idx is not None
+        or req.kv is not None
+        or len(req.prefix_indices) != 0
+        or getattr(req, "is_retracted", False)
+    ):
+        return None
+    input_tokens = [int(token) for token in req.full_untruncated_fill_ids]
+    maximum_prefix = int(req._compute_max_prefix_len(len(input_tokens)))
+    if maximum_prefix <= 0:
+        req._orbitkv_capsule_miss = True
+        return None
+    started_ns = time.perf_counter_ns()
+    response = _require_capsules().command(
+        {
+            "op": "restore",
+            "identity": _capsule_identity(),
+            "chunk_tokens": _capsule_chunk_tokens(),
+            "token_ids": input_tokens[:maximum_prefix],
+        }
+    )
+    lookup_done_ns = time.perf_counter_ns()
+    if response.get("status") == "miss":
+        req._orbitkv_capsule_miss = True
+        if _trace_allocations_enabled():
+            _emit(
+                {
+                    "event": "capsule_miss",
+                    "request_id": str(req.rid),
+                    "query_token_count": maximum_prefix,
+                }
+            )
+        return None
+    kv_cache_cpu, prefix_tokens, live_tokens = _read_capsule_payload(response)
+    payload_done_ns = time.perf_counter_ns()
+    if prefix_tokens > maximum_prefix:
+        raise RuntimeError("OrbitKV Capsule prefix exceeds SGLang match boundary")
+    allocator = tree_cache.token_to_kv_pool_allocator
+    indices = _allocate_capsule_slots(allocator, live_tokens)
+    allocation_done_ns = time.perf_counter_ns()
+    if indices is None:
+        if _trace_allocations_enabled():
+            _emit(
+                {
+                    "event": "capsule_deferred",
+                    "request_id": str(req.rid),
+                    "prefix_token_count": prefix_tokens,
+                    "live_token_count": live_tokens,
+                    "reason": "kv_capacity",
+                }
+            )
+        return None
+    try:
+        allocator.load_cpu_copy(
+            kv_cache_cpu,
+            indices,
+            mamba_indices=req.mamba_pool_idx,
+        )
+    except Exception:
+        allocator.free(indices)
+        raise
+    load_done_ns = time.perf_counter_ns()
+    import torch
+
+    dead_prefix_tokens = prefix_tokens - live_tokens
+    if dead_prefix_tokens:
+        prefix_indices = torch.zeros(
+            (prefix_tokens,), dtype=torch.int64, device=indices.device
+        )
+        prefix_indices[dead_prefix_tokens:] = indices.to(dtype=torch.int64)
+        req.prefix_indices = prefix_indices
+    else:
+        req.prefix_indices = indices.to(dtype=torch.int64, copy=True)
+    req.cache_protected_len = dead_prefix_tokens
+    req._orbitkv_capsule_prefix_tokens = prefix_tokens
+    req._orbitkv_capsule_live_tokens = live_tokens
+    req._orbitkv_capsule_hydration_ns = {
+        "lookup": lookup_done_ns - started_ns,
+        "payload_decode": payload_done_ns - lookup_done_ns,
+        "allocation": allocation_done_ns - payload_done_ns,
+        "load": load_done_ns - allocation_done_ns,
+        "total": load_done_ns - started_ns,
+    }
+    return indices
+
+
+def _rollback_capsule_hydration(req: Any, allocator: Any, indices: Any) -> None:
+    allocator.free(indices)
+    req.prefix_indices = req.prefix_indices.new_empty((0,))
+    req._orbitkv_capsule_prefix_tokens = 0
+    req._orbitkv_capsule_live_tokens = 0
+    req._orbitkv_capsule_hydration_ns = None
+
+
+def _hydrate_capsule_for_admission(
+    original_fn: Callable,
+    adder: Any,
+    req: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    tree_cache = adder.tree_cache
+    indices = _try_hydrate_capsule(req, tree_cache)
+    if indices is None:
+        return original_fn(adder, req, *args, **kwargs)
+    before = len(adder.can_run_list)
+    try:
+        result = original_fn(adder, req, *args, **kwargs)
+    except Exception:
+        _rollback_capsule_hydration(
+            req, tree_cache.token_to_kv_pool_allocator, indices
+        )
+        raise
+    admitted = len(adder.can_run_list) > before and adder.can_run_list[-1] is req
+    if not admitted:
+        _rollback_capsule_hydration(
+            req, tree_cache.token_to_kv_pool_allocator, indices
+        )
+        return result
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "capsule_hydrated",
+                "request_id": str(req.rid),
+                "prefix_token_count": int(req._orbitkv_capsule_prefix_tokens),
+                "live_token_count": int(req._orbitkv_capsule_live_tokens),
+                "duration_ns": req._orbitkv_capsule_hydration_ns,
+            }
+        )
+    return result
+
+
+def _admit_uniform_swa_capsule_request(
+    original_fn: Callable,
+    adder: Any,
+    req: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    def admit(current_adder: Any, current_req: Any, *inner_args: Any, **inner_kwargs: Any):
+        return _admit_uniform_swa_request(
+            original_fn,
+            current_adder,
+            current_req,
+            *inner_args,
+            **inner_kwargs,
+        )
+
+    return _hydrate_capsule_for_admission(
+        admit,
+        adder,
+        req,
+        *args,
+        **kwargs,
+    )
 
 
 def _emit(event: dict[str, Any]) -> None:
@@ -1513,6 +1842,14 @@ def register() -> None:
     _STATE_PLAN = _load_state_plan()
     _POLICY = _load_policy()
     if _POLICY is not None:
+        if (
+            _UNIFORM_SWA_CONTRACT is not None
+            and _POLICY.get("plan_fingerprint")
+            != _UNIFORM_SWA_CONTRACT.get("plan_fingerprint")
+        ):
+            raise RuntimeError(
+                "OrbitKV SGLang policy and state-plan fingerprints differ"
+            )
         os.environ["SGLANG_SWA_EVICTION_INTERVAL"] = str(
             _POLICY["swa_eviction_interval_tokens"]
         )
@@ -1568,6 +1905,12 @@ def register() -> None:
             _release_owned_request,
             HookType.AROUND,
         )
+        if _capsules_enabled() and _UNIFORM_SWA_CONTRACT is None:
+            HookRegistry.register(
+                "sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req",
+                _hydrate_capsule_for_admission,
+                HookType.AROUND,
+            )
     elif _PHYSICAL_PLAN is not None:
         HookRegistry.register(
             "sglang.srt.managers.schedule_batch.ScheduleBatch.maybe_evict_swa",
@@ -1619,7 +1962,11 @@ def register() -> None:
         )
         HookRegistry.register(
             "sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req",
-            _admit_uniform_swa_request,
+            (
+                _admit_uniform_swa_capsule_request
+                if _capsules_enabled()
+                else _admit_uniform_swa_request
+            ),
             HookType.AROUND,
         )
         if _UNIFORM_SWA_CONTRACT["cuda_graph_mode"] == "decode":

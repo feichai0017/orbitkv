@@ -22,10 +22,11 @@ fn identity() -> serde_json::Value {
 fn capsule_sidecar_publishes_and_restores_longest_prefix() {
     let directory = tempfile::tempdir().unwrap();
     let payload_path = directory.path().join("payload.bin");
+    let catalog_path = directory.path().join("catalog");
     std::fs::write(&payload_path, b"kv-payload").unwrap();
     let mut child = Command::new(binary())
         .arg("serve-capsules")
-        .arg(directory.path().join("catalog"))
+        .arg(&catalog_path)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .spawn()
@@ -70,6 +71,29 @@ fn capsule_sidecar_publishes_and_restores_longest_prefix() {
 
     drop(stdin);
     assert!(child.wait().unwrap().success());
+
+    let mut reopened = Command::new(binary())
+        .arg("serve-capsules")
+        .arg(&catalog_path)
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut stdin = reopened.stdin.take().unwrap();
+    let mut stdout = BufReader::new(reopened.stdout.take().unwrap());
+    write_command(
+        &mut stdin,
+        &serde_json::json!({
+            "op": "restore",
+            "identity": identity(),
+            "chunk_tokens": 4,
+            "token_ids": [1, 2, 3, 4],
+        }),
+    );
+    let restored = read_response(&mut stdout);
+    assert_eq!(restored["status"], "restored");
+    drop(stdin);
+    assert!(reopened.wait().unwrap().success());
 }
 
 fn write_command(stdin: &mut impl Write, command: &serde_json::Value) {

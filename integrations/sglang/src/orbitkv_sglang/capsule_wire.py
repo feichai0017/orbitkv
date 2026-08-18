@@ -36,17 +36,20 @@ def encode_cpu_tensors(value: Any) -> bytes:
     return stream.getvalue()
 
 
-def decode_cpu_tensors(payload: bytes) -> Any:
-    stream = io.BytesIO(payload)
-    if stream.read(len(MAGIC)) != MAGIC:
+def decode_cpu_tensors(payload: bytes | bytearray | memoryview) -> Any:
+    view = memoryview(payload)
+    if view.readonly:
+        view = memoryview(bytearray(view))
+    stream = _BufferReader(view)
+    if bytes(stream.read_exact(len(MAGIC))) != MAGIC:
         raise ValueError("unsupported OrbitKV SGLang tensor wire payload")
     value = _decode_value(stream)
-    if stream.read(1):
+    if not stream.at_end():
         raise ValueError("trailing bytes in OrbitKV SGLang tensor wire payload")
     return value
 
 
-def _encode_value(stream: io.BytesIO, value: Any) -> None:
+def _encode_value(stream, value: Any) -> None:
     if value is None:
         stream.write(bytes([_NONE]))
         return
@@ -77,7 +80,7 @@ def _encode_value(stream: io.BytesIO, value: Any) -> None:
     raise TypeError(f"unsupported OrbitKV tensor wire value: {type(value)!r}")
 
 
-def _encode_tensor(stream: io.BytesIO, tensor: torch.Tensor) -> None:
+def _encode_tensor(stream, tensor: torch.Tensor) -> None:
     if tensor.device.type != "cpu":
         raise ValueError("OrbitKV tensor wire requires CPU tensors")
     tensor = tensor.detach().contiguous()
@@ -93,8 +96,8 @@ def _encode_tensor(stream: io.BytesIO, tensor: torch.Tensor) -> None:
     stream.write(raw)
 
 
-def _decode_value(stream: io.BytesIO) -> Any:
-    tag = _read_exact(stream, 1)[0]
+def _decode_value(stream: "_BufferReader") -> Any:
+    tag = stream.read_exact(1)[0]
     if tag == _NONE:
         return None
     if tag == _TENSOR:
@@ -104,25 +107,25 @@ def _decode_value(stream: io.BytesIO) -> Any:
     if tag == _DICT:
         result = {}
         for _ in range(_read_u64(stream)):
-            key = _read_exact(stream, _read_u64(stream)).decode("utf-8")
+            key = bytes(stream.read_exact(_read_u64(stream))).decode("utf-8")
             result[key] = _decode_value(stream)
         return result
     if tag == _BOOL:
-        raw = _read_exact(stream, 1)[0]
+        raw = stream.read_exact(1)[0]
         if raw not in (0, 1):
             raise ValueError("invalid boolean in OrbitKV tensor wire payload")
         return bool(raw)
     raise ValueError(f"unknown OrbitKV tensor wire tag: {tag}")
 
 
-def _decode_tensor(stream: io.BytesIO) -> torch.Tensor:
-    dtype_code = _read_exact(stream, 1)[0]
+def _decode_tensor(stream: "_BufferReader") -> torch.Tensor:
+    dtype_code = stream.read_exact(1)[0]
     dtype = _CODE_TO_DTYPE.get(dtype_code)
     if dtype is None:
         raise ValueError(f"unknown OrbitKV tensor dtype code: {dtype_code}")
     shape = tuple(_read_u64(stream) for _ in range(_read_u64(stream)))
-    raw = bytearray(_read_exact(stream, _read_u64(stream)))
-    tensor = torch.frombuffer(raw, dtype=dtype).clone()
+    raw = stream.read_exact(_read_u64(stream))
+    tensor = torch.frombuffer(raw, dtype=dtype)
     expected = 1
     for dimension in shape:
         expected *= dimension
@@ -131,12 +134,22 @@ def _decode_tensor(stream: io.BytesIO) -> torch.Tensor:
     return tensor.reshape(shape)
 
 
-def _read_u64(stream: io.BytesIO) -> int:
-    return struct.unpack("<Q", _read_exact(stream, 8))[0]
+def _read_u64(stream: "_BufferReader") -> int:
+    return struct.unpack("<Q", stream.read_exact(8))[0]
 
 
-def _read_exact(stream: io.BytesIO, length: int) -> bytes:
-    value = stream.read(length)
-    if len(value) != length:
-        raise ValueError("truncated OrbitKV SGLang tensor wire payload")
-    return value
+class _BufferReader:
+    def __init__(self, payload: bytes | bytearray | memoryview):
+        self._payload = memoryview(payload)
+        self._position = 0
+
+    def read_exact(self, length: int) -> memoryview:
+        end = self._position + length
+        if length < 0 or end > len(self._payload):
+            raise ValueError("truncated OrbitKV SGLang tensor wire payload")
+        value = self._payload[self._position : end]
+        self._position = end
+        return value
+
+    def at_end(self) -> bool:
+        return self._position == len(self._payload)

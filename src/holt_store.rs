@@ -139,6 +139,26 @@ impl HoltCapsuleStore {
         &self,
         path: &PrefixPath,
     ) -> Result<Option<RestoredCapsule>, HoltCapsuleError> {
+        let Some((candidate_path, manifest)) = self.lookup_deepest(path)? else {
+            return Ok(None);
+        };
+        let payload = self.restore_payload(&candidate_path, &manifest)?;
+        Ok(Some(RestoredCapsule { manifest, payload }))
+    }
+
+    /// Finds the deepest published Capsule manifest without reading its payload.
+    ///
+    /// The returned manifest is authenticated against the exact prefix path.
+    /// Callers that consume the payload must still verify its size and digest.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when a catalog entry is malformed or belongs to a
+    /// different path.
+    pub fn lookup_deepest(
+        &self,
+        path: &PrefixPath,
+    ) -> Result<Option<(PrefixPath, CapsuleManifest)>, HoltCapsuleError> {
         let query_key = path.catalog_key_at(path.chunks().len())?;
         let Some(record) = self.capsules.longest_prefix_record(&query_key)? else {
             return Ok(None);
@@ -146,8 +166,8 @@ impl HoltCapsuleStore {
         let chunk_count = path.chunk_count_for_catalog_key(&record.key)?;
         let candidate_path = path.prefix_at(chunk_count)?;
         let manifest: CapsuleManifest = serde_json::from_slice(&record.value)?;
-        let payload = self.restore_payload(&candidate_path, &manifest)?;
-        Ok(Some(RestoredCapsule { manifest, payload }))
+        manifest.validate_for_path(&candidate_path)?;
+        Ok(Some((candidate_path, manifest)))
     }
 
     /// Forces a Holt checkpoint after all previously acknowledged publishes.

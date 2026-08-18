@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import importlib.util
+import hashlib
 import json
 import os
 import subprocess
@@ -9,6 +10,8 @@ import tempfile
 import types
 import unittest
 from pathlib import Path
+
+import torch
 
 
 class FakeTensor:
@@ -142,14 +145,132 @@ class FakeCapsules:
         self.commands = []
 
     def command(self, command):
-        self.events.append(("capsule_publish", None))
         self.commands.append(command)
+        if command["op"] == "restore":
+            return {"status": "miss"}
+        self.events.append(("capsule_publish", None))
         return {
             "status": "published",
             "prefix_token_count": len(command["token_ids"]),
             "payload_bytes": Path(command["payload_path"]).stat().st_size,
             "created": True,
         }
+
+
+class FakeHydrationCapsules:
+    def __init__(
+        self,
+        payload_path: Path,
+        prefix_tokens: int,
+        live_tokens: int | None = None,
+    ):
+        payload = payload_path.read_bytes()
+        digest = list(hashlib.sha256(payload).digest())
+        live_tokens = prefix_tokens if live_tokens is None else live_tokens
+        self.commands = []
+        self.response = {
+            "status": "restored",
+            "manifest": {
+                "schema": "orbitkv.continuation-capsule.v1",
+                "prefix_token_count": prefix_tokens,
+                "live_token_count": live_tokens,
+                "payload_bytes": len(payload),
+                "payload_digest": digest,
+                "components": [
+                    {
+                        "state_class": "sglang-kv",
+                        "offset_bytes": 0,
+                        "length_bytes": len(payload),
+                        "checksum": digest,
+                    }
+                ],
+            },
+            "payload_path": str(payload_path),
+        }
+
+    def command(self, command):
+        self.commands.append(command)
+        return self.response
+
+
+class FakeExistingCapsules:
+    def __init__(self, prefix_tokens):
+        self.prefix_tokens = prefix_tokens
+        self.commands = []
+
+    def command(self, command):
+        self.commands.append(command)
+        return {
+            "status": "restored",
+            "manifest": {
+                "schema": "orbitkv.continuation-capsule.v1",
+                "prefix_token_count": self.prefix_tokens,
+            },
+            "payload_path": "/not-read-for-publication-reuse",
+        }
+
+
+class FakeHydrationAllocator:
+    page_size = 16
+    device = "cpu"
+
+    def __init__(self, fail_load=False, hybrid=True):
+        self.fail_load = fail_load
+        self.loaded = []
+        self.freed = []
+        self.tail_lengths = []
+        self._kvcache = types.SimpleNamespace(
+            full_kv_pool=object() if hybrid else None
+        )
+
+    def alloc_extend(
+        self,
+        _prefix_lens,
+        _prefix_lens_cpu,
+        _seq_lens,
+        _seq_lens_cpu,
+        _last_loc,
+        extend_num_tokens,
+    ):
+        return torch.arange(1, extend_num_tokens + 1, dtype=torch.int64)
+
+    def alloc_extend_swa_tail(
+        self,
+        _prefix_lens,
+        _prefix_lens_cpu,
+        _seq_lens,
+        _seq_lens_cpu,
+        _last_loc,
+        extend_num_tokens,
+        swa_tail_len,
+    ):
+        self.tail_lengths.append(swa_tail_len)
+        return torch.arange(1, extend_num_tokens + 1, dtype=torch.int64)
+
+    def load_cpu_copy(self, value, indices, mamba_indices=None):
+        if self.fail_load:
+            raise RuntimeError("injected capsule load failure")
+        self.loaded.append((value, indices.clone(), mamba_indices))
+
+    def free(self, indices):
+        self.freed.append(indices.clone())
+
+
+class FakeHydrationReq:
+    rid = "hydrate-r0"
+    req_pool_idx = None
+    kv = None
+    mamba_pool_idx = None
+    is_retracted = False
+    cache_protected_len = 0
+
+    def __init__(self, input_tokens=65):
+        self.full_untruncated_fill_ids = list(range(input_tokens))
+        self.prefix_indices = torch.empty((0,), dtype=torch.int64)
+
+    @staticmethod
+    def _compute_max_prefix_len(input_len):
+        return max(input_len - 1, 0)
 
 
 class FakeReqToToken:
@@ -1044,7 +1165,11 @@ class ShadowPluginTests(unittest.TestCase):
             [command["op"] for command in owner.commands],
             ["release_request"],
         )
-        command = capsules.commands[0]
+        self.assertEqual(
+            [command["op"] for command in capsules.commands],
+            ["restore", "publish"],
+        )
+        command = capsules.commands[1]
         self.assertEqual(command["token_ids"], [1, 2, 3, 4])
         self.assertEqual(command["components"][0]["length_bytes"], 4)
 
@@ -1074,6 +1199,372 @@ class ShadowPluginTests(unittest.TestCase):
             [command["op"] for command in owner.commands],
             ["release_request"],
         )
+
+    def test_capsule_does_not_republish_unchanged_hydrated_boundary(self):
+        from orbitkv_sglang import plugin
+
+        req = FakeOwningReq()
+        req._orbitkv_capsule_prefix_tokens = 4
+        capsules = FakeCapsules([])
+        owner = FakeOwner()
+        old_capsules = plugin._CAPSULES
+        old_owner = plugin._OWNER
+        environment = {
+            "ORBITKV_CAPSULE_STORE": tempfile.mkdtemp(),
+            "ORBITKV_CAPSULE_CHUNK_TOKENS": "4",
+        }
+        old_environment = {key: os.environ.get(key) for key in environment}
+        try:
+            plugin._CAPSULES = capsules
+            plugin._OWNER = owner
+            os.environ.update(environment)
+            result = plugin._release_owned_request(
+                lambda *_args, **_kwargs: "released",
+                req,
+                types.SimpleNamespace(is_chunk_cache=lambda: True),
+            )
+        finally:
+            plugin._CAPSULES = old_capsules
+            plugin._OWNER = old_owner
+            for key, value in old_environment.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual(result, "released")
+        self.assertEqual(capsules.commands, [])
+        self.assertEqual(
+            [command["op"] for command in owner.commands],
+            ["release_request"],
+        )
+
+    def test_capsule_reuses_existing_published_boundary(self):
+        from orbitkv_sglang import plugin
+
+        req = FakeOwningReq()
+        capsules = FakeExistingCapsules(4)
+        owner = FakeOwner()
+        old_capsules = plugin._CAPSULES
+        old_owner = plugin._OWNER
+        environment = {
+            "ORBITKV_CAPSULE_STORE": tempfile.mkdtemp(),
+            "ORBITKV_CAPSULE_CHUNK_TOKENS": "4",
+            "ORBITKV_TRACE_ALLOCATIONS": "0",
+            "ORBITKV_CAPSULE_IDENTITY": json.dumps(
+                {
+                    "namespace": "dGVuYW50",
+                    "model_fingerprint": f"sha256:{'01' * 32}",
+                    "tokenizer_fingerprint": f"sha256:{'02' * 32}",
+                    "adapter_fingerprint": f"sha256:{'03' * 32}",
+                    "state_plan_fingerprint": f"sha256:{'04' * 32}",
+                }
+            ),
+        }
+        old_environment = {key: os.environ.get(key) for key in environment}
+        try:
+            plugin._CAPSULES = capsules
+            plugin._OWNER = owner
+            os.environ.update(environment)
+            result = plugin._release_owned_request(
+                lambda *_args, **_kwargs: "released",
+                req,
+                types.SimpleNamespace(is_chunk_cache=lambda: True),
+            )
+        finally:
+            plugin._CAPSULES = old_capsules
+            plugin._OWNER = old_owner
+            for key, value in old_environment.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual(result, "released")
+        self.assertEqual(
+            [command["op"] for command in capsules.commands],
+            ["restore"],
+        )
+        self.assertEqual(
+            [command["op"] for command in owner.commands],
+            ["release_request"],
+        )
+
+    def test_pure_swa_capsule_exports_only_live_tail(self):
+        from orbitkv_sglang import plugin
+
+        events = []
+        owner = FakeOwner()
+        capsules = FakeCapsules(events)
+        allocator = FakeCapsuleAllocator(events)
+        tree_cache = types.SimpleNamespace(
+            is_chunk_cache=lambda: True,
+            req_to_token_pool=types.SimpleNamespace(req_to_token=FakeReqToToken()),
+            token_to_kv_pool_allocator=allocator,
+        )
+        req = FakeOwningReq()
+        req.kv_committed_len = 64
+        req.origin_input_ids = list(range(64))
+        old_capsules = plugin._CAPSULES
+        old_owner = plugin._OWNER
+        old_policy = plugin._POLICY
+        old_encoder = plugin._encode_capsule_payload
+        environment = {
+            "ORBITKV_CAPSULE_STORE": tempfile.mkdtemp(),
+            "ORBITKV_CAPSULE_CHUNK_TOKENS": "16",
+            "ORBITKV_TRACE_ALLOCATIONS": "0",
+            "ORBITKV_CAPSULE_IDENTITY": json.dumps(
+                {
+                    "namespace": "dGVuYW50",
+                    "model_fingerprint": f"sha256:{'01' * 32}",
+                    "tokenizer_fingerprint": f"sha256:{'02' * 32}",
+                    "adapter_fingerprint": f"sha256:{'03' * 32}",
+                    "state_plan_fingerprint": f"sha256:{'04' * 32}",
+                }
+            ),
+        }
+        old_environment = {key: os.environ.get(key) for key in environment}
+        try:
+            plugin._CAPSULES = capsules
+            plugin._OWNER = owner
+            plugin._POLICY = {
+                "page_tokens": 16,
+                "unbounded_classes": [],
+                "bounded_classes": [{"name": "swa", "window_tokens": 32}],
+            }
+            plugin._encode_capsule_payload = lambda value: b"x" * value["tokens"]
+            os.environ.update(environment)
+            allocator.get_cpu_copy = lambda indices, mamba_indices=None: {
+                "tokens": indices.numel()
+            }
+            result = plugin._release_owned_request(
+                lambda *_args, **_kwargs: "released",
+                req,
+                tree_cache,
+            )
+        finally:
+            plugin._CAPSULES = old_capsules
+            plugin._OWNER = old_owner
+            plugin._POLICY = old_policy
+            plugin._encode_capsule_payload = old_encoder
+            for key, value in old_environment.items():
+                if value is None:
+                    os.environ.pop(key, None)
+                else:
+                    os.environ[key] = value
+
+        self.assertEqual(result, "released")
+        publish = capsules.commands[1]
+        self.assertEqual(publish["token_ids"], list(range(64)))
+        self.assertEqual(publish["live_token_count"], 32)
+        self.assertEqual(publish["components"][0]["length_bytes"], 32)
+
+    def test_capsule_hydration_commits_only_after_admission(self):
+        from orbitkv_sglang import plugin
+        from orbitkv_sglang.capsule_wire import encode_cpu_tensors
+
+        with tempfile.TemporaryDirectory() as directory:
+            payload_path = Path(directory) / "capsule.payload"
+            payload_path.write_bytes(
+                encode_cpu_tensors({"full": [[torch.ones((64, 1))]], "swa": None})
+            )
+            capsules = FakeHydrationCapsules(payload_path, 64)
+            allocator = FakeHydrationAllocator()
+            tree_cache = types.SimpleNamespace(
+                is_chunk_cache=lambda: True,
+                token_to_kv_pool_allocator=allocator,
+            )
+            adder = types.SimpleNamespace(tree_cache=tree_cache, can_run_list=[])
+            req = FakeHydrationReq()
+            old_capsules = plugin._CAPSULES
+            old_policy = plugin._POLICY
+            environment = {
+                "ORBITKV_CAPSULE_STORE": directory,
+                "ORBITKV_CAPSULE_CHUNK_TOKENS": "16",
+                "ORBITKV_TRACE_ALLOCATIONS": "0",
+                "ORBITKV_CAPSULE_IDENTITY": json.dumps(
+                    {
+                        "namespace": "dGVuYW50",
+                        "model_fingerprint": f"sha256:{'01' * 32}",
+                        "tokenizer_fingerprint": f"sha256:{'02' * 32}",
+                        "adapter_fingerprint": f"sha256:{'03' * 32}",
+                        "state_plan_fingerprint": f"sha256:{'04' * 32}",
+                    }
+                ),
+            }
+            old_environment = {key: os.environ.get(key) for key in environment}
+            try:
+                plugin._CAPSULES = capsules
+                plugin._POLICY = {
+                    "page_tokens": 16,
+                    "unbounded_classes": ["full"],
+                    "bounded_classes": [{"name": "swa", "window_tokens": 32}]
+                }
+                os.environ.update(environment)
+
+                def original(current_adder, current_req):
+                    self.assertEqual(len(current_req.prefix_indices), 64)
+                    current_adder.can_run_list.append(current_req)
+                    return "continue"
+
+                result = plugin._hydrate_capsule_for_admission(
+                    original, adder, req
+                )
+            finally:
+                plugin._CAPSULES = old_capsules
+                plugin._POLICY = old_policy
+                for key, value in old_environment.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(result, "continue")
+        self.assertEqual(allocator.tail_lengths, [32])
+        self.assertEqual(len(allocator.loaded), 1)
+        self.assertEqual(allocator.freed, [])
+        self.assertEqual(req._orbitkv_capsule_prefix_tokens, 64)
+        self.assertEqual(capsules.commands[0]["token_ids"], list(range(64)))
+
+    def test_capsule_hydration_rolls_back_rejected_admission(self):
+        from orbitkv_sglang import plugin
+        from orbitkv_sglang.capsule_wire import encode_cpu_tensors
+
+        with tempfile.TemporaryDirectory() as directory:
+            payload_path = Path(directory) / "capsule.payload"
+            payload_path.write_bytes(encode_cpu_tensors([torch.ones((64, 1))]))
+            capsules = FakeHydrationCapsules(payload_path, 64)
+            allocator = FakeHydrationAllocator()
+            tree_cache = types.SimpleNamespace(
+                is_chunk_cache=lambda: True,
+                token_to_kv_pool_allocator=allocator,
+            )
+            adder = types.SimpleNamespace(tree_cache=tree_cache, can_run_list=[])
+            req = FakeHydrationReq()
+            old_capsules = plugin._CAPSULES
+            old_policy = plugin._POLICY
+            environment = {
+                "ORBITKV_CAPSULE_STORE": directory,
+                "ORBITKV_CAPSULE_CHUNK_TOKENS": "16",
+                "ORBITKV_TRACE_ALLOCATIONS": "0",
+                "ORBITKV_CAPSULE_IDENTITY": json.dumps(
+                    {
+                        "namespace": "dGVuYW50",
+                        "model_fingerprint": f"sha256:{'01' * 32}",
+                        "tokenizer_fingerprint": f"sha256:{'02' * 32}",
+                        "adapter_fingerprint": f"sha256:{'03' * 32}",
+                        "state_plan_fingerprint": f"sha256:{'04' * 32}",
+                    }
+                ),
+            }
+            old_environment = {key: os.environ.get(key) for key in environment}
+            try:
+                plugin._CAPSULES = capsules
+                plugin._POLICY = {
+                    "page_tokens": 16,
+                    "unbounded_classes": ["full"],
+                    "bounded_classes": [{"name": "swa", "window_tokens": 32}]
+                }
+                os.environ.update(environment)
+                result = plugin._hydrate_capsule_for_admission(
+                    lambda *_args, **_kwargs: "no_token",
+                    adder,
+                    req,
+                )
+            finally:
+                plugin._CAPSULES = old_capsules
+                plugin._POLICY = old_policy
+                for key, value in old_environment.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(result, "no_token")
+        self.assertEqual(len(allocator.loaded), 1)
+        self.assertEqual(len(allocator.freed), 1)
+        self.assertEqual(len(req.prefix_indices), 0)
+
+    def test_pure_swa_capsule_hydrates_only_live_tail(self):
+        from orbitkv_sglang import plugin
+        from orbitkv_sglang.capsule_wire import encode_cpu_tensors
+
+        with tempfile.TemporaryDirectory() as directory:
+            payload_path = Path(directory) / "capsule.payload"
+            payload_path.write_bytes(encode_cpu_tensors([torch.ones((32, 1))]))
+            capsules = FakeHydrationCapsules(
+                payload_path,
+                prefix_tokens=64,
+                live_tokens=32,
+            )
+            allocator = FakeHydrationAllocator(hybrid=False)
+            tree_cache = types.SimpleNamespace(
+                is_chunk_cache=lambda: True,
+                token_to_kv_pool_allocator=allocator,
+            )
+            adder = types.SimpleNamespace(tree_cache=tree_cache, can_run_list=[])
+            req = FakeHydrationReq()
+            old_capsules = plugin._CAPSULES
+            old_policy = plugin._POLICY
+            environment = {
+                "ORBITKV_CAPSULE_STORE": directory,
+                "ORBITKV_CAPSULE_CHUNK_TOKENS": "16",
+                "ORBITKV_TRACE_ALLOCATIONS": "0",
+                "ORBITKV_CAPSULE_IDENTITY": json.dumps(
+                    {
+                        "namespace": "dGVuYW50",
+                        "model_fingerprint": f"sha256:{'01' * 32}",
+                        "tokenizer_fingerprint": f"sha256:{'02' * 32}",
+                        "adapter_fingerprint": f"sha256:{'03' * 32}",
+                        "state_plan_fingerprint": f"sha256:{'04' * 32}",
+                    }
+                ),
+            }
+            old_environment = {key: os.environ.get(key) for key in environment}
+            try:
+                plugin._CAPSULES = capsules
+                plugin._POLICY = {
+                    "page_tokens": 16,
+                    "unbounded_classes": [],
+                    "bounded_classes": [{"name": "swa", "window_tokens": 32}],
+                }
+                os.environ.update(environment)
+
+                def original(current_adder, current_req):
+                    self.assertEqual(len(current_req.prefix_indices), 64)
+                    self.assertTrue(
+                        torch.equal(
+                            current_req.prefix_indices[:32],
+                            torch.zeros((32,), dtype=torch.int64),
+                        )
+                    )
+                    self.assertTrue(
+                        torch.equal(
+                            current_req.prefix_indices[32:],
+                            torch.arange(1, 33, dtype=torch.int64),
+                        )
+                    )
+                    current_adder.can_run_list.append(current_req)
+                    return "continue"
+
+                result = plugin._hydrate_capsule_for_admission(
+                    original, adder, req
+                )
+            finally:
+                plugin._CAPSULES = old_capsules
+                plugin._POLICY = old_policy
+                for key, value in old_environment.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(result, "continue")
+        self.assertEqual(req.cache_protected_len, 32)
+        self.assertEqual(req._orbitkv_capsule_prefix_tokens, 64)
+        self.assertEqual(req._orbitkv_capsule_live_tokens, 32)
+        self.assertEqual(len(allocator.loaded[0][1]), 32)
+        self.assertEqual(allocator.freed, [])
 
     def test_ffi_and_sidecar_owner_transports_are_equivalent(self):
         from orbitkv_sglang import plugin
