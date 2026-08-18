@@ -2,6 +2,7 @@
 
 | Record | Scope |
 | --- | --- |
+| `h20-live-tail-capsule-20260818` | Pure-SWA minimal-state hydration and E2E A/B |
 | `h20-capsule-export-20260818` | Real-checkpoint KV export and host restore |
 | `applicability-h20-20260817` | Qwen Full fallback, Mistral bounded state, GPT-OSS Hybrid |
 | `h20-gpt-oss-20b-real-20260817` | Primary real-checkpoint SGLang result |
@@ -22,5 +23,6 @@ Boundaries:
   proofs, not GPU performance results.
 - Capsule evidence covers export and host restore, not request hydration or
   TTFT improvement.
+- Live-tail Capsule hydration is qualified only for compiler-proven pure SWA.
 - VMM does not yet back SGLang KV tensors.
 - Every primary record includes a hash manifest.

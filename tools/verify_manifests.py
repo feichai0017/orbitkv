@@ -23,6 +23,7 @@ DEFAULT_MANIFESTS = (
     ROOT / "results/applicability-h20-20260817/page16-manifest.json",
     ROOT / "results/applicability-h20-20260817/page16-graph-manifest.json",
     ROOT / "results/h20-capsule-export-20260818/manifest.json",
+    ROOT / "results/h20-live-tail-capsule-20260818/manifest.json",
 )
 
 

@@ -1,0 +1,30 @@
+{
+  "claim_boundary": [
+    "real 496060688-byte checkpoint and pinned SGLang revision",
+    "pure-SWA compiler-proven live-tail capsule",
+    "single request, one decode token, three paired rounds per length",
+    "no Hybrid Full+SWA hydration claim"
+  ],
+  "date": "2026-08-18",
+  "records": {
+    "results/h20-live-tail-capsule-20260818/README.md": "569580dc9da74529bbe0f18a6b5646c1e4cb5c44351236bc3015cc5bfe8d6c98",
+    "results/h20-live-tail-capsule-20260818/state-plan.json": "ffb6f4c54239b7db5d17e29f728a6b4489e1c99bdcdf8eb340774df0c092b66d",
+    "results/h20-live-tail-capsule-20260818/summary.json": "3dfde090b8d4145892f6e9ff65df57ce29bb97a0ddf0dd42314a9391ce060d54"
+  },
+  "schema": "orbitkv.h20-live-tail-capsule-manifest.v1",
+  "source_commit": "ffda1766f4c85df2bf17d27a2d29e3bee3fffbd7",
+  "sources": {
+    "examples/mistral_uniform_swa.json": "6deb15c29db50df52d20eb28a99b2f14a15f6cc30f263029917921d8a024246f",
+    "integrations/sglang/bench_hybrid_shadow.py": "ac217ba272b47bab3263f1fcb02484820582eb2db9a2f4cd755da33f41534b85",
+    "integrations/sglang/src/orbitkv_sglang/capsule_wire.py": "de09d86d8c886443113ea6a2061afe39d26e0ff715891142c24d10a420e1d1c2",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "cfd6e9ed1c6e062b856deaabf89e57f2e83a0c7fe52512109dd493256925120f",
+    "integrations/sglang/tests/test_shadow_plugin.py": "e4a9533fa137a21c59e753eaf95aa02a1cd91e1495aae67af3caf6fac5211e25",
+    "src/bin/orbitkv.rs": "377e92295b2f91dc291c849ce73d244dda4c878759a586495c86fd12db829786",
+    "src/holt_store.rs": "b36e9280778478d1443df595a8073f6b4b7083036622dcaabc6b3709fc7ab16e",
+    "src/plan.rs": "e0bd138f68b01e2e402c39309e51815d9ca41a576f69d4e2b0d13518733fba9e",
+    "tests/capsule_cli.rs": "fbec5a5f9a5dfbdab2fef9e741f180bab6d55873fb3dbe43a3f878a0235832f1"
+  },
+  "workspace_sections": [
+    "records"
+  ]
+}

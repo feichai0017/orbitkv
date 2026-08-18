@@ -1,0 +1,464 @@
+{
+  "checkpoint_weight_bytes": 496060688,
+  "claim_boundary": [
+    "real checkpoint and SGLang attention data plane",
+    "pure-SWA compiler-proven live-tail capsule",
+    "single request and one decode token",
+    "three paired rounds per prompt length",
+    "no hybrid Full+SWA hydration claim"
+  ],
+  "date": "2026-08-18",
+  "gpu": "NVIDIA H20",
+  "model": "/workspace/models/tiny-mistral-248m-v3-d128-swa1024-fixture",
+  "page_tokens": 16,
+  "pairs": [
+    {
+      "capsule": {
+        "cached_tokens": 4096,
+        "capsule_events": [
+          {
+            "event": "capsule_miss",
+            "query_token_count": 4095,
+            "request_id": "aeadafa54108403b96a09a8d99c4a344",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787058978511888000
+          },
+          {
+            "created": true,
+            "event": "capsule_published",
+            "payload_bytes": 12585267,
+            "prefix_token_count": 4096,
+            "request_id": "aeadafa54108403b96a09a8d99c4a344",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787058979805531902
+          },
+          {
+            "duration_ns": {
+              "allocation": 547601,
+              "load": 2043168,
+              "lookup": 635701,
+              "payload_decode": 18069566,
+              "total": 21296036
+            },
+            "event": "capsule_hydrated",
+            "live_token_count": 1024,
+            "prefix_token_count": 4096,
+            "request_id": "4183719d683a48ab8821ac37c038a76c",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787058979831599434
+          }
+        ],
+        "e2e_seconds": 0.04137511923909187,
+        "iteration_seconds": 0.04184199869632721,
+        "mode": "capsule",
+        "output_digest": "4af2838f718f3b4326421476de010d9a1a80b5d6673b4e590e2e6850d6320bfd",
+        "pair": 0,
+        "payload_bytes": 12585267,
+        "process_seconds": 20.664009124040604,
+        "prompt_tokens": 4096,
+        "seed_seconds": 1.3073747418820858
+      },
+      "cold": {
+        "cached_tokens": 0,
+        "capsule_events": [],
+        "e2e_seconds": 0.04433129355311394,
+        "iteration_seconds": 0.044847309589385986,
+        "mode": "cold",
+        "output_digest": "4af2838f718f3b4326421476de010d9a1a80b5d6673b4e590e2e6850d6320bfd",
+        "pair": 0,
+        "payload_bytes": 0,
+        "process_seconds": 21.06736446544528,
+        "prompt_tokens": 4096,
+        "seed_seconds": 1.2218631617724895
+      },
+      "order": [
+        "cold",
+        "capsule"
+      ],
+      "pair": 0,
+      "prompt_tokens": 4096,
+      "ratio": 0.9333163082534411
+    },
+    {
+      "capsule": {
+        "cached_tokens": 4096,
+        "capsule_events": [
+          {
+            "event": "capsule_miss",
+            "query_token_count": 4095,
+            "request_id": "d2aa666a1e7445aa9cf2a9765b87efad",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787058999138223465
+          },
+          {
+            "created": true,
+            "event": "capsule_published",
+            "payload_bytes": 12585267,
+            "prefix_token_count": 4096,
+            "request_id": "d2aa666a1e7445aa9cf2a9765b87efad",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059000479350123
+          },
+          {
+            "duration_ns": {
+              "allocation": 585842,
+              "load": 2053823,
+              "lookup": 651823,
+              "payload_decode": 18697075,
+              "total": 21988563
+            },
+            "event": "capsule_hydrated",
+            "live_token_count": 1024,
+            "prefix_token_count": 4096,
+            "request_id": "bfdd2608b5b44868b20edee9d00bf37a",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059000506367574
+          }
+        ],
+        "e2e_seconds": 0.042168498039245605,
+        "iteration_seconds": 0.04267152398824692,
+        "mode": "capsule",
+        "output_digest": "4af2838f718f3b4326421476de010d9a1a80b5d6673b4e590e2e6850d6320bfd",
+        "pair": 1,
+        "payload_bytes": 12585267,
+        "process_seconds": 20.850339498370886,
+        "prompt_tokens": 4096,
+        "seed_seconds": 1.3555687069892883
+      },
+      "cold": {
+        "cached_tokens": 0,
+        "capsule_events": [],
+        "e2e_seconds": 0.04461359232664108,
+        "iteration_seconds": 0.04548873379826546,
+        "mode": "cold",
+        "output_digest": "4af2838f718f3b4326421476de010d9a1a80b5d6673b4e590e2e6850d6320bfd",
+        "pair": 1,
+        "payload_bytes": 0,
+        "process_seconds": 20.539446018636227,
+        "prompt_tokens": 4096,
+        "seed_seconds": 1.2028840705752373
+      },
+      "order": [
+        "capsule",
+        "cold"
+      ],
+      "pair": 1,
+      "prompt_tokens": 4096,
+      "ratio": 0.9451939608562885
+    },
+    {
+      "capsule": {
+        "cached_tokens": 4096,
+        "capsule_events": [
+          {
+            "event": "capsule_miss",
+            "query_token_count": 4095,
+            "request_id": "4542a33e97554181aeefcc31ae72a880",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059060730447028
+          },
+          {
+            "created": true,
+            "event": "capsule_published",
+            "payload_bytes": 12585267,
+            "prefix_token_count": 4096,
+            "request_id": "4542a33e97554181aeefcc31ae72a880",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059062021736988
+          },
+          {
+            "duration_ns": {
+              "allocation": 613399,
+              "load": 2062592,
+              "lookup": 656450,
+              "payload_decode": 18042205,
+              "total": 21374646
+            },
+            "event": "capsule_hydrated",
+            "live_token_count": 1024,
+            "prefix_token_count": 4096,
+            "request_id": "d0d05871920640a29910bcd947cbfff1",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059062047798270
+          }
+        ],
+        "e2e_seconds": 0.04140755906701088,
+        "iteration_seconds": 0.04190783575177193,
+        "mode": "capsule",
+        "output_digest": "4af2838f718f3b4326421476de010d9a1a80b5d6673b4e590e2e6850d6320bfd",
+        "pair": 2,
+        "payload_bytes": 12585267,
+        "process_seconds": 21.040377531200647,
+        "prompt_tokens": 4096,
+        "seed_seconds": 1.3051466457545757
+      },
+      "cold": {
+        "cached_tokens": 0,
+        "capsule_events": [],
+        "e2e_seconds": 0.045491207391023636,
+        "iteration_seconds": 0.04595385119318962,
+        "mode": "cold",
+        "output_digest": "4af2838f718f3b4326421476de010d9a1a80b5d6673b4e590e2e6850d6320bfd",
+        "pair": 2,
+        "payload_bytes": 0,
+        "process_seconds": 20.268882416188717,
+        "prompt_tokens": 4096,
+        "seed_seconds": 1.2103273496031761
+      },
+      "order": [
+        "cold",
+        "capsule"
+      ],
+      "pair": 2,
+      "prompt_tokens": 4096,
+      "ratio": 0.9102321402702857
+    },
+    {
+      "capsule": {
+        "cached_tokens": 16384,
+        "capsule_events": [
+          {
+            "event": "capsule_miss",
+            "query_token_count": 16383,
+            "request_id": "4759d6abb7ef46868c1864c4a4a8cda1",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059102397034023
+          },
+          {
+            "created": true,
+            "event": "capsule_published",
+            "payload_bytes": 12585267,
+            "prefix_token_count": 16384,
+            "request_id": "4759d6abb7ef46868c1864c4a4a8cda1",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059103763637764
+          },
+          {
+            "duration_ns": {
+              "allocation": 681228,
+              "load": 2203295,
+              "lookup": 1795669,
+              "payload_decode": 18628142,
+              "total": 23308334
+            },
+            "event": "capsule_hydrated",
+            "live_token_count": 1024,
+            "prefix_token_count": 16384,
+            "request_id": "81a43ca88cb14bc4954a18f72202bb5a",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059103792998763
+          }
+        ],
+        "e2e_seconds": 0.0823514275252819,
+        "iteration_seconds": 0.08290379121899605,
+        "mode": "capsule",
+        "output_digest": "ccb485376a8317ea99c98272f41f94e27460b30bb28bde3926106dea7ab3b0d8",
+        "pair": 0,
+        "payload_bytes": 12585267,
+        "process_seconds": 21.664869986474514,
+        "prompt_tokens": 16384,
+        "seed_seconds": 1.3826629221439362
+      },
+      "cold": {
+        "cached_tokens": 0,
+        "capsule_events": [],
+        "e2e_seconds": 0.13207988813519478,
+        "iteration_seconds": 0.13262053951621056,
+        "mode": "cold",
+        "output_digest": "ccb485376a8317ea99c98272f41f94e27460b30bb28bde3926106dea7ab3b0d8",
+        "pair": 0,
+        "payload_bytes": 0,
+        "process_seconds": 20.382849164307117,
+        "prompt_tokens": 16384,
+        "seed_seconds": 1.2596896812319756
+      },
+      "order": [
+        "cold",
+        "capsule"
+      ],
+      "pair": 0,
+      "prompt_tokens": 16384,
+      "ratio": 0.6234971023066612
+    },
+    {
+      "capsule": {
+        "cached_tokens": 16384,
+        "capsule_events": [
+          {
+            "event": "capsule_miss",
+            "query_token_count": 16383,
+            "request_id": "dd44ae535f01471ea3100b1daa9f68e5",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059124741167115
+          },
+          {
+            "created": true,
+            "event": "capsule_published",
+            "payload_bytes": 12585267,
+            "prefix_token_count": 16384,
+            "request_id": "dd44ae535f01471ea3100b1daa9f68e5",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059126104542781
+          },
+          {
+            "duration_ns": {
+              "allocation": 617662,
+              "load": 2249776,
+              "lookup": 2270914,
+              "payload_decode": 20069069,
+              "total": 25207421
+            },
+            "event": "capsule_hydrated",
+            "live_token_count": 1024,
+            "prefix_token_count": 16384,
+            "request_id": "3573a8a95bf4497b92467c6a9f3883f5",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059126137762818
+          }
+        ],
+        "e2e_seconds": 0.08559498563408852,
+        "iteration_seconds": 0.08607670292258263,
+        "mode": "capsule",
+        "output_digest": "ccb485376a8317ea99c98272f41f94e27460b30bb28bde3926106dea7ab3b0d8",
+        "pair": 1,
+        "payload_bytes": 12585267,
+        "process_seconds": 21.836576730012894,
+        "prompt_tokens": 16384,
+        "seed_seconds": 1.3806642852723598
+      },
+      "cold": {
+        "cached_tokens": 0,
+        "capsule_events": [],
+        "e2e_seconds": 0.13239754736423492,
+        "iteration_seconds": 0.13298935443162918,
+        "mode": "cold",
+        "output_digest": "ccb485376a8317ea99c98272f41f94e27460b30bb28bde3926106dea7ab3b0d8",
+        "pair": 1,
+        "payload_bytes": 0,
+        "process_seconds": 20.389930058270693,
+        "prompt_tokens": 16384,
+        "seed_seconds": 1.2757884822785854
+      },
+      "order": [
+        "capsule",
+        "cold"
+      ],
+      "pair": 1,
+      "prompt_tokens": 16384,
+      "ratio": 0.6464997829499871
+    },
+    {
+      "capsule": {
+        "cached_tokens": 16384,
+        "capsule_events": [
+          {
+            "event": "capsule_miss",
+            "query_token_count": 16383,
+            "request_id": "9f6108db7db342ef8a2ca7c0f61af452",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059187149442601
+          },
+          {
+            "created": true,
+            "event": "capsule_published",
+            "payload_bytes": 12585267,
+            "prefix_token_count": 16384,
+            "request_id": "9f6108db7db342ef8a2ca7c0f61af452",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059188510232826
+          },
+          {
+            "duration_ns": {
+              "allocation": 579275,
+              "load": 2075377,
+              "lookup": 1793109,
+              "payload_decode": 18778362,
+              "total": 23226123
+            },
+            "event": "capsule_hydrated",
+            "live_token_count": 1024,
+            "prefix_token_count": 16384,
+            "request_id": "2a65837dd5364620b0e9a8f6cd601a34",
+            "schema": "orbitkv.sglang-shadow.v1",
+            "timestamp_ns": 1787059188539520573
+          }
+        ],
+        "e2e_seconds": 0.08146925643086433,
+        "iteration_seconds": 0.08200544118881226,
+        "mode": "capsule",
+        "output_digest": "ccb485376a8317ea99c98272f41f94e27460b30bb28bde3926106dea7ab3b0d8",
+        "pair": 2,
+        "payload_bytes": 12585267,
+        "process_seconds": 20.45123941078782,
+        "prompt_tokens": 16384,
+        "seed_seconds": 1.376308910548687
+      },
+      "cold": {
+        "cached_tokens": 0,
+        "capsule_events": [],
+        "e2e_seconds": 0.17313482612371445,
+        "iteration_seconds": 0.1736706830561161,
+        "mode": "cold",
+        "output_digest": "ccb485376a8317ea99c98272f41f94e27460b30bb28bde3926106dea7ab3b0d8",
+        "pair": 2,
+        "payload_bytes": 0,
+        "process_seconds": 21.01510388031602,
+        "prompt_tokens": 16384,
+        "seed_seconds": 1.5926140174269676
+      },
+      "order": [
+        "cold",
+        "capsule"
+      ],
+      "pair": 2,
+      "prompt_tokens": 16384,
+      "ratio": 0.47055383515186033
+    }
+  ],
+  "physical_pool_tokens": 4096,
+  "schema": "orbitkv.h20-live-tail-capsule-ab.v1",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+  "source_commit": "ffda1766f4c85df2bf17d27a2d29e3bee3fffbd7",
+  "state_plan": "/tmp/orbitkv-tiny-mistral-state-plan-32k.json",
+  "summary": {
+    "16384": {
+      "cached_tokens": [
+        16384
+      ],
+      "digests": [
+        "ccb485376a8317ea99c98272f41f94e27460b30bb28bde3926106dea7ab3b0d8"
+      ],
+      "median_change_percent": -37.65028976933388,
+      "median_ratio": 0.6234971023066612,
+      "pairs": 3,
+      "payload_bytes": [
+        12585267
+      ],
+      "ratios": [
+        0.6234971023066612,
+        0.6464997829499871,
+        0.47055383515186033
+      ]
+    },
+    "4096": {
+      "cached_tokens": [
+        4096
+      ],
+      "digests": [
+        "4af2838f718f3b4326421476de010d9a1a80b5d6673b4e590e2e6850d6320bfd"
+      ],
+      "median_change_percent": -6.668369174655886,
+      "median_ratio": 0.9333163082534411,
+      "pairs": 3,
+      "payload_bytes": [
+        12585267
+      ],
+      "ratios": [
+        0.9333163082534411,
+        0.9451939608562885,
+        0.9102321402702857
+      ]
+    }
+  },
+  "window_tokens": 1024
+}
