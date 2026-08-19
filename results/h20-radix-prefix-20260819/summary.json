@@ -1,0 +1,103 @@
+{
+  "checkpoint_weight_bytes": 13761316904,
+  "claim_boundary": [
+    "real GPT-OSS 20B checkpoint and pinned SGLang UnifiedRadixCache",
+    "one seed plus one exact-prefix continuation request per process",
+    "three runs per mode with mixed order; single request and one decode token",
+    "no pressure eviction, overlap, speculative decoding, concurrency, or vLLM claim",
+    "continuation timing is a smoke result; durable Capsule publication cost is reported separately"
+  ],
+  "date": "2026-08-19",
+  "decode_tokens": 1,
+  "engine_runtime": {
+    "disable_overlap_schedule": true,
+    "disable_radix_cache": false,
+    "owner_transport": "sidecar",
+    "speculative_decoding": false,
+    "tree_cache": "UnifiedRadixCache"
+  },
+  "gpu": "NVIDIA H20",
+  "model": "/workspace/models/gpt-oss-20b",
+  "orbitkv_event_chain": [
+    "capsule_miss",
+    "capsule_published",
+    "prefix_component_recovered(full)",
+    "prefix_component_recovered(swa)",
+    "prefix_acquired(full+swa)",
+    "capsule_reused(prefix_lease)",
+    "prefix_released"
+  ],
+  "page_tokens": 16,
+  "prefix_tokens": 1024,
+  "runs": {
+    "orbitkv": [
+      {
+        "cached_tokens": 1024,
+        "continuation_seconds": 0.15530284494161606,
+        "order": "owner_first",
+        "output_digest": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97",
+        "owner_transport": "sidecar",
+        "seed_seconds": 5.002585586160421
+      },
+      {
+        "cached_tokens": 1024,
+        "continuation_seconds": 0.137091226875782,
+        "order": "owner_then_stock",
+        "output_digest": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97",
+        "owner_transport": "sidecar",
+        "seed_seconds": 4.743693593889475
+      },
+      {
+        "cached_tokens": 1024,
+        "continuation_seconds": 0.1396709457039833,
+        "order": "stock_then_owner",
+        "output_digest": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97",
+        "owner_transport": "sidecar",
+        "seed_seconds": 4.77597764134407
+      }
+    ],
+    "stock": [
+      {
+        "cached_tokens": 1024,
+        "continuation_seconds": 0.14756372198462486,
+        "order": "stock_first",
+        "output_digest": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97",
+        "owner_transport": null,
+        "seed_seconds": 1.4459235928952694
+      },
+      {
+        "cached_tokens": 1024,
+        "continuation_seconds": 0.19050519168376923,
+        "order": "owner_then_stock",
+        "output_digest": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97",
+        "owner_transport": null,
+        "seed_seconds": 1.4325401224195957
+      },
+      {
+        "cached_tokens": 1024,
+        "continuation_seconds": 0.15242234990000725,
+        "order": "stock_then_owner",
+        "output_digest": "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97",
+        "owner_transport": null,
+        "seed_seconds": 1.4462759755551815
+      }
+    ]
+  },
+  "schema": "orbitkv.h20-radix-prefix.v1",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+  "suffix_tokens": 1,
+  "summary": {
+    "all_cached_tokens": [
+      1024
+    ],
+    "all_output_digests": [
+      "d0bca111f8628137adc4c16f123496dcdd1d590d06cb5d9acd68b39fe656fb97"
+    ],
+    "orbitkv_continuation_median_seconds": 0.1396709457039833,
+    "orbitkv_over_stock_continuation_ratio": 0.9163416375328869,
+    "orbitkv_over_stock_seed_ratio": 3.3030636368418413,
+    "orbitkv_seed_median_seconds": 4.77597764134407,
+    "stock_continuation_median_seconds": 0.15242234990000725,
+    "stock_seed_median_seconds": 1.4459235928952694
+  }
+}

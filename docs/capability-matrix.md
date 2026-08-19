@@ -33,6 +33,7 @@ result summaries link here rather than defining independent support claims.
 | Pure-SWA live-tail Capsule | L4 | SGLang hydration; 1K live tail; single request and one decode token | `results/h20-live-tail-capsule-20260818/` |
 | Full+SWA Hybrid Capsule | L4 | GPT-OSS 20B; Full history plus 128-token SWA tail; measured host-file crossover | `results/h20-hybrid-capsule-20260818/` |
 | Holt persistent Capsule catalog | L4 | Sole catalog backend; content-addressed payload files; longest-prefix restore | `results/h20-capsule-export-20260818/`, `results/h20-hybrid-capsule-20260818/` |
+| Component-aware Prefix ownership | L4 | GPT-OSS 20B; exact 1K Prefix; SGLang `UnifiedRadixCache`; authenticated Full+SWA components; atomic shared lease; single request, non-overlap | `results/h20-radix-prefix-20260819/` |
 | Generation-aware CUDA VMM slot | L3 | H20 reserve/map/remap/unmap primitive; not SGLang tensor storage | `results/h20-generation-vmm-20260817/` |
 | Transactional physical reclamation | L3 | Certificate, backend receipt, commit; reference/CUDA lifecycle | `results/h20-generation-vmm-20260817/` |
 | Transactional allocation/binding | L4 | Rust prepare/commit/abort coordinator drives SGLang Capsule hydration; binding uses the owner sidecar while reclamation may use FFI | `src/binding.rs`, `src/manager.rs`, `integrations/sglang/tests/test_shadow_plugin.py` |
@@ -43,7 +44,8 @@ The following remain below L4:
 
 - One runtime resource manifest for deployment paths, model identity, and external service endpoints.
 - A versioned FFI binding ABI; the current L4 binding path uses the Rust owner sidecar.
-- Radix/Prefix component-aware ownership and shared-page lifecycle.
+- SGLang Radix/Prefix pressure eviction, concurrent sharing, and broader
+  shared-page qualification beyond the exact-prefix Full+SWA path.
 - Overlap scheduling and real multi-stream CUDA-event execution frontiers.
 - Speculative decoding, fork, rollback, beam/tree state, and COW.
 - Mamba/SSM or other recurrent state.

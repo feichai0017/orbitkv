@@ -5,6 +5,7 @@ Capability levels and unsupported paths are defined only in
 
 | Record | Scope |
 | --- | --- |
+| `h20-radix-prefix-20260819` | GPT-OSS component-aware Full+SWA Prefix on SGLang UnifiedRadixCache |
 | `h20-transactional-binding-20260819` | Rust prepare/load/commit binding enters real SGLang hydration |
 | `h20-runtime-state-plan-20260819` | One fingerprinted runtime artifact drives owner and Capsule contracts |
 | `h20-hybrid-capsule-20260818` | GPT-OSS Full+SWA component restore crossover |
