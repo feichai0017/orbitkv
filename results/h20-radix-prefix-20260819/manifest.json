@@ -14,7 +14,6 @@
   "schema": "orbitkv.h20-radix-prefix-manifest.v1",
   "sources": {
     ".github/workflows/ci.yml": "7af3ec552f2f07ba7d2f701bf1b469dfdfa08126bde206a52f6fd47f8f66aacd",
-    "docs/capability-matrix.md": "b4a68826963e0425c7911b452d983377cb252c8f6f72de47da8f6c733c252e08",
     "integrations/sglang/bench_hybrid_shadow.py": "fdaeb800e6fbd7acb8c6c4acef90d08b45153e295bcf493240559491adbef505",
     "integrations/sglang/src/orbitkv_sglang/plugin.py": "6ef0fd968740d5a260ac7cff0d368c53bb7ce9d717823c83125c995a713098e2",
     "integrations/sglang/tests/test_shadow_plugin.py": "226f01133a36a9c9ec73360496c85300e640fa7daa8cc714ae05b812528bc121",
@@ -26,7 +25,6 @@
     "src/state_plan.rs": "58304788b79acaa5b3bfdc73612ad3fb06be9e3abc4b5ebe821b61dc415a9bfb"
   },
   "workspace_sections": [
-    "records",
-    "sources"
+    "records"
   ]
 }

@@ -15,7 +15,6 @@
   "schema": "orbitkv.h20-cuda-event-overlap-manifest.v1",
   "sources": {
     ".github/workflows/ci.yml": "66fd54894f426d0801119a770605a8ce4e8b3f440bf39e72347c411136b4c32f",
-    "docs/capability-matrix.md": "e499dc1fdc21def22da3891d5350b8e5bf2519427b21557efeb03611020fde38",
     "integrations/sglang/bench_hybrid_shadow.py": "918109c03f974f0f9eeec578318109e7192a7826f6a86fe7a0ad4a6869d2119c",
     "integrations/sglang/src/orbitkv_sglang/plugin.py": "a512e15816ad3f686ad970d4dc3e0a2e2fee38a3f1ed62a5b5153896eecd7c97",
     "integrations/sglang/tests/test_shadow_plugin.py": "080d58086eb50c0de4666566e754818bd74c4675e06f560122e459bb8b6df78c",
@@ -26,7 +25,6 @@
     "tests/retention_cli.rs": "263b67985b9c008570d961eab100dd7577c7d694cae6435044ff131ac71dd74c"
   },
   "workspace_sections": [
-    "records",
-    "sources"
+    "records"
   ]
 }
