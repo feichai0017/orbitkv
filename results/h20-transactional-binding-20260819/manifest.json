@@ -1,0 +1,27 @@
+{
+  "claim_boundary": [
+    "real GPT-OSS 20B SGLang binding transaction",
+    "Rust-derived Full and SWA ranges",
+    "no fault-injected GPU or new performance claim"
+  ],
+  "date": "2026-08-19",
+  "records": {
+    "results/h20-transactional-binding-20260819/README.md": "299c2ad8fd91ef3ee8ac15991b7d048e0b83f846ce6e0b7f71b9607505db3e9a",
+    "results/h20-transactional-binding-20260819/runtime-state-plan.json": "5a02ab6cbb4156b30c19bdb3081daf11f37a20b79713c4f513a6dd6d821793b8",
+    "results/h20-transactional-binding-20260819/summary.json": "7175470d2c6961b11d421458442713c4520c01ef425f60e92172fade52574c8f"
+  },
+  "schema": "orbitkv.h20-transactional-binding-manifest.v1",
+  "source_commit": "68b815c",
+  "sources": {
+    "docs/capability-matrix.md": "d77fcce153165abd7011fdc13ce19c9f0d175bfcaf469a0fdc8bc6cd47d646d9",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "247f58b893abb426778de825386273c22fee74123e5997ff01fb6d5f2140c3da",
+    "integrations/sglang/tests/test_shadow_plugin.py": "92cc82f74ac7d97bd8213946747c454b5ecae0516039d4baa42ef4f1e040a2c1",
+    "src/binding.rs": "fbcac2c3077b53f3b0d07b4cb3d09412ff3451bfa0d3b86352252e05f7f3a116",
+    "src/lib.rs": "44d159223f955e8421222e95e4f56afec209c5eda3779ee97532a1a0ea46fa85",
+    "src/manager.rs": "b039ab5af09782f130e5ded6df1c38ea841ea3d52f19c5864558dbc94d70876c",
+    "src/sglang_owner.rs": "faed5469368084eac1657611d7dc2e7a157c724dff26453c5f29a05c7a1dd6b5"
+  },
+  "workspace_sections": [
+    "records"
+  ]
+}

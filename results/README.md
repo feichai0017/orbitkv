@@ -5,6 +5,7 @@ Capability levels and unsupported paths are defined only in
 
 | Record | Scope |
 | --- | --- |
+| `h20-transactional-binding-20260819` | Rust prepare/load/commit binding enters real SGLang hydration |
 | `h20-runtime-state-plan-20260819` | One fingerprinted runtime artifact drives owner and Capsule contracts |
 | `h20-hybrid-capsule-20260818` | GPT-OSS Full+SWA component restore crossover |
 | `h20-live-tail-capsule-20260818` | Pure-SWA minimal-state hydration and E2E A/B |

@@ -1,0 +1,152 @@
+{
+  "schema": "orbitkv.runtime-state-plan.v1",
+  "artifact_fingerprint": "sha256:e2c1bd2aeeaebf39a15e07c4e2b1b6827f03f3d2aa6582c297e8de41438f352a",
+  "plan_fingerprint": "sha256:dfbeded59980b8784b79097e96ae51addbee8cd8ffb19977b6e5aa1df2c1c756",
+  "semantic_source": {
+    "schema": "orbitkv.retention-ir.v1",
+    "page_tokens": 16,
+    "states": [
+      {
+        "name": "full",
+        "layers": [
+          1,
+          3,
+          5,
+          7,
+          9,
+          11,
+          13,
+          15,
+          17,
+          19,
+          21,
+          23
+        ],
+        "bytes_per_token_per_layer": 2048,
+        "may_read": {
+          "op": "true"
+        }
+      },
+      {
+        "name": "swa",
+        "layers": [
+          0,
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22
+        ],
+        "bytes_per_token_per_layer": 2048,
+        "may_read": {
+          "op": "less_than",
+          "lhs": {
+            "op": "sub",
+            "lhs": {
+              "op": "query_position"
+            },
+            "rhs": {
+              "op": "key_position"
+            }
+          },
+          "rhs": {
+            "op": "constant",
+            "value": 128
+          }
+        }
+      }
+    ]
+  },
+  "layout": {
+    "classes": [
+      {
+        "address": {
+          "kind": "append_only"
+        },
+        "bytes_per_token_per_layer": 2048,
+        "layers": [
+          1,
+          3,
+          5,
+          7,
+          9,
+          11,
+          13,
+          15,
+          17,
+          19,
+          21,
+          23
+        ],
+        "minimum_slots_per_request": null,
+        "name": "full",
+        "retirement": {
+          "kind": "never"
+        }
+      },
+      {
+        "address": {
+          "kind": "periodic",
+          "period_blocks": 9
+        },
+        "bytes_per_token_per_layer": 2048,
+        "layers": [
+          0,
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22
+        ],
+        "minimum_slots_per_request": 9,
+        "name": "swa",
+        "retirement": {
+          "kind": "block_end_plus",
+          "offset_tokens": 127
+        }
+      }
+    ],
+    "page_tokens": 16,
+    "plan_fingerprint": "sha256:dfbeded59980b8784b79097e96ae51addbee8cd8ffb19977b6e5aa1df2c1c756",
+    "schema": "orbitkv.layout-program.v1"
+  },
+  "sglang_policy": {
+    "bounded_classes": [
+      {
+        "block_slots": 9,
+        "name": "swa",
+        "token_slots": 144,
+        "window_tokens": 128
+      }
+    ],
+    "max_persistent_swa_token_slots_per_request": 144,
+    "page_tokens": 16,
+    "plan_fingerprint": "sha256:dfbeded59980b8784b79097e96ae51addbee8cd8ffb19977b6e5aa1df2c1c756",
+    "schema": "orbitkv.sglang-policy.v1",
+    "swa_eviction_interval_tokens": 32,
+    "unbounded_classes": [
+      "full"
+    ]
+  },
+  "execution": {
+    "mode": "owner",
+    "owner_transport": "ffi"
+  },
+  "capsule": {
+    "enabled": true,
+    "chunk_tokens": 128,
+    "maximum_payload_bytes": 268435456
+  }
+}
