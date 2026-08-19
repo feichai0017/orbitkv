@@ -1,0 +1,68 @@
+{
+  "benchmarks": [
+    {
+      "blocks_per_request": 128,
+      "dense_maximum_inflight_submissions": 1,
+      "dense_median_ns": 1597018,
+      "dense_over_reference_milli": 81,
+      "dense_physical_slots": 193,
+      "events_per_round": 514,
+      "final_dense_resident_blocks": 0,
+      "final_reference_resident_blocks": 0,
+      "reference_median_ns": 19525057,
+      "requests": 1,
+      "rounds": 9
+    },
+    {
+      "blocks_per_request": 512,
+      "dense_maximum_inflight_submissions": 8,
+      "dense_median_ns": 127656065,
+      "dense_over_reference_milli": 63,
+      "dense_physical_slots": 4616,
+      "events_per_round": 16400,
+      "final_dense_resident_blocks": 0,
+      "final_reference_resident_blocks": 0,
+      "reference_median_ns": 2013794805,
+      "requests": 8,
+      "rounds": 7
+    },
+    {
+      "blocks_per_request": 256,
+      "dense_maximum_inflight_submissions": 32,
+      "dense_median_ns": 160274842,
+      "dense_over_reference_milli": 65,
+      "dense_physical_slots": 10272,
+      "events_per_round": 32832,
+      "final_dense_resident_blocks": 0,
+      "final_reference_resident_blocks": 0,
+      "reference_median_ns": 2454134103,
+      "requests": 32,
+      "rounds": 5
+    }
+  ],
+  "build_profile": "release",
+  "claim_boundary": [
+    "host control-plane benchmark only",
+    "same semantic plan and full ownership event stream for Reference and Dense runtimes",
+    "no SGLang, GPU kernel, end-to-end latency, or vLLM claim",
+    "fixed-capacity generation arenas remain bounded over long execution"
+  ],
+  "correctness": {
+    "bounded_lifecycle_iterations": 1000,
+    "deterministic_random_events": 1000,
+    "out_of_order_completion": true,
+    "request_generation_reuse": true,
+    "tested_layouts": [
+      "AppendOnly",
+      "Periodic",
+      "Pinned + PeriodicFrom"
+    ],
+    "transactional_binding": true
+  },
+  "date": "2026-08-19",
+  "host": "g340-cd51-7804-db9d-6be9-5485-3305",
+  "machine": "x86_64",
+  "plan": "examples/gpt_oss_hybrid_tiny.json",
+  "python_platform": "Linux-5.15.152.bsk.7-amd64-x86_64-with-glibc2.36",
+  "schema": "orbitkv.dense-runtime-validation.v1"
+}

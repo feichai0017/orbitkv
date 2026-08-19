@@ -3,7 +3,7 @@ use serde_json::Value;
 use sha2::{Digest, Sha256};
 use thiserror::Error;
 
-use crate::{KvPlanSource, PlanError};
+use crate::{DenseRuntimeArtifact, DenseRuntimeError, KvPlanSource, PlanError};
 
 const RUNTIME_STATE_PLAN_SCHEMA: &str = "orbitkv.runtime-state-plan.v1";
 
@@ -79,6 +79,8 @@ pub struct RuntimeStatePlan {
     pub physical_plan: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uniform_state_plan: Option<Value>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dense_runtime: Option<DenseRuntimeArtifact>,
     pub execution: RuntimeExecutionContract,
     pub capsule: RuntimeCapsuleContract,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -90,6 +92,7 @@ pub struct RuntimeStatePlanOptions {
     pub eviction_interval_tokens: u64,
     pub physical_plan: Option<Value>,
     pub uniform_state_plan: Option<Value>,
+    pub dense_runtime: Option<DenseRuntimeArtifact>,
     pub execution: RuntimeExecutionContract,
     pub capsule: RuntimeCapsuleContract,
     pub prefix: Option<RuntimePrefixContract>,
@@ -127,6 +130,8 @@ pub enum RuntimeStatePlanError {
     Json(#[from] serde_json::Error),
     #[error(transparent)]
     Plan(#[from] PlanError),
+    #[error(transparent)]
+    Dense(#[from] DenseRuntimeError),
 }
 
 /// Compiles all semantic and engine contracts consumed by the runtime into one
@@ -172,6 +177,7 @@ pub fn compile_runtime_state_plan(
         &plan_fingerprint,
         options.execution.uniform_state_plan_mode,
     )?;
+    validate_dense_runtime(options.dense_runtime.as_ref(), &compiled)?;
     let mut artifact = RuntimeStatePlan {
         schema: RUNTIME_STATE_PLAN_SCHEMA.into(),
         artifact_fingerprint: String::new(),
@@ -181,6 +187,7 @@ pub fn compile_runtime_state_plan(
         sglang_policy,
         physical_plan: options.physical_plan,
         uniform_state_plan: options.uniform_state_plan,
+        dense_runtime: options.dense_runtime,
         execution: options.execution,
         capsule: options.capsule,
         prefix: options.prefix,
@@ -232,6 +239,7 @@ impl RuntimeStatePlan {
             &self.plan_fingerprint,
             self.execution.uniform_state_plan_mode,
         )?;
+        validate_dense_runtime(self.dense_runtime.as_ref(), &compiled)?;
         if self.compute_fingerprint()? != self.artifact_fingerprint {
             return Err(RuntimeStatePlanError::FingerprintMismatch);
         }
@@ -250,6 +258,12 @@ impl RuntimeStatePlan {
             "execution": self.execution,
             "capsule": self.capsule,
         });
+        if let Some(dense_runtime) = &self.dense_runtime {
+            payload
+                .as_object_mut()
+                .expect("runtime StatePlan fingerprint payload must be an object")
+                .insert("dense_runtime".into(), serde_json::to_value(dense_runtime)?);
+        }
         if let Some(prefix) = &self.prefix {
             payload
                 .as_object_mut()
@@ -385,6 +399,16 @@ fn validate_uniform_state_plan(
     Ok(())
 }
 
+fn validate_dense_runtime(
+    artifact: Option<&DenseRuntimeArtifact>,
+    plan: &crate::CompiledKvPlan,
+) -> Result<(), RuntimeStatePlanError> {
+    if let Some(artifact) = artifact {
+        artifact.validate(plan)?;
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{KvClassSpec, KvPlanInput, RetentionKind};
@@ -421,6 +445,7 @@ mod tests {
                 eviction_interval_tokens: 32,
                 physical_plan: None,
                 uniform_state_plan: None,
+                dense_runtime: None,
                 execution: RuntimeExecutionContract {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Ffi),
@@ -456,6 +481,7 @@ mod tests {
                 eviction_interval_tokens: 16,
                 physical_plan: None,
                 uniform_state_plan: None,
+                dense_runtime: None,
                 execution: RuntimeExecutionContract {
                     mode: RuntimeExecutionMode::Policy,
                     owner_transport: None,
@@ -482,6 +508,7 @@ mod tests {
                 eviction_interval_tokens: 16,
                 physical_plan: None,
                 uniform_state_plan: None,
+                dense_runtime: None,
                 execution: RuntimeExecutionContract {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Ffi),
@@ -510,6 +537,7 @@ mod tests {
                 eviction_interval_tokens: 16,
                 physical_plan: None,
                 uniform_state_plan: None,
+                dense_runtime: None,
                 execution: RuntimeExecutionContract {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Sidecar),
@@ -544,6 +572,7 @@ mod tests {
                 eviction_interval_tokens: 16,
                 physical_plan: None,
                 uniform_state_plan: None,
+                dense_runtime: None,
                 execution: RuntimeExecutionContract {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Ffi),
@@ -570,6 +599,7 @@ mod tests {
                 eviction_interval_tokens: 16,
                 physical_plan: None,
                 uniform_state_plan: None,
+                dense_runtime: None,
                 execution: RuntimeExecutionContract {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Sidecar),
@@ -590,5 +620,43 @@ mod tests {
             artifact.execution.frontier,
             Some(RuntimeExecutionFrontier::CudaEvent)
         );
+    }
+
+    #[test]
+    fn dense_runtime_is_validated_and_fingerprinted() {
+        let semantic_source = source();
+        let compiled = semantic_source.clone().compile().unwrap();
+        let dense_runtime = DenseRuntimeArtifact::compile(&compiled, 8, 16, 4096).unwrap();
+        let artifact = compile_runtime_state_plan(
+            semantic_source,
+            RuntimeStatePlanOptions {
+                eviction_interval_tokens: 16,
+                physical_plan: None,
+                uniform_state_plan: None,
+                dense_runtime: Some(dense_runtime),
+                execution: RuntimeExecutionContract {
+                    mode: RuntimeExecutionMode::Owner,
+                    owner_transport: Some(RuntimeOwnerTransport::Sidecar),
+                    uniform_state_plan_mode: None,
+                    frontier: None,
+                },
+                capsule: RuntimeCapsuleContract {
+                    enabled: false,
+                    chunk_tokens: 16,
+                    maximum_payload_bytes: 1 << 20,
+                },
+                prefix: None,
+            },
+        )
+        .unwrap();
+        artifact.validate().unwrap();
+        assert_eq!(artifact.dense_runtime.as_ref().unwrap().maximum_requests, 8);
+
+        let mut tampered = artifact;
+        tampered.dense_runtime.as_mut().unwrap().classes[0].physical_slots += 1;
+        assert!(matches!(
+            tampered.validate(),
+            Err(RuntimeStatePlanError::Dense(_))
+        ));
     }
 }

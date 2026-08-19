@@ -29,6 +29,7 @@ DEFAULT_MANIFESTS = (
     ROOT / "results/h20-transactional-binding-20260819/manifest.json",
     ROOT / "results/h20-radix-prefix-20260819/manifest.json",
     ROOT / "results/h20-cuda-event-overlap-20260819/manifest.json",
+    ROOT / "results/dense-runtime-20260819/manifest.json",
 )
 
 

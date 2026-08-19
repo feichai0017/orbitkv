@@ -635,6 +635,7 @@ mod tests {
                 eviction_interval_tokens: 16,
                 physical_plan: None,
                 uniform_state_plan: None,
+                dense_runtime: None,
                 execution: RuntimeExecutionContract {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Ffi),

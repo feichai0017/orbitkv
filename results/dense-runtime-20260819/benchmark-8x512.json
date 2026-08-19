@@ -1,0 +1,33 @@
+{
+  "schema": "orbitkv.dense-runtime-benchmark.v1",
+  "plan_fingerprint": "sha256:bb6d7e2717a01b8fdc40c17892cab6e96e531cf28d3dd484b246d38ab76998fa",
+  "requests": 8,
+  "blocks_per_request": 512,
+  "rounds": 7,
+  "events_per_round": 16400,
+  "dense_maximum_inflight_submissions": 8,
+  "dense_physical_slots": 4616,
+  "reference_ns": [
+    2017012360,
+    2015250813,
+    2017134256,
+    2011416786,
+    2013794805,
+    2011259703,
+    2008888142
+  ],
+  "dense_ns": [
+    128302842,
+    128514576,
+    127092042,
+    126878899,
+    127856795,
+    127656065,
+    127590701
+  ],
+  "reference_median_ns": 2013794805,
+  "dense_median_ns": 127656065,
+  "dense_over_reference_milli": 63,
+  "final_reference_resident_blocks": 0,
+  "final_dense_resident_blocks": 0
+}

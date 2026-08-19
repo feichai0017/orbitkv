@@ -179,7 +179,7 @@ pub struct CompiledKvPlan {
     pub classes: Vec<CompiledKvClass>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AddressProgram {
     AppendOnly,
@@ -196,7 +196,7 @@ pub enum AddressProgram {
     },
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum RetirementProgram {
     Never,
@@ -233,7 +233,7 @@ pub struct LogicalCellId {
     pub cell_index: u64,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 pub struct CellVersion {
     pub cycle: u64,
 }
@@ -244,7 +244,7 @@ pub struct TemporalAddress {
     pub version: CellVersion,
 }
 
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct BlockDomain {
     pub start_block: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -361,17 +361,14 @@ pub enum PlanError {
 }
 
 impl AddressProgram {
-    /// Maps one logical block ordinal to its compiler-defined cell and version.
+    /// Evaluates the dense cell index and temporal version without allocating
+    /// logical identity strings.
     ///
     /// # Errors
     ///
-    /// Returns an error if a periodic program has a zero period.
-    pub fn evaluate(
-        &self,
-        request_id: &str,
-        class_name: &str,
-        ordinal: u64,
-    ) -> Result<TemporalAddress, PlanError> {
+    /// Returns an error if a periodic program has a zero period or its origin
+    /// exceeds the logical ordinal.
+    pub fn evaluate_dense(&self, ordinal: u64) -> Result<(u64, CellVersion), PlanError> {
         let (cell_index, cycle) = match *self {
             Self::AppendOnly | Self::Pinned => (ordinal, 0),
             Self::Periodic { period_blocks } => {
@@ -402,13 +399,28 @@ impl AddressProgram {
                 (ordinal % blocks_per_epoch, ordinal / blocks_per_epoch)
             }
         };
+        Ok((cell_index, CellVersion { cycle }))
+    }
+
+    /// Maps one logical block ordinal to its compiler-defined cell and version.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a periodic program has a zero period.
+    pub fn evaluate(
+        &self,
+        request_id: &str,
+        class_name: &str,
+        ordinal: u64,
+    ) -> Result<TemporalAddress, PlanError> {
+        let (cell_index, version) = self.evaluate_dense(ordinal)?;
         Ok(TemporalAddress {
             cell: LogicalCellId {
                 request_id: request_id.to_owned(),
                 class_name: class_name.to_owned(),
                 cell_index,
             },
-            version: CellVersion { cycle },
+            version,
         })
     }
 }

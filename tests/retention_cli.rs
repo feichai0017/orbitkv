@@ -122,6 +122,52 @@ fn runtime_state_plan_compiles_cuda_event_frontier() {
 }
 
 #[test]
+fn runtime_state_plan_compiles_dense_runtime() {
+    let plan = root().join("examples/gpt_oss_hybrid_tiny.json");
+    let artifact = run(&[
+        "compile-runtime-state-plan",
+        plan.to_str().unwrap(),
+        "--eviction-interval",
+        "32",
+        "--execution-mode",
+        "owner",
+        "--owner-transport",
+        "sidecar",
+        "--capsule-enabled",
+        "false",
+        "--capsule-chunk-tokens",
+        "128",
+        "--capsule-max-payload-bytes",
+        "1073741824",
+        "--dense-max-requests",
+        "8",
+        "--dense-max-inflight",
+        "16",
+        "--dense-max-blocks",
+        "8192",
+    ]);
+    assert_eq!(artifact["dense_runtime"]["maximum_requests"], 8);
+    assert_eq!(
+        artifact["dense_runtime"]["maximum_inflight_submissions"],
+        16
+    );
+    assert_eq!(
+        artifact["dense_runtime"]["maximum_blocks_per_request"],
+        8192
+    );
+    assert_eq!(artifact["dense_runtime"]["classes"][0]["class_id"], 0);
+    assert_eq!(artifact["dense_runtime"]["classes"][1]["class_id"], 1);
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("runtime-state-plan.json");
+    std::fs::write(&path, serde_json::to_vec(&artifact).unwrap()).unwrap();
+    assert_eq!(
+        run(&["validate-runtime-state-plan", path.to_str().unwrap()]),
+        artifact
+    );
+}
+
+#[test]
 fn retention_analysis_reports_derived_window_and_address() {
     let retention = root().join("examples/full_swa_retention.json");
     let report = run(&["analyze-retention", retention.to_str().unwrap()]);

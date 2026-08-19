@@ -5,6 +5,7 @@ Capability levels and unsupported paths are defined only in
 
 | Record | Scope |
 | --- | --- |
+| `dense-runtime-20260819` | Fixed-capacity generated ownership runtime and Reference differential benchmark |
 | `h20-cuda-event-overlap-20260819` | Real SGLang overlap scheduling with request-scoped CUDA-event frontiers |
 | `h20-radix-prefix-20260819` | GPT-OSS component-aware Full+SWA Prefix on SGLang UnifiedRadixCache |
 | `h20-transactional-binding-20260819` | Rust prepare/load/commit binding enters real SGLang hydration |

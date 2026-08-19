@@ -2,6 +2,7 @@
 
 pub mod binding;
 pub mod capsule;
+pub mod dense;
 pub mod frontier;
 pub mod hf_config;
 pub mod holt_store;
@@ -23,6 +24,13 @@ pub use binding::{
 pub use capsule::{
     CapsuleComponent, CapsuleComponentSpec, CapsuleError, CapsuleIdentity, CapsuleManifest,
     ContentDigest, PrefixChunk, PrefixPath, build_capsule_components,
+};
+pub use dense::{
+    ClassId, DenseBindingIntent, DenseClassProgram, DenseKvRuntime, DenseLogicalBlock,
+    DensePhysicalBindingBlockReceipt, DensePhysicalBindingReceipt, DensePhysicalHandle,
+    DensePhysicalReclamationReceipt, DenseRetirementCertificate, DenseRuntimeArtifact,
+    DenseRuntimeError, DenseRuntimeStats, DenseSemanticProof, DenseTemporalAddress, DenseView,
+    DenseViewBlock, RequestLease,
 };
 pub use frontier::{
     CompletionDomainId, CompletionDomainSnapshot, CompletionSequenceRange, ExecutionFrontier,
@@ -51,11 +59,12 @@ pub use optimizer::{
 };
 pub use plan::{
     AddressProgram, ApplicabilityClass, ApplicabilityClassGeometry, ApplicabilityReport,
-    BackendDecision, BackendRequirements, CellVersion, ClassCapacity, ClassLayoutProgram,
-    CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, KvPlanSource, LayoutProgram,
-    LifetimeNormalizationReport, LifetimeNormalizedClass, LogicalCellId, PhysicalBackend,
-    PlanError, RetentionKind, RetirementProgram, SglangBoundedClassPolicy, SglangPolicy,
-    TemporalAddress, choose_physical_backend, compile_plan, compile_retention_program,
+    BackendDecision, BackendRequirements, BlockDomain, CellVersion, ClassCapacity,
+    ClassLayoutProgram, CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, KvPlanSource,
+    LayoutProgram, LifetimeNormalizationReport, LifetimeNormalizedClass, LogicalCellId,
+    PhysicalBackend, PlanError, RetentionKind, RetirementProgram, SglangBoundedClassPolicy,
+    SglangPolicy, TemporalAddress, choose_physical_backend, compile_plan,
+    compile_retention_program,
 };
 pub use prefix::{
     PersistentPrefixComponent, PrefixAvailability, PrefixComponentCompleteness,

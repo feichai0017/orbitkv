@@ -3,14 +3,16 @@ use std::fs::File;
 use std::io::{BufRead, BufReader, BufWriter, Write};
 use std::path::Path;
 use std::process::{Command, ExitCode};
+use std::time::Instant;
 
 use orbitkv::{
     ApplicabilityReport, CapsuleComponentSpec, CapsuleIdentity, CapsuleManifest, CompiledKvPlan,
-    ContentDigest, HfRetentionCompilation, HfRetentionOptions, HfStatePlanOptions,
-    HoltCapsuleStore, KvPlanSource, OwnerCommand, PhysicalPlanObjective, PrefixPath,
-    RetentionAnalysis, RuntimeCapsuleContract, RuntimeExecutionContract, RuntimeExecutionFrontier,
-    RuntimeExecutionMode, RuntimeOwnerTransport, RuntimePrefixContract, RuntimePrefixMode,
-    RuntimeStatePlan, RuntimeStatePlanOptions, RuntimeUniformStatePlanMode, SglangOwner,
+    ContentDigest, DenseKvRuntime, DensePhysicalReclamationReceipt, DenseRuntimeArtifact,
+    HfRetentionCompilation, HfRetentionOptions, HfStatePlanOptions, HoltCapsuleStore, KvPlanSource,
+    OwnerCommand, PhysicalPlanObjective, PrefixPath, RetentionAnalysis, RuntimeCapsuleContract,
+    RuntimeExecutionContract, RuntimeExecutionFrontier, RuntimeExecutionMode,
+    RuntimeOwnerTransport, RuntimePrefixContract, RuntimePrefixMode, RuntimeStatePlan,
+    RuntimeStatePlanOptions, RuntimeUniformStatePlanMode, SglangOwner,
     SglangPhysicalOptimizationInput, SglangPhysicalPlan, SglangUniformSwaOptions,
     UniformSwaCudaGraphMode, analyze_state, build_capsule_components, compile_hf_config,
     compile_hf_state_plan, compile_retention_program, compile_runtime_state_plan,
@@ -72,6 +74,25 @@ struct HfApplicabilityReport {
     compilation: HfRetentionCompilation,
     layout: orbitkv::LayoutProgram,
     applicability: ApplicabilityReport,
+}
+
+#[derive(Serialize)]
+struct DenseBenchmarkReport {
+    schema: &'static str,
+    plan_fingerprint: String,
+    requests: u32,
+    blocks_per_request: u64,
+    rounds: u32,
+    events_per_round: u64,
+    dense_maximum_inflight_submissions: u32,
+    dense_physical_slots: u64,
+    reference_ns: Vec<u128>,
+    dense_ns: Vec<u128>,
+    reference_median_ns: u128,
+    dense_median_ns: u128,
+    dense_over_reference_milli: u128,
+    final_reference_resident_blocks: u64,
+    final_dense_resident_blocks: u64,
 }
 
 #[derive(Clone, Copy, Serialize)]
@@ -156,6 +177,9 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("validate-runtime-state-plan") => {
             validate_runtime_state_plan_command(&mut args)?;
         }
+        Some("benchmark-dense") => {
+            benchmark_dense_command(&mut args)?;
+        }
         Some("analyze-hf-applicability") => {
             analyze_hf_applicability_command(&mut args)?;
         }
@@ -229,7 +253,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile-hf-state-plan|compile-runtime-state-plan|validate-runtime-state-plan|compile|analyze-hf-applicability|analyze-retention|analyze-lifetime-normalization|analyze-applicability|emit-layout|emit-sglang-policy|serve-sglang-owner|serve-capsules|analyze-sglang|check-sglang> ..."
+                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile-hf-state-plan|compile-runtime-state-plan|validate-runtime-state-plan|benchmark-dense|compile|analyze-hf-applicability|analyze-retention|analyze-lifetime-normalization|analyze-applicability|emit-layout|emit-sglang-policy|serve-sglang-owner|serve-capsules|analyze-sglang|check-sglang> ..."
                     .into(),
             );
         }
@@ -260,6 +284,200 @@ fn validate_runtime_state_plan_command(
     write_json(&artifact)
 }
 
+fn benchmark_dense_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan_path = required(args, "plan path")?;
+    let requests = required_flagged_u64(args, "--requests", "request count")?;
+    let requests = u32::try_from(requests)?;
+    let blocks_per_request =
+        required_flagged_u64(args, "--blocks-per-request", "blocks per request")?;
+    let rounds = required_flagged_u64(args, "--rounds", "round count")?;
+    let rounds = u32::try_from(rounds)?;
+    require_end(args)?;
+    if requests == 0 || blocks_per_request == 0 || rounds == 0 {
+        return Err("dense benchmark dimensions must be positive".into());
+    }
+    let plan = load_plan(plan_path)?;
+    let artifact = DenseRuntimeArtifact::compile(&plan, requests, requests, blocks_per_request)?;
+    let request_ids = (0..requests)
+        .map(|request| format!("request-{request}"))
+        .collect::<Vec<_>>();
+    let mut reference_ns = Vec::with_capacity(rounds as usize);
+    let mut dense_ns = Vec::with_capacity(rounds as usize);
+    let mut final_reference_resident_blocks = 0;
+    let mut final_dense_resident_blocks = 0;
+    for round in 0..rounds {
+        let reference_first = round.is_multiple_of(2);
+        if reference_first {
+            let (elapsed, resident) =
+                benchmark_reference_round(&plan, &request_ids, blocks_per_request)?;
+            reference_ns.push(elapsed);
+            final_reference_resident_blocks = resident;
+            let (elapsed, resident) =
+                benchmark_dense_round(&artifact, requests, blocks_per_request)?;
+            dense_ns.push(elapsed);
+            final_dense_resident_blocks = resident;
+        } else {
+            let (elapsed, resident) =
+                benchmark_dense_round(&artifact, requests, blocks_per_request)?;
+            dense_ns.push(elapsed);
+            final_dense_resident_blocks = resident;
+            let (elapsed, resident) =
+                benchmark_reference_round(&plan, &request_ids, blocks_per_request)?;
+            reference_ns.push(elapsed);
+            final_reference_resident_blocks = resident;
+        }
+    }
+    let reference_median_ns = median_u128(&reference_ns);
+    let dense_median_ns = median_u128(&dense_ns);
+    let events_per_round = u64::from(requests)
+        .checked_mul(blocks_per_request)
+        .and_then(|events| events.checked_mul(4))
+        .and_then(|events| events.checked_add(u64::from(requests) * 2))
+        .ok_or("dense benchmark event count overflow")?;
+    let dense_physical_slots = artifact
+        .classes
+        .iter()
+        .try_fold(0_u64, |total, class| {
+            total.checked_add(class.physical_slots)
+        })
+        .ok_or("dense benchmark physical slot count overflow")?;
+    write_json(&DenseBenchmarkReport {
+        schema: "orbitkv.dense-runtime-benchmark.v1",
+        plan_fingerprint: plan.fingerprint(),
+        requests,
+        blocks_per_request,
+        rounds,
+        events_per_round,
+        dense_maximum_inflight_submissions: artifact.maximum_inflight_submissions,
+        dense_physical_slots,
+        reference_ns,
+        dense_ns,
+        reference_median_ns,
+        dense_median_ns,
+        dense_over_reference_milli: dense_median_ns.saturating_mul(1000) / reference_median_ns,
+        final_reference_resident_blocks,
+        final_dense_resident_blocks,
+    })
+}
+
+fn benchmark_reference_round(
+    plan: &CompiledKvPlan,
+    request_ids: &[String],
+    blocks_per_request: u64,
+) -> Result<(u128, u64), Box<dyn std::error::Error>> {
+    let maximum_requests = u64::try_from(request_ids.len())?;
+    let pools = plan
+        .classes
+        .iter()
+        .map(|class| {
+            let per_request = class.slot_count.unwrap_or(blocks_per_request);
+            Ok(orbitkv::ClassPoolConfig {
+                class_name: class.spec.name.clone(),
+                slot_count: per_request
+                    .checked_mul(maximum_requests)
+                    .ok_or("reference benchmark slot count overflow")?,
+            })
+        })
+        .collect::<Result<Vec<_>, Box<dyn std::error::Error>>>()?;
+    let mut runtime =
+        orbitkv::KvBlockManager::new(plan.clone(), orbitkv::BlockManagerConfig { pools })?;
+    for request_id in request_ids {
+        runtime.register_request(request_id.clone())?;
+    }
+    let started = Instant::now();
+    for ordinal in 0..blocks_per_request {
+        let boundary = ordinal
+            .checked_add(1)
+            .and_then(|block| block.checked_mul(plan.page_tokens))
+            .ok_or("reference benchmark boundary overflow")?;
+        for request_id in request_ids {
+            runtime.materialize_to(request_id, boundary)?;
+            let certificates = runtime.advance_semantic_frontier(request_id, boundary)?;
+            commit_reference_certificates(&mut runtime, certificates)?;
+            let view = runtime.submit_view(request_id)?;
+            let certificates = runtime.complete_submission(view.submission_id)?;
+            commit_reference_certificates(&mut runtime, certificates)?;
+        }
+    }
+    for request_id in request_ids {
+        let certificates = runtime.release_request(request_id)?;
+        commit_reference_certificates(&mut runtime, certificates)?;
+    }
+    let elapsed = started.elapsed().as_nanos();
+    Ok((elapsed, runtime.stats().resident_blocks))
+}
+
+fn benchmark_dense_round(
+    artifact: &DenseRuntimeArtifact,
+    requests: u32,
+    blocks_per_request: u64,
+) -> Result<(u128, u64), Box<dyn std::error::Error>> {
+    let mut runtime = DenseKvRuntime::new(artifact.clone())?;
+    let leases = (0..requests)
+        .map(|_| runtime.acquire_request())
+        .collect::<Result<Vec<_>, _>>()?;
+    let started = Instant::now();
+    for ordinal in 0..blocks_per_request {
+        let boundary = ordinal
+            .checked_add(1)
+            .and_then(|block| block.checked_mul(artifact.page_tokens))
+            .ok_or("dense benchmark boundary overflow")?;
+        for &lease in &leases {
+            runtime.materialize_to(lease, boundary)?;
+            let certificates = runtime.advance_semantic_frontier(lease, boundary)?;
+            commit_dense_certificates(&mut runtime, certificates)?;
+            let view = runtime.submit_view(lease)?;
+            let certificates = runtime.complete_submission(view.submission_id)?;
+            commit_dense_certificates(&mut runtime, certificates)?;
+        }
+    }
+    for lease in leases {
+        let certificates = runtime.release_request(lease)?;
+        commit_dense_certificates(&mut runtime, certificates)?;
+        runtime.recycle_request(lease)?;
+    }
+    let elapsed = started.elapsed().as_nanos();
+    Ok((elapsed, runtime.stats().resident_blocks))
+}
+
+fn commit_reference_certificates(
+    runtime: &mut orbitkv::KvBlockManager,
+    certificates: Vec<orbitkv::RetirementCertificate>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    for certificate in certificates {
+        runtime.commit_reclamation(&orbitkv::PhysicalReclamationReceipt {
+            schema: "orbitkv.physical-reclamation-receipt.v1",
+            certificate_id: certificate.certificate_id,
+            physical: certificate.physical,
+        })?;
+    }
+    Ok(())
+}
+
+fn commit_dense_certificates(
+    runtime: &mut DenseKvRuntime,
+    certificates: Vec<orbitkv::DenseRetirementCertificate>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let artifact_fingerprint = runtime.artifact().artifact_fingerprint.clone();
+    for certificate in certificates {
+        runtime.commit_reclamation(&DensePhysicalReclamationReceipt {
+            schema: "orbitkv.dense-physical-reclamation-receipt.v1".into(),
+            artifact_fingerprint: artifact_fingerprint.clone(),
+            certificate_id: certificate.certificate_id,
+            physical: certificate.physical,
+        })?;
+    }
+    Ok(())
+}
+
+fn median_u128(values: &[u128]) -> u128 {
+    let mut values = values.to_vec();
+    values.sort_unstable();
+    values[values.len() / 2]
+}
+
 fn compile_runtime_state_plan_command(
     args: &mut impl Iterator<Item = String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
@@ -285,23 +503,81 @@ fn compile_runtime_state_plan_command(
         required_flagged_u64(args, "--capsule-chunk-tokens", "Capsule chunk tokens")?;
     let capsule_maximum_payload_bytes =
         required_flagged_u64(args, "--capsule-max-payload-bytes", "Capsule payload limit")?;
-    let mut physical_plan = None;
-    let mut uniform_state_plan = None;
-    let mut uniform_state_plan_mode = None;
-    let mut prefix = None;
-    let mut execution_frontier = None;
+    let optional = parse_runtime_state_plan_optional(args)?;
+    let semantic_source = load_source(plan_path)?;
+    let dense_runtime = match (
+        optional.dense_maximum_requests,
+        optional.dense_maximum_inflight,
+        optional.dense_maximum_blocks,
+    ) {
+        (None, None, None) => None,
+        (Some(maximum_requests), Some(maximum_inflight), Some(maximum_blocks)) => {
+            Some(DenseRuntimeArtifact::compile(
+                &semantic_source.clone().compile()?,
+                maximum_requests,
+                maximum_inflight,
+                maximum_blocks,
+            )?)
+        }
+        _ => {
+            return Err(
+                "--dense-max-requests, --dense-max-inflight, and --dense-max-blocks must be specified together".into(),
+            );
+        }
+    };
+    let artifact = compile_runtime_state_plan(
+        semantic_source,
+        RuntimeStatePlanOptions {
+            eviction_interval_tokens,
+            physical_plan: optional.physical_plan,
+            uniform_state_plan: optional.uniform_state_plan,
+            dense_runtime,
+            execution: RuntimeExecutionContract {
+                mode: execution_mode,
+                owner_transport,
+                uniform_state_plan_mode: optional.uniform_state_plan_mode,
+                frontier: optional.execution_frontier,
+            },
+            capsule: RuntimeCapsuleContract {
+                enabled: capsule_enabled,
+                chunk_tokens: capsule_chunk_tokens,
+                maximum_payload_bytes: capsule_maximum_payload_bytes,
+            },
+            prefix: optional.prefix,
+        },
+    )?;
+    artifact.validate()?;
+    write_json(&artifact)
+}
+
+#[derive(Default)]
+struct RuntimeStatePlanOptional {
+    physical_plan: Option<serde_json::Value>,
+    uniform_state_plan: Option<serde_json::Value>,
+    uniform_state_plan_mode: Option<RuntimeUniformStatePlanMode>,
+    prefix: Option<RuntimePrefixContract>,
+    execution_frontier: Option<RuntimeExecutionFrontier>,
+    dense_maximum_requests: Option<u32>,
+    dense_maximum_inflight: Option<u32>,
+    dense_maximum_blocks: Option<u64>,
+}
+
+fn parse_runtime_state_plan_optional(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<RuntimeStatePlanOptional, Box<dyn std::error::Error>> {
+    let mut options = RuntimeStatePlanOptional::default();
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--physical-plan" => {
                 let path = required(args, "physical plan path")?;
-                physical_plan = Some(serde_json::from_slice(&std::fs::read(path)?)?);
+                options.physical_plan = Some(serde_json::from_slice(&std::fs::read(path)?)?);
             }
             "--uniform-state-plan" => {
                 let path = required(args, "uniform state plan path")?;
-                uniform_state_plan = Some(serde_json::from_slice(&std::fs::read(path)?)?);
+                options.uniform_state_plan = Some(serde_json::from_slice(&std::fs::read(path)?)?);
             }
             "--uniform-state-plan-mode" => {
-                uniform_state_plan_mode =
+                options.uniform_state_plan_mode =
                     Some(match required(args, "uniform state plan mode")?.as_str() {
                         "execute" => RuntimeUniformStatePlanMode::Execute,
                         "kernel_reference" => RuntimeUniformStatePlanMode::KernelReference,
@@ -313,7 +589,7 @@ fn compile_runtime_state_plan_command(
                     });
             }
             "--prefix-mode" => {
-                prefix = Some(RuntimePrefixContract {
+                options.prefix = Some(RuntimePrefixContract {
                     mode: match required(args, "Prefix mode")?.as_str() {
                         "capsule_backed_swa_radix" => RuntimePrefixMode::CapsuleBackedSwaRadix,
                         value => {
@@ -323,38 +599,30 @@ fn compile_runtime_state_plan_command(
                 });
             }
             "--execution-frontier" => {
-                execution_frontier = Some(match required(args, "execution frontier")?.as_str() {
-                    "cuda_event" => RuntimeExecutionFrontier::CudaEvent,
-                    value => {
-                        return Err(format!("unsupported execution frontier {value:?}").into());
-                    }
-                });
+                options.execution_frontier =
+                    Some(match required(args, "execution frontier")?.as_str() {
+                        "cuda_event" => RuntimeExecutionFrontier::CudaEvent,
+                        value => {
+                            return Err(format!("unsupported execution frontier {value:?}").into());
+                        }
+                    });
+            }
+            "--dense-max-requests" => {
+                options.dense_maximum_requests =
+                    Some(required(args, "dense maximum requests")?.parse::<u32>()?);
+            }
+            "--dense-max-inflight" => {
+                options.dense_maximum_inflight =
+                    Some(required(args, "dense maximum inflight")?.parse::<u32>()?);
+            }
+            "--dense-max-blocks" => {
+                options.dense_maximum_blocks =
+                    Some(required(args, "dense maximum blocks")?.parse::<u64>()?);
             }
             argument => return Err(format!("unexpected argument {argument}").into()),
         }
     }
-    let artifact = compile_runtime_state_plan(
-        load_source(plan_path)?,
-        RuntimeStatePlanOptions {
-            eviction_interval_tokens,
-            physical_plan,
-            uniform_state_plan,
-            execution: RuntimeExecutionContract {
-                mode: execution_mode,
-                owner_transport,
-                uniform_state_plan_mode,
-                frontier: execution_frontier,
-            },
-            capsule: RuntimeCapsuleContract {
-                enabled: capsule_enabled,
-                chunk_tokens: capsule_chunk_tokens,
-                maximum_payload_bytes: capsule_maximum_payload_bytes,
-            },
-            prefix,
-        },
-    )?;
-    artifact.validate()?;
-    write_json(&artifact)
+    Ok(options)
 }
 
 fn parse_bool(value: &str) -> Result<bool, Box<dyn std::error::Error>> {

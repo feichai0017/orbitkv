@@ -1,0 +1,35 @@
+{
+  "base_source_commit": "96b0e5e",
+  "claim_boundary": [
+    "host control-plane benchmark only",
+    "same semantic plan and complete ownership lifecycle for Reference and Dense runtimes",
+    "fixed-capacity generation arenas and bounded out-of-order completion window",
+    "no SGLang, vLLM, GPU kernel, or end-to-end serving claim"
+  ],
+  "date": "2026-08-19",
+  "records": {
+    "results/dense-runtime-20260819/README.md": "f980bd2aa5757e170f75a9fb164497ed5edcffb9d085b3bcf081e6d7dbb8e5c2",
+    "results/dense-runtime-20260819/benchmark-1x128.json": "5479a081477718be0c34eccc25414956320a501022d574274ed0b248fe392667",
+    "results/dense-runtime-20260819/benchmark-8x512.json": "c7f4a83a25304265917d20528a4e0a547a278b0cba343e10ac94ebfa21392a6e",
+    "results/dense-runtime-20260819/benchmark-32x256.json": "7e175379f99d3477cde75f7525bec46d81d237899f612d0375fbd0c8d9104b98",
+    "results/dense-runtime-20260819/runtime-state-plan.json": "f4e03a964d6d1e81294488fb12587b3a3aa5919996601b656637191e24a84ed2",
+    "results/dense-runtime-20260819/summary.json": "c63c3631b5bc9bb3877004f3dff59381f34356fe82fcb7dade246b019929bd2a"
+  },
+  "schema": "orbitkv.dense-runtime-manifest.v1",
+  "sources": {
+    "crates/orbitkv-ffi/src/lib.rs": "651d919b3bdd38f1fd1ee940506cea65f8171f92817e2e472ecfb659b6bb570c",
+    "docs/capability-matrix.md": "6b0d6bcca5b8e2f52cae1021b1def027fb543e8791d242dbaffacc8eec01985d",
+    "results/README.md": "820bc392d16a18fb38e29b4431abde15a548e31252c9df11a9b1048a21b303ec",
+    "src/bin/orbitkv.rs": "91fa103bd5321e579e70f6b2d55d4eba68e2cdb7372f051f2af5cb2705e7bd79",
+    "src/dense.rs": "5dfac2f059a8b1b1ea556694ea788b9c796df4ddfe914456ced58766443962f9",
+    "src/lib.rs": "3e1fe74d6d9a9be6345bde26197e195fe556a8d7bdd5dea4b43dc524572e5df8",
+    "src/plan.rs": "e4cfb23a50eb3eb929d2b58c861b9ac2c0511c81308010c8842795f1b685a062",
+    "src/state_plan.rs": "7b2d859f4263526f0350b2d56db609fcb552df4c2c646cf97acaf712505d91cb",
+    "tests/retention_cli.rs": "fb2bc0d4d87d090ffa3e1d631b2ed186aa74f8301f54eaf89de4877691f43325",
+    "tools/verify_manifests.py": "2d4fdcf51c8318e5edc2842e7bae5caa2d72bf275022d71673d7658554ac686f"
+  },
+  "workspace_sections": [
+    "records",
+    "sources"
+  ]
+}
