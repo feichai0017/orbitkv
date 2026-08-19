@@ -78,13 +78,12 @@ pub unsafe extern "C" fn orbitkv_dense_create(
             out_dense.write(std::ptr::null_mut());
         }
         let bytes = unsafe { slice::from_raw_parts(plan_json, plan_json_len) };
-        let state_plan =
-            serde_json::from_slice::<RuntimeStatePlan>(bytes).map_err(|error| {
-                (
-                    ORBITKV_STATUS_INVALID_ARGUMENT,
-                    format!("invalid runtime StatePlan JSON: {error}"),
-                )
-            })?;
+        let state_plan = serde_json::from_slice::<RuntimeStatePlan>(bytes).map_err(|error| {
+            (
+                ORBITKV_STATUS_INVALID_ARGUMENT,
+                format!("invalid runtime StatePlan JSON: {error}"),
+            )
+        })?;
         let service = DenseRuntimeService::from_state_plan(&state_plan)
             .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?;
         let certificate_capacity = state_plan
@@ -96,7 +95,9 @@ pub unsafe extern "C" fn orbitkv_dense_create(
             ))?
             .classes
             .iter()
-            .try_fold(0_u64, |total, class| total.checked_add(class.physical_slots))
+            .try_fold(0_u64, |total, class| {
+                total.checked_add(class.physical_slots)
+            })
             .and_then(|total| usize::try_from(total).ok())
             .ok_or((
                 ORBITKV_STATUS_INVALID_ARGUMENT,
@@ -388,9 +389,8 @@ pub unsafe extern "C" fn orbitkv_dense_commit_reclamations_and_recycle(
         let handle = unsafe { &*dense };
         let mut service = handle.service.lock().map_err(|_| dense_mutex_error())?;
         let fingerprint = service.artifact_fingerprint().to_owned();
-        let receipts = unsafe {
-            certificate_receipts(certificates, certificate_count, &fingerprint)?
-        };
+        let receipts =
+            unsafe { certificate_receipts(certificates, certificate_count, &fingerprint)? };
         service
             .commit_reclamations_and_recycle(request.into(), &receipts)
             .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?;
@@ -421,9 +421,8 @@ pub unsafe extern "C" fn orbitkv_dense_commit_reclamations(
         let handle = unsafe { &*dense };
         let mut service = handle.service.lock().map_err(|_| dense_mutex_error())?;
         let fingerprint = service.artifact_fingerprint().to_owned();
-        let receipts = unsafe {
-            certificate_receipts(certificates, certificate_count, &fingerprint)?
-        };
+        let receipts =
+            unsafe { certificate_receipts(certificates, certificate_count, &fingerprint)? };
         service
             .commit_reclamations(&receipts)
             .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?;

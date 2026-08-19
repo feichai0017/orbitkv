@@ -17,7 +17,7 @@
   "schema": "orbitkv.h20-dense-sglang-manifest.v4",
   "sources": {
     "crates/orbitkv-ffi/include/orbitkv_owner.h": "c9dfb7653f2592d5af028bdd4a8a45a5ec1d446c6e882243f4c4172f1fcd0828",
-    "crates/orbitkv-ffi/src/dense.rs": "4dc2cecbf0ecdf00d5b2a5fb26d962e2036892b214e0b3eaaedd48ec6e043779",
+    "crates/orbitkv-ffi/src/dense.rs": "99184d7ce3e2495686ebe908a8e174725df541cd0e12221372bebbc957d54a42",
     "crates/orbitkv-ffi/src/lib.rs": "306761867a433d4aea4bdbbd18d7fde3c17b5083739595c71304eb03c52b8a72",
     "crates/orbitkv-ffi/tests/header_smoke.c": "6874c84c7a0f281cf8f7506f726be1c7ecf5a74fa4e6cefc24691ca53edb68f4",
     "docs/capability-matrix.md": "47a2ed22fa71067673f2fed531603bbbd3058b1be8fe140116e06359328ffa07",
