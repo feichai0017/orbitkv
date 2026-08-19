@@ -1,0 +1,48 @@
+{
+  "checkpoint_weight_bytes": 496060688,
+  "claim_boundary": [
+    "real checkpoint and pinned SGLang attention data plane",
+    "pure-SWA 4K logical Prefix with compiler-proven 1K live tail",
+    "single request and one continuation token",
+    "Dense sidecar owns page binding, immutable view, CUDA-event completion, release certificates, and request recycling",
+    "no multi-token, overlap, radix, speculative, disaggregation, CUDA Graph, hybrid Full+SWA, or performance-win claim"
+  ],
+  "date": "2026-08-19",
+  "dense": {
+    "cached_tokens": [
+      4096
+    ],
+    "event_counts": {
+      "capsule_hydrated": 1,
+      "dense_binding_committed": 1,
+      "dense_binding_prepared": 1,
+      "dense_execution_completed": 1,
+      "dense_hydration_committed": 1,
+      "dense_request_recycled": 1,
+      "dense_view_submitted": 1,
+      "execution_completed": 1,
+      "execution_registered": 1
+    },
+    "iteration_seconds": 1.2818913832306862,
+    "output_digest": "328a9cac5ab9a570d38781cab9d2ff2a58d8039b28332cdbba6f893b3cdb197f",
+    "physical_token_slots": 3168
+  },
+  "digests_match": true,
+  "gpu": "NVIDIA H20",
+  "machine": "x86_64",
+  "model": "/workspace/models/tiny-mistral-248m-v3-d128-swa1024-fixture",
+  "physical_slot_reduction_percent": 90.33203125,
+  "reference": {
+    "iteration_seconds": 1.197245866060257,
+    "output_digest": "328a9cac5ab9a570d38781cab9d2ff2a58d8039b28332cdbba6f893b3cdb197f",
+    "physical_token_slots": 32768
+  },
+  "schema": "orbitkv.h20-dense-sglang-validation.v1",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+  "workload": {
+    "continuation_tokens": 1,
+    "live_tail_tokens": 1024,
+    "page_tokens": 16,
+    "prefix_tokens": 4096
+  }
+}

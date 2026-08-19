@@ -1,0 +1,35 @@
+{
+  "base_source_commit": "42f3d93",
+  "claim_boundary": [
+    "real checkpoint and pinned SGLang attention data plane",
+    "pure-SWA 4K logical Prefix with compiler-proven 1K live tail",
+    "single request and one continuation token",
+    "no multi-token, overlap, Radix, speculation, disaggregation, CUDA Graph, Hybrid Full+SWA, or performance-win claim"
+  ],
+  "date": "2026-08-19",
+  "records": {
+    "results/h20-dense-sglang-20260819/README.md": "1ec5bcee516f6c6cc3fe14b4e23ff8283279e16c19de2748cd08185cdf1ba003",
+    "results/h20-dense-sglang-20260819/dense-events.jsonl": "9da666698aa08e9c66af724a71d8c07cb4770516f7ddf148d6bc4ec5751ec545",
+    "results/h20-dense-sglang-20260819/runtime-state-plan.json": "7219d217be2c40c17a4152d8dc166f6a90558d64e64f2dc8bb479e4953c40eea",
+    "results/h20-dense-sglang-20260819/summary.json": "669a484e1b5f95376fb2c9239cbdd096b519f995f9f203faf0b0e64a1287855c"
+  },
+  "schema": "orbitkv.h20-dense-sglang-manifest.v1",
+  "sources": {
+    "docs/capability-matrix.md": "77ad114c73147b4d4db0c3b264f7393c0d6765fb86b89f546a42a93f88b762fe",
+    "integrations/sglang/bench_hybrid_shadow.py": "249f614665dde835d0b34869bb184afde8a15d9388d7db25644a2371a0010e7d",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "ffe53612e970a181c962cfb85bdb0ae4a502f10c66413e1ba73f2abced35b13c",
+    "integrations/sglang/tests/test_shadow_plugin.py": "194d1287fe6492d2ccf331e70df59c875e41899ff3eba4e1c3682278fb257884",
+    "results/README.md": "c77a8d6f0a711685876d93af3cf106b7780be0c504714812ff3c63da93815f3c",
+    "src/bin/orbitkv.rs": "2cc0edaa6a6179084d68a7f31e4c0b59821f56e5ab88d8521e41cfb4d5ab9287",
+    "src/dense.rs": "fc5e053252e851bb15a11452ff06c538124f2730bb40677cf688ebb7aafcbe52",
+    "src/dense_protocol.rs": "2e8900ea701914c22f247dcbcc235e4cce84122a67eef1388f708836ab19d508",
+    "src/lib.rs": "16e7b2400b6b0af37298101aad4681cc83643c250fd7666c90b94f921b7e7255",
+    "src/state_plan.rs": "cade989edfec08fc80aa9299667b7fadd2685ba49c8e8f1375ce42acfde29b0a",
+    "tests/dense_cli.rs": "2aabcadc13a785ec803a14c8ac46157f936ec1427c8bea90b0fa5b7f054bc028",
+    "tools/verify_manifests.py": "f8523093fd0eb1591017be62f9ae6a6c2ee9e2151c86507b6926c7975e0b97ec"
+  },
+  "workspace_sections": [
+    "records",
+    "sources"
+  ]
+}

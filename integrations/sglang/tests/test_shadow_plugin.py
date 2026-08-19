@@ -280,6 +280,50 @@ class FakeBindings:
         raise AssertionError(command)
 
 
+class FakeDenseRuntime:
+    def __init__(self):
+        self.commands = []
+        self.next_submission_id = 1
+
+    def command(self, command):
+        self.commands.append(command)
+        operation = command["op"]
+        if operation == "submit_view":
+            submission_id = self.next_submission_id
+            self.next_submission_id += 1
+            return {
+                "status": "view_submitted",
+                "view": {
+                    "request": command["request"],
+                    "submission_id": submission_id,
+                    "blocks": [],
+                },
+            }
+        if operation == "complete_submission":
+            return {
+                "status": "submission_completed",
+                "submission_id": command["submission_id"],
+                "certificates": [],
+            }
+        if operation in (
+            "advance_semantic_frontier",
+            "advance_resident_frontier",
+        ):
+            return {
+                "status": "semantic_frontier_advanced",
+                "request": command["request"],
+                "boundary": command["boundary"],
+                "certificates": [],
+            }
+        if operation == "commit_binding":
+            return {
+                "status": "binding_committed",
+                "binding_id": command["receipt"]["binding_id"],
+                "blocks": [],
+            }
+        raise AssertionError(command)
+
+
 class FakeCapsules:
     def __init__(self, events):
         self.events = events
@@ -1589,6 +1633,175 @@ class ShadowPluginTests(unittest.TestCase):
                 os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
             else:
                 os.environ["ORBITKV_TRACE_ALLOCATIONS"] = old_trace
+
+    def test_dense_capsule_receipt_binds_full_and_swa_backend_pages(self):
+        if torch is None:
+            self.skipTest("torch is unavailable")
+        from orbitkv_sglang import plugin
+
+        indices = torch.arange(16, 80, dtype=torch.int64)
+        mapping = torch.zeros((96,), dtype=torch.int64)
+        mapping[indices] = torch.arange(48, 112, dtype=torch.int64)
+        allocator = types.SimpleNamespace(
+            _kvcache=types.SimpleNamespace(
+                full_to_swa_index_mapping=mapping
+            )
+        )
+        transaction = {
+            "request": {"slot": 0, "generation": 1},
+            "index_origin_tokens": 0,
+            "intent": {
+                "binding_id": 7,
+                "pending_blocks": [
+                    {
+                        "logical": {
+                            "request": {"slot": 0, "generation": 1},
+                            "class_id": 0,
+                            "ordinal": 0,
+                        },
+                        "physical": {
+                            "class_id": 0,
+                            "slot": 0,
+                            "generation": 1,
+                        },
+                    },
+                    {
+                        "logical": {
+                            "request": {"slot": 0, "generation": 1},
+                            "class_id": 1,
+                            "ordinal": 0,
+                        },
+                        "physical": {
+                            "class_id": 1,
+                            "slot": 0,
+                            "generation": 1,
+                        },
+                    },
+                ],
+            },
+        }
+        old_runtime = plugin._RUNTIME_STATE_PLAN
+        old_policy = plugin._POLICY
+        try:
+            plugin._RUNTIME_STATE_PLAN = {
+                "dense_runtime": {
+                    "artifact_fingerprint": f"sha256:{'11' * 32}",
+                    "page_tokens": 16,
+                    "classes": [
+                        {"class_id": 0, "name": "full"},
+                        {"class_id": 1, "name": "swa"},
+                    ],
+                }
+            }
+            plugin._POLICY = {
+                "unbounded_classes": ["full"],
+                "bounded_classes": [{"name": "swa"}],
+            }
+            receipt = plugin._dense_binding_receipt(
+                transaction,
+                allocator,
+                indices,
+            )
+        finally:
+            plugin._RUNTIME_STATE_PLAN = old_runtime
+            plugin._POLICY = old_policy
+
+        self.assertEqual(receipt["blocks"][0]["backend"], {"domain": 0, "index": 1})
+        self.assertEqual(receipt["blocks"][1]["backend"], {"domain": 1, "index": 3})
+
+    def test_cuda_event_completion_advances_dense_runtime(self):
+        from orbitkv_sglang import plugin
+
+        owner = FakeOwner()
+        dense = FakeDenseRuntime()
+        device_module = FakeExecutionDeviceModule()
+        req = FakeOwningReq()
+        req._orbitkv_dense_request = {"slot": 0, "generation": 1}
+        req._orbitkv_dense_boundary = 4
+        req.kv.kv_allocated_len = 4
+        batch = types.SimpleNamespace(reqs=[req])
+        scheduler = types.SimpleNamespace(
+            device=types.SimpleNamespace(index=0),
+            device_module=device_module,
+            forward_stream=object(),
+        )
+        old_owner = plugin._OWNER
+        old_dense = plugin._DENSE_RUNTIME
+        old_runtime = plugin._RUNTIME_STATE_PLAN
+        old_trace = os.environ.get("ORBITKV_TRACE_ALLOCATIONS")
+        with plugin._EXECUTION_EVENTS_LOCK:
+            old_events = dict(plugin._EXECUTION_EVENTS)
+            plugin._EXECUTION_EVENTS.clear()
+        try:
+            plugin._OWNER = owner
+            plugin._DENSE_RUNTIME = dense
+            plugin._RUNTIME_STATE_PLAN = {
+                "execution": {
+                    "mode": "owner",
+                    "owner_transport": "sidecar",
+                    "frontier": "cuda_event",
+                },
+                "capsule": {"enabled": True},
+                "dense_runtime": {
+                    "page_tokens": 16,
+                    "classes": [{"class_id": 0, "name": "full"}],
+                },
+            }
+            os.environ["ORBITKV_TRACE_ALLOCATIONS"] = "0"
+            result = plugin._track_forward_execution(
+                lambda *_args, **_kwargs: "forward-result",
+                scheduler,
+                batch,
+            )
+            self.assertEqual(result, "forward-result")
+            device_module.events[0].ready = True
+            plugin._poll_execution_events()
+        finally:
+            plugin._OWNER = old_owner
+            plugin._DENSE_RUNTIME = old_dense
+            plugin._RUNTIME_STATE_PLAN = old_runtime
+            with plugin._EXECUTION_EVENTS_LOCK:
+                plugin._EXECUTION_EVENTS.clear()
+                plugin._EXECUTION_EVENTS.update(old_events)
+            if old_trace is None:
+                os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
+            else:
+                os.environ["ORBITKV_TRACE_ALLOCATIONS"] = old_trace
+
+        self.assertEqual(
+            [command["op"] for command in dense.commands],
+            [
+                "submit_view",
+                "complete_submission",
+                "advance_resident_frontier",
+            ],
+        )
+
+    def test_dense_capsule_rejects_more_than_one_continuation_token(self):
+        from orbitkv_sglang import plugin
+
+        req = FakeOwningReq()
+        req._orbitkv_dense_request = {"slot": 0, "generation": 1}
+        req._orbitkv_dense_hydration_boundary = 4096
+        req.kv.kv_allocated_len = 4097
+        batch = types.SimpleNamespace(
+            enable_overlap=False,
+            reqs=[req],
+        )
+        old_runtime = plugin._RUNTIME_STATE_PLAN
+        try:
+            plugin._RUNTIME_STATE_PLAN = {
+                "execution": {"frontier": "cuda_event"},
+                "capsule": {"enabled": True},
+                "dense_runtime": {"page_tokens": 16},
+            }
+            with self.assertRaisesRegex(RuntimeError, "one continuation token"):
+                plugin._stage_dense_bindings_after_prepare(
+                    lambda *_args, **_kwargs: None,
+                    batch,
+                )
+        finally:
+            plugin._RUNTIME_STATE_PLAN = old_runtime
 
     def test_request_release_waits_only_for_its_cuda_event(self):
         from orbitkv_sglang import plugin

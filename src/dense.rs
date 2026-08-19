@@ -40,10 +40,24 @@ pub struct DensePhysicalHandle {
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct DenseBindingBlock {
+    pub logical: DenseLogicalBlock,
+    pub temporal: DenseTemporalAddress,
+    pub physical: DensePhysicalHandle,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
+pub struct DenseBackendHandle {
+    pub domain: ClassId,
+    pub index: u64,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DenseViewBlock {
     pub logical: DenseLogicalBlock,
     pub temporal: DenseTemporalAddress,
     pub physical: DensePhysicalHandle,
+    pub backend: DenseBackendHandle,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -79,13 +93,14 @@ pub struct DenseBindingIntent {
     pub previous_boundary: u64,
     pub target_boundary: u64,
     pub resident_blocks: Vec<DenseViewBlock>,
-    pub pending_blocks: Vec<DenseViewBlock>,
+    pub pending_blocks: Vec<DenseBindingBlock>,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 pub struct DensePhysicalBindingBlockReceipt {
     pub logical: DenseLogicalBlock,
     pub physical: DensePhysicalHandle,
+    pub backend: DenseBackendHandle,
     pub payload_ready: bool,
 }
 
@@ -127,6 +142,7 @@ pub struct DenseRetirementCertificate {
     pub logical: DenseLogicalBlock,
     pub temporal: DenseTemporalAddress,
     pub physical: DensePhysicalHandle,
+    pub backend: DenseBackendHandle,
     pub token_start: u64,
     pub token_end_exclusive: u64,
     pub semantic_proof: DenseSemanticProof,
@@ -139,6 +155,7 @@ pub struct DensePhysicalReclamationReceipt {
     pub artifact_fingerprint: String,
     pub certificate_id: u64,
     pub physical: DensePhysicalHandle,
+    pub backend: DenseBackendHandle,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
@@ -168,6 +185,7 @@ struct DenseSlot {
     generation: u64,
     occupant: Option<DenseLogicalBlock>,
     version: Option<CellVersion>,
+    backend: Option<DenseBackendHandle>,
     readers: u32,
     phase: DenseSlotPhase,
     pending_binding: Option<u64>,
@@ -178,6 +196,12 @@ struct DenseSlot {
 struct DenseClassRuntime {
     program: DenseClassProgram,
     slots: Vec<DenseSlot>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct DenseBackendBinding {
+    backend: DenseBackendHandle,
+    physical: DensePhysicalHandle,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -199,7 +223,7 @@ struct DenseSubmission {
 struct DenseBindingPreflight {
     previous_boundary: u64,
     resident_blocks: Vec<DenseViewBlock>,
-    pending_blocks: Vec<DenseViewBlock>,
+    pending_blocks: Vec<DenseBindingBlock>,
 }
 
 #[derive(Clone, Debug)]
@@ -363,6 +387,7 @@ pub struct DenseKvRuntime {
     next_submission_sequence: u64,
     bindings: DenseArena<DenseBindingIntent>,
     certificates: DenseArena<DenseRetirementCertificate>,
+    backend_bindings: Vec<Vec<Option<DenseBackendBinding>>>,
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -385,6 +410,10 @@ pub enum DenseRuntimeError {
     StaleRequest(RequestLease),
     #[error("dense request has already been released: {0:?}")]
     RequestReleased(RequestLease),
+    #[error("dense hydration requires a fresh request lease")]
+    HydrationRequiresFreshRequest,
+    #[error("dense hydration boundary must be positive")]
+    ZeroHydrationBoundary,
     #[error("dense request generation exhausted at slot {0}")]
     RequestGenerationExhausted(u32),
     #[error("dense materialized boundary moved backwards")]
@@ -393,6 +422,8 @@ pub enum DenseRuntimeError {
     SemanticFrontierMovedBackwards,
     #[error("dense semantic frontier exceeds materialized boundary")]
     SemanticFrontierBeyondMaterialized,
+    #[error("dense resident frontier cannot advance before any block is bound")]
+    ResidentFrontierWithoutBinding,
     #[error("dense request already has pending binding {0}")]
     PendingBinding(u64),
     #[error("dense binding generation exhausted")]
@@ -403,6 +434,14 @@ pub enum DenseRuntimeError {
     StaleBinding(u64),
     #[error("dense binding receipt does not match intent {0}")]
     MismatchedBindingReceipt(u64),
+    #[error("dense backend handle is outside the compiled domain: {0:?}")]
+    BackendHandleOutOfRange(DenseBackendHandle),
+    #[error("dense backend binding table is exhausted for domain {0:?}")]
+    BackendBindingCapacityExhausted(ClassId),
+    #[error("dense backend handle is already bound: {0:?}")]
+    BackendHandleCollision(DenseBackendHandle),
+    #[error("dense physical handle has no committed backend binding: {0:?}")]
+    MissingBackendBinding(DensePhysicalHandle),
     #[error("dense binding receipt {0} does not prove payload readiness")]
     PayloadNotReady(u64),
     #[error("dense binding backend transaction id must not be empty")]
@@ -610,12 +649,17 @@ impl DenseKvRuntime {
         })?;
         let certificate_capacity = u32::try_from(certificate_capacity)
             .map_err(|_| DenseRuntimeError::ArithmeticOverflow("dense certificate capacity"))?;
+        let backend_bindings = classes
+            .iter()
+            .map(|class| vec![None; class.slots.len()])
+            .collect();
         Ok(Self {
             submissions: DenseArena::new("submission", artifact.maximum_inflight_submissions)?,
             completion: CompletionWindow::new(artifact.maximum_inflight_submissions)?,
             next_submission_sequence: 1,
             bindings: DenseArena::new("binding", artifact.maximum_requests)?,
             certificates: DenseArena::new("certificate", certificate_capacity)?,
+            backend_bindings,
             artifact,
             classes,
             requests: vec![DenseRequest::default(); request_count],
@@ -679,6 +723,10 @@ impl DenseKvRuntime {
                 .map(|block| DensePhysicalBindingBlockReceipt {
                     logical: block.logical,
                     physical: block.physical,
+                    backend: DenseBackendHandle {
+                        domain: block.physical.class_id,
+                        index: block.physical.slot,
+                    },
                     payload_ready: true,
                 })
                 .collect(),
@@ -721,6 +769,107 @@ impl DenseKvRuntime {
         }
         self.request_mut(lease)?.pending_binding = Some(binding_id);
         Ok(intent)
+    }
+
+    /// Reserves only the compiler-proven live set at one continuation boundary.
+    ///
+    /// This entry point is for Capsule or disaggregated restore into a fresh
+    /// request lease. It skips semantically dead history instead of replaying
+    /// every prior allocation through a finite periodic address machine.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a non-fresh request, invalid boundary, or unsafe
+    /// live-cell collision.
+    pub fn prepare_hydration_to(
+        &mut self,
+        lease: RequestLease,
+        boundary: u64,
+    ) -> Result<DenseBindingIntent, DenseRuntimeError> {
+        let request = self.request(lease)?;
+        if request.released {
+            return Err(DenseRuntimeError::RequestReleased(lease));
+        }
+        if request.materialized_boundary != 0 || request.semantic_frontier != 0 {
+            return Err(DenseRuntimeError::HydrationRequiresFreshRequest);
+        }
+        if let Some(binding_id) = request.pending_binding {
+            return Err(DenseRuntimeError::PendingBinding(binding_id));
+        }
+        if boundary == 0 {
+            return Err(DenseRuntimeError::ZeroHydrationBoundary);
+        }
+        let pending_blocks = self.hydration_blocks(lease, boundary)?;
+        let binding_id = self.bindings.insert_with(|binding_id| DenseBindingIntent {
+            schema: "orbitkv.dense-binding-intent.v1",
+            binding_id,
+            request: lease,
+            previous_boundary: 0,
+            target_boundary: boundary,
+            resident_blocks: Vec::new(),
+            pending_blocks,
+        })?;
+        let intent = self
+            .bindings
+            .get(binding_id)
+            .cloned()
+            .ok_or(DenseRuntimeError::UnknownBinding(binding_id))?;
+        if let Err(error) = self.reserve_binding_slots(binding_id, &intent.pending_blocks) {
+            self.bindings.remove(binding_id);
+            return Err(error);
+        }
+        self.request_mut(lease)?.pending_binding = Some(binding_id);
+        Ok(intent)
+    }
+
+    fn hydration_blocks(
+        &self,
+        lease: RequestLease,
+        boundary: u64,
+    ) -> Result<Vec<DenseBindingBlock>, DenseRuntimeError> {
+        let last = (boundary - 1) / self.artifact.page_tokens;
+        if last >= self.artifact.maximum_blocks_per_request {
+            return Err(DenseRuntimeError::ArithmeticOverflow(
+                "dense maximum hydration boundary",
+            ));
+        }
+        let mut pending = Vec::new();
+        for class_index in 0..self.classes.len() {
+            let program = &self.classes[class_index].program;
+            for ordinal in program.block_domain.start_block..=last {
+                if !program.block_domain.contains(ordinal)
+                    || program
+                        .retirement
+                        .death_boundary(self.artifact.page_tokens, ordinal)?
+                        .is_some_and(|death| death <= boundary)
+                {
+                    continue;
+                }
+                let (logical, temporal, _, slot_index) =
+                    self.locate_cell(lease, class_index, ordinal)?;
+                let slot = self.classes[class_index].slots.get(slot_index).ok_or(
+                    DenseRuntimeError::ArithmeticOverflow("dense hydration slot index"),
+                )?;
+                if slot.phase != DenseSlotPhase::Free
+                    || slot.occupant.is_some()
+                    || slot.backend.is_some()
+                {
+                    return Err(DenseRuntimeError::CellCollision(logical));
+                }
+                pending.push(DenseBindingBlock {
+                    logical,
+                    temporal,
+                    physical: DensePhysicalHandle {
+                        class_id: program.class_id,
+                        slot: slot_index as u64,
+                        generation: slot.generation.checked_add(1).ok_or(
+                            DenseRuntimeError::ArithmeticOverflow("dense slot generation"),
+                        )?,
+                    },
+                });
+            }
+        }
+        Ok(pending)
     }
 
     fn preflight_binding(
@@ -773,6 +922,15 @@ impl DenseKvRuntime {
                                 | DenseSlotPhase::Certified
                         )
                     {
+                        let backend =
+                            slot.backend
+                                .ok_or(DenseRuntimeError::MissingBackendBinding(
+                                    DensePhysicalHandle {
+                                        class_id,
+                                        slot: slot_index as u64,
+                                        generation: slot.generation,
+                                    },
+                                ))?;
                         resident_blocks.push(DenseViewBlock {
                             logical,
                             temporal,
@@ -781,16 +939,20 @@ impl DenseKvRuntime {
                                 slot: slot_index as u64,
                                 generation: slot.generation,
                             },
+                            backend,
                         });
                         continue;
                     }
-                    if slot.phase != DenseSlotPhase::Free || slot.occupant.is_some() {
+                    if slot.phase != DenseSlotPhase::Free
+                        || slot.occupant.is_some()
+                        || slot.backend.is_some()
+                    {
                         return Err(DenseRuntimeError::CellCollision(logical));
                     }
                     let generation = slot.generation.checked_add(1).ok_or(
                         DenseRuntimeError::ArithmeticOverflow("dense slot generation"),
                     )?;
-                    pending_blocks.push(DenseViewBlock {
+                    pending_blocks.push(DenseBindingBlock {
                         logical,
                         temporal,
                         physical: DensePhysicalHandle {
@@ -812,7 +974,7 @@ impl DenseKvRuntime {
     fn reserve_binding_slots(
         &mut self,
         binding_id: u64,
-        pending_blocks: &[DenseViewBlock],
+        pending_blocks: &[DenseBindingBlock],
     ) -> Result<(), DenseRuntimeError> {
         for block in pending_blocks {
             let class = self
@@ -828,6 +990,7 @@ impl DenseKvRuntime {
                 .ok_or(DenseRuntimeError::StaleHandle(block.physical))?;
             if slot.phase != DenseSlotPhase::Free
                 || slot.occupant.is_some()
+                || slot.backend.is_some()
                 || slot
                     .generation
                     .checked_add(1)
@@ -850,6 +1013,7 @@ impl DenseKvRuntime {
                 .ok_or(DenseRuntimeError::StaleHandle(block.physical))?;
             if slot.phase != DenseSlotPhase::Free
                 || slot.occupant.is_some()
+                || slot.backend.is_some()
                 || slot
                     .generation
                     .checked_add(1)
@@ -863,6 +1027,71 @@ impl DenseKvRuntime {
             slot.phase = DenseSlotPhase::Reserved;
             slot.pending_binding = Some(binding_id);
         }
+        Ok(())
+    }
+
+    fn backend_binding(
+        &self,
+        backend: DenseBackendHandle,
+    ) -> Result<Option<DensePhysicalHandle>, DenseRuntimeError> {
+        self.class(backend.domain)?;
+        self.backend_bindings
+            .get(usize::from(backend.domain.0))
+            .ok_or(DenseRuntimeError::BackendHandleOutOfRange(backend))
+            .map(|bindings| {
+                bindings
+                    .iter()
+                    .flatten()
+                    .find(|binding| binding.backend == backend)
+                    .map(|binding| binding.physical)
+            })
+    }
+
+    fn insert_backend_binding(
+        &mut self,
+        backend: DenseBackendHandle,
+        physical: DensePhysicalHandle,
+    ) -> Result<(), DenseRuntimeError> {
+        self.class(backend.domain)?;
+        let bindings = self
+            .backend_bindings
+            .get_mut(usize::from(backend.domain.0))
+            .ok_or(DenseRuntimeError::BackendHandleOutOfRange(backend))?;
+        if bindings
+            .iter()
+            .flatten()
+            .any(|binding| binding.backend == backend)
+        {
+            return Err(DenseRuntimeError::BackendHandleCollision(backend));
+        }
+        let binding = bindings
+            .iter_mut()
+            .find(|binding| binding.is_none())
+            .ok_or(DenseRuntimeError::BackendBindingCapacityExhausted(
+                backend.domain,
+            ))?;
+        *binding = Some(DenseBackendBinding { backend, physical });
+        Ok(())
+    }
+
+    fn remove_backend_binding(
+        &mut self,
+        backend: DenseBackendHandle,
+        physical: DensePhysicalHandle,
+    ) -> Result<(), DenseRuntimeError> {
+        self.class(backend.domain)?;
+        let binding = self
+            .backend_bindings
+            .get_mut(usize::from(backend.domain.0))
+            .and_then(|bindings| {
+                bindings.iter_mut().find(|binding| {
+                    binding.is_some_and(|binding| {
+                        binding.backend == backend && binding.physical == physical
+                    })
+                })
+            })
+            .ok_or(DenseRuntimeError::BackendHandleOutOfRange(backend))?;
+        *binding = None;
         Ok(())
     }
 
@@ -880,6 +1109,45 @@ impl DenseKvRuntime {
             .get(receipt.binding_id)
             .cloned()
             .ok_or(DenseRuntimeError::UnknownBinding(receipt.binding_id))?;
+        self.validate_binding_receipt(&intent, receipt)?;
+
+        let mut published = intent.resident_blocks;
+        for actual in &receipt.blocks {
+            self.insert_backend_binding(actual.backend, actual.physical)?;
+            let slot = self.slot_mut(actual.physical)?;
+            slot.phase = DenseSlotPhase::Active;
+            slot.pending_binding = None;
+            slot.backend = Some(actual.backend);
+            let temporal = intent
+                .pending_blocks
+                .iter()
+                .find(|block| block.logical == actual.logical)
+                .map(|block| block.temporal)
+                .ok_or(DenseRuntimeError::MismatchedBindingReceipt(
+                    receipt.binding_id,
+                ))?;
+            published.push(DenseViewBlock {
+                logical: actual.logical,
+                temporal,
+                physical: actual.physical,
+                backend: actual.backend,
+            });
+        }
+        let request = self.request_mut(intent.request)?;
+        request.materialized_boundary = intent.target_boundary;
+        request.pending_binding = None;
+        self.bindings
+            .remove(receipt.binding_id)
+            .ok_or(DenseRuntimeError::UnknownBinding(receipt.binding_id))?;
+        published.sort_by_key(|block| (block.logical.class_id, block.logical.ordinal));
+        Ok(published)
+    }
+
+    fn validate_binding_receipt(
+        &self,
+        intent: &DenseBindingIntent,
+        receipt: &DensePhysicalBindingReceipt,
+    ) -> Result<(), DenseRuntimeError> {
         if receipt.schema != "orbitkv.dense-physical-binding-receipt.v1"
             || receipt.artifact_fingerprint != self.artifact.artifact_fingerprint
             || receipt.backend_transaction_id.is_empty()
@@ -897,14 +1165,38 @@ impl DenseKvRuntime {
                 receipt.binding_id,
             ));
         }
+        let mut backends = receipt
+            .blocks
+            .iter()
+            .map(|block| block.backend)
+            .collect::<Vec<_>>();
+        backends.sort();
+        if backends.windows(2).any(|pair| pair[0] == pair[1]) {
+            return Err(DenseRuntimeError::MismatchedBindingReceipt(
+                receipt.binding_id,
+            ));
+        }
         for expected in &intent.pending_blocks {
-            let matches = receipt.blocks.iter().filter(|actual| {
+            let mut matches = receipt.blocks.iter().filter(|actual| {
                 actual.logical == expected.logical && actual.physical == expected.physical
             });
-            if matches.count() != 1 {
+            let Some(actual) = matches.next() else {
                 return Err(DenseRuntimeError::MismatchedBindingReceipt(
                     receipt.binding_id,
                 ));
+            };
+            if matches.next().is_some() {
+                return Err(DenseRuntimeError::MismatchedBindingReceipt(
+                    receipt.binding_id,
+                ));
+            }
+            if actual.backend.domain != expected.logical.class_id {
+                return Err(DenseRuntimeError::MismatchedBindingReceipt(
+                    receipt.binding_id,
+                ));
+            }
+            if self.backend_binding(actual.backend)?.is_some() {
+                return Err(DenseRuntimeError::BackendHandleCollision(actual.backend));
             }
         }
         if receipt.blocks.iter().any(|block| !block.payload_ready) {
@@ -923,25 +1215,12 @@ impl DenseKvRuntime {
                 || slot.pending_binding != Some(receipt.binding_id)
                 || slot.occupant != Some(block.logical)
                 || slot.version != Some(block.temporal.version)
+                || slot.backend.is_some()
             {
                 return Err(DenseRuntimeError::StaleBinding(receipt.binding_id));
             }
         }
-
-        for block in &intent.pending_blocks {
-            let slot = self.slot_mut(block.physical)?;
-            slot.phase = DenseSlotPhase::Active;
-            slot.pending_binding = None;
-        }
-        let request = self.request_mut(intent.request)?;
-        request.materialized_boundary = intent.target_boundary;
-        request.pending_binding = None;
-        self.bindings
-            .remove(receipt.binding_id)
-            .ok_or(DenseRuntimeError::UnknownBinding(receipt.binding_id))?;
-        let mut published = intent.resident_blocks;
-        published.extend(intent.pending_blocks);
-        Ok(published)
+        Ok(())
     }
 
     /// Aborts an invisible binding while consuming slot generations.
@@ -965,6 +1244,7 @@ impl DenseKvRuntime {
             let slot = self.slot_mut(block.physical)?;
             slot.occupant = None;
             slot.version = None;
+            slot.backend = None;
             slot.phase = DenseSlotPhase::Free;
             slot.pending_binding = None;
         }
@@ -996,6 +1276,57 @@ impl DenseKvRuntime {
             return Err(DenseRuntimeError::SemanticFrontierBeyondMaterialized);
         }
         self.request_mut(lease)?.semantic_frontier = boundary;
+        self.mark_retirements(lease)
+    }
+
+    /// Advances logical time within an already committed physical block.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the boundary crosses into an unbound logical block
+    /// or if either frontier would move backwards.
+    pub fn advance_resident_frontier(
+        &mut self,
+        lease: RequestLease,
+        boundary: u64,
+    ) -> Result<Vec<DenseRetirementCertificate>, DenseRuntimeError> {
+        let request = self.request(lease)?;
+        if request.released {
+            return Err(DenseRuntimeError::RequestReleased(lease));
+        }
+        if let Some(binding_id) = request.pending_binding {
+            return Err(DenseRuntimeError::PendingBinding(binding_id));
+        }
+        if boundary < request.materialized_boundary {
+            return Err(DenseRuntimeError::MaterializedBoundaryMovedBackwards);
+        }
+        if boundary < request.semantic_frontier {
+            return Err(DenseRuntimeError::SemanticFrontierMovedBackwards);
+        }
+        if boundary == request.materialized_boundary {
+            self.request_mut(lease)?.semantic_frontier = boundary;
+            return self.mark_retirements(lease);
+        }
+        if request.materialized_boundary == 0 {
+            return Err(DenseRuntimeError::ResidentFrontierWithoutBinding);
+        }
+        let previous_ordinal = (request.materialized_boundary - 1) / self.artifact.page_tokens;
+        let target_ordinal = (boundary - 1) / self.artifact.page_tokens;
+        if previous_ordinal != target_ordinal {
+            return Err(DenseRuntimeError::SemanticFrontierBeyondMaterialized);
+        }
+        for class in &self.classes {
+            if class.program.block_domain.contains(target_ordinal) {
+                self.block(DenseLogicalBlock {
+                    request: lease,
+                    class_id: class.program.class_id,
+                    ordinal: target_ordinal,
+                })?;
+            }
+        }
+        let request = self.request_mut(lease)?;
+        request.materialized_boundary = boundary;
+        request.semantic_frontier = boundary;
         self.mark_retirements(lease)
     }
 
@@ -1070,6 +1401,8 @@ impl DenseKvRuntime {
             let slot = self.slot(block.physical)?;
             if slot.occupant != Some(block.logical)
                 || slot.generation != block.physical.generation
+                || slot.backend != Some(block.backend)
+                || self.backend_binding(block.backend)? != Some(block.physical)
                 || slot.readers == 0
             {
                 return Err(DenseRuntimeError::StaleHandle(block.physical));
@@ -1136,6 +1469,7 @@ impl DenseKvRuntime {
         if receipt.schema != "orbitkv.dense-physical-reclamation-receipt.v1"
             || receipt.artifact_fingerprint != self.artifact.artifact_fingerprint
             || receipt.physical != certificate.physical
+            || receipt.backend != certificate.backend
         {
             return Err(DenseRuntimeError::MismatchedReclamationReceipt(
                 receipt.certificate_id,
@@ -1146,6 +1480,8 @@ impl DenseKvRuntime {
             || slot.pending_certificate != Some(receipt.certificate_id)
             || slot.readers != 0
             || slot.occupant != Some(certificate.logical)
+            || slot.backend != Some(certificate.backend)
+            || self.backend_binding(certificate.backend)? != Some(certificate.physical)
         {
             return Err(DenseRuntimeError::MismatchedReclamationReceipt(
                 receipt.certificate_id,
@@ -1154,8 +1490,10 @@ impl DenseKvRuntime {
         let slot = self.slot_mut(certificate.physical)?;
         slot.occupant = None;
         slot.version = None;
+        slot.backend = None;
         slot.phase = DenseSlotPhase::Free;
         slot.pending_certificate = None;
+        self.remove_backend_binding(certificate.backend, certificate.physical)?;
         self.certificates.remove(receipt.certificate_id).ok_or(
             DenseRuntimeError::UnknownCertificate(receipt.certificate_id),
         )?;
@@ -1180,7 +1518,10 @@ impl DenseKvRuntime {
                     DenseRuntimeError::SlotCountTooLarge(class.program.name.clone())
                 })?;
             if class.slots[start..end].iter().any(|slot| {
-                slot.phase != DenseSlotPhase::Free || slot.occupant.is_some() || slot.readers != 0
+                slot.phase != DenseSlotPhase::Free
+                    || slot.occupant.is_some()
+                    || slot.backend.is_some()
+                    || slot.readers != 0
             }) {
                 return Err(DenseRuntimeError::RequestStillResident);
             }
@@ -1237,6 +1578,9 @@ impl DenseKvRuntime {
                 let Some(logical) = slot.occupant else {
                     continue;
                 };
+                let Some(backend) = slot.backend else {
+                    continue;
+                };
                 blocks.push(DenseViewBlock {
                     logical,
                     temporal: DenseTemporalAddress {
@@ -1249,6 +1593,7 @@ impl DenseKvRuntime {
                         slot: (start + offset) as u64,
                         generation: slot.generation,
                     },
+                    backend,
                 });
             }
         }
@@ -1322,6 +1667,7 @@ impl DenseKvRuntime {
                     logical,
                     temporal: block.temporal,
                     physical: block.physical,
+                    backend: block.backend,
                     token_start,
                     token_end_exclusive,
                     semantic_proof,
@@ -1439,6 +1785,15 @@ impl DenseKvRuntime {
                 slot: slot_index as u64,
                 generation: slot.generation,
             },
+            backend: slot
+                .backend
+                .ok_or(DenseRuntimeError::MissingBackendBinding(
+                    DensePhysicalHandle {
+                        class_id: logical.class_id,
+                        slot: slot_index as u64,
+                        generation: slot.generation,
+                    },
+                ))?,
         })
     }
 
@@ -1746,6 +2101,7 @@ mod tests {
                     artifact_fingerprint: artifact_fingerprint.clone(),
                     certificate_id: certificate.certificate_id,
                     physical: certificate.physical,
+                    backend: certificate.backend,
                 })
                 .unwrap();
         }
@@ -1787,6 +2143,205 @@ mod tests {
                 "physical slots do not match request stripes"
             ))
         ));
+    }
+
+    #[test]
+    fn binding_publishes_dynamic_backend_pages_in_immutable_views() {
+        let artifact = DenseRuntimeArtifact::compile(&hybrid_plan(), 1, 4, 16).unwrap();
+        let mut runtime = DenseKvRuntime::new(artifact).unwrap();
+        let lease = runtime.acquire_request().unwrap();
+        let intent = runtime.prepare_binding_to(lease, 4).unwrap();
+        let backend_indices = [7, 1];
+        let receipt = DensePhysicalBindingReceipt {
+            schema: "orbitkv.dense-physical-binding-receipt.v1".into(),
+            artifact_fingerprint: runtime.artifact().artifact_fingerprint.clone(),
+            binding_id: intent.binding_id,
+            backend_transaction_id: "sglang:test-binding".into(),
+            blocks: intent
+                .pending_blocks
+                .iter()
+                .zip(backend_indices)
+                .map(|(block, index)| DensePhysicalBindingBlockReceipt {
+                    logical: block.logical,
+                    physical: block.physical,
+                    backend: DenseBackendHandle {
+                        domain: block.logical.class_id,
+                        index,
+                    },
+                    payload_ready: true,
+                })
+                .collect(),
+        };
+        let published = runtime.commit_binding(&receipt).unwrap();
+        assert_eq!(
+            published
+                .iter()
+                .map(|block| block.backend.index)
+                .collect::<BTreeSet<_>>(),
+            BTreeSet::from(backend_indices)
+        );
+        assert!(
+            published
+                .iter()
+                .any(|block| block.backend.index != block.physical.slot)
+        );
+        runtime.advance_semantic_frontier(lease, 4).unwrap();
+        let view = runtime.submit_view(lease).unwrap();
+        assert_eq!(
+            view.blocks
+                .iter()
+                .map(|block| block.backend)
+                .collect::<BTreeSet<_>>(),
+            published
+                .iter()
+                .map(|block| block.backend)
+                .collect::<BTreeSet<_>>()
+        );
+    }
+
+    #[test]
+    fn hydration_materializes_only_the_compiler_proven_live_set() {
+        let plan = compile_plan(KvPlanInput {
+            page_tokens: 16,
+            classes: vec![
+                KvClassSpec {
+                    name: "full".into(),
+                    layers: vec![1],
+                    retention: RetentionKind::Full,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: None,
+                },
+                KvClassSpec {
+                    name: "swa".into(),
+                    layers: vec![0],
+                    retention: RetentionKind::Sliding,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: Some(1024),
+                },
+            ],
+        })
+        .unwrap();
+        let artifact = DenseRuntimeArtifact::compile(&plan, 1, 4, 1024).unwrap();
+        let mut runtime = DenseKvRuntime::new(artifact).unwrap();
+        let lease = runtime.acquire_request().unwrap();
+        let intent = runtime.prepare_hydration_to(lease, 16_384).unwrap();
+        let full = class_id_for(&plan, "full");
+        let swa = class_id_for(&plan, "swa");
+        assert_eq!(
+            intent
+                .pending_blocks
+                .iter()
+                .filter(|block| block.logical.class_id == full)
+                .count(),
+            1024
+        );
+        let swa_blocks = intent
+            .pending_blocks
+            .iter()
+            .filter(|block| block.logical.class_id == swa)
+            .collect::<Vec<_>>();
+        assert_eq!(swa_blocks.len(), 64);
+        assert_eq!(swa_blocks.first().unwrap().logical.ordinal, 960);
+        assert_eq!(swa_blocks.last().unwrap().logical.ordinal, 1023);
+        assert_eq!(
+            swa_blocks
+                .iter()
+                .map(|block| block.temporal.cell_index)
+                .collect::<BTreeSet<_>>()
+                .len(),
+            64
+        );
+    }
+
+    #[test]
+    fn resident_frontier_advances_only_inside_a_bound_page() {
+        let artifact = DenseRuntimeArtifact::compile(&hybrid_plan(), 1, 4, 16).unwrap();
+        let mut runtime = DenseKvRuntime::new(artifact).unwrap();
+        let lease = runtime.acquire_request().unwrap();
+        runtime.materialize_to(lease, 1).unwrap();
+        runtime.advance_resident_frontier(lease, 4).unwrap();
+        assert_eq!(runtime.request(lease).unwrap().materialized_boundary, 4);
+        assert_eq!(runtime.request(lease).unwrap().semantic_frontier, 4);
+        assert_eq!(
+            runtime.advance_resident_frontier(lease, 5),
+            Err(DenseRuntimeError::SemanticFrontierBeyondMaterialized)
+        );
+    }
+
+    #[test]
+    fn duplicate_backend_page_fails_before_any_binding_is_published() {
+        let artifact = DenseRuntimeArtifact::compile(&hybrid_plan(), 1, 4, 16).unwrap();
+        let mut runtime = DenseKvRuntime::new(artifact).unwrap();
+        let lease = runtime.acquire_request().unwrap();
+        let intent = runtime.prepare_binding_to(lease, 8).unwrap();
+        let receipt = DensePhysicalBindingReceipt {
+            schema: "orbitkv.dense-physical-binding-receipt.v1".into(),
+            artifact_fingerprint: runtime.artifact().artifact_fingerprint.clone(),
+            binding_id: intent.binding_id,
+            backend_transaction_id: "sglang:duplicate".into(),
+            blocks: intent
+                .pending_blocks
+                .iter()
+                .map(|block| DensePhysicalBindingBlockReceipt {
+                    logical: block.logical,
+                    physical: block.physical,
+                    backend: DenseBackendHandle {
+                        domain: block.logical.class_id,
+                        index: 0,
+                    },
+                    payload_ready: true,
+                })
+                .collect(),
+        };
+        assert_eq!(
+            runtime.commit_binding(&receipt),
+            Err(DenseRuntimeError::MismatchedBindingReceipt(
+                intent.binding_id
+            ))
+        );
+        assert_eq!(runtime.stats().reserved_blocks, 4);
+        assert_eq!(runtime.stats().resident_blocks, 0);
+        assert!(
+            runtime
+                .backend_bindings
+                .iter()
+                .flatten()
+                .all(Option::is_none)
+        );
+        runtime.abort_binding(intent.binding_id).unwrap();
+    }
+
+    #[test]
+    fn reclamation_receipt_must_name_the_committed_backend_page() {
+        let artifact = DenseRuntimeArtifact::compile(&hybrid_plan(), 1, 4, 16).unwrap();
+        let mut runtime = DenseKvRuntime::new(artifact).unwrap();
+        let lease = runtime.acquire_request().unwrap();
+        runtime.materialize_to(lease, 4).unwrap();
+        runtime.advance_semantic_frontier(lease, 4).unwrap();
+        let certificates = runtime.release_request(lease).unwrap();
+        let certificate = certificates[0].clone();
+        let wrong = DensePhysicalReclamationReceipt {
+            schema: "orbitkv.dense-physical-reclamation-receipt.v1".into(),
+            artifact_fingerprint: runtime.artifact().artifact_fingerprint.clone(),
+            certificate_id: certificate.certificate_id,
+            physical: certificate.physical,
+            backend: DenseBackendHandle {
+                domain: certificate.backend.domain,
+                index: (certificate.backend.index + 1)
+                    % runtime
+                        .class(certificate.backend.domain)
+                        .unwrap()
+                        .slots
+                        .len() as u64,
+            },
+        };
+        assert_eq!(
+            runtime.commit_reclamation(&wrong),
+            Err(DenseRuntimeError::MismatchedReclamationReceipt(
+                certificate.certificate_id
+            ))
+        );
+        commit_dense(&mut runtime, certificates);
     }
 
     #[test]

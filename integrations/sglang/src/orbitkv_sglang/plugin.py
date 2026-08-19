@@ -25,9 +25,11 @@ _UNIFORM_SWA_CONTRACT: dict[str, Any] | None = None
 _STATE_PLAN_MODE: str | None = None
 _OWNER: "OwnerClient | None" = None
 _BINDINGS: "SidecarOwnerClient | None" = None
+_DENSE_RUNTIME: "DenseRuntimeClient | None" = None
 _CAPSULES: "CapsuleClient | None" = None
 _CAPSULES_LOCK = threading.Lock()
 _BINDINGS_LOCK = threading.Lock()
+_DENSE_RUNTIME_LOCK = threading.Lock()
 _PREFIX_OBJECTS: dict[tuple[str, str, str], dict[str, Any]] = {}
 _PREFIX_OBJECTS_LOCK = threading.Lock()
 _EXECUTION_EVENTS: dict[int, dict[str, Any]] = {}
@@ -167,6 +169,24 @@ class SidecarOwnerClient(OwnerClient):
         self._stdout.close()
         if self._process.stderr is not None:
             self._process.stderr.close()
+
+
+class DenseRuntimeClient(SidecarOwnerClient):
+    def __init__(self, orbitkv_bin: str, state_plan_path: str):
+        self._process = subprocess.Popen(
+            [orbitkv_bin, "serve-dense-runtime", state_plan_path],
+            stdin=subprocess.PIPE,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            bufsize=1,
+        )
+        if self._process.stdin is None or self._process.stdout is None:
+            self._process.kill()
+            raise RuntimeError("OrbitKV Dense Runtime did not expose command pipes")
+        self._stdin = self._process.stdin
+        self._stdout = self._process.stdout
+        self._lock = threading.Lock()
 
 
 class _FfiCertificate(ctypes.Structure):
@@ -475,6 +495,15 @@ def _execution_frontier_enabled() -> bool:
     )
 
 
+def _dense_capsule_binding_enabled() -> bool:
+    return (
+        _RUNTIME_STATE_PLAN is not None
+        and isinstance(_RUNTIME_STATE_PLAN.get("dense_runtime"), dict)
+        and _capsules_enabled()
+        and _execution_frontier_enabled()
+    )
+
+
 def _completion_domain(scheduler: Any) -> str:
     device = getattr(scheduler, "device", None)
     device_index = getattr(device, "index", None)
@@ -494,6 +523,8 @@ def _complete_execution_entries(entries: list[dict[str, Any]]) -> None:
     for entry in entries:
         by_domain.setdefault(entry["completion_domain"], []).append(entry)
     for completion_domain, domain_entries in by_domain.items():
+        for entry in domain_entries:
+            _complete_dense_execution(entry)
         submission_ids = [
             int(entry["submission_id"]) for entry in domain_entries
         ]
@@ -571,7 +602,12 @@ def _track_forward_execution(
     *args: Any,
     **kwargs: Any,
 ):
-    result = original_fn(scheduler, batch, *args, **kwargs)
+    dense_executions = _submit_dense_views(batch)
+    try:
+        result = original_fn(scheduler, batch, *args, **kwargs)
+    except Exception:
+        _cancel_dense_views(dense_executions)
+        raise
     if not _execution_frontier_enabled() or batch is None:
         return result
     request_ids = sorted(
@@ -607,6 +643,7 @@ def _track_forward_execution(
         "submission_id": int(ticket["submission_id"]),
         "domain_sequence": int(ticket["domain_sequence"]),
         "request_ids": request_ids,
+        "dense_executions": dense_executions,
     }
     with _EXECUTION_EVENTS_LOCK:
         if entry["submission_id"] in _EXECUTION_EVENTS:
@@ -623,6 +660,298 @@ def _track_forward_execution(
             }
         )
     return result
+
+
+def _stage_dense_binding(req: Any, batch: Any) -> None:
+    request = getattr(req, "_orbitkv_dense_request", None)
+    if request is None:
+        return
+    if getattr(req, "_orbitkv_dense_pending_binding", None) is not None:
+        raise RuntimeError("OrbitKV Dense request already has a pending binding")
+    boundary = int(req.kv.kv_allocated_len)
+    current = int(getattr(req, "_orbitkv_dense_boundary", 0))
+    if boundary <= current:
+        return
+    page_tokens = int(_RUNTIME_STATE_PLAN["dense_runtime"]["page_tokens"])
+    if int(batch.tree_cache.page_size) != page_tokens:
+        raise RuntimeError("OrbitKV Dense page size does not match SGLang")
+    if current > 0 and (boundary - 1) // page_tokens == (current - 1) // page_tokens:
+        return
+    response = _require_dense_runtime().command(
+        {"op": "prepare_binding", "request": request, "boundary": boundary}
+    )
+    if response.get("status") != "binding_prepared":
+        raise RuntimeError("OrbitKV Dense Runtime returned an invalid append intent")
+    intent = response.get("intent")
+    if (
+        not isinstance(intent, dict)
+        or intent.get("request") != request
+        or int(intent.get("previous_boundary", -1)) != current
+        or int(intent.get("target_boundary", -1)) != boundary
+    ):
+        raise RuntimeError("OrbitKV Dense append intent does not match SGLang")
+    indices = batch.req_to_token_pool.req_to_token[req.req_pool_idx, :boundary]
+    transaction = {
+        "request": request,
+        "intent": intent,
+        "index_origin_tokens": 0,
+        "committed": False,
+    }
+    req._orbitkv_dense_pending_binding = {
+        "transaction": transaction,
+        "receipt": _dense_binding_receipt(
+            transaction,
+            batch.token_to_kv_pool_allocator,
+            indices,
+        ),
+        "boundary": boundary,
+    }
+    req._orbitkv_dense_allocator = batch.token_to_kv_pool_allocator
+    req._orbitkv_dense_req_to_token = batch.req_to_token_pool.req_to_token[
+        req.req_pool_idx
+    ]
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "dense_binding_prepared",
+                "request_id": str(req.rid),
+                "binding_id": int(intent["binding_id"]),
+                "previous_boundary": current,
+                "target_boundary": boundary,
+                "pending_blocks": len(intent["pending_blocks"]),
+            }
+        )
+
+
+def _stage_dense_bindings_after_prepare(
+    original_fn: Callable,
+    batch: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    if _dense_capsule_binding_enabled():
+        if batch.enable_overlap:
+            raise RuntimeError(
+                "OrbitKV Dense Capsule binding does not yet qualify overlap scheduling"
+            )
+        for req in batch.reqs:
+            if getattr(req, "_orbitkv_dense_request", None) is not None:
+                _wait_execution_for_request(str(req.rid))
+                hydration_boundary = int(
+                    getattr(req, "_orbitkv_dense_hydration_boundary", 0)
+                )
+                if (
+                    req.kv is not None
+                    and (
+                        hydration_boundary <= 0
+                        or int(req.kv.kv_allocated_len) >= hydration_boundary + 1
+                    )
+                ):
+                    raise RuntimeError(
+                        "OrbitKV Dense Capsule binding currently qualifies "
+                        "one continuation token"
+                    )
+    result = original_fn(batch, *args, **kwargs)
+    if _dense_capsule_binding_enabled():
+        for req in batch.reqs:
+            _stage_dense_binding(req, batch)
+    return result
+
+
+def _submit_dense_views(batch: Any) -> list[dict[str, Any]]:
+    if not _dense_capsule_binding_enabled() or batch is None:
+        return []
+    executions = []
+    for req in batch.reqs:
+        request = getattr(req, "_orbitkv_dense_request", None)
+        if request is None:
+            continue
+        response = _require_dense_runtime().command(
+            {"op": "submit_view", "request": request}
+        )
+        view = response.get("view")
+        if (
+            response.get("status") != "view_submitted"
+            or not isinstance(view, dict)
+            or view.get("request") != request
+        ):
+            raise RuntimeError("OrbitKV Dense Runtime returned an invalid view")
+        executions.append(
+            {
+                "req": req,
+                "request": request,
+                "submission_id": int(view["submission_id"]),
+                "boundary": int(req.kv.kv_allocated_len),
+            }
+        )
+        if _trace_allocations_enabled():
+            _emit(
+                {
+                    "event": "dense_view_submitted",
+                    "request_id": str(req.rid),
+                    "submission_id": int(view["submission_id"]),
+                    "semantic_frontier": int(view["semantic_frontier"]),
+                    "blocks": len(view["blocks"]),
+                }
+            )
+    return executions
+
+
+def _cancel_dense_views(executions: list[dict[str, Any]]) -> None:
+    for execution in executions:
+        response = _require_dense_runtime().command(
+            {
+                "op": "complete_submission",
+                "submission_id": execution["submission_id"],
+            }
+        )
+        if response.get("status") != "submission_completed":
+            raise RuntimeError("OrbitKV Dense Runtime failed to cancel a view")
+        _abort_dense_pending_binding(execution["req"])
+
+
+def _abort_dense_pending_binding(req: Any) -> None:
+    pending = getattr(req, "_orbitkv_dense_pending_binding", None)
+    if pending is None:
+        return
+    response = _require_dense_runtime().command(
+        {
+            "op": "abort_binding",
+            "binding_id": int(pending["transaction"]["intent"]["binding_id"]),
+        }
+    )
+    if response.get("status") != "binding_aborted":
+        raise RuntimeError("OrbitKV Dense Runtime rejected append abort")
+    req._orbitkv_dense_pending_binding = None
+
+
+def _commit_dense_pending_binding(req: Any) -> None:
+    pending = getattr(req, "_orbitkv_dense_pending_binding", None)
+    if pending is None:
+        return
+    response = _require_dense_runtime().command(
+        {"op": "commit_binding", "receipt": pending["receipt"]}
+    )
+    if (
+        response.get("status") != "binding_committed"
+        or int(response.get("binding_id", -1))
+        != int(pending["transaction"]["intent"]["binding_id"])
+    ):
+        raise RuntimeError("OrbitKV Dense Runtime rejected append binding")
+    pending["transaction"]["committed"] = True
+    req._orbitkv_dense_boundary = int(pending["boundary"])
+    req._orbitkv_dense_pending_binding = None
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "dense_binding_committed",
+                "request_id": str(req.rid),
+                "binding_id": int(pending["transaction"]["intent"]["binding_id"]),
+                "boundary": int(pending["boundary"]),
+            }
+        )
+
+
+def _commit_dense_certificate(req: Any, allocator: Any, certificate: dict[str, Any]) -> None:
+    _, swa_class = _capsule_state_classes()
+    class_name = _dense_class_names()[int(certificate["logical"]["class_id"])]
+    if class_name != swa_class:
+        raise RuntimeError("OrbitKV Dense online retirement is only qualified for SWA")
+    page_tokens = int(_RUNTIME_STATE_PLAN["dense_runtime"]["page_tokens"])
+    token_start = int(certificate["token_start"])
+    token_end = int(certificate["token_end_exclusive"])
+    if token_end - token_start != page_tokens:
+        raise RuntimeError("OrbitKV Dense certificate is not one physical page")
+    full_indices = req._orbitkv_dense_req_to_token[token_start:token_end]
+    expected_page = int(certificate["backend"]["index"])
+    kvcache = getattr(allocator, "_kvcache", None)
+    mapping = getattr(kvcache, "full_to_swa_index_mapping", None)
+    mapped = full_indices if mapping is None else mapping[full_indices]
+    if int(mapped[0].item()) // page_tokens != expected_page:
+        raise RuntimeError("OrbitKV Dense certificate does not match SGLang mapping")
+    allocator.free_swa(full_indices)
+    response = _require_dense_runtime().command(
+        {
+            "op": "commit_reclamation",
+            "receipt": {
+                "schema": "orbitkv.dense-physical-reclamation-receipt.v1",
+                "artifact_fingerprint": certificate["artifact_fingerprint"],
+                "certificate_id": certificate["certificate_id"],
+                "physical": certificate["physical"],
+                "backend": certificate["backend"],
+            },
+        }
+    )
+    if response.get("status") != "reclamation_committed":
+        raise RuntimeError("OrbitKV Dense Runtime rejected online reclamation")
+    req.kv.swa_evicted_seqlen = max(
+        int(req.kv.swa_evicted_seqlen),
+        token_end,
+    )
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "dense_reclamation_committed",
+                "request_id": str(req.rid),
+                "certificate_id": int(certificate["certificate_id"]),
+                "class_name": class_name,
+                "token_start": token_start,
+                "token_end_exclusive": token_end,
+                "backend_page": expected_page,
+            }
+        )
+
+
+def _complete_dense_execution(entry: dict[str, Any]) -> None:
+    executions = entry.get("dense_executions", ())
+    for execution in executions:
+        req = execution["req"]
+        completed = _require_dense_runtime().command(
+            {
+                "op": "complete_submission",
+                "submission_id": execution["submission_id"],
+            }
+        )
+        if completed.get("status") != "submission_completed":
+            raise RuntimeError("OrbitKV Dense Runtime rejected execution completion")
+        had_pending_binding = (
+            getattr(req, "_orbitkv_dense_pending_binding", None) is not None
+        )
+        _commit_dense_pending_binding(req)
+        frontier_operation = (
+            "advance_semantic_frontier"
+            if had_pending_binding
+            else "advance_resident_frontier"
+        )
+        advanced = _require_dense_runtime().command(
+            {
+                "op": frontier_operation,
+                "request": execution["request"],
+                "boundary": execution["boundary"],
+            }
+        )
+        if advanced.get("status") != "semantic_frontier_advanced":
+            raise RuntimeError("OrbitKV Dense Runtime rejected semantic frontier")
+        req._orbitkv_dense_boundary = int(execution["boundary"])
+        certificates = (
+            list(completed.get("certificates", ()))
+            + list(advanced.get("certificates", ()))
+        )
+        allocator = (
+            req._orbitkv_dense_allocator if certificates else None
+        )
+        for certificate in certificates:
+            _commit_dense_certificate(req, allocator, certificate)
+        if _trace_allocations_enabled():
+            _emit(
+                {
+                    "event": "dense_execution_completed",
+                    "request_id": str(req.rid),
+                    "submission_id": int(execution["submission_id"]),
+                    "semantic_frontier": int(execution["boundary"]),
+                    "certificates": len(certificates),
+                }
+            )
 
 
 def _capsule_identity() -> dict[str, Any]:
@@ -1365,6 +1694,15 @@ def _stop_bindings() -> None:
     _BINDINGS = None
 
 
+def _stop_dense_runtime() -> None:
+    global _DENSE_RUNTIME
+
+    if _DENSE_RUNTIME is None:
+        return
+    _DENSE_RUNTIME.close()
+    _DENSE_RUNTIME = None
+
+
 def _stop_capsules() -> None:
     global _CAPSULES
 
@@ -1407,6 +1745,20 @@ def _require_bindings() -> OwnerClient:
                 _binding_plan_path(),
             )
         return _BINDINGS
+
+
+def _require_dense_runtime() -> DenseRuntimeClient:
+    global _DENSE_RUNTIME
+
+    if not _dense_capsule_binding_enabled():
+        raise RuntimeError("OrbitKV Dense Capsule binding is not compiled")
+    with _DENSE_RUNTIME_LOCK:
+        if _DENSE_RUNTIME is None:
+            _DENSE_RUNTIME = DenseRuntimeClient(
+                os.environ.get("ORBITKV_BIN", "orbitkv"),
+                os.environ["ORBITKV_RUNTIME_STATE_PLAN"],
+            )
+        return _DENSE_RUNTIME
 
 
 def _export_capsule_before_release(
@@ -1939,6 +2291,211 @@ def _commit_capsule_binding(intent: dict[str, Any], indices: Any) -> None:
         )
 
 
+def _prepare_dense_capsule_binding(
+    req: Any,
+    prefix_tokens: int,
+    live_tokens: int,
+) -> dict[str, Any] | None:
+    if not _dense_capsule_binding_enabled():
+        return None
+    acquired = _require_dense_runtime().command({"op": "acquire_request"})
+    if acquired.get("status") != "request_acquired":
+        raise RuntimeError("OrbitKV Dense Runtime returned an invalid request lease")
+    request = acquired.get("request")
+    prepared = _require_dense_runtime().command(
+        {
+            "op": "prepare_hydration",
+            "request": request,
+            "boundary": prefix_tokens,
+        }
+    )
+    if prepared.get("status") != "binding_prepared":
+        raise RuntimeError("OrbitKV Dense Runtime returned an invalid hydration intent")
+    intent = prepared.get("intent")
+    artifact = _RUNTIME_STATE_PLAN["dense_runtime"]
+    if (
+        not isinstance(request, dict)
+        or not isinstance(intent, dict)
+        or intent.get("schema") != "orbitkv.dense-binding-intent.v1"
+        or intent.get("request") != request
+        or int(intent.get("target_boundary", -1)) != prefix_tokens
+        or not isinstance(intent.get("pending_blocks"), list)
+        or not str(artifact.get("artifact_fingerprint", "")).startswith("sha256:")
+    ):
+        raise RuntimeError("OrbitKV Dense hydration intent does not match StatePlan")
+    return {
+        "request": request,
+        "intent": intent,
+        "index_origin_tokens": prefix_tokens - live_tokens,
+        "committed": False,
+    }
+
+
+def _dense_class_names() -> dict[int, str]:
+    if _RUNTIME_STATE_PLAN is None:
+        raise RuntimeError("OrbitKV Dense binding requires a runtime StatePlan")
+    classes = _RUNTIME_STATE_PLAN["dense_runtime"].get("classes")
+    if not isinstance(classes, list) or not classes:
+        raise RuntimeError("OrbitKV Dense artifact has no classes")
+    return {int(program["class_id"]): str(program["name"]) for program in classes}
+
+
+def _dense_backend_page(
+    allocator: Any,
+    indices: Any,
+    *,
+    class_name: str,
+    ordinal: int,
+    page_tokens: int,
+    index_origin_tokens: int,
+) -> int:
+    token_offset = ordinal * page_tokens - index_origin_tokens
+    if token_offset < 0 or token_offset >= int(indices.numel()):
+        raise RuntimeError("OrbitKV Dense block exceeds hydrated SGLang indices")
+    full_token_index = int(indices[token_offset].item())
+    if full_token_index <= 0 or full_token_index % page_tokens != 0:
+        raise RuntimeError("OrbitKV Dense Full token index is not a valid page")
+    import torch
+
+    resident_tokens = min(page_tokens, int(indices.numel()) - token_offset)
+    if resident_tokens <= 0:
+        raise RuntimeError("OrbitKV Dense backend page has no resident tokens")
+    full_page = indices[token_offset : token_offset + resident_tokens].to(
+        dtype=torch.int64
+    )
+    expected_full_page = full_token_index + torch.arange(
+        resident_tokens, dtype=torch.int64, device=indices.device
+    )
+    if not bool(torch.equal(full_page, expected_full_page)):
+        raise RuntimeError("OrbitKV Dense Full backend page is not contiguous")
+    full_class, swa_class = _capsule_state_classes()
+    if class_name == full_class:
+        token_index = full_token_index
+    elif class_name == swa_class:
+        kvcache = getattr(allocator, "_kvcache", None)
+        mapping = getattr(kvcache, "full_to_swa_index_mapping", None)
+        if mapping is None:
+            if full_class is None:
+                token_index = full_token_index
+            else:
+                raise RuntimeError("OrbitKV Dense Hybrid binding requires SWA mapping")
+        else:
+            token_index = int(mapping[full_token_index].item())
+        if token_index <= 0 or token_index % page_tokens != 0:
+            raise RuntimeError("OrbitKV Dense SWA token index is not a valid page")
+        mapped_page = (
+            mapping[full_page] if mapping is not None else full_page
+        ).to(dtype=torch.int64)
+        expected_swa_page = token_index + torch.arange(
+            resident_tokens, dtype=torch.int64, device=indices.device
+        )
+        if not bool(torch.equal(mapped_page, expected_swa_page)):
+            raise RuntimeError("OrbitKV Dense SWA backend page is not contiguous")
+    else:
+        raise RuntimeError("OrbitKV Dense class is not lowered by the Capsule adapter")
+    page_id = token_index // page_tokens
+    return page_id
+
+
+def _dense_binding_receipt(
+    transaction: dict[str, Any],
+    allocator: Any,
+    indices: Any,
+) -> dict[str, Any]:
+    intent = transaction["intent"]
+    page_tokens = int(_RUNTIME_STATE_PLAN["dense_runtime"]["page_tokens"])
+    class_names = _dense_class_names()
+    blocks = []
+    for block in intent["pending_blocks"]:
+        logical = block["logical"]
+        class_id = int(logical["class_id"])
+        backend_page = _dense_backend_page(
+            allocator,
+            indices,
+            class_name=class_names[class_id],
+            ordinal=int(logical["ordinal"]),
+            page_tokens=page_tokens,
+            index_origin_tokens=int(transaction["index_origin_tokens"]),
+        )
+        blocks.append(
+            {
+                "logical": logical,
+                "physical": block["physical"],
+                "backend": {"domain": class_id, "index": backend_page},
+                "payload_ready": True,
+            }
+        )
+    return {
+        "schema": "orbitkv.dense-physical-binding-receipt.v1",
+        "artifact_fingerprint": _RUNTIME_STATE_PLAN["dense_runtime"][
+            "artifact_fingerprint"
+        ],
+        "binding_id": int(intent["binding_id"]),
+        "backend_transaction_id": (
+            f"sglang-capsule:{transaction['request']['slot']}:"
+            f"{intent['binding_id']}:{getattr(indices, 'data_ptr', lambda: id(indices))()}"
+        ),
+        "blocks": blocks,
+    }
+
+
+def _commit_dense_capsule_binding(
+    transaction: dict[str, Any],
+    allocator: Any,
+    indices: Any,
+) -> None:
+    response = _require_dense_runtime().command(
+        {
+            "op": "commit_binding",
+            "receipt": _dense_binding_receipt(transaction, allocator, indices),
+        }
+    )
+    if (
+        response.get("status") != "binding_committed"
+        or int(response.get("binding_id", -1))
+        != int(transaction["intent"]["binding_id"])
+    ):
+        raise RuntimeError("OrbitKV Dense Runtime returned an invalid binding commit")
+    transaction["committed"] = True
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "dense_hydration_committed",
+                "binding_id": int(transaction["intent"]["binding_id"]),
+                "request": transaction["request"],
+                "boundary": int(transaction["intent"]["target_boundary"]),
+                "blocks": len(response.get("blocks", ())),
+            }
+        )
+
+
+def _abort_dense_capsule_binding(transaction: dict[str, Any] | None) -> None:
+    if transaction is None or transaction.get("committed"):
+        return
+    intent = transaction["intent"]
+    response = _require_dense_runtime().command(
+        {"op": "abort_binding", "binding_id": int(intent["binding_id"])}
+    )
+    if (
+        response.get("status") != "binding_aborted"
+        or int(response.get("binding_id", -1)) != int(intent["binding_id"])
+    ):
+        raise RuntimeError("OrbitKV Dense Runtime returned an invalid binding abort")
+    released = _require_dense_runtime().command(
+        {"op": "release_request", "request": transaction["request"]}
+    )
+    if (
+        released.get("status") != "request_released"
+        or released.get("certificates") != []
+    ):
+        raise RuntimeError("OrbitKV Dense Runtime failed to release aborted request")
+    recycled = _require_dense_runtime().command(
+        {"op": "recycle_request", "request": transaction["request"]}
+    )
+    if recycled.get("status") != "request_recycled":
+        raise RuntimeError("OrbitKV Dense Runtime failed to recycle aborted request")
+
+
 def _commit_capsule_prefix_binding(
     req: Any,
     intent: dict[str, Any],
@@ -2032,12 +2589,23 @@ def _try_hydrate_capsule(req: Any, tree_cache: Any):
     payload_done_ns = time.perf_counter_ns()
     if prefix_tokens > maximum_prefix:
         raise RuntimeError("OrbitKV Capsule prefix exceeds SGLang match boundary")
-    intent = _prepare_capsule_binding(req, prefix_tokens, live_tokens, prefix)
+    dense_transaction = (
+        _prepare_dense_capsule_binding(req, prefix_tokens, live_tokens)
+        if is_chunk_cache
+        else None
+    )
+    intent = (
+        None
+        if dense_transaction is not None
+        else _prepare_capsule_binding(req, prefix_tokens, live_tokens, prefix)
+    )
     allocator = tree_cache.token_to_kv_pool_allocator
     indices = _allocate_capsule_slots(allocator, live_tokens)
     allocation_done_ns = time.perf_counter_ns()
     if indices is None:
-        _abort_capsule_binding(intent)
+        if intent is not None:
+            _abort_capsule_binding(intent)
+        _abort_dense_capsule_binding(dense_transaction)
         if _trace_allocations_enabled():
             _emit(
                 {
@@ -2057,7 +2625,9 @@ def _try_hydrate_capsule(req: Any, tree_cache: Any):
         )
     except Exception:
         allocator.free(indices)
-        _abort_capsule_binding(intent)
+        if intent is not None:
+            _abort_capsule_binding(intent)
+        _abort_dense_capsule_binding(dense_transaction)
         raise
     load_done_ns = time.perf_counter_ns()
     import torch
@@ -2090,6 +2660,7 @@ def _try_hydrate_capsule(req: Any, tree_cache: Any):
     return {
         "indices": indices,
         "intent": intent,
+        "dense": dense_transaction,
         "prefix": prefix,
         "radix": not is_chunk_cache,
     }
@@ -2102,7 +2673,9 @@ def _rollback_capsule_hydration(
 ) -> None:
     indices = transaction["indices"]
     allocator.free(indices)
-    _abort_capsule_binding(transaction["intent"])
+    if transaction["intent"] is not None:
+        _abort_capsule_binding(transaction["intent"])
+    _abort_dense_capsule_binding(transaction["dense"])
     req.prefix_indices = req.prefix_indices.new_empty((0,))
     req._orbitkv_capsule_prefix_tokens = 0
     req._orbitkv_capsule_live_tokens = 0
@@ -2111,6 +2684,61 @@ def _rollback_capsule_hydration(
     req._orbitkv_prefix_state_classes = None
     req._orbitkv_prefix_lease_id = None
     req._orbitkv_capsule_hydration_ns = None
+
+
+def _prepare_dense_capsule_release(req: Any) -> dict[str, Any] | None:
+    request = getattr(req, "_orbitkv_dense_request", None)
+    if request is None:
+        return None
+    if getattr(req, "_orbitkv_dense_pending_binding", None) is not None:
+        raise RuntimeError("OrbitKV Dense request has an uncommitted binding at release")
+    response = _require_dense_runtime().command(
+        {"op": "release_request", "request": request}
+    )
+    if response.get("status") != "request_released":
+        raise RuntimeError("OrbitKV Dense Runtime returned an invalid request release")
+    certificates = response.get("certificates")
+    if not isinstance(certificates, list):
+        raise RuntimeError("OrbitKV Dense Runtime returned invalid certificates")
+    return {"request": request, "certificates": certificates}
+
+
+def _commit_dense_capsule_release(req: Any, release: dict[str, Any] | None) -> None:
+    if release is None:
+        return
+    request = release["request"]
+    certificates = release["certificates"]
+    for certificate in certificates:
+        committed = _require_dense_runtime().command(
+            {
+                "op": "commit_reclamation",
+                "receipt": {
+                    "schema": "orbitkv.dense-physical-reclamation-receipt.v1",
+                    "artifact_fingerprint": certificate["artifact_fingerprint"],
+                    "certificate_id": certificate["certificate_id"],
+                    "physical": certificate["physical"],
+                    "backend": certificate["backend"],
+                },
+            }
+        )
+        if committed.get("status") != "reclamation_committed":
+            raise RuntimeError("OrbitKV Dense Runtime rejected physical reclamation")
+    recycled = _require_dense_runtime().command(
+        {"op": "recycle_request", "request": request}
+    )
+    if recycled.get("status") != "request_recycled":
+        raise RuntimeError("OrbitKV Dense Runtime failed to recycle request")
+    req._orbitkv_dense_request = None
+    req._orbitkv_dense_hydration_boundary = 0
+    req._orbitkv_dense_committed = False
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "dense_request_recycled",
+                "request_id": str(req.rid),
+                "certificates": len(certificates),
+            }
+        )
 
 
 def _hydrate_capsule_for_admission(
@@ -2144,6 +2772,25 @@ def _hydrate_capsule_for_admission(
                 req,
                 transaction["intent"],
                 transaction["indices"],
+            )
+        elif transaction["dense"] is not None:
+            _commit_dense_capsule_binding(
+                transaction["dense"],
+                tree_cache.token_to_kv_pool_allocator,
+                transaction["indices"],
+            )
+            req._orbitkv_dense_request = transaction["dense"]["request"]
+            req._orbitkv_dense_boundary = int(req._orbitkv_capsule_prefix_tokens)
+            req._orbitkv_dense_hydration_boundary = int(
+                req._orbitkv_capsule_prefix_tokens
+            )
+            req._orbitkv_dense_committed = True
+            req._orbitkv_dense_pending_binding = None
+            req._orbitkv_dense_allocator = tree_cache.token_to_kv_pool_allocator
+            req._orbitkv_dense_req_to_token = (
+                tree_cache.req_to_token_pool.req_to_token[req.req_pool_idx]
+                if req.req_pool_idx is not None
+                else None
             )
         else:
             _commit_capsule_binding(transaction["intent"], transaction["indices"])
@@ -2960,6 +3607,8 @@ def _own_swa_reclamation(
     req: Any,
     pre_len: int,
 ):
+    if getattr(req, "_orbitkv_dense_request", None) is not None:
+        return None
     if not batch.tree_cache.is_chunk_cache():
         return original_fn(batch, req, pre_len)
     if batch.enable_overlap and not _execution_frontier_enabled():
@@ -3139,6 +3788,7 @@ def _release_owned_request(
     is_insert = bool(kwargs.get("is_insert", args[0] if args else True))
     if req is not None:
         _wait_execution_for_request(str(req.rid))
+    dense_release = _prepare_dense_capsule_release(req) if req is not None else None
     _export_capsule_before_release(req, tree_cache, is_insert=is_insert)
     if req is not None:
         _release_prefix_lease(req)
@@ -3146,6 +3796,7 @@ def _release_owned_request(
     if not bool(getattr(tree_cache, "is_chunk_cache", lambda: True)()):
         _sync_radix_prefix_components(tree_cache)
     if req is not None:
+        _commit_dense_capsule_release(req, dense_release)
         _require_owner().command(
             {
                 "op": "release_request",
@@ -3229,6 +3880,13 @@ def register() -> None:
         _capsule_identity()
         atexit.register(_stop_capsules)
         atexit.register(_stop_bindings)
+        if _RUNTIME_STATE_PLAN.get("dense_runtime") is not None:
+            if not _execution_frontier_enabled():
+                raise RuntimeError(
+                    "OrbitKV Dense Capsule binding requires a CUDA-event frontier"
+                )
+            _require_dense_runtime()
+            atexit.register(_stop_dense_runtime)
 
     if _owner_enabled():
         if _POLICY is None:
@@ -3278,6 +3936,17 @@ def register() -> None:
             HookRegistry.register(
                 "sglang.srt.managers.scheduler.Scheduler.run_batch",
                 _track_forward_execution,
+                HookType.AROUND,
+            )
+        if _dense_capsule_binding_enabled():
+            HookRegistry.register(
+                "sglang.srt.managers.schedule_batch.ScheduleBatch.prepare_for_extend",
+                _stage_dense_bindings_after_prepare,
+                HookType.AROUND,
+            )
+            HookRegistry.register(
+                "sglang.srt.managers.schedule_batch.ScheduleBatch.prepare_for_decode",
+                _stage_dense_bindings_after_prepare,
                 HookType.AROUND,
             )
         if _capsules_enabled() and _UNIFORM_SWA_CONTRACT is None:

@@ -8,8 +8,9 @@ use std::time::Instant;
 use orbitkv::{
     ApplicabilityReport, CapsuleComponentSpec, CapsuleIdentity, CapsuleManifest, CompiledKvPlan,
     ContentDigest, DenseKvRuntime, DensePhysicalReclamationReceipt, DenseRuntimeArtifact,
-    HfRetentionCompilation, HfRetentionOptions, HfStatePlanOptions, HoltCapsuleStore, KvPlanSource,
-    OwnerCommand, PhysicalPlanObjective, PrefixPath, RetentionAnalysis, RuntimeCapsuleContract,
+    DenseRuntimeCommand, DenseRuntimeResponse, DenseRuntimeService, HfRetentionCompilation,
+    HfRetentionOptions, HfStatePlanOptions, HoltCapsuleStore, KvPlanSource, OwnerCommand,
+    PhysicalPlanObjective, PrefixPath, RetentionAnalysis, RuntimeCapsuleContract,
     RuntimeExecutionContract, RuntimeExecutionFrontier, RuntimeExecutionMode,
     RuntimeOwnerTransport, RuntimePrefixContract, RuntimePrefixMode, RuntimeStatePlan,
     RuntimeStatePlanOptions, RuntimeUniformStatePlanMode, SglangOwner,
@@ -236,6 +237,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
             require_end(&mut args)?;
             serve_sglang_owner(&load_owner_plan(plan_path)?)?;
         }
+        Some("serve-dense-runtime") => serve_dense_runtime_command(&mut args)?,
         Some("serve-capsules") => {
             let root = required(&mut args, "capsule store root")?;
             require_end(&mut args)?;
@@ -253,7 +255,7 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => {
             return Err(
-                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile-hf-state-plan|compile-runtime-state-plan|validate-runtime-state-plan|benchmark-dense|compile|analyze-hf-applicability|analyze-retention|analyze-lifetime-normalization|analyze-applicability|emit-layout|emit-sglang-policy|serve-sglang-owner|serve-capsules|analyze-sglang|check-sglang> ..."
+                "usage: orbitkv <compile-hf-physical-plan|compile-hf-config|compile-hf-state-plan|compile-runtime-state-plan|validate-runtime-state-plan|serve-dense-runtime|benchmark-dense|compile|analyze-hf-applicability|analyze-retention|analyze-lifetime-normalization|analyze-applicability|emit-layout|emit-sglang-policy|serve-sglang-owner|serve-capsules|analyze-sglang|check-sglang> ..."
                     .into(),
             );
         }
@@ -467,6 +469,7 @@ fn commit_dense_certificates(
             artifact_fingerprint: artifact_fingerprint.clone(),
             certificate_id: certificate.certificate_id,
             physical: certificate.physical,
+            backend: certificate.backend,
         })?;
     }
     Ok(())
@@ -1101,4 +1104,36 @@ fn serve_sglang_owner(plan: &CompiledKvPlan) -> Result<(), Box<dyn std::error::E
         stdout.flush()?;
     }
     Ok(())
+}
+
+fn serve_dense_runtime(state_plan: &RuntimeStatePlan) -> Result<(), Box<dyn std::error::Error>> {
+    let mut runtime = DenseRuntimeService::from_state_plan(state_plan)?;
+    let stdin = std::io::stdin();
+    let mut stdout = BufWriter::new(std::io::stdout());
+    for line in stdin.lock().lines() {
+        let line = line?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        let response = match serde_json::from_str::<DenseRuntimeCommand>(&line) {
+            Ok(command) => runtime.execute(command),
+            Err(error) => DenseRuntimeResponse::Error {
+                code: "invalid_command",
+                message: error.to_string(),
+            },
+        };
+        serde_json::to_writer(&mut stdout, &response)?;
+        stdout.write_all(b"\n")?;
+        stdout.flush()?;
+    }
+    Ok(())
+}
+
+fn serve_dense_runtime_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let plan_path = required(args, "runtime StatePlan path")?;
+    require_end(args)?;
+    let state_plan = serde_json::from_slice::<RuntimeStatePlan>(&std::fs::read(plan_path)?)?;
+    serve_dense_runtime(&state_plan)
 }

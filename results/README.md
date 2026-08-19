@@ -5,6 +5,7 @@ Capability levels and unsupported paths are defined only in
 
 | Record | Scope |
 | --- | --- |
+| `h20-dense-sglang-20260819` | Pure-SWA one-token Dense page binding through real SGLang |
 | `dense-runtime-20260819` | Fixed-capacity generated ownership runtime and Reference differential benchmark |
 | `h20-cuda-event-overlap-20260819` | Real SGLang overlap scheduling with request-scoped CUDA-event frontiers |
 | `h20-radix-prefix-20260819` | GPT-OSS component-aware Full+SWA Prefix on SGLang UnifiedRadixCache |

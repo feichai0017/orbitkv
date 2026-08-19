@@ -167,6 +167,11 @@ def main() -> None:
         runtime_state_plan is not None
         and runtime_state_plan["execution"].get("frontier") == "cuda_event"
     )
+    dense_runtime = (
+        runtime_state_plan.get("dense_runtime")
+        if runtime_state_plan is not None
+        else None
+    )
 
     if args.mode in ("stock", "native_policy"):
         os.environ.pop("SGLANG_PLUGINS", None)
@@ -296,7 +301,8 @@ def main() -> None:
         page_size=args.page_size,
         moe_runner_backend=args.moe_runner_backend,
         disable_overlap_schedule=not (
-            cuda_event_frontier or args.enable_overlap_schedule
+            (cuda_event_frontier and dense_runtime is None)
+            or args.enable_overlap_schedule
         ),
         disable_radix_cache=not (
             radix_prefix_enabled or args.enable_radix_cache

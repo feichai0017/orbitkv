@@ -1,5 +1,5 @@
 {
-  "base_source_commit": "96b0e5e",
+  "base_source_commit": "42f3d934089aca79574e157c55f58c09004d6fa4",
   "claim_boundary": [
     "host control-plane benchmark only",
     "same semantic plan and complete ownership lifecycle for Reference and Dense runtimes",
@@ -29,7 +29,6 @@
     "tools/verify_manifests.py": "2d4fdcf51c8318e5edc2842e7bae5caa2d72bf275022d71673d7658554ac686f"
   },
   "workspace_sections": [
-    "records",
-    "sources"
+    "records"
   ]
 }

@@ -36,6 +36,7 @@ result summaries link here rather than defining independent support claims.
 | Component-aware Prefix ownership | L4 | GPT-OSS 20B; exact 1K Prefix; SGLang `UnifiedRadixCache`; authenticated Full+SWA components; atomic shared lease; single request, non-overlap | `results/h20-radix-prefix-20260819/` |
 | CUDA-event execution frontier | L4 | GPT-OSS 20B; SGLang overlap scheduler; Full+SWA ChunkCache; one forward-stream domain; one- and two-request event-backed reclamation | `results/h20-cuda-event-overlap-20260819/` |
 | Dense ownership runtime | L2 | Fixed Class IDs and request stripes; bounded generation arenas; 1,000-event Reference differential test; release control-plane benchmark | `results/dense-runtime-20260819/` |
+| Dense SGLang physical binding | L4 | Pure SWA; 4K logical Prefix/1K live tail; paged-periodic allocator; single request and one continuation token; CUDA-event view pin; non-overlap | `results/h20-dense-sglang-20260819/` |
 | Generation-aware CUDA VMM slot | L3 | H20 reserve/map/remap/unmap primitive; not SGLang tensor storage | `results/h20-generation-vmm-20260817/` |
 | Transactional physical reclamation | L3 | Certificate, backend receipt, commit; reference/CUDA lifecycle | `results/h20-generation-vmm-20260817/` |
 | Transactional allocation/binding | L4 | Rust prepare/commit/abort coordinator drives SGLang Capsule hydration; binding uses the owner sidecar while reclamation may use FFI | `src/binding.rs`, `src/manager.rs`, `integrations/sglang/tests/test_shadow_plugin.py` |
@@ -50,11 +51,13 @@ The following remain below L4:
   shared-page qualification beyond the exact-prefix Full+SWA path.
 - Multiple simultaneous completion domains, Radix+overlap, and CUDA Graph plus
   overlap execution-frontier qualification.
+- Dense SGLang multi-token continuation, overlap, Radix, speculation,
+  disaggregation, CUDA Graph, and Hybrid Full+SWA physical binding.
 - Speculative decoding, fork, rollback, beam/tree state, and COW.
 - Mamba/SSM or other recurrent state.
 - Cross-attention and dynamic/content-dependent sparse attention.
-- Dense-runtime SGLang/vLLM physical-binding adapters and engine E2E
-  qualification.
+- A general Dense-runtime SGLang adapter beyond the qualified pure-SWA
+  one-token path.
 - A vLLM adapter.
 - Native TWO-span or mirrored-VMM attention data planes.
 - VMM-backed SGLang KV tensors.

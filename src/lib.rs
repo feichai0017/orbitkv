@@ -3,6 +3,7 @@
 pub mod binding;
 pub mod capsule;
 pub mod dense;
+pub mod dense_protocol;
 pub mod frontier;
 pub mod hf_config;
 pub mod holt_store;
@@ -26,11 +27,14 @@ pub use capsule::{
     ContentDigest, PrefixChunk, PrefixPath, build_capsule_components,
 };
 pub use dense::{
-    ClassId, DenseBindingIntent, DenseClassProgram, DenseKvRuntime, DenseLogicalBlock,
-    DensePhysicalBindingBlockReceipt, DensePhysicalBindingReceipt, DensePhysicalHandle,
-    DensePhysicalReclamationReceipt, DenseRetirementCertificate, DenseRuntimeArtifact,
-    DenseRuntimeError, DenseRuntimeStats, DenseSemanticProof, DenseTemporalAddress, DenseView,
-    DenseViewBlock, RequestLease,
+    ClassId, DenseBackendHandle, DenseBindingBlock, DenseBindingIntent, DenseClassProgram,
+    DenseKvRuntime, DenseLogicalBlock, DensePhysicalBindingBlockReceipt,
+    DensePhysicalBindingReceipt, DensePhysicalHandle, DensePhysicalReclamationReceipt,
+    DenseRetirementCertificate, DenseRuntimeArtifact, DenseRuntimeError, DenseRuntimeStats,
+    DenseSemanticProof, DenseTemporalAddress, DenseView, DenseViewBlock, RequestLease,
+};
+pub use dense_protocol::{
+    DenseRuntimeCommand, DenseRuntimeResponse, DenseRuntimeService, DenseRuntimeServiceError,
 };
 pub use frontier::{
     CompletionDomainId, CompletionDomainSnapshot, CompletionSequenceRange, ExecutionFrontier,

@@ -7,6 +7,42 @@ use crate::{DenseRuntimeArtifact, DenseRuntimeError, KvPlanSource, PlanError};
 
 const RUNTIME_STATE_PLAN_SCHEMA: &str = "orbitkv.runtime-state-plan.v1";
 
+#[derive(Clone, Copy)]
+struct RuntimeArtifactFeatures(u8);
+
+impl RuntimeArtifactFeatures {
+    const UNIFORM_PLAN: u8 = 1 << 0;
+    const CAPSULE: u8 = 1 << 1;
+    const PHYSICAL_PLAN: u8 = 1 << 2;
+    const DENSE_RUNTIME: u8 = 1 << 3;
+
+    fn new(
+        uniform_plan: Option<&Value>,
+        capsule: &RuntimeCapsuleContract,
+        physical_plan: Option<&Value>,
+        dense_runtime: Option<&DenseRuntimeArtifact>,
+    ) -> Self {
+        let mut features = 0;
+        if uniform_plan.is_some() {
+            features |= Self::UNIFORM_PLAN;
+        }
+        if capsule.enabled {
+            features |= Self::CAPSULE;
+        }
+        if physical_plan.is_some() {
+            features |= Self::PHYSICAL_PLAN;
+        }
+        if dense_runtime.is_some() {
+            features |= Self::DENSE_RUNTIME;
+        }
+        Self(features)
+    }
+
+    const fn contains(self, feature: u8) -> bool {
+        self.0 & feature != 0
+    }
+}
+
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeExecutionMode {
@@ -150,9 +186,12 @@ pub fn compile_runtime_state_plan(
 ) -> Result<RuntimeStatePlan, RuntimeStatePlanError> {
     validate_execution(
         &options.execution,
-        options.uniform_state_plan.is_some(),
-        options.capsule.enabled,
-        options.physical_plan.is_some(),
+        RuntimeArtifactFeatures::new(
+            options.uniform_state_plan.as_ref(),
+            &options.capsule,
+            options.physical_plan.as_ref(),
+            options.dense_runtime.as_ref(),
+        ),
     )?;
     validate_capsule(&options.capsule)?;
     let compiled = semantic_source.clone().compile()?;
@@ -209,9 +248,12 @@ impl RuntimeStatePlan {
         }
         validate_execution(
             &self.execution,
-            self.uniform_state_plan.is_some(),
-            self.capsule.enabled,
-            self.physical_plan.is_some(),
+            RuntimeArtifactFeatures::new(
+                self.uniform_state_plan.as_ref(),
+                &self.capsule,
+                self.physical_plan.as_ref(),
+                self.dense_runtime.as_ref(),
+            ),
         )?;
         validate_capsule(&self.capsule)?;
         let compiled = self.semantic_source.clone().compile()?;
@@ -277,9 +319,7 @@ impl RuntimeStatePlan {
 
 fn validate_execution(
     execution: &RuntimeExecutionContract,
-    has_uniform_plan: bool,
-    capsule_enabled: bool,
-    has_physical_plan: bool,
+    features: RuntimeArtifactFeatures,
 ) -> Result<(), RuntimeStatePlanError> {
     match (execution.mode, execution.owner_transport) {
         (RuntimeExecutionMode::Owner, None) => {
@@ -290,17 +330,22 @@ fn validate_execution(
         }
         _ => {}
     }
-    if execution.uniform_state_plan_mode.is_some() && !has_uniform_plan {
+    if execution.uniform_state_plan_mode.is_some()
+        && !features.contains(RuntimeArtifactFeatures::UNIFORM_PLAN)
+    {
         return Err(RuntimeStatePlanError::MissingUniformStatePlan);
     }
-    if capsule_enabled && execution.mode != RuntimeExecutionMode::Owner {
+    if features.contains(RuntimeArtifactFeatures::CAPSULE)
+        && execution.mode != RuntimeExecutionMode::Owner
+    {
         return Err(RuntimeStatePlanError::CapsuleRequiresOwner);
     }
     if execution.frontier == Some(RuntimeExecutionFrontier::CudaEvent)
         && (execution.mode != RuntimeExecutionMode::Owner
             || execution.owner_transport != Some(RuntimeOwnerTransport::Sidecar)
-            || has_uniform_plan
-            || has_physical_plan)
+            || (features.contains(RuntimeArtifactFeatures::UNIFORM_PLAN)
+                && !features.contains(RuntimeArtifactFeatures::DENSE_RUNTIME))
+            || features.contains(RuntimeArtifactFeatures::PHYSICAL_PLAN))
     {
         return Err(RuntimeStatePlanError::InvalidExecutionFrontier);
     }
@@ -627,21 +672,53 @@ mod tests {
         let semantic_source = source();
         let compiled = semantic_source.clone().compile().unwrap();
         let dense_runtime = DenseRuntimeArtifact::compile(&compiled, 8, 16, 4096).unwrap();
+        let uniform_state_plan = serde_json::json!({
+            "schema": "orbitkv.hf-state-plan.v4",
+            "layout": {
+                "plan_fingerprint": compiled.fingerprint(),
+            },
+        });
+        let error = compile_runtime_state_plan(
+            semantic_source.clone(),
+            RuntimeStatePlanOptions {
+                eviction_interval_tokens: 16,
+                physical_plan: None,
+                uniform_state_plan: Some(uniform_state_plan.clone()),
+                dense_runtime: None,
+                execution: RuntimeExecutionContract {
+                    mode: RuntimeExecutionMode::Owner,
+                    owner_transport: Some(RuntimeOwnerTransport::Sidecar),
+                    uniform_state_plan_mode: Some(RuntimeUniformStatePlanMode::Execute),
+                    frontier: Some(RuntimeExecutionFrontier::CudaEvent),
+                },
+                capsule: RuntimeCapsuleContract {
+                    enabled: true,
+                    chunk_tokens: 16,
+                    maximum_payload_bytes: 1 << 20,
+                },
+                prefix: None,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeStatePlanError::InvalidExecutionFrontier
+        ));
         let artifact = compile_runtime_state_plan(
             semantic_source,
             RuntimeStatePlanOptions {
                 eviction_interval_tokens: 16,
                 physical_plan: None,
-                uniform_state_plan: None,
+                uniform_state_plan: Some(uniform_state_plan),
                 dense_runtime: Some(dense_runtime),
                 execution: RuntimeExecutionContract {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Sidecar),
-                    uniform_state_plan_mode: None,
-                    frontier: None,
+                    uniform_state_plan_mode: Some(RuntimeUniformStatePlanMode::Execute),
+                    frontier: Some(RuntimeExecutionFrontier::CudaEvent),
                 },
                 capsule: RuntimeCapsuleContract {
-                    enabled: false,
+                    enabled: true,
                     chunk_tokens: 16,
                     maximum_payload_bytes: 1 << 20,
                 },
