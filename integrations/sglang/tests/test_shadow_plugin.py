@@ -142,6 +142,65 @@ class FakeOwner:
         raise AssertionError(command)
 
 
+class FakeBindings:
+    def __init__(self, *, hybrid=True, window_tokens=32, fail_commit=False):
+        self.hybrid = hybrid
+        self.window_tokens = window_tokens
+        self.fail_commit = fail_commit
+        self.commands = []
+        self.next_binding_id = 1
+
+    def command(self, command):
+        self.commands.append(command)
+        operation = command["op"]
+        if operation == "prepare_binding":
+            prefix_tokens = int(command["prefix_tokens"])
+            start = max(0, prefix_tokens - self.window_tokens)
+            components = []
+            if self.hybrid:
+                components.append(
+                    {
+                        "state_class": "full",
+                        "token_start": 0,
+                        "token_end_exclusive": prefix_tokens,
+                        "physical_tokens": prefix_tokens,
+                    }
+                )
+            components.append(
+                {
+                    "state_class": "swa",
+                    "token_start": start,
+                    "token_end_exclusive": prefix_tokens,
+                    "physical_tokens": prefix_tokens - start,
+                }
+            )
+            binding_id = self.next_binding_id
+            self.next_binding_id += 1
+            return {
+                "status": "binding_prepared",
+                "intent": {
+                    "schema": "orbitkv.state-binding-intent.v1",
+                    "plan_fingerprint": f"sha256:{'00' * 32}",
+                    "binding_id": binding_id,
+                    "request_id": command["request_id"],
+                    "components": components,
+                },
+            }
+        if operation == "commit_binding":
+            if self.fail_commit:
+                raise RuntimeError("injected binding commit failure")
+            return {
+                "status": "binding_committed",
+                "binding_id": command["receipt"]["binding_id"],
+            }
+        if operation == "abort_binding":
+            return {
+                "status": "binding_aborted",
+                "binding_id": command["binding_id"],
+            }
+        raise AssertionError(command)
+
+
 class FakeCapsules:
     def __init__(self, events):
         self.events = events
@@ -1618,6 +1677,7 @@ class ShadowPluginTests(unittest.TestCase):
             adder = types.SimpleNamespace(tree_cache=tree_cache, can_run_list=[])
             req = FakeHydrationReq()
             old_capsules = plugin._CAPSULES
+            old_bindings = plugin._BINDINGS
             old_policy = plugin._POLICY
             environment = {
                 "ORBITKV_CAPSULE_STORE": directory,
@@ -1636,7 +1696,10 @@ class ShadowPluginTests(unittest.TestCase):
             old_environment = {key: os.environ.get(key) for key in environment}
             try:
                 plugin._CAPSULES = capsules
+                bindings = FakeBindings()
+                plugin._BINDINGS = bindings
                 plugin._POLICY = {
+                    "plan_fingerprint": f"sha256:{'00' * 32}",
                     "page_tokens": 16,
                     "unbounded_classes": ["full"],
                     "bounded_classes": [{"name": "swa", "window_tokens": 32}]
@@ -1653,6 +1716,7 @@ class ShadowPluginTests(unittest.TestCase):
                 )
             finally:
                 plugin._CAPSULES = old_capsules
+                plugin._BINDINGS = old_bindings
                 plugin._POLICY = old_policy
                 for key, value in old_environment.items():
                     if value is None:
@@ -1666,6 +1730,10 @@ class ShadowPluginTests(unittest.TestCase):
         self.assertEqual(allocator.freed, [])
         self.assertEqual(req._orbitkv_capsule_prefix_tokens, 64)
         self.assertEqual(capsules.commands[0]["token_ids"], list(range(64)))
+        self.assertEqual(
+            [command["op"] for command in bindings.commands],
+            ["prepare_binding", "commit_binding"],
+        )
 
     def test_capsule_hydration_rolls_back_rejected_admission(self):
         if torch is None:
@@ -1685,6 +1753,7 @@ class ShadowPluginTests(unittest.TestCase):
             adder = types.SimpleNamespace(tree_cache=tree_cache, can_run_list=[])
             req = FakeHydrationReq()
             old_capsules = plugin._CAPSULES
+            old_bindings = plugin._BINDINGS
             old_policy = plugin._POLICY
             environment = {
                 "ORBITKV_CAPSULE_STORE": directory,
@@ -1703,7 +1772,10 @@ class ShadowPluginTests(unittest.TestCase):
             old_environment = {key: os.environ.get(key) for key in environment}
             try:
                 plugin._CAPSULES = capsules
+                bindings = FakeBindings()
+                plugin._BINDINGS = bindings
                 plugin._POLICY = {
+                    "plan_fingerprint": f"sha256:{'00' * 32}",
                     "page_tokens": 16,
                     "unbounded_classes": ["full"],
                     "bounded_classes": [{"name": "swa", "window_tokens": 32}]
@@ -1716,6 +1788,7 @@ class ShadowPluginTests(unittest.TestCase):
                 )
             finally:
                 plugin._CAPSULES = old_capsules
+                plugin._BINDINGS = old_bindings
                 plugin._POLICY = old_policy
                 for key, value in old_environment.items():
                     if value is None:
@@ -1727,6 +1800,147 @@ class ShadowPluginTests(unittest.TestCase):
         self.assertEqual(len(allocator.loaded), 1)
         self.assertEqual(len(allocator.freed), 1)
         self.assertEqual(len(req.prefix_indices), 0)
+        self.assertEqual(
+            [command["op"] for command in bindings.commands],
+            ["prepare_binding", "abort_binding"],
+        )
+
+    def test_capsule_load_failure_frees_physical_state_and_aborts_binding(self):
+        if torch is None:
+            self.skipTest("torch is unavailable")
+        from orbitkv_sglang import plugin
+        from orbitkv_sglang.capsule_wire import encode_cpu_tensors
+
+        with tempfile.TemporaryDirectory() as directory:
+            payload_path = Path(directory) / "capsule.payload"
+            payload_path.write_bytes(
+                encode_cpu_tensors({"full": [[torch.ones((64, 1))]], "swa": None})
+            )
+            capsules = FakeHydrationCapsules(payload_path, 64)
+            allocator = FakeHydrationAllocator(fail_load=True)
+            tree_cache = types.SimpleNamespace(
+                is_chunk_cache=lambda: True,
+                token_to_kv_pool_allocator=allocator,
+            )
+            req = FakeHydrationReq()
+            old_capsules = plugin._CAPSULES
+            old_bindings = plugin._BINDINGS
+            old_policy = plugin._POLICY
+            environment = {
+                "ORBITKV_CAPSULE_STORE": directory,
+                "ORBITKV_CAPSULE_CHUNK_TOKENS": "16",
+                "ORBITKV_TRACE_ALLOCATIONS": "0",
+                "ORBITKV_CAPSULE_IDENTITY": json.dumps(
+                    {
+                        "namespace": "dGVuYW50",
+                        "model_fingerprint": f"sha256:{'01' * 32}",
+                        "tokenizer_fingerprint": f"sha256:{'02' * 32}",
+                        "adapter_fingerprint": f"sha256:{'03' * 32}",
+                        "state_plan_fingerprint": f"sha256:{'04' * 32}",
+                    }
+                ),
+            }
+            old_environment = {key: os.environ.get(key) for key in environment}
+            try:
+                bindings = FakeBindings()
+                plugin._CAPSULES = capsules
+                plugin._BINDINGS = bindings
+                plugin._POLICY = {
+                    "plan_fingerprint": f"sha256:{'00' * 32}",
+                    "page_tokens": 16,
+                    "unbounded_classes": ["full"],
+                    "bounded_classes": [{"name": "swa", "window_tokens": 32}],
+                }
+                os.environ.update(environment)
+                with self.assertRaisesRegex(RuntimeError, "injected capsule load"):
+                    plugin._try_hydrate_capsule(req, tree_cache)
+            finally:
+                plugin._CAPSULES = old_capsules
+                plugin._BINDINGS = old_bindings
+                plugin._POLICY = old_policy
+                for key, value in old_environment.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(len(allocator.freed), 1)
+        self.assertEqual(
+            [command["op"] for command in bindings.commands],
+            ["prepare_binding", "abort_binding"],
+        )
+
+    def test_binding_commit_failure_removes_admission_and_rolls_back(self):
+        if torch is None:
+            self.skipTest("torch is unavailable")
+        from orbitkv_sglang import plugin
+        from orbitkv_sglang.capsule_wire import encode_cpu_tensors
+
+        with tempfile.TemporaryDirectory() as directory:
+            payload_path = Path(directory) / "capsule.payload"
+            payload_path.write_bytes(
+                encode_cpu_tensors({"full": [[torch.ones((64, 1))]], "swa": None})
+            )
+            capsules = FakeHydrationCapsules(payload_path, 64)
+            allocator = FakeHydrationAllocator()
+            tree_cache = types.SimpleNamespace(
+                is_chunk_cache=lambda: True,
+                token_to_kv_pool_allocator=allocator,
+            )
+            adder = types.SimpleNamespace(tree_cache=tree_cache, can_run_list=[])
+            req = FakeHydrationReq()
+            old_capsules = plugin._CAPSULES
+            old_bindings = plugin._BINDINGS
+            old_policy = plugin._POLICY
+            environment = {
+                "ORBITKV_CAPSULE_STORE": directory,
+                "ORBITKV_CAPSULE_CHUNK_TOKENS": "16",
+                "ORBITKV_TRACE_ALLOCATIONS": "0",
+                "ORBITKV_CAPSULE_IDENTITY": json.dumps(
+                    {
+                        "namespace": "dGVuYW50",
+                        "model_fingerprint": f"sha256:{'01' * 32}",
+                        "tokenizer_fingerprint": f"sha256:{'02' * 32}",
+                        "adapter_fingerprint": f"sha256:{'03' * 32}",
+                        "state_plan_fingerprint": f"sha256:{'04' * 32}",
+                    }
+                ),
+            }
+            old_environment = {key: os.environ.get(key) for key in environment}
+            try:
+                bindings = FakeBindings(fail_commit=True)
+                plugin._CAPSULES = capsules
+                plugin._BINDINGS = bindings
+                plugin._POLICY = {
+                    "plan_fingerprint": f"sha256:{'00' * 32}",
+                    "page_tokens": 16,
+                    "unbounded_classes": ["full"],
+                    "bounded_classes": [{"name": "swa", "window_tokens": 32}],
+                }
+                os.environ.update(environment)
+
+                def original(current_adder, current_req):
+                    current_adder.can_run_list.append(current_req)
+                    return "continue"
+
+                with self.assertRaisesRegex(RuntimeError, "binding commit failure"):
+                    plugin._hydrate_capsule_for_admission(original, adder, req)
+            finally:
+                plugin._CAPSULES = old_capsules
+                plugin._BINDINGS = old_bindings
+                plugin._POLICY = old_policy
+                for key, value in old_environment.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(adder.can_run_list, [])
+        self.assertEqual(len(allocator.freed), 1)
+        self.assertEqual(
+            [command["op"] for command in bindings.commands],
+            ["prepare_binding", "commit_binding", "abort_binding"],
+        )
 
     def test_pure_swa_capsule_hydrates_only_live_tail(self):
         if torch is None:
@@ -1750,6 +1964,7 @@ class ShadowPluginTests(unittest.TestCase):
             adder = types.SimpleNamespace(tree_cache=tree_cache, can_run_list=[])
             req = FakeHydrationReq()
             old_capsules = plugin._CAPSULES
+            old_bindings = plugin._BINDINGS
             old_policy = plugin._POLICY
             environment = {
                 "ORBITKV_CAPSULE_STORE": directory,
@@ -1768,7 +1983,10 @@ class ShadowPluginTests(unittest.TestCase):
             old_environment = {key: os.environ.get(key) for key in environment}
             try:
                 plugin._CAPSULES = capsules
+                bindings = FakeBindings(hybrid=False)
+                plugin._BINDINGS = bindings
                 plugin._POLICY = {
+                    "plan_fingerprint": f"sha256:{'00' * 32}",
                     "page_tokens": 16,
                     "unbounded_classes": [],
                     "bounded_classes": [{"name": "swa", "window_tokens": 32}],
@@ -1797,6 +2015,7 @@ class ShadowPluginTests(unittest.TestCase):
                 )
             finally:
                 plugin._CAPSULES = old_capsules
+                plugin._BINDINGS = old_bindings
                 plugin._POLICY = old_policy
                 for key, value in old_environment.items():
                     if value is None:
@@ -1810,6 +2029,10 @@ class ShadowPluginTests(unittest.TestCase):
         self.assertEqual(req._orbitkv_capsule_live_tokens, 32)
         self.assertEqual(len(allocator.loaded[0][1]), 32)
         self.assertEqual(allocator.freed, [])
+        self.assertEqual(
+            [command["op"] for command in bindings.commands],
+            ["prepare_binding", "commit_binding"],
+        )
 
     def test_hybrid_capsule_restores_full_history_and_swa_tail(self):
         if torch is None:
@@ -1843,6 +2066,7 @@ class ShadowPluginTests(unittest.TestCase):
             adder = types.SimpleNamespace(tree_cache=tree_cache, can_run_list=[])
             req = FakeHydrationReq()
             old_capsules = plugin._CAPSULES
+            old_bindings = plugin._BINDINGS
             old_policy = plugin._POLICY
             environment = {
                 "ORBITKV_CAPSULE_STORE": directory,
@@ -1861,7 +2085,10 @@ class ShadowPluginTests(unittest.TestCase):
             old_environment = {key: os.environ.get(key) for key in environment}
             try:
                 plugin._CAPSULES = capsules
+                bindings = FakeBindings()
+                plugin._BINDINGS = bindings
                 plugin._POLICY = {
+                    "plan_fingerprint": f"sha256:{'00' * 32}",
                     "page_tokens": 16,
                     "unbounded_classes": ["full"],
                     "bounded_classes": [{"name": "swa", "window_tokens": 32}],
@@ -1878,6 +2105,7 @@ class ShadowPluginTests(unittest.TestCase):
                 )
             finally:
                 plugin._CAPSULES = old_capsules
+                plugin._BINDINGS = old_bindings
                 plugin._POLICY = old_policy
                 for key, value in old_environment.items():
                     if value is None:
@@ -1894,6 +2122,10 @@ class ShadowPluginTests(unittest.TestCase):
         self.assertFalse(bool(loaded["swa_mask"][:32].any().item()))
         self.assertTrue(bool(loaded["swa_mask"][32:].all().item()))
         self.assertEqual(req.cache_protected_len, 0)
+        self.assertEqual(
+            [command["op"] for command in bindings.commands],
+            ["prepare_binding", "commit_binding"],
+        )
 
     def test_hybrid_capsule_rejects_wrong_swa_component_range(self):
         if torch is None:

@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+pub mod binding;
 pub mod capsule;
 pub mod hf_config;
 pub mod holt_store;
@@ -12,6 +13,11 @@ pub mod sglang_owner;
 pub mod state_plan;
 pub mod trace;
 
+pub use binding::{
+    BindingCoordinator, BindingCoordinatorStats, BindingError,
+    PhysicalStateBindingComponentReceipt, PhysicalStateBindingReceipt, StateBindingComponent,
+    StateBindingIntent,
+};
 pub use capsule::{
     CapsuleComponent, CapsuleComponentSpec, CapsuleError, CapsuleIdentity, CapsuleManifest,
     ContentDigest, PrefixChunk, PrefixPath, build_capsule_components,
@@ -23,9 +29,10 @@ pub use hf_config::{
 };
 pub use holt_store::{CapsulePublish, HoltCapsuleError, HoltCapsuleStore, RestoredCapsule};
 pub use manager::{
-    BlockHandle, BlockKey, BlockManagerConfig, ClassPoolConfig, ExecutionProof, KvBlockManager,
-    KvView, ManagerError, ManagerStats, PhysicalReclamationReceipt, RetirementCertificate,
-    SemanticProof, ViewBlock,
+    BindingIntent, BlockHandle, BlockKey, BlockManagerConfig, ClassPoolConfig, ExecutionProof,
+    KvBlockManager, KvView, ManagerError, ManagerStats, PhysicalBindingBlockReceipt,
+    PhysicalBindingReceipt, PhysicalReclamationReceipt, RetirementCertificate, SemanticProof,
+    ViewBlock,
 };
 pub use optimizer::{
     OptimizerError, PhysicalPlanObjective, SglangPhysicalCandidate, SglangPhysicalContract,

@@ -80,6 +80,34 @@ pub struct PhysicalReclamationReceipt {
     pub physical: BlockHandle,
 }
 
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BindingIntent {
+    pub schema: &'static str,
+    pub plan_fingerprint: String,
+    pub binding_id: u64,
+    pub request_id: String,
+    pub previous_boundary: u64,
+    pub target_boundary: u64,
+    pub resident_blocks: Vec<ViewBlock>,
+    pub pending_blocks: Vec<ViewBlock>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PhysicalBindingBlockReceipt {
+    pub logical: BlockKey,
+    pub physical: BlockHandle,
+    pub payload_ready: bool,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PhysicalBindingReceipt {
+    pub schema: &'static str,
+    pub plan_fingerprint: String,
+    pub binding_id: u64,
+    pub backend_transaction_id: String,
+    pub blocks: Vec<PhysicalBindingBlockReceipt>,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ClassPoolConfig {
     pub class_name: String,
@@ -95,7 +123,9 @@ pub struct BlockManagerConfig {
 pub struct ManagerStats {
     pub requests: u64,
     pub active_submissions: u64,
+    pub pending_bindings: u64,
     pub pending_certificates: u64,
+    pub reserved_blocks: u64,
     pub resident_blocks: u64,
     pub retiring_blocks: u64,
     pub free_slots: BTreeMap<String, u64>,
@@ -105,6 +135,7 @@ pub struct ManagerStats {
 enum SlotPhase {
     #[default]
     Free,
+    Reserved,
     Active,
     Retiring,
     Certified,
@@ -117,6 +148,7 @@ struct SlotState {
     temporal: Option<TemporalAddress>,
     readers: BTreeSet<u64>,
     phase: SlotPhase,
+    pending_binding: Option<u64>,
     pending_certificate: Option<u64>,
 }
 
@@ -144,6 +176,12 @@ struct CellBinding {
     logical: BlockKey,
     version: crate::CellVersion,
     physical: BlockHandle,
+}
+
+struct BindingPreflight {
+    previous_boundary: u64,
+    resident_blocks: Vec<ViewBlock>,
+    pending_logical: Vec<(BlockKey, TemporalAddress)>,
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -194,6 +232,18 @@ pub enum ManagerError {
     CannotMaterializeDead(BlockKey),
     #[error("physical pool {class:?} has no committed free slot")]
     PoolExhausted { class: String },
+    #[error("request {request:?} already has pending binding {binding_id}")]
+    PendingBinding { request: String, binding_id: u64 },
+    #[error("unknown binding transaction {0}")]
+    UnknownBinding(u64),
+    #[error("binding transaction {0} is stale")]
+    StaleBinding(u64),
+    #[error("physical binding receipt does not match transaction {0}")]
+    MismatchedBindingReceipt(u64),
+    #[error("physical binding receipt {0} does not prove payload readiness")]
+    PayloadNotReady(u64),
+    #[error("physical binding backend transaction id must not be empty")]
+    EmptyBackendTransactionId,
     #[error("logical block is not resident: {0:?}")]
     BlockNotResident(BlockKey),
     #[error("logical block handle is stale: {0:?}")]
@@ -212,6 +262,8 @@ pub enum ManagerError {
     SubmissionGenerationExhausted,
     #[error("certificate generation exhausted")]
     CertificateGenerationExhausted,
+    #[error("binding generation exhausted")]
+    BindingGenerationExhausted,
     #[error("block generation exhausted for {0:?}")]
     BlockGenerationExhausted(BlockKey),
     #[error("integer overflow while calculating {0}")]
@@ -235,6 +287,11 @@ pub struct KvBlockManager {
     next_submission_id: u64,
     pending_certificates: BTreeMap<u64, RetirementCertificate>,
     next_certificate_id: u64,
+    pending_bindings: BTreeMap<u64, BindingIntent>,
+    pending_request_bindings: BTreeMap<String, u64>,
+    pending_block_bindings: BTreeMap<BlockKey, u64>,
+    pending_cell_bindings: BTreeMap<LogicalCellId, u64>,
+    next_binding_id: u64,
 }
 
 impl KvBlockManager {
@@ -306,6 +363,11 @@ impl KvBlockManager {
             next_submission_id: 1,
             pending_certificates: BTreeMap::new(),
             next_certificate_id: 1,
+            pending_bindings: BTreeMap::new(),
+            pending_request_bindings: BTreeMap::new(),
+            pending_block_bindings: BTreeMap::new(),
+            pending_cell_bindings: BTreeMap::new(),
+            next_binding_id: 1,
         })
     }
 
@@ -330,8 +392,8 @@ impl KvBlockManager {
 
     /// Records that a request has materialized tokens through `boundary`.
     ///
-    /// This method allocates every newly intersected logical block. It does not
-    /// advance semantic time or reclaim blocks.
+    /// This compatibility helper executes the same two-phase binding protocol
+    /// as external backends and immediately commits an in-memory receipt.
     ///
     /// # Errors
     ///
@@ -342,12 +404,82 @@ impl KvBlockManager {
         request_id: &str,
         boundary: u64,
     ) -> Result<Vec<ViewBlock>, ManagerError> {
+        let intent = self.prepare_binding_to(request_id, boundary)?;
+        let receipt = PhysicalBindingReceipt {
+            schema: "orbitkv.physical-binding-receipt.v1",
+            plan_fingerprint: self.fingerprint.clone(),
+            binding_id: intent.binding_id,
+            backend_transaction_id: format!("reference:{}", intent.binding_id),
+            blocks: intent
+                .pending_blocks
+                .iter()
+                .map(|block| PhysicalBindingBlockReceipt {
+                    logical: block.logical.clone(),
+                    physical: block.physical.clone(),
+                    payload_ready: true,
+                })
+                .collect(),
+        };
+        self.commit_binding(&receipt)
+    }
+
+    /// Reserves physical slots for all blocks intersecting `boundary` without
+    /// publishing them to request state or immutable views.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error without reserving any slot if the request, address
+    /// program, generation, or pool preflight fails.
+    pub fn prepare_binding_to(
+        &mut self,
+        request_id: &str,
+        boundary: u64,
+    ) -> Result<BindingIntent, ManagerError> {
+        let BindingPreflight {
+            previous_boundary,
+            resident_blocks,
+            pending_logical,
+        } = self.preflight_binding(request_id, boundary)?;
+        let binding_id = self.next_binding_id;
+        let pending_blocks = self.plan_binding_slots(pending_logical)?;
+        self.next_binding_id = self
+            .next_binding_id
+            .checked_add(1)
+            .ok_or(ManagerError::BindingGenerationExhausted)?;
+        self.reserve_binding_slots(binding_id, &pending_blocks)?;
+        let intent = BindingIntent {
+            schema: "orbitkv.binding-intent.v1",
+            plan_fingerprint: self.fingerprint.clone(),
+            binding_id,
+            request_id: request_id.to_owned(),
+            previous_boundary,
+            target_boundary: boundary,
+            resident_blocks,
+            pending_blocks,
+        };
+        self.pending_request_bindings
+            .insert(request_id.to_owned(), binding_id);
+        self.pending_bindings.insert(binding_id, intent.clone());
+        Ok(intent)
+    }
+
+    fn preflight_binding(
+        &self,
+        request_id: &str,
+        boundary: u64,
+    ) -> Result<BindingPreflight, ManagerError> {
         let request = self
             .requests
             .get(request_id)
             .ok_or_else(|| ManagerError::UnknownRequest(request_id.to_owned()))?;
         if request.released {
             return Err(ManagerError::RequestReleased(request_id.to_owned()));
+        }
+        if let Some(binding_id) = self.pending_request_bindings.get(request_id) {
+            return Err(ManagerError::PendingBinding {
+                request: request_id.to_owned(),
+                binding_id: *binding_id,
+            });
         }
         if boundary < request.materialized_boundary {
             return Err(ManagerError::MaterializedBoundaryMovedBackwards {
@@ -358,48 +490,19 @@ impl KvBlockManager {
         }
         let old_boundary = request.materialized_boundary;
         if old_boundary == boundary {
-            return Ok(Vec::new());
+            return Ok(BindingPreflight {
+                previous_boundary: old_boundary,
+                resident_blocks: Vec::new(),
+                pending_logical: Vec::new(),
+            });
         }
         let first_block = old_boundary / self.plan.page_tokens;
         let last_block = (boundary - 1) / self.plan.page_tokens;
         let class_names = self.classes.keys().cloned().collect::<Vec<_>>();
         let mut required = BTreeMap::<String, u64>::new();
-        for ordinal in first_block..=last_block {
-            for class_name in &class_names {
-                if !self.class_contains_block(class_name, ordinal)? {
-                    continue;
-                }
-                let logical = BlockKey {
-                    request_id: request_id.to_owned(),
-                    class_name: class_name.clone(),
-                    ordinal,
-                };
-                if self.block_handles.contains_key(&logical) {
-                    continue;
-                }
-                if self.is_semantically_dead(&logical)? {
-                    return Err(ManagerError::CannotMaterializeDead(logical));
-                }
-                let count = required.entry(class_name.clone()).or_default();
-                *count = count
-                    .checked_add(1)
-                    .ok_or(ManagerError::ArithmeticOverflow(
-                        "materialization block count",
-                    ))?;
-            }
-        }
-        for (class_name, required_slots) in required {
-            let available_slots = self
-                .pools
-                .get(&class_name)
-                .ok_or_else(|| ManagerError::UnknownClass(class_name.clone()))?
-                .free
-                .len() as u64;
-            if required_slots > available_slots {
-                return Err(ManagerError::PoolExhausted { class: class_name });
-            }
-        }
-        let mut allocated = Vec::new();
+        let mut resident_blocks = Vec::new();
+        let mut pending_logical = Vec::new();
+        let mut pending_cells = BTreeSet::new();
         for ordinal in first_block..=last_block {
             for class_name in &class_names {
                 if !self.class_contains_block(class_name, ordinal)? {
@@ -411,37 +514,302 @@ impl KvBlockManager {
                     ordinal,
                 };
                 if let Some(handle) = self.block_handles.get(&logical) {
-                    let temporal = self.layout.temporal_address(
-                        request_id,
-                        &logical.class_name,
-                        logical.ordinal,
-                    )?;
-                    allocated.push(ViewBlock {
+                    let temporal = self
+                        .layout
+                        .temporal_address(request_id, class_name, ordinal)?;
+                    resident_blocks.push(ViewBlock {
                         logical,
                         temporal,
                         physical: handle.clone(),
                     });
                     continue;
                 }
-                let (temporal, handle) = self.allocate(logical.clone())?;
-                self.requests
-                    .get_mut(request_id)
-                    .ok_or_else(|| ManagerError::UnknownRequest(request_id.to_owned()))?
-                    .blocks
-                    .insert(logical.clone());
-                self.block_handles.insert(logical.clone(), handle.clone());
-                allocated.push(ViewBlock {
-                    logical,
-                    temporal,
-                    physical: handle,
+                if self.pending_block_bindings.contains_key(&logical) {
+                    return Err(ManagerError::StaleBinding(
+                        self.pending_block_bindings[&logical],
+                    ));
+                }
+                if self.is_semantically_dead(&logical)? {
+                    return Err(ManagerError::CannotMaterializeDead(logical));
+                }
+                let temporal = self
+                    .layout
+                    .temporal_address(request_id, class_name, ordinal)?;
+                if self.cell_bindings.contains_key(&temporal.cell)
+                    || self.pending_cell_bindings.contains_key(&temporal.cell)
+                    || !pending_cells.insert(temporal.cell.clone())
+                {
+                    return Err(ManagerError::LogicalCellCollision(temporal.cell));
+                }
+                let count = required.entry(class_name.clone()).or_default();
+                *count = count
+                    .checked_add(1)
+                    .ok_or(ManagerError::ArithmeticOverflow(
+                        "materialization block count",
+                    ))?;
+                pending_logical.push((logical, temporal));
+            }
+        }
+        for (class_name, required_slots) in &required {
+            let available_slots = self
+                .pools
+                .get(class_name)
+                .ok_or_else(|| ManagerError::UnknownClass(class_name.clone()))?
+                .free
+                .len() as u64;
+            if *required_slots > available_slots {
+                return Err(ManagerError::PoolExhausted {
+                    class: class_name.clone(),
                 });
             }
         }
-        self.requests
-            .get_mut(request_id)
-            .ok_or_else(|| ManagerError::UnknownRequest(request_id.to_owned()))?
-            .materialized_boundary = boundary;
-        Ok(allocated)
+        Ok(BindingPreflight {
+            previous_boundary: old_boundary,
+            resident_blocks,
+            pending_logical,
+        })
+    }
+
+    fn plan_binding_slots(
+        &self,
+        pending_logical: Vec<(BlockKey, TemporalAddress)>,
+    ) -> Result<Vec<ViewBlock>, ManagerError> {
+        let mut offsets = BTreeMap::<String, usize>::new();
+        let mut pending_blocks = Vec::with_capacity(pending_logical.len());
+        for (logical, temporal) in pending_logical {
+            let offset = offsets.entry(logical.class_name.clone()).or_default();
+            let pool = self
+                .pools
+                .get(&logical.class_name)
+                .ok_or_else(|| ManagerError::UnknownClass(logical.class_name.clone()))?;
+            let slot_index =
+                *pool
+                    .free
+                    .iter()
+                    .nth(*offset)
+                    .ok_or_else(|| ManagerError::PoolExhausted {
+                        class: logical.class_name.clone(),
+                    })?;
+            let generation = pool.slots[slot_index]
+                .generation
+                .checked_add(1)
+                .ok_or_else(|| ManagerError::BlockGenerationExhausted(logical.clone()))?;
+            *offset += 1;
+            pending_blocks.push(ViewBlock {
+                logical: logical.clone(),
+                temporal,
+                physical: BlockHandle {
+                    class_name: logical.class_name,
+                    slot: slot_index as u64,
+                    generation,
+                },
+            });
+        }
+        Ok(pending_blocks)
+    }
+
+    fn reserve_binding_slots(
+        &mut self,
+        binding_id: u64,
+        pending_blocks: &[ViewBlock],
+    ) -> Result<(), ManagerError> {
+        for block in pending_blocks {
+            let slot_index = usize::try_from(block.physical.slot)
+                .map_err(|_| ManagerError::StaleHandle(block.physical.clone()))?;
+            let pool = self
+                .pools
+                .get(&block.physical.class_name)
+                .ok_or_else(|| ManagerError::UnknownClass(block.physical.class_name.clone()))?;
+            let slot = pool
+                .slots
+                .get(slot_index)
+                .ok_or_else(|| ManagerError::StaleHandle(block.physical.clone()))?;
+            if !pool.free.contains(&slot_index)
+                || slot.phase != SlotPhase::Free
+                || slot.occupant.is_some()
+                || slot.temporal.is_some()
+                || slot.generation.checked_add(1) != Some(block.physical.generation)
+            {
+                return Err(ManagerError::StaleBinding(binding_id));
+            }
+        }
+        for block in pending_blocks {
+            let slot_index = usize::try_from(block.physical.slot)
+                .map_err(|_| ManagerError::StaleHandle(block.physical.clone()))?;
+            let pool = self
+                .pools
+                .get_mut(&block.physical.class_name)
+                .ok_or_else(|| ManagerError::UnknownClass(block.physical.class_name.clone()))?;
+            if !pool.free.remove(&slot_index) {
+                return Err(ManagerError::StaleBinding(binding_id));
+            }
+            let slot = &mut pool.slots[slot_index];
+            debug_assert_eq!(slot.phase, SlotPhase::Free);
+            slot.generation = block.physical.generation;
+            slot.occupant = Some(block.logical.clone());
+            slot.temporal = Some(block.temporal.clone());
+            slot.phase = SlotPhase::Reserved;
+            slot.pending_binding = Some(binding_id);
+            self.pending_block_bindings
+                .insert(block.logical.clone(), binding_id);
+            self.pending_cell_bindings
+                .insert(block.temporal.cell.clone(), binding_id);
+        }
+        Ok(())
+    }
+
+    /// Publishes one prepared binding after the physical backend proves every
+    /// reserved block is bound and its payload is ready.
+    ///
+    /// Receipt validation is completed for the full batch before any logical
+    /// block becomes visible.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for a stale, partial, duplicate, mismatched, or
+    /// payload-incomplete receipt. Failure leaves the intent pending.
+    pub fn commit_binding(
+        &mut self,
+        receipt: &PhysicalBindingReceipt,
+    ) -> Result<Vec<ViewBlock>, ManagerError> {
+        let binding_id = receipt.binding_id;
+        let intent = self
+            .pending_bindings
+            .get(&binding_id)
+            .cloned()
+            .ok_or(ManagerError::UnknownBinding(binding_id))?;
+        if receipt.schema != "orbitkv.physical-binding-receipt.v1"
+            || receipt.plan_fingerprint != self.fingerprint
+            || receipt.backend_transaction_id.is_empty()
+        {
+            return if receipt.backend_transaction_id.is_empty() {
+                Err(ManagerError::EmptyBackendTransactionId)
+            } else {
+                Err(ManagerError::MismatchedBindingReceipt(binding_id))
+            };
+        }
+        let mut receipt_blocks = BTreeMap::new();
+        for block in &receipt.blocks {
+            if !block.payload_ready {
+                return Err(ManagerError::PayloadNotReady(binding_id));
+            }
+            if receipt_blocks
+                .insert(block.logical.clone(), block.physical.clone())
+                .is_some()
+            {
+                return Err(ManagerError::MismatchedBindingReceipt(binding_id));
+            }
+        }
+        if receipt_blocks.len() != intent.pending_blocks.len() {
+            return Err(ManagerError::MismatchedBindingReceipt(binding_id));
+        }
+        for block in &intent.pending_blocks {
+            if receipt_blocks.get(&block.logical) != Some(&block.physical)
+                || self.pending_block_bindings.get(&block.logical) != Some(&binding_id)
+                || self.pending_cell_bindings.get(&block.temporal.cell) != Some(&binding_id)
+                || self.block_handles.contains_key(&block.logical)
+                || self.cell_bindings.contains_key(&block.temporal.cell)
+            {
+                return Err(ManagerError::MismatchedBindingReceipt(binding_id));
+            }
+            let slot = self.slot(&block.physical)?;
+            if slot.phase != SlotPhase::Reserved
+                || slot.pending_binding != Some(binding_id)
+                || slot.occupant.as_ref() != Some(&block.logical)
+                || slot.temporal.as_ref() != Some(&block.temporal)
+            {
+                return Err(ManagerError::StaleBinding(binding_id));
+            }
+        }
+        let request = self
+            .requests
+            .get(&intent.request_id)
+            .ok_or_else(|| ManagerError::UnknownRequest(intent.request_id.clone()))?;
+        if request.released || request.materialized_boundary != intent.previous_boundary {
+            return Err(ManagerError::StaleBinding(binding_id));
+        }
+
+        for block in &intent.pending_blocks {
+            let slot = self.slot_mut(&block.physical)?;
+            slot.phase = SlotPhase::Active;
+            slot.pending_binding = None;
+        }
+        {
+            let request = self
+                .requests
+                .get_mut(&intent.request_id)
+                .ok_or_else(|| ManagerError::UnknownRequest(intent.request_id.clone()))?;
+            for block in &intent.pending_blocks {
+                request.blocks.insert(block.logical.clone());
+            }
+            request.materialized_boundary = intent.target_boundary;
+        }
+        for block in &intent.pending_blocks {
+            self.block_handles
+                .insert(block.logical.clone(), block.physical.clone());
+            self.cell_bindings.insert(
+                block.temporal.cell.clone(),
+                CellBinding {
+                    logical: block.logical.clone(),
+                    version: block.temporal.version,
+                    physical: block.physical.clone(),
+                },
+            );
+            self.pending_block_bindings.remove(&block.logical);
+            self.pending_cell_bindings.remove(&block.temporal.cell);
+        }
+        self.pending_request_bindings.remove(&intent.request_id);
+        self.pending_bindings.remove(&binding_id);
+        let mut published = intent.resident_blocks;
+        published.extend(intent.pending_blocks);
+        Ok(published)
+    }
+
+    /// Aborts a prepared binding and returns all reserved slots to their pools.
+    ///
+    /// Generation numbers remain consumed, so stale backend receipts cannot
+    /// become valid after a later reservation.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an unknown or internally stale intent.
+    pub fn abort_binding(&mut self, binding_id: u64) -> Result<(), ManagerError> {
+        let intent = self
+            .pending_bindings
+            .get(&binding_id)
+            .cloned()
+            .ok_or(ManagerError::UnknownBinding(binding_id))?;
+        for block in &intent.pending_blocks {
+            let slot = self.slot(&block.physical)?;
+            if slot.phase != SlotPhase::Reserved
+                || slot.pending_binding != Some(binding_id)
+                || slot.occupant.as_ref() != Some(&block.logical)
+                || slot.temporal.as_ref() != Some(&block.temporal)
+            {
+                return Err(ManagerError::StaleBinding(binding_id));
+            }
+        }
+        for block in &intent.pending_blocks {
+            {
+                let slot = self.slot_mut(&block.physical)?;
+                slot.occupant = None;
+                slot.temporal = None;
+                slot.phase = SlotPhase::Free;
+                slot.pending_binding = None;
+            }
+            let slot_index = usize::try_from(block.physical.slot)
+                .map_err(|_| ManagerError::StaleBinding(binding_id))?;
+            self.pools
+                .get_mut(&block.physical.class_name)
+                .ok_or_else(|| ManagerError::UnknownClass(block.physical.class_name.clone()))?
+                .free
+                .insert(slot_index);
+            self.pending_block_bindings.remove(&block.logical);
+            self.pending_cell_bindings.remove(&block.temporal.cell);
+        }
+        self.pending_request_bindings.remove(&intent.request_id);
+        self.pending_bindings.remove(&binding_id);
+        Ok(())
     }
 
     fn class_contains_block(&self, class_name: &str, ordinal: u64) -> Result<bool, ManagerError> {
@@ -471,6 +839,12 @@ impl KvBlockManager {
             .ok_or_else(|| ManagerError::UnknownRequest(request_id.to_owned()))?;
         if request.released {
             return Err(ManagerError::RequestReleased(request_id.to_owned()));
+        }
+        if let Some(binding_id) = self.pending_request_bindings.get(request_id) {
+            return Err(ManagerError::PendingBinding {
+                request: request_id.to_owned(),
+                binding_id: *binding_id,
+            });
         }
         if boundary < request.semantic_frontier {
             return Err(ManagerError::SemanticFrontierMovedBackwards {
@@ -603,6 +977,12 @@ impl KvBlockManager {
         &mut self,
         request_id: &str,
     ) -> Result<Vec<RetirementCertificate>, ManagerError> {
+        if let Some(binding_id) = self.pending_request_bindings.get(request_id) {
+            return Err(ManagerError::PendingBinding {
+                request: request_id.to_owned(),
+                binding_id: *binding_id,
+            });
+        }
         let request = self
             .requests
             .get_mut(request_id)
@@ -679,13 +1059,18 @@ impl KvBlockManager {
     #[must_use]
     pub fn stats(&self) -> ManagerStats {
         let mut free_slots = BTreeMap::new();
+        let mut reserved_blocks = 0_u64;
         let mut resident_blocks = 0_u64;
         let mut retiring_blocks = 0_u64;
         for (name, pool) in &self.pools {
             free_slots.insert(name.clone(), pool.free.len() as u64);
             for slot in &pool.slots {
                 if slot.occupant.is_some() {
-                    resident_blocks += 1;
+                    if slot.phase == SlotPhase::Reserved {
+                        reserved_blocks += 1;
+                    } else {
+                        resident_blocks += 1;
+                    }
                 }
                 if matches!(slot.phase, SlotPhase::Retiring | SlotPhase::Certified) {
                     retiring_blocks += 1;
@@ -695,59 +1080,13 @@ impl KvBlockManager {
         ManagerStats {
             requests: self.requests.len() as u64,
             active_submissions: self.submissions.len() as u64,
+            pending_bindings: self.pending_bindings.len() as u64,
             pending_certificates: self.pending_certificates.len() as u64,
+            reserved_blocks,
             resident_blocks,
             retiring_blocks,
             free_slots,
         }
-    }
-
-    fn allocate(
-        &mut self,
-        logical: BlockKey,
-    ) -> Result<(TemporalAddress, BlockHandle), ManagerError> {
-        let temporal = self.layout.temporal_address(
-            &logical.request_id,
-            &logical.class_name,
-            logical.ordinal,
-        )?;
-        if self.cell_bindings.contains_key(&temporal.cell) {
-            return Err(ManagerError::LogicalCellCollision(temporal.cell.clone()));
-        }
-        let pool = self
-            .pools
-            .get_mut(&logical.class_name)
-            .ok_or_else(|| ManagerError::UnknownClass(logical.class_name.clone()))?;
-        let slot_index = pool
-            .free
-            .pop_first()
-            .ok_or_else(|| ManagerError::PoolExhausted {
-                class: logical.class_name.clone(),
-            })?;
-        let slot = &mut pool.slots[slot_index];
-        debug_assert_eq!(slot.phase, SlotPhase::Free);
-        debug_assert!(slot.occupant.is_none());
-        slot.generation = slot
-            .generation
-            .checked_add(1)
-            .ok_or_else(|| ManagerError::BlockGenerationExhausted(logical.clone()))?;
-        slot.occupant = Some(logical.clone());
-        slot.temporal = Some(temporal.clone());
-        slot.phase = SlotPhase::Active;
-        let handle = BlockHandle {
-            class_name: logical.class_name.clone(),
-            slot: slot_index as u64,
-            generation: slot.generation,
-        };
-        self.cell_bindings.insert(
-            temporal.cell.clone(),
-            CellBinding {
-                logical,
-                version: temporal.version,
-                physical: handle.clone(),
-            },
-        );
-        Ok((temporal, handle))
     }
 
     fn mark_request_retirements(
@@ -1020,6 +1359,86 @@ mod tests {
         .unwrap()
     }
 
+    fn ready_receipt(intent: &BindingIntent) -> PhysicalBindingReceipt {
+        PhysicalBindingReceipt {
+            schema: "orbitkv.physical-binding-receipt.v1",
+            plan_fingerprint: intent.plan_fingerprint.clone(),
+            binding_id: intent.binding_id,
+            backend_transaction_id: format!("test:{}", intent.binding_id),
+            blocks: intent
+                .pending_blocks
+                .iter()
+                .map(|block| PhysicalBindingBlockReceipt {
+                    logical: block.logical.clone(),
+                    physical: block.physical.clone(),
+                    payload_ready: true,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn prepared_binding_is_invisible_until_backend_commit() {
+        let mut manager = manager(8, 3);
+        manager.register_request("r0").unwrap();
+        let intent = manager.prepare_binding_to("r0", 16).unwrap();
+        assert_eq!(manager.stats().pending_bindings, 1);
+        assert_eq!(manager.stats().reserved_blocks, 2);
+        assert_eq!(manager.stats().resident_blocks, 0);
+        assert!(manager.submit_view("r0").unwrap().blocks.is_empty());
+        assert!(matches!(
+            manager.advance_semantic_frontier("r0", 1),
+            Err(ManagerError::PendingBinding { .. })
+        ));
+        let published = manager.commit_binding(&ready_receipt(&intent)).unwrap();
+        assert_eq!(published.len(), 2);
+        assert_eq!(manager.stats().pending_bindings, 0);
+        manager.advance_semantic_frontier("r0", 1).unwrap();
+        assert_eq!(manager.submit_view("r0").unwrap().blocks.len(), 2);
+    }
+
+    #[test]
+    fn binding_receipt_preflight_is_atomic_and_abortable() {
+        let mut manager = manager(8, 3);
+        manager.register_request("r0").unwrap();
+        let intent = manager.prepare_binding_to("r0", 16).unwrap();
+        let mut incomplete = ready_receipt(&intent);
+        incomplete.blocks[1].payload_ready = false;
+        assert_eq!(
+            manager.commit_binding(&incomplete),
+            Err(ManagerError::PayloadNotReady(intent.binding_id))
+        );
+        assert_eq!(manager.stats().pending_bindings, 1);
+        assert!(manager.submit_view("r0").unwrap().blocks.is_empty());
+        manager.abort_binding(intent.binding_id).unwrap();
+        assert_eq!(manager.stats().pending_bindings, 0);
+        assert_eq!(manager.stats().free_slots["full"], 8);
+        assert_eq!(manager.stats().free_slots["swa"], 3);
+
+        let retried = manager.prepare_binding_to("r0", 16).unwrap();
+        for (first, second) in intent.pending_blocks.iter().zip(&retried.pending_blocks) {
+            assert_eq!(first.physical.slot, second.physical.slot);
+            assert_eq!(first.physical.generation + 1, second.physical.generation);
+        }
+        manager.commit_binding(&ready_receipt(&retried)).unwrap();
+    }
+
+    #[test]
+    fn mismatched_binding_receipt_cannot_publish_a_partial_batch() {
+        let mut manager = manager(8, 3);
+        manager.register_request("r0").unwrap();
+        let intent = manager.prepare_binding_to("r0", 16).unwrap();
+        let mut receipt = ready_receipt(&intent);
+        receipt.blocks.pop();
+        assert_eq!(
+            manager.commit_binding(&receipt),
+            Err(ManagerError::MismatchedBindingReceipt(intent.binding_id))
+        );
+        assert_eq!(manager.stats().pending_bindings, 1);
+        assert!(manager.submit_view("r0").unwrap().blocks.is_empty());
+        manager.abort_binding(intent.binding_id).unwrap();
+    }
+
     #[test]
     fn certificate_commit_is_required_before_reuse() {
         let mut manager = manager(8, 3);
@@ -1037,7 +1456,7 @@ mod tests {
         );
         assert!(matches!(
             manager.materialize_to("r0", 64),
-            Err(ManagerError::PoolExhausted { .. })
+            Err(ManagerError::PoolExhausted { .. } | ManagerError::LogicalCellCollision(_))
         ));
         let old = certificates[0].physical.clone();
         let receipt = PhysicalReclamationReceipt {

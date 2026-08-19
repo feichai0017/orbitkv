@@ -35,13 +35,14 @@ result summaries link here rather than defining independent support claims.
 | Holt persistent Capsule catalog | L4 | Sole catalog backend; content-addressed payload files; longest-prefix restore | `results/h20-capsule-export-20260818/`, `results/h20-hybrid-capsule-20260818/` |
 | Generation-aware CUDA VMM slot | L3 | H20 reserve/map/remap/unmap primitive; not SGLang tensor storage | `results/h20-generation-vmm-20260817/` |
 | Transactional physical reclamation | L3 | Certificate, backend receipt, commit; reference/CUDA lifecycle | `results/h20-generation-vmm-20260817/` |
-| Transactional allocation/binding | L2 | Capsule admission has local rollback; no shared Runtime `BindingIntent` ABI yet | `integrations/sglang/tests/test_shadow_plugin.py` |
+| Transactional allocation/binding | L4 | Rust prepare/commit/abort coordinator drives SGLang Capsule hydration; binding uses the owner sidecar while reclamation may use FFI | `src/binding.rs`, `src/manager.rs`, `integrations/sglang/tests/test_shadow_plugin.py` |
 
 ## Not Qualified
 
 The following remain below L4:
 
 - One runtime resource manifest for deployment paths, model identity, and external service endpoints.
+- A versioned FFI binding ABI; the current L4 binding path uses the Rust owner sidecar.
 - Radix/Prefix component-aware ownership and shared-page lifecycle.
 - Overlap scheduling and real multi-stream CUDA-event execution frontiers.
 - Speculative decoding, fork, rollback, beam/tree state, and COW.

@@ -3,7 +3,11 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::{CompiledKvPlan, PlanError, RetentionKind};
+use crate::{
+    BindingCoordinator, BindingCoordinatorStats, BindingError, CompiledKvPlan,
+    PhysicalStateBindingReceipt, PlanError, RetentionKind, StateBindingComponent,
+    StateBindingIntent,
+};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
@@ -29,6 +33,16 @@ pub enum OwnerCommand {
     },
     ReleaseRequest {
         request_id: String,
+    },
+    PrepareBinding {
+        request_id: String,
+        prefix_tokens: u64,
+    },
+    CommitBinding {
+        receipt: PhysicalStateBindingReceipt,
+    },
+    AbortBinding {
+        binding_id: u64,
     },
     Stats,
 }
@@ -70,6 +84,7 @@ pub struct OwnerStats {
     pub pending_certificates: u64,
     pub committed_reclamations: u64,
     pub committed_tokens: u64,
+    pub binding: BindingCoordinatorStats,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -83,6 +98,15 @@ pub enum OwnerResponse {
     },
     Released {
         request_id: String,
+    },
+    BindingPrepared {
+        intent: StateBindingIntent,
+    },
+    BindingCommitted {
+        binding_id: u64,
+    },
+    BindingAborted {
+        binding_id: u64,
     },
     Stats {
         stats: OwnerStats,
@@ -141,6 +165,8 @@ pub enum OwnerError {
     #[error("integer overflow while calculating {0}")]
     ArithmeticOverflow(&'static str),
     #[error(transparent)]
+    Binding(#[from] BindingError),
+    #[error(transparent)]
     Plan(#[from] PlanError),
 }
 
@@ -149,6 +175,8 @@ pub struct SglangOwner {
     page_tokens: u64,
     class_name: String,
     window_tokens: u64,
+    full_class_name: Option<String>,
+    binding: BindingCoordinator,
     requests: BTreeMap<String, RequestState>,
     pending: BTreeMap<u64, PendingState>,
     next_certificate_id: u64,
@@ -191,6 +219,12 @@ impl SglangOwner {
             page_tokens: plan.page_tokens,
             class_name: class.spec.name.clone(),
             window_tokens,
+            full_class_name: plan
+                .classes
+                .iter()
+                .find(|class| class.spec.retention == RetentionKind::Full)
+                .map(|class| class.spec.name.clone()),
+            binding: BindingCoordinator::new(plan.fingerprint()),
             requests: BTreeMap::new(),
             pending: BTreeMap::new(),
             next_certificate_id: 1,
@@ -230,6 +264,19 @@ impl SglangOwner {
                 self.commit_reclamations(&certificate_ids)
             }
             OwnerCommand::ReleaseRequest { request_id } => self.release_request(request_id),
+            OwnerCommand::PrepareBinding {
+                request_id,
+                prefix_tokens,
+            } => self.prepare_binding(request_id, prefix_tokens),
+            OwnerCommand::CommitBinding { receipt } => {
+                let binding_id = receipt.binding_id;
+                self.binding.commit(&receipt)?;
+                Ok(OwnerResponse::BindingCommitted { binding_id })
+            }
+            OwnerCommand::AbortBinding { binding_id } => {
+                self.binding.abort(binding_id)?;
+                Ok(OwnerResponse::BindingAborted { binding_id })
+            }
             OwnerCommand::Stats => Ok(OwnerResponse::Stats {
                 stats: self.stats(),
             }),
@@ -375,6 +422,35 @@ impl SglangOwner {
         Ok(OwnerResponse::Released { request_id })
     }
 
+    fn prepare_binding(
+        &mut self,
+        request_id: String,
+        prefix_tokens: u64,
+    ) -> Result<OwnerResponse, OwnerError> {
+        if prefix_tokens == 0 {
+            return Err(OwnerError::ArithmeticOverflow("binding prefix tokens"));
+        }
+        let local_start = prefix_tokens.saturating_sub(self.window_tokens);
+        let local_start = local_start / self.page_tokens * self.page_tokens;
+        let mut components = Vec::new();
+        if let Some(full_class_name) = &self.full_class_name {
+            components.push(StateBindingComponent {
+                state_class: full_class_name.clone(),
+                token_start: 0,
+                token_end_exclusive: prefix_tokens,
+                physical_tokens: prefix_tokens,
+            });
+        }
+        components.push(StateBindingComponent {
+            state_class: self.class_name.clone(),
+            token_start: local_start,
+            token_end_exclusive: prefix_tokens,
+            physical_tokens: prefix_tokens - local_start,
+        });
+        let intent = self.binding.prepare(request_id, components)?;
+        Ok(OwnerResponse::BindingPrepared { intent })
+    }
+
     #[must_use]
     pub fn stats(&self) -> OwnerStats {
         OwnerStats {
@@ -383,6 +459,7 @@ impl SglangOwner {
             pending_certificates: self.pending.len() as u64,
             committed_reclamations: self.committed_reclamations,
             committed_tokens: self.committed_tokens,
+            binding: self.binding.stats(),
         }
     }
 }
@@ -400,6 +477,7 @@ impl OwnerError {
             Self::ReleaseWithPending { .. } => "release_with_pending",
             Self::CertificateGenerationExhausted => "certificate_generation_exhausted",
             Self::ArithmeticOverflow(_) => "arithmetic_overflow",
+            Self::Binding(_) => "binding_error",
             Self::Plan(_) => "invalid_plan",
         }
     }
@@ -410,6 +488,27 @@ mod tests {
     use crate::{KvClassSpec, KvPlanInput, compile_plan};
 
     use super::*;
+
+    fn binding_receipt(intent: &StateBindingIntent) -> PhysicalStateBindingReceipt {
+        PhysicalStateBindingReceipt {
+            schema: "orbitkv.physical-state-binding-receipt.v1".into(),
+            plan_fingerprint: intent.plan_fingerprint.clone(),
+            binding_id: intent.binding_id,
+            backend_transaction_id: format!("test:{}", intent.binding_id),
+            components: intent
+                .components
+                .iter()
+                .map(|component| crate::PhysicalStateBindingComponentReceipt {
+                    state_class: component.state_class.clone(),
+                    token_start: component.token_start,
+                    token_end_exclusive: component.token_end_exclusive,
+                    physical_tokens: component.physical_tokens,
+                    physical_binding_id: format!("{}:physical", component.state_class),
+                    payload_ready: true,
+                })
+                .collect(),
+        }
+    }
 
     fn owner() -> SglangOwner {
         let plan = compile_plan(KvPlanInput {
@@ -519,5 +618,116 @@ mod tests {
         ));
         assert_eq!(owner.stats().pending_certificates, 0);
         assert_eq!(owner.stats().committed_reclamations, 1);
+    }
+
+    #[test]
+    fn hybrid_binding_components_are_derived_from_retention_plan() {
+        let plan = compile_plan(KvPlanInput {
+            page_tokens: 16,
+            classes: vec![
+                KvClassSpec {
+                    name: "full".into(),
+                    layers: vec![0],
+                    retention: RetentionKind::Full,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: None,
+                },
+                KvClassSpec {
+                    name: "swa".into(),
+                    layers: vec![1],
+                    retention: RetentionKind::Sliding,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: Some(128),
+                },
+            ],
+        })
+        .unwrap();
+        let mut owner = SglangOwner::new(&plan).unwrap();
+        let OwnerResponse::BindingPrepared { intent } =
+            owner.execute(OwnerCommand::PrepareBinding {
+                request_id: "r0".into(),
+                prefix_tokens: 1024,
+            })
+        else {
+            panic!("expected binding intent");
+        };
+        assert_eq!(
+            intent.components,
+            vec![
+                StateBindingComponent {
+                    state_class: "full".into(),
+                    token_start: 0,
+                    token_end_exclusive: 1024,
+                    physical_tokens: 1024,
+                },
+                StateBindingComponent {
+                    state_class: "swa".into(),
+                    token_start: 896,
+                    token_end_exclusive: 1024,
+                    physical_tokens: 128,
+                },
+            ]
+        );
+        let receipt = binding_receipt(&intent);
+        assert_eq!(
+            owner.execute(OwnerCommand::CommitBinding { receipt }),
+            OwnerResponse::BindingCommitted {
+                binding_id: intent.binding_id
+            }
+        );
+        assert_eq!(owner.stats().binding.committed_bindings, 1);
+    }
+
+    #[test]
+    fn failed_binding_receipt_remains_abortable() {
+        let mut owner = SglangOwner::new(
+            &compile_plan(KvPlanInput {
+                page_tokens: 16,
+                classes: vec![KvClassSpec {
+                    name: "swa".into(),
+                    layers: vec![0],
+                    retention: RetentionKind::Sliding,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: Some(128),
+                }],
+            })
+            .unwrap(),
+        )
+        .unwrap();
+        let OwnerResponse::BindingPrepared { intent } =
+            owner.execute(OwnerCommand::PrepareBinding {
+                request_id: "r0".into(),
+                prefix_tokens: 1024,
+            })
+        else {
+            panic!("expected binding intent");
+        };
+        assert_eq!(
+            intent.components,
+            vec![StateBindingComponent {
+                state_class: "swa".into(),
+                token_start: 896,
+                token_end_exclusive: 1024,
+                physical_tokens: 128,
+            }]
+        );
+        let mut receipt = binding_receipt(&intent);
+        receipt.components[0].payload_ready = false;
+        assert!(matches!(
+            owner.execute(OwnerCommand::CommitBinding { receipt }),
+            OwnerResponse::Error {
+                code: "binding_error",
+                ..
+            }
+        ));
+        assert_eq!(owner.stats().binding.pending_bindings, 1);
+        assert_eq!(
+            owner.execute(OwnerCommand::AbortBinding {
+                binding_id: intent.binding_id
+            }),
+            OwnerResponse::BindingAborted {
+                binding_id: intent.binding_id
+            }
+        );
     }
 }

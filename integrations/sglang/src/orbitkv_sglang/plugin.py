@@ -23,8 +23,10 @@ _RUNTIME_STATE_PLAN: dict[str, Any] | None = None
 _UNIFORM_SWA_CONTRACT: dict[str, Any] | None = None
 _STATE_PLAN_MODE: str | None = None
 _OWNER: "OwnerClient | None" = None
+_BINDINGS: "SidecarOwnerClient | None" = None
 _CAPSULES: "CapsuleClient | None" = None
 _CAPSULES_LOCK = threading.Lock()
+_BINDINGS_LOCK = threading.Lock()
 
 
 class CapsuleClient:
@@ -399,6 +401,11 @@ class FfiOwnerClient(OwnerClient):
                 "pending_certificates": stats.pending_certificates,
                 "committed_reclamations": stats.committed_reclamations,
                 "committed_tokens": stats.committed_tokens,
+                "binding": {
+                    "pending_bindings": 0,
+                    "committed_bindings": 0,
+                    "aborted_bindings": 0,
+                },
             },
         }
 
@@ -708,6 +715,15 @@ def _stop_owner() -> None:
     _OWNER = None
 
 
+def _stop_bindings() -> None:
+    global _BINDINGS
+
+    if _BINDINGS is None:
+        return
+    _BINDINGS.close()
+    _BINDINGS = None
+
+
 def _stop_capsules() -> None:
     global _CAPSULES
 
@@ -727,6 +743,27 @@ def _require_capsules() -> CapsuleClient:
                 os.environ["ORBITKV_CAPSULE_STORE"],
             )
         return _CAPSULES
+
+
+def _binding_plan_path() -> str:
+    if _RUNTIME_STATE_PLAN is not None:
+        return os.environ["ORBITKV_RUNTIME_STATE_PLAN"]
+    path = os.environ.get("ORBITKV_SGLANG_POLICY")
+    if not path:
+        raise RuntimeError("OrbitKV binding runtime requires a semantic plan")
+    return path
+
+
+def _require_bindings() -> SidecarOwnerClient:
+    global _BINDINGS
+
+    with _BINDINGS_LOCK:
+        if _BINDINGS is None:
+            _BINDINGS = SidecarOwnerClient(
+                os.environ.get("ORBITKV_BIN", "orbitkv"),
+                _binding_plan_path(),
+            )
+        return _BINDINGS
 
 
 def _export_capsule_before_release(
@@ -1034,6 +1071,149 @@ def _allocate_capsule_slots(allocator: Any, prefix_tokens: int):
     )
 
 
+def _expected_binding_components(
+    prefix_tokens: int,
+    live_tokens: int,
+) -> list[dict[str, Any]]:
+    if _POLICY is None:
+        raise RuntimeError("OrbitKV binding requires a loaded policy")
+    bounded = _POLICY.get("bounded_classes", ())
+    unbounded = _POLICY.get("unbounded_classes", ())
+    if len(bounded) != 1:
+        raise RuntimeError("OrbitKV binding requires one bounded class")
+    components = []
+    if unbounded:
+        if len(unbounded) != 1 or live_tokens != prefix_tokens:
+            raise RuntimeError("OrbitKV Hybrid binding class geometry is unsupported")
+        components.append(
+            {
+                "state_class": str(unbounded[0]),
+                "token_start": 0,
+                "token_end_exclusive": prefix_tokens,
+                "physical_tokens": prefix_tokens,
+            }
+        )
+    local_start = _capsule_live_start(prefix_tokens)
+    components.append(
+        {
+            "state_class": str(bounded[0]["name"]),
+            "token_start": local_start,
+            "token_end_exclusive": prefix_tokens,
+            "physical_tokens": prefix_tokens - local_start,
+        }
+    )
+    return sorted(components, key=lambda component: component["state_class"])
+
+
+def _prepare_capsule_binding(
+    req: Any,
+    prefix_tokens: int,
+    live_tokens: int,
+) -> dict[str, Any]:
+    response = _require_bindings().command(
+        {
+            "op": "prepare_binding",
+            "request_id": str(req.rid),
+            "prefix_tokens": prefix_tokens,
+        }
+    )
+    if response.get("status") != "binding_prepared":
+        raise RuntimeError("OrbitKV binding runtime returned an invalid prepare response")
+    intent = response.get("intent")
+    if (
+        not isinstance(intent, dict)
+        or intent.get("schema") != "orbitkv.state-binding-intent.v1"
+        or intent.get("plan_fingerprint") != _POLICY.get("plan_fingerprint")
+        or intent.get("request_id") != str(req.rid)
+        or sorted(
+            intent.get("components", ()),
+            key=lambda component: component.get("state_class", ""),
+        )
+        != _expected_binding_components(prefix_tokens, live_tokens)
+    ):
+        raise RuntimeError("OrbitKV binding intent does not match Capsule semantics")
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "binding_prepared",
+                "request_id": str(req.rid),
+                "binding_id": int(intent["binding_id"]),
+                "components": intent["components"],
+            }
+        )
+    return intent
+
+
+def _binding_receipt(
+    intent: dict[str, Any],
+    indices: Any,
+) -> dict[str, Any]:
+    data_pointer = getattr(indices, "data_ptr", lambda: id(indices))()
+    return {
+        "schema": "orbitkv.physical-state-binding-receipt.v1",
+        "plan_fingerprint": intent["plan_fingerprint"],
+        "binding_id": int(intent["binding_id"]),
+        "backend_transaction_id": (
+            f"sglang:{intent['request_id']}:{intent['binding_id']}:{data_pointer}"
+        ),
+        "components": [
+            {
+                **component,
+                "physical_binding_id": (
+                    f"{component['state_class']}:{data_pointer}:"
+                    f"{component['token_start']}:{component['token_end_exclusive']}"
+                ),
+                "payload_ready": True,
+            }
+            for component in intent["components"]
+        ],
+    }
+
+
+def _abort_capsule_binding(intent: dict[str, Any]) -> None:
+    response = _require_bindings().command(
+        {
+            "op": "abort_binding",
+            "binding_id": int(intent["binding_id"]),
+        }
+    )
+    if (
+        response.get("status") != "binding_aborted"
+        or int(response.get("binding_id", -1)) != int(intent["binding_id"])
+    ):
+        raise RuntimeError("OrbitKV binding runtime returned an invalid abort response")
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "binding_aborted",
+                "request_id": intent["request_id"],
+                "binding_id": int(intent["binding_id"]),
+            }
+        )
+
+
+def _commit_capsule_binding(intent: dict[str, Any], indices: Any) -> None:
+    response = _require_bindings().command(
+        {
+            "op": "commit_binding",
+            "receipt": _binding_receipt(intent, indices),
+        }
+    )
+    if (
+        response.get("status") != "binding_committed"
+        or int(response.get("binding_id", -1)) != int(intent["binding_id"])
+    ):
+        raise RuntimeError("OrbitKV binding runtime returned an invalid commit response")
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "binding_committed",
+                "request_id": intent["request_id"],
+                "binding_id": int(intent["binding_id"]),
+            }
+        )
+
+
 def _try_hydrate_capsule(req: Any, tree_cache: Any):
     if not _capsules_enabled() or getattr(req, "_orbitkv_capsule_miss", False):
         return None
@@ -1076,10 +1256,12 @@ def _try_hydrate_capsule(req: Any, tree_cache: Any):
     payload_done_ns = time.perf_counter_ns()
     if prefix_tokens > maximum_prefix:
         raise RuntimeError("OrbitKV Capsule prefix exceeds SGLang match boundary")
+    intent = _prepare_capsule_binding(req, prefix_tokens, live_tokens)
     allocator = tree_cache.token_to_kv_pool_allocator
     indices = _allocate_capsule_slots(allocator, live_tokens)
     allocation_done_ns = time.perf_counter_ns()
     if indices is None:
+        _abort_capsule_binding(intent)
         if _trace_allocations_enabled():
             _emit(
                 {
@@ -1099,6 +1281,7 @@ def _try_hydrate_capsule(req: Any, tree_cache: Any):
         )
     except Exception:
         allocator.free(indices)
+        _abort_capsule_binding(intent)
         raise
     load_done_ns = time.perf_counter_ns()
     import torch
@@ -1122,11 +1305,17 @@ def _try_hydrate_capsule(req: Any, tree_cache: Any):
         "load": load_done_ns - allocation_done_ns,
         "total": load_done_ns - started_ns,
     }
-    return indices
+    return {"indices": indices, "intent": intent}
 
 
-def _rollback_capsule_hydration(req: Any, allocator: Any, indices: Any) -> None:
+def _rollback_capsule_hydration(
+    req: Any,
+    allocator: Any,
+    transaction: dict[str, Any],
+) -> None:
+    indices = transaction["indices"]
     allocator.free(indices)
+    _abort_capsule_binding(transaction["intent"])
     req.prefix_indices = req.prefix_indices.new_empty((0,))
     req._orbitkv_capsule_prefix_tokens = 0
     req._orbitkv_capsule_live_tokens = 0
@@ -1141,23 +1330,32 @@ def _hydrate_capsule_for_admission(
     **kwargs: Any,
 ):
     tree_cache = adder.tree_cache
-    indices = _try_hydrate_capsule(req, tree_cache)
-    if indices is None:
+    transaction = _try_hydrate_capsule(req, tree_cache)
+    if transaction is None:
         return original_fn(adder, req, *args, **kwargs)
     before = len(adder.can_run_list)
     try:
         result = original_fn(adder, req, *args, **kwargs)
     except Exception:
         _rollback_capsule_hydration(
-            req, tree_cache.token_to_kv_pool_allocator, indices
+            req, tree_cache.token_to_kv_pool_allocator, transaction
         )
         raise
     admitted = len(adder.can_run_list) > before and adder.can_run_list[-1] is req
     if not admitted:
         _rollback_capsule_hydration(
-            req, tree_cache.token_to_kv_pool_allocator, indices
+            req, tree_cache.token_to_kv_pool_allocator, transaction
         )
         return result
+    try:
+        _commit_capsule_binding(transaction["intent"], transaction["indices"])
+    except Exception:
+        if adder.can_run_list and adder.can_run_list[-1] is req:
+            adder.can_run_list.pop()
+        _rollback_capsule_hydration(
+            req, tree_cache.token_to_kv_pool_allocator, transaction
+        )
+        raise
     if _trace_allocations_enabled():
         _emit(
             {
@@ -2167,6 +2365,7 @@ def register() -> None:
             )
         _capsule_identity()
         atexit.register(_stop_capsules)
+        atexit.register(_stop_bindings)
 
     if _owner_enabled():
         if _POLICY is None:
