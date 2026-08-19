@@ -11,6 +11,9 @@ use crate::{
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq)]
 #[serde(tag = "op", rename_all = "snake_case")]
 pub enum DenseRuntimeCommand {
+    Batch {
+        commands: Vec<DenseRuntimeCommand>,
+    },
     AcquireRequest,
     PrepareBinding {
         request: RequestLease,
@@ -46,6 +49,9 @@ pub enum DenseRuntimeCommand {
     CommitReclamation {
         receipt: DensePhysicalReclamationReceipt,
     },
+    CommitReclamations {
+        receipts: Vec<DensePhysicalReclamationReceipt>,
+    },
     RecycleRequest {
         request: RequestLease,
     },
@@ -55,6 +61,9 @@ pub enum DenseRuntimeCommand {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "status", rename_all = "snake_case")]
 pub enum DenseRuntimeResponse {
+    BatchCompleted {
+        responses: Vec<DenseRuntimeResponse>,
+    },
     RequestAcquired {
         request: RequestLease,
     },
@@ -86,6 +95,9 @@ pub enum DenseRuntimeResponse {
     },
     ReclamationCommitted {
         certificate_id: u64,
+    },
+    ReclamationsCommitted {
+        certificate_ids: Vec<u64>,
     },
     RequestRecycled {
         request: RequestLease,
@@ -143,11 +155,112 @@ impl DenseRuntimeService {
         }
     }
 
+    #[must_use]
+    pub fn artifact_fingerprint(&self) -> &str {
+        &self.runtime.artifact().artifact_fingerprint
+    }
+
+    /// Pins one immutable live-set view without protocol serialization.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same lifecycle errors as [`DenseKvRuntime::submit_view`].
+    pub fn submit_view(
+        &mut self,
+        request: RequestLease,
+    ) -> Result<DenseView, DenseRuntimeServiceError> {
+        Ok(self.runtime.submit_view(request)?)
+    }
+
+    /// Completes one GPU submission, optionally commits a prepared physical
+    /// binding, and advances semantic time.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when any lifecycle transition is stale or unsafe.
+    pub fn complete_step(
+        &mut self,
+        request: RequestLease,
+        submission_id: u64,
+        boundary: u64,
+        binding: Option<&DensePhysicalBindingReceipt>,
+    ) -> Result<Vec<DenseRetirementCertificate>, DenseRuntimeServiceError> {
+        let mut certificates = self.runtime.complete_submission(submission_id)?;
+        if let Some(binding) = binding {
+            self.runtime.commit_binding(binding)?;
+            certificates.extend(self.runtime.advance_semantic_frontier(request, boundary)?);
+        } else {
+            certificates.extend(self.runtime.advance_resident_frontier(request, boundary)?);
+        }
+        Ok(certificates)
+    }
+
+    /// Marks a request dead and emits all immediately executable certificates.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same lifecycle errors as [`DenseKvRuntime::release_request`].
+    pub fn release_request(
+        &mut self,
+        request: RequestLease,
+    ) -> Result<Vec<DenseRetirementCertificate>, DenseRuntimeServiceError> {
+        Ok(self.runtime.release_request(request)?)
+    }
+
+    /// Atomically commits all physical receipts and recycles the request lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns without partial reclamation when receipt validation fails.
+    pub fn commit_reclamations_and_recycle(
+        &mut self,
+        request: RequestLease,
+        receipts: &[DensePhysicalReclamationReceipt],
+    ) -> Result<(), DenseRuntimeServiceError> {
+        self.runtime.commit_reclamations(receipts)?;
+        self.runtime.recycle_request(request)?;
+        Ok(())
+    }
+
+    /// Atomically commits physical reclamation receipts without recycling the
+    /// request lease.
+    ///
+    /// # Errors
+    ///
+    /// Returns without partial reclamation when receipt validation fails.
+    pub fn commit_reclamations(
+        &mut self,
+        receipts: &[DensePhysicalReclamationReceipt],
+    ) -> Result<(), DenseRuntimeServiceError> {
+        self.runtime.commit_reclamations(receipts)?;
+        Ok(())
+    }
+
     fn try_execute(
         &mut self,
         command: DenseRuntimeCommand,
     ) -> Result<DenseRuntimeResponse, DenseRuntimeServiceError> {
         match command {
+            DenseRuntimeCommand::Batch { commands } => {
+                let mut responses = Vec::with_capacity(commands.len());
+                for command in commands {
+                    let nested = matches!(command, DenseRuntimeCommand::Batch { .. });
+                    let response = if nested {
+                        DenseRuntimeResponse::Error {
+                            code: "nested_dense_batch",
+                            message: "nested Dense Runtime command batches are unsupported".into(),
+                        }
+                    } else {
+                        self.execute(command)
+                    };
+                    let failed = matches!(response, DenseRuntimeResponse::Error { .. });
+                    responses.push(response);
+                    if failed {
+                        break;
+                    }
+                }
+                Ok(DenseRuntimeResponse::BatchCompleted { responses })
+            }
             DenseRuntimeCommand::AcquireRequest => {
                 let request = self.runtime.acquire_request()?;
                 Ok(DenseRuntimeResponse::RequestAcquired { request })
@@ -207,6 +320,14 @@ impl DenseRuntimeService {
                 let certificate_id = receipt.certificate_id;
                 self.runtime.commit_reclamation(&receipt)?;
                 Ok(DenseRuntimeResponse::ReclamationCommitted { certificate_id })
+            }
+            DenseRuntimeCommand::CommitReclamations { receipts } => {
+                let certificate_ids = receipts
+                    .iter()
+                    .map(|receipt| receipt.certificate_id)
+                    .collect();
+                self.runtime.commit_reclamations(&receipts)?;
+                Ok(DenseRuntimeResponse::ReclamationsCommitted { certificate_ids })
             }
             DenseRuntimeCommand::RecycleRequest { request } => {
                 self.runtime.recycle_request(request)?;
@@ -347,5 +468,29 @@ mod tests {
             service.execute(DenseRuntimeCommand::RecycleRequest { request }),
             DenseRuntimeResponse::RequestRecycled { .. }
         ));
+    }
+
+    #[test]
+    fn batch_transport_executes_in_order_and_stops_on_error() {
+        let mut service = DenseRuntimeService::from_state_plan(&state_plan()).unwrap();
+        let DenseRuntimeResponse::BatchCompleted { responses } =
+            service.execute(DenseRuntimeCommand::Batch {
+                commands: vec![
+                    DenseRuntimeCommand::AcquireRequest,
+                    DenseRuntimeCommand::AcquireRequest,
+                    DenseRuntimeCommand::Stats,
+                ],
+            })
+        else {
+            panic!("batch transport failed");
+        };
+        assert!(matches!(
+            responses.as_slice(),
+            [
+                DenseRuntimeResponse::RequestAcquired { .. },
+                DenseRuntimeResponse::Error { .. }
+            ]
+        ));
+        assert_eq!(service.runtime.stats().active_requests, 1);
     }
 }

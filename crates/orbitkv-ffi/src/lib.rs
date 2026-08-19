@@ -8,6 +8,10 @@ use orbitkv::{
     SglangExecutionProof, SglangOwner, SglangSemanticProof,
 };
 
+mod dense;
+
+pub use dense::*;
+
 pub const ORBITKV_OWNER_ABI_VERSION: u32 = 1;
 pub const ORBITKV_STATUS_OK: i32 = 0;
 pub const ORBITKV_STATUS_NO_CERTIFICATE: i32 = 1;

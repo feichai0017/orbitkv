@@ -25,7 +25,7 @@ _UNIFORM_SWA_CONTRACT: dict[str, Any] | None = None
 _STATE_PLAN_MODE: str | None = None
 _OWNER: "OwnerClient | None" = None
 _BINDINGS: "SidecarOwnerClient | None" = None
-_DENSE_RUNTIME: "DenseRuntimeClient | None" = None
+_DENSE_RUNTIME: "DenseRuntimeClient | FfiDenseRuntimeClient | None" = None
 _CAPSULES: "CapsuleClient | None" = None
 _CAPSULES_LOCK = threading.Lock()
 _BINDINGS_LOCK = threading.Lock()
@@ -34,6 +34,7 @@ _PREFIX_OBJECTS: dict[tuple[str, str, str], dict[str, Any]] = {}
 _PREFIX_OBJECTS_LOCK = threading.Lock()
 _EXECUTION_EVENTS: dict[int, dict[str, Any]] = {}
 _EXECUTION_EVENTS_LOCK = threading.Lock()
+_NEXT_DENSE_EVENT_ID = -1
 
 
 class CapsuleClient:
@@ -187,6 +188,384 @@ class DenseRuntimeClient(SidecarOwnerClient):
         self._stdin = self._process.stdin
         self._stdout = self._process.stdout
         self._lock = threading.Lock()
+        self.transport_commands = 0
+        self.logical_commands = 0
+
+    def command(self, command: dict[str, Any]) -> dict[str, Any]:
+        self.transport_commands += 1
+        self.logical_commands += (
+            len(command.get("commands", ()))
+            if command.get("op") == "batch"
+            else 1
+        )
+        return super().command(command)
+
+
+class _FfiDenseRequestLease(ctypes.Structure):
+    _fields_ = [
+        ("slot", ctypes.c_uint32),
+        ("generation", ctypes.c_uint32),
+    ]
+
+
+class _FfiDenseCertificate(ctypes.Structure):
+    _fields_ = [
+        ("abi_version", ctypes.c_uint32),
+        ("class_id", ctypes.c_uint16),
+        ("reserved", ctypes.c_uint16),
+        ("certificate_id", ctypes.c_uint64),
+        ("ordinal", ctypes.c_uint64),
+        ("physical_slot", ctypes.c_uint64),
+        ("physical_generation", ctypes.c_uint64),
+        ("backend_index", ctypes.c_uint64),
+        ("token_start", ctypes.c_uint64),
+        ("token_end_exclusive", ctypes.c_uint64),
+    ]
+
+
+class FfiDenseRuntimeClient:
+    ABI_VERSION = 1
+    STATUS_OK = 0
+    STATUS_BUFFER_TOO_SMALL = 2
+
+    def __init__(self, library_path: str, state_plan_path: str):
+        self._library = ctypes.CDLL(library_path)
+        self._configure_signatures()
+        if self._library.orbitkv_dense_abi_version() != self.ABI_VERSION:
+            raise RuntimeError("unsupported OrbitKV Dense ABI version")
+        self._capacity = int(self._library.orbitkv_dense_response_capacity())
+        if self._capacity <= 0:
+            raise RuntimeError("OrbitKV Dense ABI returned an invalid response capacity")
+        self._response = (ctypes.c_uint8 * self._capacity)()
+        self._error = ctypes.create_string_buffer(1024)
+        self._handle = ctypes.c_void_p()
+        plan = Path(state_plan_path).read_bytes()
+        plan_buffer = (ctypes.c_uint8 * len(plan)).from_buffer_copy(plan)
+        status = self._library.orbitkv_dense_create(
+            plan_buffer,
+            len(plan),
+            ctypes.byref(self._handle),
+            self._error,
+            len(self._error),
+        )
+        self._check(status, "create Dense Runtime")
+        if not self._handle.value:
+            raise RuntimeError("OrbitKV Dense FFI returned a null handle")
+        self._certificate_capacity = int(
+            self._library.orbitkv_dense_certificate_capacity(self._handle)
+        )
+        if self._certificate_capacity <= 0:
+            self.close()
+            raise RuntimeError("OrbitKV Dense FFI returned an invalid certificate capacity")
+        self._certificates = (
+            _FfiDenseCertificate * self._certificate_capacity
+        )()
+        self._lock = threading.Lock()
+        self.transport_commands = 0
+        self.logical_commands = 0
+
+    def _configure_signatures(self) -> None:
+        library = self._library
+        library.orbitkv_dense_abi_version.argtypes = []
+        library.orbitkv_dense_abi_version.restype = ctypes.c_uint32
+        library.orbitkv_dense_response_capacity.argtypes = []
+        library.orbitkv_dense_response_capacity.restype = ctypes.c_size_t
+        library.orbitkv_dense_create.argtypes = [
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_void_p),
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_dense_create.restype = ctypes.c_int32
+        library.orbitkv_dense_execute_json.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_dense_execute_json.restype = ctypes.c_int32
+        library.orbitkv_dense_certificate_capacity.argtypes = [ctypes.c_void_p]
+        library.orbitkv_dense_certificate_capacity.restype = ctypes.c_size_t
+        library.orbitkv_dense_submit_view.argtypes = [
+            ctypes.c_void_p,
+            _FfiDenseRequestLease,
+            ctypes.POINTER(ctypes.c_uint64),
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_dense_submit_view.restype = ctypes.c_int32
+        library.orbitkv_dense_complete_step.argtypes = [
+            ctypes.c_void_p,
+            _FfiDenseRequestLease,
+            ctypes.c_uint64,
+            ctypes.c_uint64,
+            ctypes.POINTER(ctypes.c_uint8),
+            ctypes.c_size_t,
+            ctypes.POINTER(_FfiDenseCertificate),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_dense_complete_step.restype = ctypes.c_int32
+        library.orbitkv_dense_release_request.argtypes = [
+            ctypes.c_void_p,
+            _FfiDenseRequestLease,
+            ctypes.POINTER(_FfiDenseCertificate),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_size_t),
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_dense_release_request.restype = ctypes.c_int32
+        library.orbitkv_dense_commit_reclamations_and_recycle.argtypes = [
+            ctypes.c_void_p,
+            _FfiDenseRequestLease,
+            ctypes.POINTER(_FfiDenseCertificate),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_dense_commit_reclamations_and_recycle.restype = ctypes.c_int32
+        library.orbitkv_dense_commit_reclamations.argtypes = [
+            ctypes.c_void_p,
+            ctypes.POINTER(_FfiDenseCertificate),
+            ctypes.c_size_t,
+            ctypes.POINTER(ctypes.c_char),
+            ctypes.c_size_t,
+        ]
+        library.orbitkv_dense_commit_reclamations.restype = ctypes.c_int32
+        library.orbitkv_dense_destroy.argtypes = [ctypes.c_void_p]
+        library.orbitkv_dense_destroy.restype = None
+
+    def _check(self, status: int, operation: str) -> None:
+        if status == self.STATUS_OK:
+            return
+        message = self._error.value.decode("utf-8", errors="replace")
+        raise RuntimeError(
+            f"OrbitKV Dense FFI {operation} failed with status {status}: {message}"
+        )
+
+    def command(self, command: dict[str, Any]) -> dict[str, Any]:
+        payload = json.dumps(
+            command, separators=(",", ":"), sort_keys=True
+        ).encode("utf-8")
+        command_buffer = (ctypes.c_uint8 * len(payload)).from_buffer_copy(payload)
+        response_len = ctypes.c_size_t()
+        with self._lock:
+            if not self._handle.value:
+                raise RuntimeError("OrbitKV Dense FFI is closed")
+            status = self._library.orbitkv_dense_execute_json(
+                self._handle,
+                command_buffer,
+                len(payload),
+                self._response,
+                self._capacity,
+                ctypes.byref(response_len),
+                self._error,
+                len(self._error),
+            )
+            if status == self.STATUS_BUFFER_TOO_SMALL:
+                raise RuntimeError(
+                    "OrbitKV Dense FFI response exceeded its ABI capacity"
+                )
+            self._check(status, "execute command")
+            self.transport_commands += 1
+            self.logical_commands += (
+                len(command.get("commands", ()))
+                if command.get("op") == "batch"
+                else 1
+            )
+            response = json.loads(bytes(self._response[: response_len.value]))
+        if response.get("status") == "error":
+            raise RuntimeError(
+                f"OrbitKV Dense FFI rejected command "
+                f"[{response.get('code')}]: {response.get('message')}"
+            )
+        return response
+
+    @staticmethod
+    def _request(request: dict[str, Any]) -> _FfiDenseRequestLease:
+        return _FfiDenseRequestLease(
+            slot=int(request["slot"]),
+            generation=int(request["generation"]),
+        )
+
+    @staticmethod
+    def _certificate(value: _FfiDenseCertificate) -> dict[str, Any]:
+        class_id = int(value.class_id)
+        return {
+            "certificate_id": int(value.certificate_id),
+            "logical": {
+                "class_id": class_id,
+                "ordinal": int(value.ordinal),
+            },
+            "physical": {
+                "class_id": class_id,
+                "slot": int(value.physical_slot),
+                "generation": int(value.physical_generation),
+            },
+            "backend": {
+                "domain": class_id,
+                "index": int(value.backend_index),
+            },
+            "token_start": int(value.token_start),
+            "token_end_exclusive": int(value.token_end_exclusive),
+        }
+
+    def submit_view(self, request: dict[str, Any]) -> dict[str, Any]:
+        submission_id = ctypes.c_uint64()
+        live_blocks = ctypes.c_size_t()
+        with self._lock:
+            status = self._library.orbitkv_dense_submit_view(
+                self._handle,
+                self._request(request),
+                ctypes.byref(submission_id),
+                ctypes.byref(live_blocks),
+                self._error,
+                len(self._error),
+            )
+            self._check(status, "submit view")
+            self.transport_commands += 1
+            self.logical_commands += 1
+        return {
+            "status": "view_submitted",
+            "view": {
+                "request": request,
+                "submission_id": int(submission_id.value),
+                "semantic_frontier": None,
+                "blocks": [None] * int(live_blocks.value),
+            },
+        }
+
+    def complete_step(
+        self,
+        request: dict[str, Any],
+        submission_id: int,
+        boundary: int,
+        binding_receipt: dict[str, Any] | None,
+    ) -> list[dict[str, Any]]:
+        binding_payload = (
+            json.dumps(
+                binding_receipt, separators=(",", ":"), sort_keys=True
+            ).encode("utf-8")
+            if binding_receipt is not None
+            else b""
+        )
+        binding_buffer = (
+            (ctypes.c_uint8 * len(binding_payload)).from_buffer_copy(binding_payload)
+            if binding_payload
+            else None
+        )
+        count = ctypes.c_size_t()
+        with self._lock:
+            status = self._library.orbitkv_dense_complete_step(
+                self._handle,
+                self._request(request),
+                int(submission_id),
+                int(boundary),
+                binding_buffer,
+                len(binding_payload),
+                self._certificates,
+                self._certificate_capacity,
+                ctypes.byref(count),
+                self._error,
+                len(self._error),
+            )
+            self._check(status, "complete step")
+            self.transport_commands += 1
+            self.logical_commands += 2 + int(binding_receipt is not None)
+        return [
+            self._certificate(self._certificates[index])
+            for index in range(count.value)
+        ]
+
+    def release_request(self, request: dict[str, Any]) -> list[dict[str, Any]]:
+        count = ctypes.c_size_t()
+        with self._lock:
+            status = self._library.orbitkv_dense_release_request(
+                self._handle,
+                self._request(request),
+                self._certificates,
+                self._certificate_capacity,
+                ctypes.byref(count),
+                self._error,
+                len(self._error),
+            )
+            self._check(status, "release request")
+            self.transport_commands += 1
+            self.logical_commands += 1
+        return [
+            self._certificate(self._certificates[index])
+            for index in range(count.value)
+        ]
+
+    def commit_reclamations_and_recycle(
+        self,
+        request: dict[str, Any],
+        certificates: list[dict[str, Any]],
+    ) -> None:
+        values = self._certificate_values(certificates)
+        with self._lock:
+            status = self._library.orbitkv_dense_commit_reclamations_and_recycle(
+                self._handle,
+                self._request(request),
+                values if certificates else None,
+                len(certificates),
+                self._error,
+                len(self._error),
+            )
+            self._check(status, "commit reclamations and recycle")
+            self.transport_commands += 1
+            self.logical_commands += 2
+
+    def commit_reclamations(self, certificates: list[dict[str, Any]]) -> None:
+        values = self._certificate_values(certificates)
+        with self._lock:
+            status = self._library.orbitkv_dense_commit_reclamations(
+                self._handle,
+                values if certificates else None,
+                len(certificates),
+                self._error,
+                len(self._error),
+            )
+            self._check(status, "commit reclamations")
+            self.transport_commands += 1
+            self.logical_commands += 1
+
+    def _certificate_values(
+        self, certificates: list[dict[str, Any]]
+    ):
+        return (_FfiDenseCertificate * len(certificates))(
+            *[
+                _FfiDenseCertificate(
+                    abi_version=self.ABI_VERSION,
+                    class_id=int(certificate["logical"]["class_id"]),
+                    reserved=0,
+                    certificate_id=int(certificate["certificate_id"]),
+                    ordinal=int(certificate["logical"]["ordinal"]),
+                    physical_slot=int(certificate["physical"]["slot"]),
+                    physical_generation=int(certificate["physical"]["generation"]),
+                    backend_index=int(certificate["backend"]["index"]),
+                    token_start=int(certificate["token_start"]),
+                    token_end_exclusive=int(certificate["token_end_exclusive"]),
+                )
+                for certificate in certificates
+            ]
+        )
+
+    def close(self) -> None:
+        with getattr(self, "_lock", threading.Lock()):
+            if getattr(self, "_handle", None) is None or not self._handle.value:
+                return
+            self._library.orbitkv_dense_destroy(self._handle)
+            self._handle = ctypes.c_void_p()
 
 
 class _FfiCertificate(ctypes.Structure):
@@ -525,35 +904,39 @@ def _complete_execution_entries(entries: list[dict[str, Any]]) -> None:
     for completion_domain, domain_entries in by_domain.items():
         for entry in domain_entries:
             _complete_dense_execution(entry)
-        submission_ids = [
-            int(entry["submission_id"]) for entry in domain_entries
+        owner_entries = [
+            entry for entry in domain_entries if entry["owner_submission_id"] is not None
         ]
-        response = _require_owner().command(
-            {
-                "op": "complete_executions",
-                "completion_domain": completion_domain,
-                "submission_ids": submission_ids,
-            }
-        )
-        if (
-            response.get("status") != "executions_completed"
-            or response.get("completion_domain") != completion_domain
-            or response.get("submission_ids") != submission_ids
-        ):
-            raise RuntimeError(
-                "OrbitKV owner returned an invalid execution completion"
+        owner_submission_ids = [
+            int(entry["owner_submission_id"]) for entry in owner_entries
+        ]
+        if owner_submission_ids:
+            response = _require_owner().command(
+                {
+                    "op": "complete_executions",
+                    "completion_domain": completion_domain,
+                    "submission_ids": owner_submission_ids,
+                }
             )
+            if (
+                response.get("status") != "executions_completed"
+                or response.get("completion_domain") != completion_domain
+                or response.get("submission_ids") != owner_submission_ids
+            ):
+                raise RuntimeError(
+                    "OrbitKV owner returned an invalid execution completion"
+                )
         with _EXECUTION_EVENTS_LOCK:
             for entry in domain_entries:
-                _EXECUTION_EVENTS.pop(int(entry["submission_id"]), None)
+                _EXECUTION_EVENTS.pop(int(entry["event_id"]), None)
         if _trace_allocations_enabled():
             for entry in domain_entries:
                 _emit(
                     {
                         "event": "execution_completed",
                         "completion_domain": entry["completion_domain"],
-                        "submission_id": int(entry["submission_id"]),
-                        "domain_sequence": int(entry["domain_sequence"]),
+                        "submission_id": int(entry["event_id"]),
+                        "domain_sequence": entry["domain_sequence"],
                         "request_ids": entry["request_ids"],
                     }
                 )
@@ -602,6 +985,8 @@ def _track_forward_execution(
     *args: Any,
     **kwargs: Any,
 ):
+    global _NEXT_DENSE_EVENT_ID
+
     dense_executions = _submit_dense_views(batch)
     try:
         result = original_fn(scheduler, batch, *args, **kwargs)
@@ -622,39 +1007,54 @@ def _track_forward_execution(
     completion_domain = _completion_domain(scheduler)
     event = scheduler.device_module.Event()
     event.record(stream=scheduler.forward_stream)
-    response = _require_owner().command(
-        {
-            "op": "register_execution",
-            "completion_domain": completion_domain,
-            "request_ids": request_ids,
-        }
+    dense_request_ids = sorted(
+        str(execution["req"].rid) for execution in dense_executions
     )
-    ticket = response.get("ticket")
-    if (
-        response.get("status") != "execution_registered"
-        or not isinstance(ticket, dict)
-        or ticket.get("completion_domain") != completion_domain
-        or ticket.get("request_ids") != request_ids
-    ):
-        raise RuntimeError("OrbitKV owner returned an invalid execution ticket")
+    owner_request_ids = sorted(set(request_ids) - set(dense_request_ids))
+    ticket = None
+    if owner_request_ids:
+        response = _require_owner().command(
+            {
+                "op": "register_execution",
+                "completion_domain": completion_domain,
+                "request_ids": owner_request_ids,
+            }
+        )
+        ticket = response.get("ticket")
+        if (
+            response.get("status") != "execution_registered"
+            or not isinstance(ticket, dict)
+            or ticket.get("completion_domain") != completion_domain
+            or ticket.get("request_ids") != owner_request_ids
+        ):
+            raise RuntimeError("OrbitKV owner returned an invalid execution ticket")
+        event_id = int(ticket["submission_id"])
+        domain_sequence = int(ticket["domain_sequence"])
+    else:
+        event_id = _NEXT_DENSE_EVENT_ID
+        _NEXT_DENSE_EVENT_ID -= 1
+        domain_sequence = None
     entry = {
         "event": event,
         "completion_domain": completion_domain,
-        "submission_id": int(ticket["submission_id"]),
-        "domain_sequence": int(ticket["domain_sequence"]),
+        "event_id": event_id,
+        "owner_submission_id": (
+            int(ticket["submission_id"]) if ticket is not None else None
+        ),
+        "domain_sequence": domain_sequence,
         "request_ids": request_ids,
         "dense_executions": dense_executions,
     }
     with _EXECUTION_EVENTS_LOCK:
-        if entry["submission_id"] in _EXECUTION_EVENTS:
+        if entry["event_id"] in _EXECUTION_EVENTS:
             raise RuntimeError("duplicate OrbitKV execution submission")
-        _EXECUTION_EVENTS[entry["submission_id"]] = entry
+        _EXECUTION_EVENTS[entry["event_id"]] = entry
     if _trace_allocations_enabled():
         _emit(
             {
                 "event": "execution_registered",
                 "completion_domain": completion_domain,
-                "submission_id": entry["submission_id"],
+                "submission_id": entry["event_id"],
                 "domain_sequence": entry["domain_sequence"],
                 "request_ids": request_ids,
             }
@@ -752,8 +1152,11 @@ def _submit_dense_views(batch: Any) -> list[dict[str, Any]]:
         request = getattr(req, "_orbitkv_dense_request", None)
         if request is None:
             continue
-        response = _require_dense_runtime().command(
-            {"op": "submit_view", "request": request}
+        dense_runtime = _require_dense_runtime()
+        response = (
+            dense_runtime.submit_view(request)
+            if isinstance(dense_runtime, FfiDenseRuntimeClient)
+            else dense_runtime.command({"op": "submit_view", "request": request})
         )
         view = response.get("view")
         if (
@@ -776,7 +1179,11 @@ def _submit_dense_views(batch: Any) -> list[dict[str, Any]]:
                     "event": "dense_view_submitted",
                     "request_id": str(req.rid),
                     "submission_id": int(view["submission_id"]),
-                    "semantic_frontier": int(view["semantic_frontier"]),
+                    "semantic_frontier": (
+                        int(view["semantic_frontier"])
+                        if view["semantic_frontier"] is not None
+                        else int(req._orbitkv_dense_boundary)
+                    ),
                     "blocks": len(view["blocks"]),
                 }
             )
@@ -811,13 +1218,17 @@ def _abort_dense_pending_binding(req: Any) -> None:
     req._orbitkv_dense_pending_binding = None
 
 
-def _commit_dense_pending_binding(req: Any) -> None:
+def _dense_pending_binding_command(req: Any) -> dict[str, Any] | None:
     pending = getattr(req, "_orbitkv_dense_pending_binding", None)
     if pending is None:
-        return
-    response = _require_dense_runtime().command(
-        {"op": "commit_binding", "receipt": pending["receipt"]}
-    )
+        return None
+    return {"op": "commit_binding", "receipt": pending["receipt"]}
+
+
+def _finish_dense_pending_binding(req: Any, response: dict[str, Any]) -> None:
+    pending = getattr(req, "_orbitkv_dense_pending_binding", None)
+    if pending is None:
+        raise RuntimeError("OrbitKV Dense binding completion has no pending intent")
     if (
         response.get("status") != "binding_committed"
         or int(response.get("binding_id", -1))
@@ -838,7 +1249,11 @@ def _commit_dense_pending_binding(req: Any) -> None:
         )
 
 
-def _commit_dense_certificate(req: Any, allocator: Any, certificate: dict[str, Any]) -> None:
+def _free_dense_certificate(
+    req: Any,
+    allocator: Any,
+    certificate: dict[str, Any],
+) -> dict[str, Any]:
     _, swa_class = _capsule_state_classes()
     class_name = _dense_class_names()[int(certificate["logical"]["class_id"])]
     if class_name != swa_class:
@@ -856,7 +1271,7 @@ def _commit_dense_certificate(req: Any, allocator: Any, certificate: dict[str, A
     if int(mapped[0].item()) // page_tokens != expected_page:
         raise RuntimeError("OrbitKV Dense certificate does not match SGLang mapping")
     allocator.free_swa(full_indices)
-    response = _require_dense_runtime().command(
+    return (
         {
             "op": "commit_reclamation",
             "receipt": {
@@ -867,14 +1282,35 @@ def _commit_dense_certificate(req: Any, allocator: Any, certificate: dict[str, A
                 "backend": certificate["backend"],
             },
         }
+        if "artifact_fingerprint" in certificate
+        else {}
     )
+
+
+def _finish_dense_certificate(
+    req: Any,
+    certificate: dict[str, Any],
+    response: dict[str, Any],
+) -> None:
     if response.get("status") != "reclamation_committed":
         raise RuntimeError("OrbitKV Dense Runtime rejected online reclamation")
+    token_start = int(certificate["token_start"])
+    token_end = int(certificate["token_end_exclusive"])
+    class_name = _dense_class_names()[int(certificate["logical"]["class_id"])]
+    expected_page = int(certificate["backend"]["index"])
     req.kv.swa_evicted_seqlen = max(
         int(req.kv.swa_evicted_seqlen),
         token_end,
     )
+    _trace_dense_certificate(req, certificate)
+
+
+def _trace_dense_certificate(req: Any, certificate: dict[str, Any]) -> None:
     if _trace_allocations_enabled():
+        token_start = int(certificate["token_start"])
+        token_end = int(certificate["token_end_exclusive"])
+        class_name = _dense_class_names()[int(certificate["logical"]["class_id"])]
+        expected_page = int(certificate["backend"]["index"])
         _emit(
             {
                 "event": "dense_reclamation_committed",
@@ -892,42 +1328,86 @@ def _complete_dense_execution(entry: dict[str, Any]) -> None:
     executions = entry.get("dense_executions", ())
     for execution in executions:
         req = execution["req"]
-        completed = _require_dense_runtime().command(
-            {
-                "op": "complete_submission",
-                "submission_id": execution["submission_id"],
-            }
-        )
-        if completed.get("status") != "submission_completed":
-            raise RuntimeError("OrbitKV Dense Runtime rejected execution completion")
-        had_pending_binding = (
-            getattr(req, "_orbitkv_dense_pending_binding", None) is not None
-        )
-        _commit_dense_pending_binding(req)
+        pending_command = _dense_pending_binding_command(req)
+        had_pending_binding = pending_command is not None
         frontier_operation = (
             "advance_semantic_frontier"
             if had_pending_binding
             else "advance_resident_frontier"
         )
-        advanced = _require_dense_runtime().command(
+        commands = [
+            {
+                "op": "complete_submission",
+                "submission_id": execution["submission_id"],
+            }
+        ]
+        if pending_command is not None:
+            commands.append(pending_command)
+        commands.append(
             {
                 "op": frontier_operation,
                 "request": execution["request"],
                 "boundary": execution["boundary"],
             }
         )
-        if advanced.get("status") != "semantic_frontier_advanced":
-            raise RuntimeError("OrbitKV Dense Runtime rejected semantic frontier")
+        dense_runtime = _require_dense_runtime()
+        if isinstance(dense_runtime, FfiDenseRuntimeClient):
+            certificates = dense_runtime.complete_step(
+                execution["request"],
+                execution["submission_id"],
+                execution["boundary"],
+                (
+                    getattr(req, "_orbitkv_dense_pending_binding", {}) or {}
+                ).get("receipt"),
+            )
+            if had_pending_binding:
+                pending = req._orbitkv_dense_pending_binding
+                pending["transaction"]["committed"] = True
+                req._orbitkv_dense_boundary = int(pending["boundary"])
+                req._orbitkv_dense_pending_binding = None
+        else:
+            responses = _dense_batch(commands)
+            completed = responses[0]
+            if completed.get("status") != "submission_completed":
+                raise RuntimeError("OrbitKV Dense Runtime rejected execution completion")
+            response_offset = 1
+            if had_pending_binding:
+                _finish_dense_pending_binding(req, responses[response_offset])
+                response_offset += 1
+            advanced = responses[response_offset]
+            if advanced.get("status") != "semantic_frontier_advanced":
+                raise RuntimeError("OrbitKV Dense Runtime rejected semantic frontier")
+            certificates = (
+                list(completed.get("certificates", ()))
+                + list(advanced.get("certificates", ()))
+            )
         req._orbitkv_dense_boundary = int(execution["boundary"])
-        certificates = (
-            list(completed.get("certificates", ()))
-            + list(advanced.get("certificates", ()))
-        )
         allocator = (
             req._orbitkv_dense_allocator if certificates else None
         )
+        reclamation_commands = []
         for certificate in certificates:
-            _commit_dense_certificate(req, allocator, certificate)
+            command = _free_dense_certificate(req, allocator, certificate)
+            if command:
+                reclamation_commands.append(command)
+        if reclamation_commands:
+            reclamation_responses = _dense_batch(reclamation_commands)
+            for certificate, response in zip(
+                certificates,
+                reclamation_responses,
+                strict=True,
+            ):
+                _finish_dense_certificate(req, certificate, response)
+        elif certificates:
+            if isinstance(dense_runtime, FfiDenseRuntimeClient):
+                dense_runtime.commit_reclamations(certificates)
+            for certificate in certificates:
+                token_end = int(certificate["token_end_exclusive"])
+                req.kv.swa_evicted_seqlen = max(
+                    int(req.kv.swa_evicted_seqlen),
+                    token_end,
+                )
+                _trace_dense_certificate(req, certificate)
         if _trace_allocations_enabled():
             _emit(
                 {
@@ -1685,6 +2165,14 @@ def _stop_dense_runtime() -> None:
 
     if _DENSE_RUNTIME is None:
         return
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "dense_transport_stats",
+                "transport_commands": int(_DENSE_RUNTIME.transport_commands),
+                "logical_commands": int(_DENSE_RUNTIME.logical_commands),
+            }
+        )
     _DENSE_RUNTIME.close()
     _DENSE_RUNTIME = None
 
@@ -1733,18 +2221,54 @@ def _require_bindings() -> OwnerClient:
         return _BINDINGS
 
 
-def _require_dense_runtime() -> DenseRuntimeClient:
+def _require_dense_runtime() -> DenseRuntimeClient | FfiDenseRuntimeClient:
     global _DENSE_RUNTIME
 
     if not _dense_capsule_binding_enabled():
         raise RuntimeError("OrbitKV Dense Capsule binding is not compiled")
     with _DENSE_RUNTIME_LOCK:
         if _DENSE_RUNTIME is None:
-            _DENSE_RUNTIME = DenseRuntimeClient(
-                os.environ.get("ORBITKV_BIN", "orbitkv"),
-                os.environ["ORBITKV_RUNTIME_STATE_PLAN"],
-            )
+            transport = os.environ.get(
+                "ORBITKV_DENSE_TRANSPORT", "sidecar"
+            ).lower()
+            if transport == "sidecar":
+                _DENSE_RUNTIME = DenseRuntimeClient(
+                    os.environ.get("ORBITKV_BIN", "orbitkv"),
+                    os.environ["ORBITKV_RUNTIME_STATE_PLAN"],
+                )
+            elif transport == "ffi":
+                library_path = os.environ.get("ORBITKV_OWNER_LIB")
+                if not library_path:
+                    raise RuntimeError(
+                        "ORBITKV_OWNER_LIB is required for Dense FFI"
+                    )
+                _DENSE_RUNTIME = FfiDenseRuntimeClient(
+                    library_path,
+                    os.environ["ORBITKV_RUNTIME_STATE_PLAN"],
+                )
+            else:
+                raise RuntimeError(
+                    f"unsupported ORBITKV_DENSE_TRANSPORT: {transport}"
+                )
         return _DENSE_RUNTIME
+
+
+def _dense_batch(commands: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not commands:
+        return []
+    response = _require_dense_runtime().command(
+        {"op": "batch", "commands": commands}
+    )
+    responses = response.get("responses")
+    if (
+        response.get("status") != "batch_completed"
+        or not isinstance(responses, list)
+        or len(responses) != len(commands)
+    ):
+        raise RuntimeError("OrbitKV Dense Runtime returned an invalid command batch")
+    if any(item.get("status") == "error" for item in responses):
+        raise RuntimeError("OrbitKV Dense Runtime command batch failed")
+    return responses
 
 
 def _export_capsule_before_release(
@@ -2678,14 +3202,18 @@ def _prepare_dense_capsule_release(req: Any) -> dict[str, Any] | None:
         return None
     if getattr(req, "_orbitkv_dense_pending_binding", None) is not None:
         raise RuntimeError("OrbitKV Dense request has an uncommitted binding at release")
-    response = _require_dense_runtime().command(
-        {"op": "release_request", "request": request}
-    )
-    if response.get("status") != "request_released":
-        raise RuntimeError("OrbitKV Dense Runtime returned an invalid request release")
-    certificates = response.get("certificates")
-    if not isinstance(certificates, list):
-        raise RuntimeError("OrbitKV Dense Runtime returned invalid certificates")
+    dense_runtime = _require_dense_runtime()
+    if isinstance(dense_runtime, FfiDenseRuntimeClient):
+        certificates = dense_runtime.release_request(request)
+    else:
+        response = dense_runtime.command(
+            {"op": "release_request", "request": request}
+        )
+        if response.get("status") != "request_released":
+            raise RuntimeError("OrbitKV Dense Runtime returned an invalid request release")
+        certificates = response.get("certificates")
+        if not isinstance(certificates, list):
+            raise RuntimeError("OrbitKV Dense Runtime returned invalid certificates")
     return {"request": request, "certificates": certificates}
 
 
@@ -2694,34 +3222,47 @@ def _commit_dense_capsule_release(req: Any, release: dict[str, Any] | None) -> N
         return
     request = release["request"]
     certificates = release["certificates"]
-    for certificate in certificates:
-        committed = _require_dense_runtime().command(
-            {
-                "op": "commit_reclamation",
-                "receipt": {
-                    "schema": "orbitkv.dense-physical-reclamation-receipt.v1",
-                    "artifact_fingerprint": certificate["artifact_fingerprint"],
-                    "certificate_id": certificate["certificate_id"],
-                    "physical": certificate["physical"],
-                    "backend": certificate["backend"],
-                },
-            }
+    dense_runtime = _require_dense_runtime()
+    if isinstance(dense_runtime, FfiDenseRuntimeClient):
+        dense_runtime.commit_reclamations_and_recycle(request, certificates)
+        responses = []
+    else:
+        receipts = [
+        {
+            "schema": "orbitkv.dense-physical-reclamation-receipt.v1",
+            "artifact_fingerprint": certificate["artifact_fingerprint"],
+            "certificate_id": certificate["certificate_id"],
+            "physical": certificate["physical"],
+            "backend": certificate["backend"],
+        }
+        for certificate in certificates
+    ]
+        responses = _dense_batch(
+            [
+                {"op": "commit_reclamations", "receipts": receipts},
+                {"op": "recycle_request", "request": request},
+            ]
         )
-        if committed.get("status") != "reclamation_committed":
-            raise RuntimeError("OrbitKV Dense Runtime rejected physical reclamation")
-    recycled = _require_dense_runtime().command(
-        {"op": "recycle_request", "request": request}
-    )
-    if recycled.get("status") != "request_recycled":
-        raise RuntimeError("OrbitKV Dense Runtime failed to recycle request")
+        committed, recycled = responses
+        if (
+            committed.get("status") != "reclamations_committed"
+            or committed.get("certificate_ids")
+            != [certificate["certificate_id"] for certificate in certificates]
+        ):
+            raise RuntimeError("OrbitKV Dense Runtime rejected physical reclamations")
+        if recycled.get("status") != "request_recycled":
+            raise RuntimeError("OrbitKV Dense Runtime failed to recycle request")
     req._orbitkv_dense_request = None
     req._orbitkv_dense_committed = False
     if _trace_allocations_enabled():
+        dense_runtime = _require_dense_runtime()
         _emit(
             {
                 "event": "dense_request_recycled",
                 "request_id": str(req.rid),
                 "certificates": len(certificates),
+                "transport_commands": int(dense_runtime.transport_commands),
+                "logical_commands": int(dense_runtime.logical_commands),
             }
         )
 

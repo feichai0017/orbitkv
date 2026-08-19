@@ -1459,44 +1459,75 @@ impl DenseKvRuntime {
         &mut self,
         receipt: &DensePhysicalReclamationReceipt,
     ) -> Result<(), DenseRuntimeError> {
-        let certificate = self
-            .certificates
-            .get(receipt.certificate_id)
-            .cloned()
-            .ok_or(DenseRuntimeError::UnknownCertificate(
-                receipt.certificate_id,
-            ))?;
-        if receipt.schema != "orbitkv.dense-physical-reclamation-receipt.v1"
-            || receipt.artifact_fingerprint != self.artifact.artifact_fingerprint
-            || receipt.physical != certificate.physical
-            || receipt.backend != certificate.backend
+        self.commit_reclamations(std::slice::from_ref(receipt))
+    }
+
+    /// Atomically commits physical reclamation for a complete receipt batch.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error without freeing any slot if a receipt is duplicated,
+    /// stale, or mismatched.
+    pub fn commit_reclamations(
+        &mut self,
+        receipts: &[DensePhysicalReclamationReceipt],
+    ) -> Result<(), DenseRuntimeError> {
+        let mut certificate_ids = receipts
+            .iter()
+            .map(|receipt| receipt.certificate_id)
+            .collect::<Vec<_>>();
+        certificate_ids.sort_unstable();
+        if let Some(duplicate) = certificate_ids
+            .windows(2)
+            .find(|pair| pair[0] == pair[1])
+            .map(|pair| pair[0])
         {
-            return Err(DenseRuntimeError::MismatchedReclamationReceipt(
-                receipt.certificate_id,
-            ));
+            return Err(DenseRuntimeError::MismatchedReclamationReceipt(duplicate));
         }
-        let slot = self.slot(certificate.physical)?;
-        if slot.phase != DenseSlotPhase::Certified
-            || slot.pending_certificate != Some(receipt.certificate_id)
-            || slot.readers != 0
-            || slot.occupant != Some(certificate.logical)
-            || slot.backend != Some(certificate.backend)
-            || self.backend_binding(certificate.backend)? != Some(certificate.physical)
-        {
-            return Err(DenseRuntimeError::MismatchedReclamationReceipt(
-                receipt.certificate_id,
-            ));
+        let mut certificates = Vec::with_capacity(receipts.len());
+        for receipt in receipts {
+            let certificate = self
+                .certificates
+                .get(receipt.certificate_id)
+                .cloned()
+                .ok_or(DenseRuntimeError::UnknownCertificate(
+                    receipt.certificate_id,
+                ))?;
+            if receipt.schema != "orbitkv.dense-physical-reclamation-receipt.v1"
+                || receipt.artifact_fingerprint != self.artifact.artifact_fingerprint
+                || receipt.physical != certificate.physical
+                || receipt.backend != certificate.backend
+            {
+                return Err(DenseRuntimeError::MismatchedReclamationReceipt(
+                    receipt.certificate_id,
+                ));
+            }
+            let slot = self.slot(certificate.physical)?;
+            if slot.phase != DenseSlotPhase::Certified
+                || slot.pending_certificate != Some(receipt.certificate_id)
+                || slot.readers != 0
+                || slot.occupant != Some(certificate.logical)
+                || slot.backend != Some(certificate.backend)
+                || self.backend_binding(certificate.backend)? != Some(certificate.physical)
+            {
+                return Err(DenseRuntimeError::MismatchedReclamationReceipt(
+                    receipt.certificate_id,
+                ));
+            }
+            certificates.push(certificate);
         }
-        let slot = self.slot_mut(certificate.physical)?;
-        slot.occupant = None;
-        slot.version = None;
-        slot.backend = None;
-        slot.phase = DenseSlotPhase::Free;
-        slot.pending_certificate = None;
-        self.remove_backend_binding(certificate.backend, certificate.physical)?;
-        self.certificates.remove(receipt.certificate_id).ok_or(
-            DenseRuntimeError::UnknownCertificate(receipt.certificate_id),
-        )?;
+        for certificate in certificates {
+            let slot = self.slot_mut(certificate.physical)?;
+            slot.occupant = None;
+            slot.version = None;
+            slot.backend = None;
+            slot.phase = DenseSlotPhase::Free;
+            slot.pending_certificate = None;
+            self.remove_backend_binding(certificate.backend, certificate.physical)?;
+            self.certificates.remove(certificate.certificate_id).ok_or(
+                DenseRuntimeError::UnknownCertificate(certificate.certificate_id),
+            )?;
+        }
         Ok(())
     }
 
@@ -2342,6 +2373,38 @@ mod tests {
             ))
         );
         commit_dense(&mut runtime, certificates);
+    }
+
+    #[test]
+    fn reclamation_batch_is_atomic_on_receipt_mismatch() {
+        let artifact = DenseRuntimeArtifact::compile(&hybrid_plan(), 1, 4, 16).unwrap();
+        let mut runtime = DenseKvRuntime::new(artifact).unwrap();
+        let lease = runtime.acquire_request().unwrap();
+        runtime.materialize_to(lease, 4).unwrap();
+        runtime.advance_semantic_frontier(lease, 4).unwrap();
+        let certificates = runtime.release_request(lease).unwrap();
+        let artifact_fingerprint = runtime.artifact().artifact_fingerprint.clone();
+        let mut receipts = certificates
+            .iter()
+            .map(|certificate| DensePhysicalReclamationReceipt {
+                schema: "orbitkv.dense-physical-reclamation-receipt.v1".into(),
+                artifact_fingerprint: artifact_fingerprint.clone(),
+                certificate_id: certificate.certificate_id,
+                physical: certificate.physical,
+                backend: certificate.backend,
+            })
+            .collect::<Vec<_>>();
+        receipts[1].backend.index = u64::MAX;
+        assert_eq!(
+            runtime.commit_reclamations(&receipts),
+            Err(DenseRuntimeError::MismatchedReclamationReceipt(
+                receipts[1].certificate_id
+            ))
+        );
+        assert_eq!(runtime.stats().resident_blocks, 2);
+        receipts[1].backend = certificates[1].backend;
+        runtime.commit_reclamations(&receipts).unwrap();
+        assert_eq!(runtime.stats().resident_blocks, 0);
     }
 
     #[test]

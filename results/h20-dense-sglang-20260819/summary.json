@@ -15,9 +15,9 @@
   "claim_boundary": [
     "real checkpoint and pinned SGLang attention data plane",
     "pure-SWA 4K logical Prefix with compiler-proven 1K live tail",
-    "single request, 128 continuation tokens, three rounds",
-    "Dense sidecar owns page binding, immutable view, CUDA-event completion, online retirement certificates, and request recycling",
-    "no overlap, Radix, speculation, disaggregation, CUDA Graph, Hybrid Full+SWA, or performance-win claim"
+    "single request, 128 continuation tokens, seven rounds",
+    "typed struct Dense FFI owns page binding, immutable view, CUDA-event completion, online retirement certificates, and request recycling",
+    "no drop-in complete allocator replacement, overlap, Radix, speculation, disaggregation, CUDA Graph, Hybrid Full+SWA, or performance-win claim"
   ],
   "correctness_fix": {
     "bounded_boost": "only page-aligned tokens provably dead before the next non-overlap ChunkCache allocation",
@@ -33,21 +33,25 @@
     ],
     "root_cause": "continued chunk admission did not consume the compiled SWA reclamation proof"
   },
-  "date": "2026-08-19",
+  "date": "2026-08-20",
   "dense_event_counts": {
-    "capsule_hydrated": 3,
-    "dense_binding_committed": 24,
-    "dense_binding_prepared": 24,
-    "dense_execution_completed": 384,
-    "dense_hydration_committed": 3,
-    "dense_reclamation_committed": 24,
-    "dense_request_recycled": 3,
-    "dense_view_submitted": 384,
-    "execution_completed": 384,
-    "execution_registered": 384
+    "capsule_hydrated": 7,
+    "dense_binding_prepared": 56,
+    "dense_execution_completed": 896,
+    "dense_hydration_committed": 7,
+    "dense_reclamation_committed": 56,
+    "dense_request_recycled": 7,
+    "dense_view_submitted": 896,
+    "execution_completed": 896,
+    "execution_registered": 896
   },
-  "dense_over_capsule": 1.1010457754995369,
-  "dense_over_reference": 1.1691162465819396,
+  "dense_over_capsule": 1.075246905271055,
+  "dense_over_reference": 1.1781593295175998,
+  "dense_transport": "typed_struct_ffi_v1",
+  "dense_transport_stats": {
+    "logical_commands": 2898,
+    "transport_commands": 1939
+  },
   "digests": {
     "capsule": "985ee8b2265fc13e82376669f07f2030b8616ad3f282d3ae0fd1384e54c556e4",
     "dense": "985ee8b2265fc13e82376669f07f2030b8616ad3f282d3ae0fd1384e54c556e4",
@@ -56,25 +60,37 @@
   "gpu": "NVIDIA H20",
   "iteration_seconds": {
     "capsule": [
-      2.339688640087843,
-      1.041629146784544,
-      1.0466519184410572
+      2.4300031289458275,
+      1.0927117690443993,
+      1.0774750113487244,
+      1.045320514589548,
+      1.0495988801121712,
+      1.0443653427064419,
+      1.0419911071658134
     ],
     "dense": [
-      2.3627878054976463,
-      1.1458269022405148,
-      1.1524116732180119
+      2.3450255692005157,
+      1.1135399006307125,
+      1.1209132671356201,
+      1.1325122974812984,
+      1.1285779476165771,
+      1.128611482679844,
+      1.1145369112491608
     ],
     "reference": [
-      2.136303048580885,
-      0.985711794346571,
-      0.960924755781889
+      2.104540690779686,
+      0.9695877730846405,
+      0.9548539705574512,
+      0.9568226002156734,
+      0.955829743295908,
+      0.9579162336885929,
+      0.9579582028090954
     ]
   },
   "median_seconds": {
-    "capsule": 1.0466519184410572,
-    "dense": 1.1524116732180119,
-    "reference": 0.985711794346571
+    "capsule": 1.0495988801121712,
+    "dense": 1.1285779476165771,
+    "reference": 0.9579162336885929
   },
   "model": "/workspace/models/tiny-mistral-248m-v3-d128-swa1024-fixture",
   "physical_slot_reduction_percent": 90.33203125,
@@ -83,13 +99,29 @@
     "dense": 3168,
     "reference": 32768
   },
-  "schema": "orbitkv.h20-dense-sglang-validation.v2",
+  "replacement_boundary": {
+    "engine_still_owns": [
+      "physical page allocation primitives",
+      "ReqToToken table",
+      "KV tensors and attention kernel views",
+      "scheduler and Prefix/Radix protocols outside the qualified path"
+    ],
+    "orbitkv_owns": [
+      "compiled temporal address program",
+      "request lease and generation",
+      "backend page binding identity",
+      "immutable reader view",
+      "semantic and execution frontiers",
+      "retirement certificates and commit"
+    ]
+  },
+  "schema": "orbitkv.h20-dense-sglang-validation.v4",
   "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
   "workload": {
     "continuation_tokens": 128,
     "live_tail_tokens": 1024,
     "page_tokens": 16,
     "prefix_tokens": 4096,
-    "rounds": 3
+    "rounds": 7
   }
 }

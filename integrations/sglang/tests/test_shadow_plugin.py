@@ -288,6 +288,14 @@ class FakeDenseRuntime:
     def command(self, command):
         self.commands.append(command)
         operation = command["op"]
+        if operation == "batch":
+            outer_commands = self.commands
+            responses = []
+            for nested in command["commands"]:
+                self.commands = []
+                responses.append(self.command(nested))
+                self.commands = outer_commands
+            return {"status": "batch_completed", "responses": responses}
         if operation == "submit_view":
             submission_id = self.next_submission_id
             self.next_submission_id += 1
@@ -320,6 +328,18 @@ class FakeDenseRuntime:
                 "status": "binding_committed",
                 "binding_id": command["receipt"]["binding_id"],
                 "blocks": [],
+            }
+        if operation == "commit_reclamations":
+            return {
+                "status": "reclamations_committed",
+                "certificate_ids": [
+                    receipt["certificate_id"] for receipt in command["receipts"]
+                ],
+            }
+        if operation == "recycle_request":
+            return {
+                "status": "request_recycled",
+                "request": command["request"],
             }
         raise AssertionError(command)
 
@@ -1844,10 +1864,10 @@ class ShadowPluginTests(unittest.TestCase):
             [command["op"] for command in dense.commands],
             [
                 "submit_view",
-                "complete_submission",
-                "advance_resident_frontier",
+                "batch",
             ],
         )
+        self.assertEqual(owner.commands, [])
 
     def test_request_release_waits_only_for_its_cuda_event(self):
         from orbitkv_sglang import plugin
@@ -1865,16 +1885,20 @@ class ShadowPluginTests(unittest.TestCase):
                     1: {
                         "event": event_r0,
                         "completion_domain": "cuda:0:forward",
-                        "submission_id": 1,
+                        "event_id": 1,
+                        "owner_submission_id": 1,
                         "domain_sequence": 1,
                         "request_ids": ["r0"],
+                        "dense_executions": [],
                     },
                     2: {
                         "event": event_r1,
                         "completion_domain": "cuda:0:forward",
-                        "submission_id": 2,
+                        "event_id": 2,
+                        "owner_submission_id": 2,
                         "domain_sequence": 2,
                         "request_ids": ["r1"],
+                        "dense_executions": [],
                     },
                 }
             )
@@ -3084,6 +3108,32 @@ class ShadowPluginTests(unittest.TestCase):
             self.assertEqual(
                 ffi.command(release_command),
                 sidecar.command(release_command),
+            )
+        finally:
+            ffi.close()
+            sidecar.close()
+
+    def test_ffi_and_sidecar_dense_transports_are_equivalent(self):
+        from orbitkv_sglang import plugin
+
+        orbitkv_bin = os.environ.get("ORBITKV_BIN")
+        owner_library = os.environ.get("ORBITKV_OWNER_LIB")
+        if not orbitkv_bin or not owner_library:
+            self.skipTest("ORBITKV_BIN and ORBITKV_OWNER_LIB are required")
+        root = Path(__file__).resolve().parents[3]
+        state_plan = root / (
+            "results/h20-dense-sglang-20260819/runtime-state-plan.json"
+        )
+        ffi = plugin.FfiDenseRuntimeClient(owner_library, str(state_plan))
+        sidecar = plugin.DenseRuntimeClient(orbitkv_bin, str(state_plan))
+        try:
+            self.assertEqual(
+                ffi.command({"op": "stats"}),
+                sidecar.command({"op": "stats"}),
+            )
+            self.assertEqual(
+                ffi.command({"op": "acquire_request"}),
+                sidecar.command({"op": "acquire_request"}),
             )
         finally:
             ffi.close()

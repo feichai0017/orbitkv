@@ -36,7 +36,7 @@ result summaries link here rather than defining independent support claims.
 | Component-aware Prefix ownership | L4 | GPT-OSS 20B; exact 1K Prefix; SGLang `UnifiedRadixCache`; authenticated Full+SWA components; atomic shared lease; single request, non-overlap | `results/h20-radix-prefix-20260819/` |
 | CUDA-event execution frontier | L4 | GPT-OSS 20B; SGLang overlap scheduler; Full+SWA ChunkCache; one forward-stream domain; one- and two-request event-backed reclamation | `results/h20-cuda-event-overlap-20260819/` |
 | Dense ownership runtime | L2 | Fixed Class IDs and request stripes; bounded generation arenas; 1,000-event Reference differential test; release control-plane benchmark | `results/dense-runtime-20260819/` |
-| Dense SGLang physical binding | L4 | Pure SWA; 4K logical Prefix/1K live tail; paged-periodic allocator; single request; 128 continuation tokens across three rounds; CUDA-event view pin; non-overlap | `results/h20-dense-sglang-20260819/` |
+| Dense SGLang physical binding | L4 | Pure SWA; 4K logical Prefix/1K live tail; paged-periodic allocator; single request; 128 continuation tokens across seven rounds; typed-struct FFI v1; CUDA-event view pin; non-overlap | `results/h20-dense-sglang-20260819/` |
 | Generation-aware CUDA VMM slot | L3 | H20 reserve/map/remap/unmap primitive; not SGLang tensor storage | `results/h20-generation-vmm-20260817/` |
 | Transactional physical reclamation | L3 | Certificate, backend receipt, commit; reference/CUDA lifecycle | `results/h20-generation-vmm-20260817/` |
 | Transactional allocation/binding | L4 | Rust prepare/commit/abort coordinator drives SGLang Capsule hydration; binding uses the owner sidecar while reclamation may use FFI | `src/binding.rs`, `src/manager.rs`, `integrations/sglang/tests/test_shadow_plugin.py` |
@@ -46,7 +46,12 @@ result summaries link here rather than defining independent support claims.
 The following remain below L4:
 
 - One runtime resource manifest for deployment paths, model identity, and external service endpoints.
-- A versioned FFI binding ABI; the current L4 binding path uses the Rust owner sidecar.
+- A versioned FFI ABI for component-aware Prefix binding; that L4 path still
+  uses the Rust owner sidecar. Dense page binding has a separate typed FFI v1.
+- Drop-in replacement of SGLang's complete allocator/ReqToToken/Prefix contract;
+  the qualified Dense path owns page binding and lifetime for one pure-SWA
+  execution slice while SGLang still supplies allocation primitives and kernel
+  views.
 - SGLang Radix/Prefix pressure eviction, concurrent sharing, and broader
   shared-page qualification beyond the exact-prefix Full+SWA path.
 - Multiple simultaneous completion domains, Radix+overlap, and CUDA Graph plus

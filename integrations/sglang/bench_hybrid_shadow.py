@@ -130,6 +130,9 @@ def main() -> None:
     parser.add_argument(
         "--owner-transport", choices=("ffi", "sidecar"), default="ffi"
     )
+    parser.add_argument(
+        "--dense-transport", choices=("ffi", "sidecar"), default="sidecar"
+    )
     parser.add_argument("--eviction-interval", type=int, default=16)
     parser.add_argument(
         "--cuda-graph-mode", choices=("disabled", "decode"), default="disabled"
@@ -191,6 +194,7 @@ def main() -> None:
         os.environ.pop("ORBITKV_SGLANG_OWNING", None)
         os.environ.pop("ORBITKV_OWNER_TRANSPORT", None)
         os.environ.pop("ORBITKV_OWNER_LIB", None)
+        os.environ.pop("ORBITKV_DENSE_TRANSPORT", None)
         os.environ.pop("ORBITKV_BIN", None)
         os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
         os.environ.pop("ORBITKV_SGLANG_REVISION", None)
@@ -262,7 +266,14 @@ def main() -> None:
             if runtime_owner_transport == "ffi":
                 os.environ["ORBITKV_OWNER_LIB"] = args.orbitkv_owner_lib
             else:
-                os.environ.pop("ORBITKV_OWNER_LIB", None)
+                if dense_runtime is not None and args.dense_transport == "ffi":
+                    os.environ["ORBITKV_OWNER_LIB"] = args.orbitkv_owner_lib
+                else:
+                    os.environ.pop("ORBITKV_OWNER_LIB", None)
+            if dense_runtime is not None:
+                os.environ["ORBITKV_DENSE_TRANSPORT"] = args.dense_transport
+            else:
+                os.environ.pop("ORBITKV_DENSE_TRANSPORT", None)
         elif args.mode in ("policy", "owner"):
             os.environ["ORBITKV_SGLANG_POLICY"] = str(plan_path)
             if args.physical_plan:
@@ -290,6 +301,7 @@ def main() -> None:
             os.environ.pop("ORBITKV_SGLANG_OWNING", None)
             os.environ.pop("ORBITKV_OWNER_TRANSPORT", None)
             os.environ.pop("ORBITKV_OWNER_LIB", None)
+            os.environ.pop("ORBITKV_DENSE_TRANSPORT", None)
         Path(args.trace).unlink(missing_ok=True)
 
     engine_args = dict(
