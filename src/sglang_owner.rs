@@ -5,7 +5,8 @@ use thiserror::Error;
 
 use crate::{
     BindingCoordinator, BindingCoordinatorStats, BindingError, CompiledKvPlan,
-    PhysicalStateBindingReceipt, PlanError, RetentionKind, StateBindingComponent,
+    PhysicalStateBindingReceipt, PlanError, PrefixError, PrefixLeaseId, PrefixObjectId,
+    PrefixObjectSnapshot, PrefixRuntime, PrefixRuntimeStats, RetentionKind, StateBindingComponent,
     StateBindingIntent,
 };
 
@@ -37,12 +38,48 @@ pub enum OwnerCommand {
     PrepareBinding {
         request_id: String,
         prefix_tokens: u64,
+        #[serde(default)]
+        prefix: Option<Box<PrefixObjectSnapshot>>,
     },
     CommitBinding {
         receipt: PhysicalStateBindingReceipt,
     },
+    CommitBindingAndAcquirePrefix {
+        receipt: PhysicalStateBindingReceipt,
+        state_classes: Vec<String>,
+    },
     AbortBinding {
         binding_id: u64,
+    },
+    RegisterPrefix {
+        prefix: Box<PrefixObjectSnapshot>,
+    },
+    AcquirePrefix {
+        object_id: PrefixObjectId,
+        state_classes: Vec<String>,
+    },
+    ReleasePrefixComponent {
+        lease_id: PrefixLeaseId,
+        state_class: String,
+    },
+    AttachPrefixComponent {
+        lease_id: PrefixLeaseId,
+        state_class: String,
+    },
+    ReleasePrefix {
+        lease_id: PrefixLeaseId,
+    },
+    TombstonePrefixComponent {
+        object_id: PrefixObjectId,
+        state_class: String,
+    },
+    RecoverPrefixComponent {
+        object_id: PrefixObjectId,
+        state_class: String,
+        physical_binding_id: String,
+    },
+    PrefixSnapshot {
+        object_id: PrefixObjectId,
     },
     Stats,
 }
@@ -85,6 +122,7 @@ pub struct OwnerStats {
     pub committed_reclamations: u64,
     pub committed_tokens: u64,
     pub binding: BindingCoordinatorStats,
+    pub prefix: PrefixRuntimeStats,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -105,8 +143,44 @@ pub enum OwnerResponse {
     BindingCommitted {
         binding_id: u64,
     },
+    PrefixBindingCommitted {
+        binding_id: u64,
+        lease_id: PrefixLeaseId,
+        object_id: PrefixObjectId,
+        state_classes: Vec<String>,
+    },
     BindingAborted {
         binding_id: u64,
+    },
+    PrefixRegistered {
+        object_id: PrefixObjectId,
+    },
+    PrefixAcquired {
+        lease_id: PrefixLeaseId,
+        object_id: PrefixObjectId,
+        state_classes: Vec<String>,
+    },
+    PrefixComponentReleased {
+        lease_id: PrefixLeaseId,
+        state_class: String,
+    },
+    PrefixComponentAttached {
+        lease_id: PrefixLeaseId,
+        state_class: String,
+    },
+    PrefixReleased {
+        lease_id: PrefixLeaseId,
+    },
+    PrefixComponentTombstoned {
+        object_id: PrefixObjectId,
+        state_class: String,
+    },
+    PrefixComponentRecovered {
+        object_id: PrefixObjectId,
+        state_class: String,
+    },
+    PrefixSnapshot {
+        prefix: Box<PrefixObjectSnapshot>,
     },
     Stats {
         stats: OwnerStats,
@@ -167,6 +241,8 @@ pub enum OwnerError {
     #[error(transparent)]
     Binding(#[from] BindingError),
     #[error(transparent)]
+    Prefix(#[from] PrefixError),
+    #[error(transparent)]
     Plan(#[from] PlanError),
 }
 
@@ -177,6 +253,8 @@ pub struct SglangOwner {
     window_tokens: u64,
     full_class_name: Option<String>,
     binding: BindingCoordinator,
+    prefix: PrefixRuntime,
+    pending_prefix_bindings: BTreeMap<u64, PrefixObjectId>,
     requests: BTreeMap<String, RequestState>,
     pending: BTreeMap<u64, PendingState>,
     next_certificate_id: u64,
@@ -225,6 +303,8 @@ impl SglangOwner {
                 .find(|class| class.spec.retention == RetentionKind::Full)
                 .map(|class| class.spec.name.clone()),
             binding: BindingCoordinator::new(plan.fingerprint()),
+            prefix: PrefixRuntime::default(),
+            pending_prefix_bindings: BTreeMap::new(),
             requests: BTreeMap::new(),
             pending: BTreeMap::new(),
             next_certificate_id: 1,
@@ -267,19 +347,102 @@ impl SglangOwner {
             OwnerCommand::PrepareBinding {
                 request_id,
                 prefix_tokens,
-            } => self.prepare_binding(request_id, prefix_tokens),
-            OwnerCommand::CommitBinding { receipt } => {
-                let binding_id = receipt.binding_id;
-                self.binding.commit(&receipt)?;
-                Ok(OwnerResponse::BindingCommitted { binding_id })
-            }
+                prefix,
+            } => self.prepare_binding(request_id, prefix_tokens, prefix.as_deref()),
+            OwnerCommand::CommitBinding { receipt } => self.commit_binding(&receipt, None),
+            OwnerCommand::CommitBindingAndAcquirePrefix {
+                receipt,
+                state_classes,
+            } => self.commit_binding(&receipt, Some(state_classes)),
             OwnerCommand::AbortBinding { binding_id } => {
                 self.binding.abort(binding_id)?;
+                self.pending_prefix_bindings.remove(&binding_id);
                 Ok(OwnerResponse::BindingAborted { binding_id })
             }
+            prefix_command @ (OwnerCommand::RegisterPrefix { .. }
+            | OwnerCommand::AcquirePrefix { .. }
+            | OwnerCommand::ReleasePrefixComponent { .. }
+            | OwnerCommand::AttachPrefixComponent { .. }
+            | OwnerCommand::ReleasePrefix { .. }
+            | OwnerCommand::TombstonePrefixComponent { .. }
+            | OwnerCommand::RecoverPrefixComponent { .. }
+            | OwnerCommand::PrefixSnapshot { .. }) => self.execute_prefix_command(prefix_command),
             OwnerCommand::Stats => Ok(OwnerResponse::Stats {
                 stats: self.stats(),
             }),
+        }
+    }
+
+    fn execute_prefix_command(
+        &mut self,
+        command: OwnerCommand,
+    ) -> Result<OwnerResponse, OwnerError> {
+        match command {
+            OwnerCommand::RegisterPrefix { prefix } => {
+                let object_id = self.prefix.register_persistent_snapshot(&prefix)?;
+                Ok(OwnerResponse::PrefixRegistered { object_id })
+            }
+            OwnerCommand::AcquirePrefix {
+                object_id,
+                state_classes,
+            } => {
+                let lease = self.prefix.acquire(object_id, &state_classes)?;
+                Ok(OwnerResponse::PrefixAcquired {
+                    lease_id: lease.lease_id,
+                    object_id: lease.object_id,
+                    state_classes: lease.state_classes,
+                })
+            }
+            OwnerCommand::ReleasePrefixComponent {
+                lease_id,
+                state_class,
+            } => {
+                self.prefix.release_component(lease_id, &state_class)?;
+                Ok(OwnerResponse::PrefixComponentReleased {
+                    lease_id,
+                    state_class,
+                })
+            }
+            OwnerCommand::AttachPrefixComponent {
+                lease_id,
+                state_class,
+            } => {
+                self.prefix.attach_component(lease_id, &state_class)?;
+                Ok(OwnerResponse::PrefixComponentAttached {
+                    lease_id,
+                    state_class,
+                })
+            }
+            OwnerCommand::ReleasePrefix { lease_id } => {
+                self.prefix.release(lease_id)?;
+                Ok(OwnerResponse::PrefixReleased { lease_id })
+            }
+            OwnerCommand::TombstonePrefixComponent {
+                object_id,
+                state_class,
+            } => {
+                self.prefix.tombstone(object_id, &state_class)?;
+                Ok(OwnerResponse::PrefixComponentTombstoned {
+                    object_id,
+                    state_class,
+                })
+            }
+            OwnerCommand::RecoverPrefixComponent {
+                object_id,
+                state_class,
+                physical_binding_id,
+            } => {
+                self.prefix
+                    .mark_device_resident(object_id, &state_class, physical_binding_id)?;
+                Ok(OwnerResponse::PrefixComponentRecovered {
+                    object_id,
+                    state_class,
+                })
+            }
+            OwnerCommand::PrefixSnapshot { object_id } => Ok(OwnerResponse::PrefixSnapshot {
+                prefix: Box::new(self.prefix.snapshot(object_id)?),
+            }),
+            _ => unreachable!("only Prefix commands are delegated"),
         }
     }
 
@@ -426,6 +589,7 @@ impl SglangOwner {
         &mut self,
         request_id: String,
         prefix_tokens: u64,
+        prefix: Option<&PrefixObjectSnapshot>,
     ) -> Result<OwnerResponse, OwnerError> {
         if prefix_tokens == 0 {
             return Err(OwnerError::ArithmeticOverflow("binding prefix tokens"));
@@ -447,8 +611,66 @@ impl SglangOwner {
             token_end_exclusive: prefix_tokens,
             physical_tokens: prefix_tokens - local_start,
         });
+        if let Some(prefix) = prefix {
+            if prefix.prefix_token_count != prefix_tokens
+                || prefix.components.len() != components.len()
+                || !components.iter().all(|expected| {
+                    prefix.components.iter().any(|actual| {
+                        actual.spec.state_class == expected.state_class
+                            && actual.spec.token_range.start == expected.token_start
+                            && actual.spec.token_range.end_exclusive == expected.token_end_exclusive
+                    })
+                })
+            {
+                return Err(OwnerError::Prefix(PrefixError::InvalidPersistentSnapshot));
+            }
+            self.prefix.register_persistent_snapshot(prefix)?;
+        }
         let intent = self.binding.prepare(request_id, components)?;
+        if let Some(prefix) = prefix {
+            self.pending_prefix_bindings
+                .insert(intent.binding_id, prefix.object_id);
+        }
         Ok(OwnerResponse::BindingPrepared { intent })
+    }
+
+    fn commit_binding(
+        &mut self,
+        receipt: &PhysicalStateBindingReceipt,
+        acquire: Option<Vec<String>>,
+    ) -> Result<OwnerResponse, OwnerError> {
+        let binding_id = receipt.binding_id;
+        let object_id = self.pending_prefix_bindings.get(&binding_id).copied();
+        if acquire.is_some() && object_id.is_none() {
+            return Err(OwnerError::Prefix(PrefixError::MismatchedBindingReceipt));
+        }
+
+        let mut binding = self.binding.clone();
+        let mut prefix = self.prefix.clone();
+        binding.commit(receipt)?;
+        let lease = if let Some(object_id) = object_id {
+            prefix.commit_binding(object_id, receipt)?;
+            if let Some(state_classes) = acquire {
+                Some(prefix.acquire(object_id, &state_classes)?)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        self.binding = binding;
+        self.prefix = prefix;
+        self.pending_prefix_bindings.remove(&binding_id);
+        if let Some(lease) = lease {
+            return Ok(OwnerResponse::PrefixBindingCommitted {
+                binding_id,
+                lease_id: lease.lease_id,
+                object_id: lease.object_id,
+                state_classes: lease.state_classes,
+            });
+        }
+        Ok(OwnerResponse::BindingCommitted { binding_id })
     }
 
     #[must_use]
@@ -460,6 +682,7 @@ impl SglangOwner {
             committed_reclamations: self.committed_reclamations,
             committed_tokens: self.committed_tokens,
             binding: self.binding.stats(),
+            prefix: self.prefix.stats(),
         }
     }
 }
@@ -478,6 +701,7 @@ impl OwnerError {
             Self::CertificateGenerationExhausted => "certificate_generation_exhausted",
             Self::ArithmeticOverflow(_) => "arithmetic_overflow",
             Self::Binding(_) => "binding_error",
+            Self::Prefix(_) => "prefix_error",
             Self::Plan(_) => "invalid_plan",
         }
     }
@@ -485,7 +709,10 @@ impl OwnerError {
 
 #[cfg(test)]
 mod tests {
-    use crate::{KvClassSpec, KvPlanInput, compile_plan};
+    use crate::{
+        CapsuleComponentSpec, CapsuleIdentity, CapsuleManifest, ContentDigest, KvClassSpec,
+        KvPlanInput, PrefixPath, build_capsule_components, compile_plan,
+    };
 
     use super::*;
 
@@ -532,6 +759,64 @@ mod tests {
         })
         .unwrap();
         SglangOwner::new(&plan).unwrap()
+    }
+
+    fn hybrid_prefix_owner() -> (SglangOwner, PrefixObjectId, PrefixObjectSnapshot) {
+        let plan = compile_plan(KvPlanInput {
+            page_tokens: 16,
+            classes: vec![
+                KvClassSpec {
+                    name: "full".into(),
+                    layers: vec![0],
+                    retention: RetentionKind::Full,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: None,
+                },
+                KvClassSpec {
+                    name: "swa".into(),
+                    layers: vec![1],
+                    retention: RetentionKind::Sliding,
+                    bytes_per_token_per_layer: 128,
+                    window_tokens: Some(32),
+                },
+            ],
+        })
+        .unwrap();
+        let identity = CapsuleIdentity {
+            namespace: b"tenant-a".to_vec(),
+            model_fingerprint: ContentDigest::sha256(b"model"),
+            tokenizer_fingerprint: ContentDigest::sha256(b"tokenizer"),
+            adapter_fingerprint: ContentDigest::sha256(b"adapter"),
+            state_plan_fingerprint: ContentDigest::sha256(plan.fingerprint().as_bytes()),
+        };
+        let path = PrefixPath::from_token_ids(identity, 16, &(0..64).collect::<Vec<_>>()).unwrap();
+        let payload = b"fullswa!";
+        let components = build_capsule_components(
+            payload,
+            &[
+                CapsuleComponentSpec {
+                    state_class: "full".into(),
+                    length_bytes: 4,
+                    token_start: Some(0),
+                    token_end_exclusive: Some(64),
+                },
+                CapsuleComponentSpec {
+                    state_class: "swa".into(),
+                    length_bytes: 4,
+                    token_start: Some(32),
+                    token_end_exclusive: Some(64),
+                },
+            ],
+        )
+        .unwrap();
+        let manifest = CapsuleManifest::new(&path, 64, payload, components, 1).unwrap();
+        let mut prefix_runtime = PrefixRuntime::default();
+        let object_id = prefix_runtime.register_capsule(&path, &manifest).unwrap();
+        (
+            SglangOwner::new(&plan).unwrap(),
+            object_id,
+            prefix_runtime.snapshot(object_id).unwrap(),
+        )
     }
 
     fn plan(owner: &mut SglangOwner, observed: u64, frontier: u64) -> OwnerResponse {
@@ -647,6 +932,7 @@ mod tests {
             owner.execute(OwnerCommand::PrepareBinding {
                 request_id: "r0".into(),
                 prefix_tokens: 1024,
+                prefix: None,
             })
         else {
             panic!("expected binding intent");
@@ -698,6 +984,7 @@ mod tests {
             owner.execute(OwnerCommand::PrepareBinding {
                 request_id: "r0".into(),
                 prefix_tokens: 1024,
+                prefix: None,
             })
         else {
             panic!("expected binding intent");
@@ -728,6 +1015,187 @@ mod tests {
             OwnerResponse::BindingAborted {
                 binding_id: intent.binding_id
             }
+        );
+    }
+
+    #[test]
+    fn capsule_prefix_binding_drives_component_lifecycle() {
+        let (mut owner, object_id, prefix) = hybrid_prefix_owner();
+
+        let OwnerResponse::BindingPrepared { intent } =
+            owner.execute(OwnerCommand::PrepareBinding {
+                request_id: "r0".into(),
+                prefix_tokens: 64,
+                prefix: Some(Box::new(prefix)),
+            })
+        else {
+            panic!("expected binding intent");
+        };
+        let receipt = binding_receipt(&intent);
+        assert_eq!(
+            owner.execute(OwnerCommand::CommitBinding { receipt }),
+            OwnerResponse::BindingCommitted {
+                binding_id: intent.binding_id
+            }
+        );
+
+        let OwnerResponse::PrefixAcquired {
+            lease_id,
+            state_classes,
+            ..
+        } = owner.execute(OwnerCommand::AcquirePrefix {
+            object_id,
+            state_classes: vec!["full".into(), "swa".into()],
+        })
+        else {
+            panic!("expected Prefix lease");
+        };
+        assert_eq!(state_classes, vec!["full", "swa"]);
+        assert!(matches!(
+            owner.execute(OwnerCommand::TombstonePrefixComponent {
+                object_id,
+                state_class: "swa".into(),
+            }),
+            OwnerResponse::Error {
+                code: "prefix_error",
+                ..
+            }
+        ));
+        assert_eq!(
+            owner.execute(OwnerCommand::ReleasePrefixComponent {
+                lease_id,
+                state_class: "swa".into(),
+            }),
+            OwnerResponse::PrefixComponentReleased {
+                lease_id,
+                state_class: "swa".into(),
+            }
+        );
+        assert_eq!(
+            owner.execute(OwnerCommand::TombstonePrefixComponent {
+                object_id,
+                state_class: "swa".into(),
+            }),
+            OwnerResponse::PrefixComponentTombstoned {
+                object_id,
+                state_class: "swa".into(),
+            }
+        );
+
+        let OwnerResponse::PrefixSnapshot { prefix } =
+            owner.execute(OwnerCommand::PrefixSnapshot { object_id })
+        else {
+            panic!("expected Prefix snapshot");
+        };
+        assert_eq!(prefix.availability, crate::PrefixAvailability::Restorable);
+        assert_eq!(
+            prefix
+                .components
+                .iter()
+                .find(|component| component.spec.state_class == "full")
+                .unwrap()
+                .lease_count,
+            1
+        );
+        assert_eq!(
+            prefix
+                .components
+                .iter()
+                .find(|component| component.spec.state_class == "swa")
+                .unwrap()
+                .device,
+            crate::PrefixDeviceState::Tombstoned
+        );
+        assert_eq!(
+            owner.execute(OwnerCommand::ReleasePrefix { lease_id }),
+            OwnerResponse::PrefixReleased { lease_id }
+        );
+    }
+
+    #[test]
+    fn binding_and_prefix_acquire_commit_atomically() {
+        let plan = compile_plan(KvPlanInput {
+            page_tokens: 16,
+            classes: vec![KvClassSpec {
+                name: "swa".into(),
+                layers: vec![0],
+                retention: RetentionKind::Sliding,
+                bytes_per_token_per_layer: 128,
+                window_tokens: Some(32),
+            }],
+        })
+        .unwrap();
+        let mut owner = SglangOwner::new(&plan).unwrap();
+        let identity = CapsuleIdentity {
+            namespace: b"tenant-a".to_vec(),
+            model_fingerprint: ContentDigest::sha256(b"model"),
+            tokenizer_fingerprint: ContentDigest::sha256(b"tokenizer"),
+            adapter_fingerprint: ContentDigest::sha256(b"adapter"),
+            state_plan_fingerprint: ContentDigest::sha256(plan.fingerprint().as_bytes()),
+        };
+        let path = PrefixPath::from_token_ids(identity, 16, &(0..64).collect::<Vec<_>>()).unwrap();
+        let payload = b"swa!";
+        let components = build_capsule_components(
+            payload,
+            &[CapsuleComponentSpec {
+                state_class: "swa".into(),
+                length_bytes: 4,
+                token_start: Some(32),
+                token_end_exclusive: Some(64),
+            }],
+        )
+        .unwrap();
+        let manifest = CapsuleManifest::new(&path, 32, payload, components, 1).unwrap();
+        let mut prefix_runtime = PrefixRuntime::default();
+        let object_id = prefix_runtime.register_capsule(&path, &manifest).unwrap();
+        let prefix = prefix_runtime.snapshot(object_id).unwrap();
+
+        let OwnerResponse::BindingPrepared { intent } =
+            owner.execute(OwnerCommand::PrepareBinding {
+                request_id: "r0".into(),
+                prefix_tokens: 64,
+                prefix: Some(Box::new(prefix)),
+            })
+        else {
+            panic!("expected binding intent");
+        };
+        let receipt = binding_receipt(&intent);
+        assert!(matches!(
+            owner.execute(OwnerCommand::CommitBindingAndAcquirePrefix {
+                receipt: receipt.clone(),
+                state_classes: vec!["unknown".into()],
+            }),
+            OwnerResponse::Error {
+                code: "prefix_error",
+                ..
+            }
+        ));
+        assert_eq!(owner.stats().binding.pending_bindings, 1);
+        let OwnerResponse::PrefixSnapshot { prefix } =
+            owner.execute(OwnerCommand::PrefixSnapshot { object_id })
+        else {
+            panic!("expected Prefix snapshot");
+        };
+        assert_eq!(prefix.availability, crate::PrefixAvailability::Restorable);
+
+        let OwnerResponse::PrefixBindingCommitted {
+            lease_id,
+            object_id: committed_object,
+            state_classes,
+            ..
+        } = owner.execute(OwnerCommand::CommitBindingAndAcquirePrefix {
+            receipt,
+            state_classes: vec!["swa".into()],
+        })
+        else {
+            panic!("expected atomic Prefix binding");
+        };
+        assert_eq!(committed_object, object_id);
+        assert_eq!(state_classes, vec!["swa"]);
+        assert_eq!(owner.stats().binding.committed_bindings, 1);
+        assert_eq!(
+            owner.execute(OwnerCommand::ReleasePrefix { lease_id }),
+            OwnerResponse::PrefixReleased { lease_id }
         );
     }
 }

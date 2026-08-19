@@ -11,6 +11,7 @@ import struct
 import subprocess
 import threading
 import time
+from array import array
 from pathlib import Path
 from typing import Any, Callable
 
@@ -27,6 +28,8 @@ _BINDINGS: "SidecarOwnerClient | None" = None
 _CAPSULES: "CapsuleClient | None" = None
 _CAPSULES_LOCK = threading.Lock()
 _BINDINGS_LOCK = threading.Lock()
+_PREFIX_OBJECTS: dict[tuple[str, str, str], dict[str, Any]] = {}
+_PREFIX_OBJECTS_LOCK = threading.Lock()
 
 
 class CapsuleClient:
@@ -406,6 +409,14 @@ class FfiOwnerClient(OwnerClient):
                     "committed_bindings": 0,
                     "aborted_bindings": 0,
                 },
+                "prefix": {
+                    "objects": 0,
+                    "device_ready_objects": 0,
+                    "restorable_objects": 0,
+                    "incomplete_objects": 0,
+                    "active_leases": 0,
+                    "tombstoned_components": 0,
+                },
             },
         }
 
@@ -440,6 +451,14 @@ def _capsules_enabled() -> bool:
     if _RUNTIME_STATE_PLAN is not None:
         return bool(_RUNTIME_STATE_PLAN["capsule"]["enabled"])
     return "ORBITKV_CAPSULE_STORE" in os.environ
+
+
+def _prefix_radix_enabled() -> bool:
+    return (
+        _RUNTIME_STATE_PLAN is not None
+        and _RUNTIME_STATE_PLAN.get("prefix")
+        == {"mode": "capsule_backed_swa_radix"}
+    )
 
 
 def _capsule_identity() -> dict[str, Any]:
@@ -523,6 +542,456 @@ def _hybrid_swa_capsule() -> bool:
     )
 
 
+def _capsule_state_classes() -> tuple[str | None, str]:
+    if _POLICY is None:
+        raise RuntimeError("OrbitKV Capsule hydration requires an SGLang policy")
+    bounded = _POLICY.get("bounded_classes", ())
+    unbounded = _POLICY.get("unbounded_classes", ())
+    if len(bounded) != 1 or len(unbounded) > 1:
+        raise RuntimeError("OrbitKV Capsule policy has unsupported state classes")
+    swa_class = bounded[0].get("name")
+    full_class = unbounded[0] if unbounded else None
+    if (
+        not isinstance(swa_class, str)
+        or not swa_class
+        or (full_class is not None and (not isinstance(full_class, str) or not full_class))
+    ):
+        raise RuntimeError("OrbitKV Capsule policy has invalid state class names")
+    return full_class, swa_class
+
+
+def _prefix_token_digest(token_ids: list[int] | tuple[int, ...]) -> str:
+    hasher = hashlib.sha256()
+    for token in token_ids:
+        if token < 0 or token > 0xFFFF_FFFF:
+            raise RuntimeError("OrbitKV Prefix token id is outside u32")
+        hasher.update(struct.pack("<I", token))
+    return hasher.hexdigest()
+
+
+def _validate_radix_prefix_namespace(req: Any) -> None:
+    if getattr(req, "extra_key", None) is not None or getattr(
+        req, "cache_salt", None
+    ) is not None:
+        raise RuntimeError(
+            "OrbitKV Capsule-backed Radix Prefix does not yet encode "
+            "SGLang extra_key or cache_salt"
+        )
+
+
+def _prefix_registry_key(
+    token_ids: list[int] | tuple[int, ...],
+    extra_key: Any,
+    cache_salt: Any,
+) -> tuple[str, str, str]:
+    return (
+        _prefix_token_digest(token_ids),
+        repr(extra_key),
+        repr(cache_salt),
+    )
+
+
+def _register_prefix_object(
+    req: Any,
+    prefix: dict[str, Any],
+    token_ids: list[int],
+    *,
+    device_resident: bool,
+) -> None:
+    prefix_tokens = int(prefix["prefix_token_count"])
+    tokens = tuple(int(token) for token in token_ids[:prefix_tokens])
+    if len(tokens) != prefix_tokens:
+        raise RuntimeError("OrbitKV Prefix token identity is incomplete")
+    key = _prefix_registry_key(
+        tokens,
+        getattr(req, "extra_key", None),
+        getattr(req, "cache_salt", None),
+    )
+    entry = {
+        "object_id": list(prefix["object_id"]),
+        "prefix_token_count": prefix_tokens,
+        "token_ids": tokens,
+        "token_digest": key,
+        "extra_key": getattr(req, "extra_key", None),
+        "cache_salt": getattr(req, "cache_salt", None),
+        "tree_materialized": False,
+        "components": {
+            component["spec"]["state_class"]: {
+                "token_start": int(component["spec"]["token_range"]["start"]),
+                "token_end_exclusive": int(
+                    component["spec"]["token_range"]["end_exclusive"]
+                ),
+                "device_resident": device_resident,
+            }
+            for component in prefix["components"]
+        },
+    }
+    with _PREFIX_OBJECTS_LOCK:
+        existing = _PREFIX_OBJECTS.get(key)
+        if existing is not None:
+            existing_geometry = {
+                **existing,
+                "tree_materialized": False,
+                "components": {
+                    name: {
+                        **component,
+                        "device_resident": False,
+                    }
+                    for name, component in existing["components"].items()
+                },
+            }
+            entry_geometry = {
+                **entry,
+                "tree_materialized": False,
+                "components": {
+                    name: {
+                        **component,
+                        "device_resident": False,
+                    }
+                    for name, component in entry["components"].items()
+                },
+            }
+            if existing_geometry != entry_geometry:
+                raise RuntimeError("OrbitKV Prefix registry identity conflict")
+            entry["tree_materialized"] = bool(existing["tree_materialized"])
+            for name, component in entry["components"].items():
+                component["device_resident"] = bool(
+                    existing["components"][name]["device_resident"]
+                    or component["device_resident"]
+                )
+        _PREFIX_OBJECTS[key] = entry
+
+
+def _register_persistent_prefix(
+    req: Any,
+    response: dict[str, Any],
+    token_ids: list[int],
+) -> None:
+    manifest = response.get("manifest")
+    if not isinstance(manifest, dict):
+        raise RuntimeError("OrbitKV Capsule response returned no manifest")
+    prefix = _validate_prefix_snapshot(response.get("prefix"), manifest)
+    registered = _require_bindings().command(
+        {"op": "register_prefix", "prefix": prefix}
+    )
+    if (
+        registered.get("status") != "prefix_registered"
+        or registered.get("object_id") != prefix["object_id"]
+    ):
+        raise RuntimeError("OrbitKV Prefix runtime rejected persistent Capsule")
+    _register_prefix_object(
+        req,
+        prefix,
+        token_ids,
+        device_resident=False,
+    )
+
+
+def _lookup_prefix_object(
+    token_ids: list[int],
+    matched_tokens: int,
+    extra_key: Any,
+    cache_salt: Any,
+) -> dict[str, Any] | None:
+    with _PREFIX_OBJECTS_LOCK:
+        entry = _PREFIX_OBJECTS.get(
+            _prefix_registry_key(
+                token_ids[:matched_tokens],
+                extra_key,
+                cache_salt,
+            )
+        )
+        if (
+            entry is not None
+            and int(entry["prefix_token_count"]) == matched_tokens
+            and entry["extra_key"] == extra_key
+            and entry["cache_salt"] == cache_salt
+        ):
+            return dict(entry)
+    return None
+
+
+def _acquire_radix_prefix_lock(
+    original_fn: Callable,
+    adder: Any,
+    req: Any,
+):
+    if getattr(req, "_orbitkv_prefix_lease_id", None) is not None:
+        return original_fn(adder, req)
+    matched_tokens = _tensor_numel(req.prefix_indices)
+    if matched_tokens <= 0:
+        return original_fn(adder, req)
+    token_ids = [
+        int(token)
+        for token in list(req.origin_input_ids) + list(req.output_ids)
+    ]
+    entry = _lookup_prefix_object(
+        token_ids,
+        matched_tokens,
+        getattr(req, "extra_key", None),
+        getattr(req, "cache_salt", None),
+    )
+    if entry is None:
+        return original_fn(adder, req)
+    state_classes = sorted(
+        name
+        for name, component in entry["components"].items()
+        if component["device_resident"]
+    )
+    if len(state_classes) != len(entry["components"]):
+        return original_fn(adder, req)
+    response = _require_bindings().command(
+        {
+            "op": "acquire_prefix",
+            "object_id": entry["object_id"],
+            "state_classes": state_classes,
+        }
+    )
+    if (
+        response.get("status") != "prefix_acquired"
+        or response.get("object_id") != entry["object_id"]
+        or sorted(response.get("state_classes", ())) != state_classes
+    ):
+        raise RuntimeError("OrbitKV Prefix runtime returned an invalid lease")
+    req._orbitkv_prefix_object_id = entry["object_id"]
+    req._orbitkv_prefix_token_count = int(entry["prefix_token_count"])
+    req._orbitkv_prefix_state_classes = state_classes
+    req._orbitkv_prefix_lease_id = int(response["lease_id"])
+    try:
+        result = original_fn(adder, req)
+    except Exception:
+        _release_prefix_lease(req)
+        raise
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "prefix_acquired",
+                "request_id": str(req.rid),
+                "lease_id": req._orbitkv_prefix_lease_id,
+                "object_id": entry["object_id"],
+                "prefix_token_count": entry["prefix_token_count"],
+                "state_classes": state_classes,
+            }
+        )
+    return result
+
+
+def _release_prefix_component(req: Any, state_class: str) -> None:
+    lease_id = getattr(req, "_orbitkv_prefix_lease_id", None)
+    if lease_id is None:
+        return
+    response = _require_bindings().command(
+        {
+            "op": "release_prefix_component",
+            "lease_id": int(lease_id),
+            "state_class": state_class,
+        }
+    )
+    if (
+        response.get("status") != "prefix_component_released"
+        or int(response.get("lease_id", -1)) != int(lease_id)
+        or response.get("state_class") != state_class
+    ):
+        raise RuntimeError("OrbitKV Prefix runtime returned an invalid component release")
+    classes = list(getattr(req, "_orbitkv_prefix_state_classes", ()))
+    if state_class in classes:
+        classes.remove(state_class)
+    req._orbitkv_prefix_state_classes = classes
+
+
+def _attach_prefix_component(req: Any, state_class: str) -> None:
+    lease_id = getattr(req, "_orbitkv_prefix_lease_id", None)
+    if lease_id is None:
+        raise RuntimeError("OrbitKV Prefix lease cannot be rolled back")
+    response = _require_bindings().command(
+        {
+            "op": "attach_prefix_component",
+            "lease_id": int(lease_id),
+            "state_class": state_class,
+        }
+    )
+    if (
+        response.get("status") != "prefix_component_attached"
+        or int(response.get("lease_id", -1)) != int(lease_id)
+        or response.get("state_class") != state_class
+    ):
+        raise RuntimeError("OrbitKV Prefix runtime returned an invalid component attach")
+    classes = list(getattr(req, "_orbitkv_prefix_state_classes", ()))
+    if state_class not in classes:
+        classes.append(state_class)
+        classes.sort()
+    req._orbitkv_prefix_state_classes = classes
+
+
+def _release_prefix_lease(req: Any) -> None:
+    lease_id = getattr(req, "_orbitkv_prefix_lease_id", None)
+    if lease_id is None:
+        return
+    response = _require_bindings().command(
+        {"op": "release_prefix", "lease_id": int(lease_id)}
+    )
+    if (
+        response.get("status") != "prefix_released"
+        or int(response.get("lease_id", -1)) != int(lease_id)
+    ):
+        raise RuntimeError("OrbitKV Prefix runtime returned an invalid lease release")
+    req._orbitkv_prefix_lease_id = None
+    req._orbitkv_prefix_state_classes = []
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "prefix_released",
+                "request_id": str(req.rid),
+                "lease_id": int(lease_id),
+                "object_id": getattr(req, "_orbitkv_prefix_object_id", None),
+            }
+        )
+
+
+def _radix_component_residency(
+    tree_cache: Any,
+    entry: dict[str, Any],
+) -> tuple[bool, dict[str, bool]]:
+    from sglang.srt.mem_cache.radix_cache import RadixKey
+
+    key = RadixKey(
+        token_ids=array("q", entry["token_ids"]),
+        extra_key=entry["extra_key"],
+        cache_salt=entry["cache_salt"],
+    ).page_aligned(tree_cache.page_size)
+    node = tree_cache.root_node
+    cursor = 0
+    spans: list[tuple[int, int, dict[str, bool]]] = []
+    full_class, swa_class = _capsule_state_classes()
+    unified = hasattr(tree_cache, "tree_core")
+    component_types = None
+    if unified:
+        from sglang.srt.mem_cache.unified_cache.components import ComponentType
+
+        component_types = {
+            full_class: ComponentType.FULL,
+            swa_class: ComponentType.SWA,
+        }
+    while len(key) > 0:
+        child = node.children.get(key.child_key(tree_cache.page_size))
+        if child is None:
+            break
+        matched = child.key.match(key, page_size=tree_cache.page_size)
+        if matched <= 0:
+            break
+        if unified:
+            resident = {
+                state_class: (
+                    child.component_data[component_type].value is not None
+                )
+                for state_class, component_type in component_types.items()
+            }
+        else:
+            resident = {
+                full_class: child.value is not None,
+                swa_class: not bool(child.swa_tombstone),
+            }
+        spans.append((cursor, cursor + matched, resident))
+        cursor += matched
+        if matched < len(child.key):
+            break
+        node = child
+        key = key[matched:]
+    complete = cursor >= int(entry["prefix_token_count"])
+    residency = {}
+    for state_class, component in entry["components"].items():
+        if not complete:
+            residency[state_class] = False
+        else:
+            start = int(component["token_start"])
+            end = int(component["token_end_exclusive"])
+            residency[state_class] = all(
+                state_class in resident and resident[state_class]
+                for span_start, span_end, resident in spans
+                if span_start < end and start < span_end
+            )
+    return complete, residency
+
+
+def _sync_radix_prefix_components(tree_cache: Any) -> None:
+    with _PREFIX_OBJECTS_LOCK:
+        entries = [
+            (key, dict(entry))
+            for key, entry in _PREFIX_OBJECTS.items()
+            if entry["components"]
+        ]
+    for key, entry in entries:
+        materialized, actual = _radix_component_residency(tree_cache, entry)
+        if not bool(entry.get("tree_materialized", False)) and not materialized:
+            continue
+        if materialized and not bool(entry.get("tree_materialized", False)):
+            with _PREFIX_OBJECTS_LOCK:
+                current = _PREFIX_OBJECTS.get(key)
+                if current is not None:
+                    current["tree_materialized"] = True
+        for state_class, resident in actual.items():
+            previous = bool(entry["components"][state_class]["device_resident"])
+            if previous == resident:
+                continue
+            if resident:
+                object_hex = bytes(entry["object_id"]).hex()
+                response = _require_bindings().command(
+                    {
+                        "op": "recover_prefix_component",
+                        "object_id": entry["object_id"],
+                        "state_class": state_class,
+                        "physical_binding_id": (
+                            f"sglang-radix:{object_hex}:{state_class}"
+                        ),
+                    }
+                )
+                expected_status = "prefix_component_recovered"
+            else:
+                response = _require_bindings().command(
+                    {
+                        "op": "tombstone_prefix_component",
+                        "object_id": entry["object_id"],
+                        "state_class": state_class,
+                    }
+                )
+                expected_status = "prefix_component_tombstoned"
+            if (
+                response.get("status") != expected_status
+                or response.get("object_id") != entry["object_id"]
+                or response.get("state_class") != state_class
+            ):
+                raise RuntimeError(
+                    "OrbitKV Prefix runtime rejected Radix component transition"
+                )
+            with _PREFIX_OBJECTS_LOCK:
+                current = _PREFIX_OBJECTS.get(key)
+                if current is not None:
+                    current["components"][state_class]["device_resident"] = resident
+            if _trace_allocations_enabled():
+                _emit(
+                    {
+                        "event": (
+                            "prefix_component_recovered"
+                            if resident
+                            else "prefix_component_tombstoned"
+                        ),
+                        "object_id": entry["object_id"],
+                        "state_class": state_class,
+                    }
+                )
+
+
+def _sync_radix_after_mutation(
+    original_fn: Callable,
+    tree_cache: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    result = original_fn(tree_cache, *args, **kwargs)
+    _sync_radix_prefix_components(tree_cache)
+    return result
+
+
 def _encode_capsule_payload(value: Any) -> bytes:
     from .capsule_wire import encode_cpu_tensors
 
@@ -587,6 +1056,7 @@ def _encode_capsule_components(
     prefix_tokens: int,
     live_start: int,
 ) -> tuple[bytes, list[dict[str, Any]]]:
+    full_class, swa_class = _capsule_state_classes()
     if _hybrid_swa_capsule():
         if not isinstance(kv_cache_cpu, dict) or set(kv_cache_cpu) != {
             "full",
@@ -605,13 +1075,13 @@ def _encode_capsule_components(
             full_payload + swa_payload,
             [
                 {
-                    "state_class": "full-kv",
+                    "state_class": full_class,
                     "length_bytes": len(full_payload),
                     "token_start": 0,
                     "token_end_exclusive": prefix_tokens,
                 },
                 {
-                    "state_class": "swa-kv",
+                    "state_class": swa_class,
                     "length_bytes": len(swa_payload),
                     "token_start": live_start,
                     "token_end_exclusive": prefix_tokens,
@@ -619,7 +1089,7 @@ def _encode_capsule_components(
             ],
         )
     payload = _encode_capsule_payload(kv_cache_cpu)
-    state_class = "swa-kv" if _pure_swa_capsule() else "sglang-kv"
+    state_class = swa_class
     return (
         payload,
         [
@@ -754,9 +1224,11 @@ def _binding_plan_path() -> str:
     return path
 
 
-def _require_bindings() -> SidecarOwnerClient:
+def _require_bindings() -> OwnerClient:
     global _BINDINGS
 
+    if _prefix_radix_enabled():
+        return _require_owner()
     with _BINDINGS_LOCK:
         if _BINDINGS is None:
             _BINDINGS = SidecarOwnerClient(
@@ -781,8 +1253,12 @@ def _export_capsule_before_release(
         return None
     if not is_insert or not req.finished():
         return None
+    if not tree_cache.is_chunk_cache() and not tree_cache.supports_swa():
+        raise RuntimeError(
+            "OrbitKV Capsule export requires ChunkCache or SWARadixCache"
+        )
     if not tree_cache.is_chunk_cache():
-        raise RuntimeError("OrbitKV Capsule export currently requires ChunkCache")
+        _validate_radix_prefix_namespace(req)
     committed = int(req.effective_kv_committed_len())
     chunk_tokens = _capsule_chunk_tokens()
     aligned = (committed // chunk_tokens) * chunk_tokens
@@ -790,6 +1266,18 @@ def _export_capsule_before_release(
         return None
     hydrated_prefix = int(getattr(req, "_orbitkv_capsule_prefix_tokens", 0))
     if hydrated_prefix and aligned <= hydrated_prefix:
+        return None
+    shared_prefix = int(getattr(req, "_orbitkv_prefix_token_count", 0))
+    if shared_prefix and aligned <= shared_prefix:
+        if _trace_allocations_enabled():
+            _emit(
+                {
+                    "event": "capsule_reused",
+                    "request_id": str(req.rid),
+                    "prefix_token_count": aligned,
+                    "source": "prefix_lease",
+                }
+            )
         return None
     fill_ids = [
         int(token)
@@ -816,6 +1304,8 @@ def _export_capsule_before_release(
         if existing_boundary > aligned:
             raise RuntimeError("OrbitKV Capsule catalog exceeded the query boundary")
         if existing_boundary == aligned:
+            if not tree_cache.is_chunk_cache():
+                _register_persistent_prefix(req, existing, fill_ids)
             if _trace_allocations_enabled():
                 _emit(
                     {
@@ -886,6 +1376,8 @@ def _export_capsule_before_release(
         )
     finally:
         payload_path.unlink(missing_ok=True)
+    if not tree_cache.is_chunk_cache():
+        _register_persistent_prefix(req, response, fill_ids)
     if _trace_allocations_enabled():
         _emit(
             {
@@ -899,7 +1391,9 @@ def _export_capsule_before_release(
     return response
 
 
-def _read_capsule_payload(response: dict[str, Any]) -> tuple[Any, int, int]:
+def _read_capsule_payload(
+    response: dict[str, Any],
+) -> tuple[Any, int, int, dict[str, Any]]:
     manifest = response.get("manifest")
     if (
         response.get("status") != "restored"
@@ -921,6 +1415,7 @@ def _read_capsule_payload(response: dict[str, Any]) -> tuple[Any, int, int]:
     components = manifest.get("components")
     if not isinstance(components, list) or not components:
         raise RuntimeError("OrbitKV Capsule SGLang components are invalid")
+    prefix = _validate_prefix_snapshot(response.get("prefix"), manifest)
     payload_path = Path(str(response.get("payload_path", "")))
     if not payload_path.is_file() or payload_path.stat().st_size != payload_bytes:
         raise RuntimeError("OrbitKV Capsule payload object is missing or truncated")
@@ -938,7 +1433,63 @@ def _read_capsule_payload(response: dict[str, Any]) -> tuple[Any, int, int]:
         prefix_tokens,
         live_tokens,
     )
-    return decoded, prefix_tokens, live_tokens
+    return decoded, prefix_tokens, live_tokens, prefix
+
+
+def _validate_prefix_snapshot(
+    prefix: Any,
+    manifest: dict[str, Any],
+) -> dict[str, Any]:
+    if (
+        not isinstance(prefix, dict)
+        or prefix.get("schema") != "orbitkv.prefix-object-snapshot.v1"
+        or prefix.get("availability") != "restorable"
+        or int(prefix.get("prefix_token_count", 0))
+        != int(manifest.get("prefix_token_count", 0))
+    ):
+        raise RuntimeError("OrbitKV Capsule Prefix snapshot is invalid")
+    object_id = prefix.get("object_id")
+    if not isinstance(object_id, list) or len(object_id) != hashlib.sha256().digest_size:
+        raise RuntimeError("OrbitKV Capsule Prefix object identity is invalid")
+    manifest_components = {
+        component.get("state_class"): component
+        for component in manifest.get("components", ())
+    }
+    prefix_components = prefix.get("components")
+    if (
+        not isinstance(prefix_components, list)
+        or len(prefix_components) != len(manifest_components)
+    ):
+        raise RuntimeError("OrbitKV Capsule Prefix components are invalid")
+    for component in prefix_components:
+        spec = component.get("spec") if isinstance(component, dict) else None
+        state_class = spec.get("state_class") if isinstance(spec, dict) else None
+        token_range = spec.get("token_range") if isinstance(spec, dict) else None
+        persistent = component.get("persistent") if isinstance(component, dict) else None
+        manifest_component = manifest_components.get(state_class)
+        if (
+            not isinstance(manifest_component, dict)
+            or not isinstance(token_range, dict)
+            or not isinstance(persistent, dict)
+            or component.get("device") != {"state": "absent"}
+            or component.get("device_completeness") != "missing"
+            or component.get("persistent_completeness") != "complete"
+            or int(component.get("lease_count", -1)) != 0
+            or int(token_range.get("start", -1))
+            != int(manifest_component.get("token_start", -2))
+            or int(token_range.get("end_exclusive", -1))
+            != int(manifest_component.get("token_end_exclusive", -2))
+            or persistent.get("capsule_id") != manifest.get("capsule_id")
+            or persistent.get("payload_digest") != manifest.get("payload_digest")
+            or persistent.get("component_checksum")
+            != manifest_component.get("checksum")
+            or int(persistent.get("offset_bytes", -1))
+            != int(manifest_component.get("offset_bytes", -2))
+            or int(persistent.get("length_bytes", -1))
+            != int(manifest_component.get("length_bytes", -2))
+        ):
+            raise RuntimeError("OrbitKV Capsule Prefix component proof is invalid")
+    return prefix
 
 
 def _decode_capsule_components(
@@ -985,16 +1536,17 @@ def _decode_capsule_components(
     if expected_offset != len(payload):
         raise RuntimeError("OrbitKV Capsule components do not cover the payload")
 
-    if set(decoded) == {"full-kv", "swa-kv"}:
+    full_class, swa_class = _capsule_state_classes()
+    if full_class is not None and set(decoded) == {full_class, swa_class}:
         if not _hybrid_swa_capsule() or live_tokens != prefix_tokens:
             raise RuntimeError("OrbitKV Hybrid Capsule does not match its state plan")
         expected_live_start = _capsule_live_start(prefix_tokens)
-        if ranges["full-kv"] != (0, prefix_tokens) or ranges["swa-kv"] != (
+        if ranges[full_class] != (0, prefix_tokens) or ranges[swa_class] != (
             expected_live_start,
             prefix_tokens,
         ):
             raise RuntimeError("OrbitKV Hybrid Capsule component ranges do not match")
-        swa_component = decoded["swa-kv"]
+        swa_component = decoded[swa_class]
         if (
             not isinstance(swa_component, dict)
             or set(swa_component) != {"swa", "swa_mask"}
@@ -1008,7 +1560,7 @@ def _decode_capsule_components(
         ):
             raise RuntimeError("OrbitKV Hybrid SWA component mask is invalid")
         return {
-            "full": decoded["full-kv"],
+            "full": decoded[full_class],
             "swa": swa_component["swa"],
             "swa_mask": swa_mask,
         }
@@ -1016,7 +1568,7 @@ def _decode_capsule_components(
     if len(decoded) != 1:
         raise RuntimeError("OrbitKV Capsule component set is unsupported")
     state_class, value = next(iter(decoded.items()))
-    if state_class not in ("sglang-kv", "swa-kv"):
+    if full_class is not None or state_class != swa_class:
         raise RuntimeError("OrbitKV Capsule state class is unsupported")
     token_range = ranges[state_class]
     if token_range != (None, None):
@@ -1109,12 +1661,14 @@ def _prepare_capsule_binding(
     req: Any,
     prefix_tokens: int,
     live_tokens: int,
+    prefix: dict[str, Any],
 ) -> dict[str, Any]:
     response = _require_bindings().command(
         {
             "op": "prepare_binding",
             "request_id": str(req.rid),
             "prefix_tokens": prefix_tokens,
+            "prefix": prefix,
         }
     )
     if response.get("status") != "binding_prepared":
@@ -1214,11 +1768,62 @@ def _commit_capsule_binding(intent: dict[str, Any], indices: Any) -> None:
         )
 
 
+def _commit_capsule_prefix_binding(
+    req: Any,
+    intent: dict[str, Any],
+    indices: Any,
+) -> None:
+    object_id = getattr(req, "_orbitkv_prefix_object_id", None)
+    state_classes = getattr(req, "_orbitkv_prefix_state_classes", None)
+    if (
+        not isinstance(object_id, list)
+        or len(object_id) != hashlib.sha256().digest_size
+        or not isinstance(state_classes, list)
+        or not state_classes
+    ):
+        raise RuntimeError("OrbitKV Radix Prefix binding metadata is incomplete")
+    response = _require_bindings().command(
+        {
+            "op": "commit_binding_and_acquire_prefix",
+            "receipt": _binding_receipt(intent, indices),
+            "state_classes": state_classes,
+        }
+    )
+    if (
+        response.get("status") != "prefix_binding_committed"
+        or int(response.get("binding_id", -1)) != int(intent["binding_id"])
+        or response.get("object_id") != object_id
+        or sorted(response.get("state_classes", ())) != sorted(state_classes)
+    ):
+        raise RuntimeError(
+            "OrbitKV binding runtime returned an invalid Prefix commit response"
+        )
+    req._orbitkv_prefix_lease_id = int(response["lease_id"])
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "prefix_binding_committed",
+                "request_id": str(req.rid),
+                "binding_id": int(intent["binding_id"]),
+                "lease_id": req._orbitkv_prefix_lease_id,
+                "object_id": object_id,
+                "state_classes": state_classes,
+            }
+        )
+
+
 def _try_hydrate_capsule(req: Any, tree_cache: Any):
     if not _capsules_enabled() or getattr(req, "_orbitkv_capsule_miss", False):
         return None
-    if not tree_cache.is_chunk_cache():
-        raise RuntimeError("OrbitKV Capsule hydration currently requires ChunkCache")
+    is_chunk_cache = bool(tree_cache.is_chunk_cache())
+    if not is_chunk_cache and (
+        not _prefix_radix_enabled() or not bool(tree_cache.supports_swa())
+    ):
+        raise RuntimeError(
+            "OrbitKV Capsule hydration requires ChunkCache or compiled SWARadix Prefix mode"
+        )
+    if not is_chunk_cache:
+        _validate_radix_prefix_namespace(req)
     if (
         req.req_pool_idx is not None
         or req.kv is not None
@@ -1252,11 +1857,11 @@ def _try_hydrate_capsule(req: Any, tree_cache: Any):
                 }
             )
         return None
-    kv_cache_cpu, prefix_tokens, live_tokens = _read_capsule_payload(response)
+    kv_cache_cpu, prefix_tokens, live_tokens, prefix = _read_capsule_payload(response)
     payload_done_ns = time.perf_counter_ns()
     if prefix_tokens > maximum_prefix:
         raise RuntimeError("OrbitKV Capsule prefix exceeds SGLang match boundary")
-    intent = _prepare_capsule_binding(req, prefix_tokens, live_tokens)
+    intent = _prepare_capsule_binding(req, prefix_tokens, live_tokens, prefix)
     allocator = tree_cache.token_to_kv_pool_allocator
     indices = _allocate_capsule_slots(allocator, live_tokens)
     allocation_done_ns = time.perf_counter_ns()
@@ -1298,6 +1903,12 @@ def _try_hydrate_capsule(req: Any, tree_cache: Any):
     req.cache_protected_len = dead_prefix_tokens
     req._orbitkv_capsule_prefix_tokens = prefix_tokens
     req._orbitkv_capsule_live_tokens = live_tokens
+    req._orbitkv_prefix_object_id = prefix["object_id"]
+    req._orbitkv_prefix_token_count = prefix_tokens
+    req._orbitkv_prefix_state_classes = [
+        component["spec"]["state_class"] for component in prefix["components"]
+    ]
+    req._orbitkv_prefix_lease_id = None
     req._orbitkv_capsule_hydration_ns = {
         "lookup": lookup_done_ns - started_ns,
         "payload_decode": payload_done_ns - lookup_done_ns,
@@ -1305,7 +1916,12 @@ def _try_hydrate_capsule(req: Any, tree_cache: Any):
         "load": load_done_ns - allocation_done_ns,
         "total": load_done_ns - started_ns,
     }
-    return {"indices": indices, "intent": intent}
+    return {
+        "indices": indices,
+        "intent": intent,
+        "prefix": prefix,
+        "radix": not is_chunk_cache,
+    }
 
 
 def _rollback_capsule_hydration(
@@ -1319,6 +1935,10 @@ def _rollback_capsule_hydration(
     req.prefix_indices = req.prefix_indices.new_empty((0,))
     req._orbitkv_capsule_prefix_tokens = 0
     req._orbitkv_capsule_live_tokens = 0
+    req._orbitkv_prefix_object_id = None
+    req._orbitkv_prefix_token_count = 0
+    req._orbitkv_prefix_state_classes = None
+    req._orbitkv_prefix_lease_id = None
     req._orbitkv_capsule_hydration_ns = None
 
 
@@ -1348,7 +1968,14 @@ def _hydrate_capsule_for_admission(
         )
         return result
     try:
-        _commit_capsule_binding(transaction["intent"], transaction["indices"])
+        if transaction["radix"]:
+            _commit_capsule_prefix_binding(
+                req,
+                transaction["intent"],
+                transaction["indices"],
+            )
+        else:
+            _commit_capsule_binding(transaction["intent"], transaction["indices"])
     except Exception:
         if adder.can_run_list and adder.can_run_list[-1] is req:
             adder.can_run_list.pop()
@@ -1356,6 +1983,13 @@ def _hydrate_capsule_for_admission(
             req, tree_cache.token_to_kv_pool_allocator, transaction
         )
         raise
+    if transaction["radix"]:
+        _register_prefix_object(
+            req,
+            transaction["prefix"],
+            [int(token) for token in req.full_untruncated_fill_ids],
+            device_resident=True,
+        )
     if _trace_allocations_enabled():
         _emit(
             {
@@ -2150,11 +2784,13 @@ def _require_owner() -> OwnerClient:
 
 
 def _own_swa_reclamation(
-    _original_fn: Callable,
+    original_fn: Callable,
     batch: Any,
     req: Any,
     pre_len: int,
 ):
+    if not batch.tree_cache.is_chunk_cache():
+        return original_fn(batch, req, pre_len)
     if batch.enable_overlap:
         raise RuntimeError(
             "OrbitKV owning mode currently requires disable_overlap_schedule"
@@ -2232,8 +2868,12 @@ def _commit_swa_reclamations(
     if getattr(batch, "_orbitkv_pending_certificates", None) is not None:
         raise RuntimeError("nested OrbitKV reclamation group")
     batch._orbitkv_pending_certificates = []
+    released_prefix_components = _prepare_swa_prefix_component_releases(batch)
     try:
         result = original_fn(batch, *args, **kwargs)
+        _finish_swa_prefix_component_releases(
+            batch, released_prefix_components, failed=False
+        )
         pending = batch._orbitkv_pending_certificates
         if pending:
             certificates = [certificate for _, certificate in pending]
@@ -2268,8 +2908,51 @@ def _commit_swa_reclamations(
                         }
                     )
         return result
+    except Exception:
+        _finish_swa_prefix_component_releases(
+            batch, released_prefix_components, failed=True
+        )
+        raise
     finally:
         batch._orbitkv_pending_certificates = None
+
+
+def _prepare_swa_prefix_component_releases(batch: Any) -> list[tuple[Any, str]]:
+    if batch.tree_cache.is_chunk_cache() or not batch.tree_cache.supports_swa():
+        return []
+    from sglang.srt.environ import envs
+
+    if not envs.SGLANG_OPT_SWA_RELEASE_LEAF_LOCK_AFTER_WINDOW.get():
+        return []
+    _, swa_class = _capsule_state_classes()
+    window = int(batch.tree_cache.sliding_window_size)
+    released = []
+    for req in batch.reqs:
+        if (
+            getattr(req, "_orbitkv_prefix_lease_id", None) is not None
+            and swa_class in getattr(req, "_orbitkv_prefix_state_classes", ())
+            and not req.swa_prefix_lock_released
+            and req.swa_uuid_for_lock is not None
+            and req.last_node is not None
+            and req.decode_batch_idx >= window
+        ):
+            _release_prefix_component(req, swa_class)
+            released.append((req, swa_class))
+    return released
+
+
+def _finish_swa_prefix_component_releases(
+    batch: Any,
+    released: list[tuple[Any, str]],
+    *,
+    failed: bool,
+) -> None:
+    if not released:
+        return
+    for req, state_class in released:
+        if not req.swa_prefix_lock_released:
+            _attach_prefix_component(req, state_class)
+    _sync_radix_prefix_components(batch.tree_cache)
 
 
 def _release_owned_request(
@@ -2281,7 +2964,11 @@ def _release_owned_request(
 ):
     is_insert = bool(kwargs.get("is_insert", args[0] if args else True))
     _export_capsule_before_release(req, tree_cache, is_insert=is_insert)
+    if req is not None:
+        _release_prefix_lease(req)
     result = original_fn(req, tree_cache, *args, **kwargs)
+    if not bool(getattr(tree_cache, "is_chunk_cache", lambda: True)()):
+        _sync_radix_prefix_components(tree_cache)
     if req is not None:
         _require_owner().command(
             {
@@ -2415,6 +3102,32 @@ def register() -> None:
             HookRegistry.register(
                 "sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req",
                 _hydrate_capsule_for_admission,
+                HookType.AROUND,
+            )
+        if _prefix_radix_enabled():
+            HookRegistry.register(
+                "sglang.srt.managers.schedule_policy.PrefillAdder._req_inc_lock_ref",
+                _acquire_radix_prefix_lock,
+                HookType.AROUND,
+            )
+            HookRegistry.register(
+                "sglang.srt.mem_cache.swa_radix_cache.SWARadixCache.insert",
+                _sync_radix_after_mutation,
+                HookType.AROUND,
+            )
+            HookRegistry.register(
+                "sglang.srt.mem_cache.swa_radix_cache.SWARadixCache.evict",
+                _sync_radix_after_mutation,
+                HookType.AROUND,
+            )
+            HookRegistry.register(
+                "sglang.srt.mem_cache.unified_radix_cache.UnifiedRadixCache.insert",
+                _sync_radix_after_mutation,
+                HookType.AROUND,
+            )
+            HookRegistry.register(
+                "sglang.srt.mem_cache.unified_radix_cache.UnifiedRadixCache.evict",
+                _sync_radix_after_mutation,
                 HookType.AROUND,
             )
     elif _PHYSICAL_PLAN is not None:

@@ -28,6 +28,18 @@ pub enum RuntimeUniformStatePlanMode {
     KernelReference,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimePrefixMode {
+    CapsuleBackedSwaRadix,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RuntimePrefixContract {
+    pub mode: RuntimePrefixMode,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RuntimeExecutionContract {
@@ -61,6 +73,8 @@ pub struct RuntimeStatePlan {
     pub uniform_state_plan: Option<Value>,
     pub execution: RuntimeExecutionContract,
     pub capsule: RuntimeCapsuleContract,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub prefix: Option<RuntimePrefixContract>,
 }
 
 #[derive(Clone, Debug)]
@@ -70,6 +84,7 @@ pub struct RuntimeStatePlanOptions {
     pub uniform_state_plan: Option<Value>,
     pub execution: RuntimeExecutionContract,
     pub capsule: RuntimeCapsuleContract,
+    pub prefix: Option<RuntimePrefixContract>,
 }
 
 #[derive(Debug, Error)]
@@ -96,6 +111,8 @@ pub enum RuntimeStatePlanError {
     CapsuleRequiresOwner,
     #[error("runtime StatePlan Capsule limits must be positive")]
     InvalidCapsuleContract,
+    #[error("runtime StatePlan Prefix contract requires owner Capsule execution")]
+    InvalidPrefixContract,
     #[error("runtime StatePlan JSON encoding failed: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
@@ -127,6 +144,13 @@ pub fn compile_runtime_state_plan(
     let layout = serde_json::to_value(compiled.layout_program()?)?;
     let policy = compiled.sglang_policy_with_eviction_interval(options.eviction_interval_tokens)?;
     let sglang_policy = serde_json::to_value(policy)?;
+    validate_prefix(
+        options.prefix.as_ref(),
+        &options.execution,
+        &options.capsule,
+        &sglang_policy,
+        options.uniform_state_plan.is_some(),
+    )?;
     validate_physical_plan(
         options.physical_plan.as_ref(),
         &plan_fingerprint,
@@ -148,6 +172,7 @@ pub fn compile_runtime_state_plan(
         uniform_state_plan: options.uniform_state_plan,
         execution: options.execution,
         capsule: options.capsule,
+        prefix: options.prefix,
     };
     artifact.artifact_fingerprint = artifact.compute_fingerprint()?;
     Ok(artifact)
@@ -178,6 +203,13 @@ impl RuntimeStatePlan {
             return Err(RuntimeStatePlanError::LayoutMismatch);
         }
         validate_sglang_policy(&self.sglang_policy, &self.plan_fingerprint)?;
+        validate_prefix(
+            self.prefix.as_ref(),
+            &self.execution,
+            &self.capsule,
+            &self.sglang_policy,
+            self.uniform_state_plan.is_some(),
+        )?;
         validate_physical_plan(
             self.physical_plan.as_ref(),
             &self.plan_fingerprint,
@@ -195,7 +227,7 @@ impl RuntimeStatePlan {
     }
 
     fn compute_fingerprint(&self) -> Result<String, RuntimeStatePlanError> {
-        let payload = serde_json::json!({
+        let mut payload = serde_json::json!({
             "schema": self.schema,
             "plan_fingerprint": self.plan_fingerprint,
             "semantic_source": self.semantic_source,
@@ -206,6 +238,12 @@ impl RuntimeStatePlan {
             "execution": self.execution,
             "capsule": self.capsule,
         });
+        if let Some(prefix) = &self.prefix {
+            payload
+                .as_object_mut()
+                .expect("runtime StatePlan fingerprint payload must be an object")
+                .insert("prefix".into(), serde_json::to_value(prefix)?);
+        }
         let bytes = serde_json::to_vec(&payload)?;
         Ok(format!("sha256:{:x}", Sha256::digest(bytes)))
     }
@@ -237,6 +275,35 @@ fn validate_execution(
 fn validate_capsule(capsule: &RuntimeCapsuleContract) -> Result<(), RuntimeStatePlanError> {
     if capsule.chunk_tokens == 0 || capsule.maximum_payload_bytes == 0 {
         return Err(RuntimeStatePlanError::InvalidCapsuleContract);
+    }
+    Ok(())
+}
+
+fn validate_prefix(
+    prefix: Option<&RuntimePrefixContract>,
+    execution: &RuntimeExecutionContract,
+    capsule: &RuntimeCapsuleContract,
+    policy: &Value,
+    has_uniform_plan: bool,
+) -> Result<(), RuntimeStatePlanError> {
+    if prefix.is_some() {
+        let bounded = policy
+            .get("bounded_classes")
+            .and_then(Value::as_array)
+            .ok_or(RuntimeStatePlanError::InvalidPrefixContract)?;
+        let unbounded = policy
+            .get("unbounded_classes")
+            .and_then(Value::as_array)
+            .ok_or(RuntimeStatePlanError::InvalidPrefixContract)?;
+        if !capsule.enabled
+            || execution.mode != RuntimeExecutionMode::Owner
+            || execution.owner_transport != Some(RuntimeOwnerTransport::Sidecar)
+            || has_uniform_plan
+            || bounded.len() != 1
+            || unbounded.len() != 1
+        {
+            return Err(RuntimeStatePlanError::InvalidPrefixContract);
+        }
     }
     Ok(())
 }
@@ -343,6 +410,7 @@ mod tests {
                     chunk_tokens: 128,
                     maximum_payload_bytes: 1 << 30,
                 },
+                prefix: None,
             },
         )
         .unwrap();
@@ -350,6 +418,7 @@ mod tests {
         let encoded = serde_json::to_vec(&artifact).unwrap();
         let mut decoded: RuntimeStatePlan = serde_json::from_slice(&encoded).unwrap();
         decoded.validate().unwrap();
+        assert!(decoded.prefix.is_none());
         decoded.capsule.chunk_tokens = 256;
         assert!(matches!(
             decoded.validate(),
@@ -375,9 +444,70 @@ mod tests {
                     chunk_tokens: 16,
                     maximum_payload_bytes: 1 << 20,
                 },
+                prefix: None,
             },
         )
         .unwrap_err();
         assert!(matches!(error, RuntimeStatePlanError::CapsuleRequiresOwner));
+    }
+
+    #[test]
+    fn radix_prefix_contract_requires_sidecar_and_is_fingerprinted() {
+        let error = compile_runtime_state_plan(
+            source(),
+            RuntimeStatePlanOptions {
+                eviction_interval_tokens: 16,
+                physical_plan: None,
+                uniform_state_plan: None,
+                execution: RuntimeExecutionContract {
+                    mode: RuntimeExecutionMode::Owner,
+                    owner_transport: Some(RuntimeOwnerTransport::Ffi),
+                    uniform_state_plan_mode: None,
+                },
+                capsule: RuntimeCapsuleContract {
+                    enabled: true,
+                    chunk_tokens: 16,
+                    maximum_payload_bytes: 1 << 20,
+                },
+                prefix: Some(RuntimePrefixContract {
+                    mode: RuntimePrefixMode::CapsuleBackedSwaRadix,
+                }),
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeStatePlanError::InvalidPrefixContract
+        ));
+
+        let artifact = compile_runtime_state_plan(
+            source(),
+            RuntimeStatePlanOptions {
+                eviction_interval_tokens: 16,
+                physical_plan: None,
+                uniform_state_plan: None,
+                execution: RuntimeExecutionContract {
+                    mode: RuntimeExecutionMode::Owner,
+                    owner_transport: Some(RuntimeOwnerTransport::Sidecar),
+                    uniform_state_plan_mode: None,
+                },
+                capsule: RuntimeCapsuleContract {
+                    enabled: true,
+                    chunk_tokens: 16,
+                    maximum_payload_bytes: 1 << 20,
+                },
+                prefix: Some(RuntimePrefixContract {
+                    mode: RuntimePrefixMode::CapsuleBackedSwaRadix,
+                }),
+            },
+        )
+        .unwrap();
+        artifact.validate().unwrap();
+        assert_eq!(
+            artifact.prefix,
+            Some(RuntimePrefixContract {
+                mode: RuntimePrefixMode::CapsuleBackedSwaRadix
+            })
+        );
     }
 }

@@ -8,7 +8,10 @@ use serde::Serialize;
 use sha2::{Digest as _, Sha256};
 use thiserror::Error;
 
-use crate::{CapsuleError, CapsuleManifest, ContentDigest, PrefixPath};
+use crate::{
+    CapsuleError, CapsuleManifest, ContentDigest, PrefixError, PrefixObjectSnapshot, PrefixPath,
+    PrefixRuntime,
+};
 
 const CAPSULE_TREE: &str = "orbitkv/capsules";
 const HOLT_VALUE_LIMIT: usize = 65_535;
@@ -24,6 +27,18 @@ pub enum CapsulePublish {
 pub struct RestoredCapsule {
     pub manifest: CapsuleManifest,
     pub payload: Vec<u8>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RestoredPrefixCapsule {
+    pub capsule: RestoredCapsule,
+    pub prefix: PrefixObjectSnapshot,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct RestoredCapsuleState {
+    pub capsule: RestoredCapsule,
+    pub prefix: Option<PrefixObjectSnapshot>,
 }
 
 #[derive(Debug)]
@@ -53,6 +68,8 @@ pub enum HoltCapsuleError {
     InvalidPayloadObject,
     #[error("capsule payload object is missing")]
     MissingPayload,
+    #[error("capsule Prefix lifecycle metadata is invalid: {0}")]
+    Prefix(#[from] PrefixError),
 }
 
 impl HoltCapsuleStore {
@@ -139,11 +156,80 @@ impl HoltCapsuleStore {
         &self,
         path: &PrefixPath,
     ) -> Result<Option<RestoredCapsule>, HoltCapsuleError> {
+        Ok(self
+            .restore_deepest_state(path)?
+            .map(|restored| restored.capsule))
+    }
+
+    /// Restores one authenticated Capsule and, when every component declares
+    /// an exact token range, derives its component-aware Prefix snapshot from
+    /// the same verified payload read.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the catalog, payload, or exact component geometry
+    /// is invalid.
+    pub fn restore_deepest_state(
+        &self,
+        path: &PrefixPath,
+    ) -> Result<Option<RestoredCapsuleState>, HoltCapsuleError> {
         let Some((candidate_path, manifest)) = self.lookup_deepest(path)? else {
             return Ok(None);
         };
         let payload = self.restore_payload(&candidate_path, &manifest)?;
-        Ok(Some(RestoredCapsule { manifest, payload }))
+        let prefix = if manifest.components.iter().all(|component| {
+            component.token_start.is_some() && component.token_end_exclusive.is_some()
+        }) {
+            let mut runtime = PrefixRuntime::default();
+            let object_id = runtime.register_capsule(&candidate_path, &manifest)?;
+            Some(runtime.snapshot(object_id)?)
+        } else {
+            None
+        };
+        Ok(Some(RestoredCapsuleState {
+            capsule: RestoredCapsule { manifest, payload },
+            prefix,
+        }))
+    }
+
+    /// Restores and authenticates the deepest Capsule before exposing its
+    /// component-aware Prefix lifecycle snapshot.
+    ///
+    /// A catalog-only hit is insufficient: the immutable payload and every
+    /// component checksum are verified before persistent completeness becomes
+    /// visible in the returned Prefix object.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the catalog, payload, or Prefix component
+    /// geometry is invalid.
+    pub fn restore_deepest_prefix(
+        &self,
+        path: &PrefixPath,
+    ) -> Result<Option<RestoredPrefixCapsule>, HoltCapsuleError> {
+        let Some(restored) = self.restore_deepest_state(path)? else {
+            return Ok(None);
+        };
+        let prefix = restored.prefix.ok_or_else(|| {
+            HoltCapsuleError::Prefix(PrefixError::MissingCapsuleComponentRange(
+                restored
+                    .capsule
+                    .manifest
+                    .components
+                    .iter()
+                    .find(|component| {
+                        component.token_start.is_none() || component.token_end_exclusive.is_none()
+                    })
+                    .map_or_else(
+                        || "unknown".into(),
+                        |component| component.state_class.clone(),
+                    ),
+            ))
+        })?;
+        Ok(Some(RestoredPrefixCapsule {
+            capsule: restored.capsule,
+            prefix,
+        }))
     }
 
     /// Finds the deepest published Capsule manifest without reading its payload.
@@ -343,8 +429,8 @@ mod tests {
             offset_bytes: 0,
             length_bytes: u64::try_from(payload.len()).unwrap(),
             checksum: ContentDigest::sha256(payload),
-            token_start: None,
-            token_end_exclusive: None,
+            token_start: Some(0),
+            token_end_exclusive: Some(path.token_count()),
         }];
         let manifest =
             CapsuleManifest::new(&path, path.token_count(), payload, components, 1).unwrap();
@@ -460,6 +546,32 @@ mod tests {
         store.publish(&path, &manifest, &payload).unwrap();
         let restored = store.restore_deepest(&path).unwrap().unwrap();
         assert_eq!(restored.payload, payload);
+    }
+
+    #[test]
+    fn authenticated_restore_exposes_component_aware_prefix() {
+        let directory = TempDir::new().unwrap();
+        let payload = b"persistent-kv-state";
+        let (path, manifest) = capsule(identity(b"model"), &[1, 2, 3, 4], payload);
+        let store = HoltCapsuleStore::open(directory.path()).unwrap();
+        store.publish(&path, &manifest, payload).unwrap();
+
+        let restored = store.restore_deepest_prefix(&path).unwrap().unwrap();
+        assert_eq!(restored.capsule.manifest, manifest);
+        assert_eq!(restored.capsule.payload, payload);
+        assert_eq!(
+            restored.prefix.availability,
+            crate::PrefixAvailability::Restorable
+        );
+        assert_eq!(restored.prefix.components.len(), 1);
+        assert_eq!(
+            restored.prefix.components[0].persistent_completeness,
+            crate::PrefixComponentCompleteness::Complete
+        );
+        assert_eq!(
+            restored.prefix.components[0].device_completeness,
+            crate::PrefixComponentCompleteness::Missing
+        );
     }
 
     #[test]

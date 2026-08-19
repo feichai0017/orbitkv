@@ -7,6 +7,7 @@ pub mod holt_store;
 pub mod manager;
 pub mod optimizer;
 pub mod plan;
+pub mod prefix;
 pub mod retention;
 pub mod runtime;
 pub mod sglang_owner;
@@ -27,7 +28,10 @@ pub use hf_config::{
     HfStatePlan, HfStatePlanError, HfStatePlanOptions, SglangUniformSwaContract,
     SglangUniformSwaOptions, UniformSwaCudaGraphMode, compile_hf_config, compile_hf_state_plan,
 };
-pub use holt_store::{CapsulePublish, HoltCapsuleError, HoltCapsuleStore, RestoredCapsule};
+pub use holt_store::{
+    CapsulePublish, HoltCapsuleError, HoltCapsuleStore, RestoredCapsule, RestoredCapsuleState,
+    RestoredPrefixCapsule,
+};
 pub use manager::{
     BindingIntent, BlockHandle, BlockKey, BlockManagerConfig, ClassPoolConfig, ExecutionProof,
     KvBlockManager, KvView, ManagerError, ManagerStats, PhysicalBindingBlockReceipt,
@@ -47,6 +51,12 @@ pub use plan::{
     PlanError, RetentionKind, RetirementProgram, SglangBoundedClassPolicy, SglangPolicy,
     TemporalAddress, choose_physical_backend, compile_plan, compile_retention_program,
 };
+pub use prefix::{
+    PersistentPrefixComponent, PrefixAvailability, PrefixComponentCompleteness,
+    PrefixComponentSnapshot, PrefixComponentSpec, PrefixDeviceState, PrefixError, PrefixLease,
+    PrefixLeaseId, PrefixObjectId, PrefixObjectSnapshot, PrefixRuntime, PrefixRuntimeStats,
+    PrefixTokenRange,
+};
 pub use retention::{
     AtomicRetention, InferredRegion, InferredRetention, IntExpr, KvHeadRange, Predicate,
     RetentionAnalysis, RetentionError, RetentionProgramInput, RetentionStateDecl, analyze_state,
@@ -60,7 +70,7 @@ pub use sglang_owner::{
 };
 pub use state_plan::{
     RuntimeCapsuleContract, RuntimeExecutionContract, RuntimeExecutionMode, RuntimeOwnerTransport,
-    RuntimeStatePlan, RuntimeStatePlanError, RuntimeStatePlanOptions, RuntimeUniformStatePlanMode,
-    compile_runtime_state_plan,
+    RuntimePrefixContract, RuntimePrefixMode, RuntimeStatePlan, RuntimeStatePlanError,
+    RuntimeStatePlanOptions, RuntimeUniformStatePlanMode, compile_runtime_state_plan,
 };
 pub use trace::{SglangTraceEvent, TraceError, TraceSummary, summarize_sglang_trace};

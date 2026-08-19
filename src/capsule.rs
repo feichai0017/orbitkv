@@ -6,7 +6,7 @@ const KEY_MAGIC: &[u8] = b"orbitkv/capsule/v1\0";
 const CHUNK_MARKER: u8 = 1;
 const CAPSULE_SCHEMA: &str = "orbitkv.continuation-capsule.v1";
 
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(transparent)]
 pub struct ContentDigest(pub [u8; 32]);
 

@@ -114,6 +114,7 @@ def main() -> None:
     parser.add_argument("--load-format", choices=("auto", "dummy"), default="dummy")
     parser.add_argument("--context-length", type=int, default=8192)
     parser.add_argument("--page-size", type=int, default=16)
+    parser.add_argument("--enable-radix-cache", action="store_true")
     parser.add_argument("--attention-backend", default="triton")
     parser.add_argument("--moe-runner-backend", default="triton")
     parser.add_argument("--trace", default="/tmp/orbitkv-hybrid-shadow.jsonl")
@@ -148,6 +149,17 @@ def main() -> None:
     runtime_state_plan = (
         json.loads(Path(args.runtime_state_plan).read_text(encoding="utf-8"))
         if args.runtime_state_plan
+        else None
+    )
+    prefix_mode = (
+        runtime_state_plan.get("prefix", {}).get("mode")
+        if runtime_state_plan is not None
+        else None
+    )
+    radix_prefix_enabled = prefix_mode == "capsule_backed_swa_radix"
+    runtime_owner_transport = (
+        runtime_state_plan["execution"].get("owner_transport")
+        if runtime_state_plan is not None
         else None
     )
 
@@ -237,9 +249,6 @@ def main() -> None:
             os.environ.pop("ORBITKV_CAPSULE_CHUNK_TOKENS", None)
             os.environ.pop("ORBITKV_CAPSULE_MAX_PAYLOAD_BYTES", None)
         if args.runtime_state_plan:
-            runtime_owner_transport = runtime_state_plan["execution"].get(
-                "owner_transport"
-            )
             if runtime_owner_transport == "ffi":
                 os.environ["ORBITKV_OWNER_LIB"] = args.orbitkv_owner_lib
             else:
@@ -282,7 +291,9 @@ def main() -> None:
         page_size=args.page_size,
         moe_runner_backend=args.moe_runner_backend,
         disable_overlap_schedule=True,
-        disable_radix_cache=True,
+        disable_radix_cache=not (
+            radix_prefix_enabled or args.enable_radix_cache
+        ),
         chunked_prefill_size=2048,
         max_running_requests=max_running_requests,
         random_seed=20260816,
@@ -388,12 +399,26 @@ def main() -> None:
                 token_digest(seed_outputs) if seed_outputs is not None else None
             ),
             "eviction_interval": (
-                args.eviction_interval
-                if args.mode in ("native_policy", "policy", "owner")
-                else 128
+                int(
+                    runtime_state_plan["sglang_policy"][
+                        "swa_eviction_interval_tokens"
+                    ]
+                )
+                if runtime_state_plan is not None
+                else (
+                    args.eviction_interval
+                    if args.mode in ("native_policy", "policy", "owner")
+                    else 128
+                )
             ),
             "owner_transport": (
-                args.owner_transport if args.mode == "owner" else None
+                (
+                    runtime_owner_transport
+                    if runtime_state_plan is not None
+                    else args.owner_transport
+                )
+                if args.mode == "owner"
+                else None
             ),
             "load_seconds": loaded - started,
             "iteration_seconds": iteration_seconds,

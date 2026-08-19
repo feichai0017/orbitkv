@@ -639,6 +639,7 @@ mod tests {
                     chunk_tokens: 16,
                     maximum_payload_bytes: 1 << 20,
                 },
+                prefix: None,
             },
         )
         .unwrap();

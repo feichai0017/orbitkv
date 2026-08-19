@@ -9,8 +9,9 @@ use orbitkv::{
     ContentDigest, HfRetentionCompilation, HfRetentionOptions, HfStatePlanOptions,
     HoltCapsuleStore, KvPlanSource, OwnerCommand, PhysicalPlanObjective, PrefixPath,
     RetentionAnalysis, RuntimeCapsuleContract, RuntimeExecutionContract, RuntimeExecutionMode,
-    RuntimeOwnerTransport, RuntimeStatePlan, RuntimeStatePlanOptions, RuntimeUniformStatePlanMode,
-    SglangOwner, SglangPhysicalOptimizationInput, SglangPhysicalPlan, SglangUniformSwaOptions,
+    RuntimeOwnerTransport, RuntimePrefixContract, RuntimePrefixMode, RuntimeStatePlan,
+    RuntimeStatePlanOptions, RuntimeUniformStatePlanMode, SglangOwner,
+    SglangPhysicalOptimizationInput, SglangPhysicalPlan, SglangUniformSwaOptions,
     UniformSwaCudaGraphMode, analyze_state, build_capsule_components, compile_hf_config,
     compile_hf_state_plan, compile_retention_program, compile_runtime_state_plan,
     optimize_sglang_physical_plan,
@@ -109,9 +110,14 @@ enum CapsuleResponse {
         prefix_token_count: u64,
         payload_bytes: u64,
         created: bool,
+        manifest: Box<CapsuleManifest>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prefix: Option<Box<orbitkv::PrefixObjectSnapshot>>,
     },
     Restored {
         manifest: Box<CapsuleManifest>,
+        #[serde(skip_serializing_if = "Option::is_none")]
+        prefix: Option<Box<orbitkv::PrefixObjectSnapshot>>,
         payload_path: String,
     },
     Miss,
@@ -282,6 +288,7 @@ fn compile_runtime_state_plan_command(
     let mut physical_plan = None;
     let mut uniform_state_plan = None;
     let mut uniform_state_plan_mode = None;
+    let mut prefix = None;
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--physical-plan" => {
@@ -304,6 +311,16 @@ fn compile_runtime_state_plan_command(
                         }
                     });
             }
+            "--prefix-mode" => {
+                prefix = Some(RuntimePrefixContract {
+                    mode: match required(args, "Prefix mode")?.as_str() {
+                        "capsule_backed_swa_radix" => RuntimePrefixMode::CapsuleBackedSwaRadix,
+                        value => {
+                            return Err(format!("unsupported Prefix mode {value:?}").into());
+                        }
+                    },
+                });
+            }
             argument => return Err(format!("unexpected argument {argument}").into()),
         }
     }
@@ -323,6 +340,7 @@ fn compile_runtime_state_plan_command(
                 chunk_tokens: capsule_chunk_tokens,
                 maximum_payload_bytes: capsule_maximum_payload_bytes,
             },
+            prefix,
         },
     )?;
     artifact.validate()?;
@@ -401,12 +419,23 @@ fn execute_capsule_command_inner(
                 created_unix_ms,
             )?;
             let publication = store.publish(&path, &manifest, &payload)?;
+            let prefix = if manifest.components.iter().all(|component| {
+                component.token_start.is_some() && component.token_end_exclusive.is_some()
+            }) {
+                let mut prefix_runtime = orbitkv::PrefixRuntime::default();
+                let object_id = prefix_runtime.register_capsule(&path, &manifest)?;
+                Some(Box::new(prefix_runtime.snapshot(object_id)?))
+            } else {
+                None
+            };
             Ok(CapsuleResponse::Published {
                 capsule_id: manifest.capsule_id,
                 payload_digest: manifest.payload_digest,
                 prefix_token_count: manifest.prefix_token_count,
                 payload_bytes: manifest.payload_bytes,
                 created: matches!(publication, orbitkv::CapsulePublish::Published),
+                manifest: Box::new(manifest),
+                prefix,
             })
         }
         CapsuleCommand::Restore {
@@ -415,12 +444,15 @@ fn execute_capsule_command_inner(
             token_ids,
         } => {
             let path = PrefixPath::from_token_ids(identity, chunk_tokens, &token_ids)?;
-            let Some((_, manifest)) = store.lookup_deepest(&path)? else {
+            let Some(restored) = store.restore_deepest_state(&path)? else {
                 return Ok(CapsuleResponse::Miss);
             };
+            let manifest = restored.capsule.manifest;
+            let prefix = restored.prefix.map(Box::new);
             let payload_path = capsule_payload_path(root, manifest.payload_digest);
             Ok(CapsuleResponse::Restored {
                 manifest: Box::new(manifest),
+                prefix,
                 payload_path: payload_path.display().to_string(),
             })
         }

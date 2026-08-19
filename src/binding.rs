@@ -160,6 +160,32 @@ impl BindingCoordinator {
     ///
     /// Returns an error while leaving the intent pending for retry or abort.
     pub fn commit(&mut self, receipt: &PhysicalStateBindingReceipt) -> Result<(), BindingError> {
+        self.validate_commit(receipt)?;
+        let binding_id = receipt.binding_id;
+        let intent = self
+            .pending
+            .get(&binding_id)
+            .ok_or(BindingError::UnknownBinding(binding_id))?;
+        let request_id = intent.request_id.clone();
+        self.pending.remove(&binding_id);
+        self.pending_requests.remove(&request_id);
+        self.committed_bindings = self.committed_bindings.saturating_add(1);
+        Ok(())
+    }
+
+    /// Validates a physical receipt without changing coordinator state.
+    ///
+    /// This preflight lets a higher-level owner atomically validate both the
+    /// binding transaction and its logical Prefix object before committing
+    /// either metadata domain.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation errors as [`Self::commit`].
+    pub fn validate_commit(
+        &self,
+        receipt: &PhysicalStateBindingReceipt,
+    ) -> Result<(), BindingError> {
         let binding_id = receipt.binding_id;
         let intent = self
             .pending
@@ -204,10 +230,6 @@ impl BindingCoordinator {
                 return Err(BindingError::MismatchedReceipt(binding_id));
             }
         }
-        let request_id = intent.request_id.clone();
-        self.pending.remove(&binding_id);
-        self.pending_requests.remove(&request_id);
-        self.committed_bindings = self.committed_bindings.saturating_add(1);
         Ok(())
     }
 

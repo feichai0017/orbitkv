@@ -9,6 +9,7 @@ import sys
 import tempfile
 import types
 import unittest
+from array import array
 from pathlib import Path
 
 try:
@@ -23,6 +24,14 @@ class FakeTensor:
 
     def numel(self) -> int:
         return self.size
+
+    def __getitem__(self, key):
+        if not isinstance(key, slice):
+            raise TypeError(key)
+        start, stop, step = key.indices(self.size)
+        if step != 1:
+            raise ValueError("FakeTensor only supports contiguous slices")
+        return FakeTensor(max(0, stop - start))
 
 
 class FakeSWATokenToKVPoolAllocator:
@@ -193,10 +202,57 @@ class FakeBindings:
                 "status": "binding_committed",
                 "binding_id": command["receipt"]["binding_id"],
             }
+        if operation == "commit_binding_and_acquire_prefix":
+            if self.fail_commit:
+                raise RuntimeError("injected Prefix binding commit failure")
+            return {
+                "status": "prefix_binding_committed",
+                "binding_id": command["receipt"]["binding_id"],
+                "lease_id": 1,
+                "object_id": command["receipt"].get(
+                    "object_id",
+                    self.commands[-2]["prefix"]["object_id"],
+                ),
+                "state_classes": sorted(command["state_classes"]),
+            }
+        if operation == "release_prefix":
+            return {
+                "status": "prefix_released",
+                "lease_id": command["lease_id"],
+            }
+        if operation == "release_prefix_component":
+            return {
+                "status": "prefix_component_released",
+                "lease_id": command["lease_id"],
+                "state_class": command["state_class"],
+            }
+        if operation == "attach_prefix_component":
+            return {
+                "status": "prefix_component_attached",
+                "lease_id": command["lease_id"],
+                "state_class": command["state_class"],
+            }
+        if operation == "tombstone_prefix_component":
+            return {
+                "status": "prefix_component_tombstoned",
+                "object_id": command["object_id"],
+                "state_class": command["state_class"],
+            }
+        if operation == "recover_prefix_component":
+            return {
+                "status": "prefix_component_recovered",
+                "object_id": command["object_id"],
+                "state_class": command["state_class"],
+            }
         if operation == "abort_binding":
             return {
                 "status": "binding_aborted",
                 "binding_id": command["binding_id"],
+            }
+        if operation == "register_prefix":
+            return {
+                "status": "prefix_registered",
+                "object_id": command["prefix"]["object_id"],
             }
         raise AssertionError(command)
 
@@ -217,6 +273,42 @@ class FakeCapsules:
             "payload_bytes": Path(command["payload_path"]).stat().st_size,
             "created": True,
         }
+
+
+def _prefix_snapshot(manifest):
+    capsule_id = manifest.setdefault(
+        "capsule_id", list(hashlib.sha256(b"capsule-id").digest())
+    )
+    object_id = list(hashlib.sha256(b"prefix-object-id").digest())
+    return {
+        "schema": "orbitkv.prefix-object-snapshot.v1",
+        "object_id": object_id,
+        "prefix_token_count": manifest["prefix_token_count"],
+        "availability": "restorable",
+        "components": [
+            {
+                "spec": {
+                    "state_class": component["state_class"],
+                    "token_range": {
+                        "start": component["token_start"],
+                        "end_exclusive": component["token_end_exclusive"],
+                    },
+                },
+                "device": {"state": "absent"},
+                "device_completeness": "missing",
+                "persistent": {
+                    "capsule_id": capsule_id,
+                    "payload_digest": manifest["payload_digest"],
+                    "component_checksum": component["checksum"],
+                    "offset_bytes": component["offset_bytes"],
+                    "length_bytes": component["length_bytes"],
+                },
+                "persistent_completeness": "complete",
+                "lease_count": 0,
+            }
+            for component in manifest["components"]
+        ],
+    }
 
 
 class FakeHydrationCapsules:
@@ -240,15 +332,18 @@ class FakeHydrationCapsules:
                 "payload_digest": digest,
                 "components": [
                     {
-                        "state_class": "sglang-kv",
+                        "state_class": "swa",
                         "offset_bytes": 0,
                         "length_bytes": len(payload),
                         "checksum": digest,
+                        "token_start": prefix_tokens - live_tokens,
+                        "token_end_exclusive": prefix_tokens,
                     }
                 ],
             },
             "payload_path": str(payload_path),
         }
+        self.response["prefix"] = _prefix_snapshot(self.response["manifest"])
 
     def command(self, command):
         self.commands.append(command)
@@ -277,7 +372,7 @@ class FakeHybridHydrationCapsules:
                 "payload_digest": list(hashlib.sha256(payload).digest()),
                 "components": [
                     {
-                        "state_class": "full-kv",
+                        "state_class": "full",
                         "offset_bytes": 0,
                         "length_bytes": len(full_payload),
                         "checksum": list(hashlib.sha256(full_payload).digest()),
@@ -285,7 +380,7 @@ class FakeHybridHydrationCapsules:
                         "token_end_exclusive": prefix_tokens,
                     },
                     {
-                        "state_class": "swa-kv",
+                        "state_class": "swa",
                         "offset_bytes": len(full_payload),
                         "length_bytes": len(swa_payload),
                         "checksum": list(hashlib.sha256(swa_payload).digest()),
@@ -296,6 +391,7 @@ class FakeHybridHydrationCapsules:
             },
             "payload_path": str(payload_path),
         }
+        self.response["prefix"] = _prefix_snapshot(self.response["manifest"])
 
     def command(self, command):
         self.commands.append(command)
@@ -401,6 +497,18 @@ class FakeTreeCache:
 
     @staticmethod
     def is_chunk_cache() -> bool:
+        return True
+
+
+class FakeRadixTreeCache:
+    page_size = 16
+
+    @staticmethod
+    def is_chunk_cache() -> bool:
+        return False
+
+    @staticmethod
+    def supports_swa() -> bool:
         return True
 
 
@@ -558,7 +666,96 @@ def _load_hook_registry(sglang_root: Path):
     return module
 
 
+def _load_swa_radix_types(sglang_root: Path):
+    required_modules = (
+        "sglang",
+        "sglang.srt",
+        "sglang.srt.mem_cache",
+        "sglang.srt.mem_cache.allocator",
+        "sglang.srt.mem_cache.allocator.swa",
+        "sglang.srt.mem_cache.base_prefix_cache",
+        "sglang.srt.mem_cache.cache_init_params",
+        "sglang.srt.mem_cache.events",
+        "sglang.srt.mem_cache.utils",
+        "sglang.srt.environ",
+    )
+    for name in required_modules:
+        if name not in sys.modules:
+            _module(name)
+
+    allocator_module = sys.modules["sglang.srt.mem_cache.allocator.swa"]
+    allocator_module.SWATokenToKVPoolAllocator = FakeSWATokenToKVPoolAllocator
+    base_module = sys.modules["sglang.srt.mem_cache.base_prefix_cache"]
+    base_module.BasePrefixCache = object
+    for name in (
+        "DecLockRefParams",
+        "DecLockRefResult",
+        "EvictParams",
+        "EvictResult",
+        "IncLockRefResult",
+        "InsertParams",
+        "InsertResult",
+        "MatchPrefixParams",
+        "MatchResult",
+    ):
+        setattr(base_module, name, type(name, (), {}))
+    sys.modules["sglang.srt.mem_cache.cache_init_params"].CacheInitParams = type(
+        "CacheInitParams", (), {}
+    )
+    sys.modules["sglang.srt.mem_cache.events"].KVCacheEventMixin = type(
+        "KVCacheEventMixin", (), {}
+    )
+    utilities = sys.modules["sglang.srt.mem_cache.utils"]
+    utilities.get_eviction_strategy = lambda _policy: None
+    utilities.get_hash_str = lambda *_args, **_kwargs: ""
+    utilities.split_node_hash_value = lambda *_args, **_kwargs: (None, None)
+    sys.modules["sglang.srt.environ"].envs = types.SimpleNamespace()
+
+    radix_path = sglang_root / "python/sglang/srt/mem_cache/radix_cache.py"
+    radix_spec = importlib.util.spec_from_file_location(
+        "sglang.srt.mem_cache.radix_cache", radix_path
+    )
+    if radix_spec is None or radix_spec.loader is None:
+        raise RuntimeError(f"cannot load SGLang RadixKey from {radix_path}")
+    radix_module = importlib.util.module_from_spec(radix_spec)
+    sys.modules[radix_spec.name] = radix_module
+    radix_spec.loader.exec_module(radix_module)
+
+    swa_path = sglang_root / "python/sglang/srt/mem_cache/swa_radix_cache.py"
+    swa_spec = importlib.util.spec_from_file_location(
+        "sglang.srt.mem_cache.swa_radix_cache", swa_path
+    )
+    if swa_spec is None or swa_spec.loader is None:
+        raise RuntimeError(f"cannot load SGLang SWARadix TreeNode from {swa_path}")
+    swa_module = importlib.util.module_from_spec(swa_spec)
+    sys.modules[swa_spec.name] = swa_module
+    swa_spec.loader.exec_module(swa_module)
+    return radix_module.RadixKey, swa_module.TreeNode
+
+
 class ShadowPluginTests(unittest.TestCase):
+    def test_pinned_unified_radix_component_contract_is_present(self):
+        root = Path(os.environ["ORBITKV_SGLANG_ROOT"])
+        cache = (
+            root
+            / "python/sglang/srt/mem_cache/unified_radix_cache.py"
+        ).read_text(encoding="utf-8")
+        core = (
+            root
+            / "python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py"
+        ).read_text(encoding="utf-8")
+        component = (
+            root
+            / "python/sglang/srt/mem_cache/unified_cache/components/tree_component.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("class UnifiedRadixCache", cache)
+        self.assertIn("def insert(", cache)
+        self.assertIn("def evict(", cache)
+        self.assertIn("class UnifiedTreeNode", core)
+        self.assertIn("self.component_data", core)
+        self.assertIn("class ComponentData", component)
+        self.assertIn("value: Optional[torch.Tensor] = None", component)
+
     def test_runtime_state_plan_is_the_single_plugin_contract(self):
         from orbitkv_sglang import plugin
 
@@ -578,13 +775,15 @@ class ShadowPluginTests(unittest.TestCase):
                     "--execution-mode",
                     "owner",
                     "--owner-transport",
-                    "ffi",
+                    "sidecar",
                     "--capsule-enabled",
                     "true",
                     "--capsule-chunk-tokens",
                     "128",
                     "--capsule-max-payload-bytes",
                     "1073741824",
+                    "--prefix-mode",
+                    "capsule_backed_swa_radix",
                 ],
                 text=True,
             )
@@ -607,8 +806,9 @@ class ShadowPluginTests(unittest.TestCase):
                     artifact["artifact_fingerprint"],
                 )
                 self.assertTrue(plugin._owner_enabled())
-                self.assertEqual(plugin._owner_transport(), "ffi")
+                self.assertEqual(plugin._owner_transport(), "sidecar")
                 self.assertTrue(plugin._capsules_enabled())
+                self.assertTrue(plugin._prefix_radix_enabled())
                 self.assertEqual(plugin._capsule_chunk_tokens(), 128)
                 self.assertEqual(plugin._capsule_payload_limit(), 1073741824)
 
@@ -1319,6 +1519,7 @@ class ShadowPluginTests(unittest.TestCase):
         req = FakeOwningReq()
         old_capsules = plugin._CAPSULES
         old_owner = plugin._OWNER
+        old_policy = plugin._POLICY
         old_encoder = plugin._encode_capsule_payload
         environment = {
             "ORBITKV_CAPSULE_STORE": tempfile.mkdtemp(),
@@ -1338,6 +1539,11 @@ class ShadowPluginTests(unittest.TestCase):
         try:
             plugin._CAPSULES = capsules
             plugin._OWNER = owner
+            plugin._POLICY = {
+                "page_tokens": 16,
+                "unbounded_classes": [],
+                "bounded_classes": [{"name": "swa", "window_tokens": 32}],
+            }
             plugin._encode_capsule_payload = lambda value: b"wire"
             os.environ.update(environment)
 
@@ -1355,6 +1561,7 @@ class ShadowPluginTests(unittest.TestCase):
         finally:
             plugin._CAPSULES = old_capsules
             plugin._OWNER = old_owner
+            plugin._POLICY = old_policy
             plugin._encode_capsule_payload = old_encoder
             for key, value in old_environment.items():
                 if value is None:
@@ -1641,13 +1848,13 @@ class ShadowPluginTests(unittest.TestCase):
             publish["components"],
             [
                 {
-                    "state_class": "full-kv",
+                    "state_class": "full",
                     "length_bytes": publish["components"][0]["length_bytes"],
                     "token_start": 0,
                     "token_end_exclusive": 64,
                 },
                 {
-                    "state_class": "swa-kv",
+                    "state_class": "swa",
                     "length_bytes": publish["components"][1]["length_bytes"],
                     "token_start": 32,
                     "token_end_exclusive": 64,
@@ -1696,12 +1903,12 @@ class ShadowPluginTests(unittest.TestCase):
             old_environment = {key: os.environ.get(key) for key in environment}
             try:
                 plugin._CAPSULES = capsules
-                bindings = FakeBindings()
+                bindings = FakeBindings(hybrid=False)
                 plugin._BINDINGS = bindings
                 plugin._POLICY = {
                     "plan_fingerprint": f"sha256:{'00' * 32}",
                     "page_tokens": 16,
-                    "unbounded_classes": ["full"],
+                    "unbounded_classes": [],
                     "bounded_classes": [{"name": "swa", "window_tokens": 32}]
                 }
                 os.environ.update(environment)
@@ -1725,7 +1932,7 @@ class ShadowPluginTests(unittest.TestCase):
                         os.environ[key] = value
 
         self.assertEqual(result, "continue")
-        self.assertEqual(allocator.tail_lengths, [32])
+        self.assertEqual(allocator.tail_lengths, [])
         self.assertEqual(len(allocator.loaded), 1)
         self.assertEqual(allocator.freed, [])
         self.assertEqual(req._orbitkv_capsule_prefix_tokens, 64)
@@ -1772,12 +1979,12 @@ class ShadowPluginTests(unittest.TestCase):
             old_environment = {key: os.environ.get(key) for key in environment}
             try:
                 plugin._CAPSULES = capsules
-                bindings = FakeBindings()
+                bindings = FakeBindings(hybrid=False)
                 plugin._BINDINGS = bindings
                 plugin._POLICY = {
                     "plan_fingerprint": f"sha256:{'00' * 32}",
                     "page_tokens": 16,
-                    "unbounded_classes": ["full"],
+                    "unbounded_classes": [],
                     "bounded_classes": [{"name": "swa", "window_tokens": 32}]
                 }
                 os.environ.update(environment)
@@ -1800,9 +2007,189 @@ class ShadowPluginTests(unittest.TestCase):
         self.assertEqual(len(allocator.loaded), 1)
         self.assertEqual(len(allocator.freed), 1)
         self.assertEqual(len(req.prefix_indices), 0)
+
+    def test_radix_capsule_binding_atomically_acquires_prefix_lease(self):
+        if torch is None:
+            self.skipTest("torch is unavailable")
+        from orbitkv_sglang import plugin
+        from orbitkv_sglang.capsule_wire import encode_cpu_tensors
+
+        with tempfile.TemporaryDirectory() as directory:
+            payload_path = Path(directory) / "capsule.payload"
+            payload_path.write_bytes(
+                encode_cpu_tensors({"full": [[torch.ones((64, 1))]], "swa": None})
+            )
+            capsules = FakeHydrationCapsules(payload_path, 64)
+            allocator = FakeHydrationAllocator()
+            tree_cache = types.SimpleNamespace(
+                is_chunk_cache=lambda: False,
+                supports_swa=lambda: True,
+                token_to_kv_pool_allocator=allocator,
+            )
+            adder = types.SimpleNamespace(tree_cache=tree_cache, can_run_list=[])
+            req = FakeHydrationReq()
+            old_capsules = plugin._CAPSULES
+            old_bindings = plugin._BINDINGS
+            old_owner = plugin._OWNER
+            old_policy = plugin._POLICY
+            old_runtime_plan = plugin._RUNTIME_STATE_PLAN
+            with plugin._PREFIX_OBJECTS_LOCK:
+                old_prefix_objects = dict(plugin._PREFIX_OBJECTS)
+                plugin._PREFIX_OBJECTS.clear()
+            environment = {
+                "ORBITKV_CAPSULE_STORE": directory,
+                "ORBITKV_CAPSULE_CHUNK_TOKENS": "16",
+                "ORBITKV_TRACE_ALLOCATIONS": "0",
+                "ORBITKV_CAPSULE_IDENTITY": json.dumps(
+                    {
+                        "namespace": "dGVuYW50",
+                        "model_fingerprint": f"sha256:{'01' * 32}",
+                        "tokenizer_fingerprint": f"sha256:{'02' * 32}",
+                        "adapter_fingerprint": f"sha256:{'03' * 32}",
+                        "state_plan_fingerprint": f"sha256:{'04' * 32}",
+                    }
+                ),
+            }
+            old_environment = {key: os.environ.get(key) for key in environment}
+            try:
+                plugin._CAPSULES = capsules
+                bindings = FakeBindings(hybrid=False)
+                plugin._BINDINGS = bindings
+                plugin._OWNER = bindings
+                plugin._POLICY = {
+                    "plan_fingerprint": f"sha256:{'00' * 32}",
+                    "page_tokens": 16,
+                    "unbounded_classes": [],
+                    "bounded_classes": [{"name": "swa", "window_tokens": 32}],
+                }
+                plugin._RUNTIME_STATE_PLAN = {
+                    "artifact_fingerprint": f"sha256:{'04' * 32}",
+                    "capsule": {
+                        "enabled": True,
+                        "chunk_tokens": 16,
+                        "maximum_payload_bytes": 1 << 30,
+                    },
+                    "execution": {"owner_transport": "sidecar"},
+                    "prefix": {"mode": "capsule_backed_swa_radix"},
+                }
+                os.environ.update(environment)
+
+                def original(current_adder, current_req):
+                    current_adder.can_run_list.append(current_req)
+                    return "continue"
+
+                result = plugin._hydrate_capsule_for_admission(original, adder, req)
+            finally:
+                plugin._CAPSULES = old_capsules
+                plugin._BINDINGS = old_bindings
+                plugin._OWNER = old_owner
+                plugin._POLICY = old_policy
+                plugin._RUNTIME_STATE_PLAN = old_runtime_plan
+                with plugin._PREFIX_OBJECTS_LOCK:
+                    plugin._PREFIX_OBJECTS.clear()
+                    plugin._PREFIX_OBJECTS.update(old_prefix_objects)
+                for key, value in old_environment.items():
+                    if value is None:
+                        os.environ.pop(key, None)
+                    else:
+                        os.environ[key] = value
+
+        self.assertEqual(result, "continue")
+        self.assertEqual(req._orbitkv_prefix_lease_id, 1)
+        self.assertEqual(req._orbitkv_prefix_state_classes, ["swa"])
         self.assertEqual(
             [command["op"] for command in bindings.commands],
-            ["prepare_binding", "abort_binding"],
+            ["prepare_binding", "commit_binding_and_acquire_prefix"],
+        )
+        self.assertEqual(
+            bindings.commands[0]["prefix"],
+            capsules.response["prefix"],
+        )
+
+    def test_real_swa_radix_nodes_drive_component_tombstone_and_recovery(self):
+        if torch is None:
+            self.skipTest("torch is unavailable")
+        from orbitkv_sglang import plugin
+
+        sglang_root = Path(os.environ["ORBITKV_SGLANG_ROOT"])
+        RadixKey, TreeNode = _load_swa_radix_types(sglang_root)
+        root = TreeNode()
+        root.key = RadixKey(token_ids=array("q"))
+        child = TreeNode()
+        child.parent = root
+        child.key = RadixKey(token_ids=array("q", range(64)))
+        child.value = torch.arange(64, dtype=torch.int64)
+        child.swa_tombstone = True
+        root.children[child.key.child_key(16)] = child
+        tree_cache = types.SimpleNamespace(root_node=root, page_size=16)
+        object_id = list(hashlib.sha256(b"prefix-object").digest())
+        entry = {
+            "object_id": object_id,
+            "prefix_token_count": 64,
+            "token_ids": tuple(range(64)),
+            "token_digest": plugin._prefix_token_digest(tuple(range(64))),
+            "extra_key": None,
+            "cache_salt": None,
+            "tree_materialized": True,
+            "components": {
+                "full": {
+                    "token_start": 0,
+                    "token_end_exclusive": 64,
+                    "device_resident": True,
+                },
+                "swa": {
+                    "token_start": 32,
+                    "token_end_exclusive": 64,
+                    "device_resident": True,
+                },
+            },
+        }
+        key = plugin._prefix_registry_key(tuple(range(64)), None, None)
+        bindings = FakeBindings()
+        old_bindings = plugin._BINDINGS
+        old_policy = plugin._POLICY
+        with plugin._PREFIX_OBJECTS_LOCK:
+            old_prefix_objects = dict(plugin._PREFIX_OBJECTS)
+            plugin._PREFIX_OBJECTS.clear()
+            plugin._PREFIX_OBJECTS[key] = entry
+        try:
+            plugin._BINDINGS = bindings
+            plugin._POLICY = {
+                "page_tokens": 16,
+                "unbounded_classes": ["full"],
+                "bounded_classes": [{"name": "swa", "window_tokens": 32}],
+            }
+            plugin._sync_radix_prefix_components(tree_cache)
+            with plugin._PREFIX_OBJECTS_LOCK:
+                self.assertTrue(
+                    plugin._PREFIX_OBJECTS[key]["components"]["full"][
+                        "device_resident"
+                    ]
+                )
+                self.assertFalse(
+                    plugin._PREFIX_OBJECTS[key]["components"]["swa"][
+                        "device_resident"
+                    ]
+                )
+
+            child.swa_tombstone = False
+            plugin._sync_radix_prefix_components(tree_cache)
+            with plugin._PREFIX_OBJECTS_LOCK:
+                self.assertTrue(
+                    plugin._PREFIX_OBJECTS[key]["components"]["swa"][
+                        "device_resident"
+                    ]
+                )
+        finally:
+            plugin._BINDINGS = old_bindings
+            plugin._POLICY = old_policy
+            with plugin._PREFIX_OBJECTS_LOCK:
+                plugin._PREFIX_OBJECTS.clear()
+                plugin._PREFIX_OBJECTS.update(old_prefix_objects)
+
+        self.assertEqual(
+            [command["op"] for command in bindings.commands],
+            ["tombstone_prefix_component", "recover_prefix_component"],
         )
 
     def test_capsule_load_failure_frees_physical_state_and_aborts_binding(self):
@@ -1842,13 +2229,13 @@ class ShadowPluginTests(unittest.TestCase):
             }
             old_environment = {key: os.environ.get(key) for key in environment}
             try:
-                bindings = FakeBindings()
+                bindings = FakeBindings(hybrid=False)
                 plugin._CAPSULES = capsules
                 plugin._BINDINGS = bindings
                 plugin._POLICY = {
                     "plan_fingerprint": f"sha256:{'00' * 32}",
                     "page_tokens": 16,
-                    "unbounded_classes": ["full"],
+                    "unbounded_classes": [],
                     "bounded_classes": [{"name": "swa", "window_tokens": 32}],
                 }
                 os.environ.update(environment)
@@ -1908,13 +2295,13 @@ class ShadowPluginTests(unittest.TestCase):
             }
             old_environment = {key: os.environ.get(key) for key in environment}
             try:
-                bindings = FakeBindings(fail_commit=True)
+                bindings = FakeBindings(hybrid=False, fail_commit=True)
                 plugin._CAPSULES = capsules
                 plugin._BINDINGS = bindings
                 plugin._POLICY = {
                     "plan_fingerprint": f"sha256:{'00' * 32}",
                     "page_tokens": 16,
-                    "unbounded_classes": ["full"],
+                    "unbounded_classes": [],
                     "bounded_classes": [{"name": "swa", "window_tokens": 32}],
                 }
                 os.environ.update(environment)
@@ -2184,7 +2571,7 @@ class ShadowPluginTests(unittest.TestCase):
                 }
                 os.environ.update(environment)
                 with self.assertRaisesRegex(
-                    RuntimeError, "component ranges do not match"
+                    RuntimeError, "Prefix component proof is invalid"
                 ):
                     plugin._try_hydrate_capsule(req, tree_cache)
             finally:

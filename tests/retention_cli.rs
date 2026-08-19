@@ -48,18 +48,21 @@ fn runtime_state_plan_is_one_validated_owner_artifact() {
         "--execution-mode",
         "owner",
         "--owner-transport",
-        "ffi",
+        "sidecar",
         "--capsule-enabled",
         "true",
         "--capsule-chunk-tokens",
         "128",
         "--capsule-max-payload-bytes",
         "1073741824",
+        "--prefix-mode",
+        "capsule_backed_swa_radix",
     ]);
     assert_eq!(artifact["schema"], "orbitkv.runtime-state-plan.v1");
     assert_eq!(artifact["execution"]["mode"], "owner");
-    assert_eq!(artifact["execution"]["owner_transport"], "ffi");
+    assert_eq!(artifact["execution"]["owner_transport"], "sidecar");
     assert_eq!(artifact["capsule"]["enabled"], true);
+    assert_eq!(artifact["prefix"]["mode"], "capsule_backed_swa_radix");
     assert_eq!(
         artifact["plan_fingerprint"],
         artifact["layout"]["plan_fingerprint"]
