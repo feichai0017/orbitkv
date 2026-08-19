@@ -1291,6 +1291,78 @@ class ShadowPluginTests(unittest.TestCase):
                     "admitted",
                 )
                 self.assertEqual(adder.rem_total_token_offset, 2048)
+
+                page_one_contract = dict(plugin._UNIFORM_SWA_CONTRACT)
+                plugin._UNIFORM_SWA_CONTRACT = {
+                    **page_one_contract,
+                    "page_tokens": 16,
+                    "chunked_prefill_tokens": 2048,
+                    "window_tokens": 1024,
+                }
+                plugin._STATE_PLAN_MODE = "execute"
+                chunk_req = types.SimpleNamespace(
+                    full_untruncated_fill_ids=list(range(4097)),
+                    prefix_indices=list(range(2048)),
+                )
+
+                class FakeChunkAdder:
+                    is_all_swa = True
+
+                    def __init__(self):
+                        self.rem_total_token_offset = 0
+                        self.rem_swa_token_offset = 0
+
+                    @property
+                    def rem_total_tokens(self):
+                        return 1120 - self.rem_total_token_offset
+
+                    @property
+                    def rem_swa_tokens(self):
+                        return 1120 - self.rem_swa_token_offset
+
+                chunk_adder = FakeChunkAdder()
+
+                def add_chunk(current_adder, current_req):
+                    available = min(
+                        int(current_adder.rem_total_tokens),
+                        int(current_adder.rem_swa_tokens) - 16,
+                    )
+                    self.assertGreaterEqual(available, 2048)
+                    return current_req
+
+                self.assertIs(
+                    plugin._admit_uniform_swa_chunked_request(
+                        add_chunk,
+                        chunk_adder,
+                        chunk_req,
+                    ),
+                    chunk_req,
+                )
+                self.assertEqual(chunk_adder.rem_total_token_offset, 0)
+                self.assertEqual(chunk_adder.rem_swa_token_offset, 0)
+
+                no_reclaim_req = types.SimpleNamespace(
+                    full_untruncated_fill_ids=list(range(2049)),
+                    prefix_indices=list(range(1024)),
+                )
+
+                def reject_unsafe_chunk(current_adder, current_req):
+                    available = min(
+                        int(current_adder.rem_total_tokens),
+                        int(current_adder.rem_swa_tokens) - 16,
+                    )
+                    self.assertEqual(available, 1104)
+                    return current_req
+
+                self.assertIs(
+                    plugin._admit_uniform_swa_chunked_request(
+                        reject_unsafe_chunk,
+                        chunk_adder,
+                        no_reclaim_req,
+                    ),
+                    no_reclaim_req,
+                )
+                plugin._UNIFORM_SWA_CONTRACT = page_one_contract
                 with self.assertRaisesRegex(
                     RuntimeError, "did not produce its compiled allocator"
                 ):
@@ -1776,32 +1848,6 @@ class ShadowPluginTests(unittest.TestCase):
                 "advance_resident_frontier",
             ],
         )
-
-    def test_dense_capsule_rejects_more_than_one_continuation_token(self):
-        from orbitkv_sglang import plugin
-
-        req = FakeOwningReq()
-        req._orbitkv_dense_request = {"slot": 0, "generation": 1}
-        req._orbitkv_dense_hydration_boundary = 4096
-        req.kv.kv_allocated_len = 4097
-        batch = types.SimpleNamespace(
-            enable_overlap=False,
-            reqs=[req],
-        )
-        old_runtime = plugin._RUNTIME_STATE_PLAN
-        try:
-            plugin._RUNTIME_STATE_PLAN = {
-                "execution": {"frontier": "cuda_event"},
-                "capsule": {"enabled": True},
-                "dense_runtime": {"page_tokens": 16},
-            }
-            with self.assertRaisesRegex(RuntimeError, "one continuation token"):
-                plugin._stage_dense_bindings_after_prepare(
-                    lambda *_args, **_kwargs: None,
-                    batch,
-                )
-        finally:
-            plugin._RUNTIME_STATE_PLAN = old_runtime
 
     def test_request_release_waits_only_for_its_cuda_event(self):
         from orbitkv_sglang import plugin

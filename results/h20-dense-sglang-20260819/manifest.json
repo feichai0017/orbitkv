@@ -1,25 +1,25 @@
 {
-  "base_source_commit": "42f3d93",
+  "base_source_commit": "9e8006b46ed854cc12bc18a71446383d752c5cf0",
   "claim_boundary": [
     "real checkpoint and pinned SGLang attention data plane",
     "pure-SWA 4K logical Prefix with compiler-proven 1K live tail",
-    "single request and one continuation token",
-    "no multi-token, overlap, Radix, speculation, disaggregation, CUDA Graph, Hybrid Full+SWA, or performance-win claim"
+    "single request, 128 continuation tokens, three rounds",
+    "no overlap, Radix, speculation, disaggregation, CUDA Graph, Hybrid Full+SWA, or performance-win claim"
   ],
   "date": "2026-08-19",
   "records": {
-    "results/h20-dense-sglang-20260819/README.md": "1ec5bcee516f6c6cc3fe14b4e23ff8283279e16c19de2748cd08185cdf1ba003",
-    "results/h20-dense-sglang-20260819/dense-events.jsonl": "9da666698aa08e9c66af724a71d8c07cb4770516f7ddf148d6bc4ec5751ec545",
+    "results/h20-dense-sglang-20260819/README.md": "f6499251e0a97f8d8b4ed5eb8a7e671dc8580a2de978de0d95d40ff1b9821213",
+    "results/h20-dense-sglang-20260819/dense-events.jsonl": "e5b56acc1dbcf53fcc3aa01c4c38a01f94dc871240b63f1b064cb7559a3e3ce9",
     "results/h20-dense-sglang-20260819/runtime-state-plan.json": "7219d217be2c40c17a4152d8dc166f6a90558d64e64f2dc8bb479e4953c40eea",
-    "results/h20-dense-sglang-20260819/summary.json": "669a484e1b5f95376fb2c9239cbdd096b519f995f9f203faf0b0e64a1287855c"
+    "results/h20-dense-sglang-20260819/summary.json": "b83f707bf9d9f0da343d3731143d59ee632aa9decd0c15cd0700714293e043b2"
   },
-  "schema": "orbitkv.h20-dense-sglang-manifest.v1",
+  "schema": "orbitkv.h20-dense-sglang-manifest.v2",
   "sources": {
-    "docs/capability-matrix.md": "77ad114c73147b4d4db0c3b264f7393c0d6765fb86b89f546a42a93f88b762fe",
+    "docs/capability-matrix.md": "3179a8e0d0ef9b6fa734842fd19c98bf28bf5ff4e7fb3611bfef7dad97afab18",
     "integrations/sglang/bench_hybrid_shadow.py": "249f614665dde835d0b34869bb184afde8a15d9388d7db25644a2371a0010e7d",
-    "integrations/sglang/src/orbitkv_sglang/plugin.py": "ffe53612e970a181c962cfb85bdb0ae4a502f10c66413e1ba73f2abced35b13c",
-    "integrations/sglang/tests/test_shadow_plugin.py": "194d1287fe6492d2ccf331e70df59c875e41899ff3eba4e1c3682278fb257884",
-    "results/README.md": "c77a8d6f0a711685876d93af3cf106b7780be0c504714812ff3c63da93815f3c",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "6bffa9064aa31ea98af748d795fc1abb7494c85220f780de8b3b5b403fbd7ad1",
+    "integrations/sglang/tests/test_shadow_plugin.py": "1b85ba1ec96d689718fad480c698fb030e858b7f34d9bb227eb552a68544c41b",
+    "results/README.md": "faa73fb5786baf5f0342adf7c23787b6a3f43b099f2d8466f7aaea9714ccfadd",
     "src/bin/orbitkv.rs": "2cc0edaa6a6179084d68a7f31e4c0b59821f56e5ab88d8521e41cfb4d5ab9287",
     "src/dense.rs": "fc5e053252e851bb15a11452ff06c538124f2730bb40677cf688ebb7aafcbe52",
     "src/dense_protocol.rs": "2e8900ea701914c22f247dcbcc235e4cce84122a67eef1388f708836ab19d508",

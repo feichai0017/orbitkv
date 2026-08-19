@@ -1,48 +1,95 @@
 {
+  "all_digests_match": true,
+  "cached_tokens": {
+    "capsule": [
+      4096
+    ],
+    "dense": [
+      4096
+    ],
+    "reference": [
+      0
+    ]
+  },
   "checkpoint_weight_bytes": 496060688,
   "claim_boundary": [
     "real checkpoint and pinned SGLang attention data plane",
     "pure-SWA 4K logical Prefix with compiler-proven 1K live tail",
-    "single request and one continuation token",
-    "Dense sidecar owns page binding, immutable view, CUDA-event completion, release certificates, and request recycling",
-    "no multi-token, overlap, radix, speculative, disaggregation, CUDA Graph, hybrid Full+SWA, or performance-win claim"
+    "single request, 128 continuation tokens, three rounds",
+    "Dense sidecar owns page binding, immutable view, CUDA-event completion, online retirement certificates, and request recycling",
+    "no overlap, Radix, speculation, disaggregation, CUDA Graph, Hybrid Full+SWA, or performance-win claim"
   ],
-  "date": "2026-08-19",
-  "dense": {
-    "cached_tokens": [
-      4096
+  "correctness_fix": {
+    "bounded_boost": "only page-aligned tokens provably dead before the next non-overlap ChunkCache allocation",
+    "fixed_chunk_tokens": [
+      2048,
+      2048,
+      16
     ],
-    "event_counts": {
-      "capsule_hydrated": 1,
-      "dense_binding_committed": 1,
-      "dense_binding_prepared": 1,
-      "dense_execution_completed": 1,
-      "dense_hydration_committed": 1,
-      "dense_request_recycled": 1,
-      "dense_view_submitted": 1,
-      "execution_completed": 1,
-      "execution_registered": 1
-    },
-    "iteration_seconds": 1.2818913832306862,
-    "output_digest": "328a9cac5ab9a570d38781cab9d2ff2a58d8039b28332cdbba6f893b3cdb197f",
-    "physical_token_slots": 3168
+    "old_chunk_tokens": [
+      2048,
+      1104,
+      960
+    ],
+    "root_cause": "continued chunk admission did not consume the compiled SWA reclamation proof"
   },
-  "digests_match": true,
+  "date": "2026-08-19",
+  "dense_event_counts": {
+    "capsule_hydrated": 3,
+    "dense_binding_committed": 24,
+    "dense_binding_prepared": 24,
+    "dense_execution_completed": 384,
+    "dense_hydration_committed": 3,
+    "dense_reclamation_committed": 24,
+    "dense_request_recycled": 3,
+    "dense_view_submitted": 384,
+    "execution_completed": 384,
+    "execution_registered": 384
+  },
+  "dense_over_capsule": 1.1010457754995369,
+  "dense_over_reference": 1.1691162465819396,
+  "digests": {
+    "capsule": "985ee8b2265fc13e82376669f07f2030b8616ad3f282d3ae0fd1384e54c556e4",
+    "dense": "985ee8b2265fc13e82376669f07f2030b8616ad3f282d3ae0fd1384e54c556e4",
+    "reference": "985ee8b2265fc13e82376669f07f2030b8616ad3f282d3ae0fd1384e54c556e4"
+  },
   "gpu": "NVIDIA H20",
-  "machine": "x86_64",
+  "iteration_seconds": {
+    "capsule": [
+      2.339688640087843,
+      1.041629146784544,
+      1.0466519184410572
+    ],
+    "dense": [
+      2.3627878054976463,
+      1.1458269022405148,
+      1.1524116732180119
+    ],
+    "reference": [
+      2.136303048580885,
+      0.985711794346571,
+      0.960924755781889
+    ]
+  },
+  "median_seconds": {
+    "capsule": 1.0466519184410572,
+    "dense": 1.1524116732180119,
+    "reference": 0.985711794346571
+  },
   "model": "/workspace/models/tiny-mistral-248m-v3-d128-swa1024-fixture",
   "physical_slot_reduction_percent": 90.33203125,
-  "reference": {
-    "iteration_seconds": 1.197245866060257,
-    "output_digest": "328a9cac5ab9a570d38781cab9d2ff2a58d8039b28332cdbba6f893b3cdb197f",
-    "physical_token_slots": 32768
+  "physical_token_slots": {
+    "capsule": 3168,
+    "dense": 3168,
+    "reference": 32768
   },
-  "schema": "orbitkv.h20-dense-sglang-validation.v1",
+  "schema": "orbitkv.h20-dense-sglang-validation.v2",
   "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
   "workload": {
-    "continuation_tokens": 1,
+    "continuation_tokens": 128,
     "live_tail_tokens": 1024,
     "page_tokens": 16,
-    "prefix_tokens": 4096
+    "prefix_tokens": 4096,
+    "rounds": 3
   }
 }

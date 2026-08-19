@@ -737,20 +737,6 @@ def _stage_dense_bindings_after_prepare(
         for req in batch.reqs:
             if getattr(req, "_orbitkv_dense_request", None) is not None:
                 _wait_execution_for_request(str(req.rid))
-                hydration_boundary = int(
-                    getattr(req, "_orbitkv_dense_hydration_boundary", 0)
-                )
-                if (
-                    req.kv is not None
-                    and (
-                        hydration_boundary <= 0
-                        or int(req.kv.kv_allocated_len) >= hydration_boundary + 1
-                    )
-                ):
-                    raise RuntimeError(
-                        "OrbitKV Dense Capsule binding currently qualifies "
-                        "one continuation token"
-                    )
     result = original_fn(batch, *args, **kwargs)
     if _dense_capsule_binding_enabled():
         for req in batch.reqs:
@@ -2729,7 +2715,6 @@ def _commit_dense_capsule_release(req: Any, release: dict[str, Any] | None) -> N
     if recycled.get("status") != "request_recycled":
         raise RuntimeError("OrbitKV Dense Runtime failed to recycle request")
     req._orbitkv_dense_request = None
-    req._orbitkv_dense_hydration_boundary = 0
     req._orbitkv_dense_committed = False
     if _trace_allocations_enabled():
         _emit(
@@ -2781,9 +2766,6 @@ def _hydrate_capsule_for_admission(
             )
             req._orbitkv_dense_request = transaction["dense"]["request"]
             req._orbitkv_dense_boundary = int(req._orbitkv_capsule_prefix_tokens)
-            req._orbitkv_dense_hydration_boundary = int(
-                req._orbitkv_capsule_prefix_tokens
-            )
             req._orbitkv_dense_committed = True
             req._orbitkv_dense_pending_binding = None
             req._orbitkv_dense_allocator = tree_cache.token_to_kv_pool_allocator
@@ -3538,6 +3520,48 @@ def _admit_uniform_swa_request(
         adder.rem_total_token_offset += boost
 
 
+def _admit_uniform_swa_chunked_request(
+    original_fn: Callable,
+    adder: Any,
+    req: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    if _UNIFORM_SWA_CONTRACT is None or _STATE_PLAN_MODE != "execute":
+        return original_fn(adder, req, *args, **kwargs)
+    if not adder.is_all_swa:
+        raise RuntimeError("OrbitKV uniform-SWA chunk admission requires PureSWA")
+    chunk_tokens = int(_UNIFORM_SWA_CONTRACT["chunked_prefill_tokens"])
+    page_tokens = int(_UNIFORM_SWA_CONTRACT["page_tokens"])
+    window_tokens = int(_UNIFORM_SWA_CONTRACT["window_tokens"])
+    remaining = len(req.full_untruncated_fill_ids) - len(req.prefix_indices)
+    desired = min(remaining, chunk_tokens)
+    required = desired + page_tokens
+    committed_frontier = max(
+        int(getattr(getattr(req, "kv", None), "swa_evicted_seqlen", 0)),
+        int(getattr(req, "cache_protected_len", 0)),
+        int(getattr(req, "swa_evict_floor", 0)),
+    )
+    reclaimable_end = max(0, len(req.prefix_indices) - window_tokens)
+    reclaimable_end = reclaimable_end // page_tokens * page_tokens
+    reclaimable = max(0, reclaimable_end - committed_frontier)
+    total_boost = min(
+        reclaimable,
+        max(0, required - int(adder.rem_total_tokens)),
+    )
+    swa_boost = min(
+        reclaimable,
+        max(0, required - int(adder.rem_swa_tokens)),
+    )
+    adder.rem_total_token_offset -= total_boost
+    adder.rem_swa_token_offset -= swa_boost
+    try:
+        return original_fn(adder, req, *args, **kwargs)
+    finally:
+        adder.rem_total_token_offset += total_boost
+        adder.rem_swa_token_offset += swa_boost
+
+
 def _validate_physical_contract(batch: Any) -> None:
     if _PHYSICAL_PLAN is None:
         return
@@ -4037,6 +4061,11 @@ def register() -> None:
                 if _capsules_enabled()
                 else _admit_uniform_swa_request
             ),
+            HookType.AROUND,
+        )
+        HookRegistry.register(
+            "sglang.srt.managers.schedule_policy.PrefillAdder.add_chunked_req",
+            _admit_uniform_swa_chunked_request,
             HookType.AROUND,
         )
         if _UNIFORM_SWA_CONTRACT["cuda_graph_mode"] == "decode":
