@@ -88,6 +88,40 @@ fn runtime_state_plan_is_one_validated_owner_artifact() {
 }
 
 #[test]
+fn runtime_state_plan_compiles_cuda_event_frontier() {
+    let plan = root().join("examples/gpt_oss_hybrid_tiny.json");
+    let artifact = run(&[
+        "compile-runtime-state-plan",
+        plan.to_str().unwrap(),
+        "--eviction-interval",
+        "32",
+        "--execution-mode",
+        "owner",
+        "--owner-transport",
+        "sidecar",
+        "--capsule-enabled",
+        "false",
+        "--capsule-chunk-tokens",
+        "128",
+        "--capsule-max-payload-bytes",
+        "1073741824",
+        "--execution-frontier",
+        "cuda_event",
+    ]);
+    assert_eq!(artifact["execution"]["frontier"], "cuda_event");
+    assert_eq!(artifact["execution"]["owner_transport"], "sidecar");
+    assert_eq!(artifact["capsule"]["enabled"], false);
+
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("runtime-state-plan.json");
+    std::fs::write(&path, serde_json::to_vec(&artifact).unwrap()).unwrap();
+    assert_eq!(
+        run(&["validate-runtime-state-plan", path.to_str().unwrap()]),
+        artifact
+    );
+}
+
+#[test]
 fn retention_analysis_reports_derived_window_and_address() {
     let retention = root().join("examples/full_swa_retention.json");
     let report = run(&["analyze-retention", retention.to_str().unwrap()]);

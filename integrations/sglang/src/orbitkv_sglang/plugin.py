@@ -30,6 +30,8 @@ _CAPSULES_LOCK = threading.Lock()
 _BINDINGS_LOCK = threading.Lock()
 _PREFIX_OBJECTS: dict[tuple[str, str, str], dict[str, Any]] = {}
 _PREFIX_OBJECTS_LOCK = threading.Lock()
+_EXECUTION_EVENTS: dict[int, dict[str, Any]] = {}
+_EXECUTION_EVENTS_LOCK = threading.Lock()
 
 
 class CapsuleClient:
@@ -417,6 +419,11 @@ class FfiOwnerClient(OwnerClient):
                     "active_leases": 0,
                     "tombstoned_components": 0,
                 },
+                "execution": {
+                    "completion_domains": 0,
+                    "pending_submissions": 0,
+                    "tracked_requests": 0,
+                },
             },
         }
 
@@ -459,6 +466,163 @@ def _prefix_radix_enabled() -> bool:
         and _RUNTIME_STATE_PLAN.get("prefix")
         == {"mode": "capsule_backed_swa_radix"}
     )
+
+
+def _execution_frontier_enabled() -> bool:
+    return (
+        _RUNTIME_STATE_PLAN is not None
+        and _RUNTIME_STATE_PLAN["execution"].get("frontier") == "cuda_event"
+    )
+
+
+def _completion_domain(scheduler: Any) -> str:
+    device = getattr(scheduler, "device", None)
+    device_index = getattr(device, "index", None)
+    if callable(device_index):
+        device_index = None
+    if device_index is None and isinstance(device, str) and ":" in device:
+        _, _, suffix = device.partition(":")
+        if suffix.isdigit():
+            device_index = int(suffix)
+    if device_index is None:
+        device_index = 0
+    return f"cuda:{device_index}:forward"
+
+
+def _complete_execution_entries(entries: list[dict[str, Any]]) -> None:
+    by_domain: dict[str, list[dict[str, Any]]] = {}
+    for entry in entries:
+        by_domain.setdefault(entry["completion_domain"], []).append(entry)
+    for completion_domain, domain_entries in by_domain.items():
+        submission_ids = [
+            int(entry["submission_id"]) for entry in domain_entries
+        ]
+        response = _require_owner().command(
+            {
+                "op": "complete_executions",
+                "completion_domain": completion_domain,
+                "submission_ids": submission_ids,
+            }
+        )
+        if (
+            response.get("status") != "executions_completed"
+            or response.get("completion_domain") != completion_domain
+            or response.get("submission_ids") != submission_ids
+        ):
+            raise RuntimeError(
+                "OrbitKV owner returned an invalid execution completion"
+            )
+        with _EXECUTION_EVENTS_LOCK:
+            for entry in domain_entries:
+                _EXECUTION_EVENTS.pop(int(entry["submission_id"]), None)
+        if _trace_allocations_enabled():
+            for entry in domain_entries:
+                _emit(
+                    {
+                        "event": "execution_completed",
+                        "completion_domain": entry["completion_domain"],
+                        "submission_id": int(entry["submission_id"]),
+                        "domain_sequence": int(entry["domain_sequence"]),
+                        "request_ids": entry["request_ids"],
+                    }
+                )
+
+
+def _poll_execution_events() -> None:
+    if not _execution_frontier_enabled():
+        return
+    with _EXECUTION_EVENTS_LOCK:
+        entries = list(_EXECUTION_EVENTS.values())
+    completed = [entry for entry in entries if entry["event"].query()]
+    if completed:
+        _complete_execution_entries(completed)
+
+
+def _wait_execution_for_request(request_id: str) -> None:
+    if not _execution_frontier_enabled():
+        return
+    _poll_execution_events()
+    with _EXECUTION_EVENTS_LOCK:
+        entries = [
+            entry
+            for entry in _EXECUTION_EVENTS.values()
+            if request_id in entry["request_ids"]
+        ]
+    for entry in entries:
+        entry["event"].synchronize()
+    if entries:
+        _complete_execution_entries(entries)
+
+
+def _has_pending_execution_for_request(request_id: str) -> bool:
+    if not _execution_frontier_enabled():
+        return False
+    with _EXECUTION_EVENTS_LOCK:
+        return any(
+            request_id in entry["request_ids"]
+            for entry in _EXECUTION_EVENTS.values()
+        )
+
+
+def _track_forward_execution(
+    original_fn: Callable,
+    scheduler: Any,
+    batch: Any,
+    *args: Any,
+    **kwargs: Any,
+):
+    result = original_fn(scheduler, batch, *args, **kwargs)
+    if not _execution_frontier_enabled() or batch is None:
+        return result
+    request_ids = sorted(
+        {
+            str(req.rid)
+            for req in batch.reqs
+            if req is not None and getattr(req, "kv", None) is not None
+        }
+    )
+    if not request_ids:
+        return result
+    completion_domain = _completion_domain(scheduler)
+    event = scheduler.device_module.Event()
+    event.record(stream=scheduler.forward_stream)
+    response = _require_owner().command(
+        {
+            "op": "register_execution",
+            "completion_domain": completion_domain,
+            "request_ids": request_ids,
+        }
+    )
+    ticket = response.get("ticket")
+    if (
+        response.get("status") != "execution_registered"
+        or not isinstance(ticket, dict)
+        or ticket.get("completion_domain") != completion_domain
+        or ticket.get("request_ids") != request_ids
+    ):
+        raise RuntimeError("OrbitKV owner returned an invalid execution ticket")
+    entry = {
+        "event": event,
+        "completion_domain": completion_domain,
+        "submission_id": int(ticket["submission_id"]),
+        "domain_sequence": int(ticket["domain_sequence"]),
+        "request_ids": request_ids,
+    }
+    with _EXECUTION_EVENTS_LOCK:
+        if entry["submission_id"] in _EXECUTION_EVENTS:
+            raise RuntimeError("duplicate OrbitKV execution submission")
+        _EXECUTION_EVENTS[entry["submission_id"]] = entry
+    if _trace_allocations_enabled():
+        _emit(
+            {
+                "event": "execution_registered",
+                "completion_domain": completion_domain,
+                "submission_id": entry["submission_id"],
+                "domain_sequence": entry["domain_sequence"],
+                "request_ids": request_ids,
+            }
+        )
+    return result
 
 
 def _capsule_identity() -> dict[str, Any]:
@@ -1181,6 +1345,13 @@ def _stop_owner() -> None:
 
     if _OWNER is None:
         return
+    if _execution_frontier_enabled():
+        with _EXECUTION_EVENTS_LOCK:
+            entries = list(_EXECUTION_EVENTS.values())
+        for entry in entries:
+            entry["event"].synchronize()
+        if entries:
+            _complete_execution_entries(entries)
     _OWNER.close()
     _OWNER = None
 
@@ -2791,9 +2962,9 @@ def _own_swa_reclamation(
 ):
     if not batch.tree_cache.is_chunk_cache():
         return original_fn(batch, req, pre_len)
-    if batch.enable_overlap:
+    if batch.enable_overlap and not _execution_frontier_enabled():
         raise RuntimeError(
-            "OrbitKV owning mode currently requires disable_overlap_schedule"
+            "OrbitKV overlap execution requires a compiled CUDA-event frontier"
         )
     if not batch.tree_cache.is_chunk_cache():
         raise RuntimeError(
@@ -2806,6 +2977,7 @@ def _own_swa_reclamation(
     if req.kv is None:
         return None
 
+    _poll_execution_events()
     owner = _require_owner()
     response = owner.command(
         {
@@ -2865,6 +3037,7 @@ def _commit_swa_reclamations(
     **kwargs: Any,
 ):
     _validate_physical_contract(batch)
+    _poll_execution_events()
     if getattr(batch, "_orbitkv_pending_certificates", None) is not None:
         raise RuntimeError("nested OrbitKV reclamation group")
     batch._orbitkv_pending_certificates = []
@@ -2931,6 +3104,7 @@ def _prepare_swa_prefix_component_releases(batch: Any) -> list[tuple[Any, str]]:
         if (
             getattr(req, "_orbitkv_prefix_lease_id", None) is not None
             and swa_class in getattr(req, "_orbitkv_prefix_state_classes", ())
+            and not _has_pending_execution_for_request(str(req.rid))
             and not req.swa_prefix_lock_released
             and req.swa_uuid_for_lock is not None
             and req.last_node is not None
@@ -2963,6 +3137,8 @@ def _release_owned_request(
     **kwargs: Any,
 ):
     is_insert = bool(kwargs.get("is_insert", args[0] if args else True))
+    if req is not None:
+        _wait_execution_for_request(str(req.rid))
     _export_capsule_before_release(req, tree_cache, is_insert=is_insert)
     if req is not None:
         _release_prefix_lease(req)
@@ -3098,6 +3274,12 @@ def register() -> None:
             _release_owned_request,
             HookType.AROUND,
         )
+        if _execution_frontier_enabled():
+            HookRegistry.register(
+                "sglang.srt.managers.scheduler.Scheduler.run_batch",
+                _track_forward_execution,
+                HookType.AROUND,
+            )
         if _capsules_enabled() and _UNIFORM_SWA_CONTRACT is None:
             HookRegistry.register(
                 "sglang.srt.managers.schedule_policy.PrefillAdder.add_one_req",

@@ -23,6 +23,12 @@ pub enum RuntimeOwnerTransport {
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum RuntimeExecutionFrontier {
+    CudaEvent,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum RuntimeUniformStatePlanMode {
     Execute,
     KernelReference,
@@ -48,6 +54,8 @@ pub struct RuntimeExecutionContract {
     pub owner_transport: Option<RuntimeOwnerTransport>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub uniform_state_plan_mode: Option<RuntimeUniformStatePlanMode>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub frontier: Option<RuntimeExecutionFrontier>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -113,6 +121,8 @@ pub enum RuntimeStatePlanError {
     InvalidCapsuleContract,
     #[error("runtime StatePlan Prefix contract requires owner Capsule execution")]
     InvalidPrefixContract,
+    #[error("runtime StatePlan CUDA-event frontier requires sidecar owner execution")]
+    InvalidExecutionFrontier,
     #[error("runtime StatePlan JSON encoding failed: {0}")]
     Json(#[from] serde_json::Error),
     #[error(transparent)]
@@ -137,6 +147,7 @@ pub fn compile_runtime_state_plan(
         &options.execution,
         options.uniform_state_plan.is_some(),
         options.capsule.enabled,
+        options.physical_plan.is_some(),
     )?;
     validate_capsule(&options.capsule)?;
     let compiled = semantic_source.clone().compile()?;
@@ -193,6 +204,7 @@ impl RuntimeStatePlan {
             &self.execution,
             self.uniform_state_plan.is_some(),
             self.capsule.enabled,
+            self.physical_plan.is_some(),
         )?;
         validate_capsule(&self.capsule)?;
         let compiled = self.semantic_source.clone().compile()?;
@@ -253,6 +265,7 @@ fn validate_execution(
     execution: &RuntimeExecutionContract,
     has_uniform_plan: bool,
     capsule_enabled: bool,
+    has_physical_plan: bool,
 ) -> Result<(), RuntimeStatePlanError> {
     match (execution.mode, execution.owner_transport) {
         (RuntimeExecutionMode::Owner, None) => {
@@ -268,6 +281,14 @@ fn validate_execution(
     }
     if capsule_enabled && execution.mode != RuntimeExecutionMode::Owner {
         return Err(RuntimeStatePlanError::CapsuleRequiresOwner);
+    }
+    if execution.frontier == Some(RuntimeExecutionFrontier::CudaEvent)
+        && (execution.mode != RuntimeExecutionMode::Owner
+            || execution.owner_transport != Some(RuntimeOwnerTransport::Sidecar)
+            || has_uniform_plan
+            || has_physical_plan)
+    {
+        return Err(RuntimeStatePlanError::InvalidExecutionFrontier);
     }
     Ok(())
 }
@@ -404,6 +425,7 @@ mod tests {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Ffi),
                     uniform_state_plan_mode: None,
+                    frontier: None,
                 },
                 capsule: RuntimeCapsuleContract {
                     enabled: true,
@@ -438,6 +460,7 @@ mod tests {
                     mode: RuntimeExecutionMode::Policy,
                     owner_transport: None,
                     uniform_state_plan_mode: None,
+                    frontier: None,
                 },
                 capsule: RuntimeCapsuleContract {
                     enabled: true,
@@ -463,6 +486,7 @@ mod tests {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Ffi),
                     uniform_state_plan_mode: None,
+                    frontier: None,
                 },
                 capsule: RuntimeCapsuleContract {
                     enabled: true,
@@ -490,6 +514,7 @@ mod tests {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Sidecar),
                     uniform_state_plan_mode: None,
+                    frontier: None,
                 },
                 capsule: RuntimeCapsuleContract {
                     enabled: true,
@@ -508,6 +533,62 @@ mod tests {
             Some(RuntimePrefixContract {
                 mode: RuntimePrefixMode::CapsuleBackedSwaRadix
             })
+        );
+    }
+
+    #[test]
+    fn cuda_event_frontier_requires_sidecar_and_is_fingerprinted() {
+        let error = compile_runtime_state_plan(
+            source(),
+            RuntimeStatePlanOptions {
+                eviction_interval_tokens: 16,
+                physical_plan: None,
+                uniform_state_plan: None,
+                execution: RuntimeExecutionContract {
+                    mode: RuntimeExecutionMode::Owner,
+                    owner_transport: Some(RuntimeOwnerTransport::Ffi),
+                    uniform_state_plan_mode: None,
+                    frontier: Some(RuntimeExecutionFrontier::CudaEvent),
+                },
+                capsule: RuntimeCapsuleContract {
+                    enabled: false,
+                    chunk_tokens: 16,
+                    maximum_payload_bytes: 1 << 20,
+                },
+                prefix: None,
+            },
+        )
+        .unwrap_err();
+        assert!(matches!(
+            error,
+            RuntimeStatePlanError::InvalidExecutionFrontier
+        ));
+
+        let artifact = compile_runtime_state_plan(
+            source(),
+            RuntimeStatePlanOptions {
+                eviction_interval_tokens: 16,
+                physical_plan: None,
+                uniform_state_plan: None,
+                execution: RuntimeExecutionContract {
+                    mode: RuntimeExecutionMode::Owner,
+                    owner_transport: Some(RuntimeOwnerTransport::Sidecar),
+                    uniform_state_plan_mode: None,
+                    frontier: Some(RuntimeExecutionFrontier::CudaEvent),
+                },
+                capsule: RuntimeCapsuleContract {
+                    enabled: false,
+                    chunk_tokens: 16,
+                    maximum_payload_bytes: 1 << 20,
+                },
+                prefix: None,
+            },
+        )
+        .unwrap();
+        artifact.validate().unwrap();
+        assert_eq!(
+            artifact.execution.frontier,
+            Some(RuntimeExecutionFrontier::CudaEvent)
         );
     }
 }

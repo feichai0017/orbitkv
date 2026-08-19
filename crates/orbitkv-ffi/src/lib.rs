@@ -171,6 +171,12 @@ pub unsafe extern "C" fn orbitkv_owner_plan_chunk_reclamation(
                     SglangExecutionProof::NonOverlapSchedulerBarrier { execution_epoch } => {
                         execution_epoch
                     }
+                    SglangExecutionProof::CompletionFrontiers { .. } => {
+                        return Err((
+                            ORBITKV_STATUS_OWNER_ERROR,
+                            "owner ABI v1 cannot encode completion-frontier proof".to_owned(),
+                        ));
+                    }
                 };
                 let output = OrbitKvCertificateV1 {
                     abi_version: ORBITKV_OWNER_ABI_VERSION,
@@ -633,6 +639,7 @@ mod tests {
                     mode: RuntimeExecutionMode::Owner,
                     owner_transport: Some(RuntimeOwnerTransport::Ffi),
                     uniform_state_plan_mode: None,
+                    frontier: None,
                 },
                 capsule: RuntimeCapsuleContract {
                     enabled: true,

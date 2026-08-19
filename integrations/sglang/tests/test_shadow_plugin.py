@@ -114,6 +114,8 @@ class FakePureSwaAllocator(FakeGeneralSwaAllocator):
 class FakeOwner:
     def __init__(self):
         self.commands = []
+        self.next_submission_id = 1
+        self.domain_sequences = {}
 
     def command(self, command):
         self.commands.append(command)
@@ -148,6 +150,27 @@ class FakeOwner:
             }
         if command["op"] == "release_request":
             return {"status": "released", "request_id": command["request_id"]}
+        if command["op"] == "register_execution":
+            domain = command["completion_domain"]
+            sequence = self.domain_sequences.get(domain, 0) + 1
+            self.domain_sequences[domain] = sequence
+            submission_id = self.next_submission_id
+            self.next_submission_id += 1
+            return {
+                "status": "execution_registered",
+                "ticket": {
+                    "submission_id": submission_id,
+                    "completion_domain": domain,
+                    "domain_sequence": sequence,
+                    "request_ids": sorted(command["request_ids"]),
+                },
+            }
+        if command["op"] == "complete_executions":
+            return {
+                "status": "executions_completed",
+                "completion_domain": command["completion_domain"],
+                "submission_ids": command["submission_ids"],
+            }
         raise AssertionError(command)
 
 
@@ -577,6 +600,33 @@ class FakeOwningReq:
         return True
 
 
+class FakeExecutionEvent:
+    def __init__(self):
+        self.ready = False
+        self.recorded_stream = None
+        self.synchronized = False
+
+    def record(self, stream=None):
+        self.recorded_stream = stream
+
+    def query(self):
+        return self.ready
+
+    def synchronize(self):
+        self.synchronized = True
+        self.ready = True
+
+
+class FakeExecutionDeviceModule:
+    def __init__(self):
+        self.events = []
+
+    def Event(self):
+        event = FakeExecutionEvent()
+        self.events.append(event)
+        return event
+
+
 class FakeOwningBatch:
     enable_overlap = False
     tree_cache = FakeTreeCache()
@@ -755,6 +805,20 @@ class ShadowPluginTests(unittest.TestCase):
         self.assertIn("self.component_data", core)
         self.assertIn("class ComponentData", component)
         self.assertIn("value: Optional[torch.Tensor] = None", component)
+
+    def test_pinned_overlap_forward_stream_contract_is_present(self):
+        root = Path(os.environ["ORBITKV_SGLANG_ROOT"])
+        scheduler = (
+            root / "python/sglang/srt/managers/scheduler.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("def run_batch(", scheduler)
+        self.assertIn("with self.forward_stream_ctx:", scheduler)
+        self.assertIn(
+            "self.model_worker.forward_batch_generation(",
+            scheduler,
+        )
+        self.assertIn("def event_loop_overlap(", scheduler)
+        self.assertIn("self.result_queue.append((batch.copy(), batch_result))", scheduler)
 
     def test_runtime_state_plan_is_the_single_plugin_contract(self):
         from orbitkv_sglang import plugin
@@ -1460,6 +1524,123 @@ class ShadowPluginTests(unittest.TestCase):
         )
         self.assertEqual(events, [("physical_free", 32), ("free_group_end", None)])
         self.assertEqual(req.kv.swa_evicted_seqlen, 32)
+
+    def test_cuda_event_frontier_registers_and_polls_real_submission(self):
+        from orbitkv_sglang import plugin
+
+        owner = FakeOwner()
+        device_module = FakeExecutionDeviceModule()
+        req = FakeOwningReq()
+        batch = types.SimpleNamespace(reqs=[req])
+        scheduler = types.SimpleNamespace(
+            device=types.SimpleNamespace(index=0),
+            device_module=device_module,
+            forward_stream=object(),
+        )
+        old_owner = plugin._OWNER
+        old_runtime = plugin._RUNTIME_STATE_PLAN
+        old_trace = os.environ.get("ORBITKV_TRACE_ALLOCATIONS")
+        with plugin._EXECUTION_EVENTS_LOCK:
+            old_events = dict(plugin._EXECUTION_EVENTS)
+            plugin._EXECUTION_EVENTS.clear()
+        try:
+            plugin._OWNER = owner
+            plugin._RUNTIME_STATE_PLAN = {
+                "execution": {
+                    "mode": "owner",
+                    "owner_transport": "sidecar",
+                    "frontier": "cuda_event",
+                },
+                "capsule": {"enabled": False},
+            }
+            os.environ["ORBITKV_TRACE_ALLOCATIONS"] = "0"
+            result = plugin._track_forward_execution(
+                lambda *_args, **_kwargs: "forward-result",
+                scheduler,
+                batch,
+            )
+            self.assertEqual(result, "forward-result")
+            self.assertEqual(len(device_module.events), 1)
+            self.assertIs(
+                device_module.events[0].recorded_stream,
+                scheduler.forward_stream,
+            )
+            plugin._poll_execution_events()
+            self.assertEqual(
+                [command["op"] for command in owner.commands],
+                ["register_execution"],
+            )
+
+            device_module.events[0].ready = True
+            plugin._poll_execution_events()
+            self.assertEqual(
+                [command["op"] for command in owner.commands],
+                ["register_execution", "complete_executions"],
+            )
+            with plugin._EXECUTION_EVENTS_LOCK:
+                self.assertEqual(plugin._EXECUTION_EVENTS, {})
+        finally:
+            plugin._OWNER = old_owner
+            plugin._RUNTIME_STATE_PLAN = old_runtime
+            with plugin._EXECUTION_EVENTS_LOCK:
+                plugin._EXECUTION_EVENTS.clear()
+                plugin._EXECUTION_EVENTS.update(old_events)
+            if old_trace is None:
+                os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
+            else:
+                os.environ["ORBITKV_TRACE_ALLOCATIONS"] = old_trace
+
+    def test_request_release_waits_only_for_its_cuda_event(self):
+        from orbitkv_sglang import plugin
+
+        owner = FakeOwner()
+        event_r0 = FakeExecutionEvent()
+        event_r1 = FakeExecutionEvent()
+        old_owner = plugin._OWNER
+        old_runtime = plugin._RUNTIME_STATE_PLAN
+        with plugin._EXECUTION_EVENTS_LOCK:
+            old_events = dict(plugin._EXECUTION_EVENTS)
+            plugin._EXECUTION_EVENTS.clear()
+            plugin._EXECUTION_EVENTS.update(
+                {
+                    1: {
+                        "event": event_r0,
+                        "completion_domain": "cuda:0:forward",
+                        "submission_id": 1,
+                        "domain_sequence": 1,
+                        "request_ids": ["r0"],
+                    },
+                    2: {
+                        "event": event_r1,
+                        "completion_domain": "cuda:0:forward",
+                        "submission_id": 2,
+                        "domain_sequence": 2,
+                        "request_ids": ["r1"],
+                    },
+                }
+            )
+        try:
+            plugin._OWNER = owner
+            plugin._RUNTIME_STATE_PLAN = {
+                "execution": {
+                    "mode": "owner",
+                    "owner_transport": "sidecar",
+                    "frontier": "cuda_event",
+                },
+                "capsule": {"enabled": False},
+            }
+            plugin._wait_execution_for_request("r0")
+            self.assertTrue(event_r0.synchronized)
+            self.assertFalse(event_r1.synchronized)
+            with plugin._EXECUTION_EVENTS_LOCK:
+                self.assertNotIn(1, plugin._EXECUTION_EVENTS)
+                self.assertIn(2, plugin._EXECUTION_EVENTS)
+        finally:
+            plugin._OWNER = old_owner
+            plugin._RUNTIME_STATE_PLAN = old_runtime
+            with plugin._EXECUTION_EVENTS_LOCK:
+                plugin._EXECUTION_EVENTS.clear()
+                plugin._EXECUTION_EVENTS.update(old_events)
 
     def test_owner_does_not_commit_failed_physical_free(self):
         from orbitkv_sglang import plugin

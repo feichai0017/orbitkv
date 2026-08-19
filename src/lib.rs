@@ -2,6 +2,7 @@
 
 pub mod binding;
 pub mod capsule;
+pub mod frontier;
 pub mod hf_config;
 pub mod holt_store;
 pub mod manager;
@@ -22,6 +23,11 @@ pub use binding::{
 pub use capsule::{
     CapsuleComponent, CapsuleComponentSpec, CapsuleError, CapsuleIdentity, CapsuleManifest,
     ContentDigest, PrefixChunk, PrefixPath, build_capsule_components,
+};
+pub use frontier::{
+    CompletionDomainId, CompletionDomainSnapshot, CompletionSequenceRange, ExecutionFrontier,
+    ExecutionFrontierError, ExecutionFrontierStats, ExecutionSubmissionId, ExecutionTicket,
+    RequestCompletionWitness,
 };
 pub use hf_config::{
     HfConfigError, HfLayerInference, HfRetentionCompilation, HfRetentionOptions, HfSglangLowering,
@@ -69,8 +75,9 @@ pub use sglang_owner::{
     SglangOwner, SglangRetirementCertificate, SglangSemanticProof,
 };
 pub use state_plan::{
-    RuntimeCapsuleContract, RuntimeExecutionContract, RuntimeExecutionMode, RuntimeOwnerTransport,
-    RuntimePrefixContract, RuntimePrefixMode, RuntimeStatePlan, RuntimeStatePlanError,
-    RuntimeStatePlanOptions, RuntimeUniformStatePlanMode, compile_runtime_state_plan,
+    RuntimeCapsuleContract, RuntimeExecutionContract, RuntimeExecutionFrontier,
+    RuntimeExecutionMode, RuntimeOwnerTransport, RuntimePrefixContract, RuntimePrefixMode,
+    RuntimeStatePlan, RuntimeStatePlanError, RuntimeStatePlanOptions, RuntimeUniformStatePlanMode,
+    compile_runtime_state_plan,
 };
 pub use trace::{SglangTraceEvent, TraceError, TraceSummary, summarize_sglang_trace};

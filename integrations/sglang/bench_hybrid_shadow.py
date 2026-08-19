@@ -115,6 +115,7 @@ def main() -> None:
     parser.add_argument("--context-length", type=int, default=8192)
     parser.add_argument("--page-size", type=int, default=16)
     parser.add_argument("--enable-radix-cache", action="store_true")
+    parser.add_argument("--enable-overlap-schedule", action="store_true")
     parser.add_argument("--attention-backend", default="triton")
     parser.add_argument("--moe-runner-backend", default="triton")
     parser.add_argument("--trace", default="/tmp/orbitkv-hybrid-shadow.jsonl")
@@ -161,6 +162,10 @@ def main() -> None:
         runtime_state_plan["execution"].get("owner_transport")
         if runtime_state_plan is not None
         else None
+    )
+    cuda_event_frontier = (
+        runtime_state_plan is not None
+        and runtime_state_plan["execution"].get("frontier") == "cuda_event"
     )
 
     if args.mode in ("stock", "native_policy"):
@@ -290,7 +295,9 @@ def main() -> None:
         context_length=args.context_length,
         page_size=args.page_size,
         moe_runner_backend=args.moe_runner_backend,
-        disable_overlap_schedule=True,
+        disable_overlap_schedule=not (
+            cuda_event_frontier or args.enable_overlap_schedule
+        ),
         disable_radix_cache=not (
             radix_prefix_enabled or args.enable_radix_cache
         ),

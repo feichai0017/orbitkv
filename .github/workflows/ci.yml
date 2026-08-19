@@ -101,6 +101,7 @@ jobs:
             python/sglang/srt/mem_cache/unified_radix_cache.py \
             python/sglang/srt/mem_cache/unified_cache/components/tree_component.py \
             python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py \
+            python/sglang/srt/managers/scheduler.py \
             > /tmp/sglang/.git/info/sparse-checkout
           git -C /tmp/sglang checkout 095ec6c997bfdd25d3864cb0ce77a6562a934b96
       - run: python -m compileall -q integrations/sglang/src integrations/sglang/tests integrations/sglang/checkpoint_identity.py integrations/sglang/bench_hybrid_shadow.py integrations/sglang/bench_real_model_ab.py integrations/sglang/bench_real_model_ablation.py integrations/sglang/bench_uniform_swa_ab.py integrations/sglang/verify_physical_candidates.py integrations/sglang/bench_owner_transport.py integrations/sglang/bench_owner_e2e_ab.py

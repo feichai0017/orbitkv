@@ -4,10 +4,11 @@ use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
-    BindingCoordinator, BindingCoordinatorStats, BindingError, CompiledKvPlan,
-    PhysicalStateBindingReceipt, PlanError, PrefixError, PrefixLeaseId, PrefixObjectId,
-    PrefixObjectSnapshot, PrefixRuntime, PrefixRuntimeStats, RetentionKind, StateBindingComponent,
-    StateBindingIntent,
+    BindingCoordinator, BindingCoordinatorStats, BindingError, CompiledKvPlan, CompletionDomainId,
+    ExecutionFrontier, ExecutionFrontierError, ExecutionFrontierStats, ExecutionSubmissionId,
+    ExecutionTicket, PhysicalStateBindingReceipt, PlanError, PrefixError, PrefixLeaseId,
+    PrefixObjectId, PrefixObjectSnapshot, PrefixRuntime, PrefixRuntimeStats,
+    RequestCompletionWitness, RetentionKind, StateBindingComponent, StateBindingIntent,
 };
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
@@ -34,6 +35,14 @@ pub enum OwnerCommand {
     },
     ReleaseRequest {
         request_id: String,
+    },
+    RegisterExecution {
+        completion_domain: CompletionDomainId,
+        request_ids: Vec<String>,
+    },
+    CompleteExecutions {
+        completion_domain: CompletionDomainId,
+        submission_ids: Vec<ExecutionSubmissionId>,
     },
     PrepareBinding {
         request_id: String,
@@ -97,7 +106,12 @@ pub enum SglangSemanticProof {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum SglangExecutionProof {
-    NonOverlapSchedulerBarrier { execution_epoch: u64 },
+    NonOverlapSchedulerBarrier {
+        execution_epoch: u64,
+    },
+    CompletionFrontiers {
+        domains: Vec<RequestCompletionWitness>,
+    },
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -123,6 +137,7 @@ pub struct OwnerStats {
     pub committed_tokens: u64,
     pub binding: BindingCoordinatorStats,
     pub prefix: PrefixRuntimeStats,
+    pub execution: ExecutionFrontierStats,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -136,6 +151,13 @@ pub enum OwnerResponse {
     },
     Released {
         request_id: String,
+    },
+    ExecutionRegistered {
+        ticket: ExecutionTicket,
+    },
+    ExecutionsCompleted {
+        completion_domain: CompletionDomainId,
+        submission_ids: Vec<ExecutionSubmissionId>,
     },
     BindingPrepared {
         intent: StateBindingIntent,
@@ -243,6 +265,8 @@ pub enum OwnerError {
     #[error(transparent)]
     Prefix(#[from] PrefixError),
     #[error(transparent)]
+    Execution(#[from] ExecutionFrontierError),
+    #[error(transparent)]
     Plan(#[from] PlanError),
 }
 
@@ -255,6 +279,7 @@ pub struct SglangOwner {
     binding: BindingCoordinator,
     prefix: PrefixRuntime,
     pending_prefix_bindings: BTreeMap<u64, PrefixObjectId>,
+    execution: ExecutionFrontier,
     requests: BTreeMap<String, RequestState>,
     pending: BTreeMap<u64, PendingState>,
     next_certificate_id: u64,
@@ -305,6 +330,7 @@ impl SglangOwner {
             binding: BindingCoordinator::new(plan.fingerprint()),
             prefix: PrefixRuntime::default(),
             pending_prefix_bindings: BTreeMap::new(),
+            execution: ExecutionFrontier::default(),
             requests: BTreeMap::new(),
             pending: BTreeMap::new(),
             next_certificate_id: 1,
@@ -344,6 +370,24 @@ impl SglangOwner {
                 self.commit_reclamations(&certificate_ids)
             }
             OwnerCommand::ReleaseRequest { request_id } => self.release_request(request_id),
+            OwnerCommand::RegisterExecution {
+                completion_domain,
+                request_ids,
+            } => {
+                let ticket = self.execution.register(completion_domain, request_ids)?;
+                Ok(OwnerResponse::ExecutionRegistered { ticket })
+            }
+            OwnerCommand::CompleteExecutions {
+                completion_domain,
+                submission_ids,
+            } => {
+                self.execution
+                    .complete(&completion_domain, &submission_ids)?;
+                Ok(OwnerResponse::ExecutionsCompleted {
+                    completion_domain,
+                    submission_ids,
+                })
+            }
             OwnerCommand::PrepareBinding {
                 request_id,
                 prefix_tokens,
@@ -479,12 +523,24 @@ impl SglangOwner {
         if target <= observed_evicted_seqlen {
             return Ok(OwnerResponse::Reclamation { certificate: None });
         }
+        if self.execution.pending_for_request(&request_id) > 0 {
+            return Ok(OwnerResponse::Reclamation { certificate: None });
+        }
 
         let certificate_id = self.next_certificate_id;
         self.next_certificate_id = self
             .next_certificate_id
             .checked_add(1)
             .ok_or(OwnerError::CertificateGenerationExhausted)?;
+        let execution_witnesses = self.execution.request_completion_witnesses(&request_id);
+        if execution_witnesses
+            .iter()
+            .any(|witness| !witness.proves_complete())
+        {
+            return Err(OwnerError::Execution(
+                ExecutionFrontierError::IncompleteWitness(request_id),
+            ));
+        }
         let certificate = SglangRetirementCertificate {
             schema: "orbitkv.sglang-retirement-certificate.v1",
             plan_fingerprint: self.fingerprint.clone(),
@@ -499,7 +555,13 @@ impl SglangOwner {
                 window_tokens: self.window_tokens,
                 maximum_reclaimable_end,
             },
-            execution_proof: SglangExecutionProof::NonOverlapSchedulerBarrier { execution_epoch },
+            execution_proof: if execution_witnesses.is_empty() {
+                SglangExecutionProof::NonOverlapSchedulerBarrier { execution_epoch }
+            } else {
+                SglangExecutionProof::CompletionFrontiers {
+                    domains: execution_witnesses,
+                }
+            },
         };
         state.pending_certificate = Some(certificate_id);
         self.pending.insert(
@@ -581,6 +643,7 @@ impl SglangOwner {
                 certificate_id,
             });
         }
+        self.execution.release_request(&request_id)?;
         self.requests.remove(&request_id);
         Ok(OwnerResponse::Released { request_id })
     }
@@ -683,6 +746,7 @@ impl SglangOwner {
             committed_tokens: self.committed_tokens,
             binding: self.binding.stats(),
             prefix: self.prefix.stats(),
+            execution: self.execution.stats(),
         }
     }
 }
@@ -702,6 +766,7 @@ impl OwnerError {
             Self::ArithmeticOverflow(_) => "arithmetic_overflow",
             Self::Binding(_) => "binding_error",
             Self::Prefix(_) => "prefix_error",
+            Self::Execution(_) => "execution_error",
             Self::Plan(_) => "invalid_plan",
         }
     }
@@ -710,8 +775,9 @@ impl OwnerError {
 #[cfg(test)]
 mod tests {
     use crate::{
-        CapsuleComponentSpec, CapsuleIdentity, CapsuleManifest, ContentDigest, KvClassSpec,
-        KvPlanInput, PrefixPath, build_capsule_components, compile_plan,
+        CapsuleComponentSpec, CapsuleIdentity, CapsuleManifest, CompletionSequenceRange,
+        ContentDigest, KvClassSpec, KvPlanInput, PrefixPath, build_capsule_components,
+        compile_plan,
     };
 
     use super::*;
@@ -1196,6 +1262,72 @@ mod tests {
         assert_eq!(
             owner.execute(OwnerCommand::ReleasePrefix { lease_id }),
             OwnerResponse::PrefixReleased { lease_id }
+        );
+    }
+
+    #[test]
+    fn cuda_event_frontier_blocks_reclamation_until_all_readers_complete() {
+        let mut owner = owner();
+        let domain = CompletionDomainId("cuda:0:forward".into());
+        let OwnerResponse::ExecutionRegistered { ticket: first } =
+            owner.execute(OwnerCommand::RegisterExecution {
+                completion_domain: domain.clone(),
+                request_ids: vec!["r0".into()],
+            })
+        else {
+            panic!("expected first execution ticket");
+        };
+        let OwnerResponse::ExecutionRegistered { ticket: second } =
+            owner.execute(OwnerCommand::RegisterExecution {
+                completion_domain: domain.clone(),
+                request_ids: vec!["r0".into()],
+            })
+        else {
+            panic!("expected second execution ticket");
+        };
+
+        assert_eq!(
+            plan(&mut owner, 0, 64),
+            OwnerResponse::Reclamation { certificate: None }
+        );
+        assert!(matches!(
+            owner.execute(OwnerCommand::CompleteExecutions {
+                completion_domain: domain.clone(),
+                submission_ids: vec![second.submission_id],
+            }),
+            OwnerResponse::ExecutionsCompleted { .. }
+        ));
+        assert_eq!(
+            plan(&mut owner, 0, 64),
+            OwnerResponse::Reclamation { certificate: None }
+        );
+        assert!(matches!(
+            owner.execute(OwnerCommand::CompleteExecutions {
+                completion_domain: domain.clone(),
+                submission_ids: vec![first.submission_id],
+            }),
+            OwnerResponse::ExecutionsCompleted { .. }
+        ));
+
+        let OwnerResponse::Reclamation {
+            certificate: Some(certificate),
+        } = plan(&mut owner, 0, 64)
+        else {
+            panic!("expected completion-safe certificate");
+        };
+        assert_eq!(
+            certificate.execution_proof,
+            SglangExecutionProof::CompletionFrontiers {
+                domains: vec![RequestCompletionWitness {
+                    completion_domain: domain,
+                    required_ranges: vec![CompletionSequenceRange {
+                        start: 1,
+                        end_exclusive: 3,
+                    }],
+                    completed_through: 2,
+                    completed_out_of_order: Vec::new(),
+                }]
+            }
         );
     }
 }

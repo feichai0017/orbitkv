@@ -8,9 +8,9 @@ use orbitkv::{
     ApplicabilityReport, CapsuleComponentSpec, CapsuleIdentity, CapsuleManifest, CompiledKvPlan,
     ContentDigest, HfRetentionCompilation, HfRetentionOptions, HfStatePlanOptions,
     HoltCapsuleStore, KvPlanSource, OwnerCommand, PhysicalPlanObjective, PrefixPath,
-    RetentionAnalysis, RuntimeCapsuleContract, RuntimeExecutionContract, RuntimeExecutionMode,
-    RuntimeOwnerTransport, RuntimePrefixContract, RuntimePrefixMode, RuntimeStatePlan,
-    RuntimeStatePlanOptions, RuntimeUniformStatePlanMode, SglangOwner,
+    RetentionAnalysis, RuntimeCapsuleContract, RuntimeExecutionContract, RuntimeExecutionFrontier,
+    RuntimeExecutionMode, RuntimeOwnerTransport, RuntimePrefixContract, RuntimePrefixMode,
+    RuntimeStatePlan, RuntimeStatePlanOptions, RuntimeUniformStatePlanMode, SglangOwner,
     SglangPhysicalOptimizationInput, SglangPhysicalPlan, SglangUniformSwaOptions,
     UniformSwaCudaGraphMode, analyze_state, build_capsule_components, compile_hf_config,
     compile_hf_state_plan, compile_retention_program, compile_runtime_state_plan,
@@ -289,6 +289,7 @@ fn compile_runtime_state_plan_command(
     let mut uniform_state_plan = None;
     let mut uniform_state_plan_mode = None;
     let mut prefix = None;
+    let mut execution_frontier = None;
     while let Some(flag) = args.next() {
         match flag.as_str() {
             "--physical-plan" => {
@@ -321,6 +322,14 @@ fn compile_runtime_state_plan_command(
                     },
                 });
             }
+            "--execution-frontier" => {
+                execution_frontier = Some(match required(args, "execution frontier")?.as_str() {
+                    "cuda_event" => RuntimeExecutionFrontier::CudaEvent,
+                    value => {
+                        return Err(format!("unsupported execution frontier {value:?}").into());
+                    }
+                });
+            }
             argument => return Err(format!("unexpected argument {argument}").into()),
         }
     }
@@ -334,6 +343,7 @@ fn compile_runtime_state_plan_command(
                 mode: execution_mode,
                 owner_transport,
                 uniform_state_plan_mode,
+                frontier: execution_frontier,
             },
             capsule: RuntimeCapsuleContract {
                 enabled: capsule_enabled,
