@@ -1,0 +1,108 @@
+{
+  "checkpoint_weight_bytes": 13761316904,
+  "claim_boundary": [
+    "real GPT-OSS 20B checkpoint and pinned SGLang overlap scheduler",
+    "torch CUDA events recorded on the real forward stream",
+    "request-specific compressed completion ranges in reclamation certificates",
+    "three single-request runs per mode plus one two-request shared-event run",
+    "no speculative decoding, radix+overlap, CUDA Graph, disaggregation, or multi-domain GPU claim"
+  ],
+  "date": "2026-08-19",
+  "decode_tokens": 32,
+  "engine_runtime": {
+    "cuda_graph": false,
+    "disable_overlap_schedule": false,
+    "disable_radix_cache": true,
+    "execution_frontier": "cuda_event",
+    "owner_transport": "sidecar",
+    "speculative_decoding": false,
+    "tree_cache": "SWAChunkCache"
+  },
+  "gpu": "NVIDIA H20",
+  "model": "/workspace/models/gpt-oss-20b",
+  "page_tokens": 16,
+  "prompt_tokens": 4096,
+  "schema": "orbitkv.h20-cuda-event-overlap.v1",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+  "single_request": {
+    "event_counts": [
+      {
+        "execution_completed": 34,
+        "execution_registered": 34,
+        "retirement_committed": 1
+      },
+      {
+        "execution_completed": 34,
+        "execution_registered": 34,
+        "retirement_committed": 1
+      },
+      {
+        "execution_completed": 34,
+        "execution_registered": 34,
+        "retirement_committed": 1
+      }
+    ],
+    "first_reclamation_execution_proof": {
+      "domains": [
+        {
+          "completed_out_of_order": [],
+          "completed_through": 3,
+          "completion_domain": "cuda:0:forward",
+          "required_ranges": [
+            {
+              "end_exclusive": 4,
+              "start": 1
+            }
+          ]
+        }
+      ],
+      "kind": "completion_frontiers"
+    },
+    "orbitkv_median_seconds": 3.3515520170331,
+    "orbitkv_over_stock_ratio": 0.9889367857582586,
+    "orbitkv_runs": [
+      {
+        "e2e_seconds": 3.3352052494883537,
+        "output_digest": "54f65952ad8d24e1cc555b1ccd5de84cdb2052aa402e567295838ee33194b565"
+      },
+      {
+        "e2e_seconds": 3.3515520170331,
+        "output_digest": "54f65952ad8d24e1cc555b1ccd5de84cdb2052aa402e567295838ee33194b565"
+      },
+      {
+        "e2e_seconds": 3.5952876955270767,
+        "output_digest": "54f65952ad8d24e1cc555b1ccd5de84cdb2052aa402e567295838ee33194b565"
+      }
+    ],
+    "stock_median_seconds": 3.3890457563102245,
+    "stock_runs": [
+      {
+        "e2e_seconds": 3.3466956727206707,
+        "output_digest": "54f65952ad8d24e1cc555b1ccd5de84cdb2052aa402e567295838ee33194b565"
+      },
+      {
+        "e2e_seconds": 3.3890457563102245,
+        "output_digest": "54f65952ad8d24e1cc555b1ccd5de84cdb2052aa402e567295838ee33194b565"
+      },
+      {
+        "e2e_seconds": 3.815552271902561,
+        "output_digest": "54f65952ad8d24e1cc555b1ccd5de84cdb2052aa402e567295838ee33194b565"
+      }
+    ]
+  },
+  "two_request": {
+    "completion_tokens": 64,
+    "execution_completed": 38,
+    "execution_registered": 38,
+    "output_digest": "769a2690381596bbedbbe61258759c1d4314846e6db308253b7e7c48a3ab4e1c",
+    "request_e2e_seconds": [
+      4.0757224150002,
+      4.178528279066086
+    ],
+    "retirement_committed": 2,
+    "shared_execution_ticket": {
+      "domain_sequence": 7,
+      "request_count": 2
+    }
+  }
+}

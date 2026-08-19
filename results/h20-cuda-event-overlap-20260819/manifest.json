@@ -1,0 +1,32 @@
+{
+  "base_source_commit": "3c4d6a7a113ae147dbb1e3fcd6aedc7eeb0d7133",
+  "claim_boundary": [
+    "real GPT-OSS 20B SGLang overlap scheduler",
+    "real forward-stream CUDA events and request-specific completion ranges",
+    "three single-request runs per mode plus one two-request run",
+    "no speculation, radix+overlap, CUDA Graph, disaggregation, or multi-domain GPU claim"
+  ],
+  "date": "2026-08-19",
+  "records": {
+    "results/h20-cuda-event-overlap-20260819/README.md": "a7570b1a0f2a451c043bdf2e46ffdf785fdf6d1abc345768ac67ce25317bfd1f",
+    "results/h20-cuda-event-overlap-20260819/runtime-state-plan.json": "54569e10901a593006620292b47a427a941bdf15fc3de7afc6c1f4eb862ba177",
+    "results/h20-cuda-event-overlap-20260819/summary.json": "d9c2f264492d15bf6b1fcd63d73a408d9a8d6ab41bb63d7d99a3987605b5c15b"
+  },
+  "schema": "orbitkv.h20-cuda-event-overlap-manifest.v1",
+  "sources": {
+    ".github/workflows/ci.yml": "66fd54894f426d0801119a770605a8ce4e8b3f440bf39e72347c411136b4c32f",
+    "docs/capability-matrix.md": "e499dc1fdc21def22da3891d5350b8e5bf2519427b21557efeb03611020fde38",
+    "integrations/sglang/bench_hybrid_shadow.py": "918109c03f974f0f9eeec578318109e7192a7826f6a86fe7a0ad4a6869d2119c",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "a512e15816ad3f686ad970d4dc3e0a2e2fee38a3f1ed62a5b5153896eecd7c97",
+    "integrations/sglang/tests/test_shadow_plugin.py": "080d58086eb50c0de4666566e754818bd74c4675e06f560122e459bb8b6df78c",
+    "src/frontier.rs": "9c62c8d11807019d36a564e223f5b12022ae6361ea787cb7a29bc34bb14543f5",
+    "src/lib.rs": "cd0e6545dd1b01575c41df8e7ac2054438127d851f7debd6bcee652ca00b2b65",
+    "src/sglang_owner.rs": "cf6308fdd99508129690c493b2e9de17daddf520d5ad391eafa7dc0f06539f25",
+    "src/state_plan.rs": "d2190295f8bbf63a7f48fa7a7686f18c9bdbb6fab4416de6c37a2dd1ceb190a2",
+    "tests/retention_cli.rs": "263b67985b9c008570d961eab100dd7577c7d694cae6435044ff131ac71dd74c"
+  },
+  "workspace_sections": [
+    "records",
+    "sources"
+  ]
+}
