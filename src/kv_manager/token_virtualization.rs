@@ -5,7 +5,7 @@ use serde::Serialize;
 
 use super::arena::RuntimeClass;
 use super::manager_state::{ClassDelta, ClassTransition};
-use super::persistent_snapshot::{ClassRoot, RootEntry};
+use super::persistent_snapshot::{ClassRoot, RootEntry, RootLayout};
 use super::{
     CanonicalKvManager, KvManagerError, PageLease, RequestLease, RequestSnapshot, RequestView,
     SnapshotLease, TailActionKind, ViewVersion,
@@ -143,6 +143,7 @@ pub(super) fn append_class_token_delta(
     delta: &ClassDelta,
     previous_boundary: u64,
     target_boundary: u64,
+    previous_layout_boundary: u64,
 ) -> Result<PersistentTokenTable, KvManagerError> {
     if root.tokens.len() != previous_boundary {
         return Err(KvManagerError::Invariant("token table boundary"));
@@ -191,7 +192,12 @@ pub(super) fn append_class_token_delta(
     for token_id in previous_boundary..target_boundary {
         let retained = token_id >= retained_start;
         let location = if retained {
-            let ordinal = token_id / page_tokens;
+            let physical_token_id = previous_layout_boundary
+                .checked_add(token_id - previous_boundary)
+                .ok_or(KvManagerError::ArithmeticOverflow(
+                    "appended physical token id",
+                ))?;
+            let ordinal = physical_token_id / page_tokens;
             let entry = delta
                 .tail_destination
                 .or(delta.tail_source)
@@ -204,7 +210,7 @@ pub(super) fn append_class_token_delta(
                         .find(|entry| entry.logical_ordinal == ordinal)
                 })
                 .ok_or(KvManagerError::Invariant("new token placement"))?;
-            Some(token_location(entry, token_id, page_tokens)?)
+            Some(token_location(entry, physical_token_id, page_tokens)?)
         } else {
             None
         };
@@ -221,7 +227,7 @@ pub(super) fn append_class_token_delta(
     root.tokens.patch(&patches)?.append(&appended)
 }
 
-pub(super) fn apply_dense_class_transition(
+pub(super) fn apply_class_transition(
     page_tokens: u64,
     class: RuntimeClass,
     root: &mut ClassRoot,
@@ -269,17 +275,21 @@ pub(super) fn apply_dense_class_transition(
         delta,
         previous_boundary,
         target_boundary,
+        delta.previous_layout_boundary,
     )?;
-    root.resident_tokens = match class.retention {
-        crate::plan::RetentionKind::Full => target_boundary,
-        crate::plan::RetentionKind::Sliding => {
-            target_boundary.saturating_sub(class.retained_start(target_boundary))
-        }
-        crate::plan::RetentionKind::Chunked => {
-            return Err(KvManagerError::UnsupportedProfile(
-                "chunked token layout is not implemented",
-            ));
-        }
+    root.resident_tokens = match root.layout {
+        RootLayout::Packed => delta.target_layout_boundary,
+        RootLayout::Dense => match class.retention {
+            crate::plan::RetentionKind::Full => target_boundary,
+            crate::plan::RetentionKind::Sliding => {
+                target_boundary.saturating_sub(class.retained_start(target_boundary))
+            }
+            crate::plan::RetentionKind::Chunked => {
+                return Err(KvManagerError::UnsupportedProfile(
+                    "chunked token layout is not implemented",
+                ));
+            }
+        },
     };
     Ok(())
 }

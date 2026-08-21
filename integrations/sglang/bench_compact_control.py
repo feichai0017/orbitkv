@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Measure the ABI6 compact host control path without starting a GPU."""
+"""Measure the ABI7 compact host control path without starting a GPU."""
 
 from __future__ import annotations
 

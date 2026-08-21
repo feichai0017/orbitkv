@@ -1,5 +1,4 @@
 from __future__ import annotations
-
 import argparse
 import csv
 import hashlib
@@ -15,10 +14,7 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
-
 from checkpoint_identity import checkpoint_identity, sha256_file
-
-
 INTEGRATION_ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = INTEGRATION_ROOT.parents[1]
 ADAPTER_SOURCE_ROOT = INTEGRATION_ROOT / "src"
@@ -140,7 +136,7 @@ def validate_arguments(args: argparse.Namespace) -> dict[str, Path | None]:
     if args.seed < 0:
         raise ValueError("--seed must be nonnegative")
     if args.requests not in QUALIFICATION_BATCH_SIZES:
-        raise ValueError("--requests must be exactly 1 or 4 for ABI6 qualification")
+        raise ValueError("--requests must be exactly 1 or 4 for ABI7 qualification")
     if args.decode_tokens != 33:
         raise ValueError(
             "--decode-tokens must be exactly 33 so measured requests do not "
@@ -1094,6 +1090,9 @@ _BATCH_COUNTER_FIELDS = (
     "prefix_publish_release_batch_calls",
     "prefix_evict_batch_calls",
     "prefix_recycle_batch_calls",
+    "token_views_batch_calls", "mark_token_dispositions_batch_calls",
+    "prepare_relocation_batch_calls", "submit_relocation_batch_calls",
+    "complete_relocation_batch_calls", "abort_relocations_batch_calls",
     "buffer_too_small_preflights",
     "retryable_conflicts",
     "fail_stops",
@@ -1120,6 +1119,10 @@ _BATCH_COUNTER_FIELDS = (
     "cow_copied_tokens",
     "mirror_validation_calls",
     "mirror_syncs",
+    "token_disposition_batches", "token_policy_evictions",
+    "relocation_batches", "relocation_moves",
+    "relocation_reclaimed_pages", "relocation_copy_events",
+    "relocation_copy_tokens",
 )
 _FORBIDDEN_COUNTER_FIELDS = (
     "hot_workspace_allocations",
@@ -1189,6 +1192,11 @@ def _validate_batch_counter_contract(
         "prefix_publish_release_batch_calls": seed_batches,
         "prefix_evict_batch_calls": cleanup_batches,
         "prefix_recycle_batch_calls": cleanup_batches,
+        **{name: 0 for name in (
+            "token_views_batch_calls", "mark_token_dispositions_batch_calls",
+            "prepare_relocation_batch_calls", "submit_relocation_batch_calls",
+            "complete_relocation_batch_calls", "abort_relocations_batch_calls",
+        )},
         "buffer_too_small_preflights": (
             warm_request_calls + release_batches + seed_batches + cleanup_batches
         ),
@@ -1205,6 +1213,12 @@ def _validate_batch_counter_contract(
         "cow_copy_intents": 0,
         "cow_move_calls": 0,
         "cow_copied_tokens": 0,
+        **{name: 0 for name in (
+            "token_disposition_batches", "token_policy_evictions",
+            "relocation_batches", "relocation_moves",
+            "relocation_reclaimed_pages", "relocation_copy_events",
+            "relocation_copy_tokens",
+        )},
     }
     identities = {
         name: {"expected": expected, "actual": counters[name]}
@@ -1213,7 +1227,7 @@ def _validate_batch_counter_contract(
     }
     if identities:
         raise RuntimeError(
-            f"OrbitKV ABI6 B{batch_size} batch identities disagree at {stage}: "
+            f"OrbitKV ABI7 B{batch_size} batch identities disagree at {stage}: "
             f"{identities}"
         )
     full_evicted = counters["prefix_evicted_full_tokens"]
@@ -1246,7 +1260,7 @@ def _validate_batch_counter_contract(
     event_waits = counters["event_waits"]
     if event_waits > forward_batches or event_queries + event_waits < forward_batches:
         raise RuntimeError(
-            f"OrbitKV ABI6 event observation counters are inconsistent at {stage}"
+            f"OrbitKV ABI7 event observation counters are inconsistent at {stage}"
         )
 
     base_acknowledgements = completed_iterations + cleanup_batches
@@ -1322,7 +1336,7 @@ def manager_census(
         "swa_activity",
         "batch_counters",
     }
-    if set(reported) != allowed or reported.get("abi_version") != 6:
+    if set(reported) != allowed or reported.get("abi_version") != 7:
         raise RuntimeError(f"OrbitKV manager top-level schema is invalid at {stage}")
     raw_identities = reported["identities"]
     raw_arena_stats = reported["arena_stats"]
@@ -1358,7 +1372,7 @@ def manager_census(
     }
     if forbidden:
         raise RuntimeError(
-            f"OrbitKV ABI6 failure counters are nonzero at {stage}: {forbidden}"
+            f"OrbitKV ABI7 failure counters are nonzero at {stage}: {forbidden}"
         )
     _validate_batch_counter_contract(
         batch_counters,
@@ -1383,7 +1397,7 @@ def manager_census(
     )
     if len(set(batch_call_counts)) != 1:
         raise RuntimeError(
-            f"OrbitKV ABI6 batch call identities disagree at {stage}"
+            f"OrbitKV ABI7 batch call identities disagree at {stage}"
         )
     engine_epochs: set[int] = set()
     page_ranges: list[tuple[int, int]] = []
@@ -1515,7 +1529,7 @@ def manager_census(
             f"free={manager_stats['free_pages']} expected={page_capacity}"
         )
     return {
-        "abi_version": 6,
+        "abi_version": 7,
         "identities": identities,
         "arena_stats": arena_stats,
         "manager_stats": manager_stats,
@@ -1981,7 +1995,5 @@ def main(argv: Sequence[str] | None = None) -> None:
     except (ValueError, RuntimeError) as error:
         parser.error(str(error))
     print(json.dumps(result, sort_keys=True), flush=True)
-
-
 if __name__ == "__main__":
     main()

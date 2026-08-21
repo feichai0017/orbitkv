@@ -22,8 +22,9 @@ The live tree is **ABI7**:
   and no ABI5 scalar-named lifecycle aliases; and
 - the split ABI7 Python FFI/runtime and SGLang `OrbitKVPrefixCache` are L2 GO
   on the host against the release library and pinned official `v0.5.17`
-  source contract. The token-relocation C/Python wire is host L2 only; SGLang
-  copy/event/attention integration and all ABI7 H20 evidence remain pending.
+  source contract. The explicit Full-only eager token-relocation path now has
+  host L2 seams for real copy/event orchestration and split absolute/active
+  lengths; all ABI7 H20 and performance evidence remains pending.
 
 The latest engine evidence is an immutable **historical ABI5-v5** snapshot,
 not evidence for ABI7. Its exact `9233c06d…` source closure has scoped L4
@@ -83,7 +84,7 @@ for the invariants and module boundaries.
 | ABI7 Rust core | L2 GO | Host unit, property, fault, stale-lease, Prefix, fork, COW, token relocation, and reclamation tests |
 | ABI7 C wire | L2 GO | Exact 29 symbols, C/C++ layouts, batch atomicity, short-buffer and malformed-receipt gates |
 | ABI7 Python/Prefix | L2 GO | Exact ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, relocation wire, mirror cleanup, fail-stop, and teardown host gates |
-| ABI7 SGLang relocation | Pending | Copy stream/event, retained-slot attention metadata, and end-to-end qualification are not implemented |
+| ABI7 SGLang relocation | L2 host / L4 pending | Full-only eager, explicit/default-off Naive/Relocate path; H20 engine qualification pending |
 | ABI7 H20 | Pending | No engine run may inherit ABI5 evidence |
 | Frozen ABI5-v5 | Historical scoped L4 | Qwen Full and GPT-OSS Full+SWA B1/B4 correctness on one H20 |
 

@@ -222,6 +222,7 @@ assert HOOK_TARGETS == (
     "sglang.srt.managers.scheduler.Scheduler.run_batch",
     "sglang.srt.mem_cache.kv_cache_configurator.KVCacheConfigurator.configure",
     "sglang.srt.managers.scheduler.Scheduler.get_internal_state",
+    "sglang.srt.model_executor.forward_batch_info.ForwardBatch.init_new",
 )
 assert all(target in HookRegistry._patched for target in HOOK_TARGETS)
 assert schedule_batch.alloc_for_extend is allocation.alloc_for_extend

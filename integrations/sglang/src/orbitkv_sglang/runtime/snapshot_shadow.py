@@ -8,6 +8,7 @@ from .identity import (
     TAIL_FRESH,
     TAIL_IN_PLACE,
     TAIL_NONE,
+    CLASS_LOWERING_PACKED,
     ArenaIdentity,
     ManagerError,
     PageLease,
@@ -180,6 +181,8 @@ class RequestCursor:
     view_version: int = 0
     boundary: int = 0
     pages: dict[tuple[int, int], PageShadow] = field(default_factory=dict)
+    layout_boundaries: dict[int, int] = field(default_factory=dict)
+    active_kv_lengths: dict[int, int] = field(default_factory=dict)
 
     @classmethod
     def from_view(cls, view: RequestView) -> RequestCursor:
@@ -199,6 +202,8 @@ class ClassLoweringSpec:
     exact_new_pages: tuple[int, ...]
     tail_action: TailAction
     copy_intents: tuple[CopyIntent, ...]
+    previous_layout_boundary: int | None = None
+    target_layout_boundary: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -303,9 +308,6 @@ def _decode_prepared(
     if prepared.target_snapshot == prepared.base_snapshot:
         raise ManagerError("prepare did not allocate a distinct target snapshot")
 
-    expected_writes = expected_new_ordinals(
-        prepared.previous_boundary, prepared.target_boundary, int(config.page_tokens)
-    )
     class_specs: list[ClassLoweringSpec] = []
     new_pages: list[PageShadow] = []
     physical: set[tuple[int, int]] = set()
@@ -314,9 +316,25 @@ def _decode_prepared(
     for class_config, lowering in zip(classes, prepared.class_lowerings, strict=True):
         class_page_start = len(new_pages)
         arena = arenas[class_config.class_id]
+        packed = lowering.flags == CLASS_LOWERING_PACKED
+        if lowering.flags not in (0, CLASS_LOWERING_PACKED):
+            raise ManagerError("prepare returned unknown class lowering flags")
+        previous_layout_boundary = cursor.layout_boundaries.get(
+            lowering.class_id, cursor.boundary
+        )
+        if packed and lowering.class_id not in cursor.layout_boundaries:
+            raise ManagerError("packed lowering lacks a physical layout boundary")
+        if not packed and previous_layout_boundary != prepared.previous_boundary:
+            raise ManagerError("dense lowering physical boundary diverged")
+        target_layout_boundary = previous_layout_boundary + (
+            prepared.target_boundary - prepared.previous_boundary
+        )
+        expected_writes = expected_new_ordinals(
+            previous_layout_boundary, target_layout_boundary, int(config.page_tokens)
+        )
         if lowering.class_id != class_config.class_id:
             raise ManagerError("prepare class lowerings are not in compiled order")
-        if lowering.flags != 0 or lowering.reserved != 0:
+        if lowering.reserved != 0:
             raise ManagerError("prepare returned nonzero class reserved fields")
         if (
             lowering.tail_offset != tail_cursor
@@ -342,8 +360,8 @@ def _decode_prepared(
         copies = prepared.copy_intents[copy_cursor:copy_end]
         if action.class_id != lowering.class_id or action.reserved != 0:
             raise ManagerError("tail action does not belong to its class")
-        partial = prepared.previous_boundary % arena.page_tokens
-        ordinal = prepared.previous_boundary // arena.page_tokens if partial else 0
+        partial = previous_layout_boundary % arena.page_tokens
+        ordinal = previous_layout_boundary // arena.page_tokens if partial else 0
         expected_tail = cursor.pages.get((lowering.class_id, ordinal)) if partial else None
         last_location = -1
         if not partial:
@@ -467,6 +485,8 @@ def _decode_prepared(
                 exact_new_pages=tuple(exact_new_pages),
                 tail_action=action,
                 copy_intents=copies,
+                previous_layout_boundary=previous_layout_boundary,
+                target_layout_boundary=target_layout_boundary,
             )
         )
         tail_cursor, copy_cursor, write_cursor = tail_end, copy_end, write_end

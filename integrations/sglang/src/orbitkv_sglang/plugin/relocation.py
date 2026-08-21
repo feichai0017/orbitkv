@@ -1,0 +1,219 @@
+from __future__ import annotations
+
+from typing import Any, Callable
+
+from ..runtime import (
+    ClassTokenDispositionUpdate,
+    FailStopped,
+    RelocationCopyReceipt,
+    RelocationPolicy,
+    TokenDisposition,
+    TokenDispositionKind,
+)
+from . import state as _state
+from .state import _config, _request_key, _runtime
+
+
+def _victim_updates(boundary: int) -> tuple[ClassTokenDispositionUpdate, ...]:
+    policy = _config().token_reclamation
+    if boundary != policy.trigger_tokens:
+        return ()
+    return tuple(
+        ClassTokenDispositionUpdate(
+            class_id=0,
+            token_id=token_id,
+            disposition=TokenDisposition(
+                TokenDispositionKind.POLICY_EVICTED,
+                policy.policy_id,
+                policy.policy_version,
+                policy.quality_contract,
+            ),
+        )
+        for token_id in range(boundary)
+        if token_id % _config().page_tokens >= policy.retained_per_page
+    )
+
+
+def _preflight_request(req: Any, row: Any, boundary: int, old_view: Any) -> None:
+    import torch
+
+    prefix = getattr(req, "prefix_indices", None)
+    if prefix is not None and int(prefix.numel()) != 0:
+        raise RuntimeError("first token-reclamation profile forbids Prefix mirrors")
+    if int(row.numel()) < boundary:
+        raise RuntimeError("ReqToToken row is shorter than the absolute boundary")
+    expected = []
+    for placement in old_view.placements:
+        if placement.location is None:
+            raise RuntimeError("pre-reclamation token lacks a physical location")
+        arena = _runtime().arenas_by_class[0]
+        location = placement.location
+        page = location.backend_index - arena.backend_base_index + 1
+        expected.append(page * _config().page_tokens + location.offset)
+    expected_tensor = torch.tensor(expected, dtype=torch.int64, device=row.device)
+    if not torch.equal(row[:boundary].to(torch.int64), expected_tensor):
+        raise RuntimeError("victim set disagrees with the ReqToToken authority mirror")
+
+
+def _publish_compact_row(req: Any, row: Any, locations: tuple[int, ...], boundary: int) -> None:
+    import torch
+
+    count = len(locations)
+    if not 0 < count < boundary:
+        raise RuntimeError("token reclamation did not produce a strict retained subset")
+    replacement = torch.tensor(locations, dtype=row.dtype, device=row.device)
+    row[:count].copy_(replacement)
+    row[count:boundary].zero_()
+    req._orbitkv_active_kv_len = count
+    req._orbitkv_retained_locations = tuple(locations)
+
+
+def _copy_callback(scheduler: Any) -> Callable[[Any], tuple[RelocationCopyReceipt, ...]]:
+    def execute(prepared: Any) -> tuple[RelocationCopyReceipt, ...]:
+        import torch
+
+        arena = _runtime().arenas_by_class[prepared.class_id]
+        sources = []
+        destinations = []
+        for movement in prepared.moves:
+            source_page = movement.source.backend_index - arena.backend_base_index + 1
+            destination_page = (
+                movement.destination.backend_index - arena.backend_base_index + 1
+            )
+            sources.append(source_page * _config().page_tokens + movement.source.offset)
+            destinations.append(
+                destination_page * _config().page_tokens + movement.destination.offset
+            )
+        device = scheduler.device
+        source = torch.tensor(sources, dtype=torch.int64, device=device)
+        destination = torch.tensor(destinations, dtype=torch.int64, device=device)
+        stream = scheduler.device_module.Stream(device=device)
+        event = scheduler.device_module.Event()
+        try:
+            with scheduler.device_module.stream(stream):
+                _state._ALLOCATOR.get_kvcache().move_kv_cache(destination, source)
+                event.record(stream=stream)
+            event.synchronize()
+        except Exception as error:
+            raise RuntimeError(f"relocation CUDA copy/event failed: {error}") from error
+        _state._counter_add("relocation_copy_events")
+        _state._counter_add("relocation_copy_tokens", len(sources))
+        return tuple(
+            RelocationCopyReceipt(
+                prepared.relocation,
+                movement.token_id,
+                movement.source,
+                movement.destination,
+            )
+            for movement in prepared.moves
+        )
+
+    return execute
+
+
+def _maybe_reclaim_running_batch(scheduler: Any, running_batch: Any) -> None:
+    policy = _config().token_reclamation
+    if policy.mode == "off" or running_batch is None or running_batch.is_empty():
+        return
+    runtime = _runtime()
+    possible = tuple(
+        req
+        for req in running_batch.reqs
+        if runtime.has_request(_request_key(req))
+        and getattr(getattr(req, "kv", None), "kv_allocated_len", None)
+        == policy.trigger_tokens
+        and not bool(getattr(req, "_orbitkv_token_reclamation_done", False))
+    )
+    if possible:
+        # The event publishes the authoritative boundary. Selecting candidates
+        # before this wait can observe N-1 while the completed step targets N.
+        runtime.wait_batch(tuple(_request_key(req) for req in possible))
+    candidates = tuple(
+        req
+        for req in possible
+        if runtime.record_for(_request_key(req)).boundary == policy.trigger_tokens
+    )
+    if not candidates:
+        return
+    table = running_batch.req_to_token_pool.req_to_token
+    for req in candidates:
+        key = _request_key(req)
+        record = runtime.record_for(key)
+        row_index = int(req.req_pool_idx)
+        row = table[row_index]
+        updates = _victim_updates(record.boundary)
+        if not updates:
+            raise RuntimeError("configured victim policy produced no updates")
+        old_view = runtime.token_view(key, 0)
+        _preflight_request(req, row, record.boundary, old_view)
+        if policy.mode == "naive":
+            publication = runtime.mark_token_dispositions(key, 0, updates)
+            _publish_compact_row(
+                req, row, publication.retained_locations, record.boundary
+            )
+        elif policy.mode == "relocate":
+            publication = runtime.relocate_tokens(
+                key,
+                0,
+                updates,
+                RelocationPolicy(
+                    policy.maximum_source_pages,
+                    policy.evacuation_headroom_pages,
+                    policy.fragmentation_threshold_milli,
+                    True,
+                ),
+                _copy_callback(scheduler),
+                int(getattr(scheduler.device, "index", 0) or 0) + 65_537,
+                int(getattr(scheduler, "forward_ct", 0)) + 1,
+            )
+            try:
+                _publish_compact_row(
+                    req, row, publication.retained_locations, record.boundary
+                )
+                scheduler.device_module.current_stream(scheduler.device).synchronize()
+                runtime.acknowledge_relocation(publication)
+            except Exception as error:
+                runtime.fail_stop(f"relocation mirror publication became uncertain: {error}")
+                raise FailStopped(
+                    runtime.failure_reason or "relocation mirror publication failed"
+                ) from error
+            _state._counter_add("relocation_batches")
+            _state._counter_add("relocation_moves", len(publication.prepared.moves))
+            _state._counter_add(
+                "relocation_reclaimed_pages",
+                publication.prepared.projected_reclaimed_pages,
+            )
+        else:
+            raise RuntimeError("unknown token-reclamation mode")
+        req._orbitkv_token_reclamation_done = True
+        req.skip_radix_cache_insert = True
+        _state._counter_add("token_disposition_batches")
+        _state._counter_add("token_policy_evictions", len(updates))
+
+
+def _active_forward_lengths(
+    result: Any, _cls: Any, batch: Any, _model_runner: Any, **_kwargs: Any
+) -> Any:
+    import torch
+
+    absolute = [int(value) for value in batch.seq_lens_cpu.tolist()]
+    active = [
+        int(getattr(req, "_orbitkv_active_kv_len", value))
+        for req, value in zip(batch.reqs, absolute, strict=True)
+    ]
+    if active == absolute:
+        return result
+    if len(active) != int(result.batch_size):
+        raise RuntimeError("active KV length cardinality changed")
+    result.absolute_seq_lens = result.seq_lens
+    result.absolute_seq_lens_cpu = result.seq_lens_cpu
+    result.absolute_seq_lens_sum = result.seq_lens_sum
+    result.seq_lens = torch.tensor(
+        active, dtype=result.absolute_seq_lens.dtype, device=result.absolute_seq_lens.device
+    )
+    result.seq_lens_cpu = torch.tensor(active, dtype=torch.int64)
+    result.seq_lens_sum = sum(active)
+    return result
+
+
+__all__ = ["_active_forward_lengths", "_maybe_reclaim_running_batch"]

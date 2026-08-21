@@ -10,6 +10,20 @@ from typing import Any, Literal, Mapping
 
 PAGE_TOKENS = 16
 RetentionKind = Literal["full", "sliding"]
+ReclamationMode = Literal["off", "naive", "relocate"]
+
+
+@dataclass(frozen=True, slots=True)
+class TokenReclamationConfig:
+    mode: ReclamationMode = "off"
+    trigger_tokens: int = 0
+    retained_per_page: int = 0
+    policy_id: int = 0
+    policy_version: int = 0
+    quality_contract: int = 0
+    fragmentation_threshold_milli: int = 250
+    maximum_source_pages: int = 0
+    evacuation_headroom_pages: int = 0
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,7 +67,7 @@ class ClassConfig:
 
 @dataclass(frozen=True, slots=True)
 class ManagerPlanConfig:
-    """The sole breaking ABI6 snapshot/prefix plan; no legacy translation."""
+    """The sole breaking ABI7 snapshot/prefix plan; no legacy translation."""
 
     plan_path: Path
     library_path: Path
@@ -61,6 +75,7 @@ class ManagerPlanConfig:
     plan_fingerprint: str
     page_tokens: int
     classes: tuple[ClassConfig, ...]
+    token_reclamation: TokenReclamationConfig = TokenReclamationConfig()
 
     @property
     def num_hidden_layers(self) -> int:
@@ -84,7 +99,7 @@ class ManagerPlanConfig:
 
 
 def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
-    """Load only the ABI6 Full, sliding, or Full+sliding plan schema."""
+    """Load only the ABI7 Full, sliding, or Full+sliding plan schema."""
 
     source = os.environ if environ is None else environ
     plan_path = _configured_file(source, "ORBITKV_PLAN")
@@ -128,6 +143,11 @@ def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
         raise ValueError("KV classes must cover every model layer exactly once")
 
     canonical = _canonical_json(root)
+    token_reclamation = _token_reclamation_config(source)
+    if token_reclamation.mode != "off" and retentions != ("full",):
+        raise ValueError(
+            "first token-reclamation engine profile requires one Full class"
+        )
     return ManagerPlanConfig(
         plan_path=plan_path,
         library_path=library_path,
@@ -135,6 +155,60 @@ def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
         plan_fingerprint="sha256:" + hashlib.sha256(canonical).hexdigest(),
         page_tokens=page_tokens,
         classes=classes,
+        token_reclamation=token_reclamation,
+    )
+
+
+def _token_reclamation_config(
+    source: Mapping[str, str],
+) -> TokenReclamationConfig:
+    encoded = source.get("ORBITKV_TOKEN_RECLAMATION")
+    if encoded is None:
+        return TokenReclamationConfig()
+    try:
+        raw = json.loads(
+            encoded,
+            object_pairs_hook=_object_without_duplicate_keys,
+            parse_constant=_reject_non_finite_number,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError(f"invalid ORBITKV_TOKEN_RECLAMATION JSON: {error}") from error
+    value = _mapping(raw, "ORBITKV_TOKEN_RECLAMATION")
+    fields = {
+        "mode",
+        "trigger_tokens",
+        "retained_per_page",
+        "policy_id",
+        "policy_version",
+        "quality_contract",
+        "fragmentation_threshold_milli",
+        "maximum_source_pages",
+        "evacuation_headroom_pages",
+    }
+    _exact_keys(value, "ORBITKV_TOKEN_RECLAMATION", fields)
+    mode = _string(value, "mode", "ORBITKV_TOKEN_RECLAMATION")
+    if mode not in ("naive", "relocate"):
+        raise ValueError(
+            "ORBITKV_TOKEN_RECLAMATION.mode must be 'naive' or 'relocate'"
+        )
+    values = {
+        name: _positive_int(value, name, "ORBITKV_TOKEN_RECLAMATION")
+        for name in fields - {"mode", "fragmentation_threshold_milli"}
+    }
+    threshold = value.get("fragmentation_threshold_milli")
+    if isinstance(threshold, bool) or not isinstance(threshold, int) or not 0 <= threshold <= 1000:
+        raise ValueError(
+            "ORBITKV_TOKEN_RECLAMATION.fragmentation_threshold_milli must be in [0, 1000]"
+        )
+    retained = values["retained_per_page"]
+    if retained >= PAGE_TOKENS:
+        raise ValueError(
+            f"ORBITKV_TOKEN_RECLAMATION.retained_per_page must be below {PAGE_TOKENS}"
+        )
+    return TokenReclamationConfig(
+        mode=mode,
+        fragmentation_threshold_milli=threshold,
+        **values,
     )
 
 
@@ -277,6 +351,8 @@ __all__ = [
     "ClassConfig",
     "ManagerPlanConfig",
     "PAGE_TOKENS",
+    "ReclamationMode",
     "RetentionKind",
+    "TokenReclamationConfig",
     "load_config",
 ]

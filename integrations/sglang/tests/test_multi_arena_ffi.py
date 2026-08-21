@@ -49,6 +49,7 @@ from orbitkv_sglang.runtime import (
     RequestView,
     RetryableConflict,
     bind_receipts,
+    CLASS_LOWERING_PACKED,
     copy_receipts,
     reclamation_receipts,
     relocation_copy_receipts,
@@ -449,13 +450,46 @@ def test_abi7_full_evacuation_relocates_live_tokens_and_reclaims_sources(
     manager.acknowledge_reclamations_batch(
         reclamation_receipts(completed.retirements)
     )
+    prepared_append = manager.prepare_batch(
+        (PrepareBatchItem(current.request, current.snapshot, 49),)
+    )[0]
+    assert prepared_append.class_lowerings[0].flags == CLASS_LOWERING_PACKED
+    assert prepared_append.tail_actions[0].logical_ordinal == 1
+    assert prepared_append.tail_actions[0].valid_token_count == 8
+    assert not prepared_append.write_intents
+    submitted_append = manager.submit_batch(
+        (
+            (
+                prepared_append.step,
+                bind_receipts(prepared_append, (), manager.arenas_by_class),
+                copy_receipts(prepared_append),
+            ),
+        )
+    )[0]
+    append_completion = manager.complete_batch(
+        BatchCompletionReceipt(current.request.engine_epoch, 3, 3),
+        (submitted_append.submission,),
+    ).completions[0]
+    current = RequestView(
+        append_completion.request,
+        append_completion.published_snapshot,
+        append_completion.published_view_version,
+        append_completion.published_boundary,
+        append_completion.resident_count,
+    )
+    appended = manager.token_views_batch(
+        (TokenViewQuery(current.request, current.snapshot, 0, current.boundary),)
+    )[0]
+    assert appended.placements[48].location is not None
+    assert appended.placements[48].location.offset == 8
+
     released = manager.release_batch(
         (ReleaseBatchItem(current.request, current.snapshot),)
     )
     assert tuple(
         (item.token_begin, item.token_end_exclusive)
         for item in released.retirements
-    ) == ((0, 16), (16, 24))
+    ) == ((0, 16), (16, 25))
     manager.acknowledge_reclamations_batch(
         reclamation_receipts(released.retirements)
     )

@@ -42,6 +42,9 @@ impl RequestState {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ClassDelta {
     pub(super) class_id: u16,
+    pub(super) layout: super::RootLayout,
+    pub(super) previous_layout_boundary: u64,
+    pub(super) target_layout_boundary: u64,
     pub(super) tail_action: TailActionKind,
     pub(super) tail_source: Option<RootEntry>,
     pub(super) tail_destination: Option<RootEntry>,

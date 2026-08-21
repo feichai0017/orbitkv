@@ -23,6 +23,7 @@ from orbitkv_sglang.runtime import (
     ArenaIdentity,
     ArenaStats,
     CanonicalRuntime,
+    ClassTokenDispositionUpdate,
     CompletionBatch,
     EvictedPrefix,
     FailStopped,
@@ -38,11 +39,15 @@ from orbitkv_sglang.runtime import (
     PrefixSemanticKey,
     ReclamationCertificate,
     ReclamationLease,
+    RelocationCopyReceipt,
+    RelocationPolicy,
     ReleaseBatchItem,
     RequestLease,
     RetryableConflict,
     SnapshotLease,
     TAIL_FRESH,
+    TokenDisposition,
+    TokenDispositionKind,
     reclamation_receipts,
 )
 from orbitkv_sglang.runtime.completion import completion_cursor_delta
@@ -119,6 +124,67 @@ def _runtime(
     )
     assert isinstance(manager, CtypesManager)
     return config, manager, CanonicalRuntime(config, manager)
+
+
+def test_token_reclamation_config_is_explicit_strict_and_full_only(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    full_plan = tmp_path / "full-reclamation-plan.json"
+    full_plan.write_text(
+        json.dumps(
+            {
+                "page_tokens": 16,
+                "classes": [
+                    {
+                        "name": "full",
+                        "layers": [0],
+                        "retention": "full",
+                        "bytes_per_token_per_layer": 128,
+                        "window_tokens": None,
+                    }
+                ],
+            }
+        )
+    )
+    base = {
+        "ORBITKV_PLAN": str(full_plan),
+        "ORBITKV_LIBRARY": str(ffi_library),
+    }
+    assert load_config(base).token_reclamation.mode == "off"
+    profile = {
+        "mode": "relocate",
+        "trigger_tokens": 48,
+        "retained_per_page": 8,
+        "policy_id": 7,
+        "policy_version": 1,
+        "quality_contract": 99,
+        "fragmentation_threshold_milli": 250,
+        "maximum_source_pages": 3,
+        "evacuation_headroom_pages": 2,
+    }
+    enabled = load_config(
+        {**base, "ORBITKV_TOKEN_RECLAMATION": json.dumps(profile)}
+    )
+    assert enabled.token_reclamation.mode == "relocate"
+    assert enabled.token_reclamation.retained_per_page == 8
+    with pytest.raises(ValueError, match="unknown fields"):
+        load_config(
+            {
+                **base,
+                "ORBITKV_TOKEN_RECLAMATION": json.dumps(
+                    {**profile, "silent_default": True}
+                ),
+            }
+        )
+    with pytest.raises(ValueError, match="below 16"):
+        load_config(
+            {
+                **base,
+                "ORBITKV_TOKEN_RECLAMATION": json.dumps(
+                    {**profile, "retained_per_page": 16}
+                ),
+            }
+        )
 
 
 class ReadyEvent:
@@ -280,6 +346,83 @@ def test_real_b2_b4_runtime_lifecycle_is_collective_and_reference_exact(
     assert stats.active_requests == stats.active_snapshots == 0
     assert stats.pending_reclamations == 0
     assert stats.total_request_page_refs == stats.total_prefix_page_refs == 0
+    runtime.close()
+
+
+def _policy_updates() -> tuple[ClassTokenDispositionUpdate, ...]:
+    return tuple(
+        ClassTokenDispositionUpdate(
+            0,
+            token_id,
+            TokenDisposition(TokenDispositionKind.POLICY_EVICTED, 7, 1, 99),
+        )
+        for token_id in range(48)
+        if token_id % 16 >= 8
+    )
+
+
+@pytest.mark.parametrize("mode", ["naive", "relocate"])
+def test_runtime_same_victim_set_naive_and_relocation_preserve_absolute_boundary(
+    tmp_path: Path, ffi_library: Path, mode: str
+) -> None:
+    _config_value, manager, runtime = _runtime(
+        tmp_path, ffi_library, hybrid=False
+    )
+    _step_batch(runtime, (("request", 48),))
+    record = runtime.record_for("request")
+    assert record.boundary == 48
+    before = runtime.token_view("request", 0)
+    assert len(before.placements) == 48
+    updates = _policy_updates()
+
+    if mode == "naive":
+        output = runtime.mark_token_dispositions("request", 0, updates)
+        assert len(output.retained_locations) == 24
+        assert len(record.cursor.pages) == 3
+        assert manager.stats().active_pages == 3
+    else:
+        def copied(prepared: Any) -> tuple[RelocationCopyReceipt, ...]:
+            return tuple(
+                RelocationCopyReceipt(
+                    prepared.relocation,
+                    movement.token_id,
+                    movement.source,
+                    movement.destination,
+                )
+                for movement in prepared.moves
+            )
+
+        output = runtime.relocate_tokens(
+            "request",
+            0,
+            updates,
+            RelocationPolicy(3, 2, 250, True),
+            copied,
+            9,
+            1,
+        )
+        assert len(output.retained_locations) == 24
+        assert len(output.prepared.source_pages) == 3
+        assert len(output.prepared.destination_pages) == 2
+        assert output.prepared.projected_reclaimed_pages == 1
+        runtime.acknowledge_relocation(output)
+        assert len(record.cursor.pages) == 2
+        assert manager.stats().active_pages == 2
+
+    assert record.boundary == 48
+    assert runtime.active_kv_length("request", 0) == 24
+    _step_batch(runtime, (("request", 49),), domain=10)
+    assert record.boundary == 49
+    assert runtime.active_kv_length("request", 0) == 25
+    after = runtime.token_view("request", 0)
+    assert len(after.placements) == 49
+    assert after.placements[48].location is not None
+
+    runtime.release_batch(("request",))
+    stats = runtime.stats()
+    assert stats.free_pages == 64
+    assert stats.active_requests == stats.active_snapshots == 0
+    assert stats.pending_reclamations == 0
     runtime.close()
 
 

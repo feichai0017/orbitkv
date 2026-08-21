@@ -280,8 +280,20 @@ def _lower_extend_class(
 
     class_plans = [plan.by_class[class_id] for plan in plans]
     bs = len(plans)
-    prefix_lens = prefix_lens_cpu.to(batch.device, non_blocking=True)
-    targets = targets_cpu.to(batch.device, non_blocking=True)
+    if int(prefix_lens_cpu.numel()) != len(class_plans) or int(
+        targets_cpu.numel()
+    ) != len(class_plans):
+        raise RuntimeError("absolute and physical lowering cardinalities differ")
+    physical_prefixes = torch.tensor(
+        [int(item.previous_layout_boundary) for item in class_plans],
+        dtype=torch.int64,
+    )
+    physical_targets = torch.tensor(
+        [int(item.target_layout_boundary) for item in class_plans],
+        dtype=torch.int64,
+    )
+    prefix_lens = physical_prefixes.to(batch.device, non_blocking=True)
+    targets = physical_targets.to(batch.device, non_blocking=True)
     last_loc = torch.tensor(
         [class_plan.last_location for class_plan in class_plans],
         dtype=torch.int64,
@@ -318,7 +330,13 @@ def _lower_decode_class(
 
     class_plans = [plan.by_class[class_id] for plan in plans]
     bs = len(plans)
-    targets = targets_cpu.to(batch.device, non_blocking=True)
+    if int(targets_cpu.numel()) != len(class_plans):
+        raise RuntimeError("absolute and physical decode cardinalities differ")
+    targets = torch.tensor(
+        [int(item.target_layout_boundary) for item in class_plans],
+        dtype=torch.int64,
+        device=batch.device,
+    )
     last_loc = torch.tensor(
         [class_plan.last_location for class_plan in class_plans],
         dtype=torch.int64,
@@ -650,6 +668,10 @@ def _alloc_for_extend(batch: Any) -> tuple[Any, Any, Any]:
     from sglang.srt.managers.schedule_batch import ReqKvInfo
 
     _validate_batch(batch)
+    if any(hasattr(req, "_orbitkv_active_kv_len") for req in batch.reqs):
+        raise RuntimeError(
+            "first token-reclamation engine profile supports decode continuation only"
+        )
     prefix_values, extend_values, target_values = _preflight_extend_batch(batch)
     batch.maybe_evict_swa()
     _ensure_prepare_capacity(batch, prefix_values, target_values)
@@ -793,6 +815,13 @@ def _alloc_for_decode(batch: Any, token_per_req: int) -> Any:
     )
     batch.seq_lens = previous_device
     batch.req_pool_indices = req_pool_indices_device
+    active_previous = tuple(
+        int(getattr(req, "_orbitkv_active_kv_len", absolute))
+        for req, absolute in zip(batch.reqs, previous, strict=True)
+    )
+    active_previous_device = torch.tensor(
+        active_previous, dtype=torch.int64, device=batch.device
+    )
     batch_record, plans = _prepare_batch(batch, previous, targets)
     try:
         locations = _lower_all_decode(batch, targets_cpu, plans)
@@ -816,13 +845,21 @@ def _alloc_for_decode(batch: Any, token_per_req: int) -> Any:
         if batch.model_config.is_encoder_decoder:
             raise RuntimeError("OrbitKV does not support encoder-decoder models")
         batch.req_to_token_pool.write(
-            (batch.req_pool_indices, previous_device),
+            (batch.req_pool_indices, active_previous_device),
             out_cache_loc.to(torch.int32),
         )
         _write_hybrid_lut(locations)
         _commit_cow_mirrors(cow_mirror_plan)
-        for req in batch.reqs:
+        for index, (req, active) in enumerate(
+            zip(batch.reqs, active_previous, strict=True)
+        ):
             req.kv.kv_allocated_len += 1
+            if hasattr(req, "_orbitkv_active_kv_len"):
+                req._orbitkv_active_kv_len = active + 1
+                retained = tuple(req._orbitkv_retained_locations)
+                req._orbitkv_retained_locations = retained + (
+                    int(out_cache_loc[index].item()),
+                )
         batch._orbitkv_batch = batch_record
     except Exception as error:
         _runtime().candidate_mirror_failed(batch_record, error)
@@ -853,6 +890,10 @@ def _get_next_batch_to_run(
     original_fn: Callable[..., Any], scheduler: Any, *args: Any, **kwargs: Any
 ) -> Any:
     try:
+        from .relocation import _maybe_reclaim_running_batch
+
+        running_batch = args[0] if args else kwargs.get("running_batch")
+        _maybe_reclaim_running_batch(scheduler, running_batch)
         return original_fn(scheduler, *args, **kwargs)
     except Exception as error:
         _runtime().pre_forward_failed(error)
@@ -1070,7 +1111,7 @@ def _flush_release_group(candidates: Sequence[_ReleaseCandidate]) -> None:
                     completed.publication, pending.tokens
                 )
         else:
-            # ABI6 has no heterogeneous publish-or-release transaction.  Keep
+            # ABI7 has no heterogeneous publish-or-release transaction. Keep
             # one official free_group atomic: duplicates or opt-outs sacrifice
             # this insertion instead of splitting the group across commits.
             runtime.release_batch(tuple(candidate.key for candidate in values))
@@ -1093,6 +1134,9 @@ def _flush_release_group(candidates: Sequence[_ReleaseCandidate]) -> None:
                 "_orbitkv_prefix_semantic",
                 "_orbitkv_provisional_prefix_lock",
                 "_orbitkv_prefix_lock_held",
+                "_orbitkv_active_kv_len",
+                "_orbitkv_retained_locations",
+                "_orbitkv_token_reclamation_done",
             ):
                 if hasattr(req, name):
                     delattr(req, name)
@@ -1130,6 +1174,9 @@ def _release_kv_cache(req: Any, tree_cache: Any, is_insert: bool = True) -> None
             "_orbitkv_prefix_semantic",
             "_orbitkv_provisional_prefix_lock",
             "_orbitkv_prefix_lock_held",
+            "_orbitkv_active_kv_len",
+            "_orbitkv_retained_locations",
+            "_orbitkv_token_reclamation_done",
         ):
             if hasattr(req, name):
                 delattr(req, name)

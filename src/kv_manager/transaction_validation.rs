@@ -127,8 +127,6 @@ impl CanonicalKvManager {
         if delta.classes.len() != self.classes.len() || snapshot.roots.len() != self.classes.len() {
             return Err(KvManagerError::StaleView);
         }
-        let first_new = delta.previous_boundary.div_ceil(self.page_tokens);
-        let new_end = delta.target_boundary.div_ceil(self.page_tokens);
         let joint_cow = delta
             .classes
             .iter()
@@ -141,28 +139,47 @@ impl CanonicalKvManager {
             .zip(snapshot.roots.iter())
             .zip(0_usize..)
         {
+            let first_new = class_delta
+                .previous_layout_boundary
+                .div_ceil(self.page_tokens);
+            let new_end = class_delta
+                .target_layout_boundary
+                .div_ceil(self.page_tokens);
             if class_delta.class_id != class.class_id
                 || class_index != usize::from(class.class_id)
+                || root.layout != class_delta.layout
+                || root.mirror_boundary(delta.previous_boundary)
+                    != class_delta.previous_layout_boundary
+                || class_delta
+                    .target_layout_boundary
+                    .checked_sub(class_delta.previous_layout_boundary)
+                    != Some(delta.target_boundary - delta.previous_boundary)
                 || class_delta.writes.len()
                     != usize::try_from(new_end - first_new)
                         .map_err(|_| KvManagerError::ArithmeticOverflow("class write count"))?
             {
                 return Err(KvManagerError::Invariant("delta class shape"));
             }
-            let expected_tail = if delta.previous_boundary.is_multiple_of(self.page_tokens) {
+            let expected_tail = if class_delta
+                .previous_layout_boundary
+                .is_multiple_of(self.page_tokens)
+            {
                 None
             } else {
                 root.entries.back().copied()
             };
             if class_delta.tail_source != expected_tail
                 || class_delta.tail_source.is_some_and(|entry| {
-                    entry.logical_ordinal != delta.previous_boundary / self.page_tokens
+                    entry.logical_ordinal != class_delta.previous_layout_boundary / self.page_tokens
                         || entry.class_id != class.class_id
                 })
             {
                 return Err(KvManagerError::StaleView);
             }
-            let expected_action = if delta.previous_boundary.is_multiple_of(self.page_tokens) {
+            let expected_action = if class_delta
+                .previous_layout_boundary
+                .is_multiple_of(self.page_tokens)
+            {
                 TailActionKind::None
             } else if expected_tail.is_none() {
                 TailActionKind::Fresh
@@ -201,7 +218,7 @@ impl CanonicalKvManager {
                 if !seen.insert(entry.page.page_id) {
                     return Err(KvManagerError::DuplicatePage);
                 }
-                let expected_ordinal = delta.previous_boundary / self.page_tokens;
+                let expected_ordinal = class_delta.previous_layout_boundary / self.page_tokens;
                 if self.root_entry_for_page(class, expected_ordinal, entry.page)? != entry {
                     return Err(KvManagerError::StaleView);
                 }

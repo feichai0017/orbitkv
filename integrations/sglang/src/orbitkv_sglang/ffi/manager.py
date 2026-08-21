@@ -85,7 +85,7 @@ def _discard_created_handle(loaded: LoadedLibrary, handle: ctypes.c_void_p) -> N
     """Best-effort consume a create result that cannot be handed to a caller.
 
     Creation has exclusive ownership of any non-null output handle.  Even an
-    unusable or lost-return result must therefore attempt the ABI6 consuming
+    unusable or lost-return result must therefore attempt the ABI7 consuming
     destroy operation; retaining the pointer would leak authority, while a
     second attempt would risk using an already-consumed pointer.
     """
@@ -370,7 +370,7 @@ class CtypesManager(TokenRelocationMixin, ManagerProtocol):
         if not self._handle or not self._handle.value:
             raise ManagerError("OrbitKV manager handle is closed")
         if self._poisoned is not None and not allow_poisoned:
-            raise FailStopped("OrbitKV ABI6 handle is poisoned: " + self._poisoned)
+            raise FailStopped("OrbitKV ABI7 handle is poisoned: " + self._poisoned)
         return self._handle
 
     def _message(self) -> str:
@@ -380,7 +380,7 @@ class CtypesManager(TokenRelocationMixin, ManagerProtocol):
         if self._poisoned is None:
             self._poisoned = reason
             self._counters["fail_stops"] += 1
-        return FailStopped("OrbitKV ABI6 handle is poisoned: " + self._poisoned)
+        return FailStopped("OrbitKV ABI7 handle is poisoned: " + self._poisoned)
 
     def _call(
         self,
@@ -1237,9 +1237,9 @@ class CtypesManagerFactory(ManagerFactoryProtocol):
             raise ManagerError("canonical KvPlanInput JSON is empty")
         registrations = tuple(arenas)
         if not registrations or len(registrations) != len(config.classes):
-            raise ManagerError("one ABI6 arena is required for every plan class")
+            raise ManagerError("one ABI7 arena is required for every plan class")
         if tuple(item.class_id for item in registrations) != tuple(range(len(registrations))):
-            raise ManagerError("ABI6 arena registrations must be class-id ordered")
+            raise ManagerError("ABI7 arena registrations must be class-id ordered")
         total_pages = sum(item.page_count for item in registrations)
         for registration, class_config in zip(registrations, config.classes, strict=True):
             if (
@@ -1249,7 +1249,7 @@ class CtypesManagerFactory(ManagerFactoryProtocol):
                 or registration.page_count <= 0
                 or registration.backend_base_index < 0
             ):
-                raise ManagerError("ABI6 arena registration differs from the plan")
+                raise ManagerError("ABI7 arena registration differs from the plan")
         if settings.maximum_reclamations < total_pages:
             raise ManagerError("maximum_reclamations must cover all physical pages")
         manager_config = L.ManagerConfigLayout(

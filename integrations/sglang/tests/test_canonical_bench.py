@@ -690,7 +690,7 @@ def _settled_manager_state(
     page_count = sum(item["page_count"] for item in identities)
     prefix_pages = len(identities) if live_prefix else 0
     return {
-        "abi_version": 6,
+        "abi_version": 7,
         "identities": identities,
         "arena_stats": arena_stats,
         "manager_stats": {
@@ -791,7 +791,7 @@ def test_multi_arena_live_prefix_census_requires_exact_abi6_ref_schema():
     )
     assert [item["class_id"] for item in census["identities"]] == [0, 1]
     assert [item["first_page_id"] for item in census["identities"]] == [1, 5]
-    assert census["abi_version"] == 6
+    assert census["abi_version"] == 7
     assert census["manager_stats"]["free_pages"] == 4
     assert census["manager_stats"]["active_pages"] == 2
     assert census["manager_stats"]["active_prefixes"] == 1
@@ -1100,7 +1100,7 @@ def test_request_traces_reject_foreign_returned_rid():
         )
 
 
-def test_abi6_counter_schema_never_fabricates_missing_internal_state_fields():
+def test_abi7_counter_schema_never_fabricates_missing_internal_state_fields():
     state = _settled_manager_state()
     del state["batch_counters"]["capacity_memset_bytes"]
     with pytest.raises(RuntimeError, match="noncanonical field set"):

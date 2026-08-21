@@ -2,20 +2,16 @@
 use super::root_instrumentation;
 use super::{
     Arc, BTreeMap, BTreeSet, BackendBindReceipt, BackendCopyReceipt, BackendUnobservedReceipt,
-    BatchCompletionReceipt, CanonicalKvManager, ClassDelta, ClassLowering, ClassRoot,
-    ClassTransition, CompletionBatch, CopyIntent, DetachedReason, KvManagerError, OperationState,
-    PageLease, PagePhase, PersistentRootEntries, PersistentTokenTable, PrepareBatchItem,
-    PreparedState, PreparedStep, PublishedReceipt, ReclamationState, RequestSnapshot,
-    RetentionKind, RootEntry, RootLayout, SnapshotLease, StepCompletion, StepDelta, StepLease,
-    SubmissionLease, SubmitBatchItem, SubmittedState, SubmittedStep, TailAction, TailActionKind,
-    ViewVersion, WriteIntent, apply_dense_class_transition,
+    BatchCompletionReceipt, CLASS_LOWERING_PACKED, CanonicalKvManager, ClassDelta, ClassLowering,
+    ClassRoot, ClassTransition, CompletionBatch, CopyIntent, DetachedReason, KvManagerError,
+    OperationState, PageLease, PagePhase, PersistentRootEntries, PersistentTokenTable,
+    PrepareBatchItem, PreparedState, PreparedStep, PublishedReceipt, ReclamationState,
+    RequestSnapshot, RetentionKind, RootEntry, RootLayout, SnapshotLease, StepCompletion,
+    StepDelta, StepLease, SubmissionLease, SubmitBatchItem, SubmittedState, SubmittedStep,
+    TailAction, TailActionKind, ViewVersion, WriteIntent, apply_class_transition,
 };
 impl CanonicalKvManager {
     /// Atomically reserves manager-selected pages for an ordered request batch.
-    ///
-    /// Every request, operation slot, target boundary, and physical page is
-    /// preflighted for the entire batch. Any error leaves requests, operation
-    /// generations, page generations, and free lists unchanged.
     ///
     /// # Errors
     ///
@@ -23,11 +19,7 @@ impl CanonicalKvManager {
     /// invalid boundary, insufficient operation capacity, or insufficient
     /// physical capacity.
     ///
-    /// # Panics
-    ///
-    /// Panics only if exclusive manager state changes after collective
-    /// preflight, which indicates an internal invariant violation.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::missing_panics_doc, clippy::too_many_lines)]
     pub fn prepare_batch(
         &mut self,
         items: &[PrepareBatchItem],
@@ -68,9 +60,11 @@ impl CanonicalKvManager {
             if snapshot.roots.len() != self.classes.len() {
                 return Err(KvManagerError::Invariant("snapshot class cardinality"));
             }
-            if snapshot.roots.iter().any(|root| !root.is_dense()) {
+            if snapshot.roots.iter().any(|root| !root.is_dense())
+                && (self.classes.len() != 1 || self.classes[0].retention != RetentionKind::Full)
+            {
                 return Err(KvManagerError::UnsupportedProfile(
-                    "append after token relocation is not implemented",
+                    "first packed append profile requires one Full class",
                 ));
             }
             if item.target_boundary <= snapshot.boundary {
@@ -105,11 +99,7 @@ impl CanonicalKvManager {
                 generation: planned_snapshot.1,
             };
             let previous_boundary = snapshot.boundary;
-            let first_new_ordinal = previous_boundary.div_ceil(self.page_tokens);
-            let new_end_ordinal = item.target_boundary.div_ceil(self.page_tokens);
-            let previous_tail_ordinal = (previous_boundary % self.page_tokens != 0)
-                .then_some(previous_boundary / self.page_tokens);
-            let tails = self
+            let class_boundaries = self
                 .classes
                 .iter()
                 .copied()
@@ -118,11 +108,34 @@ impl CanonicalKvManager {
                         .roots
                         .get(usize::from(class.class_id))
                         .ok_or(KvManagerError::Invariant("snapshot class cardinality"))?;
-                    Ok(previous_tail_ordinal.and_then(|ordinal| {
-                        root.entries.back().copied().filter(|entry| {
-                            entry.class_id == class.class_id && entry.logical_ordinal == ordinal
-                        })
-                    }))
+                    let previous_layout_boundary = root.mirror_boundary(previous_boundary);
+                    let target_layout_boundary = if root.is_dense() {
+                        item.target_boundary
+                    } else {
+                        previous_layout_boundary
+                            .checked_add(step_tokens)
+                            .ok_or(KvManagerError::ArithmeticOverflow("packed target boundary"))?
+                    };
+                    Ok((previous_layout_boundary, target_layout_boundary))
+                })
+                .collect::<Result<Vec<_>, KvManagerError>>()?;
+            let tails = self
+                .classes
+                .iter()
+                .copied()
+                .zip(class_boundaries.iter().copied())
+                .map(|(class, (previous_layout_boundary, _))| {
+                    let root = snapshot
+                        .roots
+                        .get(usize::from(class.class_id))
+                        .ok_or(KvManagerError::Invariant("snapshot class cardinality"))?;
+                    Ok((previous_layout_boundary % self.page_tokens != 0)
+                        .then_some(previous_layout_boundary / self.page_tokens)
+                        .and_then(|ordinal| {
+                            root.entries.back().copied().filter(|entry| {
+                                entry.class_id == class.class_id && entry.logical_ordinal == ordinal
+                            })
+                        }))
                 })
                 .collect::<Result<Vec<_>, KvManagerError>>()?;
             let joint_cow =
@@ -141,7 +154,18 @@ impl CanonicalKvManager {
             let mut write_intents = Vec::new();
             let mut class_deltas = Vec::with_capacity(self.classes.len());
 
-            for (class, previous_tail) in self.classes.iter().copied().zip(tails) {
+            for ((class, previous_tail), (previous_layout_boundary, target_layout_boundary)) in self
+                .classes
+                .iter()
+                .copied()
+                .zip(tails)
+                .zip(class_boundaries.iter().copied())
+            {
+                let root = &snapshot.roots[usize::from(class.class_id)];
+                let first_new_ordinal = previous_layout_boundary.div_ceil(self.page_tokens);
+                let new_end_ordinal = target_layout_boundary.div_ceil(self.page_tokens);
+                let previous_tail_ordinal = (previous_layout_boundary % self.page_tokens != 0)
+                    .then_some(previous_layout_boundary / self.page_tokens);
                 let class_tail_offset = u32::try_from(tail_actions.len())
                     .map_err(|_| KvManagerError::ArithmeticOverflow("class tail offset"))?;
                 let class_copy_offset = u32::try_from(copy_intents.len())
@@ -150,7 +174,7 @@ impl CanonicalKvManager {
                     .map_err(|_| KvManagerError::ArithmeticOverflow("class write offset"))?;
                 let (tail_action, tail_destination, copy_intent) =
                     if let Some(ordinal) = previous_tail_ordinal {
-                        let valid = u32::try_from(previous_boundary % self.page_tokens)
+                        let valid = u32::try_from(previous_layout_boundary % self.page_tokens)
                             .map_err(|_| KvManagerError::ArithmeticOverflow("tail valid tokens"))?;
                         match previous_tail {
                             Some(source) if joint_cow => {
@@ -257,7 +281,11 @@ impl CanonicalKvManager {
                     .ok_or(KvManagerError::Invariant("class copy range"))?;
                 class_lowerings.push(ClassLowering {
                     class_id: class.class_id,
-                    flags: 0,
+                    flags: if root.is_dense() {
+                        0
+                    } else {
+                        CLASS_LOWERING_PACKED
+                    },
                     tail_offset: class_tail_offset,
                     tail_count: 1,
                     copy_offset: class_copy_offset,
@@ -274,6 +302,9 @@ impl CanonicalKvManager {
                 }
                 class_deltas.push(ClassDelta {
                     class_id: class.class_id,
+                    layout: root.layout,
+                    previous_layout_boundary,
+                    target_layout_boundary,
                     tail_action: tail_action.kind,
                     tail_source: previous_tail,
                     tail_destination,
@@ -359,10 +390,6 @@ impl CanonicalKvManager {
 
     /// Atomically validates backend bindings and pins an ordered step batch.
     ///
-    /// Receipt ranges must form one canonical, gap-free partition of
-    /// `receipts` in item order. The authoritative request identity is derived
-    /// from each step; callers cannot substitute it.
-    ///
     /// # Errors
     ///
     /// Structural identity/range failures reject the whole batch without
@@ -370,11 +397,7 @@ impl CanonicalKvManager {
     /// mismatch fail-stops every candidate in the batch: all reachable pages
     /// and requests are quarantined, so they cannot be aborted or reused.
     ///
-    /// # Panics
-    ///
-    /// Panics only if exclusive manager state changes after collective
-    /// preflight, which indicates an internal invariant violation.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::missing_panics_doc, clippy::too_many_lines)]
     pub fn submit_batch(
         &mut self,
         items: &[SubmitBatchItem],
@@ -600,20 +623,12 @@ impl CanonicalKvManager {
     /// Atomically publishes an ordered submission batch at one shared backend
     /// completion point.
     ///
-    /// Submission identities are authoritative and derive their requests.
-    /// Every root, page pin, retirement, and reclamation slot is preflighted
-    /// before any publication occurs.
-    ///
     /// # Errors
     ///
     /// Any invalid completion event or submission rejects the whole batch with
     /// no published view, page phase, operation, or reclamation mutation.
     ///
-    /// # Panics
-    ///
-    /// Panics only if exclusive manager state changes after collective
-    /// preflight, which indicates an internal invariant violation.
-    #[allow(clippy::too_many_lines)]
+    #[allow(clippy::missing_panics_doc, clippy::too_many_lines)]
     pub fn complete_batch(
         &mut self,
         receipt: BatchCompletionReceipt,
@@ -691,6 +706,12 @@ impl CanonicalKvManager {
                 if class_delta.class_id != class.class_id {
                     return Err(KvManagerError::Invariant("delta class ordering"));
                 }
+                if root.layout != class_delta.layout
+                    || root.mirror_boundary(delta.previous_boundary)
+                        != class_delta.previous_layout_boundary
+                {
+                    return Err(KvManagerError::StaleView);
+                }
                 if let (Some(front), Some(back)) = (root.entries.front(), root.entries.back()) {
                     let expected_len = back
                         .logical_ordinal
@@ -735,7 +756,9 @@ impl CanonicalKvManager {
                     .ok_or(KvManagerError::Invariant("empty append candidate"))?;
                 let expected_first =
                     class.candidate_start(delta.previous_boundary) / self.page_tokens;
-                let candidate_end = delta.target_boundary.div_ceil(self.page_tokens);
+                let candidate_end = class_delta
+                    .target_layout_boundary
+                    .div_ceil(self.page_tokens);
                 let candidate_len = root
                     .entries
                     .len()
@@ -986,7 +1009,7 @@ impl CanonicalKvManager {
                 .zip(submitted.delta.classes.iter())
                 .zip(transitions.iter())
             {
-                apply_dense_class_transition(
+                apply_class_transition(
                     self.page_tokens,
                     class,
                     root,
@@ -1175,10 +1198,7 @@ impl CanonicalKvManager {
     /// Any missing proof, duplicate, stale step, or stale page rejects the
     /// whole batch without mutation.
     ///
-    /// # Panics
-    ///
-    /// Panics only if exclusive manager state changes after collective
-    /// preflight, which indicates an internal invariant violation.
+    #[allow(clippy::missing_panics_doc)]
     pub fn abort_steps_batch(
         &mut self,
         receipts: &[BackendUnobservedReceipt],
@@ -1287,10 +1307,7 @@ impl CanonicalKvManager {
     /// Any duplicate, stale, or submitted identity rejects the whole call
     /// before quarantine begins.
     ///
-    /// # Panics
-    ///
-    /// Panics only if exclusive manager state changes after collective
-    /// preflight, which indicates an internal invariant violation.
+    #[allow(clippy::missing_panics_doc)]
     pub fn quarantine_steps_batch(&mut self, steps: &[StepLease]) -> Result<(), KvManagerError> {
         if steps.is_empty() {
             return Err(KvManagerError::EmptyBatch);
@@ -1392,10 +1409,7 @@ impl CanonicalKvManager {
     /// Any duplicate, stale, or unsubmitted identity rejects the whole call
     /// before quarantine begins.
     ///
-    /// # Panics
-    ///
-    /// Panics only if exclusive manager state changes after collective
-    /// preflight, which indicates an internal invariant violation.
+    #[allow(clippy::missing_panics_doc)]
     pub fn quarantine_submissions_batch(
         &mut self,
         submissions: &[SubmissionLease],

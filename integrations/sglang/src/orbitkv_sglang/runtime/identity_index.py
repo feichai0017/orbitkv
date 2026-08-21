@@ -63,6 +63,12 @@ class IdentityIndexMixin:
             self._remove_exact(self._snapshot_leases, snapshot, "snapshot")
         self._snapshot_leases.update(new)
 
+    def _replace_head(self, old: SnapshotLease, new: SnapshotLease) -> None:
+        if new in self._snapshot_leases:
+            self._identity_index_failed("replacement snapshot identity is already live")
+        self._remove_exact(self._snapshot_leases, old, "snapshot")
+        self._snapshot_leases.add(new)
+
     def _abort_prepared_identity(self, pending: Any) -> None:
         self._remove_exact(
             self._snapshot_leases, pending.prepared.target_snapshot, "snapshot"

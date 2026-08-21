@@ -30,7 +30,7 @@ cannot inherit ABI5 hardware evidence.
 | ABI7 Python FFI/runtime | L2 GO | Exact-29 ctypes loader; 58 frozen layouts; bounded hot/cold workspaces; optional relocation capability; typed retry/fail-stop and force-destroy teardown | Python FFI/runtime tests against the release library |
 | Official SGLang source contract | L2 | Official `v0.5.17`, peeled commit `29481685462732237d80d86076d6563e1f658102`, checked required hooks and fail-hard patch | pinned-checkout tests |
 | SGLang `OrbitKVPrefixCache` | L2 GO | Official cache seam; nodes contain token/digest/LRU plus opaque Prefix leases only; warm attach, lock/ref accounting, Full+SWA COW, grouped release, eviction, and hostile fault paths pass host gates | pinned `v0.5.17` contract and plugin integration tests; no H20 evidence |
-| SGLang token relocation | Pending L4 | Full-class first profile still lacks real KV copy stream/event, retained-slot ReqToToken publication, split absolute/active lengths, and engine attention consumption | no H20/E2E evidence |
+| SGLang token relocation | L2 host / L4 pending | Explicitly enabled Full-only eager path has matched Naive/Relocate victim sets, real KV copy stream/event orchestration, compact ReqToToken, split absolute/active lengths, decode continuation, and fail-closed release; default is off | host plugin/runtime tests; no H20/E2E evidence |
 | Stable-address CUDA VMM primitive | L2 host | Isolated reserve/map/remap/unmap backend; not the manager data plane and not SGLang tensor storage | `crates/orbitkv-cuda/` host tests |
 | General SGLang replacement | Not L5 | ABI7 H20 Prefix/relocation E2E, overlap/Graph, speculation, distributed execution, pressure, performance, and a release matrix are pending | this matrix |
 
@@ -120,7 +120,7 @@ a later ABI.
 ## Not qualified
 
 - ABI7 SGLang/H20 Prefix correctness or Prefix warm-hit performance;
-- SGLang/GPU token-exact relocation, retained-slot attention, or compaction performance;
+- H20-qualified SGLang token relocation, retained-slot attention correctness, or compaction performance;
 - overlap scheduling, multiple completion domains, or CUDA Graph replay;
 - speculative branches, rollback, beam search, or cancellation pressure;
 - cross-attention, dynamic sparse attention, Mamba/SSM state, vLLM, VMM-backed
