@@ -32,6 +32,10 @@ class ReclamationLeaseLayout(ctypes.Structure):
     _fields_ = LEASE_FIELDS
 
 
+class RelocationLeaseLayout(ctypes.Structure):
+    _fields_ = LEASE_FIELDS
+
+
 class PrefixLeaseLayout(ctypes.Structure):
     _fields_ = LEASE_FIELDS
 
@@ -457,12 +461,164 @@ class ManagerStatsLayout(ctypes.Structure):
     ]
 
 
+class TokenDispositionLayout(ctypes.Structure):
+    _fields_ = [
+        ("policy_or_proof_id", U64),
+        ("version", U64),
+        ("quality_contract", U64),
+        ("kind", U16),
+        ("reserved16", U16),
+        ("reserved32", U32),
+    ]
+
+
+class TokenLocationLayout(ctypes.Structure):
+    _fields_ = [
+        ("page", PageLeaseLayout),
+        ("backend_index", U64),
+        ("offset", U32),
+        ("reserved", U32),
+    ]
+
+
+class TokenPlacementLayout(ctypes.Structure):
+    _fields_ = [
+        ("token_id", U64),
+        ("disposition", TokenDispositionLayout),
+        ("location", TokenLocationLayout),
+        ("location_present", U32),
+        ("reserved", U32),
+    ]
+
+
+class TokenViewQueryLayout(ctypes.Structure):
+    _fields_ = [
+        ("request", RequestLeaseLayout),
+        ("expected_snapshot", SnapshotLeaseLayout),
+        ("class_id", U16),
+        ("reserved16", U16),
+        ("reserved32", U32),
+    ]
+
+
+class TokenViewLayout(ctypes.Structure):
+    _fields_ = [
+        ("view_version", U64),
+        ("placement_offset", U32),
+        ("placement_count", U32),
+        ("page_tokens", U32),
+        ("class_id", U16),
+        ("reserved16", U16),
+        ("reserved32", U32),
+    ]
+
+
+class ClassTokenDispositionUpdateLayout(ctypes.Structure):
+    _fields_ = [
+        ("token_id", U64),
+        ("disposition", TokenDispositionLayout),
+        ("class_id", U16),
+        ("reserved16", U16),
+        ("reserved32", U32),
+    ]
+
+
+class TokenDispositionBatchItemLayout(ctypes.Structure):
+    _fields_ = [
+        ("request", RequestLeaseLayout),
+        ("expected_snapshot", SnapshotLeaseLayout),
+        ("update_offset", U32),
+        ("update_count", U32),
+    ]
+
+
+class RelocationPolicyLayout(ctypes.Structure):
+    _fields_ = [
+        ("maximum_source_pages", U32),
+        ("evacuation_headroom_pages", U32),
+        ("fragmentation_threshold_milli", U16),
+        ("full_evacuation", U8),
+        ("reserved8", U8),
+        ("reserved32", U32),
+    ]
+
+
+class PrepareRelocationItemLayout(ctypes.Structure):
+    _fields_ = [
+        ("request", RequestLeaseLayout),
+        ("expected_snapshot", SnapshotLeaseLayout),
+        ("policy", RelocationPolicyLayout),
+        ("class_id", U16),
+        ("reserved16", U16),
+        ("reserved32", U32),
+    ]
+
+
+class PreparedRelocationLayout(ctypes.Structure):
+    _fields_ = [
+        ("relocation", RelocationLeaseLayout),
+        ("request", RequestLeaseLayout),
+        ("base_snapshot", SnapshotLeaseLayout),
+        ("target_snapshot", SnapshotLeaseLayout),
+        ("base_view_version", U64),
+        ("target_view_version", U64),
+        ("source_offset", U32),
+        ("source_count", U32),
+        ("destination_offset", U32),
+        ("destination_count", U32),
+        ("move_offset", U32),
+        ("move_count", U32),
+        ("projected_reclaimed_pages", U32),
+        ("fragmentation_milli", U16),
+        ("class_id", U16),
+        ("reserved32", U32),
+    ]
+
+
+class TokenMoveLayout(ctypes.Structure):
+    _fields_ = [
+        ("token_id", U64),
+        ("source", TokenLocationLayout),
+        ("destination", TokenLocationLayout),
+    ]
+
+
+class RelocationCopyReceiptLayout(ctypes.Structure):
+    _fields_ = [
+        ("relocation", RelocationLeaseLayout),
+        ("token_id", U64),
+        ("source", TokenLocationLayout),
+        ("destination", TokenLocationLayout),
+        ("observed", U8),
+        ("copied", U8),
+        ("reserved16", U16),
+        ("reserved32", U32),
+    ]
+
+
+class SubmittedRelocationLayout(ctypes.Structure):
+    _fields_ = [
+        ("relocation", RelocationLeaseLayout),
+        ("request", RequestLeaseLayout),
+        ("target_snapshot", SnapshotLeaseLayout),
+    ]
+
+
+class RelocationUnobservedReceiptLayout(ctypes.Structure):
+    _fields_ = [
+        ("relocation", RelocationLeaseLayout),
+        ("backend_unobserved", U32),
+        ("reserved", U32),
+    ]
+
+
 FROZEN_LAYOUTS = {
     RequestLeaseLayout: (16, 8),
     SnapshotLeaseLayout: (16, 8),
     StepLeaseLayout: (16, 8),
     SubmissionLeaseLayout: (16, 8),
     ReclamationLeaseLayout: (16, 8),
+    RelocationLeaseLayout: (16, 8),
     PrefixLeaseLayout: (16, 8),
     PageLeaseLayout: (32, 8),
     BackendArenaRegistrationLayout: (24, 8),
@@ -501,6 +657,20 @@ FROZEN_LAYOUTS = {
     PrefixPublishReleaseLayout: (144, 8),
     EvictedPrefixLayout: (88, 8),
     ManagerStatsLayout: (136, 8),
+    TokenDispositionLayout: (32, 8),
+    TokenLocationLayout: (48, 8),
+    TokenPlacementLayout: (96, 8),
+    TokenViewQueryLayout: (40, 8),
+    TokenViewLayout: (32, 8),
+    ClassTokenDispositionUpdateLayout: (48, 8),
+    TokenDispositionBatchItemLayout: (40, 8),
+    RelocationPolicyLayout: (16, 4),
+    PrepareRelocationItemLayout: (56, 8),
+    PreparedRelocationLayout: (120, 8),
+    TokenMoveLayout: (104, 8),
+    RelocationCopyReceiptLayout: (128, 8),
+    SubmittedRelocationLayout: (48, 8),
+    RelocationUnobservedReceiptLayout: (24, 8),
 }
 
 
@@ -509,7 +679,7 @@ def assert_frozen_layouts() -> None:
         actual = (ctypes.sizeof(layout), ctypes.alignment(layout))
         if actual != expected:
             raise RuntimeError(
-                f"ABI6 layout drift for {layout.__name__}: {actual} != {expected}"
+                f"ABI7 layout drift for {layout.__name__}: {actual} != {expected}"
             )
 
 

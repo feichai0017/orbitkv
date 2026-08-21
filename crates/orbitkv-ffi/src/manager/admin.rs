@@ -12,7 +12,7 @@ pub extern "C" fn orbitkv_abi_version() -> u32 {
     ORBITKV_ABI_VERSION
 }
 
-/// Creates a canonical ABI6 manager.
+/// Creates a canonical ABI7 manager.
 ///
 /// # Safety
 /// All pointers must name readable/writable storage for their declared sizes.
@@ -121,6 +121,7 @@ pub unsafe extern "C" fn orbitkv_manager_create(
         let handle = Box::new(OrbitKvManagerHandle {
             manager: Mutex::new(manager),
             total_page_capacity,
+            page_tokens,
             maximum_requests: config.maximum_requests,
             maximum_operations: config.maximum_operations,
             maximum_prefixes: config.maximum_prefixes,

@@ -32,12 +32,12 @@ export const compilerStages = [
 
 export const metrics = [
   {
-    value: "ABI6 / L2",
+    value: "ABI7 / L2",
     label: "Host core + C wire",
-    detail: "Snapshots, Prefix, fork, joint COW, and reclamation pass host gates.",
+    detail: "Snapshots, Prefix, joint COW, token relocation, and reclamation pass host gates.",
   },
   {
-    value: "23 exact",
+    value: "29 exact",
     label: "C symbols",
     detail: "Batch-only exported surface with C/C++ layout and dynamic symbol checks.",
   },
@@ -60,22 +60,22 @@ export const metrics = [
 
 export const evidenceRows = [
   {
-    result: "ABI6 Rust core",
+    result: "ABI7 Rust core",
     value: "L2 GO",
-    contract: "Immutable snapshots, request fork, Prefix refs, joint Full+SWA COW, page-owned reclamation",
+    contract: "Immutable snapshots, Prefix/COW, token views, Full evacuation, packed publication, reclamation",
     boundary: "host only; no engine or GPU inheritance",
   },
   {
-    result: "ABI6 C wire",
-    value: "L2 GO / 23",
+    result: "ABI7 C wire",
+    value: "L2 GO / 29",
     contract: "Exact symbol set, C/C++ layouts, batch atomicity, short-buffer and malformed-receipt gates",
-    boundary: "host wire only; no H20 Prefix inheritance",
+    boundary: "host wire only; no H20 Prefix/relocation inheritance",
   },
   {
-    result: "ABI6 Python/SGLang",
+    result: "ABI7 Python/Prefix",
     value: "L2 GO",
-    contract: "Split FFI/runtime/plugin, official OrbitKVPrefixCache seam, joint COW and collective cleanup",
-    boundary: "host-qualified only; no H20 Prefix record",
+    contract: "Exact-29 loader, 58 layouts, relocation wire, official OrbitKVPrefixCache seam",
+    boundary: "host-qualified only; SGLang relocation and H20 remain pending",
   },
   {
     result: "Frozen ABI5-v5 H20",
@@ -87,7 +87,7 @@ export const evidenceRows = [
     result: "ABI5-v5 grouped release",
     value: "20 → 5",
     contract: "Twenty B4 request releases through five release/recycle transactions",
-    boundary: "historical control-plane result; not ABI6 Prefix performance",
+    boundary: "historical control-plane result; not ABI7 Prefix performance",
   },
   {
     result: "ABI5-v5 B4 steady",
@@ -102,23 +102,23 @@ export const evidenceRows = [
     boundary: "no compression or intrinsic same-capacity memory-win claim",
   },
   {
-    result: "Relocation and Graph",
+    result: "SGLang relocation and Graph",
     value: "pending",
-    contract: "Token-exact placement moves and multiple completion domains",
-    boundary: "future milestones; no projected vToken or Graph benefit",
+    contract: "Real KV copy/event, retained-slot attention, and multiple completion domains",
+    boundary: "host transaction exists; no engine, H20, or projected vToken benefit",
   },
 ];
 
 export const roadmap = [
   {
     state: "NEXT",
-    name: "Run ABI6 H20 Prefix",
-    detail: "Qualify warm-hit sharing, grouped release, pressure eviction and COW against the exact frozen source.",
+    name: "Connect SGLang relocation",
+    detail: "Add real KV copies, CUDA event ordering, retained-slot mirrors, and split absolute/active lengths.",
   },
   {
     state: "THEN",
-    name: "Token-exact relocation",
-    detail: "Move retained K/V bytes against one immutable snapshot; this is not numerical compression.",
+    name: "Run ABI7 H20 A/B",
+    detail: "Compare the same victim set and capacity with real models and repeated paired runs.",
   },
   {
     state: "LATER",
@@ -131,7 +131,7 @@ export const docs = [
   {
     key: "00 / CAPABILITIES",
     name: "Capability Matrix",
-    detail: "Normative live ABI6, historical ABI5, and exclusion boundary.",
+    detail: "Normative live ABI7, historical ABI5, and exclusion boundary.",
     href: `${repositoryUrl}/blob/main/docs/capability-matrix.md`,
   },
   {

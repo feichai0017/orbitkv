@@ -31,6 +31,7 @@ from orbitkv_sglang.ffi.manager import CtypesManager
 from orbitkv_sglang.runtime import (
     ArenaRegistration,
     BatchCompletionReceipt,
+    ClassTokenDispositionUpdate,
     FailStopped,
     ManagerError,
     ManagerCreateSettings,
@@ -40,6 +41,8 @@ from orbitkv_sglang.runtime import (
     PrefixPublishItem,
     PrefixSemanticKey,
     PrepareBatchItem,
+    PrepareRelocationItem,
+    RelocationPolicy,
     ReleaseBatchItem,
     RequestCursor,
     RequestForkItem,
@@ -48,6 +51,11 @@ from orbitkv_sglang.runtime import (
     bind_receipts,
     copy_receipts,
     reclamation_receipts,
+    relocation_copy_receipts,
+    TokenDisposition,
+    TokenDispositionBatchItem,
+    TokenDispositionKind,
+    TokenViewQuery,
 )
 from orbitkv_sglang.runtime.snapshot_shadow import (
     _decode_prepared,
@@ -335,8 +343,8 @@ def _release_all(manager: CtypesManager, views: tuple[RequestView, ...]) -> None
 
 
 def test_frozen_layouts_and_exact_symbol_allowlist(ffi_library: Path) -> None:
-    assert ABI_VERSION == 6
-    assert len(FROZEN_LAYOUTS) == 43
+    assert ABI_VERSION == 7
+    assert len(FROZEN_LAYOUTS) == 58
     assert_frozen_layouts()
     output = subprocess.check_output(
         ["nm", "-D", "--defined-only", str(ffi_library)], text=True
@@ -347,6 +355,118 @@ def test_frozen_layouts_and_exact_symbol_allowlist(ffi_library: Path) -> None:
         if line.split() and line.split()[-1].startswith("orbitkv_")
     }
     assert exported == EXACT_SYMBOL_ALLOWLIST
+
+
+def test_abi7_full_evacuation_relocates_live_tokens_and_reclaims_sources(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    config, manager = _manager(tmp_path, ffi_library, hybrid=False)
+    current, _prepared, _completion = _commit(
+        manager,
+        config,
+        manager.request_acquire_batch(1)[0],
+        48,
+        completion_value=1,
+    )
+    before = manager.token_views_batch(
+        (TokenViewQuery(current.request, current.snapshot, 0, current.boundary),)
+    )[0]
+    assert len(before.placements) == 48
+    assert all(
+        item.disposition.kind is TokenDispositionKind.RETAINED
+        and item.location is not None
+        for item in before.placements
+    )
+
+    victims = tuple(range(8, 16)) + tuple(range(24, 32)) + tuple(range(40, 48))
+    current = manager.mark_token_dispositions_batch(
+        (
+            TokenDispositionBatchItem(
+                current.request,
+                current.snapshot,
+                tuple(
+                    ClassTokenDispositionUpdate(
+                        0,
+                        token_id,
+                        TokenDisposition(
+                            TokenDispositionKind.POLICY_EVICTED,
+                            policy_or_proof_id=7,
+                            version=1,
+                            quality_contract=99,
+                        ),
+                    )
+                    for token_id in victims
+                ),
+            ),
+        )
+    )[0]
+    naive = manager.token_views_batch(
+        (TokenViewQuery(current.request, current.snapshot, 0, current.boundary),)
+    )[0]
+    assert sum(
+        item.disposition.kind is TokenDispositionKind.POLICY_EVICTED
+        for item in naive.placements
+    ) == 24
+    assert all(naive.placements[token_id].location is not None for token_id in victims)
+
+    prepared = manager.prepare_relocation_batch(
+        (
+            PrepareRelocationItem(
+                current.request,
+                current.snapshot,
+                0,
+                RelocationPolicy(
+                    maximum_source_pages=3,
+                    evacuation_headroom_pages=2,
+                    fragmentation_threshold_milli=250,
+                    full_evacuation=True,
+                ),
+            ),
+        )
+    )[0]
+    assert len(prepared.source_pages) == 3
+    assert len(prepared.destination_pages) == 2
+    assert len(prepared.moves) == 24
+    assert prepared.projected_reclaimed_pages == 1
+    submitted = manager.submit_relocation_batch(
+        ((prepared.relocation, relocation_copy_receipts(prepared)),)
+    )[0]
+    completed = manager.complete_relocation_batch(
+        BatchCompletionReceipt(current.request.engine_epoch, 2, 2),
+        (submitted.relocation,),
+    )
+    assert len(completed.publications) == 1
+    assert len(completed.retirements) == 3
+    current = completed.publications[0]
+    packed = manager.token_views_batch(
+        (TokenViewQuery(current.request, current.snapshot, 0, current.boundary),)
+    )[0]
+    assert [
+        item.token_id for item in packed.placements if item.location is not None
+    ] == [token_id for token_id in range(48) if token_id not in victims]
+    assert all(packed.placements[token_id].location is None for token_id in victims)
+
+    manager.acknowledge_reclamations_batch(
+        reclamation_receipts(completed.retirements)
+    )
+    released = manager.release_batch(
+        (ReleaseBatchItem(current.request, current.snapshot),)
+    )
+    assert tuple(
+        (item.token_begin, item.token_end_exclusive)
+        for item in released.retirements
+    ) == ((0, 16), (16, 24))
+    manager.acknowledge_reclamations_batch(
+        reclamation_receipts(released.retirements)
+    )
+    manager.recycle_requests_batch((current.request,))
+    stats = manager.stats()
+    assert stats.free_pages == 64
+    assert stats.active_requests == stats.active_snapshots == 0
+    assert stats.pending_reclamations == 0
+    assert stats.total_request_page_refs == stats.total_prefix_page_refs == 0
+    assert stats.total_reader_pins == 0
+    manager.destroy()
 
 
 @pytest.mark.parametrize("batch_size", [2, 4])

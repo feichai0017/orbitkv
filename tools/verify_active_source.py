@@ -22,10 +22,10 @@ TEST_BENCH_FILES = (
     ROOT / "integrations/sglang/bench_compact_control.py",
 )
 
-ABI6_MARKERS = {
-    ROOT / "crates/orbitkv-ffi/include/orbitkv.h": "#define ORBITKV_ABI_VERSION 6u",
-    ROOT / "crates/orbitkv-ffi/src/lib.rs": "pub const ORBITKV_ABI_VERSION: u32 = 6;",
-    ROOT / "integrations/sglang/src/orbitkv_sglang/ffi/library.py": "ABI_VERSION = 6",
+ABI7_MARKERS = {
+    ROOT / "crates/orbitkv-ffi/include/orbitkv.h": "#define ORBITKV_ABI_VERSION 7u",
+    ROOT / "crates/orbitkv-ffi/src/lib.rs": "pub const ORBITKV_ABI_VERSION: u32 = 7;",
+    ROOT / "integrations/sglang/src/orbitkv_sglang/ffi/library.py": "ABI_VERSION = 7",
 }
 
 # ABI5 exposed these scalar-shaped names even though their arguments were
@@ -93,14 +93,14 @@ def check_source_sizes(failures: list[str]) -> tuple[int, int]:
     return len(production), len(tests_and_benches)
 
 
-def check_abi6_markers(failures: list[str]) -> None:
-    for path, marker in ABI6_MARKERS.items():
+def check_abi7_markers(failures: list[str]) -> None:
+    for path, marker in ABI7_MARKERS.items():
         if not path.is_file():
-            failures.append(f"missing ABI6 surface: {path.relative_to(ROOT)}")
+            failures.append(f"missing ABI7 surface: {path.relative_to(ROOT)}")
             continue
         if marker not in path.read_text(encoding="utf-8"):
             failures.append(
-                f"{path.relative_to(ROOT)}: missing exact ABI6 marker {marker!r}"
+                f"{path.relative_to(ROOT)}: missing exact ABI7 marker {marker!r}"
             )
 
 
@@ -147,7 +147,7 @@ def check_removed_aliases(failures: list[str]) -> None:
 def main() -> None:
     failures: list[str] = []
     production_count, test_bench_count = check_source_sizes(failures)
-    check_abi6_markers(failures)
+    check_abi7_markers(failures)
     check_removed_aliases(failures)
 
     if failures:
@@ -158,7 +158,7 @@ def main() -> None:
         "verified active source: "
         f"{production_count} production files <= {PRODUCTION_LIMIT} lines, "
         f"{test_bench_count} test/bench files <= {TEST_BENCH_LIMIT} lines, "
-        "ABI6 markers present, no ABI5 lifecycle aliases"
+        "ABI7 markers present, no ABI5 lifecycle aliases"
     )
 
 

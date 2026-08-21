@@ -6,14 +6,14 @@ import { docs, repositoryUrl } from "../../data/site";
 
 <SiteLayout
   title="Architecture | OrbitKV"
-  description="OrbitKV ABI6 identities, immutable snapshots, Prefix/COW transactions, reclamation, and engine boundaries."
+  description="OrbitKV ABI7 identities, immutable snapshots, Prefix/COW and token-relocation transactions, reclamation, and engine boundaries."
   active="Architecture"
 >
   <header class="page-hero">
     <p class="eyebrow">Architecture</p>
     <h1>One authority for snapshots, sharing, and reuse.</h1>
     <p>
-      ABI6 compiles retention semantics into immutable request snapshots and
+      ABI7 compiles retention semantics into immutable request snapshots and
       generation-checked physical-page transactions.
     </p>
   </header>
@@ -53,7 +53,7 @@ import { docs, repositoryUrl } from "../../data/site";
         <li>Unsupported semantics and engine contracts fail closed.</li>
       </ul>
 
-      <h2>ABI6 manager lifecycle</h2>
+      <h2>ABI7 manager lifecycle</h2>
       <p>
         A request points at an immutable, generation-checked snapshot head.
         <code>prepare_batch</code> keeps a candidate private and returns tail,
@@ -70,9 +70,9 @@ import { docs, repositoryUrl } from "../../data/site";
 
       <h2>Current integration boundary</h2>
       <p>
-        The modular Rust core, exact 23-symbol C ABI6 wire, split Python
+        The modular Rust core, exact 29-symbol C ABI7 wire, split Python
         FFI/runtime/plugin layers, and SGLang <code>OrbitKVPrefixCache</code>
-        are host L2 GO. H20 Prefix correctness and performance remain pending.
+        are host L2 GO. SGLang relocation and all ABI7 H20 evidence remain pending.
       </p>
 
       <h2>Capability levels</h2>
@@ -102,9 +102,9 @@ import { docs, repositoryUrl } from "../../data/site";
         <p>
           The historical frozen 9233c06d ABI5-v5 snapshot has scoped Full/Hybrid L4
           correctness on one H20 against official SGLang v0.5.17. It does not
-          qualify ABI6. Same-capacity memory reduction is 0%, and
+          qualify ABI7. Same-capacity memory reduction is 0%, and
           <code>performance_go</code> is false because the B4 measurements come
-          from one epoch. ABI6 H20 Prefix E2E, relocation, Graph/overlap,
+          from one epoch. ABI7 H20 Prefix/relocation E2E, Graph/overlap,
           speculation, multi-GPU, and disaggregation remain unqualified.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>

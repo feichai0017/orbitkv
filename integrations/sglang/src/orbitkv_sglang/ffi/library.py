@@ -7,7 +7,7 @@ from typing import Any
 from . import layouts as L
 
 
-ABI_VERSION = 6
+ABI_VERSION = 7
 STATUS_OK = 0
 STATUS_BUFFER_TOO_SMALL = 1
 STATUS_RETRYABLE_CONFLICT = 2
@@ -20,7 +20,7 @@ ERROR_BUFFER_BYTES = 4096
 
 
 class CanonicalAbiUnavailable(RuntimeError):
-    """The configured library does not expose the frozen ABI6 surface."""
+    """The configured library does not expose the frozen ABI7 surface."""
 
 
 HANDLE = ctypes.c_void_p
@@ -52,6 +52,39 @@ FUNCTION_SPECS: dict[str, tuple[Any, ...]] = {
         HANDLE, _ptr(L.RequestForkItemLayout), ctypes.c_uint32,
         _ptr(L.ForkedItemLayout), ctypes.c_uint32, PU32,
         _ptr(L.SnapshotPageLayout), ctypes.c_uint32, PU32, PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_manager_token_views_batch": (
+        HANDLE, _ptr(L.TokenViewQueryLayout), ctypes.c_uint32,
+        _ptr(L.TokenViewLayout), ctypes.c_uint32, PU32,
+        _ptr(L.TokenPlacementLayout), ctypes.c_uint32, PU32, PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_manager_mark_token_dispositions_batch": (
+        HANDLE, _ptr(L.TokenDispositionBatchItemLayout), ctypes.c_uint32,
+        _ptr(L.ClassTokenDispositionUpdateLayout), ctypes.c_uint32,
+        _ptr(L.RequestViewLayout), ctypes.c_uint32, PU32, PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_manager_prepare_relocation_batch": (
+        HANDLE, _ptr(L.PrepareRelocationItemLayout), ctypes.c_uint32,
+        _ptr(L.PreparedRelocationLayout), ctypes.c_uint32, PU32,
+        _ptr(L.PageLeaseLayout), ctypes.c_uint32, PU32,
+        _ptr(L.PageLeaseLayout), ctypes.c_uint32, PU32,
+        _ptr(L.TokenMoveLayout), ctypes.c_uint32, PU32, PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_manager_submit_relocation_batch": (
+        HANDLE, _ptr(L.RelocationLeaseLayout), ctypes.c_uint32,
+        _ptr(L.RelocationCopyReceiptLayout), ctypes.c_uint32,
+        _ptr(L.SubmittedRelocationLayout), ctypes.c_uint32, PU32, PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_manager_complete_relocation_batch": (
+        HANDLE, _ptr(L.CompletionReceiptLayout),
+        _ptr(L.RelocationLeaseLayout), ctypes.c_uint32,
+        _ptr(L.RequestViewLayout), ctypes.c_uint32, PU32,
+        _ptr(L.ReclamationCertificateLayout), ctypes.c_uint32, PU32,
+        PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_manager_abort_relocations_batch": (
+        HANDLE, _ptr(L.RelocationUnobservedReceiptLayout), ctypes.c_uint32,
+        PCHAR, ctypes.c_size_t,
     ),
     "orbitkv_manager_prepare_batch": (
         HANDLE, _ptr(L.PrepareItemLayout), ctypes.c_uint32,
@@ -142,7 +175,7 @@ class LoadedLibrary:
             library = ctypes.CDLL(str(self.path))
         except OSError as error:
             raise CanonicalAbiUnavailable(
-                f"cannot load OrbitKV ABI6 library {self.path}: {error}"
+                f"cannot load OrbitKV ABI7 library {self.path}: {error}"
             ) from error
         try:
             abi = library.orbitkv_abi_version
@@ -159,13 +192,13 @@ class LoadedLibrary:
                 function.restype = ctypes.c_int32
         except AttributeError as error:
             raise CanonicalAbiUnavailable(
-                f"OrbitKV library is missing an ABI6 symbol: {error}"
+                f"OrbitKV library is missing an ABI7 symbol: {error}"
             ) from error
         self.cdll = library
 
     def function(self, name: str) -> Any:
         if name not in EXACT_SYMBOL_ALLOWLIST:
-            raise KeyError(f"symbol is outside the frozen ABI6 allowlist: {name}")
+            raise KeyError(f"symbol is outside the frozen ABI7 allowlist: {name}")
         return getattr(self.cdll, name)
 
 

@@ -5,7 +5,7 @@ mod manager;
 
 pub use manager::*;
 
-pub const ORBITKV_ABI_VERSION: u32 = 6;
+pub const ORBITKV_ABI_VERSION: u32 = 7;
 pub const ORBITKV_STATUS_OK: i32 = 0;
 pub const ORBITKV_STATUS_BUFFER_TOO_SMALL: i32 = 1;
 pub const ORBITKV_STATUS_RETRYABLE_CONFLICT: i32 = 2;

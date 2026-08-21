@@ -1,7 +1,7 @@
 # Capability Matrix
 
 This is the normative boundary for the live source tree. A historical result
-qualifies only the source closure named by its manifest; breaking ABI6 work
+qualifies only the source closure named by its manifest; breaking ABI7 work
 cannot inherit ABI5 hardware evidence.
 
 ## Levels
@@ -14,38 +14,43 @@ cannot inherit ABI5 hardware evidence.
 | L4 Engine E2E | A pinned engine and released checkpoint pass exact-source end-to-end gates. |
 | L5 Production | Pressure, cancellation, feature combinations, and a version matrix are qualified. |
 
-## Live ABI6 source
+## Live ABI7 source
 
 | Capability | Level | Exact boundary | Evidence |
 | --- | --- | --- | --- |
 | Retention and plan compiler | L1 | Checked Full, sliding, and retained IR/compiler relations | `src/retention.rs`, `src/plan/`, compiler tests |
 | Strict HF manager-plan frontend | L1 | Emits the sole `KvPlanInput`; unknown semantics fail closed | `src/hf_config.rs`, `tests/canonical_cli.rs` |
-| Identity and arena ownership | L2 GO | Generation-checked request, snapshot, page, step, submission, Prefix, and reclamation leases; independent class pools | `src/kv_manager/identity.rs`, `arena.rs`, host tests |
+| Identity and arena ownership | L2 GO | Generation-checked request, snapshot, page, step, submission, Prefix, reclamation, and relocation leases; independent class pools | `src/kv_manager/identity.rs`, `arena.rs`, host tests |
 | Persistent snapshots | L2 GO | Immutable class roots, expected-head CAS, stale-head rejection, incremental path-copy, no hot full-root materialization | `src/kv_manager/persistent_snapshot.rs`, host/property tests |
 | Append transactions | L2 GO | Failure-atomic acquire/fork/prepare/submit/complete, compact write/copy intents, abort and quarantine | `src/kv_manager/append_transaction.rs`, fault tests |
 | Prefix and joint COW core | L2 GO | Page-aligned lookup/publish/publish-release/attach/evict/recycle; request fork; Full+SWA partial-tail joint COW | `src/kv_manager/prefix.rs`, Prefix/COW tests |
 | Page-owned reclamation | L2 GO | Request/Prefix refs, reader pins and writer state jointly gate detach, certificates, ACK, and reuse | `src/kv_manager/reclamation.rs`, lifecycle/fault tests |
-| Typed C ABI6 wire | L2 GO | Exactly 23 batch-only symbols; C/C++ layout checks; reserved-field, span, capacity, short-buffer, stale-lease, and receipt validation | `crates/orbitkv-ffi/include/orbitkv.h`, FFI tests, CI symbol diff |
-| ABI6 Python FFI/runtime | L2 GO | Exact-23 ctypes loader, bounded hot/cold workspaces, incremental snapshot/page/identity journals, collective mirror cleanup, typed retry/fail-stop, and force-destroy teardown | Python FFI/runtime tests against the release library |
+| Token virtualization and relocation core | L2 GO | Canonical token views; semantic-death/policy-eviction evidence; profitable private Full evacuation; exact copy receipts; packed publication; quarantine and precise release | `src/kv_manager/token_virtualization.rs`, `relocation_transaction.rs`, property/fault/lifecycle tests |
+| Typed C ABI7 wire | L2 GO | Exactly 29 batch-only symbols; C/C++ layout checks; token/relocation spans; reserved-field, capacity, short-buffer, stale-lease, and receipt validation | `crates/orbitkv-ffi/include/orbitkv.h`, FFI tests, CI symbol diff |
+| ABI7 Python FFI/runtime | L2 GO | Exact-29 ctypes loader; 58 frozen layouts; bounded hot/cold workspaces; optional relocation capability; typed retry/fail-stop and force-destroy teardown | Python FFI/runtime tests against the release library |
 | Official SGLang source contract | L2 | Official `v0.5.17`, peeled commit `29481685462732237d80d86076d6563e1f658102`, checked required hooks and fail-hard patch | pinned-checkout tests |
 | SGLang `OrbitKVPrefixCache` | L2 GO | Official cache seam; nodes contain token/digest/LRU plus opaque Prefix leases only; warm attach, lock/ref accounting, Full+SWA COW, grouped release, eviction, and hostile fault paths pass host gates | pinned `v0.5.17` contract and plugin integration tests; no H20 evidence |
+| SGLang token relocation | Pending L4 | Full-class first profile still lacks real KV copy stream/event, retained-slot ReqToToken publication, split absolute/active lengths, and engine attention consumption | no H20/E2E evidence |
 | Stable-address CUDA VMM primitive | L2 host | Isolated reserve/map/remap/unmap backend; not the manager data plane and not SGLang tensor storage | `crates/orbitkv-cuda/` host tests |
-| General SGLang replacement | Not L5 | H20 Prefix E2E, overlap/Graph, speculation, distributed execution, pressure, performance, and a release matrix are pending | this matrix |
+| General SGLang replacement | Not L5 | ABI7 H20 Prefix/relocation E2E, overlap/Graph, speculation, distributed execution, pressure, performance, and a release matrix are pending | this matrix |
 
-### Exact ABI6 C surface
+### Exact ABI7 C surface
 
-The dynamic library must export these 23 symbols and no other `orbitkv_*`
+The dynamic library must export these 29 symbols and no other `orbitkv_*`
 symbol:
 
 ```text
 orbitkv_abi_version
+orbitkv_manager_abort_relocations_batch
 orbitkv_manager_abort_steps_batch
 orbitkv_manager_acknowledge_reclamations_batch
 orbitkv_manager_arena_identities
 orbitkv_manager_arena_stats
 orbitkv_manager_complete_batch
+orbitkv_manager_complete_relocation_batch
 orbitkv_manager_create
 orbitkv_manager_destroy
+orbitkv_manager_mark_token_dispositions_batch
 orbitkv_manager_prefix_attach_batch
 orbitkv_manager_prefix_evict_batch
 orbitkv_manager_prefix_lookup_batch
@@ -53,6 +58,7 @@ orbitkv_manager_prefix_publish_batch
 orbitkv_manager_prefix_publish_release_batch
 orbitkv_manager_prefix_recycle_batch
 orbitkv_manager_prepare_batch
+orbitkv_manager_prepare_relocation_batch
 orbitkv_manager_quarantine_steps_batch
 orbitkv_manager_quarantine_submissions_batch
 orbitkv_manager_recycle_requests_batch
@@ -61,6 +67,8 @@ orbitkv_manager_request_acquire_batch
 orbitkv_manager_request_fork_batch
 orbitkv_manager_stats
 orbitkv_manager_submit_batch
+orbitkv_manager_submit_relocation_batch
+orbitkv_manager_token_views_batch
 ```
 
 The ABI5 scalar-shaped names `abort_steps`, `quarantine_steps`,
@@ -94,7 +102,7 @@ profile has repeated-epoch statistics. Therefore `performance_go=false`; the
 negative GPT diagnostic is not a general speedup claim.
 
 This is scoped historical L4 correctness for ABI5-v5. It does not qualify the
-live ABI6 core, C wire, Python runtime, Prefix path, or performance.
+live ABI7 core, C wire, Python runtime, Prefix path, relocation, or performance.
 
 ## Earlier records
 
@@ -111,8 +119,8 @@ a later ABI.
 
 ## Not qualified
 
-- ABI6 SGLang/H20 Prefix correctness or Prefix warm-hit performance;
-- token-exact relocation/compaction;
+- ABI7 SGLang/H20 Prefix correctness or Prefix warm-hit performance;
+- SGLang/GPU token-exact relocation, retained-slot attention, or compaction performance;
 - overlap scheduling, multiple completion domains, or CUDA Graph replay;
 - speculative branches, rollback, beam search, or cancellation pressure;
 - cross-attention, dynamic sparse attention, Mamba/SSM state, vLLM, VMM-backed

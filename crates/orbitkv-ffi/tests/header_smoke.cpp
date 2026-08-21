@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <type_traits>
 
-static_assert(ORBITKV_ABI_VERSION == 6u, "breaking ABI version");
+static_assert(ORBITKV_ABI_VERSION == 7u, "breaking ABI version");
 static_assert(ORBITKV_STATUS_RETRYABLE_CONFLICT == 2,
               "retryable conflict status");
 static_assert(ORBITKV_STATUS_FAIL_STOPPED == -4, "fail-stopped status");
@@ -11,6 +11,8 @@ static_assert(std::is_standard_layout_v<OrbitKvRequestView>);
 static_assert(std::is_standard_layout_v<OrbitKvPreparedBatchItem>);
 static_assert(std::is_standard_layout_v<OrbitKvDetachedBinding>);
 static_assert(std::is_standard_layout_v<OrbitKvPrefixLookupHint>);
+static_assert(std::is_standard_layout_v<OrbitKvTokenPlacement>);
+static_assert(std::is_standard_layout_v<OrbitKvPreparedRelocation>);
 
 int main() {
   (void)&orbitkv_manager_create;
@@ -18,6 +20,12 @@ int main() {
   (void)&orbitkv_manager_arena_stats;
   (void)&orbitkv_manager_request_acquire_batch;
   (void)&orbitkv_manager_request_fork_batch;
+  (void)&orbitkv_manager_token_views_batch;
+  (void)&orbitkv_manager_mark_token_dispositions_batch;
+  (void)&orbitkv_manager_prepare_relocation_batch;
+  (void)&orbitkv_manager_submit_relocation_batch;
+  (void)&orbitkv_manager_complete_relocation_batch;
+  (void)&orbitkv_manager_abort_relocations_batch;
   (void)&orbitkv_manager_prepare_batch;
   (void)&orbitkv_manager_submit_batch;
   (void)&orbitkv_manager_complete_batch;

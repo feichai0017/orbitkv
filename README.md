@@ -11,20 +11,22 @@ one typed C wire, and no compatibility loader for superseded lifecycle ABIs.
 
 ## Current boundary
 
-The live tree is **ABI6**:
+The live tree is **ABI7**:
 
 - the modular Rust host core is L2 GO for immutable snapshots, shared-page
   references, request fork, page-aligned Prefix lookup/publish/attach/evict,
-  Full+SWA joint copy-on-write, and page-owned reclamation;
-- the typed, batch-only C wire is L2 GO with exactly 23 exported
+  Full+SWA joint copy-on-write, page-owned reclamation, canonical token views,
+  policy/proof dispositions, and failure-atomic Full-page evacuation;
+- the typed, batch-only C wire is L2 GO with exactly 29 exported
   `orbitkv_*` symbols, C/C++ layout checks, short-buffer zero-mutation checks,
   and no ABI5 scalar-named lifecycle aliases; and
-- the split ABI6 Python FFI/runtime and SGLang `OrbitKVPrefixCache` are L2 GO
+- the split ABI7 Python FFI/runtime and SGLang `OrbitKVPrefixCache` are L2 GO
   on the host against the release library and pinned official `v0.5.17`
-  source contract. No ABI6 H20 Prefix result exists yet.
+  source contract. The token-relocation C/Python wire is host L2 only; SGLang
+  copy/event/attention integration and all ABI7 H20 evidence remain pending.
 
 The latest engine evidence is an immutable **historical ABI5-v5** snapshot,
-not evidence for ABI6. Its exact `9233c06d…` source closure has scoped L4
+not evidence for ABI7. Its exact `9233c06d…` source closure has scoped L4
 correctness on one H20 against official SGLang `v0.5.17`, peeled commit
 `29481685462732237d80d86076d6563e1f658102`.
 
@@ -41,12 +43,13 @@ CanonicalKvManager                         sole ownership authority
   identity + arena                         generations and physical pages
   persistent snapshot                     immutable request roots
   append transaction                      prepare / submit / complete / COW
+  token relocation                       disposition / move / packed publish
   Prefix                                  lookup / publish / attach / evict
   reclamation                             detach / certificate / ACK / recycle
           |
           | compact leases, intents, copies, detached bindings, certificates
           v
-ABI6 C wire                                exact 23-symbol batch surface
+ABI7 C wire                                exact 29-symbol batch surface
           |
           v
 Python runtime + SGLang adapter            host-qualified Prefix/COW path
@@ -77,10 +80,11 @@ for the invariants and module boundaries.
 
 | Surface | Status | Boundary |
 | --- | --- | --- |
-| ABI6 Rust core | L2 GO | Host unit, property, fault, stale-lease, Prefix, fork, COW, and reclamation tests |
-| ABI6 C wire | L2 GO | Exact 23 symbols, C/C++ layouts, batch atomicity, short-buffer and malformed-receipt gates |
-| ABI6 Python/SGLang | L2 GO | Exact ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, mirror cleanup, fail-stop, and teardown host gates |
-| ABI6 H20 Prefix | Pending | No engine run may inherit ABI5 evidence |
+| ABI7 Rust core | L2 GO | Host unit, property, fault, stale-lease, Prefix, fork, COW, token relocation, and reclamation tests |
+| ABI7 C wire | L2 GO | Exact 29 symbols, C/C++ layouts, batch atomicity, short-buffer and malformed-receipt gates |
+| ABI7 Python/Prefix | L2 GO | Exact ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, relocation wire, mirror cleanup, fail-stop, and teardown host gates |
+| ABI7 SGLang relocation | Pending | Copy stream/event, retained-slot attention metadata, and end-to-end qualification are not implemented |
+| ABI7 H20 | Pending | No engine run may inherit ABI5 evidence |
 | Frozen ABI5-v5 | Historical scoped L4 | Qwen Full and GPT-OSS Full+SWA B1/B4 correctness on one H20 |
 
 In the frozen ABI5-v5 H20 record, all eight manager/stock JSON records pass
@@ -110,7 +114,7 @@ python tools/verify_manifests.py
 ```
 
 The active-source gate limits production Rust/Python modules to 1,500 lines,
-test/benchmark modules to 2,000 lines, verifies ABI6 markers, and rejects the
+test/benchmark modules to 2,000 lines, verifies ABI7 markers, and rejects the
 removed ABI5 lifecycle aliases. It deliberately ignores append-only evidence
 under `results/`.
 
@@ -118,8 +122,9 @@ under `results/`.
 
 The ordered work is:
 
-1. run exact-source SGLang `OrbitKVPrefixCache` correctness on H20;
-2. implement token-exact relocation/compaction against immutable snapshots;
+1. connect the host-qualified relocation wire to SGLang KV copies, retained-slot
+   mirrors, and split absolute/active lengths;
+2. run exact-source ABI7 Prefix and relocation correctness/performance on H20;
 3. qualify overlap and CUDA Graph completion domains; and
 4. add speculation, multi-GPU placement, and disaggregation.
 
