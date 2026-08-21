@@ -8,13 +8,15 @@ use super::{
     OrbitKvPrefixAttachBatchItem, OrbitKvPrefixLease, OrbitKvPrefixLookupHint,
     OrbitKvPrefixPublishBatchItem, OrbitKvPrefixSemanticKey, OrbitKvPublishedPrefix,
     OrbitKvReclamationCertificate, OrbitKvReclamationLease, OrbitKvReclamationReceipt,
-    OrbitKvReleaseBatchItem, OrbitKvRequestForkBatchItem, OrbitKvRequestLease, OrbitKvRequestView,
-    OrbitKvSnapshotLease, OrbitKvSnapshotPage, OrbitKvStepLease, OrbitKvSubmissionLease,
-    OrbitKvSubmitBatchItem, OrbitKvTailAction, OrbitKvWriteIntent, PageLease, PrefixAttachItem,
-    PrefixLease, PrefixLookupHint, PrefixPublishItem, PrefixSemanticKey, ReclamationCertificate,
-    ReclamationLease, ReclamationReceipt, ReleaseBatchItem, RequestForkItem, RequestLease,
+    OrbitKvReleaseBatchItem, OrbitKvRelocationLease, OrbitKvRequestForkBatchItem,
+    OrbitKvRequestLease, OrbitKvRequestView, OrbitKvSnapshotLease, OrbitKvSnapshotPage,
+    OrbitKvStepLease, OrbitKvSubmissionLease, OrbitKvSubmitBatchItem, OrbitKvTailAction,
+    OrbitKvTokenDisposition, OrbitKvTokenLocation, OrbitKvTokenPlacement, OrbitKvTokenViewQuery,
+    OrbitKvWriteIntent, PageLease, PrefixAttachItem, PrefixLease, PrefixLookupHint,
+    PrefixPublishItem, PrefixSemanticKey, ReclamationCertificate, ReclamationLease,
+    ReclamationReceipt, ReleaseBatchItem, RelocationLease, RequestForkItem, RequestLease,
     RequestView, SnapshotLease, SnapshotPage, StepLease, SubmissionLease, SubmitBatchItem,
-    TailAction, WriteIntent,
+    TailAction, TokenLocation, TokenPlacement, TokenViewQuery, WriteIntent,
 };
 
 macro_rules! lease_conversions {
@@ -457,6 +459,101 @@ impl From<ManagerStats> for OrbitKvManagerStats {
             total_request_page_refs: value.total_request_page_refs,
             total_prefix_page_refs: value.total_prefix_page_refs,
             total_reader_pins: value.total_reader_pins,
+        }
+    }
+}
+
+impl From<OrbitKvRelocationLease> for RelocationLease {
+    fn from(value: OrbitKvRelocationLease) -> Self {
+        Self {
+            engine_epoch: value.engine_epoch,
+            slot: value.slot,
+            generation: value.generation,
+        }
+    }
+}
+
+impl From<RelocationLease> for OrbitKvRelocationLease {
+    fn from(value: RelocationLease) -> Self {
+        Self {
+            engine_epoch: value.engine_epoch,
+            slot: value.slot,
+            generation: value.generation,
+        }
+    }
+}
+
+impl From<OrbitKvTokenLocation> for TokenLocation {
+    fn from(value: OrbitKvTokenLocation) -> Self {
+        Self {
+            page: value.page.into(),
+            backend_index: value.backend_index,
+            offset: value.offset,
+            reserved: value.reserved,
+        }
+    }
+}
+
+impl From<TokenLocation> for OrbitKvTokenLocation {
+    fn from(value: TokenLocation) -> Self {
+        Self {
+            page: value.page.into(),
+            backend_index: value.backend_index,
+            offset: value.offset,
+            reserved: value.reserved,
+        }
+    }
+}
+
+impl From<TokenPlacement> for OrbitKvTokenPlacement {
+    fn from(value: TokenPlacement) -> Self {
+        Self {
+            token_id: value.token_id,
+            disposition: value.disposition.into(),
+            location: value
+                .location
+                .map_or_else(OrbitKvTokenLocation::default, Into::into),
+            location_present: u32::from(value.location.is_some()),
+            reserved: 0,
+        }
+    }
+}
+
+impl From<OrbitKvTokenViewQuery> for TokenViewQuery {
+    fn from(value: OrbitKvTokenViewQuery) -> Self {
+        Self {
+            request: value.request.into(),
+            expected_snapshot: value.expected_snapshot.into(),
+            class_id: value.class_id,
+        }
+    }
+}
+
+impl From<OrbitKvTokenDisposition> for orbitkv::kv_manager::TokenDisposition {
+    fn from(value: OrbitKvTokenDisposition) -> Self {
+        let kind = match value.kind {
+            1 => orbitkv::kv_manager::TokenDispositionKind::SemanticallyDead,
+            2 => orbitkv::kv_manager::TokenDispositionKind::PolicyEvicted,
+            _ => orbitkv::kv_manager::TokenDispositionKind::Retained,
+        };
+        Self {
+            kind,
+            policy_or_proof_id: value.policy_or_proof_id,
+            version: value.version,
+            quality_contract: value.quality_contract,
+        }
+    }
+}
+
+impl From<orbitkv::kv_manager::TokenDisposition> for OrbitKvTokenDisposition {
+    fn from(value: orbitkv::kv_manager::TokenDisposition) -> Self {
+        Self {
+            policy_or_proof_id: value.policy_or_proof_id,
+            version: value.version,
+            quality_contract: value.quality_contract,
+            kind: value.kind as u16,
+            reserved16: 0,
+            reserved32: 0,
         }
     }
 }

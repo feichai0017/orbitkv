@@ -11,8 +11,9 @@ use orbitkv::kv_manager::{
     CopyIntent, DetachedBinding, KvManagerError, ManagerConfig, ManagerStats, PageLease,
     PrefixAttachItem, PrefixLease, PrefixLookupHint, PrefixPublishItem, PrefixSemanticKey,
     PrepareBatchItem, ReclamationCertificate, ReclamationLease, ReclamationReceipt,
-    ReleaseBatchItem, RequestForkItem, RequestLease, RequestView, SnapshotLease, SnapshotPage,
-    StepLease, SubmissionLease, SubmitBatchItem, TailAction, WriteIntent,
+    ReleaseBatchItem, RelocationLease, RequestForkItem, RequestLease, RequestView, SnapshotLease,
+    SnapshotPage, StepLease, SubmissionLease, SubmitBatchItem, TailAction, TokenLocation,
+    TokenPlacement, TokenViewQuery, WriteIntent,
 };
 use orbitkv::{KvPlanInput, compile_plan};
 
@@ -31,6 +32,7 @@ pub const ORBITKV_TAIL_FRESH: u16 = 3;
 pub struct OrbitKvManagerHandle {
     manager: Mutex<CanonicalKvManager>,
     total_page_capacity: u32,
+    page_tokens: u32,
     maximum_requests: u32,
     maximum_operations: u32,
     maximum_prefixes: u32,
@@ -45,14 +47,18 @@ mod conversions;
 mod layouts;
 mod prefix;
 mod reclamation;
+mod relocation;
 mod request;
+mod token;
 mod transaction;
 
 pub use admin::*;
 pub use layouts::*;
 pub use prefix::*;
 pub use reclamation::*;
+pub use relocation::*;
 pub use request::*;
+pub use token::*;
 pub use transaction::*;
 
 fn invalid<T>(message: &str) -> Result<T, (i32, String)> {

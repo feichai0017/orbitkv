@@ -16,7 +16,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <div class="hero-copy">
       <div class="hero-kicker">
         <span class="release-dot" aria-hidden="true"></span>
-        <span>ABI6 Rust core + exact C wire · host L2 GO</span>
+        <span>ABI7 token relocation core + exact C wire · host L2 GO</span>
       </div>
       <h1>Attention semantics.<br /><span>Compiled into state.</span></h1>
       <p class="hero-lede">
@@ -45,7 +45,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div class="console-body">
         <div class="console-ident">
           <span>RETENTION</span>
-          <strong>SNAPSHOT + PREFIX + JOINT COW · ABI6</strong>
+          <strong>SNAPSHOT + PREFIX + RELOCATION · ABI7</strong>
         </div>
         <div class="provider-switch" aria-label="Physical lowering">
           <span class="selected">PAGED</span>
@@ -90,11 +90,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="section performance-section" id="evidence">
     <header class="section-heading">
-      <div><p class="eyebrow">Qualification boundary</p><h2>Host ABI6 is green; H20 Prefix is next.</h2></div>
+      <div><p class="eyebrow">Qualification boundary</p><h2>Host ABI7 is green; SGLang relocation is next.</h2></div>
       <p>
-        The modular Rust core, exact 23-symbol C wire, ABI6 Python runtime, and
-        SGLang <code>OrbitKVPrefixCache</code> are host L2 GO. The H20 Prefix
-        gate remains pending. Frozen ABI5-v5 H20 evidence is historical only.
+        The modular Rust core, exact 29-symbol C wire, ABI7 Python runtime, and
+        SGLang <code>OrbitKVPrefixCache</code> are host L2 GO. Real relocation
+        copies, attention metadata, and all ABI7 H20 gates remain pending; the
+        frozen ABI5-v5 H20 record is historical only.
       </p>
     </header>
     <div class="metric-grid">
@@ -127,7 +128,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p>
         Snapshot, Prefix, fork, joint COW, page-owned reclamation, and the
         official SGLang cache seam are host-qualified. Next are the H20 Prefix
-        gate, token-exact relocation, Graph, and distribution.
+        relocation integration, the ABI7 H20 A/B gate, Graph, and distribution.
       </p>
     </header>
     <div class="milestone-list">

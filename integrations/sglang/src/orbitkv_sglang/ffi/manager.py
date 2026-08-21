@@ -40,6 +40,7 @@ from orbitkv_sglang.runtime import (
     PublishedPrefix,
     ReclamationCertificate,
     ReclamationLease,
+    RelocationLease,
     ReclamationReceipt,
     ReleaseBatchCompletion,
     ReleaseBatchItem,
@@ -71,6 +72,7 @@ from .library import (
     LoadedLibrary,
 )
 from .workspace import HotBounds, HotWorkspace, array, cold_materialization, cold_reclamation
+from .token_relocation import TokenRelocationMixin
 
 
 def _uint(name: str, value: int, bits: int) -> int:
@@ -106,11 +108,12 @@ def _lease_to_c(value: Any) -> Any:
         (StepLease, L.StepLeaseLayout),
         (SubmissionLease, L.SubmissionLeaseLayout),
         (ReclamationLease, L.ReclamationLeaseLayout),
+        (RelocationLease, L.RelocationLeaseLayout),
         (PrefixLease, L.PrefixLeaseLayout),
     )
     layout = next((item for kind, item in layouts if isinstance(value, kind)), None)
     if layout is None:
-        raise ManagerError("value is not an ABI6 lease DTO")
+        raise ManagerError("value is not an ABI7 lease DTO")
     return layout(
         _uint("lease engine epoch", value.engine_epoch, 64),
         _uint("lease slot", value.slot, 32),
@@ -274,7 +277,7 @@ def _published(value: L.PublishedPrefixLayout) -> PublishedPrefix:
     return PublishedPrefix(_prefix(value.prefix), _key(value.key), int(value.resident_count))
 
 
-class CtypesManager(ManagerProtocol):
+class CtypesManager(TokenRelocationMixin, ManagerProtocol):
     def __init__(
         self,
         loaded: LoadedLibrary,
@@ -292,6 +295,7 @@ class CtypesManager(ManagerProtocol):
         self._error = ctypes.create_string_buffer(ERROR_BUFFER_BYTES)
         self._arena_count = len(registrations)
         self._physical_pages = sum(item.page_count for item in registrations)
+        self._page_tokens = int(page_tokens)
         self._request_capacity = int(settings.maximum_requests)
         self._operation_capacity = min(
             self._request_capacity, int(settings.maximum_operations)
@@ -314,6 +318,12 @@ class CtypesManager(ManagerProtocol):
         self._counters: dict[str, int] = {
             "request_acquire_batch_calls": 0,
             "request_fork_batch_calls": 0,
+            "token_views_batch_calls": 0,
+            "mark_token_dispositions_batch_calls": 0,
+            "prepare_relocation_batch_calls": 0,
+            "submit_relocation_batch_calls": 0,
+            "complete_relocation_batch_calls": 0,
+            "abort_relocations_batch_calls": 0,
             "prepare_batch_calls": 0,
             "submit_batch_calls": 0,
             "complete_batch_calls": 0,

@@ -3,7 +3,7 @@
 _Static_assert(ORBITKV_STATUS_FAIL_STOPPED == -4,
                "fail-stopped status changed");
 
-/* Every ABI6 symbol is type-checked by assignment and retained by use. */
+/* Every ABI7 symbol is type-checked by assignment and retained by use. */
 int main(void) {
   uint32_t (*abi_version)(void) = orbitkv_abi_version;
   int32_t (*create)(const uint8_t *, size_t, const OrbitKvManagerConfig *,
@@ -24,6 +24,35 @@ int main(void) {
                         OrbitKvForkedBatchItem *, uint32_t, uint32_t *,
                         OrbitKvSnapshotPage *, uint32_t, uint32_t *, char *,
                         size_t) = orbitkv_manager_request_fork_batch;
+  int32_t (*token_views)(
+      OrbitKvManagerHandle *, const OrbitKvTokenViewQuery *, uint32_t,
+      OrbitKvTokenView *, uint32_t, uint32_t *, OrbitKvTokenPlacement *,
+      uint32_t, uint32_t *, char *, size_t) =
+      orbitkv_manager_token_views_batch;
+  int32_t (*mark_dispositions)(
+      OrbitKvManagerHandle *, const OrbitKvTokenDispositionBatchItem *,
+      uint32_t, const OrbitKvClassTokenDispositionUpdate *, uint32_t,
+      OrbitKvRequestView *, uint32_t, uint32_t *, char *, size_t) =
+      orbitkv_manager_mark_token_dispositions_batch;
+  int32_t (*prepare_relocation)(
+      OrbitKvManagerHandle *, const OrbitKvPrepareRelocationItem *, uint32_t,
+      OrbitKvPreparedRelocation *, uint32_t, uint32_t *, OrbitKvPageLease *,
+      uint32_t, uint32_t *, OrbitKvPageLease *, uint32_t, uint32_t *,
+      OrbitKvTokenMove *, uint32_t, uint32_t *, char *, size_t) =
+      orbitkv_manager_prepare_relocation_batch;
+  int32_t (*submit_relocation)(
+      OrbitKvManagerHandle *, const OrbitKvRelocationLease *, uint32_t,
+      const OrbitKvRelocationCopyReceipt *, uint32_t,
+      OrbitKvSubmittedRelocation *, uint32_t, uint32_t *, char *, size_t) =
+      orbitkv_manager_submit_relocation_batch;
+  int32_t (*complete_relocation)(
+      OrbitKvManagerHandle *, const OrbitKvBatchCompletionReceipt *,
+      const OrbitKvRelocationLease *, uint32_t, OrbitKvRequestView *, uint32_t,
+      uint32_t *, OrbitKvReclamationCertificate *, uint32_t, uint32_t *, char *,
+      size_t) = orbitkv_manager_complete_relocation_batch;
+  int32_t (*abort_relocations)(
+      OrbitKvManagerHandle *, const OrbitKvRelocationUnobservedReceipt *,
+      uint32_t, char *, size_t) = orbitkv_manager_abort_relocations_batch;
   int32_t (*prepare)(OrbitKvManagerHandle *, const OrbitKvPrepareBatchItem *,
                      uint32_t, OrbitKvPreparedBatchItem *, uint32_t,
                      uint32_t *, OrbitKvClassLowering *, uint32_t, uint32_t *,
@@ -98,6 +127,12 @@ int main(void) {
   (void)arena_stats;
   (void)acquire;
   (void)fork_batch;
+  (void)token_views;
+  (void)mark_dispositions;
+  (void)prepare_relocation;
+  (void)submit_relocation;
+  (void)complete_relocation;
+  (void)abort_relocations;
   (void)prepare;
   (void)submit;
   (void)complete;

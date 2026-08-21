@@ -47,7 +47,7 @@ jobs:
       - run: cargo test --locked --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets
       - run: cargo clippy --locked --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets -- -D warnings
       - run: cargo build --locked --manifest-path crates/orbitkv-ffi/Cargo.toml
-      - name: Verify the exact ABI6 symbol set
+      - name: Verify the exact ABI7 symbol set
         run: |
           nm -D --defined-only crates/orbitkv-ffi/target/debug/liborbitkv_ffi.so \
             | awk '{print $3}' \
@@ -55,13 +55,16 @@ jobs:
             | sort > /tmp/orbitkv-actual-symbols
           cat > /tmp/orbitkv-expected-symbols <<'EOF'
           orbitkv_abi_version
+          orbitkv_manager_abort_relocations_batch
           orbitkv_manager_abort_steps_batch
           orbitkv_manager_acknowledge_reclamations_batch
           orbitkv_manager_arena_identities
           orbitkv_manager_arena_stats
           orbitkv_manager_complete_batch
+          orbitkv_manager_complete_relocation_batch
           orbitkv_manager_create
           orbitkv_manager_destroy
+          orbitkv_manager_mark_token_dispositions_batch
           orbitkv_manager_prefix_attach_batch
           orbitkv_manager_prefix_evict_batch
           orbitkv_manager_prefix_lookup_batch
@@ -69,6 +72,7 @@ jobs:
           orbitkv_manager_prefix_publish_release_batch
           orbitkv_manager_prefix_recycle_batch
           orbitkv_manager_prepare_batch
+          orbitkv_manager_prepare_relocation_batch
           orbitkv_manager_quarantine_steps_batch
           orbitkv_manager_quarantine_submissions_batch
           orbitkv_manager_recycle_requests_batch
@@ -77,6 +81,8 @@ jobs:
           orbitkv_manager_request_fork_batch
           orbitkv_manager_stats
           orbitkv_manager_submit_batch
+          orbitkv_manager_submit_relocation_batch
+          orbitkv_manager_token_views_batch
           EOF
           diff -u /tmp/orbitkv-expected-symbols /tmp/orbitkv-actual-symbols
       - name: Test C header and dynamic ABI

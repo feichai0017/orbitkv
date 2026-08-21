@@ -1,7 +1,7 @@
 # Token Reclamation and Hybrid-State Architecture
 
 The normative shipped capability boundary remains capability-matrix.md. This
-document specifies the post-ABI6 implementation and qualification contract.
+document specifies the ABI7 implementation and qualification contract.
 Code existence is not an H20 or performance claim.
 
 ## Scope

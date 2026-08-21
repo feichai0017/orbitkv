@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define ORBITKV_ABI_VERSION 6u
+#define ORBITKV_ABI_VERSION 7u
 
 #define ORBITKV_STATUS_OK 0
 #define ORBITKV_STATUS_BUFFER_TOO_SMALL 1
@@ -47,8 +47,12 @@ extern "C" {
 #define ORBITKV_DETACHED_REQUEST_RELEASE 3u
 #define ORBITKV_DETACHED_PREFIX_TRANSFER 4u
 
+#define ORBITKV_TOKEN_RETAINED 0u
+#define ORBITKV_TOKEN_SEMANTICALLY_DEAD 1u
+#define ORBITKV_TOKEN_POLICY_EVICTED 2u
+
 /*
- * ABI6 is breaking and batch-only. Every caller-supplied reserved field must
+ * ABI7 is breaking and batch-only. Every caller-supplied reserved field must
  * be zero. Mutating calls validate count envelopes, pointers, reserved fields,
  * canonical spans, and all output capacities before core mutation. A short
  * buffer reports required counts and leaves manager state unchanged.
@@ -68,6 +72,7 @@ ORBITKV_LEASE(OrbitKvSnapshotLease);
 ORBITKV_LEASE(OrbitKvStepLease);
 ORBITKV_LEASE(OrbitKvSubmissionLease);
 ORBITKV_LEASE(OrbitKvReclamationLease);
+ORBITKV_LEASE(OrbitKvRelocationLease);
 ORBITKV_LEASE(OrbitKvPrefixLease);
 
 #undef ORBITKV_LEASE
@@ -453,6 +458,138 @@ typedef struct OrbitKvManagerStats {
   uint64_t total_reader_pins;
 } OrbitKvManagerStats;
 
+/*
+ * ABI7 token views separate logical token identity and disposition from its
+ * current physical placement. location_present is exactly 0 or 1.
+ */
+typedef struct OrbitKvTokenDisposition {
+  uint64_t policy_or_proof_id;
+  uint64_t version;
+  uint64_t quality_contract;
+  uint16_t kind;
+  uint16_t reserved16;
+  uint32_t reserved32;
+} OrbitKvTokenDisposition;
+
+typedef struct OrbitKvTokenLocation {
+  OrbitKvPageLease page;
+  uint64_t backend_index;
+  uint32_t offset;
+  uint32_t reserved;
+} OrbitKvTokenLocation;
+
+typedef struct OrbitKvTokenPlacement {
+  uint64_t token_id;
+  OrbitKvTokenDisposition disposition;
+  OrbitKvTokenLocation location;
+  uint32_t location_present;
+  uint32_t reserved;
+} OrbitKvTokenPlacement;
+
+typedef struct OrbitKvTokenViewQuery {
+  OrbitKvRequestLease request;
+  OrbitKvSnapshotLease expected_snapshot;
+  uint16_t class_id;
+  uint16_t reserved16;
+  uint32_t reserved32;
+} OrbitKvTokenViewQuery;
+
+typedef struct OrbitKvTokenView {
+  uint64_t view_version;
+  uint32_t placement_offset;
+  uint32_t placement_count;
+  uint32_t page_tokens;
+  uint16_t class_id;
+  uint16_t reserved16;
+  uint32_t reserved32;
+} OrbitKvTokenView;
+
+typedef struct OrbitKvClassTokenDispositionUpdate {
+  uint64_t token_id;
+  OrbitKvTokenDisposition disposition;
+  uint16_t class_id;
+  uint16_t reserved16;
+  uint32_t reserved32;
+} OrbitKvClassTokenDispositionUpdate;
+
+typedef struct OrbitKvTokenDispositionBatchItem {
+  OrbitKvRequestLease request;
+  OrbitKvSnapshotLease expected_snapshot;
+  uint32_t update_offset;
+  uint32_t update_count;
+} OrbitKvTokenDispositionBatchItem;
+
+/*
+ * ABI7 relocation is a prepare/copy/submit/complete transaction. Sources are
+ * not reusable until completion returns reclamation certificates and their
+ * mirror removals have been synchronized and acknowledged.
+ */
+typedef struct OrbitKvRelocationPolicy {
+  uint32_t maximum_source_pages;
+  uint32_t evacuation_headroom_pages;
+  uint16_t fragmentation_threshold_milli;
+  uint8_t full_evacuation;
+  uint8_t reserved8;
+  uint32_t reserved32;
+} OrbitKvRelocationPolicy;
+
+typedef struct OrbitKvPrepareRelocationItem {
+  OrbitKvRequestLease request;
+  OrbitKvSnapshotLease expected_snapshot;
+  OrbitKvRelocationPolicy policy;
+  uint16_t class_id;
+  uint16_t reserved16;
+  uint32_t reserved32;
+} OrbitKvPrepareRelocationItem;
+
+typedef struct OrbitKvPreparedRelocation {
+  OrbitKvRelocationLease relocation;
+  OrbitKvRequestLease request;
+  OrbitKvSnapshotLease base_snapshot;
+  OrbitKvSnapshotLease target_snapshot;
+  uint64_t base_view_version;
+  uint64_t target_view_version;
+  uint32_t source_offset;
+  uint32_t source_count;
+  uint32_t destination_offset;
+  uint32_t destination_count;
+  uint32_t move_offset;
+  uint32_t move_count;
+  uint32_t projected_reclaimed_pages;
+  uint16_t fragmentation_milli;
+  uint16_t class_id;
+  uint32_t reserved32;
+} OrbitKvPreparedRelocation;
+
+typedef struct OrbitKvTokenMove {
+  uint64_t token_id;
+  OrbitKvTokenLocation source;
+  OrbitKvTokenLocation destination;
+} OrbitKvTokenMove;
+
+typedef struct OrbitKvRelocationCopyReceipt {
+  OrbitKvRelocationLease relocation;
+  uint64_t token_id;
+  OrbitKvTokenLocation source;
+  OrbitKvTokenLocation destination;
+  uint8_t observed;
+  uint8_t copied;
+  uint16_t reserved16;
+  uint32_t reserved32;
+} OrbitKvRelocationCopyReceipt;
+
+typedef struct OrbitKvSubmittedRelocation {
+  OrbitKvRelocationLease relocation;
+  OrbitKvRequestLease request;
+  OrbitKvSnapshotLease target_snapshot;
+} OrbitKvSubmittedRelocation;
+
+typedef struct OrbitKvRelocationUnobservedReceipt {
+  OrbitKvRelocationLease relocation;
+  uint32_t backend_unobserved;
+  uint32_t reserved;
+} OrbitKvRelocationUnobservedReceipt;
+
 #if defined(__cplusplus)
 #define ORBITKV_STATIC_ASSERT static_assert
 #define ORBITKV_ALIGNOF alignof
@@ -488,6 +625,10 @@ ORBITKV_LAYOUT(OrbitKvReclamationLease, 16, 8);
 ORBITKV_OFFSET(OrbitKvReclamationLease, engine_epoch, 0);
 ORBITKV_OFFSET(OrbitKvReclamationLease, slot, 8);
 ORBITKV_OFFSET(OrbitKvReclamationLease, generation, 12);
+ORBITKV_LAYOUT(OrbitKvRelocationLease, 16, 8);
+ORBITKV_OFFSET(OrbitKvRelocationLease, engine_epoch, 0);
+ORBITKV_OFFSET(OrbitKvRelocationLease, slot, 8);
+ORBITKV_OFFSET(OrbitKvRelocationLease, generation, 12);
 ORBITKV_LAYOUT(OrbitKvPrefixLease, 16, 8);
 ORBITKV_OFFSET(OrbitKvPrefixLease, engine_epoch, 0);
 ORBITKV_OFFSET(OrbitKvPrefixLease, slot, 8);
@@ -782,6 +923,101 @@ ORBITKV_OFFSET(OrbitKvManagerStats, pending_reclamations, 104);
 ORBITKV_OFFSET(OrbitKvManagerStats, total_request_page_refs, 112);
 ORBITKV_OFFSET(OrbitKvManagerStats, total_prefix_page_refs, 120);
 ORBITKV_OFFSET(OrbitKvManagerStats, total_reader_pins, 128);
+ORBITKV_LAYOUT(OrbitKvTokenDisposition, 32, 8);
+ORBITKV_OFFSET(OrbitKvTokenDisposition, policy_or_proof_id, 0);
+ORBITKV_OFFSET(OrbitKvTokenDisposition, version, 8);
+ORBITKV_OFFSET(OrbitKvTokenDisposition, quality_contract, 16);
+ORBITKV_OFFSET(OrbitKvTokenDisposition, kind, 24);
+ORBITKV_OFFSET(OrbitKvTokenDisposition, reserved16, 26);
+ORBITKV_OFFSET(OrbitKvTokenDisposition, reserved32, 28);
+ORBITKV_LAYOUT(OrbitKvTokenLocation, 48, 8);
+ORBITKV_OFFSET(OrbitKvTokenLocation, page, 0);
+ORBITKV_OFFSET(OrbitKvTokenLocation, backend_index, 32);
+ORBITKV_OFFSET(OrbitKvTokenLocation, offset, 40);
+ORBITKV_OFFSET(OrbitKvTokenLocation, reserved, 44);
+ORBITKV_LAYOUT(OrbitKvTokenPlacement, 96, 8);
+ORBITKV_OFFSET(OrbitKvTokenPlacement, token_id, 0);
+ORBITKV_OFFSET(OrbitKvTokenPlacement, disposition, 8);
+ORBITKV_OFFSET(OrbitKvTokenPlacement, location, 40);
+ORBITKV_OFFSET(OrbitKvTokenPlacement, location_present, 88);
+ORBITKV_OFFSET(OrbitKvTokenPlacement, reserved, 92);
+ORBITKV_LAYOUT(OrbitKvTokenViewQuery, 40, 8);
+ORBITKV_OFFSET(OrbitKvTokenViewQuery, request, 0);
+ORBITKV_OFFSET(OrbitKvTokenViewQuery, expected_snapshot, 16);
+ORBITKV_OFFSET(OrbitKvTokenViewQuery, class_id, 32);
+ORBITKV_OFFSET(OrbitKvTokenViewQuery, reserved16, 34);
+ORBITKV_OFFSET(OrbitKvTokenViewQuery, reserved32, 36);
+ORBITKV_LAYOUT(OrbitKvTokenView, 32, 8);
+ORBITKV_OFFSET(OrbitKvTokenView, view_version, 0);
+ORBITKV_OFFSET(OrbitKvTokenView, placement_offset, 8);
+ORBITKV_OFFSET(OrbitKvTokenView, placement_count, 12);
+ORBITKV_OFFSET(OrbitKvTokenView, page_tokens, 16);
+ORBITKV_OFFSET(OrbitKvTokenView, class_id, 20);
+ORBITKV_OFFSET(OrbitKvTokenView, reserved16, 22);
+ORBITKV_OFFSET(OrbitKvTokenView, reserved32, 24);
+ORBITKV_LAYOUT(OrbitKvClassTokenDispositionUpdate, 48, 8);
+ORBITKV_OFFSET(OrbitKvClassTokenDispositionUpdate, token_id, 0);
+ORBITKV_OFFSET(OrbitKvClassTokenDispositionUpdate, disposition, 8);
+ORBITKV_OFFSET(OrbitKvClassTokenDispositionUpdate, class_id, 40);
+ORBITKV_OFFSET(OrbitKvClassTokenDispositionUpdate, reserved16, 42);
+ORBITKV_OFFSET(OrbitKvClassTokenDispositionUpdate, reserved32, 44);
+ORBITKV_LAYOUT(OrbitKvTokenDispositionBatchItem, 40, 8);
+ORBITKV_OFFSET(OrbitKvTokenDispositionBatchItem, request, 0);
+ORBITKV_OFFSET(OrbitKvTokenDispositionBatchItem, expected_snapshot, 16);
+ORBITKV_OFFSET(OrbitKvTokenDispositionBatchItem, update_offset, 32);
+ORBITKV_OFFSET(OrbitKvTokenDispositionBatchItem, update_count, 36);
+ORBITKV_LAYOUT(OrbitKvRelocationPolicy, 16, 4);
+ORBITKV_OFFSET(OrbitKvRelocationPolicy, maximum_source_pages, 0);
+ORBITKV_OFFSET(OrbitKvRelocationPolicy, evacuation_headroom_pages, 4);
+ORBITKV_OFFSET(OrbitKvRelocationPolicy, fragmentation_threshold_milli, 8);
+ORBITKV_OFFSET(OrbitKvRelocationPolicy, full_evacuation, 10);
+ORBITKV_OFFSET(OrbitKvRelocationPolicy, reserved8, 11);
+ORBITKV_OFFSET(OrbitKvRelocationPolicy, reserved32, 12);
+ORBITKV_LAYOUT(OrbitKvPrepareRelocationItem, 56, 8);
+ORBITKV_OFFSET(OrbitKvPrepareRelocationItem, request, 0);
+ORBITKV_OFFSET(OrbitKvPrepareRelocationItem, expected_snapshot, 16);
+ORBITKV_OFFSET(OrbitKvPrepareRelocationItem, policy, 32);
+ORBITKV_OFFSET(OrbitKvPrepareRelocationItem, class_id, 48);
+ORBITKV_OFFSET(OrbitKvPrepareRelocationItem, reserved16, 50);
+ORBITKV_OFFSET(OrbitKvPrepareRelocationItem, reserved32, 52);
+ORBITKV_LAYOUT(OrbitKvPreparedRelocation, 120, 8);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, relocation, 0);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, request, 16);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, base_snapshot, 32);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, target_snapshot, 48);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, base_view_version, 64);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, target_view_version, 72);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, source_offset, 80);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, source_count, 84);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, destination_offset, 88);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, destination_count, 92);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, move_offset, 96);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, move_count, 100);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, projected_reclaimed_pages, 104);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, fragmentation_milli, 108);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, class_id, 110);
+ORBITKV_OFFSET(OrbitKvPreparedRelocation, reserved32, 112);
+ORBITKV_LAYOUT(OrbitKvTokenMove, 104, 8);
+ORBITKV_OFFSET(OrbitKvTokenMove, token_id, 0);
+ORBITKV_OFFSET(OrbitKvTokenMove, source, 8);
+ORBITKV_OFFSET(OrbitKvTokenMove, destination, 56);
+ORBITKV_LAYOUT(OrbitKvRelocationCopyReceipt, 128, 8);
+ORBITKV_OFFSET(OrbitKvRelocationCopyReceipt, relocation, 0);
+ORBITKV_OFFSET(OrbitKvRelocationCopyReceipt, token_id, 16);
+ORBITKV_OFFSET(OrbitKvRelocationCopyReceipt, source, 24);
+ORBITKV_OFFSET(OrbitKvRelocationCopyReceipt, destination, 72);
+ORBITKV_OFFSET(OrbitKvRelocationCopyReceipt, observed, 120);
+ORBITKV_OFFSET(OrbitKvRelocationCopyReceipt, copied, 121);
+ORBITKV_OFFSET(OrbitKvRelocationCopyReceipt, reserved16, 122);
+ORBITKV_OFFSET(OrbitKvRelocationCopyReceipt, reserved32, 124);
+ORBITKV_LAYOUT(OrbitKvSubmittedRelocation, 48, 8);
+ORBITKV_OFFSET(OrbitKvSubmittedRelocation, relocation, 0);
+ORBITKV_OFFSET(OrbitKvSubmittedRelocation, request, 16);
+ORBITKV_OFFSET(OrbitKvSubmittedRelocation, target_snapshot, 32);
+ORBITKV_LAYOUT(OrbitKvRelocationUnobservedReceipt, 24, 8);
+ORBITKV_OFFSET(OrbitKvRelocationUnobservedReceipt, relocation, 0);
+ORBITKV_OFFSET(OrbitKvRelocationUnobservedReceipt, backend_unobserved, 16);
+ORBITKV_OFFSET(OrbitKvRelocationUnobservedReceipt, reserved, 20);
 
 #undef ORBITKV_OFFSET
 #undef ORBITKV_LAYOUT
@@ -818,6 +1054,52 @@ int32_t orbitkv_manager_request_fork_batch(
     uint32_t forked_capacity, uint32_t *out_forked_count,
     OrbitKvSnapshotPage *pages, uint32_t page_capacity,
     uint32_t *out_page_count, char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_manager_token_views_batch(
+    OrbitKvManagerHandle *manager, const OrbitKvTokenViewQuery *queries,
+    uint32_t query_count, OrbitKvTokenView *views, uint32_t view_capacity,
+    uint32_t *out_view_count, OrbitKvTokenPlacement *placements,
+    uint32_t placement_capacity, uint32_t *out_placement_count,
+    char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_manager_mark_token_dispositions_batch(
+    OrbitKvManagerHandle *manager,
+    const OrbitKvTokenDispositionBatchItem *items, uint32_t item_count,
+    const OrbitKvClassTokenDispositionUpdate *updates, uint32_t update_count,
+    OrbitKvRequestView *outputs, uint32_t output_capacity,
+    uint32_t *out_output_count, char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_manager_prepare_relocation_batch(
+    OrbitKvManagerHandle *manager, const OrbitKvPrepareRelocationItem *items,
+    uint32_t item_count, OrbitKvPreparedRelocation *prepared,
+    uint32_t prepared_capacity, uint32_t *out_prepared_count,
+    OrbitKvPageLease *sources, uint32_t source_capacity,
+    uint32_t *out_source_count, OrbitKvPageLease *destinations,
+    uint32_t destination_capacity, uint32_t *out_destination_count,
+    OrbitKvTokenMove *moves, uint32_t move_capacity,
+    uint32_t *out_move_count, char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_manager_submit_relocation_batch(
+    OrbitKvManagerHandle *manager, const OrbitKvRelocationLease *relocations,
+    uint32_t relocation_count, const OrbitKvRelocationCopyReceipt *receipts,
+    uint32_t receipt_count, OrbitKvSubmittedRelocation *submitted,
+    uint32_t submitted_capacity, uint32_t *out_submitted_count,
+    char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_manager_complete_relocation_batch(
+    OrbitKvManagerHandle *manager,
+    const OrbitKvBatchCompletionReceipt *completion,
+    const OrbitKvRelocationLease *relocations, uint32_t relocation_count,
+    OrbitKvRequestView *publications, uint32_t publication_capacity,
+    uint32_t *out_publication_count,
+    OrbitKvReclamationCertificate *retirements, uint32_t retirement_capacity,
+    uint32_t *out_retirement_count, char *error_buffer,
+    size_t error_buffer_len);
+
+int32_t orbitkv_manager_abort_relocations_batch(
+    OrbitKvManagerHandle *manager,
+    const OrbitKvRelocationUnobservedReceipt *receipts, uint32_t receipt_count,
+    char *error_buffer, size_t error_buffer_len);
 
 int32_t orbitkv_manager_prepare_batch(
     OrbitKvManagerHandle *manager, const OrbitKvPrepareBatchItem *items,

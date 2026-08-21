@@ -5,9 +5,10 @@ boundary. This directory is append-only evidence: every record qualifies only
 the exact source, ABI, engine, hardware, commands, and outputs bound by its
 manifest.
 
-The live tree is ABI6. Its Rust core, exact 23-symbol C wire, Python runtime,
-and SGLang Prefix adapter are host L2. Its H20 Prefix qualification is
-pending. Every record below predates ABI6 and therefore remains historical.
+The live tree is ABI7. Its Rust core, exact 29-symbol C wire, Python runtime,
+SGLang Prefix adapter, and host relocation transaction are L2. SGLang
+relocation and all ABI7 H20 qualification remain pending. Every record below
+predates ABI7 and therefore remains historical.
 
 ## Latest engine record
 
@@ -32,7 +33,7 @@ B4 steady manager overhead of +4.1932% for Qwen and -5.2048% for GPT-OSS;
 Qwen B1 is +5.0009%. With no repeated-epoch statistics,
 `performance_go=false`; the GPT result is not a general speedup claim.
 
-Nothing in this record qualifies ABI6 Prefix/COW, Python, SGLang integration,
+Nothing in this record qualifies ABI7 Prefix/COW, Python, SGLang integration,
 relocation, Graph, or distributed execution.
 
 ## Earlier records

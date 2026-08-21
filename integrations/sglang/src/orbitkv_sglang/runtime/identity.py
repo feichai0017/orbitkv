@@ -31,6 +31,17 @@ if TYPE_CHECKING:
         RequestForkItem,
         RequestView,
     )
+    from .token_relocation import (
+        CompletedRelocationBatch,
+        PrepareRelocationItem,
+        PreparedRelocation,
+        RelocationCopyReceipt,
+        RelocationUnobservedReceipt,
+        SubmittedRelocation,
+        TokenDispositionBatchItem,
+        TokenView,
+        TokenViewQuery,
+    )
 
 
 TAIL_NONE = 0
@@ -140,6 +151,13 @@ class SubmissionLease:
 
 @dataclass(frozen=True, slots=True)
 class ReclamationLease:
+    engine_epoch: int
+    slot: int
+    generation: int
+
+
+@dataclass(frozen=True, slots=True)
+class RelocationLease:
     engine_epoch: int
     slot: int
     generation: int
@@ -277,6 +295,40 @@ class ManagerProtocol(Protocol):
 
 
 @runtime_checkable
+class TokenRelocationManagerProtocol(Protocol):
+    """Optional ABI7 capability; ordinary manager users need not implement it."""
+
+    def token_views_batch(
+        self, queries: Sequence[TokenViewQuery]
+    ) -> tuple[TokenView, ...]: ...
+
+    def mark_token_dispositions_batch(
+        self, items: Sequence[TokenDispositionBatchItem]
+    ) -> tuple[RequestView, ...]: ...
+
+    def prepare_relocation_batch(
+        self, items: Sequence[PrepareRelocationItem]
+    ) -> tuple[PreparedRelocation, ...]: ...
+
+    def submit_relocation_batch(
+        self,
+        items: Sequence[
+            tuple[RelocationLease, Sequence[RelocationCopyReceipt]]
+        ],
+    ) -> tuple[SubmittedRelocation, ...]: ...
+
+    def complete_relocation_batch(
+        self,
+        receipt: BatchCompletionReceipt,
+        relocations: Sequence[RelocationLease],
+    ) -> CompletedRelocationBatch: ...
+
+    def abort_relocations_batch(
+        self, receipts: Sequence[RelocationUnobservedReceipt]
+    ) -> None: ...
+
+
+@runtime_checkable
 class ManagerFactoryProtocol(Protocol):
     def create(
         self,
@@ -296,10 +348,12 @@ __all__ = [
     "ManagerFactoryProtocol",
     "ManagerProtocol",
     "ManagerStats",
+    "TokenRelocationManagerProtocol",
     "PageLease",
     "PrefixLease",
     "PrefixSemanticKey",
     "ReclamationLease",
+    "RelocationLease",
     "RequestLease",
     "RetryableConflict",
     "SnapshotLease",

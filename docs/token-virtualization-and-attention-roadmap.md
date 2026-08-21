@@ -1,16 +1,16 @@
 # Token Virtualization and Attention Expansion Roadmap
 
-This roadmap starts from the live ABI6 architecture. Qualification status is
+This roadmap starts from the live ABI7 architecture. Qualification status is
 normative only in the [Capability Matrix](capability-matrix.md).
 
 ## Current checkpoint
 
-The modular Rust core and exact 23-symbol C ABI6 wire are host-qualified L2.
+The modular Rust core and exact 29-symbol C ABI7 wire are host-qualified L2.
 They provide immutable snapshots, request fork, page-aligned Prefix ownership,
 joint Full+SWA COW, detach actions, and page-owned reclamation.
 
-The ABI6 Python runtime and SGLang Prefix adapter are host-qualified L2. There
-is no ABI6 H20 Prefix evidence. The frozen ABI5-v5 H20 record is historical
+The ABI7 Python runtime and SGLang Prefix adapter are host-qualified L2. There
+is no ABI7 H20 evidence. The frozen ABI5-v5 H20 record is historical
 scoped L4 correctness only and does not qualify this source.
 
 ## Why the module split is a roadmap prerequisite
@@ -55,12 +55,12 @@ The term **compaction** below means token-exact K/V relocation and
 defragmentation. It is not quantization, a codec, low-rank compression, or a
 same-capacity memory result.
 
-## M1: Freeze the ABI6 Python/runtime boundary
+## M1: Freeze the ABI7 Python/runtime boundary
 
 Status: **L2 GO**.
 
-- complete ctypes parity with `orbitkv.h` and ABI version 6;
-- load exactly the 23 allowed symbols and reject all compatibility aliases;
+- complete ctypes parity with `orbitkv.h` and ABI version 7;
+- load exactly the 29 allowed symbols and reject all compatibility aliases;
 - keep FFI layout/workspace code separate from lifecycle journals;
 - make snapshot heads, materialized views, detach actions, and reclamation
   receipts generation checked in Python;
@@ -68,7 +68,7 @@ Status: **L2 GO**.
 - qualify malformed spans, stale leases, short buffers, fail-stop, and
   quarantine paths.
 
-Exit gate: the ABI6 Python runtime is L2 against the exact release library.
+Exit gate: the ABI7 Python runtime is L2 against the exact release library.
 
 ## M2: Integrate SGLang Prefix ownership
 
@@ -97,22 +97,20 @@ reduce the bytes of a same-sized preallocated KV tensor arena.
 
 ## M3: Token table and exact relocation
 
-Status: **pending after Prefix**.
+Status: **core, C wire, and Python wire host L2 GO; SGLang GPU/E2E pending**.
 
-Add stable logical token IDs and class-specific placement generations without
-changing snapshot identity:
+ABI7 adds stable logical token IDs, canonical disposition batches, and
+class-specific physical placement without changing logical token identity:
 
 ```text
 TokenPlacement {
     token_id,
-    class_id,
-    page: PageLease,
-    offset,
-    placement_generation,
+    disposition,
+    location: Option<{ page: PageLease, backend_index, offset }>,
 }
 ```
 
-A relocation transaction must:
+The host transaction now:
 
 1. plan against one immutable snapshot head;
 2. reserve exact destination `PageLease` values from bounded headroom;
@@ -124,8 +122,9 @@ A relocation transaction must:
 
 Global invariants are token conservation, unique placement, completion
 visibility, snapshot isolation, generation safety, and deferred source reuse.
-Unknown copy launch or completion quarantines destinations and preserves
-source pins.
+Unknown or mismatched copy receipts quarantine destinations and fail-stop the
+request. The remaining engine work is real KV copying, CUDA stream/event
+ordering, retained-slot mirror publication, and attention consumption.
 
 Relocation should run only when `source_pages > destination_pages` after
 accounting for temporary destination headroom. It should not scan every token

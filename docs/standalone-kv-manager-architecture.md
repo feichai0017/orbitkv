@@ -2,7 +2,7 @@
 
 The normative qualification boundary is the
 [Capability Matrix](capability-matrix.md). This document describes the live
-ABI6 design; the H20 records under `results/` are historical evidence for
+ABI7 design; the H20 records under `results/` are historical evidence for
 older frozen ABIs.
 
 ## Objective and authority
@@ -10,7 +10,7 @@ older frozen ABIs.
 OrbitKV is an engine-independent, semantics-compiled KV state manager. It is
 the sole authority for:
 
-- request, snapshot, Prefix, page, step, submission, and reclamation identity;
+- request, snapshot, Prefix, page, step, submission, reclamation, and relocation identity;
 - logical-to-physical KV bindings and physical page generation;
 - immutable published roots and mutable transaction candidates;
 - Prefix residency, sharing, attachment, and eviction;
@@ -31,15 +31,17 @@ attention-retention semantics
          identity + arena
          persistent snapshot
          append transaction
+         token relocation
          Prefix
          reclamation
-    -> ABI6 typed batch wire
+    -> ABI7 typed batch wire
     -> engine adapter and checked device mirrors
     -> backend tensor arenas and attention kernels
 ```
 
-The Rust core, C wire, ABI6 Python adapter, and SGLang `OrbitKVPrefixCache` are
-host-qualified L2. The H20 Prefix path is not yet qualified.
+The Rust core, C wire, ABI7 Python adapter, and SGLang `OrbitKVPrefixCache` are
+host-qualified L2. The relocation core and wire are also host L2; SGLang
+relocation and every ABI7 H20 path are not yet qualified.
 
 ## Module boundaries
 
@@ -53,6 +55,8 @@ The canonical manager is split by invariant rather than by call count:
 | `append_transaction.rs` | Prepare, submit, complete, abort, quarantine, tail policy and COW |
 | `prefix.rs` | Request fork and page-aligned Prefix lookup/publish/attach/evict |
 | `reclamation.rs` | Request release, detach, certificates, ACK and recycle |
+| `token_virtualization.rs` | Canonical token views, dispositions, planning, and packed placement |
+| `relocation_transaction.rs` | Failure-atomic prepare/submit/complete/abort relocation lifecycle |
 | `transaction_validation.rs` | Batch-wide preflight and ref-count deltas |
 | `protocol.rs` | Backend-independent request/result types |
 | `facade.rs` | Construction, public queries and stable core facade |
@@ -225,7 +229,7 @@ or materialize all 8,192 entries.
 
 ## Compatibility and acceptance
 
-ABI6 exports exactly 23 `orbitkv_*` symbols listed in the
+ABI7 exports exactly 29 `orbitkv_*` symbols listed in the
 [Capability Matrix](capability-matrix.md). There are no ABI5 lifecycle aliases,
 older loaders, or silent native-allocation fallback paths.
 
@@ -233,4 +237,4 @@ An engine profile becomes a replacement claim only after its native allocator
 and Prefix owner cease to be authoritative; all fault and pressure gates pass;
 and an append-only manifest binds the exact manager, wire, adapter, engine
 release, hardware, commands, and outputs. The frozen ABI5-v5 H20 record does
-not satisfy those gates for ABI6.
+not satisfy those gates for ABI7.

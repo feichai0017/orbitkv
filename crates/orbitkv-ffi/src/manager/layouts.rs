@@ -15,6 +15,7 @@ lease!(OrbitKvSnapshotLease);
 lease!(OrbitKvStepLease);
 lease!(OrbitKvSubmissionLease);
 lease!(OrbitKvReclamationLease);
+lease!(OrbitKvRelocationLease);
 lease!(OrbitKvPrefixLease);
 
 #[repr(C)]
@@ -455,6 +456,157 @@ pub struct OrbitKvManagerStats {
     pub total_reader_pins: u64,
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvTokenDisposition {
+    pub policy_or_proof_id: u64,
+    pub version: u64,
+    pub quality_contract: u64,
+    pub kind: u16,
+    pub reserved16: u16,
+    pub reserved32: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvTokenLocation {
+    pub page: OrbitKvPageLease,
+    pub backend_index: u64,
+    pub offset: u32,
+    pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvTokenPlacement {
+    pub token_id: u64,
+    pub disposition: OrbitKvTokenDisposition,
+    pub location: OrbitKvTokenLocation,
+    pub location_present: u32,
+    pub reserved: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvTokenViewQuery {
+    pub request: OrbitKvRequestLease,
+    pub expected_snapshot: OrbitKvSnapshotLease,
+    pub class_id: u16,
+    pub reserved16: u16,
+    pub reserved32: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvTokenView {
+    pub view_version: u64,
+    pub placement_offset: u32,
+    pub placement_count: u32,
+    pub page_tokens: u32,
+    pub class_id: u16,
+    pub reserved16: u16,
+    pub reserved32: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvClassTokenDispositionUpdate {
+    pub token_id: u64,
+    pub disposition: OrbitKvTokenDisposition,
+    pub class_id: u16,
+    pub reserved16: u16,
+    pub reserved32: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvTokenDispositionBatchItem {
+    pub request: OrbitKvRequestLease,
+    pub expected_snapshot: OrbitKvSnapshotLease,
+    pub update_offset: u32,
+    pub update_count: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvRelocationPolicy {
+    pub maximum_source_pages: u32,
+    pub evacuation_headroom_pages: u32,
+    pub fragmentation_threshold_milli: u16,
+    pub full_evacuation: u8,
+    pub reserved8: u8,
+    pub reserved32: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvPrepareRelocationItem {
+    pub request: OrbitKvRequestLease,
+    pub expected_snapshot: OrbitKvSnapshotLease,
+    pub policy: OrbitKvRelocationPolicy,
+    pub class_id: u16,
+    pub reserved16: u16,
+    pub reserved32: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvPreparedRelocation {
+    pub relocation: OrbitKvRelocationLease,
+    pub request: OrbitKvRequestLease,
+    pub base_snapshot: OrbitKvSnapshotLease,
+    pub target_snapshot: OrbitKvSnapshotLease,
+    pub base_view_version: u64,
+    pub target_view_version: u64,
+    pub source_offset: u32,
+    pub source_count: u32,
+    pub destination_offset: u32,
+    pub destination_count: u32,
+    pub move_offset: u32,
+    pub move_count: u32,
+    pub projected_reclaimed_pages: u32,
+    pub fragmentation_milli: u16,
+    pub class_id: u16,
+    pub reserved32: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvTokenMove {
+    pub token_id: u64,
+    pub source: OrbitKvTokenLocation,
+    pub destination: OrbitKvTokenLocation,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvRelocationCopyReceipt {
+    pub relocation: OrbitKvRelocationLease,
+    pub token_id: u64,
+    pub source: OrbitKvTokenLocation,
+    pub destination: OrbitKvTokenLocation,
+    pub observed: u8,
+    pub copied: u8,
+    pub reserved16: u16,
+    pub reserved32: u32,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvSubmittedRelocation {
+    pub relocation: OrbitKvRelocationLease,
+    pub request: OrbitKvRequestLease,
+    pub target_snapshot: OrbitKvSnapshotLease,
+}
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct OrbitKvRelocationUnobservedReceipt {
+    pub relocation: OrbitKvRelocationLease,
+    pub backend_unobserved: u32,
+    pub reserved: u32,
+}
+
 macro_rules! abi_layout {
     ($ty:ty, $size:expr, $align:expr; $($field:ident = $offset:expr),+ $(,)?) => {
         const _: [(); $size] = [(); std::mem::size_of::<$ty>()];
@@ -468,6 +620,7 @@ abi_layout!(OrbitKvSnapshotLease, 16, 8; engine_epoch = 0, slot = 8, generation 
 abi_layout!(OrbitKvStepLease, 16, 8; engine_epoch = 0, slot = 8, generation = 12);
 abi_layout!(OrbitKvSubmissionLease, 16, 8; engine_epoch = 0, slot = 8, generation = 12);
 abi_layout!(OrbitKvReclamationLease, 16, 8; engine_epoch = 0, slot = 8, generation = 12);
+abi_layout!(OrbitKvRelocationLease, 16, 8; engine_epoch = 0, slot = 8, generation = 12);
 abi_layout!(OrbitKvPrefixLease, 16, 8; engine_epoch = 0, slot = 8, generation = 12);
 abi_layout!(OrbitKvPageLease, 32, 8; engine_epoch = 0, pool_epoch = 8, generation = 16, page_id = 24, pool_id = 28);
 abi_layout!(OrbitKvBackendArenaRegistration, 24, 8; pool_id = 0, class_id = 4, backend_domain = 6, page_count = 8, reserved = 12, backend_base_index = 16);
@@ -506,3 +659,17 @@ abi_layout!(OrbitKvPublishedPrefix, 96, 8; prefix = 0, key = 16, resident_count 
 abi_layout!(OrbitKvPrefixPublishReleaseBatchItem, 144, 8; publication = 0, request = 96, detached_snapshot = 112, detached_offset = 128, detached_count = 132, reserved = 136);
 abi_layout!(OrbitKvEvictedPrefix, 88, 8; prefix = 0, key = 16);
 abi_layout!(OrbitKvManagerStats, 136, 8; active_requests = 0, active_snapshots = 8, active_prefixes = 16, evicted_prefixes = 24, prepared_steps = 32, submitted_steps = 40, free_pages = 48, reserved_pages = 56, writing_pages = 64, active_pages = 72, retiring_pages = 80, quarantined_pages = 88, exhausted_pages = 96, pending_reclamations = 104, total_request_page_refs = 112, total_prefix_page_refs = 120, total_reader_pins = 128);
+abi_layout!(OrbitKvTokenDisposition, 32, 8; policy_or_proof_id = 0, version = 8, quality_contract = 16, kind = 24, reserved16 = 26, reserved32 = 28);
+abi_layout!(OrbitKvTokenLocation, 48, 8; page = 0, backend_index = 32, offset = 40, reserved = 44);
+abi_layout!(OrbitKvTokenPlacement, 96, 8; token_id = 0, disposition = 8, location = 40, location_present = 88, reserved = 92);
+abi_layout!(OrbitKvTokenViewQuery, 40, 8; request = 0, expected_snapshot = 16, class_id = 32, reserved16 = 34, reserved32 = 36);
+abi_layout!(OrbitKvTokenView, 32, 8; view_version = 0, placement_offset = 8, placement_count = 12, page_tokens = 16, class_id = 20, reserved16 = 22, reserved32 = 24);
+abi_layout!(OrbitKvClassTokenDispositionUpdate, 48, 8; token_id = 0, disposition = 8, class_id = 40, reserved16 = 42, reserved32 = 44);
+abi_layout!(OrbitKvTokenDispositionBatchItem, 40, 8; request = 0, expected_snapshot = 16, update_offset = 32, update_count = 36);
+abi_layout!(OrbitKvRelocationPolicy, 16, 4; maximum_source_pages = 0, evacuation_headroom_pages = 4, fragmentation_threshold_milli = 8, full_evacuation = 10, reserved8 = 11, reserved32 = 12);
+abi_layout!(OrbitKvPrepareRelocationItem, 56, 8; request = 0, expected_snapshot = 16, policy = 32, class_id = 48, reserved16 = 50, reserved32 = 52);
+abi_layout!(OrbitKvPreparedRelocation, 120, 8; relocation = 0, request = 16, base_snapshot = 32, target_snapshot = 48, base_view_version = 64, target_view_version = 72, source_offset = 80, source_count = 84, destination_offset = 88, destination_count = 92, move_offset = 96, move_count = 100, projected_reclaimed_pages = 104, fragmentation_milli = 108, class_id = 110, reserved32 = 112);
+abi_layout!(OrbitKvTokenMove, 104, 8; token_id = 0, source = 8, destination = 56);
+abi_layout!(OrbitKvRelocationCopyReceipt, 128, 8; relocation = 0, token_id = 16, source = 24, destination = 72, observed = 120, copied = 121, reserved16 = 122, reserved32 = 124);
+abi_layout!(OrbitKvSubmittedRelocation, 48, 8; relocation = 0, request = 16, target_snapshot = 32);
+abi_layout!(OrbitKvRelocationUnobservedReceipt, 24, 8; relocation = 0, backend_unobserved = 16, reserved = 20);
