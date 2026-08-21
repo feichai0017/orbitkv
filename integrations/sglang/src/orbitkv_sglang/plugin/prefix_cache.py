@@ -20,6 +20,7 @@ from ..runtime import (
     sglang_page_id,
 )
 from . import state as _state
+from .prefix_sanity import validate_prefix_cache
 from .state import _config, _request_key, _runtime
 
 
@@ -145,7 +146,11 @@ class OrbitKvPrefixCache(BasePrefixCache):
         self.token_to_kv_pool_allocator = params.token_to_kv_pool_allocator
         self.page_size = config.page_tokens
         sliding = config.sliding_class
-        expected_window = None if sliding is None else sliding.window_tokens
+        # SGLang's cache/scheduler contract stores the number of historical
+        # tokens to the left of the current query.  KvPlanInput stores the
+        # inclusive attention width, so a W-token window is represented as
+        # W - 1 at this engine seam (GPT-OSS 128 -> SGLang 127).
+        expected_window = None if sliding is None else sliding.kernel_window_left
         if getattr(params, "sliding_window_size", None) != expected_window:
             raise RuntimeError("SGLang sliding window differs from the manager plan")
         self.sliding_window_size = expected_window
@@ -738,6 +743,9 @@ class OrbitKvPrefixCache(BasePrefixCache):
 
     def pretty_print(self) -> None:
         print(f"#OrbitKV prefixes: {len(self._nodes)}; #tokens: {self.total_size()}")
+
+    def sanity_check(self) -> None:
+        validate_prefix_cache(self)
 
     def _semantic_endpoints(
         self, tokens: tuple[int, ...]

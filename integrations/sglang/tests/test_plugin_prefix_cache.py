@@ -297,7 +297,7 @@ def _cache(
         req_to_token_pool=req_pool,
         token_to_kv_pool_allocator=allocator,
         page_size=16,
-        sliding_window_size=window_tokens if len(retentions) == 2 else None,
+        sliding_window_size=window_tokens - 1 if len(retentions) == 2 else None,
     )
     return prefix_cache.OrbitKvPrefixCache(params), runtime, allocator, req_pool
 
@@ -456,6 +456,18 @@ def test_prefix_cache_is_official_backend_with_exact_namespace_and_linear_endpoi
     endpoints = cache._semantic_endpoints(_tokens(8192))
     assert len(endpoints) == 512
     assert endpoints[-1].boundary == 8192
+    cache.sanity_check()
+
+
+def test_prefix_sanity_check_recomputes_topology_residency_and_census():
+    cache, runtime, _allocator, _pool = _cache("full", "sliding")
+    _publish(cache, runtime, _tokens(32), 9, resident_count=4)
+    _publish(cache, runtime, _tokens(48), 10, resident_count=5)
+    cache.sanity_check()
+
+    cache._swa_total_tokens += cache.page_size
+    with pytest.raises(RuntimeError, match="incremental census"):
+        cache.sanity_check()
 
 
 def test_prefix_cache_abstract_method_call_signatures_match_official_v0517():
@@ -696,7 +708,7 @@ def test_official_prefill_adder_reads_compiled_sliding_window(monkeypatch):
         rem_chunk_tokens=64,
     )
 
-    assert cache.sliding_window_size == 32
+    assert cache.sliding_window_size == 31
     assert adder.is_hybrid_swa is True
     assert adder._swa_budget_for_req(48, 8) == 64
 
