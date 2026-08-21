@@ -4,14 +4,14 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "orbitkv-sglang"
-version = "0.1.0"
-description = "SGLang instrumentation and owning adapter for the Rust OrbitKV block manager."
+version = "0.2.0"
+description = "Breaking-only SGLang adapter for the canonical OrbitKV block manager."
 requires-python = ">=3.10"
 license = { text = "MIT" }
-dependencies = []
+dependencies = ["sglang==0.5.17"]
 
 [project.entry-points."sglang.srt.plugins"]
-orbitkv_shadow = "orbitkv_sglang.plugin:register"
+orbitkv_manager = "orbitkv_sglang.plugin:register"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
