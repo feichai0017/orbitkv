@@ -98,6 +98,16 @@ pub struct CanonicalKvManager {
     pub(super) page_counts: Vec<PageCounts>,
     pub(super) prepared_steps: u64,
     pub(super) submitted_steps: u64,
+    pub(super) active_prefixes: u64,
+    pub(super) evicted_prefixes: u64,
     #[cfg(test)]
     pub(super) hot_path: HotPathInstrumentation,
+}
+
+#[allow(dead_code)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) struct CensusWork {
+    pub(super) classes: u64,
+    pub(super) page_slots: u64,
+    pub(super) prefix_slots: u64,
 }

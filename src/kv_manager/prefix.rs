@@ -107,6 +107,7 @@ impl CanonicalKvManager {
                 resident_count,
             });
         }
+        self.active_prefixes += outputs.len() as u64;
         Ok(outputs.into_boxed_slice())
     }
 
@@ -355,7 +356,7 @@ impl CanonicalKvManager {
             }
         }
         for (lease, transfer) in transfers {
-            let page = self
+            let mut page = self
                 .page_mut(lease.page_id)
                 .expect("prefix transfer preflight retained page");
             page.request_refs -= transfer;
@@ -394,6 +395,7 @@ impl CanonicalKvManager {
                 },
             });
         }
+        self.active_prefixes += outputs.len() as u64;
         Ok(outputs.into_boxed_slice())
     }
 
@@ -497,6 +499,8 @@ impl CanonicalKvManager {
             state.evicted = true;
             state.roots = Arc::from([]);
         }
+        self.active_prefixes -= evicted.len() as u64;
+        self.evicted_prefixes += evicted.len() as u64;
         Ok(PrefixEvictionBatch {
             evicted: evicted.into_boxed_slice(),
             retirements: certificates.into_boxed_slice(),
@@ -536,6 +540,7 @@ impl CanonicalKvManager {
                 .remove(prefix.slot, prefix.generation)
                 .expect("prefix recycle preflight retained prefix");
         }
+        self.evicted_prefixes -= prefixes.len() as u64;
         Ok(())
     }
     fn validate_prefix_bundle(

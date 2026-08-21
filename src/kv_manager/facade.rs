@@ -1,8 +1,8 @@
-use super::arena::RuntimeClass;
+use super::arena::{PageMut, RuntimeClass};
 use super::{
     AddressProgram, Arc, Arena, ArenaStats, BTreeMap, BTreeSet, BackendArenaRegistration,
-    BlockDomain, CANONICAL_PAGE_TOKENS, CanonicalKvManager, ClassLayoutProgram, ClassRoot,
-    CompiledKvClass, CompiledKvPlan, FIRST_POOL_EPOCH, ForkedRequest, KvManagerError,
+    BlockDomain, CANONICAL_PAGE_TOKENS, CanonicalKvManager, CensusWork, ClassLayoutProgram,
+    ClassRoot, CompiledKvClass, CompiledKvPlan, FIRST_POOL_EPOCH, ForkedRequest, KvManagerError,
     ManagerConfig, ManagerStats, MaterializedRequestView, NEXT_ENGINE_EPOCH, Ordering, PageCounts,
     PageLease, PagePhase, PageState, PersistentRootEntries, PrefixLease, PrefixLookupHint,
     PrefixSemanticKey, ReclamationLease, RequestForkItem, RequestLease, RequestSnapshot,
@@ -83,6 +83,8 @@ impl CanonicalKvManager {
             page_counts,
             prepared_steps: 0,
             submitted_steps: 0,
+            active_prefixes: 0,
+            evicted_prefixes: 0,
             #[cfg(test)]
             hot_path: HotPathInstrumentation::default(),
         })
@@ -562,57 +564,43 @@ impl CanonicalKvManager {
 
     #[must_use]
     pub fn stats(&self) -> ManagerStats {
-        let (active_prefixes, evicted_prefixes) = self
-            .prefixes
-            .slots
-            .iter()
-            .filter_map(|slot| slot.value.as_ref())
-            .fold((0_u64, 0_u64), |(active, evicted), prefix| {
-                if prefix.evicted {
-                    (active, evicted + 1)
-                } else {
-                    (active + 1, evicted)
-                }
-            });
-        let mut stats = self.page_counts.iter().fold(
-            ManagerStats {
-                active_requests: self.requests.active_len() as u64,
-                active_snapshots: self.snapshots.active_len() as u64,
-                active_prefixes,
-                evicted_prefixes,
-                prepared_steps: self.prepared_steps,
-                submitted_steps: self.submitted_steps,
-                pending_reclamations: self.reclamations.active_len() as u64,
-                ..ManagerStats::default()
-            },
-            |mut stats, counts| {
-                stats.free_pages += counts.free;
-                stats.reserved_pages += counts.reserved;
-                stats.writing_pages += counts.writing;
-                stats.active_pages += counts.active;
-                stats.retiring_pages += counts.retiring;
-                stats.quarantined_pages += counts.quarantined;
-                stats.exhausted_pages += counts.exhausted;
-                stats
-            },
-        );
-        let (writers, request_refs, prefix_refs, reader_pins) = self.pages.iter().fold(
-            (0_u64, 0_u64, 0_u64, 0_u64),
-            |(writers, request_refs, prefix_refs, reader_pins), page| {
-                (
-                    writers + u64::from(page.phase == PagePhase::Live && page.writer.is_some()),
-                    request_refs.saturating_add(u64::from(page.request_refs)),
-                    prefix_refs.saturating_add(u64::from(page.prefix_refs)),
-                    reader_pins.saturating_add(u64::from(page.reader_pins)),
-                )
-            },
-        );
-        stats.writing_pages = writers;
-        stats.active_pages -= writers;
-        stats.total_request_page_refs = request_refs;
-        stats.total_prefix_page_refs = prefix_refs;
-        stats.total_reader_pins = reader_pins;
+        self.stats_impl(None)
+    }
+
+    fn stats_impl(&self, mut work: Option<&mut CensusWork>) -> ManagerStats {
+        let mut stats = ManagerStats {
+            active_requests: self.requests.active_len() as u64,
+            active_snapshots: self.snapshots.active_len() as u64,
+            active_prefixes: self.active_prefixes,
+            evicted_prefixes: self.evicted_prefixes,
+            prepared_steps: self.prepared_steps,
+            submitted_steps: self.submitted_steps,
+            pending_reclamations: self.reclamations.active_len() as u64,
+            ..ManagerStats::default()
+        };
+        for counts in &self.page_counts {
+            if let Some(instrumentation) = work.as_deref_mut() {
+                instrumentation.classes += 1;
+            }
+            stats.free_pages += counts.free;
+            stats.reserved_pages += counts.reserved;
+            stats.writing_pages += counts.writing;
+            stats.active_pages += counts.active - counts.writing;
+            stats.retiring_pages += counts.retiring;
+            stats.quarantined_pages += counts.quarantined;
+            stats.exhausted_pages += counts.exhausted;
+            stats.total_request_page_refs += counts.request_refs;
+            stats.total_prefix_page_refs += counts.prefix_refs;
+            stats.total_reader_pins += counts.reader_pins;
+        }
         stats
+    }
+
+    #[cfg(test)]
+    pub(super) fn stats_instrumented(&self) -> (ManagerStats, CensusWork) {
+        let mut work = CensusWork::default();
+        let stats = self.stats_impl(Some(&mut work));
+        (stats, work)
     }
 
     /// Returns an immutable per-class physical-page census in class-id order.
@@ -623,30 +611,17 @@ impl CanonicalKvManager {
     /// the manager's in-memory page arena, which is an internal invariant.
     #[must_use]
     pub fn arena_stats(&self) -> Box<[ArenaStats]> {
+        self.arena_stats_impl(None)
+    }
+
+    fn arena_stats_impl(&self, mut work: Option<&mut CensusWork>) -> Box<[ArenaStats]> {
         self.classes
             .iter()
             .zip(&self.page_counts)
             .map(|(class, counts)| {
-                let start = usize::try_from(class.first_page_id - 1)
-                    .expect("validated class page range fits usize");
-                let page_count = usize::try_from(class.backend.page_count)
-                    .expect("validated class page count fits usize");
-                let end = start + page_count;
-                let (writers, request_refs, prefix_refs, reader_pins) =
-                    self.pages[start..end].iter().fold(
-                        (0_u64, 0_u64, 0_u64, 0_u64),
-                        |(writers, request_refs, prefix_refs, reader_pins), page| {
-                            (
-                                writers
-                                    + u64::from(
-                                        page.phase == PagePhase::Live && page.writer.is_some(),
-                                    ),
-                                request_refs.saturating_add(u64::from(page.request_refs)),
-                                prefix_refs.saturating_add(u64::from(page.prefix_refs)),
-                                reader_pins.saturating_add(u64::from(page.reader_pins)),
-                            )
-                        },
-                    );
+                if let Some(instrumentation) = work.as_deref_mut() {
+                    instrumentation.classes += 1;
+                }
                 ArenaStats {
                     engine_epoch: self.engine_epoch,
                     pool_epoch: self.pool_epoch,
@@ -657,18 +632,25 @@ impl CanonicalKvManager {
                     first_page_id: class.first_page_id,
                     free_pages: counts.free,
                     reserved_pages: counts.reserved,
-                    writing_pages: writers,
-                    active_pages: counts.active - writers,
+                    writing_pages: counts.writing,
+                    active_pages: counts.active - counts.writing,
                     retiring_pages: counts.retiring,
                     quarantined_pages: counts.quarantined,
                     exhausted_pages: counts.exhausted,
-                    request_page_refs: request_refs,
-                    prefix_page_refs: prefix_refs,
-                    reader_pins,
+                    request_page_refs: counts.request_refs,
+                    prefix_page_refs: counts.prefix_refs,
+                    reader_pins: counts.reader_pins,
                 }
             })
             .collect::<Vec<_>>()
             .into_boxed_slice()
+    }
+
+    #[cfg(test)]
+    pub(super) fn arena_stats_instrumented(&self) -> (Box<[ArenaStats]>, CensusWork) {
+        let mut work = CensusWork::default();
+        let stats = self.arena_stats_impl(Some(&mut work));
+        (stats, work)
     }
 
     pub(super) fn runtime_class(&self, class_id: u16) -> Result<RuntimeClass, KvManagerError> {
@@ -779,14 +761,20 @@ impl CanonicalKvManager {
             .ok_or(KvManagerError::InvalidPage(page_id))
     }
 
-    pub(super) fn page_mut(&mut self, page_id: u32) -> Result<&mut PageState, KvManagerError> {
+    pub(super) fn page_mut(&mut self, page_id: u32) -> Result<PageMut<'_>, KvManagerError> {
         let index = page_id
             .checked_sub(1)
             .and_then(|value| usize::try_from(value).ok())
             .ok_or(KvManagerError::InvalidPage(page_id))?;
-        self.pages
+        let page = self
+            .pages
             .get_mut(index)
-            .ok_or(KvManagerError::InvalidPage(page_id))
+            .ok_or(KvManagerError::InvalidPage(page_id))?;
+        let counts = self
+            .page_counts
+            .get_mut(usize::from(page.class_id))
+            .ok_or(KvManagerError::Invariant("page census class"))?;
+        Ok(PageMut::new(page, counts))
     }
 
     pub(super) fn set_page_phase(
@@ -794,15 +782,6 @@ impl CanonicalKvManager {
         page_id: u32,
         target: PagePhase,
     ) -> Result<(), KvManagerError> {
-        let (class_id, previous) = {
-            let page = self.page(page_id)?;
-            (page.class_id, page.phase)
-        };
-        if std::mem::discriminant(&previous) != std::mem::discriminant(&target) {
-            let counts = &mut self.page_counts[usize::from(class_id)];
-            counts.decrement(previous);
-            counts.increment(target);
-        }
         self.page_mut(page_id)?.phase = target;
         Ok(())
     }
@@ -819,12 +798,14 @@ impl CanonicalKvManager {
                 Some(lease.page_id),
                 "planned page remains class stack head"
             );
-            let page = self
-                .page_mut(lease.page_id)
-                .expect("planned page id remains valid");
-            debug_assert_eq!(page.phase, PagePhase::Free);
-            debug_assert_eq!(page.generation.checked_add(1), Some(lease.generation));
-            page.generation = lease.generation;
+            {
+                let mut page = self
+                    .page_mut(lease.page_id)
+                    .expect("planned page id remains valid");
+                debug_assert_eq!(page.phase, PagePhase::Free);
+                debug_assert_eq!(page.generation.checked_add(1), Some(lease.generation));
+                page.generation = lease.generation;
+            }
             self.set_page_phase(lease.page_id, PagePhase::Reserved { step })
                 .expect("planned page remains valid");
         }

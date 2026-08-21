@@ -200,7 +200,7 @@ fn share_snapshot_for_cow(
     assert_eq!(target_snapshot.boundary, 0);
     assert!(target_snapshot.is_empty());
     for entry in CanonicalKvManager::root_entries(&source_snapshot.roots) {
-        let page = manager.page_mut(entry.page.page_id).expect("fork page");
+        let mut page = manager.page_mut(entry.page.page_id).expect("fork page");
         page.request_refs = page.request_refs.checked_add(1).expect("fork ref count");
     }
     *manager
@@ -538,7 +538,7 @@ fn arena_counts(manager: &CanonicalKvManager) -> Vec<ArenaCounts> {
 fn assert_incremental_census_matches_full_scan(manager: &CanonicalKvManager) {
     let mut scanned = vec![PageCounts::default(); manager.classes.len()];
     for page in &manager.pages {
-        scanned[usize::from(page.class_id)].increment(page.phase);
+        scanned[usize::from(page.class_id)].increment_page(*page);
     }
     assert_eq!(manager.page_counts, scanned);
 
@@ -576,6 +576,8 @@ fn assert_incremental_census_matches_full_scan(manager: &CanonicalKvManager) {
         });
     assert_eq!(stats.active_prefixes, active_prefixes);
     assert_eq!(stats.evicted_prefixes, evicted_prefixes);
+    assert_eq!(manager.active_prefixes, active_prefixes);
+    assert_eq!(manager.evicted_prefixes, evicted_prefixes);
     assert_eq!(
         stats.total_request_page_refs,
         manager

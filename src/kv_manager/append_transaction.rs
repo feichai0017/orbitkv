@@ -530,7 +530,7 @@ impl CanonicalKvManager {
         for (step, prepared, submission, _) in &plans {
             for class_delta in &prepared.delta.classes {
                 if let Some(source) = class_delta.tail_source {
-                    let page = self
+                    let mut page = self
                         .page_mut(source.page.page_id)
                         .expect("batch preflight validated tail source");
                     page.reader_pins += 1;
@@ -541,7 +541,7 @@ impl CanonicalKvManager {
                 if let Some(destination) = class_delta.tail_destination {
                     self.set_page_phase(destination.page.page_id, PagePhase::Live)
                         .expect("batch preflight retained tail destination");
-                    let page = self
+                    let mut page = self
                         .page_mut(destination.page.page_id)
                         .expect("batch preflight validated tail destination");
                     page.reader_pins = 1;
@@ -550,7 +550,7 @@ impl CanonicalKvManager {
                 for entry in class_delta.writes.iter().copied() {
                     self.set_page_phase(entry.page.page_id, PagePhase::Live)
                         .expect("batch preflight retained reserved write");
-                    let page = self
+                    let mut page = self
                         .page_mut(entry.page.page_id)
                         .expect("batch preflight validated reserved write");
                     page.reader_pins = 1;
@@ -1043,7 +1043,7 @@ impl CanonicalKvManager {
         for (_, submitted, _, _, _, _) in &plans {
             for class_delta in &submitted.delta.classes {
                 if let Some(source) = class_delta.tail_source {
-                    let page = self
+                    let mut page = self
                         .page_mut(source.page.page_id)
                         .expect("batch preflight validated submitted tail source");
                     page.reader_pins -= 1;
@@ -1054,7 +1054,7 @@ impl CanonicalKvManager {
                     page.completion_value = receipt.completion_value;
                 }
                 if let Some(destination) = class_delta.tail_destination {
-                    let page = self
+                    let mut page = self
                         .page_mut(destination.page.page_id)
                         .expect("batch preflight validated submitted tail destination");
                     page.reader_pins -= 1;
@@ -1063,7 +1063,7 @@ impl CanonicalKvManager {
                     page.completion_value = receipt.completion_value;
                 }
                 for entry in class_delta.writes.iter() {
-                    let page = self
+                    let mut page = self
                         .page_mut(entry.page.page_id)
                         .expect("batch preflight validated submitted write");
                     page.reader_pins -= 1;

@@ -25,8 +25,8 @@ use arena::{Arena, PageCounts, PagePhase, PageState};
 #[cfg(test)]
 use facade::validate_class_program;
 use manager_state::{
-    ClassDelta, ClassTransition, OperationState, PrefixState, PreparedState, ReclamationState,
-    RequestState, StepDelta, SubmittedState,
+    CensusWork, ClassDelta, ClassTransition, OperationState, PrefixState, PreparedState,
+    ReclamationState, RequestState, StepDelta, SubmittedState,
 };
 use persistent_snapshot::{ClassRoot, PersistentRootEntries, RequestSnapshot, RootEntry};
 #[cfg(test)]

@@ -1,6 +1,34 @@
 use super::*;
 
 #[test]
+fn census_work_is_class_bounded_for_large_page_and_prefix_capacity() {
+    const CAPACITY: u32 = 8_192;
+    let plan = full_plan(CANONICAL_PAGE_TOKENS);
+    let manager = CanonicalKvManager::new(
+        &plan,
+        ManagerConfig {
+            maximum_requests: 4,
+            maximum_operations: 4,
+            maximum_prefixes: CAPACITY,
+            maximum_reclamations: CAPACITY,
+            maximum_step_tokens: 16,
+        },
+        &[backend(0, 230, CAPACITY, 120_000)],
+    )
+    .expect("large census manager");
+
+    let (_stats, stats_work) = manager.stats_instrumented();
+    let (_arenas, arena_work) = manager.arena_stats_instrumented();
+
+    assert_eq!(stats_work.classes, 1);
+    assert_eq!(arena_work.classes, 1);
+    assert_eq!(stats_work.page_slots, 0);
+    assert_eq!(stats_work.prefix_slots, 0);
+    assert_eq!(arena_work.page_slots, 0);
+    assert_eq!(arena_work.prefix_slots, 0);
+}
+
+#[test]
 fn prefix_append_path_copies_only_persistent_tree_spine() {
     const ROOT_PAGES: u32 = 1_024;
     let plan = full_plan(CANONICAL_PAGE_TOKENS);

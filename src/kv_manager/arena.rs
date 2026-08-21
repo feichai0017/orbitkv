@@ -1,4 +1,5 @@
 use crate::plan::RetentionKind;
+use std::ops::{Deref, DerefMut};
 
 use super::error::KvManagerError;
 use super::identity::{ReclamationLease, StepLease, SubmissionLease};
@@ -96,6 +97,9 @@ pub(super) struct PageCounts {
     pub(super) retiring: u64,
     pub(super) quarantined: u64,
     pub(super) exhausted: u64,
+    pub(super) request_refs: u64,
+    pub(super) prefix_refs: u64,
+    pub(super) reader_pins: u64,
 }
 
 impl PageCounts {
@@ -118,6 +122,91 @@ impl PageCounts {
             PagePhase::Quarantined => &mut self.quarantined,
             PagePhase::Exhausted => &mut self.exhausted,
         }
+    }
+
+    pub(super) fn apply_page_change(&mut self, before: PageState, after: PageState) {
+        debug_assert_eq!(before.class_id, after.class_id);
+        if std::mem::discriminant(&before.phase) != std::mem::discriminant(&after.phase) {
+            self.decrement(before.phase);
+            self.increment(after.phase);
+        }
+        Self::replace_total(
+            &mut self.writing,
+            u64::from(before.phase == PagePhase::Live && before.writer.is_some()),
+            u64::from(after.phase == PagePhase::Live && after.writer.is_some()),
+        );
+        Self::replace_total(
+            &mut self.request_refs,
+            u64::from(before.request_refs),
+            u64::from(after.request_refs),
+        );
+        Self::replace_total(
+            &mut self.prefix_refs,
+            u64::from(before.prefix_refs),
+            u64::from(after.prefix_refs),
+        );
+        Self::replace_total(
+            &mut self.reader_pins,
+            u64::from(before.reader_pins),
+            u64::from(after.reader_pins),
+        );
+    }
+
+    #[cfg(test)]
+    pub(super) fn increment_page(&mut self, page: PageState) {
+        self.increment(page.phase);
+        self.writing += u64::from(page.phase == PagePhase::Live && page.writer.is_some());
+        self.request_refs += u64::from(page.request_refs);
+        self.prefix_refs += u64::from(page.prefix_refs);
+        self.reader_pins += u64::from(page.reader_pins);
+    }
+
+    fn replace_total(counter: &mut u64, before: u64, after: u64) {
+        if after >= before {
+            *counter = counter
+                .checked_add(after - before)
+                .expect("page census cannot overflow u64");
+        } else {
+            *counter = counter
+                .checked_sub(before - after)
+                .expect("page census cannot underflow");
+        }
+    }
+}
+
+pub(super) struct PageMut<'a> {
+    page: &'a mut PageState,
+    counts: &'a mut PageCounts,
+    before: PageState,
+}
+
+impl<'a> PageMut<'a> {
+    pub(super) fn new(page: &'a mut PageState, counts: &'a mut PageCounts) -> Self {
+        Self {
+            before: *page,
+            page,
+            counts,
+        }
+    }
+}
+
+impl Deref for PageMut<'_> {
+    type Target = PageState;
+
+    fn deref(&self) -> &Self::Target {
+        self.page
+    }
+}
+
+impl DerefMut for PageMut<'_> {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.page
+    }
+}
+
+impl Drop for PageMut<'_> {
+    fn drop(&mut self) {
+        self.counts.apply_page_change(self.before, *self.page);
     }
 }
 
