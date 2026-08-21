@@ -14,6 +14,7 @@ from .lowering import (
     _run_batch,
 )
 from .prefix_cache import _build_prefix_cache
+from .relocation import _active_forward_lengths
 from .state import _config, _runtime
 from .validation import (
     HOOK_TARGETS,
@@ -40,7 +41,7 @@ def _get_internal_state(
     ):
         raise RuntimeError("manager internal-state arena order changed")
     state["orbitkv_manager"] = {
-        "abi_version": 6,
+        "abi_version": 7,
         "identities": [
             {
                 "engine_epoch": item.engine_epoch,
@@ -133,6 +134,7 @@ def _register() -> None:
         (HOOK_TARGETS[6], _run_batch, HookType.AROUND),
         (HOOK_TARGETS[7], _validate_configurator, HookType.AROUND),
         (HOOK_TARGETS[8], _get_internal_state, HookType.AROUND),
+        (HOOK_TARGETS[9], _active_forward_lengths, HookType.AFTER),
     )
     for target, hook, hook_type in hooks:
         HookRegistry.register(target, hook, hook_type)

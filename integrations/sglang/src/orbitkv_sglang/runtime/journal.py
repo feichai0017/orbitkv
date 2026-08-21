@@ -1,8 +1,6 @@
 from __future__ import annotations
-
 from threading import RLock
 from typing import Any, Hashable, Sequence
-
 from .completion import (
     BatchCompletionReceipt,
     BatchRecord,
@@ -54,6 +52,7 @@ from .page_registry import (
     shadow_identities,
 )
 from .records import MirrorTransaction, RequestRecord
+from .relocation import RelocationRuntimeMixin
 from .snapshot_shadow import (
     AttachedPrefix,
     ForkedRequest,
@@ -74,12 +73,11 @@ from .snapshot_shadow import (
     _positive,
     page_shadow_from_snapshot,
 )
-
 _ZERO_SNAPSHOT = SnapshotLease(0, 0, 0)
-
-
-class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntimeMixin):
-    """Fail-closed host journal around the ABI6 canonical manager."""
+class CanonicalRuntime(
+    IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntimeMixin, RelocationRuntimeMixin
+):
+    """Fail-closed host journal around the ABI7 canonical manager."""
 
     def __init__(self, config: Any, manager: ManagerProtocol):
         if not isinstance(manager, ManagerProtocol):
@@ -1005,6 +1003,13 @@ class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntime
             group.records, records, output.completions, cursor_deltas, strict=True
         ):
             cursor_delta.apply(record.cursor.pages)
+            record.cursor.layout_boundaries.update(cursor_delta.layout_boundaries)
+            step_tokens = (
+                pending.prepared.target_boundary
+                - pending.prepared.previous_boundary
+            )
+            for class_id in tuple(record.cursor.active_kv_lengths):
+                record.cursor.active_kv_lengths[class_id] += step_tokens
             record.cursor.snapshot = completion.published_snapshot
             record.cursor.view_version = completion.published_view_version
             record.cursor.boundary = completion.published_boundary
@@ -1040,7 +1045,11 @@ class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntime
                 raise ManagerError("release changed request or snapshot identity")
             projection = dict(record.cursor.pages)
             detached = self._apply_detached(
-                projection, {}, release.detached, record.boundary
+                projection,
+                {},
+                release.detached,
+                record.boundary,
+                record.cursor.layout_boundaries,
             )
             if projection or len(detached) != len(record.cursor.pages):
                 raise ManagerError("release did not detach the whole request view")
@@ -1092,6 +1101,7 @@ class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntime
         candidates: dict[tuple[int, int], PageShadow],
         bindings: Sequence[DetachedBinding],
         resident_boundary: int,
+        layout_boundaries: dict[int, int] | None = None,
     ) -> tuple[PageShadow, ...]:
         previous_key: tuple[int, int, int, int, int] | None = None
         detached: list[PageShadow] = []
@@ -1126,7 +1136,7 @@ class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntime
                 or item.token_end_exclusive
                 != min(
                     (item.logical_ordinal + 1) * self.page_tokens,
-                    resident_boundary,
+                    (layout_boundaries or {}).get(item.class_id, resident_boundary),
                 )
             ):
                 raise ManagerError("detached binding does not match the shadow view")
@@ -1213,7 +1223,7 @@ class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntime
         previous: tuple[int, ...] | None = None
         for certificate in certificates:
             # Completion uses its transition key; page-owner release/eviction
-            # uses the PageLease BTree key.  Both suffixes use PageLease's ABI6
+            # uses the PageLease BTree key. Both suffixes use PageLease's ABI7
             # repr/Ord field order, never a backend-local page-number order.
             page_key = (
                 certificate.page.engine_epoch,
@@ -1486,12 +1496,4 @@ class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntime
             ):
                 raise ManagerError("cannot destroy a manager with live requests")
             self.manager.destroy()
-
-
-__all__ = [
-    "BatchRecord",
-    "CanonicalRuntime",
-    "RequestRecord",
-    "StepPhase",
-    "StepRecord",
-]
+__all__ = ["BatchRecord", "CanonicalRuntime", "RequestRecord", "StepPhase", "StepRecord"]

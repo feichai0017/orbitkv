@@ -40,6 +40,13 @@ _COUNTER_NAMES = (
     "mirror_validation_calls",
     "mirror_syncs",
     "prefix_global_alias_scans",
+    "token_disposition_batches",
+    "token_policy_evictions",
+    "relocation_batches",
+    "relocation_moves",
+    "relocation_reclaimed_pages",
+    "relocation_copy_events",
+    "relocation_copy_tokens",
 )
 _COUNTERS = {name: 0 for name in _COUNTER_NAMES}
 

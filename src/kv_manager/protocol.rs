@@ -148,6 +148,9 @@ pub struct ClassLowering {
     pub reserved: u32,
 }
 
+/// The class root uses packed physical ordinals after token relocation.
+pub const CLASS_LOWERING_PACKED: u16 = 1;
+
 /// One exact manager-selected page that must be bound before submission.
 ///
 /// The owning class and logical ordinal are derived from the canonical class

@@ -553,24 +553,6 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
             .is_none_or(|location| !prepared.plan.source_pages.contains(&location.page))
     }));
     assert!(matches!(
-        manager.prepare_batch(&[PrepareBatchItem {
-            request,
-            expected_head: publication.snapshot,
-            target_boundary: 49,
-        }]),
-        Err(KvManagerError::UnsupportedProfile(_))
-    ));
-    let extra = manager.acquire_request_leases_for_test(1).unwrap()[0];
-    assert!(matches!(
-        manager.fork_requests_batch(&[RequestForkItem {
-            source_request: request,
-            expected_source_head: publication.snapshot,
-            target_empty_request: extra,
-            expected_target_head: manager.request(extra).unwrap().head,
-        }]),
-        Err(KvManagerError::UnsupportedProfile(_))
-    ));
-    assert!(matches!(
         manager.publish_prefix_batch(&[PrefixPublishItem {
             request,
             expected_head: publication.snapshot,
@@ -578,23 +560,77 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
         }]),
         Err(KvManagerError::UnsupportedProfile(_))
     ));
-    let stats = manager.stats();
-    assert_eq!(stats.retiring_pages, 3);
-    assert_eq!(stats.active_pages, 2);
     manager
         .acknowledge_reclamations_batch(&reclamation_receipts(&output.retirements))
         .unwrap();
+    let appended = append_step(&mut manager, request, 49);
+    assert_eq!(appended.publication.boundary, 49);
+    let appended_view = manager
+        .token_views_batch(&[TokenViewQuery {
+            request,
+            expected_snapshot: appended.publication.snapshot,
+            class_id: 0,
+        }])
+        .unwrap()[0]
+        .clone();
+    assert_eq!(appended_view.placements.len(), 49);
+    let newest = appended_view.placements[48];
+    assert!(newest.disposition.retained());
+    let newest_location = newest.location.unwrap();
+    assert_eq!(newest_location.offset, 8);
+    assert_eq!(newest_location.page, prepared.plan.destination_pages[1]);
+    let appended = append_step(&mut manager, request, 65);
+    let appended_view = manager
+        .token_views_batch(&[TokenViewQuery {
+            request,
+            expected_snapshot: appended.publication.snapshot,
+            class_id: 0,
+        }])
+        .unwrap()[0]
+        .clone();
+    assert_eq!(appended_view.placements.len(), 65);
+    assert_eq!(
+        appended_view
+            .placements
+            .iter()
+            .filter(|placement| placement.disposition.retained())
+            .count(),
+        41
+    );
+    let newest_location = appended_view.placements[64].location.unwrap();
+    assert_eq!(newest_location.offset, 8);
+    assert!(
+        !prepared
+            .plan
+            .destination_pages
+            .contains(&newest_location.page)
+    );
+    let extra = manager.acquire_request_leases_for_test(1).unwrap()[0];
+    assert!(matches!(
+        manager.fork_requests_batch(&[RequestForkItem {
+            source_request: request,
+            expected_source_head: appended.publication.snapshot,
+            target_empty_request: extra,
+            expected_target_head: manager.request(extra).unwrap().head,
+        }]),
+        Err(KvManagerError::UnsupportedProfile(_))
+    ));
+    let stats = manager.stats();
+    assert_eq!(stats.retiring_pages, 0);
+    assert_eq!(stats.active_pages, 3);
     let release = manager
         .release_batch(&[ReleaseBatchItem {
             request,
-            expected_head: publication.snapshot,
+            expected_head: appended.publication.snapshot,
         }])
         .unwrap();
-    assert_eq!(release.retirements.len(), 2);
+    assert_eq!(release.retirements.len(), 3);
     assert_eq!(release.retirements[0].token_begin, 0);
     assert_eq!(release.retirements[0].token_end_exclusive, 16);
     assert_eq!(release.retirements[1].token_begin, 16);
-    assert_eq!(release.retirements[1].token_end_exclusive, 24);
+    assert_eq!(release.retirements[1].token_end_exclusive, 32);
+    assert_eq!(release.retirements[2].token_begin, 32);
+    assert_eq!(release.retirements[2].token_end_exclusive, 41);
     manager
         .acknowledge_reclamations_batch(&reclamation_receipts(&release.retirements))
         .unwrap();

@@ -6,8 +6,8 @@ the exact source, ABI, engine, hardware, commands, and outputs bound by its
 manifest.
 
 The live tree is ABI7. Its Rust core, exact 29-symbol C wire, Python runtime,
-SGLang Prefix adapter, and host relocation transaction are L2. SGLang
-relocation and all ABI7 H20 qualification remain pending. Every record below
+SGLang Prefix adapter, host relocation transaction, and Full-only eager engine
+seams are L2. All ABI7 H20 qualification remains pending. Every record below
 predates ABI7 and therefore remains historical.
 
 ## Latest engine record

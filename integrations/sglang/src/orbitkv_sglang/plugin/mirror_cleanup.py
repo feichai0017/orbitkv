@@ -168,6 +168,30 @@ class _MirrorCleanupCoordinator:
             if prefix_count > boundary:
                 raise RuntimeError("SGLang prefix mirror exceeds its KV boundary")
             retention_frontier = 0
+            compact_locations = getattr(req, "_orbitkv_retained_locations", None)
+            compact_release = compact_locations is not None and item.releasing
+            if compact_release:
+                if (
+                    prefix_count != 0
+                    or not isinstance(compact_locations, tuple)
+                    or not compact_locations
+                    or len(compact_locations) > boundary
+                    or any(
+                        isinstance(location, bool)
+                        or not isinstance(location, Integral)
+                        or int(location) <= 0
+                        for location in compact_locations
+                    )
+                ):
+                    raise RuntimeError("compact release metadata is invalid")
+                compact_view = mirror[: len(compact_locations)]
+                expected_compact = torch.tensor(
+                    compact_locations, dtype=torch.int64, device=table.device
+                )
+                checks.append(
+                    torch.all(compact_view.to(torch.int64) == expected_compact)
+                )
+                zero_views.append(compact_view)
             candidates = tuple(item.candidates)
             candidate_by_class_ordinal: dict[tuple[int, int], Any] = {}
             for candidate in candidates:
@@ -354,6 +378,8 @@ class _MirrorCleanupCoordinator:
                 )
 
                 if primary is not None and detached.class_id == primary.class_id:
+                    if compact_release:
+                        continue
                     if detached_key not in retiring_primary_sources:
                         target = mirror[begin:end].to(dtype=torch.int64)
                         expected = (

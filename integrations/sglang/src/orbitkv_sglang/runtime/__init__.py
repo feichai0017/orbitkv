@@ -19,6 +19,7 @@ from .identity import (
     DETACHED_REPLACE,
     DETACHED_REQUEST_RELEASE,
     DETACHED_RETENTION,
+    CLASS_LOWERING_PACKED,
     TAIL_COPY_ON_WRITE,
     TAIL_FRESH,
     TAIL_IN_PLACE,
@@ -82,6 +83,7 @@ from .reclamation import (
     ReleaseCompletion,
     reclamation_receipts,
 )
+from .relocation import DispositionPublication, RelocationPublication
 from .snapshot_shadow import (
     AttachedPrefix,
     ClassLowering,
@@ -122,6 +124,7 @@ __all__ = [
     "BatchRecord",
     "CanonicalRuntime",
     "ClassLowering",
+    "CLASS_LOWERING_PACKED",
     "ClassLoweringSpec",
     "ClassTokenDispositionUpdate",
     "CompletedRelocationBatch",
@@ -134,6 +137,7 @@ __all__ = [
     "DETACHED_REQUEST_RELEASE",
     "DETACHED_RETENTION",
     "DetachedBinding",
+    "DispositionPublication",
     "EvictedPrefix",
     "FailStopped",
     "ForkedRequest",
@@ -170,6 +174,7 @@ __all__ = [
     "RelocationCopyReceipt",
     "RelocationLease",
     "RelocationPolicy",
+    "RelocationPublication",
     "RelocationUnobservedReceipt",
     "ReleaseBatchCompletion",
     "ReleaseBatchItem",

@@ -48,13 +48,14 @@ pub use identity::{
 pub use manager_state::CanonicalKvManager;
 pub use protocol::{
     ArenaStats, AttachedPrefix, BackendArenaRegistration, BackendBindReceipt, BackendCopyReceipt,
-    BackendUnobservedReceipt, BatchCompletionReceipt, ClassLowering, CompletionBatch, CopyIntent,
-    DetachedAction, DetachedBinding, DetachedReason, EvictedPrefix, ForkedRequest, ManagerConfig,
-    ManagerStats, MaterializedRequestView, PrefixAttachItem, PrefixEvictionBatch, PrefixLookupHint,
-    PrefixPublishItem, PrefixPublishRelease, PrepareBatchItem, PreparedStep, PublishedPrefix,
-    PublishedReceipt, ReclamationCertificate, ReclamationReceipt, ReleaseBatchCompletion,
-    ReleaseBatchItem, ReleaseCompletion, RequestForkItem, RequestView, SnapshotPage,
-    StepCompletion, SubmitBatchItem, SubmittedStep, TailAction, TailActionKind, WriteIntent,
+    BackendUnobservedReceipt, BatchCompletionReceipt, CLASS_LOWERING_PACKED, ClassLowering,
+    CompletionBatch, CopyIntent, DetachedAction, DetachedBinding, DetachedReason, EvictedPrefix,
+    ForkedRequest, ManagerConfig, ManagerStats, MaterializedRequestView, PrefixAttachItem,
+    PrefixEvictionBatch, PrefixLookupHint, PrefixPublishItem, PrefixPublishRelease,
+    PrepareBatchItem, PreparedStep, PublishedPrefix, PublishedReceipt, ReclamationCertificate,
+    ReclamationReceipt, ReleaseBatchCompletion, ReleaseBatchItem, ReleaseCompletion,
+    RequestForkItem, RequestView, SnapshotPage, StepCompletion, SubmitBatchItem, SubmittedStep,
+    TailAction, TailActionKind, WriteIntent,
 };
 pub use token_virtualization::{
     ClassTokenDispositionUpdate, CompletedRelocationBatch, CompletedRelocationItem,
@@ -64,7 +65,7 @@ pub use token_virtualization::{
     TokenDispositionUpdate, TokenLocation, TokenMove, TokenPlacement, TokenView, TokenViewQuery,
     apply_token_relocation, mark_token_dispositions, plan_token_relocation, validate_token_view,
 };
-use token_virtualization::{PersistentTokenTable, apply_dense_class_transition};
+use token_virtualization::{PersistentTokenTable, apply_class_transition};
 
 const CANONICAL_PAGE_TOKENS: u64 = 16;
 const FIRST_POOL_EPOCH: u64 = 1;

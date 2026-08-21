@@ -5,6 +5,7 @@ from enum import Enum, auto
 from typing import Any, Hashable, Mapping, Sequence
 
 from .identity import (
+    CLASS_LOWERING_PACKED,
     DETACHED_CLEAR,
     DETACHED_COPY_ON_WRITE,
     DETACHED_REPLACE,
@@ -151,6 +152,7 @@ class CursorDelta:
     transient: tuple[PageShadow, ...]
     retired_transient: tuple[PageShadow, ...]
     detached: tuple[PageShadow, ...]
+    layout_boundaries: tuple[tuple[int, int], ...]
 
     def apply(self, pages: dict[tuple[int, int], PageShadow]) -> None:
         for shadow in self.removed:
@@ -199,9 +201,23 @@ def completion_cursor_delta(
     expected_resident_count = 0
     for class_config in classes:
         class_id = int(class_config.class_id)
-        old_end = (pending.prepared.previous_boundary + page_tokens - 1) // page_tokens
-        new_end = (pending.prepared.target_boundary + page_tokens - 1) // page_tokens
-        if class_config.retention == "full":
+        lowering = pending.prepared.class_lowerings[class_id]
+        if lowering.class_id != class_id:
+            raise ManagerError("completion class lowerings are not canonical")
+        packed = lowering.flags == CLASS_LOWERING_PACKED
+        if lowering.flags not in (0, CLASS_LOWERING_PACKED):
+            raise ManagerError("completion class lowering flags are invalid")
+        old_layout_boundary = cursor.layout_boundaries.get(
+            class_id, pending.prepared.previous_boundary
+        )
+        if packed and class_id not in cursor.layout_boundaries:
+            raise ManagerError("packed completion lacks a layout boundary")
+        new_layout_boundary = old_layout_boundary + (
+            pending.prepared.target_boundary - pending.prepared.previous_boundary
+        )
+        old_end = (old_layout_boundary + page_tokens - 1) // page_tokens
+        new_end = (new_layout_boundary + page_tokens - 1) // page_tokens
+        if packed or class_config.retention == "full":
             old_start = new_start = 0
         elif class_config.retention == "sliding":
             window = int(class_config.window_tokens)
@@ -332,6 +348,19 @@ def completion_cursor_delta(
             candidate for key, candidate in candidates.items() if key not in added
         ),
         tuple(detached),
+        tuple(
+            (
+                int(class_config.class_id),
+                cursor.layout_boundaries.get(
+                    int(class_config.class_id), pending.prepared.previous_boundary
+                )
+                + (
+                    pending.prepared.target_boundary
+                    - pending.prepared.previous_boundary
+                ),
+            )
+            for class_config in classes
+        ),
     )
 
 
@@ -639,7 +668,7 @@ class CompletionRuntimeMixin:
     @staticmethod
     def _validate_batch_record(batch: BatchRecord) -> None:
         if not isinstance(batch, BatchRecord):
-            raise ManagerError("operation requires one ABI6 batch journal")
+            raise ManagerError("operation requires one ABI7 batch journal")
         if len({id(record) for record in batch.records}) != len(batch.records):
             raise ManagerError("step batch contains a duplicate record")
         if len(set(batch.keys)) != len(batch.keys):
