@@ -1,6 +1,19 @@
 use super::*;
 
 #[test]
+fn destroy_releases_an_exclusively_owned_nonquiescent_handle() {
+    let mut error = [0; 256];
+    let handle = create(&mut error);
+    let acquired = acquire(handle, 1, &mut error);
+    assert_eq!(acquired.len(), 1);
+    assert_eq!(stats(handle, &mut error).active_requests, 1);
+    assert_eq!(
+        unsafe { orbitkv_manager_destroy(handle, error.as_mut_ptr(), error.len()) },
+        ORBITKV_STATUS_OK
+    );
+}
+
+#[test]
 fn semantic_bind_and_copy_faults_report_known_fail_stopped_quarantine() {
     assert_semantic_submit_fault_is_fail_stopped(|bind_receipts, _| {
         bind_receipts

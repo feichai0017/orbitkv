@@ -26,8 +26,7 @@ extern "C" {
  * - FAIL_STOPPED means the call performed a known fail-closed quarantine
  *   mutation after semantic backend-receipt validation failed. The caller
  *   must permanently stop manager lifecycle/allocation work and must not
- *   retry or reuse the handle. Only stats and a destroy attempt are allowed;
- *   destroy can return MANAGER_ERROR while quarantined state is non-quiescent.
+ *   retry or reuse the handle. Only stats and destroy are allowed.
  * - PANIC means the call outcome is unknown. The caller must permanently
  *   fail-stop, must not retry the operation, and must not reuse the manager
  *   handle for lifecycle or allocation work. Destruction is the only allowed
@@ -949,6 +948,12 @@ int32_t orbitkv_manager_stats(
     OrbitKvManagerHandle *manager, OrbitKvManagerStats *out_stats,
     char *error_buffer, size_t error_buffer_len);
 
+/*
+ * Exclusively destroys the handle and discards any remaining host authority.
+ * Healthy callers must first verify quiescence with orbitkv_manager_stats.
+ * Fail-stopped callers use this operation to release an otherwise
+ * non-quiescent or outcome-unknown handle; no lifecycle work is implied.
+ */
 int32_t orbitkv_manager_destroy(
     OrbitKvManagerHandle *manager, char *error_buffer,
     size_t error_buffer_len);

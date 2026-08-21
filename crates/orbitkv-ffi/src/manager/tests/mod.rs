@@ -399,12 +399,8 @@ fn assert_semantic_submit_fault_is_fail_stopped(
     assert!(after.quarantined_pages > before.quarantined_pages);
     assert_eq!(
         unsafe { orbitkv_manager_destroy(handle, error.as_mut_ptr(), error.len()) },
-        ORBITKV_STATUS_MANAGER_ERROR
+        ORBITKV_STATUS_OK
     );
-
-    // The public destroy attempt intentionally retains a non-quiescent
-    // fail-stopped handle. Unit-test teardown drops only host metadata.
-    unsafe { drop(Box::from_raw(handle)) };
 }
 
 struct CompletedBuffers {

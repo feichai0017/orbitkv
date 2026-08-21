@@ -1,11 +1,10 @@
 use super::{
     BackendArenaRegistration, CanonicalKvManager, KvPlanInput, MAX_PLAN_JSON_BYTES, Mutex,
     ORBITKV_ABI_VERSION, ORBITKV_STATUS_BUFFER_TOO_SMALL, ORBITKV_STATUS_INVALID_ARGUMENT,
-    ORBITKV_STATUS_MANAGER_ERROR, ORBITKV_STATUS_OK, OrbitKvArenaIdentity, OrbitKvArenaStats,
-    OrbitKvBackendArenaRegistration, OrbitKvManagerConfig, OrbitKvManagerHandle,
-    OrbitKvManagerStats, c_char, compile_plan, core_error, ffi_boundary, input_slice, invalid,
-    invalid_pair, lock_manager, manager_ref, preflight_output, required_ref, slice, u32_len,
-    write_copy_slice,
+    ORBITKV_STATUS_OK, OrbitKvArenaIdentity, OrbitKvArenaStats, OrbitKvBackendArenaRegistration,
+    OrbitKvManagerConfig, OrbitKvManagerHandle, OrbitKvManagerStats, c_char, compile_plan,
+    core_error, ffi_boundary, input_slice, invalid, invalid_pair, lock_manager, manager_ref,
+    preflight_output, required_ref, slice, u32_len, write_copy_slice,
 };
 
 #[unsafe(no_mangle)]
@@ -225,7 +224,11 @@ pub unsafe extern "C" fn orbitkv_manager_stats(
     })
 }
 
-/// Destroys a quiescent manager. Null is a successful no-op.
+/// Destroys an exclusively owned manager. Null is a successful no-op.
+///
+/// Destruction discards all remaining host-side authority, including
+/// quarantined or outcome-unknown state. Callers that require a clean
+/// lifecycle must verify quiescence with `orbitkv_manager_stats` first.
 ///
 /// # Safety
 /// A non-null handle must be live and exclusively owned by the caller.
@@ -238,29 +241,6 @@ pub unsafe extern "C" fn orbitkv_manager_destroy(
     ffi_boundary(error_buffer, error_buffer_len, || {
         if manager.is_null() {
             return Ok(ORBITKV_STATUS_OK);
-        }
-        let handle = unsafe { manager_ref(manager) }?;
-        let stats = lock_manager(handle)?.stats();
-        if stats.active_requests != 0
-            || stats.active_snapshots != 0
-            || stats.active_prefixes != 0
-            || stats.evicted_prefixes != 0
-            || stats.prepared_steps != 0
-            || stats.submitted_steps != 0
-            || stats.reserved_pages != 0
-            || stats.writing_pages != 0
-            || stats.active_pages != 0
-            || stats.retiring_pages != 0
-            || stats.quarantined_pages != 0
-            || stats.pending_reclamations != 0
-            || stats.total_request_page_refs != 0
-            || stats.total_prefix_page_refs != 0
-            || stats.total_reader_pins != 0
-        {
-            return Err((
-                ORBITKV_STATUS_MANAGER_ERROR,
-                "manager is not quiescent; handle was not destroyed".to_owned(),
-            ));
         }
         unsafe { drop(Box::from_raw(manager)) };
         Ok(ORBITKV_STATUS_OK)
