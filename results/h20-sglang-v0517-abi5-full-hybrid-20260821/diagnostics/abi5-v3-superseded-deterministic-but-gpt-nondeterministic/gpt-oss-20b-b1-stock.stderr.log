@@ -1,0 +1,4 @@
+mxfp4 quantization is not fully optimized yet. The speed can be slower than non-quantized models.
+Detected GPT-OSS model, enabling triton_kernels MOE kernel.
+Sampling backend is set to pytorch for deterministic inference.
+Multi-thread loading shards:   0% Completed | 0/3 [00:00<?, ?it/s]Multi-thread loading shards: 100% Completed | 3/3 [00:00<00:00, 229.04it/s]

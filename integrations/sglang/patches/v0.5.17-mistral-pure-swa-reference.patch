@@ -1,0 +1,49 @@
+diff --git a/python/sglang/srt/configs/model_config.py b/python/sglang/srt/configs/model_config.py
+index 15b84ed239cda07269d306f95d230482a3a32c01..195bd1964f0901fc2538862fd58f625f195b9ca9 100644
+--- a/python/sglang/srt/configs/model_config.py
++++ b/python/sglang/srt/configs/model_config.py
+@@ -1991,6 +1991,7 @@ def is_hybrid_swa_model(
+ ):
+ 
+     hybrid_swa_archs = {
++        "MistralForCausalLM",
+         "Llama4ForConditionalGeneration",
+         "DeepseekV4ForCausalLM",
+         "DeepseekV4ForCausalLMNextN",
+@@ -2031,7 +2032,10 @@ def get_hybrid_layer_ids(
+     hf_text_config: PretrainedConfig,
+ ):
+     num_hidden_layers = hf_text_config.num_hidden_layers
+-    if "Llama4ForConditionalGeneration" in model_architectures:
++    if "MistralForCausalLM" in model_architectures:
++        swa_attention_layer_ids = list(range(num_hidden_layers))
++        full_attention_layer_ids = []
++    elif "Llama4ForConditionalGeneration" in model_architectures:
+         swa_attention_layer_ids = [
+             i for i in range(num_hidden_layers) if (i + 1) % 4 != 0
+         ]
+diff --git a/python/sglang/srt/models/mistral.py b/python/sglang/srt/models/mistral.py
+index f97ba66bc06f97ec843474984a5e103a90c8828f..b24e80dd134aadaa1d29edff9a7b7c92f7d456cb 100644
+--- a/python/sglang/srt/models/mistral.py
++++ b/python/sglang/srt/models/mistral.py
+@@ -28,7 +28,19 @@ logger = logging.getLogger(__name__)
+ 
+ 
+ class MistralForCausalLM(LlamaForCausalLM):
+-    pass
++    def __init__(self, *args, **kwargs):
++        super().__init__(*args, **kwargs)
++        window_left = self.get_attention_sliding_window_size()
++        for layer_id in range(self.model.start_layer, self.model.end_layer):
++            self.model.layers[
++                layer_id
++            ].self_attn.attn.sliding_window_size = window_left
++
++    def get_attention_sliding_window_size(self) -> int:
++        sliding_window = int(self.config.sliding_window)
++        if sliding_window <= 0:
++            raise ValueError("Mistral sliding_window must be positive")
++        return sliding_window - 1
+ 
+ 
+ class MistralForCausalLMMistralFormat(MistralForCausalLM):

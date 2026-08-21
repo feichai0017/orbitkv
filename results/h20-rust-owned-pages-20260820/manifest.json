@@ -1,0 +1,25 @@
+{
+  "base_source_commit": "e1b90eada4ce4e347735bdb572809a649d09f350",
+  "date": "2026-08-20",
+  "records": {
+    "results/h20-rust-owned-pages-20260820/README.md": "492845ea961a6cc53a2bcb6724d9fad5be4d650b4c60a91fec9e8c34b15e7c69",
+    "results/h20-rust-owned-pages-20260820/summary.json": "9f320714f5238c276c6c3d7f9c3ab6a4edc70c0986287b4d1467f868d8f00414"
+  },
+  "source_provenance_amendment": "results/h20-rust-owned-pages-20260820/provenance-amendment.json",
+  "source_provenance_amendment_sha256": "132692a39bfd90de7a287d25b4ffd2c50ead862ccedb3629d257715b990abeee",
+  "schema": "orbitkv.h20-rust-owned-pages-manifest.v1",
+  "sources": {
+    "crates/orbitkv-ffi/include/orbitkv_owner.h": "b88fbb42c2026f76b8cc5a93e619da4ba6db320bc83f1fcfd112729ef9595952",
+    "crates/orbitkv-ffi/src/dense.rs": "1658f8e6543324989903f34df0e697b1645924aeaac8c0ee6fa506e5fe5131d3",
+    "crates/orbitkv-ffi/tests/header_smoke.c": "d28386adedeeb07df3291bb5f7212e8e84c53dbae21bf9d31df2b3d2e6867244",
+    "docs/capability-matrix.md": "df5021f6041fe94321044779f8349648e43e3e194605cabfff2cdb72a7a2905e",
+    "integrations/sglang/src/orbitkv_sglang/plugin.py": "842272f4868431baf7244852e6177cbb0625802f6a9f620a64355009d6306108",
+    "integrations/sglang/tests/test_shadow_plugin.py": "51c7c20cb9f386dc50f935926366df072fde20a3e310d7e522be3b734e021838",
+    "results/README.md": "3fd0f5edd16f0b10dcfe80a8c2c4471d33d9b849e28b40050b94fce0652c14a8",
+    "src/lib.rs": "510946a8f1cf65c7e9a72b9cea220399fb5ae07202fa1138ac3fd8b5f7562f8c",
+    "src/physical_page_pool.rs": "0a7cf8049a92625aad0f11da75ef9415eb7e9dad35e327f7278df42fa636d18c"
+  },
+  "workspace_sections": [
+    "records"
+  ]
+}

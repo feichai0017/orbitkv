@@ -1,104 +1,132 @@
 # OrbitKV
 
-**Compile attention retention semantics into KV block plans.**
+OrbitKV compiles attention-retention semantics into a generation-checked KV
+page manager. It is designed to own page choice, immutable request snapshots,
+Prefix references, GPU completion pins, and reclamation while an inference
+engine continues to own tensor allocation, scheduling, kernels, and model
+execution.
 
-OrbitKV is a Rust attention-state compiler and KV block manager. It generates
-address programs, memory policies, immutable views, and proof-carrying
-reclamation. SGLang is the first external validator.
+OrbitKV is still developed with breaking interfaces. There is one live core,
+one typed C wire, and no compatibility loader for superseded lifecycle ABIs.
 
-## Capability boundary
+## Current boundary
 
-OrbitKV separates compiler support, reference execution, GPU primitives,
-engine end-to-end qualification, and production qualification. The normative
-matrix is [`docs/capability-matrix.md`](docs/capability-matrix.md).
+The live tree is **ABI6**:
 
-Current L4 paths include pinned-SGLang Full+SWA ownership, page16 pure-SWA
-paged-periodic execution, and pure-SWA plus Full+SWA Continuation Capsule
-hydration. Sink+Sliding, Same-Chunk, and per-head lifetime normalization remain
-L2 reference-runtime capabilities. CUDA VMM remains an L3 primitive and does
-not back SGLang KV tensors.
+- the modular Rust host core is L2 GO for immutable snapshots, shared-page
+  references, request fork, page-aligned Prefix lookup/publish/attach/evict,
+  Full+SWA joint copy-on-write, and page-owned reclamation;
+- the typed, batch-only C wire is L2 GO with exactly 23 exported
+  `orbitkv_*` symbols, C/C++ layout checks, short-buffer zero-mutation checks,
+  and no ABI5 scalar-named lifecycle aliases; and
+- the split ABI6 Python FFI/runtime and SGLang `OrbitKVPrefixCache` are L2 GO
+  on the host against the release library and pinned official `v0.5.17`
+  source contract. No ABI6 H20 Prefix result exists yet.
 
-Capsule metadata is conditionally published into one Holt tree after its
-immutable, content-addressed KV payload is durable. Payloads are files rather
-than Holt values, so they are not constrained by Holt's metadata-size limit.
-Unsupported or unprovable semantics fail closed or fall back to unbounded Full
-state.
+The latest engine evidence is an immutable **historical ABI5-v5** snapshot,
+not evidence for ABI6. Its exact `9233c06d…` source closure has scoped L4
+correctness on one H20 against official SGLang `v0.5.17`, peeled commit
+`29481685462732237d80d86076d6563e1f658102`.
 
-## Key results
+The normative current/historical distinction is in the
+[Capability Matrix](docs/capability-matrix.md).
 
-| Result | Value | Boundary |
-| --- | ---: | --- |
-| GPT-OSS Full capacity | +25.81% | same 1.979 GiB KV budget |
-| GPT-OSS Owner vs Stock128 | -20.30% | 8×6K prompt workload |
-| Mistral KV slots | -61.696% | page16, 4×12K, same output digest |
-| Mistral median runtime | 0.9855× | decode Graph, same output digest |
-| Pure-SWA Capsule | -37.65% | 16K logical prefix, 1K live tail |
-| Hybrid Capsule | -19.74% | GPT-OSS 20B, 16K Full + 128-token SWA tail |
-| Physical-plan predictions | 4/4 | intervals 16/32/64/128 |
-| Multi-scale head KV | -42.105% | exact geometry |
+## Architecture
 
-All GPT-OSS output-token digests matched. The capacity gain is reproducible by
-manually setting SGLang interval 32; OrbitKV contributes automatic plan
-synthesis and auditable ownership.
-
-## Quick start
-
-```bash
-cargo test --all-targets
-
-cargo run -- analyze-retention \
-  examples/chunked_local_retention.json
-
-cargo run -- analyze-lifetime-normalization \
-  examples/multi_scale_head_windows.json
-
-cargo run -- compile-hf-config /path/to/config.json \
-  --page-tokens 16 --kv-dtype-bytes 2
-
-cargo run -- compile-hf-state-plan /path/to/config.json \
-  --page-tokens 1 --kv-dtype-bytes 2 --boundary 32768 \
-  --max-running-requests 4 --chunked-prefill-tokens 2048 \
-  --eviction-interval 128 --decode-headroom-tokens 32 \
-  --cuda-graph-mode disabled
+```text
+compiled retention plan
+          |
+          v
+CanonicalKvManager                         sole ownership authority
+  identity + arena                         generations and physical pages
+  persistent snapshot                     immutable request roots
+  append transaction                      prepare / submit / complete / COW
+  Prefix                                  lookup / publish / attach / evict
+  reclamation                             detach / certificate / ACK / recycle
+          |
+          | compact leases, intents, copies, detached bindings, certificates
+          v
+ABI6 C wire                                exact 23-symbol batch surface
+          |
+          v
+Python runtime + SGLang adapter            host-qualified Prefix/COW path
+          |
+          v
+ReqToToken / class LUT mirrors             checked mirrors, never authorities
+          |
+          v
+FlashInfer / FA3 / engine KV tensor arenas
 ```
 
-Unified runtime artifact:
+Requests hold generation-checked `SnapshotLease` heads. Snapshot class roots
+are immutable persistent trees, so append work is proportional to changed
+pages rather than total resident pages. Physical pages carry request refs,
+Prefix refs, reader pins, writer state, and generation. A page is reusable
+only after every reference is gone and an exact reclamation receipt is
+acknowledged.
+
+If a shared or pinned partial tail must be extended, the manager emits an
+exact copy intent and publishes the new root only after the backend proves
+that the copy was observed, completed, and ordered before new writes. For a
+Hybrid request, partial Full and SWA tails enter the same joint-COW decision.
+
+See [Standalone KV Manager Architecture](docs/standalone-kv-manager-architecture.md)
+for the invariants and module boundaries.
+
+## What is proven
+
+| Surface | Status | Boundary |
+| --- | --- | --- |
+| ABI6 Rust core | L2 GO | Host unit, property, fault, stale-lease, Prefix, fork, COW, and reclamation tests |
+| ABI6 C wire | L2 GO | Exact 23 symbols, C/C++ layouts, batch atomicity, short-buffer and malformed-receipt gates |
+| ABI6 Python/SGLang | L2 GO | Exact ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, mirror cleanup, fail-stop, and teardown host gates |
+| ABI6 H20 Prefix | Pending | No engine run may inherit ABI5 evidence |
+| Frozen ABI5-v5 | Historical scoped L4 | Qwen Full and GPT-OSS Full+SWA B1/B4 correctness on one H20 |
+
+In the frozen ABI5-v5 H20 record, all eight manager/stock JSON records pass
+independent verification, all request traces match, and every Full/SWA arena
+drains. Grouped B4 release reduces 20 request-level release/recycle calls to
+five batch transactions.
+
+The same-capacity intrinsic memory reduction is **0%** because the compared
+SGLang processes reserve identical KV tensor arenas. The one H20 epoch reports
+B4 steady manager overhead of +4.1932% for Qwen and -5.2048% for GPT-OSS, while
+Qwen B1 is +5.0009%. There are no repeated-epoch statistics, so
+`performance_go=false` and no general speedup is claimed.
+
+[Frozen ABI5-v5 H20 record](results/h20-sglang-v0517-abi5-v5-grouped-release-20260821/README.md)
+
+## Build and verify
 
 ```bash
-cargo run -- compile-runtime-state-plan examples/gpt_oss_20b_retention.json \
-  --eviction-interval 32 \
-  --execution-mode owner --owner-transport ffi \
-  --capsule-enabled true --capsule-chunk-tokens 128 \
-  --capsule-max-payload-bytes 1073741824 \
-  > runtime-state-plan.json
+cargo fmt --all -- --check
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
+
+cargo test --locked --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets
+python tools/verify_active_source.py
+python tools/verify_capability_matrix.py
+python tools/verify_manifests.py
 ```
 
-Physical-plan compilation:
+The active-source gate limits production Rust/Python modules to 1,500 lines,
+test/benchmark modules to 2,000 lines, verifies ABI6 markers, and rejects the
+removed ABI5 lifecycle aliases. It deliberately ignores append-only evidence
+under `results/`.
 
-```bash
-cargo run -- compile-hf-physical-plan /path/to/config.json \
-  --page-tokens 16 --kv-dtype-bytes 2 \
-  --available-kv-bytes 2123759616 \
-  --max-running-requests 128 --attention-dp-size 1 \
-  --chunked-prefill-tokens 2048 \
-  --workload-requests 8 --prompt-tokens 6000 --decode-tokens 32 \
-  --candidate-intervals 16,32,64,128 \
-  --max-reclamation-calls 4 --min-admitted-requests 8 \
-  --objective capacity
-```
+## Next gates
 
-## Boundaries
+The ordered work is:
 
-The qualified SGLang paths disable radix cache, overlap, speculation, and
-disaggregation. Page16 Paged Periodic also qualifies decode CUDA Graph replay
-with eager prefill, up to four requests. Capsule results are single-request,
-one-decode-token experiments. Hybrid host-file restore is slower than cold
-prefill at 1K and 4K, and faster at 16K. See the capability matrix for all
-levels and exclusions.
+1. run exact-source SGLang `OrbitKVPrefixCache` correctness on H20;
+2. implement token-exact relocation/compaction against immutable snapshots;
+3. qualify overlap and CUDA Graph completion domains; and
+4. add speculation, multi-GPU placement, and disaggregation.
 
-See:
+Compaction means byte-exact K/V relocation and physical defragmentation. It is
+not quantization, numerical compression, or evidence of a same-capacity memory
+win. See the [Token Virtualization and Attention Roadmap](docs/token-virtualization-and-attention-roadmap.md).
 
-- `docs/h20-gpt-oss-20b-real-validation-20260817.md`
-- `docs/capability-matrix.md`
-- `docs/sglang-e2e.md`
-- `results/README.md`
+Historical records and their source hashes are indexed in
+[results/README.md](results/README.md). They are append-only and never qualify a
+later ABI automatically.

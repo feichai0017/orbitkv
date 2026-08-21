@@ -8,11 +8,6 @@ use cudarc::driver::{
 };
 use thiserror::Error;
 
-mod block_pool;
-
-pub use block_pool::{CudaBlockAddress, CudaExecutionFrontier, CudaVmmBlockPool};
-use orbitkv::BlockHandle;
-
 #[derive(Clone, Debug, Eq, PartialEq, serde::Serialize)]
 pub struct CudaVmmCapabilities {
     pub device_ordinal: usize,
@@ -42,34 +37,6 @@ pub enum CudaVmmError {
     SourceTooLarge { actual: usize, capacity: usize },
     #[error("host destination length {actual} exceeds VMM slot length {capacity}")]
     DestinationTooLarge { actual: usize, capacity: usize },
-    #[error("VMM block class name must not be empty")]
-    EmptyClassName,
-    #[error("VMM block pool must contain at least one slot")]
-    ZeroSlots,
-    #[error("VMM block belongs to {physical:?}, expected class {expected:?}")]
-    ClassMismatch {
-        expected: String,
-        physical: BlockHandle,
-    },
-    #[error("VMM slot is out of range: {0:?}")]
-    SlotOutOfRange(BlockHandle),
-    #[error("VMM slot is already active: {0:?}")]
-    SlotAlreadyActive(BlockHandle),
-    #[error("VMM slot generation exhausted: {0:?}")]
-    GenerationExhausted(BlockHandle),
-    #[error("VMM slot expected generation {expected}, got {physical:?}")]
-    UnexpectedGeneration {
-        physical: BlockHandle,
-        expected: u64,
-    },
-    #[error("VMM block generation is inactive or stale: {0:?}")]
-    StaleGeneration(BlockHandle),
-    #[error("cannot close VMM pool with active block: {0:?}")]
-    SlotStillActive(BlockHandle),
-    #[error("CUDA submission {0} already has an execution event")]
-    DuplicateSubmission(u64),
-    #[error("unknown CUDA submission {0}")]
-    UnknownSubmission(u64),
 }
 
 struct PhysicalAllocation {

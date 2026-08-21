@@ -1,0 +1,95 @@
+2026-08-20 20:52:16,370 WARNING - Ignore import error when loading sglang.srt.models.midashenglm: No module named 'torchaudio'
+2026-08-20 20:52:16,494 WARNING - Ignore import error when loading sglang.srt.models.sarashina2_vision: cannot import name 'MultimodalDataItem' from 'sglang.srt.managers.mm_utils' (/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/mm_utils.py)
+2026-08-20 20:52:16,504 INFO - Load weight begin. avail mem=94.56 GB
+
+Multi-thread loading shards:   0% Completed | 0/2 [00:00<?, ?it/s]
+Multi-thread loading shards:  50% Completed | 1/2 [00:01<00:01,  1.61s/it]
+Multi-thread loading shards: 100% Completed | 2/2 [00:02<00:00,  1.36s/it]
+Multi-thread loading shards: 100% Completed | 2/2 [00:02<00:00,  1.39s/it]
+2026-08-20 20:52:19,561 INFO - Load weight end. elapsed=3.06 s, type=MistralForCausalLM, avail mem=81.05 GB, mem usage=13.50 GB.
+2026-08-20 20:52:20,000 INFO - Restoring add_bos_token=True for /workspace/models/mistral-7b-v0.1 (was False after v5 loading)
+2026-08-20 20:52:20,004 INFO - Use sliding window memory pool (all SWA). swa_layer_tokens=582592
+2026-08-20 20:52:20,004 INFO - Use sliding window memory pool (all SWA). swa_layer_tokens=6160
+2026-08-20 20:52:20,005 INFO - Full KV Cache is allocated. dtype: torch.bfloat16, #tokens: 0, K size: 0.00 GB, V size: 0.00 GB
+2026-08-20 20:52:20,014 INFO - SWA KV Cache is allocated. dtype: torch.bfloat16, #tokens: 6160, K size: 0.38 GB, V size: 0.38 GB
+2026-08-20 20:52:20,014 INFO - SWAKVPool mem usage: 0.75 GB, swa size: 6160, full size: 0
+2026-08-20 20:52:20,015 INFO - Memory pool end. avail mem=80.18 GB
+2026-08-20 20:52:20,112 INFO - Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+2026-08-20 20:52:20,113 INFO - max_total_num_tokens=6160, chunked_prefill_size=2048, max_prefill_tokens=16384, max_running_requests=1, context_len=16384, available_gpu_mem=79.63 GB
+2026-08-20 20:52:20,114 INFO - Tree cache initialized: source=default impl=PureSWAChunkCache hybrid_swa=True hybrid_ssm=False hierarchical=False streaming_wrapped=False
+2026-08-20 20:54:06,339 INFO - Prefill batch, #new-seq: 1, #new-token: 2048, #cached-token: 0, full token usage: 0.00, swa token usage: 0.33, #running-req: 0, #queue-req: 0, #pending-token: 9953, cuda graph: False, input throughput (token/s): 19.28
+2026-08-20 20:54:12,848 INFO - Prefill batch, #new-seq: 1, #new-token: 2048, #cached-token: 0, full token usage: 0.00, swa token usage: 0.66, #running-req: 0, #queue-req: 0, #pending-token: 7905, cuda graph: False, input throughput (token/s): 314.66
+2026-08-20 20:54:24,268 INFO - Prefill batch, #new-seq: 1, #new-token: 2048, #cached-token: 0, full token usage: 0.00, swa token usage: 1.00, #running-req: 0, #queue-req: 0, #pending-token: 5857, cuda graph: False, input throughput (token/s): 179.33
+Process Process-2:
+Process Process-1:
+Traceback (most recent call last):
+  File "/usr/local/cpython/3.11.10/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/local/cpython/3.11.10/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 5066, in run_scheduler_process
+    scheduler.run_event_loop()
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 1701, in run_event_loop
+    dispatch_event_loop(self)
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 4916, in dispatch_event_loop
+    scheduler.event_loop_normal()
+  File "/workspace/orbitkv/.venv-sglang-h20/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 1734, in event_loop_normal
+    plan = self.get_next_batch_to_run(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/utils/nvtx_utils.py", line 109, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 3113, in get_next_batch_to_run
+    prefill_plan = self.get_new_batch_prefill(running_batch)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 3188, in get_new_batch_prefill
+    return NextBatchPlan(batch_to_run=ret, running_batch=running_batch)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/usr/local/cpython/3.11.10/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/local/cpython/3.11.10/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/detokenizer_manager.py", line 529, in run_detokenizer_process
+    manager.event_loop()
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/detokenizer_manager.py", line 170, in event_loop
+    recv_obj = sock_recv(self.recv_from_scheduler)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/io_struct.py", line 2479, in sock_recv
+    return socket.recv_pyobj(flags=flags)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/cpython/3.11.10/lib/python3.11/site-packages/zmq/sugar/socket.py", line 989, in recv_pyobj
+    msg = self.recv(flags)
+          ^^^^^^^^^^^^^^^^
+  File "_zmq.py", line 1147, in zmq.backend.cython._zmq.Socket.recv
+  File "_zmq.py", line 1182, in zmq.backend.cython._zmq.Socket.recv
+  File "_zmq.py", line 1337, in zmq.backend.cython._zmq._recv_copy
+  File "_zmq.py", line 169, in zmq.backend.cython._zmq._check_rc
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/workspace/orbitkv/integrations/sglang/bench_canonical_manager.py", line 906, in <module>
+    main()
+  File "/workspace/orbitkv/integrations/sglang/bench_canonical_manager.py", line 899, in main
+    result = run(args, paths)
+             ^^^^^^^^^^^^^^^^
+  File "/workspace/orbitkv/integrations/sglang/bench_canonical_manager.py", line 793, in run
+    output = engine.generate(
+             ^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/entrypoints/engine.py", line 459, in generate
+    ret = self.loop.run_until_complete(generator.__anext__())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "uvloop/loop.pyx", line 1512, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1505, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1379, in uvloop.loop.Loop.run_forever
+  File "uvloop/loop.pyx", line 557, in uvloop.loop.Loop._run
+  File "uvloop/handles/poll.pyx", line 216, in uvloop.loop.__on_uvpoll_event
+  File "uvloop/cbhandles.pyx", line 83, in uvloop.loop.Handle._run
+  File "uvloop/cbhandles.pyx", line 66, in uvloop.loop.Handle._run
+  File "uvloop/loop.pyx", line 399, in uvloop.loop.Loop._read_from_self
+  File "uvloop/loop.pyx", line 404, in uvloop.loop.Loop._invoke_signals
+  File "uvloop/loop.pyx", line 379, in uvloop.loop.Loop._ceval_process_signals
+KeyboardInterrupt

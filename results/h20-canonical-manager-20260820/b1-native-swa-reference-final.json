@@ -1,0 +1,344 @@
+{
+  "checkpoint": {
+    "config_sha256": "cf25cdf4719f181d1d1d371973285d9afe9afde0d0c6a6fd48de857555ce1e0d",
+    "index_files": [
+      {
+        "bytes": 25125,
+        "name": "model.safetensors.index.json",
+        "sha256": "c94ab46aaf5fcca44720c10bcc498c1b0d9759d47534a396e3512edc451ebd06"
+      }
+    ],
+    "indexed_weight_bytes": 14483464192,
+    "indexed_weight_container_overhead_bytes": 33848,
+    "indexed_weight_files": [
+      "model-00001-of-00002.safetensors",
+      "model-00002-of-00002.safetensors"
+    ],
+    "indexed_weights_complete": true,
+    "load_format": "auto",
+    "missing_indexed_weights": [],
+    "observed_indexed_weight_bytes": 14483498040,
+    "weight_bytes": 14483498040,
+    "weight_files": [
+      {
+        "bytes": 9942981696,
+        "name": "model-00001-of-00002.safetensors"
+      },
+      {
+        "bytes": 4540516344,
+        "name": "model-00002-of-00002.safetensors"
+      }
+    ]
+  },
+  "checkpoint_contract": {
+    "architecture": "MistralForCausalLM",
+    "num_hidden_layers": 32,
+    "sliding_window": 4096,
+    "vocab_size": 32000
+  },
+  "checkpoint_identity_sha256": "fdf22fe5493881279c0efaf008fcb9ea27fba1f573af8ff00115430b74a901f4",
+  "command": [
+    "/workspace/orbitkv/.venv-sglang-h20/bin/python",
+    "/workspace/orbitkv/integrations/sglang/bench_canonical_manager.py",
+    "--mode",
+    "native-swa",
+    "--sglang-root",
+    "/workspace/sglang-mistral-native-swa-reference",
+    "--model",
+    "/workspace/models/mistral-7b-v0.1",
+    "--requests",
+    "1",
+    "--max-running-requests",
+    "1",
+    "--prompt-tokens",
+    "12001",
+    "--decode-tokens",
+    "33",
+    "--iterations",
+    "1",
+    "--chunked-prefill-size",
+    "2048",
+    "--context-length",
+    "16384",
+    "--max-total-tokens",
+    "16384",
+    "--attention-backend",
+    "flashinfer",
+    "--seed",
+    "20260820"
+  ],
+  "command_sha256": "25976ae8ad88efe16c9005f4e63ac312b6306146fed20b8e6b7c5e4e0ea5dfa9",
+  "completed_requests": 1,
+  "completion_tokens": 33,
+  "engine_args": {
+    "attention_backend": "flashinfer",
+    "chunked_prefill_size": 2048,
+    "context_length": 16384,
+    "dcp_size": 1,
+    "disable_cuda_graph": true,
+    "disable_hybrid_swa_memory": false,
+    "disable_overlap_schedule": true,
+    "disable_radix_cache": true,
+    "disaggregation_mode": "null",
+    "dp_size": 1,
+    "dtype": "bfloat16",
+    "enable_dp_attention": false,
+    "enable_hierarchical_cache": false,
+    "enable_hisparse": false,
+    "enable_lmcache": false,
+    "enable_page_major_kv_layout": false,
+    "enable_pdmux": false,
+    "enable_streaming_session": false,
+    "enable_torch_compile": false,
+    "enable_unified_memory": false,
+    "kv_cache_dtype": "bfloat16",
+    "load_format": "auto",
+    "log_level": "error",
+    "max_running_requests": 1,
+    "max_total_tokens": 16384,
+    "model_path": "/workspace/models/mistral-7b-v0.1",
+    "page_size": 1,
+    "pp_size": 1,
+    "random_seed": 20260820,
+    "skip_tokenizer_init": false,
+    "speculative_algorithm": null,
+    "tp_size": 1,
+    "trust_remote_code": false
+  },
+  "environment": {
+    "CUDA_VISIBLE_DEVICES": "0",
+    "PATH": "/workspace/orbitkv/.venv-sglang-h20/bin:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
+    "PYTHONPATH": "/workspace/sglang-mistral-native-swa-reference/python:/workspace/orbitkv/integrations/sglang/src",
+    "SGLANG_PLUGINS": "orbitkv_stock_baseline_no_plugins",
+    "SGLANG_USE_HND_KVCACHE": "0"
+  },
+  "environment_sha256": "e944f2735ed57bb295fbb2a43f8cfc7cd31767daef435a49cf3444084ef5536c",
+  "gpu_snapshots": [
+    {
+      "gpus": [
+        {
+          "index": "0",
+          "memory.free": "97284",
+          "memory.used": "0",
+          "name": "NVIDIA H20",
+          "power.draw": "116.61",
+          "temperature.gpu": "34",
+          "utilization.gpu": "0",
+          "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+        }
+      ],
+      "label": "before_engine",
+      "time_ns": 1787232772174347800
+    },
+    {
+      "gpus": [
+        {
+          "index": "0",
+          "memory.free": "80259",
+          "memory.used": "17025",
+          "name": "NVIDIA H20",
+          "power.draw": "116.89",
+          "temperature.gpu": "34",
+          "utilization.gpu": "1",
+          "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+        }
+      ],
+      "label": "after_load",
+      "time_ns": 1787232792900129300
+    },
+    {
+      "gpus": [
+        {
+          "index": "0",
+          "memory.free": "79915",
+          "memory.used": "17369",
+          "name": "NVIDIA H20",
+          "power.draw": "258.61",
+          "temperature.gpu": "37",
+          "utilization.gpu": "40",
+          "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+        }
+      ],
+      "label": "after_workload",
+      "time_ns": 1787232796432349000
+    },
+    {
+      "gpus": [
+        {
+          "index": "0",
+          "memory.free": "79915",
+          "memory.used": "17369",
+          "name": "NVIDIA H20",
+          "power.draw": "229.05",
+          "temperature.gpu": "36",
+          "utilization.gpu": "32",
+          "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3"
+        }
+      ],
+      "label": "after_shutdown",
+      "time_ns": 1787232796577822700
+    }
+  ],
+  "iteration_seconds": [
+    3.4959598928689957
+  ],
+  "iteration_total_seconds": 3.4959598928689957,
+  "load_seconds": 16.509302012622356,
+  "manager": null,
+  "mode": "native-swa",
+  "model": "/workspace/models/mistral-7b-v0.1",
+  "output_token_digest_sha256": "2a17477503c7ac0f01fee4552f82e7cb7ed82ce5c172729c0baf92bac97f06de",
+  "runtime_identity": {
+    "kv_layout": "nhd",
+    "platform": "Linux-5.15.152.bsk.7-amd64-x86_64-with-glibc2.36",
+    "python_executable": "/workspace/orbitkv/.venv-sglang-h20/bin/python",
+    "python_version": "3.11.10",
+    "sglang_package": "/workspace/sglang-mistral-native-swa-reference/python/sglang/__init__.py",
+    "sglang_version": "0.0.0.dev1+g095ec6c99"
+  },
+  "schema": "orbitkv.canonical-manager-real-model.v1",
+  "server_memory": {
+    "after_load": {
+      "graph": {
+        "decode": 0,
+        "draft_decode": 0,
+        "draft_extend": 0,
+        "draft_prefill": 0,
+        "prefill": 0,
+        "target_verify": 0
+      },
+      "kvcache": 2,
+      "startup_available": 78.378,
+      "token_capacity": 16384,
+      "token_capacity_swa": 16384,
+      "weight": 13.504
+    },
+    "after_workload": {
+      "graph": {
+        "decode": 0,
+        "draft_decode": 0,
+        "draft_extend": 0,
+        "draft_prefill": 0,
+        "prefill": 0,
+        "target_verify": 0
+      },
+      "kvcache": 2,
+      "startup_available": 78.378,
+      "token_capacity": 16384,
+      "token_capacity_swa": 16384,
+      "weight": 13.504
+    }
+  },
+  "setup_and_load_seconds": 20.70506612211466,
+  "source_identity": {
+    "adapter": {
+      "files": [
+        {
+          "path": "integrations/sglang/pyproject.toml",
+          "sha256": "10612282e5c6c17de03eb8eff1f690abc6fce8ae08603ee17ac04712be6c6a2a"
+        },
+        {
+          "path": "integrations/sglang/prepare_pinned_checkout.py",
+          "sha256": "a66187ffee9916fc40325093cfbc0368e3f39ac8d506fbf97de6d3473d23374d"
+        },
+        {
+          "path": "integrations/sglang/patches/095ec6c-orbitkv-fail-closed.patch",
+          "sha256": "6de7acab246b299386b5d6557154a7aa237c8bdb498b8b885bed1c72e849745d"
+        },
+        {
+          "path": "integrations/sglang/patches/095ec6c-mistral-pure-swa-reference.patch",
+          "sha256": "66a343b1e26ab3d1c97f57f12450efba301e6fb8bd7fea56a52525e6cf9ae266"
+        },
+        {
+          "path": "integrations/sglang/src/orbitkv_sglang/__init__.py",
+          "sha256": "84c77c4e276dce75836a20386e21d9d3866855770073bcffa7bedb21d02c3f21"
+        },
+        {
+          "path": "integrations/sglang/src/orbitkv_sglang/config.py",
+          "sha256": "35eab485a1a70d793e7c179734f21151c68a35ec566dfa4d6b5744b8dc509986"
+        },
+        {
+          "path": "integrations/sglang/src/orbitkv_sglang/ffi.py",
+          "sha256": "a46aa0554411f0de547ab712b7fb74ac2482d1185e7a817c68044910cd59ae41"
+        },
+        {
+          "path": "integrations/sglang/src/orbitkv_sglang/pinned.py",
+          "sha256": "d8f9ba2450b41b9e84c5f2e5bdd402341c6bc39559b0f9ed871a3c2770e271f3"
+        },
+        {
+          "path": "integrations/sglang/src/orbitkv_sglang/plugin.py",
+          "sha256": "a6085eb5e16f5d7984b2653d9c1c0b18cb58a4b8b58442500ea764d5718980df"
+        },
+        {
+          "path": "integrations/sglang/src/orbitkv_sglang/runtime.py",
+          "sha256": "20fb33c23b30319421f39b84649880faa5ac5a972c8a8d1a8f854768ce27bad0"
+        }
+      ]
+    },
+    "build_tool": {
+      "path": "/workspace/orbitkv/.venv-sglang-h20/bin/ninja",
+      "sha256": "696f9628a79d9ce50314cf9556d7cd1a1d1ec52b8fd52828f6f9db1719565b67",
+      "version": "1.13.0.git.kitware.jobserver-pipe-1"
+    },
+    "checkpoint_identity_helper_sha256": "67c97699e4ee7c903ad77241591c0a1d73255464300c89e3e08909ed185dca97",
+    "dirty_paths": [
+      "python/sglang/srt/configs/model_config.py",
+      "python/sglang/srt/models/mistral.py"
+    ],
+    "harness_sha256": "0061f4e1ff7ce636264198f5122c456af55a9f4b089985aa70b64b88784b5321",
+    "library_sha256": null,
+    "loader": {
+      "head_git_blob": "00ae1acd18266765c006d87ba5eec51e9f113d8d",
+      "patch_sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      "path": "python/sglang/srt/plugins/__init__.py",
+      "worktree_git_blob": "00ae1acd18266765c006d87ba5eec51e9f113d8d",
+      "worktree_sha256": "3a975a73f1a7887e68c81ea7a2530250597ac8ae978efc0b0f70f038a99a3164"
+    },
+    "manager_entrypoint": null,
+    "native_swa_reference": {
+      "artifact": "integrations/sglang/patches/095ec6c-mistral-pure-swa-reference.patch",
+      "files": [
+        {
+          "head_git_blob": "9811e663c13be57f0d1252046e2281b7076eb9ea",
+          "head_sha256": "5d7139ed1a11c7c6dfaf93b80f7ddcea50e231a72c74cfec82d6e9875355a545",
+          "path": "python/sglang/srt/configs/model_config.py",
+          "worktree_git_blob": "9f31d7e0d8c0dc2f4f082ecc7b806a2a606699f3",
+          "worktree_sha256": "3c05e655ccb2ecc6c4002501d51e0c8b51db06bdee6d736e99155527c0c87717"
+        },
+        {
+          "head_git_blob": "f97ba66bc06f97ec843474984a5e103a90c8828f",
+          "head_sha256": "21a2df76c3cb114833f521a64e8dac53986036e1eb4bdd5b65759a5100904cea",
+          "path": "python/sglang/srt/models/mistral.py",
+          "worktree_git_blob": "b24e80dd134aadaa1d29edff9a7b7c92f7d456cb",
+          "worktree_sha256": "30ab4cdea2e578ef2710d6e9892acdc27a1022a711cbddfe5ebe627b6597eb56"
+        }
+      ],
+      "patch_sha256": "66a343b1e26ab3d1c97f57f12450efba301e6fb8bd7fea56a52525e6cf9ae266"
+    },
+    "pinned_contract": {
+      "base_source_sha256": "3a975a73f1a7887e68c81ea7a2530250597ac8ae978efc0b0f70f038a99a3164",
+      "loader_path": "python/sglang/srt/plugins/__init__.py",
+      "patch_diff_sha256": "6de7acab246b299386b5d6557154a7aa237c8bdb498b8b885bed1c72e849745d",
+      "patched_source_sha256": "1fc2e2472e8fd55f564826509b2afa1f8f0d86a4b2ee3a3986c3209e3c09c934",
+      "revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96"
+    },
+    "plan_sha256": null,
+    "python_source_contract": "pinned_head_plus_mistral_native_swa_reference_patch",
+    "revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+    "root": "/workspace/sglang-mistral-native-swa-reference",
+    "sglang_python_sha256": "e54e5073b3d139f84b594bb23f7651a41a7c3d0148df980568928a070192ad5b"
+  },
+  "source_identity_sha256": "fcb4d6004350568c0b385a2cb14df20327f0fb185043be496e7a667d5e210725",
+  "started_at_utc": "2026-08-20T13:32:56.370096+00:00",
+  "total_seconds": 24.488000459969044,
+  "workload": {
+    "decode_tokens": 33,
+    "input_token_digest_sha256": "b779318f22d9b99649afeb31631a90a2faaa44ad6f2ec6e42afbec99d2549b5a",
+    "iterations": 1,
+    "max_running_requests": 1,
+    "prompt_tokens": 12001,
+    "requests": 1,
+    "seed": 20260820
+  }
+}
+

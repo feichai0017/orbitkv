@@ -1,0 +1,282 @@
+{
+  "schema": "orbitkv.h20-sglang-v0517-abi5-v5-grouped-release-validation.v1",
+  "date": "2026-08-21",
+  "status": "scoped_abi5_v5_grouped_release_correctness_qualified",
+  "performance_go": false,
+  "engine": {
+    "release": "v0.5.17",
+    "revision": "29481685462732237d80d86076d6563e1f658102",
+    "gpu": "NVIDIA H20",
+    "gpu_count": 1,
+    "abi": 5,
+    "record_schema": "orbitkv.sglang-v0517-full-hybrid-single-run.v5",
+    "page_tokens": 16,
+    "kv_dtype": "bfloat16",
+    "kv_layout": "nhd",
+    "execution": "eager",
+    "cache": "ChunkCache",
+    "tp": 1,
+    "pp": 1,
+    "dp": 1,
+    "dcp": 1
+  },
+  "workload": {
+    "prompt_tokens_per_request": 513,
+    "decode_tokens_per_request": 33,
+    "context_tokens": 1024,
+    "seed": 20260820,
+    "b1_requests": 1,
+    "b1_iterations": 1,
+    "b4_requests": 4,
+    "b4_iterations": 5,
+    "sampling": "temperature=0, fixed sampling_seed, exact 33 tokens, ignore_eos",
+    "performance_epoch_count": 1
+  },
+  "profiles": {
+    "qwen2.5-7b": {
+      "architecture": "Qwen2ForCausalLM",
+      "attention_profile": "full",
+      "attention_backend": "flashinfer",
+      "moe_runner_backend": "auto_not_applicable"
+    },
+    "gpt-oss-20b": {
+      "architecture": "GptOssForCausalLM",
+      "attention_profile": "hybrid_full_swa",
+      "attention_backend": "fa3",
+      "sliding_window_tokens": 128,
+      "moe_runner_backend": "triton",
+      "moe_profile_scope": "explicit_sglang_builtin_triton_not_external_triton_kernel"
+    }
+  },
+  "primary_correctness_pairs": {
+    "qwen2.5-7b-b1": {
+      "manager_record": "raw/qwen2.5-7b-b1-manager.json",
+      "stock_reference": "raw/qwen2.5-7b-b1-stock.json",
+      "pair_key_sha256": "4e0dd967f28f1e57de34cda5179dcf079e8f8be73fa82ca4a04094880faa956a",
+      "output_token_digest_sha256": "1e82cba111b8aca0b5311fd2b87b6f85658e4a99e65ec3040d9d06cafacf690e",
+      "completed_requests": 1,
+      "completion_tokens": 33,
+      "manager_batch_calls": 33,
+      "manager_batch_items": 33,
+      "release_batch_calls": 1,
+      "released_items": 1,
+      "recycle_requests_calls": 1,
+      "acknowledge_reclamations_calls": 1,
+      "event_waits": 1,
+      "final_pages": {
+        "full_free": 64,
+        "full_total": 64
+      },
+      "final_all_free": true,
+      "swa_activity": "not_applicable_zero"
+    },
+    "qwen2.5-7b-b4": {
+      "manager_record": "raw/qwen2.5-7b-b4-manager.json",
+      "stock_reference": "raw/qwen2.5-7b-b4-stock.json",
+      "pair_key_sha256": "a560dc121c51bfe01b154d697d94dae56c1bf40f5d1bc8edd90feed77db0e091",
+      "output_token_digest_sha256": "c7743d583c336357b09e04e73d043a8f2df63bd5707279286fbe00d25544ee46",
+      "completed_requests": 20,
+      "completion_tokens": 660,
+      "manager_batch_calls": 165,
+      "manager_batch_items": 660,
+      "release_batch_calls": 5,
+      "released_items": 20,
+      "recycle_requests_calls": 5,
+      "acknowledge_reclamations_calls": 5,
+      "event_waits": 5,
+      "final_pages": {
+        "full_free": 256,
+        "full_total": 256
+      },
+      "final_all_free": true,
+      "swa_activity": "not_applicable_zero"
+    },
+    "gpt-oss-20b-b1": {
+      "manager_record": "raw/gpt-oss-20b-b1-manager.json",
+      "stock_reference": "raw/gpt-oss-20b-b1-stock.json",
+      "pair_key_sha256": "e2304b2f42970309784e4925696480b8758895172b8a710445ea4c7a2b3f6522",
+      "output_token_digest_sha256": "adfd5174f811e7c7f7fe731c18699073bacb9fd1a352b457be1f127a854bd6cd",
+      "completed_requests": 1,
+      "completion_tokens": 33,
+      "manager_batch_calls": 33,
+      "manager_batch_items": 33,
+      "release_batch_calls": 1,
+      "released_items": 1,
+      "recycle_requests_calls": 1,
+      "acknowledge_reclamations_calls": 4,
+      "event_waits": 1,
+      "final_pages": {
+        "full_free": 64,
+        "full_total": 64,
+        "swa_free": 52,
+        "swa_total": 52
+      },
+      "final_all_free": true,
+      "swa_retirement_certificates": 26,
+      "swa_pages_reclaimed": 26,
+      "swa_wrap_events": 3
+    },
+    "gpt-oss-20b-b4": {
+      "manager_record": "raw/gpt-oss-20b-b4-manager.json",
+      "stock_reference": "raw/gpt-oss-20b-b4-stock.json",
+      "pair_key_sha256": "106ee25301f57bce0127ccda421363957814d9a3ccbd29d27b757c49a96aaa49",
+      "output_token_digest_sha256": "02f3326d4fe54b64d45fb488d8d8246ac331e0da2f1f286025f59f7fb6e22247",
+      "completed_requests": 20,
+      "completion_tokens": 660,
+      "manager_batch_calls": 165,
+      "manager_batch_items": 660,
+      "release_batch_calls": 5,
+      "released_items": 20,
+      "recycle_requests_calls": 5,
+      "acknowledge_reclamations_calls": 20,
+      "event_waits": 5,
+      "final_pages": {
+        "full_free": 256,
+        "full_total": 256,
+        "swa_free": 205,
+        "swa_total": 205
+      },
+      "final_all_free": true,
+      "swa_retirement_certificates": 520,
+      "swa_pages_reclaimed": 520,
+      "swa_wrap_events": 60
+    }
+  },
+  "primary_success_records": [
+    "raw/qwen2.5-7b-b1-manager.json",
+    "raw/qwen2.5-7b-b4-manager.json",
+    "raw/gpt-oss-20b-b1-manager.json",
+    "raw/gpt-oss-20b-b4-manager.json"
+  ],
+  "paired_stock_references": [
+    "raw/qwen2.5-7b-b1-stock.json",
+    "raw/qwen2.5-7b-b4-stock.json",
+    "raw/gpt-oss-20b-b1-stock.json",
+    "raw/gpt-oss-20b-b4-stock.json"
+  ],
+  "validation": {
+    "frozen_runner_pair_checker_passed": true,
+    "primary_manager_record_count": 4,
+    "paired_stock_reference_count": 4,
+    "raw_json_count": 8,
+    "raw_stderr_count": 8,
+    "pair_contracts_equal": true,
+    "input_digests_equal": true,
+    "request_ids_equal": true,
+    "complete_output_token_traces_equal": true,
+    "per_request_output_digests_equal": true,
+    "within_lane_output_sequences_stable": true,
+    "completion_counts_exact": true,
+    "capacity_readbacks_equal": true,
+    "checkpoint_identities_equal": true,
+    "official_release_identities_exact": true,
+    "manager_final_census_all_free": true,
+    "manager_final_nonfree_counters_zero": true,
+    "manager_failure_and_quarantine_counters_zero": true,
+    "grouped_release_counts_exact": true,
+    "hybrid_swa_activity_strictly_positive": true,
+    "full_swa_activity_not_applicable_and_zero": true
+  },
+  "memory": {
+    "comparison": "same SGLang tensor-arena sizing cap within each stock/manager pair",
+    "qwen_b1_reported_kvcache_gib_each": 0.056,
+    "qwen_b4_reported_kvcache_gib_each": 0.22,
+    "gpt_oss_b1_reported_kvcache_gib_each": 0.043,
+    "gpt_oss_b4_reported_kvcache_gib_each": 0.17,
+    "same_cap_intrinsic_reduction_percent": 0,
+    "compression_claim": false,
+    "memory_saving_claim": false
+  },
+  "performance": {
+    "status": "not_qualified",
+    "performance_go": false,
+    "speedup_claim": false,
+    "threshold": "manager overhead <= 5%",
+    "epoch_count": 1,
+    "repeated_epoch_statistics": false,
+    "qwen2.5-7b-b1": {
+      "stock_sample_seconds": 1.0114635974168777,
+      "manager_sample_seconds": 1.0620457269251347,
+      "manager_overhead_percent": 5.000884820515128,
+      "strict_threshold_pass": false,
+      "classification": "single_sample_above_strict_threshold"
+    },
+    "gpt-oss-20b-b1": {
+      "stock_sample_seconds": 2.0399783849716187,
+      "manager_sample_seconds": 1.9673965722322464,
+      "manager_overhead_percent": -3.5579696958593976,
+      "strict_threshold_pass": true,
+      "classification": "single_sample_diagnostic_only"
+    },
+    "qwen2.5-7b-b4": {
+      "stock_samples_seconds": [
+        1.1916674822568893,
+        1.0339847058057785,
+        1.0135007873177528,
+        1.0118143893778324,
+        1.0157972164452076
+      ],
+      "manager_samples_seconds": [
+        1.2177361696958542,
+        1.0657282024621964,
+        1.0381349213421345,
+        1.0486625581979752,
+        1.071888193488121
+      ],
+      "stock_steady_median_seconds": 1.0146490018814802,
+      "manager_steady_median_seconds": 1.0571953803300858,
+      "manager_overhead_percent": 4.193211481971715,
+      "strict_threshold_pass": true,
+      "classification": "single_epoch_steady_non_regression_diagnostic"
+    },
+    "gpt-oss-20b-b4": {
+      "stock_samples_seconds": [
+        2.370373833924532,
+        1.5769429728388786,
+        1.5432696528732777,
+        1.6366515569388866,
+        1.4380739070475101
+      ],
+      "manager_samples_seconds": [
+        2.194031212478876,
+        1.521278753876686,
+        1.498171892017126,
+        1.4596392549574375,
+        1.4568919278681278
+      ],
+      "stock_steady_median_seconds": 1.5601063128560781,
+      "manager_steady_median_seconds": 1.4789055734872818,
+      "manager_overhead_percent": -5.204820895836426,
+      "strict_threshold_pass": true,
+      "classification": "single_epoch_steady_diagnostic_only"
+    },
+    "failure_reasons": [
+      "Qwen B1 one-sample overhead is 5.000884820515128%, above the strict <=5% red-team guard.",
+      "All profiles have only one run epoch and no repeated-epoch statistics."
+    ]
+  },
+  "qualified_scope": {
+    "models": [
+      "Qwen2ForCausalLM Full attention",
+      "GptOssForCausalLM ordered Full+SWA attention with a 128-token window and explicit built-in Triton MoE runner"
+    ],
+    "batch_profiles": [
+      "B1 one request",
+      "B4 four concurrent requests with five grouped-release iterations"
+    ],
+    "engine_features": "official SGLang v0.5.17 eager single-GPU ChunkCache only",
+    "source_boundary": "Only the immutable 23-file source closure, runner, library, inputs, loaders, four manager records, and paired stock references archived here are qualified."
+  },
+  "not_qualified": [
+    "default external triton_kernel GPT-OSS MoE execution",
+    "Prefix, Radix, shared-prefix ownership, sealed roots, or COW",
+    "overlap scheduling or multiple completion domains",
+    "CUDA Graph or stable descriptor replay",
+    "speculative decoding, fork, rollback, beam, or cancellation churn",
+    "disaggregation, remote KV, multi-GPU, or TP/PP/DP/DCP greater than one",
+    "cross-attention, MLA, Mamba/SSM, dynamic sparse attention, or other model families",
+    "intrinsic KV compression or same-capacity memory reduction",
+    "performance, speedup, production readiness, or a version compatibility matrix",
+    "future changes outside the immutable archived source snapshot"
+  ]
+}

@@ -1,0 +1,122 @@
+2026-08-20 20:40:58,055 WARNING - Ignore import error when loading sglang.srt.models.midashenglm: No module named 'torchaudio'
+2026-08-20 20:40:58,181 WARNING - Ignore import error when loading sglang.srt.models.sarashina2_vision: cannot import name 'MultimodalDataItem' from 'sglang.srt.managers.mm_utils' (/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/mm_utils.py)
+2026-08-20 20:40:58,192 INFO - Load weight begin. avail mem=94.56 GB
+
+Multi-thread loading shards:   0% Completed | 0/2 [00:00<?, ?it/s]
+Multi-thread loading shards:  50% Completed | 1/2 [00:01<00:01,  1.60s/it]
+Multi-thread loading shards: 100% Completed | 2/2 [00:02<00:00,  1.35s/it]
+Multi-thread loading shards: 100% Completed | 2/2 [00:02<00:00,  1.39s/it]
+2026-08-20 20:41:01,405 INFO - Load weight end. elapsed=3.21 s, type=MistralForCausalLM, avail mem=81.05 GB, mem usage=13.50 GB.
+2026-08-20 20:41:01,410 INFO - Use sliding window memory pool (all SWA). swa_layer_tokens=582592
+2026-08-20 20:41:01,410 INFO - Use sliding window memory pool (all SWA). swa_layer_tokens=6160
+2026-08-20 20:41:01,411 INFO - Full KV Cache is allocated. dtype: torch.bfloat16, #tokens: 0, K size: 0.00 GB, V size: 0.00 GB
+2026-08-20 20:41:01,420 INFO - SWA KV Cache is allocated. dtype: torch.bfloat16, #tokens: 6160, K size: 0.38 GB, V size: 0.38 GB
+2026-08-20 20:41:01,421 INFO - SWAKVPool mem usage: 0.75 GB, swa size: 6160, full size: 0
+2026-08-20 20:41:01,422 INFO - Memory pool end. avail mem=80.18 GB
+2026-08-20 20:41:01,545 INFO - Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+2026-08-20 20:41:01,545 INFO - max_total_num_tokens=6160, chunked_prefill_size=2048, max_prefill_tokens=16384, max_running_requests=1, context_len=16384, available_gpu_mem=79.63 GB
+2026-08-20 20:41:01,546 INFO - Tree cache initialized: source=default impl=PureSWAChunkCache hybrid_swa=True hybrid_ssm=False hierarchical=False streaming_wrapped=False
+Process Process-2:
+Process Process-1:
+Traceback (most recent call last):
+Traceback (most recent call last):
+  File "/usr/local/cpython/3.11.10/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/local/cpython/3.11.10/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/detokenizer_manager.py", line 529, in run_detokenizer_process
+    manager.event_loop()
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/detokenizer_manager.py", line 170, in event_loop
+    recv_obj = sock_recv(self.recv_from_scheduler)
+               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/io_struct.py", line 2479, in sock_recv
+    return socket.recv_pyobj(flags=flags)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/cpython/3.11.10/lib/python3.11/site-packages/zmq/sugar/socket.py", line 989, in recv_pyobj
+    msg = self.recv(flags)
+          ^^^^^^^^^^^^^^^^
+  File "_zmq.py", line 1147, in zmq.backend.cython._zmq.Socket.recv
+  File "_zmq.py", line 1182, in zmq.backend.cython._zmq.Socket.recv
+  File "_zmq.py", line 1337, in zmq.backend.cython._zmq._recv_copy
+  File "_zmq.py", line 169, in zmq.backend.cython._zmq._check_rc
+KeyboardInterrupt
+  File "/usr/local/cpython/3.11.10/lib/python3.11/multiprocessing/process.py", line 314, in _bootstrap
+    self.run()
+  File "/usr/local/cpython/3.11.10/lib/python3.11/multiprocessing/process.py", line 108, in run
+    self._target(*self._args, **self._kwargs)
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 5066, in run_scheduler_process
+    scheduler.run_event_loop()
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 1701, in run_event_loop
+    dispatch_event_loop(self)
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 4916, in dispatch_event_loop
+    scheduler.event_loop_normal()
+  File "/workspace/orbitkv/.venv-sglang-h20/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 1734, in event_loop_normal
+    plan = self.get_next_batch_to_run(
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/utils/nvtx_utils.py", line 109, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 3113, in get_next_batch_to_run
+    prefill_plan = self.get_new_batch_prefill(running_batch)
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 3174, in get_new_batch_prefill
+    ret, running_batch = self._get_new_batch_prefill_raw(
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 3334, in _get_new_batch_prefill_raw
+    res = adder.add_one_req(
+          ^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/plugins/hook_registry.py", line 390, in wrapper
+    return hook(original_fn, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/orbitkv/integrations/sglang/src/orbitkv_sglang/plugin.py", line 970, in _admit_request
+    return original_fn(adder, req, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/schedule_policy.py", line 1214, in add_one_req
+    return self.add_one_req_ignore_eos(req)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/schedule_policy.py", line 1073, in add_one_req_ignore_eos
+    if paged_input > min(self.cur_rem_tokens, self.rem_total_tokens):
+                         ^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/schedule_policy.py", line 699, in cur_rem_tokens
+    self.token_to_kv_pool_allocator.swa_available_size()
+  File "/workspace/orbitkv/integrations/sglang/src/orbitkv_sglang/plugin.py", line 269, in swa_available_size
+    return self.available_size()
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/orbitkv/integrations/sglang/src/orbitkv_sglang/plugin.py", line 263, in available_size
+    return _runtime().stats().free_pages * self.page_size
+           ^^^^^^^^^^^^^^^^^^
+  File "/workspace/orbitkv/integrations/sglang/src/orbitkv_sglang/runtime.py", line 634, in stats
+    stats = self.manager.stats()
+            ^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/orbitkv/integrations/sglang/src/orbitkv_sglang/ffi.py", line 845, in stats
+    self._checked_call(
+  File "/workspace/orbitkv/integrations/sglang/src/orbitkv_sglang/ffi.py", line 599, in _checked_call
+    status = int(function(*args, error, len(error)))
+                 ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+KeyboardInterrupt
+Traceback (most recent call last):
+  File "/workspace/orbitkv/integrations/sglang/bench_canonical_manager.py", line 878, in <module>
+    main()
+  File "/workspace/orbitkv/integrations/sglang/bench_canonical_manager.py", line 871, in main
+    result = run(args, paths)
+             ^^^^^^^^^^^^^^^^
+  File "/workspace/orbitkv/integrations/sglang/bench_canonical_manager.py", line 766, in run
+    output = engine.generate(
+             ^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/entrypoints/engine.py", line 459, in generate
+    ret = self.loop.run_until_complete(generator.__anext__())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "uvloop/loop.pyx", line 1512, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1505, in uvloop.loop.Loop.run_until_complete
+  File "uvloop/loop.pyx", line 1379, in uvloop.loop.Loop.run_forever
+  File "uvloop/loop.pyx", line 557, in uvloop.loop.Loop._run
+  File "uvloop/handles/poll.pyx", line 216, in uvloop.loop.__on_uvpoll_event
+  File "uvloop/cbhandles.pyx", line 83, in uvloop.loop.Handle._run
+  File "uvloop/cbhandles.pyx", line 66, in uvloop.loop.Handle._run
+  File "uvloop/loop.pyx", line 399, in uvloop.loop.Loop._read_from_self
+  File "uvloop/loop.pyx", line 404, in uvloop.loop.Loop._invoke_signals
+  File "uvloop/loop.pyx", line 379, in uvloop.loop.Loop._ceval_process_signals
+KeyboardInterrupt

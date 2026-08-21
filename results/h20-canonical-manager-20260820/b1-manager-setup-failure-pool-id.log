@@ -1,0 +1,32 @@
+2026-08-20 20:38:42,679 WARNING - Ignore import error when loading sglang.srt.models.midashenglm: No module named 'torchaudio'
+2026-08-20 20:38:43,093 WARNING - Ignore import error when loading sglang.srt.models.sarashina2_vision: cannot import name 'MultimodalDataItem' from 'sglang.srt.managers.mm_utils' (/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/mm_utils.py)
+2026-08-20 20:38:43,161 INFO - Load weight begin. avail mem=94.56 GB
+
+Multi-thread loading shards:   0% Completed | 0/2 [00:00<?, ?it/s]
+Multi-thread loading shards:  50% Completed | 1/2 [00:01<00:01,  1.78s/it]
+Multi-thread loading shards: 100% Completed | 2/2 [00:03<00:00,  1.51s/it]
+Multi-thread loading shards: 100% Completed | 2/2 [00:03<00:00,  1.55s/it]
+2026-08-20 20:38:46,546 INFO - Load weight end. elapsed=3.39 s, type=MistralForCausalLM, avail mem=81.05 GB, mem usage=13.50 GB.
+2026-08-20 20:38:46,557 INFO - Use sliding window memory pool (all SWA). swa_layer_tokens=582592
+2026-08-20 20:38:46,557 INFO - Use sliding window memory pool (all SWA). swa_layer_tokens=6160
+2026-08-20 20:38:46,557 INFO - Full KV Cache is allocated. dtype: torch.bfloat16, #tokens: 0, K size: 0.00 GB, V size: 0.00 GB
+2026-08-20 20:38:46,565 INFO - SWA KV Cache is allocated. dtype: torch.bfloat16, #tokens: 6160, K size: 0.38 GB, V size: 0.38 GB
+2026-08-20 20:38:46,566 INFO - SWAKVPool mem usage: 0.75 GB, swa size: 6160, full size: 0
+2026-08-20 20:38:46,567 INFO - Memory pool end. avail mem=80.18 GB
+2026-08-20 20:38:46,695 INFO - Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+2026-08-20 20:38:46,695 INFO - max_total_num_tokens=6160, chunked_prefill_size=2048, max_prefill_tokens=16384, max_running_requests=1, context_len=16384, available_gpu_mem=79.63 GB
+2026-08-20 20:38:46,697 INFO - Tree cache initialized: source=default impl=PureSWAChunkCache hybrid_swa=True hybrid_ssm=False hierarchical=False streaming_wrapped=False
+usage: bench_canonical_manager.py [-h] --mode {manager,stock} --sglang-root
+                                  SGLANG_ROOT --model MODEL [--plan PLAN]
+                                  [--library LIBRARY] --requests REQUESTS
+                                  --max-running-requests MAX_RUNNING_REQUESTS
+                                  --prompt-tokens PROMPT_TOKENS
+                                  --decode-tokens DECODE_TOKENS --iterations
+                                  ITERATIONS --chunked-prefill-size
+                                  CHUNKED_PREFILL_SIZE --context-length
+                                  CONTEXT_LENGTH
+                                  [--max-total-tokens MAX_TOTAL_TOKENS]
+                                  [--mem-fraction-static MEM_FRACTION_STATIC]
+                                  [--attention-backend {flashinfer}]
+                                  [--seed SEED]
+bench_canonical_manager.py: error: OrbitKV manager arena mismatch at after_load: {'pool_id': {'expected': 0, 'actual': 1}}

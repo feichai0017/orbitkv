@@ -1,0 +1,2 @@
+results/**/*.log -whitespace
+integrations/sglang/patches/*.patch -whitespace

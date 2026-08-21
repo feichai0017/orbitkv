@@ -1,0 +1,24 @@
+[package]
+name = "orbitkv"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Compile attention retention into safe and efficient KV-block plans."
+license = "MIT"
+repository = "https://github.com/feichai0017/orbitkv"
+homepage = "https://feichai0017.github.io/orbitkv/"
+keywords = ["llm", "kv-cache", "attention", "cuda", "inference"]
+categories = ["memory-management", "compilers"]
+
+[dependencies]
+serde = { version = "1.0.228", features = ["derive", "rc"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+thiserror = "2.0.17"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

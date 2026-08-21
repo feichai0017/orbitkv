@@ -6,15 +6,15 @@ import { docs, repositoryUrl } from "../../data/site";
 
 <SiteLayout
   title="Architecture | OrbitKV"
-  description="OrbitKV compiler IR, physical design, block ownership, reclamation protocol, and NVIDIA backend boundaries."
+  description="OrbitKV ABI6 identities, immutable snapshots, Prefix/COW transactions, reclamation, and engine boundaries."
   active="Architecture"
 >
   <header class="page-hero">
     <p class="eyebrow">Architecture</p>
-    <h1>Temporal physical design for model state.</h1>
+    <h1>One authority for snapshots, sharing, and reuse.</h1>
     <p>
-      OrbitKV compiles future-read semantics into block lifetime, address,
-      immutable view, and reclamation programs.
+      ABI6 compiles retention semantics into immutable request snapshots and
+      generation-checked physical-page transactions.
     </p>
   </header>
 
@@ -27,10 +27,11 @@ import { docs, repositoryUrl } from "../../data/site";
     -> Lifetime / head stripes
     -> LayoutProgram
     -> PhysicalPlan
-    -> immutable KVView
-    -> SemanticDead ∧ ExecutionComplete
-    -> backend commit
-    -> reuse`}</code></pre>
+    -> immutable SnapshotLease head
+    -> tail / COW copy / write intents
+    -> completion-gated publication
+    -> detach + final-ref certificate
+    -> backend ACK + reuse`}</code></pre>
 
       <h2>Generated layouts</h2>
       <table class="evidence-table-native">
@@ -52,22 +53,31 @@ import { docs, repositoryUrl } from "../../data/site";
         <li>Unsupported semantics and engine contracts fail closed.</li>
       </ul>
 
-      <h2>Persistent capsules</h2>
+      <h2>ABI6 manager lifecycle</h2>
       <p>
-        Holt 0.9.2 is the sole persistent prefix catalog. OrbitKV durably writes
-        immutable, content-addressed KV payload files first, then atomically
-        publishes their Capsule manifests into one Holt tree. Restore validates model,
-        tokenizer, adapter, StatePlan, prefix, payload, and component checksums.
+        A request points at an immutable, generation-checked snapshot head.
+        <code>prepare_batch</code> keeps a candidate private and returns tail,
+        exact COW copy, and fresh-write intents. <code>submit_batch</code>
+        validates exact backend receipts. <code>complete_batch</code> publishes
+        every request head atomically only after completion evidence validates.
       </p>
       <p>
-        SGLang end-to-end qualification now covers compiler-proven pure-SWA
-        live tails and GPT-OSS Full+SWA components. Hybrid restore keeps the
-        complete Full history while moving only the final SWA window.
+        Request and Prefix refs, reader pins, and the writer live on the page.
+        Detach returns explicit mirror CLEAR/REPLACE actions; a reclamation
+        certificate appears only when the final ref is gone. Ambiguous copy,
+        launch, or completion outcomes enter fail-stop quarantine.
+      </p>
+
+      <h2>Current integration boundary</h2>
+      <p>
+        The modular Rust core, exact 23-symbol C ABI6 wire, split Python
+        FFI/runtime/plugin layers, and SGLang <code>OrbitKVPrefixCache</code>
+        are host L2 GO. H20 Prefix correctness and performance remain pending.
       </p>
 
       <h2>Capability levels</h2>
       <p>
-        OrbitKV reports compiler, reference-runtime, GPU-primitive, engine-E2E,
+        OrbitKV reports compiler, host/ABI, GPU-primitive, engine-E2E,
         and production qualification separately. The{" "}
         <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>
           Capability Matrix
@@ -90,14 +100,15 @@ import { docs, repositoryUrl } from "../../data/site";
       <div class="doc-note">
         <strong>Boundary.</strong>
         <p>
-          The owning SGLang paths require ChunkCache with radix, speculation,
-          overlap, and disaggregation disabled. Page16 pure SWA separately
-          qualifies decode CUDA Graph. Capsule hydration is L4 only for the
-          recorded pure-SWA and Full+SWA single-request workloads. VMM remains
-          an isolated L3 primitive.
+          The historical frozen 9233c06d ABI5-v5 snapshot has scoped Full/Hybrid L4
+          correctness on one H20 against official SGLang v0.5.17. It does not
+          qualify ABI6. Same-capacity memory reduction is 0%, and
+          <code>performance_go</code> is false because the B4 measurements come
+          from one epoch. ABI6 H20 Prefix E2E, relocation, Graph/overlap,
+          speculation, multi-GPU, and disaggregation remain unqualified.
         </p>
-        <a href={`${repositoryUrl}/blob/main/docs/h20-owning-vmm-validation-20260817.md`}>
-          Full owning and VMM qualification
+        <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>
+          Current capability matrix
         </a>
       </div>
     </article>

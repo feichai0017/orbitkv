@@ -1,0 +1,72 @@
+{
+  "baseline_commit": "e1b90ea",
+  "baseline_median_seconds": 2.1479811407625675,
+  "baseline_steady_median_seconds": 2.14596095867455,
+  "cached_tokens": 4096,
+  "completion_tokens": 128,
+  "date": "2026-08-20",
+  "dense_ffi_version": 2,
+  "final_page_pool": {
+    "active_pages": 0,
+    "free_pages": 198,
+    "retiring_pages": 0,
+    "total_pages": 198
+  },
+  "gpu": "NVIDIA H20",
+  "iteration_seconds": [
+    3.5832798965275288,
+    2.156121749430895,
+    2.2147862873971462,
+    2.1617044024169445,
+    2.1633889377117157,
+    2.1590046882629395,
+    2.147318869829178
+  ],
+  "median_holt_lookup_ms": {
+    "baseline": 527.5923565,
+    "rust_owned_pages": 525.284297
+  },
+  "median_page_allocation_ms": {
+    "baseline": 2.436095,
+    "rust_owned_pages": 2.7566765
+  },
+  "maximum_observed_generation": 14,
+  "maximum_retiring_pages": 64,
+  "median_seconds": 2.1617044024169445,
+  "model": "/workspace/models/tiny-mistral-248m-v3-d128-swa1024-fixture",
+  "output_digest": "985ee8b2265fc13e82376669f07f2030b8616ad3f282d3ae0fd1384e54c556e4",
+  "page_size_tokens": 16,
+  "page_transitions": {
+    "aborted_batches": 0,
+    "acquired_batches": 63,
+    "committed_batches": 63,
+    "retiring_batches": 63
+  },
+  "physical_token_slots": 3168,
+  "prefix_tokens": 4096,
+  "reference_output_digest": "985ee8b2265fc13e82376669f07f2030b8616ad3f282d3ae0fd1384e54c556e4",
+  "replacement_boundary": {
+    "orbitkv_owns": [
+      "physical SWA page selection",
+      "page lease generation",
+      "active-retiring-free transitions",
+      "semantic and execution-gated page reuse"
+    ],
+    "sglang_owns": [
+      "ReqToToken",
+      "KV tensors",
+      "allocation kernels consuming OrbitKV page IDs",
+      "attention kernel views"
+    ]
+  },
+  "rust_page_ownership_over_baseline_steady": 1.0067072919510531,
+  "schema": "orbitkv.h20-rust-owned-pages.v1",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+  "steady_median_seconds": 2.160354545339942,
+  "workload": {
+    "continuation_tokens": 128,
+    "live_tail_tokens": 1024,
+    "requests": 1,
+    "rounds": 7
+  }
+}

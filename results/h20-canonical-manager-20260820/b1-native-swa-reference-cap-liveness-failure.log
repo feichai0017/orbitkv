@@ -1,0 +1,36 @@
+2026-08-20 21:31:45,544 WARNING - Ignore import error when loading sglang.srt.models.midashenglm: No module named 'torchaudio'
+2026-08-20 21:31:45,846 WARNING - Ignore import error when loading sglang.srt.models.sarashina2_vision: cannot import name 'MultimodalDataItem' from 'sglang.srt.managers.mm_utils' (/workspace/sglang-mistral-native-swa-reference/python/sglang/srt/managers/mm_utils.py)
+2026-08-20 21:31:45,911 INFO - Load weight begin. avail mem=94.56 GB
+
+Multi-thread loading shards:   0% Completed | 0/2 [00:00<?, ?it/s]
+Multi-thread loading shards:  50% Completed | 1/2 [00:01<00:01,  1.60s/it]
+Multi-thread loading shards: 100% Completed | 2/2 [00:02<00:00,  1.35s/it]
+Multi-thread loading shards: 100% Completed | 2/2 [00:02<00:00,  1.39s/it]
+2026-08-20 21:31:48,948 INFO - Load weight end. elapsed=3.04 s, type=MistralForCausalLM, avail mem=81.05 GB, mem usage=13.50 GB.
+2026-08-20 21:31:49,388 INFO - Restoring add_bos_token=True for /workspace/models/mistral-7b-v0.1 (was False after v5 loading)
+2026-08-20 21:31:49,391 INFO - Use sliding window memory pool (all SWA). swa_layer_tokens=582600
+2026-08-20 21:31:49,392 INFO - Use sliding window memory pool (all SWA). swa_layer_tokens=6160
+2026-08-20 21:31:49,392 INFO - Full KV Cache is allocated. dtype: torch.bfloat16, #tokens: 0, K size: 0.00 GB, V size: 0.00 GB
+2026-08-20 21:31:49,400 INFO - SWA KV Cache is allocated. dtype: torch.bfloat16, #tokens: 6160, K size: 0.38 GB, V size: 0.38 GB
+2026-08-20 21:31:49,400 INFO - SWAKVPool mem usage: 0.75 GB, swa size: 6160, full size: 0
+2026-08-20 21:31:49,401 INFO - Memory pool end. avail mem=80.18 GB
+2026-08-20 21:31:49,502 INFO - Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+2026-08-20 21:31:49,503 INFO - max_total_num_tokens=6160, chunked_prefill_size=2048, max_prefill_tokens=16384, max_running_requests=1, context_len=16384, available_gpu_mem=79.63 GB
+2026-08-20 21:31:49,504 INFO - Tree cache initialized: source=default impl=PureSWAChunkCache hybrid_swa=True hybrid_ssm=False hierarchical=False streaming_wrapped=False
+2026-08-20 21:31:49,638 ERROR - Input length (12001 tokens) exceeds the maximum allowed length (6154 tokens). Use a shorter input or enable --allow-auto-truncate., self.rid='orbitkv-canonical-20260820-0-0'
+2026-08-20 21:31:50,888 INFO - Prefill batch, #new-seq: 1, #new-token: 1, #cached-token: 0, full token usage: 0.00, swa token usage: 0.00, #running-req: 0, #queue-req: 0, #pending-token: 0, cuda graph: False, input throughput (token/s): 0.72
+usage: bench_canonical_manager.py [-h] --mode {manager,stock,native-swa}
+                                  --sglang-root SGLANG_ROOT --model MODEL
+                                  [--plan PLAN] [--library LIBRARY] --requests
+                                  REQUESTS --max-running-requests
+                                  MAX_RUNNING_REQUESTS --prompt-tokens
+                                  PROMPT_TOKENS --decode-tokens DECODE_TOKENS
+                                  --iterations ITERATIONS
+                                  --chunked-prefill-size CHUNKED_PREFILL_SIZE
+                                  --context-length CONTEXT_LENGTH
+                                  [--max-total-tokens MAX_TOTAL_TOKENS]
+                                  [--mem-fraction-static MEM_FRACTION_STATIC]
+                                  [--attention-backend {flashinfer}]
+                                  [--seed SEED]
+bench_canonical_manager.py: error: Input length (12001 tokens) exceeds the maximum allowed length (6154 tokens). Use a shorter input or enable --allow-auto-truncate.
+

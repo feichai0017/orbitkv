@@ -1,0 +1,218 @@
+{
+  "schema": "orbitkv.h20-sglang-v0517-abi5-full-hybrid-validation.v1",
+  "date": "2026-08-21",
+  "status": "scoped_l4_abi5_correctness_qualified",
+  "performance_go": false,
+  "engine": {
+    "release": "v0.5.17",
+    "revision": "29481685462732237d80d86076d6563e1f658102",
+    "gpu": "NVIDIA H20",
+    "gpu_count": 1,
+    "abi": 5,
+    "page_tokens": 16,
+    "kv_dtype": "bfloat16",
+    "kv_layout": "nhd",
+    "execution": "eager",
+    "cache": "ChunkCache",
+    "tp": 1,
+    "pp": 1,
+    "dp": 1,
+    "dcp": 1
+  },
+  "workload": {
+    "prompt_tokens_per_request": 513,
+    "decode_tokens_per_request": 33,
+    "context_tokens": 1024,
+    "seed": 20260820,
+    "b1_requests": 1,
+    "b1_iterations": 1,
+    "b4_requests": 4,
+    "b4_iterations": 5,
+    "sampling": "temperature=0, fixed sampling_seed, exact 33 tokens, ignore_eos",
+    "performance_epoch_count": 1
+  },
+  "profiles": {
+    "qwen2.5-7b": {
+      "architecture": "Qwen2ForCausalLM",
+      "attention_profile": "full",
+      "attention_backend": "flashinfer",
+      "moe_runner_backend": "auto_not_applicable"
+    },
+    "gpt-oss-20b": {
+      "architecture": "GptOssForCausalLM",
+      "attention_profile": "hybrid_full_swa",
+      "attention_backend": "fa3",
+      "sliding_window_tokens": 128,
+      "moe_runner_backend": "triton",
+      "moe_profile_scope": "explicit_sglang_builtin_triton_not_external_triton_kernel"
+    }
+  },
+  "primary_correctness_pairs": {
+    "qwen2.5-7b-b1": {
+      "manager_record": "raw/qwen2.5-7b-b1-manager.json",
+      "stock_reference": "raw/qwen2.5-7b-b1-stock.json",
+      "pair_key_sha256": "4e0dd967f28f1e57de34cda5179dcf079e8f8be73fa82ca4a04094880faa956a",
+      "output_token_digest_sha256": "1e82cba111b8aca0b5311fd2b87b6f85658e4a99e65ec3040d9d06cafacf690e",
+      "completed_requests": 1,
+      "completion_tokens": 33,
+      "manager_batch_calls": 33,
+      "manager_batch_items": 33,
+      "final_pages": {"full_free": 64, "full_total": 64},
+      "final_all_free": true,
+      "swa_activity": "not_applicable_zero"
+    },
+    "qwen2.5-7b-b4": {
+      "manager_record": "raw/qwen2.5-7b-b4-manager.json",
+      "stock_reference": "raw/qwen2.5-7b-b4-stock.json",
+      "pair_key_sha256": "a560dc121c51bfe01b154d697d94dae56c1bf40f5d1bc8edd90feed77db0e091",
+      "output_token_digest_sha256": "c7743d583c336357b09e04e73d043a8f2df63bd5707279286fbe00d25544ee46",
+      "completed_requests": 20,
+      "completion_tokens": 660,
+      "manager_batch_calls": 165,
+      "manager_batch_items": 660,
+      "final_pages": {"full_free": 256, "full_total": 256},
+      "final_all_free": true,
+      "swa_activity": "not_applicable_zero"
+    },
+    "gpt-oss-20b-b1": {
+      "manager_record": "raw/gpt-oss-20b-b1-manager.json",
+      "stock_reference": "raw/gpt-oss-20b-b1-stock.json",
+      "pair_key_sha256": "e2304b2f42970309784e4925696480b8758895172b8a710445ea4c7a2b3f6522",
+      "output_token_digest_sha256": "adfd5174f811e7c7f7fe731c18699073bacb9fd1a352b457be1f127a854bd6cd",
+      "completed_requests": 1,
+      "completion_tokens": 33,
+      "manager_batch_calls": 33,
+      "manager_batch_items": 33,
+      "final_pages": {
+        "full_free": 64,
+        "full_total": 64,
+        "swa_free": 52,
+        "swa_total": 52
+      },
+      "final_all_free": true,
+      "swa_retirement_certificates": 26,
+      "swa_pages_reclaimed": 26,
+      "swa_wrap_events": 3
+    },
+    "gpt-oss-20b-b4": {
+      "manager_record": "raw/gpt-oss-20b-b4-manager.json",
+      "stock_reference": "raw/gpt-oss-20b-b4-stock.json",
+      "pair_key_sha256": "106ee25301f57bce0127ccda421363957814d9a3ccbd29d27b757c49a96aaa49",
+      "output_token_digest_sha256": "02f3326d4fe54b64d45fb488d8d8246ac331e0da2f1f286025f59f7fb6e22247",
+      "completed_requests": 20,
+      "completion_tokens": 660,
+      "manager_batch_calls": 165,
+      "manager_batch_items": 660,
+      "final_pages": {
+        "full_free": 256,
+        "full_total": 256,
+        "swa_free": 205,
+        "swa_total": 205
+      },
+      "final_all_free": true,
+      "swa_retirement_certificates": 520,
+      "swa_pages_reclaimed": 520,
+      "swa_wrap_events": 60
+    }
+  },
+  "primary_success_records": [
+    "raw/qwen2.5-7b-b1-manager.json",
+    "raw/qwen2.5-7b-b4-manager.json",
+    "raw/gpt-oss-20b-b1-manager.json",
+    "raw/gpt-oss-20b-b4-manager.json"
+  ],
+  "paired_stock_references": [
+    "raw/qwen2.5-7b-b1-stock.json",
+    "raw/qwen2.5-7b-b4-stock.json",
+    "raw/gpt-oss-20b-b1-stock.json",
+    "raw/gpt-oss-20b-b4-stock.json"
+  ],
+  "validation": {
+    "primary_manager_record_count": 4,
+    "paired_stock_reference_count": 4,
+    "raw_json_count": 8,
+    "raw_stderr_count": 8,
+    "pair_contracts_equal": true,
+    "input_digests_equal": true,
+    "request_ids_equal": true,
+    "complete_output_token_traces_equal": true,
+    "per_request_output_digests_equal": true,
+    "within_lane_output_sequences_stable": true,
+    "completion_counts_exact": true,
+    "capacity_readbacks_equal": true,
+    "checkpoint_identities_equal": true,
+    "official_release_identities_exact": true,
+    "manager_final_census_all_free": true,
+    "manager_final_nonfree_counters_zero": true,
+    "manager_failure_and_quarantine_counters_zero": true,
+    "hybrid_swa_activity_strictly_positive": true,
+    "full_swa_activity_not_applicable_and_zero": true
+  },
+  "memory": {
+    "comparison": "same SGLang tensor-arena sizing cap within each stock/manager pair",
+    "qwen_b1_reported_kvcache_gib_each": 0.056,
+    "qwen_b4_reported_kvcache_gib_each": 0.22,
+    "gpt_oss_b1_reported_kvcache_gib_each": 0.043,
+    "gpt_oss_b4_reported_kvcache_gib_each": 0.17,
+    "same_cap_intrinsic_reduction_percent": 0,
+    "compression_claim": false,
+    "memory_saving_claim": false
+  },
+  "performance": {
+    "status": "not_qualified",
+    "performance_go": false,
+    "speedup_claim": false,
+    "metric": "B4 steady median seconds, excluding iteration zero from each five-iteration in-process sequence",
+    "threshold": "manager overhead <= 5%",
+    "epoch_count": 1,
+    "repeated_epoch_statistics": false,
+    "qwen2.5-7b": {
+      "stock_samples_seconds": [1.2074848152697086, 1.0502991192042828, 1.0340531505644321, 1.0351061560213566, 1.0337461344897747],
+      "manager_samples_seconds": [1.2489356845617294, 1.0396932512521744, 1.0389740727841854, 1.0446315854787827, 1.041134312748909],
+      "stock_steady_median_seconds": 1.0345796532928944,
+      "manager_steady_median_seconds": 1.0404137820005417,
+      "manager_overhead_percent": 0.5639129562502232,
+      "strict_threshold_pass": true,
+      "classification": "single_epoch_non_regression_pass"
+    },
+    "gpt-oss-20b": {
+      "stock_samples_seconds": [3.5039975196123123, 1.4009797014296055, 1.398327011615038, 1.406139813363552, 1.405576691031456],
+      "manager_samples_seconds": [2.8060299083590508, 1.4753736592829227, 1.4720060303807259, 1.4726055674254894, 1.4743947498500347],
+      "stock_steady_median_seconds": 1.4032781962305307,
+      "manager_steady_median_seconds": 1.473500158637762,
+      "manager_overhead_percent": 5.004136927079794,
+      "strict_threshold_pass": false,
+      "classification": "hybrid_boundary_above_strict_threshold"
+    },
+    "failure_reasons": [
+      "GPT-OSS Hybrid overhead is 5.004136927079794%, above the strict <=5% threshold.",
+      "Both profiles have only one run epoch and no repeated-epoch statistics."
+    ]
+  },
+  "qualified_scope": {
+    "models": [
+      "Qwen2ForCausalLM Full attention",
+      "GptOssForCausalLM ordered Full+SWA attention with a 128-token window and explicit built-in Triton MoE runner"
+    ],
+    "batch_profiles": ["B1 one request", "B4 four concurrent requests"],
+    "engine_features": "official SGLang v0.5.17 eager single-GPU ChunkCache only",
+    "source_boundary": "Only the immutable source closure, runner, library, inputs, four manager records, and paired stock references archived here are qualified."
+  },
+  "diagnostic_only_epochs": [
+    "diagnostics/abi5-v3-superseded-chunk2064",
+    "diagnostics/abi5-v3-superseded-default-nondeterministic",
+    "diagnostics/abi5-v3-superseded-deterministic-but-gpt-nondeterministic"
+  ],
+  "not_qualified": [
+    "default external triton_kernel GPT-OSS MoE execution",
+    "Prefix, Radix, shared-prefix ownership, sealed roots, or COW",
+    "overlap scheduling or multiple completion domains",
+    "CUDA Graph or stable descriptor replay",
+    "speculative decoding, fork, rollback, beam, or cancellation churn",
+    "disaggregation, remote KV, multi-GPU, or TP/PP/DP/DCP greater than one",
+    "cross-attention, MLA, Mamba/SSM, dynamic sparse attention, or other model families",
+    "intrinsic KV compression or same-capacity memory reduction",
+    "performance, production readiness, or a version compatibility matrix",
+    "future changes outside the immutable archived source snapshot"
+  ]
+}
