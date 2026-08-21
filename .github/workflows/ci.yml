@@ -21,6 +21,7 @@ jobs:
       - run: cargo clippy --locked --all-targets -- -D warnings
       - run: python tools/verify_manifests.py
       - run: python tools/verify_capability_matrix.py
+      - run: python tools/verify_active_source.py
       - run: python tools/verify_real_model_results.py
       - run: python tools/verify_applicability_results.py
 
@@ -46,6 +47,38 @@ jobs:
       - run: cargo test --locked --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets
       - run: cargo clippy --locked --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets -- -D warnings
       - run: cargo build --locked --manifest-path crates/orbitkv-ffi/Cargo.toml
+      - name: Verify the exact ABI6 symbol set
+        run: |
+          nm -D --defined-only crates/orbitkv-ffi/target/debug/liborbitkv_ffi.so \
+            | awk '{print $3}' \
+            | grep '^orbitkv_' \
+            | sort > /tmp/orbitkv-actual-symbols
+          cat > /tmp/orbitkv-expected-symbols <<'EOF'
+          orbitkv_abi_version
+          orbitkv_manager_abort_steps_batch
+          orbitkv_manager_acknowledge_reclamations_batch
+          orbitkv_manager_arena_identities
+          orbitkv_manager_arena_stats
+          orbitkv_manager_complete_batch
+          orbitkv_manager_create
+          orbitkv_manager_destroy
+          orbitkv_manager_prefix_attach_batch
+          orbitkv_manager_prefix_evict_batch
+          orbitkv_manager_prefix_lookup_batch
+          orbitkv_manager_prefix_publish_batch
+          orbitkv_manager_prefix_publish_release_batch
+          orbitkv_manager_prefix_recycle_batch
+          orbitkv_manager_prepare_batch
+          orbitkv_manager_quarantine_steps_batch
+          orbitkv_manager_quarantine_submissions_batch
+          orbitkv_manager_recycle_requests_batch
+          orbitkv_manager_release_batch
+          orbitkv_manager_request_acquire_batch
+          orbitkv_manager_request_fork_batch
+          orbitkv_manager_stats
+          orbitkv_manager_submit_batch
+          EOF
+          diff -u /tmp/orbitkv-expected-symbols /tmp/orbitkv-actual-symbols
       - name: Test C header and dynamic ABI
         run: |
           cc \
@@ -60,6 +93,20 @@ jobs:
             -Wl,-rpath,"${GITHUB_WORKSPACE}/crates/orbitkv-ffi/target/debug" \
             -o /tmp/orbitkv-ffi-header-smoke
           /tmp/orbitkv-ffi-header-smoke
+      - name: Test C++ header and dynamic ABI
+        run: |
+          c++ \
+            -std=c++17 \
+            -Wall \
+            -Wextra \
+            -Werror \
+            -Icrates/orbitkv-ffi/include \
+            crates/orbitkv-ffi/tests/header_smoke.cpp \
+            -Lcrates/orbitkv-ffi/target/debug \
+            -lorbitkv_ffi \
+            -Wl,-rpath,"${GITHUB_WORKSPACE}/crates/orbitkv-ffi/target/debug" \
+            -o /tmp/orbitkv-ffi-header-smoke-cpp
+          /tmp/orbitkv-ffi-header-smoke-cpp
 
   website:
     runs-on: ubuntu-latest
@@ -85,32 +132,42 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: cargo build --locked --bin orbitkv
-      - run: cargo build --locked --manifest-path crates/orbitkv-ffi/Cargo.toml
-      - name: Fetch pinned SGLang hook contract
+          cache: pip
+          cache-dependency-path: integrations/sglang/pyproject.toml
+      - name: Install the exact SGLang integration
         run: |
+          python -m pip install --upgrade pip
+          python -m pip install "pytest==9.1.1" "pyflakes==3.4.0" -e integrations/sglang
+      - name: Fetch and verify official SGLang v0.5.17
+        run: |
+          sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" /workspace
           git clone \
             --filter=blob:none \
-            --no-checkout \
+            --depth=1 \
+            --branch v0.5.17 \
             https://github.com/sgl-project/sglang.git \
-            /tmp/sglang
-          git -C /tmp/sglang sparse-checkout init --no-cone
-          printf '%s\n' \
-            python/sglang/srt/plugins/hook_registry.py \
-            python/sglang/srt/mem_cache/radix_cache.py \
-            python/sglang/srt/mem_cache/swa_radix_cache.py \
-            python/sglang/srt/mem_cache/unified_radix_cache.py \
-            python/sglang/srt/mem_cache/unified_cache/components/tree_component.py \
-            python/sglang/srt/mem_cache/unified_cache/unified_tree_core.py \
-            python/sglang/srt/managers/scheduler.py \
-            > /tmp/sglang/.git/info/sparse-checkout
-          git -C /tmp/sglang checkout 095ec6c997bfdd25d3864cb0ce77a6562a934b96
-      - run: python -m compileall -q integrations/sglang/src integrations/sglang/tests integrations/sglang/checkpoint_identity.py integrations/sglang/bench_hybrid_shadow.py integrations/sglang/bench_real_model_ab.py integrations/sglang/bench_real_model_ablation.py integrations/sglang/bench_uniform_swa_ab.py integrations/sglang/verify_physical_candidates.py integrations/sglang/bench_owner_transport.py integrations/sglang/bench_owner_e2e_ab.py
-      - name: Test SGLang plugin and Rust trace analyzer
+            /workspace/sglang
+          test "$(git -C /workspace/sglang rev-parse 'v0.5.17^{commit}')" = \
+            29481685462732237d80d86076d6563e1f658102
+          test "$(git -C /workspace/sglang rev-parse HEAD)" = \
+            29481685462732237d80d86076d6563e1f658102
+          python integrations/sglang/prepare_pinned_checkout.py \
+            check-base \
+            --sglang-root /workspace/sglang
+      - name: Compile current integration sources without repository pycache
         env:
+          PYTHONPYCACHEPREFIX: ${{ runner.temp }}/orbitkv-pycompile
+        run: python -m compileall -q -f integrations/sglang
+      - name: Check current integration sources for Python defects
+        run: |
+          python -m pyflakes \
+            integrations/sglang/src \
+            integrations/sglang/tests \
+            integrations/sglang/bench_canonical_manager.py \
+            integrations/sglang/bench_compact_control.py
+      - name: Test the canonical SGLang v0.5.17 adapter
+        env:
+          CUDA_VISIBLE_DEVICES: ""
+          PYTHONDONTWRITEBYTECODE: "1"
           PYTHONPATH: integrations/sglang/src
-          ORBITKV_SGLANG_ROOT: /tmp/sglang
-          ORBITKV_BIN: ${{ github.workspace }}/target/debug/orbitkv
-          ORBITKV_PLAN: ${{ github.workspace }}/examples/full_swa.json
-          ORBITKV_OWNER_LIB: ${{ github.workspace }}/crates/orbitkv-ffi/target/debug/liborbitkv_ffi.so
-        run: python -m unittest discover -s integrations/sglang/tests -v
+        run: python -m pytest -q integrations/sglang/tests
