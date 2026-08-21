@@ -23,6 +23,6 @@ index 00ae1acd18266765c006d87ba5eec51e9f113d8d..7c20ccb51e46942f0bbdfdbcaf88c314
 +            "The required orbitkv_manager entrypoint could not be loaded"
 +        )
 +    _plugins_loaded = True
-
+ 
      for name, (func, dist_name) in plugins.items():
          source = HookSource(plugin_name=name, dist_name=dist_name)
