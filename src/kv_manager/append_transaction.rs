@@ -4,12 +4,12 @@ use super::{
     Arc, BTreeMap, BTreeSet, BackendBindReceipt, BackendCopyReceipt, BackendUnobservedReceipt,
     BatchCompletionReceipt, CanonicalKvManager, ClassDelta, ClassLowering, ClassRoot,
     ClassTransition, CompletionBatch, CopyIntent, DetachedReason, KvManagerError, OperationState,
-    PageLease, PagePhase, PersistentRootEntries, PrepareBatchItem, PreparedState, PreparedStep,
-    PublishedReceipt, ReclamationState, RequestSnapshot, RetentionKind, RootEntry, SnapshotLease,
-    StepCompletion, StepDelta, StepLease, SubmissionLease, SubmitBatchItem, SubmittedState,
-    SubmittedStep, TailAction, TailActionKind, ViewVersion, WriteIntent,
+    PageLease, PagePhase, PersistentRootEntries, PersistentTokenTable, PrepareBatchItem,
+    PreparedState, PreparedStep, PublishedReceipt, ReclamationState, RequestSnapshot,
+    RetentionKind, RootEntry, SnapshotLease, StepCompletion, StepDelta, StepLease, SubmissionLease,
+    SubmitBatchItem, SubmittedState, SubmittedStep, TailAction, TailActionKind, ViewVersion,
+    WriteIntent, apply_dense_class_transition,
 };
-
 impl CanonicalKvManager {
     /// Atomically reserves manager-selected pages for an ordered request batch.
     ///
@@ -324,6 +324,7 @@ impl CanonicalKvManager {
                     roots: (0..self.classes.len())
                         .map(|_| ClassRoot {
                             entries: PersistentRootEntries::default(),
+                            tokens: PersistentTokenTable::default(),
                         })
                         .collect::<Vec<_>>()
                         .into(),
@@ -972,39 +973,21 @@ impl CanonicalKvManager {
                 )
                 .expect("batch completion preflight retained base snapshot");
             let mut candidate_roots = base_snapshot.roots.iter().cloned().collect::<Vec<_>>();
-            for ((root, class_delta), transition) in candidate_roots
+            for (((root, class), class_delta), transition) in candidate_roots
                 .iter_mut()
+                .zip(self.classes.iter().copied())
                 .zip(submitted.delta.classes.iter())
                 .zip(transitions.iter())
             {
-                for _ in 0..transition.retire_from_root {
-                    root.entries
-                        .pop_front()
-                        .expect("completion preflight validated root retirement");
-                }
-                if let Some(destination) = class_delta.tail_destination
-                    && destination.logical_ordinal >= transition.retain_first_ordinal
-                {
-                    if class_delta.tail_action == TailActionKind::CopyOnWrite {
-                        let source = class_delta
-                            .tail_source
-                            .expect("COW completion retained its source");
-                        let removed = root
-                            .entries
-                            .pop_back()
-                            .expect("COW completion preflight retained its tail");
-                        debug_assert_eq!(removed, source);
-                    }
-                    root.entries.push_back(destination);
-                }
-                root.entries.extend(
-                    class_delta
-                        .writes
-                        .iter()
-                        .skip(transition.retire_from_writes)
-                        .copied(),
-                );
-                debug_assert_eq!(root.entries.len(), transition.resident_count);
+                apply_dense_class_transition(
+                    self.page_tokens,
+                    class,
+                    root,
+                    class_delta,
+                    transition,
+                    submitted.delta.previous_boundary,
+                    submitted.delta.target_boundary,
+                )?;
             }
             let resident_count = u32::try_from(resident_count)
                 .map_err(|_| KvManagerError::ArithmeticOverflow("published resident count"))?;

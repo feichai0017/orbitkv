@@ -10,11 +10,7 @@ from ..pinned import validate_patched_checkout
 from . import state as _state
 from .state import RuntimeLimits, _config, _request_key, _runtime
 
-SUPPORTED_ARCHITECTURES = ("Qwen2ForCausalLM", "GptOssForCausalLM")
-ATTENTION_BACKENDS_BY_ARCHITECTURE = {
-    "Qwen2ForCausalLM": ("flashinfer", "flashinfer"),
-    "GptOssForCausalLM": ("fa3", "fa3"),
-}
+SUPPORTED_ATTENTION_BACKENDS = frozenset(("flashinfer", "fa3"))
 _ENTRYPOINT_NAME = "orbitkv_manager"
 
 _PROPAGATED_ALIASES = (
@@ -301,22 +297,31 @@ def _uses_hnd_kv_cache() -> bool:
 
 def _checkpoint_architecture(model: Any) -> str:
     architectures = list(getattr(model.hf_config, "architectures", ()) or ())
-    if len(architectures) != 1 or architectures[0] not in SUPPORTED_ARCHITECTURES:
-        raise RuntimeError("OrbitKV supports only Qwen2 and GPT-OSS checkpoints")
+    if (
+        len(architectures) != 1
+        or not isinstance(architectures[0], str)
+        or not architectures[0]
+    ):
+        raise RuntimeError("OrbitKV requires one explicit checkpoint architecture")
     return architectures[0]
 
 
 def _validate_attention_backend_contract(configurator: Any) -> str:
     architecture = _checkpoint_architecture(configurator.model_config)
     backends = tuple(configurator.server_args.get_attention_backends())
-    if len(backends) != 2:
-        raise RuntimeError("SGLang returned an invalid attention backend pair")
-    expected = ATTENTION_BACKENDS_BY_ARCHITECTURE[architecture]
-    if backends != expected:
+    if (
+        len(backends) != 2
+        or backends[0] != backends[1]
+        or backends[0] not in SUPPORTED_ATTENTION_BACKENDS
+    ):
         raise RuntimeError(
-            f"{architecture} requires SGLang attention backends {expected}, "
-            f"got {backends}"
+            f"{architecture} requires one uniform token-KV backend from "
+            f"{sorted(SUPPORTED_ATTENTION_BACKENDS)}, got {backends}"
         )
+    if bool(getattr(configurator.model_config, "has_attention_sinks", False)) and (
+        backends != ("fa3", "fa3")
+    ):
+        raise RuntimeError(f"{architecture} attention sinks require SGLang FA3")
     return architecture
 
 
@@ -326,27 +331,29 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
     text = model.hf_text_config
     if int(text.num_hidden_layers) != plan.num_hidden_layers:
         raise RuntimeError("checkpoint layer count differs from KvPlanInput.layers")
-    architecture = _checkpoint_architecture(model)
+    _checkpoint_architecture(model)
     retentions = tuple(item.retention for item in plan.classes)
     all_layers = tuple(range(plan.num_hidden_layers))
-    if architecture == "Qwen2ForCausalLM":
+    if retentions == ("full",):
         if retentions != ("full",) or plan.classes[0].layers != all_layers:
-            raise RuntimeError("Qwen2 requires one Full class covering every layer")
+            raise RuntimeError("Full profile requires one class covering every layer")
         if bool(model.is_hybrid_swa):
-            raise RuntimeError("Qwen2 unexpectedly resolved hybrid SWA storage")
-    elif architecture == "GptOssForCausalLM":
+            raise RuntimeError("Full profile unexpectedly resolved hybrid SWA storage")
+    elif retentions == ("full", "sliding"):
         if retentions != ("full", "sliding") or not bool(model.is_hybrid_swa):
-            raise RuntimeError("GPT-OSS requires ordered Full+SWA classes")
+            raise RuntimeError("Hybrid profile requires ordered Full+SWA classes")
         full, sliding = plan.classes
         if (
             tuple(model.full_attention_layer_ids) != full.layers
             or tuple(model.swa_attention_layer_ids) != sliding.layers
         ):
-            raise RuntimeError("GPT-OSS layer partition differs from KvPlanInput")
+            raise RuntimeError("SGLang Full/SWA partition differs from KvPlanInput")
         if int(model.sliding_window_size) != int(sliding.window_tokens):
-            raise RuntimeError("GPT-OSS sliding window differs from KvPlanInput")
+            raise RuntimeError("SGLang sliding window differs from KvPlanInput")
         if bool(getattr(model, "disable_hybrid_swa_memory", False)):
-            raise RuntimeError("GPT-OSS hybrid SWA memory is disabled")
+            raise RuntimeError("SGLang hybrid SWA memory is disabled")
+    else:
+        raise RuntimeError("OrbitKV SGLang supports only Full or ordered Full+SWA")
 
     if bool(getattr(model, "is_deepseek_v4_arch", False)) or bool(
         getattr(model, "is_hybrid_swa_compress", False)

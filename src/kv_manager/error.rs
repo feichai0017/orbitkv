@@ -74,6 +74,16 @@ pub enum KvManagerError {
     ReaderCountOverflow(u32),
     #[error("device view is stale")]
     StaleView,
+    #[error("token view is malformed")]
+    InvalidTokenView,
+    #[error("token placement does not match its page census")]
+    TokenPlacementMismatch,
+    #[error("token view version is stale")]
+    StaleTokenView,
+    #[error("token relocation policy is invalid")]
+    InvalidRelocationPolicy,
+    #[error("token relocation plan is invalid")]
+    InvalidRelocationPlan,
     #[error("step was already submitted")]
     StepAlreadySubmitted,
     #[error("step was not submitted")]
