@@ -422,6 +422,293 @@ fn canonical_manager_materializes_full_and_sliding_token_views() {
     }));
 }
 
+#[test]
+#[allow(clippy::too_many_lines)]
+fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
+    let plan = full_plan(CANONICAL_PAGE_TOKENS);
+    let mut manager = manager_for_plan(&plan, &[backend(0, 1, 8, 0)], 64, 8);
+    let request = manager.acquire_request_leases_for_test(1).unwrap()[0];
+    let initial = append_step(&mut manager, request, 48);
+    let initial_view = manager
+        .token_views_batch(&[TokenViewQuery {
+            request,
+            expected_snapshot: initial.publication.snapshot,
+            class_id: 0,
+        }])
+        .unwrap()[0]
+        .clone();
+    let updates = (0..48_u64)
+        .filter(|token_id| token_id % 16 >= 8)
+        .map(|token_id| ClassTokenDispositionUpdate {
+            class_id: 0,
+            token_id,
+            disposition: TokenDisposition::policy_evicted(71, 1, 99),
+        })
+        .collect::<Vec<_>>();
+    let marked = manager
+        .mark_token_dispositions_batch(&[TokenDispositionBatchItem {
+            request,
+            expected_snapshot: initial.publication.snapshot,
+            updates: updates.into_boxed_slice(),
+        }])
+        .unwrap()[0];
+    let marked_view = manager
+        .token_views_batch(&[TokenViewQuery {
+            request,
+            expected_snapshot: marked.snapshot,
+            class_id: 0,
+        }])
+        .unwrap()[0]
+        .clone();
+    assert_eq!(retained_tokens(&marked_view).len(), 24);
+
+    let prepared = manager
+        .prepare_relocation_batch(&[PrepareRelocationItem {
+            request,
+            expected_snapshot: marked.snapshot,
+            class_id: 0,
+            policy: RelocationPolicy {
+                fragmentation_threshold_milli: 250,
+                maximum_source_pages: 8,
+                evacuation_headroom_pages: 2,
+                full_evacuation: true,
+            },
+        }])
+        .unwrap()[0]
+        .clone();
+    assert_eq!(prepared.plan.source_pages.len(), 3);
+    assert_eq!(prepared.plan.destination_pages.len(), 2);
+    assert_eq!(prepared.plan.projected_reclaimed_pages, 1);
+    assert_eq!(retained_tokens(&initial_view).len(), 48);
+
+    let image = state_image(&manager);
+    assert_eq!(
+        manager.complete_relocation_batch(
+            BatchCompletionReceipt {
+                engine_epoch: prepared.relocation.engine_epoch,
+                completion_domain: 5,
+                completion_value: 7,
+                confirmed: 0,
+                reserved: 0,
+            },
+            &[prepared.relocation],
+        ),
+        Err(KvManagerError::CompletionNotConfirmed)
+    );
+    assert_eq!(state_image(&manager), image);
+
+    let receipts = prepared
+        .plan
+        .moves
+        .iter()
+        .map(|movement| RelocationCopyReceipt {
+            relocation: prepared.relocation,
+            token_id: movement.token_id,
+            source: movement.source,
+            destination: movement.destination,
+            observed: 1,
+            copied: 1,
+            reserved16: 0,
+            reserved32: 0,
+        })
+        .collect::<Vec<_>>();
+    manager
+        .submit_relocation_batch(&[prepared.relocation], &receipts)
+        .unwrap();
+    assert_eq!(
+        manager.abort_relocations_batch(&[RelocationUnobservedReceipt {
+            relocation: prepared.relocation,
+            backend_unobserved: 1,
+            reserved: 0,
+        }]),
+        Err(KvManagerError::StepAlreadySubmitted)
+    );
+    let output = manager
+        .complete_relocation_batch(
+            BatchCompletionReceipt {
+                engine_epoch: prepared.relocation.engine_epoch,
+                completion_domain: 5,
+                completion_value: 7,
+                confirmed: 1,
+                reserved: 0,
+            },
+            &[prepared.relocation],
+        )
+        .unwrap();
+    assert_eq!(output.publications.len(), 1);
+    assert_eq!(output.retirements.len(), 3);
+    let publication = output.publications[0];
+    let packed = manager
+        .token_views_batch(&[TokenViewQuery {
+            request,
+            expected_snapshot: publication.snapshot,
+            class_id: 0,
+        }])
+        .unwrap()[0]
+        .clone();
+    assert_eq!(retained_tokens(&marked_view), retained_tokens(&packed));
+    assert!(packed.placements.iter().all(|placement| {
+        placement
+            .location
+            .is_none_or(|location| !prepared.plan.source_pages.contains(&location.page))
+    }));
+    assert!(matches!(
+        manager.prepare_batch(&[PrepareBatchItem {
+            request,
+            expected_head: publication.snapshot,
+            target_boundary: 49,
+        }]),
+        Err(KvManagerError::UnsupportedProfile(_))
+    ));
+    let extra = manager.acquire_request_leases_for_test(1).unwrap()[0];
+    assert!(matches!(
+        manager.fork_requests_batch(&[RequestForkItem {
+            source_request: request,
+            expected_source_head: publication.snapshot,
+            target_empty_request: extra,
+            expected_target_head: manager.request(extra).unwrap().head,
+        }]),
+        Err(KvManagerError::UnsupportedProfile(_))
+    ));
+    assert!(matches!(
+        manager.publish_prefix_batch(&[PrefixPublishItem {
+            request,
+            expected_head: publication.snapshot,
+            key: prefix_key(7, 48),
+        }]),
+        Err(KvManagerError::UnsupportedProfile(_))
+    ));
+    let stats = manager.stats();
+    assert_eq!(stats.retiring_pages, 3);
+    assert_eq!(stats.active_pages, 2);
+    manager
+        .acknowledge_reclamations_batch(&reclamation_receipts(&output.retirements))
+        .unwrap();
+    let release = manager
+        .release_batch(&[ReleaseBatchItem {
+            request,
+            expected_head: publication.snapshot,
+        }])
+        .unwrap();
+    assert_eq!(release.retirements.len(), 2);
+    assert_eq!(release.retirements[0].token_begin, 0);
+    assert_eq!(release.retirements[0].token_end_exclusive, 16);
+    assert_eq!(release.retirements[1].token_begin, 16);
+    assert_eq!(release.retirements[1].token_end_exclusive, 24);
+    manager
+        .acknowledge_reclamations_batch(&reclamation_receipts(&release.retirements))
+        .unwrap();
+    manager.recycle_requests_batch(&[request]).unwrap();
+    manager.release_current_for_test(&[extra]).unwrap();
+    manager.recycle_requests_batch(&[extra]).unwrap();
+    let stats = manager.stats();
+    assert_eq!(stats.free_pages, 8);
+    assert_eq!(stats.active_pages, 0);
+    assert_eq!(stats.retiring_pages, 0);
+}
+
+#[test]
+fn relocation_prepare_abort_and_receipt_faults_are_failure_atomic() {
+    let plan = full_plan(CANONICAL_PAGE_TOKENS);
+    let mut manager = manager_for_plan(&plan, &[backend(0, 1, 8, 0)], 64, 8);
+    let request = manager.acquire_request_leases_for_test(1).unwrap()[0];
+    let initial = append_step(&mut manager, request, 48);
+    let updates = (0..48_u64)
+        .filter(|token_id| token_id % 16 >= 8)
+        .map(|token_id| ClassTokenDispositionUpdate {
+            class_id: 0,
+            token_id,
+            disposition: TokenDisposition::policy_evicted(81, 1, 101),
+        })
+        .collect::<Vec<_>>();
+    let marked = manager
+        .mark_token_dispositions_batch(&[TokenDispositionBatchItem {
+            request,
+            expected_snapshot: initial.publication.snapshot,
+            updates: updates.into_boxed_slice(),
+        }])
+        .unwrap()[0];
+    let policy = RelocationPolicy {
+        fragmentation_threshold_milli: 250,
+        maximum_source_pages: 8,
+        evacuation_headroom_pages: 2,
+        full_evacuation: true,
+    };
+    let before = state_image(&manager);
+    assert_eq!(
+        manager.prepare_relocation_batch(&[PrepareRelocationItem {
+            request,
+            expected_snapshot: marked.snapshot,
+            class_id: 0,
+            policy: RelocationPolicy {
+                evacuation_headroom_pages: 1,
+                ..policy
+            },
+        }]),
+        Err(KvManagerError::InvalidRelocationPlan)
+    );
+    assert_eq!(state_image(&manager), before);
+
+    let prepared = manager
+        .prepare_relocation_batch(&[PrepareRelocationItem {
+            request,
+            expected_snapshot: marked.snapshot,
+            class_id: 0,
+            policy,
+        }])
+        .unwrap()[0]
+        .clone();
+    let reserved = manager.stats();
+    assert_eq!(reserved.reserved_pages, 2);
+    manager
+        .abort_relocations_batch(&[RelocationUnobservedReceipt {
+            relocation: prepared.relocation,
+            backend_unobserved: 1,
+            reserved: 0,
+        }])
+        .unwrap();
+    assert_eq!(manager.stats().reserved_pages, 0);
+    assert_eq!(manager.stats().free_pages, 5);
+
+    let prepared = manager
+        .prepare_relocation_batch(&[PrepareRelocationItem {
+            request,
+            expected_snapshot: marked.snapshot,
+            class_id: 0,
+            policy,
+        }])
+        .unwrap()[0]
+        .clone();
+    let mut receipts = relocation_receipts(&prepared);
+    receipts[0].token_id += 1;
+    assert_eq!(
+        manager.submit_relocation_batch(&[prepared.relocation], &receipts),
+        Err(KvManagerError::BatchQuarantined(Box::new(
+            KvManagerError::CopyReceiptMismatch
+        )))
+    );
+    assert!(manager.request(request).unwrap().quarantined);
+    assert_eq!(manager.stats().quarantined_pages, 2);
+}
+
+fn relocation_receipts(prepared: &PreparedRelocation) -> Vec<RelocationCopyReceipt> {
+    prepared
+        .plan
+        .moves
+        .iter()
+        .map(|movement| RelocationCopyReceipt {
+            relocation: prepared.relocation,
+            token_id: movement.token_id,
+            source: movement.source,
+            destination: movement.destination,
+            observed: 1,
+            copied: 1,
+            reserved16: 0,
+            reserved32: 0,
+        })
+        .collect()
+}
+
 fn append_step(
     manager: &mut CanonicalKvManager,
     request: RequestLease,

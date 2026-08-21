@@ -277,6 +277,28 @@ fn root_tree_remove_max(root: &Arc<RootTreeNode>) -> (Option<Arc<RootTreeNode>>,
 pub(super) struct ClassRoot {
     pub(super) entries: PersistentRootEntries,
     pub(super) tokens: PersistentTokenTable,
+    pub(super) layout: RootLayout,
+    pub(super) resident_tokens: u64,
+}
+
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(super) enum RootLayout {
+    #[default]
+    Dense,
+    Packed,
+}
+
+impl ClassRoot {
+    pub(super) fn is_dense(&self) -> bool {
+        self.layout == RootLayout::Dense
+    }
+
+    pub(super) fn mirror_boundary(&self, snapshot_boundary: u64) -> u64 {
+        match self.layout {
+            RootLayout::Dense => snapshot_boundary,
+            RootLayout::Packed => self.resident_tokens,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

@@ -199,7 +199,11 @@ fn share_snapshot_for_cow(
         .expect("fork target snapshot");
     assert_eq!(target_snapshot.boundary, 0);
     assert!(target_snapshot.is_empty());
-    for entry in CanonicalKvManager::root_entries(&source_snapshot.roots) {
+    for entry in CanonicalKvManager::root_entries(
+        &source_snapshot.roots,
+        source_snapshot.boundary,
+        manager.page_tokens,
+    ) {
         let mut page = manager.page_mut(entry.page.page_id).expect("fork page");
         page.request_refs = page.request_refs.checked_add(1).expect("fork ref count");
     }
@@ -659,7 +663,11 @@ fn assert_reference_census_matches_full_scan(manager: &CanonicalKvManager) {
             .snapshots
             .get(request.head.slot, request.head.generation)
             .expect("live request head");
-        for entry in CanonicalKvManager::root_entries(&snapshot.roots) {
+        for entry in CanonicalKvManager::root_entries(
+            &snapshot.roots,
+            snapshot.boundary,
+            manager.page_tokens,
+        ) {
             *request_refs.entry(entry.page).or_default() += 1;
         }
     }
@@ -671,7 +679,11 @@ fn assert_reference_census_matches_full_scan(manager: &CanonicalKvManager) {
         .filter_map(|slot| slot.value.as_ref())
         .filter(|prefix| !prefix.evicted)
     {
-        for entry in CanonicalKvManager::root_entries(&prefix.roots) {
+        for entry in CanonicalKvManager::root_entries(
+            &prefix.roots,
+            prefix.key.boundary,
+            manager.page_tokens,
+        ) {
             *prefix_refs.entry(entry.page).or_default() += 1;
         }
     }

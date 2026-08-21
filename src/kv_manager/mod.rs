@@ -17,6 +17,7 @@ mod persistent_snapshot;
 mod prefix;
 mod protocol;
 mod reclamation;
+mod relocation_transaction;
 #[cfg(test)]
 mod test_model;
 mod token_virtualization;
@@ -29,7 +30,9 @@ use manager_state::{
     CensusWork, ClassDelta, ClassTransition, OperationState, PrefixState, PreparedState,
     ReclamationState, RequestState, StepDelta, SubmittedState,
 };
-use persistent_snapshot::{ClassRoot, PersistentRootEntries, RequestSnapshot, RootEntry};
+use persistent_snapshot::{
+    ClassRoot, PersistentRootEntries, RequestSnapshot, RootEntry, RootLayout,
+};
 #[cfg(test)]
 use persistent_snapshot::{HotPathInstrumentation, RootTreeNode, root_instrumentation};
 #[cfg(test)]
@@ -39,8 +42,8 @@ use test_model::{
 
 pub use error::KvManagerError;
 pub use identity::{
-    PageLease, PrefixLease, PrefixSemanticKey, ReclamationLease, RequestLease, SnapshotLease,
-    StepLease, SubmissionLease, ViewVersion,
+    PageLease, PrefixLease, PrefixSemanticKey, ReclamationLease, RelocationLease, RequestLease,
+    SnapshotLease, StepLease, SubmissionLease, ViewVersion,
 };
 pub use manager_state::CanonicalKvManager;
 pub use protocol::{
@@ -54,8 +57,10 @@ pub use protocol::{
     StepCompletion, SubmitBatchItem, SubmittedStep, TailAction, TailActionKind, WriteIntent,
 };
 pub use token_virtualization::{
-    ClassTokenDispositionUpdate, RelocationDestination, RelocationPageState, RelocationPlan,
-    RelocationPolicy, TokenDisposition, TokenDispositionBatchItem, TokenDispositionKind,
+    ClassTokenDispositionUpdate, CompletedRelocationBatch, CompletedRelocationItem,
+    PrepareRelocationItem, PreparedRelocation, RelocationCopyReceipt, RelocationDestination,
+    RelocationPageState, RelocationPlan, RelocationPolicy, RelocationUnobservedReceipt,
+    SubmittedRelocation, TokenDisposition, TokenDispositionBatchItem, TokenDispositionKind,
     TokenDispositionUpdate, TokenLocation, TokenMove, TokenPlacement, TokenView, TokenViewQuery,
     apply_token_relocation, mark_token_dispositions, plan_token_relocation, validate_token_view,
 };

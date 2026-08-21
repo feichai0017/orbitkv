@@ -7,7 +7,7 @@ use super::{
     PageLease, PagePhase, PageState, PersistentRootEntries, PersistentTokenTable, PrefixLease,
     PrefixLookupHint, PrefixSemanticKey, ReclamationLease, RequestForkItem, RequestLease,
     RequestSnapshot, RequestState, RequestView, RetentionKind, RetirementProgram, RootEntry,
-    SnapshotLease, SnapshotPage, StepLease, SubmissionLease, TokenView, TokenViewQuery,
+    RootLayout, SnapshotLease, SnapshotPage, StepLease, SubmissionLease, TokenView, TokenViewQuery,
     ViewVersion,
 };
 #[cfg(test)]
@@ -78,6 +78,7 @@ impl CanonicalKvManager {
             prefixes: Arena::new("prefix", config.maximum_prefixes)?,
             prefix_index: BTreeMap::new(),
             operations: Arena::new("operation", config.maximum_operations)?,
+            relocations: Arena::new("relocation", config.maximum_operations)?,
             reclamations: Arena::new("reclamation", config.maximum_reclamations)?,
             pages,
             free_pages,
@@ -289,6 +290,7 @@ impl CanonicalKvManager {
         })?;
         let mut pages = Vec::with_capacity(resident_count);
         for (class, root) in self.classes.iter().copied().zip(roots.iter()) {
+            let mirror_boundary = root.mirror_boundary(boundary);
             for entry in root.entries.iter().copied() {
                 let token_begin = entry.logical_ordinal.checked_mul(self.page_tokens).ok_or(
                     KvManagerError::ArithmeticOverflow("materialized token begin"),
@@ -296,11 +298,14 @@ impl CanonicalKvManager {
                 let token_end = token_begin
                     .checked_add(self.page_tokens)
                     .ok_or(KvManagerError::ArithmeticOverflow("materialized token end"))?
-                    .min(boundary);
-                let visible_begin = class
-                    .retained_start(boundary)
-                    .max(token_begin)
-                    .min(token_end);
+                    .min(mirror_boundary);
+                let visible_begin = if root.is_dense() {
+                    class.retained_start(boundary)
+                } else {
+                    0
+                }
+                .max(token_begin)
+                .min(token_end);
                 pages.push(SnapshotPage {
                     class_id: entry.class_id,
                     backend_domain: entry.backend_domain,
@@ -404,6 +409,8 @@ impl CanonicalKvManager {
                         .map(|_| ClassRoot {
                             entries: PersistentRootEntries::default(),
                             tokens: PersistentTokenTable::default(),
+                            layout: RootLayout::Dense,
+                            resident_tokens: 0,
                         })
                         .collect::<Vec<_>>()
                         .into(),
@@ -415,6 +422,7 @@ impl CanonicalKvManager {
                     head,
                     pending_step: None,
                     inflight_submission: None,
+                    pending_relocation: None,
                     last_completion_domain: 0,
                     last_completion_value: 0,
                     released: false,
@@ -506,12 +514,17 @@ impl CanonicalKvManager {
             if source_state.head != item.expected_source_head {
                 return Err(KvManagerError::StaleView);
             }
-            if source_state.pending_step.is_some() || source_state.inflight_submission.is_some() {
+            if source_state.busy() {
                 return Err(KvManagerError::RequestBusy);
             }
             let source_snapshot = self.request_snapshot(item.source_request)?;
             if source_snapshot.roots.len() != self.classes.len() {
                 return Err(KvManagerError::Invariant("snapshot class cardinality"));
+            }
+            if source_snapshot.roots.iter().any(|root| !root.is_dense()) {
+                return Err(KvManagerError::UnsupportedProfile(
+                    "fork after token relocation is not implemented",
+                ));
             }
 
             let target_state = self.request(item.target_empty_request)?;
@@ -521,7 +534,7 @@ impl CanonicalKvManager {
             if target_state.head != item.expected_target_head {
                 return Err(KvManagerError::StaleView);
             }
-            if target_state.pending_step.is_some() || target_state.inflight_submission.is_some() {
+            if target_state.busy() {
                 return Err(KvManagerError::RequestBusy);
             }
             let target_snapshot = self.request_snapshot(item.target_empty_request)?;
@@ -539,7 +552,11 @@ impl CanonicalKvManager {
                 .map_err(|_| KvManagerError::ArithmeticOverflow("resident count"))?;
             let pages =
                 self.materialize_snapshot_roots(source_snapshot.boundary, &source_snapshot.roots)?;
-            for entry in Self::root_entries(&source_snapshot.roots) {
+            for entry in Self::root_entries(
+                &source_snapshot.roots,
+                source_snapshot.boundary,
+                self.page_tokens,
+            ) {
                 let increment = page_increments.entry(entry.page).or_default();
                 *increment = increment
                     .checked_add(1)
@@ -762,7 +779,11 @@ impl CanonicalKvManager {
         self.snapshots.get_mut(head.slot, head.generation)
     }
 
-    pub(super) fn root_entries(roots: &[ClassRoot]) -> Vec<RootEntry> {
+    pub(super) fn root_entries(
+        roots: &[ClassRoot],
+        _boundary: u64,
+        _page_tokens: u64,
+    ) -> Vec<RootEntry> {
         roots
             .iter()
             .flat_map(|root| root.entries.iter().copied())
