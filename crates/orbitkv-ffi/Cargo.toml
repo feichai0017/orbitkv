@@ -3,7 +3,7 @@ name = "orbitkv-ffi"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
-description = "Stable C ABI for the OrbitKV owning control plane."
+description = "Canonical C ABI for the OrbitKV KV manager."
 license = "MIT"
 repository = "https://github.com/feichai0017/orbitkv"
 
