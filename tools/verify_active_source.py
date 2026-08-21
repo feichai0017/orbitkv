@@ -20,6 +20,7 @@ TEST_BENCH_ROOTS = (
 TEST_BENCH_FILES = (
     ROOT / "integrations/sglang/bench_canonical_manager.py",
     ROOT / "integrations/sglang/bench_compact_control.py",
+    ROOT / "integrations/sglang/bench_token_relocation.py",
 )
 
 ABI7_MARKERS = {

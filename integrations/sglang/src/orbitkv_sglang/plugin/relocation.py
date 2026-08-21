@@ -68,7 +68,7 @@ def _publish_compact_row(req: Any, row: Any, locations: tuple[int, ...], boundar
     req._orbitkv_retained_locations = tuple(locations)
 
 
-def _copy_callback(scheduler: Any) -> Callable[[Any], tuple[RelocationCopyReceipt, ...]]:
+def _copy_callback(batch: Any) -> Callable[[Any], tuple[RelocationCopyReceipt, ...]]:
     def execute(prepared: Any) -> tuple[RelocationCopyReceipt, ...]:
         import torch
 
@@ -84,13 +84,14 @@ def _copy_callback(scheduler: Any) -> Callable[[Any], tuple[RelocationCopyReceip
             destinations.append(
                 destination_page * _config().page_tokens + movement.destination.offset
             )
-        device = scheduler.device
+        device = batch.device
+        device_module = torch.get_device_module(device)
         source = torch.tensor(sources, dtype=torch.int64, device=device)
         destination = torch.tensor(destinations, dtype=torch.int64, device=device)
-        stream = scheduler.device_module.Stream(device=device)
-        event = scheduler.device_module.Event()
+        stream = device_module.Stream(device=device)
+        event = device_module.Event()
         try:
-            with scheduler.device_module.stream(stream):
+            with device_module.stream(stream):
                 _state._ALLOCATOR.get_kvcache().move_kv_cache(destination, source)
                 event.record(stream=stream)
             event.synchronize()
@@ -111,31 +112,27 @@ def _copy_callback(scheduler: Any) -> Callable[[Any], tuple[RelocationCopyReceip
     return execute
 
 
-def _maybe_reclaim_running_batch(scheduler: Any, running_batch: Any) -> None:
+def _maybe_reclaim_decode_batch(batch: Any) -> None:
     policy = _config().token_reclamation
-    if policy.mode == "off" or running_batch is None or running_batch.is_empty():
+    if policy.mode == "off" or not batch.reqs:
         return
     runtime = _runtime()
-    possible = tuple(
+    candidates = tuple(
         req
-        for req in running_batch.reqs
+        for req in batch.reqs
         if runtime.has_request(_request_key(req))
         and getattr(getattr(req, "kv", None), "kv_allocated_len", None)
         == policy.trigger_tokens
         and not bool(getattr(req, "_orbitkv_token_reclamation_done", False))
     )
-    if possible:
-        # The event publishes the authoritative boundary. Selecting candidates
-        # before this wait can observe N-1 while the completed step targets N.
-        runtime.wait_batch(tuple(_request_key(req) for req in possible))
-    candidates = tuple(
-        req
-        for req in possible
-        if runtime.record_for(_request_key(req)).boundary == policy.trigger_tokens
-    )
     if not candidates:
         return
-    table = running_batch.req_to_token_pool.req_to_token
+    if any(
+        runtime.record_for(_request_key(req)).boundary != policy.trigger_tokens
+        for req in candidates
+    ):
+        raise RuntimeError("published boundary differs from reclamation trigger")
+    table = batch.req_to_token_pool.req_to_token
     for req in candidates:
         key = _request_key(req)
         record = runtime.record_for(key)
@@ -162,15 +159,19 @@ def _maybe_reclaim_running_batch(scheduler: Any, running_batch: Any) -> None:
                     policy.fragmentation_threshold_milli,
                     True,
                 ),
-                _copy_callback(scheduler),
-                int(getattr(scheduler.device, "index", 0) or 0) + 65_537,
-                int(getattr(scheduler, "forward_ct", 0)) + 1,
+                _copy_callback(batch),
+                int(getattr(batch.device, "index", 0) or 0) + 65_537,
+                record.boundary,
             )
             try:
                 _publish_compact_row(
                     req, row, publication.retained_locations, record.boundary
                 )
-                scheduler.device_module.current_stream(scheduler.device).synchronize()
+                import torch
+
+                torch.get_device_module(batch.device).current_stream(
+                    batch.device
+                ).synchronize()
                 runtime.acknowledge_relocation(publication)
             except Exception as error:
                 runtime.fail_stop(f"relocation mirror publication became uncertain: {error}")
@@ -216,4 +217,4 @@ def _active_forward_lengths(
     return result
 
 
-__all__ = ["_active_forward_lengths", "_maybe_reclaim_running_batch"]
+__all__ = ["_active_forward_lengths", "_maybe_reclaim_decode_batch"]

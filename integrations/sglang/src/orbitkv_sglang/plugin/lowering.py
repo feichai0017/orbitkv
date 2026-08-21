@@ -848,6 +848,25 @@ def _alloc_for_decode(batch: Any, token_per_req: int) -> Any:
             (batch.req_pool_indices, active_previous_device),
             out_cache_loc.to(torch.int32),
         )
+        compact_rows = tuple(
+            index
+            for index, req in enumerate(batch.reqs)
+            if hasattr(req, "_orbitkv_active_kv_len")
+        )
+        if compact_rows:
+            observed = torch.stack(
+                tuple(
+                    batch.req_to_token_pool.req_to_token[
+                        int(req_pool_values[index]), active_previous[index]
+                    ]
+                    for index in compact_rows
+                )
+            ).to(torch.int64)
+            expected = out_cache_loc[
+                torch.tensor(compact_rows, dtype=torch.int64, device=batch.device)
+            ].to(torch.int64)
+            if not torch.equal(observed, expected):
+                raise RuntimeError("compact ReqToToken write did not commit exactly")
         _write_hybrid_lut(locations)
         _commit_cow_mirrors(cow_mirror_plan)
         for index, (req, active) in enumerate(
@@ -872,6 +891,9 @@ def _alloc_for_decode(batch: Any, token_per_req: int) -> Any:
 def _manager_maybe_evict_swa(batch: Any) -> None:
     _validate_batch(batch)
     _wait_previous_steps(batch)
+    from .relocation import _maybe_reclaim_decode_batch
+
+    _maybe_reclaim_decode_batch(batch)
 
 
 def _completion_domain(scheduler: Any) -> int:
@@ -890,10 +912,6 @@ def _get_next_batch_to_run(
     original_fn: Callable[..., Any], scheduler: Any, *args: Any, **kwargs: Any
 ) -> Any:
     try:
-        from .relocation import _maybe_reclaim_running_batch
-
-        running_batch = args[0] if args else kwargs.get("running_batch")
-        _maybe_reclaim_running_batch(scheduler, running_batch)
         return original_fn(scheduler, *args, **kwargs)
     except Exception as error:
         _runtime().pre_forward_failed(error)

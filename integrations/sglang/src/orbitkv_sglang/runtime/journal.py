@@ -907,6 +907,7 @@ class CanonicalRuntime(
                 raise ManagerError("COW intents duplicate a destination page")
             retired_candidates = {page.page for page in cursor_delta.retired_transient}
             candidate_transitions: list[MirrorCandidateTransition] = []
+            compact_row = bool(record.cursor.active_kv_lengths)
             for candidate in pending.new_pages:
                 arena = self.arenas_by_class[candidate.class_id]
                 begin = candidate.logical_ordinal * self.page_tokens
@@ -935,6 +936,8 @@ class CanonicalRuntime(
                         or copy.source_token_offset != copy.destination_token_offset
                     ):
                         raise ManagerError("COW candidate token span changed")
+                if compact_row:
+                    continue
                 candidate_transitions.append(
                     MirrorCandidateTransition(
                         destination=candidate.page,
@@ -1480,7 +1483,6 @@ class CanonicalRuntime(
     @staticmethod
     def _zero_page() -> Any:
         from .identity import PageLease
-
         return PageLease(0, 0, 0, 0, 0)
 
     def close(self) -> None:
@@ -1496,4 +1498,3 @@ class CanonicalRuntime(
             ):
                 raise ManagerError("cannot destroy a manager with live requests")
             self.manager.destroy()
-__all__ = ["BatchRecord", "CanonicalRuntime", "RequestRecord", "StepPhase", "StepRecord"]
