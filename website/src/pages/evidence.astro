@@ -6,7 +6,7 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
 
 <SiteLayout
   title="Evidence | OrbitKV"
-  description="H20 memory, admission, owning-control, and CUDA VMM evidence for OrbitKV."
+  description="Append-only OrbitKV correctness, lifecycle, memory, and performance-smoke evidence with explicit source boundaries."
   active="Evidence"
 >
   <header class="page-hero">
@@ -20,7 +20,7 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
-      <h2>Primary results</h2>
+      <h2>Live host gate and historical engine boundary</h2>
       <div class="metric-grid compact">
         {metrics.map((item) => (
           <article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>
@@ -46,12 +46,13 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
 
       <h2>Exclusions</h2>
       <ul>
-        <li>No released-checkpoint model-quality improvement claim.</li>
-        <li>No radix/prefix-cache, speculative, overlap, or disaggregation qualification.</li>
-        <li>Decode CUDA Graph is qualified only for the recorded page16 pure-SWA path.</li>
-        <li>No claim that VMM already backs SGLang KV tensors.</li>
-        <li>No multi-GPU multicast or fabric-memory claim.</li>
-        <li>One H20 does not qualify other NVIDIA architectures.</li>
+        <li>ABI6 Rust core, exact 23-symbol C wire, Python runtime, and SGLang Prefix adapter are host L2 GO.</li>
+        <li>The frozen ABI5-v5 H20 record qualifies only its exact 9233c06d source closure.</li>
+        <li>No same-capacity KV compression claim: historical paired page16 tensor bytes are identical.</li>
+        <li><code>performance_go</code> is false: the ABI5-v5 B4 epoch gives +4.1932% Qwen and −5.2048% GPT-OSS manager overhead, without repeated statistics.</li>
+        <li>Token compaction will relocate retained K/V exactly; it is not numerical compression.</li>
+        <li>No ABI6 H20 Prefix, speculative, overlap, Graph, or disaggregation qualification.</li>
+        <li>No VMM-backed SGLang tensor or multi-GPU claim.</li>
       </ul>
 
       <p>
