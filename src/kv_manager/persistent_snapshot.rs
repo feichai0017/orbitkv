@@ -4,6 +4,7 @@ use std::sync::Arc;
 use std::cell::Cell;
 
 use super::identity::{PageLease, ViewVersion};
+use super::token_virtualization::PersistentTokenTable;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RootEntry {
@@ -275,6 +276,7 @@ fn root_tree_remove_max(root: &Arc<RootTreeNode>) -> (Option<Arc<RootTreeNode>>,
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ClassRoot {
     pub(super) entries: PersistentRootEntries,
+    pub(super) tokens: PersistentTokenTable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

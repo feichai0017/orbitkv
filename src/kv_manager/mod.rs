@@ -19,6 +19,7 @@ mod protocol;
 mod reclamation;
 #[cfg(test)]
 mod test_model;
+mod token_virtualization;
 mod transaction_validation;
 
 use arena::{Arena, PageCounts, PagePhase, PageState};
@@ -52,6 +53,13 @@ pub use protocol::{
     ReleaseBatchItem, ReleaseCompletion, RequestForkItem, RequestView, SnapshotPage,
     StepCompletion, SubmitBatchItem, SubmittedStep, TailAction, TailActionKind, WriteIntent,
 };
+pub use token_virtualization::{
+    ClassTokenDispositionUpdate, RelocationDestination, RelocationPageState, RelocationPlan,
+    RelocationPolicy, TokenDisposition, TokenDispositionBatchItem, TokenDispositionKind,
+    TokenDispositionUpdate, TokenLocation, TokenMove, TokenPlacement, TokenView, TokenViewQuery,
+    apply_token_relocation, mark_token_dispositions, plan_token_relocation, validate_token_view,
+};
+use token_virtualization::{PersistentTokenTable, apply_dense_class_transition};
 
 const CANONICAL_PAGE_TOKENS: u64 = 16;
 const FIRST_POOL_EPOCH: u64 = 1;

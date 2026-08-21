@@ -4,10 +4,11 @@ use super::{
     BlockDomain, CANONICAL_PAGE_TOKENS, CanonicalKvManager, CensusWork, ClassLayoutProgram,
     ClassRoot, CompiledKvClass, CompiledKvPlan, FIRST_POOL_EPOCH, ForkedRequest, KvManagerError,
     ManagerConfig, ManagerStats, MaterializedRequestView, NEXT_ENGINE_EPOCH, Ordering, PageCounts,
-    PageLease, PagePhase, PageState, PersistentRootEntries, PrefixLease, PrefixLookupHint,
-    PrefixSemanticKey, ReclamationLease, RequestForkItem, RequestLease, RequestSnapshot,
-    RequestState, RequestView, RetentionKind, RetirementProgram, RootEntry, SnapshotLease,
-    SnapshotPage, StepLease, SubmissionLease, ViewVersion,
+    PageLease, PagePhase, PageState, PersistentRootEntries, PersistentTokenTable, PrefixLease,
+    PrefixLookupHint, PrefixSemanticKey, ReclamationLease, RequestForkItem, RequestLease,
+    RequestSnapshot, RequestState, RequestView, RetentionKind, RetirementProgram, RootEntry,
+    SnapshotLease, SnapshotPage, StepLease, SubmissionLease, TokenView, TokenViewQuery,
+    ViewVersion,
 };
 #[cfg(test)]
 use super::{DeviceKvEntry, HotPathInstrumentation};
@@ -139,6 +140,73 @@ impl CanonicalKvManager {
                     return Err(KvManagerError::DuplicateRequest);
                 }
                 self.request_view(request)
+            })
+            .collect::<Result<Vec<_>, KvManagerError>>()
+            .map(Vec::into_boxed_slice)
+    }
+
+    /// Materializes generation-checked logical token views for cold planning.
+    ///
+    /// Normal append never calls this path. The complete ordered query batch is
+    /// preflighted before any view is returned, and every retained placement is
+    /// revalidated against the canonical page generation and backend arena.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error for an empty or duplicate query, stale request/snapshot,
+    /// unavailable request, invalid class, malformed token table, or placement
+    /// that no longer names a live canonical page generation.
+    pub fn token_views_batch(
+        &self,
+        queries: &[TokenViewQuery],
+    ) -> Result<Box<[TokenView]>, KvManagerError> {
+        if queries.is_empty() {
+            return Err(KvManagerError::EmptyBatch);
+        }
+        let mut seen = BTreeSet::new();
+        queries
+            .iter()
+            .map(|query| {
+                if !seen.insert((query.request, query.class_id)) {
+                    return Err(KvManagerError::DuplicateRequest);
+                }
+                let state = self.request(query.request)?;
+                if state.released || state.quarantined {
+                    return Err(KvManagerError::RequestUnavailable);
+                }
+                if state.head != query.expected_snapshot {
+                    return Err(KvManagerError::StaleTokenView);
+                }
+                let class = self.runtime_class(query.class_id)?;
+                let snapshot = self.request_snapshot(query.request)?;
+                let root = snapshot
+                    .roots
+                    .get(usize::from(query.class_id))
+                    .ok_or(KvManagerError::InvalidClass(query.class_id))?;
+                let placements = root.tokens.materialize()?;
+                let view = TokenView {
+                    class_id: query.class_id,
+                    version: snapshot.view_version,
+                    page_tokens: u32::try_from(self.page_tokens)
+                        .map_err(|_| KvManagerError::ArithmeticOverflow("page tokens"))?,
+                    placements,
+                };
+                super::validate_token_view(&view)?;
+                for placement in &view.placements {
+                    let Some(location) = placement.location else {
+                        continue;
+                    };
+                    self.validate_page_lease(class, location.page)?;
+                    let page = self.page(location.page.page_id)?;
+                    if page.class_id != query.class_id
+                        || page.generation != location.page.generation
+                        || page.phase != PagePhase::Live
+                        || class.backend_index(location.page.page_id)? != location.backend_index
+                    {
+                        return Err(KvManagerError::TokenPlacementMismatch);
+                    }
+                }
+                Ok(view)
             })
             .collect::<Result<Vec<_>, KvManagerError>>()
             .map(Vec::into_boxed_slice)
@@ -335,6 +403,7 @@ impl CanonicalKvManager {
                     roots: (0..self.classes.len())
                         .map(|_| ClassRoot {
                             entries: PersistentRootEntries::default(),
+                            tokens: PersistentTokenTable::default(),
                         })
                         .collect::<Vec<_>>()
                         .into(),

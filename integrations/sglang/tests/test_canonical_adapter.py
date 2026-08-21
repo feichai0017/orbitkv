@@ -1907,10 +1907,11 @@ def test_sglang_free_group_rejects_duplicate_before_any_release_mutation():
     assert batch.req_to_token_pool.freed == []
 
 
-def test_qwen_and_gpt_oss_geometry_gates_allow_native_attention_partition():
+def test_full_and_hybrid_geometry_gates_are_semantic_not_architecture_allowlists():
     for retentions, architecture, layers in (
         (("full",), "Qwen2ForCausalLM", ((0,), ())),
         (("full", "sliding"), "GptOssForCausalLM", ((0,), (1,))),
+        (("full", "sliding"), "Olmo3ForCausalLM", ((0,), (1,))),
     ):
         config = _config(retentions)
         state._install_test_state(config=config)
@@ -1940,17 +1941,20 @@ def test_qwen_and_gpt_oss_geometry_gates_allow_native_attention_partition():
 
 
 @pytest.mark.parametrize(
-    "architecture, expected, rejected",
+    "architecture, has_sinks, expected, rejected",
     (
-        ("Qwen2ForCausalLM", ("flashinfer", "flashinfer"), ("fa3", "fa3")),
-        ("GptOssForCausalLM", ("fa3", "fa3"), ("flashinfer", "flashinfer")),
+        ("Qwen2ForCausalLM", False, ("flashinfer", "flashinfer"), ("triton", "triton")),
+        ("Qwen2ForCausalLM", False, ("fa3", "fa3"), ("fa3", "flashinfer")),
+        ("GptOssForCausalLM", True, ("fa3", "fa3"), ("flashinfer", "flashinfer")),
+        ("Olmo3ForCausalLM", False, ("flashinfer", "flashinfer"), ("triton", "triton")),
     ),
 )
-def test_attention_backend_contract_is_exact_per_architecture(
-    architecture, expected, rejected
+def test_attention_backend_contract_accepts_uniform_token_kv_backends(
+    architecture, has_sinks, expected, rejected
 ):
     model = SimpleNamespace(
-        hf_config=SimpleNamespace(architectures=[architecture])
+        hf_config=SimpleNamespace(architectures=[architecture]),
+        has_attention_sinks=has_sinks,
     )
     configurator = SimpleNamespace(
         model_config=model,
@@ -1959,7 +1963,7 @@ def test_attention_backend_contract_is_exact_per_architecture(
     assert validation._validate_attention_backend_contract(configurator) == architecture
 
     configurator.server_args.get_attention_backends = lambda: rejected
-    with pytest.raises(RuntimeError, match=rf"{architecture} requires"):
+    with pytest.raises(RuntimeError, match=rf"{architecture}.*require"):
         validation._validate_attention_backend_contract(configurator)
 
 

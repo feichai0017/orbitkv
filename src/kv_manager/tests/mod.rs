@@ -6,3 +6,4 @@ mod performance;
 mod prefix_cow;
 mod profile_validation;
 mod properties;
+mod token_virtualization;
