@@ -11,14 +11,10 @@ keywords = ["llm", "kv-cache", "attention", "cuda", "inference"]
 categories = ["memory-management", "compilers"]
 
 [dependencies]
-holt = { version = "=0.9.2", default-features = false }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
 sha2 = "0.10.9"
 thiserror = "2.0.17"
-
-[dev-dependencies]
-tempfile = "3.23.0"
 
 [lints.rust]
 unsafe_code = "forbid"
