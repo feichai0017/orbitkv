@@ -1,0 +1,95 @@
+2026-08-20 20:49:10,329 WARNING - Ignore import error when loading sglang.srt.models.midashenglm: No module named 'torchaudio'
+2026-08-20 20:49:10,454 WARNING - Ignore import error when loading sglang.srt.models.sarashina2_vision: cannot import name 'MultimodalDataItem' from 'sglang.srt.managers.mm_utils' (/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/mm_utils.py)
+2026-08-20 20:49:10,464 INFO - Load weight begin. avail mem=94.56 GB
+
+Multi-thread loading shards:   0% Completed | 0/2 [00:00<?, ?it/s]
+Multi-thread loading shards:  50% Completed | 1/2 [00:01<00:01,  1.61s/it]
+Multi-thread loading shards: 100% Completed | 2/2 [00:02<00:00,  1.36s/it]
+Multi-thread loading shards: 100% Completed | 2/2 [00:02<00:00,  1.40s/it]
+2026-08-20 20:49:13,526 INFO - Load weight end. elapsed=3.06 s, type=MistralForCausalLM, avail mem=81.05 GB, mem usage=13.50 GB.
+2026-08-20 20:49:13,983 INFO - Restoring add_bos_token=True for /workspace/models/mistral-7b-v0.1 (was False after v5 loading)
+2026-08-20 20:49:13,987 INFO - Use sliding window memory pool (all SWA). swa_layer_tokens=582592
+2026-08-20 20:49:13,987 INFO - Use sliding window memory pool (all SWA). swa_layer_tokens=6160
+2026-08-20 20:49:13,988 INFO - Full KV Cache is allocated. dtype: torch.bfloat16, #tokens: 0, K size: 0.00 GB, V size: 0.00 GB
+2026-08-20 20:49:13,996 INFO - SWA KV Cache is allocated. dtype: torch.bfloat16, #tokens: 6160, K size: 0.38 GB, V size: 0.38 GB
+2026-08-20 20:49:13,996 INFO - SWAKVPool mem usage: 0.75 GB, swa size: 6160, full size: 0
+2026-08-20 20:49:13,997 INFO - Memory pool end. avail mem=80.18 GB
+2026-08-20 20:49:14,092 INFO - Disable prefill CUDA graph because cuda_graph_config resolved prefill.backend='disabled' (e.g. via --cuda-graph-backend-prefill=disabled or auto-disable rules).
+2026-08-20 20:49:14,093 INFO - max_total_num_tokens=6160, chunked_prefill_size=2048, max_prefill_tokens=16384, max_running_requests=1, context_len=16384, available_gpu_mem=79.63 GB
+2026-08-20 20:49:14,094 INFO - Tree cache initialized: source=default impl=PureSWAChunkCache hybrid_swa=True hybrid_ssm=False hierarchical=False streaming_wrapped=False
+2026-08-20 20:49:14,748 ERROR - Scheduler hit an exception: Traceback (most recent call last):
+  File "/workspace/orbitkv/integrations/sglang/src/orbitkv_sglang/plugin.py", line 679, in _run_batch
+    result = original_fn(scheduler, batch, *args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/utils/nvtx_utils.py", line 109, in wrapper
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 3793, in run_batch
+    batch_result = self.model_worker.forward_batch_generation(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/tp_worker.py", line 609, in forward_batch_generation
+    out = self.model_runner.forward(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/model_executor/model_runner.py", line 1545, in forward
+    output = self._forward_raw(
+             ^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/model_executor/model_runner.py", line 1732, in _forward_raw
+    ret = self.eager_runner.execute(
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/model_executor/runner/eager_runner.py", line 213, in execute
+    return self._execute_extend(forward_batch, pp_proxy_tensors)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/model_executor/runner/eager_runner.py", line 307, in _execute_extend
+    model_runner.attn_backend.init_forward_metadata(forward_batch)
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/layers/attention/flashinfer_backend.py", line 980, in init_forward_metadata
+    self.indices_updater_prefill.update(
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/layers/attention/flashinfer_backend.py", line 1917, in update_sliding_window
+    self.call_begin_forward(
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/layers/attention/flashinfer_backend.py", line 2122, in call_begin_forward
+    wrapper_ragged.begin_forward(
+  File "/workspace/orbitkv/.venv-sglang-h20/lib/python3.11/site-packages/flashinfer/prefill.py", line 3628, in plan
+    self._cached_module = get_batch_prefill_module(
+                          ^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/orbitkv/.venv-sglang-h20/lib/python3.11/site-packages/flashinfer/prefill.py", line 462, in get_batch_prefill_module
+    module = gen_batch_prefill_module(backend, *args).build_and_load()
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/orbitkv/.venv-sglang-h20/lib/python3.11/site-packages/flashinfer/jit/core.py", line 320, in build_and_load
+    self.build()
+  File "/workspace/orbitkv/.venv-sglang-h20/lib/python3.11/site-packages/flashinfer/jit/core.py", line 427, in build
+    run_ninja(self.build_dir, self.ninja_path, verbose)
+  File "/workspace/orbitkv/.venv-sglang-h20/lib/python3.11/site-packages/flashinfer/jit/cpp_ext.py", line 370, in run_ninja
+    subprocess.run(
+  File "/usr/local/cpython/3.11.10/lib/python3.11/subprocess.py", line 548, in run
+    with Popen(*popenargs, **kwargs) as process:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/usr/local/cpython/3.11.10/lib/python3.11/subprocess.py", line 1026, in __init__
+    self._execute_child(args, executable, preexec_fn, close_fds,
+  File "/usr/local/cpython/3.11.10/lib/python3.11/subprocess.py", line 1955, in _execute_child
+    raise child_exception_type(errno_num, err_msg, err_filename)
+FileNotFoundError: [Errno 2] No such file or directory: 'ninja'
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 5066, in run_scheduler_process
+    scheduler.run_event_loop()
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 1701, in run_event_loop
+    dispatch_event_loop(self)
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 4916, in dispatch_event_loop
+    scheduler.event_loop_normal()
+  File "/workspace/orbitkv/.venv-sglang-h20/lib/python3.11/site-packages/torch/utils/_contextlib.py", line 124, in decorate_context
+    return func(*args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/managers/scheduler.py", line 1743, in event_loop_normal
+    result = self.run_batch(batch)
+             ^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/sglang-orbitkv-canonical/python/sglang/srt/plugins/hook_registry.py", line 390, in wrapper
+    return hook(original_fn, *args, **kwargs)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/workspace/orbitkv/integrations/sglang/src/orbitkv_sglang/plugin.py", line 682, in _run_batch
+    raise FailStopped(runtime.failure_reason or "forward failed") from error
+orbitkv_sglang.runtime.FailStopped: forward launch became uncertain: [Errno 2] No such file or directory: 'ninja'
+
+[2026-08-20 20:49:14] SIGQUIT received. signum=None, frame=None. It usually means one child failed.
+[rank0]:[W820 20:49:15.098510404 ProcessGroupNCCL.cpp:1624] Warning: WARNING: destroy_process_group() was not called before program exit, which can leak resources. For more info, please see https://pytorch.org/docs/stable/distributed.html#shutdown (function operator())
+[2026-08-20 20:49:19] No live scheduler processes found; skipping py-spy and CUDA coredump.

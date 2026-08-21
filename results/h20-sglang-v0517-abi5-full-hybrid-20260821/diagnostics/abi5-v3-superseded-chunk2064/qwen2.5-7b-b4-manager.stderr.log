@@ -1,0 +1,15 @@
+Multi-thread loading shards:   0% Completed | 0/4 [00:00<?, ?it/s]Multi-thread loading shards:  25% Completed | 1/4 [00:00<00:02,  1.44it/s]Multi-thread loading shards:  50% Completed | 2/4 [00:01<00:01,  1.46it/s]Multi-thread loading shards:  75% Completed | 3/4 [00:02<00:00,  1.48it/s]Multi-thread loading shards: 100% Completed | 4/4 [00:02<00:00,  1.46it/s]Multi-thread loading shards: 100% Completed | 4/4 [00:02<00:00,  1.46it/s]
+usage: bench_canonical_manager.py [-h] --mode {manager,stock} --sglang-root
+                                  SGLANG_ROOT --model MODEL [--plan PLAN]
+                                  [--library LIBRARY] --requests REQUESTS
+                                  --max-running-requests MAX_RUNNING_REQUESTS
+                                  --prompt-tokens PROMPT_TOKENS
+                                  --decode-tokens DECODE_TOKENS --iterations
+                                  ITERATIONS --chunked-prefill-size
+                                  CHUNKED_PREFILL_SIZE --context-length
+                                  CONTEXT_LENGTH --max-total-tokens
+                                  MAX_TOTAL_TOKENS
+                                  [--mem-fraction-static MEM_FRACTION_STATIC]
+                                  --attention-backend {flashinfer,fa3}
+                                  [--seed SEED]
+bench_canonical_manager.py: error: OrbitKV ABI5 B4 batch identities disagree at after_workload: {'prepared_items': {'expected': 680, 'actual': 665}, 'submitted_items': {'expected': 680, 'actual': 665}, 'completed_items': {'expected': 680, 'actual': 665}}
