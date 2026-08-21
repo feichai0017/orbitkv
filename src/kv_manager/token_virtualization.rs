@@ -127,7 +127,7 @@ impl PersistentTokenTable {
         Ok(result)
     }
 
-    fn from_materialized(placements: &[TokenPlacement]) -> Result<Self, KvManagerError> {
+    pub(super) fn from_materialized(placements: &[TokenPlacement]) -> Result<Self, KvManagerError> {
         Self::default().append(placements)
     }
 
@@ -270,6 +270,17 @@ pub(super) fn apply_dense_class_transition(
         previous_boundary,
         target_boundary,
     )?;
+    root.resident_tokens = match class.retention {
+        crate::plan::RetentionKind::Full => target_boundary,
+        crate::plan::RetentionKind::Sliding => {
+            target_boundary.saturating_sub(class.retained_start(target_boundary))
+        }
+        crate::plan::RetentionKind::Chunked => {
+            return Err(KvManagerError::UnsupportedProfile(
+                "chunked token layout is not implemented",
+            ));
+        }
+    };
     Ok(())
 }
 
@@ -444,7 +455,7 @@ impl CanonicalKvManager {
             if state.head != item.expected_snapshot {
                 return Err(KvManagerError::StaleTokenView);
             }
-            if state.pending_step.is_some() || state.inflight_submission.is_some() {
+            if state.busy() {
                 return Err(KvManagerError::RequestBusy);
             }
             let snapshot = self.request_snapshot(item.request)?;
@@ -568,6 +579,7 @@ pub struct RelocationPolicy {
     pub fragmentation_threshold_milli: u16,
     pub maximum_source_pages: u32,
     pub evacuation_headroom_pages: u32,
+    pub full_evacuation: bool,
 }
 
 impl Default for RelocationPolicy {
@@ -576,6 +588,7 @@ impl Default for RelocationPolicy {
             fragmentation_threshold_milli: 250,
             maximum_source_pages: 32,
             evacuation_headroom_pages: 8,
+            full_evacuation: false,
         }
     }
 }
@@ -598,6 +611,64 @@ pub struct RelocationPlan {
     pub destination_pages: Box<[PageLease]>,
     pub moves: Box<[TokenMove]>,
     pub projected_reclaimed_pages: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CompletedRelocationItem {
+    pub request: RequestLease,
+    pub expected_snapshot: SnapshotLease,
+    pub plan: RelocationPlan,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct CompletedRelocationBatch {
+    pub publications: Box<[RequestView]>,
+    pub retirements: Box<[super::ReclamationCertificate]>,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct PrepareRelocationItem {
+    pub request: RequestLease,
+    pub expected_snapshot: SnapshotLease,
+    pub class_id: u16,
+    pub policy: RelocationPolicy,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct PreparedRelocation {
+    pub relocation: super::RelocationLease,
+    pub request: RequestLease,
+    pub base_snapshot: SnapshotLease,
+    pub target_snapshot: SnapshotLease,
+    pub plan: RelocationPlan,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[repr(C)]
+pub struct RelocationCopyReceipt {
+    pub relocation: super::RelocationLease,
+    pub token_id: u64,
+    pub source: TokenLocation,
+    pub destination: TokenLocation,
+    pub observed: u8,
+    pub copied: u8,
+    pub reserved16: u16,
+    pub reserved32: u32,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SubmittedRelocation {
+    pub relocation: super::RelocationLease,
+    pub request: RequestLease,
+    pub target_snapshot: SnapshotLease,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[repr(C)]
+pub struct RelocationUnobservedReceipt {
+    pub relocation: super::RelocationLease,
+    pub backend_unobserved: u32,
+    pub reserved: u32,
 }
 
 #[derive(Clone, Copy)]
@@ -712,11 +783,18 @@ pub fn plan_token_relocation(
     let mut candidates = occupancy
         .iter()
         .filter(|(_, item)| {
-            item.present > 0 && item.live < page_tokens && item.state.privately_relocatable()
+            item.present > 0
+                && (policy.full_evacuation || item.live < page_tokens)
+                && item.state.privately_relocatable()
         })
         .map(|(&page, item)| (item.live, page))
         .collect::<Vec<_>>();
     candidates.sort_unstable_by_key(|&(live, page)| (live, page));
+    if policy.full_evacuation
+        && candidates.len() != occupancy.values().filter(|item| item.present > 0).count()
+    {
+        return Ok(None);
+    }
     candidates.truncate(policy.maximum_source_pages as usize);
 
     let mut selected = Vec::new();

@@ -40,31 +40,36 @@ impl CanonicalKvManager {
             if state.head != item.expected_head {
                 return Err(KvManagerError::StaleView);
             }
-            if state.pending_step.is_some() || state.inflight_submission.is_some() {
+            if state.busy() {
                 return Err(KvManagerError::RequestBusy);
             }
             let snapshot = self.request_snapshot(request)?;
-            let entries = Self::root_entries(&snapshot.roots);
-            for entry in &entries {
-                let aggregate =
-                    page_detaches
-                        .entry(entry.page)
-                        .or_insert((0, *entry, snapshot.boundary));
+            let entries = snapshot
+                .roots
+                .iter()
+                .flat_map(|root| {
+                    let boundary = root.mirror_boundary(snapshot.boundary);
+                    root.entries
+                        .iter()
+                        .copied()
+                        .map(move |entry| (entry, boundary))
+                })
+                .collect::<Vec<_>>();
+            for (entry, boundary) in &entries {
+                let aggregate = page_detaches
+                    .entry(entry.page)
+                    .or_insert((0, *entry, *boundary));
                 aggregate.0 = aggregate
                     .0
                     .checked_add(1)
                     .ok_or(KvManagerError::ReferenceCountOverflow(entry.page.page_id))?;
-                aggregate.2 = aggregate.2.max(snapshot.boundary);
+                aggregate.2 = aggregate.2.max(*boundary);
             }
             let detached = entries
                 .iter()
                 .copied()
-                .map(|entry| {
-                    self.clear_detached_binding(
-                        entry,
-                        snapshot.boundary,
-                        DetachedReason::RequestRelease,
-                    )
+                .map(|(entry, boundary)| {
+                    self.clear_detached_binding(entry, boundary, DetachedReason::RequestRelease)
                 })
                 .collect::<Result<Vec<_>, KvManagerError>>()?;
             states.push((request, state.head, detached));
@@ -272,10 +277,7 @@ impl CanonicalKvManager {
                 return Err(KvManagerError::DuplicateRequest);
             }
             let state = self.request(request)?;
-            if !state.released
-                || state.pending_step.is_some()
-                || state.inflight_submission.is_some()
-            {
+            if !state.released || state.busy() {
                 return Err(KvManagerError::RequestNotRecyclable);
             }
             if self

@@ -47,7 +47,7 @@ impl CanonicalKvManager {
             if state.head != item.expected_head {
                 return Err(KvManagerError::StaleView);
             }
-            if state.pending_step.is_some() || state.inflight_submission.is_some() {
+            if state.busy() {
                 return Err(KvManagerError::RequestBusy);
             }
             let snapshot = self.request_snapshot(item.request)?;
@@ -157,7 +157,7 @@ impl CanonicalKvManager {
             if request_state.head != item.expected_empty_head {
                 return Err(KvManagerError::StaleView);
             }
-            if request_state.pending_step.is_some() || request_state.inflight_submission.is_some() {
+            if request_state.busy() {
                 return Err(KvManagerError::RequestBusy);
             }
             let old_snapshot = self.request_snapshot(item.request)?;
@@ -175,7 +175,11 @@ impl CanonicalKvManager {
                 self.materialize_snapshot_roots(prefix_state.key.boundary, &prefix_state.roots)?;
             let resident_count = u32::try_from(pages.len())
                 .map_err(|_| KvManagerError::ArithmeticOverflow("resident count"))?;
-            for entry in Self::root_entries(&prefix_state.roots) {
+            for entry in Self::root_entries(
+                &prefix_state.roots,
+                prefix_state.key.boundary,
+                self.page_tokens,
+            ) {
                 *page_increments.entry(entry.page).or_default() = page_increments
                     .get(&entry.page)
                     .copied()
@@ -302,7 +306,7 @@ impl CanonicalKvManager {
             if state.head != item.expected_head {
                 return Err(KvManagerError::StaleView);
             }
-            if state.pending_step.is_some() || state.inflight_submission.is_some() {
+            if state.busy() {
                 return Err(KvManagerError::RequestBusy);
             }
             let detached_snapshot = state.head;
@@ -429,7 +433,7 @@ impl CanonicalKvManager {
             if state.evicted || self.prefix_index.get(&state.key) != Some(&prefix) {
                 return Err(KvManagerError::PrefixHintStale);
             }
-            for entry in Self::root_entries(&state.roots) {
+            for entry in Self::root_entries(&state.roots, state.key.boundary, self.page_tokens) {
                 let delta = decrements.entry(entry.page).or_insert((0, entry));
                 delta.0 = delta
                     .0
@@ -558,6 +562,11 @@ impl CanonicalKvManager {
         let mut seen = BTreeSet::new();
         let mut entries = Vec::new();
         for (class, root) in self.classes.iter().copied().zip(snapshot.roots.iter()) {
+            if !root.is_dense() {
+                return Err(KvManagerError::UnsupportedProfile(
+                    "Prefix publication after token relocation is not implemented",
+                ));
+            }
             let first = class.retained_start(key.boundary) / self.page_tokens;
             let expected_len = usize::try_from(end.saturating_sub(first))
                 .map_err(|_| KvManagerError::ArithmeticOverflow("prefix root length"))?;

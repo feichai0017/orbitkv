@@ -6,9 +6,9 @@ use super::{
     ClassTransition, CompletionBatch, CopyIntent, DetachedReason, KvManagerError, OperationState,
     PageLease, PagePhase, PersistentRootEntries, PersistentTokenTable, PrepareBatchItem,
     PreparedState, PreparedStep, PublishedReceipt, ReclamationState, RequestSnapshot,
-    RetentionKind, RootEntry, SnapshotLease, StepCompletion, StepDelta, StepLease, SubmissionLease,
-    SubmitBatchItem, SubmittedState, SubmittedStep, TailAction, TailActionKind, ViewVersion,
-    WriteIntent, apply_dense_class_transition,
+    RetentionKind, RootEntry, RootLayout, SnapshotLease, StepCompletion, StepDelta, StepLease,
+    SubmissionLease, SubmitBatchItem, SubmittedState, SubmittedStep, TailAction, TailActionKind,
+    ViewVersion, WriteIntent, apply_dense_class_transition,
 };
 impl CanonicalKvManager {
     /// Atomically reserves manager-selected pages for an ordered request batch.
@@ -61,12 +61,17 @@ impl CanonicalKvManager {
             if state.head != item.expected_head {
                 return Err(KvManagerError::StaleView);
             }
-            if state.pending_step.is_some() || state.inflight_submission.is_some() {
+            if state.busy() {
                 return Err(KvManagerError::RequestBusy);
             }
             let snapshot = self.request_snapshot(item.request)?;
             if snapshot.roots.len() != self.classes.len() {
                 return Err(KvManagerError::Invariant("snapshot class cardinality"));
+            }
+            if snapshot.roots.iter().any(|root| !root.is_dense()) {
+                return Err(KvManagerError::UnsupportedProfile(
+                    "append after token relocation is not implemented",
+                ));
             }
             if item.target_boundary <= snapshot.boundary {
                 return Err(KvManagerError::NonMonotonicBoundary {
@@ -325,6 +330,8 @@ impl CanonicalKvManager {
                         .map(|_| ClassRoot {
                             entries: PersistentRootEntries::default(),
                             tokens: PersistentTokenTable::default(),
+                            layout: RootLayout::Dense,
+                            resident_tokens: 0,
                         })
                         .collect::<Vec<_>>()
                         .into(),

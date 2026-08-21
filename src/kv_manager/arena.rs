@@ -2,7 +2,7 @@ use crate::plan::RetentionKind;
 use std::ops::{Deref, DerefMut};
 
 use super::error::KvManagerError;
-use super::identity::{ReclamationLease, StepLease, SubmissionLease};
+use super::identity::{ReclamationLease, RelocationLease, StepLease, SubmissionLease};
 use super::protocol::BackendArenaRegistration;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -69,6 +69,8 @@ impl RuntimeClass {
 pub(super) enum PagePhase {
     Free,
     Reserved { step: StepLease },
+    ReservedRelocation { relocation: RelocationLease },
+    Relocating { relocation: RelocationLease },
     Live,
     Retiring { reclamation: ReclamationLease },
     Quarantined,
@@ -116,8 +118,8 @@ impl PageCounts {
     fn counter_mut(&mut self, phase: PagePhase) -> &mut u64 {
         match phase {
             PagePhase::Free => &mut self.free,
-            PagePhase::Reserved { .. } => &mut self.reserved,
-            PagePhase::Live => &mut self.active,
+            PagePhase::Reserved { .. } | PagePhase::ReservedRelocation { .. } => &mut self.reserved,
+            PagePhase::Relocating { .. } | PagePhase::Live => &mut self.active,
             PagePhase::Retiring { .. } => &mut self.retiring,
             PagePhase::Quarantined => &mut self.quarantined,
             PagePhase::Exhausted => &mut self.exhausted,
@@ -132,8 +134,8 @@ impl PageCounts {
         }
         Self::replace_total(
             &mut self.writing,
-            u64::from(before.phase == PagePhase::Live && before.writer.is_some()),
-            u64::from(after.phase == PagePhase::Live && after.writer.is_some()),
+            u64::from(Self::is_writing(before)),
+            u64::from(Self::is_writing(after)),
         );
         Self::replace_total(
             &mut self.request_refs,
@@ -155,7 +157,7 @@ impl PageCounts {
     #[cfg(test)]
     pub(super) fn increment_page(&mut self, page: PageState) {
         self.increment(page.phase);
-        self.writing += u64::from(page.phase == PagePhase::Live && page.writer.is_some());
+        self.writing += u64::from(Self::is_writing(page));
         self.request_refs += u64::from(page.request_refs);
         self.prefix_refs += u64::from(page.prefix_refs);
         self.reader_pins += u64::from(page.reader_pins);
@@ -171,6 +173,11 @@ impl PageCounts {
                 .checked_sub(before - after)
                 .expect("page census cannot underflow");
         }
+    }
+
+    fn is_writing(page: PageState) -> bool {
+        matches!(page.phase, PagePhase::Relocating { .. })
+            || page.phase == PagePhase::Live && page.writer.is_some()
     }
 }
 

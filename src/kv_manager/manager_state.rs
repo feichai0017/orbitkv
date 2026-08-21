@@ -3,13 +3,14 @@ use std::sync::Arc;
 
 use super::arena::{Arena, PageCounts, PageState, RuntimeClass};
 use super::identity::{
-    PrefixLease, PrefixSemanticKey, RequestLease, SnapshotLease, StepLease, SubmissionLease,
-    ViewVersion,
+    PrefixLease, PrefixSemanticKey, RelocationLease, RequestLease, SnapshotLease, StepLease,
+    SubmissionLease, ViewVersion,
 };
 #[cfg(test)]
 use super::persistent_snapshot::HotPathInstrumentation;
 use super::persistent_snapshot::{ClassRoot, RequestSnapshot, RootEntry};
 use super::protocol::{CopyIntent, ReclamationCertificate, TailActionKind};
+use super::relocation_transaction::RelocationState;
 
 #[derive(Debug)]
 pub(super) struct PrefixState {
@@ -23,10 +24,19 @@ pub(super) struct RequestState {
     pub(super) head: SnapshotLease,
     pub(super) pending_step: Option<StepLease>,
     pub(super) inflight_submission: Option<SubmissionLease>,
+    pub(super) pending_relocation: Option<RelocationLease>,
     pub(super) last_completion_domain: u64,
     pub(super) last_completion_value: u64,
     pub(super) released: bool,
     pub(super) quarantined: bool,
+}
+
+impl RequestState {
+    pub(super) fn busy(&self) -> bool {
+        self.pending_step.is_some()
+            || self.inflight_submission.is_some()
+            || self.pending_relocation.is_some()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -92,6 +102,7 @@ pub struct CanonicalKvManager {
     pub(super) prefixes: Arena<PrefixState>,
     pub(super) prefix_index: BTreeMap<PrefixSemanticKey, PrefixLease>,
     pub(super) operations: Arena<OperationState>,
+    pub(super) relocations: Arena<RelocationState>,
     pub(super) reclamations: Arena<ReclamationState>,
     pub(super) pages: Vec<PageState>,
     pub(super) free_pages: Vec<Vec<u32>>,
