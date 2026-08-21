@@ -1,0 +1,13 @@
+{
+  "manifest_at_run": {
+    "path": "results/h20-rust-owned-pages-20260820/manifest-at-run.json",
+    "sha256": "04637f7ce435439b6b48716aacf3f4c3c77fd80bc8e17122e2160514d6dd783c"
+  },
+  "note": "The H20 run used base commit e1b90eada4ce4e347735bdb572809a649d09f350 plus the exact dirty source patch below. Later hardening changes must not be attributed to this run.",
+  "schema": "orbitkv.source-provenance-amendment.v1",
+  "source_patch": {
+    "base_commit": "e1b90eada4ce4e347735bdb572809a649d09f350",
+    "path": "results/h20-rust-owned-pages-20260820/source-worktree.patch",
+    "sha256": "39af557db2258e946a3d66ee7ff0c74e933f896d6796695b48a1d480b6efb03f"
+  }
+}

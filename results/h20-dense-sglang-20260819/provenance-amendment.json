@@ -1,0 +1,6 @@
+{
+  "note": "The run observed base commit 502489035dbbd1a66f464c11d185e486c72990f4 plus dirty source blobs. Later commit e1b90eada4ce4e347735bdb572809a649d09f350 sealed byte-identical copies of every source listed by the original manifest; it is a provenance anchor, not the runtime HEAD.",
+  "observed_base_commit": "502489035dbbd1a66f464c11d185e486c72990f4",
+  "schema": "orbitkv.source-tree-provenance-amendment.v1",
+  "sealed_source_commit": "e1b90eada4ce4e347735bdb572809a649d09f350"
+}

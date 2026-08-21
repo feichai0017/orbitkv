@@ -1,0 +1,160 @@
+{
+  "schema": "orbitkv.h20-canonical-manager-validation.v1",
+  "date": "2026-08-20",
+  "status": "phase1_l4_qualified",
+  "gpu": "NVIDIA H20",
+  "sglang_revision": "095ec6c997bfdd25d3864cb0ce77a6562a934b96",
+  "abi": 3,
+  "manager_entrypoint": "orbitkv_manager",
+  "breaking_change_policy": {
+    "canonical_manager_paths": 1,
+    "compatibility_fallback": false,
+    "legacy_abi_symbols": false
+  },
+  "replacement_scope": {
+    "status": "qualified_only_for_pinned_phase1_profile",
+    "model": "MistralForCausalLM",
+    "checkpoint": "/workspace/models/mistral-7b-v0.1",
+    "layers": 32,
+    "attention": "all-layer fixed sliding window",
+    "window_tokens": 4096,
+    "page_tokens": 16,
+    "kv_dtype": "bfloat16",
+    "kv_layout": "nhd",
+    "attention_backend": "flashinfer",
+    "cache": "PureSWAChunkCache",
+    "execution": "eager",
+    "cuda_gpus": 1,
+    "tp": 1,
+    "pp": 1,
+    "dcp": 1,
+    "disabled": [
+      "radix_prefix",
+      "overlap",
+      "cuda_graph",
+      "speculation",
+      "disaggregation",
+      "streaming",
+      "hierarchical_cache",
+      "remote_cache"
+    ]
+  },
+  "source_contract": {
+    "base_source_commit": "e1b90eada4ce4e347735bdb572809a649d09f350",
+    "harness_sha256": "0061f4e1ff7ce636264198f5122c456af55a9f4b089985aa70b64b88784b5321",
+    "library_sha256": "ff1bfef06a8905145cbec0358a84d6c0bbefe81f834021e3c064be6b49d4ec09",
+    "plan_sha256": "dbe08878bca1195dd1c47680b414e41143ff36f17e99c0cd5fee21b73d798dc3",
+    "plan_fingerprint": "sha256:8de54696faff824f02c201ea20f65dd5e4010dcabe833b50283b3a4c775e3490",
+    "loader_patch_sha256": "6de7acab246b299386b5d6557154a7aa237c8bdb498b8b885bed1c72e849745d",
+    "native_reference_patch_sha256": "66a343b1e26ab3d1c97f57f12450efba301e6fb8bd7fea56a52525e6cf9ae266"
+  },
+  "workloads": {
+    "b1": {
+      "requests": 1,
+      "max_running_requests": 1,
+      "prompt_tokens": 12001,
+      "decode_tokens_per_request": 33,
+      "manager_completed_requests": 1,
+      "manager_completion_tokens": 33,
+      "manager_output_digest_sha256": "2a17477503c7ac0f01fee4552f82e7cb7ed82ce5c172729c0baf92bac97f06de",
+      "native_swa_output_digest_sha256": "2a17477503c7ac0f01fee4552f82e7cb7ed82ce5c172729c0baf92bac97f06de",
+      "semantic_reference_match": true,
+      "manager_record": "results/h20-canonical-manager-20260820/b1-manager-current-final.json",
+      "native_reference_record": "results/h20-canonical-manager-20260820/b1-native-swa-reference-final.json"
+    },
+    "b4": {
+      "requests": 4,
+      "max_running_requests": 4,
+      "prompt_tokens_per_request": 12001,
+      "decode_tokens_per_request": 33,
+      "manager_completed_requests": 4,
+      "manager_completion_tokens": 132,
+      "manager_output_digest_sha256": "3c8b982e76e051c73529883c8ac17c0abe842c540b228bf56d83821c25f09f2a",
+      "native_swa_output_digest_sha256": "3c8b982e76e051c73529883c8ac17c0abe842c540b228bf56d83821c25f09f2a",
+      "semantic_reference_match": true,
+      "manager_record": "results/h20-canonical-manager-20260820/b4-manager-current-final.json",
+      "native_reference_record": "results/h20-canonical-manager-20260820/b4-native-swa-reference-final.json"
+    }
+  },
+  "lifecycle": {
+    "b1": {
+      "pool_id": 1,
+      "engine_epoch": 1,
+      "pool_epoch": 2,
+      "manager_pages": 385,
+      "free_pages_after_workload": 385
+    },
+    "b4": {
+      "pool_id": 1,
+      "engine_epoch": 1,
+      "pool_epoch": 2,
+      "manager_pages": 1159,
+      "free_pages_after_workload": 1159
+    },
+    "zero_after_workload_counters": [
+      "active_requests",
+      "prepared_steps",
+      "submitted_steps",
+      "reserved_pages",
+      "writing_pages",
+      "active_pages",
+      "retiring_pages",
+      "quarantined_pages",
+      "exhausted_pages",
+      "pending_reclamations"
+    ],
+    "reported_and_settled": true
+  },
+  "memory": {
+    "bytes_per_token_all_32_layers": 131072,
+    "b4_advertised_capacity_tokens": 18544,
+    "manager_page16_physical_slots_with_engine_padding": 18560,
+    "manager_page16_physical_kv_gib": 2.265625,
+    "stock_page16_same_cap_physical_slots": 18560,
+    "stock_page16_same_cap_physical_kv_gib": 2.265625,
+    "same_cap_intrinsic_reduction_percent": 0.0,
+    "native_page1_physical_slots": 18545,
+    "native_page1_physical_kv_gib": 2.2637939453125,
+    "native_vs_manager_padding_difference_slots": 15,
+    "comparison_50000_advertised_physical_slots": 50016,
+    "comparison_50000_physical_kv_gib": 6.10546875,
+    "compiled_budget_saved_slots": 31456,
+    "compiled_budget_saved_kv_gib": 3.83984375,
+    "compiled_budget_reduction_percent": 62.89187460012796,
+    "classification": "admission_budget_difference_not_intrinsic_same_cap_compression"
+  },
+  "performance_smoke": {
+    "manager_b4_seconds": 10.085802413523197,
+    "native_swa_b4_seconds": 9.16858920827508,
+    "manager_overhead_percent": 10.003864110525207,
+    "samples_each": 1,
+    "claim": "smoke_only",
+    "performance_go": false
+  },
+  "stock_diagnostics": {
+    "pristine_pinned_mistral_attention": "full_attention_not_swa",
+    "cross_window_b4_digest_sha256": "c05ca5001c3c3806d98d63fe52332a3a1c6f2357831376c90c3afb5092b36029",
+    "semantic_oracle": false,
+    "pre_window_4000_plus_33_manager_and_stock_digest_sha256": "2a17477503c7ac0f01fee4552f82e7cb7ed82ce5c172729c0baf92bac97f06de",
+    "purpose": "diagnoses_pristine_stock_semantic_divergence_at_the_sliding_window_boundary"
+  },
+  "primary_success_evidence": [
+    "b1-manager-current-final.json",
+    "b1-native-swa-reference-final.json",
+    "b4-manager-current-final.json",
+    "b4-native-swa-reference-final.json"
+  ],
+  "excluded_from_success_evidence": [
+    "all setup, environment, and liveness failure logs",
+    "b1-manager-final.json",
+    "b4-manager-same-cap-final.json",
+    "all pristine-stock and pre-window diagnostic records"
+  ],
+  "not_qualified": [
+    "Full or Hybrid Full+SWA ownership",
+    "Prefix or Radix ownership, sealed pages, COW, fork, rollback, beam, or speculation",
+    "overlap, CUDA Graph, stable descriptor replay, or multiple completion domains",
+    "TwoSpan or mirrored-VMM attention data planes",
+    "multi-GPU, disaggregation, remote memory, other engines, or production version matrices"
+  ]
+}

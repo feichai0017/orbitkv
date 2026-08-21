@@ -1,0 +1,28 @@
+diff --git a/python/sglang/srt/plugins/__init__.py b/python/sglang/srt/plugins/__init__.py
+index 00ae1acd18266765c006d87ba5eec51e9f113d8d..7c20ccb51e46942f0bbdfdbcaf88c3148939cb55 100644
+--- a/python/sglang/srt/plugins/__init__.py
++++ b/python/sglang/srt/plugins/__init__.py
+@@ -119,12 +119,21 @@ def load_plugins():
+     global _plugins_loaded
+     if _plugins_loaded:
+         return
+-    _plugins_loaded = True
+-
++    selected_plugins = envs.SGLANG_PLUGINS.get()
++    if selected_plugins != "orbitkv_manager":
++        raise SystemExit(
++            "The pinned OrbitKV SGLang checkout requires "
++            "SGLANG_PLUGINS=orbitkv_manager"
++        )
+     plugins = load_plugins_by_group(
+         GENERAL_PLUGINS_GROUP,
+         excluded_dists=_get_excluded_dists(),
+     )
++    if set(plugins) != {"orbitkv_manager"}:
++        raise SystemExit(
++            "The required orbitkv_manager entrypoint could not be loaded"
++        )
++    _plugins_loaded = True
+ 
+     for name, (func, dist_name) in plugins.items():
+         source = HookSource(plugin_name=name, dist_name=dist_name)

@@ -1,0 +1,22 @@
+[package]
+name = "orbitkv-ffi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Canonical C ABI for the OrbitKV KV manager."
+license = "MIT"
+repository = "https://github.com/feichai0017/orbitkv"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+orbitkv = { path = "../.." }
+serde_json = "1.0.145"
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

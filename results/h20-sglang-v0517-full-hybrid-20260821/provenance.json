@@ -1,0 +1,132 @@
+{
+  "schema": "orbitkv.h20-sglang-v0517-source-provenance.v2",
+  "date": "2026-08-21",
+  "engine": {
+    "release": "v0.5.17",
+    "revision": "29481685462732237d80d86076d6563e1f658102",
+    "python_tree_sha256": "ffda05a78218ed47a7fad82a86c8a1068ac6549cb0ddecf9959fe8752034b9c8",
+    "stock_loader": {
+      "path": "source-snapshot/sglang-v0.5.17/stock/python/sglang/srt/plugins/__init__.py",
+      "sha256": "3a975a73f1a7887e68c81ea7a2530250597ac8ae978efc0b0f70f038a99a3164"
+    },
+    "manager_loader": {
+      "path": "source-snapshot/sglang-v0.5.17/manager/python/sglang/srt/plugins/__init__.py",
+      "sha256": "1fc2e2472e8fd55f564826509b2afa1f8f0d86a4b2ee3a3986c3209e3c09c934"
+    },
+    "loader_patch": {
+      "path": "source-snapshot/posthardening/integrations/sglang/patches/v0.5.17-orbitkv-fail-closed.patch",
+      "sha256": "6de7acab246b299386b5d6557154a7aa237c8bdb498b8b885bed1c72e849745d"
+    }
+  },
+  "record_declared_static_adapter_files": {
+    "integrations/sglang/pyproject.toml": "16872544e5eb1394fae8157aea562e3089db3600663fba01eb1886d13015042a",
+    "integrations/sglang/prepare_pinned_checkout.py": "ce15a4409d4db9441a7285a5c716208e67f3b64a13352df2b0b78faf2434ab2b",
+    "integrations/sglang/patches/v0.5.17-orbitkv-fail-closed.patch": "6de7acab246b299386b5d6557154a7aa237c8bdb498b8b885bed1c72e849745d",
+    "integrations/sglang/src/orbitkv_sglang/__init__.py": "84c77c4e276dce75836a20386e21d9d3866855770073bcffa7bedb21d02c3f21",
+    "integrations/sglang/src/orbitkv_sglang/config.py": "d0814ddbbab6d3fac582c564d166d112fc18e19eb5b366ef13c239ed56690c63",
+    "integrations/sglang/src/orbitkv_sglang/ffi.py": "c126e7ec06284b8b8235f2245349075acfef2b10e4d2001cafd11e38577964ad",
+    "integrations/sglang/src/orbitkv_sglang/pinned.py": "9d66c646076135fe789d91c28a87d216ea96889c098f43d06d29415f1194d942"
+  },
+  "source_epochs": {
+    "posthardening_primary_manager": {
+      "records": [
+        "raw/qwen2.5-7b-b1-manager-posthardening.json",
+        "raw/qwen2.5-7b-b1-stock-posthardening.json",
+        "raw/qwen2.5-7b-b4-manager-posthardening.json",
+        "raw/qwen2.5-7b-b4-i5-manager.json",
+        "raw/qwen2.5-7b-b4-i5-stock.json",
+        "raw/gpt-oss-20b-b1-manager-posthardening.json",
+        "raw/gpt-oss-20b-b4-manager-posthardening.json",
+        "raw/gpt-oss-20b-b4-i5-manager.json",
+        "raw/gpt-oss-20b-b4-i5-stock.json"
+      ],
+      "harness": {
+        "path": "source-snapshot/posthardening/integrations/sglang/bench_canonical_manager.py",
+        "sha256": "3e28e933d91e8600ad6838a4c5bbb55dc65cc5da697fed00572475bb7ee1f955"
+      },
+      "plugin": {
+        "path": "source-snapshot/posthardening/integrations/sglang/src/orbitkv_sglang/plugin.py",
+        "sha256": "03dc15b719b84fb94166c7ed84c817b707de272f53a16eef6ccc582bfa50ae73"
+      },
+      "runtime": {
+        "path": "source-snapshot/posthardening/integrations/sglang/src/orbitkv_sglang/runtime.py",
+        "sha256": "2c1d3834e3d17ff091f89d28d432be9b3bd6e9f361ff4d4fe647e451fffee861"
+      },
+      "i5_status": "diagnostic_performance_smoke_only"
+    },
+    "prehardening_stock_baseline": {
+      "primary_records": [
+        "raw/qwen2.5-7b-b4-stock.json",
+        "raw/gpt-oss-20b-b1-stock.json",
+        "raw/gpt-oss-20b-b4-stock.json"
+      ],
+      "harness": {
+        "path": "source-snapshot/integrations/sglang/bench_canonical_manager.py",
+        "sha256": "3e28e933d91e8600ad6838a4c5bbb55dc65cc5da697fed00572475bb7ee1f955"
+      },
+      "plugin_capture_only": {
+        "path": "source-snapshot/integrations/sglang/src/orbitkv_sglang/plugin.py",
+        "sha256": "162d1b9c89ba90c4086e24c840f1d628bcdd3a658f0be106b34c7149dff01f96"
+      },
+      "runtime_capture_only": {
+        "path": "source-snapshot/integrations/sglang/src/orbitkv_sglang/runtime.py",
+        "sha256": "d787bcfc8835459f9740075a3b35e1c69e5ee9121f52e3ce00d6c14c308db176"
+      },
+      "note": "These stock records use the explicit stock sentinel and load no OrbitKV plugin. Their pair contracts and harness match the post-hardening manager records; the captured plugin/runtime bytes are provenance fields, not executed stock code."
+    },
+    "superseded_initial_records": {
+      "records": [
+        "raw/qwen2.5-7b-b1-manager.json",
+        "raw/qwen2.5-7b-b1-stock.json",
+        "raw/qwen2.5-7b-b4-manager.json",
+        "raw/gpt-oss-20b-b1-manager.json",
+        "raw/gpt-oss-20b-b4-manager.json"
+      ],
+      "status": "diagnostic_only_not_primary",
+      "qwen_b1_harness": {
+        "path": "source-snapshot/qwen-b1-legacy/integrations/sglang/bench_canonical_manager.py",
+        "sha256": "4b7160833bf6254034fa47be9a61ba0dfff549fd6c78ccb31ff9adb4d6882f67"
+      },
+      "qwen_b1_plugin": {
+        "path": "source-snapshot/qwen-b1-legacy/integrations/sglang/src/orbitkv_sglang/plugin.py",
+        "sha256": "9511df8a0dd50188f867679b87586141faf4b921c2eb690625fd3bd95e0b8a89"
+      },
+      "later_initial_harness": "3e28e933d91e8600ad6838a4c5bbb55dc65cc5da697fed00572475bb7ee1f955",
+      "later_initial_plugin": "162d1b9c89ba90c4086e24c840f1d628bcdd3a658f0be106b34c7149dff01f96",
+      "later_initial_runtime": "d787bcfc8835459f9740075a3b35e1c69e5ee9121f52e3ce00d6c14c308db176"
+    }
+  },
+  "artifacts": {
+    "native_library": {
+      "bytes": 827776,
+      "path": "source-snapshot/.qualification/build/ffi-target/release/liborbitkv_ffi.so",
+      "sha256": "d77836ec4215ccfe9fd361fa2da75c7056a409183bad46437db834bfa2b313ad"
+    },
+    "qwen_plan": {
+      "path": "source-snapshot/.qualification/plans/qwen2.5-7b-full-page16-bf16.json",
+      "sha256": "415db5596d4bb6943c930d3cc159471e0f8911ed5572707d527152460acca130"
+    },
+    "gpt_oss_plan": {
+      "path": "source-snapshot/.qualification/plans/gpt-oss-20b-hybrid-page16-bf16.json",
+      "sha256": "cf870e5f8191f8bffd9b7bc4eac5d8c3aa8c6bc1b46f04b35c3c738c3d12e5e5"
+    }
+  },
+  "primary_record_source_identity_sha256": {
+    "qwen2.5-7b-b1-manager-posthardening": "194867e3cb9a01ec02d17c82b3a8fb2872c40c6acde410be03aae436983534d7",
+    "qwen2.5-7b-b1-stock-posthardening": "0fbb14c0361632cdd937cb44ddc95da7fc6b2d10de9f79e2f7f6387054673e21",
+    "qwen2.5-7b-b4-manager-posthardening": "194867e3cb9a01ec02d17c82b3a8fb2872c40c6acde410be03aae436983534d7",
+    "qwen2.5-7b-b4-stock": "e9da85918773d73b9e157875fc048bc4011c7ba83ec55b70568005f5787893d5",
+    "gpt-oss-20b-b1-manager-posthardening": "30297f3e5ddde2416c2c53d4b8a132997ea9a3a3138cd9f7a6afb4eac2297e8f",
+    "gpt-oss-20b-b1-stock": "e9da85918773d73b9e157875fc048bc4011c7ba83ec55b70568005f5787893d5",
+    "gpt-oss-20b-b4-manager-posthardening": "30297f3e5ddde2416c2c53d4b8a132997ea9a3a3138cd9f7a6afb4eac2297e8f",
+    "gpt-oss-20b-b4-stock": "e9da85918773d73b9e157875fc048bc4011c7ba83ec55b70568005f5787893d5"
+  },
+  "boundaries": {
+    "primary_manager_source_bytes_archived": true,
+    "primary_stock_source_bytes_archived": true,
+    "native_library_binary_archived": true,
+    "exhaustive_native_library_rebuild_source_inventory": false,
+    "live_worktree_is_evidence_source": false,
+    "note": "The immutable archive, not the mutable live worktree, is the source authority for these records. The native library is bound by exact binary hash; the records do not carry an exhaustive Rust rebuild-source inventory."
+  }
+}

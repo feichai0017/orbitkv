@@ -1,0 +1,12 @@
+{
+  "schema": "orbitkv.historical-unsealed-source-amendment.v1",
+  "manifest": {
+    "path": "results/h20-canonical-manager-20260820/manifest.json",
+    "sha256": "2343ac9fefbeb0f6d0074628fecf733948fc508cc7745e39a390baa173346ce1"
+  },
+  "observed_base_commit": "e1b90eada4ce4e347735bdb572809a649d09f350",
+  "source_inventory_sha256": "994960f637bc2d0c6117a421ea4eba334c4fc05d5cb3c8c8161d75c693a7b460",
+  "qualification_status": "historical_nonqualifying",
+  "reason": "The run used workspace source files, including untracked canonical-manager files, but no complete source archive or reconstructible patch was sealed before later breaking changes. Record hashes remain verifiable; source hashes must not be compared with the current worktree or attributed to later code.",
+  "current_capability_effect": "none"
+}

@@ -1,0 +1,143 @@
+{
+  "schema": "orbitkv.h20-sglang-v0517-abi5-source-provenance.v1",
+  "date": "2026-08-21",
+  "archive_policy": "append_only_exact_bytes",
+  "engine": {
+    "release": "v0.5.17",
+    "revision": "29481685462732237d80d86076d6563e1f658102",
+    "official_remote": "https://github.com/sgl-project/sglang.git",
+    "sglang_python_sha256": "ffda05a78218ed47a7fad82a86c8a1068ac6549cb0ddecf9959fe8752034b9c8",
+    "stock_checkout_status": "clean_pinned_head",
+    "manager_checkout_status": "pinned_head_plus_canonical_loader_patch",
+    "stock_loader": {
+      "path": "sglang-v0.5.17/stock/python/sglang/srt/plugins/__init__.py",
+      "sha256": "3a975a73f1a7887e68c81ea7a2530250597ac8ae978efc0b0f70f038a99a3164",
+      "git_blob": "00ae1acd18266765c006d87ba5eec51e9f113d8d"
+    },
+    "manager_loader": {
+      "path": "sglang-v0.5.17/manager/python/sglang/srt/plugins/__init__.py",
+      "sha256": "1fc2e2472e8fd55f564826509b2afa1f8f0d86a4b2ee3a3986c3209e3c09c934",
+      "git_blob": "7c20ccb51e46942f0bbdfdbcaf88c3148939cb55"
+    },
+    "loader_patch": {
+      "path": "source-closure/integrations/sglang/patches/v0.5.17-orbitkv-fail-closed.patch",
+      "sha256": "6de7acab246b299386b5d6557154a7aa237c8bdb498b8b885bed1c72e849745d"
+    }
+  },
+  "qualification_profile": {
+    "gpu": "NVIDIA H20",
+    "gpu_count": 1,
+    "abi": 5,
+    "page_tokens": 16,
+    "kv_dtype": "bfloat16",
+    "kv_layout": "nhd",
+    "execution": "eager",
+    "cache": "ChunkCache",
+    "parallelism": "TP/PP/DP/DCP=1",
+    "qwen_attention_backend": "flashinfer",
+    "gpt_oss_attention_backend": "fa3",
+    "gpt_oss_moe_runner_backend": "triton",
+    "gpt_oss_moe_profile_note": "Explicit SGLang built-in Triton MoE runner; the default external triton_kernel backend is outside this qualification."
+  },
+  "frozen_source_closure": {
+    "root": "source-closure",
+    "file_count": 23,
+    "sha256": "e61045f6fe3731f2bf76fb141f385c2898b3254b056a6818acdc216ea555b567",
+    "algorithm": "For each file in the listed order, emit '<file_sha256>  <relative_path>\\n'; SHA-256 the concatenation.",
+    "files": [
+      "Cargo.toml",
+      "Cargo.lock",
+      "src/lib.rs",
+      "src/kv_manager.rs",
+      "src/hf_config.rs",
+      "src/plan.rs",
+      "src/retention.rs",
+      "crates/orbitkv-ffi/Cargo.toml",
+      "crates/orbitkv-ffi/Cargo.lock",
+      "crates/orbitkv-ffi/include/orbitkv.h",
+      "crates/orbitkv-ffi/src/lib.rs",
+      "crates/orbitkv-ffi/src/manager.rs",
+      "integrations/sglang/bench_canonical_manager.py",
+      "integrations/sglang/checkpoint_identity.py",
+      "integrations/sglang/pyproject.toml",
+      "integrations/sglang/prepare_pinned_checkout.py",
+      "integrations/sglang/patches/v0.5.17-orbitkv-fail-closed.patch",
+      "integrations/sglang/src/orbitkv_sglang/__init__.py",
+      "integrations/sglang/src/orbitkv_sglang/config.py",
+      "integrations/sglang/src/orbitkv_sglang/ffi.py",
+      "integrations/sglang/src/orbitkv_sglang/pinned.py",
+      "integrations/sglang/src/orbitkv_sglang/plugin.py",
+      "integrations/sglang/src/orbitkv_sglang/runtime.py"
+    ]
+  },
+  "artifacts": {
+    "harness": {
+      "path": "source-closure/integrations/sglang/bench_canonical_manager.py",
+      "sha256": "c8819cd8b84e113ed338700df5ecaa44a840c6c1408d878aca5c55d5c3a591fe"
+    },
+    "runner": {
+      "path": "qualification/h20-abi5-exact-commands.sh",
+      "bytes": 34150,
+      "sha256": "b2bb96307d6f48d976fa7d0c85aa3b0d45bca49fad76760c6cfe6f21df57d650"
+    },
+    "native_library": {
+      "path": "qualification/build/ffi-target/release/liborbitkv_ffi.so",
+      "bytes": 918848,
+      "sha256": "3917bf0ae32239c11f913b5322b1679a71a57b3990004e55c04ea8097181dc5f",
+      "abi_version": 5,
+      "orbitkv_symbol_count": 16
+    },
+    "requirements_lock": {
+      "path": "qualification/requirements-v0.5.17.lock.txt",
+      "sha256": "472d8f63cad22cd7ac4908059562bebde5e54b8d2432f750640a14d525d2fa97"
+    },
+    "qwen_plan": {
+      "path": "qualification/plans/qwen2.5-7b-full-page16-bf16.json",
+      "sha256": "415db5596d4bb6943c930d3cc159471e0f8911ed5572707d527152460acca130"
+    },
+    "gpt_oss_plan": {
+      "path": "qualification/plans/gpt-oss-20b-hybrid-page16-bf16.json",
+      "sha256": "cf870e5f8191f8bffd9b7bc4eac5d8c3aa8c6bc1b46f04b35c3c738c3d12e5e5"
+    }
+  },
+  "evidence_roles": {
+    "primary_manager_records": [
+      "raw/qwen2.5-7b-b1-manager.json",
+      "raw/qwen2.5-7b-b4-manager.json",
+      "raw/gpt-oss-20b-b1-manager.json",
+      "raw/gpt-oss-20b-b4-manager.json"
+    ],
+    "paired_stock_references": [
+      "raw/qwen2.5-7b-b1-stock.json",
+      "raw/qwen2.5-7b-b4-stock.json",
+      "raw/gpt-oss-20b-b1-stock.json",
+      "raw/gpt-oss-20b-b4-stock.json"
+    ],
+    "primary_json_count": 4,
+    "stock_reference_json_count": 4,
+    "stderr_log_count": 8
+  },
+  "superseded_diagnostics": {
+    "diagnostics/abi5-v3-superseded-chunk2064": {
+      "status": "diagnostic_only_not_primary",
+      "reason": "The nominal B4 chunk admitted a mixed B4/B1 tail; the manager lifecycle evidence was useful, but the fixed-B4 harness expectation was invalid."
+    },
+    "diagnostics/abi5-v3-superseded-default-nondeterministic": {
+      "status": "diagnostic_only_not_primary",
+      "reason": "GPT-OSS used the default external triton_kernel MoE path and stock output was not repeatable."
+    },
+    "diagnostics/abi5-v3-superseded-deterministic-but-gpt-nondeterministic": {
+      "status": "diagnostic_only_not_primary",
+      "reason": "The deterministic-inference flag did not make the external triton_kernel GPT-OSS path repeatable."
+    }
+  },
+  "boundaries": {
+    "complete_runner_source_closure_bytes_archived": true,
+    "runner_library_plans_requirements_archived": true,
+    "stock_and_manager_loader_bytes_archived": true,
+    "raw_v4_records_and_stderr_archived": true,
+    "superseded_epochs_preserved_without_promotion": true,
+    "live_worktree_is_evidence_authority": false,
+    "archive_snapshot_is_evidence_authority": true
+  }
+}

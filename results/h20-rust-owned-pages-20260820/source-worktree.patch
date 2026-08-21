@@ -1,0 +1,2187 @@
+diff --git a/crates/orbitkv-ffi/include/orbitkv_owner.h b/crates/orbitkv-ffi/include/orbitkv_owner.h
+index 893f855..2824e2d 100644
+--- a/crates/orbitkv-ffi/include/orbitkv_owner.h
++++ b/crates/orbitkv-ffi/include/orbitkv_owner.h
+@@ -9,7 +9,7 @@ extern "C" {
+ #endif
+ 
+ #define ORBITKV_OWNER_ABI_VERSION 1u
+-#define ORBITKV_DENSE_ABI_VERSION 1u
++#define ORBITKV_DENSE_ABI_VERSION 2u
+ #define ORBITKV_STATUS_OK 0
+ #define ORBITKV_STATUS_NO_CERTIFICATE 1
+ #define ORBITKV_DENSE_STATUS_BUFFER_TOO_SMALL 2
+@@ -38,6 +38,21 @@ typedef struct OrbitKvDenseCertificateV1 {
+   uint64_t token_end_exclusive;
+ } OrbitKvDenseCertificateV1;
+ 
++typedef struct OrbitKvPhysicalPageLeaseV1 {
++  uint32_t page_id;
++  uint32_t reserved;
++  uint64_t generation;
++} OrbitKvPhysicalPageLeaseV1;
++
++typedef struct OrbitKvPhysicalPagePoolStatsV1 {
++  uint32_t abi_version;
++  uint32_t reserved;
++  uint64_t total_pages;
++  uint64_t free_pages;
++  uint64_t active_pages;
++  uint64_t retiring_pages;
++} OrbitKvPhysicalPagePoolStatsV1;
++
+ typedef struct OrbitKvCertificateV1 {
+   uint32_t abi_version;
+   uint32_t reserved;
+@@ -165,6 +180,46 @@ int32_t orbitkv_dense_commit_reclamations(
+     char *error_buffer,
+     size_t error_buffer_len);
+ 
++int32_t orbitkv_dense_page_pool_init(OrbitKvDenseHandle *dense,
++                                     uint32_t page_count,
++                                     char *error_buffer,
++                                     size_t error_buffer_len);
++
++int32_t orbitkv_dense_page_pool_acquire(
++    OrbitKvDenseHandle *dense,
++    uint32_t page_count,
++    OrbitKvPhysicalPageLeaseV1 *leases,
++    size_t lease_capacity,
++    char *error_buffer,
++    size_t error_buffer_len);
++
++int32_t orbitkv_dense_page_pool_begin_retirement(
++    OrbitKvDenseHandle *dense,
++    const OrbitKvPhysicalPageLeaseV1 *leases,
++    size_t lease_count,
++    char *error_buffer,
++    size_t error_buffer_len);
++
++int32_t orbitkv_dense_page_pool_abort_retirement(
++    OrbitKvDenseHandle *dense,
++    const OrbitKvPhysicalPageLeaseV1 *leases,
++    size_t lease_count,
++    char *error_buffer,
++    size_t error_buffer_len);
++
++int32_t orbitkv_dense_page_pool_commit_retirement(
++    OrbitKvDenseHandle *dense,
++    const OrbitKvPhysicalPageLeaseV1 *leases,
++    size_t lease_count,
++    char *error_buffer,
++    size_t error_buffer_len);
++
++int32_t orbitkv_dense_page_pool_stats(
++    OrbitKvDenseHandle *dense,
++    OrbitKvPhysicalPagePoolStatsV1 *out_stats,
++    char *error_buffer,
++    size_t error_buffer_len);
++
+ void orbitkv_dense_destroy(OrbitKvDenseHandle *dense);
+ 
+ #ifdef __cplusplus
+diff --git a/crates/orbitkv-ffi/src/dense.rs b/crates/orbitkv-ffi/src/dense.rs
+index be1761e..b9ce09e 100644
+--- a/crates/orbitkv-ffi/src/dense.rs
++++ b/crates/orbitkv-ffi/src/dense.rs
+@@ -5,19 +5,21 @@ use std::sync::Mutex;
+ use orbitkv::{
+     ClassId, DenseBackendHandle, DensePhysicalBindingReceipt, DensePhysicalHandle,
+     DensePhysicalReclamationReceipt, DenseRetirementCertificate, DenseRuntimeCommand,
+-    DenseRuntimeService, RequestLease, RuntimeStatePlan,
++    DenseRuntimeService, PhysicalPageLease, PhysicalPagePool, PhysicalPagePoolStats, RequestLease,
++    RuntimeStatePlan,
+ };
+ 
+ use crate::{
+     ORBITKV_STATUS_INVALID_ARGUMENT, ORBITKV_STATUS_OK, ORBITKV_STATUS_OWNER_ERROR, ffi_boundary,
+ };
+ 
+-pub const ORBITKV_DENSE_ABI_VERSION: u32 = 1;
++pub const ORBITKV_DENSE_ABI_VERSION: u32 = 2;
+ pub const ORBITKV_DENSE_STATUS_BUFFER_TOO_SMALL: i32 = 2;
+ pub const ORBITKV_DENSE_RESPONSE_CAPACITY: usize = 1024 * 1024;
+ 
+ pub struct OrbitKvDenseHandle {
+     service: Mutex<DenseRuntimeService>,
++    page_pool: Mutex<Option<PhysicalPagePool>>,
+     certificate_capacity: usize,
+ }
+ 
+@@ -43,6 +45,25 @@ pub struct OrbitKvDenseCertificateV1 {
+     pub token_end_exclusive: u64,
+ }
+ 
++#[repr(C)]
++#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
++pub struct OrbitKvPhysicalPageLeaseV1 {
++    pub page_id: u32,
++    pub reserved: u32,
++    pub generation: u64,
++}
++
++#[repr(C)]
++#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
++pub struct OrbitKvPhysicalPagePoolStatsV1 {
++    pub abi_version: u32,
++    pub reserved: u32,
++    pub total_pages: u64,
++    pub free_pages: u64,
++    pub active_pages: u64,
++    pub retiring_pages: u64,
++}
++
+ #[unsafe(no_mangle)]
+ pub extern "C" fn orbitkv_dense_abi_version() -> u32 {
+     ORBITKV_DENSE_ABI_VERSION
+@@ -105,6 +126,7 @@ pub unsafe extern "C" fn orbitkv_dense_create(
+             ))?;
+         let handle = Box::new(OrbitKvDenseHandle {
+             service: Mutex::new(service),
++            page_pool: Mutex::new(None),
+             certificate_capacity,
+         });
+         unsafe {
+@@ -114,6 +136,194 @@ pub unsafe extern "C" fn orbitkv_dense_create(
+     })
+ }
+ 
++/// Initializes the Rust-owned physical page pool.
++///
++/// # Safety
++///
++/// `dense` must be live. Reinitialization is rejected.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn orbitkv_dense_page_pool_init(
++    dense: *mut OrbitKvDenseHandle,
++    page_count: u32,
++    error_buffer: *mut c_char,
++    error_buffer_len: usize,
++) -> i32 {
++    ffi_boundary(error_buffer, error_buffer_len, || {
++        let handle = unsafe { dense_ref(dense)? };
++        let mut page_pool = handle
++            .page_pool
++            .lock()
++            .map_err(|_| page_pool_mutex_error())?;
++        if page_pool.is_some() {
++            return Err((
++                ORBITKV_STATUS_INVALID_ARGUMENT,
++                "Dense physical page pool is already initialized".to_owned(),
++            ));
++        }
++        *page_pool = Some(
++            PhysicalPagePool::new(page_count)
++                .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?,
++        );
++        Ok(ORBITKV_STATUS_OK)
++    })
++}
++
++/// Acquires physical pages selected by `OrbitKV`.
++///
++/// # Safety
++///
++/// `leases` must reference `lease_capacity` writable entries.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn orbitkv_dense_page_pool_acquire(
++    dense: *mut OrbitKvDenseHandle,
++    page_count: u32,
++    leases: *mut OrbitKvPhysicalPageLeaseV1,
++    lease_capacity: usize,
++    error_buffer: *mut c_char,
++    error_buffer_len: usize,
++) -> i32 {
++    ffi_boundary(error_buffer, error_buffer_len, || {
++        if usize::try_from(page_count)
++            .ok()
++            .is_none_or(|count| count > lease_capacity)
++            || (page_count > 0 && leases.is_null())
++        {
++            return Err((
++                ORBITKV_STATUS_INVALID_ARGUMENT,
++                "physical page lease buffer is too small".to_owned(),
++            ));
++        }
++        let handle = unsafe { dense_ref(dense)? };
++        let mut page_pool = handle
++            .page_pool
++            .lock()
++            .map_err(|_| page_pool_mutex_error())?;
++        let pool = page_pool.as_mut().ok_or((
++            ORBITKV_STATUS_INVALID_ARGUMENT,
++            "Dense physical page pool is not initialized".to_owned(),
++        ))?;
++        let acquired = pool
++            .acquire(page_count)
++            .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?;
++        for (index, lease) in acquired.into_iter().enumerate() {
++            unsafe {
++                leases.add(index).write(lease.into());
++            }
++        }
++        Ok(ORBITKV_STATUS_OK)
++    })
++}
++
++/// Moves active physical pages into the retiring phase.
++///
++/// # Safety
++///
++/// `leases` must reference `lease_count` readable entries.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn orbitkv_dense_page_pool_begin_retirement(
++    dense: *mut OrbitKvDenseHandle,
++    leases: *const OrbitKvPhysicalPageLeaseV1,
++    lease_count: usize,
++    error_buffer: *mut c_char,
++    error_buffer_len: usize,
++) -> i32 {
++    unsafe {
++        page_pool_transition(
++            dense,
++            leases,
++            lease_count,
++            error_buffer,
++            error_buffer_len,
++            PhysicalPagePool::begin_retirement,
++        )
++    }
++}
++
++/// Restores retiring pages to active ownership.
++///
++/// # Safety
++///
++/// `leases` must reference `lease_count` readable entries.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn orbitkv_dense_page_pool_abort_retirement(
++    dense: *mut OrbitKvDenseHandle,
++    leases: *const OrbitKvPhysicalPageLeaseV1,
++    lease_count: usize,
++    error_buffer: *mut c_char,
++    error_buffer_len: usize,
++) -> i32 {
++    unsafe {
++        page_pool_transition(
++            dense,
++            leases,
++            lease_count,
++            error_buffer,
++            error_buffer_len,
++            PhysicalPagePool::abort_retirement,
++        )
++    }
++}
++
++/// Returns retiring pages to the Rust-owned free pool.
++///
++/// # Safety
++///
++/// `leases` must reference `lease_count` readable entries.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn orbitkv_dense_page_pool_commit_retirement(
++    dense: *mut OrbitKvDenseHandle,
++    leases: *const OrbitKvPhysicalPageLeaseV1,
++    lease_count: usize,
++    error_buffer: *mut c_char,
++    error_buffer_len: usize,
++) -> i32 {
++    unsafe {
++        page_pool_transition(
++            dense,
++            leases,
++            lease_count,
++            error_buffer,
++            error_buffer_len,
++            PhysicalPagePool::commit_retirement,
++        )
++    }
++}
++
++/// Reads Rust-owned physical page counters.
++///
++/// # Safety
++///
++/// `out_stats` must reference writable storage.
++#[unsafe(no_mangle)]
++pub unsafe extern "C" fn orbitkv_dense_page_pool_stats(
++    dense: *mut OrbitKvDenseHandle,
++    out_stats: *mut OrbitKvPhysicalPagePoolStatsV1,
++    error_buffer: *mut c_char,
++    error_buffer_len: usize,
++) -> i32 {
++    ffi_boundary(error_buffer, error_buffer_len, || {
++        if out_stats.is_null() {
++            return Err((
++                ORBITKV_STATUS_INVALID_ARGUMENT,
++                "physical page pool stats output is required".to_owned(),
++            ));
++        }
++        let handle = unsafe { dense_ref(dense)? };
++        let page_pool = handle
++            .page_pool
++            .lock()
++            .map_err(|_| page_pool_mutex_error())?;
++        let stats = page_pool.as_ref().ok_or((
++            ORBITKV_STATUS_INVALID_ARGUMENT,
++            "Dense physical page pool is not initialized".to_owned(),
++        ))?;
++        unsafe {
++            out_stats.write(stats.stats().into());
++        }
++        Ok(ORBITKV_STATUS_OK)
++    })
++}
++
+ /// Returns the maximum certificate batch emitted by this Dense Runtime.
+ ///
+ /// # Safety
+@@ -455,6 +665,38 @@ impl From<OrbitKvDenseRequestLeaseV1> for RequestLease {
+     }
+ }
+ 
++impl From<PhysicalPageLease> for OrbitKvPhysicalPageLeaseV1 {
++    fn from(value: PhysicalPageLease) -> Self {
++        Self {
++            page_id: value.page_id,
++            reserved: 0,
++            generation: value.generation,
++        }
++    }
++}
++
++impl From<OrbitKvPhysicalPageLeaseV1> for PhysicalPageLease {
++    fn from(value: OrbitKvPhysicalPageLeaseV1) -> Self {
++        Self {
++            page_id: value.page_id,
++            generation: value.generation,
++        }
++    }
++}
++
++impl From<PhysicalPagePoolStats> for OrbitKvPhysicalPagePoolStatsV1 {
++    fn from(value: PhysicalPagePoolStats) -> Self {
++        Self {
++            abi_version: ORBITKV_DENSE_ABI_VERSION,
++            reserved: 0,
++            total_pages: value.total_pages,
++            free_pages: value.free_pages,
++            active_pages: value.active_pages,
++            retiring_pages: value.retiring_pages,
++        }
++    }
++}
++
+ impl OrbitKvDenseCertificateV1 {
+     fn from_certificate(certificate: &DenseRetirementCertificate) -> Self {
+         Self {
+@@ -519,6 +761,68 @@ fn dense_mutex_error() -> (i32, String) {
+     )
+ }
+ 
++fn page_pool_mutex_error() -> (i32, String) {
++    (
++        ORBITKV_STATUS_OWNER_ERROR,
++        "Dense physical page pool mutex is poisoned".to_owned(),
++    )
++}
++
++unsafe fn dense_ref<'a>(
++    dense: *mut OrbitKvDenseHandle,
++) -> Result<&'a OrbitKvDenseHandle, (i32, String)> {
++    if dense.is_null() {
++        return Err((
++            ORBITKV_STATUS_INVALID_ARGUMENT,
++            "Dense handle is required".to_owned(),
++        ));
++    }
++    Ok(unsafe { &*dense })
++}
++
++unsafe fn page_pool_transition(
++    dense: *mut OrbitKvDenseHandle,
++    leases: *const OrbitKvPhysicalPageLeaseV1,
++    lease_count: usize,
++    error_buffer: *mut c_char,
++    error_buffer_len: usize,
++    transition: fn(
++        &mut PhysicalPagePool,
++        &[PhysicalPageLease],
++    ) -> Result<(), orbitkv::PhysicalPagePoolError>,
++) -> i32 {
++    ffi_boundary(error_buffer, error_buffer_len, || {
++        if lease_count > 0 && leases.is_null() {
++            return Err((
++                ORBITKV_STATUS_INVALID_ARGUMENT,
++                "physical page lease buffer is required".to_owned(),
++            ));
++        }
++        let handle = unsafe { dense_ref(dense)? };
++        let inputs = if lease_count == 0 {
++            &[]
++        } else {
++            unsafe { slice::from_raw_parts(leases, lease_count) }
++        };
++        let leases = inputs
++            .iter()
++            .copied()
++            .map(PhysicalPageLease::from)
++            .collect::<Vec<_>>();
++        let mut page_pool = handle
++            .page_pool
++            .lock()
++            .map_err(|_| page_pool_mutex_error())?;
++        let pool = page_pool.as_mut().ok_or((
++            ORBITKV_STATUS_INVALID_ARGUMENT,
++            "Dense physical page pool is not initialized".to_owned(),
++        ))?;
++        transition(pool, &leases)
++            .map_err(|error| (ORBITKV_STATUS_OWNER_ERROR, error.to_string()))?;
++        Ok(ORBITKV_STATUS_OK)
++    })
++}
++
+ unsafe fn certificate_receipts(
+     certificates: *const OrbitKvDenseCertificateV1,
+     certificate_count: usize,
+@@ -656,5 +960,102 @@ mod tests {
+             std::mem::offset_of!(OrbitKvDenseCertificateV1, backend_index),
+             40
+         );
++        assert_eq!(std::mem::size_of::<OrbitKvPhysicalPageLeaseV1>(), 16);
++        assert_eq!(std::mem::align_of::<OrbitKvPhysicalPageLeaseV1>(), 8);
++        assert_eq!(std::mem::size_of::<OrbitKvPhysicalPagePoolStatsV1>(), 40);
++        assert_eq!(std::mem::align_of::<OrbitKvPhysicalPagePoolStatsV1>(), 8);
++    }
++
++    #[test]
++    fn physical_page_pool_abi_enforces_two_phase_reuse() {
++        let plan = state_plan_bytes();
++        let mut handle = std::ptr::null_mut();
++        let mut error = [0_i8; 256];
++        assert_eq!(
++            unsafe {
++                orbitkv_dense_create(
++                    plan.as_ptr(),
++                    plan.len(),
++                    &raw mut handle,
++                    error.as_mut_ptr(),
++                    error.len(),
++                )
++            },
++            ORBITKV_STATUS_OK
++        );
++        assert_eq!(
++            unsafe { orbitkv_dense_page_pool_init(handle, 2, error.as_mut_ptr(), error.len()) },
++            ORBITKV_STATUS_OK
++        );
++        let mut leases = [OrbitKvPhysicalPageLeaseV1::default(); 2];
++        assert_eq!(
++            unsafe {
++                orbitkv_dense_page_pool_acquire(
++                    handle,
++                    2,
++                    leases.as_mut_ptr(),
++                    leases.len(),
++                    error.as_mut_ptr(),
++                    error.len(),
++                )
++            },
++            ORBITKV_STATUS_OK
++        );
++        assert_eq!(
++            unsafe {
++                orbitkv_dense_page_pool_begin_retirement(
++                    handle,
++                    leases.as_ptr(),
++                    1,
++                    error.as_mut_ptr(),
++                    error.len(),
++                )
++            },
++            ORBITKV_STATUS_OK
++        );
++        let mut unavailable = OrbitKvPhysicalPageLeaseV1::default();
++        assert_eq!(
++            unsafe {
++                orbitkv_dense_page_pool_acquire(
++                    handle,
++                    1,
++                    &raw mut unavailable,
++                    1,
++                    error.as_mut_ptr(),
++                    error.len(),
++                )
++            },
++            ORBITKV_STATUS_OWNER_ERROR
++        );
++        assert_eq!(
++            unsafe {
++                orbitkv_dense_page_pool_commit_retirement(
++                    handle,
++                    leases.as_ptr(),
++                    1,
++                    error.as_mut_ptr(),
++                    error.len(),
++                )
++            },
++            ORBITKV_STATUS_OK
++        );
++        assert_eq!(
++            unsafe {
++                orbitkv_dense_page_pool_acquire(
++                    handle,
++                    1,
++                    &raw mut unavailable,
++                    1,
++                    error.as_mut_ptr(),
++                    error.len(),
++                )
++            },
++            ORBITKV_STATUS_OK
++        );
++        assert_eq!(unavailable.page_id, leases[0].page_id);
++        assert_eq!(unavailable.generation, leases[0].generation + 1);
++        unsafe {
++            orbitkv_dense_destroy(handle);
++        }
+     }
+ }
+diff --git a/crates/orbitkv-ffi/tests/header_smoke.c b/crates/orbitkv-ffi/tests/header_smoke.c
+index 7295006..310bd91 100644
+--- a/crates/orbitkv-ffi/tests/header_smoke.c
++++ b/crates/orbitkv-ffi/tests/header_smoke.c
+@@ -15,6 +15,10 @@ _Static_assert(sizeof(OrbitKvDenseCertificateV1) == 64,
+                "Dense certificate ABI size changed");
+ _Static_assert(offsetof(OrbitKvDenseCertificateV1, backend_index) == 40,
+                "Dense backend index offset changed");
++_Static_assert(sizeof(OrbitKvPhysicalPageLeaseV1) == 16,
++               "physical page lease ABI size changed");
++_Static_assert(sizeof(OrbitKvPhysicalPagePoolStatsV1) == 40,
++               "physical page stats ABI size changed");
+ 
+ int main(void) {
+   if (orbitkv_owner_abi_version() != ORBITKV_OWNER_ABI_VERSION) {
+diff --git a/docs/capability-matrix.md b/docs/capability-matrix.md
+index cefacd5..5ec1ccf 100644
+--- a/docs/capability-matrix.md
++++ b/docs/capability-matrix.md
+@@ -37,6 +37,7 @@ result summaries link here rather than defining independent support claims.
+ | CUDA-event execution frontier | L4 | GPT-OSS 20B; SGLang overlap scheduler; Full+SWA ChunkCache; one forward-stream domain; one- and two-request event-backed reclamation | `results/h20-cuda-event-overlap-20260819/` |
+ | Dense ownership runtime | L2 | Fixed Class IDs and request stripes; bounded generation arenas; 1,000-event Reference differential test; release control-plane benchmark | `results/dense-runtime-20260819/` |
+ | Dense SGLang physical binding | L4 | Pure SWA; 4K logical Prefix/1K live tail; paged-periodic allocator; single request; 128 continuation tokens across seven rounds; typed-struct FFI v1; CUDA-event view pin; non-overlap | `results/h20-dense-sglang-20260819/` |
++| Rust-owned SGLang SWA pages | L4 | Pure SWA page16; Dense FFI v2; Rust selects generation-checked physical page IDs; SGLang consumes them with existing allocation kernels; single request, non-overlap | `results/h20-rust-owned-pages-20260820/` |
+ | Generation-aware CUDA VMM slot | L3 | H20 reserve/map/remap/unmap primitive; not SGLang tensor storage | `results/h20-generation-vmm-20260817/` |
+ | Transactional physical reclamation | L3 | Certificate, backend receipt, commit; reference/CUDA lifecycle | `results/h20-generation-vmm-20260817/` |
+ | Transactional allocation/binding | L4 | Rust prepare/commit/abort coordinator drives SGLang Capsule hydration; binding uses the owner sidecar while reclamation may use FFI | `src/binding.rs`, `src/manager.rs`, `integrations/sglang/tests/test_shadow_plugin.py` |
+@@ -47,11 +48,10 @@ The following remain below L4:
+ 
+ - One runtime resource manifest for deployment paths, model identity, and external service endpoints.
+ - A versioned FFI ABI for component-aware Prefix binding; that L4 path still
+-  uses the Rust owner sidecar. Dense page binding has a separate typed FFI v1.
++  uses the Rust owner sidecar. Rust-owned physical pages use Dense FFI v2.
+ - Drop-in replacement of SGLang's complete allocator/ReqToToken/Prefix contract;
+-  the qualified Dense path owns page binding and lifetime for one pure-SWA
+-  execution slice while SGLang still supplies allocation primitives and kernel
+-  views.
++  the qualified pure-SWA path owns physical page selection, generation, binding,
++  and lifetime while SGLang still owns ReqToToken, KV tensors, and kernel views.
+ - SGLang Radix/Prefix pressure eviction, concurrent sharing, and broader
+   shared-page qualification beyond the exact-prefix Full+SWA path.
+ - Multiple simultaneous completion domains, Radix+overlap, and CUDA Graph plus
+diff --git a/integrations/sglang/src/orbitkv_sglang/plugin.py b/integrations/sglang/src/orbitkv_sglang/plugin.py
+index 46c1cba..17609b6 100644
+--- a/integrations/sglang/src/orbitkv_sglang/plugin.py
++++ b/integrations/sglang/src/orbitkv_sglang/plugin.py
+@@ -223,16 +223,37 @@ class _FfiDenseCertificate(ctypes.Structure):
+     ]
+ 
+ 
++class _FfiPhysicalPageLease(ctypes.Structure):
++    _fields_ = [
++        ("page_id", ctypes.c_uint32),
++        ("reserved", ctypes.c_uint32),
++        ("generation", ctypes.c_uint64),
++    ]
++
++
++class _FfiPhysicalPagePoolStats(ctypes.Structure):
++    _fields_ = [
++        ("abi_version", ctypes.c_uint32),
++        ("reserved", ctypes.c_uint32),
++        ("total_pages", ctypes.c_uint64),
++        ("free_pages", ctypes.c_uint64),
++        ("active_pages", ctypes.c_uint64),
++        ("retiring_pages", ctypes.c_uint64),
++    ]
++
++
+ class FfiDenseRuntimeClient:
+-    ABI_VERSION = 1
++    ABI_VERSION = 2
+     STATUS_OK = 0
+     STATUS_BUFFER_TOO_SMALL = 2
+ 
+     def __init__(self, library_path: str, state_plan_path: str):
+         self._library = ctypes.CDLL(library_path)
+-        self._configure_signatures()
++        self._library.orbitkv_dense_abi_version.argtypes = []
++        self._library.orbitkv_dense_abi_version.restype = ctypes.c_uint32
+         if self._library.orbitkv_dense_abi_version() != self.ABI_VERSION:
+             raise RuntimeError("unsupported OrbitKV Dense ABI version")
++        self._configure_signatures()
+         self._capacity = int(self._library.orbitkv_dense_response_capacity())
+         if self._capacity <= 0:
+             raise RuntimeError("OrbitKV Dense ABI returned an invalid response capacity")
+@@ -341,6 +362,43 @@ class FfiDenseRuntimeClient:
+             ctypes.c_size_t,
+         ]
+         library.orbitkv_dense_commit_reclamations.restype = ctypes.c_int32
++        library.orbitkv_dense_page_pool_init.argtypes = [
++            ctypes.c_void_p,
++            ctypes.c_uint32,
++            ctypes.POINTER(ctypes.c_char),
++            ctypes.c_size_t,
++        ]
++        library.orbitkv_dense_page_pool_init.restype = ctypes.c_int32
++        library.orbitkv_dense_page_pool_acquire.argtypes = [
++            ctypes.c_void_p,
++            ctypes.c_uint32,
++            ctypes.POINTER(_FfiPhysicalPageLease),
++            ctypes.c_size_t,
++            ctypes.POINTER(ctypes.c_char),
++            ctypes.c_size_t,
++        ]
++        library.orbitkv_dense_page_pool_acquire.restype = ctypes.c_int32
++        for name in (
++            "orbitkv_dense_page_pool_begin_retirement",
++            "orbitkv_dense_page_pool_abort_retirement",
++            "orbitkv_dense_page_pool_commit_retirement",
++        ):
++            callback = getattr(library, name)
++            callback.argtypes = [
++                ctypes.c_void_p,
++                ctypes.POINTER(_FfiPhysicalPageLease),
++                ctypes.c_size_t,
++                ctypes.POINTER(ctypes.c_char),
++                ctypes.c_size_t,
++            ]
++            callback.restype = ctypes.c_int32
++        library.orbitkv_dense_page_pool_stats.argtypes = [
++            ctypes.c_void_p,
++            ctypes.POINTER(_FfiPhysicalPagePoolStats),
++            ctypes.POINTER(ctypes.c_char),
++            ctypes.c_size_t,
++        ]
++        library.orbitkv_dense_page_pool_stats.restype = ctypes.c_int32
+         library.orbitkv_dense_destroy.argtypes = [ctypes.c_void_p]
+         library.orbitkv_dense_destroy.restype = None
+ 
+@@ -560,6 +618,106 @@ class FfiDenseRuntimeClient:
+             ]
+         )
+ 
++    def init_page_pool(self, page_count: int) -> None:
++        with self._lock:
++            status = self._library.orbitkv_dense_page_pool_init(
++                self._handle,
++                int(page_count),
++                self._error,
++                len(self._error),
++            )
++            self._check(status, "initialize physical page pool")
++            self.transport_commands += 1
++            self.logical_commands += 1
++
++    def acquire_pages(self, page_count: int) -> list[tuple[int, int]]:
++        if page_count <= 0:
++            return []
++        leases = (_FfiPhysicalPageLease * page_count)()
++        with self._lock:
++            status = self._library.orbitkv_dense_page_pool_acquire(
++                self._handle,
++                int(page_count),
++                leases,
++                page_count,
++                self._error,
++                len(self._error),
++            )
++            self._check(status, "acquire physical pages")
++            self.transport_commands += 1
++            self.logical_commands += 1
++        return [
++            (int(lease.page_id), int(lease.generation)) for lease in leases
++        ]
++
++    def begin_page_retirement(self, leases: list[tuple[int, int]]) -> None:
++        self._page_transition(
++            "orbitkv_dense_page_pool_begin_retirement",
++            leases,
++            "begin physical page retirement",
++        )
++
++    def abort_page_retirement(self, leases: list[tuple[int, int]]) -> None:
++        self._page_transition(
++            "orbitkv_dense_page_pool_abort_retirement",
++            leases,
++            "abort physical page retirement",
++        )
++
++    def commit_page_retirement(self, leases: list[tuple[int, int]]) -> None:
++        self._page_transition(
++            "orbitkv_dense_page_pool_commit_retirement",
++            leases,
++            "commit physical page retirement",
++        )
++
++    def page_pool_stats(self) -> dict[str, int]:
++        stats = _FfiPhysicalPagePoolStats()
++        with self._lock:
++            status = self._library.orbitkv_dense_page_pool_stats(
++                self._handle,
++                ctypes.byref(stats),
++                self._error,
++                len(self._error),
++            )
++            self._check(status, "read physical page pool stats")
++            self.transport_commands += 1
++            self.logical_commands += 1
++        return {
++            "total_pages": int(stats.total_pages),
++            "free_pages": int(stats.free_pages),
++            "active_pages": int(stats.active_pages),
++            "retiring_pages": int(stats.retiring_pages),
++        }
++
++    def _page_transition(
++        self,
++        function_name: str,
++        leases: list[tuple[int, int]],
++        operation: str,
++    ) -> None:
++        values = (_FfiPhysicalPageLease * len(leases))(
++            *[
++                _FfiPhysicalPageLease(
++                    page_id=page_id,
++                    reserved=0,
++                    generation=generation,
++                )
++                for page_id, generation in leases
++            ]
++        )
++        with self._lock:
++            status = getattr(self._library, function_name)(
++                self._handle,
++                values if leases else None,
++                len(leases),
++                self._error,
++                len(self._error),
++            )
++            self._check(status, operation)
++            self.transport_commands += 1
++            self.logical_commands += 1
++
+     def close(self) -> None:
+         with getattr(self, "_lock", threading.Lock()):
+             if getattr(self, "_handle", None) is None or not self._handle.value:
+@@ -1270,8 +1428,24 @@ def _free_dense_certificate(
+     mapped = full_indices if mapping is None else mapping[full_indices]
+     if int(mapped[0].item()) // page_tokens != expected_page:
+         raise RuntimeError("OrbitKV Dense certificate does not match SGLang mapping")
++    rust_allocator = _rust_owned_swa_allocator(allocator)
++    full_indices_snapshot = (
++        full_indices.to(dtype=full_indices.dtype, copy=True)
++        if rust_allocator is not None
++        else None
++    )
++    mapped_snapshot = (
++        mapped.to(dtype=mapped.dtype, copy=True)
++        if rust_allocator is not None
++        else None
++    )
+     allocator.free_swa(full_indices)
+-    return (
++    if (
++        rust_allocator is not None
++        and expected_page not in rust_allocator.retiring_page_ids()
++    ):
++        raise RuntimeError("OrbitKV physical page did not enter retiring state")
++    command = (
+         {
+             "op": "commit_reclamation",
+             "receipt": {
+@@ -1283,26 +1457,105 @@ def _free_dense_certificate(
+             },
+         }
+         if "artifact_fingerprint" in certificate
+-        else {}
++        else None
+     )
++    return {
++        "command": command,
++        "allocator": allocator,
++        "rust_allocator": rust_allocator,
++        "page_ids": [expected_page] if rust_allocator is not None else [],
++        "full_indices": full_indices_snapshot,
++        "mapped_indices": mapped_snapshot,
++    }
+ 
+ 
+-def _finish_dense_certificate(
+-    req: Any,
+-    certificate: dict[str, Any],
+-    response: dict[str, Any],
+-) -> None:
+-    if response.get("status") != "reclamation_committed":
+-        raise RuntimeError("OrbitKV Dense Runtime rejected online reclamation")
+-    token_start = int(certificate["token_start"])
+-    token_end = int(certificate["token_end_exclusive"])
+-    class_name = _dense_class_names()[int(certificate["logical"]["class_id"])]
+-    expected_page = int(certificate["backend"]["index"])
+-    req.kv.swa_evicted_seqlen = max(
+-        int(req.kv.swa_evicted_seqlen),
+-        token_end,
++def _rust_owned_swa_allocator(allocator: Any) -> Any | None:
++    candidate = getattr(allocator, "swa_attn_allocator", None)
++    return candidate if isinstance(candidate, _RustOwnedPagedAllocator) else None
++
++
++def _rust_page_ids_for_full_indices(
++    allocator: Any,
++    full_indices: Any,
++) -> tuple[Any | None, list[int]]:
++    rust_allocator = _rust_owned_swa_allocator(allocator)
++    if rust_allocator is None or full_indices.numel() == 0:
++        return rust_allocator, []
++    mapping = getattr(
++        getattr(allocator, "_kvcache", None),
++        "full_to_swa_index_mapping",
++        None,
++    )
++    mapped = full_indices if mapping is None else mapping[full_indices]
++    page_ids = sorted(
++        {
++            int(index) // rust_allocator.page_size
++            for index in mapped.detach().cpu().tolist()
++            if int(index) > 0
++        }
++    )
++    return rust_allocator, page_ids
++
++
++def _rust_page_reclamation_transaction(
++    allocator: Any,
++    full_indices: Any,
++) -> dict[str, Any]:
++    rust_allocator, page_ids = _rust_page_ids_for_full_indices(
++        allocator,
++        full_indices,
+     )
+-    _trace_dense_certificate(req, certificate)
++    mapping = getattr(
++        getattr(allocator, "_kvcache", None),
++        "full_to_swa_index_mapping",
++        None,
++    )
++    return {
++        "allocator": allocator,
++        "rust_allocator": rust_allocator,
++        "page_ids": page_ids,
++        "full_indices": (
++            full_indices.to(dtype=full_indices.dtype, copy=True)
++            if rust_allocator is not None
++            else None
++        ),
++        "mapped_indices": (
++            mapping[full_indices].to(dtype=mapping.dtype, copy=True)
++            if rust_allocator is not None and mapping is not None
++            else None
++        ),
++    }
++
++
++def _commit_rust_page_reclamations(
++    transactions: list[dict[str, Any]],
++) -> None:
++    grouped: dict[Any, list[int]] = {}
++    for transaction in transactions:
++        rust_allocator = transaction["rust_allocator"]
++        if rust_allocator is not None:
++            grouped.setdefault(rust_allocator, []).extend(transaction["page_ids"])
++    for rust_allocator, page_ids in grouped.items():
++        rust_allocator.commit_retiring_pages(page_ids)
++
++
++def _abort_rust_page_reclamations(
++    transactions: list[dict[str, Any]],
++) -> None:
++    for transaction in reversed(transactions):
++        rust_allocator = transaction["rust_allocator"]
++        if rust_allocator is None:
++            continue
++        page_ids = transaction["page_ids"]
++        allocator = transaction["allocator"]
++        mapping = getattr(
++            getattr(allocator, "_kvcache", None),
++            "full_to_swa_index_mapping",
++            None,
++        )
++        if mapping is not None:
++            mapping[transaction["full_indices"]] = transaction["mapped_indices"]
++        rust_allocator.abort_retiring_pages(page_ids)
+ 
+ 
+ def _trace_dense_certificate(req: Any, certificate: dict[str, Any]) -> None:
+@@ -1385,29 +1638,37 @@ def _complete_dense_execution(entry: dict[str, Any]) -> None:
+         allocator = (
+             req._orbitkv_dense_allocator if certificates else None
+         )
++        physical_transactions = []
+         reclamation_commands = []
+         for certificate in certificates:
+-            command = _free_dense_certificate(req, allocator, certificate)
+-            if command:
+-                reclamation_commands.append(command)
+-        if reclamation_commands:
+-            reclamation_responses = _dense_batch(reclamation_commands)
+-            for certificate, response in zip(
+-                certificates,
+-                reclamation_responses,
+-                strict=True,
+-            ):
+-                _finish_dense_certificate(req, certificate, response)
+-        elif certificates:
+-            if isinstance(dense_runtime, FfiDenseRuntimeClient):
+-                dense_runtime.commit_reclamations(certificates)
+-            for certificate in certificates:
+-                token_end = int(certificate["token_end_exclusive"])
+-                req.kv.swa_evicted_seqlen = max(
+-                    int(req.kv.swa_evicted_seqlen),
+-                    token_end,
+-                )
+-                _trace_dense_certificate(req, certificate)
++            transaction = _free_dense_certificate(req, allocator, certificate)
++            physical_transactions.append(transaction)
++            if transaction["command"] is not None:
++                reclamation_commands.append(transaction["command"])
++        try:
++            if reclamation_commands:
++                reclamation_responses = _dense_batch(reclamation_commands)
++                if any(
++                    response.get("status") != "reclamation_committed"
++                    for response in reclamation_responses
++                ):
++                    raise RuntimeError(
++                        "OrbitKV Dense Runtime rejected online reclamation"
++                    )
++            elif certificates:
++                if isinstance(dense_runtime, FfiDenseRuntimeClient):
++                    dense_runtime.commit_reclamations(certificates)
++        except Exception:
++            _abort_rust_page_reclamations(physical_transactions)
++            raise
++        _commit_rust_page_reclamations(physical_transactions)
++        for certificate in certificates:
++            token_end = int(certificate["token_end_exclusive"])
++            req.kv.swa_evicted_seqlen = max(
++                int(req.kv.swa_evicted_seqlen),
++                token_end,
++            )
++            _trace_dense_certificate(req, certificate)
+         if _trace_allocations_enabled():
+             _emit(
+                 {
+@@ -3214,7 +3475,10 @@ def _prepare_dense_capsule_release(req: Any) -> dict[str, Any] | None:
+         certificates = response.get("certificates")
+         if not isinstance(certificates, list):
+             raise RuntimeError("OrbitKV Dense Runtime returned invalid certificates")
+-    return {"request": request, "certificates": certificates}
++    return {
++        "request": request,
++        "certificates": certificates,
++    }
+ 
+ 
+ def _commit_dense_capsule_release(req: Any, release: dict[str, Any] | None) -> None:
+@@ -3225,18 +3489,17 @@ def _commit_dense_capsule_release(req: Any, release: dict[str, Any] | None) -> N
+     dense_runtime = _require_dense_runtime()
+     if isinstance(dense_runtime, FfiDenseRuntimeClient):
+         dense_runtime.commit_reclamations_and_recycle(request, certificates)
+-        responses = []
+     else:
+         receipts = [
+-        {
+-            "schema": "orbitkv.dense-physical-reclamation-receipt.v1",
+-            "artifact_fingerprint": certificate["artifact_fingerprint"],
+-            "certificate_id": certificate["certificate_id"],
+-            "physical": certificate["physical"],
+-            "backend": certificate["backend"],
+-        }
+-        for certificate in certificates
+-    ]
++            {
++                "schema": "orbitkv.dense-physical-reclamation-receipt.v1",
++                "artifact_fingerprint": certificate["artifact_fingerprint"],
++                "certificate_id": certificate["certificate_id"],
++                "physical": certificate["physical"],
++                "backend": certificate["backend"],
++            }
++            for certificate in certificates
++        ]
+         responses = _dense_batch(
+             [
+                 {"op": "commit_reclamations", "receipts": receipts},
+@@ -3692,6 +3955,286 @@ def _sha256_file(path: Path) -> str:
+     return f"sha256:{digest.hexdigest()}"
+ 
+ 
++class _RustOwnedPagedAllocator:
++    def __init__(self, inner: Any, dense_runtime: FfiDenseRuntimeClient):
++        import torch
++
++        self._inner = inner
++        self._dense_runtime = dense_runtime
++        self.page_size = int(inner.page_size)
++        self.size = int(inner.size)
++        self.num_pages = int(inner.num_pages)
++        self.device = inner.device
++        self.dtype = inner.dtype
++        self.need_sort = inner.need_sort
++        self.debug_mode = inner.debug_mode
++        self.is_not_in_free_group = True
++        self.free_group = []
++        self.free_page_reps_group = []
++        self._leases: dict[int, int] = {}
++        self._retiring: dict[int, int] = {}
++        self._supplied: list[int] = []
++        self._free_page_count = self.num_pages
++        self._dense_runtime.init_page_pool(self.num_pages)
++        self.free_pages = torch.empty(
++            (0,), dtype=torch.int64, device=self.device
++        )
++        self.release_pages = torch.empty(
++            (0,), dtype=torch.int64, device=self.device
++        )
++        self._trace_page_transition("rust_page_pool_initialized", [])
++
++    def available_size(self):
++        return self._free_page_count * self.page_size
++
++    def alloc(self, need_size):
++        need_size = int(need_size)
++        if need_size % self.page_size != 0:
++            raise RuntimeError("OrbitKV physical allocation is not page aligned")
++        return self._allocate_with_supply(
++            need_size // self.page_size,
++            self._inner.alloc,
++            need_size,
++        )
++
++    def alloc_extend(self, *args, **kwargs):
++        from sglang.srt.utils.common import get_num_new_pages
++
++        prefix_lens_cpu = args[1]
++        seq_lens_cpu = args[3]
++        num_pages = kwargs.get("num_new_pages")
++        if num_pages is None:
++            num_pages = get_num_new_pages(
++                seq_lens=seq_lens_cpu,
++                page_size=self.page_size,
++                prefix_lens=prefix_lens_cpu,
++            )
++        return self._allocate_with_supply(
++            int(num_pages),
++            self._inner.alloc_extend,
++            *args,
++            **kwargs,
++        )
++
++    def alloc_decode(self, *args, **kwargs):
++        from sglang.srt.utils.common import get_num_new_pages
++
++        seq_lens_cpu = args[1]
++        num_pages = get_num_new_pages(
++            seq_lens=seq_lens_cpu,
++            page_size=self.page_size,
++            decode=True,
++        )
++        return self._allocate_with_supply(
++            int(num_pages),
++            self._inner.alloc_decode,
++            *args,
++            **kwargs,
++        )
++
++    def free(self, free_index):
++        if free_index.numel() == 0:
++            return
++        if self.is_not_in_free_group:
++            self._begin_retirement(free_index)
++        else:
++            self.free_group.append(free_index.clone())
++
++    def free_segment(self, free_index, *, start_pos):
++        self.free(free_index)
++
++    def free_group_begin(self):
++        self.is_not_in_free_group = False
++        self.free_group = []
++
++    def free_group_end(self):
++        self.is_not_in_free_group = True
++        if self.free_group:
++            import torch
++
++            self._begin_retirement(torch.cat(self.free_group))
++        self.free_group = []
++
++    def commit_retiring_pages(self, page_ids: list[int]) -> None:
++        page_ids, leases = self._retiring_leases(page_ids)
++        if not page_ids:
++            return
++        self._dense_runtime.commit_page_retirement(leases)
++        for page_id in page_ids:
++            self._retiring.pop(page_id)
++        self._free_page_count += len(page_ids)
++        self._trace_page_transition("rust_pages_committed", leases)
++
++    def abort_retiring_pages(self, page_ids: list[int]) -> None:
++        page_ids, leases = self._retiring_leases(page_ids)
++        if not page_ids:
++            return
++        self._dense_runtime.abort_page_retirement(leases)
++        for page_id in page_ids:
++            self._leases[page_id] = self._retiring.pop(page_id)
++        self._trace_page_transition("rust_pages_aborted", leases)
++
++    def retiring_page_ids(self) -> set[int]:
++        return set(self._retiring)
++
++    def clear(self):
++        if self._leases or self._retiring or self._supplied:
++            raise RuntimeError(
++                "OrbitKV Rust-owned page allocator cannot clear live pages"
++            )
++
++    def resize(self, _config):
++        raise RuntimeError(
++            "OrbitKV Rust-owned page allocator does not support resize"
++        )
++
++    def get_cpu_copy(self, indices, mamba_indices=None):
++        return self._inner.get_cpu_copy(indices, mamba_indices=mamba_indices)
++
++    def load_cpu_copy(self, value, indices, mamba_indices=None):
++        return self._inner.load_cpu_copy(
++            value, indices, mamba_indices=mamba_indices
++        )
++
++    def _allocate_with_supply(
++        self,
++        num_pages: int,
++        operation: Callable,
++        *args: Any,
++        **kwargs: Any,
++    ):
++        if num_pages < 0:
++            raise RuntimeError("OrbitKV physical page request is negative")
++        if num_pages == 0:
++            return operation(*args, **kwargs)
++        if num_pages > self._free_page_count:
++            return None
++        self._supply(num_pages)
++        try:
++            result = operation(*args, **kwargs)
++            if result is None:
++                self._return_supplied_pages()
++                return None
++            self._consume_supplied()
++            return result
++        except Exception:
++            self._return_supplied_pages()
++            raise
++
++    def _supply(self, num_pages: int) -> None:
++        import torch
++
++        if self.free_pages.numel() != 0 or self._supplied:
++            raise RuntimeError("OrbitKV physical page supply was not consumed")
++        leases = self._dense_runtime.acquire_pages(num_pages)
++        self._free_page_count -= len(leases)
++        for page_id, generation in leases:
++            if page_id in self._leases or page_id in self._retiring:
++                raise RuntimeError("OrbitKV physical page lease is duplicated")
++            self._leases[page_id] = generation
++        self._supplied = [page_id for page_id, _ in leases]
++        self.free_pages = torch.tensor(
++            self._supplied,
++            dtype=torch.int64,
++            device=self.device,
++        )
++        self._inner.free_pages = self.free_pages
++        self._trace_page_transition("rust_pages_acquired", leases)
++
++    def _consume_supplied(self) -> None:
++        import torch
++
++        if self._inner.free_pages.numel() != 0:
++            raise RuntimeError("SGLang did not consume all OrbitKV supplied pages")
++        self.free_pages = torch.empty(
++            (0,), dtype=torch.int64, device=self.device
++        )
++        self._inner.free_pages = self.free_pages
++        self._supplied = []
++
++    def _return_supplied_pages(self) -> None:
++        import torch
++
++        page_ids = list(self._supplied)
++        self.free_pages = torch.empty(
++            (0,), dtype=torch.int64, device=self.device
++        )
++        self._inner.free_pages = self.free_pages
++        self._supplied = []
++        if not page_ids:
++            return
++        leases = [(page_id, self._leases[page_id]) for page_id in page_ids]
++        self._dense_runtime.begin_page_retirement(leases)
++        self._dense_runtime.commit_page_retirement(leases)
++        for page_id in page_ids:
++            self._leases.pop(page_id)
++        self._free_page_count += len(page_ids)
++        self._trace_page_transition("rust_pages_returned", leases)
++
++    def _begin_retirement(self, free_index) -> None:
++        page_ids = sorted(
++            set(
++                int(value)
++                for value in (free_index // self.page_size).detach().cpu().tolist()
++                if int(value) > 0
++            )
++        )
++        leases = []
++        for page_id in page_ids:
++            generation = self._leases.get(page_id)
++            if generation is None:
++                if page_id in self._retiring:
++                    raise RuntimeError(
++                        f"OrbitKV physical page {page_id} was retired twice"
++                    )
++                raise RuntimeError(
++                    f"SGLang freed page {page_id} without an OrbitKV lease"
++                )
++            leases.append((page_id, generation))
++        self._dense_runtime.begin_page_retirement(leases)
++        for page_id, generation in leases:
++            self._leases.pop(page_id)
++            self._retiring[page_id] = generation
++        self._trace_page_transition("rust_pages_retiring", leases)
++
++    def _retiring_leases(
++        self, page_ids: list[int]
++    ) -> tuple[list[int], list[tuple[int, int]]]:
++        normalized = [int(page_id) for page_id in page_ids]
++        if len(set(normalized)) != len(normalized):
++            raise RuntimeError("OrbitKV physical page transition is duplicated")
++        leases = []
++        for page_id in normalized:
++            generation = self._retiring.get(page_id)
++            if generation is None:
++                raise RuntimeError(
++                    f"OrbitKV physical page {page_id} is not retiring"
++                )
++            leases.append((page_id, generation))
++        return normalized, leases
++
++    def _trace_page_transition(
++        self,
++        event: str,
++        leases: list[tuple[int, int]],
++    ) -> None:
++        if not _trace_allocations_enabled():
++            return
++        _emit(
++            {
++                "event": event,
++                "page_count": len(leases),
++                "pages": [
++                    {"page_id": page_id, "generation": generation}
++                    for page_id, generation in leases[:8]
++                ],
++                "free_pages": int(self._free_page_count),
++                "active_pages": len(self._leases),
++                "retiring_pages": len(self._retiring),
++            }
++        )
++
++
+ def _build_paged_periodic_allocator():
+     from sglang.srt.mem_cache.allocator.swa import (
+         PureSWATokenToKVPoolAllocator as OriginalPureSwaAllocator,
+@@ -3741,6 +4284,13 @@ def _build_paged_periodic_allocator():
+             )
+             self.logical_index_tokens = logical_index_tokens
+             self.physical_swa_tokens = int(size_swa)
++            if _dense_capsule_binding_enabled():
++                dense_runtime = _require_dense_runtime()
++                if isinstance(dense_runtime, FfiDenseRuntimeClient):
++                    self.swa_attn_allocator = _RustOwnedPagedAllocator(
++                        self.swa_attn_allocator,
++                        dense_runtime,
++                    )
+ 
+         def translate_loc_from_full_to_swa(self, kv_indices):
+             return super(
+@@ -3774,7 +4324,11 @@ def _build_paged_periodic_allocator():
+             ).free_group_begin()
+ 
+         def free_group_end(self):
+-            return super(OriginalPureSwaAllocator, self).free_group_end()
++            result = super(OriginalPureSwaAllocator, self).free_group_end()
++            tree_cache = getattr(self, "_orbitkv_tree_cache", None)
++            if tree_cache is not None:
++                _commit_pending_request_releases(tree_cache)
++            return result
+ 
+         def clear(self):
+             return super(OriginalPureSwaAllocator, self).clear()
+@@ -4234,13 +4788,23 @@ def _own_swa_reclamation(
+     free_slots = batch.req_to_token_pool.req_to_token[
+         req.req_pool_idx, token_start:token_end
+     ]
++    page_transaction = _rust_page_reclamation_transaction(
++        batch.token_to_kv_pool_allocator,
++        free_slots,
++    )
+     batch.token_to_kv_pool_allocator.free_swa(free_slots)
+     pending = getattr(batch, "_orbitkv_pending_certificates", None)
+     if pending is None:
+         raise RuntimeError(
+             "OrbitKV certificate was generated outside a managed free group"
+         )
+-    pending.append((req, certificate))
++    pending.append(
++        {
++            "req": req,
++            "certificate": certificate,
++            "page_transaction": page_transaction,
++        }
++    )
+     return None
+ 
+ 
+@@ -4256,6 +4820,7 @@ def _commit_swa_reclamations(
+         raise RuntimeError("nested OrbitKV reclamation group")
+     batch._orbitkv_pending_certificates = []
+     released_prefix_components = _prepare_swa_prefix_component_releases(batch)
++    owner_committed = False
+     try:
+         result = original_fn(batch, *args, **kwargs)
+         _finish_swa_prefix_component_releases(
+@@ -4263,7 +4828,7 @@ def _commit_swa_reclamations(
+         )
+         pending = batch._orbitkv_pending_certificates
+         if pending:
+-            certificates = [certificate for _, certificate in pending]
++            certificates = [entry["certificate"] for entry in pending]
+             response = _require_owner().command(
+                 {
+                     "op": "commit_reclamations",
+@@ -4281,12 +4846,27 @@ def _commit_swa_reclamations(
+                 raise RuntimeError(
+                     "OrbitKV owner returned a mismatched batch commit response"
+                 )
+-            for req, certificate in pending:
++            owner_committed = True
++            for entry in pending:
++                req = entry["req"]
++                certificate = entry["certificate"]
+                 req.kv.swa_evicted_seqlen = int(
+                     certificate["token_end_exclusive"]
+                 )
++                page_transaction = entry["page_transaction"]
++                rust_allocator = page_transaction["rust_allocator"]
++                if rust_allocator is not None:
++                    page_ids = page_transaction["page_ids"]
++                    if not set(page_ids).issubset(
++                        rust_allocator.retiring_page_ids()
++                    ):
++                        raise RuntimeError(
++                            "OrbitKV Owner committed before physical page retirement"
++                        )
++                    rust_allocator.commit_retiring_pages(page_ids)
+             if _trace_allocations_enabled():
+-                for _, certificate in pending:
++                for entry in pending:
++                    certificate = entry["certificate"]
+                     _emit(
+                         {
+                             "event": "retirement_committed",
+@@ -4296,6 +4876,18 @@ def _commit_swa_reclamations(
+                     )
+         return result
+     except Exception:
++        pending = batch._orbitkv_pending_certificates
++        if pending and not owner_committed:
++            transactions = [entry["page_transaction"] for entry in pending]
++            retiring = [
++                transaction
++                for transaction in transactions
++                if transaction["rust_allocator"] is not None
++                and set(transaction["page_ids"]).issubset(
++                    transaction["rust_allocator"].retiring_page_ids()
++                )
++            ]
++            _abort_rust_page_reclamations(retiring)
+         _finish_swa_prefix_component_releases(
+             batch, released_prefix_components, failed=True
+         )
+@@ -4353,6 +4945,13 @@ def _release_owned_request(
+     is_insert = bool(kwargs.get("is_insert", args[0] if args else True))
+     if req is not None:
+         _wait_execution_for_request(str(req.rid))
++    allocator = getattr(tree_cache, "token_to_kv_pool_allocator", None)
++    rust_allocator = _rust_owned_swa_allocator(allocator)
++    retiring_before = (
++        rust_allocator.retiring_page_ids()
++        if rust_allocator is not None
++        else set()
++    )
+     dense_release = _prepare_dense_capsule_release(req) if req is not None else None
+     _export_capsule_before_release(req, tree_cache, is_insert=is_insert)
+     if req is not None:
+@@ -4361,16 +4960,61 @@ def _release_owned_request(
+     if not bool(getattr(tree_cache, "is_chunk_cache", lambda: True)()):
+         _sync_radix_prefix_components(tree_cache)
+     if req is not None:
+-        _commit_dense_capsule_release(req, dense_release)
+         _require_owner().command(
+             {
+                 "op": "release_request",
+                 "request_id": str(req.rid),
+             }
+         )
++        pending = getattr(tree_cache, "_orbitkv_request_releases", None)
++        if pending is None:
++            pending = []
++            tree_cache._orbitkv_request_releases = pending
++        pending.append(
++            {
++                "req": req,
++                "dense_release": dense_release,
++                "rust_allocator": rust_allocator,
++                "retiring_before": retiring_before,
++            }
++        )
++        if allocator is None or bool(
++            getattr(allocator, "is_not_in_free_group", True)
++        ):
++            _commit_pending_request_releases(tree_cache)
++        else:
++            allocator._orbitkv_tree_cache = tree_cache
+     return result
+ 
+ 
++def _commit_pending_request_releases(tree_cache: Any) -> None:
++    pending = getattr(tree_cache, "_orbitkv_request_releases", None)
++    if not pending:
++        return
++    tree_cache._orbitkv_request_releases = []
++    for release in pending:
++        req = release["req"]
++        dense_release = release["dense_release"]
++        if dense_release is not None:
++            _commit_dense_capsule_release(req, dense_release)
++    by_allocator: dict[Any, set[int]] = {}
++    baseline_by_allocator: dict[Any, set[int]] = {}
++    for release in pending:
++        rust_allocator = release["rust_allocator"]
++        if rust_allocator is not None:
++            baseline = release["retiring_before"]
++            previous = baseline_by_allocator.setdefault(rust_allocator, baseline)
++            if previous != baseline:
++                raise RuntimeError(
++                    "OrbitKV request release group has inconsistent page baseline"
++                )
++            by_allocator[rust_allocator] = (
++                rust_allocator.retiring_page_ids() - baseline
++            )
++    for rust_allocator, page_ids in by_allocator.items():
++        rust_allocator.commit_retiring_pages(sorted(page_ids))
++
++
+ def _emit_owner_certificate(certificate: dict[str, Any]) -> None:
+     if _trace_allocations_enabled():
+         _emit(
+diff --git a/integrations/sglang/tests/test_shadow_plugin.py b/integrations/sglang/tests/test_shadow_plugin.py
+index 436bd54..23db892 100644
+--- a/integrations/sglang/tests/test_shadow_plugin.py
++++ b/integrations/sglang/tests/test_shadow_plugin.py
+@@ -284,6 +284,8 @@ class FakeDenseRuntime:
+     def __init__(self):
+         self.commands = []
+         self.next_submission_id = 1
++        self.transport_commands = 0
++        self.logical_commands = 0
+ 
+     def command(self, command):
+         self.commands.append(command)
+@@ -344,6 +346,101 @@ class FakeDenseRuntime:
+         raise AssertionError(command)
+ 
+ 
++class FakePhysicalPageRuntime:
++    def __init__(self):
++        self.pages = {}
++        self.calls = []
++
++    def init_page_pool(self, page_count):
++        self.pages = {
++            page_id: {"generation": 0, "phase": "free"}
++            for page_id in range(1, page_count + 1)
++        }
++        self.calls.append(("init", page_count))
++
++    def acquire_pages(self, page_count):
++        free = [
++            page_id
++            for page_id, state in self.pages.items()
++            if state["phase"] == "free"
++        ]
++        if page_count > len(free):
++            raise RuntimeError("physical page request exceeds pool capacity")
++        leases = []
++        for page_id in free[:page_count]:
++            state = self.pages[page_id]
++            state["generation"] += 1
++            state["phase"] = "active"
++            leases.append((page_id, state["generation"]))
++        self.calls.append(("acquire", leases))
++        return leases
++
++    def begin_page_retirement(self, leases):
++        self._transition(leases, "active", "retiring", "begin")
++
++    def abort_page_retirement(self, leases):
++        self._transition(leases, "retiring", "active", "abort")
++
++    def commit_page_retirement(self, leases):
++        self._transition(leases, "retiring", "free", "commit")
++
++    def _transition(self, leases, expected, target, operation):
++        for page_id, generation in leases:
++            state = self.pages[page_id]
++            if state != {"generation": generation, "phase": expected}:
++                raise RuntimeError("stale physical page lease")
++        for page_id, _ in leases:
++            self.pages[page_id]["phase"] = target
++        self.calls.append((operation, list(leases)))
++
++
++class FakeInnerPagedAllocator:
++    page_size = 16
++    size = 32
++    num_pages = 2
++    device = "cpu"
++    dtype = "bf16"
++    need_sort = False
++    debug_mode = False
++
++    def __init__(self):
++        self.free_pages = torch.empty((0,), dtype=torch.int64)
++        self.release_pages = torch.empty((0,), dtype=torch.int64)
++        self.fail_allocation = False
++        self._kvcache = types.SimpleNamespace()
++
++    def alloc(self, need_size):
++        page_count = need_size // self.page_size
++        if self.fail_allocation:
++            return None
++        pages = self.free_pages[:page_count]
++        self.free_pages = self.free_pages[page_count:]
++        offsets = torch.arange(self.page_size, dtype=torch.int64)
++        return (pages[:, None] * self.page_size + offsets).reshape(-1)
++
++    def get_cpu_copy(self, indices, mamba_indices=None):
++        return indices.clone(), mamba_indices
++
++    def load_cpu_copy(self, value, indices, mamba_indices=None):
++        return value, indices, mamba_indices
++
++
++class FakeRustOwnedTopAllocator:
++    def __init__(self, page_allocator):
++        self.swa_attn_allocator = page_allocator
++        mapping = torch.zeros((64,), dtype=torch.int64)
++        mapping[16:32] = torch.arange(16, 32, dtype=torch.int64)
++        self._kvcache = types.SimpleNamespace(
++            full_to_swa_index_mapping=mapping
++        )
++
++    def free_swa(self, full_indices):
++        mapping = self._kvcache.full_to_swa_index_mapping
++        swa_indices = mapping[full_indices]
++        self.swa_attn_allocator.free(swa_indices[swa_indices > 0])
++        mapping[full_indices] = 0
++
++
+ class FakeCapsules:
+     def __init__(self, events):
+         self.events = events
+@@ -1085,6 +1182,214 @@ class ShadowPluginTests(unittest.TestCase):
+         finally:
+             plugin._UNIFORM_SWA_CONTRACT = old_contract
+ 
++    @unittest.skipIf(torch is None, "torch is required")
++    def test_rust_owned_page_allocator_requires_retirement_commit_before_reuse(self):
++        from orbitkv_sglang import plugin
++
++        old_trace = os.environ.get("ORBITKV_TRACE_ALLOCATIONS")
++        try:
++            os.environ["ORBITKV_TRACE_ALLOCATIONS"] = "0"
++            runtime = FakePhysicalPageRuntime()
++            allocator = plugin._RustOwnedPagedAllocator(
++                FakeInnerPagedAllocator(),
++                runtime,
++            )
++
++            first = allocator.alloc(16)
++            self.assertEqual(first.tolist(), list(range(16, 32)))
++            allocator.free(first)
++            self.assertEqual(
++                runtime.pages[1], {"generation": 1, "phase": "retiring"}
++            )
++
++            second = allocator.alloc(16)
++            self.assertEqual(second.tolist(), list(range(32, 48)))
++            self.assertIsNone(allocator.alloc(16))
++
++            allocator.commit_retiring_pages([1])
++            reused = allocator.alloc(16)
++            self.assertEqual(reused.tolist(), list(range(16, 32)))
++            self.assertEqual(
++                runtime.pages[1], {"generation": 2, "phase": "active"}
++            )
++        finally:
++            if old_trace is None:
++                os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
++            else:
++                os.environ["ORBITKV_TRACE_ALLOCATIONS"] = old_trace
++
++    @unittest.skipIf(torch is None, "torch is required")
++    def test_rust_owned_page_allocator_returns_failed_supply_atomically(self):
++        from orbitkv_sglang import plugin
++
++        old_trace = os.environ.get("ORBITKV_TRACE_ALLOCATIONS")
++        try:
++            os.environ["ORBITKV_TRACE_ALLOCATIONS"] = "0"
++            runtime = FakePhysicalPageRuntime()
++            inner = FakeInnerPagedAllocator()
++            allocator = plugin._RustOwnedPagedAllocator(inner, runtime)
++            inner.fail_allocation = True
++
++            self.assertIsNone(allocator.alloc(16))
++            self.assertEqual(allocator.available_size(), 32)
++            self.assertEqual(
++                {state["phase"] for state in runtime.pages.values()},
++                {"free"},
++            )
++
++            inner.fail_allocation = False
++            allocated = allocator.alloc(16)
++            self.assertEqual(allocated.tolist(), list(range(16, 32)))
++            self.assertEqual(
++                runtime.pages[1], {"generation": 2, "phase": "active"}
++            )
++        finally:
++            if old_trace is None:
++                os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
++            else:
++                os.environ["ORBITKV_TRACE_ALLOCATIONS"] = old_trace
++
++    @unittest.skipIf(torch is None, "torch is required")
++    def test_dense_reclamation_failure_restores_mapping_and_page_lease(self):
++        from orbitkv_sglang import plugin
++
++        old_runtime = plugin._RUNTIME_STATE_PLAN
++        old_policy = plugin._POLICY
++        old_trace = os.environ.get("ORBITKV_TRACE_ALLOCATIONS")
++        try:
++            os.environ["ORBITKV_TRACE_ALLOCATIONS"] = "0"
++            runtime = FakePhysicalPageRuntime()
++            page_allocator = plugin._RustOwnedPagedAllocator(
++                FakeInnerPagedAllocator(),
++                runtime,
++            )
++            allocated = page_allocator.alloc(16)
++            allocator = FakeRustOwnedTopAllocator(page_allocator)
++            req = types.SimpleNamespace(
++                _orbitkv_dense_req_to_token=allocated.clone(),
++            )
++            certificate = {
++                "certificate_id": 7,
++                "logical": {"class_id": 0, "ordinal": 0},
++                "physical": {"class_id": 0, "slot": 0, "generation": 1},
++                "backend": {"domain": 0, "index": 1},
++                "token_start": 0,
++                "token_end_exclusive": 16,
++            }
++            plugin._RUNTIME_STATE_PLAN = {
++                "dense_runtime": {
++                    "page_tokens": 16,
++                    "classes": [{"class_id": 0, "name": "swa"}],
++                }
++            }
++            plugin._POLICY = {
++                "unbounded_classes": [],
++                "bounded_classes": [{"name": "swa"}],
++            }
++            transaction = plugin._free_dense_certificate(
++                req,
++                allocator,
++                certificate,
++            )
++            self.assertEqual(
++                runtime.pages[1],
++                {"generation": 1, "phase": "retiring"},
++            )
++            self.assertTrue(
++                torch.equal(
++                    allocator._kvcache.full_to_swa_index_mapping[allocated],
++                    torch.zeros((16,), dtype=torch.int64),
++                )
++            )
++
++            plugin._abort_rust_page_reclamations([transaction])
++            self.assertEqual(
++                runtime.pages[1],
++                {"generation": 1, "phase": "active"},
++            )
++            self.assertTrue(
++                torch.equal(
++                    allocator._kvcache.full_to_swa_index_mapping[allocated],
++                    allocated,
++                )
++            )
++        finally:
++            plugin._RUNTIME_STATE_PLAN = old_runtime
++            plugin._POLICY = old_policy
++            if old_trace is None:
++                os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
++            else:
++                os.environ["ORBITKV_TRACE_ALLOCATIONS"] = old_trace
++
++    @unittest.skipIf(torch is None, "torch is required")
++    def test_dense_request_release_commits_pages_after_free_group(self):
++        from orbitkv_sglang import plugin
++
++        old_dense = plugin._DENSE_RUNTIME
++        old_runtime = plugin._RUNTIME_STATE_PLAN
++        old_trace = os.environ.get("ORBITKV_TRACE_ALLOCATIONS")
++        try:
++            os.environ["ORBITKV_TRACE_ALLOCATIONS"] = "0"
++            runtime = FakePhysicalPageRuntime()
++            page_allocator = plugin._RustOwnedPagedAllocator(
++                FakeInnerPagedAllocator(),
++                runtime,
++            )
++            allocated = page_allocator.alloc(16)
++            page_allocator.free_group_begin()
++            page_allocator.free(allocated)
++            release = {
++                "request": {"slot": 0, "generation": 1},
++                "certificates": [],
++            }
++            tree_cache = types.SimpleNamespace(_orbitkv_request_releases=[])
++            req = types.SimpleNamespace(
++                rid="r0",
++                _orbitkv_dense_request=release["request"],
++                _orbitkv_dense_committed=True,
++            )
++            tree_cache._orbitkv_request_releases.append(
++                {
++                    "req": req,
++                    "dense_release": release,
++                    "rust_allocator": page_allocator,
++                    "retiring_before": set(),
++                }
++            )
++            plugin._DENSE_RUNTIME = FakeDenseRuntime()
++            plugin._RUNTIME_STATE_PLAN = {
++                "capsule": {"enabled": True},
++                "execution": {"frontier": "cuda_event"},
++                "dense_runtime": {},
++            }
++            page_allocator.free_group_end()
++            self.assertEqual(
++                runtime.pages[1],
++                {"generation": 1, "phase": "retiring"},
++            )
++            self.assertIsNone(
++                page_allocator.alloc(2 * page_allocator.page_size)
++            )
++
++            plugin._commit_pending_request_releases(tree_cache)
++            self.assertEqual(
++                runtime.pages[1],
++                {"generation": 1, "phase": "free"},
++            )
++            reused = page_allocator.alloc(page_allocator.page_size)
++            self.assertEqual(reused.tolist(), list(range(16, 32)))
++            self.assertEqual(
++                runtime.pages[1],
++                {"generation": 2, "phase": "active"},
++            )
++        finally:
++            plugin._DENSE_RUNTIME = old_dense
++            plugin._RUNTIME_STATE_PLAN = old_runtime
++            if old_trace is None:
++                os.environ.pop("ORBITKV_TRACE_ALLOCATIONS", None)
++            else:
++                os.environ["ORBITKV_TRACE_ALLOCATIONS"] = old_trace
++
+     def test_uniform_swa_state_plan_binds_model_kernel_and_allocator(self):
+         from orbitkv_sglang import plugin
+ 
+diff --git a/results/README.md b/results/README.md
+index 7cafab7..f973abe 100644
+--- a/results/README.md
++++ b/results/README.md
+@@ -5,6 +5,7 @@ Capability levels and unsupported paths are defined only in
+ 
+ | Record | Scope |
+ | --- | --- |
++| `h20-rust-owned-pages-20260820` | Rust-selected physical SWA pages through real SGLang allocation kernels |
+ | `h20-dense-sglang-20260819` | Pure-SWA 128-token Dense page binding through real SGLang |
+ | `dense-runtime-20260819` | Fixed-capacity generated ownership runtime and Reference differential benchmark |
+ | `h20-cuda-event-overlap-20260819` | Real SGLang overlap scheduling with request-scoped CUDA-event frontiers |
+diff --git a/src/lib.rs b/src/lib.rs
+index 6f80984..654ba97 100644
+--- a/src/lib.rs
++++ b/src/lib.rs
+@@ -9,6 +9,7 @@ pub mod hf_config;
+ pub mod holt_store;
+ pub mod manager;
+ pub mod optimizer;
++pub mod physical_page_pool;
+ pub mod plan;
+ pub mod prefix;
+ pub mod retention;
+@@ -61,6 +62,9 @@ pub use optimizer::{
+     SglangPhysicalCost, SglangPhysicalOptimizationInput, SglangPhysicalPlan,
+     optimize_sglang_physical_plan,
+ };
++pub use physical_page_pool::{
++    PhysicalPageLease, PhysicalPagePool, PhysicalPagePoolError, PhysicalPagePoolStats,
++};
+ pub use plan::{
+     AddressProgram, ApplicabilityClass, ApplicabilityClassGeometry, ApplicabilityReport,
+     BackendDecision, BackendRequirements, BlockDomain, CellVersion, ClassCapacity,
+diff --git a/src/physical_page_pool.rs b/src/physical_page_pool.rs
+new file mode 100644
+index 0000000..8ab3c37
+--- /dev/null
++++ b/src/physical_page_pool.rs
+@@ -0,0 +1,300 @@
++use serde::{Deserialize, Serialize};
++use thiserror::Error;
++
++#[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
++pub struct PhysicalPageLease {
++    pub page_id: u32,
++    pub generation: u64,
++}
++
++#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
++pub struct PhysicalPagePoolStats {
++    pub total_pages: u64,
++    pub free_pages: u64,
++    pub active_pages: u64,
++    pub retiring_pages: u64,
++}
++
++#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
++enum PagePhase {
++    #[default]
++    Free,
++    Active,
++    Retiring,
++}
++
++#[derive(Clone, Copy, Debug, Default)]
++struct PageState {
++    generation: u64,
++    phase: PagePhase,
++}
++
++#[derive(Clone, Debug)]
++pub struct PhysicalPagePool {
++    pages: Vec<PageState>,
++    free: Vec<u32>,
++    active_pages: usize,
++    retiring_pages: usize,
++}
++
++#[derive(Clone, Debug, Error, Eq, PartialEq)]
++pub enum PhysicalPagePoolError {
++    #[error("physical page pool must contain at least one page")]
++    ZeroPages,
++    #[error("physical page request exceeds pool capacity")]
++    CapacityExhausted,
++    #[error("physical page id is invalid: {0}")]
++    InvalidPageId(u32),
++    #[error("physical page lease is stale: {0:?}")]
++    StaleLease(PhysicalPageLease),
++    #[error("physical page lease is duplicated: {0:?}")]
++    DuplicateLease(PhysicalPageLease),
++    #[error("physical page generation exhausted: {0}")]
++    GenerationExhausted(u32),
++}
++
++impl PhysicalPagePool {
++    /// Creates a fixed-capacity one-based physical page pool.
++    ///
++    /// # Errors
++    ///
++    /// Returns an error when `page_count` is zero.
++    pub fn new(page_count: u32) -> Result<Self, PhysicalPagePoolError> {
++        if page_count == 0 {
++            return Err(PhysicalPagePoolError::ZeroPages);
++        }
++        let page_count =
++            usize::try_from(page_count).map_err(|_| PhysicalPagePoolError::CapacityExhausted)?;
++        Ok(Self {
++            pages: vec![PageState::default(); page_count],
++            free: (1..=u32::try_from(page_count)
++                .map_err(|_| PhysicalPagePoolError::CapacityExhausted)?)
++                .rev()
++                .collect(),
++            active_pages: 0,
++            retiring_pages: 0,
++        })
++    }
++
++    /// Atomically acquires `count` generation-checked pages.
++    ///
++    /// # Errors
++    ///
++    /// Returns without mutation if capacity or any page generation is
++    /// exhausted.
++    pub fn acquire(&mut self, count: u32) -> Result<Vec<PhysicalPageLease>, PhysicalPagePoolError> {
++        let count = usize::try_from(count).map_err(|_| PhysicalPagePoolError::CapacityExhausted)?;
++        if count > self.free.len() {
++            return Err(PhysicalPagePoolError::CapacityExhausted);
++        }
++        for &page_id in self.free.iter().rev().take(count) {
++            let page = self.page(page_id)?;
++            if page.generation == u64::MAX {
++                return Err(PhysicalPagePoolError::GenerationExhausted(page_id));
++            }
++        }
++        let mut leases = Vec::with_capacity(count);
++        for _ in 0..count {
++            let page_id = self
++                .free
++                .pop()
++                .ok_or(PhysicalPagePoolError::CapacityExhausted)?;
++            let page = self.page_mut(page_id)?;
++            page.generation += 1;
++            page.phase = PagePhase::Active;
++            leases.push(PhysicalPageLease {
++                page_id,
++                generation: page.generation,
++            });
++        }
++        self.active_pages += count;
++        Ok(leases)
++    }
++
++    /// Atomically moves active pages into the retiring phase.
++    ///
++    /// # Errors
++    ///
++    /// Returns without mutation for duplicate, stale, or non-active leases.
++    pub fn begin_retirement(
++        &mut self,
++        leases: &[PhysicalPageLease],
++    ) -> Result<(), PhysicalPagePoolError> {
++        self.validate_batch(leases, PagePhase::Active)?;
++        for &lease in leases {
++            self.page_mut(lease.page_id)?.phase = PagePhase::Retiring;
++        }
++        self.active_pages -= leases.len();
++        self.retiring_pages += leases.len();
++        Ok(())
++    }
++
++    /// Restores a retiring batch to active ownership.
++    ///
++    /// # Errors
++    ///
++    /// Returns without mutation for duplicate or stale leases.
++    pub fn abort_retirement(
++        &mut self,
++        leases: &[PhysicalPageLease],
++    ) -> Result<(), PhysicalPagePoolError> {
++        self.validate_batch(leases, PagePhase::Retiring)?;
++        for &lease in leases {
++            self.page_mut(lease.page_id)?.phase = PagePhase::Active;
++        }
++        self.retiring_pages -= leases.len();
++        self.active_pages += leases.len();
++        Ok(())
++    }
++
++    /// Atomically returns a retiring batch to the free pool.
++    ///
++    /// # Errors
++    ///
++    /// Returns without mutation for duplicate or stale leases.
++    pub fn commit_retirement(
++        &mut self,
++        leases: &[PhysicalPageLease],
++    ) -> Result<(), PhysicalPagePoolError> {
++        self.validate_batch(leases, PagePhase::Retiring)?;
++        for &lease in leases {
++            self.page_mut(lease.page_id)?.phase = PagePhase::Free;
++        }
++        let mut page_ids = leases.iter().map(|lease| lease.page_id).collect::<Vec<_>>();
++        page_ids.sort_unstable_by(|left, right| right.cmp(left));
++        self.free.extend(page_ids);
++        self.free.sort_unstable_by(|left, right| right.cmp(left));
++        self.retiring_pages -= leases.len();
++        Ok(())
++    }
++
++    #[must_use]
++    pub fn stats(&self) -> PhysicalPagePoolStats {
++        PhysicalPagePoolStats {
++            total_pages: self.pages.len() as u64,
++            free_pages: self.free.len() as u64,
++            active_pages: self.active_pages as u64,
++            retiring_pages: self.retiring_pages as u64,
++        }
++    }
++
++    fn validate_batch(
++        &self,
++        leases: &[PhysicalPageLease],
++        expected_phase: PagePhase,
++    ) -> Result<(), PhysicalPagePoolError> {
++        let mut sorted = leases.to_vec();
++        sorted.sort();
++        if let Some(duplicate) = sorted
++            .windows(2)
++            .find(|pair| pair[0].page_id == pair[1].page_id)
++            .map(|pair| pair[0])
++        {
++            return Err(PhysicalPagePoolError::DuplicateLease(duplicate));
++        }
++        for &lease in leases {
++            let page = self.page(lease.page_id)?;
++            if page.generation != lease.generation || page.phase != expected_phase {
++                return Err(PhysicalPagePoolError::StaleLease(lease));
++            }
++        }
++        Ok(())
++    }
++
++    fn page(&self, page_id: u32) -> Result<&PageState, PhysicalPagePoolError> {
++        let index = page_id
++            .checked_sub(1)
++            .and_then(|index| usize::try_from(index).ok())
++            .ok_or(PhysicalPagePoolError::InvalidPageId(page_id))?;
++        self.pages
++            .get(index)
++            .ok_or(PhysicalPagePoolError::InvalidPageId(page_id))
++    }
++
++    fn page_mut(&mut self, page_id: u32) -> Result<&mut PageState, PhysicalPagePoolError> {
++        let index = page_id
++            .checked_sub(1)
++            .and_then(|index| usize::try_from(index).ok())
++            .ok_or(PhysicalPagePoolError::InvalidPageId(page_id))?;
++        self.pages
++            .get_mut(index)
++            .ok_or(PhysicalPagePoolError::InvalidPageId(page_id))
++    }
++}
++
++#[cfg(test)]
++mod tests {
++    use super::*;
++
++    #[test]
++    fn retirement_requires_exact_generation_and_two_phase_commit() {
++        let mut pool = PhysicalPagePool::new(2).unwrap();
++        let first = pool.acquire(1).unwrap();
++        pool.begin_retirement(&first).unwrap();
++        assert_eq!(
++            pool.stats(),
++            PhysicalPagePoolStats {
++                total_pages: 2,
++                free_pages: 1,
++                active_pages: 0,
++                retiring_pages: 1,
++            }
++        );
++        assert_eq!(
++            pool.acquire(2),
++            Err(PhysicalPagePoolError::CapacityExhausted)
++        );
++        pool.commit_retirement(&first).unwrap();
++        let second = pool.acquire(2).unwrap();
++        let reused = second
++            .iter()
++            .find(|lease| lease.page_id == first[0].page_id)
++            .unwrap();
++        assert_eq!(reused.generation, first[0].generation + 1);
++        assert_eq!(
++            pool.begin_retirement(&first),
++            Err(PhysicalPagePoolError::StaleLease(first[0]))
++        );
++    }
++
++    #[test]
++    fn batch_transition_is_atomic_on_duplicate_or_stale_lease() {
++        let mut pool = PhysicalPagePool::new(2).unwrap();
++        let leases = pool.acquire(2).unwrap();
++        let duplicate = [leases[0], leases[0]];
++        assert_eq!(
++            pool.begin_retirement(&duplicate),
++            Err(PhysicalPagePoolError::DuplicateLease(leases[0]))
++        );
++        assert_eq!(pool.stats().active_pages, 2);
++        let stale = [
++            leases[0],
++            PhysicalPageLease {
++                generation: leases[1].generation + 1,
++                ..leases[1]
++            },
++        ];
++        assert_eq!(
++            pool.begin_retirement(&stale),
++            Err(PhysicalPagePoolError::StaleLease(stale[1]))
++        );
++        assert_eq!(pool.stats().active_pages, 2);
++    }
++
++    #[test]
++    fn committed_pages_are_reacquired_in_ascending_page_order() {
++        let mut pool = PhysicalPagePool::new(4).unwrap();
++        let leases = pool.acquire(4).unwrap();
++        pool.begin_retirement(&[leases[3], leases[1]]).unwrap();
++        pool.commit_retirement(&[leases[3], leases[1]]).unwrap();
++
++        let reacquired = pool.acquire(2).unwrap();
++        assert_eq!(
++            reacquired
++                .iter()
++                .map(|lease| lease.page_id)
++                .collect::<Vec<_>>(),
++            vec![2, 4]
++        );
++    }
++}
+
