@@ -8,6 +8,8 @@ execution.
 
 OrbitKV is still developed with breaking interfaces. There is one live core,
 one typed C wire, and no compatibility loader for superseded lifecycle ABIs.
+The compiler also distinguishes token KV, MLA latent KV, recurrent state, and
+convolution state instead of forcing every Hybrid layer into a KV-block shape.
 
 ## Current boundary
 
@@ -22,9 +24,10 @@ The live tree is **ABI7**:
   and no ABI5 scalar-named lifecycle aliases; and
 - the split ABI7 Python FFI/runtime and SGLang `OrbitKVPrefixCache` are L2 GO
   on the host against the release library and pinned official `v0.5.17`
-  source contract. The explicit Full-only eager token-relocation path now has
-  host L2 seams for real copy/event orchestration and split absolute/active
-  lengths; all ABI7 H20 and performance evidence remains pending.
+  source contract. The explicit eager token-relocation path now has host L2
+  seams for Full and common-victim-set Full+SWA, real copy/event orchestration,
+  checked Full-to-SWA LUTs, and split absolute/active lengths; all ABI7 H20
+  and performance evidence remains pending.
 
 The latest engine evidence is an immutable **historical ABI5-v5** snapshot,
 not evidence for ABI7. Its exact `9233c06d…` source closure has scoped L4
@@ -82,9 +85,11 @@ for the invariants and module boundaries.
 | Surface | Status | Boundary |
 | --- | --- | --- |
 | ABI7 Rust core | L2 GO | Host unit, property, fault, stale-lease, Prefix, fork, COW, token relocation, and reclamation tests |
+| Heterogeneous state compiler | L1 GO | Token KV, MLA latent+RoPE, recurrent, and convolution contracts compile to distinct backends |
+| Recurrent/convolution checkpoint pool | L2 host | Generation-checked replace/retire/ACK, abort, and quarantine; SGLang kernels pending |
 | ABI7 C wire | L2 GO | Exact 29 symbols, C/C++ layouts, batch atomicity, short-buffer and malformed-receipt gates |
 | ABI7 Python/Prefix | L2 GO | Exact ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, relocation wire, mirror cleanup, fail-stop, and teardown host gates |
-| ABI7 SGLang relocation | L2 host / L4 pending | Full-only eager, explicit/default-off Naive/Relocate path; H20 engine qualification pending |
+| ABI7 SGLang relocation | L2 host / L4 pending | Full and common-victim-set Full+SWA eager, explicit/default-off Naive/Relocate path; H20 pending |
 | ABI7 H20 | Pending | No engine run may inherit ABI5 evidence |
 | Frozen ABI5-v5 | Historical scoped L4 | Qwen Full and GPT-OSS Full+SWA B1/B4 correctness on one H20 |
 
@@ -123,9 +128,10 @@ under `results/`.
 
 The ordered work is:
 
-1. connect the host-qualified relocation wire to SGLang KV copies, retained-slot
-   mirrors, and split absolute/active lengths;
-2. run exact-source ABI7 Prefix and relocation correctness/performance on H20;
+1. run exact-source ABI7 Full and Full+SWA Prefix/relocation correctness and
+   matched performance on H20;
+2. connect MLA component copies and recurrent/convolution checkpoint adapters
+   to their real SGLang model-state tensors, then qualify each independently;
 3. qualify overlap and CUDA Graph completion domains; and
 4. add speculation, multi-GPU placement, and disaggregation.
 
@@ -136,3 +142,15 @@ win. See the [Token Virtualization and Attention Roadmap](docs/token-virtualizat
 Historical records and their source hashes are indexed in
 [results/README.md](results/README.md). They are append-only and never qualify a
 later ABI automatically.
+
+Compile the heterogeneous-state example with:
+
+```bash
+cargo run -- compile-state-plan examples/hybrid-attention-state-plan.json
+cargo run -- compile-state-manager-plan examples/hybrid-attention-state-plan.json
+```
+
+The first command preserves all backend-specific contracts and component
+geometry. The second projects only token-addressable TokenKV/MLA classes into
+the canonical manager input; recurrent and convolution states remain on their
+generation-checked checkpoint path.
