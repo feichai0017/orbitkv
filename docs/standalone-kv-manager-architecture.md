@@ -2,7 +2,7 @@
 
 The normative qualification boundary is the
 [Capability Matrix](capability-matrix.md). This document describes the live
-ABI7 design; the H20 records under `results/` are historical evidence for
+ABI8 design; the H20 records under `results/` are historical evidence for
 older frozen ABIs.
 
 ## Objective and authority
@@ -34,14 +34,15 @@ attention-retention semantics
          token relocation
          Prefix
          reclamation
-    -> ABI7 typed batch wire
+    -> ABI8 typed manager + fixed-state wire
     -> engine adapter and checked device mirrors
     -> backend tensor arenas and attention kernels
 ```
 
-The Rust core, C wire, ABI7 Python adapter, and SGLang `OrbitKVPrefixCache` are
-host-qualified L2. The relocation core and wire are also host L2; SGLang
-relocation and every ABI7 H20 path are not yet qualified.
+The Rust core, C wire, ABI8 Python adapter, independent fixed-state client, and
+SGLang `OrbitKVPrefixCache` are host-qualified L2. The relocation and
+fixed-state core/wire paths are also host L2; the SGLang fixed-state adapter
+and every ABI8 H20 path are not yet qualified.
 
 ## Module boundaries
 
@@ -62,6 +63,7 @@ The canonical manager is split by invariant rather than by call count:
 | `facade.rs` | Construction, public queries and stable core facade |
 | `manager_state.rs` | Private state records shared by the transaction modules |
 | `test_model.rs`, `tests/` | Test-only executable model, full-scan oracles and fault traces |
+| `state_checkpoint.rs` | Independent request-owned fixed-width state replace, retirement, ACK, abort, and quarantine |
 
 Production Rust and Python modules are limited to 1,500 lines; test and
 benchmark modules are limited to 2,000. CI applies this only to active source,
@@ -215,6 +217,31 @@ An adapter exception with no typed pre-commit outcome is unknown. The runtime
 must fail-stop; it must not retry the operation or repair state with a private
 side map.
 
+## Fixed-state checkpoint protocol
+
+Recurrent Mamba/GDN/KDA/linear-attention state and finite convolution state do
+not enter token snapshots or TokenMove. ABI8 exposes a separate
+`OrbitKvStatePoolHandle` with request-owned fixed-width slots:
+
+```text
+prepare(owner, expected slot)
+  -> source? + reserved destination + transition
+backend clear/copy on the consuming CUDA stream
+  -> exact observed/written receipt
+confirmed completion event
+  -> atomically publish destination + retirement certificate for source?
+physical source clear
+  -> exact ACK -> next generation may reuse the slot
+```
+
+Initial publication has no source and requires a real backend clear before
+submit. Replacement copies the complete model-specific state from the current
+slot. Receipt mismatch or unknown observation quarantines the affected owner
+and destination. The pool's zero-based slot identity is backend-independent;
+an SGLang adapter must map it to physical Mamba slot `slot_id + 1`, preserving
+SGLang slot zero as its dummy slot. That adapter is not part of the current
+host-qualified checkpoint.
+
 ## Complexity contract
 
 - hot append/complete: `O(C + Δ log R + Δ log Δ)`, roughly
@@ -229,12 +256,13 @@ or materialize all 8,192 entries.
 
 ## Compatibility and acceptance
 
-ABI7 exports exactly 29 `orbitkv_*` symbols listed in the
-[Capability Matrix](capability-matrix.md). There are no ABI5 lifecycle aliases,
-older loaders, or silent native-allocation fallback paths.
+ABI8 exports exactly 40 `orbitkv_*` symbols listed in the
+[Capability Matrix](capability-matrix.md): 29 canonical-manager symbols and 11
+independent state-pool symbols. There are no ABI5 lifecycle aliases, older
+loaders, or silent native-allocation fallback paths.
 
 An engine profile becomes a replacement claim only after its native allocator
 and Prefix owner cease to be authoritative; all fault and pressure gates pass;
 and an append-only manifest binds the exact manager, wire, adapter, engine
 release, hardware, commands, and outputs. The frozen ABI5-v5 H20 record does
-not satisfy those gates for ABI7.
+not satisfy those gates for ABI8.

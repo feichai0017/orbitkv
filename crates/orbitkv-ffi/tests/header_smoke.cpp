@@ -3,7 +3,7 @@
 #include <cstdint>
 #include <type_traits>
 
-static_assert(ORBITKV_ABI_VERSION == 7u, "breaking ABI version");
+static_assert(ORBITKV_ABI_VERSION == 8u, "breaking ABI version");
 static_assert(ORBITKV_STATUS_RETRYABLE_CONFLICT == 2,
               "retryable conflict status");
 static_assert(ORBITKV_STATUS_FAIL_STOPPED == -4, "fail-stopped status");
@@ -13,6 +13,8 @@ static_assert(std::is_standard_layout_v<OrbitKvDetachedBinding>);
 static_assert(std::is_standard_layout_v<OrbitKvPrefixLookupHint>);
 static_assert(std::is_standard_layout_v<OrbitKvTokenPlacement>);
 static_assert(std::is_standard_layout_v<OrbitKvPreparedRelocation>);
+static_assert(std::is_standard_layout_v<OrbitKvStateSlotLease>);
+static_assert(std::is_standard_layout_v<OrbitKvStatePublication>);
 
 int main() {
   (void)&orbitkv_manager_create;
@@ -42,6 +44,17 @@ int main() {
   (void)&orbitkv_manager_prefix_evict_batch;
   (void)&orbitkv_manager_prefix_recycle_batch;
   (void)&orbitkv_manager_stats;
+  (void)&orbitkv_state_pool_create;
+  (void)&orbitkv_state_pool_identity;
+  (void)&orbitkv_state_pool_stats;
+  (void)&orbitkv_state_pool_prepare_batch;
+  (void)&orbitkv_state_pool_submit_batch;
+  (void)&orbitkv_state_pool_complete_batch;
+  (void)&orbitkv_state_pool_abort_batch;
+  (void)&orbitkv_state_pool_retire_owners_batch;
+  (void)&orbitkv_state_pool_acknowledge_batch;
+  (void)&orbitkv_state_pool_current_batch;
+  (void)&orbitkv_state_pool_destroy;
   if (orbitkv_abi_version() != ORBITKV_ABI_VERSION) {
     return 1;
   }

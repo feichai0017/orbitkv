@@ -1,7 +1,7 @@
 # Token Reclamation and Hybrid-State Architecture
 
 The normative shipped capability boundary remains capability-matrix.md. This
-document specifies the ABI7 implementation and qualification contract.
+document specifies the ABI8 implementation and qualification contract.
 Code existence is not an H20 or performance claim.
 
 ## Scope
@@ -34,8 +34,9 @@ checkpoints, and `convolution` lowers to a fixed-width state ring. The
 the existing token manager, using the summed per-token width for capacity while
 retaining component geometry for independent latent/RoPE copies. Recurrent and
 convolution state never enter that projection. The
-standalone recurrent/convolution checkpoint pool is host L2; SGLang state
-kernels remain unintegrated. The pure-MLA SGLang seam validates the compiled
+standalone recurrent/convolution checkpoint pool and its independent ABI8
+C/Python wire are host L2; SGLang allocation, state tensors, and kernels remain
+unintegrated. The pure-MLA SGLang seam validates the compiled
 component widths against `MLATokenToKVPool` and copies its combined
 latent+RoPE row through the same completion-gated relocation transaction; this
 is host L2 only and excludes DSA, FP4, DCP, and Hybrid Linear models.
@@ -46,9 +47,13 @@ layers, BF16 `kv_lora_rank=512`, and `qk_rope_head_dim=64`, or 1024 latent plus
 The first host-qualified implementation profile is single-GPU eager Full KV.
 The second host-qualified profile is ordered Full+SWA with one logical victim
 set and class-specific placements; it fails closed when SWA visibility diverges.
-MLA still needs real-model H20 qualification. Recurrent, convolution,
-Graph, speculation, distributed, and cross-device paths fail closed until
-their distinct protocols are implemented and qualified.
+MLA still needs real-model H20 qualification. Recurrent and convolution state
+must use request-level fixed-width checkpoints, never token pages or
+TokenMove. Their first engine profile is restricted to eager, single GPU, no
+Prefix-state sharing, ReplaySSM, int8 checkpoint pool, extra/ping-pong buffer,
+speculation, overlap, Graph, or unified memory. Those paths plus distributed
+and cross-device execution fail closed until their distinct adapters are
+implemented and qualified.
 
 ## Logical contract
 

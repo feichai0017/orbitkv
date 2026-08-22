@@ -77,7 +77,7 @@ _ZERO_SNAPSHOT = SnapshotLease(0, 0, 0)
 class CanonicalRuntime(
     IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntimeMixin, RelocationRuntimeMixin
 ):
-    """Fail-closed host journal around the ABI7 canonical manager."""
+    """Fail-closed host journal around the ABI8 canonical manager."""
 
     def __init__(self, config: Any, manager: ManagerProtocol):
         if not isinstance(manager, ManagerProtocol):
@@ -1226,7 +1226,7 @@ class CanonicalRuntime(
         previous: tuple[int, ...] | None = None
         for certificate in certificates:
             # Completion uses its transition key; page-owner release/eviction
-            # uses the PageLease BTree key. Both suffixes use PageLease's ABI7
+            # uses the PageLease BTree key. Both suffixes use PageLease's ABI8
             # repr/Ord field order, never a backend-local page-number order.
             page_key = (
                 certificate.page.engine_epoch,

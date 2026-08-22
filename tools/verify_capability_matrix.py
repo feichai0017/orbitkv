@@ -29,10 +29,10 @@ STALE_CLAIMS = (
     "The checked-in ABI5 wire no longer matches",
 )
 MATRIX_REQUIRED_CLAIMS = (
-    "| Typed C ABI7 wire | L2 GO |",
-    "| ABI7 Python FFI/runtime | L2 GO |",
+    "| Typed C ABI8 wire | L2 GO |",
+    "| ABI8 Python FFI/runtime | L2 GO |",
     "| SGLang `OrbitKVPrefixCache` | L2 GO |",
-    "Exactly 29 batch-only symbols",
+    "Exactly 40 typed symbols",
     "`9233c06d…`",
     "Same-capacity intrinsic KV-memory reduction is **0%**",
     "`performance_go=false`",
@@ -63,8 +63,8 @@ def main() -> None:
         text = path.read_text(encoding="utf-8")
         if "capability-matrix" not in text.lower():
             raise RuntimeError(f"public capability surface does not link the matrix: {path}")
-        if "ABI7" not in text:
-            raise RuntimeError(f"public capability surface omits live ABI7 status: {path}")
+        if "ABI8" not in text:
+            raise RuntimeError(f"public capability surface omits live ABI8 status: {path}")
         if "histor" not in text.lower():
             raise RuntimeError(f"public capability surface omits historical boundary: {path}")
         for stale in STALE_CLAIMS:

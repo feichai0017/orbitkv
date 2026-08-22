@@ -10,6 +10,7 @@ from .library import (
     CanonicalAbiUnavailable,
 )
 from .manager import CtypesManager, CtypesManagerFactory
+from .state_pool import CtypesStatePool
 
 
 __all__ = [
@@ -17,6 +18,7 @@ __all__ = [
     "CanonicalAbiUnavailable",
     "CtypesManager",
     "CtypesManagerFactory",
+    "CtypesStatePool",
     "STATUS_BUFFER_TOO_SMALL",
     "STATUS_FAIL_STOPPED",
     "STATUS_INVALID_ARGUMENT",

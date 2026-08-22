@@ -185,7 +185,7 @@ def _copy_receipt_c(value: RelocationCopyReceipt) -> L.RelocationCopyReceiptLayo
 
 
 class TokenRelocationMixin:
-    """ABI7 token-view and relocation calls shared by the ctypes manager."""
+    """ABI8 token-view and relocation calls shared by the ctypes manager."""
 
     def token_views_batch(
         self, queries: Sequence[TokenViewQuery]
@@ -384,7 +384,7 @@ class TokenRelocationMixin:
                 or item.policy.evacuation_headroom_pages > self._physical_pages
                 for item in values
             ):
-                raise ManagerError("ABI7 first relocation transaction requires bounded full evacuation")
+                raise ManagerError("ABI8 first relocation transaction requires bounded full evacuation")
             move_capacity = self._physical_pages * self._page_tokens
             prepared = array(L.PreparedRelocationLayout, count)
             sources = array(L.PageLeaseLayout, self._physical_pages)

@@ -21,6 +21,6 @@ pub use plan::{
 };
 pub use state_checkpoint::{
     StateCheckpointError, StateCheckpointPool, StateCompletionReceipt, StateCopyIntent,
-    StateCopyReceipt, StatePublication, StateRetirementCertificate, StateRetirementLease,
-    StateSlotLease, StateTransitionLease,
+    StateCopyReceipt, StatePoolIdentity, StatePoolStats, StatePublication,
+    StateRetirementCertificate, StateRetirementLease, StateSlotLease, StateTransitionLease,
 };

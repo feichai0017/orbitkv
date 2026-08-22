@@ -1211,7 +1211,8 @@ def _flush_release_group(candidates: Sequence[_ReleaseCandidate]) -> None:
                     completed.publication, pending.tokens
                 )
         else:
-            # ABI7 has no heterogeneous publish-or-release transaction. Keep
+            # The canonical manager has no heterogeneous publish-or-release
+            # transaction. Keep
             # one official free_group atomic: duplicates or opt-outs sacrifice
             # this insertion instead of splitting the group across commits.
             runtime.release_batch(tuple(candidate.key for candidate in values))

@@ -130,7 +130,7 @@ def validate_arguments(args: argparse.Namespace) -> dict[str, Path | None]:
     if args.seed < 0:
         raise ValueError("--seed must be nonnegative")
     if args.requests not in QUALIFICATION_BATCH_SIZES:
-        raise ValueError("--requests must be exactly 1 or 4 for ABI7 qualification")
+        raise ValueError("--requests must be exactly 1 or 4 for ABI8 qualification")
     if args.decode_tokens != 33:
         raise ValueError(
             "--decode-tokens must be exactly 33 so measured requests do not "
@@ -1118,7 +1118,7 @@ def _validate_batch_counter_contract(
     }
     if identities:
         raise RuntimeError(
-            f"OrbitKV ABI7 B{batch_size} batch identities disagree at {stage}: "
+            f"OrbitKV ABI8 B{batch_size} batch identities disagree at {stage}: "
             f"{identities}"
         )
     full_evicted = counters["prefix_evicted_full_tokens"]
@@ -1151,7 +1151,7 @@ def _validate_batch_counter_contract(
     event_waits = counters["event_waits"]
     if event_waits > forward_batches or event_queries + event_waits < forward_batches:
         raise RuntimeError(
-            f"OrbitKV ABI7 event observation counters are inconsistent at {stage}"
+            f"OrbitKV ABI8 event observation counters are inconsistent at {stage}"
         )
 
     base_acknowledgements = completed_iterations + cleanup_batches
@@ -1263,7 +1263,7 @@ def manager_census(
     }
     if forbidden:
         raise RuntimeError(
-            f"OrbitKV ABI7 failure counters are nonzero at {stage}: {forbidden}"
+            f"OrbitKV ABI8 failure counters are nonzero at {stage}: {forbidden}"
         )
     _validate_batch_counter_contract(
         batch_counters,
@@ -1288,7 +1288,7 @@ def manager_census(
     )
     if len(set(batch_call_counts)) != 1:
         raise RuntimeError(
-            f"OrbitKV ABI7 batch call identities disagree at {stage}"
+            f"OrbitKV ABI8 batch call identities disagree at {stage}"
         )
     engine_epochs: set[int] = set()
     page_ranges: list[tuple[int, int]] = []

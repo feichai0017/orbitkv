@@ -13,24 +13,26 @@ convolution state instead of forcing every Hybrid layer into a KV-block shape.
 
 ## Current boundary
 
-The live tree is **ABI7**:
+The live tree is **ABI8**:
 
 - the modular Rust host core is L2 GO for immutable snapshots, shared-page
   references, request fork, page-aligned Prefix lookup/publish/attach/evict,
   Full+SWA joint copy-on-write, page-owned reclamation, canonical token views,
   policy/proof dispositions, and failure-atomic Full-page evacuation;
-- the typed, batch-only C wire is L2 GO with exactly 29 exported
-  `orbitkv_*` symbols, C/C++ layout checks, short-buffer zero-mutation checks,
-  and no ABI5 scalar-named lifecycle aliases; and
-- the split ABI7 Python FFI/runtime and SGLang `OrbitKVPrefixCache` are L2 GO
+- the typed C wire is L2 GO with exactly 40 exported `orbitkv_*` symbols:
+  29 batch-only canonical-manager symbols plus 11 independent fixed-state-pool
+  symbols, with C/C++ layout checks, short-buffer zero-mutation checks, and no
+  ABI5 scalar-named lifecycle aliases; and
+- the split ABI8 Python FFI/runtime, independent `CtypesStatePool`, and SGLang
+  `OrbitKVPrefixCache` are L2 GO
   on the host against the release library and pinned official `v0.5.17`
   source contract. The explicit eager token-relocation path now has host L2
   seams for Full and common-victim-set Full+SWA, real copy/event orchestration,
-  checked Full-to-SWA LUTs, and split absolute/active lengths; all ABI7 H20
-  and performance evidence remains pending.
+  checked Full-to-SWA LUTs, and split absolute/active lengths. The fixed-state
+  SGLang adapter and all ABI8 H20/performance evidence remain pending.
 
 The latest engine evidence is an immutable **historical ABI5-v5** snapshot,
-not evidence for ABI7. Its exact `9233c06d…` source closure has scoped L4
+not evidence for ABI8. Its exact `9233c06d…` source closure has scoped L4
 correctness on one H20 against official SGLang `v0.5.17`, peeled commit
 `29481685462732237d80d86076d6563e1f658102`.
 
@@ -53,7 +55,7 @@ CanonicalKvManager                         sole ownership authority
           |
           | compact leases, intents, copies, detached bindings, certificates
           v
-ABI7 C wire                                exact 29-symbol batch surface
+ABI8 C wire                                exact 40-symbol typed surface
           |
           v
 Python runtime + SGLang adapter            host-qualified Prefix/COW path
@@ -84,14 +86,15 @@ for the invariants and module boundaries.
 
 | Surface | Status | Boundary |
 | --- | --- | --- |
-| ABI7 Rust core | L2 GO | Host unit, property, fault, stale-lease, Prefix, fork, COW, token relocation, and reclamation tests |
+| ABI8 Rust core | L2 GO | Host unit, property, fault, stale-lease, Prefix, fork, COW, token relocation, reclamation, and fixed-state checkpoint tests |
 | Heterogeneous state compiler | L1 GO | Token KV, MLA latent+RoPE, recurrent, and convolution contracts compile to distinct backends |
 | Recurrent/convolution checkpoint pool | L2 host | Generation-checked replace/retire/ACK, abort, and quarantine; SGLang kernels pending |
 | Pure MLA SGLang seam | L2 host / L4 pending | Explicit latent+RoPE geometry checked against the real SGLang pool; combined-row relocation host-tested; H20 and model correctness pending |
-| ABI7 C wire | L2 GO | Exact 29 symbols, C/C++ layouts, batch atomicity, short-buffer and malformed-receipt gates |
-| ABI7 Python/Prefix | L2 GO | Exact ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, relocation wire, mirror cleanup, fail-stop, and teardown host gates |
-| ABI7 SGLang relocation | L2 host / L4 pending | Full and common-victim-set Full+SWA eager, explicit/default-off Naive/Relocate path; H20 pending |
-| ABI7 H20 | Pending | No engine run may inherit ABI5 evidence |
+| ABI8 C wire | L2 GO | Exact 40 symbols, C/C++ layouts, manager/state batch atomicity, short-buffer and malformed-receipt gates |
+| ABI8 Python/Prefix/state wire | L2 GO | 73 frozen ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, relocation and independent fixed-state wires, fail-stop, and teardown host gates |
+| ABI8 SGLang relocation | L2 host / L4 pending | Full and common-victim-set Full+SWA eager, explicit/default-off Naive/Relocate path; H20 pending |
+| ABI8 SGLang fixed state | Pending | No Mamba/GDN/KDA/ShortConv allocator, tensor-copy, CUDA-event, publication, or retirement adapter yet |
+| ABI8 H20 | Pending | No engine run may inherit ABI5 or ABI7 evidence |
 | Frozen ABI5-v5 | Historical scoped L4 | Qwen Full and GPT-OSS Full+SWA B1/B4 correctness on one H20 |
 
 In the frozen ABI5-v5 H20 record, all eight manager/stock JSON records pass
@@ -121,7 +124,7 @@ python tools/verify_manifests.py
 ```
 
 The active-source gate limits production Rust/Python modules to 1,500 lines,
-test/benchmark modules to 2,000 lines, verifies ABI7 markers, and rejects the
+test/benchmark modules to 2,000 lines, verifies ABI8 markers, and rejects the
 removed ABI5 lifecycle aliases. It deliberately ignores append-only evidence
 under `results/`.
 
@@ -129,10 +132,10 @@ under `results/`.
 
 The ordered work is:
 
-1. run exact-source ABI7 Full and Full+SWA Prefix/relocation correctness and
+1. connect the restricted recurrent/convolution checkpoint adapter to real
+   SGLang model-state tensors and forward-stream completion events;
+2. run exact-source ABI8 Full, Full+SWA, MLA, and fixed-state correctness plus
    matched performance on H20;
-2. connect MLA component copies and recurrent/convolution checkpoint adapters
-   to their real SGLang model-state tensors, then qualify each independently;
 3. qualify overlap and CUDA Graph completion domains; and
 4. add speculation, multi-GPU placement, and disaggregation.
 
