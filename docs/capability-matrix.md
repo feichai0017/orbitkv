@@ -19,6 +19,7 @@ cannot inherit ABI5 hardware evidence.
 | Capability | Level | Exact boundary | Evidence |
 | --- | --- | --- | --- |
 | Retention and plan compiler | L1 | Checked Full, sliding, and retained IR/compiler relations | `src/retention.rs`, `src/plan/`, compiler tests |
+| Heterogeneous attention-state compiler | L1 GO | Separates token KV, MLA latent+RoPE components, recurrent Mamba/GDN/KDA/linear state, and convolution state; token-only manager projection excludes fixed-width state | `src/attention_state.rs`, `compile-state-plan`, `compile-state-manager-plan`, mixed-state example/tests |
 | Strict HF manager-plan frontend | L1 | Emits the sole `KvPlanInput`; unknown semantics fail closed | `src/hf_config.rs`, `tests/canonical_cli.rs` |
 | Identity and arena ownership | L2 GO | Generation-checked request, snapshot, page, step, submission, Prefix, reclamation, and relocation leases; independent class pools | `src/kv_manager/identity.rs`, `arena.rs`, host tests |
 | Persistent snapshots | L2 GO | Immutable class roots, expected-head CAS, stale-head rejection, incremental path-copy, no hot full-root materialization | `src/kv_manager/persistent_snapshot.rs`, host/property tests |
@@ -26,11 +27,12 @@ cannot inherit ABI5 hardware evidence.
 | Prefix and joint COW core | L2 GO | Page-aligned lookup/publish/publish-release/attach/evict/recycle; request fork; Full+SWA partial-tail joint COW | `src/kv_manager/prefix.rs`, Prefix/COW tests |
 | Page-owned reclamation | L2 GO | Request/Prefix refs, reader pins and writer state jointly gate detach, certificates, ACK, and reuse | `src/kv_manager/reclamation.rs`, lifecycle/fault tests |
 | Token virtualization and relocation core | L2 GO | Canonical token views; semantic-death/policy-eviction evidence; profitable private Full evacuation; exact copy receipts; packed publication; quarantine and precise release | `src/kv_manager/token_virtualization.rs`, `relocation_transaction.rs`, property/fault/lifecycle tests |
+| Recurrent/convolution checkpoint pool | L2 host | Fixed-width generation-checked initial/replace/retire/ACK lifecycle with exact copy receipts, completion gating, abort, and quarantine; no token ids or TokenMove surface | `src/state_checkpoint.rs`, host lifecycle/fault tests |
 | Typed C ABI7 wire | L2 GO | Exactly 29 batch-only symbols; C/C++ layout checks; token/relocation spans; reserved-field, capacity, short-buffer, stale-lease, and receipt validation | `crates/orbitkv-ffi/include/orbitkv.h`, FFI tests, CI symbol diff |
 | ABI7 Python FFI/runtime | L2 GO | Exact-29 ctypes loader; 58 frozen layouts; bounded hot/cold workspaces; optional relocation capability; typed retry/fail-stop and force-destroy teardown | Python FFI/runtime tests against the release library |
 | Official SGLang source contract | L2 | Official `v0.5.17`, peeled commit `29481685462732237d80d86076d6563e1f658102`, checked required hooks and fail-hard patch | pinned-checkout tests |
 | SGLang `OrbitKVPrefixCache` | L2 GO | Official cache seam; nodes contain token/digest/LRU plus opaque Prefix leases only; warm attach, lock/ref accounting, Full+SWA COW, grouped release, eviction, and hostile fault paths pass host gates | pinned `v0.5.17` contract and plugin integration tests; no H20 evidence |
-| SGLang token relocation | L2 host / L4 pending | Explicitly enabled Full-only eager path has matched Naive/Relocate victim sets, real KV copy stream/event orchestration, compact ReqToToken, split absolute/active lengths, decode continuation, and fail-closed release; default is off | host plugin/runtime tests; no H20/E2E evidence |
+| SGLang token relocation | L2 host / L4 pending | Explicit/default-off eager path covers Full and ordered Full+SWA while they share one victim set; Full relocates physically, SWA keeps class-specific placement through a checked LUT; compact ReqToToken, split absolute/active lengths, decode continuation, and fail-closed release are host-tested | host plugin/runtime tests; no H20/E2E evidence; compact Hybrid fails closed once SWA visibility diverges |
 | Stable-address CUDA VMM primitive | L2 host | Isolated reserve/map/remap/unmap backend; not the manager data plane and not SGLang tensor storage | `crates/orbitkv-cuda/` host tests |
 | General SGLang replacement | Not L5 | ABI7 H20 Prefix/relocation E2E, overlap/Graph, speculation, distributed execution, pressure, performance, and a release matrix are pending | this matrix |
 
@@ -121,6 +123,7 @@ a later ABI.
 
 - ABI7 SGLang/H20 Prefix correctness or Prefix warm-hit performance;
 - H20-qualified SGLang token relocation, retained-slot attention correctness, or compaction performance;
+- SGLang MLA latent+RoPE copy integration and recurrent/convolution state checkpoint integration;
 - overlap scheduling, multiple completion domains, or CUDA Graph replay;
 - speculative branches, rollback, beam search, or cancellation pressure;
 - cross-attention, dynamic sparse attention, Mamba/SSM state, vLLM, VMM-backed

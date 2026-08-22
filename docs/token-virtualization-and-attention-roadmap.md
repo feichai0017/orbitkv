@@ -97,7 +97,8 @@ reduce the bytes of a same-sized preallocated KV tensor arena.
 
 ## M3: Token table and exact relocation
 
-Status: **core, C wire, and Python wire host L2 GO; SGLang GPU/E2E pending**.
+Status: **core, C wire, Python wire, and eager SGLang adapter host L2 GO;
+SGLang GPU/E2E pending**.
 
 ABI7 adds stable logical token IDs, canonical disposition batches, and
 class-specific physical placement without changing logical token identity:
@@ -123,8 +124,11 @@ The host transaction now:
 Global invariants are token conservation, unique placement, completion
 visibility, snapshot isolation, generation safety, and deferred source reuse.
 Unknown or mismatched copy receipts quarantine destinations and fail-stop the
-request. The remaining engine work is real KV copying, CUDA stream/event
-ordering, retained-slot mirror publication, and attention consumption.
+request. The eager adapter now contains Full KV copy, CUDA stream/event
+ordering, compact ReqToToken publication, and class-specific Full-to-SWA LUT
+handling. Those paths have host coverage but no real-GPU execution evidence, so
+the remaining gate is exact-source H20 engine qualification rather than another
+host capability claim.
 
 Relocation should run only when `source_pages > destination_pages` after
 accounting for temporary destination headroom. It should not scan every token
@@ -137,6 +141,22 @@ liveness: sink-plus-window, sparse/heavy-hitter policies, lifetime-normalized
 classes, and private suffixes around protected Prefix pages. Published vToken
 block-reduction numbers must not be projected onto OrbitKV before matched
 experiments exist.
+
+## M3b: Heterogeneous state backends
+
+Status: **compiler L1 and checkpoint core host L2; engine integration pending**.
+
+The heterogeneous compiler separates token KV, MLA latent plus RoPE
+components, recurrent Mamba/GDN/KDA/linear state, and finite convolution state.
+Its token-manager projection includes only token-addressable classes. MLA keeps
+component geometry for independent copies; recurrent and convolution state use
+a generation-checked fixed-width checkpoint transaction with no TokenMove
+surface.
+
+The next engine step is model-specific tensor discovery and copy/publication
+adapters for MLA, then recurrent and convolution state. Each backend needs its
+own exact-byte or numerical-state oracle and H20 qualification; passing the Full
+KV relocation path does not qualify any of them.
 
 ## M4: Multiple completion domains and CUDA Graph
 

@@ -26,8 +26,20 @@ Hybrid attention is not one storage type:
 | Convolution state | LFM2 ShortConv and finite convolution buffers | Not token-relocatable; use fixed-width state snapshots |
 | Sparse auxiliary state | DSA/HiSparse index and compressed host tiers | Separate backend contract; selection is not ownership |
 
-The first implementation profile is single-GPU eager Full KV. The second is
-ordered Full+SWA with one logical victim set and class-specific placements.
+The `orbitkv.attention-state-plan.v1` compiler makes this taxonomy executable:
+`token_kv` lowers to key/value token slots, `latent_kv` lowers to distinct
+latent and RoPE components, `recurrent` lowers to fixed-width generation-checked
+checkpoints, and `convolution` lowers to a fixed-width state ring. The
+`compile-state-manager-plan` projection feeds only TokenKV and MLA classes to
+the existing token manager, using the summed per-token width for capacity while
+retaining component geometry for independent latent/RoPE copies. Recurrent and
+convolution state never enter that projection. The
+standalone recurrent/convolution checkpoint pool is host L2; SGLang state
+kernels and MLA tensor copies remain unqualified.
+
+The first host-qualified implementation profile is single-GPU eager Full KV.
+The second host-qualified profile is ordered Full+SWA with one logical victim
+set and class-specific placements; it fails closed when SWA visibility diverges.
 MLA needs separate backend geometry qualification. Recurrent, convolution,
 Graph, speculation, distributed, and cross-device paths fail closed until
 their distinct protocols are implemented and qualified.

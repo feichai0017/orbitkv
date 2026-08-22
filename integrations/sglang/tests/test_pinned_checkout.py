@@ -11,7 +11,9 @@ INTEGRATION_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = INTEGRATION_ROOT.parents[1]
 SOURCE_ROOT = INTEGRATION_ROOT / "src"
 PREPARE_SCRIPT = INTEGRATION_ROOT / "prepare_pinned_checkout.py"
-UPSTREAM_SGLANG_ROOT = Path("/workspace/sglang")
+UPSTREAM_SGLANG_ROOT = Path(
+    os.environ.get("ORBITKV_TEST_SGLANG_ROOT", "/workspace/sglang")
+)
 sys.path.insert(0, str(SOURCE_ROOT))
 
 from orbitkv_sglang import pinned  # noqa: E402
@@ -240,4 +242,4 @@ print(f"hooks={len(HOOK_TARGETS)} aliases=5 radix=orbitkv")
         code,
         env=_pinned_env(patched_sglang_checkout),
     )
-    assert "hooks=9 aliases=5 radix=orbitkv" in completed.stdout
+    assert "hooks=10 aliases=5 radix=orbitkv" in completed.stdout
