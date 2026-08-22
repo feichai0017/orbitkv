@@ -144,9 +144,20 @@ def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
 
     canonical = _canonical_json(root)
     token_reclamation = _token_reclamation_config(source)
-    if token_reclamation.mode != "off" and retentions != ("full",):
+    if token_reclamation.mode != "off" and retentions not in (
+        ("full",),
+        ("full", "sliding"),
+    ):
         raise ValueError(
-            "first token-reclamation engine profile requires one Full class"
+            "token reclamation requires Full or ordered Full+SWA classes"
+        )
+    if (
+        token_reclamation.mode != "off"
+        and retentions == ("full", "sliding")
+        and token_reclamation.trigger_tokens > classes[1].kernel_window_left
+    ):
+        raise ValueError(
+            "token-reclamation trigger exceeds the shared Full/SWA visibility prefix"
         )
     return ManagerPlanConfig(
         plan_path=plan_path,

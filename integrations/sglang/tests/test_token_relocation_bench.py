@@ -28,11 +28,12 @@ def test_base_runner_contract_is_full_eager_and_crosses_packed_page() -> None:
         context_length=128,
         seed=7,
         mem_fraction_static=None,
+        attention_backend="flashinfer",
     )
     base = bench._base_args(args)
     assert base.mode == "manager"
     assert base.attention_backend == "flashinfer"
     assert base.prompt_tokens == 48
     assert base.decode_tokens == 17
-    assert base.prompt_tokens - bench.VICTIM_COUNT + base.decode_tokens == 41
+    assert base.prompt_tokens - bench.VICTIM_COUNT + base.decode_tokens - 1 == 40
     assert base.chunked_prefill_size == 4 * 48

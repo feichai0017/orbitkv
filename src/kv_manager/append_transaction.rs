@@ -60,11 +60,14 @@ impl CanonicalKvManager {
             if snapshot.roots.len() != self.classes.len() {
                 return Err(KvManagerError::Invariant("snapshot class cardinality"));
             }
-            if snapshot.roots.iter().any(|root| !root.is_dense())
-                && (self.classes.len() != 1 || self.classes[0].retention != RetentionKind::Full)
+            if snapshot
+                .roots
+                .iter()
+                .zip(self.classes.iter())
+                .any(|(root, class)| !root.is_dense() && class.retention != RetentionKind::Full)
             {
                 return Err(KvManagerError::UnsupportedProfile(
-                    "first packed append profile requires one Full class",
+                    "only Full classes may use packed append layout",
                 ));
             }
             if item.target_boundary <= snapshot.boundary {

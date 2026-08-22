@@ -20,7 +20,7 @@ def _victim_updates(boundary: int) -> tuple[ClassTokenDispositionUpdate, ...]:
         return ()
     return tuple(
         ClassTokenDispositionUpdate(
-            class_id=0,
+            class_id=class_config.class_id,
             token_id=token_id,
             disposition=TokenDisposition(
                 TokenDispositionKind.POLICY_EVICTED,
@@ -29,12 +29,25 @@ def _victim_updates(boundary: int) -> tuple[ClassTokenDispositionUpdate, ...]:
                 policy.quality_contract,
             ),
         )
+        for class_config in _config().classes
         for token_id in range(boundary)
         if token_id % _config().page_tokens >= policy.retained_per_page
     )
 
 
-def _preflight_request(req: Any, row: Any, boundary: int, old_view: Any) -> None:
+def _view_locations(view: Any) -> tuple[int, ...]:
+    arena = _runtime().arenas_by_class[view.class_id]
+    result = []
+    for placement in view.placements:
+        if placement.location is None:
+            raise RuntimeError("pre-reclamation token lacks a physical location")
+        location = placement.location
+        page = location.backend_index - arena.backend_base_index + 1
+        result.append(page * _config().page_tokens + location.offset)
+    return tuple(result)
+
+
+def _preflight_request(req: Any, row: Any, boundary: int, old_views: Any) -> None:
     import torch
 
     prefix = getattr(req, "prefix_indices", None)
@@ -42,22 +55,38 @@ def _preflight_request(req: Any, row: Any, boundary: int, old_view: Any) -> None
         raise RuntimeError("first token-reclamation profile forbids Prefix mirrors")
     if int(row.numel()) < boundary:
         raise RuntimeError("ReqToToken row is shorter than the absolute boundary")
-    expected = []
-    for placement in old_view.placements:
-        if placement.location is None:
-            raise RuntimeError("pre-reclamation token lacks a physical location")
-        arena = _runtime().arenas_by_class[0]
-        location = placement.location
-        page = location.backend_index - arena.backend_base_index + 1
-        expected.append(page * _config().page_tokens + location.offset)
+    views = tuple(old_views)
+    if tuple(view.class_id for view in views) != tuple(
+        item.class_id for item in _config().classes
+    ):
+        raise RuntimeError("pre-reclamation token views are not class ordered")
+    locations = {view.class_id: _view_locations(view) for view in views}
+    full = _config().full_class
+    assert full is not None
+    expected = locations[full.class_id]
     expected_tensor = torch.tensor(expected, dtype=torch.int64, device=row.device)
     if not torch.equal(row[:boundary].to(torch.int64), expected_tensor):
         raise RuntimeError("victim set disagrees with the ReqToToken authority mirror")
+    sliding = _config().sliding_class
+    if sliding is not None:
+        mapping = _state._ALLOCATOR.full_to_swa_index_mapping
+        full_tensor = expected_tensor
+        swa_tensor = torch.tensor(
+            locations[sliding.class_id], dtype=torch.int64, device=row.device
+        )
+        if not torch.equal(mapping[full_tensor].to(torch.int64), swa_tensor):
+            raise RuntimeError("victim set disagrees with the Full-to-SWA LUT")
 
 
-def _publish_compact_row(req: Any, row: Any, locations: tuple[int, ...], boundary: int) -> None:
+def _publish_compact_row(
+    req: Any, row: Any, publication: Any, old_full: tuple[int, ...], boundary: int
+) -> None:
     import torch
 
+    class_locations = dict(publication.class_retained_locations)
+    full = _config().full_class
+    assert full is not None
+    locations = class_locations[full.class_id]
     count = len(locations)
     if not 0 < count < boundary:
         raise RuntimeError("token reclamation did not produce a strict retained subset")
@@ -66,6 +95,23 @@ def _publish_compact_row(req: Any, row: Any, locations: tuple[int, ...], boundar
     row[count:boundary].zero_()
     req._orbitkv_active_kv_len = count
     req._orbitkv_retained_locations = tuple(locations)
+    sliding = _config().sliding_class
+    if sliding is not None:
+        mapping = _state._ALLOCATOR.full_to_swa_index_mapping
+        full_locations = torch.tensor(
+            locations, dtype=torch.int64, device=row.device
+        )
+        swa_locations = torch.tensor(
+            class_locations[sliding.class_id], dtype=torch.int64, device=row.device
+        )
+        if int(full_locations.numel()) != int(swa_locations.numel()):
+            raise RuntimeError("Full and SWA retained cardinalities differ")
+        old_full_locations = torch.tensor(
+            old_full, dtype=torch.int64, device=row.device
+        )
+        mapping[old_full_locations] = 0
+        mapping[full_locations] = swa_locations
+        req._orbitkv_retained_swa_locations = tuple(class_locations[sliding.class_id])
 
 
 def _copy_callback(batch: Any) -> Callable[[Any], tuple[RelocationCopyReceipt, ...]]:
@@ -92,7 +138,13 @@ def _copy_callback(batch: Any) -> Callable[[Any], tuple[RelocationCopyReceipt, .
         event = device_module.Event()
         try:
             with device_module.stream(stream):
-                _state._ALLOCATOR.get_kvcache().move_kv_cache(destination, source)
+                kvcache = _state._ALLOCATOR.get_kvcache()
+                pool = (
+                    kvcache.full_kv_pool
+                    if _config().sliding_class is not None
+                    else kvcache
+                )
+                pool.move_kv_cache(destination, source)
                 event.record(stream=stream)
             event.synchronize()
         except Exception as error:
@@ -141,13 +193,29 @@ def _maybe_reclaim_decode_batch(batch: Any) -> None:
         updates = _victim_updates(record.boundary)
         if not updates:
             raise RuntimeError("configured victim policy produced no updates")
-        old_view = runtime.token_view(key, 0)
-        _preflight_request(req, row, record.boundary, old_view)
+        old_views = tuple(
+            runtime.token_view(key, item.class_id) for item in _config().classes
+        )
+        _preflight_request(req, row, record.boundary, old_views)
+        old_full_locations = _view_locations(old_views[0])
         if policy.mode == "naive":
             publication = runtime.mark_token_dispositions(key, 0, updates)
-            _publish_compact_row(
-                req, row, publication.retained_locations, record.boundary
-            )
+            try:
+                _publish_compact_row(
+                    req, row, publication, old_full_locations, record.boundary
+                )
+                import torch
+
+                torch.get_device_module(batch.device).current_stream(
+                    batch.device
+                ).synchronize()
+            except Exception as error:
+                runtime.fail_stop(
+                    f"naive disposition mirror publication became uncertain: {error}"
+                )
+                raise FailStopped(
+                    runtime.failure_reason or "naive mirror publication failed"
+                ) from error
         elif policy.mode == "relocate":
             publication = runtime.relocate_tokens(
                 key,
@@ -165,7 +233,7 @@ def _maybe_reclaim_decode_batch(batch: Any) -> None:
             )
             try:
                 _publish_compact_row(
-                    req, row, publication.retained_locations, record.boundary
+                    req, row, publication, old_full_locations, record.boundary
                 )
                 import torch
 

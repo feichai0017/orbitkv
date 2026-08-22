@@ -39,6 +39,9 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--context-length", type=int, default=128)
     parser.add_argument("--seed", type=int, default=20260821)
     parser.add_argument("--mem-fraction-static", type=float)
+    parser.add_argument(
+        "--attention-backend", choices=("flashinfer", "fa3"), required=True
+    )
     parser.add_argument("--output")
     return parser
 
@@ -77,7 +80,7 @@ def _base_args(args: argparse.Namespace) -> argparse.Namespace:
         chunked_prefill_size=args.requests * TRIGGER_TOKENS,
         context_length=args.context_length,
         max_total_tokens=args.max_total_tokens,
-        attention_backend="flashinfer",
+        attention_backend=args.attention_backend,
         mem_fraction_static=args.mem_fraction_static,
         seed=args.seed,
     )
@@ -122,7 +125,7 @@ def _manager_state(info: dict[str, Any], stage: str) -> dict[str, Any]:
 
 
 def _validate_final_census(
-    state: dict[str, Any], mode: str, requests: int, iterations: int
+    state: dict[str, Any], mode: str, requests: int, iterations: int, class_count: int
 ) -> None:
     stats = state["manager_stats"]
     arena = state["arena_stats"][0]
@@ -140,7 +143,7 @@ def _validate_final_census(
     operations = requests * iterations
     expected = {
         "token_disposition_batches": operations,
-        "token_policy_evictions": operations * VICTIM_COUNT,
+        "token_policy_evictions": operations * VICTIM_COUNT * class_count,
         "mark_token_dispositions_batch_calls": operations,
     }
     if mode == "relocate":
@@ -194,8 +197,8 @@ def run(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
     _stage("hash-checkpoint")
     manager_config = load_config()
     contract, checkpoint = common.checkpoint_contract(paths["model"], manager_config)
-    if contract["architecture"] != "Qwen2ForCausalLM" or contract["attention_profile"] != "full":
-        raise RuntimeError("token-relocation qualification requires Qwen Full attention")
+    if contract["attention_profile"] not in ("full", "hybrid_full_swa"):
+        raise RuntimeError("token-relocation qualification requires Full or Full+SWA")
     prompts = tuple(
         tuple(value)
         for value in common.deterministic_input_ids(
@@ -248,7 +251,10 @@ def run(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
         info_final = engine.get_server_info()
         common.verify_runtime_contract(base, info_final, contract)
         state_final = _manager_state(info_final, "final")
-        _validate_final_census(state_final, args.mode, args.requests, args.iterations)
+        _validate_final_census(
+            state_final, args.mode, args.requests, args.iterations,
+            len(contract["classes"])
+        )
         after_workload = common.gpu_snapshot("after_workload")
     _stage("snapshot-after-shutdown")
     after_shutdown = common.gpu_snapshot("after_shutdown")

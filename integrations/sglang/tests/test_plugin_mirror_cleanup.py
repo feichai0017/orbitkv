@@ -169,6 +169,68 @@ def _install_pairs(mapping, full, sliding) -> None:
         )
 
 
+def test_compact_hybrid_release_validates_whole_row_and_lut_before_clear():
+    pool, allocator = _install_hybrid()
+    full_locations = tuple(range(80, 104))
+    swa_locations = tuple(range(208, 232))
+    row = 1
+    pool.req_to_token[row, :24] = torch.tensor(full_locations, dtype=torch.int32)
+    allocator.full_to_swa_index_mapping[torch.tensor(full_locations)] = torch.tensor(
+        swa_locations, dtype=torch.int64
+    )
+    req = SimpleNamespace(
+        req_pool_idx=row,
+        prefix_indices=torch.empty(0, dtype=torch.int64),
+        _orbitkv_retained_locations=full_locations,
+        _orbitkv_retained_swa_locations=swa_locations,
+    )
+    detached = tuple(
+        DetachedBinding(
+            old=_page(class_id, ordinal),
+            replacement=PageLease(0, 0, 0, 0, 0),
+            logical_ordinal=ordinal,
+            old_backend_index=ordinal,
+            replacement_backend_index=0,
+            token_begin=ordinal * 16,
+            token_end_exclusive=(ordinal + 1) * 16,
+            class_id=class_id,
+            backend_domain=class_id + 1,
+            action=DETACHED_CLEAR,
+            reason=3,
+        )
+        for class_id in (0, 1)
+        for ordinal in (0, 1)
+    )
+    item = MirrorCleanupItem(
+        mirror_cleanup._MirrorCleanupContext(req, row),
+        detached,
+        True,
+        32,
+        (),
+    )
+    coordinator = mirror_cleanup._MirrorCleanupCoordinator(pool, allocator)
+    plan = coordinator.preflight((item,), ())
+    coordinator.commit(plan)
+    coordinator.synchronize(plan)
+    coordinator.finalize(plan)
+    assert not torch.count_nonzero(pool.req_to_token[row, :24])
+    assert not torch.count_nonzero(
+        allocator.full_to_swa_index_mapping[torch.tensor(full_locations)]
+    )
+
+    pool.req_to_token[row, :24] = torch.tensor(full_locations, dtype=torch.int32)
+    allocator.full_to_swa_index_mapping[torch.tensor(full_locations)] = torch.tensor(
+        swa_locations, dtype=torch.int64
+    )
+    allocator.full_to_swa_index_mapping[full_locations[7]] += 1
+    before_row = pool.req_to_token.clone()
+    before_mapping = allocator.full_to_swa_index_mapping.clone()
+    with pytest.raises(RuntimeError, match="SGLang mirror"):
+        coordinator.preflight((item,), ())
+    assert torch.equal(pool.req_to_token, before_row)
+    assert torch.equal(allocator.full_to_swa_index_mapping, before_mapping)
+
+
 def test_cold_prefix_eviction_scans_global_aliases_once_per_collective(monkeypatch):
     pool, allocator = _install_hybrid()
     full, sliding = _paired_retirements(64)

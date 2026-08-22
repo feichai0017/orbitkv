@@ -346,4 +346,43 @@ def test_b4_late_old_lut_fault_preflights_entire_batch_with_zero_mutation():
     assert events == []
     assert torch.equal(batch.req_to_token_pool.req_to_token, before_rows)
     assert torch.equal(allocator.full_to_swa_index_mapping, before_mapping)
+
+
+def test_compact_hybrid_tail_uses_class_specific_geometry_and_lut_authority():
+    _runtime, allocator, events = _install()
+    full_locations = tuple(range(80, 104))
+    swa_locations = tuple(range(208, 232))
+    full_action = TailAction(0, 1, 8, 1, _page(0, 5), _page(0, 5))
+    swa_action = TailAction(1, 3, 0, 3, PageLease(0, 0, 0, 0, 0), _page(1, 40))
+    plan = LoweringPlan(
+        RequestLease(1, 0, 1),
+        SnapshotLease(1, 0, 1),
+        SnapshotLease(1, 8, 1),
+        48,
+        49,
+        (
+            ClassLoweringSpec(0, 1, 88, (), full_action, (), 24, 25),
+            ClassLoweringSpec(1, 2, -1, (40,), swa_action, (), 48, 49),
+        ),
+    )
+    req = SimpleNamespace(
+        rid="compact",
+        req_pool_idx=1,
+        prefix_indices=torch.empty(0, dtype=torch.int64),
+        _orbitkv_active_kv_len=24,
+        _orbitkv_retained_locations=full_locations,
+        _orbitkv_retained_swa_locations=swa_locations,
+    )
+    pool = _ReqPool(events)
+    pool.req_to_token[1, :24] = torch.tensor(full_locations, dtype=torch.int32)
+    allocator.full_to_swa_index_mapping[torch.tensor(full_locations)] = torch.tensor(
+        swa_locations, dtype=torch.int64
+    )
+    batch = SimpleNamespace(
+        reqs=[req], req_to_token_pool=pool, device=torch.device("cpu")
+    )
+    lowering._validate_joint_hybrid_tails((plan,))
+    mirror = lowering._preflight_cow_mirrors(batch, (plan,), (False,))
+    assert not mirror.assignments
+    assert not mirror.mapping_assignments
     assert state._activity_counters()["cow_copy_intents"] == 0
