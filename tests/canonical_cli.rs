@@ -200,6 +200,105 @@ fn hf_manager_plan_rejects_unproven_layer_semantics() {
 }
 
 #[test]
+fn compile_state_plan_separates_mla_recurrent_and_convolution_contracts() {
+    let plan = TempJson::new(
+        br#"{
+          "page_tokens": 16,
+          "states": [
+            {
+              "name": "mla",
+              "layers": [0, 1],
+              "storage": {
+                "kind": "latent_kv",
+                "latent_bytes_per_token_per_layer": 1024,
+                "rope_bytes_per_token_per_layer": 128,
+                "retention": "full",
+                "window_tokens": null
+              }
+            },
+            {
+              "name": "gdn",
+              "layers": [2],
+              "storage": {
+                "kind": "recurrent",
+                "family": "gdn",
+                "state_bytes_per_layer": 4096,
+                "checkpoint_slots_per_request": 2
+              }
+            },
+            {
+              "name": "shortconv",
+              "layers": [2],
+              "storage": {
+                "kind": "convolution",
+                "state_bytes_per_layer": 2048,
+                "kernel_width": 4,
+                "checkpoint_slots_per_request": 2
+              }
+            }
+          ]
+        }"#,
+    );
+    let output = run(&["compile-state-plan", plan.0.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let compiled: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(compiled["schema"], "orbitkv.attention-state-plan.v1");
+    assert_eq!(compiled["states"][0]["backend"]["kind"], "token_slots");
+    assert_eq!(compiled["states"][0]["backend"]["token_relocatable"], true);
+    assert_eq!(
+        compiled["states"][1]["backend"]["kind"],
+        "recurrent_checkpoints"
+    );
+    assert_eq!(compiled["states"][1]["backend"]["token_relocatable"], false);
+    assert_eq!(compiled["states"][2]["backend"]["kind"], "convolution_ring");
+
+    let manager = run(&["compile-state-manager-plan", plan.0.to_str().unwrap()]);
+    assert!(
+        manager.status.success(),
+        "{}",
+        String::from_utf8_lossy(&manager.stderr)
+    );
+    let manager: serde_json::Value = serde_json::from_slice(&manager.stdout).unwrap();
+    assert_eq!(manager["page_tokens"], 16);
+    assert_eq!(manager["classes"].as_array().unwrap().len(), 1);
+    assert_eq!(manager["classes"][0]["name"], "mla");
+    assert_eq!(manager["classes"][0]["bytes_per_token_per_layer"], 1_152);
+    let generated = TempJson::new(&serde_json::to_vec(&manager).unwrap());
+    let compiled_manager = run(&["compile-plan", generated.0.to_str().unwrap()]);
+    assert!(
+        compiled_manager.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled_manager.stderr)
+    );
+}
+
+#[test]
+fn state_manager_plan_rejects_a_checkpoint_only_model() {
+    let plan = TempJson::new(
+        br#"{
+          "page_tokens": 16,
+          "states": [{
+            "name": "mamba",
+            "layers": [0],
+            "storage": {
+              "kind": "recurrent",
+              "family": "mamba",
+              "state_bytes_per_layer": 4096,
+              "checkpoint_slots_per_request": 2
+            }
+          }]
+        }"#,
+    );
+    let output = run(&["compile-state-manager-plan", plan.0.to_str().unwrap()]);
+    assert!(!output.status.success());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no token-addressable state"));
+}
+
+#[test]
 fn removed_cli_commands_have_no_compatibility_aliases() {
     for command in ["compile", "compile-hf-config", "serve-dense-runtime"] {
         let output = run(&[command]);

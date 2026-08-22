@@ -2,10 +2,13 @@ use std::env;
 use std::io::{BufWriter, Write};
 use std::process::ExitCode;
 
-use orbitkv::{HfRetentionOptions, KvPlanInput, compile_hf_manager_plan, compile_plan};
+use orbitkv::{
+    AttentionStatePlanInput, HfRetentionOptions, KvPlanInput, compile_attention_state_manager_plan,
+    compile_attention_state_plan, compile_hf_manager_plan, compile_plan,
+};
 use serde::Serialize;
 
-const USAGE: &str = "usage:\n  orbitkv compile-plan <plan.json>\n  orbitkv compile-hf-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>";
+const USAGE: &str = "usage:\n  orbitkv compile-plan <plan.json>\n  orbitkv compile-state-plan <state-plan.json>\n  orbitkv compile-state-manager-plan <state-plan.json>\n  orbitkv compile-hf-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>";
 
 fn main() -> ExitCode {
     match run() {
@@ -21,9 +24,29 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("compile-plan") => compile_plan_command(&mut args),
+        Some("compile-state-plan") => compile_state_plan_command(&mut args),
+        Some("compile-state-manager-plan") => compile_state_manager_plan_command(&mut args),
         Some("compile-hf-manager-plan") => compile_hf_manager_plan_command(&mut args),
         _ => Err(USAGE.into()),
     }
+}
+
+fn compile_state_manager_plan_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = required(args, "attention-state plan path")?;
+    require_end(args)?;
+    let input = serde_json::from_slice::<AttentionStatePlanInput>(&std::fs::read(path)?)?;
+    write_json(&compile_attention_state_manager_plan(input)?)
+}
+
+fn compile_state_plan_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = required(args, "attention-state plan path")?;
+    require_end(args)?;
+    let input = serde_json::from_slice::<AttentionStatePlanInput>(&std::fs::read(path)?)?;
+    write_json(&compile_attention_state_plan(input)?)
 }
 
 fn compile_plan_command(
