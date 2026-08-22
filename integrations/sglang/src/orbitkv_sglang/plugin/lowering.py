@@ -436,6 +436,26 @@ def _validate_joint_hybrid_tails(plans: Sequence[LoweringPlan]) -> None:
     for plan in plans:
         full_spec = plan.by_class[full.class_id]
         swa_spec = plan.by_class[sliding.class_id]
+        compact = (
+            full_spec.previous_layout_boundary is not None
+            and full_spec.previous_layout_boundary != plan.previous_boundary
+        )
+        if compact:
+            if (
+                full_spec.previous_layout_boundary is None
+                or full_spec.target_layout_boundary is None
+                or swa_spec.previous_layout_boundary != plan.previous_boundary
+                or swa_spec.target_layout_boundary != plan.target_boundary
+                or full_spec.target_layout_boundary
+                - full_spec.previous_layout_boundary
+                != plan.target_boundary - plan.previous_boundary
+                or full_spec.copy_intents
+                or swa_spec.copy_intents
+            ):
+                raise RuntimeError(
+                    "compact Hybrid transition changed class-specific append geometry"
+                )
+            continue
         full_action = full_spec.tail_action
         swa_action = swa_spec.tail_action
         full_cow = full_action.kind == TAIL_COPY_ON_WRITE
@@ -596,6 +616,37 @@ def _preflight_cow_mirrors(
         batch.reqs, plans, use_prefix_mirror, strict=True
     ):
         primary_spec = plan.by_class[primary.class_id]
+        if (
+            config.full_class is not None
+            and config.sliding_class is not None
+            and primary_spec.previous_layout_boundary is not None
+            and primary_spec.previous_layout_boundary != plan.previous_boundary
+        ):
+            retained_full = getattr(req, "_orbitkv_retained_locations", None)
+            retained_swa = getattr(req, "_orbitkv_retained_swa_locations", None)
+            if (
+                prefix_authoritative
+                or not isinstance(retained_full, tuple)
+                or not isinstance(retained_swa, tuple)
+                or len(retained_full) != len(retained_swa)
+                or primary_spec.previous_layout_boundary != len(retained_full)
+                or any(spec.copy_intents for spec in plan.class_specs)
+            ):
+                raise RuntimeError(
+                    "compact Hybrid request lost its class-specific mirror authority"
+                )
+            row = batch.req_to_token_pool.req_to_token[
+                int(req.req_pool_idx), : len(retained_full)
+            ].to(torch.int64)
+            expected_full = torch.tensor(
+                retained_full, dtype=torch.int64, device=batch.device
+            )
+            expected_swa = torch.tensor(
+                retained_swa, dtype=torch.int64, device=batch.device
+            )
+            comparisons.append((row, expected_full))
+            comparisons.append((mapping[expected_full].to(torch.int64), expected_swa))
+            continue
         count = int(primary_spec.tail_action.valid_token_count)
         if count == 0:
             continue
@@ -803,6 +854,18 @@ def _alloc_for_decode(batch: Any, token_per_req: int) -> Any:
     previous, req_pool_values = _preflight_decode_batch(batch)
     batch.maybe_evict_swa()
     targets = [value + 1 for value in previous]
+    config = _config()
+    sliding = config.sliding_class
+    reclamation_enabled = (
+        getattr(getattr(config, "token_reclamation", None), "mode", "off")
+        != "off"
+    )
+    if reclamation_enabled and sliding is not None and any(
+        hasattr(req, "_orbitkv_active_kv_len") for req in batch.reqs
+    ) and any(target > int(sliding.kernel_window_left) for target in targets):
+        raise RuntimeError(
+            "compact Full+SWA profile reached class-divergent sliding visibility"
+        )
 
     import torch
 
@@ -868,6 +931,18 @@ def _alloc_for_decode(batch: Any, token_per_req: int) -> Any:
             if not torch.equal(observed, expected):
                 raise RuntimeError("compact ReqToToken write did not commit exactly")
         _write_hybrid_lut(locations)
+        if compact_rows and _config().sliding_class is not None:
+            full = _config().full_class
+            sliding = _config().sliding_class
+            assert full is not None and sliding is not None
+            row_indices = torch.tensor(
+                compact_rows, dtype=torch.int64, device=batch.device
+            )
+            full_new = locations[full.class_id][row_indices].to(torch.int64)
+            swa_new = locations[sliding.class_id][row_indices].to(torch.int64)
+            mapping = _state._ALLOCATOR.full_to_swa_index_mapping
+            if not torch.equal(mapping[full_new].to(torch.int64), swa_new):
+                raise RuntimeError("compact Full-to-SWA decode mapping did not commit")
         _commit_cow_mirrors(cow_mirror_plan)
         for index, (req, active) in enumerate(
             zip(batch.reqs, active_previous, strict=True)
@@ -879,6 +954,13 @@ def _alloc_for_decode(batch: Any, token_per_req: int) -> Any:
                 req._orbitkv_retained_locations = retained + (
                     int(out_cache_loc[index].item()),
                 )
+                if hasattr(req, "_orbitkv_retained_swa_locations"):
+                    sliding = _config().sliding_class
+                    assert sliding is not None
+                    swa_retained = tuple(req._orbitkv_retained_swa_locations)
+                    req._orbitkv_retained_swa_locations = swa_retained + (
+                        int(locations[sliding.class_id][index].item()),
+                    )
         batch._orbitkv_batch = batch_record
     except Exception as error:
         _runtime().candidate_mirror_failed(batch_record, error)
@@ -1154,6 +1236,7 @@ def _flush_release_group(candidates: Sequence[_ReleaseCandidate]) -> None:
                 "_orbitkv_prefix_lock_held",
                 "_orbitkv_active_kv_len",
                 "_orbitkv_retained_locations",
+                "_orbitkv_retained_swa_locations",
                 "_orbitkv_token_reclamation_done",
             ):
                 if hasattr(req, name):
@@ -1194,6 +1277,7 @@ def _release_kv_cache(req: Any, tree_cache: Any, is_insert: bool = True) -> None
             "_orbitkv_prefix_lock_held",
             "_orbitkv_active_kv_len",
             "_orbitkv_retained_locations",
+            "_orbitkv_retained_swa_locations",
             "_orbitkv_token_reclamation_done",
         ):
             if hasattr(req, name):

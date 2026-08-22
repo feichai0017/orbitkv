@@ -131,6 +131,7 @@ class _MirrorCleanupCoordinator:
         }
         covered_swa_keys = set()
         cold_alias_scan = False
+        compact_hybrid_releases = 0
 
         for item in values:
             context = item.context
@@ -169,6 +170,9 @@ class _MirrorCleanupCoordinator:
                 raise RuntimeError("SGLang prefix mirror exceeds its KV boundary")
             retention_frontier = 0
             compact_locations = getattr(req, "_orbitkv_retained_locations", None)
+            compact_swa_locations = getattr(
+                req, "_orbitkv_retained_swa_locations", None
+            )
             compact_release = compact_locations is not None and item.releasing
             if compact_release:
                 if (
@@ -192,6 +196,23 @@ class _MirrorCleanupCoordinator:
                     torch.all(compact_view.to(torch.int64) == expected_compact)
                 )
                 zero_views.append(compact_view)
+                if hybrid:
+                    if (
+                        not isinstance(compact_swa_locations, tuple)
+                        or len(compact_swa_locations) != len(compact_locations)
+                    ):
+                        raise RuntimeError("compact SWA release metadata is invalid")
+                    full_tensor = expected_compact
+                    swa_tensor = torch.tensor(
+                        compact_swa_locations,
+                        dtype=torch.int64,
+                        device=table.device,
+                    )
+                    checks.append(
+                        torch.all(mapping[full_tensor].to(torch.int64) == swa_tensor)
+                    )
+                    mapping_indices.append(full_tensor)
+                    compact_hybrid_releases += 1
             candidates = tuple(item.candidates)
             candidate_by_class_ordinal: dict[tuple[int, int], Any] = {}
             for candidate in candidates:
@@ -408,6 +429,8 @@ class _MirrorCleanupCoordinator:
                             if detached.action == DETACHED_CLEAR:
                                 zero_views.append(prefix_view)
                 elif hybrid and detached.class_id == sliding.class_id:
+                    if compact_release:
+                        continue
                     cow_source = cow_swa_sources.get(detached_key)
                     if cow_source is not None:
                         safe_locations, expected = cow_source
@@ -566,7 +589,11 @@ class _MirrorCleanupCoordinator:
                     raise RuntimeError("SWA retention frontier is invalid")
                 frontier_updates.append((kv, max(int(current), retention_frontier)))
 
-        if hybrid:
+        if hybrid and compact_hybrid_releases not in (0, len(values)):
+            raise RuntimeError(
+                "compact and dense Hybrid releases require separate cleanup batches"
+            )
+        if hybrid and compact_hybrid_releases == 0:
             full_groups: dict[tuple[int, int, int], list[Any]] = {}
             swa_groups: dict[tuple[int, int, int], list[Any]] = {}
             for certificate in certificates:

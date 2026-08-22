@@ -185,6 +185,37 @@ def test_token_reclamation_config_is_explicit_strict_and_full_only(
                 ),
             }
         )
+    hybrid_plan = tmp_path / "hybrid-reclamation-plan.json"
+    hybrid_plan.write_text(
+        json.dumps(
+            {
+                "page_tokens": 16,
+                "classes": [
+                    {**json.loads(full_plan.read_text())["classes"][0], "layers": [0]},
+                    {
+                        "name": "swa",
+                        "layers": [1],
+                        "retention": "sliding",
+                        "bytes_per_token_per_layer": 128,
+                        "window_tokens": 128,
+                    },
+                ],
+            }
+        )
+    )
+    hybrid_base = {**base, "ORBITKV_PLAN": str(hybrid_plan)}
+    assert load_config(
+        {**hybrid_base, "ORBITKV_TOKEN_RECLAMATION": json.dumps(profile)}
+    ).token_reclamation.mode == "relocate"
+    with pytest.raises(ValueError, match="shared Full/SWA visibility"):
+        load_config(
+            {
+                **hybrid_base,
+                "ORBITKV_TOKEN_RECLAMATION": json.dumps(
+                    {**profile, "trigger_tokens": 128}
+                ),
+            }
+        )
 
 
 class ReadyEvent:
@@ -423,6 +454,62 @@ def test_runtime_same_victim_set_naive_and_relocation_preserve_absolute_boundary
     assert stats.free_pages == 64
     assert stats.active_requests == stats.active_snapshots == 0
     assert stats.pending_reclamations == 0
+    runtime.close()
+
+
+def test_runtime_hybrid_full_relocation_preserves_swa_placements_and_appends(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    _config_value, manager, runtime = _runtime(
+        tmp_path, ffi_library, hybrid=True, window_tokens=128
+    )
+    _step_batch(runtime, (("request", 48),))
+    updates = tuple(
+        ClassTokenDispositionUpdate(
+            class_id,
+            token_id,
+            TokenDisposition(TokenDispositionKind.POLICY_EVICTED, 7, 1, 99),
+        )
+        for class_id in (0, 1)
+        for token_id in range(48)
+        if token_id % 16 >= 8
+    )
+
+    def copied(prepared: Any) -> tuple[RelocationCopyReceipt, ...]:
+        return tuple(
+            RelocationCopyReceipt(
+                prepared.relocation,
+                movement.token_id,
+                movement.source,
+                movement.destination,
+            )
+            for movement in prepared.moves
+        )
+
+    output = runtime.relocate_tokens(
+        "request",
+        0,
+        updates,
+        RelocationPolicy(3, 2, 250, True),
+        copied,
+        11,
+        1,
+    )
+    class_locations = dict(output.class_retained_locations)
+    assert len(class_locations[0]) == len(class_locations[1]) == 24
+    assert class_locations[0] != class_locations[1]
+    runtime.acknowledge_relocation(output)
+    record = runtime.record_for("request")
+    assert len([page for page in record.cursor.pages.values() if page.class_id == 0]) == 2
+    assert len([page for page in record.cursor.pages.values() if page.class_id == 1]) == 3
+    _step_batch(runtime, (("request", 49),), domain=12)
+    assert runtime.active_kv_length("request", 0) == 25
+    assert runtime.active_kv_length("request", 1) == 25
+    views = (runtime.token_view("request", 0), runtime.token_view("request", 1))
+    assert views[0].placements[48].location.offset == 8
+    assert views[1].placements[48].location.offset == 0
+    runtime.release_batch(("request",))
+    assert runtime.stats().free_pages == 128
     runtime.close()
 
 

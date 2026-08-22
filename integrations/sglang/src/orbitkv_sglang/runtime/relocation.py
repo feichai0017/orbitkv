@@ -25,6 +25,7 @@ class RelocationPublication:
     prepared: PreparedRelocation
     publication: RequestView
     retained_locations: tuple[int, ...]
+    class_retained_locations: tuple[tuple[int, tuple[int, ...]], ...]
     retirements: tuple[Any, ...]
 
 
@@ -34,6 +35,7 @@ class DispositionPublication:
     old_view: TokenView
     publication: RequestView
     retained_locations: tuple[int, ...]
+    class_retained_locations: tuple[tuple[int, tuple[int, ...]], ...]
 
 
 class RelocationRuntimeMixin:
@@ -78,25 +80,44 @@ class RelocationRuntimeMixin:
             if record.pending is not None:
                 raise ManagerError("cannot change dispositions for a busy request")
             manager = self._relocation_manager()
-            old_view = manager.token_views_batch(
-                (TokenViewQuery(record.lease, record.head, int(class_id), record.boundary),)
-            )[0]
+            affected = tuple(sorted({item.class_id for item in updates}))
+            old_views = manager.token_views_batch(
+                tuple(
+                    TokenViewQuery(record.lease, record.head, item, record.boundary)
+                    for item in affected
+                )
+            )
             publication = manager.mark_token_dispositions_batch(
                 (TokenDispositionBatchItem(record.lease, record.head, tuple(updates)),)
             )[0]
             self._validate_relocation_view(record, publication)
             marked = manager.token_views_batch(
-                (TokenViewQuery(record.lease, publication.snapshot, int(class_id), record.boundary),)
-            )[0]
-            retained_locations = self._retained_locations(
-                marked, int(class_id), require_dead_absent=False
+                tuple(
+                    TokenViewQuery(
+                        record.lease, publication.snapshot, item, record.boundary
+                    )
+                    for item in affected
+                )
             )
+            class_locations = tuple(
+                (
+                    item.class_id,
+                    self._retained_locations(
+                        item, item.class_id, require_dead_absent=False
+                    ),
+                )
+                for item in marked
+            )
+            self._validate_common_retained_set(marked)
+            retained_locations = dict(class_locations)[int(class_id)]
             self._replace_head(record.head, publication.snapshot)
             record.cursor.snapshot = publication.snapshot
             record.cursor.view_version = publication.view_version
-            record.cursor.active_kv_lengths[int(class_id)] = len(retained_locations)
+            for affected_class, locations in class_locations:
+                record.cursor.active_kv_lengths[affected_class] = len(locations)
             return DispositionPublication(
-                key, old_view, publication, retained_locations
+                key, old_views[affected.index(int(class_id))], publication,
+                retained_locations, class_locations
             )
 
     def relocate_tokens(
@@ -115,16 +136,18 @@ class RelocationRuntimeMixin:
             if record.pending is not None:
                 raise ManagerError("cannot relocate a busy request")
             class_config = self.config.classes_by_id.get(int(class_id))
-            if (
-                len(self.config.classes) != 1
-                or class_config is None
-                or class_config.retention != "full"
-            ):
-                raise ManagerError("first engine relocation profile requires Full-only")
+            if class_config is None or class_config.retention != "full":
+                raise ManagerError("physical token relocation requires a Full class")
             manager = self._relocation_manager()
-            old_view = manager.token_views_batch(
-                (TokenViewQuery(record.lease, record.head, int(class_id), record.boundary),)
-            )[0]
+            affected = tuple(sorted({item.class_id for item in updates}))
+            if int(class_id) not in affected:
+                raise ManagerError("relocation class lacks disposition updates")
+            old_views = manager.token_views_batch(
+                tuple(
+                    TokenViewQuery(record.lease, record.head, item, record.boundary)
+                    for item in affected
+                )
+            )
             marked = manager.mark_token_dispositions_batch(
                 (
                     TokenDispositionBatchItem(
@@ -170,11 +193,32 @@ class RelocationRuntimeMixin:
             publication = output.publications[0]
             try:
                 self._validate_relocation_view(record, publication)
-                packed = manager.token_views_batch(
-                    (TokenViewQuery(record.lease, publication.snapshot, int(class_id), record.boundary),)
-                )[0]
-                retained_locations = self._retained_locations(packed, int(class_id))
-                old_pages = tuple(record.cursor.pages.values())
+                views = manager.token_views_batch(
+                    tuple(
+                        TokenViewQuery(
+                            record.lease, publication.snapshot, item, record.boundary
+                        )
+                        for item in affected
+                    )
+                )
+                self._validate_common_retained_set(views)
+                class_locations = tuple(
+                    (
+                        item.class_id,
+                        self._retained_locations(
+                            item,
+                            item.class_id,
+                            require_dead_absent=item.class_id == int(class_id),
+                        ),
+                    )
+                    for item in views
+                )
+                retained_locations = dict(class_locations)[int(class_id)]
+                old_pages = tuple(
+                    item
+                    for item in record.cursor.pages.values()
+                    if item.class_id == int(class_id)
+                )
                 new_pages = self._packed_shadows(record, prepared, int(class_id))
                 refs = self._page_registry.plan(old_pages, new_pages)
                 self._validate_relocation_retirements(
@@ -182,11 +226,21 @@ class RelocationRuntimeMixin:
                     int(completion_domain), int(completion_value)
                 )
                 self._page_registry.commit(refs)
-                record.cursor.pages = {
-                    (item.class_id, item.logical_ordinal): item for item in new_pages
+                retained_pages = {
+                    key: item
+                    for key, item in record.cursor.pages.items()
+                    if item.class_id != int(class_id)
                 }
+                retained_pages.update(
+                    {
+                        (item.class_id, item.logical_ordinal): item
+                        for item in new_pages
+                    }
+                )
+                record.cursor.pages = retained_pages
                 record.cursor.layout_boundaries[int(class_id)] = len(retained_locations)
-                record.cursor.active_kv_lengths[int(class_id)] = len(retained_locations)
+                for affected_class, locations in class_locations:
+                    record.cursor.active_kv_lengths[affected_class] = len(locations)
                 self._replace_head(record.head, publication.snapshot)
                 record.cursor.snapshot = publication.snapshot
                 record.cursor.view_version = publication.view_version
@@ -199,10 +253,11 @@ class RelocationRuntimeMixin:
                 ) from error
             return RelocationPublication(
                 key,
-                old_view,
+                old_views[affected.index(int(class_id))],
                 prepared,
                 publication,
                 retained_locations,
+                class_locations,
                 tuple(output.retirements),
             )
 
@@ -273,6 +328,19 @@ class RelocationRuntimeMixin:
             elif require_dead_absent and placement.location is not None:
                 raise ManagerError("packed non-retained token kept a location")
         return tuple(result)
+
+    @staticmethod
+    def _validate_common_retained_set(views: Sequence[TokenView]) -> None:
+        retained = [
+            tuple(
+                placement.token_id
+                for placement in view.placements
+                if not placement.disposition.kind.value
+            )
+            for view in views
+        ]
+        if not retained or any(value != retained[0] for value in retained[1:]):
+            raise ManagerError("attention classes do not share one retained token set")
 
     def _packed_shadows(
         self, record: Any, prepared: PreparedRelocation, class_id: int

@@ -644,6 +644,137 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
+fn hybrid_full_relocation_keeps_swa_class_specific_placement_and_appends() {
+    let plan = hybrid_plan(128);
+    let mut manager = manager_for_plan(
+        &plan,
+        &[backend(0, 1, 16, 0), backend(1, 2, 16, 100)],
+        48,
+        32,
+    );
+    let request = manager.acquire_request_leases_for_test(1).unwrap()[0];
+    let initial = append_step(&mut manager, request, 48);
+    let updates = (0..2_u16)
+        .flat_map(|class_id| {
+            (0..48_u64)
+                .filter(|token_id| token_id % 16 >= 8)
+                .map(move |token_id| ClassTokenDispositionUpdate {
+                    class_id,
+                    token_id,
+                    disposition: TokenDisposition::policy_evicted(71, 1, 99),
+                })
+        })
+        .collect::<Vec<_>>();
+    let marked = manager
+        .mark_token_dispositions_batch(&[TokenDispositionBatchItem {
+            request,
+            expected_snapshot: initial.publication.snapshot,
+            updates: updates.into_boxed_slice(),
+        }])
+        .unwrap()[0];
+    let views = manager
+        .token_views_batch(&[
+            TokenViewQuery {
+                request,
+                expected_snapshot: marked.snapshot,
+                class_id: 0,
+            },
+            TokenViewQuery {
+                request,
+                expected_snapshot: marked.snapshot,
+                class_id: 1,
+            },
+        ])
+        .unwrap();
+    assert_eq!(retained_tokens(&views[0]), retained_tokens(&views[1]));
+
+    let prepared = manager
+        .prepare_relocation_batch(&[PrepareRelocationItem {
+            request,
+            expected_snapshot: marked.snapshot,
+            class_id: 0,
+            policy: RelocationPolicy {
+                fragmentation_threshold_milli: 250,
+                maximum_source_pages: 3,
+                evacuation_headroom_pages: 2,
+                full_evacuation: true,
+            },
+        }])
+        .unwrap()[0]
+        .clone();
+    let receipts = prepared
+        .plan
+        .moves
+        .iter()
+        .map(|movement| RelocationCopyReceipt {
+            relocation: prepared.relocation,
+            token_id: movement.token_id,
+            source: movement.source,
+            destination: movement.destination,
+            observed: 1,
+            copied: 1,
+            reserved16: 0,
+            reserved32: 0,
+        })
+        .collect::<Vec<_>>();
+    manager
+        .submit_relocation_batch(&[prepared.relocation], &receipts)
+        .unwrap();
+    let relocated = manager
+        .complete_relocation_batch(
+            BatchCompletionReceipt {
+                engine_epoch: prepared.relocation.engine_epoch,
+                completion_domain: 9,
+                completion_value: 1,
+                confirmed: 1,
+                reserved: 0,
+            },
+            &[prepared.relocation],
+        )
+        .unwrap();
+    manager
+        .acknowledge_reclamations_batch(&reclamation_receipts(&relocated.retirements))
+        .unwrap();
+    let publication = relocated.publications[0];
+    let appended = append_step(&mut manager, request, 49);
+    assert_eq!(appended.publication.boundary, 49);
+    let views = manager
+        .token_views_batch(&[
+            TokenViewQuery {
+                request,
+                expected_snapshot: appended.publication.snapshot,
+                class_id: 0,
+            },
+            TokenViewQuery {
+                request,
+                expected_snapshot: appended.publication.snapshot,
+                class_id: 1,
+            },
+        ])
+        .unwrap();
+    assert_eq!(views[0].placements[48].location.unwrap().offset, 8);
+    assert_eq!(views[1].placements[48].location.unwrap().offset, 0);
+    assert_eq!(retained_tokens(&views[0]), retained_tokens(&views[1]));
+    assert_ne!(publication.snapshot, appended.publication.snapshot);
+
+    let released = manager
+        .release_batch(&[ReleaseBatchItem {
+            request,
+            expected_head: appended.publication.snapshot,
+        }])
+        .unwrap();
+    assert_eq!(released.retirements.len(), 6);
+    manager
+        .acknowledge_reclamations_batch(&reclamation_receipts(&released.retirements))
+        .unwrap();
+    manager.recycle_requests_batch(&[request]).unwrap();
+    let stats = manager.stats();
+    assert_eq!(stats.free_pages, 32);
+    assert_eq!(stats.active_pages, 0);
+}
+
+#[test]
 fn relocation_prepare_abort_and_receipt_faults_are_failure_atomic() {
     let plan = full_plan(CANONICAL_PAGE_TOKENS);
     let mut manager = manager_for_plan(&plan, &[backend(0, 1, 8, 0)], 64, 8);
