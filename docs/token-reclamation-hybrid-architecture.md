@@ -35,12 +35,18 @@ the existing token manager, using the summed per-token width for capacity while
 retaining component geometry for independent latent/RoPE copies. Recurrent and
 convolution state never enter that projection. The
 standalone recurrent/convolution checkpoint pool is host L2; SGLang state
-kernels and MLA tensor copies remain unqualified.
+kernels remain unintegrated. The pure-MLA SGLang seam validates the compiled
+component widths against `MLATokenToKVPool` and copies its combined
+latent+RoPE row through the same completion-gated relocation transaction; this
+is host L2 only and excludes DSA, FP4, DCP, and Hybrid Linear models.
+The checked qualification fixture for `deepseek-ai/DeepSeek-V2-Lite` uses 27
+layers, BF16 `kv_lora_rank=512`, and `qk_rope_head_dim=64`, or 1024 latent plus
+128 RoPE bytes per token per layer. It is a plan/runner fixture, not H20 evidence.
 
 The first host-qualified implementation profile is single-GPU eager Full KV.
 The second host-qualified profile is ordered Full+SWA with one logical victim
 set and class-specific placements; it fails closed when SWA visibility diverges.
-MLA needs separate backend geometry qualification. Recurrent, convolution,
+MLA still needs real-model H20 qualification. Recurrent, convolution,
 Graph, speculation, distributed, and cross-device paths fail closed until
 their distinct protocols are implemented and qualified.
 

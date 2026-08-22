@@ -16,7 +16,8 @@ pub use hf_config::{
     HfRetentionOptions, compile_hf_config, compile_hf_manager_plan,
 };
 pub use plan::{
-    CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, PlanError, compile_plan,
+    CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, PlanError, TokenComponentSpec,
+    TokenStorageKind, compile_plan,
 };
 pub use state_checkpoint::{
     StateCheckpointError, StateCheckpointPool, StateCompletionReceipt, StateCopyIntent,

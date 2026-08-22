@@ -87,6 +87,7 @@ for the invariants and module boundaries.
 | ABI7 Rust core | L2 GO | Host unit, property, fault, stale-lease, Prefix, fork, COW, token relocation, and reclamation tests |
 | Heterogeneous state compiler | L1 GO | Token KV, MLA latent+RoPE, recurrent, and convolution contracts compile to distinct backends |
 | Recurrent/convolution checkpoint pool | L2 host | Generation-checked replace/retire/ACK, abort, and quarantine; SGLang kernels pending |
+| Pure MLA SGLang seam | L2 host / L4 pending | Explicit latent+RoPE geometry checked against the real SGLang pool; combined-row relocation host-tested; H20 and model correctness pending |
 | ABI7 C wire | L2 GO | Exact 29 symbols, C/C++ layouts, batch atomicity, short-buffer and malformed-receipt gates |
 | ABI7 Python/Prefix | L2 GO | Exact ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, relocation wire, mirror cleanup, fail-stop, and teardown host gates |
 | ABI7 SGLang relocation | L2 host / L4 pending | Full and common-victim-set Full+SWA eager, explicit/default-off Naive/Relocate path; H20 pending |
@@ -148,6 +149,8 @@ Compile the heterogeneous-state example with:
 ```bash
 cargo run -- compile-state-plan examples/hybrid-attention-state-plan.json
 cargo run -- compile-state-manager-plan examples/hybrid-attention-state-plan.json
+cargo run -- compile-state-manager-plan examples/deepseek-v2-lite-mla-state-plan.json
+cargo run -- compile-plan examples/deepseek-v2-lite-mla.json
 ```
 
 The first command preserves all backend-specific contracts and component

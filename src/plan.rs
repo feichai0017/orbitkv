@@ -16,6 +16,28 @@ pub enum RetentionKind {
     Chunked,
 }
 
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TokenStorageKind {
+    #[default]
+    TokenKv,
+    LatentKv,
+}
+
+impl TokenStorageKind {
+    #[allow(clippy::trivially_copy_pass_by_ref)]
+    fn is_token_kv(&self) -> bool {
+        *self == Self::TokenKv
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct TokenComponentSpec {
+    pub name: String,
+    pub bytes_per_token_per_layer: u64,
+}
+
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct KvClassSpec {
@@ -25,6 +47,10 @@ pub struct KvClassSpec {
     pub bytes_per_token_per_layer: u64,
     #[serde(default)]
     pub window_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "TokenStorageKind::is_token_kv")]
+    pub storage: TokenStorageKind,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub components: Vec<TokenComponentSpec>,
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -240,6 +266,13 @@ pub enum PlanError {
     DuplicateClassName(String),
     #[error("{class}: bytes_per_token_per_layer must be positive")]
     ZeroBytesPerToken { class: String },
+    #[error("{class}: token storage components are invalid for {storage:?}")]
+    InvalidTokenComponents {
+        class: String,
+        storage: TokenStorageKind,
+    },
+    #[error("{class}: token storage component bytes do not match the class width")]
+    TokenComponentBytesMismatch { class: String },
     #[error("{class}: full retention cannot have a window")]
     FullHasWindow { class: String },
     #[error("{class}: sliding retention requires a positive window")]
@@ -494,6 +527,22 @@ impl CompiledKvPlan {
                 .to_le_bytes(),
             );
             hash.update(class.spec.window_tokens.unwrap_or(0).to_le_bytes());
+            if class.spec.storage != TokenStorageKind::TokenKv || !class.spec.components.is_empty()
+            {
+                hash.update(1_u64.to_le_bytes());
+                hash.update(
+                    match class.spec.storage {
+                        TokenStorageKind::TokenKv => 0_u64,
+                        TokenStorageKind::LatentKv => 1_u64,
+                    }
+                    .to_le_bytes(),
+                );
+                hash.update((class.spec.components.len() as u64).to_le_bytes());
+                for component in &class.spec.components {
+                    update_bytes(&mut hash, component.name.as_bytes());
+                    hash.update(component.bytes_per_token_per_layer.to_le_bytes());
+                }
+            }
             if let Some(chunk_tokens) = class.chunk_tokens {
                 hash.update(1_u64.to_le_bytes());
                 hash.update(chunk_tokens.to_le_bytes());

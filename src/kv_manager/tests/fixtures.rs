@@ -14,6 +14,8 @@ fn sliding_plan(window_tokens: u64, page_tokens: u64) -> CompiledKvPlan {
             retention: RetentionKind::Sliding,
             bytes_per_token_per_layer: 128,
             window_tokens: Some(window_tokens),
+            storage: crate::plan::TokenStorageKind::TokenKv,
+            components: Vec::new(),
         }],
     })
     .expect("test plan compiles")
@@ -28,6 +30,8 @@ fn full_plan(page_tokens: u64) -> CompiledKvPlan {
             retention: RetentionKind::Full,
             bytes_per_token_per_layer: 128,
             window_tokens: None,
+            storage: crate::plan::TokenStorageKind::TokenKv,
+            components: Vec::new(),
         }],
     })
     .expect("test full plan compiles")
@@ -43,6 +47,8 @@ fn hybrid_plan(window_tokens: u64) -> CompiledKvPlan {
                 retention: RetentionKind::Full,
                 bytes_per_token_per_layer: 128,
                 window_tokens: None,
+                storage: crate::plan::TokenStorageKind::TokenKv,
+                components: Vec::new(),
             },
             KvClassSpec {
                 name: "swa".into(),
@@ -50,6 +56,8 @@ fn hybrid_plan(window_tokens: u64) -> CompiledKvPlan {
                 retention: RetentionKind::Sliding,
                 bytes_per_token_per_layer: 128,
                 window_tokens: Some(window_tokens),
+                storage: crate::plan::TokenStorageKind::TokenKv,
+                components: Vec::new(),
             },
         ],
     })

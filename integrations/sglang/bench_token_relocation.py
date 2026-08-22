@@ -26,7 +26,9 @@ def _stage(name: str) -> None:
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Run one matched Full-only Naive-Evict or Relocate H20 sample."
+        description=(
+            "Run one matched Full/Full+SWA/MLA Naive-Evict or Relocate H20 sample."
+        )
     )
     parser.add_argument("--mode", choices=("naive", "relocate"), required=True)
     parser.add_argument("--sglang-root", required=True)
@@ -100,7 +102,9 @@ def _policy(mode: str) -> dict[str, Any]:
     }
 
 
-def _manager_state(info: dict[str, Any], stage: str) -> dict[str, Any]:
+def _manager_state(
+    info: dict[str, Any], stage: str, class_count: int
+) -> dict[str, Any]:
     state = common._state(info).get("orbitkv_manager")
     if not isinstance(state, dict) or state.get("abi_version") != 7:
         raise RuntimeError(f"ABI7 manager state is missing at {stage}")
@@ -110,7 +114,7 @@ def _manager_state(info: dict[str, Any], stage: str) -> dict[str, Any]:
     if (
         not isinstance(stats, dict)
         or not isinstance(arenas, list)
-        or len(arenas) != 1
+        or len(arenas) != class_count
         or not isinstance(counters, dict)
     ):
         raise RuntimeError(f"manager census is malformed at {stage}")
@@ -128,7 +132,7 @@ def _validate_final_census(
     state: dict[str, Any], mode: str, requests: int, iterations: int, class_count: int
 ) -> None:
     stats = state["manager_stats"]
-    arena = state["arena_stats"][0]
+    arenas = state["arena_stats"]
     counters = state["batch_counters"]
     if (
         stats["active_requests"]
@@ -137,7 +141,7 @@ def _validate_final_census(
         or stats["total_request_page_refs"]
         or stats["total_prefix_page_refs"]
         or stats["total_reader_pins"]
-        or arena["free_pages"] != arena["page_count"]
+        or any(arena["free_pages"] != arena["page_count"] for arena in arenas)
     ):
         raise RuntimeError("manager did not drain after the relocation workload")
     operations = requests * iterations
@@ -197,8 +201,10 @@ def run(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
     _stage("hash-checkpoint")
     manager_config = load_config()
     contract, checkpoint = common.checkpoint_contract(paths["model"], manager_config)
-    if contract["attention_profile"] not in ("full", "hybrid_full_swa"):
-        raise RuntimeError("token-relocation qualification requires Full or Full+SWA")
+    if contract["attention_profile"] not in ("full", "hybrid_full_swa", "mla"):
+        raise RuntimeError(
+            "token-relocation qualification requires Full, Full+SWA, or MLA"
+        )
     prompts = tuple(
         tuple(value)
         for value in common.deterministic_input_ids(
@@ -228,7 +234,9 @@ def run(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
         after_load = common.gpu_snapshot("after_load")
         info_load = engine.get_server_info()
         common.verify_runtime_contract(base, info_load, contract)
-        state_load = _manager_state(info_load, "after_load")
+        state_load = _manager_state(
+            info_load, "after_load", len(contract["classes"])
+        )
         _stage("run-workload")
         for iteration in range(args.iterations):
             batch_inputs = [list(item) for item in prompts]
@@ -250,7 +258,9 @@ def run(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
         _stage("validate-drain")
         info_final = engine.get_server_info()
         common.verify_runtime_contract(base, info_final, contract)
-        state_final = _manager_state(info_final, "final")
+        state_final = _manager_state(
+            info_final, "final", len(contract["classes"])
+        )
         _validate_final_census(
             state_final, args.mode, args.requests, args.iterations,
             len(contract["classes"])

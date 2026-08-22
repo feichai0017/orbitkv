@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
-use crate::plan::{KvClassSpec, KvPlanInput, RetentionKind};
+use crate::plan::{KvClassSpec, KvPlanInput, RetentionKind, TokenComponentSpec, TokenStorageKind};
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -68,6 +68,7 @@ pub struct StateComponentGeometry {
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum AttentionStateBackend {
     TokenSlots {
+        storage: TokenStorageKind,
         components: Vec<StateComponentGeometry>,
         bytes_per_token_per_layer: u64,
         page_bytes_per_layer: u64,
@@ -123,6 +124,8 @@ impl CompiledAttentionStatePlan {
             .iter()
             .filter_map(|state| match &state.backend {
                 AttentionStateBackend::TokenSlots {
+                    storage,
+                    components,
                     bytes_per_token_per_layer,
                     retention,
                     window_tokens,
@@ -133,6 +136,14 @@ impl CompiledAttentionStatePlan {
                     retention: *retention,
                     bytes_per_token_per_layer: *bytes_per_token_per_layer,
                     window_tokens: *window_tokens,
+                    storage: *storage,
+                    components: components
+                        .iter()
+                        .map(|component| TokenComponentSpec {
+                            name: component.name.to_owned(),
+                            bytes_per_token_per_layer: component.bytes_per_token_per_layer,
+                        })
+                        .collect(),
                 }),
                 AttentionStateBackend::RecurrentCheckpoints { .. }
                 | AttentionStateBackend::ConvolutionRing { .. } => None,
@@ -287,6 +298,7 @@ fn compile_storage(
             Ok((
                 "token_addressable",
                 AttentionStateBackend::TokenSlots {
+                    storage: TokenStorageKind::TokenKv,
                     components: vec![
                         StateComponentGeometry {
                             name: "key",
@@ -327,6 +339,7 @@ fn compile_storage(
             Ok((
                 "token_addressable",
                 AttentionStateBackend::TokenSlots {
+                    storage: TokenStorageKind::LatentKv,
                     components: vec![
                         StateComponentGeometry {
                             name: "latent",
@@ -427,6 +440,7 @@ mod tests {
     use super::*;
 
     #[test]
+    #[allow(clippy::too_many_lines)]
     fn compiles_token_latent_recurrent_and_convolution_backends() {
         let output = compile_attention_state_plan(AttentionStatePlanInput {
             page_tokens: 16,
@@ -527,6 +541,20 @@ mod tests {
         assert_eq!(manager.classes[1].name, "mla");
         assert_eq!(manager.classes[1].bytes_per_token_per_layer, 1_152);
         assert_eq!(manager.classes[1].layers, vec![1]);
+        assert_eq!(manager.classes[1].storage, TokenStorageKind::LatentKv);
+        assert_eq!(
+            manager.classes[1].components,
+            vec![
+                TokenComponentSpec {
+                    name: "latent".into(),
+                    bytes_per_token_per_layer: 1_024,
+                },
+                TokenComponentSpec {
+                    name: "rope".into(),
+                    bytes_per_token_per_layer: 128,
+                },
+            ]
+        );
     }
 
     #[test]

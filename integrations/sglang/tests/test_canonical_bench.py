@@ -489,10 +489,45 @@ def test_gpt_oss_contract_matches_ordered_full_plus_swa_plan(tmp_path, monkeypat
         bench.checkpoint_contract(model, manager_config)
 
 
+def test_deepseek_v2_contract_matches_explicit_mla_geometry(tmp_path, monkeypatch):
+    monkeypatch.setattr(bench, "checkpoint_identity", _checkpoint_identity)
+    model = _write_config(
+        tmp_path,
+        {
+            "architectures": ["DeepseekV2ForCausalLM"],
+            "num_hidden_layers": 3,
+            "vocab_size": 256,
+            "max_position_embeddings": 4096,
+            "kv_lora_rank": 512,
+            "qk_rope_head_dim": 64,
+        },
+    )
+    latent = SimpleNamespace(
+        name="latent_mla",
+        retention="full",
+        layers=(0, 1, 2),
+        window_tokens=None,
+        storage="latent_kv",
+        components_by_name={"latent": 1024, "rope": 128},
+    )
+    manager_config = SimpleNamespace(
+        page_tokens=16, num_hidden_layers=3, classes=(latent,)
+    )
+    contract, _identity = bench.checkpoint_contract(model, manager_config)
+    assert contract["attention_profile"] == "mla"
+    assert contract["attention_backend"] == "flashinfer"
+    assert contract["classes"][0]["name"] == "latent_mla"
+
+    latent.components_by_name["rope"] = 64
+    with pytest.raises(RuntimeError, match="MLA geometry"):
+        bench.checkpoint_contract(model, manager_config)
+
+
 def test_checkpoint_and_source_gates_have_no_legacy_attention_path():
     assert bench.SUPPORTED_ARCHITECTURES == (
         "Qwen2ForCausalLM",
         "GptOssForCausalLM",
+        "DeepseekV2ForCausalLM",
     )
     source_gate = inspect.getsource(bench.verify_sglang_source)
     assert "validate_base_checkout" in source_gate

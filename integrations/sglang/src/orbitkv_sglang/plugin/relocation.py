@@ -12,6 +12,7 @@ from ..runtime import (
 )
 from . import state as _state
 from .state import _config, _request_key, _runtime
+from .validation import _validate_mla_pool_geometry
 
 
 def _victim_updates(boundary: int) -> tuple[ClassTokenDispositionUpdate, ...]:
@@ -144,6 +145,9 @@ def _copy_callback(batch: Any) -> Callable[[Any], tuple[RelocationCopyReceipt, .
                     if _config().sliding_class is not None
                     else kvcache
                 )
+                class_config = _config().classes_by_id[prepared.class_id]
+                if class_config.storage == "latent_kv":
+                    _validate_mla_pool_geometry(pool, class_config)
                 pool.move_kv_cache(destination, source)
                 event.record(stream=stream)
             event.synchronize()
