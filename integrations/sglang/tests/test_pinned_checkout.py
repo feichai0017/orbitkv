@@ -204,6 +204,13 @@ from sglang.srt.plugins import load_plugins
 
 load_plugins()
 
+from types import SimpleNamespace
+
+import torch
+
+from orbitkv_sglang.plugin import state as plugin_state
+from orbitkv_sglang.plugin.fixed_state import _attach_fixed_state_forward_batch
+from orbitkv_sglang.plugin.relocation import _active_forward_lengths
 from orbitkv_sglang.plugin.validation import HOOK_TARGETS
 from sglang.srt.mem_cache import allocation, common
 from sglang.srt.managers import schedule_batch, scheduler
@@ -212,7 +219,7 @@ from sglang.srt.mem_cache.registry import (
     get_radix_cache_factory,
     registered_radix_cache_backends,
 )
-from sglang.srt.plugins.hook_registry import HookRegistry
+from sglang.srt.plugins.hook_registry import HookRegistry, HookType, _wrap_fn
 
 assert HOOK_TARGETS == (
     "sglang.srt.mem_cache.kv_cache_configurator.KVCacheConfigurator._build_token_to_kv_pool_allocator",
@@ -225,7 +232,18 @@ assert HOOK_TARGETS == (
     "sglang.srt.mem_cache.kv_cache_configurator.KVCacheConfigurator.configure",
     "sglang.srt.managers.scheduler.Scheduler.get_internal_state",
     "sglang.srt.model_executor.forward_batch_info.ForwardBatch.init_new",
+    "sglang.srt.mem_cache.memory_pool.HybridReqToTokenPool.alloc",
+    "sglang.srt.model_executor.model_runner.ModelRunner._maybe_execute_deferred_mamba_cow_and_clear",
+    "sglang.srt.mem_cache.memory_pool.HybridReqToTokenPool.clear",
+    "sglang.srt.mem_cache.memory_pool.HybridReqToTokenPool.free_mamba_cache",
 )
+assert len(HOOK_TARGETS) == len(set(HOOK_TARGETS)) == 14
+assert sum(len(hooks) for hooks in HookRegistry._hooks.values()) == 15
+forward_hooks = HookRegistry._hooks[HOOK_TARGETS[9]]
+assert [(hook_type, hook) for hook_type, hook, _source in forward_hooks] == [
+    (HookType.AFTER, _active_forward_lengths),
+    (HookType.AFTER, _attach_fixed_state_forward_batch),
+]
 assert all(target in HookRegistry._patched for target in HOOK_TARGETS)
 assert schedule_batch.alloc_for_extend is allocation.alloc_for_extend
 assert schedule_batch.alloc_for_decode is allocation.alloc_for_decode
@@ -234,7 +252,45 @@ assert scheduler.release_kv_cache is common.release_kv_cache
 assert batch_result_processor.release_kv_cache is common.release_kv_cache
 assert get_radix_cache_factory("orbitkv") is not None
 assert "orbitkv" in registered_radix_cache_backends()
-print(f"hooks={len(HOOK_TARGETS)} aliases=5 radix=orbitkv")
+
+# Exercise the pinned registry's real wrapper composition without constructing an
+# engine.  The first AFTER hook rewrites active lengths and the second carries the
+# fixed-state records onto that same returned ForwardBatch-like object.
+records = (object(),)
+result = SimpleNamespace(
+    batch_size=1,
+    seq_lens=torch.tensor([5], dtype=torch.int64),
+    seq_lens_cpu=torch.tensor([5], dtype=torch.int64),
+    seq_lens_sum=5,
+)
+batch = SimpleNamespace(
+    seq_lens_cpu=torch.tensor([5], dtype=torch.int64),
+    reqs=[SimpleNamespace(
+        rid="hook-order",
+        req_pool_idx=1,
+        _orbitkv_active_kv_len=3,
+    )],
+    _orbitkv_state_records=records,
+)
+wrapped = _wrap_fn(
+    lambda _cls, _batch, _runner: result,
+    _active_forward_lengths,
+    HookType.AFTER,
+)
+wrapped = _wrap_fn(wrapped, _attach_fixed_state_forward_batch, HookType.AFTER)
+plugin_state._FIXED_STATE = object()
+observed = wrapped(object(), batch, object())
+assert observed is result
+assert observed.absolute_seq_lens_sum == 5
+assert observed.seq_lens_cpu.tolist() == [3]
+assert observed.seq_lens_sum == 3
+assert observed._orbitkv_state_records == records
+
+print(
+    f"targets={len(HOOK_TARGETS)} registered_hooks="
+    f"{sum(len(hooks) for hooks in HookRegistry._hooks.values())} "
+    "after_order=active,state aliases=5 radix=orbitkv"
+)
 '''
     completed = _run(
         sys.executable,
@@ -242,4 +298,7 @@ print(f"hooks={len(HOOK_TARGETS)} aliases=5 radix=orbitkv")
         code,
         env=_pinned_env(patched_sglang_checkout),
     )
-    assert "hooks=10 aliases=5 radix=orbitkv" in completed.stdout
+    assert (
+        "targets=14 registered_hooks=15 after_order=active,state "
+        "aliases=5 radix=orbitkv"
+    ) in completed.stdout

@@ -1227,7 +1227,11 @@ def manager_census(
         "swa_activity",
         "batch_counters",
     }
-    if set(reported) != allowed or reported.get("abi_version") != 7:
+    reported_keys = set(reported)
+    if (
+        reported_keys - {"fixed_state"} != allowed
+        or reported.get("abi_version") != 8
+    ):
         raise RuntimeError(f"OrbitKV manager top-level schema is invalid at {stage}")
     raw_identities = reported["identities"]
     raw_arena_stats = reported["arena_stats"]
@@ -1420,7 +1424,7 @@ def manager_census(
             f"free={manager_stats['free_pages']} expected={page_capacity}"
         )
     return {
-        "abi_version": 7,
+        "abi_version": 8,
         "identities": identities,
         "arena_stats": arena_stats,
         "manager_stats": manager_stats,

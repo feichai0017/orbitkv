@@ -90,12 +90,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="section performance-section" id="evidence">
     <header class="section-heading">
-      <div><p class="eyebrow">Qualification boundary</p><h2>Host ABI8 is green; engine fixed state is next.</h2></div>
+      <div><p class="eyebrow">Qualification boundary</p><h2>ABI8 core and wire are host L2 GO; production integration remains scoped.</h2></div>
       <p>
-        The modular Rust core, exact 40-symbol C wire, 73-layout ABI8 Python
-        runtime, and SGLang <code>OrbitKVPrefixCache</code> are host L2 GO. The
-        fixed-state SGLang adapter and all ABI8 H20 gates remain pending; the
-        frozen ABI5-v5 H20 record is historical only.
+        The modular Rust token/fixed-state core and exact 40-symbol C wire
+        retain host L2 GO. The production request-owned fixed-state seam is
+        host-qualified only for initial clear, forward-event propagation, and
+        retire/clear/ACK. Replacement copy has coordinator/real-CPU-tensor host
+        tests, but its production trigger remains pending. GDN, KDA, ShortConv,
+        and linear-attention bindings, plus real CUDA/model/H20/performance
+        qualification, remain pending. Separate manager and state-pool handles
+        provide no cross-handle atomicity. The frozen ABI5-v5 H20 record is
+        historical only.
       </p>
     </header>
     <div class="metric-grid">
@@ -127,8 +132,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div><p class="eyebrow">Next gates</p><h2>Expand the qualified ownership surface.</h2></div>
       <p>
         Snapshot, Prefix, fork, joint COW, page-owned reclamation, and the
-        official SGLang cache seam are host-qualified. Next are fixed-state
-        engine integration, the ABI8 H20 A/B gate, Graph, and distribution.
+        official SGLang cache seam retain their scoped host evidence. For fixed
+        state, only initial clear, forward-event propagation, and
+        retire/clear/ACK are qualified on the production seam; the replacement
+        production trigger and family-specific bindings remain pending. Next
+        are real CUDA/model/H20 and performance qualification, followed by
+        Graph and distribution.
       </p>
     </header>
     <div class="milestone-list">

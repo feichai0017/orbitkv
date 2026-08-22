@@ -28,8 +28,13 @@ The live tree is **ABI8**:
   on the host against the release library and pinned official `v0.5.17`
   source contract. The explicit eager token-relocation path now has host L2
   seams for Full and common-victim-set Full+SWA, real copy/event orchestration,
-  checked Full-to-SWA LUTs, and split absolute/active lengths. The fixed-state
-  SGLang adapter and all ABI8 H20/performance evidence remain pending.
+  checked Full-to-SWA LUTs, and split absolute/active lengths. The restricted
+  production fixed-state seam currently connects only initial
+  `MambaPool.clear_slots`, the forward completion event, and release-time
+  retire/clear/ACK. Same-owner replacement through `MambaPool.copy_from` is
+  covered by coordinator and real-CPU-tensor host tests only; its production
+  trigger remains pending. GDN/KDA/ShortConv/linear-attention family bindings
+  and real CUDA/model/H20/performance evidence remain pending.
 
 The latest engine evidence is an immutable **historical ABI5-v5** snapshot,
 not evidence for ABI8. Its exact `9233c06d…` source closure has scoped L4
@@ -38,6 +43,12 @@ correctness on one H20 against official SGLang `v0.5.17`, peeled commit
 
 The normative current/historical distinction is in the
 [Capability Matrix](docs/capability-matrix.md).
+The restricted Mamba seam additionally requires `ORBITKV_STATE_PLAN` to name
+the canonical heterogeneous plan whose token projection matches
+`ORBITKV_PLAN`; missing or drifting geometry fails startup.
+The token manager and fixed-state pool are separate ABI8 handles. A failure
+between their commits has fail-stop containment only: there is no cross-handle
+atomic commit or rollback guarantee.
 
 ## Architecture
 
@@ -88,12 +99,12 @@ for the invariants and module boundaries.
 | --- | --- | --- |
 | ABI8 Rust core | L2 GO | Host unit, property, fault, stale-lease, Prefix, fork, COW, token relocation, reclamation, and fixed-state checkpoint tests |
 | Heterogeneous state compiler | L1 GO | Token KV, MLA latent+RoPE, recurrent, and convolution contracts compile to distinct backends |
-| Recurrent/convolution checkpoint pool | L2 host | Generation-checked replace/retire/ACK, abort, and quarantine; SGLang kernels pending |
+| Recurrent/convolution checkpoint pool | L2 host | Generation-checked core/wire initial/replace/retire/ACK, abort, and quarantine; production family bindings pending |
 | Pure MLA SGLang seam | L2 host / L4 pending | Explicit latent+RoPE geometry checked against the real SGLang pool; combined-row relocation host-tested; H20 and model correctness pending |
-| ABI8 C wire | L2 GO | Exact 40 symbols, C/C++ layouts, manager/state batch atomicity, short-buffer and malformed-receipt gates |
+| ABI8 C wire | L2 GO | Exact 40 symbols, C/C++ layouts, per-handle manager-batch and state-pool-batch atomicity, short-buffer and malformed-receipt gates; no cross-handle atomicity |
 | ABI8 Python/Prefix/state wire | L2 GO | 73 frozen ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, relocation and independent fixed-state wires, fail-stop, and teardown host gates |
 | ABI8 SGLang relocation | L2 host / L4 pending | Full and common-victim-set Full+SWA eager, explicit/default-off Naive/Relocate path; H20 pending |
-| ABI8 SGLang fixed state | Pending | No Mamba/GDN/KDA/ShortConv allocator, tensor-copy, CUDA-event, publication, or retirement adapter yet |
+| ABI8 SGLang fixed state | Scoped host evidence / production incomplete | Production covers initial `MambaPool.clear_slots`, the forward event, and retire/clear/ACK only; same-owner `copy_from` replacement has coordinator/real-CPU-tensor host tests but no production trigger; GDN/KDA/ShortConv/linear-attention bindings and real CUDA/model/H20/performance are pending |
 | ABI8 H20 | Pending | No engine run may inherit ABI5 or ABI7 evidence |
 | Frozen ABI5-v5 | Historical scoped L4 | Qwen Full and GPT-OSS Full+SWA B1/B4 correctness on one H20 |
 
@@ -132,12 +143,14 @@ under `results/`.
 
 The ordered work is:
 
-1. connect the restricted recurrent/convolution checkpoint adapter to real
-   SGLang model-state tensors and forward-stream completion events;
-2. run exact-source ABI8 Full, Full+SWA, MLA, and fixed-state correctness plus
-   matched performance on H20;
-3. qualify overlap and CUDA Graph completion domains; and
-4. add speculation, multi-GPU placement, and disaggregation.
+1. add the production trigger for the host-tested same-owner
+   `MambaPool.copy_from` replacement path;
+2. implement family-specific GDN, KDA, ShortConv, and linear-attention
+   bindings;
+3. run exact-source ABI8 Full, Full+SWA, MLA, and each bound fixed-state
+   profile through real CUDA/model correctness and matched H20 performance;
+4. qualify overlap and CUDA Graph completion domains; and
+5. add speculation, multi-GPU placement, and disaggregation.
 
 Compaction means byte-exact K/V relocation and physical defragmentation. It is
 not quantization, numerical compression, or evidence of a same-capacity memory

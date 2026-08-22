@@ -48,7 +48,7 @@ def test_manager_state_accepts_one_or_two_compiled_token_classes(monkeypatch) ->
         "pending_reclamations": 0,
     }
     state = {
-        "abi_version": 7,
+        "abi_version": 8,
         "manager_stats": counters,
         "arena_stats": [{}, {}],
         "batch_counters": {},

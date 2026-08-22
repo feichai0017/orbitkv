@@ -70,10 +70,16 @@ import { docs, repositoryUrl } from "../../data/site";
 
       <h2>Current integration boundary</h2>
       <p>
-        The modular Rust core, exact 40-symbol C ABI8 wire, 73 frozen Python
-        layouts, independent state-pool client, and SGLang
-        <code>OrbitKVPrefixCache</code> are host L2 GO. The SGLang fixed-state
-        adapter and all ABI8 H20 evidence remain pending.
+        The modular Rust token/fixed-state core and exact 40-symbol C ABI8 wire
+        retain host L2 GO. The production request-owned fixed-state seam is
+        host-qualified only for initial clear, forward-event propagation, and
+        retire/clear/ACK. Replacement copy is covered only by coordinator and
+        real-CPU-tensor host tests; its production trigger remains pending. GDN,
+        KDA, ShortConv, and linear-attention bindings, plus real
+        CUDA/model/H20/performance qualification, remain pending. Manager and
+        state-pool handles are separate and provide no cross-handle atomicity.
+        The 73-layout runtime and <code>OrbitKVPrefixCache</code> retain their
+        separately scoped host evidence.
       </p>
 
       <h2>Capability levels</h2>

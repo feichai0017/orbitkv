@@ -725,7 +725,7 @@ def _settled_manager_state(
     page_count = sum(item["page_count"] for item in identities)
     prefix_pages = len(identities) if live_prefix else 0
     return {
-        "abi_version": 7,
+        "abi_version": 8,
         "identities": identities,
         "arena_stats": arena_stats,
         "manager_stats": {
@@ -826,7 +826,7 @@ def test_multi_arena_live_prefix_census_requires_exact_abi6_ref_schema():
     )
     assert [item["class_id"] for item in census["identities"]] == [0, 1]
     assert [item["first_page_id"] for item in census["identities"]] == [1, 5]
-    assert census["abi_version"] == 7
+    assert census["abi_version"] == 8
     assert census["manager_stats"]["free_pages"] == 4
     assert census["manager_stats"]["active_pages"] == 2
     assert census["manager_stats"]["active_prefixes"] == 1

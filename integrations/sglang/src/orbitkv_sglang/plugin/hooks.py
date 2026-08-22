@@ -5,6 +5,13 @@ from typing import Any, Callable
 from ..config import load_config
 from . import state as _state
 from .facade import _build_token_to_kv_pool_allocator
+from .fixed_state import (
+    _attach_fixed_state_forward_batch,
+    _execute_fixed_state_deferred,
+    _fixed_state_alloc,
+    _fixed_state_free,
+    _fixed_state_pool_clear,
+)
 from .lowering import (
     _alloc_for_decode,
     _alloc_for_extend,
@@ -41,7 +48,7 @@ def _get_internal_state(
     ):
         raise RuntimeError("manager internal-state arena order changed")
     state["orbitkv_manager"] = {
-        "abi_version": 7,
+        "abi_version": 8,
         "identities": [
             {
                 "engine_epoch": item.engine_epoch,
@@ -109,6 +116,10 @@ def _get_internal_state(
             **_state._activity_counters(),
         },
     }
+    if _state._FIXED_STATE is not None:
+        state["orbitkv_manager"]["fixed_state"] = (
+            _state._FIXED_STATE.census()
+        )
     return result
 
 
@@ -135,6 +146,11 @@ def _register() -> None:
         (HOOK_TARGETS[7], _validate_configurator, HookType.AROUND),
         (HOOK_TARGETS[8], _get_internal_state, HookType.AROUND),
         (HOOK_TARGETS[9], _active_forward_lengths, HookType.AFTER),
+        (HOOK_TARGETS[9], _attach_fixed_state_forward_batch, HookType.AFTER),
+        (HOOK_TARGETS[10], _fixed_state_alloc, HookType.AROUND),
+        (HOOK_TARGETS[11], _execute_fixed_state_deferred, HookType.AROUND),
+        (HOOK_TARGETS[12], _fixed_state_pool_clear, HookType.AROUND),
+        (HOOK_TARGETS[13], _fixed_state_free, HookType.AROUND),
     )
     for target, hook, hook_type in hooks:
         HookRegistry.register(target, hook, hook_type)

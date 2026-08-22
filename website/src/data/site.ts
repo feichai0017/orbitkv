@@ -68,14 +68,14 @@ export const evidenceRows = [
   {
     result: "ABI8 C wire",
     value: "L2 GO / 40",
-    contract: "29 manager plus 11 independent state-pool symbols, C/C++ layouts, atomicity and receipt gates",
-    boundary: "host wire only; no H20 Prefix, relocation, or fixed-state inheritance",
+    contract: "29 manager plus 11 state-pool symbols, C/C++ layouts, per-handle transactions, and receipt gates",
+    boundary: "host wire only; manager and state-pool handles are separate, with no cross-handle atomicity or H20 inheritance",
   },
   {
-    result: "ABI8 Python/Prefix/state",
-    value: "L2 GO",
-    contract: "Exact-40 loader, 73 layouts, relocation/state wires, official OrbitKVPrefixCache seam",
-    boundary: "host-qualified only; SGLang fixed-state adapter, relocation E2E, and H20 remain pending",
+    result: "ABI8 Python/Prefix + scoped state",
+    value: "L2 GO / scoped",
+    contract: "Exact-40 loader, 73 layouts, OrbitKVPrefixCache, and fixed-state initial clear, forward event, retire/clear/ACK",
+    boundary: "replacement copy has coordinator/real-CPU-tensor host tests only; production trigger, family bindings, CUDA/model/H20/performance remain pending",
   },
   {
     result: "Frozen ABI5-v5 H20",
@@ -112,13 +112,13 @@ export const evidenceRows = [
 export const roadmap = [
   {
     state: "NEXT",
-    name: "Connect fixed state",
-    detail: "Bind request-owned state slots to real SGLang clear/copy tensors and forward-stream completion events.",
+    name: "Complete fixed-state integration",
+    detail: "Add the production replacement trigger and GDN, KDA, ShortConv, and linear-attention bindings, then qualify real CUDA/model/H20 behavior and performance.",
   },
   {
     state: "THEN",
     name: "Run ABI8 H20 A/B",
-    detail: "Qualify Full, Full+SWA, MLA, and fixed-state profiles with real models and repeated matched runs.",
+    detail: "After integration is complete, run repeated matched H20 tests for Full, Full+SWA, MLA, and each bound fixed-state family.",
   },
   {
     state: "LATER",

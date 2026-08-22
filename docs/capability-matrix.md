@@ -28,13 +28,13 @@ cannot inherit ABI5 hardware evidence.
 | Page-owned reclamation | L2 GO | Request/Prefix refs, reader pins and writer state jointly gate detach, certificates, ACK, and reuse | `src/kv_manager/reclamation.rs`, lifecycle/fault tests |
 | Token virtualization and relocation core | L2 GO | Canonical token views; semantic-death/policy-eviction evidence; profitable private Full evacuation; exact copy receipts; packed publication; quarantine and precise release | `src/kv_manager/token_virtualization.rs`, `relocation_transaction.rs`, property/fault/lifecycle tests |
 | Recurrent/convolution checkpoint pool | L2 host | Fixed-width generation-checked initial/replace/retire/ACK lifecycle with exact copy receipts, completion gating, abort, and quarantine; no token ids or TokenMove surface | `src/state_checkpoint.rs`, host lifecycle/fault tests |
-| Typed C ABI8 wire | L2 GO | Exactly 40 typed symbols: 29 canonical-manager plus 11 independent state-pool symbols; C/C++ layout checks; reserved-field, capacity, short-buffer, stale-lease, and receipt validation | `crates/orbitkv-ffi/include/orbitkv.h`, FFI tests, CI symbol diff |
+| Typed C ABI8 wire | L2 GO | Exactly 40 typed symbols: 29 canonical-manager plus 11 independent state-pool symbols; per-handle transactions, C/C++ layout checks, reserved-field, capacity, short-buffer, stale-lease, and receipt validation; no cross-handle atomicity | `crates/orbitkv-ffi/include/orbitkv.h`, FFI tests, CI symbol diff |
 | ABI8 Python FFI/runtime | L2 GO | Exact-40 ctypes loader; 73 frozen layouts; bounded manager workspaces; independent state-pool client; typed retry/fail-stop and force-destroy teardown | Python FFI/runtime tests against the release library |
 | Official SGLang source contract | L2 | Official `v0.5.17`, peeled commit `29481685462732237d80d86076d6563e1f658102`, checked required hooks and fail-hard patch | pinned-checkout tests |
 | SGLang `OrbitKVPrefixCache` | L2 GO | Official cache seam; nodes contain token/digest/LRU plus opaque Prefix leases only; warm attach, lock/ref accounting, Full+SWA COW, grouped release, eviction, and hostile fault paths pass host gates | pinned `v0.5.17` contract and plugin integration tests; no H20 evidence |
 | SGLang token relocation | L2 host / L4 pending | Explicit/default-off eager path covers Full and ordered Full+SWA while they share one victim set; Full relocates physically, SWA keeps class-specific placement through a checked LUT; compact ReqToToken, split absolute/active lengths, decode continuation, and fail-closed release are host-tested | host plugin/runtime tests; no H20/E2E evidence; compact Hybrid fails closed once SWA visibility diverges |
 | SGLang MLA relocation seam | L2 host / L4 pending | Pure BF16 Full-retention MLA, page16, eager, single GPU, FlashInfer or FA3; compiler geometry is checked against `MLATokenToKVPool` and relocation copies every layer's combined latent+RoPE row | real pinned `MLATokenToKVPool` host copy/config tests; no H20/model evidence; DSA, FP4, DCP, Hybrid Linear, Prefix performance pending |
-| SGLang recurrent/convolution adapter | Pending | ABI8 state-pool wire is not yet connected to `HybridReqToTokenPool`, `MambaPool.clear_slots`/`copy_from`, forward-stream CUDA completion, or release-time physical clear/ACK | no engine adapter or GPU/E2E evidence |
+| SGLang fixed-state seam | Scoped L2 host / production incomplete | The production request-owned Mamba path connects exact `slot_id + 1` mirrors, initial `MambaPool.clear_slots`, the forward completion event, and release-time retire/clear/ACK only | Same-owner `MambaPool.copy_from` replacement is coordinator/real-CPU-tensor host-tested, but its production trigger is pending; GDN/KDA/ShortConv/linear-attention family bindings and all real CUDA/model/H20/performance evidence are pending; separate token/state handles provide fail-stop containment, not cross-handle atomicity |
 | Stable-address CUDA VMM primitive | L2 host | Isolated reserve/map/remap/unmap backend; not the manager data plane and not SGLang tensor storage | `crates/orbitkv-cuda/` host tests |
 | General SGLang replacement | Not L5 | ABI8 H20 Prefix/relocation/fixed-state E2E, overlap/Graph, speculation, distributed execution, pressure, performance, and a release matrix are pending | this matrix |
 
@@ -137,12 +137,14 @@ a later ABI.
 
 - ABI8 SGLang/H20 Prefix correctness or Prefix warm-hit performance;
 - H20-qualified SGLang token relocation, retained-slot attention correctness, or compaction performance;
-- H20-qualified SGLang MLA latent+RoPE relocation and any
-  recurrent/convolution state checkpoint integration;
+- H20-qualified SGLang MLA latent+RoPE relocation; the Mamba same-owner
+  replacement production trigger; every GDN/KDA/ShortConv/linear-attention
+  family binding; and real CUDA/model/H20/performance qualification for fixed
+  state;
 - overlap scheduling, multiple completion domains, or CUDA Graph replay;
 - speculative branches, rollback, beam search, or cancellation pressure;
-- cross-attention, dynamic sparse attention, engine-integrated Mamba/SSM
-  state, vLLM, VMM-backed
+- cross-attention, dynamic sparse attention, production Mamba/SSM state, vLLM,
+  VMM-backed
   engine tensors, multi-GPU, disaggregation, remote memory, or production
   version/pressure matrices; and
 - a same-capacity memory reduction, numerical compression, or general

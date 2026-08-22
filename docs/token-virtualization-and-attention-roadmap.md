@@ -149,8 +149,9 @@ experiments exist.
 
 ## M3b: Heterogeneous state backends
 
-Status: **compiler L1 and ABI8 checkpoint core/wire host L2; engine integration
-pending**.
+Status: **compiler L1 and ABI8 checkpoint core/wire L2 GO; production seam
+limited to initial clear, forward event, and retire/clear/ACK; replacement
+trigger, family bindings, and GPU/model qualification pending**.
 
 The heterogeneous compiler separates token KV, MLA latent plus RoPE
 components, recurrent Mamba/GDN/KDA/linear state, and finite convolution state.
@@ -163,18 +164,30 @@ The independent ABI8 state-pool surface provides atomic prepare, submit,
 completion-gated publish, replace retirement, release retirement, ACK, abort,
 current-owner lookup, census, and fail-stop quarantine. Its identities and
 wire records are separate from token IDs, page leases, and TokenMove. That host
-protocol is not yet connected to an engine allocator or state tensors.
+protocol is connected to a restricted SGLang request-owned seam: the native
+Mamba free list is replaced by a census-only facade, state leases map to
+physical slot `slot_id + 1`, initial `MambaPool.clear_slots` executes before
+the first forward, the forward completion event is propagated, and release
+performs retire/clear/ACK. Same-owner `MambaPool.copy_from` replacement is
+covered only by coordinator and real-CPU-tensor host tests; its production
+trigger remains pending.
+The token manager and fixed-state pool remain independent handles: a failure
+between their commits has fail-stop containment only, with neither atomic joint
+commit nor cross-handle rollback. A future unified transaction is required
+before claiming cross-state atomicity.
 
 The pure-MLA host seam now validates compiled latent/RoPE byte widths against
 SGLang's real `MLATokenToKVPool` and exercises its combined-row copy API. It is
 limited to BF16 Full retention, page16, eager, single GPU, without DSA, FP4, or
-DCP. The next engine step is real-model H20 qualification for that seam, then
-model-specific recurrent and convolution copy/publication adapters. The first
-adapter is restricted to eager, single-GPU execution without Prefix-state
-sharing, ReplaySSM, int8 checkpoints, extra/ping-pong buffers, speculation,
-overlap, Graph, or unified memory. Each backend needs its own exact-byte or
-numerical-state oracle; passing the Full KV relocation path does not qualify
-any of them.
+DCP. The production Mamba same-owner replacement trigger and family-specific
+GDN/KDA/ShortConv/linear-attention bindings are still implementation work. The
+intended first complete fixed-state profile treats all per-request recurrent
+and convolution tensors as one aggregate checkpoint and is restricted to
+eager, single-GPU execution without Prefix-state sharing, ReplaySSM, int8
+checkpoints, extra/ping-pong buffers, speculation, overlap, Graph, or unified
+memory. The MLA path and every fixed-state family need their own real
+CUDA/model/H20/performance qualification and exact-byte or numerical-state
+oracle; passing Full KV relocation does not qualify any of them.
 
 ## M4: Multiple completion domains and CUDA Graph
 

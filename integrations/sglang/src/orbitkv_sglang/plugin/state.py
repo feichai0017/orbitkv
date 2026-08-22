@@ -4,13 +4,14 @@ from dataclasses import dataclass
 from typing import Any, Sequence
 
 from ..config import ManagerPlanConfig
-from ..ffi import CtypesManagerFactory
+from ..ffi import CtypesManagerFactory, CtypesStatePool
 from ..runtime import (
     ArenaRegistration,
     CanonicalRuntime,
     FailStopped,
     ManagerCreateSettings,
     ManagerFactoryProtocol,
+    StatePoolConfig,
 )
 
 
@@ -27,6 +28,7 @@ _RUNTIME: CanonicalRuntime | None = None
 _FACTORY: ManagerFactoryProtocol = CtypesManagerFactory()
 _ALLOCATOR: Any = None
 _MIRROR_CLEANUP: Any = None
+_FIXED_STATE: Any = None
 _COUNTER_NAMES = (
     "prefix_matches",
     "prefix_hits",
@@ -47,6 +49,12 @@ _COUNTER_NAMES = (
     "relocation_reclaimed_pages",
     "relocation_copy_events",
     "relocation_copy_tokens",
+    "fixed_state_prepares",
+    "fixed_state_clears",
+    "fixed_state_copies",
+    "fixed_state_events",
+    "fixed_state_retirements",
+    "fixed_state_acks",
 )
 _COUNTERS = {name: 0 for name in _COUNTER_NAMES}
 
@@ -129,6 +137,44 @@ def _new_runtime(registrations: Sequence[ArenaRegistration]) -> CanonicalRuntime
     return runtime
 
 
+def _new_fixed_state(req_to_token_pool: Any, *, device_module: Any | None = None) -> Any:
+    global _FIXED_STATE
+    if not _config().fixed_states:
+        return None
+    if _FIXED_STATE is not None:
+        raise RuntimeError("OrbitKV fixed-state adapter is already initialized")
+    runtime = _runtime()
+    byte_count = _config().fixed_state_byte_count
+    slot_count = int(getattr(req_to_token_pool.mamba_pool, "size", 0))
+    if byte_count <= 0 or slot_count < 2:
+        raise RuntimeError("OrbitKV fixed-state geometry is invalid")
+    from .fixed_state import FixedStateCoordinator
+
+    pool = CtypesStatePool(
+        _config().library_path,
+        StatePoolConfig(
+            runtime.engine_epoch,
+            runtime.engine_epoch + 2,
+            byte_count,
+            len(_config().classes) + 1,
+            slot_count,
+        ),
+    )
+    try:
+        coordinator = FixedStateCoordinator(
+            pool,
+            req_to_token_pool,
+            failure_sink=runtime.fail_stop,
+            device_module=device_module,
+        )
+        coordinator.install_allocator_facade()
+    except Exception:
+        pool.close()
+        raise
+    _FIXED_STATE = coordinator
+    return coordinator
+
+
 def _arena_available_tokens(class_id: int) -> int:
     return _arena_available_tokens_batch((class_id,))[0]
 
@@ -172,11 +218,13 @@ def _install_test_state(
     factory: ManagerFactoryProtocol | None = None,
 ) -> None:
     global _CONFIG, _LIMITS, _RUNTIME, _FACTORY, _ALLOCATOR, _MIRROR_CLEANUP
+    global _FIXED_STATE
     _CONFIG = config
     _LIMITS = limits
     _RUNTIME = runtime
     _ALLOCATOR = None
     _MIRROR_CLEANUP = None
+    _FIXED_STATE = None
     for name in _COUNTERS:
         _COUNTERS[name] = 0
     if factory is not None:

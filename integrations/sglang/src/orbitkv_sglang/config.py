@@ -12,6 +12,7 @@ PAGE_TOKENS = 16
 RetentionKind = Literal["full", "sliding"]
 TokenStorageKind = Literal["token_kv", "latent_kv"]
 ReclamationMode = Literal["off", "naive", "relocate"]
+FixedStateKind = Literal["mamba", "gdn", "kda", "linear_attention", "convolution"]
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,6 +74,20 @@ class ClassConfig:
 
 
 @dataclass(frozen=True, slots=True)
+class FixedStateConfig:
+    name: str
+    kind: FixedStateKind
+    layers: tuple[int, ...]
+    state_bytes_per_layer: int
+    checkpoint_slots_per_request: int
+    kernel_width: int | None = None
+
+    @property
+    def byte_count(self) -> int:
+        return self.state_bytes_per_layer * len(self.layers)
+
+
+@dataclass(frozen=True, slots=True)
 class ManagerPlanConfig:
     """The sole breaking ABI8 snapshot/prefix plan; no legacy translation."""
 
@@ -83,10 +98,19 @@ class ManagerPlanConfig:
     page_tokens: int
     classes: tuple[ClassConfig, ...]
     token_reclamation: TokenReclamationConfig = TokenReclamationConfig()
+    fixed_states: tuple[FixedStateConfig, ...] = ()
+    state_plan_path: Path | None = None
+    state_plan_fingerprint: str | None = None
 
     @property
     def num_hidden_layers(self) -> int:
-        return sum(len(item.layers) for item in self.classes)
+        layers = {layer for item in self.classes for layer in item.layers}
+        layers.update(layer for item in self.fixed_states for layer in item.layers)
+        return max(layers, default=-1) + 1
+
+    @property
+    def fixed_state_byte_count(self) -> int:
+        return sum(item.byte_count for item in self.fixed_states)
 
     @property
     def classes_by_id(self) -> dict[int, ClassConfig]:
@@ -134,7 +158,12 @@ def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
     if not isinstance(raw_classes, list) or not 1 <= len(raw_classes) <= 2:
         raise ValueError("OrbitKV SGLang requires one or two KV classes")
     classes = tuple(
-        _class_config(index, value, page_tokens)
+        _class_config(
+            index,
+            value,
+            page_tokens,
+            allow_compiler_name=source.get("ORBITKV_STATE_PLAN") is not None,
+        )
         for index, value in enumerate(raw_classes)
     )
     retentions = tuple(item.retention for item in classes)
@@ -153,11 +182,16 @@ def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
     layers = [layer for item in classes for layer in item.layers]
     if len(set(layers)) != len(layers):
         raise ValueError("KV classes overlap in model-layer ownership")
-    if sorted(layers) != list(range(len(layers))):
+    if source.get("ORBITKV_STATE_PLAN") is None and sorted(layers) != list(
+        range(len(layers))
+    ):
         raise ValueError("KV classes must cover every model layer exactly once")
 
     canonical = _canonical_json(root)
     token_reclamation = _token_reclamation_config(source)
+    fixed_states, state_plan_path, state_plan_fingerprint = _fixed_state_config(
+        source, page_tokens, classes
+    )
     if token_reclamation.mode != "off" and retentions not in (
         ("full",),
         ("full", "sliding"),
@@ -181,7 +215,207 @@ def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
         page_tokens=page_tokens,
         classes=classes,
         token_reclamation=token_reclamation,
+        fixed_states=fixed_states,
+        state_plan_path=state_plan_path,
+        state_plan_fingerprint=state_plan_fingerprint,
     )
+
+
+def _fixed_state_config(
+    source: Mapping[str, str],
+    page_tokens: int,
+    classes: tuple[ClassConfig, ...],
+) -> tuple[tuple[FixedStateConfig, ...], Path | None, str | None]:
+    encoded_path = source.get("ORBITKV_STATE_PLAN")
+    if encoded_path is None:
+        return (), None, None
+    path = _configured_file(source, "ORBITKV_STATE_PLAN")
+    try:
+        raw = json.loads(
+            path.read_bytes(),
+            object_pairs_hook=_object_without_duplicate_keys,
+            parse_constant=_reject_non_finite_number,
+        )
+    except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as error:
+        raise ValueError(f"invalid ORBITKV_STATE_PLAN JSON: {error}") from error
+    root = _mapping(raw, "AttentionStatePlan")
+    _exact_keys(root, "AttentionStatePlan", {"page_tokens", "states"})
+    if _positive_int(root, "page_tokens", "AttentionStatePlan") != page_tokens:
+        raise ValueError("attention-state and manager plans use different page sizes")
+    raw_states = root.get("states")
+    if not isinstance(raw_states, list) or not raw_states:
+        raise ValueError("AttentionStatePlan.states must be a non-empty list")
+    token_states: list[
+        tuple[
+            str,
+            tuple[int, ...],
+            str,
+            int,
+            int | None,
+            str,
+            tuple[tuple[str, int], ...],
+        ]
+    ] = []
+    fixed: list[FixedStateConfig] = []
+    for index, raw_state in enumerate(raw_states):
+        state_path = f"AttentionStatePlan.states[{index}]"
+        value = _mapping(raw_state, state_path)
+        _exact_keys(value, state_path, {"name", "layers", "storage"})
+        name = _string(value, "name", state_path)
+        layers = _state_layers(value.get("layers"), state_path)
+        storage = _mapping(value.get("storage"), f"{state_path}.storage")
+        kind = _string(storage, "kind", f"{state_path}.storage")
+        if kind in ("token_kv", "latent_kv"):
+            expected_fields = (
+                {
+                    "kind",
+                    "key_bytes_per_token_per_layer",
+                    "value_bytes_per_token_per_layer",
+                    "retention",
+                    "window_tokens",
+                }
+                if kind == "token_kv"
+                else {
+                    "kind",
+                    "latent_bytes_per_token_per_layer",
+                    "rope_bytes_per_token_per_layer",
+                    "retention",
+                    "window_tokens",
+                }
+            )
+            _exact_keys(storage, f"{state_path}.storage", expected_fields)
+            first, second = (
+                ("key_bytes_per_token_per_layer", "value_bytes_per_token_per_layer")
+                if kind == "token_kv"
+                else ("latent_bytes_per_token_per_layer", "rope_bytes_per_token_per_layer")
+            )
+            byte_count = _positive_int(storage, first, state_path) + _positive_int(
+                storage, second, state_path
+            )
+            component_names = ("key", "value") if kind == "token_kv" else (
+                "latent",
+                "rope",
+            )
+            components = (
+                (component_names[0], _positive_int(storage, first, state_path)),
+                (component_names[1], _positive_int(storage, second, state_path)),
+            )
+            retention = _string(storage, "retention", state_path)
+            window = storage.get("window_tokens")
+            if retention == "full":
+                if window is not None:
+                    raise ValueError(
+                        f"{state_path}.storage.window_tokens must be null"
+                    )
+            elif retention == "sliding":
+                window = _positive_int(storage, "window_tokens", state_path)
+            else:
+                raise ValueError(f"{state_path}.storage.retention is unsupported")
+            token_states.append(
+                (name, layers, retention, byte_count, window, kind, components)
+            )
+            continue
+        if kind == "recurrent":
+            _exact_keys(
+                storage,
+                f"{state_path}.storage",
+                {
+                    "kind",
+                    "family",
+                    "state_bytes_per_layer",
+                    "checkpoint_slots_per_request",
+                },
+            )
+            family = _string(storage, "family", state_path)
+            if family not in ("mamba", "gdn", "kda", "linear_attention"):
+                raise ValueError(f"{state_path}.storage.family is unsupported")
+            fixed.append(
+                FixedStateConfig(
+                    name,
+                    family,
+                    layers,
+                    _positive_int(storage, "state_bytes_per_layer", state_path),
+                    _positive_int(storage, "checkpoint_slots_per_request", state_path),
+                )
+            )
+            continue
+        if kind == "convolution":
+            _exact_keys(
+                storage,
+                f"{state_path}.storage",
+                {
+                    "kind",
+                    "state_bytes_per_layer",
+                    "kernel_width",
+                    "checkpoint_slots_per_request",
+                },
+            )
+            fixed.append(
+                FixedStateConfig(
+                    name,
+                    kind,
+                    layers,
+                    _positive_int(storage, "state_bytes_per_layer", state_path),
+                    _positive_int(storage, "checkpoint_slots_per_request", state_path),
+                    _positive_int(storage, "kernel_width", state_path),
+                )
+            )
+            continue
+        raise ValueError(f"{state_path}.storage.kind is unsupported")
+    projected = sorted(
+        (
+            item.name,
+            item.layers,
+            item.retention,
+            item.bytes_per_token_per_layer,
+            item.window_tokens,
+            item.storage,
+            item.components,
+        )
+        for item in classes
+    )
+    state_projection = sorted(
+        (name, layers, retention, byte_count, window, kind, components)
+        for name, layers, retention, byte_count, window, kind, components in token_states
+    )
+    if state_projection != projected:
+        raise ValueError("attention-state token projection differs from ORBITKV_PLAN")
+    all_names = [name for name, *_rest in token_states] + [item.name for item in fixed]
+    if len(set(all_names)) != len(all_names):
+        raise ValueError("attention-state names must be unique")
+    if not fixed:
+        raise ValueError("ORBITKV_STATE_PLAN contains no fixed-width state")
+    if any(item.checkpoint_slots_per_request != 2 for item in fixed):
+        raise ValueError("first fixed-state profile requires two checkpoint slots")
+    claimed = [layer for item in (*classes, *fixed) for layer in item.layers]
+    if not claimed or sorted(set(claimed)) != list(range(max(claimed) + 1)):
+        raise ValueError("attention-state plan must cover every model layer")
+    roles: set[tuple[int, str]] = set()
+    for item in fixed:
+        role = "convolution" if item.kind == "convolution" else "recurrent"
+        for layer in item.layers:
+            if (layer, role) in roles:
+                raise ValueError("attention-state fixed-state roles overlap")
+            roles.add((layer, role))
+    canonical = _canonical_json(root)
+    return (
+        tuple(fixed),
+        path,
+        "sha256:" + hashlib.sha256(canonical).hexdigest(),
+    )
+
+
+def _state_layers(raw: Any, path: str) -> tuple[int, ...]:
+    if not isinstance(raw, list) or not raw:
+        raise ValueError(f"{path}.layers must be a non-empty list")
+    if any(
+        isinstance(item, bool) or not isinstance(item, int) or item < 0
+        for item in raw
+    ):
+        raise ValueError(f"{path}.layers must contain nonnegative integers")
+    if raw != sorted(set(raw)):
+        raise ValueError(f"{path}.layers must be unique and ascending")
+    return tuple(raw)
 
 
 def _token_reclamation_config(
@@ -237,7 +471,13 @@ def _token_reclamation_config(
     )
 
 
-def _class_config(index: int, raw: Any, page_tokens: int) -> ClassConfig:
+def _class_config(
+    index: int,
+    raw: Any,
+    page_tokens: int,
+    *,
+    allow_compiler_name: bool = False,
+) -> ClassConfig:
     path = f"KvPlanInput.classes[{index}]"
     value = _mapping(raw, path)
     base_fields = {
@@ -266,7 +506,7 @@ def _class_config(index: int, raw: Any, page_tokens: int) -> ClassConfig:
     if storage not in ("token_kv", "latent_kv"):
         raise ValueError(f"{path}.storage must be 'token_kv' or 'latent_kv'")
     expected_name = "full" if retention == "full" else "swa"
-    if storage == "token_kv" and name != expected_name:
+    if storage == "token_kv" and name != expected_name and not allow_compiler_name:
         raise ValueError(
             f"{path}.name must be {expected_name!r} for {retention} token_kv"
         )
@@ -420,6 +660,8 @@ def _canonical_json(value: Any) -> bytes:
 
 __all__ = [
     "ClassConfig",
+    "FixedStateConfig",
+    "FixedStateKind",
     "ManagerPlanConfig",
     "PAGE_TOKENS",
     "ReclamationMode",
