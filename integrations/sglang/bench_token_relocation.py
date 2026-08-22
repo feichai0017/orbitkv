@@ -106,7 +106,7 @@ def _manager_state(
     info: dict[str, Any], stage: str, class_count: int
 ) -> dict[str, Any]:
     state = common._state(info).get("orbitkv_manager")
-    if not isinstance(state, dict) or state.get("abi_version") != 7:
+    if not isinstance(state, dict) or state.get("abi_version") != 8:
         raise RuntimeError(f"ABI8 manager state is missing at {stage}")
     stats = state.get("manager_stats")
     arenas = state.get("arena_stats")

@@ -35,25 +35,37 @@ the existing token manager, using the summed per-token width for capacity while
 retaining component geometry for independent latent/RoPE copies. Recurrent and
 convolution state never enter that projection. The
 standalone recurrent/convolution checkpoint pool and its independent ABI8
-C/Python wire are host L2; SGLang allocation, state tensors, and kernels remain
-unintegrated. The pure-MLA SGLang seam validates the compiled
+C/Python wire are host L2. The restricted production request-owned Mamba seam
+maps zero-based leases to physical slots `slot_id + 1` and currently connects
+only initial `MambaPool.clear_slots`, the forward completion event contract,
+and release-time retire/clear/ACK. Same-owner replacement through
+`MambaPool.copy_from` is covered by coordinator and real-CPU-tensor host tests
+only; its production trigger remains pending. This is not real-CUDA, model,
+H20, or performance evidence. The pure-MLA SGLang seam validates the compiled
 component widths against `MLATokenToKVPool` and copies its combined
 latent+RoPE row through the same completion-gated relocation transaction; this
 is host L2 only and excludes DSA, FP4, DCP, and Hybrid Linear models.
 The checked qualification fixture for `deepseek-ai/DeepSeek-V2-Lite` uses 27
 layers, BF16 `kv_lora_rank=512`, and `qk_rope_head_dim=64`, or 1024 latent plus
 128 RoPE bytes per token per layer. It is a plan/runner fixture, not H20 evidence.
+The restricted fixed-state seam requires `ORBITKV_STATE_PLAN` in addition to
+the token-only `ORBITKV_PLAN`; their canonical token projection, page size,
+layer coverage, and byte geometry are checked together before pool creation.
+The token manager and state pool remain separate handles: a partial commit is
+contained only by fail-stop, with no cross-handle atomic commit or rollback.
 
 The first host-qualified implementation profile is single-GPU eager Full KV.
 The second host-qualified profile is ordered Full+SWA with one logical victim
 set and class-specific placements; it fails closed when SWA visibility diverges.
 MLA still needs real-model H20 qualification. Recurrent and convolution state
 must use request-level fixed-width checkpoints, never token pages or
-TokenMove. Their first engine profile is restricted to eager, single GPU, no
-Prefix-state sharing, ReplaySSM, int8 checkpoint pool, extra/ping-pong buffer,
-speculation, overlap, Graph, or unified memory. Those paths plus distributed
-and cross-device execution fail closed until their distinct adapters are
-implemented and qualified.
+TokenMove. The current production Mamba subset is restricted to eager, single
+GPU, with no Prefix-state sharing, ReplaySSM, int8 checkpoint pool,
+extra/ping-pong buffer, speculation, overlap, Graph, or unified memory. Its
+same-owner replacement trigger is still absent. Family-specific GDN, KDA,
+ShortConv, and linear-attention bindings are not implemented. Every
+fixed-state profile still needs real CUDA/model/H20/performance qualification;
+distributed and cross-device execution also remain pending.
 
 ## Logical contract
 

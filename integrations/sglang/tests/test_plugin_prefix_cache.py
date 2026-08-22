@@ -1152,3 +1152,20 @@ def test_live_prefix_miss_shutdown_poison_closes_without_tree_nodes():
     )
     assert cache._nodes == {}
     assert runtime.calls[-1] == ("close", 1)
+
+
+def test_fixed_state_shutdown_failure_still_closes_token_runtime(monkeypatch):
+    cache, runtime, _allocator, _pool = _cache("full")
+
+    class BrokenFixedState:
+        def shutdown(self):
+            state._FIXED_STATE = None
+            raise RuntimeError("injected fixed-state destroy failure")
+
+    monkeypatch.setattr(state, "_FIXED_STATE", BrokenFixedState())
+
+    with pytest.raises(RuntimeError, match="fixed-state destroy failure"):
+        cache.release_host_resources()
+
+    assert runtime.calls[-1] == ("close", 1)
+    assert cache._released is True

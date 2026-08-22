@@ -48,6 +48,10 @@ HOOK_TARGETS = (
     "sglang.srt.mem_cache.kv_cache_configurator.KVCacheConfigurator.configure",
     "sglang.srt.managers.scheduler.Scheduler.get_internal_state",
     "sglang.srt.model_executor.forward_batch_info.ForwardBatch.init_new",
+    "sglang.srt.mem_cache.memory_pool.HybridReqToTokenPool.alloc",
+    "sglang.srt.model_executor.model_runner.ModelRunner._maybe_execute_deferred_mamba_cow_and_clear",
+    "sglang.srt.mem_cache.memory_pool.HybridReqToTokenPool.clear",
+    "sglang.srt.mem_cache.memory_pool.HybridReqToTokenPool.free_mamba_cache",
 )
 
 
@@ -352,6 +356,7 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
         raise RuntimeError("OrbitKV does not support attention chunking")
     retentions = tuple(item.retention for item in plan.classes)
     all_layers = tuple(range(plan.num_hidden_layers))
+    token_layers = tuple(sorted(layer for item in plan.classes for layer in item.layers))
     storage = {item.storage for item in plan.classes}
     if storage == {"latent_kv"}:
         from sglang.srt.configs.model_config import is_deepseek_dsa
@@ -359,7 +364,8 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
         if (
             len(plan.classes) != 1
             or plan.classes[0].retention != "full"
-            or plan.classes[0].layers != all_layers
+            or plan.classes[0].layers != token_layers
+            or bool(plan.fixed_states)
             or not bool(configurator.use_mla_backend)
             or bool(model.is_hybrid_swa)
             or is_deepseek_dsa(model.hf_config)
@@ -378,9 +384,11 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
     if storage != {"token_kv"}:
         raise RuntimeError("OrbitKV does not support mixed token storage backends")
     if retentions == ("full",):
-        if retentions != ("full",) or plan.classes[0].layers != all_layers:
+        if plan.classes[0].layers != token_layers:
+            raise RuntimeError("Full profile token layer identity changed")
+        if not plan.fixed_states and token_layers != all_layers:
             raise RuntimeError("Full profile requires one class covering every layer")
-        if bool(model.is_hybrid_swa):
+        if bool(model.is_hybrid_swa) and not plan.fixed_states:
             raise RuntimeError("Full profile unexpectedly resolved hybrid SWA storage")
     elif retentions == ("full", "sliding"):
         if retentions != ("full", "sliding") or not bool(model.is_hybrid_swa):
@@ -398,13 +406,11 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
     else:
         raise RuntimeError("OrbitKV SGLang supports only Full or ordered Full+SWA")
 
-    kv_heads = int(text.num_key_value_heads)
     dtype_bytes = _dtype_bytes(configurator.kv_cache_dtype)
-    full_bytes = (
-        kv_heads
-        * (int(model.head_dim) + int(getattr(model, "v_head_dim", model.head_dim)))
-        * dtype_bytes
-    )
+    kv_heads = int(text.num_key_value_heads)
+    full_bytes = kv_heads * (
+        int(model.head_dim) + int(getattr(model, "v_head_dim", model.head_dim))
+    ) * dtype_bytes
     swa_bytes = (
         kv_heads
         * (
@@ -425,6 +431,118 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
             raise RuntimeError(
                 f"{class_config.name} KV geometry differs from KvPlanInput"
             )
+    if plan.fixed_states:
+        if configurator.mambaish_config is None:
+            raise RuntimeError("attention-state plan requires SGLang fixed-state storage")
+        params = configurator.mambaish_config.mamba2_cache_params
+        fixed_layers = tuple(
+            sorted({layer for item in plan.fixed_states for layer in item.layers})
+        )
+        if tuple(params.layers) != fixed_layers:
+            raise RuntimeError("SGLang fixed-state layers differ from the state plan")
+        if int(params.mamba_cache_per_req) != plan.fixed_state_byte_count:
+            raise RuntimeError("SGLang fixed-state byte geometry differs from the state plan")
+        if (
+            set(token_layers) | set(fixed_layers) != set(all_layers)
+            or set(token_layers) & set(fixed_layers)
+        ):
+            raise RuntimeError("hybrid state roles do not cover the model")
+        if tuple(
+            getattr(configurator.mambaish_config, "full_attention_layer_ids", ())
+        ) != token_layers:
+            raise RuntimeError("SGLang token-state layers differ from the state plan")
+        recurrent = tuple(
+            item for item in plan.fixed_states if item.kind != "convolution"
+        )
+        if (
+            not recurrent
+            or any(item.kind != "mamba" for item in recurrent)
+            or getattr(configurator, "hybrid_gdn_config", None) is not None
+        ):
+            raise RuntimeError(
+                "first production fixed-state profile requires the Mamba family"
+            )
+        runtime_is_kda = bool(getattr(params, "is_kda", False))
+        if runtime_is_kda != any(item.kind == "kda" for item in recurrent):
+            raise RuntimeError(
+                "SGLang KDA family differs from the fixed-state plan"
+            )
+        if runtime_is_kda and any(item.kind != "kda" for item in recurrent):
+            raise RuntimeError(
+                "SGLang KDA pool cannot satisfy mixed recurrent families"
+            )
+
+
+def _fixed_state_profile(configurator: Any) -> bool:
+    return bool(_config().fixed_states)
+
+
+def _validate_fixed_state_options(configurator: Any) -> None:
+    if not _fixed_state_profile(configurator):
+        return
+    server = configurator.server_args
+    unsupported = {
+        "Mamba extra buffer": bool(server.enable_mamba_extra_buffer()),
+        "Mamba lazy extra buffer": bool(server.enable_mamba_extra_buffer_lazy()),
+        "ReplaySSM": bool(getattr(server, "enable_linear_replayssm", False)),
+        "ReplaySSM speculation": bool(
+            getattr(server, "enable_linear_replayssm_spec", False)
+        ),
+        "Mamba int8 checkpoint": bool(
+            getattr(server, "enable_int8_mamba_checkpoint", False)
+        ),
+    }
+    failed = [name for name, enabled in unsupported.items() if enabled]
+    if failed:
+        raise RuntimeError(
+            "OrbitKV restricted fixed-state profile rejects: " + ", ".join(failed)
+        )
+
+
+def _validate_fixed_state_pool(req_pool: Any, config: Any) -> None:
+    from sglang.srt.mem_cache.memory_pool import HybridReqToTokenPool
+
+    if (
+        not isinstance(req_pool, HybridReqToTokenPool)
+        or req_pool.mamba_ckpt_pool is not None
+        or bool(req_pool.enable_mamba_extra_buffer)
+        or bool(req_pool.enable_mamba_extra_buffer_lazy)
+        or bool(req_pool.mamba_pool.enable_linear_replayssm)
+        or bool(req_pool.mamba_pool.enable_linear_replayssm_spec)
+        or not callable(getattr(req_pool.mamba_pool, "clear_slots", None))
+        or not callable(getattr(req_pool.mamba_pool, "copy_from", None))
+    ):
+        raise RuntimeError("SGLang fixed-state pool is outside the restricted profile")
+    mamba = req_pool.mamba_pool
+    conv_tensors = tuple(mamba.mamba_cache.conv)
+    temporal = mamba.mamba_cache.temporal
+    tensors = conv_tensors + (temporal,)
+    slot_count = int(req_pool.mamba_pool.size)
+    if not tensors or any(
+        tensor.ndim < 2 or int(tensor.shape[1]) != slot_count + 1
+        for tensor in tensors
+    ):
+        raise RuntimeError("SGLang fixed-state tensor slot geometry changed")
+    conv_bytes = sum(
+        int(tensor[0, 0].numel()) * int(tensor.element_size())
+        for tensor in conv_tensors
+        if int(tensor.numel()) > 0
+    ) * int(tensors[0].shape[0])
+    recurrent_bytes = (
+        int(temporal[0, 0].numel())
+        * int(temporal.element_size())
+        * int(temporal.shape[0])
+    )
+    expected_conv = sum(
+        item.byte_count for item in config.fixed_states if item.kind == "convolution"
+    )
+    expected_recurrent = sum(
+        item.byte_count for item in config.fixed_states if item.kind != "convolution"
+    )
+    if conv_bytes != expected_conv or recurrent_bytes != expected_recurrent:
+        raise RuntimeError(
+            "SGLang fixed-state component geometry differs from the state plan"
+        )
 
 
 def _resolve_runtime_limits(configurator: Any) -> RuntimeLimits:
@@ -537,12 +655,13 @@ def _validate_configurator(
         "attention storage": bool(configurator.use_mla_backend)
         == all(item.storage == "latent_kv" for item in config.classes),
         "hybrid compression": not bool(configurator.is_hybrid_swa_compress),
-        "Mamba": configurator.mambaish_config is None
-        and configurator.hybrid_gdn_config is None,
+        "Mamba/state plan": (configurator.mambaish_config is not None)
+        == bool(config.fixed_states),
     }
     failed = [name for name, passed in required.items() if not passed]
     if failed:
         raise RuntimeError("OrbitKV runtime contract failed: " + ", ".join(failed))
+    _validate_fixed_state_options(configurator)
     _validate_checkpoint_geometry(configurator)
     resolved_limits = _resolve_runtime_limits(configurator)
     if _state._LIMITS is not None and _state._LIMITS != resolved_limits:
@@ -593,4 +712,11 @@ def _validate_configurator(
         )
     if int(result.max_running_requests) != resolved_limits.maximum_running_requests:
         raise RuntimeError("SGLang request capacity differs from the manager capacity")
+    if config.fixed_states:
+        req_pool = result.req_to_token_pool
+        _validate_fixed_state_pool(req_pool, config)
+        if _state._FIXED_STATE is None:
+            from .state import _new_fixed_state
+
+            _new_fixed_state(req_pool, device_module=torch)
     return result

@@ -142,6 +142,9 @@ class OrbitKvPrefixCache(BasePrefixCache):
             raise RuntimeError("OrbitKV prefix cache received a foreign KV allocator")
         self.disable = False
         self.disable_finished_insert = bool(params.disable_finished_insert)
+        self._fixed_state_no_prefix = bool(config.fixed_states)
+        if getattr(self, "_fixed_state_no_prefix", False):
+            self.disable_finished_insert = True
         self.req_to_token_pool = params.req_to_token_pool
         self.token_to_kv_pool_allocator = params.token_to_kv_pool_allocator
         self.page_size = config.page_tokens
@@ -249,8 +252,23 @@ class OrbitKvPrefixCache(BasePrefixCache):
                     )
                     raise
         finally:
+            fixed_error = None
             try:
-                runtime.close()
+                if _state._FIXED_STATE is not None:
+                    try:
+                        _state._FIXED_STATE.shutdown()
+                    except Exception as error:
+                        fixed_error = error
+                try:
+                    runtime.close()
+                except Exception as runtime_error:
+                    if fixed_error is not None:
+                        runtime_error.add_note(
+                            f"fixed-state shutdown also failed: {fixed_error!r}"
+                        )
+                    raise
+                if fixed_error is not None:
+                    raise fixed_error
             finally:
                 self._released = True
 
@@ -282,6 +300,17 @@ class OrbitKvPrefixCache(BasePrefixCache):
 
     def supports_swa(self) -> bool:
         return _config().sliding_class is not None
+
+    def supports_mamba(self) -> bool:
+        # This profile intentionally keeps fixed state request-owned and never
+        # enters SGLang's Prefix donation/COW protocol.
+        return False
+
+    def mamba_evictable_size(self) -> int:
+        return 0
+
+    def mamba_protected_size(self) -> int:
+        return 0
 
     def swa_reprefill_tail_tokens(self) -> int:
         return 0
@@ -322,6 +351,10 @@ class OrbitKvPrefixCache(BasePrefixCache):
     def match_prefix(self, params: Any) -> Any:
         from sglang.srt.mem_cache.base_prefix_cache import MatchResult
 
+        if self._fixed_state_no_prefix:
+            return self._finish_match(
+                self._match_result(self._empty, self.root_node, MatchResult), False
+            )
         tokens = _tokens_from_radix_key(params.key, self.page_size)
         if not tokens:
             return self._finish_match(
@@ -443,6 +476,26 @@ class OrbitKvPrefixCache(BasePrefixCache):
 
     def cache_unfinished_req(self, req: Any, **kwargs: Any) -> None:
         del kwargs
+        if getattr(self, "_fixed_state_no_prefix", False):
+            import torch
+
+            runtime = _runtime()
+            key = _request_key(req)
+            runtime.wait_batch((key,))
+            if _state._FIXED_STATE is not None:
+                _state._FIXED_STATE.wait_keys((key,))
+            record = runtime.record_for(key)
+            row = int(req.req_pool_idx)
+            if (
+                getattr(req, "_orbitkv_request_key", None) != key
+                or getattr(req, "_orbitkv_request_lease", None) != record.lease
+                or row <= 0
+            ):
+                raise RuntimeError("unfinished fixed-state request identity changed")
+            req.prefix_indices = self.req_to_token_pool.req_to_token[
+                row, : record.boundary
+            ].to(dtype=torch.int64, copy=True)
+            return
         runtime = _runtime()
         key = _request_key(req)
         initial_record = runtime.record_for(key)
@@ -508,6 +561,8 @@ class OrbitKvPrefixCache(BasePrefixCache):
     def publication_for_release(
         self, req: Any, *, is_insert: bool
     ) -> _ReleasePublication | None:
+        if getattr(self, "_fixed_state_no_prefix", False):
+            return None
         if not is_insert or self.disable_finished_insert:
             return None
         record = _runtime().record_for(_request_key(req))
@@ -1424,8 +1479,10 @@ class OrbitKvPrefixCache(BasePrefixCache):
 def _build_prefix_cache(context: Any) -> OrbitKvPrefixCache:
     if bool(context.disable_radix_cache):
         raise RuntimeError("--disable-radix-cache must be false for OrbitKV")
-    if bool(context.is_hybrid_ssm):
-        raise RuntimeError("OrbitKV does not support hybrid SSM/Mamba caches")
+    if bool(context.is_hybrid_ssm) != bool(_config().fixed_states):
+        raise RuntimeError(
+            "SGLang hybrid-state storage differs from the attention-state plan"
+        )
     if bool(context.enable_hierarchical_cache):
         raise RuntimeError("OrbitKV does not support hierarchical cache")
     return OrbitKvPrefixCache(context.params)

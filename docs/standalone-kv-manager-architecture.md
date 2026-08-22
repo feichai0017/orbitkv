@@ -39,10 +39,12 @@ attention-retention semantics
     -> backend tensor arenas and attention kernels
 ```
 
-The Rust core, C wire, ABI8 Python adapter, independent fixed-state client, and
-SGLang `OrbitKVPrefixCache` are host-qualified L2. The relocation and
-fixed-state core/wire paths are also host L2; the SGLang fixed-state adapter
-and every ABI8 H20 path are not yet qualified.
+The Rust token/fixed-state core, C wire, ABI8 Python adapter, independent
+fixed-state client, and SGLang `OrbitKVPrefixCache` retain their scoped host L2
+qualification. The restricted production fixed-state seam has host coverage
+only for initial clear, the forward completion event, and release-time
+retire/clear/ACK. Same-owner replacement has coordinator/real-CPU-tensor host
+tests only; its production trigger and every ABI8 H20 path remain pending.
 
 ## Module boundaries
 
@@ -219,8 +221,10 @@ side map.
 
 ## Fixed-state checkpoint protocol
 
-Recurrent Mamba/GDN/KDA/linear-attention state and finite convolution state do
-not enter token snapshots or TokenMove. ABI8 exposes a separate
+At the compiler and core-protocol level, recurrent Mamba/GDN/KDA/linear-
+attention state and finite convolution state do not enter token snapshots or
+TokenMove. This taxonomy does not imply that every family has an SGLang
+binding. ABI8 exposes a separate
 `OrbitKvStatePoolHandle` with request-owned fixed-width slots:
 
 ```text
@@ -234,13 +238,24 @@ physical source clear
   -> exact ACK -> next generation may reuse the slot
 ```
 
-Initial publication has no source and requires a real backend clear before
-submit. Replacement copies the complete model-specific state from the current
-slot. Receipt mismatch or unknown observation quarantines the affected owner
-and destination. The pool's zero-based slot identity is backend-independent;
-an SGLang adapter must map it to physical Mamba slot `slot_id + 1`, preserving
-SGLang slot zero as its dummy slot. That adapter is not part of the current
-host-qualified checkpoint.
+This is the core/coordinator protocol. Initial publication has no source and
+requires a backend clear before submit. Core replacement copies the complete
+model-specific state from the current slot. Receipt mismatch or unknown
+observation quarantines the affected owner and destination.
+
+The restricted production SGLang seam maps the pool's zero-based identity to
+physical Mamba slot `slot_id + 1`, preserving slot zero as the dummy slot. It
+currently connects only initial `MambaPool.clear_slots`, the forward completion
+event, and release-time retire/clear/ACK. Same-owner replacement through
+`MambaPool.copy_from` is covered only by coordinator and real-CPU-tensor host
+tests; no production trigger exists yet. Family-specific GDN, KDA, ShortConv,
+and linear-attention bindings and all real CUDA/model/H20/performance evidence
+remain pending. Prefix-state sharing and native Mamba free-list authority stay
+disabled.
+
+The token manager and state pool are independent handles. The adapter can
+contain a partial failure by fail-stopping the process, but it provides no
+cross-handle atomic commit or rollback.
 
 ## Complexity contract
 

@@ -50,6 +50,8 @@ def _wait_previous_steps(batch: Any) -> None:
             keys.append(key)
     if keys:
         runtime.wait_batch(tuple(keys))
+        if _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.wait_keys(tuple(keys))
 
 
 def _worst_case_prepare_pages(
@@ -734,6 +736,7 @@ def _alloc_for_extend(batch: Any) -> tuple[Any, Any, Any]:
     batch.seq_lens = targets_device
 
     new_req_slots = [req.req_pool_idx is None for req in batch.reqs]
+    state_records: tuple[Any, ...] = ()
     try:
         req_pool_indices = allocation.alloc_req_slots(
             batch.req_to_token_pool, batch.reqs, batch.tree_cache
@@ -765,6 +768,9 @@ def _alloc_for_extend(batch: Any) -> tuple[Any, Any, Any]:
         )
     )
     batch_record: BatchRecord | None = None
+    manager_new_requests = tuple(
+        not _runtime().has_request(_request_key(req)) for req in batch.reqs
+    )
     try:
         _preflight_prefix_locks(batch)
         req_pool_indices_cpu = torch.tensor(req_pool_values, dtype=torch.int64)
@@ -776,19 +782,80 @@ def _alloc_for_extend(batch: Any) -> tuple[Any, Any, Any]:
             prefix_values,
             target_values,
         )
+        if _state._FIXED_STATE is not None:
+            state_records = _state._FIXED_STATE.prepare_for_allocated_rows(
+                batch.reqs, req_pool_values
+            )
+            _state._FIXED_STATE.note_prepare(len(state_records))
+            batch._orbitkv_state_records = state_records
+            batch._orbitkv_state_keys = tuple(item.key for item in state_records)
         _promote_prefix_locks(batch)
-    except Exception:
-        if _runtime().failure_reason is None:
+    except Exception as admission_error:
+        rollback_errors: list[str] = []
+        cleanup_unsafe = _runtime().failure_reason is not None
+        if _state._FIXED_STATE is not None:
+            try:
+                _state._FIXED_STATE.rollback_new_requests(batch.reqs)
+            except Exception as error:
+                rollback_errors.append(f"fixed state: {error}")
+                cleanup_unsafe = True
+        if batch_record is not None:
+            try:
+                _runtime().abort_unobserved(batch_record)
+            except Exception as error:
+                rollback_errors.append(f"token step: {error}")
+                cleanup_unsafe = True
+        new_requests = tuple(
+            req
+            for req, is_new in zip(batch.reqs, manager_new_requests, strict=True)
+            if batch_record is not None and is_new
+        )
+        if not cleanup_unsafe:
+            try:
+                releasable = tuple(
+                    req
+                    for req in new_requests
+                    if _runtime().has_request(_request_key(req))
+                )
+                if releasable:
+                    _runtime().release_batch(
+                        tuple(_request_key(req) for req in releasable)
+                    )
+                    for req in releasable:
+                        for name in (
+                            "_orbitkv_request_lease",
+                            "_orbitkv_request_key",
+                        ):
+                            if hasattr(req, name):
+                                delattr(req, name)
+            except Exception as error:
+                rollback_errors.append(f"token owner: {error}")
+                cleanup_unsafe = True
+        if not cleanup_unsafe:
             try:
                 _rollback_admission_locks(batch)
+            except Exception as error:
+                rollback_errors.append(f"prefix lock: {error}")
+                cleanup_unsafe = True
+        else:
+            rollback_errors.append("prefix locks retained for containment")
+        if cleanup_unsafe:
+            # Native authority is uncertain. Do not return a SGLang row to its
+            # free list, because a later request could observe stale mappings.
+            rollback_errors.append("request rows retained for containment")
+        else:
+            try:
                 _free_new_req_rows(batch, new_req_slots)
-            except Exception as rollback_error:
-                _runtime().fail_stop(
-                    f"prefix admission rollback became uncertain: {rollback_error}"
-                )
-                raise FailStopped(
-                    _runtime().failure_reason or "prefix admission rollback failed"
-                ) from rollback_error
+            except Exception as error:
+                rollback_errors.append(f"request row: {error}")
+        if rollback_errors:
+            _runtime().fail_stop(
+                "prefix admission rollback became uncertain: "
+                + "; ".join(rollback_errors)
+            )
+            raise FailStopped(
+                _runtime().failure_reason or "prefix admission rollback failed"
+            ) from admission_error
         raise
 
     try:
@@ -808,13 +875,27 @@ def _alloc_for_extend(batch: Any) -> tuple[Any, Any, Any]:
         cow_activity = _execute_cow_copies(batch, plans)
         _runtime().mark_lowered(batch_record)
     except Exception as error:
+        if state_records and _state._FIXED_STATE is not None:
+            try:
+                _state._FIXED_STATE.abort_batch(state_records)
+            except Exception as state_error:
+                _runtime().fail_stop(
+                    f"fixed-state lowering rollback became uncertain: {state_error}"
+                )
         if batch_record is not None:
             _runtime().lowering_failed(batch_record, error)
         raise FailStopped(
             _runtime().failure_reason or "extend lowering failed"
         ) from error
 
-    _submit_batch(batch_record)
+    try:
+        _submit_batch(batch_record)
+    except Exception as error:
+        if state_records and _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.poison_unobserved(
+                state_records, f"token submit failed after fixed-state prepare: {error}"
+            )
+        raise
     _record_cow_activity(cow_activity)
 
     try:
@@ -840,6 +921,8 @@ def _alloc_for_extend(batch: Any) -> tuple[Any, Any, Any]:
                 req.kv.kv_allocated_len = int(target)
         batch._orbitkv_batch = batch_record
     except Exception as error:
+        if state_records and _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.mirror_failed(state_records, error)
         _runtime().candidate_mirror_failed(batch_record, error)
         raise FailStopped(
             _runtime().failure_reason or "candidate mirror failed"
@@ -994,8 +1077,12 @@ def _get_next_batch_to_run(
     original_fn: Callable[..., Any], scheduler: Any, *args: Any, **kwargs: Any
 ) -> Any:
     try:
+        if _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.poll()
         return original_fn(scheduler, *args, **kwargs)
     except Exception as error:
+        if _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.pre_forward_failed(error)
         _runtime().pre_forward_failed(error)
 
 
@@ -1008,6 +1095,11 @@ def _run_batch(
 ) -> Any:
     runtime = _runtime()
     batch_record = getattr(batch, "_orbitkv_batch", None)
+    state_records = (
+        ()
+        if _state._FIXED_STATE is None
+        else tuple(getattr(batch, "_orbitkv_state_records", ()))
+    )
     try:
         _validate_batch(batch)
         runtime.poll()
@@ -1025,6 +1117,8 @@ def _run_batch(
     except Exception as error:
         if isinstance(batch_record, BatchRecord):
             runtime.forward_failed(batch_record, error)
+        if _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.pre_forward_failed(error)
         if isinstance(error, FailStopped):
             raise
         raise FailStopped(
@@ -1032,17 +1126,34 @@ def _run_batch(
         ) from error
     try:
         result = original_fn(scheduler, batch, *args, **kwargs)
+        if _state._FIXED_STATE is not None:
+            state_records = _state._FIXED_STATE.records_for_schedule_batch(batch)
     except Exception as error:
         runtime.forward_failed(batch_record, error)
+        if _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.forward_failed(state_records, error)
         raise FailStopped(runtime.failure_reason or "forward failed") from error
     try:
         launch_stream = scheduler.device_module.current_stream(scheduler.device)
         event = scheduler.device_module.Event()
         event.record(stream=launch_stream)
         runtime.register_event(batch_record, event, _completion_domain(scheduler))
+        if _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.register_event(
+                expected_keys,
+                state_records,
+                event,
+                _completion_domain(scheduler),
+                scheduler.device_module,
+                scheduler.device,
+            )
         batch._orbitkv_batch = None
+        if hasattr(batch, "_orbitkv_state_records"):
+            batch._orbitkv_state_records = ()
     except Exception as error:
         runtime.event_registration_failed(batch_record, error)
+        if _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.event_registration_failed(state_records, error)
         raise FailStopped(
             runtime.failure_reason or "event registration failed"
         ) from error
@@ -1150,9 +1261,17 @@ def _flush_release_group(candidates: Sequence[_ReleaseCandidate]) -> None:
         if _release_group_identity_changed(candidate, runtime):
             runtime.fail_stop("SGLang release group identity changed before flush")
             raise FailStopped(runtime.failure_reason or "release group changed")
+    state_release_items = None
 
     try:
         runtime.wait_batch(tuple(candidate.key for candidate in values))
+        if _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.wait_keys(
+                tuple(candidate.key for candidate in values)
+            )
+            state_release_items = _state._FIXED_STATE.preflight_retire(
+                tuple((candidate.key, candidate.req) for candidate in values)
+            )
         for candidate in values:
             effective_boundary = candidate.req.effective_kv_committed_len()
             if (
@@ -1216,11 +1335,22 @@ def _flush_release_group(candidates: Sequence[_ReleaseCandidate]) -> None:
             # one official free_group atomic: duplicates or opt-outs sacrifice
             # this insertion instead of splitting the group across commits.
             runtime.release_batch(tuple(candidate.key for candidate in values))
+        if _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.retire_batch(
+                tuple((candidate.key, candidate.req) for candidate in values),
+                items=state_release_items,
+            )
         for candidate in values:
             candidate.tree_cache._commit_release_node(
                 candidate.req, candidate.prefix_node, provisional=False
             )
-            candidate.req_to_token_pool.free(candidate.req)
+        if _state._FIXED_STATE is None:
+            for candidate in values:
+                candidate.req_to_token_pool.free(candidate.req)
+        else:
+            _state._FIXED_STATE.free_request_rows(
+                tuple(candidate.req for candidate in values)
+            )
         runtime.unbind_request_rows(
             tuple((candidate.key, candidate.row) for candidate in values)
         )
@@ -1239,6 +1369,10 @@ def _flush_release_group(candidates: Sequence[_ReleaseCandidate]) -> None:
                 "_orbitkv_retained_locations",
                 "_orbitkv_retained_swa_locations",
                 "_orbitkv_token_reclamation_done",
+                "_orbitkv_state_owner_id",
+                "_orbitkv_state_transition",
+                "_orbitkv_state_lease",
+                "_orbitkv_state_key",
             ):
                 if hasattr(req, name):
                     delattr(req, name)
@@ -1280,6 +1414,10 @@ def _release_kv_cache(req: Any, tree_cache: Any, is_insert: bool = True) -> None
             "_orbitkv_retained_locations",
             "_orbitkv_retained_swa_locations",
             "_orbitkv_token_reclamation_done",
+            "_orbitkv_state_owner_id",
+            "_orbitkv_state_transition",
+            "_orbitkv_state_lease",
+            "_orbitkv_state_key",
         ):
             if hasattr(req, name):
                 delattr(req, name)

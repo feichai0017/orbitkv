@@ -5,11 +5,17 @@ boundary. This directory is append-only evidence: every record qualifies only
 the exact source, ABI, engine, hardware, commands, and outputs bound by its
 manifest.
 
-The live tree is ABI8. Its Rust core, exact 40-symbol C wire, 73-layout Python
-runtime, independent fixed-state checkpoint wire, SGLang Prefix adapter, host
-relocation transaction, and Full/common-victim-set Full+SWA eager engine seams
-are L2. The fixed-state SGLang adapter and all ABI8 H20 qualification remain
-pending. Every record below predates ABI8 and therefore remains historical.
+The live tree is ABI8. Its Rust token/fixed-state core and exact 40-symbol C
+wire retain host L2 GO. The production request-owned fixed-state seam is
+host-qualified only for initial clear, forward-event propagation, and
+retire/clear/ACK. Same-owner replacement is covered only by coordinator and
+real-CPU-tensor host tests; its production trigger remains pending.
+GDN/KDA/ShortConv/linear-attention family bindings and real
+CUDA/model/H20/performance qualification remain pending. Manager and state-pool
+handles are separate, so only fail-stop containment—not cross-handle
+atomicity—is provided. The 73-layout Python runtime, SGLang Prefix adapter,
+and existing token-manager paths retain their separately scoped host evidence.
+Every record below predates ABI8 and therefore remains historical.
 
 ## Latest engine record
 
@@ -35,7 +41,7 @@ Qwen B1 is +5.0009%. With no repeated-epoch statistics,
 `performance_go=false`; the GPT result is not a general speedup claim.
 
 Nothing in this record qualifies ABI8 Prefix/COW, Python, SGLang integration,
-relocation, fixed-state checkpoints, Graph, or distributed execution.
+relocation, fixed-state model execution, Graph, or distributed execution.
 
 ## Earlier records
 
