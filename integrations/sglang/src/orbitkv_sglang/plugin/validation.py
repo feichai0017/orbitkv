@@ -310,6 +310,17 @@ def _checkpoint_architecture(model: Any) -> str:
 def _validate_attention_backend_contract(configurator: Any) -> str:
     architecture = _checkpoint_architecture(configurator.model_config)
     backends = tuple(configurator.server_args.get_attention_backends())
+    if bool(getattr(configurator, "use_mla_backend", False)):
+        if (
+            len(backends) != 2
+            or backends[0] != backends[1]
+            or backends[0] not in SUPPORTED_ATTENTION_BACKENDS
+        ):
+            raise RuntimeError(
+                f"{architecture} requires one uniform MLA backend from "
+                f"{sorted(SUPPORTED_ATTENTION_BACKENDS)}, got {backends}"
+            )
+        return architecture
     if (
         len(backends) != 2
         or backends[0] != backends[1]
@@ -333,8 +344,39 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
     if int(text.num_hidden_layers) != plan.num_hidden_layers:
         raise RuntimeError("checkpoint layer count differs from KvPlanInput.layers")
     _checkpoint_architecture(model)
+    if bool(getattr(model, "is_deepseek_v4_arch", False)) or bool(
+        getattr(model, "is_hybrid_swa_compress", False)
+    ):
+        raise RuntimeError("OrbitKV does not support compressed attention storage")
+    if getattr(model, "attention_chunk_size", None) is not None:
+        raise RuntimeError("OrbitKV does not support attention chunking")
     retentions = tuple(item.retention for item in plan.classes)
     all_layers = tuple(range(plan.num_hidden_layers))
+    storage = {item.storage for item in plan.classes}
+    if storage == {"latent_kv"}:
+        from sglang.srt.configs.model_config import is_deepseek_dsa
+
+        if (
+            len(plan.classes) != 1
+            or plan.classes[0].retention != "full"
+            or plan.classes[0].layers != all_layers
+            or not bool(configurator.use_mla_backend)
+            or bool(model.is_hybrid_swa)
+            or is_deepseek_dsa(model.hf_config)
+        ):
+            raise RuntimeError(
+                "first MLA profile requires one Full latent_kv class covering every layer"
+            )
+        latent = int(model.kv_lora_rank) * _dtype_bytes(configurator.kv_cache_dtype)
+        rope = int(model.qk_rope_head_dim) * _dtype_bytes(configurator.kv_cache_dtype)
+        class_config = plan.classes[0]
+        if class_config.components != (("latent", latent), ("rope", rope)):
+            raise RuntimeError("MLA latent/RoPE geometry differs from KvPlanInput")
+        if class_config.bytes_per_token_per_layer != latent + rope:
+            raise RuntimeError("MLA aggregate geometry differs from KvPlanInput")
+        return
+    if storage != {"token_kv"}:
+        raise RuntimeError("OrbitKV does not support mixed token storage backends")
     if retentions == ("full",):
         if retentions != ("full",) or plan.classes[0].layers != all_layers:
             raise RuntimeError("Full profile requires one class covering every layer")
@@ -355,13 +397,6 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
             raise RuntimeError("SGLang hybrid SWA memory is disabled")
     else:
         raise RuntimeError("OrbitKV SGLang supports only Full or ordered Full+SWA")
-
-    if bool(getattr(model, "is_deepseek_v4_arch", False)) or bool(
-        getattr(model, "is_hybrid_swa_compress", False)
-    ):
-        raise RuntimeError("OrbitKV does not support compressed attention storage")
-    if getattr(model, "attention_chunk_size", None) is not None:
-        raise RuntimeError("OrbitKV does not support attention chunking")
 
     kv_heads = int(text.num_key_value_heads)
     dtype_bytes = _dtype_bytes(configurator.kv_cache_dtype)
@@ -410,7 +445,12 @@ def _resolve_runtime_limits(configurator: Any) -> RuntimeLimits:
 
 
 def _validate_physical_pool(
-    pool: Any, *, expected_tokens: int, expected_dtype: Any, name: str
+    pool: Any,
+    *,
+    expected_tokens: int,
+    expected_dtype: Any,
+    name: str,
+    storage: str = "token_kv",
 ) -> None:
     if pool is None:
         raise RuntimeError(f"SGLang did not construct the {name} KV pool")
@@ -420,8 +460,31 @@ def _validate_physical_pool(
         raise RuntimeError(f"SGLang {name} KV pool page size changed")
     if pool.dtype is not expected_dtype:
         raise RuntimeError(f"SGLang {name} KV pool dtype changed")
+    if storage == "latent_kv":
+        _validate_mla_pool_geometry(pool, _config().classes[0])
+        return
     if getattr(pool, "kv_cache_layout", None) != "nhd":
         raise RuntimeError(f"SGLang {name} KV pool is not NHD")
+
+
+def _validate_mla_pool_geometry(pool: Any, class_config: Any) -> None:
+    from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool
+
+    expected = class_config.components_by_name
+    dtype_bytes = _dtype_bytes(getattr(pool, "dtype", None))
+    if (
+        not isinstance(pool, MLATokenToKVPool)
+        or int(getattr(pool, "layer_num", 0)) != len(class_config.layers)
+        or len(getattr(pool, "kv_buffer", ())) != len(class_config.layers)
+        or int(getattr(pool, "kv_lora_rank", 0)) * dtype_bytes
+        != expected.get("latent")
+        or int(getattr(pool, "qk_rope_head_dim", 0)) * dtype_bytes
+        != expected.get("rope")
+        or bool(getattr(pool, "use_dsa", False))
+        or bool(getattr(pool, "dsa_kv_cache_store_fp8", False))
+        or not callable(getattr(pool, "move_kv_cache", None))
+    ):
+        raise RuntimeError("SGLang MLA pool geometry changed")
 
 
 def _validate_configurator(
@@ -471,7 +534,8 @@ def _validate_configurator(
         "page-major KV": not bool(server.enable_page_major_kv_layout),
         "embedding mode": not bool(server.is_embedding),
         "draft worker": not bool(configurator.is_draft_worker),
-        "MLA": not bool(configurator.use_mla_backend),
+        "attention storage": bool(configurator.use_mla_backend)
+        == all(item.storage == "latent_kv" for item in config.classes),
         "hybrid compression": not bool(configurator.is_hybrid_swa_compress),
         "Mamba": configurator.mambaish_config is None
         and configurator.hybrid_gdn_config is None,
@@ -516,6 +580,7 @@ def _validate_configurator(
             expected_tokens=allocator.size,
             expected_dtype=configurator.kv_cache_dtype,
             name="Full",
+            storage=config.full_class.storage,
         )
     else:
         if int(result.swa_max_total_num_tokens) != int(allocator.size_swa):

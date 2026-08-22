@@ -1,14 +1,26 @@
 from __future__ import annotations
 
+from contextlib import nullcontext
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 import torch
 
 import orbitkv_sglang.plugin.lowering as lowering
 import orbitkv_sglang.plugin.relocation as relocation
 import orbitkv_sglang.plugin.state as state
-from orbitkv_sglang.runtime import ArenaIdentity, PageLease, TokenLocation, TokenPlacement, TokenView
+from orbitkv_sglang.runtime import (
+    ArenaIdentity,
+    PageLease,
+    RelocationLease,
+    RequestLease,
+    SnapshotLease,
+    TokenLocation,
+    TokenMove,
+    TokenPlacement,
+    TokenView,
+)
 from orbitkv_sglang.runtime.token_relocation import TokenDisposition, TokenDispositionKind
 
 
@@ -158,3 +170,136 @@ def test_hybrid_compact_publication_rebuilds_full_to_swa_lut(monkeypatch) -> Non
     assert torch.count_nonzero(row[24:48]).item() == 0
     assert tuple(mapping[torch.tensor(new_full)].tolist()) == retained_swa
     assert torch.count_nonzero(mapping[torch.tensor(old_full)]).item() == 0
+
+
+def test_relocation_copy_moves_a_real_mla_latent_and_rope_row(monkeypatch) -> None:
+    from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool
+
+    config = SimpleNamespace(
+        page_tokens=16,
+        classes=(
+            SimpleNamespace(
+                class_id=0,
+                storage="latent_kv",
+                layers=(0, 1),
+                components_by_name={"latent": 16, "rope": 8},
+            ),
+        ),
+        classes_by_id={},
+        sliding_class=None,
+    )
+    config.classes_by_id[0] = config.classes[0]
+    arena = ArenaIdentity(1, 2, 1, 0, 10, 8, 16, 0, 1)
+    pool = MLATokenToKVPool(
+        size=128,
+        page_size=16,
+        dtype=torch.bfloat16,
+        kv_lora_rank=8,
+        qk_rope_head_dim=4,
+        layer_num=2,
+        device="cpu",
+        enable_memory_saver=False,
+        start_layer=0,
+        end_layer=2,
+    )
+    source = 17
+    destination = 33
+    for layer, tensor in enumerate(pool.kv_buffer):
+        tensor[source].copy_(
+            torch.arange(12, dtype=torch.bfloat16).reshape(1, 12) + layer * 100
+        )
+    monkeypatch.setattr(relocation, "_config", lambda: config)
+    monkeypatch.setattr(
+        relocation, "_runtime", lambda: SimpleNamespace(arenas_by_class={0: arena})
+    )
+
+    class _Event:
+        def record(self, *, stream):
+            assert isinstance(stream, _Stream)
+
+        def synchronize(self):
+            return None
+
+    class _Stream:
+        pass
+
+    device_module = SimpleNamespace(
+        Stream=lambda **_kwargs: _Stream(),
+        Event=_Event,
+        stream=lambda _stream: nullcontext(),
+    )
+    monkeypatch.setattr(torch, "get_device_module", lambda _device: device_module)
+    state._ALLOCATOR = SimpleNamespace(get_kvcache=lambda: pool)
+    location = lambda page, offset: TokenLocation(
+        PageLease(1, 2, 1, page, 1), page - 1, offset
+    )
+    movement = TokenMove(7, location(1, 1), location(2, 1))
+    prepared = SimpleNamespace(
+        class_id=0,
+        relocation=RelocationLease(1, 0, 1),
+        request=RequestLease(1, 0, 1),
+        base_snapshot=SnapshotLease(1, 0, 1),
+        target_snapshot=SnapshotLease(1, 1, 1),
+        moves=(movement,),
+    )
+    receipts = relocation._copy_callback(
+        SimpleNamespace(device=torch.device("cpu"))
+    )(prepared)
+    assert len(receipts) == 1
+    for tensor in pool.kv_buffer:
+        assert torch.equal(tensor[destination], tensor[source])
+    counters = state._activity_counters()
+    assert counters["relocation_copy_events"] == 1
+    assert counters["relocation_copy_tokens"] == 1
+
+
+def test_relocation_copy_rejects_mla_component_drift_before_move(monkeypatch) -> None:
+    component = SimpleNamespace(
+        class_id=0,
+        storage="latent_kv",
+        layers=(0,),
+        components_by_name={"latent": 16, "rope": 8},
+    )
+    config = SimpleNamespace(
+        page_tokens=16,
+        classes=(component,),
+        classes_by_id={0: component},
+        sliding_class=None,
+    )
+    arena = ArenaIdentity(1, 2, 1, 0, 10, 8, 16, 0, 1)
+    moves = []
+    pool = SimpleNamespace(
+        dtype=torch.bfloat16,
+        kv_lora_rank=8,
+        qk_rope_head_dim=3,
+        use_dsa=False,
+        dsa_kv_cache_store_fp8=False,
+        move_kv_cache=lambda *_args: moves.append("move"),
+    )
+    monkeypatch.setattr(relocation, "_config", lambda: config)
+    monkeypatch.setattr(
+        relocation, "_runtime", lambda: SimpleNamespace(arenas_by_class={0: arena})
+    )
+    monkeypatch.setattr(
+        torch,
+        "get_device_module",
+        lambda _device: SimpleNamespace(
+            Stream=lambda **_kwargs: object(),
+            Event=lambda: SimpleNamespace(record=lambda **_kwargs: None),
+            stream=lambda _stream: nullcontext(),
+        ),
+    )
+    state._ALLOCATOR = SimpleNamespace(get_kvcache=lambda: pool)
+    location = lambda page: TokenLocation(
+        PageLease(1, 2, 1, page, 1), page - 1, 0
+    )
+    prepared = SimpleNamespace(
+        class_id=0,
+        relocation=RelocationLease(1, 0, 1),
+        moves=(TokenMove(0, location(1), location(2)),),
+    )
+    with pytest.raises(RuntimeError, match="MLA pool geometry"):
+        relocation._copy_callback(SimpleNamespace(device=torch.device("cpu")))(
+            prepared
+        )
+    assert moves == []

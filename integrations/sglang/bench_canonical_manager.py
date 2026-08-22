@@ -15,6 +15,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 from checkpoint_identity import checkpoint_identity, sha256_file
+from orbitkv_sglang.qualification import (
+    ATTENTION_BACKENDS_BY_ARCHITECTURE,
+    MOE_RUNNER_BACKENDS_BY_ARCHITECTURE,
+    PAGE_TOKENS,
+    SUPPORTED_ARCHITECTURES as _SUPPORTED_ARCHITECTURES,
+    checkpoint_attention_contract,
+)
+SUPPORTED_ARCHITECTURES = _SUPPORTED_ARCHITECTURES
 INTEGRATION_ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = INTEGRATION_ROOT.parents[1]
 ADAPTER_SOURCE_ROOT = INTEGRATION_ROOT / "src"
@@ -23,19 +31,6 @@ SUPPORTED_SGLANG_RELEASE = "v0.5.17"
 SUPPORTED_SGLANG_REVISION = "29481685462732237d80d86076d6563e1f658102"
 MANAGER_ENTRYPOINT = "orbitkv_manager"
 STOCK_PLUGIN_SENTINEL = "orbitkv_stock_baseline_no_plugins"
-PAGE_TOKENS = 16
-ATTENTION_BACKENDS_BY_ARCHITECTURE = {
-    "Qwen2ForCausalLM": "flashinfer",
-    "GptOssForCausalLM": "fa3",
-}
-MOE_RUNNER_BACKENDS_BY_ARCHITECTURE = {
-    "Qwen2ForCausalLM": None,
-    # The v0.5.17 auto route selects the external triton_kernel MXFP4 MoE
-    # path on H20.  That path is not batch invariant.  The release's built-in
-    # Triton runner fixes its tiling under deterministic inference and first
-    # expands the checkpoint's MXFP4 expert weights to BF16.
-    "GptOssForCausalLM": "triton",
-}
 SGLANG_LOADER_PATCH_PATH = "python/sglang/srt/plugins/__init__.py"
 SGLANG_LOADER_BASE_GIT_BLOB = "00ae1acd18266765c006d87ba5eec51e9f113d8d"
 SGLANG_LOADER_PATCHED_GIT_BLOB = "7c20ccb51e46942f0bbdfdbcaf88c3148939cb55"
@@ -48,7 +43,6 @@ MANAGER_LOADER_PATCH_SHA256 = (
 MANAGER_LOADER_BLOB_SHA256 = (
     "1fc2e2472e8fd55f564826509b2afa1f8f0d86a4b2ee3a3986c3209e3c09c934"
 )
-SUPPORTED_ARCHITECTURES = ("Qwen2ForCausalLM", "GptOssForCausalLM")
 QUALIFICATION_BATCH_SIZES = (1, 4)
 PREFIX_SEED_BATCH_SIZE = 1
 RECORD_SCHEMA = "orbitkv.sglang-v0517-prefix-cow-single-run.v6"
@@ -94,7 +88,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--mem-fraction-static", type=float)
     parser.add_argument(
         "--attention-backend",
-        choices=tuple(ATTENTION_BACKENDS_BY_ARCHITECTURE.values()),
+        choices=tuple(dict.fromkeys(ATTENTION_BACKENDS_BY_ARCHITECTURE.values())),
         required=True,
     )
     parser.add_argument("--seed", type=int, default=20260820)
@@ -484,38 +478,6 @@ def verify_pinned_module_constants() -> dict[str, str]:
     return actual
 
 
-def _positive_checkpoint_int(config: dict[str, Any], name: str) -> int:
-    value = config.get(name)
-    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
-        raise RuntimeError(f"checkpoint has invalid {name}")
-    return value
-
-
-def _validate_plan_attention(
-    manager_config: Any, expected_classes: Sequence[dict[str, Any]], layers: int
-) -> None:
-    if manager_config.page_tokens != PAGE_TOKENS:
-        raise RuntimeError("manager plan does not use page_tokens=16")
-    if manager_config.num_hidden_layers != layers:
-        raise RuntimeError("manager plan layer count differs from the checkpoint")
-    if len(manager_config.classes) != len(expected_classes):
-        raise RuntimeError("manager plan attention classes differ from the checkpoint")
-    for actual, expected in zip(
-        manager_config.classes, expected_classes, strict=True
-    ):
-        fields = {
-            "name": actual.name,
-            "retention": actual.retention,
-            "layers": list(actual.layers),
-            "window_tokens": actual.window_tokens,
-        }
-        if fields != expected:
-            raise RuntimeError(
-                "manager plan attention class differs from the checkpoint: "
-                f"expected={expected} actual={fields}"
-            )
-
-
 def checkpoint_contract(
     model: Path, manager_config: Any | None = None
 ) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -525,88 +487,7 @@ def checkpoint_contract(
         raise RuntimeError("cannot read checkpoint config") from error
     if not isinstance(config, dict):
         raise RuntimeError("checkpoint config must be a JSON object")
-    architectures = config.get("architectures")
-    if architectures not in ([SUPPORTED_ARCHITECTURES[0]], [SUPPORTED_ARCHITECTURES[1]]):
-        raise RuntimeError(
-            "qualification supports only Qwen2ForCausalLM or GptOssForCausalLM"
-        )
-    architecture = architectures[0]
-    num_hidden_layers = _positive_checkpoint_int(config, "num_hidden_layers")
-    vocab_size = _positive_checkpoint_int(config, "vocab_size")
-    max_position_embeddings = _positive_checkpoint_int(
-        config, "max_position_embeddings"
-    )
-
-    if architecture == "Qwen2ForCausalLM":
-        if config.get("use_sliding_window") is not False:
-            raise RuntimeError(
-                "Qwen2 qualification requires use_sliding_window=false"
-            )
-        if "layer_types" in config:
-            raise RuntimeError("Qwen2 Full qualification forbids layer_types")
-        expected_classes = [
-            {
-                "name": "full",
-                "retention": "full",
-                "layers": list(range(num_hidden_layers)),
-                "window_tokens": None,
-            }
-        ]
-        sliding_window = None
-        profile = "full"
-    else:
-        raw_layer_types = config.get("layer_types")
-        if not isinstance(raw_layer_types, list) or len(raw_layer_types) != num_hidden_layers:
-            raise RuntimeError(
-                "GptOss qualification requires one explicit layer_type per layer"
-            )
-        allowed = {"full_attention", "sliding_attention"}
-        if any(value not in allowed for value in raw_layer_types):
-            raise RuntimeError("GptOss checkpoint has an unsupported layer_type")
-        full_layers = [
-            index
-            for index, value in enumerate(raw_layer_types)
-            if value == "full_attention"
-        ]
-        sliding_layers = [
-            index
-            for index, value in enumerate(raw_layer_types)
-            if value == "sliding_attention"
-        ]
-        if not full_layers or not sliding_layers:
-            raise RuntimeError("GptOss qualification requires both Full and SWA layers")
-        sliding_window = _positive_checkpoint_int(config, "sliding_window")
-        expected_classes = [
-            {
-                "name": "full",
-                "retention": "full",
-                "layers": full_layers,
-                "window_tokens": None,
-            },
-            {
-                "name": "swa",
-                "retention": "sliding",
-                "layers": sliding_layers,
-                "window_tokens": sliding_window,
-            },
-        ]
-        profile = "hybrid_full_swa"
-
-    if manager_config is not None:
-        _validate_plan_attention(
-            manager_config, expected_classes, num_hidden_layers
-        )
-
-    values = {
-        "architecture": architecture,
-        "attention_profile": profile,
-        "attention_backend": ATTENTION_BACKENDS_BY_ARCHITECTURE[architecture],
-        "num_hidden_layers": num_hidden_layers,
-        "vocab_size": vocab_size,
-        "max_position_embeddings": max_position_embeddings,
-        "sliding_window": sliding_window,
-        "classes": expected_classes,
-    }
+    values = checkpoint_attention_contract(config, manager_config)
     identity = checkpoint_identity(model, "auto")
     if identity["weight_bytes"] <= 0 or not identity["indexed_weights_complete"]:
         raise RuntimeError("checkpoint weights are missing or incomplete")
@@ -637,6 +518,14 @@ def manager_plan_identity(config: Any) -> dict[str, Any]:
                 "bytes_per_token_per_layer": item.bytes_per_token_per_layer,
                 "window_tokens": item.window_tokens,
                 "period_blocks": item.period_blocks,
+                "storage": item.storage,
+                "components": [
+                    {
+                        "name": name,
+                        "bytes_per_token_per_layer": byte_count,
+                    }
+                    for name, byte_count in item.components
+                ],
             }
             for item in config.classes
         ],
@@ -753,6 +642,8 @@ def expected_prefix_cache(mode: str, checkpoint: dict[str, Any]) -> str:
     if mode != "stock":
         raise RuntimeError(f"unknown qualification mode: {mode}")
     if checkpoint.get("attention_profile") == "full":
+        return "RadixCache"
+    if checkpoint.get("attention_profile") == "mla":
         return "RadixCache"
     if checkpoint.get("attention_profile") == "hybrid_full_swa":
         return "UnifiedRadixCache"
@@ -1004,7 +895,7 @@ def verify_runtime_contract(
             "resolved Full capacity differs from the explicit same-cap parameter"
         )
     swa_capacity = memory.get("token_capacity_swa")
-    if checkpoint["attention_profile"] == "full":
+    if checkpoint["attention_profile"] in ("full", "mla"):
         if swa_capacity is not None:
             raise RuntimeError("Full-only execution unexpectedly exposed an SWA arena")
     elif (

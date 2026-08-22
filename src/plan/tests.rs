@@ -9,6 +9,8 @@ fn sliding_input(window: u64, page: u64) -> KvPlanInput {
             retention: RetentionKind::Sliding,
             bytes_per_token_per_layer: 128,
             window_tokens: Some(window),
+            storage: TokenStorageKind::TokenKv,
+            components: Vec::new(),
         }],
     }
 }
@@ -40,6 +42,8 @@ fn applicability_distinguishes_full_uniform_and_hybrid_lifetimes() {
             retention: RetentionKind::Full,
             bytes_per_token_per_layer: 128,
             window_tokens: None,
+            storage: TokenStorageKind::TokenKv,
+            components: Vec::new(),
         }],
     })
     .unwrap()
@@ -68,6 +72,8 @@ fn applicability_distinguishes_full_uniform_and_hybrid_lifetimes() {
                 retention: RetentionKind::Full,
                 bytes_per_token_per_layer: 128,
                 window_tokens: None,
+                storage: TokenStorageKind::TokenKv,
+                components: Vec::new(),
             },
             KvClassSpec {
                 name: "swa".into(),
@@ -75,6 +81,8 @@ fn applicability_distinguishes_full_uniform_and_hybrid_lifetimes() {
                 retention: RetentionKind::Sliding,
                 bytes_per_token_per_layer: 128,
                 window_tokens: Some(1024),
+                storage: TokenStorageKind::TokenKv,
+                components: Vec::new(),
             },
         ],
     })
@@ -104,6 +112,8 @@ fn full_and_swa_capacity_matches_page_geometry() {
                 retention: RetentionKind::Full,
                 bytes_per_token_per_layer: 4096,
                 window_tokens: None,
+                storage: TokenStorageKind::TokenKv,
+                components: Vec::new(),
             },
             KvClassSpec {
                 name: "swa".into(),
@@ -111,6 +121,8 @@ fn full_and_swa_capacity_matches_page_geometry() {
                 retention: RetentionKind::Sliding,
                 bytes_per_token_per_layer: 4096,
                 window_tokens: Some(1024),
+                storage: TokenStorageKind::TokenKv,
+                components: Vec::new(),
             },
         ],
     })
@@ -175,6 +187,8 @@ fn canonical_manager_plan_and_retention_ir_compile_identically() {
                 retention: RetentionKind::Full,
                 bytes_per_token_per_layer: 128,
                 window_tokens: None,
+                storage: TokenStorageKind::TokenKv,
+                components: Vec::new(),
             },
             KvClassSpec {
                 name: "swa".into(),
@@ -182,6 +196,8 @@ fn canonical_manager_plan_and_retention_ir_compile_identically() {
                 retention: RetentionKind::Sliding,
                 bytes_per_token_per_layer: 128,
                 window_tokens: Some(1024),
+                storage: TokenStorageKind::TokenKv,
+                components: Vec::new(),
             },
         ],
     };
@@ -194,6 +210,53 @@ fn canonical_manager_plan_and_retention_ir_compile_identically() {
         retention_plan.layout_program().unwrap()
     );
     assert_eq!(canonical_plan.fingerprint(), retention_plan.fingerprint());
+}
+
+#[test]
+fn latent_storage_requires_exact_component_geometry() {
+    let latent = |components: Vec<TokenComponentSpec>| KvPlanInput {
+        page_tokens: 16,
+        classes: vec![KvClassSpec {
+            name: "mla".into(),
+            layers: vec![0],
+            retention: RetentionKind::Full,
+            bytes_per_token_per_layer: 1_152,
+            window_tokens: None,
+            storage: TokenStorageKind::LatentKv,
+            components,
+        }],
+    };
+    let valid = latent(vec![
+        TokenComponentSpec {
+            name: "latent".into(),
+            bytes_per_token_per_layer: 1_024,
+        },
+        TokenComponentSpec {
+            name: "rope".into(),
+            bytes_per_token_per_layer: 128,
+        },
+    ]);
+    let compiled = compile_plan(valid).unwrap();
+    assert_eq!(compiled.classes[0].spec.storage, TokenStorageKind::LatentKv);
+    assert_eq!(compiled.classes[0].spec.components.len(), 2);
+
+    assert!(matches!(
+        compile_plan(latent(Vec::new())),
+        Err(PlanError::InvalidTokenComponents { .. })
+    ));
+    assert!(matches!(
+        compile_plan(latent(vec![
+            TokenComponentSpec {
+                name: "latent".into(),
+                bytes_per_token_per_layer: 1_024,
+            },
+            TokenComponentSpec {
+                name: "rope".into(),
+                bytes_per_token_per_layer: 64,
+            },
+        ])),
+        Err(PlanError::TokenComponentBytesMismatch { .. })
+    ));
 }
 
 #[test]

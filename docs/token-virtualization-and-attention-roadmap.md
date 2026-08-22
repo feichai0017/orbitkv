@@ -153,10 +153,13 @@ component geometry for independent copies; recurrent and convolution state use
 a generation-checked fixed-width checkpoint transaction with no TokenMove
 surface.
 
-The next engine step is model-specific tensor discovery and copy/publication
-adapters for MLA, then recurrent and convolution state. Each backend needs its
-own exact-byte or numerical-state oracle and H20 qualification; passing the Full
-KV relocation path does not qualify any of them.
+The pure-MLA host seam now validates compiled latent/RoPE byte widths against
+SGLang's real `MLATokenToKVPool` and exercises its combined-row copy API. It is
+limited to BF16 Full retention, page16, eager, single GPU, without DSA, FP4, or
+DCP. The next engine step is real-model H20 qualification for that seam, then
+model-specific recurrent and convolution copy/publication adapters. Each
+backend needs its own exact-byte or numerical-state oracle; passing the Full KV
+relocation path does not qualify any of them.
 
 ## M4: Multiple completion domains and CUDA Graph
 

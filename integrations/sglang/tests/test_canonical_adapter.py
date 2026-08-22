@@ -1936,7 +1936,11 @@ def test_full_and_hybrid_geometry_gates_are_semantic_not_architecture_allowlists
             has_attention_sinks=architecture == "GptOssForCausalLM",
         )
         validation._validate_checkpoint_geometry(
-            SimpleNamespace(model_config=model, kv_cache_dtype=torch.bfloat16)
+            SimpleNamespace(
+                model_config=model,
+                kv_cache_dtype=torch.bfloat16,
+                use_mla_backend=False,
+            )
         )
 
 
@@ -1958,6 +1962,7 @@ def test_attention_backend_contract_accepts_uniform_token_kv_backends(
     )
     configurator = SimpleNamespace(
         model_config=model,
+        use_mla_backend=False,
         server_args=SimpleNamespace(get_attention_backends=lambda: expected),
     )
     assert validation._validate_attention_backend_contract(configurator) == architecture

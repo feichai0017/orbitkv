@@ -439,6 +439,12 @@ def _build_token_to_kv_pool_allocator(
     dtype = configurator.kv_cache_dtype
     full_type, hybrid_type, pure_type = _facade_types()
     retentions = tuple(item.retention for item in _config().classes)
+    storage = tuple(item.storage for item in _config().classes)
+    is_mla = storage == ("latent_kv",)
+    if bool(getattr(configurator, "use_mla_backend", False)) != is_mla:
+        raise RuntimeError(
+            "SGLang attention storage differs from the compiled token classes"
+        )
     registrations: tuple[ArenaRegistration, ...]
 
     if retentions == ("full",):

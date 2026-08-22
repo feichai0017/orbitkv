@@ -10,6 +10,7 @@ from typing import Any, Literal, Mapping
 
 PAGE_TOKENS = 16
 RetentionKind = Literal["full", "sliding"]
+TokenStorageKind = Literal["token_kv", "latent_kv"]
 ReclamationMode = Literal["off", "naive", "relocate"]
 
 
@@ -39,10 +40,16 @@ class ClassConfig:
     bytes_per_token_per_layer: int
     window_tokens: int | None
     period_blocks: int | None
+    storage: TokenStorageKind = "token_kv"
+    components: tuple[tuple[str, int], ...] = ()
 
     @property
     def kernel_window_left(self) -> int | None:
         return None if self.window_tokens is None else self.window_tokens - 1
+
+    @property
+    def components_by_name(self) -> dict[str, int]:
+        return dict(self.components)
 
     def minimum_sliding_pool_tokens(
         self, *, maximum_running_requests: int, chunked_prefill_tokens: int
@@ -134,6 +141,13 @@ def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
     if retentions not in (("full",), ("sliding",), ("full", "sliding")):
         raise ValueError(
             "KV classes must be Full, sliding, or ordered Full then sliding"
+        )
+    storage = tuple(item.storage for item in classes)
+    if "latent_kv" in storage and (
+        len(classes) != 1 or retentions != ("full",) or storage != ("latent_kv",)
+    ):
+        raise ValueError(
+            "first SGLang MLA profile requires one Full latent_kv class"
         )
 
     layers = [layer for item in classes for layer in item.layers]
@@ -233,26 +247,30 @@ def _class_config(index: int, raw: Any, page_tokens: int) -> ClassConfig:
         "bytes_per_token_per_layer",
         "window_tokens",
     }
+    optional_fields = {"storage", "components"}
     retention = _string(value, "retention", path)
     if retention == "full":
-        _exact_keys(value, path, base_fields)
+        _exact_keys(value, path, base_fields, optional_fields)
         if value.get("window_tokens") is not None:
             raise ValueError(f"{path}.window_tokens must be null for full retention")
-        expected_name = "full"
         window_tokens = None
         period_blocks = None
     elif retention == "sliding":
-        _exact_keys(value, path, base_fields | {"window_tokens"})
-        expected_name = "swa"
+        _exact_keys(value, path, base_fields | {"window_tokens"}, optional_fields)
         window_tokens = _positive_int(value, "window_tokens", path)
         period_blocks = 1 + _ceil_div(window_tokens - 1, page_tokens)
     else:
         raise ValueError(f"{path}.retention must be 'full' or 'sliding'")
     name = _string(value, "name", path)
-    if name != expected_name:
+    storage = value.get("storage", "token_kv")
+    if storage not in ("token_kv", "latent_kv"):
+        raise ValueError(f"{path}.storage must be 'token_kv' or 'latent_kv'")
+    expected_name = "full" if retention == "full" else "swa"
+    if storage == "token_kv" and name != expected_name:
         raise ValueError(
-            f"{path}.name must be {expected_name!r} for {retention} retention"
+            f"{path}.name must be {expected_name!r} for {retention} token_kv"
         )
+    components = _token_components(value, path, storage)
 
     raw_layers = value.get("layers")
     if not isinstance(raw_layers, list) or not raw_layers:
@@ -279,7 +297,43 @@ def _class_config(index: int, raw: Any, page_tokens: int) -> ClassConfig:
         ),
         window_tokens=window_tokens,
         period_blocks=period_blocks,
+        storage=storage,
+        components=components,
     )
+
+
+def _token_components(
+    value: Mapping[str, Any], path: str, storage: str
+) -> tuple[tuple[str, int], ...]:
+    raw = value.get("components", [])
+    if not isinstance(raw, list):
+        raise ValueError(f"{path}.components must be a list")
+    if not raw:
+        if storage != "token_kv":
+            raise ValueError(f"{path}.latent_kv requires latent and rope components")
+        return ()
+    expected = ("key", "value") if storage == "token_kv" else ("latent", "rope")
+    components: list[tuple[str, int]] = []
+    for index, item in enumerate(raw):
+        component_path = f"{path}.components[{index}]"
+        component = _mapping(item, component_path)
+        _exact_keys(
+            component, component_path, {"name", "bytes_per_token_per_layer"}
+        )
+        components.append(
+            (
+                _string(component, "name", component_path),
+                _positive_int(component, "bytes_per_token_per_layer", component_path),
+            )
+        )
+    result = tuple(components)
+    if tuple(name for name, _bytes in result) != expected:
+        raise ValueError(f"{path}.components do not match {storage} storage")
+    if sum(byte_count for _name, byte_count in result) != _positive_int(
+        value, "bytes_per_token_per_layer", path
+    ):
+        raise ValueError(f"{path}.component bytes do not match the class width")
+    return result
 
 
 def _configured_file(environ: Mapping[str, str], name: str) -> Path:
@@ -315,9 +369,15 @@ def _mapping(value: Any, path: str) -> dict[str, Any]:
     return value
 
 
-def _exact_keys(value: Mapping[str, Any], path: str, required: set[str]) -> None:
+def _exact_keys(
+    value: Mapping[str, Any],
+    path: str,
+    required: set[str],
+    optional: set[str] | None = None,
+) -> None:
+    optional = set() if optional is None else optional
     missing = required - value.keys()
-    unknown = value.keys() - required
+    unknown = value.keys() - required - optional
     if missing:
         raise ValueError(f"{path} is missing fields: {', '.join(sorted(missing))}")
     if unknown:

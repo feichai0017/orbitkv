@@ -267,6 +267,12 @@ fn compile_state_plan_separates_mla_recurrent_and_convolution_contracts() {
     assert_eq!(manager["classes"].as_array().unwrap().len(), 1);
     assert_eq!(manager["classes"][0]["name"], "mla");
     assert_eq!(manager["classes"][0]["bytes_per_token_per_layer"], 1_152);
+    assert_eq!(manager["classes"][0]["storage"], "latent_kv");
+    assert_eq!(manager["classes"][0]["components"][0]["name"], "latent");
+    assert_eq!(
+        manager["classes"][0]["components"][1]["bytes_per_token_per_layer"],
+        128
+    );
     let generated = TempJson::new(&serde_json::to_vec(&manager).unwrap());
     let compiled_manager = run(&["compile-plan", generated.0.to_str().unwrap()]);
     assert!(
@@ -296,6 +302,31 @@ fn state_manager_plan_rejects_a_checkpoint_only_model() {
     let output = run(&["compile-state-manager-plan", plan.0.to_str().unwrap()]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("no token-addressable state"));
+}
+
+#[test]
+fn deepseek_v2_lite_mla_examples_compile_to_the_same_manager_plan() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let state_plan = root.join("examples/deepseek-v2-lite-mla-state-plan.json");
+    let manager_plan = root.join("examples/deepseek-v2-lite-mla.json");
+    let projected = run(&["compile-state-manager-plan", state_plan.to_str().unwrap()]);
+    assert!(
+        projected.status.success(),
+        "{}",
+        String::from_utf8_lossy(&projected.stderr)
+    );
+    let expected: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(&manager_plan).unwrap()).unwrap();
+    assert_eq!(
+        serde_json::from_slice::<serde_json::Value>(&projected.stdout).unwrap(),
+        expected
+    );
+    let compiled = run(&["compile-plan", manager_plan.to_str().unwrap()]);
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
 }
 
 #[test]

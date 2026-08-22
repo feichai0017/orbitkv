@@ -37,3 +37,29 @@ def test_base_runner_contract_is_full_eager_and_crosses_packed_page() -> None:
     assert base.decode_tokens == 17
     assert base.prompt_tokens - bench.VICTIM_COUNT + base.decode_tokens - 1 == 40
     assert base.chunked_prefill_size == 4 * 48
+
+
+def test_manager_state_accepts_one_or_two_compiled_token_classes(monkeypatch) -> None:
+    counters = {
+        "quarantined_pages": 0,
+        "exhausted_pages": 0,
+        "prepared_steps": 0,
+        "submitted_steps": 0,
+        "pending_reclamations": 0,
+    }
+    state = {
+        "abi_version": 7,
+        "manager_stats": counters,
+        "arena_stats": [{}, {}],
+        "batch_counters": {},
+    }
+    monkeypatch.setattr(
+        bench.common, "_state", lambda _info: {"orbitkv_manager": state}
+    )
+    assert bench._manager_state({}, "test", 2) is state
+    try:
+        bench._manager_state({}, "test", 1)
+    except RuntimeError as error:
+        assert "malformed" in str(error)
+    else:
+        raise AssertionError("arena cardinality drift was accepted")

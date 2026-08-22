@@ -78,7 +78,28 @@ pub fn compile_retention_program(
 /// or checked arithmetic overflow.
 pub fn compile_plan(input: KvPlanInput) -> Result<CompiledKvPlan, PlanError> {
     validate_plan_input(&input)?;
-    compile_retention_program(input.into_retention_program()?)
+    let storage = input
+        .classes
+        .iter()
+        .map(|class| {
+            (
+                class.name.clone(),
+                (class.storage, class.components.clone()),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut compiled = compile_retention_program(input.into_retention_program()?)?;
+    for class in &mut compiled.classes {
+        let (kind, components) =
+            storage
+                .get(&class.spec.name)
+                .ok_or_else(|| PlanError::InvalidCompiledClass {
+                    class: class.spec.name.clone(),
+                })?;
+        class.spec.storage = *kind;
+        class.spec.components.clone_from(components);
+    }
+    Ok(compiled)
 }
 
 struct InferredClassInput {
@@ -105,6 +126,8 @@ impl InferredClassInput {
                 retention,
                 bytes_per_token_per_layer: state.bytes_per_token_per_layer,
                 window_tokens,
+                storage: super::TokenStorageKind::TokenKv,
+                components: Vec::new(),
             },
             kv_head_range: state.kv_head_range.clone(),
             chunk_tokens: None,
@@ -121,6 +144,8 @@ impl InferredClassInput {
                 retention: RetentionKind::Chunked,
                 bytes_per_token_per_layer: state.bytes_per_token_per_layer,
                 window_tokens: None,
+                storage: super::TokenStorageKind::TokenKv,
+                components: Vec::new(),
             },
             kv_head_range: state.kv_head_range.clone(),
             chunk_tokens: Some(chunk_tokens),
@@ -309,6 +334,7 @@ fn validate_class(class: &KvClassSpec) -> Result<(), PlanError> {
             class: class.name.clone(),
         });
     }
+    validate_token_components(class)?;
     match class.retention {
         RetentionKind::Full | RetentionKind::Chunked if class.window_tokens.is_some() => {
             Err(PlanError::FullHasWindow {
@@ -322,6 +348,49 @@ fn validate_class(class: &KvClassSpec) -> Result<(), PlanError> {
         }
         _ => Ok(()),
     }
+}
+
+fn validate_token_components(class: &KvClassSpec) -> Result<(), PlanError> {
+    if class.components.is_empty() {
+        return if class.storage == super::TokenStorageKind::TokenKv {
+            Ok(())
+        } else {
+            Err(PlanError::InvalidTokenComponents {
+                class: class.name.clone(),
+                storage: class.storage,
+            })
+        };
+    }
+    let expected = match class.storage {
+        super::TokenStorageKind::TokenKv => ["key", "value"],
+        super::TokenStorageKind::LatentKv => ["latent", "rope"],
+    };
+    if class.components.len() != expected.len()
+        || class
+            .components
+            .iter()
+            .zip(expected)
+            .any(|(component, name)| {
+                component.name != name || component.bytes_per_token_per_layer == 0
+            })
+    {
+        return Err(PlanError::InvalidTokenComponents {
+            class: class.name.clone(),
+            storage: class.storage,
+        });
+    }
+    let total = class.components.iter().try_fold(0_u64, |sum, component| {
+        sum.checked_add(component.bytes_per_token_per_layer)
+            .ok_or(PlanError::ArithmeticOverflow {
+                calculation: "token component byte width",
+            })
+    })?;
+    if total != class.bytes_per_token_per_layer {
+        return Err(PlanError::TokenComponentBytesMismatch {
+            class: class.name.clone(),
+        });
+    }
+    Ok(())
 }
 
 fn validate_head_range(state: &RetentionStateDecl) -> Result<(), PlanError> {
