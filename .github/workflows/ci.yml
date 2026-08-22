@@ -47,7 +47,7 @@ jobs:
       - run: cargo test --locked --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets
       - run: cargo clippy --locked --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets -- -D warnings
       - run: cargo build --locked --manifest-path crates/orbitkv-ffi/Cargo.toml
-      - name: Verify the exact ABI7 symbol set
+      - name: Verify the exact ABI8 symbol set
         run: |
           nm -D --defined-only crates/orbitkv-ffi/target/debug/liborbitkv_ffi.so \
             | awk '{print $3}' \
@@ -83,6 +83,17 @@ jobs:
           orbitkv_manager_submit_batch
           orbitkv_manager_submit_relocation_batch
           orbitkv_manager_token_views_batch
+          orbitkv_state_pool_abort_batch
+          orbitkv_state_pool_acknowledge_batch
+          orbitkv_state_pool_complete_batch
+          orbitkv_state_pool_create
+          orbitkv_state_pool_current_batch
+          orbitkv_state_pool_destroy
+          orbitkv_state_pool_identity
+          orbitkv_state_pool_prepare_batch
+          orbitkv_state_pool_retire_owners_batch
+          orbitkv_state_pool_stats
+          orbitkv_state_pool_submit_batch
           EOF
           diff -u /tmp/orbitkv-expected-symbols /tmp/orbitkv-actual-symbols
       - name: Test C header and dynamic ABI

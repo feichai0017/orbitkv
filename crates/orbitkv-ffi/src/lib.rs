@@ -2,10 +2,12 @@ use std::ffi::{CString, c_char};
 use std::panic::{AssertUnwindSafe, catch_unwind};
 
 mod manager;
+mod state_pool;
 
 pub use manager::*;
+pub use state_pool::*;
 
-pub const ORBITKV_ABI_VERSION: u32 = 7;
+pub const ORBITKV_ABI_VERSION: u32 = 8;
 pub const ORBITKV_STATUS_OK: i32 = 0;
 pub const ORBITKV_STATUS_BUFFER_TOO_SMALL: i32 = 1;
 pub const ORBITKV_STATUS_RETRYABLE_CONFLICT: i32 = 2;

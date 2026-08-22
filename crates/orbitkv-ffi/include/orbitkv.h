@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define ORBITKV_ABI_VERSION 7u
+#define ORBITKV_ABI_VERSION 8u
 
 #define ORBITKV_STATUS_OK 0
 #define ORBITKV_STATUS_BUFFER_TOO_SMALL 1
@@ -54,13 +54,16 @@ extern "C" {
 #define ORBITKV_TOKEN_POLICY_EVICTED 2u
 
 /*
- * ABI7 is breaking and batch-only. Every caller-supplied reserved field must
+ * ABI8 is breaking. Manager lifecycle operations are batch-only; the separate
+ * fixed-state pool also exposes identity, stats, and destroy operations. Every
+ * caller-supplied reserved field must
  * be zero. Mutating calls validate count envelopes, pointers, reserved fields,
  * canonical spans, and all output capacities before core mutation. A short
  * buffer reports required counts and leaves manager state unchanged.
  */
 
 typedef struct OrbitKvManagerHandle OrbitKvManagerHandle;
+typedef struct OrbitKvStatePoolHandle OrbitKvStatePoolHandle;
 
 #define ORBITKV_LEASE(name)                                                   \
   typedef struct name {                                                       \
@@ -76,6 +79,8 @@ ORBITKV_LEASE(OrbitKvSubmissionLease);
 ORBITKV_LEASE(OrbitKvReclamationLease);
 ORBITKV_LEASE(OrbitKvRelocationLease);
 ORBITKV_LEASE(OrbitKvPrefixLease);
+ORBITKV_LEASE(OrbitKvStateTransitionLease);
+ORBITKV_LEASE(OrbitKvStateRetirementLease);
 
 #undef ORBITKV_LEASE
 
@@ -86,6 +91,114 @@ typedef struct OrbitKvPageLease {
   uint32_t page_id;
   uint32_t pool_id;
 } OrbitKvPageLease;
+
+typedef struct OrbitKvStatePoolConfig {
+  uint64_t engine_epoch;
+  uint64_t pool_epoch;
+  uint64_t byte_count;
+  uint32_t pool_id;
+  uint32_t slot_count;
+} OrbitKvStatePoolConfig;
+
+typedef struct OrbitKvStateSlotLease {
+  uint64_t engine_epoch;
+  uint64_t pool_epoch;
+  uint64_t generation;
+  uint32_t slot_id;
+  uint32_t pool_id;
+} OrbitKvStateSlotLease;
+
+typedef struct OrbitKvStatePoolIdentity {
+  uint64_t engine_epoch;
+  uint64_t pool_epoch;
+  uint64_t byte_count;
+  uint32_t pool_id;
+  uint32_t slot_count;
+} OrbitKvStatePoolIdentity;
+
+typedef struct OrbitKvStatePoolStats {
+  OrbitKvStatePoolIdentity identity;
+  uint64_t free_slots;
+  uint64_t reserved_slots;
+  uint64_t relocating_slots;
+  uint64_t live_slots;
+  uint64_t retiring_slots;
+  uint64_t quarantined_slots;
+  uint64_t active_owners;
+  uint64_t pending_transitions;
+  uint64_t pending_retirements;
+} OrbitKvStatePoolStats;
+
+typedef struct OrbitKvStatePrepareItem {
+  uint64_t owner_id;
+  OrbitKvStateSlotLease expected;
+  uint32_t expected_present;
+  uint32_t reserved;
+} OrbitKvStatePrepareItem;
+
+typedef struct OrbitKvStateCopyIntent {
+  OrbitKvStateTransitionLease transition;
+  uint64_t owner_id;
+  OrbitKvStateSlotLease source;
+  OrbitKvStateSlotLease destination;
+  uint64_t byte_count;
+  uint32_t source_present;
+  uint32_t reserved;
+} OrbitKvStateCopyIntent;
+
+typedef struct OrbitKvStateCopyReceipt {
+  OrbitKvStateTransitionLease transition;
+  OrbitKvStateSlotLease source;
+  OrbitKvStateSlotLease destination;
+  uint64_t byte_count;
+  uint8_t source_present;
+  uint8_t observed;
+  uint8_t written;
+  uint8_t reserved8;
+  uint32_t reserved32;
+} OrbitKvStateCopyReceipt;
+
+typedef struct OrbitKvStateCompletionReceipt {
+  uint64_t engine_epoch;
+  uint64_t completion_domain;
+  uint64_t completion_value;
+  uint32_t confirmed;
+  uint32_t reserved;
+} OrbitKvStateCompletionReceipt;
+
+typedef struct OrbitKvStateRetirementCertificate {
+  OrbitKvStateRetirementLease retirement;
+  OrbitKvStateSlotLease slot;
+  uint64_t byte_count;
+  uint64_t completion_domain;
+  uint64_t completion_value;
+} OrbitKvStateRetirementCertificate;
+
+typedef struct OrbitKvStatePublication {
+  uint64_t owner_id;
+  OrbitKvStateSlotLease slot;
+  OrbitKvStateRetirementCertificate retirement;
+  uint32_t retirement_present;
+  uint32_t reserved;
+} OrbitKvStatePublication;
+
+typedef struct OrbitKvStateAbortItem {
+  OrbitKvStateTransitionLease transition;
+  uint32_t backend_unobserved;
+  uint32_t reserved;
+} OrbitKvStateAbortItem;
+
+typedef struct OrbitKvStateRetireOwnerItem {
+  uint64_t owner_id;
+  OrbitKvStateSlotLease expected;
+} OrbitKvStateRetireOwnerItem;
+
+typedef struct OrbitKvStateCurrent {
+  uint64_t owner_id;
+  OrbitKvStateSlotLease slot;
+  uint32_t present;
+  uint32_t reserved;
+} OrbitKvStateCurrent;
 
 typedef struct OrbitKvBackendArenaRegistration {
   uint32_t pool_id;
@@ -461,7 +574,7 @@ typedef struct OrbitKvManagerStats {
 } OrbitKvManagerStats;
 
 /*
- * ABI7 token views separate logical token identity and disposition from its
+ * ABI8 token views separate logical token identity and disposition from its
  * current physical placement. location_present is exactly 0 or 1.
  */
 typedef struct OrbitKvTokenDisposition {
@@ -522,7 +635,7 @@ typedef struct OrbitKvTokenDispositionBatchItem {
 } OrbitKvTokenDispositionBatchItem;
 
 /*
- * ABI7 relocation is a prepare/copy/submit/complete transaction. Sources are
+ * ABI8 relocation is a prepare/copy/submit/complete transaction. Sources are
  * not reusable until completion returns reclamation certificates and their
  * mirror removals have been synchronized and acknowledged.
  */
@@ -635,6 +748,14 @@ ORBITKV_LAYOUT(OrbitKvPrefixLease, 16, 8);
 ORBITKV_OFFSET(OrbitKvPrefixLease, engine_epoch, 0);
 ORBITKV_OFFSET(OrbitKvPrefixLease, slot, 8);
 ORBITKV_OFFSET(OrbitKvPrefixLease, generation, 12);
+ORBITKV_LAYOUT(OrbitKvStateTransitionLease, 16, 8);
+ORBITKV_OFFSET(OrbitKvStateTransitionLease, engine_epoch, 0);
+ORBITKV_OFFSET(OrbitKvStateTransitionLease, slot, 8);
+ORBITKV_OFFSET(OrbitKvStateTransitionLease, generation, 12);
+ORBITKV_LAYOUT(OrbitKvStateRetirementLease, 16, 8);
+ORBITKV_OFFSET(OrbitKvStateRetirementLease, engine_epoch, 0);
+ORBITKV_OFFSET(OrbitKvStateRetirementLease, slot, 8);
+ORBITKV_OFFSET(OrbitKvStateRetirementLease, generation, 12);
 ORBITKV_LAYOUT(OrbitKvPageLease, 32, 8);
 ORBITKV_OFFSET(OrbitKvPageLease, engine_epoch, 0);
 ORBITKV_OFFSET(OrbitKvPageLease, pool_epoch, 8);
@@ -1020,6 +1141,88 @@ ORBITKV_LAYOUT(OrbitKvRelocationUnobservedReceipt, 24, 8);
 ORBITKV_OFFSET(OrbitKvRelocationUnobservedReceipt, relocation, 0);
 ORBITKV_OFFSET(OrbitKvRelocationUnobservedReceipt, backend_unobserved, 16);
 ORBITKV_OFFSET(OrbitKvRelocationUnobservedReceipt, reserved, 20);
+ORBITKV_LAYOUT(OrbitKvStatePoolConfig, 32, 8);
+ORBITKV_OFFSET(OrbitKvStatePoolConfig, engine_epoch, 0);
+ORBITKV_OFFSET(OrbitKvStatePoolConfig, pool_epoch, 8);
+ORBITKV_OFFSET(OrbitKvStatePoolConfig, byte_count, 16);
+ORBITKV_OFFSET(OrbitKvStatePoolConfig, pool_id, 24);
+ORBITKV_OFFSET(OrbitKvStatePoolConfig, slot_count, 28);
+ORBITKV_LAYOUT(OrbitKvStateSlotLease, 32, 8);
+ORBITKV_OFFSET(OrbitKvStateSlotLease, engine_epoch, 0);
+ORBITKV_OFFSET(OrbitKvStateSlotLease, pool_epoch, 8);
+ORBITKV_OFFSET(OrbitKvStateSlotLease, generation, 16);
+ORBITKV_OFFSET(OrbitKvStateSlotLease, slot_id, 24);
+ORBITKV_OFFSET(OrbitKvStateSlotLease, pool_id, 28);
+ORBITKV_LAYOUT(OrbitKvStatePoolIdentity, 32, 8);
+ORBITKV_OFFSET(OrbitKvStatePoolIdentity, engine_epoch, 0);
+ORBITKV_OFFSET(OrbitKvStatePoolIdentity, pool_epoch, 8);
+ORBITKV_OFFSET(OrbitKvStatePoolIdentity, byte_count, 16);
+ORBITKV_OFFSET(OrbitKvStatePoolIdentity, pool_id, 24);
+ORBITKV_OFFSET(OrbitKvStatePoolIdentity, slot_count, 28);
+ORBITKV_LAYOUT(OrbitKvStatePoolStats, 104, 8);
+ORBITKV_OFFSET(OrbitKvStatePoolStats, identity, 0);
+ORBITKV_OFFSET(OrbitKvStatePoolStats, free_slots, 32);
+ORBITKV_OFFSET(OrbitKvStatePoolStats, reserved_slots, 40);
+ORBITKV_OFFSET(OrbitKvStatePoolStats, relocating_slots, 48);
+ORBITKV_OFFSET(OrbitKvStatePoolStats, live_slots, 56);
+ORBITKV_OFFSET(OrbitKvStatePoolStats, retiring_slots, 64);
+ORBITKV_OFFSET(OrbitKvStatePoolStats, quarantined_slots, 72);
+ORBITKV_OFFSET(OrbitKvStatePoolStats, active_owners, 80);
+ORBITKV_OFFSET(OrbitKvStatePoolStats, pending_transitions, 88);
+ORBITKV_OFFSET(OrbitKvStatePoolStats, pending_retirements, 96);
+ORBITKV_LAYOUT(OrbitKvStatePrepareItem, 48, 8);
+ORBITKV_OFFSET(OrbitKvStatePrepareItem, owner_id, 0);
+ORBITKV_OFFSET(OrbitKvStatePrepareItem, expected, 8);
+ORBITKV_OFFSET(OrbitKvStatePrepareItem, expected_present, 40);
+ORBITKV_OFFSET(OrbitKvStatePrepareItem, reserved, 44);
+ORBITKV_LAYOUT(OrbitKvStateCopyIntent, 104, 8);
+ORBITKV_OFFSET(OrbitKvStateCopyIntent, transition, 0);
+ORBITKV_OFFSET(OrbitKvStateCopyIntent, owner_id, 16);
+ORBITKV_OFFSET(OrbitKvStateCopyIntent, source, 24);
+ORBITKV_OFFSET(OrbitKvStateCopyIntent, destination, 56);
+ORBITKV_OFFSET(OrbitKvStateCopyIntent, byte_count, 88);
+ORBITKV_OFFSET(OrbitKvStateCopyIntent, source_present, 96);
+ORBITKV_OFFSET(OrbitKvStateCopyIntent, reserved, 100);
+ORBITKV_LAYOUT(OrbitKvStateCopyReceipt, 96, 8);
+ORBITKV_OFFSET(OrbitKvStateCopyReceipt, transition, 0);
+ORBITKV_OFFSET(OrbitKvStateCopyReceipt, source, 16);
+ORBITKV_OFFSET(OrbitKvStateCopyReceipt, destination, 48);
+ORBITKV_OFFSET(OrbitKvStateCopyReceipt, byte_count, 80);
+ORBITKV_OFFSET(OrbitKvStateCopyReceipt, source_present, 88);
+ORBITKV_OFFSET(OrbitKvStateCopyReceipt, observed, 89);
+ORBITKV_OFFSET(OrbitKvStateCopyReceipt, written, 90);
+ORBITKV_OFFSET(OrbitKvStateCopyReceipt, reserved8, 91);
+ORBITKV_OFFSET(OrbitKvStateCopyReceipt, reserved32, 92);
+ORBITKV_LAYOUT(OrbitKvStateCompletionReceipt, 32, 8);
+ORBITKV_OFFSET(OrbitKvStateCompletionReceipt, engine_epoch, 0);
+ORBITKV_OFFSET(OrbitKvStateCompletionReceipt, completion_domain, 8);
+ORBITKV_OFFSET(OrbitKvStateCompletionReceipt, completion_value, 16);
+ORBITKV_OFFSET(OrbitKvStateCompletionReceipt, confirmed, 24);
+ORBITKV_OFFSET(OrbitKvStateCompletionReceipt, reserved, 28);
+ORBITKV_LAYOUT(OrbitKvStateRetirementCertificate, 72, 8);
+ORBITKV_OFFSET(OrbitKvStateRetirementCertificate, retirement, 0);
+ORBITKV_OFFSET(OrbitKvStateRetirementCertificate, slot, 16);
+ORBITKV_OFFSET(OrbitKvStateRetirementCertificate, byte_count, 48);
+ORBITKV_OFFSET(OrbitKvStateRetirementCertificate, completion_domain, 56);
+ORBITKV_OFFSET(OrbitKvStateRetirementCertificate, completion_value, 64);
+ORBITKV_LAYOUT(OrbitKvStatePublication, 120, 8);
+ORBITKV_OFFSET(OrbitKvStatePublication, owner_id, 0);
+ORBITKV_OFFSET(OrbitKvStatePublication, slot, 8);
+ORBITKV_OFFSET(OrbitKvStatePublication, retirement, 40);
+ORBITKV_OFFSET(OrbitKvStatePublication, retirement_present, 112);
+ORBITKV_OFFSET(OrbitKvStatePublication, reserved, 116);
+ORBITKV_LAYOUT(OrbitKvStateAbortItem, 24, 8);
+ORBITKV_OFFSET(OrbitKvStateAbortItem, transition, 0);
+ORBITKV_OFFSET(OrbitKvStateAbortItem, backend_unobserved, 16);
+ORBITKV_OFFSET(OrbitKvStateAbortItem, reserved, 20);
+ORBITKV_LAYOUT(OrbitKvStateRetireOwnerItem, 40, 8);
+ORBITKV_OFFSET(OrbitKvStateRetireOwnerItem, owner_id, 0);
+ORBITKV_OFFSET(OrbitKvStateRetireOwnerItem, expected, 8);
+ORBITKV_LAYOUT(OrbitKvStateCurrent, 48, 8);
+ORBITKV_OFFSET(OrbitKvStateCurrent, owner_id, 0);
+ORBITKV_OFFSET(OrbitKvStateCurrent, slot, 8);
+ORBITKV_OFFSET(OrbitKvStateCurrent, present, 40);
+ORBITKV_OFFSET(OrbitKvStateCurrent, reserved, 44);
 
 #undef ORBITKV_OFFSET
 #undef ORBITKV_LAYOUT
@@ -1240,6 +1443,65 @@ int32_t orbitkv_manager_stats(
  */
 int32_t orbitkv_manager_destroy(
     OrbitKvManagerHandle *manager, char *error_buffer,
+    size_t error_buffer_len);
+
+/*
+ * ABI8 fixed-state pool. Recurrent/convolution slots are request-level state
+ * and deliberately have no token ids or TokenMove surface.
+ */
+int32_t orbitkv_state_pool_create(
+    const OrbitKvStatePoolConfig *config, OrbitKvStatePoolHandle **out_handle,
+    char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_state_pool_identity(
+    OrbitKvStatePoolHandle *handle, OrbitKvStatePoolIdentity *output,
+    char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_state_pool_stats(
+    OrbitKvStatePoolHandle *handle, OrbitKvStatePoolStats *output,
+    char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_state_pool_prepare_batch(
+    OrbitKvStatePoolHandle *handle, const OrbitKvStatePrepareItem *items,
+    uint32_t item_count, OrbitKvStateCopyIntent *outputs,
+    uint32_t output_capacity, uint32_t *out_count, char *error_buffer,
+    size_t error_buffer_len);
+
+int32_t orbitkv_state_pool_submit_batch(
+    OrbitKvStatePoolHandle *handle, const OrbitKvStateCopyReceipt *receipts,
+    uint32_t receipt_count, char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_state_pool_complete_batch(
+    OrbitKvStatePoolHandle *handle,
+    const OrbitKvStateCompletionReceipt *completion,
+    const OrbitKvStateTransitionLease *transitions, uint32_t transition_count,
+    OrbitKvStatePublication *outputs, uint32_t output_capacity,
+    uint32_t *out_count, char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_state_pool_abort_batch(
+    OrbitKvStatePoolHandle *handle, const OrbitKvStateAbortItem *items,
+    uint32_t item_count, char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_state_pool_retire_owners_batch(
+    OrbitKvStatePoolHandle *handle,
+    const OrbitKvStateCompletionReceipt *completion,
+    const OrbitKvStateRetireOwnerItem *items, uint32_t item_count,
+    OrbitKvStateRetirementCertificate *outputs, uint32_t output_capacity,
+    uint32_t *out_count, char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_state_pool_acknowledge_batch(
+    OrbitKvStatePoolHandle *handle,
+    const OrbitKvStateRetirementCertificate *certificates,
+    uint32_t certificate_count, char *error_buffer, size_t error_buffer_len);
+
+int32_t orbitkv_state_pool_current_batch(
+    OrbitKvStatePoolHandle *handle, const uint64_t *owner_ids,
+    uint32_t owner_count, OrbitKvStateCurrent *outputs,
+    uint32_t output_capacity, uint32_t *out_count, char *error_buffer,
+    size_t error_buffer_len);
+
+int32_t orbitkv_state_pool_destroy(
+    OrbitKvStatePoolHandle *handle, char *error_buffer,
     size_t error_buffer_len);
 
 #ifdef __cplusplus

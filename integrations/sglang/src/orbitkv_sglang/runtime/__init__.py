@@ -84,6 +84,19 @@ from .reclamation import (
     reclamation_receipts,
 )
 from .relocation import DispositionPublication, RelocationPublication
+from .state_checkpoint import (
+    StateCompletionReceipt,
+    StateCopyIntent,
+    StateCopyReceipt,
+    StatePoolConfig,
+    StatePoolIdentity,
+    StatePoolStats,
+    StatePublication,
+    StateRetirementCertificate,
+    StateRetirementLease,
+    StateSlotLease,
+    StateTransitionLease,
+)
 from .snapshot_shadow import (
     AttachedPrefix,
     ClassLowering,
@@ -195,6 +208,17 @@ __all__ = [
     "SubmittedRelocation",
     "SubmittedStep",
     "SwaActivity",
+    "StateCompletionReceipt",
+    "StateCopyIntent",
+    "StateCopyReceipt",
+    "StatePoolConfig",
+    "StatePoolIdentity",
+    "StatePoolStats",
+    "StatePublication",
+    "StateRetirementCertificate",
+    "StateRetirementLease",
+    "StateSlotLease",
+    "StateTransitionLease",
     "TAIL_COPY_ON_WRITE",
     "TAIL_FRESH",
     "TAIL_IN_PLACE",

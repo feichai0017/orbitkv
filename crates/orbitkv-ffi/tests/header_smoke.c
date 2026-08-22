@@ -3,7 +3,7 @@
 _Static_assert(ORBITKV_STATUS_FAIL_STOPPED == -4,
                "fail-stopped status changed");
 
-/* Every ABI7 symbol is type-checked by assignment and retained by use. */
+/* Every ABI8 symbol is type-checked by assignment and retained by use. */
 int main(void) {
   uint32_t (*abi_version)(void) = orbitkv_abi_version;
   int32_t (*create)(const uint8_t *, size_t, const OrbitKvManagerConfig *,
@@ -122,6 +122,42 @@ int main(void) {
                    size_t) = orbitkv_manager_stats;
   int32_t (*destroy)(OrbitKvManagerHandle *, char *, size_t) =
       orbitkv_manager_destroy;
+  int32_t (*state_create)(const OrbitKvStatePoolConfig *,
+                          OrbitKvStatePoolHandle **, char *, size_t) =
+      orbitkv_state_pool_create;
+  int32_t (*state_identity)(OrbitKvStatePoolHandle *,
+                            OrbitKvStatePoolIdentity *, char *, size_t) =
+      orbitkv_state_pool_identity;
+  int32_t (*state_stats)(OrbitKvStatePoolHandle *, OrbitKvStatePoolStats *,
+                         char *, size_t) = orbitkv_state_pool_stats;
+  int32_t (*state_prepare)(OrbitKvStatePoolHandle *,
+                           const OrbitKvStatePrepareItem *, uint32_t,
+                           OrbitKvStateCopyIntent *, uint32_t, uint32_t *,
+                           char *, size_t) = orbitkv_state_pool_prepare_batch;
+  int32_t (*state_submit)(OrbitKvStatePoolHandle *,
+                          const OrbitKvStateCopyReceipt *, uint32_t, char *,
+                          size_t) = orbitkv_state_pool_submit_batch;
+  int32_t (*state_complete)(
+      OrbitKvStatePoolHandle *, const OrbitKvStateCompletionReceipt *,
+      const OrbitKvStateTransitionLease *, uint32_t, OrbitKvStatePublication *,
+      uint32_t, uint32_t *, char *, size_t) =
+      orbitkv_state_pool_complete_batch;
+  int32_t (*state_abort)(OrbitKvStatePoolHandle *,
+                         const OrbitKvStateAbortItem *, uint32_t, char *,
+                         size_t) = orbitkv_state_pool_abort_batch;
+  int32_t (*state_retire)(
+      OrbitKvStatePoolHandle *, const OrbitKvStateCompletionReceipt *,
+      const OrbitKvStateRetireOwnerItem *, uint32_t,
+      OrbitKvStateRetirementCertificate *, uint32_t, uint32_t *, char *,
+      size_t) = orbitkv_state_pool_retire_owners_batch;
+  int32_t (*state_ack)(OrbitKvStatePoolHandle *,
+                       const OrbitKvStateRetirementCertificate *, uint32_t,
+                       char *, size_t) = orbitkv_state_pool_acknowledge_batch;
+  int32_t (*state_current)(OrbitKvStatePoolHandle *, const uint64_t *, uint32_t,
+                           OrbitKvStateCurrent *, uint32_t, uint32_t *, char *,
+                           size_t) = orbitkv_state_pool_current_batch;
+  int32_t (*state_destroy)(OrbitKvStatePoolHandle *, char *, size_t) =
+      orbitkv_state_pool_destroy;
 
   (void)arena_identities;
   (void)arena_stats;
@@ -149,6 +185,17 @@ int main(void) {
   (void)evict;
   (void)recycle_prefix;
   (void)stats;
+  (void)state_create;
+  (void)state_identity;
+  (void)state_stats;
+  (void)state_prepare;
+  (void)state_submit;
+  (void)state_complete;
+  (void)state_abort;
+  (void)state_retire;
+  (void)state_ack;
+  (void)state_current;
+  (void)state_destroy;
   if (abi_version() != ORBITKV_ABI_VERSION) {
     return 1;
   }

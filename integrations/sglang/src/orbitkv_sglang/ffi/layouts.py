@@ -40,6 +40,14 @@ class PrefixLeaseLayout(ctypes.Structure):
     _fields_ = LEASE_FIELDS
 
 
+class StateTransitionLeaseLayout(ctypes.Structure):
+    _fields_ = LEASE_FIELDS
+
+
+class StateRetirementLeaseLayout(ctypes.Structure):
+    _fields_ = LEASE_FIELDS
+
+
 class PageLeaseLayout(ctypes.Structure):
     _fields_ = [
         ("engine_epoch", U64),
@@ -47,6 +55,131 @@ class PageLeaseLayout(ctypes.Structure):
         ("generation", U64),
         ("page_id", U32),
         ("pool_id", U32),
+    ]
+
+
+class StatePoolConfigLayout(ctypes.Structure):
+    _fields_ = [
+        ("engine_epoch", U64),
+        ("pool_epoch", U64),
+        ("byte_count", U64),
+        ("pool_id", U32),
+        ("slot_count", U32),
+    ]
+
+
+class StateSlotLeaseLayout(ctypes.Structure):
+    _fields_ = [
+        ("engine_epoch", U64),
+        ("pool_epoch", U64),
+        ("generation", U64),
+        ("slot_id", U32),
+        ("pool_id", U32),
+    ]
+
+
+class StatePoolIdentityLayout(ctypes.Structure):
+    _fields_ = StatePoolConfigLayout._fields_
+
+
+class StatePoolStatsLayout(ctypes.Structure):
+    _fields_ = [
+        ("identity", StatePoolIdentityLayout),
+        ("free_slots", U64),
+        ("reserved_slots", U64),
+        ("relocating_slots", U64),
+        ("live_slots", U64),
+        ("retiring_slots", U64),
+        ("quarantined_slots", U64),
+        ("active_owners", U64),
+        ("pending_transitions", U64),
+        ("pending_retirements", U64),
+    ]
+
+
+class StatePrepareItemLayout(ctypes.Structure):
+    _fields_ = [
+        ("owner_id", U64),
+        ("expected", StateSlotLeaseLayout),
+        ("expected_present", U32),
+        ("reserved", U32),
+    ]
+
+
+class StateCopyIntentLayout(ctypes.Structure):
+    _fields_ = [
+        ("transition", StateTransitionLeaseLayout),
+        ("owner_id", U64),
+        ("source", StateSlotLeaseLayout),
+        ("destination", StateSlotLeaseLayout),
+        ("byte_count", U64),
+        ("source_present", U32),
+        ("reserved", U32),
+    ]
+
+
+class StateCopyReceiptLayout(ctypes.Structure):
+    _fields_ = [
+        ("transition", StateTransitionLeaseLayout),
+        ("source", StateSlotLeaseLayout),
+        ("destination", StateSlotLeaseLayout),
+        ("byte_count", U64),
+        ("source_present", U8),
+        ("observed", U8),
+        ("written", U8),
+        ("reserved8", U8),
+        ("reserved32", U32),
+    ]
+
+
+class StateCompletionReceiptLayout(ctypes.Structure):
+    _fields_ = [
+        ("engine_epoch", U64),
+        ("completion_domain", U64),
+        ("completion_value", U64),
+        ("confirmed", U32),
+        ("reserved", U32),
+    ]
+
+
+class StateRetirementCertificateLayout(ctypes.Structure):
+    _fields_ = [
+        ("retirement", StateRetirementLeaseLayout),
+        ("slot", StateSlotLeaseLayout),
+        ("byte_count", U64),
+        ("completion_domain", U64),
+        ("completion_value", U64),
+    ]
+
+
+class StatePublicationLayout(ctypes.Structure):
+    _fields_ = [
+        ("owner_id", U64),
+        ("slot", StateSlotLeaseLayout),
+        ("retirement", StateRetirementCertificateLayout),
+        ("retirement_present", U32),
+        ("reserved", U32),
+    ]
+
+
+class StateAbortItemLayout(ctypes.Structure):
+    _fields_ = [
+        ("transition", StateTransitionLeaseLayout),
+        ("backend_unobserved", U32),
+        ("reserved", U32),
+    ]
+
+
+class StateRetireOwnerItemLayout(ctypes.Structure):
+    _fields_ = [("owner_id", U64), ("expected", StateSlotLeaseLayout)]
+
+
+class StateCurrentLayout(ctypes.Structure):
+    _fields_ = [
+        ("owner_id", U64),
+        ("slot", StateSlotLeaseLayout),
+        ("present", U32),
+        ("reserved", U32),
     ]
 
 
@@ -620,7 +753,22 @@ FROZEN_LAYOUTS = {
     ReclamationLeaseLayout: (16, 8),
     RelocationLeaseLayout: (16, 8),
     PrefixLeaseLayout: (16, 8),
+    StateTransitionLeaseLayout: (16, 8),
+    StateRetirementLeaseLayout: (16, 8),
     PageLeaseLayout: (32, 8),
+    StatePoolConfigLayout: (32, 8),
+    StateSlotLeaseLayout: (32, 8),
+    StatePoolIdentityLayout: (32, 8),
+    StatePoolStatsLayout: (104, 8),
+    StatePrepareItemLayout: (48, 8),
+    StateCopyIntentLayout: (104, 8),
+    StateCopyReceiptLayout: (96, 8),
+    StateCompletionReceiptLayout: (32, 8),
+    StateRetirementCertificateLayout: (72, 8),
+    StatePublicationLayout: (120, 8),
+    StateAbortItemLayout: (24, 8),
+    StateRetireOwnerItemLayout: (40, 8),
+    StateCurrentLayout: (48, 8),
     BackendArenaRegistrationLayout: (24, 8),
     ManagerConfigLayout: (20, 4),
     ArenaIdentityLayout: (48, 8),
@@ -679,7 +827,7 @@ def assert_frozen_layouts() -> None:
         actual = (ctypes.sizeof(layout), ctypes.alignment(layout))
         if actual != expected:
             raise RuntimeError(
-                f"ABI7 layout drift for {layout.__name__}: {actual} != {expected}"
+                f"ABI8 layout drift for {layout.__name__}: {actual} != {expected}"
             )
 
 

@@ -12,7 +12,7 @@ pub extern "C" fn orbitkv_abi_version() -> u32 {
     ORBITKV_ABI_VERSION
 }
 
-/// Creates a canonical ABI7 manager.
+/// Creates a canonical ABI8 manager.
 ///
 /// # Safety
 /// All pointers must name readable/writable storage for their declared sizes.

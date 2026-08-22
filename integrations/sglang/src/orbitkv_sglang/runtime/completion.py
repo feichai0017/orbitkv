@@ -668,7 +668,7 @@ class CompletionRuntimeMixin:
     @staticmethod
     def _validate_batch_record(batch: BatchRecord) -> None:
         if not isinstance(batch, BatchRecord):
-            raise ManagerError("operation requires one ABI7 batch journal")
+            raise ManagerError("operation requires one ABI8 batch journal")
         if len({id(record) for record in batch.records}) != len(batch.records):
             raise ManagerError("step batch contains a duplicate record")
         if len(set(batch.keys)) != len(batch.keys):

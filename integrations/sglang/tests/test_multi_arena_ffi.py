@@ -344,8 +344,8 @@ def _release_all(manager: CtypesManager, views: tuple[RequestView, ...]) -> None
 
 
 def test_frozen_layouts_and_exact_symbol_allowlist(ffi_library: Path) -> None:
-    assert ABI_VERSION == 7
-    assert len(FROZEN_LAYOUTS) == 58
+    assert ABI_VERSION == 8
+    assert len(FROZEN_LAYOUTS) == 73
     assert_frozen_layouts()
     output = subprocess.check_output(
         ["nm", "-D", "--defined-only", str(ffi_library)], text=True

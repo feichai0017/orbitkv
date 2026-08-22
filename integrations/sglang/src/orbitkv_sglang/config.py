@@ -74,7 +74,7 @@ class ClassConfig:
 
 @dataclass(frozen=True, slots=True)
 class ManagerPlanConfig:
-    """The sole breaking ABI7 snapshot/prefix plan; no legacy translation."""
+    """The sole breaking ABI8 snapshot/prefix plan; no legacy translation."""
 
     plan_path: Path
     library_path: Path
@@ -106,7 +106,7 @@ class ManagerPlanConfig:
 
 
 def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
-    """Load only the ABI7 Full, sliding, or Full+sliding plan schema."""
+    """Load only the ABI8 Full, sliding, or Full+sliding plan schema."""
 
     source = os.environ if environ is None else environ
     plan_path = _configured_file(source, "ORBITKV_PLAN")

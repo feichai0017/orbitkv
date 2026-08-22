@@ -297,7 +297,7 @@ class ManagerProtocol(Protocol):
 
 @runtime_checkable
 class TokenRelocationManagerProtocol(Protocol):
-    """Optional ABI7 capability; ordinary manager users need not implement it."""
+    """Optional ABI8 capability; ordinary manager users need not implement it."""
 
     def token_views_batch(
         self, queries: Sequence[TokenViewQuery]

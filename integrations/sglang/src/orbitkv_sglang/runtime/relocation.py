@@ -41,7 +41,7 @@ class DispositionPublication:
 class RelocationRuntimeMixin:
     def _relocation_manager(self) -> TokenRelocationManagerProtocol:
         if not isinstance(self.manager, TokenRelocationManagerProtocol):
-            raise ManagerError("manager does not expose ABI7 token relocation")
+            raise ManagerError("manager does not expose ABI8 token relocation")
         return self.manager
 
     def token_view(self, key: Hashable, class_id: int) -> TokenView:

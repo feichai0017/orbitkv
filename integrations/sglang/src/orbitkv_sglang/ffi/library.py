@@ -7,7 +7,7 @@ from typing import Any
 from . import layouts as L
 
 
-ABI_VERSION = 7
+ABI_VERSION = 8
 STATUS_OK = 0
 STATUS_BUFFER_TOO_SMALL = 1
 STATUS_RETRYABLE_CONFLICT = 2
@@ -20,7 +20,7 @@ ERROR_BUFFER_BYTES = 4096
 
 
 class CanonicalAbiUnavailable(RuntimeError):
-    """The configured library does not expose the frozen ABI7 surface."""
+    """The configured library does not expose the frozen ABI8 surface."""
 
 
 HANDLE = ctypes.c_void_p
@@ -33,6 +33,45 @@ def _ptr(layout: Any) -> Any:
 
 
 FUNCTION_SPECS: dict[str, tuple[Any, ...]] = {
+    "orbitkv_state_pool_create": (
+        _ptr(L.StatePoolConfigLayout), _ptr(HANDLE), PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_state_pool_identity": (
+        HANDLE, _ptr(L.StatePoolIdentityLayout), PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_state_pool_stats": (
+        HANDLE, _ptr(L.StatePoolStatsLayout), PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_state_pool_prepare_batch": (
+        HANDLE, _ptr(L.StatePrepareItemLayout), ctypes.c_uint32,
+        _ptr(L.StateCopyIntentLayout), ctypes.c_uint32, PU32, PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_state_pool_submit_batch": (
+        HANDLE, _ptr(L.StateCopyReceiptLayout), ctypes.c_uint32, PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_state_pool_complete_batch": (
+        HANDLE, _ptr(L.StateCompletionReceiptLayout),
+        _ptr(L.StateTransitionLeaseLayout), ctypes.c_uint32,
+        _ptr(L.StatePublicationLayout), ctypes.c_uint32, PU32, PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_state_pool_abort_batch": (
+        HANDLE, _ptr(L.StateAbortItemLayout), ctypes.c_uint32, PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_state_pool_retire_owners_batch": (
+        HANDLE, _ptr(L.StateCompletionReceiptLayout),
+        _ptr(L.StateRetireOwnerItemLayout), ctypes.c_uint32,
+        _ptr(L.StateRetirementCertificateLayout), ctypes.c_uint32, PU32,
+        PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_state_pool_acknowledge_batch": (
+        HANDLE, _ptr(L.StateRetirementCertificateLayout), ctypes.c_uint32,
+        PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_state_pool_current_batch": (
+        HANDLE, _ptr(ctypes.c_uint64), ctypes.c_uint32,
+        _ptr(L.StateCurrentLayout), ctypes.c_uint32, PU32, PCHAR, ctypes.c_size_t,
+    ),
+    "orbitkv_state_pool_destroy": (HANDLE, PCHAR, ctypes.c_size_t),
     "orbitkv_manager_create": (
         _ptr(ctypes.c_uint8), ctypes.c_size_t,
         _ptr(L.ManagerConfigLayout), _ptr(L.BackendArenaRegistrationLayout),
@@ -175,7 +214,7 @@ class LoadedLibrary:
             library = ctypes.CDLL(str(self.path))
         except OSError as error:
             raise CanonicalAbiUnavailable(
-                f"cannot load OrbitKV ABI7 library {self.path}: {error}"
+                f"cannot load OrbitKV ABI8 library {self.path}: {error}"
             ) from error
         try:
             abi = library.orbitkv_abi_version
@@ -192,13 +231,13 @@ class LoadedLibrary:
                 function.restype = ctypes.c_int32
         except AttributeError as error:
             raise CanonicalAbiUnavailable(
-                f"OrbitKV library is missing an ABI7 symbol: {error}"
+                f"OrbitKV library is missing an ABI8 symbol: {error}"
             ) from error
         self.cdll = library
 
     def function(self, name: str) -> Any:
         if name not in EXACT_SYMBOL_ALLOWLIST:
-            raise KeyError(f"symbol is outside the frozen ABI7 allowlist: {name}")
+            raise KeyError(f"symbol is outside the frozen ABI8 allowlist: {name}")
         return getattr(self.cdll, name)
 
 

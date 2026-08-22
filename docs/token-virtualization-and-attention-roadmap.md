@@ -1,17 +1,19 @@
 # Token Virtualization and Attention Expansion Roadmap
 
-This roadmap starts from the live ABI7 architecture. Qualification status is
+This roadmap starts from the live ABI8 architecture. Qualification status is
 normative only in the [Capability Matrix](capability-matrix.md).
 
 ## Current checkpoint
 
-The modular Rust core and exact 29-symbol C ABI7 wire are host-qualified L2.
+The modular Rust core and exact 40-symbol C ABI8 wire are host-qualified L2.
 They provide immutable snapshots, request fork, page-aligned Prefix ownership,
-joint Full+SWA COW, detach actions, and page-owned reclamation.
+joint Full+SWA COW, detach actions, page-owned reclamation, and an independent
+fixed-state checkpoint pool.
 
-The ABI7 Python runtime and SGLang Prefix adapter are host-qualified L2. There
-is no ABI7 H20 evidence. The frozen ABI5-v5 H20 record is historical
-scoped L4 correctness only and does not qualify this source.
+The ABI8 Python runtime, state-pool client, and SGLang Prefix adapter are
+host-qualified L2. There is no ABI8 H20 evidence. The frozen ABI5-v5 H20
+record is historical scoped L4 correctness only and does not qualify this
+source.
 
 ## Why the module split is a roadmap prerequisite
 
@@ -28,6 +30,7 @@ persistent snapshot    immutable logical view
 append transaction     private candidate and publication
 Prefix                 shared snapshot residency and attachment
 reclamation            final-reference proof and reuse
+state checkpoint       request-owned fixed-width replace / retire / ACK
 test model/oracles      independent full-scan correctness model
 ```
 
@@ -55,12 +58,13 @@ The term **compaction** below means token-exact K/V relocation and
 defragmentation. It is not quantization, a codec, low-rank compression, or a
 same-capacity memory result.
 
-## M1: Freeze the ABI7 Python/runtime boundary
+## M1: Freeze the ABI8 Python/runtime boundary
 
 Status: **L2 GO**.
 
-- complete ctypes parity with `orbitkv.h` and ABI version 7;
-- load exactly the 29 allowed symbols and reject all compatibility aliases;
+- complete ctypes parity with `orbitkv.h` and ABI version 8;
+- load exactly the 40 allowed symbols and reject all compatibility aliases;
+- freeze 73 ctypes layouts, including the independent state-pool records;
 - keep FFI layout/workspace code separate from lifecycle journals;
 - make snapshot heads, materialized views, detach actions, and reclamation
   receipts generation checked in Python;
@@ -68,7 +72,7 @@ Status: **L2 GO**.
 - qualify malformed spans, stale leases, short buffers, fail-stop, and
   quarantine paths.
 
-Exit gate: the ABI7 Python runtime is L2 against the exact release library.
+Exit gate: the ABI8 Python runtime is L2 against the exact release library.
 
 ## M2: Integrate SGLang Prefix ownership
 
@@ -100,8 +104,9 @@ reduce the bytes of a same-sized preallocated KV tensor arena.
 Status: **core, C wire, Python wire, and eager SGLang adapter host L2 GO;
 SGLang GPU/E2E pending**.
 
-ABI7 adds stable logical token IDs, canonical disposition batches, and
-class-specific physical placement without changing logical token identity:
+The canonical-manager surface retains stable logical token IDs, canonical
+disposition batches, and class-specific physical placement without changing
+logical token identity:
 
 ```text
 TokenPlacement {
@@ -144,7 +149,8 @@ experiments exist.
 
 ## M3b: Heterogeneous state backends
 
-Status: **compiler L1 and checkpoint core host L2; engine integration pending**.
+Status: **compiler L1 and ABI8 checkpoint core/wire host L2; engine integration
+pending**.
 
 The heterogeneous compiler separates token KV, MLA latent plus RoPE
 components, recurrent Mamba/GDN/KDA/linear state, and finite convolution state.
@@ -153,13 +159,22 @@ component geometry for independent copies; recurrent and convolution state use
 a generation-checked fixed-width checkpoint transaction with no TokenMove
 surface.
 
+The independent ABI8 state-pool surface provides atomic prepare, submit,
+completion-gated publish, replace retirement, release retirement, ACK, abort,
+current-owner lookup, census, and fail-stop quarantine. Its identities and
+wire records are separate from token IDs, page leases, and TokenMove. That host
+protocol is not yet connected to an engine allocator or state tensors.
+
 The pure-MLA host seam now validates compiled latent/RoPE byte widths against
 SGLang's real `MLATokenToKVPool` and exercises its combined-row copy API. It is
 limited to BF16 Full retention, page16, eager, single GPU, without DSA, FP4, or
 DCP. The next engine step is real-model H20 qualification for that seam, then
-model-specific recurrent and convolution copy/publication adapters. Each
-backend needs its own exact-byte or numerical-state oracle; passing the Full KV
-relocation path does not qualify any of them.
+model-specific recurrent and convolution copy/publication adapters. The first
+adapter is restricted to eager, single-GPU execution without Prefix-state
+sharing, ReplaySSM, int8 checkpoints, extra/ping-pong buffers, speculation,
+overlap, Graph, or unified memory. Each backend needs its own exact-byte or
+numerical-state oracle; passing the Full KV relocation path does not qualify
+any of them.
 
 ## M4: Multiple completion domains and CUDA Graph
 

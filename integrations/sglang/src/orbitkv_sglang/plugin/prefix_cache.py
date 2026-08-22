@@ -118,7 +118,7 @@ def _request_tokens(req: Any, boundary: int) -> tuple[int, ...]:
 
 
 class OrbitKvPrefixCache(BasePrefixCache):
-    """SGLang tree seam backed only by ABI7 manager prefix leases."""
+    """SGLang tree seam backed only by ABI8 manager prefix leases."""
 
     def __init__(self, params: Any) -> None:
         import torch
