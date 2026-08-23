@@ -368,7 +368,7 @@ def configure_environment(
 def build_tool_identity() -> dict[str, str]:
     executable = shutil.which("ninja")
     if executable is None:
-        raise RuntimeError("the pinned FlashInfer path requires ninja on PATH")
+        raise RuntimeError("the pinned attention-kernel path requires ninja on PATH")
     path = Path(executable).resolve(strict=True)
     expected_directory = Path(sys.executable).absolute().parent
     if path.parent != expected_directory:

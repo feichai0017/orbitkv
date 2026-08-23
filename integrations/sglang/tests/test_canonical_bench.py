@@ -62,7 +62,7 @@ def _arguments(**overrides):
         "context_length": 128,
         "max_total_tokens": 4096,
         "mem_fraction_static": None,
-        "attention_backend": "flashinfer",
+        "attention_backend": "fa3",
         "seed": 20260820,
     }
     values.update(overrides)
@@ -145,7 +145,7 @@ def test_help_exposes_only_independent_manager_and_stock_runs():
     )
     assert "--mode {manager,stock}" in completed.stdout
     assert "--max-total-tokens" in completed.stdout
-    assert "--attention-backend {flashinfer,fa3}" in completed.stdout
+    assert "--attention-backend {fa3,flashinfer}" in completed.stdout
 
 
 def test_compact_control_help_requires_exact_abi8_matrix_dimensions():
@@ -255,7 +255,7 @@ def test_engine_profile_is_identical_and_explicitly_capacity_matched(mode):
         assert values["radix_cache_backend"] == "orbitkv"
     else:
         assert "radix_cache_backend" not in values
-    assert values["attention_backend"] == "flashinfer"
+    assert values["attention_backend"] == "fa3"
     assert values["dtype"] == values["kv_cache_dtype"] == "bfloat16"
     assert values["disable_hybrid_swa_memory"] is False
     assert values["tp_size"] == values["pp_size"] == values["dcp_size"] == 1
@@ -274,13 +274,17 @@ def test_gpt_oss_engine_profile_requires_fa3_for_both_modes(mode):
     assert values["moe_runner_backend"] == "triton"
 
     with pytest.raises(RuntimeError, match="requires --attention-backend fa3"):
-        bench.engine_arguments(_arguments(mode=mode), Path("/model"), contract)
-
-
-def test_qwen2_engine_profile_rejects_fa3():
-    with pytest.raises(RuntimeError, match="requires --attention-backend flashinfer"):
         bench.engine_arguments(
-            _arguments(attention_backend="fa3"),
+            _arguments(mode=mode, attention_backend="flashinfer"),
+            Path("/model"),
+            contract,
+        )
+
+
+def test_qwen2_engine_profile_rejects_flashinfer():
+    with pytest.raises(RuntimeError, match="requires --attention-backend fa3"):
+        bench.engine_arguments(
+            _arguments(attention_backend="flashinfer"),
             Path("/model"),
             _attention_contract(),
         )
@@ -428,7 +432,7 @@ def test_qwen2_contract_is_strict_full_only(tmp_path, monkeypatch):
     )
     contract, _identity = bench.checkpoint_contract(model)
     assert contract["attention_profile"] == "full"
-    assert contract["attention_backend"] == "flashinfer"
+    assert contract["attention_backend"] == "fa3"
     assert contract["sliding_window"] is None
     assert contract["classes"] == [
         {
@@ -554,7 +558,7 @@ def test_checkpoint_and_source_gates_have_no_legacy_attention_path():
 
 def _runtime_info(
     *,
-    attention_backend="flashinfer",
+    attention_backend="fa3",
     moe_runner_backend="auto",
     radix_cache_backend="orbitkv",
     swa_tokens=None,

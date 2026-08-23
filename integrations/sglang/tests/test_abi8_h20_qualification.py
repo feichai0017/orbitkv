@@ -333,6 +333,9 @@ def test_seal_copies_complete_matrix_and_hashes_without_overwrite(tmp_path, monk
     assert {item["profile"] for item in manifest["scope"]["cases"]} == {
         "full", "hybrid_full_swa"
     }
+    assert {item["attention_backend"] for item in manifest["scope"]["cases"]} == {
+        "fa3"
+    }
     assert "token_relocation" in manifest["scope"]["excluded"]
     assert manifest["pair_count"] == 4
     assert (output / "qualification/build/liborbitkv_ffi.so").read_bytes() == b"abi8"
