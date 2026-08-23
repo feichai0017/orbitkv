@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import subprocess
 import json
 import sys
 from pathlib import Path
@@ -12,6 +13,28 @@ sys.path.insert(0, str(INTEGRATION_ROOT))
 sys.path.insert(0, str(INTEGRATION_ROOT / "src"))
 
 import qualify_abi8_h20 as qualification  # noqa: E402
+
+
+def test_python_lock_normalizes_only_the_active_editable_commit(tmp_path, monkeypatch):
+    lock = tmp_path / "requirements.lock"
+    lock.write_text(
+        "package==1\n-e git+https://example/orbitkv.git@old#egg=orbitkv_sglang\n",
+        encoding="utf-8",
+    )
+
+    def fake_run(arguments, **_kwargs):
+        if tuple(arguments[-3:]) == ("pip", "freeze", "--all"):
+            return subprocess.CompletedProcess(
+                arguments, 0,
+                "package==1\n-e git+https://example/orbitkv.git@new#egg=orbitkv_sglang\n",
+                "",
+            )
+        return subprocess.CompletedProcess(arguments, 0, "", "")
+
+    monkeypatch.setattr(qualification, "_run", fake_run)
+    identity = qualification._verify_python_environment(Path(sys.executable), lock)
+    assert "@new#egg=orbitkv_sglang" in identity["active_editable"]
+    assert "@old#egg=orbitkv_sglang" in identity["locked_editable"]
 
 
 def _record(mode: str, profile: str = "full") -> dict:
@@ -61,6 +84,7 @@ def _record(mode: str, profile: str = "full") -> dict:
         "schema": qualification.benchmark.RECORD_SCHEMA, "mode": mode,
         "manager": manager_record, "engine_args": engine,
         "source_identity": source,
+        "checkpoint": {"config_sha256": "config"},
         "checkpoint_identity_sha256": "checkpoint",
         "checkpoint_contract": {"attention_profile": profile},
         "sampling_params": {"temperature": 0},
@@ -74,6 +98,9 @@ def _record(mode: str, profile: str = "full") -> dict:
         "iteration_seconds": [1.0],
         "pairing": {},
     }
+    record["checkpoint_identity_sha256"] = qualification.canonical_digest(
+        record["checkpoint"]
+    )
     contract = qualification._record_pair_contract(record)
     record["pairing"] = {
         "contract": contract,
@@ -173,7 +200,7 @@ def test_run_matrix_records_actual_balanced_order(tmp_path, monkeypatch):
     monkeypatch.setattr(qualification, "_run_record", fake_run)
     monkeypatch.setattr(
         qualification, "verify_pair_files",
-        lambda _stock, _manager: {
+        lambda _stock, _manager, _pre=None: {
             "schema": qualification.PAIR_SCHEMA, "status": "passed",
             "profile": "full", "batch_size": 1, "iterations": 1,
             "stock_iteration_seconds": [1.0], "manager_iteration_seconds": [1.0],
@@ -214,10 +241,38 @@ def test_seal_copies_complete_matrix_and_hashes_without_overwrite(tmp_path, monk
                 "sha256": qualification.sha256_file(Path(qualification.__file__).resolve()),
             }],
         },
-        "library": {"path": str(library), "sha256": qualification.sha256_file(library)},
+        "library": {
+            "path": str(library),
+            "sha256": qualification.sha256_file(library),
+            "bytes": library.stat().st_size,
+        },
         "inputs": {
             "plans": plans,
             "requirements": {"path": str(requirements), "sha256": qualification.sha256_file(requirements)},
+            "models": {
+                name: {
+                    "config.json": {"sha256": "config"},
+                    "model.safetensors.index.json": {"sha256": "index"},
+                    "weight_shards": [{"filename": "model-1.safetensors", "size": 7, "sha256": "shard"}],
+                    "weight_shards_sha256": "shards",
+                }
+                for name in ("qwen2.5-7b", "gpt-oss-20b")
+            },
+        },
+        "python": {
+            "executable": sys.executable,
+            "normalized_freeze_sha256": "freeze",
+            "active_editable": "active",
+            "locked_editable": "locked",
+        },
+        "sglang": {
+            "release": "v0.5.17",
+            "revision": qualification.SGLANG_REVISION,
+            "stock_root": "/stock",
+            "manager_root": "/manager",
+            "pinned_contract": {"revision": qualification.SGLANG_REVISION},
+            "stock": {"loader": {"mode": "stock"}},
+            "manager": {"loader": {"mode": "manager"}},
         },
     }
     (work / "preflight.json").write_text(json.dumps(preflight), encoding="utf-8")
@@ -228,6 +283,31 @@ def test_seal_copies_complete_matrix_and_hashes_without_overwrite(tmp_path, monk
     for case in qualification.CASES:
         stock = _record("stock", case.profile)
         manager = _record("manager", case.profile)
+        for mode, record in (("stock", stock), ("manager", manager)):
+            record["source_identity"].update(
+                root=preflight["sglang"][f"{mode}_root"],
+                pinned_contract=preflight["sglang"]["pinned_contract"],
+                loader=preflight["sglang"][mode]["loader"],
+            )
+            record["runtime_identity"] = {"python_executable": sys.executable}
+        manager["source_identity"]["library"] = preflight["library"]
+        manager["manager"]["library"] = manager["source_identity"]["library"]
+        manager["source_identity"]["plan"] = plans[case.model]
+        manager["manager"]["plan"]["artifact"] = manager["source_identity"]["plan"]
+        manager["checkpoint"].update(
+            index_files=[{"name": "model.safetensors.index.json", "sha256": "index"}],
+            indexed_weight_files=["model-1.safetensors"],
+            weight_files=[{
+                "name": "model-1.safetensors",
+                "bytes": 7,
+                "sha256": "shard",
+            }],
+        )
+        stock["checkpoint"] = copy.deepcopy(manager["checkpoint"])
+        for record in (stock, manager):
+            record["checkpoint_identity_sha256"] = qualification.canonical_digest(
+                record["checkpoint"]
+            )
         stock["workload"].update(requests=case.batch, iterations=case.iterations)
         manager["workload"].update(requests=case.batch, iterations=case.iterations)
         for record in (stock, manager):
@@ -237,7 +317,7 @@ def test_seal_copies_complete_matrix_and_hashes_without_overwrite(tmp_path, monk
         manager_path = epoch_dir / f"{case.slug}-manager.json"
         stock_path.write_text(json.dumps(stock), encoding="utf-8")
         manager_path.write_text(json.dumps(manager), encoding="utf-8")
-        pair = qualification.verify_pair_files(stock_path, manager_path)
+        pair = qualification.verify_pair_files(stock_path, manager_path, preflight)
         pair.update(epoch=1, execution_order=["stock", "manager"])
         (epoch_dir / f"{case.slug}-pair.json").write_text(json.dumps(pair), encoding="utf-8")
         pairs.append(pair)
@@ -245,7 +325,13 @@ def test_seal_copies_complete_matrix_and_hashes_without_overwrite(tmp_path, monk
     (work / "summary-all-1-epochs.json").write_text(json.dumps(summary), encoding="utf-8")
     output = tmp_path / "sealed"
     manifest = qualification.seal(type("Args", (), {"work_dir": work, "output_dir": output})())
-    assert manifest["qualification_status"] == "correctness_qualified_performance_pending"
+    assert manifest["qualification_status"] == (
+        "abi8_sglang_full_full_swa_prefix_correctness_qualified_performance_pending"
+    )
+    assert {item["profile"] for item in manifest["scope"]["cases"]} == {
+        "full", "hybrid_full_swa"
+    }
+    assert "token_relocation" in manifest["scope"]["excluded"]
     assert manifest["pair_count"] == 4
     assert (output / "qualification/build/liborbitkv_ffi.so").read_bytes() == b"abi8"
     assert (output / "README.md").is_file()

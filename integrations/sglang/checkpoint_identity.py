@@ -44,7 +44,11 @@ def checkpoint_identity(model_path: Path, load_format: str) -> dict:
             for path in index_paths
         ],
         "weight_files": [
-            {"name": path.name, "bytes": path.stat().st_size}
+            {
+                "name": path.name,
+                "bytes": path.stat().st_size,
+                "sha256": sha256_file(path),
+            }
             for path in weight_paths
         ],
         "weight_bytes": sum(path.stat().st_size for path in weight_paths),
