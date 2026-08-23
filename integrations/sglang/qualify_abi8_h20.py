@@ -17,6 +17,7 @@ import shutil
 import statistics
 import subprocess
 import sys
+import difflib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Iterable, Sequence
@@ -212,14 +213,39 @@ def _build_library(work_dir: Path, cargo: str) -> tuple[Path, dict[str, Any]]:
 def _verify_python_environment(python: Path, requirements: Path) -> dict[str, Any]:
     _run((str(python), "-m", "pip", "check"))
     frozen = _run((str(python), "-m", "pip", "freeze", "--all")).stdout
-    if frozen.splitlines() != requirements.read_text(encoding="utf-8").splitlines():
-        raise RuntimeError("active Python environment differs from requirements lock")
-    return {"executable": str(python.resolve(strict=True)),
-            "freeze_sha256": hashlib.sha256(frozen.encode()).hexdigest()}
+    expected = requirements.read_text(encoding="utf-8")
+
+    def normalize(lines: list[str]) -> tuple[list[str], str]:
+        editable = [line for line in lines if line.startswith("-e git+") and "#egg=orbitkv_sglang" in line]
+        if len(editable) != 1:
+            raise RuntimeError(
+                "Python environment must contain exactly one editable orbitkv-sglang"
+            )
+        return ["-e <active-orbitkv-source>#egg=orbitkv_sglang" if line == editable[0] else line for line in lines], editable[0]
+
+    expected_lines, expected_editable = normalize(expected.splitlines())
+    frozen_lines, active_editable = normalize(frozen.splitlines())
+    if frozen_lines != expected_lines:
+        difference = "\n".join(
+            difflib.unified_diff(
+                expected_lines, frozen_lines,
+                fromfile=str(requirements), tofile="pip freeze --all", lineterm="",
+            )
+        )
+        raise RuntimeError(
+            "active Python environment differs from requirements lock:\n" + difference
+        )
+    return {
+        "executable": str(python.resolve(strict=True)),
+        "normalized_freeze_sha256": canonical_digest(frozen_lines),
+        "active_editable": active_editable,
+        "locked_editable": expected_editable,
+    }
 
 
 def _sglang_checkout_identity(root: Path, mode: str) -> dict[str, str]:
     root = root.resolve(strict=True)
+    identity = benchmark.verify_sglang_source(root, mode)
     revision = _run(("git", "-C", str(root), "rev-parse", "HEAD")).stdout.strip()
     tag = _run(("git", "-C", str(root), "describe", "--tags", "--exact-match", "HEAD")).stdout.strip()
     remote = _run(("git", "-C", str(root), "remote", "get-url", "origin")).stdout.strip()
@@ -227,7 +253,7 @@ def _sglang_checkout_identity(root: Path, mode: str) -> dict[str, str]:
         raise RuntimeError(f"{mode} checkout is not exact official SGLang v0.5.17")
     if remote != "https://github.com/sgl-project/sglang.git":
         raise RuntimeError(f"{mode} checkout does not use the official SGLang remote")
-    return {"root": str(root), "revision": revision, "tag": tag, "remote": remote}
+    return {**identity, "tag": tag, "remote": remote}
 
 
 def _input_identity(args: argparse.Namespace) -> dict[str, Any]:
@@ -240,6 +266,21 @@ def _input_identity(args: argparse.Namespace) -> dict[str, Any]:
             filename: _require_hash(model / filename, digest, f"{name} {filename}")
             for filename, digest in MODEL_HASHES[name].items()
         }
+        index = json.loads((model / "model.safetensors.index.json").read_text(encoding="utf-8"))
+        shard_names = sorted(set(index.get("weight_map", {}).values()))
+        if not shard_names:
+            raise RuntimeError(f"{name} index contains no weight shards")
+        shards = []
+        for filename in shard_names:
+            if Path(filename).name != filename:
+                raise RuntimeError(f"{name} index contains an unsafe shard path")
+            shard = model / filename
+            shards.append({
+                "filename": filename, "size": shard.stat().st_size,
+                "sha256": sha256_file(shard),
+            })
+        models[name]["weight_shards"] = shards
+        models[name]["weight_shards_sha256"] = canonical_digest(shards)
         models[name]["root"] = str(model)
     for name, plan in (("qwen2.5-7b", args.qwen_plan), ("gpt-oss-20b", args.gpt_plan)):
         plans[name] = _require_hash(plan, PLAN_HASHES[name], f"{name} plan")
@@ -369,7 +410,7 @@ def verify_pair_records(stock: dict[str, Any], manager: dict[str, Any]) -> dict[
     if manager_plan != manager["manager"].get("plan", {}).get("artifact"):
         raise RuntimeError("manager plan identities disagree")
     equal_fields = (
-        "checkpoint_identity_sha256", "checkpoint_contract", "sampling_params",
+        "checkpoint", "checkpoint_identity_sha256", "checkpoint_contract", "sampling_params",
         "workload", "capacity_readback",
         "output_token_digest_sha256", "output_request_digests_sha256",
         "request_traces", "completed_requests", "completion_tokens",
@@ -377,6 +418,12 @@ def verify_pair_records(stock: dict[str, Any], manager: dict[str, Any]) -> dict[
     mismatches = [name for name in equal_fields if stock.get(name) != manager.get(name)]
     if mismatches:
         raise RuntimeError("pair fields differ: " + ", ".join(mismatches))
+    if any(
+        record.get("checkpoint_identity_sha256")
+        != canonical_digest(record.get("checkpoint"))
+        for record in (stock, manager)
+    ):
+        raise RuntimeError("checkpoint identity digest is invalid")
     if _normalized_engine_args(stock) != _normalized_engine_args(manager):
         raise RuntimeError("normalized engine arguments differ")
     stock_pair = stock.get("pairing", {})
@@ -427,10 +474,89 @@ def verify_pair_records(stock: dict[str, Any], manager: dict[str, Any]) -> dict[
     }
 
 
-def verify_pair_files(stock_path: Path, manager_path: Path) -> dict[str, Any]:
-    result = verify_pair_records(_load(stock_path), _load(manager_path))
+def verify_pair_files(
+    stock_path: Path, manager_path: Path, preflight: dict[str, Any] | None = None
+) -> dict[str, Any]:
+    stock = _load(stock_path)
+    manager = _load(manager_path)
+    result = verify_pair_records(stock, manager)
     result["stock_record"] = str(stock_path.resolve())
     result["manager_record"] = str(manager_path.resolve())
+    if preflight is not None:
+        model_name = (
+            "qwen2.5-7b"
+            if manager["checkpoint_contract"]["attention_profile"] == "full"
+            else "gpt-oss-20b"
+        )
+        expected_plan = preflight["inputs"]["plans"][model_name]
+        library_fields = ("path", "sha256", "bytes")
+        if any(
+            manager["source_identity"]["library"].get(name)
+            != preflight["library"].get(name)
+            for name in library_fields
+        ):
+            raise RuntimeError("pair library differs from preflight")
+        if any(
+            manager["source_identity"]["plan"].get(name) != expected_plan.get(name)
+            for name in library_fields
+        ):
+            raise RuntimeError("pair plan differs from preflight")
+        model_identity = preflight["inputs"]["models"][model_name]
+        for mode, record in (("stock", stock), ("manager", manager)):
+            source = record["source_identity"]
+            expected_root = preflight["sglang"][f"{mode}_root"]
+            expected_contract = (
+                "clean_pinned_head"
+                if mode == "stock"
+                else "pinned_head_plus_canonical_loader_patch"
+            )
+            if (
+                source.get("root") != expected_root
+                or source.get("release") != preflight["sglang"]["release"]
+                or source.get("revision") != preflight["sglang"]["revision"]
+                or source.get("pinned_contract")
+                != preflight["sglang"]["pinned_contract"]
+                or source.get("python_source_contract") != expected_contract
+                or source.get("loader")
+                != preflight["sglang"][mode].get("loader")
+                or record.get("runtime_identity", {}).get("python_executable")
+                != preflight["python"]["executable"]
+            ):
+                raise RuntimeError(f"{mode} record differs from preflight identity")
+        checkpoint = manager["checkpoint"]
+        if checkpoint["config_sha256"] != model_identity["config.json"]["sha256"]:
+            raise RuntimeError("pair checkpoint differs from preflight")
+        index_files = checkpoint.get("index_files", [])
+        if (len(index_files) != 1
+                or index_files[0].get("name") != "model.safetensors.index.json"
+                or index_files[0].get("sha256") != model_identity["model.safetensors.index.json"]["sha256"]):
+            raise RuntimeError("pair checkpoint index differs from preflight")
+        expected_shards = model_identity["weight_shards"]
+        if checkpoint.get("indexed_weight_files") != [item["filename"] for item in expected_shards]:
+            raise RuntimeError("pair indexed shard names differ from preflight")
+        recorded_shards = [
+            {
+                "filename": item.get("name"),
+                "size": item.get("bytes"),
+                "sha256": item.get("sha256"),
+            }
+            for item in checkpoint.get("weight_files", [])
+        ]
+        if recorded_shards != expected_shards:
+            raise RuntimeError("pair shard inventory differs from preflight")
+        result["input_identity"] = {
+            "source_commit": preflight["source"]["commit"],
+            "source_inventory_sha256": preflight["source"]["inventory_sha256"],
+            "library_sha256": preflight["library"]["sha256"],
+            "plan_sha256": expected_plan["sha256"],
+            "model_config_sha256": preflight["inputs"]["models"][model_name]["config.json"]["sha256"],
+            "model_index_sha256": preflight["inputs"]["models"][model_name]["model.safetensors.index.json"]["sha256"],
+            "model_weight_shards_sha256": preflight["inputs"]["models"][model_name]["weight_shards_sha256"],
+            "python_environment_sha256": canonical_digest(preflight["python"]),
+            "sglang_checkouts_sha256": canonical_digest(
+                {name: preflight["sglang"][name] for name in ("stock", "manager")}
+            ),
+        }
     return result
 
 
@@ -478,6 +604,34 @@ def _validate_preflight(record: dict[str, Any]) -> None:
     benchmark_path = Path(record["benchmark"]["path"])
     if sha256_file(benchmark_path) != record["benchmark"]["sha256"]:
         raise RuntimeError("benchmark differs from preflight identity")
+    python_identity = _verify_python_environment(
+        Path(record["python"]["executable"]),
+        Path(record["inputs"]["requirements"]["path"]),
+    )
+    if python_identity != record["python"]:
+        raise RuntimeError("Python environment differs from preflight identity")
+    for name, model in record["inputs"]["models"].items():
+        root = Path(model["root"])
+        for filename in ("config.json", "model.safetensors.index.json"):
+            _require_hash(root / filename, model[filename]["sha256"], f"{name} {filename}")
+        observed = []
+        for shard in model["weight_shards"]:
+            path = root / shard["filename"]
+            if path.stat().st_size != shard["size"] or sha256_file(path) != shard["sha256"]:
+                raise RuntimeError(f"{name} shard differs from preflight: {path.name}")
+            observed.append(shard)
+        if canonical_digest(observed) != model["weight_shards_sha256"]:
+            raise RuntimeError(f"{name} shard inventory digest differs from preflight")
+    for name, plan in record["inputs"]["plans"].items():
+        _require_hash(Path(plan["path"]), plan["sha256"], f"{name} plan")
+    requirements = record["inputs"]["requirements"]
+    _require_hash(Path(requirements["path"]), requirements["sha256"], "requirements lock")
+    stock = pinned.validate_base_checkout(record["sglang"]["stock_root"])
+    manager = pinned.validate_patched_checkout(record["sglang"]["manager_root"])
+    if _sglang_checkout_identity(stock, "stock") != record["sglang"]["stock"]:
+        raise RuntimeError("stock SGLang checkout differs from preflight")
+    if _sglang_checkout_identity(manager, "manager") != record["sglang"]["manager"]:
+        raise RuntimeError("manager SGLang checkout differs from preflight")
 
 
 def _case_command(args: argparse.Namespace, pre: dict[str, Any], case: Case, mode: str) -> list[str]:
@@ -532,14 +686,16 @@ def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
                 paths = {mode: records / f"{case.slug}-{mode}.json" for mode in ("stock", "manager")}
                 order = execution_order(epoch)
                 for mode in order:
+                    _validate_preflight(pre)
                     output = paths[mode]
                     _run_record(
                         _case_command(args, pre, case, mode), output,
                         output.with_suffix(".stderr.log"),
                     )
                     _assert_idle_h20()
+                _validate_preflight(pre)
                 stock, manager = paths["stock"], paths["manager"]
-                pair = verify_pair_files(stock, manager)
+                pair = verify_pair_files(stock, manager, pre)
                 pair["epoch"] = epoch
                 pair["execution_order"] = list(order)
                 pair_path = records / f"{case.slug}-pair.json"
@@ -551,7 +707,7 @@ def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
     return summary
 
 
-def _completed_pairs(work_dir: Path) -> list[dict[str, Any]]:
+def _completed_pairs(work_dir: Path, preflight: dict[str, Any]) -> list[dict[str, Any]]:
     epoch_dirs = sorted((work_dir / "records").glob("epoch-*"))
     if not epoch_dirs:
         raise RuntimeError("seal requires at least one completed epoch")
@@ -563,7 +719,7 @@ def _completed_pairs(work_dir: Path) -> list[dict[str, Any]]:
             stock = epoch_dir / f"{case.slug}-stock.json"
             manager = epoch_dir / f"{case.slug}-manager.json"
             pair_path = epoch_dir / f"{case.slug}-pair.json"
-            pair = verify_pair_files(stock, manager)
+            pair = verify_pair_files(stock, manager, preflight)
             pair["epoch"] = expected_epoch
             pair["execution_order"] = list(execution_order(expected_epoch))
             if _load(pair_path) != pair:
@@ -601,7 +757,7 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
         if item["path"] == "integrations/sglang/qualify_abi8_h20.py"
     ):
         raise RuntimeError("qualification runner differs from preflight source inventory")
-    pairs = _completed_pairs(work_dir)
+    pairs = _completed_pairs(work_dir, pre)
     calculated_summary = summarize_pairs(pairs)
     summaries = sorted(work_dir.glob("summary-*.json"))
     if not summaries or not any(_load(path) == calculated_summary for path in summaries):
@@ -624,10 +780,15 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
     shutil.copy2(Path(__file__).resolve(), qualification / "source/qualify_abi8_h20.py")
     shutil.copy2(Path(benchmark.__file__).resolve(), qualification / "source/bench_canonical_manager.py")
     readme = (
-        "# OrbitKV ABI8 H20 qualification\n\n"
-        f"Status: correctness qualified; performance pending.\n\n"
+        "# OrbitKV ABI8 SGLang Full and Full+SWA Prefix qualification\n\n"
+        "Status: ABI8 SGLang Full/Full+SWA Prefix correctness qualified; "
+        "performance pending.\n\n"
         f"Source commit: `{pre['source']['commit']}`\n\n"
-        f"Verified pairs: {len(pairs)} across {len(pairs) // len(CASES)} epoch(s).\n"
+        f"Verified pairs: {len(pairs)} across {len(pairs) // len(CASES)} epoch(s).\n\n"
+        "Cases: Qwen2.5-7B Full/FlashInfer B1+B4; GPT-OSS-20B "
+        "Full+SWA/FA3 B1+B4.\n\n"
+        "Excluded: token relocation, MLA, fixed-state, overlap scheduling, "
+        "CUDA Graphs, speculation, distributed execution, and performance qualification.\n"
     )
     (output_dir / "README.md").write_text(readme, encoding="utf-8")
     artifacts = _relative_artifact_hashes(
@@ -635,11 +796,35 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
     )
     manifest = {
         "schema": MANIFEST_SCHEMA,
-        "qualification_status": "correctness_qualified_performance_pending",
+        "qualification_status": "abi8_sglang_full_full_swa_prefix_correctness_qualified_performance_pending",
+        "scope": {
+            "cases": [
+                {"model": case.model, "profile": case.profile,
+                 "attention_backend": case.backend, "batch_size": case.batch}
+                for case in CASES
+            ],
+            "excluded": [
+                "token_relocation", "mla", "fixed_state",
+                "overlap_scheduling", "cuda_graphs", "speculation",
+                "distributed_execution", "performance_qualification",
+            ],
+        },
         "abi_version": 8, "exact_symbol_count": 40,
         "source_commit": pre["source"]["commit"],
         "source_inventory_sha256": pre["source"]["inventory_sha256"],
         "library_sha256": pre["library"]["sha256"],
+        "input_hashes": {
+            "requirements_sha256": pre["inputs"]["requirements"]["sha256"],
+            "plans": {name: value["sha256"] for name, value in pre["inputs"]["plans"].items()},
+            "models": {
+                name: {
+                    "config_sha256": value["config.json"]["sha256"],
+                    "index_sha256": value["model.safetensors.index.json"]["sha256"],
+                    "weight_shards_sha256": value["weight_shards_sha256"],
+                }
+                for name, value in pre["inputs"]["models"].items()
+            },
+        },
         "epoch_count": len(pairs) // len(CASES), "pair_count": len(pairs),
         "performance_go": False, "artifacts": artifacts,
     }

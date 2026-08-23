@@ -86,6 +86,19 @@ def _checkpoint_identity(*_args, **_kwargs):
     }
 
 
+def test_checkpoint_identity_hashes_weight_contents(tmp_path):
+    model = tmp_path / "model"
+    model.mkdir()
+    (model / "config.json").write_text("{}", encoding="utf-8")
+    weight = model / "model.safetensors"
+    weight.write_bytes(b"first")
+    first = bench.checkpoint_identity(model, "auto")
+    weight.write_bytes(b"other")
+    second = bench.checkpoint_identity(model, "auto")
+    assert first["weight_files"][0]["bytes"] == second["weight_files"][0]["bytes"]
+    assert first["weight_files"][0]["sha256"] != second["weight_files"][0]["sha256"]
+
+
 def _write_config(tmp_path: Path, value: dict) -> Path:
     model = tmp_path / "model"
     model.mkdir()
