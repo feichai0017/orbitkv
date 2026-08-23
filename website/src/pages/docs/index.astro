@@ -71,15 +71,23 @@ import { docs, repositoryUrl } from "../../data/site";
       <h2>Current integration boundary</h2>
       <p>
         The modular Rust token/fixed-state core and exact 40-symbol C ABI8 wire
-        retain host L2 GO. The production request-owned fixed-state seam is
-        host-qualified only for initial clear, forward-event propagation, and
-        retire/clear/ACK. Replacement copy is covered only by coordinator and
-        real-CPU-tensor host tests; its production trigger remains pending. GDN,
-        KDA, ShortConv, and linear-attention bindings, plus real
-        CUDA/model/H20/performance qualification, remain pending. Manager and
-        state-pool handles are separate and provide no cross-handle atomicity.
-        The 73-layout runtime and <code>OrbitKVPrefixCache</code> retain their
-        separately scoped host evidence.
+        retain host L2 GO. In addition, exact source <code>6f62a23</code> has a
+        sealed H20 correctness record for the <code>OrbitKVPrefixCache</code>
+        path: Qwen Full and GPT-OSS Full+SWA at B1/B4, 12 matched pairs over
+        three epochs, using official SGLang v0.5.17 with page16 BF16 NHD eager
+        FA3. It verifies exact outputs and request traces, seeded Prefix hits,
+        final all-free drain, and advancing SWA retirement, reclamation, and
+        wrap counters for every Hybrid pair. It does not cover relocation, MLA,
+        fixed-state, overlap, Graph, speculation, distributed execution, or
+        performance qualification.
+      </p>
+      <p>
+        The production request-owned fixed-state seam remains host-qualified
+        only for initial clear, forward-event propagation, and retire/clear/ACK.
+        Replacement copy is covered only by coordinator and real-CPU-tensor
+        host tests; its production trigger remains pending. GDN, KDA, ShortConv,
+        and linear-attention bindings remain pending. Manager and state-pool
+        handles are separate and provide no cross-handle atomicity.
       </p>
 
       <h2>Capability levels</h2>
@@ -107,12 +115,14 @@ import { docs, repositoryUrl } from "../../data/site";
       <div class="doc-note">
         <strong>Boundary.</strong>
         <p>
-          The historical frozen 9233c06d ABI5-v5 snapshot has scoped Full/Hybrid L4
-          correctness on one H20 against official SGLang v0.5.17. It does not
-          qualify ABI8. Same-capacity memory reduction is 0%, and
-          <code>performance_go</code> is false because the B4 measurements come
-          from one epoch. ABI8 H20 Prefix/relocation/fixed-state E2E, Graph/overlap,
-          speculation, multi-GPU, and disaggregation remain unqualified.
+          The sealed ABI8 Prefix record reports mean manager overheads of +7.37%
+          and +11.87% for Full B1/B4, and +3.99% and +4.45% for Hybrid B1/B4.
+          These are descriptive measurements: <code>performance_go=false</code>,
+          with no speedup, memory-saving, or general replacement claim. The
+          frozen 9233c06d ABI5-v5 snapshot remains historical scoped L4 evidence
+          only. The separate ABI8 fixed-state scope boundary is unchanged. Relocation, MLA,
+          fixed-state, overlap/Graph, speculation, multi-GPU, and disaggregation
+          remain outside the sealed ABI8 record.
         </p>
         <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>
           Current capability matrix

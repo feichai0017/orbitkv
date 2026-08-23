@@ -13,13 +13,37 @@ real-CPU-tensor host tests; its production trigger remains pending.
 GDN/KDA/ShortConv/linear-attention family bindings and real
 CUDA/model/H20/performance qualification remain pending. Manager and state-pool
 handles are separate, so only fail-stop containment—not cross-handle
-atomicity—is provided. The 73-layout Python runtime, SGLang Prefix adapter,
-and existing token-manager paths retain their separately scoped host evidence.
-Every record below predates ABI8 and therefore remains historical.
+atomicity—is provided. The 73-layout Python runtime and token-manager paths
+outside the sealed Full/Full+SWA Prefix boundary retain their separately
+scoped host evidence. The latest record below is exact-source ABI8; all
+preceding ABI records remain historical and qualify only their own source
+closures.
 
 ## Latest engine record
 
 | Record | Scope |
+| --- | --- |
+| `h20-sglang-v0517-abi8-full-hybrid-20260823` | Sealed exact `6f62a23` ABI8 on official SGLang v0.5.17 and one H20; Scoped L4 correctness for Qwen Full and GPT-OSS Full+SWA Prefix B1/B4; `performance_go=false` |
+
+The exact source commit is
+`6f62a23b9abaa9bf12e9b060389259fa9185e70f`. The qualified profile is page16
+BF16 NHD, eager FA3, and TP/PP/DP/DCP = 1. All 12 manager/stock pairs pass
+across three epochs; manager and stock each contain 126 measured request traces
+and 4,158 output tokens. Every manager case records Prefix publication, warm
+hits and attach, eviction, and a clean final drain. Every Hybrid case has
+positive SWA retirement-certificate and reclaimed-page counters.
+
+Mean manager-over-stock time is +7.3678% for Full B1, +11.8684% for Full B4,
++3.9865% for Full+SWA B1, and +4.4476% for Full+SWA B4. These measurements are
+diagnostic and `performance_go=false`; they are not a speedup claim. The record
+makes no memory-saving claim and does not establish a complete SGLang
+replacement or production readiness. Token relocation, MLA, fixed state,
+overlap, CUDA Graphs, speculation, distributed execution, and performance
+qualification are explicitly excluded.
+
+## Historical frozen ABI5-v5 record
+
+| Record | Historical scope |
 | --- | --- |
 | `h20-sglang-v0517-abi5-v5-grouped-release-20260821` | Frozen `9233c06d…` ABI5-v5 on official SGLang v0.5.17 and one H20; scoped L4 correctness for Qwen Full and GPT-OSS Full+SWA B1/B4; grouped release; same-cap memory reduction 0%; `performance_go=false` |
 
@@ -40,8 +64,10 @@ B4 steady manager overhead of +4.1932% for Qwen and -5.2048% for GPT-OSS;
 Qwen B1 is +5.0009%. With no repeated-epoch statistics,
 `performance_go=false`; the GPT result is not a general speedup claim.
 
-Nothing in this record qualifies ABI8 Prefix/COW, Python, SGLang integration,
-relocation, fixed-state model execution, Graph, or distributed execution.
+Nothing in this historical record qualifies ABI8 Prefix/COW, Python, SGLang
+integration, relocation, fixed-state model execution, Graph, or distributed
+execution. The separate sealed ABI8 record above is the sole source for its
+narrower current claim.
 
 ## Earlier records
 
@@ -87,5 +113,5 @@ Other directories are earlier calibration records retained for auditability.
 
 `h20-canonical-manager-20260820/provenance-amendment.json` records that its old
 workspace snapshot was not originally sealed; its original manifest remains
-unchanged. The newer ABI5-v5 record carries the exact sealed source closure
+unchanged. The later ABI5-v5 record carries the exact sealed source closure
 used by its run.

@@ -16,7 +16,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <div class="hero-copy">
       <div class="hero-kicker">
         <span class="release-dot" aria-hidden="true"></span>
-        <span>ABI8 token + fixed-state core and exact C wire · host L2 GO</span>
+        <span>ABI8 Prefix correctness · sealed H20 record · performance pending</span>
       </div>
       <h1>Attention semantics.<br /><span>Compiled into state.</span></h1>
       <p class="hero-lede">
@@ -90,17 +90,16 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="section performance-section" id="evidence">
     <header class="section-heading">
-      <div><p class="eyebrow">Qualification boundary</p><h2>ABI8 core and wire are host L2 GO; production integration remains scoped.</h2></div>
+      <div><p class="eyebrow">Qualification boundary</p><h2>The ABI8 Prefix path now has a sealed, scoped H20 correctness record.</h2></div>
       <p>
-        The modular Rust token/fixed-state core and exact 40-symbol C wire
-        retain host L2 GO. The production request-owned fixed-state seam is
-        host-qualified only for initial clear, forward-event propagation, and
-        retire/clear/ACK. Replacement copy has coordinator/real-CPU-tensor host
-        tests, but its production trigger remains pending. GDN, KDA, ShortConv,
-        and linear-attention bindings, plus real CUDA/model/H20/performance
-        qualification, remain pending. Separate manager and state-pool handles
-        provide no cross-handle atomicity. The frozen ABI5-v5 H20 record is
-        historical only.
+        Exact source 6f62a23 passed all 12 stock/manager pairs across three
+        epochs on one H20: Qwen2.5-7B Full and GPT-OSS-20B Full+SWA at B1/B4,
+        using official SGLang v0.5.17 with page16 BF16 NHD eager FA3. Outputs
+        and request traces match exactly, seeded Prefix hits are observed, all
+        arenas drain, and every Hybrid pair advances the required SWA counters.
+        Relocation, MLA, fixed-state, overlap, Graph, speculation, distributed
+        execution, and performance qualification are excluded.
+        The frozen ABI5-v5 H20 record remains historical only.
       </p>
     </header>
     <div class="metric-grid">
@@ -132,12 +131,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div><p class="eyebrow">Next gates</p><h2>Expand the qualified ownership surface.</h2></div>
       <p>
         Snapshot, Prefix, fork, joint COW, page-owned reclamation, and the
-        official SGLang cache seam retain their scoped host evidence. For fixed
-        state, only initial clear, forward-event propagation, and
-        retire/clear/ACK are qualified on the production seam; the replacement
-        production trigger and family-specific bindings remain pending. Next
-        are real CUDA/model/H20 and performance qualification, followed by
-        Graph and distribution.
+        official SGLang cache seam now have a sealed, scoped Full/Full+SWA H20
+        Prefix record. For fixed state, only initial clear, forward-event
+        propagation, and retire/clear/ACK are qualified on the production seam;
+        the replacement production trigger and family-specific bindings remain
+        pending. Relocation, MLA, fixed-state H20, performance, Graph,
+        speculation, and distribution are still open gates.
       </p>
     </header>
     <div class="milestone-list">

@@ -32,9 +32,14 @@ export const compilerStages = [
 
 export const metrics = [
   {
-    value: "ABI8 / L2",
-    label: "Host core + C wire",
-    detail: "Snapshots, Prefix, joint COW, token relocation, and reclamation pass host gates.",
+    value: "12 / 3",
+    label: "ABI8 H20 pairs / epochs",
+    detail: "Every matched Qwen Full and GPT-OSS Full+SWA B1/B4 Prefix pair passed.",
+  },
+  {
+    value: "6f62a23",
+    label: "Sealed ABI8 source",
+    detail: "Official SGLang v0.5.17 on one H20 with page16 BF16 NHD eager FA3.",
   },
   {
     value: "40 exact",
@@ -42,23 +47,42 @@ export const metrics = [
     detail: "Batch-only exported surface with C/C++ layout and dynamic symbol checks.",
   },
   {
-    value: "20 → 5",
-    label: "Historical B4 release",
-    detail: "Frozen ABI5-v5 grouped 20 request releases into five transactions.",
-  },
-  {
-    value: "0%",
-    label: "Same-cap memory",
-    detail: "Historical stock/manager pairs reserve identical KV tensor capacity.",
+    value: "+3.99–11.87%",
+    label: "Observed mean overhead",
+    detail: "Full B1/B4: +7.37/+11.87%; Hybrid B1/B4: +3.99/+4.45%.",
   },
   {
     value: "NO GO",
-    label: "General performance",
-    detail: "One ABI5 epoch is insufficient for a general latency or throughput claim.",
+    label: "Performance qualification",
+    detail: "performance_go=false; no speedup, memory-saving, or general replacement claim.",
   },
 ];
 
 export const evidenceRows = [
+  {
+    result: "Sealed ABI8 H20 Prefix",
+    value: "12 / 12 PASS",
+    contract: "Qwen Full and GPT-OSS Full+SWA B1/B4 over 3 epochs; stock and manager request traces and output digests match exactly",
+    boundary: "exact 6f62a23 source; official SGLang v0.5.17; one H20; page16 BF16 NHD eager FA3",
+  },
+  {
+    result: "ABI8 Prefix / drain / SWA",
+    value: "PASS / PASS / PASS",
+    contract: "512-token Prefix publish and measured hits; final all-free census; every Hybrid pair advances SWA retirement, reclamation, and wrap counters",
+    boundary: "Prefix path only; relocation, MLA, fixed-state, overlap, Graph, speculation, and distributed execution excluded",
+  },
+  {
+    result: "ABI8 Full mean overhead",
+    value: "+7.37 / +11.87%",
+    contract: "B1 / B4 manager over matched stock across 3 epochs",
+    boundary: "descriptive measurements only; performance_go=false",
+  },
+  {
+    result: "ABI8 Hybrid mean overhead",
+    value: "+3.99 / +4.45%",
+    contract: "B1 / B4 manager over matched stock across 3 epochs",
+    boundary: "descriptive measurements only; performance_go=false",
+  },
   {
     result: "ABI8 Rust core",
     value: "L2 GO",
@@ -72,10 +96,10 @@ export const evidenceRows = [
     boundary: "host wire only; manager and state-pool handles are separate, with no cross-handle atomicity or H20 inheritance",
   },
   {
-    result: "ABI8 Python/Prefix + scoped state",
-    value: "L2 GO / scoped",
-    contract: "Exact-40 loader, 73 layouts, OrbitKVPrefixCache, and fixed-state initial clear, forward event, retire/clear/ACK",
-    boundary: "replacement copy has coordinator/real-CPU-tensor host tests only; production trigger, family bindings, CUDA/model/H20/performance remain pending",
+    result: "ABI8 fixed-state seam",
+    value: "scoped host evidence",
+    contract: "Initial clear, forward event, and retire/clear/ACK on the production request-owned seam",
+    boundary: "excluded from the sealed H20 record; replacement trigger, family bindings, CUDA/model/H20/performance remain pending",
   },
   {
     result: "Frozen ABI5-v5 H20",
@@ -90,22 +114,22 @@ export const evidenceRows = [
     boundary: "historical control-plane result; not ABI8 Prefix performance",
   },
   {
-    result: "ABI5-v5 B4 steady",
+    result: "Historical ABI5-v5 B4 steady",
     value: "+4.19 / −5.20%",
     contract: "Qwen Full / GPT-OSS Hybrid manager latency relative to stock",
     boundary: "one epoch; no repeated statistics; performance_go=false",
   },
   {
-    result: "Same-capacity memory",
+    result: "Historical ABI5 same-capacity memory",
     value: "0%",
     contract: "Equal page16 SGLang KV tensor capacity in manager and stock processes",
     boundary: "no compression or intrinsic same-capacity memory-win claim",
   },
   {
-    result: "SGLang relocation and Graph",
+    result: "Unqualified ABI8 paths",
     value: "pending",
-    contract: "Real KV copy/event, retained-slot attention, and multiple completion domains",
-    boundary: "host transaction exists; no engine, H20, or projected vToken benefit",
+    contract: "Relocation, MLA, fixed-state, overlap, Graph, speculation, and distributed execution",
+    boundary: "not covered by the sealed Prefix record; no general SGLang replacement claim",
   },
 ];
 
@@ -117,8 +141,8 @@ export const roadmap = [
   },
   {
     state: "THEN",
-    name: "Run ABI8 H20 A/B",
-    detail: "After integration is complete, run repeated matched H20 tests for Full, Full+SWA, MLA, and each bound fixed-state family.",
+    name: "Expand ABI8 H20 coverage",
+    detail: "Extend the sealed Prefix-only Full and Full+SWA record to relocation, MLA, and each bound fixed-state family.",
   },
   {
     state: "LATER",
@@ -153,13 +177,19 @@ export const docs = [
     href: `${repositoryUrl}/blob/main/docs/token-virtualization-and-attention-roadmap.md`,
   },
   {
-    key: "04 / HISTORICAL EVIDENCE",
+    key: "04 / SEALED EVIDENCE",
+    name: "ABI8 Prefix Full/Hybrid H20",
+    detail: "Sealed exact 6f62a23; 12 matched pairs over 3 epochs; scoped correctness only.",
+    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-full-hybrid-20260823`,
+  },
+  {
+    key: "05 / HISTORICAL EVIDENCE",
     name: "ABI5-v5 Full/Hybrid H20",
     detail: "Frozen 9233c06d scoped L4 correctness; same-cap 0%; performance not GO.",
     href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi5-v5-grouped-release-20260821`,
   },
   {
-    key: "05 / RECORDS",
+    key: "06 / RECORDS",
     name: "Evidence index",
     detail: "Append-only snapshots with explicit source and ABI boundaries.",
     href: `${repositoryUrl}/blob/main/results/README.md`,
