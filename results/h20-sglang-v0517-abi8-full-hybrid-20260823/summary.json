@@ -1,0 +1,87 @@
+{
+  "groups": [
+    {
+      "batch_size": 1,
+      "epoch_count": 3,
+      "manager_over_stock_percent": 7.367782621898744,
+      "manager_seconds": {
+        "mean": 0.9605964918931326,
+        "p50": 0.9411970339715481,
+        "p95": 1.0118243992328644,
+        "p99": 1.0118243992328644
+      },
+      "performance_go": false,
+      "profile": "full",
+      "sample_count_per_mode": 3,
+      "stock_seconds": {
+        "mean": 0.8946785231431326,
+        "p50": 0.897913359105587,
+        "p95": 0.8986298516392708,
+        "p99": 0.8986298516392708
+      }
+    },
+    {
+      "batch_size": 4,
+      "epoch_count": 3,
+      "manager_over_stock_percent": 11.868353366592288,
+      "manager_seconds": {
+        "mean": 0.9771679100890954,
+        "p50": 0.9457259103655815,
+        "p95": 1.0746624805033207,
+        "p99": 1.2025855593383312
+      },
+      "performance_go": false,
+      "profile": "full",
+      "sample_count_per_mode": 15,
+      "stock_seconds": {
+        "mean": 0.8734980722268423,
+        "p50": 0.8623641617596149,
+        "p95": 0.9101100973784924,
+        "p99": 0.9270614124834538
+      }
+    },
+    {
+      "batch_size": 1,
+      "epoch_count": 3,
+      "manager_over_stock_percent": 3.986515825613779,
+      "manager_seconds": {
+        "mean": 1.6468039539953072,
+        "p50": 1.6540723033249378,
+        "p95": 1.695955716073513,
+        "p99": 1.695955716073513
+      },
+      "performance_go": false,
+      "profile": "hybrid_full_swa",
+      "sample_count_per_mode": 3,
+      "stock_seconds": {
+        "mean": 1.5836706720292568,
+        "p50": 1.5542590208351612,
+        "p95": 1.655452884733677,
+        "p99": 1.655452884733677
+      }
+    },
+    {
+      "batch_size": 4,
+      "epoch_count": 3,
+      "manager_over_stock_percent": 4.447615464133214,
+      "manager_seconds": {
+        "mean": 1.487473275512457,
+        "p50": 1.4443002715706825,
+        "p95": 1.6695697978138924,
+        "p99": 1.7654787600040436
+      },
+      "performance_go": false,
+      "profile": "hybrid_full_swa",
+      "sample_count_per_mode": 15,
+      "stock_seconds": {
+        "mean": 1.4241333025197187,
+        "p50": 1.3554388657212257,
+        "p95": 1.6179699264466763,
+        "p99": 1.6664628721773624
+      }
+    }
+  ],
+  "pair_count": 12,
+  "performance_go": false,
+  "schema": "orbitkv.abi8-h20-multi-epoch-summary.v1"
+}
