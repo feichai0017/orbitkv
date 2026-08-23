@@ -211,8 +211,11 @@ def _build_library(work_dir: Path, cargo: str) -> tuple[Path, dict[str, Any]]:
 
 
 def _verify_python_environment(python: Path, requirements: Path) -> dict[str, Any]:
-    _run((str(python), "-m", "pip", "check"))
-    frozen = _run((str(python), "-m", "pip", "freeze", "--all")).stdout
+    executable = python.absolute()
+    if not executable.is_file():
+        raise RuntimeError(f"Python executable is missing: {executable}")
+    _run((str(executable), "-m", "pip", "check"))
+    frozen = _run((str(executable), "-m", "pip", "freeze", "--all")).stdout
     expected = requirements.read_text(encoding="utf-8")
 
     def normalize(lines: list[str]) -> tuple[list[str], str]:
@@ -236,7 +239,10 @@ def _verify_python_environment(python: Path, requirements: Path) -> dict[str, An
             "active Python environment differs from requirements lock:\n" + difference
         )
     return {
-        "executable": str(python.resolve(strict=True)),
+        # Preserve the venv entry path for child execution. Resolving this
+        # symlink would produce /usr/bin/python and silently lose the venv.
+        "executable": str(executable),
+        "real_executable": str(executable.resolve(strict=True)),
         "normalized_freeze_sha256": canonical_digest(frozen_lines),
         "active_editable": active_editable,
         "locked_editable": expected_editable,
@@ -568,7 +574,7 @@ def _write_new(path: Path, value: Any) -> None:
 
 
 def _fresh_environment(python: str) -> dict[str, str]:
-    python_bin = str(Path(python).resolve().parent)
+    python_bin = str(Path(python).absolute().parent)
     return {
         "HOME": os.environ.get("HOME", "/root"), "USER": os.environ.get("USER", "root"),
         "LOGNAME": os.environ.get("LOGNAME", os.environ.get("USER", "root")),
