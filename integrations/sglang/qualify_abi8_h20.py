@@ -15,17 +15,19 @@ import json
 import os
 import shutil
 import statistics
+import struct
 import subprocess
 import sys
 import difflib
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Sequence
 
 
 INTEGRATION_ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = INTEGRATION_ROOT.parents[1]
 SOURCE_ROOT = INTEGRATION_ROOT / "src"
+sys.dont_write_bytecode = True
 sys.path.insert(0, str(INTEGRATION_ROOT))
 sys.path.insert(0, str(SOURCE_ROOT))
 
@@ -41,9 +43,14 @@ PRECHECK_SCHEMA = "orbitkv.abi8-h20-preflight.v1"
 PAIR_SCHEMA = "orbitkv.abi8-h20-pair-verification.v1"
 SUMMARY_SCHEMA = "orbitkv.abi8-h20-multi-epoch-summary.v1"
 MANIFEST_SCHEMA = "orbitkv.abi8-h20-sealed-manifest.v1"
+SEAL_VERIFICATION_SCHEMA = "orbitkv.abi8-h20-seal-verification.v1"
 EXECUTION_TOKEN = "ABI8_H20_QUALIFICATION"
 SGLANG_REVISION = "29481685462732237d80d86076d6563e1f658102"
 REQUIREMENTS_SHA256 = "472d8f63cad22cd7ac4908059562bebde5e54b8d2432f750640a14d525d2fa97"
+ORBITKV_EDITABLE_TEMPLATE = (
+    "-e git+https://github.com/feichai0017/orbitkv.git@{commit}"
+    "#egg=orbitkv_sglang&subdirectory=integrations/sglang"
+)
 MODEL_HASHES = {
     "qwen2.5-7b": {
         "config.json": "7463bb0ea78315365e6c6b74de4e73bbcc8359dfb0c5a737584e077d42c0b03c",
@@ -91,6 +98,10 @@ CASES = (
     Case("qwen2.5-7b", 4, 5, 2112, 4096, "fa3", "full"),
     Case("gpt-oss-20b", 4, 5, 2112, 4096, "fa3", "hybrid_full_swa"),
 )
+QUALIFICATION_STATUS = (
+    "abi8_sglang_full_full_swa_prefix_correctness_qualified_performance_pending"
+)
+SOURCE_PREFIX = PurePosixPath("integrations/sglang")
 
 
 def execution_order(epoch: int) -> tuple[str, str]:
@@ -172,6 +183,91 @@ def library_identity(path: Path) -> dict[str, Any]:
     return {
         "path": str(path), "sha256": sha256_file(path),
         "bytes": path.stat().st_size, "abi_version": actual_abi,
+        "symbols": symbols,
+    }
+
+
+def _elf_dynamic_symbols(path: Path) -> list[str]:
+    """Read exported dynamic symbols without loading or executing the ELF."""
+
+    data = path.read_bytes()
+    if len(data) < 64 or data[:4] != b"\x7fELF":
+        raise RuntimeError("sealed ABI8 library is not an ELF file")
+    elf_class, byte_order = data[4], data[5]
+    if elf_class not in (1, 2) or byte_order not in (1, 2):
+        raise RuntimeError("sealed ABI8 library has an unsupported ELF encoding")
+    endian = "<" if byte_order == 1 else ">"
+    if elf_class == 2:
+        header_format = endian + "HHIQQQIHHHHHH"
+        section_format = endian + "IIQQQQIIQQ"
+        symbol_format = endian + "IBBHQQ"
+        section_offset_index, section_entry_index, section_count_index = 5, 10, 11
+    else:
+        header_format = endian + "HHIIIIIHHHHHH"
+        section_format = endian + "IIIIIIIIII"
+        symbol_format = endian + "IIIBBH"
+        section_offset_index, section_entry_index, section_count_index = 5, 10, 11
+    header_size = struct.calcsize(header_format)
+    if len(data) < 16 + header_size:
+        raise RuntimeError("sealed ABI8 library has a truncated ELF header")
+    header = struct.unpack_from(header_format, data, 16)
+    section_offset = header[section_offset_index]
+    section_entry_size = header[section_entry_index]
+    section_count = header[section_count_index]
+    expected_section_size = struct.calcsize(section_format)
+    if (section_entry_size < expected_section_size or section_count <= 0
+            or section_offset + section_entry_size * section_count > len(data)):
+        raise RuntimeError("sealed ABI8 library has an invalid section table")
+    sections = [
+        struct.unpack_from(section_format, data, section_offset + index * section_entry_size)
+        for index in range(section_count)
+    ]
+    symbol_names: set[str] = set()
+    for section in sections:
+        section_type = section[1]
+        if section_type != 11:  # SHT_DYNSYM
+            continue
+        offset, size, link, entry_size = section[4], section[5], section[6], section[9]
+        if link >= len(sections):
+            raise RuntimeError("sealed ABI8 library has an invalid string table link")
+        strings = sections[link]
+        strings_offset, strings_size = strings[4], strings[5]
+        expected_symbol_size = struct.calcsize(symbol_format)
+        if (entry_size < expected_symbol_size or offset + size > len(data)
+                or strings_offset + strings_size > len(data) or size % entry_size):
+            raise RuntimeError("sealed ABI8 library has an invalid dynamic symbol table")
+        table = data[strings_offset:strings_offset + strings_size]
+        for position in range(offset, offset + size, entry_size):
+            symbol = struct.unpack_from(symbol_format, data, position)
+            name_offset = symbol[0]
+            info = symbol[1] if elf_class == 2 else symbol[3]
+            section_index = symbol[3] if elf_class == 2 else symbol[5]
+            if not name_offset or section_index == 0 or info >> 4 not in (1, 2):
+                continue
+            if name_offset >= len(table):
+                raise RuntimeError("sealed ABI8 library has an invalid symbol name")
+            end = table.find(b"\0", name_offset)
+            if end < 0:
+                raise RuntimeError("sealed ABI8 library has an unterminated symbol name")
+            try:
+                name = table[name_offset:end].decode("ascii")
+            except UnicodeDecodeError as error:
+                raise RuntimeError("sealed ABI8 library has a non-ASCII symbol") from error
+            if name.startswith("orbitkv_"):
+                symbol_names.add(name)
+    return sorted(symbol_names)
+
+
+def sealed_library_identity(path: Path) -> dict[str, Any]:
+    path = path.resolve(strict=True)
+    if not path.is_file() or path.is_symlink():
+        raise RuntimeError("sealed ABI8 library is not a regular file")
+    symbols = _elf_dynamic_symbols(path)
+    if symbols != sorted(EXACT_SYMBOL_ALLOWLIST) or len(symbols) != 40:
+        raise RuntimeError("sealed library does not export exact ABI8 40 symbols")
+    return {
+        "path": str(path), "sha256": sha256_file(path),
+        "bytes": path.stat().st_size, "abi_version": ABI_VERSION,
         "symbols": symbols,
     }
 
@@ -384,15 +480,27 @@ def _record_pair_contract(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def verify_pair_records(stock: dict[str, Any], manager: dict[str, Any]) -> dict[str, Any]:
+def verify_pair_records(
+    stock: dict[str, Any],
+    manager: dict[str, Any],
+    *,
+    harness_sha256: str | None = None,
+    adapter_identity: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     if stock.get("schema") != benchmark.RECORD_SCHEMA or manager.get("schema") != benchmark.RECORD_SCHEMA:
         raise RuntimeError("pair does not use the active benchmark record schema")
     if stock.get("mode") != "stock" or manager.get("mode") != "manager":
         raise RuntimeError("pair ordering must be stock then manager")
     if stock.get("manager") is not None or not isinstance(manager.get("manager"), dict):
         raise RuntimeError("pair manager presence is invalid")
-    current_harness = sha256_file(Path(benchmark.__file__).resolve())
-    current_adapter = benchmark._adapter_identity()
+    current_harness = (
+        sha256_file(Path(benchmark.__file__).resolve())
+        if harness_sha256 is None else harness_sha256
+    )
+    current_adapter = (
+        benchmark._adapter_identity()
+        if adapter_identity is None else adapter_identity
+    )
     for mode, record in (("stock", stock), ("manager", manager)):
         source = record.get("source_identity")
         if not isinstance(source, dict):
@@ -481,13 +589,19 @@ def verify_pair_records(stock: dict[str, Any], manager: dict[str, Any]) -> dict[
 
 
 def verify_pair_files(
-    stock_path: Path, manager_path: Path, preflight: dict[str, Any] | None = None
+    stock_path: Path, manager_path: Path, preflight: dict[str, Any] | None = None,
+    *,
+    harness_sha256: str | None = None,
+    adapter_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     stock = _load(stock_path)
     manager = _load(manager_path)
-    result = verify_pair_records(stock, manager)
-    result["stock_record"] = str(stock_path.resolve())
-    result["manager_record"] = str(manager_path.resolve())
+    result = verify_pair_records(
+        stock, manager, harness_sha256=harness_sha256,
+        adapter_identity=adapter_identity,
+    )
+    result["stock_record"] = stock_path.name
+    result["manager_record"] = manager_path.name
     if preflight is not None:
         model_name = (
             "qwen2.5-7b"
@@ -738,8 +852,52 @@ def _relative_artifact_hashes(root: Path, excluded: frozenset[str]) -> dict[str,
     return {
         path.relative_to(root).as_posix(): sha256_file(path)
         for path in sorted(root.rglob("*"))
-        if path.is_file() and path.relative_to(root).as_posix() not in excluded
+        if path.is_file() and not path.is_symlink()
+        and path.relative_to(root).as_posix() not in excluded
     }
+
+
+def _materialize_requirements_lock(source: Path, active_editable: str) -> str:
+    lines = source.read_text(encoding="utf-8").splitlines(keepends=True)
+    indexes = [
+        index for index, line in enumerate(lines)
+        if line.rstrip("\r\n").startswith("-e git+")
+        and "#egg=orbitkv_sglang" in line.rstrip("\r\n")
+    ]
+    if len(indexes) != 1:
+        raise RuntimeError(
+            "requirements lock must contain exactly one editable orbitkv-sglang"
+        )
+    if not (isinstance(active_editable, str)
+            and active_editable.startswith("-e git+")
+            and "#egg=orbitkv_sglang" in active_editable
+            and "\n" not in active_editable and "\r" not in active_editable):
+        raise RuntimeError("preflight active_editable is malformed")
+    original = lines[indexes[0]]
+    ending = original[len(original.rstrip("\r\n")):]
+    lines[indexes[0]] = active_editable + ending
+    return "".join(lines)
+
+
+def _copy_source_closure(destination: Path) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in (
+        "qualify_abi8_h20.py",
+        "bench_canonical_manager.py",
+        "checkpoint_identity.py",
+        "prepare_pinned_checkout.py",
+        "pyproject.toml",
+    ):
+        shutil.copy2(INTEGRATION_ROOT / name, destination / name)
+    (destination / "patches").mkdir()
+    shutil.copy2(
+        INTEGRATION_ROOT / "patches/v0.5.17-orbitkv-fail-closed.patch",
+        destination / "patches/v0.5.17-orbitkv-fail-closed.patch",
+    )
+    shutil.copytree(
+        SOURCE_ROOT / "orbitkv_sglang", destination / "src/orbitkv_sglang",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", "*.pyo"),
+    )
 
 
 def seal(args: argparse.Namespace) -> dict[str, Any]:
@@ -782,9 +940,16 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
     shutil.copy2(pre["library"]["path"], qualification / "build/liborbitkv_ffi.so")
     for name, identity in pre["inputs"]["plans"].items():
         shutil.copy2(identity["path"], qualification / "plans" / f"{name}.json")
-    shutil.copy2(pre["inputs"]["requirements"]["path"], qualification / "requirements.lock.txt")
-    shutil.copy2(Path(__file__).resolve(), qualification / "source/qualify_abi8_h20.py")
-    shutil.copy2(Path(benchmark.__file__).resolve(), qualification / "source/bench_canonical_manager.py")
+    original_lock = qualification / "requirements.input.lock.txt"
+    sealed_lock = qualification / "requirements.lock.txt"
+    shutil.copy2(pre["inputs"]["requirements"]["path"], original_lock)
+    sealed_lock.write_text(
+        _materialize_requirements_lock(
+            original_lock, pre["python"]["active_editable"]
+        ),
+        encoding="utf-8",
+    )
+    _copy_source_closure(qualification / "source")
     readme = (
         "# OrbitKV ABI8 SGLang Full and Full+SWA Prefix qualification\n\n"
         "Status: ABI8 SGLang Full/Full+SWA Prefix correctness qualified; "
@@ -794,7 +959,17 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
         "Cases: Qwen2.5-7B Full/FA3 B1+B4; GPT-OSS-20B "
         "Full+SWA/FA3 B1+B4.\n\n"
         "Excluded: token relocation, MLA, fixed-state, overlap scheduling, "
-        "CUDA Graphs, speculation, distributed execution, and performance qualification.\n"
+        "CUDA Graphs, speculation, distributed execution, and performance qualification.\n\n"
+        "The `qualification/source` directory is a source closure containing the "
+        "qualification runner, benchmark, checkpoint helper, packaging metadata, "
+        "reviewed SGLang patch/prepare helper, and complete `orbitkv_sglang` Python "
+        "package. Verification is offline and does not require models, SGLang "
+        "worktrees, the original repository, or an installed editable package.\n\n"
+        "From the seal root, run standalone verification with:\n\n"
+        "```sh\n"
+        "PYTHONDONTWRITEBYTECODE=1 python3 "
+        "qualification/source/qualify_abi8_h20.py verify-seal .\n"
+        "```\n"
     )
     (output_dir / "README.md").write_text(readme, encoding="utf-8")
     artifacts = _relative_artifact_hashes(
@@ -802,7 +977,7 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
     )
     manifest = {
         "schema": MANIFEST_SCHEMA,
-        "qualification_status": "abi8_sglang_full_full_swa_prefix_correctness_qualified_performance_pending",
+        "qualification_status": QUALIFICATION_STATUS,
         "scope": {
             "cases": [
                 {"model": case.model, "profile": case.profile,
@@ -820,7 +995,8 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
         "source_inventory_sha256": pre["source"]["inventory_sha256"],
         "library_sha256": pre["library"]["sha256"],
         "input_hashes": {
-            "requirements_sha256": pre["inputs"]["requirements"]["sha256"],
+            "requirements_sha256": sha256_file(sealed_lock),
+            "original_requirements_sha256": pre["inputs"]["requirements"]["sha256"],
             "plans": {name: value["sha256"] for name, value in pre["inputs"]["plans"].items()},
             "models": {
                 name: {
@@ -841,7 +1017,469 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
     (output_dir / "SHA256SUMS").write_text(
         "".join(f"{digest}  {path}\n" for path, digest in sums.items()), encoding="utf-8"
     )
+    verify_seal(output_dir)
     return manifest
+
+
+def _strict_json(path: Path) -> dict[str, Any]:
+    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+        result: dict[str, Any] = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError(f"duplicate key {key!r}")
+            result[key] = value
+        return result
+
+    try:
+        value = json.loads(
+            path.read_text(encoding="utf-8"),
+            object_pairs_hook=unique_object,
+            parse_constant=lambda value: (_ for _ in ()).throw(
+                ValueError(f"non-finite number {value}")
+            ),
+        )
+    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+        raise RuntimeError(f"cannot load strict JSON record {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise RuntimeError(f"JSON record is not an object: {path}")
+    return value
+
+
+def _safe_seal_path(value: str) -> PurePosixPath:
+    path = PurePosixPath(value)
+    if (not value or "\\" in value or path.is_absolute()
+            or path.as_posix() != value or any(part in {"", ".", ".."} for part in path.parts)):
+        raise RuntimeError(f"unsafe or non-canonical sealed path: {value!r}")
+    return path
+
+
+def _seal_inventory(root: Path) -> tuple[set[str], set[str]]:
+    files: set[str] = set()
+    directories: set[str] = set()
+    for path in root.rglob("*"):
+        relative = path.relative_to(root).as_posix()
+        _safe_seal_path(relative)
+        if path.is_symlink():
+            raise RuntimeError(f"sealed output contains a symlink: {relative}")
+        if path.is_dir():
+            directories.add(relative)
+        elif path.is_file():
+            files.add(relative)
+        else:
+            raise RuntimeError(f"sealed output contains a non-regular entry: {relative}")
+    return files, directories
+
+
+def _read_sha256sums(path: Path) -> dict[str, str]:
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except (OSError, UnicodeError) as error:
+        raise RuntimeError(f"cannot read SHA256SUMS: {error}") from error
+    values: dict[str, str] = {}
+    for line in lines:
+        fields = line.split("  ", 1)
+        if len(fields) != 2:
+            raise RuntimeError("SHA256SUMS contains a malformed line")
+        digest, name = fields
+        _safe_seal_path(name)
+        if (len(digest) != 64 or digest != digest.lower()
+                or any(character not in "0123456789abcdef" for character in digest)):
+            raise RuntimeError(f"SHA256SUMS contains an invalid digest for {name}")
+        if name == "SHA256SUMS" or name in values:
+            raise RuntimeError(f"SHA256SUMS contains an invalid duplicate entry: {name}")
+        values[name] = digest
+    if not values:
+        raise RuntimeError("SHA256SUMS is empty")
+    return values
+
+
+def _verify_seal_inventory(root: Path) -> dict[str, str]:
+    files, directories = _seal_inventory(root)
+    if "SHA256SUMS" not in files:
+        raise RuntimeError("sealed output has no SHA256SUMS")
+    sums = _read_sha256sums(root / "SHA256SUMS")
+    if files != set(sums) | {"SHA256SUMS"}:
+        missing = sorted(set(sums) - files)
+        extra = sorted(files - set(sums) - {"SHA256SUMS"})
+        raise RuntimeError(
+            f"sealed file inventory mismatch: missing={missing} unlisted={extra}"
+        )
+    expected_directories = {
+        parent.as_posix()
+        for name in files
+        for parent in PurePosixPath(name).parents
+        if parent.as_posix() != "."
+    }
+    if directories != expected_directories:
+        raise RuntimeError(
+            "sealed directory inventory mismatch: "
+            f"missing={sorted(expected_directories - directories)} "
+            f"unlisted={sorted(directories - expected_directories)}"
+        )
+    mismatches = [
+        name for name, digest in sums.items()
+        if sha256_file(root / Path(name)) != digest
+    ]
+    if mismatches:
+        raise RuntimeError(
+            "sealed SHA-256 mismatch: " + ", ".join(sorted(mismatches))
+        )
+    return sums
+
+
+def _sealed_adapter_identity(source_root: Path) -> dict[str, Any]:
+    paths = [
+        source_root / "pyproject.toml",
+        source_root / "prepare_pinned_checkout.py",
+        source_root / "patches/v0.5.17-orbitkv-fail-closed.patch",
+        *sorted((source_root / "src/orbitkv_sglang").rglob("*.py")),
+    ]
+    return {
+        "files": [
+            {
+                "path": (SOURCE_PREFIX / path.relative_to(source_root)).as_posix(),
+                "sha256": sha256_file(path),
+            }
+            for path in paths
+        ]
+    }
+
+
+def _verify_source_closure(
+    root: Path, preflight: dict[str, Any]
+) -> dict[str, Any]:
+    source_root = root / "qualification/source"
+    adapter = _sealed_adapter_identity(source_root)
+    expected_paths = {
+        "qualify_abi8_h20.py", "bench_canonical_manager.py",
+        "checkpoint_identity.py",
+        *(
+            str(PurePosixPath(item["path"]).relative_to(SOURCE_PREFIX))
+            for item in adapter["files"]
+        ),
+    }
+    actual_paths = {
+        path.relative_to(source_root).as_posix()
+        for path in source_root.rglob("*") if path.is_file()
+    }
+    if actual_paths != expected_paths:
+        raise RuntimeError("sealed qualification source closure is incomplete or excessive")
+    inventory = preflight.get("source", {}).get("inventory")
+    if not isinstance(inventory, list):
+        raise RuntimeError("preflight source inventory is missing")
+    if (preflight["source"].get("tracked_file_count") != len(inventory)
+            or preflight["source"].get("inventory_sha256")
+            != canonical_digest(inventory)):
+        raise RuntimeError("preflight source inventory digest is invalid")
+    indexed: dict[str, str] = {}
+    for item in inventory:
+        if (not isinstance(item, dict) or not isinstance(item.get("path"), str)
+                or not isinstance(item.get("sha256"), str)
+                or item["path"] in indexed):
+            raise RuntimeError("preflight source inventory is malformed")
+        indexed[item["path"]] = item["sha256"]
+    for relative in expected_paths:
+        original = (SOURCE_PREFIX / relative).as_posix()
+        path = source_root / relative
+        if indexed.get(original) != sha256_file(path):
+            raise RuntimeError(f"sealed source differs from preflight inventory: {original}")
+    if preflight.get("benchmark", {}).get("sha256") != sha256_file(
+        source_root / "bench_canonical_manager.py"
+    ):
+        raise RuntimeError("sealed benchmark differs from preflight")
+    return adapter
+
+
+def _verify_record_derivations(record: dict[str, Any], mode: str) -> None:
+    for name in ("command", "environment", "source_identity"):
+        if record.get(f"{name}_sha256") != canonical_digest(record.get(name)):
+            raise RuntimeError(f"{mode} record has invalid {name} digest")
+    traces = record.get("request_traces")
+    workload = record.get("workload", {})
+    iterations = workload.get("iterations")
+    requests = workload.get("requests")
+    decode_tokens = workload.get("decode_tokens")
+    if (not isinstance(traces, list) or not isinstance(iterations, int)
+            or not isinstance(requests, int) or not isinstance(decode_tokens, int)
+            or iterations <= 0 or requests <= 0 or decode_tokens <= 0
+            or len(traces) != iterations):
+        raise RuntimeError(f"{mode} record request trace shape is invalid")
+    request_digests: list[list[str]] = []
+    outputs: list[list[list[int]]] = []
+    completion_tokens = 0
+    for row in traces:
+        if not isinstance(row, list) or len(row) != requests:
+            raise RuntimeError(f"{mode} record request trace batch is invalid")
+        digest_row: list[str] = []
+        output_row: list[list[int]] = []
+        for index, trace in enumerate(row):
+            ids = trace.get("output_ids") if isinstance(trace, dict) else None
+            if (not isinstance(ids, list) or len(ids) != decode_tokens
+                    or any(isinstance(value, bool) or not isinstance(value, int) for value in ids)
+                    or trace.get("request_index") != index
+                    or trace.get("submitted_rid") != trace.get("returned_rid")):
+                raise RuntimeError(f"{mode} record request trace is invalid")
+            digest = canonical_digest(ids)
+            if trace.get("output_ids_sha256") != digest:
+                raise RuntimeError(f"{mode} record output_ids digest is invalid")
+            digest_row.append(digest)
+            output_row.append(ids)
+            completion_tokens += len(ids)
+        request_digests.append(digest_row)
+        outputs.append(output_row)
+    if record.get("output_request_digests_sha256") != request_digests:
+        raise RuntimeError(f"{mode} record request digest matrix is invalid")
+    if record.get("output_token_digest_sha256") != canonical_digest(outputs):
+        raise RuntimeError(f"{mode} record output token digest is invalid")
+    if (record.get("completed_requests") != requests * iterations
+            or record.get("completion_tokens") != completion_tokens):
+        raise RuntimeError(f"{mode} record completion totals are invalid")
+    timings = record.get("iteration_seconds")
+    if (not isinstance(timings, list) or len(timings) != iterations
+            or any(isinstance(value, bool) or not isinstance(value, (int, float))
+                   or value <= 0 for value in timings)):
+        raise RuntimeError(f"{mode} record iteration timings are invalid")
+
+
+def _verify_case_records(
+    stock: dict[str, Any], manager: dict[str, Any], case: Case
+) -> None:
+    for mode, record in (("stock", stock), ("manager", manager)):
+        workload = record.get("workload", {})
+        engine = record.get("engine_args", {})
+        contract = record.get("checkpoint_contract", {})
+        capacity = record.get("capacity_readback", {})
+        expected = {
+            "requests": case.batch, "iterations": case.iterations,
+            "max_running_requests": case.batch, "prompt_tokens": 513,
+            "decode_tokens": 33,
+        }
+        if any(workload.get(name) != value for name, value in expected.items()):
+            raise RuntimeError(f"{mode} record does not match the declared {case.slug} workload")
+        engine_expected = {
+            "attention_backend": case.backend,
+            "chunked_prefill_size": case.chunk_tokens,
+            "max_running_requests": case.batch,
+            "max_total_tokens": case.capacity_tokens,
+        }
+        if any(engine.get(name) != value for name, value in engine_expected.items()):
+            raise RuntimeError(f"{mode} record does not match the declared {case.slug} engine")
+        if (contract.get("attention_profile") != case.profile
+                or contract.get("attention_backend") != case.backend
+                or capacity.get("full_tokens") != case.capacity_tokens
+                or capacity.get("requested_max_total_tokens") != case.capacity_tokens):
+            raise RuntimeError(f"{mode} record does not match the declared {case.slug} contract")
+        runtime = record.get("runtime_identity", {})
+        if (runtime.get("attention_backend") != case.backend
+                or runtime.get("kv_layout") != "nhd"
+                or runtime.get("execution") != "eager"):
+            raise RuntimeError(f"{mode} record has an invalid runtime contract")
+        _verify_record_derivations(record, mode)
+
+
+def _pair_without_record_locations(value: dict[str, Any]) -> dict[str, Any]:
+    result = dict(value)
+    result.pop("stock_record", None)
+    result.pop("manager_record", None)
+    return result
+
+
+def _verify_record_reference(value: Any, expected: str, label: str) -> None:
+    if not isinstance(value, str) or Path(value).name != expected:
+        raise RuntimeError(f"sealed pair has an invalid {label} reference")
+
+
+def verify_seal(seal_dir: Path) -> dict[str, Any]:
+    requested = seal_dir.expanduser().absolute()
+    if requested.is_symlink():
+        raise RuntimeError("seal directory must not be a symlink")
+    root = requested.resolve(strict=True)
+    if not root.is_dir():
+        raise RuntimeError("seal path is not a directory")
+    sums = _verify_seal_inventory(root)
+    manifest = _strict_json(root / "manifest.json")
+    preflight = _strict_json(root / "preflight.json")
+    if manifest.get("schema") != MANIFEST_SCHEMA:
+        raise RuntimeError("sealed manifest schema is invalid")
+    if preflight.get("schema") != PRECHECK_SCHEMA:
+        raise RuntimeError("sealed preflight schema is invalid")
+    artifacts = manifest.get("artifacts")
+    expected_artifacts = {
+        name: digest for name, digest in sums.items() if name != "manifest.json"
+    }
+    if artifacts != expected_artifacts:
+        raise RuntimeError("manifest artifact inventory differs from SHA256SUMS")
+    if (manifest.get("qualification_status") != QUALIFICATION_STATUS
+            or manifest.get("abi_version") != 8
+            or manifest.get("exact_symbol_count") != 40
+            or manifest.get("performance_go") is not False):
+        raise RuntimeError("sealed manifest overstates or changes qualification scope")
+    expected_scope = {
+        "cases": [
+            {"model": case.model, "profile": case.profile,
+             "attention_backend": case.backend, "batch_size": case.batch}
+            for case in CASES
+        ],
+        "excluded": [
+            "token_relocation", "mla", "fixed_state",
+            "overlap_scheduling", "cuda_graphs", "speculation",
+            "distributed_execution", "performance_qualification",
+        ],
+    }
+    if manifest.get("scope") != expected_scope:
+        raise RuntimeError("sealed manifest scope differs from the ABI8 matrix")
+    source = preflight.get("source", {})
+    if (source.get("clean") is not True
+            or manifest.get("source_commit") != source.get("commit")
+            or manifest.get("source_inventory_sha256")
+            != source.get("inventory_sha256")):
+        raise RuntimeError("manifest source identity differs from preflight")
+    sglang = preflight.get("sglang", {})
+    if (sglang.get("release") != "v0.5.17"
+            or sglang.get("revision") != SGLANG_REVISION
+            or sglang.get("pinned_contract")
+            != benchmark.verify_pinned_module_constants()
+            or preflight.get("benchmark", {}).get("record_schema")
+            != benchmark.RECORD_SCHEMA):
+        raise RuntimeError("sealed preflight does not bind the pinned SGLang contract")
+    adapter = _verify_source_closure(root, preflight)
+    source_root = root / "qualification/source"
+    harness_sha256 = sha256_file(source_root / "bench_canonical_manager.py")
+    checkpoint_helper_sha256 = sha256_file(source_root / "checkpoint_identity.py")
+
+    library_path = root / "qualification/build/liborbitkv_ffi.so"
+    library = sealed_library_identity(library_path)
+    recorded_library = preflight.get("library", {})
+    for name in ("sha256", "bytes", "abi_version", "symbols"):
+        if library.get(name) != recorded_library.get(name):
+            raise RuntimeError("sealed ABI8 library differs from preflight")
+    if manifest.get("library_sha256") != library["sha256"]:
+        raise RuntimeError("manifest library digest differs from sealed library")
+
+    input_hashes = manifest.get("input_hashes", {})
+    original_lock = root / "qualification/requirements.input.lock.txt"
+    sealed_lock = root / "qualification/requirements.lock.txt"
+    requirement = preflight.get("inputs", {}).get("requirements", {})
+    python_identity = preflight.get("python", {})
+    expected_active_editable = ORBITKV_EDITABLE_TEMPLATE.format(
+        commit=source.get("commit")
+    )
+    if (requirement.get("sha256") != REQUIREMENTS_SHA256
+            or sha256_file(original_lock) != REQUIREMENTS_SHA256
+            or input_hashes.get("original_requirements_sha256")
+            != REQUIREMENTS_SHA256
+            or python_identity.get("active_editable") != expected_active_editable
+            or sealed_lock.read_text(encoding="utf-8")
+            != _materialize_requirements_lock(
+                original_lock, python_identity.get("active_editable")
+            )
+            or sha256_file(sealed_lock) != input_hashes.get("requirements_sha256")):
+        raise RuntimeError("sealed requirements locks are inconsistent")
+    original_lines = original_lock.read_text(encoding="utf-8").splitlines()
+    locked = [line for line in original_lines if line.startswith("-e git+")
+              and "#egg=orbitkv_sglang" in line]
+    if locked != [python_identity.get("locked_editable")]:
+        raise RuntimeError("preflight locked_editable differs from the input lock")
+
+    plans = preflight.get("inputs", {}).get("plans", {})
+    expected_input_names = {case.model for case in CASES}
+    models = preflight.get("inputs", {}).get("models", {})
+    if set(plans) != expected_input_names or set(models) != expected_input_names:
+        raise RuntimeError("sealed preflight input matrix is not exact")
+    if input_hashes.get("plans") != {
+        name: value.get("sha256") for name, value in plans.items()
+    } or input_hashes.get("plans") != PLAN_HASHES:
+        raise RuntimeError("manifest plan identities differ from preflight")
+    for case in CASES:
+        path = root / f"qualification/plans/{case.model}.json"
+        if sha256_file(path) != plans.get(case.model, {}).get("sha256"):
+            raise RuntimeError(f"sealed plan differs from preflight: {case.model}")
+    expected_models = {
+        name: {
+            "config_sha256": value["config.json"]["sha256"],
+            "index_sha256": value["model.safetensors.index.json"]["sha256"],
+            "weight_shards_sha256": value["weight_shards_sha256"],
+        }
+        for name, value in models.items()
+    }
+    if input_hashes.get("models") != expected_models:
+        raise RuntimeError("manifest model identities differ from preflight")
+    for name, hashes in MODEL_HASHES.items():
+        if (models[name]["config.json"].get("sha256") != hashes["config.json"]
+                or models[name]["model.safetensors.index.json"].get("sha256")
+                != hashes["model.safetensors.index.json"]):
+            raise RuntimeError(f"sealed model metadata differs from pinned input: {name}")
+
+    records_root = root / "records"
+    epoch_dirs = sorted(records_root.glob("epoch-*"))
+    if not epoch_dirs:
+        raise RuntimeError("sealed output contains no epochs")
+    if {path.name for path in records_root.iterdir()} != {
+        path.name for path in epoch_dirs
+    }:
+        raise RuntimeError("sealed records directory contains an unexpected entry")
+    pairs: list[dict[str, Any]] = []
+    for epoch, epoch_dir in enumerate(epoch_dirs, 1):
+        if epoch_dir.name != f"epoch-{epoch:03d}" or not epoch_dir.is_dir():
+            raise RuntimeError("sealed epochs are not contiguous from epoch-001")
+        expected_record_files: set[str] = set()
+        for case in CASES:
+            names = {
+                mode: f"{case.slug}-{mode}.json"
+                for mode in ("stock", "manager")
+            }
+            pair_name = f"{case.slug}-pair.json"
+            expected_record_files.update({*names.values(), pair_name})
+            expected_record_files.update(
+                f"{case.slug}-{mode}.stderr.log"
+                for mode in ("stock", "manager")
+            )
+            stock_path = epoch_dir / names["stock"]
+            manager_path = epoch_dir / names["manager"]
+            stock = _strict_json(stock_path)
+            manager = _strict_json(manager_path)
+            _verify_case_records(stock, manager, case)
+            for mode, record in (("stock", stock), ("manager", manager)):
+                source_identity = record.get("source_identity", {})
+                if source_identity.get("checkpoint_identity_helper_sha256") != checkpoint_helper_sha256:
+                    raise RuntimeError(f"{mode} record does not bind the sealed checkpoint helper")
+            calculated = verify_pair_files(
+                stock_path, manager_path, preflight,
+                harness_sha256=harness_sha256, adapter_identity=adapter,
+            )
+            calculated.update(
+                epoch=epoch, execution_order=list(execution_order(epoch))
+            )
+            stored = _strict_json(epoch_dir / pair_name)
+            _verify_record_reference(
+                stored.get("stock_record"), names["stock"], "stock record"
+            )
+            _verify_record_reference(
+                stored.get("manager_record"), names["manager"], "manager record"
+            )
+            if _pair_without_record_locations(stored) != _pair_without_record_locations(calculated):
+                raise RuntimeError(f"sealed pair verification differs: {epoch_dir / pair_name}")
+            pairs.append(calculated)
+        actual = {path.name for path in epoch_dir.iterdir() if path.is_file()}
+        if actual != expected_record_files:
+            raise RuntimeError("sealed epoch file matrix is incomplete or excessive")
+    summary = summarize_pairs(pairs)
+    if _strict_json(root / "summary.json") != summary:
+        raise RuntimeError("sealed summary differs from independently verified pairs")
+    if (manifest.get("epoch_count") != len(epoch_dirs)
+            or manifest.get("pair_count") != len(pairs)
+            or summary.get("pair_count") != len(pairs)
+            or summary.get("performance_go") is not False):
+        raise RuntimeError("sealed manifest counts or performance scope are invalid")
+    return {
+        "schema": SEAL_VERIFICATION_SCHEMA,
+        "status": "passed",
+        "epoch_count": len(epoch_dirs),
+        "pair_count": len(pairs),
+        "abi_version": library["abi_version"],
+        "exact_symbol_count": len(library["symbols"]),
+        "performance_go": False,
+    }
 
 
 def _percentile(values: Sequence[float], fraction: float) -> float:
@@ -911,13 +1549,21 @@ def build_parser() -> argparse.ArgumentParser:
     seal_parser = sub.add_parser("seal")
     _common_paths(seal_parser)
     seal_parser.add_argument("--output-dir", type=Path, required=True)
+    verify_seal_parser = sub.add_parser(
+        "verify-seal",
+        help="verify a relocated sealed result using only its bundled artifacts",
+    )
+    verify_seal_parser.add_argument("seal_dir", type=Path)
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     parser = build_parser()
     raw = list(sys.argv[1:] if argv is None else argv)
-    if not raw or raw[0] not in {"preflight", "run", "verify-pair", "summarize", "seal"}:
+    if not raw or raw[0] not in {
+        "preflight", "run", "verify-pair", "summarize", "seal",
+        "verify-seal",
+    }:
         raw.insert(0, "preflight")
     args = parser.parse_args(raw)
     try:
@@ -937,6 +1583,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _write_new(args.output, result)
         elif args.action == "seal":
             result = seal(args)
+        elif args.action == "verify-seal":
+            result = verify_seal(args.seal_dir)
         else:
             raise RuntimeError(f"unknown action: {args.action}")
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError) as error:

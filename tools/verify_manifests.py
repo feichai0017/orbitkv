@@ -3,6 +3,8 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import re
 import subprocess
 import tempfile
 from pathlib import Path
@@ -10,7 +12,52 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 LOCAL_PUBLISH_GIT = Path("/tmp/orbitkv-publish.git")
-DEFAULT_MANIFESTS = (
+ABI8_H20_SCHEMA = "orbitkv.abi8-h20-sealed-manifest.v1"
+ABI8_H20_MANIFEST = (
+    ROOT / "results/h20-sglang-v0517-abi8-full-hybrid-20260823/manifest.json"
+)
+ABI8_H20_QUALIFICATION_STATUS = (
+    "abi8_sglang_full_full_swa_prefix_correctness_qualified_performance_pending"
+)
+ABI8_H20_CASES = [
+    {
+        "attention_backend": "fa3",
+        "batch_size": 1,
+        "model": "qwen2.5-7b",
+        "profile": "full",
+    },
+    {
+        "attention_backend": "fa3",
+        "batch_size": 1,
+        "model": "gpt-oss-20b",
+        "profile": "hybrid_full_swa",
+    },
+    {
+        "attention_backend": "fa3",
+        "batch_size": 4,
+        "model": "qwen2.5-7b",
+        "profile": "full",
+    },
+    {
+        "attention_backend": "fa3",
+        "batch_size": 4,
+        "model": "gpt-oss-20b",
+        "profile": "hybrid_full_swa",
+    },
+]
+ABI8_H20_EXCLUSIONS = [
+    "token_relocation",
+    "mla",
+    "fixed_state",
+    "overlap_scheduling",
+    "cuda_graphs",
+    "speculation",
+    "distributed_execution",
+    "performance_qualification",
+]
+SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+
+_DEFAULT_MANIFESTS = (
     ROOT / "results/h20-owning-vmm-manifest-20260817.json",
     ROOT / "results/owner-ffi-20260817/manifest.json",
     ROOT / "results/h20-generation-vmm-20260817/manifest.json",
@@ -39,10 +86,25 @@ DEFAULT_MANIFESTS = (
     ROOT
     / "results/h20-sglang-v0517-abi5-v5-grouped-release-20260821/manifest.json",
 )
+DEFAULT_MANIFESTS = _DEFAULT_MANIFESTS + (
+    (ABI8_H20_MANIFEST,) if ABI8_H20_MANIFEST.exists() else ()
+)
 
 
 def sha256(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
+
+
+def load_json(path: Path) -> object:
+    def unique_object(pairs: list[tuple[str, object]]) -> dict[str, object]:
+        result: dict[str, object] = {}
+        for key, value in pairs:
+            if key in result:
+                raise RuntimeError(f"{path}: duplicate JSON key: {key}")
+            result[key] = value
+        return result
+
+    return json.loads(path.read_text(encoding="utf-8"), object_pairs_hook=unique_object)
 
 
 def git_repository_args() -> list[str]:
@@ -93,6 +155,141 @@ def checked_relative_path(relative_path: str) -> Path:
     if path.is_absolute() or ".." in path.parts:
         raise RuntimeError(f"unsafe provenance path: {relative_path}")
     return path
+
+
+def checked_sealed_relative_path(relative_path: str) -> Path:
+    if (
+        not relative_path
+        or "\\" in relative_path
+        or "\x00" in relative_path
+        or "\n" in relative_path
+        or "\r" in relative_path
+    ):
+        raise RuntimeError(f"unsafe sealed artifact path: {relative_path!r}")
+    parts = relative_path.split("/")
+    if any(part in ("", ".", "..") for part in parts):
+        raise RuntimeError(f"unsafe sealed artifact path: {relative_path}")
+    path = Path(*parts)
+    if path.is_absolute() or path.as_posix() != relative_path:
+        raise RuntimeError(f"unsafe sealed artifact path: {relative_path}")
+    return path
+
+
+def sealed_regular_files(root: Path) -> set[str]:
+    files: set[str] = set()
+
+    def walk_error(error: OSError) -> None:
+        raise RuntimeError(f"{root}: cannot inspect sealed file inventory") from error
+
+    for current_root, directory_names, file_names in os.walk(
+        root, followlinks=False, onerror=walk_error
+    ):
+        current = Path(current_root)
+        for name in directory_names:
+            candidate = current / name
+            if candidate.is_symlink():
+                raise RuntimeError(f"{candidate}: symlinks are not allowed in a seal")
+        for name in file_names:
+            candidate = current / name
+            if candidate.is_symlink():
+                raise RuntimeError(f"{candidate}: symlinks are not allowed in a seal")
+            if not candidate.is_file():
+                raise RuntimeError(f"{candidate}: sealed entries must be regular files")
+            files.add(candidate.relative_to(root).as_posix())
+    return files
+
+
+def verify_abi8_h20_manifest(path: Path, manifest: dict[str, object]) -> int:
+    if path.name != "manifest.json":
+        raise RuntimeError(f"{path}: sealed manifest must be named manifest.json")
+    if path.is_symlink():
+        raise RuntimeError(f"{path}: sealed manifest must not be a symlink")
+    if manifest.get("schema") != ABI8_H20_SCHEMA:
+        raise RuntimeError(f"{path}: unsupported sealed manifest schema")
+    expected_values = {
+        "abi_version": 8,
+        "exact_symbol_count": 40,
+        "pair_count": 12,
+        "epoch_count": 3,
+    }
+    for field, expected in expected_values.items():
+        value = manifest.get(field)
+        if type(value) is not int or value != expected:
+            raise RuntimeError(f"{path}: {field} must be exactly {expected}")
+    if manifest.get("performance_go") is not False:
+        raise RuntimeError(f"{path}: performance_go must be false")
+    if manifest.get("qualification_status") != ABI8_H20_QUALIFICATION_STATUS:
+        raise RuntimeError(f"{path}: unexpected qualification status")
+    expected_scope = {
+        "cases": ABI8_H20_CASES,
+        "excluded": ABI8_H20_EXCLUSIONS,
+    }
+    if manifest.get("scope") != expected_scope:
+        raise RuntimeError(f"{path}: scope cases or exclusions differ from ABI8 policy")
+
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict) or not artifacts:
+        raise RuntimeError(f"{path}: artifacts must be a non-empty object")
+
+    root = path.parent
+    artifact_paths: dict[str, Path] = {}
+    normalized_paths: set[Path] = set()
+    for relative_path, expected_digest in artifacts.items():
+        if not isinstance(relative_path, str):
+            raise RuntimeError(f"{path}: artifact paths must be strings")
+        safe_path = checked_sealed_relative_path(relative_path)
+        if relative_path in ("manifest.json", "SHA256SUMS"):
+            raise RuntimeError(f"{path}: {relative_path} must not be an artifact")
+        if safe_path in normalized_paths:
+            raise RuntimeError(f"{path}: duplicate artifact path: {relative_path}")
+        normalized_paths.add(safe_path)
+        if not isinstance(expected_digest, str) or SHA256_PATTERN.fullmatch(
+            expected_digest
+        ) is None:
+            raise RuntimeError(f"{path}: invalid SHA-256 for {relative_path}")
+
+        artifact_path = root / safe_path
+        for parent in (artifact_path, *artifact_path.parents):
+            if parent == root.parent:
+                break
+            if parent.is_symlink():
+                raise RuntimeError(f"{artifact_path}: symlinks are not allowed")
+            if parent == root:
+                break
+        if not artifact_path.is_file():
+            raise RuntimeError(f"{artifact_path}: sealed artifact is missing")
+        actual_digest = sha256(artifact_path.read_bytes())
+        if actual_digest != expected_digest:
+            raise RuntimeError(
+                f"{path}: {relative_path}: expected {expected_digest}, got {actual_digest}"
+            )
+        artifact_paths[relative_path] = artifact_path
+
+    expected_files = set(artifact_paths) | {"manifest.json", "SHA256SUMS"}
+    actual_files = sealed_regular_files(root)
+    if actual_files != expected_files:
+        missing = sorted(expected_files - actual_files)
+        unlisted = sorted(actual_files - expected_files)
+        raise RuntimeError(
+            f"{path}: sealed file inventory mismatch; "
+            f"missing={missing}, unlisted={unlisted}"
+        )
+
+    sums_path = root / "SHA256SUMS"
+    if sums_path.is_symlink() or not sums_path.is_file():
+        raise RuntimeError(f"{sums_path}: SHA256SUMS must be a regular file")
+    expected_sums = dict(artifacts)
+    expected_sums["manifest.json"] = sha256(path.read_bytes())
+    expected_sums_text = "".join(
+        f"{digest}  {relative_path}\n"
+        for relative_path, digest in sorted(expected_sums.items())
+    )
+    actual_sums_text = sums_path.read_text(encoding="utf-8")
+    if actual_sums_text != expected_sums_text:
+        raise RuntimeError(
+            f"{sums_path}: contents do not exactly match the sealed file inventory"
+        )
+    return len(expected_sums)
 
 
 def verify_source_provenance(manifest: dict[str, object]) -> int:
@@ -208,7 +405,18 @@ def historical_unsealed_sources(path: Path, manifest: dict[str, object]) -> tupl
 
 
 def verify_manifest(path: Path) -> int:
-    manifest = json.loads(path.read_text(encoding="utf-8"))
+    path = Path(os.path.abspath(path))
+    manifest = load_json(path)
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"{path}: manifest must be a JSON object")
+    schema = manifest.get("schema")
+    if schema == ABI8_H20_SCHEMA:
+        return verify_abi8_h20_manifest(path, manifest)
+    if (
+        isinstance(schema, str)
+        and schema.startswith("orbitkv.abi8-h20-sealed-manifest.")
+    ) or "artifacts" in manifest:
+        raise RuntimeError(f"{path}: unsupported sealed manifest schema")
     historical_commit = manifest.get("base_source_commit") or manifest.get(
         "source_commit"
     )
@@ -244,7 +452,7 @@ def main() -> None:
     parser.add_argument("manifests", nargs="*", type=Path)
     args = parser.parse_args()
     manifests = args.manifests or list(DEFAULT_MANIFESTS)
-    checked = sum(verify_manifest(path.resolve()) for path in manifests)
+    checked = sum(verify_manifest(path) for path in manifests)
     print(f"verified {checked} manifest hashes")
 
 
