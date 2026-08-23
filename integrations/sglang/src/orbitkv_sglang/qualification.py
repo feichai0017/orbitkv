@@ -4,7 +4,7 @@ from typing import Any, Sequence
 
 
 ATTENTION_BACKENDS_BY_ARCHITECTURE = {
-    "Qwen2ForCausalLM": "flashinfer",
+    "Qwen2ForCausalLM": "fa3",
     "GptOssForCausalLM": "fa3",
     "DeepseekV2ForCausalLM": "flashinfer",
 }

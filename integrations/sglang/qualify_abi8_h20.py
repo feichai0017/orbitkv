@@ -86,9 +86,9 @@ class Case:
 
 
 CASES = (
-    Case("qwen2.5-7b", 1, 1, 528, 1024, "flashinfer", "full"),
+    Case("qwen2.5-7b", 1, 1, 528, 1024, "fa3", "full"),
     Case("gpt-oss-20b", 1, 1, 528, 1024, "fa3", "hybrid_full_swa"),
-    Case("qwen2.5-7b", 4, 5, 2112, 4096, "flashinfer", "full"),
+    Case("qwen2.5-7b", 4, 5, 2112, 4096, "fa3", "full"),
     Case("gpt-oss-20b", 4, 5, 2112, 4096, "fa3", "hybrid_full_swa"),
 )
 
@@ -791,7 +791,7 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
         "performance pending.\n\n"
         f"Source commit: `{pre['source']['commit']}`\n\n"
         f"Verified pairs: {len(pairs)} across {len(pairs) // len(CASES)} epoch(s).\n\n"
-        "Cases: Qwen2.5-7B Full/FlashInfer B1+B4; GPT-OSS-20B "
+        "Cases: Qwen2.5-7B Full/FA3 B1+B4; GPT-OSS-20B "
         "Full+SWA/FA3 B1+B4.\n\n"
         "Excluded: token relocation, MLA, fixed-state, overlap scheduling, "
         "CUDA Graphs, speculation, distributed execution, and performance qualification.\n"
