@@ -6,6 +6,7 @@ import json
 import os
 import re
 import subprocess
+import sys
 import tempfile
 from pathlib import Path
 
@@ -56,6 +57,7 @@ ABI8_H20_EXCLUSIONS = [
     "performance_qualification",
 ]
 SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
+ABI8_H20_RUNNER = ROOT / "integrations/sglang/qualify_abi8_h20.py"
 
 _DEFAULT_MANIFESTS = (
     ROOT / "results/h20-owning-vmm-manifest-20260817.json",
@@ -86,9 +88,7 @@ _DEFAULT_MANIFESTS = (
     ROOT
     / "results/h20-sglang-v0517-abi5-v5-grouped-release-20260821/manifest.json",
 )
-DEFAULT_MANIFESTS = _DEFAULT_MANIFESTS + (
-    (ABI8_H20_MANIFEST,) if ABI8_H20_MANIFEST.exists() else ()
-)
+DEFAULT_MANIFESTS = _DEFAULT_MANIFESTS + (ABI8_H20_MANIFEST,)
 
 
 def sha256(data: bytes) -> str:
@@ -199,6 +199,130 @@ def sealed_regular_files(root: Path) -> set[str]:
     return files
 
 
+def canonical_digest(value: object) -> str:
+    data = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    return sha256(data)
+
+
+def verify_abi8_source_provenance(
+    root: Path, manifest: dict[str, object]
+) -> int:
+    preflight = load_json(root / "preflight.json")
+    if not isinstance(preflight, dict):
+        raise RuntimeError(f"{root}: preflight must be a JSON object")
+    source = preflight.get("source")
+    if not isinstance(source, dict) or source.get("clean") is not True:
+        raise RuntimeError(f"{root}: preflight has no clean source identity")
+    commit = source.get("commit")
+    inventory = source.get("inventory")
+    if (
+        not isinstance(commit, str)
+        or re.fullmatch(r"[0-9a-f]{40}", commit) is None
+        or manifest.get("source_commit") != commit
+        or not isinstance(inventory, list)
+        or not inventory
+    ):
+        raise RuntimeError(f"{root}: preflight source identity is malformed")
+    if (
+        type(source.get("tracked_file_count")) is not int
+        or source.get("tracked_file_count") != len(inventory)
+        or source.get("inventory_sha256") != canonical_digest(inventory)
+        or manifest.get("source_inventory_sha256")
+        != source.get("inventory_sha256")
+    ):
+        raise RuntimeError(f"{root}: preflight source inventory identity is invalid")
+
+    paths: list[str] = []
+    expected_hashes: dict[str, str] = {}
+    for item in inventory:
+        if not isinstance(item, dict):
+            raise RuntimeError(f"{root}: source inventory entry is malformed")
+        relative = item.get("path")
+        digest = item.get("sha256")
+        if (
+            not isinstance(relative, str)
+            or not isinstance(digest, str)
+            or SHA256_PATTERN.fullmatch(digest) is None
+            or checked_relative_path(relative).as_posix() != relative
+            or relative in expected_hashes
+        ):
+            raise RuntimeError(f"{root}: source inventory entry is invalid")
+        paths.append(relative)
+        expected_hashes[relative] = digest
+
+    try:
+        tracked = subprocess.check_output(
+            [
+                "git",
+                *git_repository_args(),
+                "ls-tree",
+                "-r",
+                "--name-only",
+                "--full-tree",
+                commit,
+            ],
+            stderr=subprocess.PIPE,
+            text=True,
+        ).splitlines()
+    except (OSError, subprocess.SubprocessError) as error:
+        raise RuntimeError(f"{root}: cannot resolve sealed source commit") from error
+    if tracked != paths:
+        raise RuntimeError(f"{root}: source inventory is not the exact Git tree")
+    for relative, expected in expected_hashes.items():
+        if sha256(git_blob(commit, relative)) != expected:
+            raise RuntimeError(
+                f"{root}: {relative}: source blob differs from preflight"
+            )
+    return len(paths)
+
+
+def verify_abi8_h20_semantics(
+    root: Path, manifest: dict[str, object]
+) -> int:
+    """Verify provenance and records with trusted code from this checkout."""
+
+    checked = verify_abi8_source_provenance(root, manifest)
+    environment = dict(os.environ)
+    environment.update(
+        PYTHONDONTWRITEBYTECODE="1",
+        PYTHONNOUSERSITE="1",
+        PYTHONPATH="",
+    )
+    try:
+        completed = subprocess.run(
+            [
+                sys.executable,
+                str(ABI8_H20_RUNNER),
+                "verify-seal",
+                str(root),
+            ],
+            cwd=ROOT,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        result = json.loads(completed.stdout)
+    except (OSError, json.JSONDecodeError, subprocess.SubprocessError) as error:
+        detail = getattr(error, "stderr", None) or str(error)
+        raise RuntimeError(
+            f"{root}: trusted ABI8 semantic verification failed: {detail}"
+        ) from error
+    expected = {
+        "schema": "orbitkv.abi8-h20-seal-verification.v1",
+        "status": "passed",
+        "epoch_count": 3,
+        "pair_count": 12,
+        "abi_version": 8,
+        "exact_symbol_count": 40,
+        "performance_go": False,
+    }
+    if result != expected:
+        raise RuntimeError(f"{root}: trusted semantic verification is incomplete")
+    return checked + 1
+
+
 def verify_abi8_h20_manifest(path: Path, manifest: dict[str, object]) -> int:
     if path.name != "manifest.json":
         raise RuntimeError(f"{path}: sealed manifest must be named manifest.json")
@@ -289,7 +413,7 @@ def verify_abi8_h20_manifest(path: Path, manifest: dict[str, object]) -> int:
         raise RuntimeError(
             f"{sums_path}: contents do not exactly match the sealed file inventory"
         )
-    return len(expected_sums)
+    return len(expected_sums) + verify_abi8_h20_semantics(root, manifest)
 
 
 def verify_source_provenance(manifest: dict[str, object]) -> int:

@@ -965,11 +965,20 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
         "reviewed SGLang patch/prepare helper, and complete `orbitkv_sglang` Python "
         "package. Verification is offline and does not require models, SGLang "
         "worktrees, the original repository, or an installed editable package.\n\n"
-        "From the seal root, run standalone verification with:\n\n"
+        "Establish trust first from a trusted OrbitKV checkout with:\n\n"
+        "```sh\n"
+        "PYTHONDONTWRITEBYTECODE=1 python3 tools/verify_manifests.py "
+        "/path/to/seal/manifest.json\n"
+        "```\n\n"
+        "That command verifies the Git source closure, every artifact, the ELF "
+        "symbol table, and all record semantics without executing bundled code "
+        "or loading the bundled library. After it succeeds, this optional "
+        "portable consistency check may be run from the seal root:\n\n"
         "```sh\n"
         "PYTHONDONTWRITEBYTECODE=1 python3 "
         "qualification/source/qualify_abi8_h20.py verify-seal .\n"
-        "```\n"
+        "```\n\n"
+        "Do not use the bundled command as the initial authenticity check.\n"
     )
     (output_dir / "README.md").write_text(readme, encoding="utf-8")
     artifacts = _relative_artifact_hashes(

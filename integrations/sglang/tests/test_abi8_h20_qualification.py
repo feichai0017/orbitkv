@@ -501,9 +501,19 @@ def test_seal_copies_complete_matrix_and_hashes_without_overwrite(tmp_path, monk
     assert not list(output.rglob("*.pyc"))
     assert (output / "README.md").is_file()
     assert (output / "SHA256SUMS").is_file()
-    assert "PYTHONDONTWRITEBYTECODE=1 python3 qualification/source/qualify_abi8_h20.py verify-seal ." in (
-        output / "README.md"
-    ).read_text(encoding="utf-8")
+    readme = (output / "README.md").read_text(encoding="utf-8")
+    trusted_command = (
+        "PYTHONDONTWRITEBYTECODE=1 python3 tools/verify_manifests.py "
+        "/path/to/seal/manifest.json"
+    )
+    bundled_command = (
+        "PYTHONDONTWRITEBYTECODE=1 python3 "
+        "qualification/source/qualify_abi8_h20.py verify-seal ."
+    )
+    assert trusted_command in readme
+    assert bundled_command in readme
+    assert readme.index(trusted_command) < readme.index(bundled_command)
+    assert "Do not use the bundled command as the initial authenticity check." in readme
     verified = qualification.verify_seal(output)
     assert verified["status"] == "passed"
     assert verified["pair_count"] == 4
