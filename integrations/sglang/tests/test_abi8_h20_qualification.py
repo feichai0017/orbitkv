@@ -35,6 +35,7 @@ def test_python_lock_normalizes_only_the_active_editable_commit(tmp_path, monkey
     identity = qualification._verify_python_environment(Path(sys.executable), lock)
     assert "@new#egg=orbitkv_sglang" in identity["active_editable"]
     assert "@old#egg=orbitkv_sglang" in identity["locked_editable"]
+    assert identity["executable"] == str(Path(sys.executable).absolute())
 
 
 def _record(mode: str, profile: str = "full") -> dict:
@@ -261,6 +262,7 @@ def test_seal_copies_complete_matrix_and_hashes_without_overwrite(tmp_path, monk
         },
         "python": {
             "executable": sys.executable,
+            "real_executable": str(Path(sys.executable).resolve()),
             "normalized_freeze_sha256": "freeze",
             "active_editable": "active",
             "locked_editable": "locked",
