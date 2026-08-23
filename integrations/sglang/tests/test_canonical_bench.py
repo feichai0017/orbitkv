@@ -135,7 +135,7 @@ def test_help_exposes_only_independent_manager_and_stock_runs():
     assert "--attention-backend {flashinfer,fa3}" in completed.stdout
 
 
-def test_compact_control_help_requires_exact_abi6_matrix_dimensions():
+def test_compact_control_help_requires_exact_abi8_matrix_dimensions():
     completed = subprocess.run(
         [
             sys.executable,
@@ -180,7 +180,7 @@ def test_compact_control_rejects_noncanonical_profile_or_batch(
     ("profile", "batch_size", "class_count"),
     (("full", 1, 1), ("hybrid", 4, 2)),
 )
-def test_compact_control_abi6_runs_real_host_batches_without_root_materialization(
+def test_compact_control_abi8_runs_real_host_batches_without_root_materialization(
     compact_ffi_library, profile, batch_size, class_count
 ):
     result = compact.run(
@@ -190,7 +190,7 @@ def test_compact_control_abi6_runs_real_host_batches_without_root_materializatio
         resident_pages=32,
         iterations=32,
     )
-    assert result["schema"] == "orbitkv.abi6-prefix-control.v1"
+    assert result["schema"] == "orbitkv.abi8-compact-control.v1"
     assert result["scope"] == "host_control_only"
     assert result["profile"] == profile
     assert result["batch_size"] == batch_size
@@ -359,7 +359,7 @@ def test_stock_forbids_manager_artifacts_and_cap_is_always_page_aligned(tmp_path
         )
 
 
-def test_abi6_qualification_accepts_only_complete_b1_or_b4_batches(tmp_path):
+def test_abi8_qualification_accepts_only_complete_b1_or_b4_batches(tmp_path):
     paths = _checkout_inputs(tmp_path)
     with pytest.raises(ValueError, match="exactly 1 or 4"):
         bench.validate_arguments(_arguments(requests=2, **paths))
@@ -591,13 +591,20 @@ def _runtime_info(
     return {"internal_states": [state]}
 
 
-def _manager_config(*, hybrid=True):
+def _manager_config(*, hybrid=True, fixed_state=False):
     classes = [
         SimpleNamespace(
             class_id=0,
             pool_id=1,
             backend_domain=1,
+            name="full",
+            layers=(0,),
             retention="full",
+            bytes_per_token_per_layer=128,
+            window_tokens=None,
+            period_blocks=None,
+            storage="token_kv",
+            components=(("key", 64), ("value", 64)),
         )
     ]
     if hybrid:
@@ -606,14 +613,64 @@ def _manager_config(*, hybrid=True):
                 class_id=1,
                 pool_id=2,
                 backend_domain=2,
+                name="swa",
+                layers=(1,),
                 retention="sliding",
+                bytes_per_token_per_layer=128,
+                window_tokens=32,
+                period_blocks=3,
+                storage="token_kv",
+                components=(("key", 64), ("value", 64)),
             )
         )
-    return SimpleNamespace(classes=tuple(classes))
+    fixed_states = (
+        (
+            SimpleNamespace(
+                name="mamba_state",
+                kind="mamba",
+                layers=(2 if hybrid else 1,),
+                state_bytes_per_layer=96,
+                checkpoint_slots_per_request=2,
+                kernel_width=None,
+                byte_count=96,
+            ),
+        )
+        if fixed_state
+        else ()
+    )
+    return SimpleNamespace(
+        classes=tuple(classes),
+        fixed_states=fixed_states,
+        fixed_state_byte_count=96 if fixed_state else 0,
+        state_plan_path=None,
+        state_plan_fingerprint=None,
+    )
 
 
 def _hybrid_config():
     return _manager_config(hybrid=True)
+
+
+def _drained_fixed_state(*, slot_count=8):
+    return {
+        "status": "host_seam",
+        "identity": {
+            "engine_epoch": 7,
+            "pool_epoch": 9,
+            "pool_id": 3,
+            "byte_count": 96,
+            "slot_count": slot_count,
+        },
+        "free_slots": slot_count,
+        "reserved_slots": 0,
+        "relocating_slots": 0,
+        "live_slots": 0,
+        "retiring_slots": 0,
+        "quarantined_slots": 0,
+        "active_owners": 0,
+        "pending_transitions": 0,
+        "pending_retirements": 0,
+    }
 
 
 def _settled_manager_state(
@@ -758,6 +815,14 @@ def _settled_manager_state(
     }
 
 
+def _fixed_state_info(raw=None):
+    state = _settled_manager_state()
+    state["fixed_state"] = _drained_fixed_state() if raw is None else raw
+    info = _runtime_info(swa_tokens=32, orbitkv_manager=state)
+    info["internal_states"][0]["max_mamba_cache_size"] = 8
+    return info
+
+
 def test_runtime_readback_records_full_and_derived_swa_capacities():
     contract = _attention_contract(
         "GptOssForCausalLM", attention_profile="hybrid_full_swa"
@@ -813,7 +878,7 @@ def test_runtime_readback_records_full_and_derived_swa_capacities():
         )
 
 
-def test_multi_arena_live_prefix_census_requires_exact_abi6_ref_schema():
+def test_multi_arena_live_prefix_census_requires_exact_abi8_ref_schema():
     census = bench.manager_census(
         _runtime_info(swa_tokens=32, orbitkv_manager=_settled_manager_state()),
         _hybrid_config(),
@@ -840,6 +905,146 @@ def test_multi_arena_live_prefix_census_requires_exact_abi6_ref_schema():
         "swa_pages_reclaimed": 0,
         "swa_wrap_events": 0,
     }
+    assert "fixed_state" not in census
+
+
+def test_manager_plan_identity_records_state_plan_and_fixed_components(tmp_path):
+    manager_plan = tmp_path / "manager.json"
+    state_plan = tmp_path / "state.json"
+    manager_plan.write_text("{}", encoding="utf-8")
+    state_plan.write_text("{}", encoding="utf-8")
+    config = _manager_config(fixed_state=True)
+    config.plan_path = manager_plan
+    config.plan_fingerprint = "sha256:manager"
+    config.page_tokens = 16
+    config.state_plan_path = state_plan
+    config.state_plan_fingerprint = "sha256:state"
+
+    identity = bench.manager_plan_identity(config)
+
+    assert identity["state_plan"] == {
+        "artifact": bench.artifact_identity(state_plan),
+        "plan_fingerprint": "sha256:state",
+    }
+    assert identity["fixed_state_byte_count"] == 96
+    assert identity["fixed_states"] == [
+        {
+            "name": "mamba_state",
+            "kind": "mamba",
+            "layers": [2],
+            "state_bytes_per_layer": 96,
+            "checkpoint_slots_per_request": 2,
+            "kernel_width": None,
+            "byte_count": 96,
+        }
+    ]
+
+
+def test_fixed_state_census_presence_matches_plan_and_is_preserved():
+    config = _manager_config(fixed_state=True)
+    census = bench.manager_census(
+        _fixed_state_info(),
+        config,
+        {"full_tokens": 64, "swa_tokens": 32},
+        "after_workload",
+        batch_size=4, completed_iterations=1, decode_tokens=33, prefix_seeded=True,
+    )
+    assert census["fixed_state"] == _drained_fixed_state()
+
+    missing = _settled_manager_state()
+    with pytest.raises(RuntimeError, match="top-level schema"):
+        bench.manager_census(
+            _runtime_info(swa_tokens=32, orbitkv_manager=missing), config,
+            {"full_tokens": 64, "swa_tokens": 32}, "after_workload",
+            batch_size=4, completed_iterations=1, decode_tokens=33, prefix_seeded=True,
+        )
+
+    unexpected = _settled_manager_state()
+    unexpected["fixed_state"] = _drained_fixed_state()
+    with pytest.raises(RuntimeError, match="top-level schema"):
+        bench.manager_census(
+            _runtime_info(swa_tokens=32, orbitkv_manager=unexpected), _hybrid_config(),
+            {"full_tokens": 64, "swa_tokens": 32}, "after_workload",
+            batch_size=4, completed_iterations=1, decode_tokens=33, prefix_seeded=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda value: value.update(extra=0),
+        lambda value: value.pop("pending_retirements"),
+        lambda value: value.update(status="ready"),
+        lambda value: value.update(identity=None),
+    ),
+)
+def test_fixed_state_census_rejects_malformed_schema(mutate):
+    raw = _drained_fixed_state()
+    mutate(raw)
+    with pytest.raises(RuntimeError, match="fixed-state"):
+        bench.manager_census(
+            _fixed_state_info(raw), _manager_config(fixed_state=True),
+            {"full_tokens": 64, "swa_tokens": 32}, "after_workload",
+            batch_size=4, completed_iterations=1, decode_tokens=33, prefix_seeded=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("engine_epoch", 8), ("pool_epoch", 8), ("pool_id", 2),
+     ("byte_count", 95), ("slot_count", 7)),
+)
+def test_fixed_state_census_rejects_identity_mismatch(field, value):
+    raw = _drained_fixed_state()
+    raw["identity"][field] = value
+    with pytest.raises(RuntimeError, match="identity differs from plan"):
+        bench.manager_census(
+            _fixed_state_info(raw), _manager_config(fixed_state=True),
+            {"full_tokens": 64, "swa_tokens": 32}, "after_workload",
+            batch_size=4, completed_iterations=1, decode_tokens=33, prefix_seeded=True,
+        )
+
+
+@pytest.mark.parametrize(
+    "field",
+    ("reserved_slots", "relocating_slots", "live_slots", "retiring_slots",
+     "quarantined_slots", "active_owners", "pending_transitions",
+     "pending_retirements"),
+)
+def test_fixed_state_census_rejects_leaks(field):
+    raw = _drained_fixed_state()
+    raw[field] = 1
+    if field.endswith("_slots"):
+        raw["free_slots"] -= 1
+    with pytest.raises(RuntimeError, match="did not drain"):
+        bench.manager_census(
+            _fixed_state_info(raw), _manager_config(fixed_state=True),
+            {"full_tokens": 64, "swa_tokens": 32}, "after_workload",
+            batch_size=4, completed_iterations=1, decode_tokens=33, prefix_seeded=True,
+        )
+
+
+def test_fixed_state_census_rejects_unaccounted_slot():
+    raw = _drained_fixed_state()
+    raw["free_slots"] -= 1
+    with pytest.raises(RuntimeError, match="slot census is incomplete"):
+        bench.manager_census(
+            _fixed_state_info(raw), _manager_config(fixed_state=True),
+            {"full_tokens": 64, "swa_tokens": 32}, "after_workload",
+            batch_size=4, completed_iterations=1, decode_tokens=33, prefix_seeded=True,
+        )
+
+
+@pytest.mark.parametrize("field", bench._FIXED_STATE_COUNTER_FIELDS)
+def test_token_only_census_requires_every_fixed_state_counter_to_be_zero(field):
+    token_only = _settled_manager_state()
+    token_only["batch_counters"][field] = 1
+    with pytest.raises(RuntimeError, match="without a state plan"):
+        bench.manager_census(
+            _runtime_info(swa_tokens=32, orbitkv_manager=token_only), _hybrid_config(),
+            {"full_tokens": 64, "swa_tokens": 32}, "after_workload",
+            batch_size=4, completed_iterations=1, decode_tokens=33, prefix_seeded=True,
+        )
 
 
 def test_multi_arena_census_rejects_leaks_and_cross_arena_capacity_mismatch():
@@ -952,7 +1157,7 @@ def test_exposed_swa_counters_are_collected_only_from_server_and_are_monotonic()
 
 @pytest.mark.parametrize("batch_size", (1, 4))
 @pytest.mark.parametrize("hybrid", (False, True))
-def test_abi6_batch_counter_identities_are_hard_validated(batch_size, hybrid):
+def test_abi8_batch_counter_identities_are_hard_validated(batch_size, hybrid):
     online_acknowledgements = 2 if hybrid else 0
     state = _settled_manager_state(
         batch_size=batch_size,
@@ -1135,7 +1340,7 @@ def test_request_traces_reject_foreign_returned_rid():
         )
 
 
-def test_abi7_counter_schema_never_fabricates_missing_internal_state_fields():
+def test_abi8_counter_schema_never_fabricates_missing_internal_state_fields():
     state = _settled_manager_state()
     del state["batch_counters"]["capacity_memset_bytes"]
     with pytest.raises(RuntimeError, match="noncanonical field set"):
@@ -1165,7 +1370,7 @@ def test_abi7_counter_schema_never_fabricates_missing_internal_state_fields():
         ("mirror_syncs", 0, "global mirror cleanup"),
     ),
 )
-def test_abi6_counter_identity_or_hot_memset_mismatch_fails(field, value, message):
+def test_abi8_counter_identity_or_hot_memset_mismatch_fails(field, value, message):
     state = _settled_manager_state()
     state["batch_counters"][field] = value
     with pytest.raises(RuntimeError, match=message):
@@ -1181,10 +1386,8 @@ def test_abi6_counter_identity_or_hot_memset_mismatch_fails(field, value, messag
         )
 
 
-def test_benchmark_record_schema_is_direct_v6_without_compatibility_aliases():
-    assert bench.RECORD_SCHEMA == (
-        "orbitkv.sglang-v0517-prefix-cow-single-run.v6"
-    )
+def test_benchmark_record_schema_is_explicit_abi8_v1():
+    assert bench.RECORD_SCHEMA == "orbitkv.sglang-v0517-abi8-single-run.v1"
     assert {
         "prefix_matches",
         "prefix_hits",
@@ -1194,6 +1397,6 @@ def test_benchmark_record_schema_is_direct_v6_without_compatibility_aliases():
         "cow_copy_intents",
         "mirror_validation_calls",
         "mirror_syncs",
+        *bench._FIXED_STATE_COUNTER_FIELDS,
     } < set(bench._BATCH_COUNTER_FIELDS)
     assert "retryable_conflicts" in bench._FORBIDDEN_COUNTER_FIELDS
-    assert ".v2" not in Path(bench.__file__).read_text(encoding="utf-8")

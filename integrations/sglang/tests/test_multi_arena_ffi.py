@@ -358,7 +358,7 @@ def test_frozen_layouts_and_exact_symbol_allowlist(ffi_library: Path) -> None:
     assert exported == EXACT_SYMBOL_ALLOWLIST
 
 
-def test_abi7_full_evacuation_relocates_live_tokens_and_reclaims_sources(
+def test_abi8_full_evacuation_relocates_live_tokens_and_reclaims_sources(
     tmp_path: Path, ffi_library: Path
 ) -> None:
     config, manager = _manager(tmp_path, ffi_library, hybrid=False)

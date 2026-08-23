@@ -167,7 +167,7 @@ fn stale_forged_and_cross_pool_plans_fail_closed() {
         Err(KvManagerError::StaleTokenView)
     );
 
-    let mut forged = plan.clone();
+    let mut forged = plan;
     let extra = TokenMove {
         token_id: 999,
         source: location(2, 1),
@@ -188,7 +188,7 @@ fn stale_forged_and_cross_pool_plans_fail_closed() {
         Err(KvManagerError::InvalidRelocationPlan)
     );
 
-    let mut wrong_pool = view.clone();
+    let mut wrong_pool = view;
     wrong_pool.placements[8]
         .location
         .as_mut()

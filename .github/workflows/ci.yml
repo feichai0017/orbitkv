@@ -181,7 +181,9 @@ jobs:
             integrations/sglang/src \
             integrations/sglang/tests \
             integrations/sglang/bench_canonical_manager.py \
-            integrations/sglang/bench_compact_control.py
+            integrations/sglang/bench_compact_control.py \
+            integrations/sglang/bench_token_relocation.py \
+            integrations/sglang/qualify_abi8_h20.py
       - name: Test the canonical SGLang v0.5.17 adapter
         env:
           CUDA_VISIBLE_DEVICES: ""
