@@ -31,12 +31,13 @@ cannot inherit ABI5 hardware evidence.
 | Typed C ABI8 wire | L2 GO | Exactly 40 typed symbols: 29 canonical-manager plus 11 independent state-pool symbols; per-handle transactions, C/C++ layout checks, reserved-field, capacity, short-buffer, stale-lease, and receipt validation; no cross-handle atomicity | `crates/orbitkv-ffi/include/orbitkv.h`, FFI tests, CI symbol diff |
 | ABI8 Python FFI/runtime | L2 GO | Exact-40 ctypes loader; 73 frozen layouts; bounded manager workspaces; independent state-pool client; typed retry/fail-stop and force-destroy teardown | Python FFI/runtime tests against the release library |
 | Official SGLang source contract | L2 | Official `v0.5.17`, peeled commit `29481685462732237d80d86076d6563e1f658102`, checked required hooks and fail-hard patch | pinned-checkout tests |
-| SGLang `OrbitKVPrefixCache` | L2 GO | Official cache seam; nodes contain token/digest/LRU plus opaque Prefix leases only; warm attach, lock/ref accounting, Full+SWA COW, grouped release, eviction, and hostile fault paths pass host gates | pinned `v0.5.17` contract and plugin integration tests; no H20 evidence |
+| SGLang `OrbitKVPrefixCache` | L2 GO | Official cache seam; nodes contain token/digest/LRU plus opaque Prefix leases only; warm attach, lock/ref accounting, Full+SWA COW, grouped release, eviction, and hostile fault paths pass host gates | pinned `v0.5.17` contract and plugin integration tests; the exact sealed H20 subset is listed below |
+| ABI8 H20 Prefix path | Scoped L4 correctness | Qwen Full and GPT-OSS Full+SWA, B1/B4, page16 BF16 NHD eager FA3 on one H20; Prefix lifecycle and final drain qualified | `results/h20-sglang-v0517-abi8-full-hybrid-20260823` at exact `6f62a23` |
 | SGLang token relocation | L2 host / L4 pending | Explicit/default-off eager path covers Full and ordered Full+SWA while they share one victim set; Full relocates physically, SWA keeps class-specific placement through a checked LUT; compact ReqToToken, split absolute/active lengths, decode continuation, and fail-closed release are host-tested | host plugin/runtime tests; no H20/E2E evidence; compact Hybrid fails closed once SWA visibility diverges |
 | SGLang MLA relocation seam | L2 host / L4 pending | Pure BF16 Full-retention MLA, page16, eager, single GPU, FlashInfer or FA3; compiler geometry is checked against `MLATokenToKVPool` and relocation copies every layer's combined latent+RoPE row | real pinned `MLATokenToKVPool` host copy/config tests; no H20/model evidence; DSA, FP4, DCP, Hybrid Linear, Prefix performance pending |
 | SGLang fixed-state seam | Scoped L2 host / production incomplete | The production request-owned Mamba path connects exact `slot_id + 1` mirrors, initial `MambaPool.clear_slots`, the forward completion event, and release-time retire/clear/ACK only | Same-owner `MambaPool.copy_from` replacement is coordinator/real-CPU-tensor host-tested, but its production trigger is pending; GDN/KDA/ShortConv/linear-attention family bindings and all real CUDA/model/H20/performance evidence are pending; separate token/state handles provide fail-stop containment, not cross-handle atomicity |
 | Stable-address CUDA VMM primitive | L2 host | Isolated reserve/map/remap/unmap backend; not the manager data plane and not SGLang tensor storage | `crates/orbitkv-cuda/` host tests |
-| General SGLang replacement | Not L5 | ABI8 H20 Prefix/relocation/fixed-state E2E, overlap/Graph, speculation, distributed execution, pressure, performance, and a release matrix are pending | this matrix |
+| General SGLang replacement | Not L5 | Scoped Prefix L4 does not qualify relocation, MLA, fixed state, overlap/Graph, speculation, distributed execution, pressure, performance, or a release matrix | this matrix |
 
 ### Exact ABI8 C surface
 
@@ -91,10 +92,42 @@ The ABI5 scalar-shaped names `abort_steps`, `quarantine_steps`,
 are removed. CI fails if an active source surface reintroduces them. Frozen
 headers inside `results/` remain unchanged.
 
+## Current sealed ABI8 engine evidence
+
+`results/h20-sglang-v0517-abi8-full-hybrid-20260823` is the sealed and
+latest engine record. It binds exact source commit
+`6f62a23b9abaa9bf12e9b060389259fa9185e70f` (short id `6f62a23`) to:
+
+- official SGLang `v0.5.17` at peeled commit
+  `29481685462732237d80d86076d6563e1f658102`;
+- one NVIDIA H20, page16 BF16 NHD storage, eager FA3, and TP/PP/DP/DCP = 1;
+- Qwen2.5-7B Full and GPT-OSS-20B Full+SWA at B1 and B4; and
+- 12 passed manager/stock pairs across three epochs, comprising 126 measured
+  request traces and 4,158 output tokens in each mode.
+
+All measured manager outputs match their stock pair. Every manager case
+records Prefix publication, warm hits and attach, eviction, and a clean final
+manager/arena drain. Every Hybrid manager case records positive SWA retirement
+certificates and reclaimed pages. This is Scoped L4 correctness for only that
+boundary.
+
+| Profile | Mean manager over stock |
+| --- | ---: |
+| Full B1 | +7.3678% |
+| Full B4 | +11.8684% |
+| Full+SWA B1 | +3.9865% |
+| Full+SWA B4 | +4.4476% |
+
+These timings are diagnostic: `performance_go=false`. The record does not
+claim a speedup or memory saving, and it does not qualify a complete SGLang
+replacement or production readiness. Token relocation, MLA, fixed state,
+overlap, CUDA Graphs, speculation, distributed execution, and performance
+qualification are explicitly excluded.
+
 ## Historical frozen ABI5-v5 evidence
 
-`results/h20-sglang-v0517-abi5-v5-grouped-release-20260821` is the latest
-engine record. It binds exact source closure `9233c06d…` to:
+`results/h20-sglang-v0517-abi5-v5-grouped-release-20260821` is the preceding
+frozen engine record. It binds exact source closure `9233c06d…` to:
 
 - official SGLang `v0.5.17` at peeled commit
   `29481685462732237d80d86076d6563e1f658102`;
@@ -135,7 +168,8 @@ a later ABI.
 
 ## Not qualified
 
-- ABI8 SGLang/H20 Prefix correctness or Prefix warm-hit performance;
+- ABI8 SGLang/H20 Prefix profiles outside the sealed Qwen Full and GPT-OSS
+  Full+SWA B1/B4 boundary, and all Prefix performance qualification;
 - H20-qualified SGLang token relocation, retained-slot attention correctness, or compaction performance;
 - H20-qualified SGLang MLA latent+RoPE relocation; the Mamba same-owner
   replacement production trigger; every GDN/KDA/ShortConv/linear-attention

@@ -36,10 +36,13 @@ The live tree is **ABI8**:
   trigger remains pending. GDN/KDA/ShortConv/linear-attention family bindings
   and real CUDA/model/H20/performance evidence remain pending.
 
-The latest engine evidence is an immutable **historical ABI5-v5** snapshot,
-not evidence for ABI8. Its exact `9233c06d…` source closure has scoped L4
-correctness on one H20 against official SGLang `v0.5.17`, peeled commit
-`29481685462732237d80d86076d6563e1f658102`.
+The latest engine evidence is the **sealed ABI8** record at
+`results/h20-sglang-v0517-abi8-full-hybrid-20260823`. It binds exact source
+commit `6f62a23b9abaa9bf12e9b060389259fa9185e70f` (short id `6f62a23`) to
+Scoped L4 correctness for the Prefix path on one H20 against official SGLang
+`v0.5.17`, peeled commit `29481685462732237d80d86076d6563e1f658102`.
+The earlier sealed ABI5-v5 record remains historical evidence for its exact
+`9233c06d…` source closure only.
 
 The normative current/historical distinction is in the
 [Capability Matrix](docs/capability-matrix.md).
@@ -102,11 +105,30 @@ for the invariants and module boundaries.
 | Recurrent/convolution checkpoint pool | L2 host | Generation-checked core/wire initial/replace/retire/ACK, abort, and quarantine; production family bindings pending |
 | Pure MLA SGLang seam | L2 host / L4 pending | Explicit latent+RoPE geometry checked against the real SGLang pool; combined-row relocation host-tested; H20 and model correctness pending |
 | ABI8 C wire | L2 GO | Exact 40 symbols, C/C++ layouts, per-handle manager-batch and state-pool-batch atomicity, short-buffer and malformed-receipt gates; no cross-handle atomicity |
-| ABI8 Python/Prefix/state wire | L2 GO | 73 frozen ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, relocation and independent fixed-state wires, fail-stop, and teardown host gates |
+| ABI8 Python/Prefix/state wire | L2 GO plus scoped Prefix L4 | 73 frozen ctypes layouts and broad host gates; the sealed Full/Full+SWA Prefix subset has exact-source H20 evidence |
 | ABI8 SGLang relocation | L2 host / L4 pending | Full and common-victim-set Full+SWA eager, explicit/default-off Naive/Relocate path; H20 pending |
 | ABI8 SGLang fixed state | Scoped host evidence / production incomplete | Production covers initial `MambaPool.clear_slots`, the forward event, and retire/clear/ACK only; same-owner `copy_from` replacement has coordinator/real-CPU-tensor host tests but no production trigger; GDN/KDA/ShortConv/linear-attention bindings and real CUDA/model/H20/performance are pending |
-| ABI8 H20 | Pending | No engine run may inherit ABI5 or ABI7 evidence |
+| ABI8 H20 Prefix path | Scoped L4 correctness | Exact `6f62a23`; Qwen Full and GPT-OSS Full+SWA B1/B4 only; performance and excluded features remain unqualified |
 | Frozen ABI5-v5 | Historical scoped L4 | Qwen Full and GPT-OSS Full+SWA B1/B4 correctness on one H20 |
+
+The sealed ABI8 H20 record uses official SGLang `v0.5.17` on one H20
+with page16 BF16 NHD storage, eager FA3 execution, and TP/PP/DP/DCP = 1.
+Across Qwen2.5-7B Full and GPT-OSS-20B Full+SWA at B1 and B4, all 12
+manager/stock pairs pass over three epochs. Manager and stock each contain 126
+measured request traces and 4,158 output tokens. The manager records exercise
+Prefix publication, warm hits and attach, eviction, and final drain; every
+Hybrid record also has positive SWA retirement-certificate and reclaimed-page
+counters.
+
+Mean manager-over-stock time is +7.3678% for Full B1, +11.8684% for Full B4,
++3.9865% for Full+SWA B1, and +4.4476% for Full+SWA B4. These are diagnostic
+measurements, `performance_go=false`, and they do not establish a speedup. The
+record makes no memory-saving claim and does not qualify a complete SGLang
+replacement or production readiness. Token relocation, MLA, fixed state,
+overlap, CUDA Graphs, speculation, distributed execution, and performance
+qualification are explicitly excluded.
+
+[Sealed ABI8 H20 record](results/h20-sglang-v0517-abi8-full-hybrid-20260823/README.md)
 
 In the frozen ABI5-v5 H20 record, all eight manager/stock JSON records pass
 independent verification, all request traces match, and every Full/SWA arena
@@ -147,8 +169,9 @@ The ordered work is:
    `MambaPool.copy_from` replacement path;
 2. implement family-specific GDN, KDA, ShortConv, and linear-attention
    bindings;
-3. run exact-source ABI8 Full, Full+SWA, MLA, and each bound fixed-state
-   profile through real CUDA/model correctness and matched H20 performance;
+3. extend exact-source H20 qualification to token relocation, MLA, and each
+   bound fixed-state profile, and separately qualify performance for the
+   sealed Full and Full+SWA Prefix profiles;
 4. qualify overlap and CUDA Graph completion domains; and
 5. add speculation, multi-GPU placement, and disaggregation.
 
