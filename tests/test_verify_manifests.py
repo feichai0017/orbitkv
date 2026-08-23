@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from copy import deepcopy
 from pathlib import Path
+from unittest.mock import patch
 
 
 MODULE_PATH = Path(__file__).resolve().parents[1] / "tools/verify_manifests.py"
@@ -66,7 +67,20 @@ class Abi8ManifestTest(unittest.TestCase):
         )
 
     def test_accepts_self_contained_seal(self) -> None:
-        self.assertEqual(verifier.verify_manifest(self.manifest_path), 2)
+        with patch.object(
+            verifier, "verify_abi8_h20_semantics", return_value=1
+        ) as semantics:
+            self.assertEqual(verifier.verify_manifest(self.manifest_path), 3)
+        semantics.assert_called_once_with(self.root, self.manifest)
+
+    def test_rejects_a_hash_consistent_but_semantically_fake_seal(self) -> None:
+        with patch.object(
+            verifier,
+            "verify_abi8_h20_semantics",
+            side_effect=RuntimeError("fabricated evidence"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "fabricated evidence"):
+                verifier.verify_manifest(self.manifest_path)
 
     def test_rejects_changed_missing_and_unlisted_artifacts(self) -> None:
         mutations = (
@@ -130,6 +144,9 @@ class Abi8ManifestTest(unittest.TestCase):
         )
         with self.assertRaises(RuntimeError):
             verifier.verify_manifest(self.manifest_path)
+
+    def test_default_manifest_set_requires_the_abi8_seal(self) -> None:
+        self.assertIn(verifier.ABI8_H20_MANIFEST, verifier.DEFAULT_MANIFESTS)
 
     def test_rejects_wrong_qualification_policy(self) -> None:
         invalid_values = {
