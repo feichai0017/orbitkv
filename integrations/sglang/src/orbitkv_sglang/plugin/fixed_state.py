@@ -1134,17 +1134,6 @@ def _request_key_from_rid(value: Any) -> tuple[str, str | bytes | int]:
     raise ManagerError("forward request rid is not stable")
 
 
-def _completion_domain(device: Any) -> int:
-    if isinstance(device, str):
-        index = None
-        if ":" in device:
-            suffix = device.rsplit(":", 1)[-1]
-            index = int(suffix) if suffix.isdigit() else 0
-    else:
-        index = getattr(device, "index", None)
-    return int(index or 0) + 1
-
-
 def _fixed_state_alloc(
     original_fn: Callable[..., Any], pool: Any, requests: Sequence[Any]
 ) -> list[int] | None:

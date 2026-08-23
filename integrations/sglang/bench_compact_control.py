@@ -268,7 +268,7 @@ def run(
         < HOST_GATE_TOTAL_P50_LIMIT_MS
     )
     return {
-        "schema": "orbitkv.abi6-prefix-control.v1",
+        "schema": "orbitkv.abi8-compact-control.v1",
         "scope": "host_control_only",
         "python": platform.python_version(),
         "library": {"path": str(library), "sha256": _sha256(library)},

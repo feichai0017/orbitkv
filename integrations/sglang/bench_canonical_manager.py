@@ -45,7 +45,7 @@ MANAGER_LOADER_BLOB_SHA256 = (
 )
 QUALIFICATION_BATCH_SIZES = (1, 4)
 PREFIX_SEED_BATCH_SIZE = 1
-RECORD_SCHEMA = "orbitkv.sglang-v0517-prefix-cow-single-run.v6"
+RECORD_SCHEMA = "orbitkv.sglang-v0517-abi8-single-run.v1"
 MANAGER_RADIX_CACHE_BACKEND = "orbitkv"
 PAIR_IMPLEMENTATION_DIFFERENCE = {
     "field": "radix_cache_backend",
@@ -503,9 +503,28 @@ def artifact_identity(path: Path) -> dict[str, Any]:
 
 
 def manager_plan_identity(config: Any) -> dict[str, Any]:
+    fixed_components = [
+        {
+            "name": item.name, "kind": item.kind, "layers": list(item.layers),
+            "state_bytes_per_layer": item.state_bytes_per_layer,
+            "checkpoint_slots_per_request": item.checkpoint_slots_per_request,
+            "kernel_width": item.kernel_width, "byte_count": item.byte_count,
+        }
+        for item in config.fixed_states
+    ]
+    has_state_plan = config.state_plan_path is not None
+    if has_state_plan != bool(fixed_components) or has_state_plan != (config.state_plan_fingerprint is not None):
+        raise RuntimeError("manager fixed-state plan provenance is incomplete")
     return {
         "artifact": artifact_identity(config.plan_path),
         "plan_fingerprint": config.plan_fingerprint,
+        "state_plan": (
+            {"artifact": artifact_identity(config.state_plan_path),
+             "plan_fingerprint": config.state_plan_fingerprint}
+            if has_state_plan else None
+        ),
+        "fixed_state_byte_count": config.fixed_state_byte_count,
+        "fixed_states": fixed_components,
         "page_tokens": config.page_tokens,
         "classes": [
             {
@@ -963,6 +982,10 @@ _MANAGER_STATS_FIELDS = (
     "total_prefix_page_refs",
     "total_reader_pins",
 )
+_FIXED_STATE_COUNTER_FIELDS = (
+    "fixed_state_prepares", "fixed_state_clears", "fixed_state_copies",
+    "fixed_state_events", "fixed_state_retirements", "fixed_state_acks",
+)
 _BATCH_COUNTER_FIELDS = (
     "request_acquire_batch_calls",
     "request_fork_batch_calls",
@@ -1014,6 +1037,7 @@ _BATCH_COUNTER_FIELDS = (
     "relocation_batches", "relocation_moves",
     "relocation_reclaimed_pages", "relocation_copy_events",
     "relocation_copy_tokens",
+    *_FIXED_STATE_COUNTER_FIELDS,
 )
 _FORBIDDEN_COUNTER_FIELDS = (
     "hot_workspace_allocations",
@@ -1040,6 +1064,48 @@ def _counter_record(value: Any, fields: Sequence[str], label: str) -> dict[str, 
     ):
         raise RuntimeError(f"{label} contains an invalid integer")
     return {name: int(value[name]) for name in fields}
+
+
+def _fixed_state_census(raw: Any, config: Any, engine_epoch: int,
+                        runtime_state: dict[str, Any], stage: str) -> dict[str, Any]:
+    identity_fields = ("engine_epoch", "pool_epoch", "pool_id", "byte_count", "slot_count")
+    phase_fields = (
+        "free_slots", "reserved_slots", "relocating_slots", "live_slots",
+        "retiring_slots", "quarantined_slots",
+    )
+    stats_fields = (*phase_fields, "active_owners", "pending_transitions", "pending_retirements")
+    if not isinstance(raw, dict) or set(raw) != {"status", "identity", *stats_fields}:
+        raise RuntimeError(
+            f"OrbitKV fixed-state census has a noncanonical field set at {stage}"
+        )
+    if raw["status"] != "host_seam":
+        raise RuntimeError(f"OrbitKV fixed-state census has an invalid status at {stage}")
+    identity = _counter_record(raw["identity"], identity_fields, "OrbitKV fixed-state identity")
+    stats = _counter_record({name: raw[name] for name in stats_fields}, stats_fields,
+                            "OrbitKV fixed-state census")
+    runtime_slots = runtime_state.get("max_mamba_cache_size")
+    if (isinstance(runtime_slots, bool) or not isinstance(runtime_slots, int)
+            or runtime_slots < 2):
+        raise RuntimeError(f"OrbitKV fixed-state slot capacity is invalid at {stage}")
+    expected = {
+        "engine_epoch": engine_epoch,
+        "pool_epoch": engine_epoch + 2,
+        "pool_id": len(config.classes) + 1,
+        "byte_count": config.fixed_state_byte_count,
+        "slot_count": runtime_slots,
+    }
+    mismatches = {name: {"expected": value, "actual": identity[name]}
+                  for name, value in expected.items() if identity[name] != value}
+    if mismatches:
+        raise RuntimeError(
+            f"OrbitKV fixed-state identity differs from plan at {stage}: {mismatches}"
+        )
+    if sum(stats[name] for name in phase_fields) != identity["slot_count"]:
+        raise RuntimeError(f"OrbitKV fixed-state slot census is incomplete at {stage}")
+    dirty = {name: stats[name] for name in stats_fields[1:] if stats[name]}
+    if stats["free_slots"] != identity["slot_count"] or dirty:
+        raise RuntimeError(f"OrbitKV fixed-state pool did not drain at {stage}: {dirty}")
+    return {"status": "host_seam", "identity": identity, **stats}
 
 
 def _validate_batch_counter_contract(
@@ -1227,11 +1293,9 @@ def manager_census(
         "swa_activity",
         "batch_counters",
     }
-    reported_keys = set(reported)
-    if (
-        reported_keys - {"fixed_state"} != allowed
-        or reported.get("abi_version") != 8
-    ):
+    has_fixed_state = bool(getattr(config, "fixed_states", ()))
+    expected_keys = allowed | ({"fixed_state"} if has_fixed_state else set())
+    if set(reported) != expected_keys or reported.get("abi_version") != 8:
         raise RuntimeError(f"OrbitKV manager top-level schema is invalid at {stage}")
     raw_identities = reported["identities"]
     raw_arena_stats = reported["arena_stats"]
@@ -1258,6 +1322,12 @@ def manager_census(
         _BATCH_COUNTER_FIELDS,
         "OrbitKV batch_counters",
     )
+    if not has_fixed_state and any(
+        batch_counters[name] for name in _FIXED_STATE_COUNTER_FIELDS
+    ):
+        raise RuntimeError(
+            f"OrbitKV fixed-state counters are nonzero without a state plan at {stage}"
+        )
     hybrid = any(item.retention == "sliding" for item in config.classes)
     swa_activity = _swa_activity(reported, hybrid)
     forbidden = {
@@ -1356,6 +1426,13 @@ def manager_census(
             )
     if len(engine_epochs) != 1:
         raise RuntimeError(f"OrbitKV arenas have different engine epochs at {stage}")
+    fixed_state = (
+        _fixed_state_census(
+            reported["fixed_state"], config, next(iter(engine_epochs)), _state(info), stage
+        )
+        if has_fixed_state
+        else None
+    )
 
     for name in _ARENA_PHASE_FIELDS:
         if manager_stats[name] != sum(item[name] for item in arena_stats):
@@ -1423,7 +1500,7 @@ def manager_census(
             f"OrbitKV manager leaked pages at {stage}: "
             f"free={manager_stats['free_pages']} expected={page_capacity}"
         )
-    return {
+    census = {
         "abi_version": 8,
         "identities": identities,
         "arena_stats": arena_stats,
@@ -1431,6 +1508,9 @@ def manager_census(
         "batch_counters": batch_counters,
         "swa_activity": swa_activity,
     }
+    if fixed_state is not None:
+        census["fixed_state"] = fixed_state
+    return census
 
 
 def stock_census_absent(info: dict[str, Any], stage: str) -> None:

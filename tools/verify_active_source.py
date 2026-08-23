@@ -21,6 +21,7 @@ TEST_BENCH_FILES = (
     ROOT / "integrations/sglang/bench_canonical_manager.py",
     ROOT / "integrations/sglang/bench_compact_control.py",
     ROOT / "integrations/sglang/bench_token_relocation.py",
+    ROOT / "integrations/sglang/qualify_abi8_h20.py",
 )
 
 ABI8_MARKERS = {
@@ -30,8 +31,9 @@ ABI8_MARKERS = {
 }
 
 # ABI5 exposed these scalar-shaped names even though their arguments were
-# arrays. ABI6 is consistently batch-named. Historical result closures are not
-# scanned, so their exact archived headers remain untouched.
+# arrays. The current ABI8 surface is consistently batch-named. Historical
+# result closures are not scanned, so their exact archived headers remain
+# untouched.
 REMOVED_ABI5_LIFECYCLE_ALIASES = (
     "orbitkv_manager_abort_steps",
     "orbitkv_manager_quarantine_steps",
