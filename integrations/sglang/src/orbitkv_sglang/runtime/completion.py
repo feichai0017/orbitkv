@@ -2,7 +2,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Hashable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Hashable, Mapping, Sequence
+
+if TYPE_CHECKING:
+    from orbitkv_runtime import CompletionFence
 
 from .identity import (
     CLASS_LOWERING_PACKED,
@@ -139,6 +142,9 @@ class EventGroup:
     event: Any
     batch: BatchRecord
     completion_domain: int
+    completion_value: int | None = None
+    completion_adapter: Any | None = None
+    completion_fence: Any | None = None
 
     @property
     def records(self) -> tuple[StepRecord, ...]:
@@ -529,6 +535,50 @@ class CompletionRuntimeMixin:
             for pending in batch.records:
                 pending.phase = StepPhase.EVENT
 
+    def register_external_event(
+        self,
+        batch: BatchRecord,
+        fence: CompletionFence,
+        event: Any,
+        *,
+        adapter: Any,
+    ) -> None:
+        with self._lock:
+            self._healthy()
+            from orbitkv_runtime import CompletionFence
+
+            if not isinstance(fence, CompletionFence):
+                raise ManagerError("external completion requires a CompletionFence")
+            if (
+                getattr(adapter, "adapter_id", None) != fence.adapter_id
+                or not callable(getattr(adapter, "event_for", None))
+                or adapter.event_for(fence) is not event
+            ):
+                raise ManagerError(
+                    "external completion fence lacks issuing-adapter evidence"
+                )
+            _positive("completion engine epoch", fence.engine_epoch)
+            if fence.engine_epoch != self.engine_epoch:
+                raise ManagerError(
+                    "external completion fence belongs to another engine epoch"
+                )
+            _positive("completion domain", fence.completion_domain)
+            _positive("completion value", fence.completion_value)
+            domain = int(fence.completion_domain)
+            value = int(fence.completion_value)
+            if event is None:
+                raise ManagerError("external completion requires a raw event")
+            self._validate_batch_record(batch)
+            for pending in batch.records:
+                self._require_pending(pending, StepPhase.FORWARD)
+            self._validate_external_completion_point(domain, value)
+            self._events.append(
+                EventGroup(event, batch, domain, value, adapter, fence)
+            )
+            self._runtime_counters["forward_events"] += 1
+            for pending in batch.records:
+                pending.phase = StepPhase.EVENT
+
     def event_registration_failed(
         self, batch: BatchRecord, error: BaseException
     ) -> None:
@@ -604,7 +654,11 @@ class CompletionRuntimeMixin:
         if group not in self._events:
             return
         try:
-            completion_value = self._next_completion_value(group.completion_domain)
+            completion_value = (
+                self._next_completion_value(group.completion_domain)
+                if group.completion_value is None
+                else group.completion_value
+            )
             receipt = BatchCompletionReceipt(
                 engine_epoch=self.engine_epoch,
                 completion_domain=group.completion_domain,
@@ -626,13 +680,17 @@ class CompletionRuntimeMixin:
             self._record_completion_point(
                 receipt.completion_domain, receipt.completion_value
             )
-            self._completion_value = completion_value + 1
+            self._completion_value = max(self._completion_value, completion_value + 1)
             self._runtime_counters["completion_values"] += 1
             for pending in group.records:
                 self._complete_prepared_identity(pending)
                 self._requests[pending.key].pending = None
                 pending.phase = StepPhase.COMPLETED
             self._events.remove(group)
+            if group.completion_adapter is not None:
+                group.completion_adapter.retire_completion(
+                    group.completion_fence
+                )
         except Exception as error:
             remaining = [
                 pending
@@ -661,6 +719,25 @@ class CompletionRuntimeMixin:
         if value <= previous:
             raise ManagerError("completion point did not advance")
         self._completion_high_water[domain] = value
+
+    def _validate_external_completion_point(
+        self, completion_domain: int, completion_value: int
+    ) -> None:
+        domain = int(completion_domain)
+        value = int(completion_value)
+        if domain >= 1 << 64 or value >= (1 << 64) - 1:
+            raise ManagerError("external completion point exhausts the runtime sequence")
+        if value <= self._completion_high_water.get(domain, 0):
+            raise ManagerError("external completion point did not advance")
+        if any(
+            group.completion_domain == domain
+            and group.completion_value is not None
+            and group.completion_value >= value
+            for group in self._events
+        ):
+            raise ManagerError(
+                "external completion point is not monotonic with pending events"
+            )
 
     def _validate_submitted(self, record: Any, pending: StepRecord, submitted: SubmittedStep) -> None:
         expected_lease = SubmissionLease(

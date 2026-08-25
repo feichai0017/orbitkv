@@ -42,7 +42,7 @@ source closures and archive reproducibility.
 | Recurrent/convolution checkpoint pool | L2 host | Fixed-width generation-checked initial/replace/retire/ACK lifecycle with exact copy receipts, completion gating, abort, and quarantine; no token ids or TokenMove surface | `src/state_checkpoint.rs`, host lifecycle/fault tests |
 | Typed C ABI8 wire | L2 GO | Exactly 40 typed symbols: 29 canonical-manager plus 11 independent state-pool symbols; per-handle transactions, C/C++ layout checks, reserved-field, capacity, short-buffer, stale-lease, and receipt validation; no cross-handle atomicity | `crates/orbitkv-ffi/include/orbitkv.h`, FFI tests, CI symbol diff |
 | ABI8 Python FFI/runtime | L2 GO | Exact-40 ctypes loader; 73 frozen layouts; bounded manager workspaces; independent state-pool client; typed retry/fail-stop and force-destroy teardown. The ABI8-preserving multi-request relocation path calls native mark/prepare/submit/complete once each, then performs one aggregate page-registry commit followed by one aggregate request-head replacement; the scalar API is a singleton batch compatibility wrapper | Python FFI/runtime success-path tests against the release library at B1/B4, including packed B4 fork/COW/append; B1/B4/B32 stale-member preflight and full-copy CUDA conformance pass, with the exact component boundary listed below |
-| Engine-neutral adapter SPI and reference arena | L2 host/package | `orbitkv-runtime` defines the typed data-plane contract; `orbitkv-reference` implements external CPU/CUDA tensor arenas, exact append/relocate effects, a two-phase engine-kernel append authorization, distinct data-ready/last-use evidence, mirror cleanup, and ACK-gated generation reuse | Separate wheels build and clean-install in CI; pending external appends reserve their exact page generations and completion domains, but the reference is a contract oracle/reusable arena adapter, not a scheduler, model runner, allocator, attention kernel, or complete engine; SGLang has not migrated to this SPI |
+| Engine-neutral adapter SPI and structured engine bridge | L2 host/package | `orbitkv-runtime` defines the typed data-plane contract; `orbitkv-reference` implements flat external CPU/CUDA tensor arenas; the opt-in SGLang bridge maps per-layer K/V tensors to aggregate neutral token records and uses two-phase external append with distinct data-ready/last-use evidence | The `structured-data-plane` extra plus `ORBITKV_STRUCTURED_DATA_PLANE=1` enables host-tested eager non-overlap BF16/NHD `token_kv` Full and Full+SWA profiles with relocation disabled. MLA, relocation, graphs, overlap, distributed modes, performance, and hardware qualification remain outside this bridge |
 | Request-private pressure telemetry | L2 host plus unarchived device diagnostic | Opt-in event samples separate consumed capacity, resident data, request-reachable bytes, semantic-live bytes, free-space minima, high-water marks, and retention amplification | Host runtime/async-schedule gates and a real single-device diagnostic have run; no append-only, sealed, or qualified pressure record is published. The device observation is not an allocator peak or a performance/capacity result. Fixed-state bytes are excluded, and shared Prefix/request-fork retention amplification fails closed |
 | Official SGLang source contract | L2 | The pinned stock checkout and manager checkout with its manifest-bound loader patch are checked separately | pinned-checkout tests |
 | SGLang `OrbitKVPrefixCache` | L2 GO | Official cache seam; nodes contain token/digest/LRU plus opaque Prefix leases only; warm attach, lock/ref accounting, Full+SWA COW, grouped release, eviction, and hostile fault paths pass host gates | pinned engine-contract and plugin integration tests; the exact sealed subset is linked below |
@@ -231,9 +231,10 @@ outside its original manifest.
   throughput/latency improvement.
 
 The engine-neutral `orbitkv-runtime` and `orbitkv-reference` wheels establish a
-host-tested/package-tested SPI and reference tensor-arena adapter only. The
-reference is not a complete engine, and the current SGLang integration has not
-migrated to the SPI.
+host-tested/package-tested SPI and reference tensor-arena adapter. The scoped
+SGLang integration uses its opt-in external-write protocol only for the
+explicit eager BF16/NHD `token_kv` subset; this is not a complete engine or a
+general SGLang replacement.
 
 Unsupported profiles must fail closed before mutation. The implementation and
 qualification order is specified in the

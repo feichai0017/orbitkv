@@ -51,6 +51,7 @@ class _StateEventGroup:
     completion_domain: int
     device_module: Any
     device: Any
+    completion_value: int | None = None
 
 
 class _OrbitKvMambaAllocator:
@@ -503,6 +504,19 @@ class FixedStateCoordinator:
                 self._discard_pending(record)
             self.fail_stop(f"fixed-state mirror publication failed: {error}")
 
+    def mirror_failed_after_external_authorization(
+        self, records: Sequence[_PendingState], error: BaseException
+    ) -> None:
+        """Contain fixed state when token destinations may already mutate."""
+
+        with self._lock:
+            values = tuple(records)
+            if values:
+                self.poison_unobserved(
+                    values,
+                    f"fixed-state mirror failed after external authorization: {error}",
+                )
+
     def abort_batch(self, records: Sequence[_PendingState]) -> None:
         with self._lock:
             values = tuple(records)
@@ -720,6 +734,7 @@ class FixedStateCoordinator:
         completion_domain: int,
         device_module: Any,
         device: Any,
+        completion_value: int | None = None,
     ) -> None:
         with self._lock:
             self._healthy()
@@ -736,6 +751,22 @@ class FixedStateCoordinator:
                 )
             ):
                 raise ManagerError("fixed-state event records are invalid")
+            if completion_value is not None and (
+                isinstance(completion_value, bool)
+                or not isinstance(completion_value, int)
+                or completion_value <= 0
+                or completion_value >= 1 << 64
+                or completion_value < self._completion_value
+                or any(
+                    group.completion_domain == int(completion_domain)
+                    and group.completion_value is not None
+                    and group.completion_value >= completion_value
+                    for group in self._events
+                )
+            ):
+                raise ManagerError(
+                    "fixed-state external completion point did not advance"
+                )
             self._events.append(
                 _StateEventGroup(
                     event,
@@ -744,11 +775,51 @@ class FixedStateCoordinator:
                     int(completion_domain),
                     device_module,
                     device,
+                    completion_value,
                 )
             )
             from .state import _counter_add
 
             _counter_add("fixed_state_events")
+
+    def register_external_event(
+        self,
+        keys: Sequence[Hashable],
+        records: Sequence[_PendingState],
+        event: Any,
+        fence: Any,
+        device_module: Any,
+        device: Any,
+        *,
+        adapter: Any,
+    ) -> None:
+        from orbitkv_runtime import CompletionFence
+
+        if not isinstance(fence, CompletionFence):
+            raise ManagerError(
+                "fixed-state external completion requires a CompletionFence"
+            )
+        if (
+            getattr(adapter, "adapter_id", None) != fence.adapter_id
+            or not callable(getattr(adapter, "event_for", None))
+            or adapter.event_for(fence) is not event
+        ):
+            raise ManagerError(
+                "fixed-state completion lacks issuing-adapter evidence"
+            )
+        if fence.engine_epoch != self.identity.engine_epoch:
+            raise ManagerError(
+                "fixed-state external completion has another engine epoch"
+            )
+        self.register_event(
+            keys,
+            records,
+            event,
+            fence.completion_domain,
+            device_module,
+            device,
+            fence.completion_value,
+        )
 
     def forward_failed(
         self, records: Sequence[_PendingState], error: BaseException
@@ -818,10 +889,15 @@ class FixedStateCoordinator:
     def _complete_group(self, group: _StateEventGroup) -> None:
         if group not in self._events:
             return
+        completion_value = (
+            self._completion_value
+            if group.completion_value is None
+            else group.completion_value
+        )
         receipt = StateCompletionReceipt(
             self.identity.engine_epoch,
             group.completion_domain,
-            self._completion_value,
+            completion_value,
         )
         try:
             publications = (
@@ -854,9 +930,11 @@ class FixedStateCoordinator:
                 )
             for key in group.keys:
                 self._owner_completions[key] = (
-                    group.completion_domain, self._completion_value
+                    group.completion_domain, completion_value
                 )
-            self._completion_value += 1
+            self._completion_value = max(
+                self._completion_value, completion_value + 1
+            )
             self._events.remove(group)
         except Exception as error:
             self.fail_stop(f"fixed-state publication became uncertain: {error}")

@@ -172,6 +172,16 @@ jobs:
           PYTHONPATH=python/orbitkv-runtime/src:integrations/reference/src \
           python -m pytest -q \
             python/orbitkv-runtime/tests integrations/reference/tests
+      - name: Verify structured SGLang extra wheel installation
+        run: |
+          python -m build --wheel --outdir /tmp/orbitkv-wheels integrations/sglang
+          python -m venv /tmp/orbitkv-structured-venv
+          /tmp/orbitkv-structured-venv/bin/python -m pip install \
+            --no-index --find-links /tmp/orbitkv-wheels \
+            orbitkv-runtime orbitkv-sglang --no-deps
+          cd /tmp
+          PYTHONPATH= /tmp/orbitkv-structured-venv/bin/python -I -c \
+            "import orbitkv_runtime, orbitkv_sglang; import orbitkv_sglang.plugin.external_append; import orbitkv_sglang.plugin.structured_arena"
 
   sglang-plugin:
     runs-on: ubuntu-latest
@@ -188,7 +198,11 @@ jobs:
       - name: Install the exact SGLang integration
         run: |
           python -m pip install --upgrade pip
-          python -m pip install "pytest==9.1.1" "pyflakes==3.4.0" -e integrations/sglang
+          python -m pip install build "pytest==9.1.1" "pyflakes==3.4.0"
+          python -m build --wheel --outdir /tmp/orbitkv-runtime-wheel \
+            python/orbitkv-runtime
+          python -m pip install --find-links /tmp/orbitkv-runtime-wheel \
+            -e 'integrations/sglang[structured-data-plane]'
       - name: Fetch and verify official SGLang v0.5.17
         run: |
           sudo install -d -m 0755 -o "$(id -u)" -g "$(id -g)" /workspace
@@ -221,5 +235,5 @@ jobs:
         env:
           CUDA_VISIBLE_DEVICES: ""
           PYTHONDONTWRITEBYTECODE: "1"
-          PYTHONPATH: integrations/sglang/src
+          PYTHONPATH: python/orbitkv-runtime/src:integrations/sglang/src
         run: python -m pytest -q integrations/sglang/tests tests

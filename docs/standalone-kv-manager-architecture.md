@@ -59,7 +59,9 @@ The separate `orbitkv-runtime` and `orbitkv-reference` packages expose an
 engine-neutral data-plane SPI and a reusable external tensor-arena reference
 adapter. Both wheels build and clean-install in CI. The reference is a contract
 oracle, not a scheduler, model runner, allocator, attention kernel, or complete
-engine; the SGLang adapter has not migrated to this SPI.
+engine. The scoped SGLang eager BF16/NHD `token_kv` path can opt into the SPI's
+external-write lifecycle over structured per-layer arenas; other SGLang
+capabilities do not inherit that support.
 
 Opt-in request-private pressure telemetry distinguishes consumed, resident,
 request-reachable, and semantic-live bytes and reports retention amplification.

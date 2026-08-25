@@ -15,6 +15,11 @@ from ..runtime import (
 )
 from . import state as _state
 from .cow_mirror import preflight_compact_cow
+from .external_lifecycle import (
+    poison_external_writes,
+    prepare_external_writes,
+    run_scheduled_batch,
+)
 from .mirror_cleanup import _mirror_cleanup_coordinator, _MirrorCleanupContext
 from .state import _config, _request_key, _runtime
 from .validation import (
@@ -918,16 +923,31 @@ def _alloc_for_extend(batch: Any) -> tuple[Any, Any, Any]:
         cow_mirror_plan = _preflight_cow_mirrors(
             batch, plans, new_req_slots
         )
+        prepare_external_writes(batch, batch_record, plans, locations)
         cow_activity = _execute_cow_copies(batch, plans)
         _runtime().mark_lowered(batch_record)
     except Exception as error:
-        if state_records and _state._FIXED_STATE is not None:
+        issued_external = getattr(batch, "_orbitkv_external_ticket", None) is not None
+        poison_external_writes(
+            batch,
+            f"extend lowering failed after external authorization: {error}"
+        )
+        if (
+            state_records
+            and _state._FIXED_STATE is not None
+            and not issued_external
+        ):
             try:
                 _state._FIXED_STATE.abort_batch(state_records)
             except Exception as state_error:
                 _runtime().fail_stop(
                     f"fixed-state lowering rollback became uncertain: {state_error}"
                 )
+        elif state_records and _state._FIXED_STATE is not None:
+            _state._FIXED_STATE.poison_unobserved(
+                state_records,
+                f"token lowering failed after external authorization: {error}",
+            )
         if batch_record is not None:
             _runtime().lowering_failed(batch_record, error)
         raise FailStopped(
@@ -937,6 +957,11 @@ def _alloc_for_extend(batch: Any) -> tuple[Any, Any, Any]:
     try:
         _submit_batch(batch_record)
     except Exception as error:
+        poison_external_writes(
+            batch, f"extend submit failed after external authorization: {error}"
+        )
+        if _state._DATA_PLANE is not None:
+            _runtime().lowering_failed(batch_record, error)
         if state_records and _state._FIXED_STATE is not None:
             _state._FIXED_STATE.poison_unobserved(
                 state_records, f"token submit failed after fixed-state prepare: {error}"
@@ -967,8 +992,16 @@ def _alloc_for_extend(batch: Any) -> tuple[Any, Any, Any]:
                 req.kv.kv_allocated_len = int(target)
         batch._orbitkv_batch = batch_record
     except Exception as error:
+        poison_external_writes(
+            batch, f"extend mirror failed after external authorization: {error}"
+        )
         if state_records and _state._FIXED_STATE is not None:
-            _state._FIXED_STATE.mirror_failed(state_records, error)
+            if _state._DATA_PLANE is None:
+                _state._FIXED_STATE.mirror_failed(state_records, error)
+            else:
+                _state._FIXED_STATE.mirror_failed_after_external_authorization(
+                    state_records, error
+                )
         _runtime().candidate_mirror_failed(batch_record, error)
         raise FailStopped(
             _runtime().failure_reason or "candidate mirror failed"
@@ -1022,15 +1055,28 @@ def _alloc_for_decode(batch: Any, token_per_req: int) -> Any:
         cow_mirror_plan = _preflight_cow_mirrors(
             batch, plans, (False,) * len(plans)
         )
+        prepare_external_writes(batch, batch_record, plans, locations)
         cow_activity = _execute_cow_copies(batch, plans)
         _runtime().mark_lowered(batch_record)
     except Exception as error:
+        poison_external_writes(
+            batch,
+            f"decode lowering failed after external authorization: {error}"
+        )
         _runtime().lowering_failed(batch_record, error)
         raise FailStopped(
             _runtime().failure_reason or "decode lowering failed"
         ) from error
 
-    _submit_batch(batch_record)
+    try:
+        _submit_batch(batch_record)
+    except Exception as error:
+        poison_external_writes(
+            batch, f"decode submit failed after external authorization: {error}"
+        )
+        if _state._DATA_PLANE is not None:
+            _runtime().lowering_failed(batch_record, error)
+        raise
     _record_cow_activity(cow_activity)
 
     try:
@@ -1092,6 +1138,9 @@ def _alloc_for_decode(batch: Any, token_per_req: int) -> Any:
                     )
         batch._orbitkv_batch = batch_record
     except Exception as error:
+        poison_external_writes(
+            batch, f"decode mirror failed after external authorization: {error}"
+        )
         _runtime().candidate_mirror_failed(batch_record, error)
         raise FailStopped(
             _runtime().failure_reason or "decode mirror failed"
@@ -1105,18 +1154,6 @@ def _manager_maybe_evict_swa(batch: Any) -> None:
     from .relocation import _maybe_reclaim_decode_batch
 
     _maybe_reclaim_decode_batch(batch)
-
-
-def _completion_domain(scheduler: Any) -> int:
-    device = getattr(scheduler, "device", None)
-    if isinstance(device, str):
-        index = None
-    else:
-        index = getattr(device, "index", None)
-    if index is None and isinstance(device, str) and ":" in device:
-        suffix = device.rsplit(":", 1)[-1]
-        index = int(suffix) if suffix.isdigit() else 0
-    return int(index or 0) + 1
 
 
 def _get_next_batch_to_run(
@@ -1139,71 +1176,9 @@ def _run_batch(
     *args: Any,
     **kwargs: Any,
 ) -> Any:
-    runtime = _runtime()
-    batch_record = getattr(batch, "_orbitkv_batch", None)
-    state_records = (
-        ()
-        if _state._FIXED_STATE is None
-        else tuple(getattr(batch, "_orbitkv_state_records", ()))
+    return run_scheduled_batch(
+        original_fn, scheduler, batch, *args, **kwargs
     )
-    try:
-        _validate_batch(batch)
-        runtime.poll()
-        if batch.reqs and not isinstance(batch_record, BatchRecord):
-            raise RuntimeError("OrbitKV forward has no submitted manager step")
-        expected_keys = tuple(_request_key(req) for req in batch.reqs)
-        if (
-            not isinstance(batch_record, BatchRecord)
-            or batch_record.keys != expected_keys
-        ):
-            raise RuntimeError(
-                "OrbitKV forward records do not match batch request order"
-            )
-        runtime.mark_forward(batch_record)
-    except Exception as error:
-        if isinstance(batch_record, BatchRecord):
-            runtime.forward_failed(batch_record, error)
-        if _state._FIXED_STATE is not None:
-            _state._FIXED_STATE.pre_forward_failed(error)
-        if isinstance(error, FailStopped):
-            raise
-        raise FailStopped(
-            runtime.failure_reason or "pre-forward manager state became uncertain"
-        ) from error
-    try:
-        result = original_fn(scheduler, batch, *args, **kwargs)
-        if _state._FIXED_STATE is not None:
-            state_records = _state._FIXED_STATE.records_for_schedule_batch(batch)
-    except Exception as error:
-        runtime.forward_failed(batch_record, error)
-        if _state._FIXED_STATE is not None:
-            _state._FIXED_STATE.forward_failed(state_records, error)
-        raise FailStopped(runtime.failure_reason or "forward failed") from error
-    try:
-        launch_stream = scheduler.device_module.current_stream(scheduler.device)
-        event = scheduler.device_module.Event()
-        event.record(stream=launch_stream)
-        runtime.register_event(batch_record, event, _completion_domain(scheduler))
-        if _state._FIXED_STATE is not None:
-            _state._FIXED_STATE.register_event(
-                expected_keys,
-                state_records,
-                event,
-                _completion_domain(scheduler),
-                scheduler.device_module,
-                scheduler.device,
-            )
-        batch._orbitkv_batch = None
-        if hasattr(batch, "_orbitkv_state_records"):
-            batch._orbitkv_state_records = ()
-    except Exception as error:
-        runtime.event_registration_failed(batch_record, error)
-        if _state._FIXED_STATE is not None:
-            _state._FIXED_STATE.event_registration_failed(state_records, error)
-        raise FailStopped(
-            runtime.failure_reason or "event registration failed"
-        ) from error
-    return result
 
 
 def _release_candidate(

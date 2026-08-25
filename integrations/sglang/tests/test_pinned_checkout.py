@@ -99,14 +99,31 @@ def patched_sglang_checkout(tmp_path_factory):
 
 
 def test_python_dependency_matches_pinned_release():
-    project_lines = (INTEGRATION_ROOT / "pyproject.toml").read_text(
+    project_text = (INTEGRATION_ROOT / "pyproject.toml").read_text(
         encoding="utf-8"
-    ).splitlines()
-    expected = (
-        'dependencies = ["sglang=='
-        f'{pinned.SUPPORTED_SGLANG_RELEASE.removeprefix("v")}"]'
     )
-    assert project_lines.count(expected) == 1
+    expected = f'"sglang=={pinned.SUPPORTED_SGLANG_RELEASE.removeprefix("v")}"'
+    assert project_text.count(expected) == 1
+    assert project_text.count(
+        'structured-data-plane = ["orbitkv-runtime>=0.1,<0.2"]'
+    ) == 1
+
+
+def test_default_plugin_lifecycle_import_does_not_require_optional_runtime():
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "PYTHONNOUSERSITE": "1",
+            "PYTHONPATH": str(SOURCE_ROOT),
+        }
+    )
+    _run(
+        sys.executable,
+        "-S",
+        "-c",
+        "import orbitkv_sglang.plugin.external_lifecycle",
+        env=environment,
+    )
 
 
 def _pinned_env(checkout: Path) -> dict[str, str]:

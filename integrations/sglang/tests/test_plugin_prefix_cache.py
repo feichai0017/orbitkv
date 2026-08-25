@@ -1297,3 +1297,53 @@ def test_fixed_state_shutdown_failure_still_closes_token_runtime(monkeypatch):
 
     assert runtime.calls[-1] == ("close", 1)
     assert cache._released is True
+
+
+def test_structured_data_plane_closes_before_token_runtime(monkeypatch):
+    cache, runtime, _allocator, _pool = _cache("full")
+    calls = []
+
+    class DataPlane:
+        def close(self):
+            calls.append("data-plane")
+
+    monkeypatch.setattr(state, "_DATA_PLANE", DataPlane())
+    original_close = runtime.close
+
+    def close_runtime():
+        calls.append("runtime")
+        return original_close()
+
+    runtime.close = close_runtime
+    cache.release_host_resources()
+
+    assert calls == ["data-plane", "runtime"]
+
+
+def test_structured_shutdown_failure_still_closes_other_resources(monkeypatch):
+    cache, runtime, _allocator, _pool = _cache("full")
+    calls = []
+
+    class BrokenDataPlane:
+        def close(self):
+            calls.append("data-plane")
+            raise RuntimeError("injected data-plane close failure")
+
+    class FixedState:
+        def shutdown(self):
+            calls.append("fixed-state")
+
+    monkeypatch.setattr(state, "_DATA_PLANE", BrokenDataPlane())
+    monkeypatch.setattr(state, "_FIXED_STATE", FixedState())
+    original_close = runtime.close
+
+    def close_runtime():
+        calls.append("runtime")
+        return original_close()
+
+    runtime.close = close_runtime
+    with pytest.raises(RuntimeError, match="data-plane close failure"):
+        cache.release_host_resources()
+
+    assert calls == ["data-plane", "fixed-state", "runtime"]
+    assert cache._released is True

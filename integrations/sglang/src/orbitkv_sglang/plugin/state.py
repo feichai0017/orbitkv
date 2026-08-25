@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import os
 from typing import Any, Sequence
 
 from ..config import ManagerPlanConfig
@@ -29,6 +30,8 @@ _FACTORY: ManagerFactoryProtocol = CtypesManagerFactory()
 _ALLOCATOR: Any = None
 _MIRROR_CLEANUP: Any = None
 _FIXED_STATE: Any = None
+_DATA_PLANE: Any = None
+_STRUCTURED_ARENAS: tuple[Any, ...] = ()
 _COUNTER_NAMES = (
     "prefix_matches",
     "prefix_hits",
@@ -69,6 +72,35 @@ def _runtime() -> CanonicalRuntime:
     if _RUNTIME is None:
         raise RuntimeError("OrbitKV KV arena is not initialized")
     return _RUNTIME
+
+
+def _data_plane() -> Any:
+    if _DATA_PLANE is None:
+        raise RuntimeError("OrbitKV structured data plane is not initialized")
+    return _DATA_PLANE
+
+
+def _uses_structured_data_plane() -> bool:
+    config = _config()
+    enabled = os.environ.get("ORBITKV_STRUCTURED_DATA_PLANE", "0").strip().lower()
+    if enabled not in ("0", "1", "false", "true"):
+        raise RuntimeError(
+            "ORBITKV_STRUCTURED_DATA_PLANE must be 0/1/false/true"
+        )
+    if enabled in ("0", "false"):
+        return False
+    retentions = tuple(item.retention for item in config.classes)
+    reclamation = getattr(config, "token_reclamation", None)
+    if (
+        retentions not in (("full",), ("full", "sliding"))
+        or not all(item.storage == "token_kv" for item in config.classes)
+        or getattr(reclamation, "mode", "off") != "off"
+    ):
+        raise RuntimeError(
+            "structured data plane requires Full or Full+SWA token_kv "
+            "with token relocation disabled"
+        )
+    return True
 
 
 def _limits() -> RuntimeLimits:
@@ -175,6 +207,68 @@ def _new_fixed_state(req_to_token_pool: Any, *, device_module: Any | None = None
     return coordinator
 
 
+def _new_data_plane(
+    token_to_kv_pool: Any, *, device_module: Any
+) -> Any | None:
+    """Install the scoped structured-arena write bridge after pool validation."""
+
+    global _DATA_PLANE, _STRUCTURED_ARENAS
+    if not _uses_structured_data_plane():
+        return None
+    if _DATA_PLANE is not None or _STRUCTURED_ARENAS:
+        raise RuntimeError("OrbitKV structured data plane was initialized twice")
+    try:
+        from .external_append import SglangExternalWriteAdapter
+        from .structured_arena import build_sglang_structured_arenas
+    except ModuleNotFoundError as error:
+        if error.name == "orbitkv_runtime":
+            raise RuntimeError(
+                "structured data plane requires the structured-data-plane extra"
+            ) from error
+        raise
+
+    arenas = build_sglang_structured_arenas(
+        _config(), _runtime(), token_to_kv_pool
+    )
+    component_device = arenas[0].components[0].tensor.device
+    adapter = SglangExternalWriteAdapter(
+        arenas,
+        device_module=device_module,
+        device=component_device,
+        adapter_id="sglang-v0517",
+    )
+    _STRUCTURED_ARENAS = arenas
+    _DATA_PLANE = adapter
+    return adapter
+
+
+def _close_owned_runtime(runtime: Any) -> None:
+    """Close every adapter-owned resource even if an earlier close fails."""
+
+    failures: list[tuple[str, BaseException]] = []
+    if _DATA_PLANE is not None:
+        try:
+            _DATA_PLANE.close()
+        except Exception as error:
+            failures.append(("structured data plane", error))
+    if _FIXED_STATE is not None:
+        try:
+            _FIXED_STATE.shutdown()
+        except Exception as error:
+            failures.append(("fixed state", error))
+    try:
+        runtime.close()
+    except Exception as error:
+        for label, previous in failures:
+            error.add_note(f"{label} shutdown also failed: {previous!r}")
+        raise
+    if failures:
+        label, error = failures[0]
+        for other_label, other in failures[1:]:
+            error.add_note(f"{other_label} shutdown also failed: {other!r}")
+        raise error
+
+
 def _arena_available_tokens(class_id: int) -> int:
     return _arena_available_tokens_batch((class_id,))[0]
 
@@ -255,13 +349,15 @@ def _install_test_state(
     factory: ManagerFactoryProtocol | None = None,
 ) -> None:
     global _CONFIG, _LIMITS, _RUNTIME, _FACTORY, _ALLOCATOR, _MIRROR_CLEANUP
-    global _FIXED_STATE
+    global _FIXED_STATE, _DATA_PLANE, _STRUCTURED_ARENAS
     _CONFIG = config
     _LIMITS = limits
     _RUNTIME = runtime
     _ALLOCATOR = None
     _MIRROR_CLEANUP = None
     _FIXED_STATE = None
+    _DATA_PLANE = None
+    _STRUCTURED_ARENAS = ()
     for name in _COUNTERS:
         _COUNTERS[name] = 0
     if factory is not None:
