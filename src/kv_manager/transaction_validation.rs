@@ -233,13 +233,25 @@ impl CanonicalKvManager {
                     return Err(KvManagerError::StalePage);
                 }
                 if class_delta.tail_action == TailActionKind::CopyOnWrite {
-                    let intent = class_delta
-                        .copy_intent
-                        .ok_or(KvManagerError::Invariant("missing copy intent"))?;
-                    if Some(intent.source) != class_delta.tail_source.map(|source| source.page)
-                        || intent.destination != entry.page
-                        || intent.class_id != class.class_id
-                    {
+                    let source = class_delta
+                        .tail_source
+                        .ok_or(KvManagerError::Invariant("missing COW source"))?;
+                    let token_count =
+                        u32::try_from(class_delta.previous_layout_boundary % self.page_tokens)
+                            .map_err(|_| KvManagerError::ArithmeticOverflow("COW token count"))?;
+                    let expected_intent = super::CopyIntent {
+                        class_id: class.class_id,
+                        backend_domain: class.backend.backend_domain,
+                        token_count,
+                        source_token_offset: 0,
+                        destination_token_offset: 0,
+                        reserved: 0,
+                        source: source.page,
+                        destination: entry.page,
+                        source_backend_index: source.backend_index,
+                        destination_backend_index: entry.backend_index,
+                    };
+                    if class_delta.copy_intent != Some(expected_intent) {
                         return Err(KvManagerError::Invariant("copy intent shape"));
                     }
                 } else if class_delta.copy_intent.is_some() {

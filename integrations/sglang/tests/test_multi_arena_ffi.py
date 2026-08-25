@@ -52,8 +52,12 @@ from orbitkv_sglang.runtime import (
     bind_receipts,
     CLASS_LOWERING_PACKED,
     copy_receipts,
+    DETACHED_COPY_ON_WRITE,
+    DETACHED_REPLACE,
     reclamation_receipts,
     relocation_copy_receipts,
+    TAIL_COPY_ON_WRITE,
+    TAIL_IN_PLACE,
     TokenDisposition,
     TokenDispositionBatchItem,
     TokenDispositionKind,
@@ -510,7 +514,7 @@ def test_abi8_full_evacuation_relocates_live_tokens_and_reclaims_sources(
     manager.destroy()
 
 
-def test_abi8_packed_partial_b4_fork_preserves_token_views_and_last_reference(
+def test_abi8_packed_partial_b4_fork_cow_append_preserves_token_locations(
     tmp_path: Path, ffi_library: Path
 ) -> None:
     config, manager = _manager(
@@ -568,9 +572,34 @@ def test_abi8_packed_partial_b4_fork_preserves_token_views_and_last_reference(
     manager.acknowledge_reclamations_batch(
         reclamation_receipts(relocated.retirements)
     )
+    source = manager.mark_token_dispositions_batch(
+        (
+            TokenDispositionBatchItem(
+                source.request,
+                source.snapshot,
+                (
+                    ClassTokenDispositionUpdate(
+                        0,
+                        35,
+                        TokenDisposition(
+                            TokenDispositionKind.POLICY_EVICTED,
+                            policy_or_proof_id=91,
+                            version=2,
+                            quality_contract=101,
+                        ),
+                    ),
+                ),
+            ),
+        )
+    )[0]
     source_tokens = manager.token_views_batch(
         (TokenViewQuery(source.request, source.snapshot, 0, source.boundary),)
     )[0]
+    assert source_tokens.placements[35].location is not None
+    assert (
+        source_tokens.placements[35].disposition.kind
+        is TokenDispositionKind.POLICY_EVICTED
+    )
 
     forked = manager.request_fork_batch(
         tuple(
@@ -612,36 +641,227 @@ def test_abi8_packed_partial_b4_fork_preserves_token_views_and_last_reference(
         for view, item in zip(target_tokens, forked, strict=True)
     )
 
+    old_tail = forked[0].target.pages[1]
+    cursors = []
+    for item in forked:
+        cursor = RequestCursor.from_view(item.target.view)
+        cursor.layout_boundaries[0] = 24
+        for page in item.target.pages:
+            shadow = page_shadow_from_snapshot(
+                cursor.lease, page, manager.arenas_by_class[page.class_id]
+            )
+            cursor.pages[(shadow.class_id, shadow.logical_ordinal)] = shadow
+        cursors.append(cursor)
+
+    prepared_cow = manager.prepare_batch(
+        tuple(
+            PrepareBatchItem(
+                item.target.view.request, item.target.view.snapshot, 49
+            )
+            for item in forked
+        )
+    )
+    decoded_cow = tuple(
+        _decode_prepared(cursor, prepared, manager.arenas_by_class, config)[1]
+        for cursor, prepared in zip(cursors, prepared_cow, strict=True)
+    )
+    assert all(
+        prepared.class_lowerings[0].flags == CLASS_LOWERING_PACKED
+        and len(prepared.tail_actions) == 1
+        and prepared.tail_actions[0].kind == TAIL_COPY_ON_WRITE
+        and prepared.tail_actions[0].valid_token_count == 8
+        and prepared.tail_actions[0].source == old_tail.page
+        and len(prepared.copy_intents) == 1
+        and prepared.copy_intents[0].token_count == 8
+        and prepared.copy_intents[0].source_token_offset == 0
+        and prepared.copy_intents[0].destination_token_offset == 0
+        and prepared.copy_intents[0].source == old_tail.page
+        and prepared.copy_intents[0].source_backend_index
+        == old_tail.backend_index
+        and not prepared.write_intents
+        for prepared in prepared_cow
+    )
+    assert len(
+        {prepared.copy_intents[0].destination for prepared in prepared_cow}
+    ) == len(forked)
+
+    submitted_cow = manager.submit_batch(
+        tuple(
+            (
+                prepared.step,
+                bind_receipts(prepared, pages, manager.arenas_by_class),
+                copy_receipts(prepared),
+            )
+            for prepared, pages in zip(prepared_cow, decoded_cow, strict=True)
+        )
+    )
+    completed_cow = manager.complete_batch(
+        BatchCompletionReceipt(source.request.engine_epoch, 3, 3),
+        tuple(item.submission for item in submitted_cow),
+    )
+    assert not completed_cow.retirements
+    assert all(
+        len(completion.detached) == 1
+        and completion.detached[0].old == old_tail.page
+        and completion.detached[0].old_backend_index == old_tail.backend_index
+        and completion.detached[0].replacement
+        == prepared.copy_intents[0].destination
+        and completion.detached[0].replacement_backend_index
+        == prepared.copy_intents[0].destination_backend_index
+        and completion.detached[0].logical_ordinal == 1
+        and completion.detached[0].token_begin == 16
+        and completion.detached[0].token_end_exclusive == 24
+        and completion.detached[0].action == DETACHED_REPLACE
+        and completion.detached[0].reason == DETACHED_COPY_ON_WRITE
+        for prepared, completion in zip(
+            prepared_cow, completed_cow.completions, strict=True
+        )
+    )
+
+    cow_views = tuple(
+        RequestView(
+            completion.request,
+            completion.published_snapshot,
+            completion.published_view_version,
+            completion.published_boundary,
+            completion.resident_count,
+        )
+        for completion in completed_cow.completions
+    )
+    cow_tokens = manager.token_views_batch(
+        tuple(
+            TokenViewQuery(view.request, view.snapshot, 0, view.boundary)
+            for view in cow_views
+        )
+    )
+    for prepared, view in zip(prepared_cow, cow_tokens, strict=True):
+        destination = prepared.copy_intents[0].destination
+        destination_backend = prepared.copy_intents[0].destination_backend_index
+        for before, after in zip(
+            source_tokens.placements, view.placements[:48], strict=True
+        ):
+            assert after.token_id == before.token_id
+            assert after.disposition == before.disposition
+            if (
+                before.location is not None
+                and before.location.page == old_tail.page
+                and before.location.backend_index == old_tail.backend_index
+            ):
+                assert after.location is not None
+                assert after.location.page == destination
+                assert after.location.backend_index == destination_backend
+                assert after.location.offset == before.location.offset
+            else:
+                assert after.location == before.location
+        appended = view.placements[48]
+        assert appended.token_id == 48
+        assert appended.disposition.kind is TokenDispositionKind.RETAINED
+        assert appended.location is not None
+        assert appended.location.page == destination
+        assert appended.location.backend_index == destination_backend
+        assert appended.location.offset == 8
+
+    source_after_cow = manager.token_views_batch(
+        (TokenViewQuery(source.request, source.snapshot, 0, source.boundary),)
+    )[0]
+    assert source_after_cow.placements == source_tokens.placements
+
+    second_cursor = RequestCursor.from_view(cow_views[0])
+    second_cursor.layout_boundaries[0] = 25
+    for key, shadow in cursors[0].pages.items():
+        second_cursor.pages[key] = shadow
+    cow_tail = decoded_cow[0][0]
+    second_cursor.pages[(cow_tail.class_id, cow_tail.logical_ordinal)] = cow_tail
+    extended, second_prepared, second_completion = _commit(
+        manager,
+        config,
+        cow_views[0],
+        50,
+        completion_value=4,
+        cursor=second_cursor,
+    )
+    assert second_prepared.class_lowerings[0].flags == CLASS_LOWERING_PACKED
+    assert second_prepared.tail_actions[0].kind == TAIL_IN_PLACE
+    assert second_prepared.tail_actions[0].valid_token_count == 9
+    assert second_prepared.tail_actions[0].source == cow_tail.page
+    assert second_prepared.tail_actions[0].destination == cow_tail.page
+    assert not second_prepared.copy_intents
+    assert not second_prepared.write_intents
+    assert not second_completion.detached
+    extended_tokens = manager.token_views_batch(
+        (TokenViewQuery(extended.request, extended.snapshot, 0, extended.boundary),)
+    )[0]
+    assert extended_tokens.placements[:49] == cow_tokens[0].placements
+    assert extended_tokens.placements[49].token_id == 49
+    assert (
+        extended_tokens.placements[49].disposition.kind
+        is TokenDispositionKind.RETAINED
+    )
+    assert extended_tokens.placements[49].location is not None
+    assert extended_tokens.placements[49].location.page == cow_tail.page
+    assert extended_tokens.placements[49].location.backend_index == (
+        prepared_cow[0].copy_intents[0].destination_backend_index
+    )
+    assert extended_tokens.placements[49].location.offset == 9
+
     source_release = manager.release_batch(
         (ReleaseBatchItem(source.request, source.snapshot),)
     )
-    assert not source_release.retirements
-    manager.recycle_requests_batch((source.request,))
-    early = manager.release_batch(
-        tuple(
-            ReleaseBatchItem(item.target.view.request, item.target.view.snapshot)
-            for item in forked[:3]
+    assert tuple(
+        (
+            item.page,
+            item.backend_index,
+            item.logical_ordinal,
+            item.token_begin,
+            item.token_end_exclusive,
+            item.completion_domain,
+            item.completion_value,
         )
+        for item in source_release.retirements
+    ) == ((old_tail.page, old_tail.backend_index, 1, 16, 24, 3, 3),)
+    manager.acknowledge_reclamations_batch(
+        reclamation_receipts(source_release.retirements)
     )
-    assert not early.retirements
-    manager.recycle_requests_batch(
-        tuple(item.target.view.request for item in forked[:3])
+    manager.recycle_requests_batch((source.request,))
+
+    sibling_views = cow_views[1:]
+    sibling_release = manager.release_batch(
+        tuple(ReleaseBatchItem(view.request, view.snapshot) for view in sibling_views)
     )
-    last = forked[3].target.view
-    last_release = manager.release_batch(
-        (ReleaseBatchItem(last.request, last.snapshot),)
+    assert len(sibling_release.retirements) == 3
+    assert all(
+        item.logical_ordinal == 1
+        and item.token_begin == 16
+        and item.token_end_exclusive == 25
+        and item.completion_domain == 3
+        and item.completion_value == 3
+        for item in sibling_release.retirements
+    )
+    manager.acknowledge_reclamations_batch(
+        reclamation_receipts(sibling_release.retirements)
+    )
+    manager.recycle_requests_batch(tuple(view.request for view in sibling_views))
+
+    final_release = manager.release_batch(
+        (ReleaseBatchItem(extended.request, extended.snapshot),)
     )
     assert tuple(
         (item.logical_ordinal, item.token_begin, item.token_end_exclusive)
-        for item in last_release.retirements
-    ) == ((0, 0, 16), (1, 16, 24))
+        for item in final_release.retirements
+    ) == ((0, 0, 16), (1, 16, 26))
+    assert len({item.reclamation for item in final_release.retirements}) == 2
     manager.acknowledge_reclamations_batch(
-        reclamation_receipts(last_release.retirements)
+        reclamation_receipts(final_release.retirements)
     )
-    manager.recycle_requests_batch((last.request,))
+    manager.recycle_requests_batch((extended.request,))
     stats = manager.stats()
     assert stats.free_pages == 64
     assert stats.active_requests == stats.active_snapshots == 0
+    assert stats.active_prefixes == stats.evicted_prefixes == 0
+    assert stats.prepared_steps == stats.submitted_steps == 0
+    assert stats.reserved_pages == stats.writing_pages == stats.active_pages == 0
+    assert stats.retiring_pages == stats.quarantined_pages == 0
+    assert stats.exhausted_pages == 0
     assert stats.pending_reclamations == 0
     assert stats.total_request_page_refs == stats.total_prefix_page_refs == 0
     assert stats.total_reader_pins == 0

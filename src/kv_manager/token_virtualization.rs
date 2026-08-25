@@ -136,6 +136,54 @@ impl PersistentTokenTable {
     }
 }
 
+fn cow_token_patches(
+    page_tokens: u64,
+    root: &ClassRoot,
+    source: RootEntry,
+    destination: RootEntry,
+    previous_layout_boundary: u64,
+    newly_retired: std::ops::Range<u64>,
+) -> Result<Vec<TokenPlacement>, KvManagerError> {
+    let valid = u32::try_from(previous_layout_boundary % page_tokens)
+        .map_err(|_| KvManagerError::ArithmeticOverflow("COW token count"))?;
+    let mut source_offsets = BTreeSet::new();
+    let mut patches = Vec::new();
+    for placement in root.tokens.materialize()?.iter().copied() {
+        let Some(location) = placement.location else {
+            continue;
+        };
+        if location.page != source.page {
+            continue;
+        }
+        if location.backend_index != source.backend_index
+            || location.offset >= valid
+            || !source_offsets.insert(location.offset)
+        {
+            return Err(KvManagerError::TokenPlacementMismatch);
+        }
+        if newly_retired.contains(&placement.token_id) {
+            continue;
+        }
+        patches.push(TokenPlacement {
+            location: Some(TokenLocation {
+                page: destination.page,
+                backend_index: destination.backend_index,
+                offset: location.offset,
+                reserved: 0,
+            }),
+            ..placement
+        });
+    }
+    if root.layout == RootLayout::Packed
+        && source_offsets.len()
+            != usize::try_from(valid)
+                .map_err(|_| KvManagerError::ArithmeticOverflow("COW token count"))?
+    {
+        return Err(KvManagerError::TokenPlacementMismatch);
+    }
+    Ok(patches)
+}
+
 pub(super) fn append_class_token_delta(
     page_tokens: u64,
     class: RuntimeClass,
@@ -162,20 +210,20 @@ pub(super) fn append_class_token_delta(
         });
     }
     if delta.tail_action == TailActionKind::CopyOnWrite {
+        let source = delta
+            .tail_source
+            .ok_or(KvManagerError::Invariant("COW token source"))?;
         let destination = delta
             .tail_destination
             .ok_or(KvManagerError::Invariant("COW token destination"))?;
-        let tail_begin = destination
-            .logical_ordinal
-            .checked_mul(page_tokens)
-            .ok_or(KvManagerError::ArithmeticOverflow("COW token begin"))?;
-        for token_id in tail_begin.max(retained_start)..previous_boundary {
-            patches.push(TokenPlacement {
-                token_id,
-                disposition: TokenDisposition::RETAINED,
-                location: Some(token_location(destination, token_id, page_tokens)?),
-            });
-        }
+        patches.extend(cow_token_patches(
+            page_tokens,
+            root,
+            source,
+            destination,
+            previous_layout_boundary,
+            previous_retained_start..retained_start.min(previous_boundary),
+        )?);
     }
     patches.sort_unstable_by_key(|placement| placement.token_id);
     if patches

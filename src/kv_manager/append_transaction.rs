@@ -150,18 +150,6 @@ impl CanonicalKvManager {
                         self.tail_is_exclusive(tail)
                             .map(|exclusive| needs_cow || !exclusive)
                     })?;
-            if joint_cow
-                && snapshot.roots.iter().zip(class_boundaries.iter()).any(
-                    |(root, (previous_layout_boundary, _))| {
-                        !root.is_dense()
-                            && !previous_layout_boundary.is_multiple_of(self.page_tokens)
-                    },
-                )
-            {
-                return Err(KvManagerError::UnsupportedProfile(
-                    "packed copy-on-write append is not implemented",
-                ));
-            }
             let mut planned_pages = Vec::new();
             let mut class_lowerings = Vec::with_capacity(self.classes.len());
             let mut tail_actions = Vec::with_capacity(self.classes.len());

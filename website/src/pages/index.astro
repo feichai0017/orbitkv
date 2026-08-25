@@ -111,9 +111,10 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         Separately, the Rust core and Python runtime have host-tested two
         relocation cycles for one request-private Full class under full
         evacuation, and the SGLang periodic trigger is host-tested across two
-        reclamation boundaries. Generation-safe packed fork is host- and
-        FFI-tested; packed Prefix and packed shared-tail COW remain unsupported
-        and fail closed.
+        reclamation boundaries. Generation-safe packed fork and shared-tail
+        COW are host-tested through Rust, raw ABI8, and Python FFI, including a
+        repeated COW generation. Packed Prefix remains unsupported; packed COW
+        has no H20/model qualification and is outside the relocation seal.
         Multi-request ABI8 relocation is also host-tested: one mark, prepare,
         submit, and complete call covers the scheduler batch; copies and the
         completion event are flattened, followed by one aggregate registry
@@ -186,8 +187,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         relocation, and the SGLang periodic trigger are host-tested, but the
         batch event is still eager and host-blocking. Independent relocation
         hardware attestation and performance qualification, real asynchronous
-        pressure/overlap, packed Prefix/shared-tail COW, MLA, Graph, speculation,
-        and distribution remain open gates.
+        pressure/overlap, packed Prefix, packed shared-tail COW H20/model
+        qualification, MLA, Graph, speculation, and distribution remain open
+        gates.
       </p>
     </header>
     <div class="milestone-list">

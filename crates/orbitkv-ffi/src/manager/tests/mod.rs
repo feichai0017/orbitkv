@@ -575,4 +575,5 @@ fn published_views(completed: &[OrbitKvCompletedBatchItem]) -> Vec<OrbitKvReques
 
 mod failures;
 mod lifecycle;
+mod packed_cow;
 mod preflight;

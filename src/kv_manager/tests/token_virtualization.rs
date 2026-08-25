@@ -1048,21 +1048,201 @@ fn hybrid_full_relocation_keeps_swa_class_specific_placement_and_appends() {
     assert_eq!(views[1].placements[48].location.unwrap().offset, 0);
     assert_eq!(retained_tokens(&views[0]), retained_tokens(&views[1]));
     assert_ne!(publication.snapshot, appended.publication.snapshot);
+    let source_views = views.into_vec();
+    let source_snapshot = manager.request_snapshot(request).unwrap();
+    assert_eq!(source_snapshot.roots[0].layout, RootLayout::Packed);
+    assert_eq!(source_snapshot.roots[0].resident_tokens, 25);
+    assert_eq!(source_snapshot.roots[1].layout, RootLayout::Dense);
+    let old_tails = source_snapshot
+        .roots
+        .iter()
+        .map(|root| *root.entries.back().unwrap())
+        .collect::<Vec<_>>();
 
-    let released = manager
+    let extra = manager.acquire_request_leases_for_test(1).unwrap()[0];
+    let extra_empty_head = manager.request(extra).unwrap().head;
+    let forked = manager
+        .fork_requests_batch(&[RequestForkItem {
+            source_request: request,
+            expected_source_head: appended.publication.snapshot,
+            target_empty_request: extra,
+            expected_target_head: extra_empty_head,
+        }])
+        .expect("fork mixed packed/dense request");
+    assert_eq!(forked[0].target.view.boundary, 49);
+    assert_eq!(forked[0].target.view.resident_count, 6);
+    assert_reference_census_matches_full_scan(&manager);
+
+    let cow_prepared = manager
+        .prepare_batch(&[PrepareBatchItem {
+            request: extra,
+            expected_head: forked[0].target.view.snapshot,
+            target_boundary: 50,
+        }])
+        .expect("joint packed Full and dense SWA COW")[0]
+        .clone();
+    assert_eq!(cow_prepared.class_lowerings[0].flags, CLASS_LOWERING_PACKED);
+    assert_eq!(cow_prepared.class_lowerings[1].flags, 0);
+    assert_eq!(cow_prepared.copy_intents.len(), 2);
+    assert_eq!(
+        cow_prepared
+            .tail_actions
+            .iter()
+            .map(|tail| (
+                tail.class_id,
+                tail.kind,
+                tail.valid_token_count,
+                tail.source
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, TailActionKind::CopyOnWrite, 9, old_tails[0].page),
+            (1, TailActionKind::CopyOnWrite, 1, old_tails[1].page),
+        ]
+    );
+    assert_eq!(
+        cow_prepared
+            .copy_intents
+            .iter()
+            .map(|copy| (
+                copy.class_id,
+                copy.token_count,
+                copy.source_token_offset,
+                copy.destination_token_offset,
+                copy.source,
+                copy.source_backend_index,
+            ))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, 9, 0, 0, old_tails[0].page, old_tails[0].backend_index),
+            (1, 1, 0, 0, old_tails[1].page, old_tails[1].backend_index),
+        ]
+    );
+    let cow_submitted = submit(&mut manager, &cow_prepared);
+    let cow_completed = complete(&mut manager, &cow_submitted, 19, 23);
+    assert!(cow_completed.retirements.is_empty());
+    assert_eq!(cow_completed.detached.len(), 2);
+    assert!(cow_completed.detached.iter().all(|binding| {
+        binding.action == DetachedAction::Replace && binding.reason == DetachedReason::CopyOnWrite
+    }));
+
+    let target_views = manager
+        .token_views_batch(&[
+            TokenViewQuery {
+                request: extra,
+                expected_snapshot: cow_completed.publication.snapshot,
+                class_id: 0,
+            },
+            TokenViewQuery {
+                request: extra,
+                expected_snapshot: cow_completed.publication.snapshot,
+                class_id: 1,
+            },
+        ])
+        .unwrap();
+    for class_id in 0..2 {
+        let source_view = &source_views[class_id];
+        let target_view = &target_views[class_id];
+        let source_tail = old_tails[class_id];
+        let copy = cow_prepared.copy_intents[class_id];
+        for (before, after) in source_view
+            .placements
+            .iter()
+            .zip(target_view.placements.iter())
+        {
+            assert_eq!(after.token_id, before.token_id);
+            assert_eq!(after.disposition, before.disposition);
+            if before.location.is_some_and(|location| {
+                location.page == source_tail.page
+                    && location.backend_index == source_tail.backend_index
+            }) {
+                let before_location = before.location.unwrap();
+                let after_location = after.location.unwrap();
+                assert_eq!(after_location.page, copy.destination);
+                assert_eq!(after_location.backend_index, copy.destination_backend_index);
+                assert_eq!(after_location.offset, before_location.offset);
+            } else {
+                assert_eq!(after.location, before.location);
+            }
+        }
+    }
+    assert_eq!(target_views[0].placements[49].location.unwrap().offset, 9);
+    assert_eq!(target_views[1].placements[49].location.unwrap().offset, 1);
+    assert_reference_census_matches_full_scan(&manager);
+    assert_incremental_census_matches_full_scan(&manager);
+
+    let next_prepared = manager
+        .prepare_batch(&[PrepareBatchItem {
+            request: extra,
+            expected_head: cow_completed.publication.snapshot,
+            target_boundary: 51,
+        }])
+        .expect("append after mixed-layout COW")[0]
+        .clone();
+    assert!(next_prepared.copy_intents.is_empty());
+    assert_eq!(
+        next_prepared
+            .tail_actions
+            .iter()
+            .map(|tail| (tail.class_id, tail.kind, tail.valid_token_count))
+            .collect::<Vec<_>>(),
+        vec![
+            (0, TailActionKind::InPlace, 10),
+            (1, TailActionKind::InPlace, 2),
+        ]
+    );
+    let next_submitted = submit(&mut manager, &next_prepared);
+    let next_completed = complete(&mut manager, &next_submitted, 29, 31);
+    assert!(next_completed.retirements.is_empty());
+
+    let source_release = manager
         .release_batch(&[ReleaseBatchItem {
             request,
             expected_head: appended.publication.snapshot,
         }])
         .unwrap();
-    assert_eq!(released.retirements.len(), 6);
+    assert_eq!(source_release.retirements.len(), 2);
+    assert_eq!(
+        source_release
+            .retirements
+            .iter()
+            .map(|certificate| (
+                certificate.class_id,
+                certificate.logical_ordinal,
+                certificate.token_begin,
+                certificate.token_end_exclusive,
+                certificate.completion_domain,
+                certificate.completion_value,
+            ))
+            .collect::<Vec<_>>(),
+        vec![(0, 1, 16, 25, 19, 23), (1, 3, 48, 49, 19, 23)]
+    );
     manager
-        .acknowledge_reclamations_batch(&reclamation_receipts(&released.retirements))
+        .acknowledge_reclamations_batch(&reclamation_receipts(&source_release.retirements))
         .unwrap();
     manager.recycle_requests_batch(&[request]).unwrap();
+    let target_release = manager
+        .release_batch(&[ReleaseBatchItem {
+            request: extra,
+            expected_head: next_completed.publication.snapshot,
+        }])
+        .unwrap();
+    assert_eq!(target_release.retirements.len(), 6);
+    manager
+        .acknowledge_reclamations_batch(&reclamation_receipts(&target_release.retirements))
+        .unwrap();
+    manager.recycle_requests_batch(&[extra]).unwrap();
     let stats = manager.stats();
     assert_eq!(stats.free_pages, 32);
     assert_eq!(stats.active_pages, 0);
+    assert_eq!(stats.active_requests, 0);
+    assert_eq!(stats.active_snapshots, 0);
+    assert_eq!(stats.pending_reclamations, 0);
+    assert_eq!(stats.total_request_page_refs, 0);
+    assert_eq!(stats.total_prefix_page_refs, 0);
+    assert_eq!(stats.total_reader_pins, 0);
+    assert_reference_census_matches_full_scan(&manager);
+    assert_incremental_census_matches_full_scan(&manager);
 }
 
 #[test]
