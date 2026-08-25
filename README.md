@@ -46,10 +46,12 @@ The live tree is **ABI8**:
   does not roll back the disposition mark or restore an older head. A
   producer-to-copy event orders relocation, but current completion handling is
   eager and host-blocking; asynchronous consumer-stream overlap is not
-  implemented. Generation-safe packed request fork is host- and FFI-tested.
-  Packed Prefix operations and packed shared partial-tail COW remain
-  unsupported and fail closed; the dense Prefix/COW claims above do not extend
-  through a packed root. The restricted
+  implemented. Generation-safe packed request fork and packed shared
+  partial-tail COW append are host-tested through the Rust core, raw ABI8, and
+  Python FFI, including a repeated packed COW generation. Packed Prefix
+  operations remain unsupported and fail closed. These post-seal packed COW
+  capabilities have no H20/model qualification and are not part of the exact
+  `7e029310…` relocation seal. The restricted
   production fixed-state seam connects request allocation, initial
   `MambaPool.clear_slots`, forward completion-event registration, and
   release-time wait/retire/clear/exact-ACK. The strict normalized official
@@ -174,7 +176,7 @@ for the invariants and module boundaries.
 | Pure MLA SGLang seam | L2 host / L4 pending | Explicit latent+RoPE geometry checked against the real SGLang pool; combined-row relocation host-tested; H20 and model correctness pending |
 | ABI8 C wire | L2 GO | Exact 40 symbols, C/C++ layouts, per-handle manager-batch and state-pool-batch atomicity, short-buffer and malformed-receipt gates; no cross-handle atomicity |
 | ABI8 Python/Prefix/state wire | L2 GO plus scoped Prefix L4 | 73 frozen ctypes layouts and broad host gates; the sealed Full/Full+SWA Prefix subset has exact-source H20 evidence |
-| ABI8 multi-request private Full relocation | L2 host plus scoped sealed correctness/lifecycle qualification | ABI8-preserving scheduler batches invoke mark/prepare/submit/complete once each, perform one aggregate registry commit followed by one aggregate head replacement, flatten plugin moves behind one event, validate all mirror plans before writes, and use one batch ACK; the scalar API is a singleton compatibility wrapper. Mirror writes are not rollback-atomic: post-mark failure is fail-stop without rollback. A producer-to-copy event exists, but completion is eager and host-blocking with no asynchronous overlap. Exact clean source `7e029310…` has 8/8 passing B1/B4 Naive/Relocate pairs; packed fork is host+FFI tested, while packed Prefix and packed shared-tail COW fail closed |
+| ABI8 multi-request private Full relocation | L2 host plus scoped sealed correctness/lifecycle qualification | ABI8-preserving scheduler batches invoke mark/prepare/submit/complete once each, perform one aggregate registry commit followed by one aggregate head replacement, flatten plugin moves behind one event, validate all mirror plans before writes, and use one batch ACK; the scalar API is a singleton compatibility wrapper. Mirror writes are not rollback-atomic: post-mark failure is fail-stop without rollback. A producer-to-copy event exists, but completion is eager and host-blocking with no asynchronous overlap. Exact clean source `7e029310…` has 8/8 passing B1/B4 Naive/Relocate pairs. Newer packed fork/shared-tail COW is host/raw-ABI8/Python-FFI tested but outside that seal; packed Prefix still fails closed |
 | Engine-neutral CUDA opaque-byte relocation harness | H20 component conformance: 7 passed | B1/B4/B32 each execute two cycles with an independent live-token/payload oracle, 257-byte coordinate-bearing records, real non-default append/copy/consumer streams, exact 3-page-to-2-page evacuation with 24 moves per request/cycle, event-ordered byte readback, ACK-gated same-page/higher-generation reuse, and final drain. This is component conformance, not sealed L3/L4, capacity, or performance qualification |
 | Qwen2.5-0.5B SGLang relocation | Scoped correctness + lifecycle qualified / performance pending | Exact clean source `7e02931036123c0f830bcca7130a43543c9e6eb1`; official SGLang v0.5.17 base plus the manifest-bound canonical loader patch, request-private Full, BF16 NHD page16 eager FlashInfer, four alternating-order B1/B4 epochs. All 16 records / 8 pairs are token-exact, fully drained, and failure-free; `source_clean=true`, `preflight_bound=true`, `sealed=true`, `qualified=true`, `hardware_attested=false`, and `performance_go=false` |
 | Request-private pressure telemetry | L2 host only | Opt-in event telemetry reports consumed/resident/reachable bytes and retention amplification; real async-GPU pressure has not run, and fixed-state bytes plus shared-Prefix/fork RA are excluded |
@@ -354,8 +356,8 @@ The ordered work is:
    `MambaPool.copy_from` replacement path;
 4. independently attest the sealed request-private Full relocation hardware,
    run real asynchronous GPU pressure/overlap qualification, and extend the
-   scope only with separate evidence; independently implement and qualify
-   packed Prefix and packed shared-tail COW, KDA, ShortConv, other
+   scope only with separate evidence; independently qualify packed shared-tail
+   COW, and implement and qualify packed Prefix, KDA, ShortConv, other
    linear-attention family bindings, and MLA;
 5. qualify overlap and CUDA Graph completion domains; and
 6. add speculation, multi-GPU placement, and disaggregation.

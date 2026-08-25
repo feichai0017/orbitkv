@@ -121,7 +121,7 @@ export const evidenceRows = [
   {
     result: "ABI8 Rust core",
     value: "L2 GO",
-    contract: "Immutable snapshots, Prefix/COW, token views, Full evacuation, packed publication and generation-safe packed fork, reclamation",
+    contract: "Immutable snapshots, Prefix/COW, token views, Full evacuation, packed publication/fork/shared-tail COW, reclamation",
     boundary: "host only; no engine or GPU inheritance",
   },
   {
@@ -134,7 +134,7 @@ export const evidenceRows = [
     result: "Repeated private Full relocation",
     value: "L2 host / 2 cycles",
     contract: "Rust core and Python runtime repeat append, disposition mark, full evacuation, publication, and exact ACK; the SGLang periodic trigger is host-tested across two reclamation boundaries",
-    boundary: "single-Full request-private profile only; packed fork is host+FFI tested, while packed Prefix and packed shared-tail COW fail closed",
+    boundary: "single-Full request-private sealed profile only; newer packed fork/shared-tail COW is host/raw-ABI8/Python-FFI tested outside the seal, while packed Prefix fails closed",
   },
   {
     result: "ABI8 multi-request relocation",
@@ -217,7 +217,7 @@ export const evidenceRows = [
   {
     result: "Unqualified ABI8 paths",
     value: "pending",
-    contract: "Relocation hardware attestation/performance, packed Prefix/shared-tail COW, MLA, fixed-state L4, real async pressure/overlap, Graph, speculation, and distributed execution",
+    contract: "Relocation hardware attestation/performance, packed Prefix, packed shared-tail COW H20/model qualification, MLA, fixed-state L4, real async pressure/overlap, Graph, speculation, and distributed execution",
     boundary: "not covered by either scoped sealed record; no general SGLang replacement claim",
   },
 ];
@@ -231,7 +231,7 @@ export const roadmap = [
   {
     state: "THEN",
     name: "Expand ABI8 H20 coverage",
-    detail: "Independently attest the sealed Full-relocation hardware, qualify performance and real async pressure/overlap, and add packed Prefix/shared-tail COW only with separate evidence.",
+    detail: "Independently attest the sealed Full-relocation hardware, qualify performance and real async pressure/overlap, qualify packed shared-tail COW, and implement packed Prefix with separate evidence.",
   },
   {
     state: "LATER",

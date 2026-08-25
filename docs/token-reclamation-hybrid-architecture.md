@@ -121,9 +121,11 @@ exact ACK, further append into the packed layout, and a second
 mark-relocate-ACK cycle. The SGLang periodic trigger is host-tested at two
 successive active-length thresholds and recomputes the next absolute boundary
 after each reclamation. Dense Prefix ownership, request fork, and shared COW
-remain separate capabilities: generation-safe request fork from a packed
-publication is host- and FFI-tested, while packed Prefix operations and packed
-shared partial-tail COW remain unsupported and fail closed before mutation.
+remain separate capabilities: generation-safe request fork and shared
+partial-tail COW from a packed publication are host-tested through Rust, raw
+ABI8, and Python FFI, including repeated COW. Packed Prefix operations remain
+unsupported and fail closed; packed COW has no H20/model qualification and is
+outside the exact `7e029310…` seal.
 
 The request-private pressure observer is also host-tested behind explicit
 opt-in. It samples lifecycle events and separates consumed capacity, resident
@@ -215,10 +217,10 @@ reclamation cannot wait until free capacity reaches zero.
 Shared Prefix generations are excluded initially. A request must first obtain
 private ownership through Snapshot/COW. No plan may overlap append, COW,
 relocation, or publication for the same request and class.
-The current repeated path does not perform that private-ownership transition
-for a packed shared root; packed Prefix and packed shared-tail COW combinations
-are therefore not admitted. Packed request fork itself is generation-safe and
-host+FFI tested, but its shared child cannot yet enter packed COW append.
+The current append transaction performs that private-ownership transition for
+a shared packed partial tail through exact COW, and repeated packed COW is
+host-tested. Packed Prefix publication/attach is still not admitted, so this
+does not make packed roots Prefix-shareable or extend the sealed engine scope.
 
 ## Correctness invariants
 

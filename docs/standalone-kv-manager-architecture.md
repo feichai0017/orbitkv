@@ -238,10 +238,11 @@ active length, and a missed boundary fails closed.
 
 This does not compose all dense-root capabilities with packed roots. Relocation
 admits private, unpinned, non-Prefix sources. Generation-safe packed request
-fork is host- and FFI-tested. Packed Prefix operations remain unsupported, and
-an append that would require shared partial-tail COW on a packed root fails
-before reservation. The SGLang trigger likewise rejects a nonempty Prefix
-mirror before manager mutation.
+fork and packed shared partial-tail COW append are host-tested through Rust,
+raw ABI8, and Python FFI, including repeated COW generations. Packed Prefix
+operations remain unsupported. These newer COW paths have no H20/model
+qualification and are outside the exact `7e029310…` seal. The SGLang trigger
+likewise rejects a nonempty Prefix mirror before manager mutation.
 
 This collective transaction is fail-stop, not end-to-end rollback. Before the
 mark, admission failures leave the batch unchanged. Once the batch mark has

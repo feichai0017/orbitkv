@@ -79,9 +79,10 @@ import { docs, repositoryUrl } from "../../data/site";
         append into the first packed publication. The SGLang periodic trigger is
         also host-tested across two successive reclamation boundaries. This does
         not compose every dense-root feature with a packed root:
-        generation-safe packed request fork is host- and FFI-tested, while
-        packed Prefix and packed shared partial-tail COW remain unsupported and
-        fail closed before mutation.
+        generation-safe packed request fork and packed shared partial-tail COW
+        are host-tested through Rust, raw ABI8, and Python FFI. Packed Prefix
+        remains unsupported; packed COW has no H20/model qualification and does
+        not inherit the relocation seal.
       </p>
       <p>
         An engine-neutral CUDA opaque-byte conformance harness is checked in for
@@ -208,7 +209,7 @@ import { docs, repositoryUrl } from "../../data/site";
           <code>performance_go=false</code>.
           The batch path is post-mark fail-stop/non-rollback and host-blocking,
           without asynchronous overlap or a capacity claim. Packed Prefix and
-          packed shared-tail COW, MLA, fixed-state L4, real asynchronous
+          packed shared-tail COW H20/model qualification, MLA, fixed-state L4, real asynchronous
           pressure/overlap, Graph, speculation, multi-GPU, and disaggregation
           remain outside the scoped sealed records. The earlier dirty relocation
           diagnostic is historical and superseded.

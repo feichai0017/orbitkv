@@ -37,9 +37,10 @@ wrapper. The ABI8 core and Python runtime also repeat
 append-mark-full-evacuation-ACK for one request-private Full class, and the
 SGLang periodic trigger is host-tested across two boundaries. Post-mark failures
 are fail-stop and non-rollback. Event completion is currently eager and
-host-blocking, with no asynchronous overlap. Generation-safe packed fork is
-now host- and FFI-tested, while packed Prefix and packed shared-tail COW remain
-fail-closed. A new engine-neutral CUDA opaque-byte
+host-blocking, with no asynchronous overlap. Generation-safe packed fork and
+packed shared-tail COW append are host-tested through Rust, raw ABI8, and
+Python FFI. Packed Prefix remains fail-closed. The packed COW work postdates
+and does not inherit the sealed H20/model scope. A new engine-neutral CUDA opaque-byte
 harness now passes all seven H20 component cases, including two real append,
 copy, and consumer-stream cycles at B1/B4/B32. A separate pinned SGLang
 Qwen2.5-0.5B qualification binds exact clean source
@@ -194,9 +195,10 @@ publish, exact-ACK the retired generations, and repeat. The SGLang adapter
 stores an integer next-reclamation boundary rather than a one-shot flag, and
 host tests exercise two boundaries for both Naive and Relocate policy modes.
 It rejects a missed boundary and a nonempty Prefix mirror before manager
-mutation. Generation-safe packed request fork is now host- and FFI-tested.
-Packed Prefix operations and shared partial-tail COW append on a packed root
-remain unsupported and fail closed.
+mutation. Generation-safe packed request fork and repeated shared partial-tail
+COW append on a packed root are now host/raw-ABI8/Python-FFI tested. Packed
+Prefix operations remain unsupported and fail closed; packed COW still needs
+separate H20/model qualification.
 
 Global invariants are token conservation, unique placement, completion
 visibility, snapshot isolation, generation safety, and deferred source reuse.
