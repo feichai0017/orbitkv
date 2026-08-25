@@ -327,8 +327,14 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
         args.python, Path(requirements["path"])
     )
     _require_active_editable(python_identity, source["commit"])
+    cargo_executable = shutil.which(args.cargo)
+    if cargo_executable is None:
+        raise RuntimeError(f"Cargo executable is unavailable: {args.cargo}")
+    # Keep the cargo proxy basename: resolving the rustup-managed symlink would
+    # invoke `rustup build` instead of dispatching the `cargo` tool.
+    cargo_executable = str(Path(cargo_executable).absolute())
     work_dir.mkdir(parents=True)
-    library_path, build = abi8._build_library(work_dir, args.cargo)
+    library_path, build = abi8._build_library(work_dir, cargo_executable)
     library = abi8.library_identity(library_path)
     record = {
         "schema": PREFLIGHT_SCHEMA,
@@ -389,6 +395,27 @@ def _validate_preflight(record: dict[str, Any]) -> None:
         raise RuntimeError("trusted relocation verifier differs from preflight")
     if abi8.library_identity(Path(record["library"]["path"])) != record["library"]:
         raise RuntimeError("ABI8 library differs from preflight")
+    build = record.get("build")
+    command = build.get("command") if isinstance(build, dict) else None
+    if (
+        not isinstance(command, list)
+        or len(command) < 5
+        or not isinstance(command[0], str)
+        or not Path(command[0]).is_absolute()
+    ):
+        raise RuntimeError("preflight build has no absolute Cargo executable")
+    cargo = Path(command[0]).absolute()
+    if not cargo.is_file():
+        raise RuntimeError("preflight Cargo executable is not a regular file")
+    if _run((str(cargo), "--version")).stdout.strip() != build.get(
+        "cargo_version"
+    ):
+        raise RuntimeError("Cargo toolchain differs from preflight")
+    target = Path(build.get("cargo_target_dir", "")).resolve(strict=True)
+    if Path(record["library"]["path"]).resolve(strict=True) != (
+        target / "release/liborbitkv_ffi.so"
+    ).resolve(strict=True):
+        raise RuntimeError("preflight library is outside its Cargo target")
     requirements = record["inputs"]["requirements"]
     _require_hash(Path(requirements["path"]), requirements["sha256"], "requirements lock")
     plan = record["inputs"]["plan"]
@@ -415,17 +442,30 @@ def _validate_preflight(record: dict[str, Any]) -> None:
         raise RuntimeError("pinned SGLang or plugin identity differs from preflight")
 
 
-def _fresh_environment(python: str) -> dict[str, str]:
+def _fresh_environment(
+    python: str, *, cargo: str | None = None, cargo_target_dir: str | None = None
+) -> dict[str, str]:
     python_bin = str(Path(python).absolute().parent)
-    return {
+    cargo_bin = (
+        str(Path(cargo).absolute().parent)
+        if cargo is not None
+        else None
+    )
+    path_entries = [python_bin]
+    if cargo_bin is not None and cargo_bin not in path_entries:
+        path_entries.append(cargo_bin)
+    path_entries.extend(
+        (
+            "/usr/local/cuda/bin", "/usr/local/sbin", "/usr/local/bin",
+            "/usr/sbin", "/usr/bin", "/sbin", "/bin",
+        )
+    )
+    environment = {
         "HOME": os.environ.get("HOME", "/root"),
         "USER": os.environ.get("USER", "root"),
         "LOGNAME": os.environ.get("LOGNAME", os.environ.get("USER", "root")),
         "LANG": "C.UTF-8", "LC_ALL": "C.UTF-8",
-        "PATH": (
-            f"{python_bin}:/usr/local/cuda/bin:/usr/local/sbin:/usr/local/bin:"
-            "/usr/sbin:/usr/bin:/sbin:/bin"
-        ),
+        "PATH": os.pathsep.join(path_entries),
         "LD_LIBRARY_PATH": os.environ.get("LD_LIBRARY_PATH", ""),
         "CUDA_HOME": "/usr/local/cuda", "CUDA_VISIBLE_DEVICES": "0",
         "PYTHONNOUSERSITE": "1", "PYTHONDONTWRITEBYTECODE": "1",
@@ -433,6 +473,10 @@ def _fresh_environment(python: str) -> dict[str, str]:
         "TRANSFORMERS_OFFLINE": "1",
         "TOKENIZERS_PARALLELISM": "false",
     }
+    if cargo_target_dir is not None:
+        target = Path(cargo_target_dir).resolve(strict=True)
+        environment["CARGO_TARGET_DIR"] = str(target)
+    return environment
 
 
 def _assert_idle_h20() -> None:
@@ -777,7 +821,12 @@ def run_component(args: argparse.Namespace) -> dict[str, Any]:
     if output.exists() or partial.exists():
         raise RuntimeError("refusing to overwrite component JUnit evidence")
     _assert_idle_h20()
-    environment = _fresh_environment(preflight_record["python"]["executable"])
+    build = preflight_record["build"]
+    environment = _fresh_environment(
+        preflight_record["python"]["executable"],
+        cargo=build["command"][0],
+        cargo_target_dir=build["cargo_target_dir"],
+    )
     environment["ORBITKV_CUDA_RELOCATION_CYCLES"] = "2"
     command = (
         preflight_record["python"]["executable"], "-m", "pytest",
@@ -786,10 +835,7 @@ def run_component(args: argparse.Namespace) -> dict[str, Any]:
     )
     _run(command, cwd=INTEGRATION_ROOT, env=environment, timeout=3600)
     properties = _component_properties(partial)
-    component_library = (
-        REPOSITORY_ROOT
-        / "crates/orbitkv-ffi/target/release/liborbitkv_ffi.so"
-    )
+    component_library = Path(preflight_record["library"]["path"])
     observed_library = {
         "path": str(component_library.resolve(strict=True)),
         "sha256": sha256_file(component_library),

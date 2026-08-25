@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -149,6 +150,24 @@ def test_component_requires_explicit_token(tmp_path: Path) -> None:
         qualification.run_component(
             _args(execute="wrong", work_dir=tmp_path)  # type: ignore[arg-type]
         )
+
+
+def test_fresh_component_environment_binds_cargo_and_target(
+    tmp_path: Path,
+) -> None:
+    cargo = tmp_path / "toolchain/bin/cargo"
+    cargo.parent.mkdir(parents=True)
+    cargo.write_text("", encoding="utf-8")
+    target = tmp_path / "target"
+    target.mkdir()
+    environment = qualification._fresh_environment(
+        sys.executable, cargo=str(cargo), cargo_target_dir=str(target)
+    )
+    assert environment["PATH"].split(os.pathsep)[:2] == [
+        str(Path(sys.executable).absolute().parent),
+        str(cargo.parent),
+    ]
+    assert environment["CARGO_TARGET_DIR"] == str(target.resolve())
 
 
 def test_preflight_refuses_existing_directory_before_side_effects(
