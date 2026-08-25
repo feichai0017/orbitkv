@@ -503,6 +503,144 @@ def test_abi8_full_evacuation_relocates_live_tokens_and_reclaims_sources(
     manager.destroy()
 
 
+def test_abi8_packed_partial_b4_fork_preserves_token_views_and_last_reference(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    config, manager = _manager(
+        tmp_path, ffi_library, hybrid=False, maximum_requests=5
+    )
+    acquired = manager.request_acquire_batch(5)
+    source, _prepared, _completion = _commit(
+        manager, config, acquired[0], 48, completion_value=1
+    )
+    victims = tuple(range(8, 16)) + tuple(range(24, 32)) + tuple(range(40, 48))
+    source = manager.mark_token_dispositions_batch(
+        (
+            TokenDispositionBatchItem(
+                source.request,
+                source.snapshot,
+                tuple(
+                    ClassTokenDispositionUpdate(
+                        0,
+                        token_id,
+                        TokenDisposition(
+                            TokenDispositionKind.POLICY_EVICTED,
+                            policy_or_proof_id=17,
+                            version=1,
+                            quality_contract=99,
+                        ),
+                    )
+                    for token_id in victims
+                ),
+            ),
+        )
+    )[0]
+    prepared = manager.prepare_relocation_batch(
+        (
+            PrepareRelocationItem(
+                source.request,
+                source.snapshot,
+                0,
+                RelocationPolicy(
+                    maximum_source_pages=3,
+                    evacuation_headroom_pages=2,
+                    fragmentation_threshold_milli=250,
+                    full_evacuation=True,
+                ),
+            ),
+        )
+    )[0]
+    submitted = manager.submit_relocation_batch(
+        ((prepared.relocation, relocation_copy_receipts(prepared)),)
+    )[0]
+    relocated = manager.complete_relocation_batch(
+        BatchCompletionReceipt(source.request.engine_epoch, 2, 2),
+        (submitted.relocation,),
+    )
+    source = relocated.publications[0]
+    manager.acknowledge_reclamations_batch(
+        reclamation_receipts(relocated.retirements)
+    )
+    source_tokens = manager.token_views_batch(
+        (TokenViewQuery(source.request, source.snapshot, 0, source.boundary),)
+    )[0]
+
+    forked = manager.request_fork_batch(
+        tuple(
+            RequestForkItem(
+                source.request,
+                source.snapshot,
+                target.request,
+                target.snapshot,
+            )
+            for target in acquired[1:]
+        )
+    )
+    assert len(forked) == 4
+    assert all(item.source == source.request for item in forked)
+    assert all(item.target.view.boundary == 48 for item in forked)
+    assert all(item.target.view.resident_count == 2 for item in forked)
+    assert all(
+        tuple(
+            (page.logical_ordinal, page.valid_token_count, page.visible_token_count)
+            for page in item.target.pages
+        )
+        == ((0, 16, 16), (1, 8, 8))
+        for item in forked
+    )
+    target_tokens = manager.token_views_batch(
+        tuple(
+            TokenViewQuery(
+                item.target.view.request,
+                item.target.view.snapshot,
+                0,
+                item.target.view.boundary,
+            )
+            for item in forked
+        )
+    )
+    assert all(view.placements == source_tokens.placements for view in target_tokens)
+    assert all(
+        view.view_version == item.target.view.view_version
+        for view, item in zip(target_tokens, forked, strict=True)
+    )
+
+    source_release = manager.release_batch(
+        (ReleaseBatchItem(source.request, source.snapshot),)
+    )
+    assert not source_release.retirements
+    manager.recycle_requests_batch((source.request,))
+    early = manager.release_batch(
+        tuple(
+            ReleaseBatchItem(item.target.view.request, item.target.view.snapshot)
+            for item in forked[:3]
+        )
+    )
+    assert not early.retirements
+    manager.recycle_requests_batch(
+        tuple(item.target.view.request for item in forked[:3])
+    )
+    last = forked[3].target.view
+    last_release = manager.release_batch(
+        (ReleaseBatchItem(last.request, last.snapshot),)
+    )
+    assert tuple(
+        (item.logical_ordinal, item.token_begin, item.token_end_exclusive)
+        for item in last_release.retirements
+    ) == ((0, 0, 16), (1, 16, 24))
+    manager.acknowledge_reclamations_batch(
+        reclamation_receipts(last_release.retirements)
+    )
+    manager.recycle_requests_batch((last.request,))
+    stats = manager.stats()
+    assert stats.free_pages == 64
+    assert stats.active_requests == stats.active_snapshots == 0
+    assert stats.pending_reclamations == 0
+    assert stats.total_request_page_refs == stats.total_prefix_page_refs == 0
+    assert stats.total_reader_pins == 0
+    manager.destroy()
+
+
 @pytest.mark.parametrize("batch_size", [2, 4])
 @pytest.mark.parametrize("hybrid", [False, True])
 def test_real_b2_b4_lifecycle_has_exact_zero_final_census(
