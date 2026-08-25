@@ -141,6 +141,37 @@ jobs:
       - run: npm run build
         working-directory: website
 
+  python-adapters:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build engine-neutral adapter wheels
+        run: |
+          python -m pip install --upgrade pip build pytest pyflakes
+          python -m build --wheel --outdir /tmp/orbitkv-wheels python/orbitkv-runtime
+          python -m build --wheel --outdir /tmp/orbitkv-wheels integrations/reference
+      - name: Verify clean wheel installation and imports
+        run: |
+          python -m venv /tmp/orbitkv-adapter-venv
+          /tmp/orbitkv-adapter-venv/bin/python -m pip install \
+            --no-index --find-links /tmp/orbitkv-wheels \
+            orbitkv-runtime orbitkv-reference
+          cd /tmp
+          PYTHONPATH= /tmp/orbitkv-adapter-venv/bin/python -I -c \
+            "import orbitkv_runtime, orbitkv_reference"
+      - name: Check and test adapter sources
+        run: |
+          python -m pyflakes \
+            python/orbitkv-runtime/src python/orbitkv-runtime/tests \
+            integrations/reference/src integrations/reference/tests
+          PYTHONDONTWRITEBYTECODE=1 \
+          PYTHONPATH=python/orbitkv-runtime/src:integrations/reference/src \
+          python -m pytest -q \
+            python/orbitkv-runtime/tests integrations/reference/tests
+
   sglang-plugin:
     runs-on: ubuntu-latest
     steps:
@@ -181,9 +212,13 @@ jobs:
             integrations/sglang/src \
             integrations/sglang/tests \
             integrations/sglang/bench_canonical_manager.py \
+            integrations/sglang/bench_capacity_pressure.py \
             integrations/sglang/bench_compact_control.py \
             integrations/sglang/bench_token_relocation.py \
-            integrations/sglang/qualify_abi8_h20.py
+            integrations/sglang/qualify_abi8_h20.py \
+            integrations/sglang/qualify_token_relocation_h20.py \
+            tools/verify_token_relocation_h20_evidence.py \
+            tools/verify_token_relocation_h20_seal.py
       - name: Test the canonical SGLang v0.5.17 adapter
         env:
           CUDA_VISIBLE_DEVICES: ""

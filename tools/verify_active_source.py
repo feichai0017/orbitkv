@@ -11,17 +11,25 @@ TEST_BENCH_LIMIT = 2_000
 PRODUCTION_ROOTS = (
     ROOT / "src",
     ROOT / "crates",
+    ROOT / "python/orbitkv-runtime/src",
+    ROOT / "integrations/reference/src",
     ROOT / "integrations/sglang/src",
 )
 TEST_BENCH_ROOTS = (
     ROOT / "tests",
+    ROOT / "python/orbitkv-runtime/tests",
+    ROOT / "integrations/reference/tests",
     ROOT / "integrations/sglang/tests",
 )
 TEST_BENCH_FILES = (
     ROOT / "integrations/sglang/bench_canonical_manager.py",
+    ROOT / "integrations/sglang/bench_capacity_pressure.py",
     ROOT / "integrations/sglang/bench_compact_control.py",
     ROOT / "integrations/sglang/bench_token_relocation.py",
     ROOT / "integrations/sglang/qualify_abi8_h20.py",
+    ROOT / "integrations/sglang/qualify_token_relocation_h20.py",
+    ROOT / "tools/verify_token_relocation_h20_evidence.py",
+    ROOT / "tools/verify_token_relocation_h20_seal.py",
 )
 
 ABI8_MARKERS = {
