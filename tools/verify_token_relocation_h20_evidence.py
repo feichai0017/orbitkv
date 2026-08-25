@@ -258,6 +258,14 @@ CENSUS_KEYS = frozenset(
         "manager_stats", "swa_activity", "batch_counters",
     }
 )
+PRESSURE_KEY = "pressure"
+PRESSURE_SCHEMA = "orbitkv.runtime-pressure.v1"
+PRESSURE_DISABLED = {
+    "schema": PRESSURE_SCHEMA,
+    "enabled": False,
+    "mode": "event_driven_high_water",
+    "sample_count": 0,
+}
 SHA256_LENGTH = 64
 
 
@@ -994,13 +1002,36 @@ def _validate_timings(
 def _validate_census(
     record: dict[str, Any], mode: str, batch: int, iterations: int,
     class_count: int, label: str,
-) -> None:
+) -> str:
     manager = record.get("manager")
     _require_exact_keys(manager, {"after_load", "final_census"}, f"{label} manager")
     after_load = manager["after_load"]
     final = manager["final_census"]
+    pressure_contracts: list[str] = []
     for stage, census in (("after-load", after_load), ("final", final)):
-        _require_exact_keys(census, CENSUS_KEYS, f"{label} {stage} census")
+        if not isinstance(census, dict):
+            raise RuntimeError(f"{label} {stage} manager census is malformed")
+        census_keys = set(census)
+        if census_keys == set(CENSUS_KEYS):
+            pressure_contracts.append("absent")
+        elif census_keys == set(CENSUS_KEYS) | {PRESSURE_KEY}:
+            pressure = census[PRESSURE_KEY]
+            _require_exact_keys(
+                pressure, PRESSURE_DISABLED, f"{label} {stage} pressure"
+            )
+            if any(
+                type(pressure[name]) is not type(expected)
+                or pressure[name] != expected
+                for name, expected in PRESSURE_DISABLED.items()
+            ):
+                raise RuntimeError(
+                    f"{label} {stage} pressure telemetry is not disabled"
+                )
+            pressure_contracts.append(PRESSURE_SCHEMA)
+        else:
+            _require_exact_keys(
+                census, CENSUS_KEYS, f"{label} {stage} census"
+            )
         if not isinstance(census, dict) or census.get("abi_version") != 8:
             raise RuntimeError(f"{label} {stage} census is not ABI8")
         stage_stats = census.get("manager_stats")
@@ -1172,6 +1203,10 @@ def _validate_census(
     ):
         if after_load.get(name) != final.get(name):
             raise RuntimeError(f"{label} manager {name} changed during the workload")
+    if pressure_contracts[0] != pressure_contracts[1]:
+        raise RuntimeError(
+            f"{label} manager pressure schema changed during the workload"
+        )
     unexpected_changes = {
         name: {"after_load": after_load["batch_counters"][name],
                "final": counters[name]}
@@ -1290,6 +1325,7 @@ def _validate_census(
             mismatches[name] = {"expected": expected_value, "actual": actual}
     if mismatches:
         raise RuntimeError(f"{label} relocation counters differ: {mismatches}")
+    return pressure_contracts[0]
 
 
 def _validate_h20(
@@ -1356,7 +1392,9 @@ def _validate_record(
     _validate_pairing(record, mode, label)
     _validate_outputs(record, iterations, batch, label)
     timings = _validate_timings(record, iterations, label)
-    _validate_census(record, mode, batch, iterations, class_count, label)
+    pressure_contract = _validate_census(
+        record, mode, batch, iterations, class_count, label
+    )
     started_at = _timestamp(record.get("started_at_utc"), label)
     gpu_uuid, snapshot_count, observed_interval_ns = _validate_h20(
         record, label, started_at
@@ -1509,6 +1547,7 @@ def _validate_record(
         "library": library,
         "plan": plan,
         "runtime": runtime,
+        "pressure_contract": pressure_contract,
     }
 
 
@@ -1739,6 +1778,10 @@ def verify_evidence(
         )
         _equal(item["runtime"], baseline["runtime"], "runtime identity")
         _equal(item["class_count"], baseline["class_count"], "class count")
+        _equal(
+            item["pressure_contract"], baseline["pressure_contract"],
+            "pressure census contract",
+        )
         _equal(item["gpu_uuid"], baseline["gpu_uuid"], "GPU identity")
         _equal(item["iterations"], baseline["iterations"], "iteration count")
         _equal(

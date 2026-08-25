@@ -688,6 +688,62 @@ def test_census_fixture_uses_exact_raw_hook_swa_activity_schema() -> None:
     }
 
 
+def _disabled_pressure() -> dict:
+    return {
+        "schema": verifier.PRESSURE_SCHEMA,
+        "enabled": False,
+        "mode": "event_driven_high_water",
+        "sample_count": 0,
+    }
+
+
+def test_accepts_exact_disabled_pressure_readback(evidence: Path) -> None:
+    for epoch in verifier.EPOCHS:
+        for batch in verifier.BATCHES:
+            for mode in verifier.MODES:
+                _mutate(
+                    evidence, epoch, batch, mode,
+                    lambda record: (
+                        record["manager"]["after_load"].__setitem__(
+                            "pressure", _disabled_pressure()
+                        ),
+                        record["manager"]["final_census"].__setitem__(
+                            "pressure", _disabled_pressure()
+                        ),
+                    ),
+                )
+    assert verifier.verify_evidence(evidence)["record_count"] == 16
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    (("enabled", True), ("sample_count", 1), ("mode", "other")),
+)
+def test_rejects_non_disabled_pressure_readback(
+    evidence: Path, field: str, value: object
+) -> None:
+    def mutate(record: dict) -> None:
+        pressure = _disabled_pressure()
+        pressure[field] = value
+        record["manager"]["after_load"]["pressure"] = pressure
+        record["manager"]["final_census"]["pressure"] = (
+            _disabled_pressure()
+        )
+
+    _mutate(evidence, 1, 1, "naive", mutate)
+    with pytest.raises(RuntimeError, match="pressure telemetry is not disabled"):
+        verifier.verify_evidence(evidence)
+
+
+def test_rejects_pressure_schema_change_within_record(evidence: Path) -> None:
+    def mutate(record: dict) -> None:
+        record["manager"]["after_load"]["pressure"] = _disabled_pressure()
+
+    _mutate(evidence, 1, 1, "naive", mutate)
+    with pytest.raises(RuntimeError, match="pressure schema changed"):
+        verifier.verify_evidence(evidence)
+
+
 @pytest.mark.parametrize("smoke_path", SMOKE_PATHS, ids=lambda path: path.stem)
 def test_real_smokes_pass_strict_single_record_validation(
     smoke_path: Path,
