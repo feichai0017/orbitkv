@@ -20,9 +20,11 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       </div>
       <h1>Attention semantics.<br /><span>Compiled into state.</span></h1>
       <p class="hero-lede">
-        OrbitKV derives when model state can die, synthesizes its physical
-        address plan, and authorizes block reuse only after semantic and GPU
-        execution frontiers agree.
+        OrbitKV is an attention-lifecycle compiler plus a transactional,
+        engine-neutral KV block runtime. It derives when model state can die,
+        synthesizes its physical address plan, and authorizes reuse only after
+        semantic and GPU execution frontiers agree. SGLang is the first
+        adapter, not a full engine replacement.
       </p>
       <div class="hero-actions">
         <a class="button primary" href={`${base}/docs/`}>Read the architecture</a>
@@ -90,7 +92,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="section performance-section" id="evidence">
     <header class="section-heading">
-      <div><p class="eyebrow">Qualification boundary</p><h2>The ABI8 Prefix path now has a sealed, scoped H20 correctness record.</h2></div>
+      <div><p class="eyebrow">Qualification boundary</p><h2>Sealed ABI8 Prefix is the sole current formal L4 result.</h2></div>
       <p>
         Exact source 6f62a23 passed all 12 stock/manager pairs across three
         epochs on one H20: Qwen2.5-7B Full and GPT-OSS-20B Full+SWA at B1/B4,
@@ -99,6 +101,34 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         arenas drain, and every Hybrid pair advances the required SWA counters.
         Relocation, MLA, fixed-state, overlap, Graph, speculation, distributed
         execution, and performance qualification are excluded.
+        The exact request-private GDN+convolution runtime is integrated through
+        allocation, initial clear, completion event, wait, retire, clear, and
+        exact ACK. Qwen3.5 has scoped pair verification and Qwen3.8-27B-FP8 has
+        a diagnostic run; both remain below L4 and neither demonstrates a
+        throughput or memory benefit.
+        Separately, the Rust core and Python runtime have host-tested two
+        relocation cycles for one request-private Full class under full
+        evacuation, and the SGLang periodic trigger is host-tested across two
+        reclamation boundaries. Prefix publication, fork, and shared
+        partial-tail COW on a packed root remain unsupported and fail closed.
+        Multi-request ABI8 relocation is also host-tested: one mark, prepare,
+        submit, and complete call covers the scheduler batch; copies and the
+        completion event are flattened, followed by one aggregate registry
+        commit and one aggregate head replacement. Every mirror plan is built
+        before writes, but mirror writes are not rollback-atomic; reclamation
+        then uses one aggregate ACK. This is a post-mark fail-stop boundary, not rollback. The
+        producer-to-copy event orders relocation, but completion is currently
+        synchronized eagerly on the host, so there is no asynchronous overlap.
+        The engine-neutral H20 component suite passes all seven cases at
+        B1/B4/B32, including two cycles with real append, copy, and consumer
+        streams, 257-byte payloads, ACK-gated generation reuse, and final drain.
+        Separately, a Qwen2.5-0.5B SGLang diagnostic passed all eight
+        Naive/Relocate B1/B4 pairs across four balanced epochs, with exact
+        tokens, two reclamation rounds per iteration, complete drain, and zero
+        failure, quarantine, and fail-stop counters. It is dirty-source,
+        unsealed, based on an observed rather than independently attested H20,
+        <code>qualified=false</code>, and <code>performance_go=false</code>;
+        formal L3/L4 and capacity qualification remain pending.
         The frozen ABI5-v5 H20 record remains historical only.
       </p>
     </header>
@@ -132,11 +162,15 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p>
         Snapshot, Prefix, fork, joint COW, page-owned reclamation, and the
         official SGLang cache seam now have a sealed, scoped Full/Full+SWA H20
-        Prefix record. For fixed state, only initial clear, forward-event
-        propagation, and retire/clear/ACK are qualified on the production seam;
-        the replacement production trigger and family-specific bindings remain
-        pending. Relocation, MLA, fixed-state H20, performance, Graph,
-        speculation, and distribution are still open gates.
+        Prefix record, the sole current formal L4 result. The integrated exact
+        request-private GDN+convolution lifecycle has
+        model-specific H20 pair diagnostics, while the replacement production
+        trigger, other families, clean L4 qualification, and performance remain
+        pending. Repeated private Full relocation, multi-request batch
+        relocation, and the SGLang periodic trigger are host-tested, but the
+        batch event is still eager and host-blocking. Clean, preflighted,
+        independently attested and sealed relocation L3/L4 qualification, async
+        overlap, MLA, Graph, speculation, and distribution remain open gates.
       </p>
     </header>
     <div class="milestone-list">

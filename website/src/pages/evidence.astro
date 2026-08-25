@@ -47,19 +47,32 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
       <h2>Exclusions</h2>
       <ul>
         <li>ABI8 Rust token/fixed-state core and the exact 40-symbol C wire retain host L2 GO; this does not qualify the complete production fixed-state seam.</li>
-        <li>The sealed H20 record qualifies only exact source <code>6f62a23</code> on official SGLang v0.5.17, one H20, and page16 BF16 NHD eager FA3.</li>
+        <li>The sealed ABI8 Prefix record is the sole current formal L4 result. It qualifies only exact source <code>6f62a23</code> on official SGLang v0.5.17, one H20, and page16 BF16 NHD eager FA3.</li>
         <li>Its 12 matched stock/manager pairs cover Qwen Full and GPT-OSS Full+SWA at B1/B4 over three epochs.</li>
         <li>All 12 pairs have exact output and request-trace equality, seeded 512-token Prefix publication and hits, final all-free drain, and zero fail-stop/quarantine counters.</li>
         <li>Every GPT-OSS Hybrid pair advances SWA retirement-certificate, reclaimed-page, and wrap counters.</li>
         <li><code>performance_go=false</code>: observed mean manager overhead is +7.37% / +11.87% for Full B1/B4 and +3.99% / +4.45% for Hybrid B1/B4.</li>
-        <li>No speedup, memory-saving, or general SGLang replacement is claimed.</li>
-        <li>The production request-owned fixed-state seam is host-qualified only for initial clear, forward-event propagation, and retire/clear/ACK.</li>
+        <li>SGLang is OrbitKV's first adapter, not a full replacement target; no speedup, memory-saving, or general SGLang replacement is claimed.</li>
+        <li>The exact request-private GDN+convolution runtime is integrated through allocation, initial clear, completion event, wait, retire, clear, and exact ACK. Qwen3.5 has scoped pair verification and Qwen3.8 is diagnostic; both remain below L4 and performance qualification.</li>
         <li>Same-owner replacement copy has coordinator/real-CPU-tensor host tests only; its production trigger remains pending.</li>
-        <li>For fixed state, GDN, KDA, ShortConv, and linear-attention bindings, plus real CUDA/model/H20/performance qualification, remain pending.</li>
+        <li>KDA, ShortConv, other fixed-state families, and the same-owner replacement trigger remain pending.</li>
         <li>Manager and state-pool handles are separate; no cross-handle atomicity is claimed.</li>
-        <li>Relocation, MLA, fixed-state, overlap, CUDA Graphs, speculation, distributed execution, and performance qualification are explicitly outside the sealed ABI8 record.</li>
+        <li>Repeated relocation retains its L2 host boundary: the Rust core and Python runtime pass two cycles for one request-private Full class under full evacuation, and the SGLang periodic trigger is host-tested across two reclamation boundaries.</li>
+        <li>Prefix publication, fork, and shared partial-tail COW on a packed root remain unsupported and fail closed before mutation.</li>
+        <li>ABI8 multi-request relocation is host-tested with exactly one disposition-mark, prepare, submit, and complete call per scheduler batch, a flattened copy and completion event, one aggregate registry commit, one aggregate head replacement, all mirror plans validated before writes, and one aggregate reclamation ACK. Mirror writes are not rollback-atomic.</li>
+        <li>After a successful mark, later uncertainty is fail-stop and non-rollback. A producer-to-copy event exists, but completion is currently eager and host-blocking, so no asynchronous overlap is claimed.</li>
+        <li>The engine-neutral CUDA opaque-byte harness passes all seven H20 component cases: payload uniqueness, stale-member atomicity at B1/B4/B32, and real append/copy/consumer-stream execution at B1/B4/B32 over two cycles with 257-byte payloads, ACK-gated generation reuse, and final drain.</li>
+        <li>A separate Qwen2.5-0.5B SGLang relocation diagnostic executed on one observed H20: 8/8 Naive/Relocate B1/B4 pairs pass across four order-balanced epochs.</li>
+        <li>Every pair is token-exact; each process runs five iterations, each iteration reaches two reclamation rounds, final manager census drains completely, and failure/quarantine/fail-stop counters remain zero.</li>
+        <li>Hot Relocate-versus-Naive throughput is +7.63% at B1 and -1.23% at B4; mean latency is -7.09% and +1.25%, while p95 is -22.84% and +2.88%. B1 is materially noisy, so no speedup claim is made.</li>
+        <li>The relocation record is <code>diagnostic_only</code>, dirty-source, unsealed, not independently hardware-attested, <code>qualified=false</code>, and <code>performance_go=false</code>. It does not establish sealed L3/L4, production readiness, capacity or memory savings, or asynchronous overlap.</li>
+        <li>The valid paired oracle uses FlashInfer. A relocate-only FA3 E2E smoke passed, but sparse Naive+FA3 is invalid and now fails closed.</li>
+        <li>Relocation remains outside the sealed ABI8 Prefix record, as do MLA, fixed-state, overlap, CUDA Graphs, speculation, and distributed execution.</li>
         <li>The frozen ABI5-v5 H20 record remains historical and qualifies only its exact 9233c06d source closure.</li>
         <li>No same-capacity KV compression claim: historical paired page16 tensor bytes are identical.</li>
+        <li>The Qwen3.8 diagnostic ran four epochs each at B1 and B4, eight pairs total; all are token-exact with a clean final census and zero failure/fail-stop counters under explicit Triton FP8.</li>
+        <li>Its pooled hot throughput is -6.19% at noisy B1 and -2.70% at B4. Equal configured arena reservation has an observed 0% difference, not a qualified memory result.</li>
+        <li>It is dirty and unsealed, no qualification preflight ran, and <code>hardware_attested=false</code>, <code>qualified=false</code>, and <code>performance_go=false</code>.</li>
         <li>Historical ABI5-v5 performance also remains NO GO: its single B4 epoch gives +4.1932% Qwen and −5.2048% GPT-OSS manager overhead.</li>
         <li>Host compaction relocates retained logical tokens exactly; it is not numerical compression.</li>
         <li>No VMM-backed SGLang tensor or multi-GPU claim.</li>
@@ -69,6 +82,14 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
         The sealed ABI8 manifest, summary, and 12 pair records are in{" "}
         <a href={`${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-full-hybrid-20260823`}>
           the ABI8 H20 Prefix evidence directory
+        </a>
+        . The unsealed Qwen3.8 records and strict diagnostic verifier are in{" "}
+        <a href={`${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824`}>
+          the Qwen3.8 H20 diagnostic directory
+        </a>
+        . The unsealed Qwen2.5 relocation records and strict verifier summary are in{" "}
+        <a href={`${repositoryUrl}/tree/main/results/h20-sglang-v0517-token-relocation-diagnostic-20260825`}>
+          the token-relocation H20 diagnostic directory
         </a>
         . The normative levels and complete exclusions are in{" "}
         <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>

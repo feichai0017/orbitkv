@@ -2,13 +2,26 @@
 
 The normative qualification boundary is the
 [Capability Matrix](capability-matrix.md). This document describes the live
-ABI8 design; the H20 records under `results/` are historical evidence for
-older frozen ABIs.
+ABI8 design. The qualified sealed ABI8 H20 record remains exact-source evidence
+only for its Qwen2.5 Full and GPT-OSS Full+SWA Prefix scope. A separate archive
+now contains scoped Qwen3.5 fixed-state pair verification from recorded H20
+runtime snapshots, but it is explicitly unqualified and independently
+unattested. Records for older ABIs
+remain historical evidence only.
+The newer Qwen3.8-27B-FP8 run is likewise diagnostic-only: it executed the
+weight-backed path on one recorded H20, but used a dirty source closure and no
+qualification preflight. It is `diagnostic_only`, `sealed=false`,
+`preflight_bound=false`, `qualified=false`, `hardware_attested=false`, and
+`performance_go=false`.
+A separate Qwen2.5-0.5B relocation archive records H20 execution, exact
+tokens, relocation counters, and clean drain, but remains unsealed,
+dirty-source, independently unattested, `diagnostic_only`, `qualified=false`,
+and `performance_go=false`.
 
 ## Objective and authority
 
-OrbitKV is an engine-independent, semantics-compiled KV state manager. It is
-the sole authority for:
+OrbitKV is an engine-independent attention-state compiler and transactional
+ownership runtime. It is the sole authority for:
 
 - request, snapshot, Prefix, page, step, submission, reclamation, and relocation identity;
 - logical-to-physical KV bindings and physical page generation;
@@ -21,6 +34,9 @@ An inference engine may allocate registered tensor arenas and execute its own
 attention kernels. It must not independently assign, free, or reuse a page in
 those arenas. Engine page tables and LUTs are checked mirrors, never a second
 ownership authority.
+OrbitKV is not a full replacement for SGLang's scheduler, kernels, tensor
+allocation, or model execution, and the current evidence does not establish a
+mature L5 production system.
 
 ## Layering
 
@@ -41,10 +57,16 @@ attention-retention semantics
 
 The Rust token/fixed-state core, C wire, ABI8 Python adapter, independent
 fixed-state client, and SGLang `OrbitKVPrefixCache` retain their scoped host L2
-qualification. The restricted production fixed-state seam has host coverage
-only for initial clear, the forward completion event, and release-time
-retire/clear/ACK. Same-owner replacement has coordinator/real-CPU-tensor host
-tests only; its production trigger and every ABI8 H20 path remain pending.
+qualification. The strict normalized official `Qwen/Qwen3.5-0.8B` profile has
+a scoped request-private GDN+convolution host implementation: request
+allocation, initial clear, forward completion-event registration, and
+release-time wait/retire/clear/exact-ACK are connected and host-tested.
+Same-owner replacement has coordinator/real-CPU-tensor host tests only and no
+production trigger. Other GDN profiles, KDA, ShortConv, and other
+linear-attention family bindings remain pending. This Qwen3.5 profile now also
+has scoped output/lifecycle/event/drain pair verification from recorded H20
+runtime snapshots; independent hardware attestation, L4 qualification, and performance qualification remain
+pending.
 
 ## Module boundaries
 
@@ -59,7 +81,7 @@ The canonical manager is split by invariant rather than by call count:
 | `prefix.rs` | Request fork and page-aligned Prefix lookup/publish/attach/evict |
 | `reclamation.rs` | Request release, detach, certificates, ACK and recycle |
 | `token_virtualization.rs` | Canonical token views, dispositions, planning, and packed placement |
-| `relocation_transaction.rs` | Failure-atomic prepare/submit/complete/abort relocation lifecycle |
+| `relocation_transaction.rs` | Batch relocation subtransaction, provably-unobserved abort, and fail-stop quarantine |
 | `transaction_validation.rs` | Batch-wide preflight and ref-count deltas |
 | `protocol.rs` | Backend-independent request/result types |
 | `facade.rs` | Construction, public queries and stable core facade |
@@ -109,6 +131,10 @@ Free
 ambiguous backend/GPU outcome -> Quarantined
 generation exhaustion         -> Exhausted
 ```
+
+Physical generation reuse requires semantic unreachability (the Semantic
+Frontier), execution completion (the Execution Frontier), and exact backend
+ACK; none of the three alone authorizes reuse.
 
 `request_refs`, `prefix_refs`, `reader_pins`, and the active writer live on the
 physical page state. Reclamation is global and page-owned: detaching one
@@ -164,6 +190,77 @@ observe its destinations. Ambiguous binding, copy, launch, or event outcomes
 quarantine the affected generations and fail-stop the lifecycle. They are
 never converted to completion or reuse.
 
+## Token relocation and packed boundary
+
+The live runtime preserves ABI8 while executing relocation as one
+multi-request scheduler batch. It freezes all candidate views and mirrors, then
+invokes native disposition mark, prepare, submit, and complete exactly once
+each. After complete output and readback validation, it commits one aggregate
+page-registry plan and one aggregate request-head replacement. The scalar
+`relocate_tokens` API is retained only as a singleton compatibility wrapper
+over this collective path.
+
+The SGLang plugin receives the ordered prepared batch, flattens every request's
+moves into one backend move, and records one relocation completion event. It
+constructs and validates every ReqToToken, Full-to-SWA LUT, and request-mirror
+plan before the first mirror write; only after all plans pass does it commit the
+mirrors and issue one ACK for the flattened batch retirement set. A
+producer-to-copy event orders relocation. The current completion model then
+synchronizes eagerly on the host before publication. An asynchronous
+consumer-stream wait and copy/compute overlap are not implemented.
+
+The host-qualified repeated profile remains one request-private Full class under
+a full-evacuation policy:
+
+```text
+append -> mark dispositions -> relocate -> publish -> exact ACK -> repeat
+```
+
+Host tests cover a first evacuation, append into the packed publication, a
+second evacuation, exact retirement spans, ACK-gated generation reuse, and
+final drain. The SGLang adapter also has host coverage for its periodic trigger:
+after each reclamation it derives the next absolute boundary from the current
+active length, and a missed boundary fails closed.
+
+This does not compose all dense-root capabilities with packed roots. Relocation
+admits private, unpinned, non-Prefix sources. Prefix publication and request
+fork after packed publication are unsupported, and an append that would require
+shared partial-tail COW on a packed root fails before reservation. The SGLang
+trigger likewise rejects a nonempty Prefix mirror before manager mutation.
+
+This collective transaction is fail-stop, not end-to-end rollback. Before the
+mark, admission failures leave the batch unchanged. Once the batch mark has
+succeeded, any later prepare/copy/submit/complete/publication/mirror/ACK failure
+or uncertain return fail-stops the runtime and does not restore the old
+dispositions or heads. A callback that proves no copy was observed can abort the
+relocation reservations, but that abort cannot undo the prior mark.
+
+The engine-neutral real-CUDA harness passes seven H20 component-conformance
+cases: payload uniqueness, stale-member atomicity at B1/B4/B32, and CUDA
+copy/consumer execution at B1/B4/B32. It encodes two cycles on the same
+requests and cursor objects, an independent
+live-token/payload oracle, 257-byte coordinate-bearing records, distinct
+non-default append/copy/consumer streams, exact 3-page-to-2-page evacuation
+with 24 moves per request/cycle, exact retirement/completion evidence,
+event-ordered byte readback, ACK-gated same-page/higher-generation reuse, and
+final drain. This establishes narrow component conformance, not sealed L3 or
+L4 qualification, capacity savings, performance, or production readiness.
+
+Separately, the pinned SGLang path executed on an observed NVIDIA H20 with
+Qwen2.5-0.5B, Full attention, BF16 NHD page16 storage, eager execution, and a
+FlashInfer same-policy oracle. Across four alternating-order B1/B4 epochs, all
+8/8 Naive/Relocate pairs match output tokens exactly, execute two reclamation
+rounds per iteration, drain fully, and report zero failure/quarantine counters.
+Hot Relocate throughput is +7.629% at B1 and -1.232% at B4; B1 has material
+epoch jitter and B4 is slightly slower, so `performance_go=false`. The archive
+is diagnostic-only, unsealed, dirty-source, independently unattested, and
+`qualified=false`; it establishes neither L3/L4 nor a capacity or memory-saving
+claim. The paired comparison uses FlashInfer because sparse Naive+FA3 is
+invalid and now fails closed. A separate relocate-only FA3 smoke passed but is
+not a same-policy comparison.
+
+[Qwen2.5-0.5B relocation diagnostic archive](../results/h20-sglang-v0517-token-relocation-diagnostic-20260825/README.md)
+
 ## Fork and joint COW
 
 `request_fork_batch` shares an immutable source snapshot with acquired empty
@@ -199,7 +296,9 @@ The intended SGLang seam is a registered `OrbitKVPrefixCache` whose Radix nodes
 store token/digest metadata, an opaque `PrefixLease`, and LRU policy only. They
 must not store authoritative tensor indices, page generations, or free-list
 state. This adapter passes host lifecycle and hostile-fault gates; exact-source
-H20 engine qualification remains pending.
+H20 correctness is sealed only for the Qwen2.5 Full and GPT-OSS Full+SWA
+Prefix boundary. The separate Qwen3.5 fixed-state pair-verification archive is
+not part of that seal, and all Qwen3.5 performance claims remain unqualified.
 
 ## Reclamation order
 
@@ -245,13 +344,75 @@ observation quarantines the affected owner and destination.
 
 The restricted production SGLang seam maps the pool's zero-based identity to
 physical Mamba slot `slot_id + 1`, preserving slot zero as the dummy slot. It
-currently connects only initial `MambaPool.clear_slots`, the forward completion
-event, and release-time retire/clear/ACK. Same-owner replacement through
-`MambaPool.copy_from` is covered only by coordinator and real-CPU-tensor host
-tests; no production trigger exists yet. Family-specific GDN, KDA, ShortConv,
-and linear-attention bindings and all real CUDA/model/H20/performance evidence
-remain pending. Prefix-state sharing and native Mamba free-list authority stay
-disabled.
+connects request allocation, initial `MambaPool.clear_slots`, the forward
+completion event, and release-time wait/retire/clear/exact-ACK. The first bound
+family profile is the strict normalized official `Qwen/Qwen3.5-0.8B` manifest:
+six Full layers remain token-addressable, while the other 18 layers use
+request-private FP32 GDN recurrent state and BF16 convolution history. Prefix
+state sharing and the native Mamba free-list authority stay disabled. Startup
+fails closed unless Full attention uses FA3, general/prefill/decode linear
+attention uses Triton, temporal state is actually FP32, the Mamba Radix
+strategy is `no_buffer`, and Radix caching is disabled.
+The production policy is generic over this structural GDN/convolution
+capability; qualification evidence remains pinned to a specific model and
+checkpoint rather than being inferred from the shared structure.
+
+This seam now has scoped pair evidence from runtime records observing one H20,
+in addition to host evidence. The archive does not independently attest the
+device. Six B1/B4 stock/manager pairs across three epochs have
+equal output-token totals, exact token/fixed-state lifecycle counters, CUDA
+stream/event completion, and final drain. Fixed-state prepare/clear/retire/ACK
+counts are one per B1 epoch and 20 per B4 epoch; copies are zero. The recorded
+manager aggregates are +0.507353% slower for B1 and +3.739403% slower for B4.
+The archive therefore has `performance_go=false`; the observed configured
+arena reservation difference is **0%**, not a qualified end-to-end
+memory-saving result. It also has `qualified=false` and
+`hardware_attested=false`: H20 runtime snapshots are recorded, but independently unattested.
+
+This completes scoped pair verification, not L4 qualification. Same-owner
+replacement through `MambaPool.copy_from` is covered only by coordinator and
+real-CPU-tensor host tests; no production trigger exists yet. Other GDN
+profiles, KDA, ShortConv, and other linear-attention family bindings remain
+pending, as do Qwen3.5 L4 and performance qualification.
+
+[Qwen3.5 H20 fixed-state pair-verification record](../results/h20-sglang-v0517-abi8-qwen35-fixed-state-pair-verification-20260823/README.md)
+
+The current Qwen3.8-27B-FP8 diagnostic exercises the same structural ownership
+seam and declares `Qwen/Qwen3.8-27B-FP8` repository revision
+`017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`. Its raw records bind the
+downloaded config, index, and all 66 weight shards by hash and byte count
+(30,866,866,928 bytes and 1,606 tensors), while repository provenance is not
+independently online-attested. It uses
+official SGLang `v0.5.17` revision
+`29481685462732237d80d86076d6563e1f658102`, explicit
+`fp8_gemm_runner_backend=triton`, eager single-GPU execution, and page16 BF16
+NHD KV storage on recorded NVIDIA H20 UUID
+`GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3`.
+
+Four epochs are balanced by execution order: epochs 1/3 manager to stock and
+epochs 2/4 stock to manager. Each epoch contains one B1 and one B4 pair,
+yielding eight pairs total; every process uses five iterations. All eight pairs
+pass the verifier and match tokens exactly, with zero final census and
+zero manager failure/fail-stop counts. Hot statistics exclude the first
+iteration of each process, leaving 16 samples per mode/batch:
+
+| Case | Stock mean / median / p95 | Manager mean / median / p95 | Latency / throughput delta | Epoch latency deltas |
+| --- | --- | --- | --- | --- |
+| B1 | 2.6296723178 / 2.5374011379 / 3.0721712420 s | 2.8031814888 / 2.6451683380 / 3.3369778013 s | +6.5981% / -6.1897% | +2.7822%, +0.7129%, +26.3407%, -1.9835% |
+| B4 | 2.9576119229 / 2.9602836296 / 3.0001941137 s | 3.0395950049 / 3.0345056280 / 3.0800264925 s | +2.7719% / -2.6972% | +1.8441%, +2.8850%, +5.0070%, +1.3885% |
+
+The B1 +26.3407% epoch is an obvious jitter outlier, and neither pooled case
+supports a speedup claim. The configured tensor-arena capacity and reported
+KV-cache reservation are equal, an observed configured arena reservation
+difference of **0%**; this is not a
+qualified end-to-end memory-saving result. This run is
+diagnostic only because its source is dirty and it records `sealed=false`,
+`preflight_bound=false`, `hardware_attested=false`, `qualified=false`, and
+`performance_go=false`. A
+default-auto DeepGEMM attempt loaded 66/66 shards but did not finish E2E after
+long precompilation and external termination.
+
+[Qwen3.8-27B-FP8 diagnostic archive](../results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824/README.md)
 
 The token manager and state pool are independent handles. The adapter can
 contain a partial failure by fail-stopping the process, but it provides no
@@ -279,5 +440,7 @@ loaders, or silent native-allocation fallback paths.
 An engine profile becomes a replacement claim only after its native allocator
 and Prefix owner cease to be authoritative; all fault and pressure gates pass;
 and an append-only manifest binds the exact manager, wire, adapter, engine
-release, hardware, commands, and outputs. The frozen ABI5-v5 H20 record does
-not satisfy those gates for ABI8.
+release, hardware, commands, and outputs. Neither the frozen ABI5-v5 record, the
+scoped ABI8 Prefix seal, the unqualified Qwen3.5 archive, the Qwen3.8
+dirty-source diagnostic, nor the Qwen2.5 relocation diagnostic satisfies those
+gates for a complete SGLang replacement.
