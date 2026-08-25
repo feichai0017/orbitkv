@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
 import subprocess
 from pathlib import Path
 from typing import Any
@@ -81,7 +82,13 @@ def ffi_library() -> Path:
         text=True,
         timeout=240,
     )
-    value = REPOSITORY_ROOT / "crates/orbitkv-ffi/target/release/liborbitkv_ffi.so"
+    target = os.environ.get("CARGO_TARGET_DIR")
+    target_dir = (
+        Path(target).resolve()
+        if target is not None
+        else REPOSITORY_ROOT / "crates/orbitkv-ffi/target"
+    )
+    value = target_dir / "release/liborbitkv_ffi.so"
     assert value.is_file()
     return value
 
