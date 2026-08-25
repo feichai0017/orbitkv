@@ -37,7 +37,7 @@ import bench_token_relocation as benchmark  # noqa: E402
 import qualify_abi8_h20 as abi8  # noqa: E402
 import verify_token_relocation_h20_evidence as evidence  # noqa: E402
 from checkpoint_identity import checkpoint_identity  # noqa: E402
-from orbitkv_sglang import pinned  # noqa: E402
+from orbitkv_sglang import pinned, qualification_primitives  # noqa: E402
 
 
 PREFLIGHT_SCHEMA = "orbitkv.abi8-h20-token-relocation-preflight.v1"
@@ -128,19 +128,16 @@ def execution_order(epoch: int) -> tuple[str, str]:
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return qualification_primitives.sha256_file(path)
 
 
 def canonical_digest(value: Any) -> str:
-    return hashlib.sha256(
-        json.dumps(
-            value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-        ).encode("ascii")
-    ).hexdigest()
+    try:
+        return qualification_primitives.canonical_json_sha256(value)
+    except ValueError as error:
+        if isinstance(error.__cause__, (TypeError, ValueError)):
+            raise error.__cause__
+        raise
 
 
 def _run(
@@ -161,26 +158,27 @@ def _run(
 
 
 def _strict_json(path: Path) -> dict[str, Any]:
-    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate key {key!r}")
-            result[key] = value
-        return result
-
     if path.is_symlink() or not path.is_file():
         raise RuntimeError(f"JSON input is not a regular file: {path}")
     try:
-        value = json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=unique_object,
-            parse_constant=lambda value: (_ for _ in ()).throw(
-                ValueError(f"non-finite number {value}")
-            ),
+        value = qualification_primitives.parse_strict_json_object(
+            path.read_text(encoding="utf-8")
         )
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
-        raise RuntimeError(f"cannot load strict JSON {path}: {error}") from error
+    except (OSError, UnicodeError, ValueError) as error:
+        if (
+            isinstance(error, ValueError)
+            and error.__cause__ is None
+            and str(error) == "strict JSON value must be an object"
+        ):
+            raise RuntimeError(f"JSON value is not an object: {path}") from None
+        detail = error.__cause__ if isinstance(error, ValueError) else None
+        message = str(detail or error)
+        message = message.replace(
+            "duplicate JSON object key ", "duplicate key ", 1
+        ).replace("non-finite JSON number ", "non-finite number ", 1)
+        raise RuntimeError(
+            f"cannot load strict JSON {path}: {message}"
+        ) from (detail or error)
     if not isinstance(value, dict):
         raise RuntimeError(f"JSON value is not an object: {path}")
     return value

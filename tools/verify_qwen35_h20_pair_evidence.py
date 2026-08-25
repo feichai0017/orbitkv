@@ -29,6 +29,7 @@ sys.path.insert(0, str(INTEGRATION_ROOT))
 sys.path.insert(0, str(SOURCE_ROOT))
 
 import qualify_abi8_h20 as qualification  # noqa: E402
+from orbitkv_sglang import qualification_primitives  # noqa: E402
 
 
 ARCHIVE_NAME = (
@@ -86,7 +87,6 @@ STATE_INPUT_SHA256 = (
 REQUIREMENTS_SHA256 = (
     "472d8f63cad22cd7ac4908059562bebde5e54b8d2432f750640a14d525d2fa97"
 )
-SHA256_PATTERN = re.compile(r"[0-9a-f]{64}\Z")
 COMMIT_PATTERN = re.compile(r"[0-9a-f]{40}\Z")
 
 MANIFEST_KEYS = frozenset(
@@ -200,69 +200,59 @@ SOURCE_CLOSURE_PATHS = frozenset(
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return qualification_primitives.sha256_file(path)
 
 
 def _strict_json(path: Path) -> dict[str, Any]:
-    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate key {key!r}")
-            result[key] = value
-        return result
-
     try:
-        value = json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=unique_object,
-            parse_constant=lambda value: (_ for _ in ()).throw(
-                ValueError(f"non-finite number {value}")
-            ),
+        value = qualification_primitives.parse_strict_json_object(
+            path.read_text(encoding="utf-8")
         )
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+    except (OSError, UnicodeError) as error:
         raise RuntimeError(f"cannot load strict JSON record {path}: {error}") from error
+    except ValueError as error:
+        if str(error) == "strict JSON value must be an object":
+            raise RuntimeError(f"JSON record is not an object: {path}") from error
+        detail = error.__cause__ or error
+        message = str(detail)
+        message = message.replace(
+            "duplicate JSON object key ", "duplicate key ", 1
+        ).replace("non-finite JSON number ", "non-finite number ", 1)
+        raise RuntimeError(
+            f"cannot load strict JSON record {path}: {message}"
+        ) from error
     if not isinstance(value, dict):
         raise RuntimeError(f"JSON record is not an object: {path}")
     return value
 
 
 def _safe_relative(value: str) -> PurePosixPath:
-    if (
-        not isinstance(value, str)
-        or not value
-        or "\\" in value
-        or any(character in value for character in ("\x00", "\n", "\r"))
-    ):
-        raise RuntimeError(f"unsafe or non-canonical archive path: {value!r}")
-    path = PurePosixPath(value)
-    if (
-        path.is_absolute()
-        or path.as_posix() != value
-        or any(part in {"", ".", ".."} for part in path.parts)
-    ):
-        raise RuntimeError(f"unsafe or non-canonical archive path: {value!r}")
-    return path
+    try:
+        return qualification_primitives.canonical_relative_path(value)
+    except ValueError as error:
+        raise RuntimeError(
+            f"unsafe or non-canonical archive path: {value!r}"
+        ) from error
+
 
 
 def _require_exact_keys(value: Any, expected: Iterable[str], label: str) -> None:
     expected_set = set(expected)
-    if not isinstance(value, dict) or set(value) != expected_set:
+    try:
+        qualification_primitives.require_exact_keys(value, expected_set, label)
+    except ValueError as error:
         actual = set(value) if isinstance(value, dict) else set()
         raise RuntimeError(
             f"{label} keys differ: missing={sorted(expected_set - actual)} "
             f"extra={sorted(actual - expected_set)}"
-        )
+        ) from error
 
 
 def _require_sha256(value: Any, label: str) -> str:
-    if not isinstance(value, str) or SHA256_PATTERN.fullmatch(value) is None:
-        raise RuntimeError(f"{label} is not a canonical SHA-256")
-    return value
+    try:
+        return qualification_primitives.require_sha256(value, label)
+    except ValueError as error:
+        raise RuntimeError(f"{label} is not a canonical SHA-256") from error
 
 
 def _require_int(value: Any, expected: int, label: str) -> None:
@@ -340,23 +330,32 @@ def _archive_inventory(root: Path) -> tuple[set[str], set[str]]:
 
 def _read_sha256sums(path: Path) -> dict[str, str]:
     try:
-        lines = path.read_text(encoding="utf-8").splitlines()
+        text = path.read_text(encoding="utf-8")
     except (OSError, UnicodeError) as error:
         raise RuntimeError(f"cannot read {path}: {error}") from error
-    values: dict[str, str] = {}
-    for line in lines:
-        fields = line.split("  ", 1)
-        if len(fields) != 2:
-            raise RuntimeError("SHA256SUMS contains a malformed line")
-        digest, name = fields
-        _safe_relative(name)
-        _require_sha256(digest, f"SHA256SUMS digest for {name}")
-        if name == "SHA256SUMS" or name in values:
-            raise RuntimeError(f"SHA256SUMS contains an invalid entry: {name}")
-        values[name] = digest
-    if not values:
-        raise RuntimeError("SHA256SUMS is empty")
-    return values
+    try:
+        return qualification_primitives.parse_sha256sums(text)
+    except ValueError as error:
+        # Preserve the verifier's established RuntimeError messages while the
+        # shared primitive remains the authority for checksum-table parsing.
+        values: dict[str, str] = {}
+        for line in text.splitlines():
+            fields = line.split("  ", 1)
+            if len(fields) != 2:
+                raise RuntimeError(
+                    "SHA256SUMS contains a malformed line"
+                ) from error
+            digest, name = fields
+            _safe_relative(name)
+            _require_sha256(digest, f"SHA256SUMS digest for {name}")
+            if name == "SHA256SUMS" or name in values:
+                raise RuntimeError(
+                    f"SHA256SUMS contains an invalid entry: {name}"
+                ) from error
+            values[name] = digest
+        if not values:
+            raise RuntimeError("SHA256SUMS is empty") from error
+        raise RuntimeError("SHA256SUMS contains a malformed line") from error
 
 
 def _validate_manifest(manifest: dict[str, Any]) -> None:

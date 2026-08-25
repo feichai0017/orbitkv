@@ -4,6 +4,8 @@ import hashlib
 import json
 from typing import Any, Sequence
 
+from .qualification_primitives import canonical_json_sha256
+
 
 PREFIX_REUSE = "prefix_reuse"
 FRESH_PROMPT = "fresh_prompt"
@@ -153,10 +155,14 @@ def deterministic_input_ids(
 
 
 def canonical_digest(value: Any) -> str:
-    encoded = json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode()
-    return hashlib.sha256(encoded).hexdigest()
+    try:
+        return canonical_json_sha256(value)
+    except ValueError as error:
+        # Preserve the public helper's original json.dumps exception contract.
+        cause = error.__cause__
+        if isinstance(cause, (TypeError, ValueError)):
+            raise cause from None
+        raise
 
 
 def input_digest(inputs: Sequence[Sequence[int]]) -> str:
