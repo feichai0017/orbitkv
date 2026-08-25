@@ -208,13 +208,22 @@ exactly:
 page_count * page_tokens * token_bytes
 ```
 
-bytes. A CPU arena may be `bytearray`, writable `memoryview`, or another
-contiguous writable buffer. A Torch arena may have any shape and element dtype
-whose contiguous byte size matches; the adapter views it as
+bytes. A CPU reference arena may be `bytearray`, writable `memoryview`, or
+another contiguous writable buffer. A reference Torch arena may have any shape
+and element dtype whose contiguous byte size matches; the adapter views it as
 `[page_count, page_tokens, token_bytes]` bytes. Token records are opaque. The
 contract therefore supports ordinary K/V rows, latent K/V, or test records
 without baking a model layout into the SPI. Torch devices other than CPU and
 CUDA fail closed.
+
+Engine adapters may instead expose a structured object through the opaque
+`ResolvedTokenAddress.arena` field, provided one neutral token address still
+names one exact aggregate record of `byte_length` bytes and the adapter proves
+that the engine's live launch coordinates expand to every component exactly
+once. The scoped SGLang bridge uses this specialization for per-layer key/value
+tensors: neutral indices exclude SGLang's dummy page, while the structured
+descriptor records its one-page storage bias and canonical layer/component
+order. This does not make the component tensors physically contiguous.
 
 ## Running the contract suite
 
@@ -233,12 +242,14 @@ SGLang import in either package and any Torch import in the neutral package.
 
 ## Current boundary
 
-This initial SPI intentionally does not adapt the existing SGLang plugin or
-claim a second complete serving-engine integration. It supplies the reusable
-effect boundary and a real external-arena implementation needed for a future
-engine adapter. The optional external append protocol likewise leaves native
-ABI8 unchanged, and SGLang has not migrated to it. It establishes ordering and
-reclamation safety only; it makes no throughput, latency, kernel-overlap, or
-CUDA Graph claim. Distributed completion, multi-device operations in one
-fence, graph-stable descriptor storage, structured tensor layouts, and sealed
-hardware qualification remain outside this contract.
+The scoped SGLang v0.5.17 bridge uses this optional protocol when the
+`structured-data-plane` package extra is installed and
+`ORBITKV_STRUCTURED_DATA_PLANE=1`. Its admitted scope is eager, non-overlap
+BF16/NHD `token_kv` Full and ordered Full+SWA profiles with token relocation
+disabled. ABI8 remains the allocation and reclamation authority;
+the bridge supplies its exact last-use event and completion point to the
+existing ABI8 completion transaction. MLA, token relocation, quantized or HND
+storage, CUDA Graphs, overlap, distributed execution, and other rejected
+profiles do not inherit this bridge. It establishes ordering and reclamation
+safety only; it makes no throughput, latency, hardware-qualification, or
+complete SGLang-replacement claim.

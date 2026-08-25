@@ -46,7 +46,9 @@ or capacity claim follows. Fixed-state bytes and shared Prefix/request-fork
 retention amplification are excluded. The
 separate `orbitkv-runtime` and `orbitkv-reference` wheels also provide an
 engine-neutral SPI and reference external-arena adapter. The reference is not a
-complete serving engine, and SGLang has not migrated to the SPI.
+complete serving engine. SGLang can opt into the two-phase external-write
+protocol only for its scoped eager BF16/NHD `token_kv` subset; broader
+migration and qualification remain roadmap work.
 
 ## Why the module split is a roadmap prerequisite
 

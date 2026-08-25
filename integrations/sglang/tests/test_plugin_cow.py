@@ -343,6 +343,80 @@ def test_hybrid_cow_moves_each_physical_subpool_before_submit_and_write(monkeypa
     assert counters["cow_copied_tokens"] == 16
 
 
+def test_external_authorization_precedes_first_cow_mutation(monkeypatch):
+    _runtime, allocator, events = _install()
+    batch, plans = _batch(allocator, events)
+    _patch_decode(monkeypatch, batch, plans, events)
+
+    def prepare(owner, _record, observed_plans, locations):
+        assert owner is batch
+        assert observed_plans == plans
+        assert set(locations) == {0, 1}
+        events.append("external_prepare")
+        owner._orbitkv_external_ticket = object()
+
+    monkeypatch.setattr(lowering, "prepare_external_writes", prepare)
+    lowering._alloc_for_decode(batch, 1)
+
+    assert events.index("external_prepare") < events.index("forward_stream")
+    assert events.index("external_prepare") < next(
+        index
+        for index, item in enumerate(events)
+        if isinstance(item, tuple) and item[0] == "full_move"
+    )
+
+
+@pytest.mark.parametrize("failure", ("cow", "submit", "mirror"))
+def test_post_ticket_failure_poisons_before_manager_containment(
+    monkeypatch, failure
+):
+    runtime, allocator, events = _install(fail_swa=failure == "cow")
+    batch, plans = _batch(allocator, events)
+    _patch_decode(monkeypatch, batch, plans, events)
+
+    class DataPlane:
+        poison_reason = None
+
+        def poison(self, reason):
+            self.poison_reason = self.poison_reason or reason
+            events.append(("poison", reason))
+
+    data_plane = DataPlane()
+    state._DATA_PLANE = data_plane
+
+    def prepare(owner, *_args):
+        events.append("external_prepare")
+        owner._orbitkv_external_ticket = object()
+
+    monkeypatch.setattr(lowering, "prepare_external_writes", prepare)
+    if failure == "submit":
+        runtime.submit_batch = lambda _batch: (
+            events.append("submit_failure"),
+            (_ for _ in ()).throw(RuntimeError("submit failed")),
+        )[1]
+    elif failure == "mirror":
+        batch.req_to_token_pool.write = lambda *_args: (
+            events.append("mirror_failure"),
+            (_ for _ in ()).throw(RuntimeError("mirror failed")),
+        )[1]
+
+    with pytest.raises((FailStopped, RuntimeError)):
+        lowering._alloc_for_decode(batch, 1)
+
+    assert data_plane.poison_reason is not None
+    poison_index = next(
+        index
+        for index, item in enumerate(events)
+        if isinstance(item, tuple) and item[0] == "poison"
+    )
+    quarantine_index = next(
+        index
+        for index, item in enumerate(events)
+        if isinstance(item, tuple) and item[0] in ("quarantine", "mirror_failed")
+    )
+    assert events.index("external_prepare") < poison_index < quarantine_index
+
+
 def test_second_class_copy_launch_failure_quarantines_without_submit_or_counter(
     monkeypatch,
 ):

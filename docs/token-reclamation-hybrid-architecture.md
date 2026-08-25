@@ -125,8 +125,10 @@ Prefix/request-fork retention amplification is rejected.
 The engine-neutral `orbitkv-runtime` SPI and `orbitkv-reference` external
 tensor-arena adapter have separate buildable, clean-installable wheels. The
 reference adapter is a reusable effect implementation and contract oracle, not
-a complete engine. SGLang still uses its existing adapter and has not migrated
-to the SPI.
+a complete engine. SGLang's scoped eager BF16/NHD `token_kv` path can opt into
+the two-phase external-write protocol for structured per-layer arenas;
+relocation and the broader engine surface remain on their existing explicitly
+bounded paths.
 
 ## Ownership and reuse frontiers
 

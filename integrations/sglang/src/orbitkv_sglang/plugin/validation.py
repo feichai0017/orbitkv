@@ -969,4 +969,8 @@ def _validate_configurator(
             from .state import _new_fixed_state
 
             _new_fixed_state(req_pool, device_module=torch)
+    if _state._DATA_PLANE is None and _state._uses_structured_data_plane():
+        from .state import _new_data_plane
+
+        _new_data_plane(kv_pool, device_module=torch)
     return result

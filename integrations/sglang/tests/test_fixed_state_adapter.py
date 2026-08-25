@@ -6,6 +6,7 @@ from types import SimpleNamespace
 
 import pytest
 import torch
+from orbitkv_runtime import CompletionFence
 from sglang.srt.mem_cache.memory_pool import MambaPool
 
 from orbitkv_sglang.ffi import CtypesStatePool
@@ -385,6 +386,61 @@ def test_fixed_state_initial_forward_event_release_and_generation_reuse(
     assert next_record.intent.destination.slot_id == first.slot_id
     assert next_record.intent.destination.generation > first.generation
     coordinator.abort_batch((next_record,))
+    coordinator.close()
+
+
+def test_fixed_state_external_completion_value_matches_shared_event(
+    ffi_library, monkeypatch
+):
+    coordinator, req_pool = _coordinator(ffi_library, 2)
+    monkeypatch.setattr(plugin_state, "_FIXED_STATE", coordinator)
+    captured = []
+    complete = coordinator._state_pool.complete_batch
+
+    def traced(receipt, transitions):
+        captured.append(receipt)
+        return complete(receipt, transitions)
+
+    monkeypatch.setattr(coordinator._state_pool, "complete_batch", traced)
+    adapter = SimpleNamespace(
+        adapter_id="shared-adapter", event_for=lambda _fence: event
+    )
+    for generation, completion_value in ((1, 2), (2, 4)):
+        req = _request(f"request-{generation}", 1, generation=generation)
+        records = coordinator.prepare_for_allocated_rows((req,), (1,))
+        runner = SimpleNamespace(req_to_token_pool=req_pool, is_draft_worker=False)
+        forward = _forward(records)
+        _execute_fixed_state_deferred(
+            lambda _runner, value: (
+                req_pool.mamba_pool.clear_slots(value.mamba_clear_indices),
+                setattr(value, "mamba_clear_indices", None),
+            )[0],
+            runner,
+            forward,
+        )
+        event = _Event()
+        adapter.event_for = lambda _fence, current=event: current
+        coordinator.register_external_event(
+            (("str", req.rid),),
+            records,
+            event,
+            CompletionFence(
+                "shared-adapter",
+                coordinator.identity.engine_epoch,
+                7,
+                completion_value,
+                completion_value,
+            ),
+            coordinator._device_module,
+            "cpu",
+            adapter=adapter,
+        )
+        coordinator.poll()
+        assert captured[-1].completion_domain == 7
+        assert captured[-1].completion_value == completion_value
+        coordinator.retire_batch(((("str", req.rid), req),))
+
+    assert [item.completion_value for item in captured] == [2, 4]
     coordinator.close()
 
 

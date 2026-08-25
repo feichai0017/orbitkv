@@ -6,6 +6,7 @@ from types import MethodType, SimpleNamespace
 from typing import Any, Sequence
 
 import pytest
+from orbitkv_runtime import CompletionFence
 
 
 INTEGRATION_ROOT = Path(__file__).resolve().parents[1]
@@ -68,6 +69,209 @@ class NoIterationPages(dict[tuple[int, int], PageShadow]):
 class NoRequestCensus(dict[Any, Any]):
     def values(self) -> Any:
         raise AssertionError("steady prepare scanned every live request")
+
+
+def _forward_batch(runtime: CanonicalRuntime, key: str, target: int) -> Any:
+    batch, _plans = runtime.prepare_batch(((key, target),))
+    runtime.mark_lowered(batch)
+    runtime.submit_batch(batch)
+    runtime.mark_forward(batch)
+    return batch
+
+
+def _completion_fence(
+    runtime: CanonicalRuntime, domain: int, value: int, *, epoch: int | None = None
+) -> CompletionFence:
+    return CompletionFence(
+        "test-adapter",
+        runtime.engine_epoch if epoch is None else epoch,
+        domain,
+        value,
+        value,
+    )
+
+
+class _IssuingAdapter:
+    adapter_id = "test-adapter"
+
+    def __init__(self, fence: CompletionFence, event: object) -> None:
+        self.fence = fence
+        self.event = event
+        self.retired = []
+
+    def event_for(self, fence: CompletionFence) -> object:
+        if fence is not self.fence:
+            raise RuntimeError("foreign fence")
+        return self.event
+
+    def retire_completion(self, fence: CompletionFence) -> None:
+        assert fence is self.fence
+        self.retired.append(fence)
+
+
+def _register_external(runtime, batch, fence, event, *, adapter_id="test-adapter"):
+    adapter = _IssuingAdapter(fence, event)
+    adapter.adapter_id = adapter_id
+    runtime.register_external_event(batch, fence, event, adapter=adapter)
+    return adapter
+
+
+def test_external_completion_fence_is_propagated_exactly(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    _config, manager, runtime = _runtime(tmp_path, ffi_library, hybrid=False)
+    captured: list[Any] = []
+    original_complete = manager.complete_batch
+
+    def traced(_self: CtypesManager, receipt: Any, submissions: Any) -> CompletionBatch:
+        captured.append(receipt)
+        return original_complete(receipt, submissions)
+
+    manager.complete_batch = MethodType(traced, manager)
+    event = ReadyEvent()
+    batch = _forward_batch(runtime, "external", 18)
+    fence = _completion_fence(runtime, 37, 4096)
+    adapter = _register_external(runtime, batch, fence, event)
+    assert runtime._events[0].event is event
+    runtime.poll()
+    assert adapter.retired == [fence]
+
+    assert len(captured) == 1
+    assert (
+        captured[0].engine_epoch,
+        captured[0].completion_domain,
+        captured[0].completion_value,
+    ) == (runtime.engine_epoch, 37, 4096)
+    record = runtime.record_for("external")
+    assert (record.completion_domain, record.completion_value) == (37, 4096)
+    assert runtime._completion_high_water[37] == 4096
+    assert runtime._completion_value == 4097
+
+    manager.complete_batch = original_complete
+    runtime.release_batch(("external",))
+    runtime.close()
+
+
+def test_external_completion_rejects_duplicate_pending_point(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    _config, manager, runtime = _runtime(tmp_path, ffi_library, hybrid=False)
+    first = _forward_batch(runtime, "first", 1)
+    second = _forward_batch(runtime, "second", 1)
+    fence = _completion_fence(runtime, 9, 17)
+    _register_external(runtime, first, fence, ReadyEvent())
+
+    with pytest.raises(ManagerError, match="pending events"):
+        _register_external(runtime, second, fence, ReadyEvent())
+
+    assert manager.performance_counters["complete_batch_calls"] == 0
+    assert len(runtime._events) == 1
+    assert second.records[0].phase.name == "FORWARD"
+    runtime.poll()
+    fence = _completion_fence(runtime, 9, 18)
+    _register_external(runtime, second, fence, ReadyEvent())
+    runtime.poll()
+    runtime.release_batch(("first", "second"))
+    runtime.close()
+
+
+def test_external_completion_rejects_regressive_completed_point(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    _config, manager, runtime = _runtime(tmp_path, ffi_library, hybrid=False)
+    first = _forward_batch(runtime, "first", 1)
+    fence = _completion_fence(runtime, 9, 20)
+    _register_external(runtime, first, fence, ReadyEvent())
+    runtime.poll()
+    second = _forward_batch(runtime, "second", 1)
+
+    with pytest.raises(ManagerError, match="did not advance"):
+        fence = _completion_fence(runtime, 9, 19)
+        _register_external(runtime, second, fence, ReadyEvent())
+
+    assert manager.performance_counters["complete_batch_calls"] == 1
+    assert second.records[0].phase.name == "FORWARD"
+    fence = _completion_fence(runtime, 9, 21)
+    _register_external(runtime, second, fence, ReadyEvent())
+    runtime.poll()
+    runtime.release_batch(("first", "second"))
+    runtime.close()
+
+
+def test_external_completion_rejects_cross_epoch_and_missing_event(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    _config, manager, runtime = _runtime(tmp_path, ffi_library, hybrid=False)
+    batch = _forward_batch(runtime, "external", 1)
+
+    with pytest.raises(ManagerError, match="engine epoch"):
+        fence = _completion_fence(
+            runtime, 3, 1, epoch=runtime.engine_epoch + 1
+        )
+        _register_external(runtime, batch, fence, ReadyEvent())
+    with pytest.raises(ManagerError, match="raw event"):
+        fence = _completion_fence(runtime, 3, 1)
+        _register_external(runtime, batch, fence, None)
+
+    assert manager.performance_counters["complete_batch_calls"] == 0
+    assert runtime._events == []
+    assert batch.records[0].phase.name == "FORWARD"
+    fence = _completion_fence(runtime, 3, 1)
+    _register_external(runtime, batch, fence, ReadyEvent())
+    runtime.poll()
+    runtime.release_batch(("external",))
+    runtime.close()
+
+
+def test_external_completion_rejects_foreign_adapter_provenance(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    _config, manager, runtime = _runtime(tmp_path, ffi_library, hybrid=False)
+    batch = _forward_batch(runtime, "external", 1)
+
+    with pytest.raises(ManagerError, match="issuing-adapter evidence"):
+        fence = _completion_fence(runtime, 3, 1)
+        _register_external(
+            runtime, batch, fence, ReadyEvent(), adapter_id="foreign-adapter"
+        )
+
+    assert manager.performance_counters["complete_batch_calls"] == 0
+    assert runtime._events == []
+    assert batch.records[0].phase.name == "FORWARD"
+    fence = _completion_fence(runtime, 3, 1)
+    _register_external(runtime, batch, fence, ReadyEvent())
+    runtime.poll()
+    runtime.release_batch(("external",))
+    runtime.close()
+
+
+def test_legacy_registration_remains_automatic_after_external_completion(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    _config, manager, runtime = _runtime(tmp_path, ffi_library, hybrid=False)
+    captured: list[tuple[int, int]] = []
+    original_complete = manager.complete_batch
+
+    def traced(_self: CtypesManager, receipt: Any, submissions: Any) -> CompletionBatch:
+        captured.append((receipt.completion_domain, receipt.completion_value))
+        return original_complete(receipt, submissions)
+
+    manager.complete_batch = MethodType(traced, manager)
+    first = _forward_batch(runtime, "external", 1)
+    fence = _completion_fence(runtime, 11, 100)
+    _register_external(runtime, first, fence, ReadyEvent())
+    runtime.poll()
+    second = _forward_batch(runtime, "legacy", 1)
+    runtime.register_event(second, ReadyEvent(), 12)
+    runtime.poll()
+
+    assert captured == [(11, 100), (12, 101)]
+    assert runtime.record_for("external").completion_value == 100
+    assert runtime.record_for("legacy").completion_value == 101
+
+    manager.complete_batch = original_complete
+    runtime.release_batch(("external", "legacy"))
+    runtime.close()
 
 
 

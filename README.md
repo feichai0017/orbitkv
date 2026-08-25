@@ -75,6 +75,11 @@ completion, and mirror-cleanup effects. `orbitkv-reference` provides an
 external CPU/CUDA tensor-arena contract oracle. Engine-specific integrations
 remain adapters to the same ownership protocol; capability does not transfer
 automatically between adapters.
+With the `structured-data-plane` package extra and
+`ORBITKV_STRUCTURED_DATA_PLANE=1`, the scoped SGLang adapter uses the optional
+two-phase external-write path for its eager BF16/NHD `token_kv` Full and
+Full+SWA subset with relocation disabled. This is an opt-in lifecycle
+integration, not a performance or full-engine replacement claim.
 
 See [Engine Adapter SPI](docs/engine-adapter-spi.md) and
 [Standalone KV Manager Architecture](docs/standalone-kv-manager-architecture.md).

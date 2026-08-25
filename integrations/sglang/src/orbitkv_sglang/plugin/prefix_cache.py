@@ -218,23 +218,8 @@ class OrbitKvPrefixCache(BasePrefixCache):
                     )
                     raise
         finally:
-            fixed_error = None
             try:
-                if _state._FIXED_STATE is not None:
-                    try:
-                        _state._FIXED_STATE.shutdown()
-                    except Exception as error:
-                        fixed_error = error
-                try:
-                    runtime.close()
-                except Exception as runtime_error:
-                    if fixed_error is not None:
-                        runtime_error.add_note(
-                            f"fixed-state shutdown also failed: {fixed_error!r}"
-                        )
-                    raise
-                if fixed_error is not None:
-                    raise fixed_error
+                _state._close_owned_runtime(runtime)
             finally:
                 self._released = True
 
@@ -1495,6 +1480,5 @@ def _build_prefix_cache(context: Any) -> OrbitKvPrefixCache:
     if bool(context.enable_hierarchical_cache):
         raise RuntimeError("OrbitKV does not support hierarchical cache")
     return OrbitKvPrefixCache(context.params)
-
 
 __all__ = ["OrbitKvPrefixCache"]
