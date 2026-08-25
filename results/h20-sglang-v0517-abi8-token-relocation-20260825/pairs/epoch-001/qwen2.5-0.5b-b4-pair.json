@@ -1,0 +1,24 @@
+{
+  "batch_size": 4,
+  "epoch": 1,
+  "exact_token_equality": true,
+  "execution_order": [
+    "naive",
+    "relocate"
+  ],
+  "failure_and_quarantine_counters_zero": true,
+  "hardware_attested": false,
+  "manager_census_fully_drained": true,
+  "naive_record": "qwen2.5-0.5b-b4-naive.json",
+  "naive_record_sha256": "86caba438cd482555ecdd580284c1855c1e3f28613badb36a8933c755fc8e9df",
+  "output_token_digest_sha256": "9f4feafce1133402f48322d5d25764c112a3194df52c8bdfe4567147aee1100c",
+  "pair_key_sha256": "aedf4028058b108865f134525747a63e7864ba9addca0a6f2768b3c4e67f30f8",
+  "performance_go": false,
+  "preflight_bound": true,
+  "qualification_claim": "scoped_correctness_and_lifecycle_only",
+  "qualified": true,
+  "relocate_record": "qwen2.5-0.5b-b4-relocate.json",
+  "relocate_record_sha256": "dacc8f3b7a9490812779a3160f9f17a223c77fccc965e0305f33ca9c335885df",
+  "schema": "orbitkv.abi8-h20-token-relocation-pair-verification.v1",
+  "status": "passed"
+}

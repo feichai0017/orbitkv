@@ -1,0 +1,15 @@
+[orbitkv-relocation] freeze-environment
+[orbitkv-relocation] verify-source
+[orbitkv-relocation] hash-checkpoint
+[orbitkv-relocation] snapshot-before-engine
+[orbitkv-relocation] load-engine
+Sampling backend is set to pytorch for deterministic inference.
+Currently radix cache is not compatible with flashinfer attention backend for deterministic inference. It will be supported in the future.
+
+Multi-thread loading shards:   0% Completed | 0/1 [00:00<?, ?it/s]
+Multi-thread loading shards: 100% Completed | 1/1 [00:00<00:00,  5.10it/s]
+Multi-thread loading shards: 100% Completed | 1/1 [00:00<00:00,  5.09it/s]
+[orbitkv-relocation] run-workload
+[orbitkv-relocation] validate-drain
+[orbitkv-relocation] snapshot-after-shutdown
+[orbitkv-relocation] complete
