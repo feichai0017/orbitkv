@@ -1,10 +1,13 @@
 from __future__ import annotations
 
 import copy
+import hashlib
 import importlib.util
 import json
+import shutil
 import subprocess
 import sys
+import xml.etree.ElementTree as ET
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -22,6 +25,16 @@ SPEC = importlib.util.spec_from_file_location(
 assert SPEC is not None and SPEC.loader is not None
 verifier = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(verifier)
+SEAL_MODULE_PATH = (
+    Path(__file__).resolve().parents[1]
+    / "tools/verify_token_relocation_h20_seal.py"
+)
+SEAL_SPEC = importlib.util.spec_from_file_location(
+    "verify_token_relocation_h20_seal", SEAL_MODULE_PATH
+)
+assert SEAL_SPEC is not None and SEAL_SPEC.loader is not None
+seal_verifier = importlib.util.module_from_spec(SEAL_SPEC)
+SEAL_SPEC.loader.exec_module(seal_verifier)
 SMOKE_PATHS = tuple(
     Path(__file__).resolve().parents[1]
     / "results/h20-sglang-v0517-token-relocation-diagnostic-20260825"
@@ -29,6 +42,11 @@ SMOKE_PATHS = tuple(
     / f"qwen2.5-0.5b-b{batch}-{mode}.json"
     for batch in (1, 4)
     for mode in ("naive", "relocate")
+)
+HISTORICAL_RECORD = (
+    Path(__file__).resolve().parents[1]
+    / "results/h20-sglang-v0517-token-relocation-diagnostic-20260825"
+    / "records/epoch-001/qwen2.5-0.5b-b1-naive.json"
 )
 
 EXPECTED_VICTIM_POLICY = {
@@ -47,6 +65,12 @@ def _write(path: Path, value: dict) -> None:
     path.write_text(
         json.dumps(value, indent=2, sort_keys=True) + "\n", encoding="utf-8"
     )
+
+
+def _historical_adapter() -> dict:
+    return json.loads(HISTORICAL_RECORD.read_text(encoding="utf-8"))[
+        "source_identity"
+    ]["adapter"]
 
 
 def _census(mode: str, batch: int, iterations: int) -> dict:
@@ -305,8 +329,8 @@ def _record(epoch: int, batch: int, mode: str) -> dict:
                 "orbitkv_sglang/plugin/__init__.py"
             ),
         },
-        "harness_sha256": verifier._sha256_file(verifier.BENCHMARK_PATH),
-        "adapter": verifier._current_adapter_identity(),
+        "harness_sha256": verifier.DIAGNOSTIC_HARNESS_SHA256,
+        "adapter": _historical_adapter(),
         "library": {
             "path": "/evidence/liborbitkv_ffi.so",
             "bytes": 4096,
@@ -704,8 +728,8 @@ def test_real_smokes_pass_strict_single_record_validation(
         batch=batch,
         mode=mode,
         label=smoke_path.name,
-        expected_harness_sha256=verifier._sha256_file(verifier.BENCHMARK_PATH),
-        expected_adapter=verifier._current_adapter_identity(),
+        expected_harness_sha256=verifier.DIAGNOSTIC_HARNESS_SHA256,
+        expected_adapter=_historical_adapter(),
         expected_iterations=5,
     )
     assert checked["iterations"] == 5
@@ -952,3 +976,543 @@ def test_rejects_duplicate_json_keys(evidence: Path) -> None:
     path.write_text('{"schema": "one", "schema": "two"}', encoding="utf-8")
     with pytest.raises(RuntimeError, match="duplicate key"):
         verifier.verify_evidence(evidence)
+
+
+def test_default_diagnostic_identity_is_historical_not_live_checkout(
+    evidence: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        verifier, "_current_adapter_identity",
+        lambda: pytest.fail("live adapter identity was consulted"),
+    )
+    monkeypatch.setattr(
+        verifier, "BENCHMARK_PATH", Path("/does/not/exist")
+    )
+    assert verifier.verify_evidence(evidence)["record_count"] == 16
+
+
+def test_validate_record_binds_an_explicit_adapter_source_root(
+    evidence: Path, tmp_path: Path,
+) -> None:
+    record = json.loads(_path(evidence, 1, 1, "naive").read_text())
+    adapter = record["source_identity"]["adapter"]
+    archive_source = tmp_path / "qualification/source"
+    for item in adapter["files"]:
+        source = Path(__file__).resolve().parents[1] / item["path"]
+        target = archive_source / item["path"]
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(source.read_bytes())
+    # Concurrent source drift means the live adapter no longer matches this
+    # historical record; restore the historical bytes from the recorded commit.
+    for item in adapter["files"]:
+        target = archive_source / item["path"]
+        if verifier._sha256_file(target) != item["sha256"]:
+            target.write_bytes(
+                subprocess.run(
+                    ["git", "show", f"cd78105:{item['path']}"],
+                    cwd=Path(__file__).resolve().parents[1], check=True,
+                    capture_output=True,
+                ).stdout
+            )
+    checked = verifier.validate_record(
+        record, 1, 1, "naive", HISTORICAL_RECORD.name,
+        expected_harness_sha256=verifier.DIAGNOSTIC_HARNESS_SHA256,
+        expected_adapter=adapter,
+        expected_adapter_source_root=(
+            archive_source / "integrations/sglang/src"
+        ),
+    )
+    assert checked["mode"] == "naive"
+    changed = (
+        archive_source
+        / "integrations/sglang/src/orbitkv_sglang/runtime/census.py"
+    )
+    changed.write_text("# changed\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="adapter source differs"):
+        verifier.validate_record(
+            record, 1, 1, "naive", HISTORICAL_RECORD.name,
+            expected_harness_sha256=verifier.DIAGNOSTIC_HARNESS_SHA256,
+            expected_adapter=adapter,
+            expected_adapter_source_root=(
+                archive_source / "integrations/sglang/src"
+            ),
+        )
+
+
+def _minimal_sealed_manifest() -> dict:
+    return {
+        "schema": seal_verifier.SEALED_MANIFEST_SCHEMA,
+        "qualification_status": seal_verifier.QUALIFICATION_STATUS,
+        "qualification_claim": seal_verifier.QUALIFICATION_CLAIM,
+        "evidence_class": seal_verifier.SEALED_EVIDENCE_CLASS,
+        "sealed": True, "source_clean": True, "source_dirty": False,
+        "preflight_bound": True, "qualified": True,
+        "hardware_attested": False, "performance_go": False,
+        "abi_version": 8, "exact_symbol_count": 40,
+        "record_schema": verifier.RECORD_SCHEMA,
+        "summary_schema": seal_verifier.SEALED_SUMMARY_SCHEMA,
+        "pair_schema": seal_verifier.SEALED_PAIR_SCHEMA,
+        "epoch_count": 4, "batch_sizes": [1, 4],
+        "record_count": 16, "pair_count": 8,
+        "scope": copy.deepcopy(seal_verifier.EXPECTED_SEALED_SCOPE),
+        "source_commit": "a" * 40,
+        "source_inventory_sha256": "b" * 64,
+        "source_provenance": {
+            "kind": "git_bundle",
+            "path": "qualification/source.bundle",
+            "sha256": "c" * 64,
+            "commit": "a" * 40, "reference": "HEAD",
+        },
+        "sglang_release": verifier.SGLANG_RELEASE,
+        "sglang_revision": verifier.SGLANG_REVISION,
+        "library_sha256": "d" * 64,
+        "model_identity_sha256": "e" * 64,
+        "input_hashes": {
+            "requirements_input_sha256": seal_verifier.REQUIREMENTS_INPUT_SHA256,
+            "requirements_sha256": "f" * 64,
+            "plan_sha256": seal_verifier.PLAN_SHA256,
+            "model": {
+                "config_sha256": verifier.CHECKPOINT_CONFIG_SHA256,
+                "weight_sha256": verifier.CHECKPOINT_WEIGHT_SHA256,
+                "weight_bytes": verifier.CHECKPOINT_WEIGHT_BYTES,
+            },
+        },
+        "observed_hardware": {
+            "name": verifier.GPU_NAME, "uuid": "GPU-test",
+            "snapshot_count": 64,
+            "attestation": "recorded_observation_only",
+        },
+        "artifacts": {},
+    }
+
+
+def test_sealed_manifest_preserves_narrow_claim_boundary() -> None:
+    manifest = _minimal_sealed_manifest()
+    seal_verifier._validate_sealed_manifest(manifest, verifier)
+    for field, forged in (
+        ("hardware_attested", True),
+        ("performance_go", True),
+        ("qualification_claim", "performance_qualified"),
+        ("exact_symbol_count", 39),
+    ):
+        changed = copy.deepcopy(manifest)
+        changed[field] = forged
+        with pytest.raises(RuntimeError, match=field):
+            seal_verifier._validate_sealed_manifest(changed, verifier)
+
+
+def test_sha256sums_and_archive_paths_are_strict(tmp_path: Path) -> None:
+    for value in ("", "/absolute", "../escape", "a/../b", "a//b", "a\\b"):
+        with pytest.raises(RuntimeError):
+            seal_verifier._safe_relative(value)
+    sums = tmp_path / "SHA256SUMS"
+    sums.write_text(f"{'a' * 64}  value\n{'b' * 64}  value\n", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="invalid entry"):
+        seal_verifier._read_sha256sums(sums)
+
+
+def test_pair_and_summary_are_recomputed_from_raw_records(
+    evidence: Path, tmp_path: Path,
+) -> None:
+    root = tmp_path / "archive"
+    shutil.copytree(evidence / "records", root / "records")
+    diagnostic = verifier.verify_evidence(root)
+    for epoch in verifier.EPOCHS:
+        for batch in verifier.BATCHES:
+            slug = f"{verifier.MODEL_SLUG}-b{batch}"
+            record_root = root / "records" / f"epoch-{epoch:03d}"
+            naive = json.loads((record_root / f"{slug}-naive.json").read_text())
+            relocate = json.loads(
+                (record_root / f"{slug}-relocate.json").read_text()
+            )
+            pair = seal_verifier._expected_pair(
+                root, epoch, batch,
+                next(
+                    item["order"] for item in diagnostic["execution_order"]["epochs"]
+                    if item["epoch"] == epoch
+                ),
+                naive, relocate, verifier,
+            )
+            path = root / "pairs" / f"epoch-{epoch:03d}/{slug}-pair.json"
+            path.parent.mkdir(parents=True, exist_ok=True)
+            _write(path, pair)
+    _write(root / "summary.json", seal_verifier._sealed_summary(diagnostic))
+    assert seal_verifier._verify_pairs_and_summary(
+        root, diagnostic, verifier
+    )["qualified"] is True
+    pair = root / "pairs/epoch-001/qwen2.5-0.5b-b1-pair.json"
+    changed = json.loads(pair.read_text())
+    changed["exact_token_equality"] = False
+    _write(pair, changed)
+    with pytest.raises(RuntimeError, match="stored pair differs"):
+        seal_verifier._verify_pairs_and_summary(root, diagnostic, verifier)
+
+
+def test_component_junit_rejects_failure_despite_zero_suite_counter(
+    tmp_path: Path,
+) -> None:
+    root = ET.Element(
+        "testsuite", tests=str(len(seal_verifier.COMPONENT_CASES)),
+        errors="0", failures="0", skipped="0",
+    )
+    properties = ET.SubElement(root, "properties")
+    for name, value in {
+        "orbitkv.cuda.available": "true",
+        "orbitkv.cuda.device_name": verifier.GPU_NAME,
+        "orbitkv.cuda.device_uuid": "GPU-test",
+        "orbitkv.cuda.runtime_version": "13.0",
+        "orbitkv.torch.version": "2.11.0+cu130",
+    }.items():
+        ET.SubElement(properties, "property", name=name, value=value)
+    for index, name in enumerate(sorted(seal_verifier.COMPONENT_CASES)):
+        case = ET.SubElement(root, "testcase", name=name)
+        if index == 0:
+            ET.SubElement(case, "failure")
+    path = tmp_path / "component.xml"
+    ET.ElementTree(root).write(path, encoding="unicode")
+    with pytest.raises(RuntimeError, match="non-passing"):
+        seal_verifier._verify_component_junit(
+            path, {"name": verifier.GPU_NAME, "uuid": "GPU-test"}
+        )
+
+
+def _sealed_junit(path: Path, uuid: str) -> None:
+    suite = ET.Element(
+        "testsuite", tests=str(len(seal_verifier.COMPONENT_CASES)),
+        errors="0", failures="0", skipped="0",
+    )
+    properties = ET.SubElement(suite, "properties")
+    for name, value in {
+        "orbitkv.cuda.available": "true",
+        "orbitkv.cuda.device_name": verifier.GPU_NAME,
+        "orbitkv.cuda.device_uuid": uuid,
+        "orbitkv.cuda.runtime_version": "13.0",
+        "orbitkv.torch.version": "2.11.0+cu130",
+    }.items():
+        ET.SubElement(properties, "property", name=name, value=value)
+    for name in sorted(seal_verifier.COMPONENT_CASES):
+        ET.SubElement(suite, "testcase", name=name)
+    ET.ElementTree(suite).write(path, encoding="unicode")
+
+
+def _git_blob(repository: Path, revision: str, relative: str) -> bytes:
+    return subprocess.run(
+        ["git", "show", f"{revision}:{relative}"], cwd=repository,
+        check=True, capture_output=True,
+    ).stdout
+
+
+@pytest.fixture
+def sealed_archive(
+    evidence: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> Path:
+    root = tmp_path / "sealed"
+    root.mkdir()
+    shutil.copytree(evidence / "records", root / "records")
+    diagnostic = verifier.verify_evidence(root)
+    for epoch in verifier.EPOCHS:
+        order = next(
+            item["order"] for item in diagnostic["execution_order"]["epochs"]
+            if item["epoch"] == epoch
+        )
+        for batch in verifier.BATCHES:
+            slug = f"{verifier.MODEL_SLUG}-b{batch}"
+            record_root = root / "records" / f"epoch-{epoch:03d}"
+            naive = json.loads((record_root / f"{slug}-naive.json").read_text())
+            relocate = json.loads(
+                (record_root / f"{slug}-relocate.json").read_text()
+            )
+            pair = seal_verifier._expected_pair(
+                root, epoch, batch, order, naive, relocate, verifier
+            )
+            pair_path = root / "pairs" / f"epoch-{epoch:03d}/{slug}-pair.json"
+            pair_path.parent.mkdir(parents=True, exist_ok=True)
+            _write(pair_path, pair)
+            for mode in verifier.MODES:
+                log = root / "logs" / f"epoch-{epoch:03d}/{slug}-{mode}.stderr.log"
+                log.parent.mkdir(parents=True, exist_ok=True)
+                log.write_text("", encoding="utf-8")
+    _write(root / "summary.json", seal_verifier._sealed_summary(diagnostic))
+    (root / "README.md").write_text("sealed test archive\n", encoding="utf-8")
+    uuid = diagnostic["hardware"]["observed_uuid"]
+    _sealed_junit(root / "component-conformance.xml", uuid)
+
+    repository = Path(__file__).resolve().parents[1]
+    historical_revision = "cd78105"
+    adapter = _historical_adapter()
+    adapter_paths = {item["path"] for item in adapter["files"]}
+    closure_paths = set(seal_verifier.SOURCE_REQUIRED_PATHS) | {
+        path for path in adapter_paths
+        if path.startswith("integrations/sglang/src/orbitkv_sglang/")
+    }
+    source_root = root / "qualification/source"
+    source_inventory = []
+    for name in sorted(closure_paths):
+        if name in adapter_paths:
+            data = _git_blob(repository, historical_revision, name)
+        else:
+            candidate = repository / name
+            data = candidate.read_bytes() if candidate.is_file() else name.encode()
+        target = source_root / name
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(data)
+        source_inventory.append(
+            {"path": name, "sha256": hashlib.sha256(data).hexdigest()}
+        )
+    closure = copy.deepcopy(source_inventory)
+    commit = "a" * 40
+    source = {
+        "clean": True, "commit": commit,
+        "tracked_file_count": len(source_inventory),
+        "inventory_sha256": verifier.canonical_digest(source_inventory),
+        "inventory": source_inventory,
+    }
+    baseline = json.loads(
+        (root / "records/epoch-001/qwen2.5-0.5b-b1-naive.json").read_text()
+    )
+    checkpoint = baseline["checkpoint"]
+    recorded_library = baseline["source_identity"]["library"]
+    for epoch in verifier.EPOCHS:
+        for batch in verifier.BATCHES:
+            for mode in verifier.MODES:
+                path = _path(root, epoch, batch, mode)
+                record = json.loads(path.read_text(encoding="utf-8"))
+                record["source_identity"]["plan"] = {
+                    "path": "/run/qwen2.5-0.5b-full-page16-bf16.json",
+                    "bytes": 301,
+                    "sha256": seal_verifier.PLAN_SHA256,
+                }
+                record["environment"]["ORBITKV_PLAN"] = (
+                    record["source_identity"]["plan"]["path"]
+                )
+                plan_index = record["command"].index("--plan") + 1
+                record["command"][plan_index] = (
+                    record["source_identity"]["plan"]["path"]
+                )
+                _write(path, record)
+    # Recompute all pair files and the summary after rebinding the synthetic
+    # records to the archived pinned plan.
+    diagnostic = verifier.verify_evidence(root)
+    for epoch in verifier.EPOCHS:
+        order = next(
+            item["order"] for item in diagnostic["execution_order"]["epochs"]
+            if item["epoch"] == epoch
+        )
+        for batch in verifier.BATCHES:
+            slug = f"{verifier.MODEL_SLUG}-b{batch}"
+            record_root = root / "records" / f"epoch-{epoch:03d}"
+            naive = json.loads((record_root / f"{slug}-naive.json").read_text())
+            relocate = json.loads(
+                (record_root / f"{slug}-relocate.json").read_text()
+            )
+            _write(
+                root / "pairs" / f"epoch-{epoch:03d}/{slug}-pair.json",
+                seal_verifier._expected_pair(
+                    root, epoch, batch, order, naive, relocate, verifier
+                ),
+            )
+    _write(root / "summary.json", seal_verifier._sealed_summary(diagnostic))
+    plan_source = repository / ".qualification/plans/qwen2.5-0.5b-full-page16-bf16.json"
+    plan_path = root / f"qualification/plans/{plan_source.name}"
+    plan_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(plan_source, plan_path)
+    model_path = root / "qualification/model/config.json"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(Path("/workspace/models/qwen2.5-0.5b-instruct/config.json"), model_path)
+    model_identity = verifier.canonical_digest(checkpoint)
+    _write(
+        root / "qualification/model-provenance.json",
+        {
+            "schema": seal_verifier.MODEL_PROVENANCE_SCHEMA,
+            "name": verifier.MODEL_SLUG,
+            "directory_name": verifier.MODEL_PATH_BASENAME,
+            "config_sha256": verifier.CHECKPOINT_CONFIG_SHA256,
+            "weight_files": checkpoint["weight_files"],
+            "checkpoint_identity_sha256": model_identity,
+        },
+    )
+    input_lock = repository / ".qualification/requirements-v0.5.17.lock.txt"
+    archived_input = root / "qualification/requirements.input.lock.txt"
+    shutil.copy2(input_lock, archived_input)
+    locked_editable = next(
+        line for line in input_lock.read_text().splitlines()
+        if line.startswith("-e git+") and "#egg=orbitkv_sglang" in line
+    )
+    active_editable = seal_verifier.ORBITKV_EDITABLE_TEMPLATE.format(commit=commit)
+    materialized = root / "qualification/requirements.lock.txt"
+    materialized.write_text(
+        seal_verifier._materialize_requirements_lock(archived_input, active_editable),
+        encoding="utf-8",
+    )
+    library_path = root / "qualification/build/liborbitkv_ffi.so"
+    library_path.parent.mkdir(parents=True, exist_ok=True)
+    library_path.write_bytes(b"synthetic ELF replaced by trusted test stub")
+    bundle = root / "qualification/source.bundle"
+    bundle.write_bytes(b"synthetic self-contained bundle")
+    preflight = {
+        "schema": seal_verifier.SEALED_PREFLIGHT_SCHEMA,
+        "qualification_scope": seal_verifier.QUALIFICATION_SCOPE,
+        "status": "host_preflight_passed_gpu_not_initialized",
+        "source": source, "source_closure": closure,
+        "benchmark": {
+            "path": "/run/bench_token_relocation.py",
+            "sha256": verifier.DIAGNOSTIC_HARNESS_SHA256,
+            "record_schema": verifier.RECORD_SCHEMA,
+        },
+        "verifier": {
+            "path": "/run/verify_token_relocation_h20_evidence.py",
+            "sha256": next(
+                item["sha256"] for item in closure
+                if item["path"] == "tools/verify_token_relocation_h20_evidence.py"
+            ),
+        },
+        "library": {
+            **recorded_library, "abi_version": 8,
+            "symbols": sorted(seal_verifier.EXACT_ABI8_SYMBOLS),
+        },
+        "build": {
+            "command": ["cargo", "build", "--release", "--locked",
+                        "--manifest-path", "/repo/crates/orbitkv-ffi/Cargo.toml"],
+            "cargo_version": "cargo 1.0", "cargo_target_dir": "/tmp/build",
+        },
+        "sglang": {
+            "release": verifier.SGLANG_RELEASE,
+            "revision": verifier.SGLANG_REVISION,
+            "manager_root": baseline["source_identity"]["root"],
+            "manager": {
+                "root": baseline["source_identity"]["root"],
+                "release": verifier.SGLANG_RELEASE,
+                "revision": verifier.SGLANG_REVISION,
+                "python_source_contract": verifier.SOURCE_CONTRACT,
+                "dirty_paths": [verifier.LOADER_PATH],
+                "loader": baseline["source_identity"]["loader"],
+                "tag": verifier.SGLANG_RELEASE,
+                "remote": "https://github.com/sgl-project/sglang.git",
+            },
+            "pinned_contract": {
+                "release": verifier.SGLANG_RELEASE,
+                "revision": verifier.SGLANG_REVISION,
+                "loader_path": verifier.LOADER_PATH,
+                "base_source_sha256": "3a975a73f1a7887e68c81ea7a2530250597ac8ae978efc0b0f70f038a99a3164",
+                "patched_source_sha256": verifier.LOADER_WORKTREE_SHA256,
+                "patch_diff_sha256": verifier.LOADER_PATCH_SHA256,
+            },
+            "manager_entrypoint": baseline["source_identity"]["plugin_selection"],
+        },
+        "inputs": {
+            "requirements": {
+                "path": "/run/requirements-v0.5.17.lock.txt",
+                "bytes": input_lock.stat().st_size,
+                "sha256": seal_verifier.REQUIREMENTS_INPUT_SHA256,
+            },
+            "plan": {
+                "path": "/run/qwen2.5-0.5b-full-page16-bf16.json",
+                "bytes": plan_path.stat().st_size, "sha256": seal_verifier.PLAN_SHA256,
+            },
+            "model": {
+                "name": verifier.MODEL_SLUG,
+                "root": f"/models/{verifier.MODEL_PATH_BASENAME}",
+                "checkpoint": checkpoint, "identity_sha256": model_identity,
+            },
+        },
+        "python": {
+            "executable": "/venv/bin/python", "real_executable": "/usr/bin/python",
+            "normalized_freeze_sha256": "b" * 64,
+            "active_editable": active_editable, "locked_editable": locked_editable,
+        },
+    }
+    _write(root / "preflight.json", preflight)
+    manifest = _minimal_sealed_manifest()
+    manifest.update(
+        source_commit=commit,
+        source_inventory_sha256=source["inventory_sha256"],
+        model_identity_sha256=model_identity,
+        library_sha256=recorded_library["sha256"],
+        input_hashes={
+            "requirements_input_sha256": seal_verifier.REQUIREMENTS_INPUT_SHA256,
+            "requirements_sha256": seal_verifier._sha256_file(materialized),
+            "plan_sha256": seal_verifier.PLAN_SHA256,
+            "model": {
+                "config_sha256": verifier.CHECKPOINT_CONFIG_SHA256,
+                "weight_sha256": verifier.CHECKPOINT_WEIGHT_SHA256,
+                "weight_bytes": verifier.CHECKPOINT_WEIGHT_BYTES,
+            },
+        },
+        observed_hardware={
+            "name": verifier.GPU_NAME, "uuid": uuid,
+            "snapshot_count": 64, "attestation": "recorded_observation_only",
+        },
+    )
+    manifest["source_provenance"] = {
+        "kind": "git_bundle", "path": "qualification/source.bundle",
+        "sha256": seal_verifier._sha256_file(bundle),
+        "commit": commit, "reference": "HEAD",
+    }
+    manifest["artifacts"] = {
+        path.relative_to(root).as_posix(): seal_verifier._sha256_file(path)
+        for path in sorted(root.rglob("*")) if path.is_file()
+    }
+    _write(root / "manifest.json", manifest)
+    sums = dict(manifest["artifacts"])
+    sums["manifest.json"] = seal_verifier._sha256_file(root / "manifest.json")
+    (root / "SHA256SUMS").write_text(
+        "".join(f"{digest}  {name}\n" for name, digest in sorted(sums.items())),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(seal_verifier, "_verify_source_bundle", lambda *_: None)
+    fake_library = {
+        "sha256": recorded_library["sha256"],
+        "bytes": recorded_library["bytes"],
+        "abi_version": 8,
+        "symbols": sorted(seal_verifier.EXACT_ABI8_SYMBOLS),
+    }
+    monkeypatch.setattr(
+        seal_verifier, "_verify_library",
+        lambda *_: fake_library,
+    )
+    return root
+
+
+def test_synthetic_sealed_archive_runs_the_complete_pipeline(
+    sealed_archive: Path,
+) -> None:
+    result = seal_verifier.verify_sealed_archive(sealed_archive)
+    assert result == {
+        "schema": seal_verifier.SEALED_VERIFICATION_SCHEMA,
+        "status": "passed",
+        "qualification_status": seal_verifier.QUALIFICATION_STATUS,
+        "qualification_claim": seal_verifier.QUALIFICATION_CLAIM,
+        "sealed": True, "source_clean": True, "preflight_bound": True,
+        "hardware_attested": False, "qualified": True,
+        "performance_go": False, "epoch_count": 4,
+        "record_count": 16, "pair_count": 8, "abi_version": 8,
+        "exact_symbol_count": 40, "all_pairs_passed": True,
+        "exact_token_equality": True,
+        "manager_census_fully_drained": True,
+        "failure_and_quarantine_counters_zero": True,
+    }
+
+
+def test_sealed_archive_rejects_unlisted_file_and_stored_summary_tamper(
+    sealed_archive: Path,
+) -> None:
+    (sealed_archive / "unlisted").write_text("x", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="inventory mismatch"):
+        seal_verifier.verify_sealed_archive(sealed_archive)
+    (sealed_archive / "unlisted").unlink()
+    summary_path = sealed_archive / "summary.json"
+    summary = json.loads(summary_path.read_text())
+    summary["exact_token_equality"] = False
+    _write(summary_path, summary)
+    manifest_path = sealed_archive / "manifest.json"
+    manifest = json.loads(manifest_path.read_text())
+    manifest["artifacts"]["summary.json"] = seal_verifier._sha256_file(summary_path)
+    _write(manifest_path, manifest)
+    sums = dict(manifest["artifacts"])
+    sums["manifest.json"] = seal_verifier._sha256_file(manifest_path)
+    (sealed_archive / "SHA256SUMS").write_text(
+        "".join(f"{digest}  {name}\n" for name, digest in sorted(sums.items())),
+        encoding="utf-8",
+    )
+    with pytest.raises(RuntimeError, match="stored summary differs"):
+        seal_verifier.verify_sealed_archive(sealed_archive)

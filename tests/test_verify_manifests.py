@@ -355,5 +355,150 @@ class TokenRelocationDiagnosticManifestTest(unittest.TestCase):
             )
 
 
+class TokenRelocationSealedManifestTest(unittest.TestCase):
+    def sealed_result(self) -> dict[str, object]:
+        return {
+            "schema": (
+                "orbitkv.abi8-h20-token-relocation-seal-verification.v1"
+            ),
+            "status": "passed",
+            "qualification_status": (
+                "abi8_sglang_full_token_relocation_correctness_lifecycle_"
+                "qualified_performance_pending"
+            ),
+            "qualification_claim": (
+                "scoped_correctness_and_lifecycle_only"
+            ),
+            "sealed": True,
+            "source_clean": True,
+            "preflight_bound": True,
+            "hardware_attested": False,
+            "qualified": True,
+            "performance_go": False,
+            "epoch_count": 4,
+            "record_count": 16,
+            "pair_count": 8,
+            "abi_version": 8,
+            "exact_symbol_count": 40,
+            "all_pairs_passed": True,
+            "exact_token_equality": True,
+            "manager_census_fully_drained": True,
+            "failure_and_quarantine_counters_zero": True,
+        }
+
+    def test_any_archive_manifest_routes_to_trusted_verifier(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "portable-archive"
+            root.mkdir()
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {"schema": verifier.TOKEN_RELOCATION_H20_SEALED_SCHEMA}
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(
+                verifier,
+                "verify_token_relocation_h20_sealed",
+                return_value=8,
+            ) as trusted_verifier:
+                self.assertEqual(verifier.verify_manifest(manifest_path), 8)
+            trusted_verifier.assert_called_once_with(root)
+
+    def test_router_rejects_noncanonical_manifest_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "forged.json"
+            path.write_text(
+                json.dumps(
+                    {"schema": verifier.TOKEN_RELOCATION_H20_SEALED_SCHEMA}
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(
+                verifier, "verify_token_relocation_h20_sealed"
+            ) as trusted_verifier:
+                with self.assertRaisesRegex(
+                    RuntimeError, "must be named manifest.json"
+                ):
+                    verifier.verify_manifest(path)
+            trusted_verifier.assert_not_called()
+
+    def test_unknown_sealed_relocation_schema_fails_closed(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "manifest.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema": (
+                            "orbitkv.abi8-h20-token-relocation-"
+                            "sealed-manifest.v2"
+                        )
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(
+                RuntimeError, "unsupported sealed manifest schema"
+            ):
+                verifier.verify_manifest(path)
+
+    def test_trusted_sealed_policy_is_conservative_and_exact(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary) / "portable-archive"
+            root.mkdir()
+            trusted_path = Path(temporary) / "trusted_verifier.py"
+            trusted_path.write_text(
+                "import json\n"
+                "def verify_sealed_archive(root):\n"
+                "    return json.loads("
+                "(root / 'trusted-result.json').read_text())\n",
+                encoding="utf-8",
+            )
+
+            def verify_result(result: object) -> int:
+                (root / "trusted-result.json").write_text(
+                    json.dumps(result),
+                    encoding="utf-8",
+                )
+                with patch.object(
+                    verifier,
+                    "TOKEN_RELOCATION_H20_VERIFIER",
+                    trusted_path,
+                ):
+                    return verifier.verify_token_relocation_h20_sealed(root)
+
+            self.assertEqual(verify_result(self.sealed_result()), 8)
+            invalid_values = {
+                "schema": "untrusted",
+                "status": "diagnostic_pair_verification_passed",
+                "qualification_status": "unqualified",
+                "qualification_claim": "performance_qualified",
+                "sealed": False,
+                "source_clean": False,
+                "preflight_bound": False,
+                "hardware_attested": True,
+                "qualified": False,
+                "performance_go": True,
+                "epoch_count": True,
+                "record_count": 15,
+                "pair_count": 7,
+                "abi_version": 9,
+                "exact_symbol_count": 41,
+                "all_pairs_passed": False,
+                "exact_token_equality": False,
+                "manager_census_fully_drained": False,
+                "failure_and_quarantine_counters_zero": False,
+            }
+            for field, invalid in invalid_values.items():
+                with self.subTest(field=field):
+                    result = self.sealed_result()
+                    result[field] = invalid
+                    with self.assertRaisesRegex(
+                        RuntimeError,
+                        "trusted token-relocation sealed verification is incomplete",
+                    ):
+                        verify_result(result)
+
+
 if __name__ == "__main__":
     unittest.main()
