@@ -61,11 +61,12 @@ adapter. Both wheels build and clean-install in CI. The reference is a contract
 oracle, not a scheduler, model runner, allocator, attention kernel, or complete
 engine; the SGLang adapter has not migrated to this SPI.
 
-Opt-in request-private pressure telemetry is host-tested. It distinguishes
-consumed, resident, request-reachable, and semantic-live bytes and reports
-retention amplification. No append-only, sealed, or qualified asynchronous GPU
-pressure record is published; fixed-state bytes are excluded, and shared
-Prefix/request-fork retention amplification fails closed.
+Opt-in request-private pressure telemetry distinguishes consumed, resident,
+request-reachable, and semantic-live bytes and reports retention amplification.
+Host gates and a real single-device diagnostic have run, but no append-only,
+sealed, or qualified pressure record is published. The observation is not an
+allocator peak or a performance/capacity result; fixed-state bytes are excluded,
+and shared Prefix/request-fork retention amplification fails closed.
 
 ## Module boundaries
 

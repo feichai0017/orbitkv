@@ -40,9 +40,10 @@ speedup, and production qualification remain pending.
 
 Opt-in request-private pressure telemetry is host-tested for consumed,
 resident, request-reachable, and semantic-live bytes plus retention
-amplification. No append-only, sealed, or qualified asynchronous GPU pressure
-record is published; fixed-state bytes and shared Prefix/request-fork retention
-amplification are excluded. The
+amplification. A real single-device diagnostic has run, but no append-only,
+sealed, or qualified pressure record is published and no allocator, performance,
+or capacity claim follows. Fixed-state bytes and shared Prefix/request-fork
+retention amplification are excluded. The
 separate `orbitkv-runtime` and `orbitkv-reference` wheels also provide an
 engine-neutral SPI and reference external-arena adapter. The reference is not a
 complete serving engine, and SGLang has not migrated to the SPI.

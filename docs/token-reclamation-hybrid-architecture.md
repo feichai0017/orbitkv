@@ -116,9 +116,10 @@ qualification.
 The request-private pressure observer is also host-tested behind explicit
 opt-in. It samples lifecycle events and separates consumed capacity, resident
 data, request-reachable bytes, semantic-live bytes, free-space minima,
-high-water marks, and retention amplification. This is telemetry plumbing, not
-a memory result: no append-only, sealed, or qualified asynchronous GPU pressure
-record is published, fixed-state bytes are excluded, and shared
+high-water marks, and retention amplification. A real single-device diagnostic
+has exercised this path, but no append-only, sealed, or qualified pressure
+record is published. The observation is neither an allocator peak nor a
+performance/capacity result; fixed-state bytes are excluded, and shared
 Prefix/request-fork retention amplification is rejected.
 
 The engine-neutral `orbitkv-runtime` SPI and `orbitkv-reference` external
