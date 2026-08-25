@@ -603,12 +603,13 @@ class CompletionRuntimeMixin:
     def _complete_group(self, group: EventGroup) -> None:
         if group not in self._events:
             return
-        receipt = BatchCompletionReceipt(
-            engine_epoch=self.engine_epoch,
-            completion_domain=group.completion_domain,
-            completion_value=self._completion_value,
-        )
         try:
+            completion_value = self._next_completion_value(group.completion_domain)
+            receipt = BatchCompletionReceipt(
+                engine_epoch=self.engine_epoch,
+                completion_domain=group.completion_domain,
+                completion_value=completion_value,
+            )
             records = tuple(
                 self._require_pending(pending, StepPhase.EVENT)
                 for pending in group.records
@@ -622,7 +623,10 @@ class CompletionRuntimeMixin:
                 raise ManagerError("event group lost a submitted identity")
             output = self.manager.complete_batch(receipt, submissions)
             self._accept_completion_batch(group, records, receipt, output)
-            self._completion_value += 1
+            self._record_completion_point(
+                receipt.completion_domain, receipt.completion_value
+            )
+            self._completion_value = completion_value + 1
             self._runtime_counters["completion_values"] += 1
             for pending in group.records:
                 self._complete_prepared_identity(pending)
@@ -638,6 +642,25 @@ class CompletionRuntimeMixin:
             self._quarantine_submitted(remaining)
             self.fail_stop(f"GPU completion publication became uncertain: {error}")
             raise FailStopped(self._failure or "completion failed") from error
+
+    def _next_completion_value(self, completion_domain: int) -> int:
+        previous = self._completion_high_water.get(int(completion_domain), 0)
+        value = max(self._completion_value, previous + 1)
+        if value >= (1 << 64) - 1:
+            raise ManagerError("completion sequence is exhausted")
+        return value
+
+    def _record_completion_point(
+        self, completion_domain: int, completion_value: int
+    ) -> None:
+        domain = int(completion_domain)
+        value = int(completion_value)
+        if domain <= 0 or value <= 0 or domain >= 1 << 64 or value >= 1 << 64:
+            raise ManagerError("completion point is outside uint64_t")
+        previous = self._completion_high_water.get(domain, 0)
+        if value <= previous:
+            raise ManagerError("completion point did not advance")
+        self._completion_high_water[domain] = value
 
     def _validate_submitted(self, record: Any, pending: StepRecord, submitted: SubmittedStep) -> None:
         expected_lease = SubmissionLease(

@@ -33,13 +33,14 @@ sys.path.insert(0, str(SOURCE_ROOT))
 
 import bench_canonical_manager as benchmark  # noqa: E402
 from orbitkv_sglang import pinned  # noqa: E402
-from orbitkv_sglang.ffi.library import (  # noqa: E402
-    ABI_VERSION,
-    EXACT_SYMBOL_ALLOWLIST,
-    LoadedLibrary,
-)
-
+from orbitkv_sglang.benchmark_profiles import validate_fresh_prompt_evidence  # noqa: E402
+from orbitkv_sglang.qualification import QWEN35_BACKEND_PROFILE  # noqa: E402
+from orbitkv_sglang.ffi.library import ABI_VERSION, EXACT_SYMBOL_ALLOWLIST, LoadedLibrary  # noqa: E402
+canonical_digest = benchmark.canonical_digest
 PRECHECK_SCHEMA = "orbitkv.abi8-h20-preflight.v1"
+LEGACY_RECORD_SCHEMAS = frozenset((
+    "orbitkv.sglang-v0517-abi8-single-run.v1", "orbitkv.sglang-v0517-abi8-single-run.v2",
+))
 PAIR_SCHEMA = "orbitkv.abi8-h20-pair-verification.v1"
 SUMMARY_SCHEMA = "orbitkv.abi8-h20-multi-epoch-summary.v1"
 MANIFEST_SCHEMA = "orbitkv.abi8-h20-sealed-manifest.v1"
@@ -47,10 +48,8 @@ SEAL_VERIFICATION_SCHEMA = "orbitkv.abi8-h20-seal-verification.v1"
 EXECUTION_TOKEN = "ABI8_H20_QUALIFICATION"
 SGLANG_REVISION = "29481685462732237d80d86076d6563e1f658102"
 REQUIREMENTS_SHA256 = "472d8f63cad22cd7ac4908059562bebde5e54b8d2432f750640a14d525d2fa97"
-ORBITKV_EDITABLE_TEMPLATE = (
-    "-e git+https://github.com/feichai0017/orbitkv.git@{commit}"
-    "#egg=orbitkv_sglang&subdirectory=integrations/sglang"
-)
+ORBITKV_EDITABLE_TEMPLATE = ("-e git+https://github.com/feichai0017/orbitkv.git@{commit}"
+                             "#egg=orbitkv_sglang&subdirectory=integrations/sglang")
 MODEL_HASHES = {
     "qwen2.5-7b": {
         "config.json": "7463bb0ea78315365e6c6b74de4e73bbcc8359dfb0c5a737584e077d42c0b03c",
@@ -60,11 +59,17 @@ MODEL_HASHES = {
         "config.json": "3a2a26ded679375b7928ddeca59764df7cea83220c1961035f6d6e232659e9ce",
         "model.safetensors.index.json": "0e085b977c4c9942f85938828e8c989ed7d5cdabf852e4da6a67c116cd502cd1",
     },
+    "qwen3.5-0.8b": {
+        "config.json": "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204",
+        "model.safetensors.index.json": "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e",
+    },
 }
 PLAN_HASHES = {
     "qwen2.5-7b": "415db5596d4bb6943c930d3cc159471e0f8911ed5572707d527152460acca130",
     "gpt-oss-20b": "cf870e5f8191f8bffd9b7bc4eac5d8c3aa8c6bc1b46f04b35c3c738c3d12e5e5",
 }
+QWEN35_TOKEN_PLAN_SHA256 = "e6e41e81e88c03419eafdb533719c101bb4840802fc7427c72d0ba66ef8d778c"
+QWEN35_STATE_INPUT_SHA256 = "a8cab7f35dd7b839979236253b49a864d0791ac1b57f2a84fc4c2d31076958b5"
 FIXED_STATE_COUNTERS = frozenset(
     {
         "fixed_state_prepares",
@@ -86,17 +91,29 @@ class Case:
     capacity_tokens: int
     backend: str
     profile: str
+    workload_profile: str = "prefix_reuse"
+    maximum_running_requests: int | None = None
 
     @property
     def slug(self) -> str:
         return f"{self.model}-b{self.batch}"
 
+    @property
+    def request_capacity(self) -> int:
+        return self.batch if self.maximum_running_requests is None else self.maximum_running_requests
 
+
+# This is the exact sealed ABI8 matrix. Supplemental profiles must live in a
+# separate case set and record tree so historical qualification stays stable.
 CASES = (
     Case("qwen2.5-7b", 1, 1, 528, 1024, "fa3", "full"),
     Case("gpt-oss-20b", 1, 1, 528, 1024, "fa3", "hybrid_full_swa"),
     Case("qwen2.5-7b", 4, 5, 2112, 4096, "fa3", "full"),
     Case("gpt-oss-20b", 4, 5, 2112, 4096, "fa3", "hybrid_full_swa"),
+)
+QWEN35_CASES = (
+    Case("qwen3.5-0.8b", 1, 1, 528, 1024, "fa3", "hybrid_full_gdn", "fresh_prompt", 2),
+    Case("qwen3.5-0.8b", 4, 5, 2112, 4096, "fa3", "hybrid_full_gdn", "fresh_prompt"),
 )
 QUALIFICATION_STATUS = (
     "abi8_sglang_full_full_swa_prefix_correctness_qualified_performance_pending"
@@ -116,11 +133,6 @@ def sha256_file(path: Path) -> str:
         for chunk in iter(lambda: stream.read(1024 * 1024), b""):
             digest.update(chunk)
     return digest.hexdigest()
-
-
-def canonical_digest(value: Any) -> str:
-    data = json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
-    return hashlib.sha256(data).hexdigest()
 
 
 def _run(arguments: Sequence[str], *, cwd: Path = REPOSITORY_ROOT,
@@ -362,7 +374,15 @@ def _input_identity(args: argparse.Namespace) -> dict[str, Any]:
     requirements = _require_hash(args.requirements, REQUIREMENTS_SHA256, "requirements lock")
     models: dict[str, Any] = {}
     plans: dict[str, Any] = {}
-    for name, model in (("qwen2.5-7b", args.qwen_model), ("gpt-oss-20b", args.gpt_model)):
+    model_inputs = (
+        [("qwen3.5-0.8b", args.qwen35_model)]
+        if args.scope == "qwen35"
+        else [
+            ("qwen2.5-7b", args.qwen_model),
+            ("gpt-oss-20b", args.gpt_model),
+        ]
+    )
+    for name, model in model_inputs:
         model = model.resolve(strict=True)
         models[name] = {
             filename: _require_hash(model / filename, digest, f"{name} {filename}")
@@ -384,9 +404,31 @@ def _input_identity(args: argparse.Namespace) -> dict[str, Any]:
         models[name]["weight_shards"] = shards
         models[name]["weight_shards_sha256"] = canonical_digest(shards)
         models[name]["root"] = str(model)
-    for name, plan in (("qwen2.5-7b", args.qwen_plan), ("gpt-oss-20b", args.gpt_plan)):
-        plans[name] = _require_hash(plan, PLAN_HASHES[name], f"{name} plan")
-    return {"requirements": requirements, "models": models, "plans": plans}
+    plan_inputs = (
+        [("qwen3.5-0.8b", args.qwen35_plan)]
+        if args.scope == "qwen35"
+        else [
+            ("qwen2.5-7b", args.qwen_plan),
+            ("gpt-oss-20b", args.gpt_plan),
+        ]
+    )
+    for name, plan in plan_inputs:
+        expected_hash = (
+            QWEN35_TOKEN_PLAN_SHA256
+            if name == "qwen3.5-0.8b" else PLAN_HASHES[name]
+        )
+        plans[name] = _require_hash(
+            plan, expected_hash, f"{name} token plan"
+        )
+    inputs = {"requirements": requirements, "models": models, "plans": plans}
+    if args.scope == "qwen35":
+        inputs["state_plans"] = {
+            "qwen3.5-0.8b": _require_hash(
+                args.qwen35_state_plan, QWEN35_STATE_INPUT_SHA256,
+                "qwen3.5-0.8b state input",
+            )
+        }
+    return inputs
 
 
 def preflight(args: argparse.Namespace) -> dict[str, Any]:
@@ -424,6 +466,7 @@ def preflight(args: argparse.Namespace) -> dict[str, Any]:
             "stock_plugin_selection": stock_selection,
         },
         "inputs": inputs,
+        "qualification_scope": args.scope,
         "python": python_identity,
         "status": "host_preflight_passed_gpu_not_initialized",
     }
@@ -457,27 +500,156 @@ def _normalized_engine_args(record: dict[str, Any]) -> dict[str, Any]:
 
 
 def _record_pair_contract(record: dict[str, Any]) -> dict[str, Any]:
-    seed = record.get("prefix_seed", {})
-    if not isinstance(seed, dict):
-        raise RuntimeError("record prefix seed is malformed")
-    prefix_contract = {
-        name: seed.get(name)
-        for name in (
-            "requests", "prompt_tokens", "input_token_digest_sha256",
-            "sampling_params", "included_in_iteration_timing",
-            "included_in_measured_output_pairing",
-        )
-    }
-    return {
+    checkpoint_contract = record.get("checkpoint_contract")
+    workload = record.get("workload")
+    if not isinstance(checkpoint_contract, dict) or not isinstance(workload, dict):
+        raise RuntimeError("record pairing workload contract is malformed")
+    workload_profiles = (
+        record.get("workload_profile"),
+        workload.get("profile"),
+        checkpoint_contract.get("workload_profile"),
+    )
+    legacy_prefix_record = workload_profiles == (None, None, None)
+    workload_profile = "prefix_reuse" if legacy_prefix_record else workload_profiles[0]
+    if (workload_profile not in ("prefix_reuse", "fresh_prompt")
+            or (not legacy_prefix_record
+                and workload_profiles != (workload_profile,) * 3)):
+        raise RuntimeError("record workload profile is inconsistent")
+    seed = record.get("prefix_seed")
+    if workload_profile == "fresh_prompt":
+        if seed is not None:
+            raise RuntimeError("fresh-prompt record must not contain a prefix seed")
+        prefix_contract = None
+    else:
+        if not isinstance(seed, dict):
+            raise RuntimeError("prefix-reuse record prefix seed is malformed")
+        prefix_contract = {
+            name: seed.get(name)
+            for name in (
+                "requests", "prompt_tokens", "input_token_digest_sha256",
+                "sampling_params", "included_in_iteration_timing",
+                "included_in_measured_output_pairing",
+            )
+        }
+    contract = {
         "checkpoint_identity_sha256": record.get("checkpoint_identity_sha256"),
-        "attention_contract_sha256": canonical_digest(record.get("checkpoint_contract")),
+        "attention_contract_sha256": canonical_digest(checkpoint_contract),
         "engine_args": _normalized_engine_args(record),
         "allowed_implementation_difference": benchmark.PAIR_IMPLEMENTATION_DIFFERENCE,
         "sampling_params": record.get("sampling_params"),
         "prefix_seed": prefix_contract,
-        "workload": record.get("workload"),
+        "workload": workload,
         "capacity_readback": record.get("capacity_readback"),
     }
+    if not legacy_prefix_record:
+        contract["workload_profile"] = workload_profile
+    return contract
+
+
+def _artifact_fields(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise RuntimeError("manager artifact identity is malformed")
+    return {name: value.get(name) for name in ("path", "sha256", "bytes")}
+
+
+def _verify_zero_swa(census: dict[str, Any], label: str) -> None:
+    swa = census.get("swa_activity")
+    fields = ("swa_retirement_certificates", "swa_pages_reclaimed", "swa_wrap_events")
+    if (not isinstance(swa, dict) or swa.get("status") != "not_applicable"
+            or any(swa.get(name) != 0 for name in fields)):
+        raise RuntimeError(f"{label} has invalid SWA telemetry")
+
+
+def _verify_fixed_state_drain(
+    census: Any, plan: dict[str, Any], label: str
+) -> None:
+    if not isinstance(census, dict):
+        raise RuntimeError(f"manager {label} census is missing")
+    fixed = census.get("fixed_state")
+    if not isinstance(fixed, dict) or fixed.get("status") != "host_seam":
+        raise RuntimeError(f"manager {label} fixed-state census is missing")
+    identity = fixed.get("identity")
+    if not isinstance(identity, dict):
+        raise RuntimeError(f"manager {label} fixed-state identity is malformed")
+    expected_bytes = plan.get("fixed_state_byte_count")
+    classes = plan.get("classes")
+    state_plan = plan.get("state_plan")
+    descriptors = plan.get("fixed_states")
+    plan_fingerprint = plan.get("plan_fingerprint")
+    state_fingerprint = (
+        state_plan.get("plan_fingerprint")
+        if isinstance(state_plan, dict) else None
+    )
+    if (isinstance(expected_bytes, bool) or not isinstance(expected_bytes, int)
+            or expected_bytes <= 0 or not isinstance(classes, list)
+            or not isinstance(descriptors, list) or not descriptors
+            or not isinstance(plan_fingerprint, str) or not plan_fingerprint
+            or not isinstance(state_fingerprint, str) or not state_fingerprint):
+        raise RuntimeError("manager fixed-state plan geometry is malformed")
+    worker_plan = {
+        "plan_fingerprint": plan_fingerprint,
+        "state_plan_fingerprint": state_fingerprint,
+        "fixed_state_byte_count": expected_bytes,
+        "fixed_state_descriptors": descriptors,
+        "tree_cache_type": {
+            "module": "orbitkv_sglang.plugin.prefix_cache",
+            "qualname": "OrbitKvPrefixCache",
+        },
+    }
+    if {name: census.get(name) for name in worker_plan} != worker_plan:
+        raise RuntimeError(
+            f"GDN {label} worker plan readback differs from recorded plan"
+        )
+    arena_identities = census.get("identities")
+    if not isinstance(arena_identities, list) or not arena_identities:
+        raise RuntimeError(f"manager {label} token identities are missing")
+    engine_epochs = {item.get("engine_epoch") for item in arena_identities if isinstance(item, dict)}
+    if len(engine_epochs) != 1:
+        raise RuntimeError(f"manager {label} token epochs are inconsistent")
+    expected_engine_epoch = next(iter(engine_epochs))
+    expected_identity = {
+        "engine_epoch": expected_engine_epoch,
+        "pool_epoch": expected_engine_epoch + 2,
+        "pool_id": len(classes) + 1,
+        "byte_count": expected_bytes,
+    }
+    if any(identity.get(name) != value for name, value in expected_identity.items()):
+        raise RuntimeError(f"manager {label} fixed-state identity differs from plan")
+    slots = identity.get("slot_count")
+    if (isinstance(slots, bool) or not isinstance(slots, int) or slots < 2
+            or fixed.get("free_slots") != slots):
+        raise RuntimeError(f"manager {label} fixed-state pool did not drain")
+    dirty_fields = (
+        "reserved_slots", "relocating_slots", "live_slots",
+        "retiring_slots", "quarantined_slots", "active_owners",
+        "pending_transitions", "pending_retirements",
+    )
+    dirty = {name: fixed.get(name) for name in dirty_fields if fixed.get(name) != 0}
+    if dirty:
+        raise RuntimeError(f"manager {label} fixed-state pool did not drain: {dirty}")
+
+
+def _verify_token_drain(census: dict[str, Any], label: str) -> None:
+    stats = census.get("manager_stats")
+    identities = census.get("identities")
+    if not isinstance(stats, dict):
+        raise RuntimeError(f"manager {label} token census is missing")
+    dirty_fields = (
+        "active_requests", "active_snapshots", "active_prefixes",
+        "active_pages", "reserved_pages", "writing_pages",
+        "retiring_pages", "quarantined_pages", "exhausted_pages",
+        "pending_reclamations", "total_request_page_refs",
+        "total_prefix_page_refs", "total_reader_pins",
+    )
+    dirty = {name: stats.get(name) for name in dirty_fields if stats.get(name) != 0}
+    if dirty:
+        raise RuntimeError(f"manager {label} token census did not drain: {dirty}")
+    if isinstance(identities, list) and identities:
+        pages = sum(item.get("page_count", 0) for item in identities if isinstance(item, dict))
+        if stats.get("free_pages") != pages:
+            raise RuntimeError(f"manager {label} token pages did not drain")
 
 
 def verify_pair_records(
@@ -487,12 +659,26 @@ def verify_pair_records(
     harness_sha256: str | None = None,
     adapter_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    if stock.get("schema") != benchmark.RECORD_SCHEMA or manager.get("schema") != benchmark.RECORD_SCHEMA:
+    schemas = {stock.get("schema"), manager.get("schema")}
+    if len(schemas) != 1 or not schemas <= {
+        benchmark.RECORD_SCHEMA, *LEGACY_RECORD_SCHEMAS,
+    }:
         raise RuntimeError("pair does not use the active benchmark record schema")
+    record_schema = next(iter(schemas))
     if stock.get("mode") != "stock" or manager.get("mode") != "manager":
         raise RuntimeError("pair ordering must be stock then manager")
     if stock.get("manager") is not None or not isinstance(manager.get("manager"), dict):
         raise RuntimeError("pair manager presence is invalid")
+    if record_schema == benchmark.RECORD_SCHEMA:
+        checkpoint_contract = manager.get("checkpoint_contract", {})
+        fresh = (
+            isinstance(checkpoint_contract, dict)
+            and checkpoint_contract.get("workload_profile") == "fresh_prompt"
+        )
+        if manager["manager"].get("counter_contract") != (
+            benchmark._manager_counter_contract(fresh=fresh)
+        ):
+            raise RuntimeError("manager v3 counter contract is invalid")
     current_harness = (
         sha256_file(Path(benchmark.__file__).resolve())
         if harness_sha256 is None else harness_sha256
@@ -515,14 +701,27 @@ def verify_pair_records(
         raise RuntimeError("stock record does not bind the pristine checkout")
     if manager["source_identity"].get("python_source_contract") != "pinned_head_plus_canonical_loader_patch":
         raise RuntimeError("manager record does not bind the reviewed loader patch")
-    if stock["source_identity"].get("library") is not None or stock["source_identity"].get("plan") is not None:
+    if (stock["source_identity"].get("library") is not None
+            or stock["source_identity"].get("plan") is not None
+            or stock["source_identity"].get("state_plan") is not None):
         raise RuntimeError("stock record unexpectedly binds manager artifacts")
     manager_library = manager["source_identity"].get("library")
     manager_plan = manager["source_identity"].get("plan")
+    manager_state_plan = manager["source_identity"].get("state_plan")
+    plan_record = manager["manager"].get("plan")
+    if not isinstance(plan_record, dict):
+        raise RuntimeError("manager plan record is missing")
     if manager_library != manager["manager"].get("library"):
         raise RuntimeError("manager library identities disagree")
-    if manager_plan != manager["manager"].get("plan", {}).get("artifact"):
+    if manager_plan != plan_record.get("artifact"):
         raise RuntimeError("manager plan identities disagree")
+    recorded_state_plan = plan_record.get("state_plan")
+    recorded_state_artifact = (
+        recorded_state_plan.get("artifact")
+        if isinstance(recorded_state_plan, dict) else None
+    )
+    if manager_state_plan != recorded_state_artifact:
+        raise RuntimeError("manager state-plan identities disagree")
     equal_fields = (
         "checkpoint", "checkpoint_identity_sha256", "checkpoint_contract", "sampling_params",
         "workload", "capacity_readback",
@@ -562,21 +761,88 @@ def verify_pair_records(
     if dirty:
         raise RuntimeError(f"manager final census did not drain: {dirty}")
     counters = final.get("batch_counters", {})
-    if any(counters.get(name) != 0 for name in FIXED_STATE_COUNTERS):
-        raise RuntimeError("TokenKV qualification exercised fixed-state counters")
     profile = manager["checkpoint_contract"].get("attention_profile")
     swa = final.get("swa_activity", {})
     swa_fields = ("swa_retirement_certificates", "swa_pages_reclaimed", "swa_wrap_events")
     if profile == "full":
+        if manager_state_plan is not None or any(counters.get(name) != 0 for name in FIXED_STATE_COUNTERS):
+            raise RuntimeError("TokenKV qualification exercised fixed-state state")
         if swa.get("status") != "not_applicable" or any(swa.get(name) != 0 for name in swa_fields):
             raise RuntimeError("Full pair has invalid SWA telemetry")
     elif profile == "hybrid_full_swa":
+        if manager_state_plan is not None or any(counters.get(name) != 0 for name in FIXED_STATE_COUNTERS):
+            raise RuntimeError("TokenKV qualification exercised fixed-state state")
         after_load = manager["manager"].get("after_load", {}).get("swa_activity", {})
         if swa.get("status") != "exposed" or any(swa.get(name, 0) <= after_load.get(name, 0) for name in swa_fields):
             raise RuntimeError("Hybrid pair did not advance all SWA counters")
+    elif profile == "hybrid_full_gdn":
+        if record_schema not in {
+            benchmark.RECORD_SCHEMA,
+            "orbitkv.sglang-v0517-abi8-single-run.v2",
+        }:
+            raise RuntimeError("GDN evidence requires record schema v2 or v3")
+        contract = manager["checkpoint_contract"]
+        if (manager.get("workload_profile") != "fresh_prompt"
+                or contract.get("workload_profile") != "fresh_prompt"
+                or contract.get("state_ownership") != "request_private"
+                or contract.get("backend_profile") != QWEN35_BACKEND_PROFILE
+                or manager.get("prefix_seed") is not None):
+            raise RuntimeError("GDN pair does not use the fresh-prompt contract")
+        if (manager_state_plan is None or not isinstance(recorded_state_plan, dict)
+                or not plan_record.get("fixed_states")
+                or plan_record.get("fixed_state_byte_count", 0) <= 0):
+            raise RuntimeError("GDN pair does not bind a fixed-state plan")
+        for mode, record in (("stock", stock), ("manager", manager)):
+            runtime = record.get("runtime_identity", {})
+            if (record.get("engine_args", {}).get("disable_radix_cache") is not True
+                    or runtime.get("backend_profile") != QWEN35_BACKEND_PROFILE):
+                raise RuntimeError(f"{mode} GDN backend profile is invalid")
+            _verify_record_derivations(record, mode)
+            validate_fresh_prompt_evidence(
+                record, mode, page_tokens=benchmark.PAGE_TOKENS
+            )
+        _verify_zero_swa(final, "GDN final census")
+        workload = manager["workload"]
+        try:
+            benchmark.validate_fixed_state_activity(
+                counters, batch_size=workload["requests"],
+                completed_iterations=workload["iterations"],
+                decode_tokens=workload["decode_tokens"], stage="final",
+            )
+        except (KeyError, RuntimeError) as error:
+            raise RuntimeError(f"GDN fixed-state counters are invalid: {error}") from error
+        expected_counters = benchmark.expected_batch_counters(
+            batch_size=workload["requests"],
+            completed_iterations=workload["iterations"],
+            prompt_tokens=workload["prompt_tokens"],
+            decode_tokens=workload["decode_tokens"], hybrid=False,
+            prefix_seeded=False, global_cleanup=False, fresh=True,
+            legacy_equal_mirror_counters=(record_schema in LEGACY_RECORD_SCHEMAS),
+        )
+        drift = {
+            name: {"expected": value, "actual": counters.get(name)}
+            for name, value in expected_counters.items()
+            if counters.get(name) != value
+        }
+        if drift:
+            raise RuntimeError(f"GDN final batch counters are invalid: {drift}")
+        declared_drains = manager["manager"].get("counter_contract", {}).get(
+            "fixed_state_drain_stages"
+        )
+        if declared_drains != ["after_load", "after_workload", "after_global_cleanup"]:
+            raise RuntimeError("GDN fixed-state drain contract is invalid")
+        for field, label in (
+            ("after_load", "after_load"),
+            ("after_workload", "after_workload"),
+            ("final_census", "after_global_cleanup"),
+        ):
+            census = manager["manager"].get(field)
+            _verify_token_drain(census, label)
+            _verify_fixed_state_drain(census, plan_record, label)
+            _verify_zero_swa(census, f"GDN {label} census")
     else:
-        raise RuntimeError("ABI8 Full/Full+SWA verifier rejects this profile")
-    return {
+        raise RuntimeError("ABI8 pair verifier rejects this profile")
+    result = {
         "schema": PAIR_SCHEMA, "status": "passed", "profile": profile,
         "batch_size": manager["workload"]["requests"],
         "iterations": manager["workload"]["iterations"],
@@ -586,6 +852,12 @@ def verify_pair_records(
         "stock_iteration_seconds": stock["iteration_seconds"],
         "manager_iteration_seconds": manager["iteration_seconds"],
     }
+    if profile == "hybrid_full_gdn":
+        result.update(
+            workload_profile=manager["workload_profile"],
+            qualification_claim="pair_verification_only_not_qualified",
+        )
+    return result
 
 
 def verify_pair_files(
@@ -600,15 +872,31 @@ def verify_pair_files(
         stock, manager, harness_sha256=harness_sha256,
         adapter_identity=adapter_identity,
     )
+    if result.get("profile") == "hybrid_full_gdn":
+        result["preflight_bound"] = preflight is not None
+        result["hardware_attested"] = False
+        result["qualified"] = False
     result["stock_record"] = stock_path.name
     result["manager_record"] = manager_path.name
     if preflight is not None:
-        model_name = (
-            "qwen2.5-7b"
-            if manager["checkpoint_contract"]["attention_profile"] == "full"
-            else "gpt-oss-20b"
-        )
+        if (result.get("profile") == "hybrid_full_gdn"
+                and preflight.get("qualification_scope") != "qwen35"):
+            raise RuntimeError(
+                "GDN pair requires qualification_scope=qwen35 preflight"
+            )
+        profile = manager["checkpoint_contract"]["attention_profile"]
+        try:
+            model_name = {
+                "full": "qwen2.5-7b",
+                "hybrid_full_swa": "gpt-oss-20b",
+                "hybrid_full_gdn": "qwen3.5-0.8b",
+            }[profile]
+        except KeyError as error:
+            raise RuntimeError("pair profile has no preflight model binding") from error
         expected_plan = preflight["inputs"]["plans"][model_name]
+        expected_state_plan = preflight["inputs"].get("state_plans", {}).get(
+            model_name
+        )
         library_fields = ("path", "sha256", "bytes")
         if any(
             manager["source_identity"]["library"].get(name)
@@ -621,6 +909,9 @@ def verify_pair_files(
             for name in library_fields
         ):
             raise RuntimeError("pair plan differs from preflight")
+        recorded_state_plan = manager["source_identity"].get("state_plan")
+        if _artifact_fields(recorded_state_plan) != _artifact_fields(expected_state_plan):
+            raise RuntimeError("pair state plan differs from preflight")
         model_identity = preflight["inputs"]["models"][model_name]
         for mode, record in (("stock", stock), ("manager", manager)):
             source = record["source_identity"]
@@ -677,6 +968,10 @@ def verify_pair_files(
                 {name: preflight["sglang"][name] for name in ("stock", "manager")}
             ),
         }
+        if expected_state_plan is not None:
+            result["input_identity"]["state_plan_sha256"] = (
+                expected_state_plan["sha256"]
+            )
     return result
 
 
@@ -715,6 +1010,8 @@ def _assert_idle_h20() -> None:
 def _validate_preflight(record: dict[str, Any]) -> None:
     if record.get("schema") != PRECHECK_SCHEMA:
         raise RuntimeError("work directory has no ABI8 preflight record")
+    if record.get("benchmark", {}).get("record_schema") != benchmark.RECORD_SCHEMA:
+        raise RuntimeError("preflight does not bind the active benchmark record schema")
     current = source_identity()
     if current != record.get("source"):
         raise RuntimeError("active source differs from preflight identity")
@@ -744,6 +1041,10 @@ def _validate_preflight(record: dict[str, Any]) -> None:
             raise RuntimeError(f"{name} shard inventory digest differs from preflight")
     for name, plan in record["inputs"]["plans"].items():
         _require_hash(Path(plan["path"]), plan["sha256"], f"{name} plan")
+    for name, plan in record["inputs"].get("state_plans", {}).items():
+        _require_hash(
+            Path(plan["path"]), plan["sha256"], f"{name} state plan"
+        )
     requirements = record["inputs"]["requirements"]
     _require_hash(Path(requirements["path"]), requirements["sha256"], "requirements lock")
     stock = pinned.validate_base_checkout(record["sglang"]["stock_root"])
@@ -760,7 +1061,8 @@ def _case_command(args: argparse.Namespace, pre: dict[str, Any], case: Case, mod
         pre["python"]["executable"], str(Path(pre["benchmark"]["path"])), "--mode", mode,
         "--sglang-root", pre["sglang"][f"{mode}_root"],
         "--model", inputs["models"][case.model]["root"],
-        "--requests", str(case.batch), "--max-running-requests", str(case.batch),
+        "--requests", str(case.batch),
+        "--max-running-requests", str(case.request_capacity),
         "--prompt-tokens", "513", "--decode-tokens", "33",
         "--iterations", str(case.iterations), "--chunked-prefill-size", str(case.chunk_tokens),
         "--context-length", "1024", "--max-total-tokens", str(case.capacity_tokens),
@@ -769,6 +1071,11 @@ def _case_command(args: argparse.Namespace, pre: dict[str, Any], case: Case, mod
     if mode == "manager":
         command.extend(("--plan", inputs["plans"][case.model]["path"],
                         "--library", pre["library"]["path"]))
+        if case.workload_profile == "fresh_prompt":
+            command.extend((
+                "--state-plan",
+                inputs["state_plans"][case.model]["path"],
+            ))
     return command
 
 
@@ -789,9 +1096,24 @@ def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
     work_dir = args.work_dir.resolve(strict=True)
     pre = _load(work_dir / "preflight.json")
     _validate_preflight(pre)
+    scope = pre.get("qualification_scope", "sealed")
+    expected_scope = "qwen35" if args.phase == "qwen35" else "sealed"
+    if scope != expected_scope:
+        raise RuntimeError(
+            f"run phase {args.phase} requires a {expected_scope} preflight, "
+            f"got {scope}"
+        )
     _assert_idle_h20()
     pair_results = []
-    selected = [case for case in CASES if args.phase == "all" or case.batch == int(args.phase[1:])]
+    if args.phase == "qwen35":
+        selected = list(QWEN35_CASES)
+        records_root = work_dir / "qwen35-records"
+    else:
+        selected = [
+            case for case in CASES
+            if args.phase == "all" or case.batch == int(args.phase[1:])
+        ]
+        records_root = work_dir / "records"
     for epoch in range(1, args.epochs + 1):
         if args.phase == "b4":
             b1_root = work_dir / "records" / f"epoch-{epoch:03d}"
@@ -802,7 +1124,7 @@ def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
                 )
         for batch in (1, 4):
             for case in (item for item in selected if item.batch == batch):
-                records = work_dir / "records" / f"epoch-{epoch:03d}"
+                records = records_root / f"epoch-{epoch:03d}"
                 paths = {mode: records / f"{case.slug}-{mode}.json" for mode in ("stock", "manager")}
                 order = execution_order(epoch)
                 for mode in order:
@@ -815,6 +1137,8 @@ def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
                     _assert_idle_h20()
                 _validate_preflight(pre)
                 stock, manager = paths["stock"], paths["manager"]
+                if case.workload_profile == "fresh_prompt":
+                    _verify_case_records(_load(stock), _load(manager), case)
                 pair = verify_pair_files(stock, manager, pre)
                 pair["epoch"] = epoch
                 pair["execution_order"] = list(order)
@@ -823,6 +1147,11 @@ def run_matrix(args: argparse.Namespace) -> dict[str, Any]:
                 pair_results.append(pair)
                 _assert_idle_h20()
     summary = summarize_pairs(pair_results)
+    if args.phase == "qwen35":
+        summary["qualification_claim"] = "pair_verification_only_not_qualified"
+        summary["preflight_bound"] = True
+        summary["hardware_attested"] = False
+        summary["qualified"] = False
     _write_new(work_dir / f"summary-{args.phase}-{args.epochs}-epochs.json", summary)
     return summary
 
@@ -907,7 +1236,11 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError(f"refusing to overwrite existing seal directory: {output_dir}")
     pre = _load(work_dir / "preflight.json")
     _validate_preflight(pre)
-    for name, identity in pre["inputs"]["plans"].items():
+    if pre.get("qualification_scope", "sealed") != "sealed":
+        raise RuntimeError("seal requires a sealed-scope preflight")
+    sealed_model_names = {case.model for case in CASES}
+    for name in sealed_model_names:
+        identity = pre["inputs"]["plans"][name]
         _require_hash(Path(identity["path"]), identity["sha256"], f"{name} plan")
     requirements_identity = pre["inputs"]["requirements"]
     _require_hash(
@@ -928,7 +1261,20 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
         raise RuntimeError("no completed summary matches independently verified pairs")
 
     output_dir.mkdir(parents=True)
-    shutil.copy2(work_dir / "preflight.json", output_dir / "preflight.json")
+    sealed_preflight = json.loads(json.dumps(pre))
+    sealed_preflight["inputs"]["models"] = {
+        name: sealed_preflight["inputs"]["models"][name]
+        for name in sealed_model_names
+    }
+    sealed_preflight["inputs"]["plans"] = {
+        name: sealed_preflight["inputs"]["plans"][name]
+        for name in sealed_model_names
+    }
+    sealed_preflight["inputs"].pop("state_plans", None)
+    (output_dir / "preflight.json").write_text(
+        json.dumps(sealed_preflight, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
     shutil.copytree(work_dir / "records", output_dir / "records")
     (output_dir / "summary.json").write_text(
         json.dumps(calculated_summary, indent=2, sort_keys=True) + "\n", encoding="utf-8"
@@ -938,7 +1284,8 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
     (qualification / "plans").mkdir()
     (qualification / "source").mkdir()
     shutil.copy2(pre["library"]["path"], qualification / "build/liborbitkv_ffi.so")
-    for name, identity in pre["inputs"]["plans"].items():
+    for name in sealed_model_names:
+        identity = pre["inputs"]["plans"][name]
         shutil.copy2(identity["path"], qualification / "plans" / f"{name}.json")
     original_lock = qualification / "requirements.input.lock.txt"
     sealed_lock = qualification / "requirements.lock.txt"
@@ -1006,7 +1353,10 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
         "input_hashes": {
             "requirements_sha256": sha256_file(sealed_lock),
             "original_requirements_sha256": pre["inputs"]["requirements"]["sha256"],
-            "plans": {name: value["sha256"] for name, value in pre["inputs"]["plans"].items()},
+            "plans": {
+                name: pre["inputs"]["plans"][name]["sha256"]
+                for name in sealed_model_names
+            },
             "models": {
                 name: {
                     "config_sha256": value["config.json"]["sha256"],
@@ -1014,6 +1364,7 @@ def seal(args: argparse.Namespace) -> dict[str, Any]:
                     "weight_shards_sha256": value["weight_shards_sha256"],
                 }
                 for name, value in pre["inputs"]["models"].items()
+                if name in sealed_model_names
             },
         },
         "epoch_count": len(pairs) // len(CASES), "pair_count": len(pairs),
@@ -1228,6 +1579,9 @@ def _verify_record_derivations(record: dict[str, Any], mode: str) -> None:
                     or trace.get("request_index") != index
                     or trace.get("submitted_rid") != trace.get("returned_rid")):
                 raise RuntimeError(f"{mode} record request trace is invalid")
+            if (record.get("workload_profile") == "fresh_prompt"
+                    and trace.get("cached_tokens") != 0):
+                raise RuntimeError(f"{mode} record cached-token evidence is invalid")
             digest = canonical_digest(ids)
             if trace.get("output_ids_sha256") != digest:
                 raise RuntimeError(f"{mode} record output_ids digest is invalid")
@@ -1260,7 +1614,7 @@ def _verify_case_records(
         capacity = record.get("capacity_readback", {})
         expected = {
             "requests": case.batch, "iterations": case.iterations,
-            "max_running_requests": case.batch, "prompt_tokens": 513,
+            "max_running_requests": case.request_capacity, "prompt_tokens": 513,
             "decode_tokens": 33,
         }
         if any(workload.get(name) != value for name, value in expected.items()):
@@ -1268,7 +1622,7 @@ def _verify_case_records(
         engine_expected = {
             "attention_backend": case.backend,
             "chunked_prefill_size": case.chunk_tokens,
-            "max_running_requests": case.batch,
+            "max_running_requests": case.request_capacity,
             "max_total_tokens": case.capacity_tokens,
         }
         if any(engine.get(name) != value for name, value in engine_expected.items()):
@@ -1288,8 +1642,11 @@ def _verify_case_records(
 
 def _pair_without_record_locations(value: dict[str, Any]) -> dict[str, Any]:
     result = dict(value)
-    result.pop("stock_record", None)
-    result.pop("manager_record", None)
+    for name in (
+        "stock_record", "manager_record", "preflight_bound",
+        "hardware_attested", "qualified",
+    ):
+        result.pop(name, None)
     return result
 
 
@@ -1349,7 +1706,7 @@ def verify_seal(seal_dir: Path) -> dict[str, Any]:
             or sglang.get("pinned_contract")
             != benchmark.verify_pinned_module_constants()
             or preflight.get("benchmark", {}).get("record_schema")
-            != benchmark.RECORD_SCHEMA):
+            not in {benchmark.RECORD_SCHEMA, *LEGACY_RECORD_SCHEMAS}):
         raise RuntimeError("sealed preflight does not bind the pinned SGLang contract")
     adapter = _verify_source_closure(root, preflight)
     source_root = root / "qualification/source"
@@ -1396,7 +1753,7 @@ def verify_seal(seal_dir: Path) -> dict[str, Any]:
     if set(plans) != expected_input_names or set(models) != expected_input_names:
         raise RuntimeError("sealed preflight input matrix is not exact")
     if input_hashes.get("plans") != {
-        name: value.get("sha256") for name, value in plans.items()
+        name: plans[name].get("sha256") for name in expected_input_names
     } or input_hashes.get("plans") != PLAN_HASHES:
         raise RuntimeError("manifest plan identities differ from preflight")
     for case in CASES:
@@ -1409,11 +1766,12 @@ def verify_seal(seal_dir: Path) -> dict[str, Any]:
             "index_sha256": value["model.safetensors.index.json"]["sha256"],
             "weight_shards_sha256": value["weight_shards_sha256"],
         }
-        for name, value in models.items()
+        for name, value in models.items() if name in expected_input_names
     }
     if input_hashes.get("models") != expected_models:
         raise RuntimeError("manifest model identities differ from preflight")
-    for name, hashes in MODEL_HASHES.items():
+    for name in expected_input_names:
+        hashes = MODEL_HASHES[name]
         if (models[name]["config.json"].get("sha256") != hashes["config.json"]
                 or models[name]["model.safetensors.index.json"].get("sha256")
                 != hashes["model.safetensors.index.json"]):
@@ -1533,6 +1891,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub = parser.add_subparsers(dest="action")
     pre = sub.add_parser("preflight")
     _common_paths(pre)
+    pre.add_argument(
+        "--scope", choices=("sealed", "qwen35"), default="sealed",
+        help="collect only the inputs required by the selected matrix",
+    )
     pre.add_argument("--python", type=Path, default=REPOSITORY_ROOT / ".venv-sglang-v0517/bin/python")
     pre.add_argument("--cargo", default="cargo")
     pre.add_argument("--stock-root", type=Path, default=REPOSITORY_ROOT / ".qualification/sglang-v0517-stock")
@@ -1540,17 +1902,36 @@ def build_parser() -> argparse.ArgumentParser:
     pre.add_argument("--requirements", type=Path, default=REPOSITORY_ROOT / ".qualification/requirements-v0.5.17.lock.txt")
     pre.add_argument("--qwen-model", type=Path, default=Path("/workspace/models/qwen2.5-7b-instruct"))
     pre.add_argument("--gpt-model", type=Path, default=Path("/workspace/models/gpt-oss-20b"))
+    pre.add_argument(
+        "--qwen35-model", type=Path,
+        default=Path("/workspace/models/qwen3.5-0.8b"),
+    )
     pre.add_argument("--qwen-plan", type=Path, default=REPOSITORY_ROOT / ".qualification/plans/qwen2.5-7b-full-page16-bf16.json")
     pre.add_argument("--gpt-plan", type=Path, default=REPOSITORY_ROOT / ".qualification/plans/gpt-oss-20b-hybrid-page16-bf16.json")
+    pre.add_argument(
+        "--qwen35-plan", type=Path,
+        default=REPOSITORY_ROOT / "examples/qwen3.5-0.8b-token-manager-page16-bf16.json",
+    )
+    pre.add_argument(
+        "--qwen35-state-plan", type=Path,
+        default=REPOSITORY_ROOT / "examples/qwen3.5-0.8b-attention-state-input-page16-bf16.json",
+    )
     run = sub.add_parser("run")
     _common_paths(run)
     run.add_argument("--execute", required=True)
-    run.add_argument("--phase", choices=("b1", "b4", "all"), default="all")
+    run.add_argument(
+        "--phase", choices=("b1", "b4", "all", "qwen35"),
+        default="all",
+    )
     run.add_argument("--epochs", type=int, default=1)
     run.add_argument("--seed", type=int, default=20260820)
     pair = sub.add_parser("verify-pair")
     pair.add_argument("stock", type=Path)
     pair.add_argument("manager", type=Path)
+    pair.add_argument(
+        "--preflight", type=Path,
+        help="optional input/source identity binding; does not attest hardware",
+    )
     pair.add_argument("--output", type=Path)
     summary = sub.add_parser("summarize")
     summary.add_argument("pairs", nargs="+", type=Path)
@@ -1583,7 +1964,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 raise RuntimeError("--epochs must be positive")
             result = run_matrix(args)
         elif args.action == "verify-pair":
-            result = verify_pair_files(args.stock, args.manager)
+            preflight_record = _load(args.preflight) if args.preflight else None
+            if (preflight_record is not None
+                    and preflight_record.get("qualification_scope") != "qwen35"):
+                raise RuntimeError(
+                    "standalone --preflight must use qualification_scope=qwen35"
+                )
+            if preflight_record is not None:
+                _validate_preflight(preflight_record)
+            result = verify_pair_files(
+                args.stock, args.manager, preflight_record
+            )
             if args.output:
                 _write_new(args.output, result)
         elif args.action == "summarize":

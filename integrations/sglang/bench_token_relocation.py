@@ -16,8 +16,16 @@ import bench_canonical_manager as common
 RECORD_SCHEMA = "orbitkv.sglang-v0517-token-relocation-single-run.v1"
 TRIGGER_TOKENS = 48
 RETAINED_PER_PAGE = 8
-DECODE_TOKENS = 17
 VICTIM_COUNT = 24
+DECODE_TOKENS = 41
+MATERIALIZED_DECODE_TOKENS = DECODE_TOKENS - 1
+RETAINED_COUNT_AT_TRIGGER = TRIGGER_TOKENS - VICTIM_COUNT
+RECLAMATION_INTERVAL_TOKENS = TRIGGER_TOKENS - RETAINED_COUNT_AT_TRIGGER
+EXPECTED_RECLAMATION_ROUNDS = (
+    MATERIALIZED_DECODE_TOKENS
+    + RECLAMATION_INTERVAL_TOKENS
+    - 1
+) // RECLAMATION_INTERVAL_TOKENS
 
 
 def _stage(name: str) -> None:
@@ -48,7 +56,7 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def validate_arguments(args: argparse.Namespace) -> dict[str, Path]:
+def validate_arguments(args: argparse.Namespace) -> dict[str, Path | None]:
     if args.iterations <= 0 or args.max_total_tokens <= 0:
         raise ValueError("iterations and max-total-tokens must be positive")
     if args.max_total_tokens % common.PAGE_TOKENS:
@@ -57,12 +65,18 @@ def validate_arguments(args: argparse.Namespace) -> dict[str, Path]:
         raise ValueError("context-length must exceed the complete workload")
     if args.requests * (TRIGGER_TOKENS + DECODE_TOKENS) > args.max_total_tokens:
         raise ValueError("max-total-tokens cannot hold the complete batch")
+    if args.mode == "naive" and args.attention_backend != "flashinfer":
+        raise ValueError(
+            "naive token retention requires the token-indexed FlashInfer backend; "
+            "FA3 page tables cannot represent sparse retained slots"
+        )
     if args.mem_fraction_static is not None and not 0 < args.mem_fraction_static <= 1:
         raise ValueError("mem-fraction-static must be in (0, 1]")
     return {
         "sglang_root": common._directory(args.sglang_root, "--sglang-root"),
         "model": common._directory(args.model, "--model"),
         "plan": common._regular_file(args.plan, "--plan"),
+        "state_plan": None,
         "library": common._regular_file(args.library, "--library"),
     }
 
@@ -99,6 +113,44 @@ def _policy(mode: str) -> dict[str, Any]:
         "fragmentation_threshold_milli": 500,
         "maximum_source_pages": 3,
         "evacuation_headroom_pages": 2,
+    }
+
+
+def _execution_contract(
+    contract: dict[str, Any], attention_backend: str
+) -> dict[str, Any]:
+    """Narrow the benchmark to request-private, no-Prefix execution."""
+
+    result = dict(contract)
+    backend_profile = dict(result.get("backend_profile", {}))
+    backend_profile["attention_backend"] = attention_backend
+    result["attention_backend"] = attention_backend
+    result["backend_profile"] = backend_profile
+    result["workload_profile"] = "fresh_prompt"
+    result["state_ownership"] = "request_private"
+    result["qualification_scope"] = "diagnostic_only"
+    return result
+
+
+def _workload(
+    args: argparse.Namespace, prompts: Sequence[Sequence[Sequence[int]]]
+) -> dict[str, Any]:
+    return {
+        "requests": args.requests,
+        "iterations": args.iterations,
+        "prompt_tokens": TRIGGER_TOKENS,
+        "decode_tokens": DECODE_TOKENS,
+        "victim_count_per_request": VICTIM_COUNT,
+        "retained_count_at_trigger": RETAINED_COUNT_AT_TRIGGER,
+        "expected_reclamation_rounds": EXPECTED_RECLAMATION_ROUNDS,
+        "seed": args.seed,
+        "input_token_digests_by_iteration_sha256": [
+            [common.canonical_digest(prompt) for prompt in row]
+            for row in prompts
+        ],
+        "input_token_digest_sha256": common.input_digest(
+            tuple(prompt for row in prompts for prompt in row)
+        ),
     }
 
 
@@ -144,22 +196,25 @@ def _validate_final_census(
         or any(arena["free_pages"] != arena["page_count"] for arena in arenas)
     ):
         raise RuntimeError("manager did not drain after the relocation workload")
-    operations = requests * iterations
+    scheduler_events = iterations * EXPECTED_RECLAMATION_ROUNDS
+    request_rounds = requests * scheduler_events
     expected = {
-        "token_disposition_batches": operations,
-        "token_policy_evictions": operations * VICTIM_COUNT * class_count,
-        "mark_token_dispositions_batch_calls": operations,
+        "token_disposition_batches": scheduler_events,
+        "token_policy_evictions": request_rounds * VICTIM_COUNT * class_count,
+        "mark_token_dispositions_batch_calls": (
+            scheduler_events if mode == "relocate" else request_rounds
+        ),
     }
     if mode == "relocate":
         expected.update(
-            relocation_batches=operations,
-            relocation_moves=operations * (TRIGGER_TOKENS - VICTIM_COUNT),
-            relocation_reclaimed_pages=operations,
-            relocation_copy_events=operations,
-            relocation_copy_tokens=operations * (TRIGGER_TOKENS - VICTIM_COUNT),
-            prepare_relocation_batch_calls=operations,
-            submit_relocation_batch_calls=operations,
-            complete_relocation_batch_calls=operations,
+            relocation_batches=scheduler_events,
+            relocation_moves=request_rounds * RETAINED_COUNT_AT_TRIGGER,
+            relocation_reclaimed_pages=request_rounds,
+            relocation_copy_events=scheduler_events,
+            relocation_copy_tokens=request_rounds * RETAINED_COUNT_AT_TRIGGER,
+            prepare_relocation_batch_calls=scheduler_events,
+            submit_relocation_batch_calls=scheduler_events,
+            complete_relocation_batch_calls=scheduler_events,
         )
     else:
         expected.update(
@@ -177,7 +232,9 @@ def _validate_final_census(
         raise RuntimeError(f"relocation counters differ from the workload: {mismatch}")
 
 
-def run(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
+def run(
+    args: argparse.Namespace, paths: dict[str, Path | None]
+) -> dict[str, Any]:
     started = time.perf_counter()
     _stage("freeze-environment")
     base = _base_args(args)
@@ -201,20 +258,32 @@ def run(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
     _stage("hash-checkpoint")
     manager_config = load_config()
     contract, checkpoint = common.checkpoint_contract(paths["model"], manager_config)
+    contract = _execution_contract(contract, args.attention_backend)
     if contract["attention_profile"] not in ("full", "hybrid_full_swa", "mla"):
         raise RuntimeError(
             "token-relocation qualification requires Full, Full+SWA, or MLA"
         )
     prompts = tuple(
-        tuple(value)
-        for value in common.deterministic_input_ids(
-            requests=args.requests,
-            prompt_tokens=TRIGGER_TOKENS,
-            vocab_size=contract["vocab_size"],
-            seed=args.seed,
+        tuple(
+            tuple(prompt)
+            for prompt in common.fresh_input_ids(
+                requests=args.requests,
+                prompt_tokens=TRIGGER_TOKENS,
+                vocab_size=contract["vocab_size"],
+                seed=args.seed,
+                iteration=iteration,
+                forbidden_token_ids=tuple(contract["control_token_ids"].values()),
+                token_upper_bound=contract["prompt_token_upper_bound"],
+            )
         )
+        for iteration in range(args.iterations)
     )
-    engine_args = common.engine_arguments(base, paths["model"], contract)
+    engine_args = common.engine_arguments(
+        base,
+        paths["model"],
+        contract,
+        diagnostic_attention_backend=args.attention_backend,
+    )
     sampling = {
         "temperature": 0, "max_new_tokens": DECODE_TOKENS,
         "min_new_tokens": DECODE_TOKENS, "ignore_eos": True,
@@ -233,13 +302,18 @@ def run(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
         load_seconds = time.perf_counter() - load_started
         after_load = common.gpu_snapshot("after_load")
         info_load = engine.get_server_info()
-        common.verify_runtime_contract(base, info_load, contract)
+        common.verify_runtime_contract(
+            base,
+            info_load,
+            contract,
+            diagnostic_attention_backend=args.attention_backend,
+        )
         state_load = _manager_state(
             info_load, "after_load", len(contract["classes"])
         )
         _stage("run-workload")
         for iteration in range(args.iterations):
-            batch_inputs = [list(item) for item in prompts]
+            batch_inputs = [list(item) for item in prompts[iteration]]
             rids = [
                 f"orbitkv-relocation-{args.mode}-{args.seed}-{iteration}-{index}"
                 for index in range(args.requests)
@@ -257,7 +331,12 @@ def run(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
             outputs.append(normalized)
         _stage("validate-drain")
         info_final = engine.get_server_info()
-        common.verify_runtime_contract(base, info_final, contract)
+        common.verify_runtime_contract(
+            base,
+            info_final,
+            contract,
+            diagnostic_attention_backend=args.attention_backend,
+        )
         state_final = _manager_state(
             info_final, "final", len(contract["classes"])
         )
@@ -269,13 +348,7 @@ def run(args: argparse.Namespace, paths: dict[str, Path]) -> dict[str, Any]:
     _stage("snapshot-after-shutdown")
     after_shutdown = common.gpu_snapshot("after_shutdown")
 
-    workload = {
-        "requests": args.requests, "iterations": args.iterations,
-        "prompt_tokens": TRIGGER_TOKENS, "decode_tokens": DECODE_TOKENS,
-        "victim_count_per_request": VICTIM_COUNT,
-        "retained_count_at_trigger": TRIGGER_TOKENS - VICTIM_COUNT,
-        "input_token_digest_sha256": common.input_digest(prompts),
-    }
+    workload = _workload(args, prompts)
     pair = {
         "checkpoint_identity_sha256": common.canonical_digest(checkpoint),
         "engine_args": common.pair_engine_arguments("manager", engine_args),

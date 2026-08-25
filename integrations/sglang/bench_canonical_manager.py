@@ -14,6 +14,10 @@ import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
+INTEGRATION_ROOT = Path(__file__).resolve().parent
+ADAPTER_SOURCE_ROOT = INTEGRATION_ROOT / "src"
+if str(ADAPTER_SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(ADAPTER_SOURCE_ROOT))
 from checkpoint_identity import checkpoint_identity, sha256_file
 from orbitkv_sglang.qualification import (
     ATTENTION_BACKENDS_BY_ARCHITECTURE,
@@ -22,10 +26,14 @@ from orbitkv_sglang.qualification import (
     SUPPORTED_ARCHITECTURES as _SUPPORTED_ARCHITECTURES,
     checkpoint_attention_contract,
 )
+from orbitkv_sglang.benchmark_profiles import (
+    canonical_digest, deterministic_input_ids, expected_batch_counters,
+    fresh_input_ids, input_digest, is_fresh_prompt, request_token_digests,
+    request_traces, token_digest, validate_cached_token_evidence,
+    validate_fixed_state_activity, verify_request_trace_stability,
+)
 SUPPORTED_ARCHITECTURES = _SUPPORTED_ARCHITECTURES
-INTEGRATION_ROOT = Path(__file__).resolve().parent
 REPOSITORY_ROOT = INTEGRATION_ROOT.parents[1]
-ADAPTER_SOURCE_ROOT = INTEGRATION_ROOT / "src"
 ADAPTER_PACKAGE_ROOT = ADAPTER_SOURCE_ROOT / "orbitkv_sglang"
 SUPPORTED_SGLANG_RELEASE = "v0.5.17"
 SUPPORTED_SGLANG_REVISION = "29481685462732237d80d86076d6563e1f658102"
@@ -45,7 +53,12 @@ MANAGER_LOADER_BLOB_SHA256 = (
 )
 QUALIFICATION_BATCH_SIZES = (1, 4)
 PREFIX_SEED_BATCH_SIZE = 1
-RECORD_SCHEMA = "orbitkv.sglang-v0517-abi8-single-run.v1"
+FP8_GEMM_BACKENDS = (
+    "deep_gemm",
+    "flashinfer_deepgemm",
+    "triton",
+)
+RECORD_SCHEMA = "orbitkv.sglang-v0517-abi8-single-run.v3"
 MANAGER_RADIX_CACHE_BACKEND = "orbitkv"
 PAIR_IMPLEMENTATION_DIFFERENCE = {
     "field": "radix_cache_backend",
@@ -68,6 +81,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--sglang-root", required=True)
     parser.add_argument("--model", required=True)
     parser.add_argument("--plan", help="canonical KvPlanInput; manager mode only")
+    parser.add_argument(
+        "--state-plan",
+        help="AttentionStatePlan input for ORBITKV_STATE_PLAN; manager mode only",
+    )
     parser.add_argument("--library", help="canonical OrbitKV cdylib; manager mode only")
     parser.add_argument("--requests", type=int, required=True)
     parser.add_argument("--max-running-requests", type=int, required=True)
@@ -90,6 +107,15 @@ def build_parser() -> argparse.ArgumentParser:
         "--attention-backend",
         choices=tuple(dict.fromkeys(ATTENTION_BACKENDS_BY_ARCHITECTURE.values())),
         required=True,
+    )
+    parser.add_argument(
+        "--fp8-gemm-backend",
+        choices=FP8_GEMM_BACKENDS,
+        default=None,
+        help=(
+            "explicit SGLang blockwise FP8 GEMM runner backend; omit to "
+            "preserve SGLang's default auto selection"
+        ),
     )
     parser.add_argument("--seed", type=int, default=20260820)
     return parser
@@ -188,20 +214,24 @@ def validate_arguments(args: argparse.Namespace) -> dict[str, Path | None]:
     _regular_file(str(model / "config.json"), "checkpoint config")
 
     plan: Path | None = None
+    state_plan: Path | None = None
     library: Path | None = None
     if args.mode == "manager":
         if not args.plan or not args.library:
             raise ValueError("manager mode requires --plan and --library")
         plan = _regular_file(args.plan, "--plan")
+        if getattr(args, "state_plan", None) is not None:
+            state_plan = _regular_file(args.state_plan, "--state-plan")
         library = _regular_file(args.library, "--library")
     else:
-        if args.plan is not None or args.library is not None:
-            raise ValueError("stock mode forbids --plan and --library")
+        if args.plan is not None or getattr(args, "state_plan", None) is not None or args.library is not None:
+            raise ValueError("stock mode forbids --plan, --state-plan, and --library")
 
     return {
         "sglang_root": sglang_root,
         "model": model,
         "plan": plan,
+        "state_plan": state_plan,
         "library": library,
     }
 
@@ -347,6 +377,8 @@ def configure_environment(
             "ORBITKV_LIBRARY": str(paths["library"]),
             "ORBITKV_SGLANG_ROOT": str(paths["sglang_root"]),
         }
+        if paths["state_plan"] is not None:
+            environment["ORBITKV_STATE_PLAN"] = str(paths["state_plan"])
     else:
         environment = {
             "SGLANG_PLUGINS": STOCK_PLUGIN_SENTINEL,
@@ -551,14 +583,60 @@ def manager_plan_identity(config: Any) -> dict[str, Any]:
     }
 
 
-def _required_attention_backend(contract: dict[str, Any]) -> str:
+def _expected_worker_plan_readback(config: Any) -> dict[str, Any]:
+    return {
+        "plan_fingerprint": config.plan_fingerprint,
+        "state_plan_fingerprint": config.state_plan_fingerprint,
+        "fixed_state_byte_count": config.fixed_state_byte_count,
+        "fixed_state_descriptors": [
+            {
+                "name": item.name,
+                "kind": item.kind,
+                "layers": list(item.layers),
+                "state_bytes_per_layer": item.state_bytes_per_layer,
+                "checkpoint_slots_per_request": (
+                    item.checkpoint_slots_per_request
+                ),
+                "kernel_width": item.kernel_width,
+                "byte_count": item.byte_count,
+            }
+            for item in config.fixed_states
+        ],
+        "tree_cache_type": {
+            "module": "orbitkv_sglang.plugin.prefix_cache",
+            "qualname": "OrbitKvPrefixCache",
+        },
+    }
+
+
+def verify_worker_plan_readback(
+    reported: Any, config: Any, stage: str
+) -> dict[str, Any]:
+    expected = _expected_worker_plan_readback(config)
+    actual = (
+        {name: reported.get(name) for name in expected}
+        if isinstance(reported, dict)
+        else reported
+    )
+    if actual != expected:
+        raise RuntimeError(
+            f"OrbitKV worker runtime plan differs from the parent process at {stage}: "
+            f"expected={expected} actual={actual}"
+        )
+    return expected
+
+def _required_attention_backend(contract: dict[str, Any], diagnostic_override: str | None = None) -> str:
     architecture = contract.get("architecture")
     try:
-        expected = ATTENTION_BACKENDS_BY_ARCHITECTURE[architecture]
+        canonical = ATTENTION_BACKENDS_BY_ARCHITECTURE[architecture]
     except (KeyError, TypeError) as error:
         raise RuntimeError(
             "checkpoint contract has an unsupported architecture"
         ) from error
+    if diagnostic_override is not None:
+        if diagnostic_override not in set(ATTENTION_BACKENDS_BY_ARCHITECTURE.values()):
+            raise RuntimeError("diagnostic attention backend override is unsupported")
+    expected = diagnostic_override or canonical
     if contract.get("attention_backend") != expected:
         raise RuntimeError("checkpoint attention backend contract is inconsistent")
     return expected
@@ -575,9 +653,10 @@ def _required_moe_runner_backend(contract: dict[str, Any]) -> str | None:
 
 
 def engine_arguments(
-    args: argparse.Namespace, model: Path, contract: dict[str, Any]
+    args: argparse.Namespace, model: Path, contract: dict[str, Any], *,
+    diagnostic_attention_backend: str | None = None,
 ) -> dict[str, Any]:
-    attention_backend = _required_attention_backend(contract)
+    attention_backend = _required_attention_backend(contract, diagnostic_attention_backend)
     if args.attention_backend != attention_backend:
         raise RuntimeError(
             f"{contract['architecture']} requires --attention-backend "
@@ -595,7 +674,7 @@ def engine_arguments(
         "attention_backend": attention_backend,
         "disable_hybrid_swa_memory": False,
         "disable_overlap_schedule": True,
-        "disable_radix_cache": False,
+        "disable_radix_cache": is_fresh_prompt(contract),
         "disable_cuda_graph": True,
         "enable_torch_compile": False,
         "enable_deterministic_inference": True,
@@ -625,6 +704,13 @@ def engine_arguments(
     moe_runner_backend = _required_moe_runner_backend(contract)
     if moe_runner_backend is not None:
         values["moe_runner_backend"] = moe_runner_backend
+    values.update(
+        {name: value for name, value in contract.get("backend_profile", {}).items()
+         if name != "attention_backend"}
+    )
+    fp8_gemm_backend = getattr(args, "fp8_gemm_backend", None)
+    if fp8_gemm_backend is not None:
+        values["fp8_gemm_runner_backend"] = fp8_gemm_backend
     if args.mem_fraction_static is not None:
         values["mem_fraction_static"] = args.mem_fraction_static
     if args.mode == "manager":
@@ -660,6 +746,8 @@ def expected_prefix_cache(mode: str, checkpoint: dict[str, Any]) -> str:
         return "OrbitKvPrefixCache"
     if mode != "stock":
         raise RuntimeError(f"unknown qualification mode: {mode}")
+    if is_fresh_prompt(checkpoint):
+        return "ChunkCache"
     if checkpoint.get("attention_profile") == "full":
         return "RadixCache"
     if checkpoint.get("attention_profile") == "mla":
@@ -667,129 +755,6 @@ def expected_prefix_cache(mode: str, checkpoint: dict[str, Any]) -> str:
     if checkpoint.get("attention_profile") == "hybrid_full_swa":
         return "UnifiedRadixCache"
     raise RuntimeError("checkpoint has an unsupported Prefix-cache profile")
-
-
-def deterministic_input_ids(
-    *, requests: int, prompt_tokens: int, vocab_size: int, seed: int
-) -> list[list[int]]:
-    if vocab_size - 3 < requests:
-        raise RuntimeError("checkpoint vocabulary is too small")
-    shared_count = (prompt_tokens - 1) // PAGE_TOKENS * PAGE_TOKENS
-    shared_material = hashlib.shake_256(
-        f"orbitkv-prefix-shared-v1:{seed}".encode("ascii")
-    ).digest(shared_count * 4)
-    shared = [
-        3
-        + int.from_bytes(shared_material[offset : offset + 4], "little")
-        % (vocab_size - 3)
-        for offset in range(0, len(shared_material), 4)
-    ]
-    result: list[list[int]] = []
-    for request in range(requests):
-        material = hashlib.shake_256(
-            f"orbitkv-canonical-v1:{seed}:{request}".encode("ascii")
-        ).digest((prompt_tokens - shared_count) * 4)
-        suffix = [
-            3
-            + int.from_bytes(material[offset : offset + 4], "little")
-            % (vocab_size - 3)
-            for offset in range(0, len(material), 4)
-        ]
-        suffix[0] = 3 + (seed + request) % (vocab_size - 3)
-        result.append(shared + suffix)
-    return result
-
-
-def token_digest(outputs: Sequence[Sequence[dict[str, Any]]]) -> str:
-    payload = [
-        [output["output_ids"] for output in iteration]
-        for iteration in outputs
-    ]
-    encoded = json.dumps(payload, separators=(",", ":"), ensure_ascii=True).encode()
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def input_digest(inputs: Sequence[Sequence[int]]) -> str:
-    encoded = json.dumps(inputs, separators=(",", ":")).encode()
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def canonical_digest(value: Any) -> str:
-    encoded = json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode()
-    return hashlib.sha256(encoded).hexdigest()
-
-
-def request_token_digests(
-    outputs: Sequence[Sequence[dict[str, Any]]],
-) -> list[list[str]]:
-    return [
-        [canonical_digest(output["output_ids"]) for output in iteration]
-        for iteration in outputs
-    ]
-
-
-def request_traces(
-    *,
-    outputs: Sequence[Sequence[dict[str, Any]]],
-    submitted_rids: Sequence[Sequence[str]],
-    submitted_input_digests: Sequence[Sequence[str]],
-) -> list[list[dict[str, Any]]]:
-    if not (
-        len(outputs) == len(submitted_rids) == len(submitted_input_digests)
-    ):
-        raise RuntimeError("request trace iteration cardinality is inconsistent")
-    traces: list[list[dict[str, Any]]] = []
-    for iteration_outputs, iteration_rids, iteration_inputs in zip(
-        outputs, submitted_rids, submitted_input_digests, strict=True
-    ):
-        if not (
-            len(iteration_outputs) == len(iteration_rids) == len(iteration_inputs)
-        ):
-            raise RuntimeError("request trace batch cardinality is inconsistent")
-        row: list[dict[str, Any]] = []
-        for request_index, (output, rid, input_sha256) in enumerate(
-            zip(
-                iteration_outputs,
-                iteration_rids,
-                iteration_inputs,
-                strict=True,
-            )
-        ):
-            ids = list(output["output_ids"])
-            meta_info = output.get("meta_info")
-            if not isinstance(meta_info, dict) or meta_info.get("id") != rid:
-                raise RuntimeError("SGLang returned a foreign request id")
-            row.append(
-                {
-                    "request_index": request_index,
-                    "submitted_rid": rid,
-                    "submitted_input_ids_sha256": input_sha256,
-                    "returned_rid": meta_info["id"],
-                    "output_ids": ids,
-                    "output_ids_sha256": canonical_digest(ids),
-                }
-            )
-        traces.append(row)
-    return traces
-
-
-def verify_request_trace_stability(
-    traces: Sequence[Sequence[dict[str, Any]]],
-) -> None:
-    if not traces:
-        raise RuntimeError("qualification produced no request traces")
-    width = len(traces[0])
-    if width <= 0 or any(len(row) != width for row in traces):
-        raise RuntimeError("request trace matrix is not rectangular")
-    for request_index in range(width):
-        expected = traces[0][request_index]["output_ids"]
-        if any(row[request_index]["output_ids"] != expected for row in traces[1:]):
-            raise RuntimeError(
-                "deterministic inference changed output tokens across iterations "
-                f"for request index {request_index}"
-            )
 
 
 def gpu_snapshot(label: str) -> dict[str, Any]:
@@ -849,12 +814,11 @@ def server_memory(info: dict[str, Any]) -> dict[str, Any]:
 
 
 def verify_runtime_contract(
-    args: argparse.Namespace,
-    info: dict[str, Any],
-    checkpoint: dict[str, Any],
+    args: argparse.Namespace, info: dict[str, Any], checkpoint: dict[str, Any], *,
+    diagnostic_attention_backend: str | None = None,
 ) -> dict[str, Any]:
     state = _state(info)
-    attention_backend = _required_attention_backend(checkpoint)
+    attention_backend = _required_attention_backend(checkpoint, diagnostic_attention_backend)
     required = {
         "page_size": PAGE_TOKENS,
         "max_total_tokens": args.max_total_tokens,
@@ -864,7 +828,7 @@ def verify_runtime_contract(
         "chunked_prefill_size": args.chunked_prefill_size,
         "max_running_requests": args.max_running_requests,
         "disable_overlap_schedule": True,
-        "disable_radix_cache": False,
+        "disable_radix_cache": is_fresh_prompt(checkpoint),
         "disable_cuda_graph": True,
         "disable_hybrid_swa_memory": False,
         "enable_torch_compile": False,
@@ -895,6 +859,13 @@ def verify_runtime_contract(
     moe_runner_backend = _required_moe_runner_backend(checkpoint)
     if moe_runner_backend is not None:
         required["moe_runner_backend"] = moe_runner_backend
+    required.update(
+        {name: value for name, value in checkpoint.get("backend_profile", {}).items()
+         if name != "attention_backend"}
+    )
+    fp8_gemm_backend = getattr(args, "fp8_gemm_backend", None)
+    if fp8_gemm_backend is not None:
+        required["fp8_gemm_runner_backend"] = fp8_gemm_backend
     mismatches = {
         name: {"expected": expected, "actual": state.get(name)}
         for name, expected in required.items()
@@ -914,7 +885,7 @@ def verify_runtime_contract(
             "resolved Full capacity differs from the explicit same-cap parameter"
         )
     swa_capacity = memory.get("token_capacity_swa")
-    if checkpoint["attention_profile"] in ("full", "mla"):
+    if checkpoint["attention_profile"] in ("full", "mla", "hybrid_full_gdn"):
         if swa_capacity is not None:
             raise RuntimeError("Full-only execution unexpectedly exposed an SWA arena")
     elif (
@@ -1053,6 +1024,24 @@ _FORBIDDEN_COUNTER_FIELDS = (
 )
 
 
+def _manager_counter_contract(*, fresh: bool) -> dict[str, Any]:
+    return {
+        "required_fields": list(_BATCH_COUNTER_FIELDS),
+        "forbidden_nonzero_fields": list(_FORBIDDEN_COUNTER_FIELDS),
+        "page_aligned_prefix_cow_expected": 0,
+        "mirror_validation_scope": "all_validated_mirror_transactions",
+        "mirror_sync_scope": "device_mutation_transactions_only",
+        "fixed_state_lifecycle": (
+            "prepare=clear=retire=ack>0; events>0; copies=0"
+            if fresh else "not_applicable"
+        ),
+        "fixed_state_drain_stages": (
+            ["after_load", "after_workload", "after_global_cleanup"]
+            if fresh else []
+        ),
+    }
+
+
 def _counter_record(value: Any, fields: Sequence[str], label: str) -> dict[str, int]:
     if not isinstance(value, dict) or set(value) != set(fields):
         raise RuntimeError(f"{label} has a noncanonical field set")
@@ -1113,12 +1102,15 @@ def _validate_batch_counter_contract(
     *,
     batch_size: int,
     completed_iterations: int,
+    prompt_tokens: int,
     decode_tokens: int,
     hybrid: bool,
     swa_activity: dict[str, Any],
     stage: str,
     prefix_seeded: bool,
     global_cleanup: bool,
+    fresh: bool = False,
+    has_fixed_state: bool = False,
 ) -> None:
     if batch_size not in QUALIFICATION_BATCH_SIZES:
         raise RuntimeError(f"OrbitKV census has an unsupported batch size at {stage}")
@@ -1133,54 +1125,16 @@ def _validate_batch_counter_contract(
     seed_batches = int(prefix_seeded)
     cleanup_batches = int(global_cleanup)
     forward_batches = seed_batches + completed_iterations * decode_tokens
-    release_batches = completed_iterations
-    warm_request_calls = completed_iterations * batch_size
-    expected = {
-        "request_acquire_batch_calls": seed_batches + warm_request_calls,
-        "request_fork_batch_calls": 0,
-        "prepare_batch_calls": forward_batches,
-        "submit_batch_calls": forward_batches,
-        "complete_batch_calls": forward_batches,
-        "release_batch_calls": release_batches,
-        "recycle_requests_batch_calls": release_batches + seed_batches,
-        "prefix_lookup_batch_calls": warm_request_calls,
-        "prefix_attach_batch_calls": warm_request_calls,
-        "prefix_publish_batch_calls": 0,
-        "prefix_publish_release_batch_calls": seed_batches,
-        "prefix_evict_batch_calls": cleanup_batches,
-        "prefix_recycle_batch_calls": cleanup_batches,
-        **{name: 0 for name in (
-            "token_views_batch_calls", "mark_token_dispositions_batch_calls",
-            "prepare_relocation_batch_calls", "submit_relocation_batch_calls",
-            "complete_relocation_batch_calls", "abort_relocations_batch_calls",
-        )},
-        "buffer_too_small_preflights": (
-            warm_request_calls + release_batches + seed_batches + cleanup_batches
-        ),
-        "cold_workspace_allocations": (
-            warm_request_calls + release_batches + seed_batches + cleanup_batches
-        ),
-        "forward_events": forward_batches,
-        "completion_values": forward_batches,
-        "prefix_matches": seed_batches + completed_iterations * batch_size,
-        "prefix_hits": completed_iterations * batch_size,
-        "prefix_publishes": seed_batches,
-        "prefix_evictions": cleanup_batches,
-        "prefix_global_alias_scans": cleanup_batches * int(hybrid),
-        "cow_copy_intents": 0,
-        "cow_move_calls": 0,
-        "cow_copied_tokens": 0,
-        **{name: 0 for name in (
-            "token_disposition_batches", "token_policy_evictions",
-            "relocation_batches", "relocation_moves",
-            "relocation_reclaimed_pages", "relocation_copy_events",
-            "relocation_copy_tokens",
-        )},
-    }
+    expected = expected_batch_counters(
+        batch_size=batch_size, completed_iterations=completed_iterations,
+        decode_tokens=decode_tokens, hybrid=hybrid, prefix_seeded=prefix_seeded,
+        global_cleanup=global_cleanup, fresh=fresh, prompt_tokens=prompt_tokens,
+    )
+    mirror_fields = ("mirror_validation_calls", "mirror_syncs")
     identities = {
         name: {"expected": expected, "actual": counters[name]}
         for name, expected in expected.items()
-        if counters[name] != expected
+        if name not in mirror_fields and counters[name] != expected
     }
     if identities:
         raise RuntimeError(
@@ -1207,12 +1161,15 @@ def _validate_batch_counter_contract(
         invalid_eviction = full_evicted != 0 or swa_evicted != 0
     if invalid_eviction:
         raise RuntimeError(f"OrbitKV Prefix eviction spans are invalid at {stage}")
-    if (
-        counters["mirror_validation_calls"] != counters["mirror_syncs"]
-        or bool(counters["mirror_validation_calls"]) is not prefix_seeded
-    ):
-        raise RuntimeError(f"OrbitKV global mirror cleanup is invalid at {stage}")
-
+    mirror_drift = {
+        name: {"expected": expected[name], "actual": counters[name]}
+        for name in mirror_fields if counters[name] != expected[name]
+    }
+    if mirror_drift:
+        raise RuntimeError(
+            f"OrbitKV mirror transaction counts are invalid at {stage}: "
+            f"{mirror_drift}"
+        )
     event_queries = counters["event_queries"]
     event_waits = counters["event_waits"]
     if event_waits > forward_batches or event_queries + event_waits < forward_batches:
@@ -1278,15 +1235,22 @@ def manager_census(
     *,
     batch_size: int,
     completed_iterations: int,
+    prompt_tokens: int | None = None,
     decode_tokens: int,
     prefix_seeded: bool = False,
     global_cleanup: bool = False,
+    fresh: bool = False,
 ) -> dict[str, Any]:
     reported = _state(info).get("orbitkv_manager")
     if not isinstance(reported, dict):
         raise RuntimeError(f"OrbitKV manager census is missing at {stage}")
     allowed = {
         "abi_version",
+        "plan_fingerprint",
+        "state_plan_fingerprint",
+        "fixed_state_byte_count",
+        "fixed_state_descriptors",
+        "tree_cache_type",
         "identities",
         "arena_stats",
         "manager_stats",
@@ -1294,9 +1258,14 @@ def manager_census(
         "batch_counters",
     }
     has_fixed_state = bool(getattr(config, "fixed_states", ()))
+    if fresh and prompt_tokens is None:
+        raise RuntimeError(
+            f"OrbitKV fresh census omitted prompt length at {stage}"
+        )
     expected_keys = allowed | ({"fixed_state"} if has_fixed_state else set())
     if set(reported) != expected_keys or reported.get("abi_version") != 8:
         raise RuntimeError(f"OrbitKV manager top-level schema is invalid at {stage}")
+    worker_plan = verify_worker_plan_readback(reported, config, stage)
     raw_identities = reported["identities"]
     raw_arena_stats = reported["arena_stats"]
     if not isinstance(raw_identities, list) or not isinstance(raw_arena_stats, list):
@@ -1343,12 +1312,15 @@ def manager_census(
         batch_counters,
         batch_size=batch_size,
         completed_iterations=completed_iterations,
+        prompt_tokens=1 if prompt_tokens is None else prompt_tokens,
         decode_tokens=decode_tokens,
         hybrid=hybrid,
         swa_activity=swa_activity,
         stage=stage,
         prefix_seeded=prefix_seeded,
         global_cleanup=global_cleanup,
+        fresh=fresh,
+        has_fixed_state=has_fixed_state,
     )
     batch_call_counts = tuple(
         batch_counters[name]
@@ -1433,6 +1405,12 @@ def manager_census(
         if has_fixed_state
         else None
     )
+    if has_fixed_state and fresh:
+        validate_fixed_state_activity(
+            batch_counters, batch_size=batch_size,
+            completed_iterations=completed_iterations, decode_tokens=decode_tokens,
+            stage=stage,
+        )
 
     for name in _ARENA_PHASE_FIELDS:
         if manager_stats[name] != sum(item[name] for item in arena_stats):
@@ -1502,6 +1480,7 @@ def manager_census(
         )
     census = {
         "abi_version": 8,
+        **worker_plan,
         "identities": identities,
         "arena_stats": arena_stats,
         "manager_stats": manager_stats,
@@ -1592,20 +1571,50 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
     contract, checkpoint = checkpoint_contract(
         paths["model"], manager_config  # type: ignore[arg-type]
     )
+    fresh = is_fresh_prompt(contract)
     if args.context_length > contract["max_position_embeddings"]:
         raise RuntimeError("--context-length exceeds checkpoint position capacity")
-    canonical_prompts = tuple(
-        tuple(prompt)
-        for prompt in deterministic_input_ids(
-            requests=args.requests,
-            prompt_tokens=args.prompt_tokens,
-            vocab_size=int(contract["vocab_size"]),
-            seed=args.seed,
+    canonical_prompts = (
+        ()
+        if fresh else tuple(
+            tuple(prompt)
+            for prompt in deterministic_input_ids(
+                requests=args.requests,
+                prompt_tokens=args.prompt_tokens,
+                vocab_size=int(contract["vocab_size"]),
+                seed=args.seed,
+            )
         )
     )
-    canonical_prompt_digests = tuple(
-        canonical_digest(list(prompt)) for prompt in canonical_prompts
+    forbidden_prompt_token_ids = tuple(
+        value
+        for name, value in contract.get("control_token_ids", {}).items()
+        if name in {
+            "image_token_id", "video_token_id",
+            "vision_start_token_id", "vision_end_token_id",
+        }
     )
+    prompts_by_iteration = tuple(
+        tuple(
+            tuple(prompt) for prompt in fresh_input_ids(
+                requests=args.requests, prompt_tokens=args.prompt_tokens,
+                vocab_size=int(contract["vocab_size"]), seed=args.seed,
+                iteration=iteration,
+                forbidden_token_ids=forbidden_prompt_token_ids,
+                token_upper_bound=int(contract["prompt_token_upper_bound"]),
+            )
+        ) if fresh else canonical_prompts
+        for iteration in range(args.iterations)
+    )
+    if fresh:
+        first_pages = [
+            prompt[:PAGE_TOKENS]
+            for row in prompts_by_iteration for prompt in row
+        ]
+        if len(set(first_pages)) != args.requests * args.iterations:
+            raise RuntimeError(
+                "fresh-prompt workload contains a shared complete prefix page"
+            )
     engine_args = engine_arguments(
         args, paths["model"], contract  # type: ignore[arg-type]
     )
@@ -1622,6 +1631,10 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
             "adapter": _adapter_identity(),
             "plugin_selection": plugin_selection,
             "plan": manager_plan["artifact"] if manager_plan else None,
+            "state_plan": (
+                manager_plan["state_plan"]["artifact"]
+                if manager_plan and manager_plan["state_plan"] else None
+            ),
             "library": manager_library,
             "build_tool": build_tool,
         }
@@ -1681,54 +1694,58 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
                 "after_load",
                 batch_size=args.requests,
                 completed_iterations=0,
+                prompt_tokens=args.prompt_tokens,
                 decode_tokens=args.decode_tokens,
+                fresh=fresh,
             )
         prefix_seed_tokens = (args.prompt_tokens - 1) // PAGE_TOKENS * PAGE_TOKENS
-        seed_inputs = [list(canonical_prompts[0][:prefix_seed_tokens])]
-        seed_rids = [f"orbitkv-prefix-seed-{args.seed}"]
-        seed_started = time.perf_counter()
-        seed_output = engine.generate(
-            input_ids=seed_inputs,
-            rid=seed_rids,
-            sampling_params=prefix_seed_sampling_params,
-        )
-        prefix_seed_seconds = time.perf_counter() - seed_started
-        seed_outputs = _normalize_outputs(seed_output, PREFIX_SEED_BATCH_SIZE)
-        if any(
-            len(output["output_ids"]) != 1
-            or not isinstance(output.get("meta_info"), dict)
-            or output["meta_info"].get("id") != rid
-            for output, rid in zip(seed_outputs, seed_rids, strict=True)
-        ):
-            raise RuntimeError("untimed Prefix seed did not complete the exact B1 batch")
-        if seed_inputs != [list(canonical_prompts[0][:prefix_seed_tokens])]:
-            raise RuntimeError("SGLang mutated the untimed Prefix seed inputs")
-        info_after_prefix_seed = engine.get_server_info()
-        capacity_after_prefix_seed = verify_runtime_contract(
-            args, info_after_prefix_seed, contract
-        )
-        if capacity_after_prefix_seed != capacity_after_load:
-            raise RuntimeError("SGLang capacity changed during the Prefix seed")
-        if manager_config is None:
-            stock_census_absent(info_after_prefix_seed, "after_prefix_seed")
-            manager_after_prefix_seed = None
-        else:
-            manager_after_prefix_seed = manager_census(
-                info_after_prefix_seed,
-                manager_config,
-                capacity_after_prefix_seed,
-                "after_prefix_seed",
-                batch_size=args.requests,
-                completed_iterations=0,
-                decode_tokens=args.decode_tokens,
-                prefix_seeded=True,
+        seed_inputs: list[list[int]] = []
+        prefix_seed_seconds: float | None = None
+        manager_after_prefix_seed = None
+        if not fresh:
+            seed_inputs = [list(canonical_prompts[0][:prefix_seed_tokens])]
+            seed_rids = [f"orbitkv-prefix-seed-{args.seed}"]
+            seed_started = time.perf_counter()
+            seed_output = engine.generate(
+                input_ids=seed_inputs, rid=seed_rids,
+                sampling_params=prefix_seed_sampling_params,
             )
+            prefix_seed_seconds = time.perf_counter() - seed_started
+            seed_outputs = _normalize_outputs(seed_output, PREFIX_SEED_BATCH_SIZE)
+            if any(
+                len(output["output_ids"]) != 1
+                or not isinstance(output.get("meta_info"), dict)
+                or output["meta_info"].get("id") != rid
+                for output, rid in zip(seed_outputs, seed_rids, strict=True)
+            ):
+                raise RuntimeError("untimed Prefix seed did not complete the exact B1 batch")
+            if seed_inputs != [list(canonical_prompts[0][:prefix_seed_tokens])]:
+                raise RuntimeError("SGLang mutated the untimed Prefix seed inputs")
+            info_after_prefix_seed = engine.get_server_info()
+            capacity_after_prefix_seed = verify_runtime_contract(
+                args, info_after_prefix_seed, contract
+            )
+            if capacity_after_prefix_seed != capacity_after_load:
+                raise RuntimeError("SGLang capacity changed during the Prefix seed")
+            if manager_config is None:
+                stock_census_absent(info_after_prefix_seed, "after_prefix_seed")
+            else:
+                manager_after_prefix_seed = manager_census(
+                    info_after_prefix_seed, manager_config, capacity_after_prefix_seed,
+                    "after_prefix_seed", batch_size=args.requests,
+                    completed_iterations=0, prompt_tokens=args.prompt_tokens,
+                    decode_tokens=args.decode_tokens,
+                    prefix_seeded=True,
+                )
         for iteration in range(args.iterations):
-            submitted_prompts = [list(prompt) for prompt in canonical_prompts]
+            submitted_prompts = [list(prompt) for prompt in prompts_by_iteration[iteration]]
             submitted_input_digests = [
                 canonical_digest(prompt) for prompt in submitted_prompts
             ]
-            if tuple(submitted_input_digests) != canonical_prompt_digests:
+            expected_input_digests = tuple(
+                canonical_digest(list(prompt)) for prompt in prompts_by_iteration[iteration]
+            )
+            if tuple(submitted_input_digests) != expected_input_digests:
                 raise RuntimeError("qualification input changed before submission")
             submitted_rids = [
                 f"orbitkv-canonical-{args.seed}-{iteration}-{request}"
@@ -1741,21 +1758,19 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
                 sampling_params=sampling_params,
             )
             iteration_seconds.append(time.perf_counter() - iteration_started)
-            if [canonical_digest(prompt) for prompt in submitted_prompts] != list(
-                canonical_prompt_digests
-            ):
+            if [canonical_digest(prompt) for prompt in submitted_prompts] != list(expected_input_digests):
                 raise RuntimeError("SGLang mutated qualification input ids")
             normalized = _normalize_outputs(output, args.requests)
             cached = [item.get("meta_info", {}).get("cached_tokens") for item in normalized]
             if any(
                 isinstance(value, bool)
                 or not isinstance(value, int)
-                or value != prefix_seed_tokens
+                or value != (0 if fresh else prefix_seed_tokens)
                 for value in cached
             ):
                 raise RuntimeError(
-                    "measured Prefix hit boundary differs from the untimed seed: "
-                    f"expected={prefix_seed_tokens} actual={cached}"
+                    "measured cache boundary differs from the workload contract: "
+                    f"expected={0 if fresh else prefix_seed_tokens} actual={cached}"
                 )
             outputs_by_iteration.append(normalized)
             submitted_rids_by_iteration.append(submitted_rids)
@@ -1777,8 +1792,10 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
                 "after_workload",
                 batch_size=args.requests,
                 completed_iterations=args.iterations,
+                prompt_tokens=args.prompt_tokens,
                 decode_tokens=args.decode_tokens,
-                prefix_seeded=True,
+                prefix_seeded=not fresh,
+                fresh=fresh,
             )
             verify_swa_activity_transition(
                 manager_after_load, manager_after_workload
@@ -1802,9 +1819,11 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
                 "after_global_cleanup",
                 batch_size=args.requests,
                 completed_iterations=args.iterations,
+                prompt_tokens=args.prompt_tokens,
                 decode_tokens=args.decode_tokens,
-                prefix_seeded=True,
-                global_cleanup=True,
+                prefix_seeded=not fresh,
+                global_cleanup=not fresh,
+                fresh=fresh,
             )
         after_global_cleanup = gpu_snapshot("after_global_cleanup")
     after_shutdown = gpu_snapshot("after_shutdown")
@@ -1827,7 +1846,11 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
         submitted_rids=submitted_rids_by_iteration,
         submitted_input_digests=submitted_input_digests_by_iteration,
     )
-    verify_request_trace_stability(traces)
+    validate_cached_token_evidence(
+        traces, 0 if fresh else prefix_seed_tokens
+    )
+    if not fresh:
+        verify_request_trace_stability(traces)
     command = [sys.executable, str(Path(__file__).resolve()), *sys.argv[1:]]
     total_seconds = time.perf_counter() - run_started
     workload = {
@@ -1837,9 +1860,14 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
         "decode_tokens": args.decode_tokens,
         "iterations": args.iterations,
         "seed": args.seed,
-        "input_token_digest_sha256": input_digest(canonical_prompts),
+        "profile": contract["workload_profile"],
+        "input_token_digest_sha256": input_digest(
+            [prompt for row in prompts_by_iteration for prompt in row]
+            if fresh else canonical_prompts
+        ),
+        "input_token_digests_by_iteration_sha256": submitted_input_digests_by_iteration,
     }
-    prefix_seed_contract = {
+    prefix_seed_contract = None if fresh else {
         "requests": PREFIX_SEED_BATCH_SIZE,
         "prompt_tokens": prefix_seed_tokens,
         "input_token_digest_sha256": input_digest(seed_inputs),
@@ -1853,6 +1881,7 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
         "engine_args": pair_engine_arguments(args.mode, engine_args),
         "allowed_implementation_difference": PAIR_IMPLEMENTATION_DIFFERENCE,
         "sampling_params": sampling_params,
+        "workload_profile": contract["workload_profile"],
         "prefix_seed": prefix_seed_contract,
         "workload": workload,
         "capacity_readback": capacity_after_workload,
@@ -1862,12 +1891,7 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
         manager_record = {
             "plan": manager_plan,
             "library": manager_library,
-            "counter_contract": {
-                "required_fields": list(_BATCH_COUNTER_FIELDS),
-                "forbidden_nonzero_fields": list(_FORBIDDEN_COUNTER_FIELDS),
-                "page_aligned_prefix_cow_expected": 0,
-                "mirror_validation_equals_sync": True,
-            },
+            "counter_contract": _manager_counter_contract(fresh=fresh),
             "after_load": manager_after_load,
             "after_prefix_seed": manager_after_prefix_seed,
             "after_workload": manager_after_workload,
@@ -1909,6 +1933,7 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
                     args.mode, contract
                 ),
             },
+            "backend_profile": contract["backend_profile"],
             "execution": "eager",
         },
         "model": str(paths["model"]),
@@ -1917,8 +1942,9 @@ def run(args: argparse.Namespace, paths: dict[str, Path | None]) -> dict[str, An
         "checkpoint_contract": contract,
         "engine_args": engine_args,
         "sampling_params": sampling_params,
-        "prefix_seed": {
-            **prefix_seed_contract,
+        "workload_profile": contract["workload_profile"],
+        "prefix_seed": None if fresh else {
+            **prefix_seed_contract,  # type: ignore[misc]
             "published_boundary_tokens": prefix_seed_tokens,
             "measured_prefix_limit_tokens": args.prompt_tokens - 1,
             "observed_hit_boundary_tokens": prefix_seed_tokens,

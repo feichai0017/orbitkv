@@ -415,6 +415,67 @@ def _validate_sliding_pool_floor(class_config: Any, size: int) -> None:
         )
 
 
+def _ensure_relocation_kv_copy_contract(token_to_kv_pool: Any) -> None:
+    reclamation = getattr(_config(), "token_reclamation", None)
+    if getattr(reclamation, "mode", "off") != "relocate":
+        return
+
+    from sglang.srt.mem_cache.memory_pool import (
+        HybridLinearKVPool,
+        MHATokenToKVPool,
+        MLATokenToKVPool,
+    )
+    from sglang.srt.mem_cache.swa_memory_pool import SWAKVPool
+
+    wrapper = token_to_kv_pool
+    leaves: tuple[tuple[str, Any], ...]
+    if type(wrapper) is SWAKVPool:
+        if not callable(getattr(wrapper, "move_kv_cache", None)):
+            raise RuntimeError(
+                "SGLang SWA KV pool has no callable relocation copy"
+            )
+        leaves = (
+            ("Full", getattr(wrapper, "full_kv_pool", None)),
+            ("SWA", getattr(wrapper, "swa_kv_pool", None)),
+        )
+    elif type(wrapper) is HybridLinearKVPool:
+        if not callable(getattr(wrapper, "move_kv_cache", None)):
+            raise RuntimeError(
+                "SGLang hybrid-linear KV pool has no callable relocation copy"
+            )
+        leaves = (("Full", getattr(wrapper, "full_kv_pool", None)),)
+    else:
+        leaves = (("Full", wrapper),)
+
+    mha_pools = []
+    for name, pool in leaves:
+        move = getattr(pool, "move_kv_cache", None)
+        if type(pool) is MHATokenToKVPool:
+            native = getattr(pool, "use_native_move_kv_cache", None)
+            if not callable(move) or type(native) is not bool:
+                raise RuntimeError(
+                    f"SGLang {name} MHA KV pool relocation contract changed"
+                )
+            mha_pools.append(pool)
+        elif type(pool) is MLATokenToKVPool:
+            if not callable(move):
+                raise RuntimeError(
+                    f"SGLang {name} MLA KV pool relocation contract changed"
+                )
+        else:
+            pool_type = type(pool)
+            raise RuntimeError(
+                "OrbitKV relocation does not support SGLang "
+                f"{name} KV pool {pool_type.__module__}.{pool_type.__qualname__}"
+            )
+
+    # This is deliberately instance-local. The SGLang environment toggle was
+    # consumed while constructing each MHA pool, and the alternative private
+    # warmup path is neither necessary nor safe to invoke after construction.
+    for pool in mha_pools:
+        pool.use_native_move_kv_cache = True
+
+
 def _build_token_to_kv_pool_allocator(
     configurator: Any,
     *,
@@ -535,6 +596,7 @@ def _build_token_to_kv_pool_allocator(
     else:
         raise RuntimeError("unsupported OrbitKV attention-class layout")
 
+    _ensure_relocation_kv_copy_contract(token_to_kv_pool)
     _new_runtime(registrations)
     _state._ALLOCATOR = allocator
     coordinator = _mirror_cleanup_coordinator(req_to_token_pool, allocator)

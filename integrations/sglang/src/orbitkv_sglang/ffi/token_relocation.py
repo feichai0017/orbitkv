@@ -384,7 +384,9 @@ class TokenRelocationMixin:
                 or item.policy.evacuation_headroom_pages > self._physical_pages
                 for item in values
             ):
-                raise ManagerError("ABI8 first relocation transaction requires bounded full evacuation")
+                raise ManagerError(
+                    "ABI8 relocation requires bounded full evacuation"
+                )
             move_capacity = self._physical_pages * self._page_tokens
             prepared = array(L.PreparedRelocationLayout, count)
             sources = array(L.PageLeaseLayout, self._physical_pages)

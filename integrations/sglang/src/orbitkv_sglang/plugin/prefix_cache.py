@@ -20,6 +20,14 @@ from ..runtime import (
     sglang_page_id,
 )
 from . import state as _state
+from .private_prefix import (
+    PRIVATE_PREFIX_MARKER,
+    PrivatePrefixProvenance,
+    clear_private_prefix,
+    validate_private_prefix,
+)
+from .prefix_tokens import request_tokens as _request_tokens
+from .prefix_tokens import tokens_from_radix_key as _tokens_from_radix_key
 from .prefix_sanity import validate_prefix_cache
 from .state import _config, _request_key, _runtime
 
@@ -74,49 +82,6 @@ class _EvictionPlanItem:
     swa_tokens: int
 
 
-def _tokens_from_radix_key(key: Any, page_size: int) -> tuple[int, ...]:
-    if bool(getattr(key, "is_bigram", False)):
-        raise RuntimeError("OrbitKV does not support EAGLE/bigram prefix keys")
-    if getattr(key, "extra_key", None) is not None:
-        raise RuntimeError("OrbitKV does not support LoRA or namespaced prefix keys")
-    try:
-        values = tuple(key)
-    except Exception as error:
-        raise RuntimeError("SGLang prefix key is not readable") from error
-    result: list[int] = []
-    for value in values:
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, Integral)
-            or not 0 <= int(value) < 2**63
-        ):
-            raise RuntimeError("SGLang prefix tokens must be nonnegative int64 values")
-        result.append(int(value))
-    aligned = len(result) // page_size * page_size
-    return tuple(result[:aligned])
-
-
-def _request_tokens(req: Any, boundary: int) -> tuple[int, ...]:
-    if getattr(req, "extra_key", None) is not None:
-        raise RuntimeError("OrbitKV does not support LoRA or namespaced requests")
-    try:
-        values = tuple(req.origin_input_ids) + tuple(req.output_ids)
-    except Exception as error:
-        raise RuntimeError("SGLang request token history is not readable") from error
-    if boundary > len(values):
-        raise RuntimeError("request KV boundary exceeds its token history")
-    result: list[int] = []
-    for value in values[:boundary]:
-        if (
-            isinstance(value, bool)
-            or not isinstance(value, Integral)
-            or not 0 <= int(value) < 2**63
-        ):
-            raise RuntimeError("SGLang request tokens must be nonnegative int64 values")
-        result.append(int(value))
-    return tuple(result)
-
-
 class OrbitKvPrefixCache(BasePrefixCache):
     """SGLang tree seam backed only by ABI8 manager prefix leases."""
 
@@ -124,8 +89,9 @@ class OrbitKvPrefixCache(BasePrefixCache):
         import torch
 
         config = _config()
-        if bool(params.disable):
-            raise RuntimeError("OrbitKV radix backend cannot be disabled")
+        no_prefix = _state._requires_disabled_radix_cache()
+        if bool(params.disable) != no_prefix:
+            raise RuntimeError("OrbitKV radix disable mode differs from its state plan")
         if bool(getattr(params, "is_eagle", False)):
             raise RuntimeError("OrbitKV does not support EAGLE prefix keys")
         if getattr(params, "eviction_policy", "lru") != "lru":
@@ -142,8 +108,8 @@ class OrbitKvPrefixCache(BasePrefixCache):
             raise RuntimeError("OrbitKV prefix cache received a foreign KV allocator")
         self.disable = False
         self.disable_finished_insert = bool(params.disable_finished_insert)
-        self._fixed_state_no_prefix = bool(config.fixed_states)
-        if getattr(self, "_fixed_state_no_prefix", False):
+        self._no_prefix = no_prefix
+        if self._no_prefix:
             self.disable_finished_insert = True
         self.req_to_token_pool = params.req_to_token_pool
         self.token_to_kv_pool_allocator = params.token_to_kv_pool_allocator
@@ -316,10 +282,10 @@ class OrbitKvPrefixCache(BasePrefixCache):
         return 0
 
     def is_chunk_cache(self) -> bool:
-        return False
+        return self._no_prefix
 
     def is_tree_cache(self) -> bool:
-        return True
+        return not self.is_chunk_cache()
 
     def root_node_handle(self, extra_key: str | None = None) -> _PrefixNode:
         if extra_key is not None:
@@ -351,7 +317,7 @@ class OrbitKvPrefixCache(BasePrefixCache):
     def match_prefix(self, params: Any) -> Any:
         from sglang.srt.mem_cache.base_prefix_cache import MatchResult
 
-        if self._fixed_state_no_prefix:
+        if self._no_prefix:
             return self._finish_match(
                 self._match_result(self._empty, self.root_node, MatchResult), False
             )
@@ -476,7 +442,7 @@ class OrbitKvPrefixCache(BasePrefixCache):
 
     def cache_unfinished_req(self, req: Any, **kwargs: Any) -> None:
         del kwargs
-        if getattr(self, "_fixed_state_no_prefix", False):
+        if getattr(self, "_no_prefix", False):
             import torch
 
             runtime = _runtime()
@@ -491,10 +457,17 @@ class OrbitKvPrefixCache(BasePrefixCache):
                 or getattr(req, "_orbitkv_request_lease", None) != record.lease
                 or row <= 0
             ):
-                raise RuntimeError("unfinished fixed-state request identity changed")
-            req.prefix_indices = self.req_to_token_pool.req_to_token[
-                row, : record.boundary
-            ].to(dtype=torch.int64, copy=True)
+                raise RuntimeError("unfinished no-prefix request identity changed")
+            source = self.req_to_token_pool.req_to_token[row]
+            validate_private_prefix(req, source, key, record.lease, record.boundary)
+            private = source[: record.boundary].to(dtype=torch.int64, copy=True)
+            req.prefix_indices = private
+            req.cache_protected_len = 0
+            setattr(
+                req,
+                PRIVATE_PREFIX_MARKER,
+                PrivatePrefixProvenance(private, key, record.lease, record.boundary),
+            )
             return
         runtime = _runtime()
         key = _request_key(req)
@@ -561,7 +534,7 @@ class OrbitKvPrefixCache(BasePrefixCache):
     def publication_for_release(
         self, req: Any, *, is_insert: bool
     ) -> _ReleasePublication | None:
-        if getattr(self, "_fixed_state_no_prefix", False):
+        if getattr(self, "_no_prefix", False):
             return None
         if not is_insert or self.disable_finished_insert:
             return None
@@ -584,6 +557,32 @@ class OrbitKvPrefixCache(BasePrefixCache):
     def _preflight_release_node(
         self, req: Any, *, provisional: bool
     ) -> _PrefixNode | None:
+        if getattr(self, "_no_prefix", False):
+            key = _request_key(req)
+            lease = getattr(req, "_orbitkv_request_lease", None)
+            boundary = getattr(getattr(req, "kv", None), "kv_allocated_len", None)
+            if (
+                lease is None
+                or isinstance(boundary, bool)
+                or not isinstance(boundary, Integral)
+                or int(boundary) < 0
+            ):
+                raise RuntimeError("request-private prefix identity is incomplete")
+            raw_row = getattr(req, "req_pool_idx", None)
+            if (
+                isinstance(raw_row, bool)
+                or not isinstance(raw_row, Integral)
+                or not 0 < int(raw_row) < int(self.req_to_token_pool.req_to_token.shape[0])
+            ):
+                raise RuntimeError("request-private prefix has an invalid row")
+            validate_private_prefix(
+                req,
+                self.req_to_token_pool.req_to_token[int(raw_row)],
+                key,
+                lease,
+                int(boundary),
+            )
+            return None
         provisional_flag = getattr(req, "_orbitkv_provisional_prefix_lock", False)
         held_flag = getattr(req, "_orbitkv_prefix_lock_held", False)
         if type(provisional_flag) is not bool or type(held_flag) is not bool:
@@ -615,6 +614,11 @@ class OrbitKvPrefixCache(BasePrefixCache):
     ) -> None:
         if self._preflight_release_node(req, provisional=provisional) is not node:
             raise RuntimeError("request prefix identity changed after preflight")
+        if getattr(self, "_no_prefix", False):
+            marker = getattr(req, PRIVATE_PREFIX_MARKER, None)
+            if marker is not None:
+                clear_private_prefix(req, marker)
+            return
         if node is None:
             return
         self.dec_lock_ref(node)
@@ -1471,14 +1475,19 @@ class OrbitKvPrefixCache(BasePrefixCache):
             "_orbitkv_prefix_semantic",
             "_orbitkv_provisional_prefix_lock",
             "_orbitkv_prefix_lock_held",
+            PRIVATE_PREFIX_MARKER,
         ):
             if hasattr(req, name):
                 delattr(req, name)
 
 
 def _build_prefix_cache(context: Any) -> OrbitKvPrefixCache:
-    if bool(context.disable_radix_cache):
-        raise RuntimeError("--disable-radix-cache must be false for OrbitKV")
+    no_prefix = _state._requires_disabled_radix_cache()
+    if bool(context.disable_radix_cache) != no_prefix:
+        required = "true" if no_prefix else "false"
+        raise RuntimeError(
+            f"--disable-radix-cache must be {required} for this OrbitKV plan"
+        )
     if bool(context.is_hybrid_ssm) != bool(_config().fixed_states):
         raise RuntimeError(
             "SGLang hybrid-state storage differs from the attention-state plan"

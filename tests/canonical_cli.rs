@@ -67,7 +67,7 @@ fn compile_plan_accepts_only_the_canonical_source_shape() {
 }
 
 #[test]
-fn hf_manager_plan_is_directly_consumable_by_compile_plan() {
+fn hf_token_manager_plan_is_directly_consumable_by_compile_plan() {
     let config = TempJson::new(
         br#"{
           "architectures": ["MistralForCausalLM"],
@@ -78,7 +78,7 @@ fn hf_manager_plan_is_directly_consumable_by_compile_plan() {
         }"#,
     );
     let output = run(&[
-        "compile-hf-manager-plan",
+        "compile-hf-token-manager-plan",
         config.0.to_str().unwrap(),
         "--page-tokens",
         "16",
@@ -106,7 +106,7 @@ fn hf_manager_plan_is_directly_consumable_by_compile_plan() {
 }
 
 #[test]
-fn hf_manager_plan_emits_full_and_hybrid_classes() {
+fn hf_token_manager_plan_emits_full_and_hybrid_classes() {
     let full = TempJson::new(
         br#"{
           "architectures": ["Qwen2ForCausalLM"],
@@ -118,7 +118,7 @@ fn hf_manager_plan_emits_full_and_hybrid_classes() {
         }"#,
     );
     let full_output = run(&[
-        "compile-hf-manager-plan",
+        "compile-hf-token-manager-plan",
         full.0.to_str().unwrap(),
         "--page-tokens",
         "16",
@@ -150,7 +150,7 @@ fn hf_manager_plan_emits_full_and_hybrid_classes() {
         }"#,
     );
     let hybrid_output = run(&[
-        "compile-hf-manager-plan",
+        "compile-hf-token-manager-plan",
         hybrid.0.to_str().unwrap(),
         "--page-tokens",
         "16",
@@ -177,7 +177,7 @@ fn hf_manager_plan_emits_full_and_hybrid_classes() {
 }
 
 #[test]
-fn hf_manager_plan_rejects_unproven_layer_semantics() {
+fn hf_token_manager_plan_rejects_unproven_layer_semantics() {
     let config = TempJson::new(
         br#"{
           "architectures": ["UnknownForCausalLM"],
@@ -188,7 +188,7 @@ fn hf_manager_plan_rejects_unproven_layer_semantics() {
         }"#,
     );
     let output = run(&[
-        "compile-hf-manager-plan",
+        "compile-hf-token-manager-plan",
         config.0.to_str().unwrap(),
         "--page-tokens",
         "16",
@@ -197,6 +197,221 @@ fn hf_manager_plan_rejects_unproven_layer_semantics() {
     ]);
     assert!(!output.status.success());
     assert!(String::from_utf8_lossy(&output.stderr).contains("does not prove"));
+}
+
+#[test]
+fn qwen35_hf_state_input_uses_the_consumable_storage_schema() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let config = root.join("fixtures/qwen3.5-0.8b/config.json");
+    let common = [
+        config.to_str().unwrap(),
+        "--page-tokens",
+        "16",
+        "--kv-dtype-bytes",
+        "2",
+    ];
+
+    let state_input_output = run(&[
+        "compile-hf-state-input",
+        common[0],
+        common[1],
+        common[2],
+        common[3],
+        common[4],
+    ]);
+    assert!(
+        state_input_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&state_input_output.stderr)
+    );
+    let state_input: serde_json::Value =
+        serde_json::from_slice(&state_input_output.stdout).unwrap();
+    assert_eq!(state_input["states"][0]["storage"]["kind"], "token_kv");
+    assert_eq!(
+        state_input["states"][2]["storage"]["state_bytes_per_layer"],
+        36_864
+    );
+    assert!(state_input["states"][0].get("backend").is_none());
+    let generated_state_input = TempJson::new(&state_input_output.stdout);
+    let compiled_state_input = run(&[
+        "compile-state-plan",
+        generated_state_input.0.to_str().unwrap(),
+    ]);
+    assert!(
+        compiled_state_input.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled_state_input.stderr)
+    );
+}
+
+#[test]
+fn qwen35_08b_hf_frontend_compiles_state_and_token_manager_plans() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let config = root.join("fixtures/qwen3.5-0.8b/config.json");
+    let common = [
+        config.to_str().unwrap(),
+        "--page-tokens",
+        "16",
+        "--kv-dtype-bytes",
+        "2",
+    ];
+    let state_output = run(&[
+        "compile-hf-state-plan",
+        common[0],
+        common[1],
+        common[2],
+        common[3],
+        common[4],
+    ]);
+    assert!(
+        state_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&state_output.stderr)
+    );
+    let state_plan: serde_json::Value = serde_json::from_slice(&state_output.stdout).unwrap();
+    assert_eq!(state_plan["schema"], "orbitkv.attention-state-plan.v1");
+    assert_eq!(state_plan["states"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        state_plan["states"][0]["layers"],
+        serde_json::json!([3, 7, 11, 15, 19, 23])
+    );
+    assert_eq!(
+        state_plan["states"][0]["backend"]["components"][0]["bytes_per_token_per_layer"],
+        1_024
+    );
+    assert_eq!(
+        state_plan["states"][0]["backend"]["components"][1]["bytes_per_token_per_layer"],
+        1_024
+    );
+    assert_eq!(
+        state_plan["states"][1]["backend"]["state_bytes_per_layer"],
+        1_048_576
+    );
+    assert_eq!(
+        state_plan["states"][1]["backend"]["checkpoint_slots_per_request"],
+        2
+    );
+    assert_eq!(
+        state_plan["states"][1]["layers"].as_array().unwrap().len(),
+        18
+    );
+    assert_eq!(
+        state_plan["states"][2]["backend"]["state_bytes_per_layer"],
+        36_864
+    );
+    assert_eq!(state_plan["states"][2]["backend"]["kernel_width"], 4);
+
+    let manager_output = run(&[
+        "compile-hf-token-manager-plan",
+        common[0],
+        common[1],
+        common[2],
+        common[3],
+        common[4],
+    ]);
+    assert!(
+        manager_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&manager_output.stderr)
+    );
+    let manager: serde_json::Value = serde_json::from_slice(&manager_output.stdout).unwrap();
+    assert_eq!(manager["classes"].as_array().unwrap().len(), 1);
+    assert_eq!(manager["classes"][0]["name"], "full_attention_kv");
+    assert_eq!(
+        manager["classes"][0]["layers"],
+        serde_json::json!([3, 7, 11, 15, 19, 23])
+    );
+    assert_eq!(manager["classes"][0]["bytes_per_token_per_layer"], 2_048);
+    assert!(manager_output.stderr.is_empty());
+    let generated = TempJson::new(&manager_output.stdout);
+    let compiled = run(&["compile-plan", generated.0.to_str().unwrap()]);
+    assert!(
+        compiled.status.success(),
+        "{}",
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+}
+
+#[test]
+fn qwen38_27b_official_config_compiles_exact_heterogeneous_geometry() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let config = root.join("fixtures/qwen3.8-27b/config.json");
+    let common = [
+        config.to_str().unwrap(),
+        "--page-tokens",
+        "16",
+        "--kv-dtype-bytes",
+        "2",
+    ];
+    let output = run(&[
+        "compile-hf-state-plan",
+        common[0],
+        common[1],
+        common[2],
+        common[3],
+        common[4],
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    let full_layers: Vec<u64> = (3..64).step_by(4).collect();
+    assert_eq!(plan["states"][0]["layers"], serde_json::json!(full_layers));
+    assert_eq!(
+        plan["states"][0]["backend"]["bytes_per_token_per_layer"],
+        4_096
+    );
+    assert_eq!(plan["states"][1]["layers"].as_array().unwrap().len(), 48);
+    assert_eq!(
+        plan["states"][1]["backend"]["state_bytes_per_layer"],
+        3_145_728
+    );
+    assert_eq!(
+        plan["states"][2]["backend"]["state_bytes_per_layer"],
+        61_440
+    );
+    assert_eq!(plan["states"][2]["backend"]["kernel_width"], 4);
+
+    let manager = run(&[
+        "compile-hf-token-manager-plan",
+        common[0],
+        common[1],
+        common[2],
+        common[3],
+        common[4],
+    ]);
+    assert!(
+        manager.status.success(),
+        "{}",
+        String::from_utf8_lossy(&manager.stderr)
+    );
+    let manager: serde_json::Value = serde_json::from_slice(&manager.stdout).unwrap();
+    assert_eq!(manager["classes"].as_array().unwrap().len(), 1);
+    assert_eq!(
+        manager["classes"][0]["layers"],
+        serde_json::json!(full_layers)
+    );
+    assert_eq!(manager["classes"][0]["bytes_per_token_per_layer"], 4_096);
+}
+
+#[test]
+fn deprecated_hf_manager_alias_preserves_the_success_stream_contract() {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let config = root.join("fixtures/qwen3.5-0.8b/config.json");
+    let output = run(&[
+        "compile-hf-manager-plan",
+        config.to_str().unwrap(),
+        "--page-tokens",
+        "16",
+        "--kv-dtype-bytes",
+        "2",
+    ]);
+    assert!(output.status.success());
+    assert!(output.stderr.is_empty());
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(value["classes"].as_array().unwrap().len(), 1);
 }
 
 #[test]

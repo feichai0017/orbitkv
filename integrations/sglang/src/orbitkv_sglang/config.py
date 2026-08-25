@@ -176,7 +176,7 @@ def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
         len(classes) != 1 or retentions != ("full",) or storage != ("latent_kv",)
     ):
         raise ValueError(
-            "first SGLang MLA profile requires one Full latent_kv class"
+            "supported SGLang MLA profile requires one Full latent_kv class"
         )
 
     layers = [layer for item in classes for layer in item.layers]
@@ -386,7 +386,7 @@ def _fixed_state_config(
     if not fixed:
         raise ValueError("ORBITKV_STATE_PLAN contains no fixed-width state")
     if any(item.checkpoint_slots_per_request != 2 for item in fixed):
-        raise ValueError("first fixed-state profile requires two checkpoint slots")
+        raise ValueError("supported fixed-state profile requires two checkpoint slots")
     claimed = [layer for item in (*classes, *fixed) for layer in item.layers]
     if not claimed or sorted(set(claimed)) != list(range(max(claimed) + 1)):
         raise ValueError("attention-state plan must cover every model layer")
@@ -464,6 +464,40 @@ def _token_reclamation_config(
         raise ValueError(
             f"ORBITKV_TOKEN_RECLAMATION.retained_per_page must be below {PAGE_TOKENS}"
         )
+    if mode == "relocate":
+        trigger = values["trigger_tokens"]
+        source_pages = _ceil_div(trigger, PAGE_TOKENS)
+        retained_tokens = (
+            trigger // PAGE_TOKENS * retained
+            + min(trigger % PAGE_TOKENS, retained)
+        )
+        retained_pages = _ceil_div(retained_tokens, PAGE_TOKENS)
+        maximum_source_pages = values["maximum_source_pages"]
+        headroom_pages = values["evacuation_headroom_pages"]
+        if source_pages > maximum_source_pages:
+            raise ValueError(
+                "ORBITKV_TOKEN_RECLAMATION trigger requires "
+                f"{source_pages} source pages, above maximum_source_pages="
+                f"{maximum_source_pages}"
+            )
+        if retained_pages > headroom_pages:
+            raise ValueError(
+                "ORBITKV_TOKEN_RECLAMATION retained tokens require "
+                f"{retained_pages} evacuation headroom pages, above "
+                f"evacuation_headroom_pages={headroom_pages}"
+            )
+        if source_pages <= retained_pages:
+            raise ValueError(
+                "ORBITKV_TOKEN_RECLAMATION relocate mode must project a "
+                "positive page gain"
+            )
+        slots = source_pages * PAGE_TOKENS
+        expected_fragmentation = (slots - retained_tokens) * 1000 // slots
+        if threshold > expected_fragmentation:
+            raise ValueError(
+                "ORBITKV_TOKEN_RECLAMATION.fragmentation_threshold_milli "
+                f"must not exceed expected fragmentation {expected_fragmentation}"
+            )
     return TokenReclamationConfig(
         mode=mode,
         fragmentation_threshold_milli=threshold,

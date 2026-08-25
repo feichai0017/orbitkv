@@ -1,0 +1,81 @@
+{
+  "page_tokens": 16,
+  "states": [
+    {
+      "name": "full_attention_kv",
+      "layers": [
+        3,
+        7,
+        11,
+        15,
+        19,
+        23
+      ],
+      "storage": {
+        "kind": "token_kv",
+        "key_bytes_per_token_per_layer": 1024,
+        "value_bytes_per_token_per_layer": 1024,
+        "retention": "full",
+        "window_tokens": null
+      }
+    },
+    {
+      "name": "gdn_recurrent",
+      "layers": [
+        0,
+        1,
+        2,
+        4,
+        5,
+        6,
+        8,
+        9,
+        10,
+        12,
+        13,
+        14,
+        16,
+        17,
+        18,
+        20,
+        21,
+        22
+      ],
+      "storage": {
+        "kind": "recurrent",
+        "family": "gdn",
+        "state_bytes_per_layer": 1048576,
+        "checkpoint_slots_per_request": 2
+      }
+    },
+    {
+      "name": "gdn_convolution",
+      "layers": [
+        0,
+        1,
+        2,
+        4,
+        5,
+        6,
+        8,
+        9,
+        10,
+        12,
+        13,
+        14,
+        16,
+        17,
+        18,
+        20,
+        21,
+        22
+      ],
+      "storage": {
+        "kind": "convolution",
+        "state_bytes_per_layer": 36864,
+        "kernel_width": 4,
+        "checkpoint_slots_per_request": 2
+      }
+    }
+  ]
+}

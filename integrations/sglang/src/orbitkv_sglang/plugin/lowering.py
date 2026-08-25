@@ -14,6 +14,7 @@ from ..runtime import (
     sglang_page_id,
 )
 from . import state as _state
+from .cow_mirror import preflight_compact_cow
 from .mirror_cleanup import _mirror_cleanup_coordinator, _MirrorCleanupContext
 from .state import _config, _request_key, _runtime
 from .validation import (
@@ -589,6 +590,7 @@ def _tail_locations(spec: Any, *, source: bool, device: Any) -> Any | None:
 @dataclass(frozen=True, slots=True)
 class _CowMirrorPlan:
     assignments: tuple[tuple[Any, Any], ...]
+    retained_assignments: tuple[tuple[Any, tuple[int, ...], tuple[int, ...]], ...]
     mapping: Any | None
     mapping_assignments: tuple[tuple[Any, Any], ...]
 
@@ -608,6 +610,9 @@ def _preflight_cow_mirrors(
         raise RuntimeError("OrbitKV plan has no primary KV class")
     comparisons: list[tuple[Any, Any]] = []
     assignments: list[tuple[Any, Any]] = []
+    retained_assignments: list[
+        tuple[Any, tuple[int, ...], tuple[int, ...]]
+    ] = []
     mapping_assignments: list[tuple[Any, Any]] = []
     mapping = (
         _state._ALLOCATOR.full_to_swa_index_mapping
@@ -618,20 +623,45 @@ def _preflight_cow_mirrors(
         batch.reqs, plans, use_prefix_mirror, strict=True
     ):
         primary_spec = plan.by_class[primary.class_id]
+        compact_request = hasattr(req, "_orbitkv_active_kv_len")
+        if compact_request:
+            row = batch.req_to_token_pool.req_to_token[int(req.req_pool_idx)]
+            substitutions = tuple(
+                (int(old), int(new))
+                for intent in primary_spec.copy_intents
+                for old, new in zip(
+                    _intent_locations(intent, destination=False, device=batch.device),
+                    _intent_locations(intent, destination=True, device=batch.device),
+                    strict=True,
+                )
+            )
+            compact = preflight_compact_cow(
+                req, row, int(plan.previous_boundary), substitutions,
+                prefix_authoritative=prefix_authoritative,
+            )
+            assignments.extend(compact.assignments)
+            if compact.replacement != compact.previous:
+                retained_assignments.append(
+                    (req, compact.previous, compact.replacement)
+                )
+
         if (
             config.full_class is not None
             and config.sliding_class is not None
-            and primary_spec.previous_layout_boundary is not None
-            and primary_spec.previous_layout_boundary != plan.previous_boundary
+            and compact_request
         ):
             retained_full = getattr(req, "_orbitkv_retained_locations", None)
             retained_swa = getattr(req, "_orbitkv_retained_swa_locations", None)
+            packed = (
+                primary_spec.previous_layout_boundary is not None
+                and primary_spec.previous_layout_boundary != plan.previous_boundary
+            )
             if (
-                prefix_authoritative
-                or not isinstance(retained_full, tuple)
+                not isinstance(retained_full, tuple)
                 or not isinstance(retained_swa, tuple)
                 or len(retained_full) != len(retained_swa)
-                or primary_spec.previous_layout_boundary != len(retained_full)
+                or packed
+                and primary_spec.previous_layout_boundary != len(retained_full)
                 or any(spec.copy_intents for spec in plan.class_specs)
             ):
                 raise RuntimeError(
@@ -648,6 +678,8 @@ def _preflight_cow_mirrors(
             )
             comparisons.append((row, expected_full))
             comparisons.append((mapping[expected_full].to(torch.int64), expected_swa))
+            continue
+        if compact_request:
             continue
         count = int(primary_spec.tail_action.valid_token_count)
         if count == 0:
@@ -700,15 +732,29 @@ def _preflight_cow_mirrors(
         expected = torch.cat(tuple(item[1].to(dtype=torch.int64) for item in comparisons))
         if not torch.equal(actual, expected):
             raise RuntimeError("COW intent disagrees with the SGLang candidate mirror")
-    return _CowMirrorPlan(tuple(assignments), mapping, tuple(mapping_assignments))
+    return _CowMirrorPlan(
+        tuple(assignments),
+        tuple(retained_assignments),
+        mapping,
+        tuple(mapping_assignments),
+    )
 
 
 def _commit_cow_mirrors(plan: _CowMirrorPlan) -> None:
+    if any(
+        getattr(req, "_orbitkv_retained_locations", None) is not previous
+        for req, previous, _replacement in plan.retained_assignments
+    ):
+        raise RuntimeError(
+            "compact retained locations changed before COW mirror commit"
+        )
     for target, replacement in plan.assignments:
         target.copy_(replacement)
     if plan.mapping is not None:
         for full_locations, swa_locations in plan.mapping_assignments:
             plan.mapping[full_locations] = swa_locations
+    for req, _previous, replacement in plan.retained_assignments:
+        req._orbitkv_retained_locations = replacement
 
 
 def _submit_batch(batch_record: BatchRecord) -> tuple[Any, ...]:
@@ -723,7 +769,7 @@ def _alloc_for_extend(batch: Any) -> tuple[Any, Any, Any]:
     _validate_batch(batch)
     if any(hasattr(req, "_orbitkv_active_kv_len") for req in batch.reqs):
         raise RuntimeError(
-            "first token-reclamation engine profile supports decode continuation only"
+            "current token-reclamation engine profile supports decode continuation only"
         )
     prefix_values, extend_values, target_values = _preflight_extend_batch(batch)
     batch.maybe_evict_swa()
@@ -1368,7 +1414,7 @@ def _flush_release_group(candidates: Sequence[_ReleaseCandidate]) -> None:
                 "_orbitkv_active_kv_len",
                 "_orbitkv_retained_locations",
                 "_orbitkv_retained_swa_locations",
-                "_orbitkv_token_reclamation_done",
+                "_orbitkv_token_reclamation_next_boundary",
                 "_orbitkv_state_owner_id",
                 "_orbitkv_state_transition",
                 "_orbitkv_state_lease",
@@ -1413,7 +1459,7 @@ def _release_kv_cache(req: Any, tree_cache: Any, is_insert: bool = True) -> None
             "_orbitkv_active_kv_len",
             "_orbitkv_retained_locations",
             "_orbitkv_retained_swa_locations",
-            "_orbitkv_token_reclamation_done",
+            "_orbitkv_token_reclamation_next_boundary",
             "_orbitkv_state_owner_id",
             "_orbitkv_state_transition",
             "_orbitkv_state_lease",

@@ -11,10 +11,15 @@ SOURCE_ROOT = Path(__file__).resolve().parents[1] / "src"
 sys.path.insert(0, str(SOURCE_ROOT))
 
 import orbitkv_sglang.plugin.facade as facade  # noqa: E402
+import orbitkv_sglang.plugin.hooks as hooks  # noqa: E402
 import orbitkv_sglang.plugin.lowering as lowering  # noqa: E402
 import orbitkv_sglang.plugin.prefix_cache as prefix_cache  # noqa: E402
 import orbitkv_sglang.plugin.state as state  # noqa: E402
-from orbitkv_sglang.config import ClassConfig, ManagerPlanConfig  # noqa: E402
+from orbitkv_sglang.config import (  # noqa: E402
+    ClassConfig,
+    FixedStateConfig,
+    ManagerPlanConfig,
+)
 from orbitkv_sglang.runtime import (  # noqa: E402
     ArenaIdentity,
     ArenaRegistration,
@@ -23,6 +28,7 @@ from orbitkv_sglang.runtime import (  # noqa: E402
     ManagerStats,
     RequestLease,
     RetryableConflict,
+    SwaActivity,
 )
 
 
@@ -149,6 +155,86 @@ def _install_runtime(runtime):
         runtime=runtime,
     )
     state._ALLOCATOR = object()
+
+
+class WorkerTreeCache:
+    pass
+
+
+def test_internal_state_echoes_loaded_runtime_plan_and_actual_tree_cache_type():
+    config = ManagerPlanConfig(
+        plan_path=Path("plan.json"),
+        library_path=Path("liborbitkv_ffi.so"),
+        plan_json=b"{}",
+        plan_fingerprint="sha256:worker-manager",
+        page_tokens=16,
+        classes=_config().classes,
+        fixed_states=(
+            FixedStateConfig("recurrent", "mamba", (1,), 96, 2),
+        ),
+        state_plan_path=Path("state-plan.json"),
+        state_plan_fingerprint="sha256:worker-state",
+    )
+    identity = ArenaIdentity(1, 2, 1, 0, 1, 8, 16, 0, 1)
+
+    class Runtime:
+        arenas = (identity,)
+        poll_count = 0
+
+        def poll(self):
+            self.poll_count += 1
+
+        def census(self):
+            return _manager_stats(0), (_arena_stats(0),)
+
+        def swa_activity(self):
+            return SwaActivity(0, 0, 0)
+
+        def performance_counters(self):
+            return {}
+
+    state._install_test_state(config=config, runtime=Runtime())
+    scheduler = SimpleNamespace(tree_cache=WorkerTreeCache())
+    result = SimpleNamespace(internal_state={"upstream": True})
+
+    returned = hooks._get_internal_state(
+        lambda owner: result, scheduler
+    )
+
+    assert returned is result
+    assert state._RUNTIME.poll_count == 1
+    assert result.internal_state["upstream"] is True
+    manager_state = result.internal_state["orbitkv_manager"]
+    readback = {
+        name: manager_state[name]
+        for name in (
+            "plan_fingerprint",
+            "state_plan_fingerprint",
+            "fixed_state_byte_count",
+            "fixed_state_descriptors",
+            "tree_cache_type",
+        )
+    }
+    assert readback == {
+        "plan_fingerprint": "sha256:worker-manager",
+        "state_plan_fingerprint": "sha256:worker-state",
+        "fixed_state_byte_count": 96,
+        "fixed_state_descriptors": [
+            {
+                "name": "recurrent",
+                "kind": "mamba",
+                "layers": [1],
+                "state_bytes_per_layer": 96,
+                "checkpoint_slots_per_request": 2,
+                "kernel_width": None,
+                "byte_count": 96,
+            }
+        ],
+        "tree_cache_type": {
+            "module": __name__,
+            "qualname": "WorkerTreeCache",
+        },
+    }
 
 
 class _DestroyManager:
@@ -306,6 +392,7 @@ def test_waiting_cancel_commits_manager_release_before_dropping_provisional_lock
         _orbitkv_request_lease=lease,
         _orbitkv_prefix_node=node,
         _orbitkv_provisional_prefix_lock=True,
+        _orbitkv_token_reclamation_next_boundary=72,
         last_node=node,
     )
 
@@ -314,6 +401,7 @@ def test_waiting_cancel_commits_manager_release_before_dropping_provisional_lock
     assert node.lock_ref == 1
     assert runtime.has_request(key)
     assert req._orbitkv_provisional_prefix_lock is True
+    assert req._orbitkv_token_reclamation_next_boundary == 72
     assert "drop_provisional" not in events
 
     lowering._release_kv_cache(req, tree)
@@ -324,6 +412,7 @@ def test_waiting_cancel_commits_manager_release_before_dropping_provisional_lock
     assert node.lock_ref == 0
     assert not runtime.has_request(key)
     assert not hasattr(req, "_orbitkv_request_lease")
+    assert not hasattr(req, "_orbitkv_token_reclamation_next_boundary")
 
 
 def test_waiting_cancel_rejects_lost_node_before_manager_release():
@@ -419,6 +508,7 @@ def test_finished_pending_event_waits_before_boundary_validation_and_release():
         prefix_indices=torch.arange(8, dtype=torch.int64),
         _orbitkv_request_key=key,
         _orbitkv_request_lease=lease,
+        _orbitkv_token_reclamation_next_boundary=72,
         effective_kv_committed_len=lambda: 9,
     )
 
@@ -436,6 +526,7 @@ def test_finished_pending_event_waits_before_boundary_validation_and_release():
     assert req.req_pool_idx is None
     assert req.kv is None
     assert not hasattr(req, "_orbitkv_request_lease")
+    assert not hasattr(req, "_orbitkv_token_reclamation_next_boundary")
 
 
 def test_finished_callback_identity_mutation_is_rejected_before_native_release():

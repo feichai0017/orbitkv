@@ -21,6 +21,7 @@ mod relocation_transaction;
 #[cfg(test)]
 mod test_model;
 mod token_virtualization;
+mod transaction_recovery;
 mod transaction_validation;
 
 use arena::{Arena, PageCounts, PagePhase, PageState};

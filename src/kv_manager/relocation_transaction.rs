@@ -1,15 +1,16 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use crate::plan::RetentionKind;
 
-use super::persistent_snapshot::RootLayout;
+use super::persistent_snapshot::{ClassRoot, RootLayout};
 use super::{
     BatchCompletionReceipt, CanonicalKvManager, CompletedRelocationBatch, KvManagerError,
     PagePhase, PersistentRootEntries, PrepareRelocationItem, PreparedRelocation, ReclamationState,
     RelocationCopyReceipt, RelocationDestination, RelocationLease, RelocationPageState,
     RelocationPlan, RelocationUnobservedReceipt, RequestSnapshot, SnapshotLease,
-    SubmittedRelocation, TokenView, apply_token_relocation, plan_token_relocation,
+    SubmittedRelocation, TokenView, ViewVersion, apply_token_relocation, plan_token_relocation,
+    validate_token_view,
 };
 
 #[derive(Clone, Debug)]
@@ -22,6 +23,150 @@ pub(super) struct RelocationState {
 }
 
 impl CanonicalKvManager {
+    fn validate_relocation_source_page(
+        &self,
+        class_id: u16,
+        source: super::PageLease,
+    ) -> Result<(), KvManagerError> {
+        let class = self.runtime_class(class_id)?;
+        self.validate_page_lease(class, source)?;
+        let page = self.page(source.page_id)?;
+        if page.generation != source.generation
+            || page.phase != PagePhase::Live
+            || page.request_refs != 1
+            || page.prefix_refs != 0
+            || page.reader_pins != 0
+            || page.writer.is_some()
+        {
+            return Err(KvManagerError::StalePage);
+        }
+        Ok(())
+    }
+
+    fn validate_reserved_relocation_destination(
+        &self,
+        class_id: u16,
+        relocation: RelocationLease,
+        destination: super::PageLease,
+    ) -> Result<(), KvManagerError> {
+        let class = self.runtime_class(class_id)?;
+        self.validate_page_lease(class, destination)?;
+        let page = self.page(destination.page_id)?;
+        if page.generation != destination.generation
+            || page.phase != (PagePhase::ReservedRelocation { relocation })
+            || page.request_refs != 0
+            || page.prefix_refs != 0
+            || page.reader_pins != 0
+            || page.writer.is_some()
+        {
+            return Err(KvManagerError::StalePage);
+        }
+        Ok(())
+    }
+
+    /// Validates the exact correspondence between a Full-class root, its
+    /// absolute token history, and its current physical layout.
+    ///
+    /// A source root may contain dead tokens that still occupy physical slots:
+    /// semantic death alone does not release storage. A freshly compacted
+    /// target is stricter and must contain only retained physical placements.
+    fn validate_relocation_root(
+        &self,
+        class_id: u16,
+        snapshot_boundary: u64,
+        view_version: ViewVersion,
+        root: &ClassRoot,
+        require_compacted: bool,
+    ) -> Result<TokenView, KvManagerError> {
+        if root.tokens.len() != snapshot_boundary {
+            return Err(KvManagerError::Invariant("token table boundary"));
+        }
+        let class = self.runtime_class(class_id)?;
+        let page_tokens = u32::try_from(self.page_tokens)
+            .map_err(|_| KvManagerError::ArithmeticOverflow("page tokens"))?;
+        let view = TokenView {
+            class_id,
+            version: view_version,
+            page_tokens,
+            placements: root.tokens.materialize()?,
+        };
+        validate_token_view(&view)?;
+        for (token_id, placement) in view.placements.iter().enumerate() {
+            if placement.token_id
+                != u64::try_from(token_id)
+                    .map_err(|_| KvManagerError::ArithmeticOverflow("token id"))?
+            {
+                return Err(KvManagerError::InvalidTokenView);
+            }
+        }
+
+        let physical_boundary = root.mirror_boundary(snapshot_boundary);
+        if root.is_dense() && root.resident_tokens != snapshot_boundary {
+            return Err(KvManagerError::Invariant("dense resident token boundary"));
+        }
+        let expected_entries = usize::try_from(physical_boundary.div_ceil(self.page_tokens))
+            .map_err(|_| KvManagerError::ArithmeticOverflow("root entry count"))?;
+        if root.entries.len() != expected_entries {
+            return Err(KvManagerError::Invariant("root physical span"));
+        }
+
+        let mut entries = BTreeMap::new();
+        for (ordinal, entry) in root.entries.iter().copied().enumerate() {
+            let ordinal = u64::try_from(ordinal)
+                .map_err(|_| KvManagerError::ArithmeticOverflow("root ordinal"))?;
+            if self.root_entry_for_page(class, ordinal, entry.page)? != entry
+                || entries
+                    .insert(entry.page, (ordinal, entry.backend_index))
+                    .is_some()
+            {
+                return Err(KvManagerError::Invariant("root physical identity"));
+            }
+        }
+
+        let mut occupied = BTreeSet::new();
+        let mut retained = 0_u64;
+        for placement in &view.placements {
+            retained = retained
+                .checked_add(u64::from(placement.disposition.retained()))
+                .ok_or(KvManagerError::ArithmeticOverflow("retained tokens"))?;
+            let Some(location) = placement.location else {
+                if root.is_dense() {
+                    return Err(KvManagerError::TokenPlacementMismatch);
+                }
+                continue;
+            };
+            if require_compacted && !placement.disposition.retained() {
+                return Err(KvManagerError::TokenPlacementMismatch);
+            }
+            let (ordinal, backend_index) = entries
+                .get(&location.page)
+                .copied()
+                .ok_or(KvManagerError::TokenPlacementMismatch)?;
+            if backend_index != location.backend_index {
+                return Err(KvManagerError::TokenPlacementMismatch);
+            }
+            let physical_slot = ordinal
+                .checked_mul(self.page_tokens)
+                .and_then(|begin| begin.checked_add(u64::from(location.offset)))
+                .ok_or(KvManagerError::ArithmeticOverflow("physical token slot"))?;
+            if physical_slot >= physical_boundary
+                || root.is_dense() && physical_slot != placement.token_id
+                || !occupied.insert(physical_slot)
+            {
+                return Err(KvManagerError::TokenPlacementMismatch);
+            }
+        }
+        if u64::try_from(occupied.len())
+            .map_err(|_| KvManagerError::ArithmeticOverflow("occupied token slots"))?
+            != physical_boundary
+            || !occupied.iter().copied().eq(0..physical_boundary)
+            || require_compacted && retained != physical_boundary
+        {
+            return Err(KvManagerError::TokenPlacementMismatch);
+        }
+        Ok(view)
+    }
+
     /// Atomically plans and reserves one full-evacuation relocation per request.
     ///
     /// # Errors
@@ -68,7 +213,7 @@ impl CanonicalKvManager {
             let class = self.runtime_class(item.class_id)?;
             if class.retention != RetentionKind::Full || !item.policy.full_evacuation {
                 return Err(KvManagerError::UnsupportedProfile(
-                    "first relocation transaction requires Full evacuation",
+                    "relocation requires Full-class full evacuation",
                 ));
             }
             let snapshot = self.request_snapshot(item.request)?;
@@ -76,19 +221,13 @@ impl CanonicalKvManager {
                 .roots
                 .get(usize::from(item.class_id))
                 .ok_or(KvManagerError::InvalidClass(item.class_id))?;
-            if !root.is_dense() || root.tokens.len() != snapshot.boundary {
-                return Err(KvManagerError::UnsupportedProfile(
-                    "nested or append-after-relocation is not implemented",
-                ));
-            }
-            let placements = root.tokens.materialize()?;
-            let view = TokenView {
-                class_id: item.class_id,
-                version: snapshot.view_version,
-                page_tokens: u32::try_from(self.page_tokens)
-                    .map_err(|_| KvManagerError::ArithmeticOverflow("page tokens"))?,
-                placements,
-            };
+            let view = self.validate_relocation_root(
+                item.class_id,
+                snapshot.boundary,
+                snapshot.view_version,
+                root,
+                false,
+            )?;
             let mut page_states = Vec::with_capacity(root.entries.len());
             for entry in root.entries.iter().copied() {
                 self.validate_page_lease(class, entry.page)?;
@@ -211,6 +350,11 @@ impl CanonicalKvManager {
     ///
     /// Any stale, duplicate, unobserved, uncopied, or mismatched receipt rejects
     /// the operation. Semantic uncertainty quarantines every destination.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if manager-owned relocation state changes after collective
+    /// preflight, which indicates an internal invariant violation.
     #[allow(clippy::too_many_lines)]
     pub fn submit_relocation_batch(
         &mut self,
@@ -221,12 +365,16 @@ impl CanonicalKvManager {
             return Err(KvManagerError::EmptyBatch);
         }
         let mut seen = BTreeSet::new();
+        let mut seen_requests = BTreeSet::new();
         let mut seen_pages = BTreeSet::new();
         let mut plans = Vec::with_capacity(relocations.len());
         let mut receipt_offset = 0_usize;
         for &relocation in relocations {
-            if relocation.engine_epoch != self.engine_epoch || !seen.insert(relocation) {
+            if relocation.engine_epoch != self.engine_epoch {
                 return Err(KvManagerError::WrongEngine);
+            }
+            if !seen.insert(relocation) {
+                return Err(KvManagerError::DuplicateStep);
             }
             let state = self
                 .relocations
@@ -235,6 +383,16 @@ impl CanonicalKvManager {
             if state.submitted {
                 return Err(KvManagerError::StepAlreadySubmitted);
             }
+            if !seen_requests.insert(state.request) {
+                return Err(KvManagerError::DuplicateRequest);
+            }
+            let request = self.request(state.request)?;
+            if request.head != state.base_snapshot || request.pending_relocation != Some(relocation)
+            {
+                return Err(KvManagerError::StaleTokenView);
+            }
+            self.snapshots
+                .get(state.target_snapshot.slot, state.target_snapshot.generation)?;
             let end = receipt_offset
                 .checked_add(state.plan.moves.len())
                 .ok_or(KvManagerError::InvalidBatchRange)?;
@@ -246,9 +404,19 @@ impl CanonicalKvManager {
                 .source_pages
                 .iter()
                 .chain(state.plan.destination_pages.iter())
-                .any(|page| !seen_pages.insert(*page))
+                .any(|page| !seen_pages.insert(page.page_id))
             {
                 return Err(KvManagerError::DuplicatePage);
+            }
+            for &source in &state.plan.source_pages {
+                self.validate_relocation_source_page(state.plan.class_id, source)?;
+            }
+            for &destination in &state.plan.destination_pages {
+                self.validate_reserved_relocation_destination(
+                    state.plan.class_id,
+                    relocation,
+                    destination,
+                )?;
             }
             plans.push((relocation, state, receipt_offset, end));
             receipt_offset = end;
@@ -282,13 +450,18 @@ impl CanonicalKvManager {
         if let Err(error) = semantic_result {
             for (relocation, state, _, _) in &plans {
                 for destination in &state.plan.destination_pages {
-                    self.set_page_phase(destination.page_id, PagePhase::Quarantined)?;
+                    self.set_page_phase(destination.page_id, PagePhase::Quarantined)
+                        .expect("relocation submit preflight retained destination");
                 }
                 self.snapshots
-                    .remove(state.target_snapshot.slot, state.target_snapshot.generation)?;
+                    .remove(state.target_snapshot.slot, state.target_snapshot.generation)
+                    .expect("relocation submit preflight retained target snapshot");
                 self.relocations
-                    .remove(relocation.slot, relocation.generation)?;
-                let request = self.request_mut(state.request)?;
+                    .remove(relocation.slot, relocation.generation)
+                    .expect("relocation submit preflight retained relocation");
+                let request = self
+                    .request_mut(state.request)
+                    .expect("relocation submit preflight retained request");
                 request.pending_relocation = None;
                 request.quarantined = true;
             }
@@ -296,7 +469,9 @@ impl CanonicalKvManager {
         }
         for (relocation, state, _, _) in &plans {
             for source in &state.plan.source_pages {
-                self.page_mut(source.page_id)?.reader_pins += 1;
+                self.page_mut(source.page_id)
+                    .expect("relocation submit preflight retained source")
+                    .reader_pins += 1;
             }
             for destination in &state.plan.destination_pages {
                 self.set_page_phase(
@@ -304,10 +479,12 @@ impl CanonicalKvManager {
                     PagePhase::Relocating {
                         relocation: *relocation,
                     },
-                )?;
+                )
+                .expect("relocation submit preflight retained destination");
             }
             self.relocations
-                .get_mut(relocation.slot, relocation.generation)?
+                .get_mut(relocation.slot, relocation.generation)
+                .expect("relocation submit preflight retained relocation")
                 .submitted = true;
         }
         Ok(plans
@@ -362,13 +539,14 @@ impl CanonicalKvManager {
             let snapshot = self.request_snapshot(state.request)?;
             let class = self.runtime_class(state.plan.class_id)?;
             let root = &snapshot.roots[usize::from(state.plan.class_id)];
-            let view = TokenView {
-                class_id: state.plan.class_id,
-                version: snapshot.view_version,
-                page_tokens: u32::try_from(self.page_tokens)
-                    .map_err(|_| KvManagerError::ArithmeticOverflow("page tokens"))?,
-                placements: root.tokens.materialize()?,
-            };
+            let view = self.validate_relocation_root(
+                state.plan.class_id,
+                snapshot.boundary,
+                snapshot.view_version,
+                root,
+                false,
+            )?;
+            let source_layout_boundary = root.mirror_boundary(snapshot.boundary);
             let target_view = apply_token_relocation(&view, &state.plan)?;
             let mut target_roots = snapshot.roots.iter().cloned().collect::<Vec<_>>();
             let target_root = &mut target_roots[usize::from(state.plan.class_id)];
@@ -395,12 +573,26 @@ impl CanonicalKvManager {
                     .count(),
             )
             .map_err(|_| KvManagerError::ArithmeticOverflow("resident tokens"))?;
+            self.validate_relocation_root(
+                state.plan.class_id,
+                snapshot.boundary,
+                state.plan.target_version,
+                target_root,
+                true,
+            )?;
+            let mut retiring_for_request = Vec::with_capacity(state.plan.source_pages.len());
             for source in &state.plan.source_pages {
                 if !seen_pages.insert(*source) {
                     return Err(KvManagerError::DuplicatePage);
                 }
                 let page = self.page(source.page_id)?;
-                if page.reader_pins == 0 || page.request_refs != 1 || page.prefix_refs != 0 {
+                if page.generation != source.generation
+                    || page.phase != PagePhase::Live
+                    || page.reader_pins != 1
+                    || page.request_refs != 1
+                    || page.prefix_refs != 0
+                    || page.writer.is_some()
+                {
                     return Err(KvManagerError::StalePage);
                 }
                 let entry = root
@@ -409,26 +601,36 @@ impl CanonicalKvManager {
                     .copied()
                     .find(|entry| entry.page == *source)
                     .ok_or(KvManagerError::InvalidRelocationPlan)?;
-                retiring.push((entry, snapshot.boundary));
+                retiring_for_request.push((entry, source_layout_boundary));
             }
+            // The planner orders evacuation candidates by occupancy, which is
+            // intentionally different from the canonical root order after a
+            // packed append.  Keep each request's certificates contiguous and
+            // publish them in physical logical-ordinal order.
+            retiring_for_request
+                .sort_unstable_by_key(|(entry, _)| (entry.logical_ordinal, entry.page));
+            retiring.extend(retiring_for_request);
             for destination in &state.plan.destination_pages {
                 if !seen_pages.insert(*destination) {
                     return Err(KvManagerError::DuplicatePage);
                 }
+                let page = self.page(destination.page_id)?;
+                if page.generation != destination.generation
+                    || page.phase != (PagePhase::Relocating { relocation })
+                    || page.reader_pins != 0
+                    || page.request_refs != 0
+                    || page.prefix_refs != 0
+                    || page.writer.is_some()
+                {
+                    return Err(KvManagerError::StalePage);
+                }
             }
-            let resident_tokens = target_root.resident_tokens;
             let resident_pages = target_roots.iter().try_fold(0_usize, |count, root| {
                 count
                     .checked_add(root.entries.len())
                     .ok_or(KvManagerError::ArithmeticOverflow("resident pages"))
             })?;
-            plans.push((
-                relocation,
-                state,
-                target_roots,
-                resident_tokens,
-                resident_pages,
-            ));
+            plans.push((relocation, state, target_roots, resident_pages));
         }
         let reclamation_slots = self.reclamations.plan_many(retiring.len())?;
         let certificates = retiring
@@ -444,7 +646,7 @@ impl CanonicalKvManager {
                 )
             })
             .collect::<Result<Vec<_>, _>>()?;
-        for (_, state, roots, _, _) in &plans {
+        for (_, state, roots, _) in &plans {
             for source in &state.plan.source_pages {
                 let mut page = self.page_mut(source.page_id)?;
                 page.reader_pins -= 1;
@@ -479,7 +681,7 @@ impl CanonicalKvManager {
             );
         }
         let mut publications = Vec::with_capacity(plans.len());
-        for (relocation, state, _, _resident_tokens, resident_pages) in plans {
+        for (relocation, state, _, resident_pages) in plans {
             self.snapshots
                 .remove(state.base_snapshot.slot, state.base_snapshot.generation)?;
             let request = self.request_mut(state.request)?;
@@ -512,6 +714,11 @@ impl CanonicalKvManager {
     /// # Errors
     ///
     /// Rejects submitted, stale, duplicated, or unproven operations before mutation.
+    ///
+    /// # Panics
+    ///
+    /// Panics only if manager-owned relocation state changes after collective
+    /// preflight, which indicates an internal invariant violation.
     pub fn abort_relocations_batch(
         &mut self,
         receipts: &[RelocationUnobservedReceipt],
@@ -519,30 +726,74 @@ impl CanonicalKvManager {
         if receipts.is_empty() {
             return Err(KvManagerError::EmptyBatch);
         }
+        let mut seen_relocations = BTreeSet::new();
+        let mut seen_requests = BTreeSet::new();
+        let mut seen_pages = BTreeSet::new();
         let mut states = Vec::with_capacity(receipts.len());
         for receipt in receipts {
             if receipt.backend_unobserved != 1 || receipt.reserved != 0 {
                 return Err(KvManagerError::BackendObservationUnknown);
             }
             let relocation = receipt.relocation;
+            if relocation.engine_epoch != self.engine_epoch {
+                return Err(KvManagerError::WrongEngine);
+            }
+            if !seen_relocations.insert(relocation) {
+                return Err(KvManagerError::DuplicateStep);
+            }
             let state = self
                 .relocations
                 .get(relocation.slot, relocation.generation)?;
             if state.submitted {
                 return Err(KvManagerError::StepAlreadySubmitted);
             }
-            states.push((relocation, state.clone()));
-        }
-        for (relocation, state) in states {
-            for destination in state.plan.destination_pages.iter().rev() {
-                self.set_page_phase(destination.page_id, PagePhase::Free)?;
-                self.free_pages[usize::from(state.plan.class_id)].push(destination.page_id);
+            if !seen_requests.insert(state.request) {
+                return Err(KvManagerError::DuplicateRequest);
+            }
+            let request = self.request(state.request)?;
+            if request.head != state.base_snapshot || request.pending_relocation != Some(relocation)
+            {
+                return Err(KvManagerError::StaleTokenView);
             }
             self.snapshots
-                .remove(state.target_snapshot.slot, state.target_snapshot.generation)?;
+                .get(state.target_snapshot.slot, state.target_snapshot.generation)?;
+            for &destination in &state.plan.destination_pages {
+                if !seen_pages.insert(destination.page_id) {
+                    return Err(KvManagerError::DuplicatePage);
+                }
+                self.validate_reserved_relocation_destination(
+                    state.plan.class_id,
+                    relocation,
+                    destination,
+                )?;
+            }
+            states.push((relocation, state.clone()));
+        }
+        let mut recycled_by_class = vec![Vec::<u32>::new(); self.classes.len()];
+        for (relocation, state) in states {
+            for destination in &state.plan.destination_pages {
+                if destination.generation == u64::MAX {
+                    self.set_page_phase(destination.page_id, PagePhase::Exhausted)
+                        .expect("relocation abort preflight retained destination");
+                } else {
+                    self.set_page_phase(destination.page_id, PagePhase::Free)
+                        .expect("relocation abort preflight retained destination");
+                    recycled_by_class[usize::from(state.plan.class_id)].push(destination.page_id);
+                }
+            }
+            self.snapshots
+                .remove(state.target_snapshot.slot, state.target_snapshot.generation)
+                .expect("relocation abort preflight retained target snapshot");
             self.relocations
-                .remove(relocation.slot, relocation.generation)?;
-            self.request_mut(state.request)?.pending_relocation = None;
+                .remove(relocation.slot, relocation.generation)
+                .expect("relocation abort preflight retained relocation");
+            self.request_mut(state.request)
+                .expect("relocation abort preflight retained request")
+                .pending_relocation = None;
+        }
+        for (free, mut recycled) in self.free_pages.iter_mut().zip(recycled_by_class) {
+            recycled.sort_unstable_by(|left, right| right.cmp(left));
+            free.extend(recycled);
         }
         Ok(())
     }

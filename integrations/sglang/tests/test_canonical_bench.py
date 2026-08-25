@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 import subprocess
 import sys
 from argparse import Namespace
@@ -18,6 +19,7 @@ sys.path.insert(0, str(INTEGRATION_ROOT))
 sys.path.insert(0, str(SOURCE_ROOT))
 
 import bench_canonical_manager as bench  # noqa: E402
+from orbitkv_sglang.benchmark_profiles import expected_mirror_transactions  # noqa: E402
 import bench_compact_control as compact  # noqa: E402
 
 
@@ -52,6 +54,7 @@ def _arguments(**overrides):
         "sglang_root": "/sglang",
         "model": "/model",
         "plan": "/plan.json",
+        "state_plan": None,
         "library": "/liborbitkv_ffi.so",
         "requests": 1,
         "max_running_requests": 4,
@@ -63,6 +66,7 @@ def _arguments(**overrides):
         "max_total_tokens": 4096,
         "mem_fraction_static": None,
         "attention_backend": "fa3",
+        "fp8_gemm_backend": None,
         "seed": 20260820,
     }
     values.update(overrides)
@@ -106,6 +110,14 @@ def _write_config(tmp_path: Path, value: dict) -> Path:
     return model
 
 
+def _qwen35_config() -> dict:
+    return json.loads(
+        (REPOSITORY_ROOT / "fixtures/qwen3.5-0.8b/config.json").read_text(
+            encoding="utf-8"
+        )
+    )
+
+
 def _checkout_inputs(tmp_path: Path) -> dict[str, str]:
     sglang = tmp_path / "sglang"
     (sglang / "python/sglang").mkdir(parents=True)
@@ -145,7 +157,24 @@ def test_help_exposes_only_independent_manager_and_stock_runs():
     )
     assert "--mode {manager,stock}" in completed.stdout
     assert "--max-total-tokens" in completed.stdout
+    assert "--state-plan" in completed.stdout
     assert "--attention-backend {fa3,flashinfer}" in completed.stdout
+    assert (
+        "--fp8-gemm-backend "
+        "{deep_gemm,flashinfer_deepgemm,triton}"
+    ) in completed.stdout
+
+
+def test_fp8_gemm_backend_parser_defaults_to_omitted_and_rejects_auto():
+    action = next(
+        action
+        for action in bench.build_parser()._actions
+        if action.dest == "fp8_gemm_backend"
+    )
+    assert action.default is None
+    assert tuple(action.choices) == bench.FP8_GEMM_BACKENDS
+    assert "auto" not in action.choices
+    assert "aiter" not in action.choices
 
 
 def test_compact_control_help_requires_exact_abi8_matrix_dimensions():
@@ -290,12 +319,55 @@ def test_qwen2_engine_profile_rejects_flashinfer():
         )
 
 
+@pytest.mark.parametrize("mode", ("manager", "stock"))
+def test_qwen35_engine_profile_is_exact_and_disables_radix(mode):
+    contract = _attention_contract(
+        "Qwen3_5ForConditionalGeneration",
+        workload_profile="fresh_prompt",
+        backend_profile={
+            "attention_backend": "fa3",
+            "linear_attn_backend": "triton",
+            "linear_attn_decode_backend": "triton",
+            "linear_attn_prefill_backend": "triton",
+            "mamba_ssm_dtype": "float32",
+            "mamba_radix_cache_strategy": "no_buffer",
+        },
+    )
+    values = bench.engine_arguments(_arguments(mode=mode), Path("/model"), contract)
+    assert values["disable_radix_cache"] is True
+    assert values["attention_backend"] == "fa3"
+    assert values["linear_attn_backend"] == "triton"
+    assert values["linear_attn_decode_backend"] == "triton"
+    assert values["linear_attn_prefill_backend"] == "triton"
+    assert values["mamba_ssm_dtype"] == "float32"
+    assert values["mamba_radix_cache_strategy"] == "no_buffer"
+    if mode == "manager":
+        assert values["radix_cache_backend"] == "orbitkv"
+    else:
+        assert "radix_cache_backend" not in values
+
+
 def test_engine_profile_enables_batch_invariant_inference():
     values = bench.engine_arguments(
         _arguments(), Path("/model"), _attention_contract()
     )
     assert values["enable_deterministic_inference"] is True
     assert values["sampling_backend"] == "pytorch"
+
+
+@pytest.mark.parametrize("mode", ("manager", "stock"))
+def test_explicit_fp8_gemm_backend_maps_to_sglang_engine_argument(mode):
+    default_values = bench.engine_arguments(
+        _arguments(mode=mode), Path("/model"), _attention_contract()
+    )
+    assert "fp8_gemm_runner_backend" not in default_values
+
+    explicit_values = bench.engine_arguments(
+        _arguments(mode=mode, fp8_gemm_backend="triton"),
+        Path("/model"),
+        _attention_contract(),
+    )
+    assert explicit_values["fp8_gemm_runner_backend"] == "triton"
 
 
 def test_b4_inputs_share_only_the_exact_page_aligned_seed_prefix():
@@ -310,6 +382,44 @@ def test_b4_inputs_share_only_the_exact_page_aligned_seed_prefix():
     assert len({tuple(prompt[:seed_boundary]) for prompt in prompts}) == 1
     assert all(prompt[:seed_boundary] == seed_inputs[0] for prompt in prompts)
     assert len({tuple(prompt) for prompt in prompts}) == 4
+
+
+def test_qwen35_fresh_inputs_share_no_complete_prefix_page_across_iterations():
+    forbidden = (1019, 1020, 1021, 1022)
+    rows = [
+        bench.fresh_input_ids(
+            requests=4, prompt_tokens=513, vocab_size=1024,
+            seed=20260820, iteration=iteration,
+            forbidden_token_ids=forbidden,
+            token_upper_bound=1019,
+        )
+        for iteration in range(5)
+    ]
+    prompts = [prompt for row in rows for prompt in row]
+    assert len({tuple(prompt[:16]) for prompt in prompts}) == 20
+    assert len({tuple(prompt) for prompt in prompts}) == 20
+    assert not set(forbidden).intersection(
+        token for prompt in prompts for token in prompt
+    )
+    assert all(token < 1019 for prompt in prompts for token in prompt)
+
+
+def test_fresh_inputs_reject_a_matrix_that_cannot_keep_first_pages_unique():
+    with pytest.raises(RuntimeError, match="collision-free token domain"):
+        bench.fresh_input_ids(
+            requests=2, prompt_tokens=16, vocab_size=6, seed=1, iteration=1,
+            forbidden_token_ids=(5,),
+        )
+
+
+def test_fresh_inputs_allow_large_seeds_without_reusing_first_tokens():
+    first = bench.fresh_input_ids(
+        requests=2, prompt_tokens=16, vocab_size=16, seed=10_000, iteration=0
+    )
+    second = bench.fresh_input_ids(
+        requests=2, prompt_tokens=16, vocab_size=16, seed=10_000, iteration=1
+    )
+    assert len({row[0] for row in (*first, *second)}) == 4
 
 
 def test_pair_normalization_allows_only_explicit_radix_backend_selection():
@@ -351,12 +461,57 @@ def test_pair_normalization_allows_only_explicit_radix_backend_selection():
     ) == "UnifiedRadixCache"
 
 
+def test_pair_normalization_binds_explicit_fp8_gemm_backend():
+    manager = bench.engine_arguments(
+        _arguments(mode="manager", fp8_gemm_backend="triton"),
+        Path("/model"),
+        _attention_contract(),
+    )
+    stock = bench.engine_arguments(
+        _arguments(mode="stock", fp8_gemm_backend="triton"),
+        Path("/model"),
+        _attention_contract(),
+    )
+    paired_manager = bench.pair_engine_arguments("manager", manager)
+    paired_stock = bench.pair_engine_arguments("stock", stock)
+    assert paired_manager == paired_stock
+    assert paired_manager["fp8_gemm_runner_backend"] == "triton"
+
+    stock["fp8_gemm_runner_backend"] = "deep_gemm"
+    assert bench.pair_engine_arguments("stock", stock) != paired_manager
+
+
 def test_manager_accepts_same_explicit_storage_cap(tmp_path):
     paths = _checkout_inputs(tmp_path)
     args = _arguments(**paths)
     resolved = bench.validate_arguments(args)
     assert resolved["plan"] == Path(paths["plan"]).resolve()
     assert resolved["library"] == Path(paths["library"]).resolve()
+
+
+def test_manager_state_plan_is_explicit_and_exported(tmp_path, monkeypatch):
+    paths = _checkout_inputs(tmp_path)
+    state_plan = tmp_path / "state-plan.json"
+    state_plan.write_text("{}", encoding="utf-8")
+    args = _arguments(**paths, state_plan=str(state_plan))
+    resolved = bench.validate_arguments(args)
+    assert resolved["state_plan"] == state_plan.resolve()
+    monkeypatch.setattr(sys, "path", list(sys.path))
+    monkeypatch.setattr(os, "environ", os.environ.copy())
+    for name in tuple(sys.modules):
+        if name == "sglang" or name.startswith("sglang."):
+            monkeypatch.delitem(sys.modules, name)
+    environment = bench.configure_environment(args, resolved)
+    assert environment["ORBITKV_STATE_PLAN"] == str(state_plan.resolve())
+
+    with pytest.raises(ValueError, match="stock mode forbids"):
+        bench.validate_arguments(
+            _arguments(
+                mode="stock", plan=None, library=None,
+                state_plan=str(state_plan),
+                **{key: paths[key] for key in ("sglang_root", "model")},
+            )
+        )
 
 
 def test_stock_forbids_manager_artifacts_and_cap_is_always_page_aligned(tmp_path):
@@ -540,11 +695,94 @@ def test_deepseek_v2_contract_matches_explicit_mla_geometry(tmp_path, monkeypatc
         bench.checkpoint_contract(model, manager_config)
 
 
+def test_qwen35_contract_uses_nested_text_config_and_exact_state_geometry(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setattr(bench, "checkpoint_identity", _checkpoint_identity)
+    model = _write_config(tmp_path, _qwen35_config())
+    config = SimpleNamespace(
+        page_tokens=16,
+        num_hidden_layers=24,
+        classes=(SimpleNamespace(
+            name="full_attention_kv", retention="full",
+            layers=(3, 7, 11, 15, 19, 23), window_tokens=None,
+            storage="token_kv", bytes_per_token_per_layer=2048,
+            components=(("key", 1024), ("value", 1024)),
+        ),),
+        fixed_states=(
+            SimpleNamespace(
+                name="gdn_recurrent", kind="gdn",
+                layers=tuple(i for i in range(24) if i % 4 != 3),
+                state_bytes_per_layer=1_048_576,
+                checkpoint_slots_per_request=2, kernel_width=None,
+            ),
+            SimpleNamespace(
+                name="gdn_convolution", kind="convolution",
+                layers=tuple(i for i in range(24) if i % 4 != 3),
+                state_bytes_per_layer=36_864,
+                checkpoint_slots_per_request=2, kernel_width=4,
+            ),
+        ),
+    )
+    contract, _identity = bench.checkpoint_contract(model, config)
+    assert contract["attention_profile"] == "hybrid_full_gdn"
+    assert contract["workload_profile"] == "fresh_prompt"
+    assert contract["state_ownership"] == "request_private"
+    assert contract["vocab_size"] == 248320
+    assert contract["prompt_token_upper_bound"] == 248044
+    assert contract["control_token_ids"] == {
+        "image_token_id": 248056,
+        "video_token_id": 248057,
+        "vision_start_token_id": 248053,
+        "vision_end_token_id": 248054,
+    }
+    assert contract["max_position_embeddings"] == 262144
+    assert contract["backend_profile"]["linear_attn_backend"] == "triton"
+    assert contract["fixed_states"][0]["state_bytes_per_layer"] == 1_048_576
+    assert contract["fixed_states"][1]["state_bytes_per_layer"] == 36_864
+
+    broken = _qwen35_config()
+    broken["text_config"] = None
+    (model / "config.json").write_text(json.dumps(broken), encoding="utf-8")
+    with pytest.raises(RuntimeError, match="nested text_config"):
+        bench.checkpoint_contract(model)
+
+
+@pytest.mark.parametrize(
+    ("path", "value", "message"),
+    (
+        (("model_type",), "other", "model_type=qwen3_5"),
+        (
+            ("text_config", "model_type"),
+            "other",
+            "text_config.model_type=qwen3_5_text",
+        ),
+        (
+            ("text_config", "full_attention_interval"),
+            3,
+            "layer_types differs from full_attention_interval",
+        ),
+    ),
+)
+def test_qwen35_checkpoint_contract_rejects_discriminator_or_schedule_drift(
+    tmp_path, path, value, message
+):
+    config = _qwen35_config()
+    target = config
+    for name in path[:-1]:
+        target = target[name]
+    target[path[-1]] = value
+    model = _write_config(tmp_path, config)
+    with pytest.raises(RuntimeError, match=message):
+        bench.checkpoint_contract(model)
+
+
 def test_checkpoint_and_source_gates_have_no_legacy_attention_path():
     assert bench.SUPPORTED_ARCHITECTURES == (
         "Qwen2ForCausalLM",
         "GptOssForCausalLM",
         "DeepseekV2ForCausalLM",
+        "Qwen3_5ForConditionalGeneration",
     )
     source_gate = inspect.getsource(bench.verify_sglang_source)
     assert "validate_base_checkout" in source_gate
@@ -563,6 +801,7 @@ def _runtime_info(
     radix_cache_backend="orbitkv",
     swa_tokens=None,
     orbitkv_manager=None,
+    fp8_gemm_runner_backend=None,
 ):
     state = {
         "page_size": 16,
@@ -605,6 +844,8 @@ def _runtime_info(
     }
     if orbitkv_manager is not None:
         state["orbitkv_manager"] = orbitkv_manager
+    if fp8_gemm_runner_backend is not None:
+        state["fp8_gemm_runner_backend"] = fp8_gemm_runner_backend
     return {"internal_states": [state]}
 
 
@@ -656,6 +897,8 @@ def _manager_config(*, hybrid=True, fixed_state=False):
         else ()
     )
     return SimpleNamespace(
+        plan_fingerprint="sha256:manager-test",
+        page_tokens=16,
         classes=tuple(classes),
         fixed_states=fixed_states,
         fixed_state_byte_count=96 if fixed_state else 0,
@@ -798,8 +1041,12 @@ def _settled_manager_state(
     )
     page_count = sum(item["page_count"] for item in identities)
     prefix_pages = len(identities) if live_prefix else 0
+    worker_plan = bench._expected_worker_plan_readback(
+        _manager_config(hybrid=hybrid)
+    )
     return {
         "abi_version": 8,
+        **worker_plan,
         "identities": identities,
         "arena_stats": arena_stats,
         "manager_stats": {
@@ -834,10 +1081,22 @@ def _settled_manager_state(
 
 def _fixed_state_info(raw=None):
     state = _settled_manager_state()
+    state.update(
+        bench._expected_worker_plan_readback(_manager_config(fixed_state=True))
+    )
     state["fixed_state"] = _drained_fixed_state() if raw is None else raw
     info = _runtime_info(swa_tokens=32, orbitkv_manager=state)
     info["internal_states"][0]["max_mamba_cache_size"] = 8
     return info
+
+
+def _attach_fixed_state_runtime_plan(state, *, hybrid=True):
+    state.update(
+        bench._expected_worker_plan_readback(
+            _manager_config(hybrid=hybrid, fixed_state=True)
+        )
+    )
+    return state
 
 
 def test_runtime_readback_records_full_and_derived_swa_capacities():
@@ -895,6 +1154,33 @@ def test_runtime_readback_records_full_and_derived_swa_capacities():
         )
 
 
+@pytest.mark.parametrize("mode", ("manager", "stock"))
+def test_runtime_readback_verifies_explicit_fp8_gemm_backend(mode):
+    radix_cache_backend = "orbitkv" if mode == "manager" else None
+    contract = _attention_contract(attention_profile="full")
+    result = bench.verify_runtime_contract(
+        _arguments(mode=mode, fp8_gemm_backend="triton"),
+        _runtime_info(
+            radix_cache_backend=radix_cache_backend,
+            fp8_gemm_runner_backend="triton",
+        ),
+        contract,
+    )
+    assert result["full_tokens"] == 4096
+
+    with pytest.raises(
+        RuntimeError, match="fp8_gemm_runner_backend.*deep_gemm"
+    ):
+        bench.verify_runtime_contract(
+            _arguments(mode=mode, fp8_gemm_backend="triton"),
+            _runtime_info(
+                radix_cache_backend=radix_cache_backend,
+                fp8_gemm_runner_backend="deep_gemm",
+            ),
+            contract,
+        )
+
+
 def test_multi_arena_live_prefix_census_requires_exact_abi8_ref_schema():
     census = bench.manager_census(
         _runtime_info(swa_tokens=32, orbitkv_manager=_settled_manager_state()),
@@ -909,6 +1195,8 @@ def test_multi_arena_live_prefix_census_requires_exact_abi8_ref_schema():
     assert [item["class_id"] for item in census["identities"]] == [0, 1]
     assert [item["first_page_id"] for item in census["identities"]] == [1, 5]
     assert census["abi_version"] == 8
+    expected_worker_plan = bench._expected_worker_plan_readback(_hybrid_config())
+    assert {name: census[name] for name in expected_worker_plan} == expected_worker_plan
     assert census["manager_stats"]["free_pages"] == 4
     assert census["manager_stats"]["active_pages"] == 2
     assert census["manager_stats"]["active_prefixes"] == 1
@@ -955,6 +1243,45 @@ def test_manager_plan_identity_records_state_plan_and_fixed_components(tmp_path)
             "byte_count": 96,
         }
     ]
+
+
+@pytest.mark.parametrize(
+    ("path", "value"),
+    (
+        (("plan_fingerprint",), "sha256:foreign-manager"),
+        (("state_plan_fingerprint",), "sha256:foreign-state"),
+        (("fixed_state_descriptors", 0, "state_bytes_per_layer"), 95),
+        (("tree_cache_type", "module"), "sglang.srt.mem_cache.radix_cache"),
+        (("tree_cache_type", "qualname"), "RadixCache"),
+    ),
+)
+def test_worker_runtime_plan_rejects_parent_worker_mismatch(path, value):
+    config = _manager_config(fixed_state=True)
+    reported = bench._expected_worker_plan_readback(config)
+    target = reported
+    for key in path[:-1]:
+        target = target[key]
+    target[path[-1]] = value
+
+    with pytest.raises(RuntimeError, match="differs from the parent process"):
+        bench.verify_worker_plan_readback(reported, config, "after_load")
+
+
+def test_manager_census_requires_worker_plan_readback_fields():
+    state = _settled_manager_state()
+    del state["plan_fingerprint"]
+
+    with pytest.raises(RuntimeError, match="top-level schema"):
+        bench.manager_census(
+            _runtime_info(swa_tokens=32, orbitkv_manager=state),
+            _hybrid_config(),
+            {"full_tokens": 64, "swa_tokens": 32},
+            "after_load",
+            batch_size=4,
+            completed_iterations=1,
+            decode_tokens=33,
+            prefix_seeded=True,
+        )
 
 
 def test_fixed_state_census_presence_matches_plan_and_is_preserved():
@@ -1061,6 +1388,172 @@ def test_token_only_census_requires_every_fixed_state_counter_to_be_zero(field):
             _runtime_info(swa_tokens=32, orbitkv_manager=token_only), _hybrid_config(),
             {"full_tokens": 64, "swa_tokens": 32}, "after_workload",
             batch_size=4, completed_iterations=1, decode_tokens=33, prefix_seeded=True,
+        )
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "iterations", "expected_validation", "expected_syncs"),
+    ((1, 1, 4, 1), (4, 5, 20, 5)),
+)
+def test_fresh_gdn_census_requires_exact_fixed_state_and_mirror_activity(
+    batch_size, iterations, expected_validation, expected_syncs
+):
+    state = _attach_fixed_state_runtime_plan(
+        _settled_manager_state(
+            batch_size=batch_size, completed_iterations=iterations, hybrid=False,
+            prefix_seeded=False,
+        ),
+        hybrid=False,
+    )
+    counters = state["batch_counters"]
+    expected = bench.expected_batch_counters(
+        batch_size=batch_size, completed_iterations=iterations, prompt_tokens=513,
+        decode_tokens=33,
+        hybrid=False, prefix_seeded=False, global_cleanup=False, fresh=True,
+    )
+    counters.update(expected)
+    counters.update(
+        fixed_state_prepares=iterations * batch_size,
+        fixed_state_clears=iterations * batch_size,
+        fixed_state_copies=0,
+        fixed_state_events=33 * iterations,
+        fixed_state_retirements=iterations * batch_size,
+        fixed_state_acks=iterations * batch_size,
+    )
+    fixed = _drained_fixed_state()
+    fixed["identity"]["pool_id"] = 2
+    state["fixed_state"] = fixed
+    info = _runtime_info(orbitkv_manager=state)
+    info["internal_states"][0]["max_mamba_cache_size"] = 8
+    census = bench.manager_census(
+        info, _manager_config(hybrid=False, fixed_state=True),
+        {"full_tokens": 64, "swa_tokens": None}, "after_workload",
+        batch_size=batch_size, completed_iterations=iterations, prompt_tokens=513,
+        decode_tokens=33,
+        fresh=True,
+    )
+    assert census["batch_counters"]["fixed_state_prepares"] == (
+        iterations * batch_size
+    )
+    assert census["batch_counters"]["fixed_state_copies"] == 0
+    assert census["batch_counters"]["mirror_validation_calls"] == (
+        expected_validation
+    )
+    assert census["batch_counters"]["mirror_syncs"] == expected_syncs
+    assert census["fixed_state"]["free_slots"] == 8
+
+    for field in bench._FIXED_STATE_COUNTER_FIELDS:
+        broken = dict(state)
+        broken["batch_counters"] = dict(counters)
+        broken["batch_counters"][field] += 1
+        broken_info = _runtime_info(orbitkv_manager=broken)
+        broken_info["internal_states"][0]["max_mamba_cache_size"] = 8
+        with pytest.raises(RuntimeError, match="fixed-state lifecycle"):
+            bench.manager_census(
+                broken_info,
+                _manager_config(hybrid=False, fixed_state=True),
+                {"full_tokens": 64, "swa_tokens": None}, "after_workload",
+                batch_size=batch_size, completed_iterations=iterations,
+                prompt_tokens=513,
+                decode_tokens=33,
+                fresh=True,
+            )
+
+    for field in ("mirror_validation_calls", "mirror_syncs"):
+        broken = dict(state)
+        broken["batch_counters"] = dict(counters)
+        broken["batch_counters"][field] += 1
+        broken_info = _runtime_info(orbitkv_manager=broken)
+        broken_info["internal_states"][0]["max_mamba_cache_size"] = 8
+        with pytest.raises(RuntimeError, match="mirror transaction counts"):
+            bench.manager_census(
+                broken_info,
+                _manager_config(hybrid=False, fixed_state=True),
+                {"full_tokens": 64, "swa_tokens": None}, "after_workload",
+                batch_size=batch_size, completed_iterations=iterations,
+                prompt_tokens=513, decode_tokens=33, fresh=True,
+            )
+
+
+@pytest.mark.parametrize(
+    ("batch_size", "iterations", "expected_validation", "expected_syncs"),
+    (
+        (1, 1, 4, 1),
+        (4, 5, 20, 5),
+    ),
+)
+def test_v3_fresh_mirror_validation_and_sync_counts_are_distinct(
+    batch_size, iterations, expected_validation, expected_syncs
+):
+    counters = bench.expected_batch_counters(
+        batch_size=batch_size, completed_iterations=iterations,
+        prompt_tokens=513, decode_tokens=33, hybrid=False,
+        prefix_seeded=False,
+        global_cleanup=False,
+        fresh=True,
+    )
+    assert counters["mirror_validation_calls"] == expected_validation
+    assert counters["mirror_syncs"] == expected_syncs
+
+
+@pytest.mark.parametrize(
+    ("prompt_tokens", "decode_tokens", "iterations", "expected"),
+    ((17, 2, 1, 2), (16, 2, 1, 3)),
+)
+def test_fresh_mirror_validation_follows_page_boundaries(
+    prompt_tokens, decode_tokens, iterations, expected
+):
+    assert expected_mirror_transactions(
+        prompt_tokens=prompt_tokens, decode_tokens=decode_tokens,
+        completed_iterations=iterations, prefix_seeded=False,
+        global_cleanup=False, fresh=True,
+    ) == expected
+
+
+def test_v2_fresh_and_v3_prefix_reuse_keep_equal_mirror_counters():
+    legacy_fresh = bench.expected_batch_counters(
+        batch_size=4, completed_iterations=5, prompt_tokens=513,
+        decode_tokens=33, hybrid=False, prefix_seeded=False,
+        global_cleanup=False, fresh=True,
+        legacy_equal_mirror_counters=True,
+    )
+    assert legacy_fresh["mirror_validation_calls"] == 20
+    assert legacy_fresh["mirror_syncs"] == 20
+
+    prefix_reuse = bench.expected_batch_counters(
+        batch_size=4, completed_iterations=5, prompt_tokens=513,
+        decode_tokens=33, hybrid=False, prefix_seeded=True,
+        global_cleanup=True, fresh=False,
+    )
+    assert prefix_reuse["mirror_validation_calls"] == 7
+    assert prefix_reuse["mirror_syncs"] == 7
+
+
+def test_fresh_counter_contract_requires_prompt_length():
+    with pytest.raises(RuntimeError, match="requires prompt_tokens"):
+        bench.expected_batch_counters(
+            batch_size=1, completed_iterations=1, decode_tokens=33,
+            hybrid=False, prefix_seeded=False, global_cleanup=False, fresh=True,
+        )
+
+
+def test_fresh_manager_census_requires_prompt_length():
+    state = _attach_fixed_state_runtime_plan(
+        _settled_manager_state(
+            batch_size=1, completed_iterations=1, hybrid=False,
+            prefix_seeded=False,
+        ),
+        hybrid=False,
+    )
+    info = _runtime_info(orbitkv_manager=state)
+    info["internal_states"][0]["max_mamba_cache_size"] = 8
+
+    with pytest.raises(RuntimeError, match="omitted prompt length"):
+        bench.manager_census(
+            info, _manager_config(hybrid=False, fixed_state=True),
+            {"full_tokens": 64, "swa_tokens": None}, "after_workload",
+            batch_size=1, completed_iterations=1, decode_tokens=33,
+            fresh=True,
         )
 
 
@@ -1315,12 +1808,12 @@ def test_request_token_digests_preserve_iteration_and_request_identity():
 def test_request_traces_bind_inputs_rids_and_exact_output_tokens():
     outputs = [
         [
-            {"output_ids": [1, 2], "meta_info": {"id": "rid-0"}},
-            {"output_ids": [3], "meta_info": {"id": "rid-1"}},
+            {"output_ids": [1, 2], "meta_info": {"id": "rid-0", "cached_tokens": 16}},
+            {"output_ids": [3], "meta_info": {"id": "rid-1", "cached_tokens": 16}},
         ],
         [
-            {"output_ids": [1, 2], "meta_info": {"id": "rid-2"}},
-            {"output_ids": [3], "meta_info": {"id": "rid-3"}},
+            {"output_ids": [1, 2], "meta_info": {"id": "rid-2", "cached_tokens": 16}},
+            {"output_ids": [3], "meta_info": {"id": "rid-3", "cached_tokens": 16}},
         ],
     ]
     traces = bench.request_traces(
@@ -1333,6 +1826,7 @@ def test_request_traces_bind_inputs_rids_and_exact_output_tokens():
         "submitted_rid": "rid-0",
         "submitted_input_ids_sha256": "input-0",
         "returned_rid": "rid-0",
+        "cached_tokens": 16,
         "output_ids": [1, 2],
         "output_ids_sha256": bench.canonical_digest([1, 2]),
     }
@@ -1384,7 +1878,7 @@ def test_abi8_counter_schema_never_fabricates_missing_internal_state_fields():
         ("retryable_conflicts", 1, "failure counters"),
         ("prefix_hits", 3, "B4 batch identities"),
         ("cow_copy_intents", 1, "B4 batch identities"),
-        ("mirror_syncs", 0, "global mirror cleanup"),
+        ("mirror_syncs", 0, "mirror transaction counts"),
     ),
 )
 def test_abi8_counter_identity_or_hot_memset_mismatch_fails(field, value, message):
@@ -1403,8 +1897,16 @@ def test_abi8_counter_identity_or_hot_memset_mismatch_fails(field, value, messag
         )
 
 
-def test_benchmark_record_schema_is_explicit_abi8_v1():
-    assert bench.RECORD_SCHEMA == "orbitkv.sglang-v0517-abi8-single-run.v1"
+def test_benchmark_record_schema_and_mirror_contract_are_explicit_abi8_v3():
+    assert bench.RECORD_SCHEMA == "orbitkv.sglang-v0517-abi8-single-run.v3"
+    contract = bench._manager_counter_contract(fresh=True)
+    assert contract["mirror_validation_scope"] == (
+        "all_validated_mirror_transactions"
+    )
+    assert contract["mirror_sync_scope"] == (
+        "device_mutation_transactions_only"
+    )
+    assert "mirror_validation_equals_sync" not in contract
     assert {
         "prefix_matches",
         "prefix_hits",

@@ -13,7 +13,9 @@ pub use attention_state::{
 };
 pub use hf_config::{
     HfConfigError, HfLayerInference, HfManagerPlanError, HfRetentionCompilation,
-    HfRetentionOptions, compile_hf_config, compile_hf_manager_plan,
+    HfRetentionOptions, HfStatePlanError, compile_hf_attention_state_input,
+    compile_hf_attention_state_plan, compile_hf_config, compile_hf_manager_plan,
+    compile_hf_token_manager_plan,
 };
 pub use plan::{
     CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, PlanError, TokenComponentSpec,

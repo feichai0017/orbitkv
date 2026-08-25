@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import Hashable
 
 from .completion import BatchCompletionReceipt
 from .identity import PageLease, RelocationLease, RequestLease, SnapshotLease
@@ -76,6 +77,14 @@ class RelocationPolicy:
 
 
 @dataclass(frozen=True, slots=True)
+class RelocationBatchItem:
+    key: Hashable
+    class_id: int
+    updates: tuple[ClassTokenDispositionUpdate, ...]
+    policy: RelocationPolicy
+
+
+@dataclass(frozen=True, slots=True)
 class PrepareRelocationItem:
     request: RequestLease
     expected_snapshot: SnapshotLease
@@ -119,6 +128,17 @@ class RelocationCopyReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class RelocationCopyBatch:
+    receipts: tuple[tuple[RelocationCopyReceipt, ...], ...]
+    completion_domain: int
+    completion_value: int | None = None
+
+
+class RelocationCopyUnobserved(RuntimeError):
+    """The copy callback proves that no relocation reached the backend."""
+
+
+@dataclass(frozen=True, slots=True)
 class SubmittedRelocation:
     relocation: RelocationLease
     request: RequestLease
@@ -158,7 +178,10 @@ __all__ = [
     "CompletedRelocationBatch",
     "PrepareRelocationItem",
     "PreparedRelocation",
+    "RelocationBatchItem",
+    "RelocationCopyBatch",
     "RelocationCopyReceipt",
+    "RelocationCopyUnobserved",
     "RelocationPolicy",
     "RelocationUnobservedReceipt",
     "SubmittedRelocation",
