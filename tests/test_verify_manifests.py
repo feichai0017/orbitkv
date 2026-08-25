@@ -177,5 +177,183 @@ class Abi8ManifestTest(unittest.TestCase):
                 self.manifest["scope"][field] = original
 
 
+class Qwen35PairEvidenceManifestTest(unittest.TestCase):
+    def test_default_manifest_routes_to_trusted_verifier(self) -> None:
+        self.assertIn(
+            verifier.QWEN35_H20_PAIR_EVIDENCE_MANIFEST,
+            verifier.DEFAULT_MANIFESTS,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {"schema": verifier.QWEN35_H20_PAIR_EVIDENCE_SCHEMA}
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(
+                verifier,
+                "verify_qwen35_h20_pair_evidence",
+                return_value=6,
+            ) as trusted_verifier:
+                self.assertEqual(verifier.verify_manifest(manifest_path), 6)
+            trusted_verifier.assert_called_once_with(root)
+
+    def test_qwen35_router_rejects_noncanonical_manifest_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "forged.json"
+            path.write_text(
+                json.dumps(
+                    {"schema": verifier.QWEN35_H20_PAIR_EVIDENCE_SCHEMA}
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(
+                verifier, "verify_qwen35_h20_pair_evidence"
+            ) as trusted_verifier:
+                with self.assertRaisesRegex(
+                    RuntimeError, "must be named manifest.json"
+                ):
+                    verifier.verify_manifest(path)
+            trusted_verifier.assert_not_called()
+
+
+class Qwen38DiagnosticManifestTest(unittest.TestCase):
+    def test_default_manifest_routes_to_pinned_diagnostic_verifier(self) -> None:
+        self.assertIn(
+            verifier.QWEN38_H20_DIAGNOSTIC_MANIFEST,
+            verifier.DEFAULT_MANIFESTS,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {"schema": verifier.QWEN38_H20_DIAGNOSTIC_SCHEMA}
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(
+                verifier,
+                "verify_qwen38_h20_diagnostic",
+                return_value=43,
+            ) as trusted_verifier:
+                self.assertEqual(verifier.verify_manifest(manifest_path), 43)
+            trusted_verifier.assert_called_once_with(root)
+
+    def test_qwen38_router_rejects_noncanonical_manifest_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "forged.json"
+            path.write_text(
+                json.dumps(
+                    {"schema": verifier.QWEN38_H20_DIAGNOSTIC_SCHEMA}
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(
+                verifier, "verify_qwen38_h20_diagnostic"
+            ) as trusted_verifier:
+                with self.assertRaisesRegex(
+                    RuntimeError, "must be named manifest.json"
+                ):
+                    verifier.verify_manifest(path)
+            trusted_verifier.assert_not_called()
+
+
+class TokenRelocationDiagnosticManifestTest(unittest.TestCase):
+    def test_default_manifest_routes_to_trusted_verifier(self) -> None:
+        self.assertIn(
+            verifier.TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST,
+            verifier.DEFAULT_MANIFESTS,
+        )
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            manifest_path = root / "manifest.json"
+            manifest_path.write_text(
+                json.dumps(
+                    {
+                        "schema": (
+                            verifier.TOKEN_RELOCATION_H20_DIAGNOSTIC_SCHEMA
+                        )
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(
+                verifier,
+                "verify_token_relocation_h20_diagnostic",
+                return_value=19,
+            ) as trusted_verifier:
+                self.assertEqual(verifier.verify_manifest(manifest_path), 19)
+            trusted_verifier.assert_called_once_with(root)
+
+    def test_router_rejects_noncanonical_manifest_name(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            path = Path(temporary) / "forged.json"
+            path.write_text(
+                json.dumps(
+                    {
+                        "schema": (
+                            verifier.TOKEN_RELOCATION_H20_DIAGNOSTIC_SCHEMA
+                        )
+                    }
+                ),
+                encoding="utf-8",
+            )
+            with patch.object(
+                verifier, "verify_token_relocation_h20_diagnostic"
+            ) as trusted_verifier:
+                with self.assertRaisesRegex(
+                    RuntimeError, "must be named manifest.json"
+                ):
+                    verifier.verify_manifest(path)
+            trusted_verifier.assert_not_called()
+
+    def test_archive_manifest_retains_diagnostic_boundary(self) -> None:
+        manifest = verifier.load_json(
+            verifier.TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST
+        )
+        self.assertIsInstance(manifest, dict)
+        for field, expected in (
+            ("evidence_class", "diagnostic_only"),
+            ("diagnostic_only", True),
+            ("sealed", False),
+            ("source_dirty", True),
+            ("hardware_attested", False),
+            ("qualified", False),
+            ("performance_go", False),
+        ):
+            with self.subTest(field=field):
+                self.assertIs(type(manifest[field]), type(expected))
+                self.assertEqual(manifest[field], expected)
+        self.assertEqual(manifest["artifact_count"], 19)
+        self.assertEqual(len(manifest["artifacts"]), 19)
+        self.assertEqual(
+            sum(name.startswith("records/") for name in manifest["artifacts"]),
+            16,
+        )
+        self.assertEqual(
+            manifest["integrity_scope"],
+            "all_payload_artifacts_except_manifest_and_checksum_index",
+        )
+
+    def test_component_conformance_binds_recorded_device(self) -> None:
+        manifest = verifier.load_json(
+            verifier.TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST
+        )
+        verifier.verify_token_relocation_component_conformance(
+            verifier.TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST.parent
+            / "component-conformance.xml",
+            manifest["observed_hardware"],
+        )
+        with self.assertRaisesRegex(RuntimeError, "device identity differs"):
+            verifier.verify_token_relocation_component_conformance(
+                verifier.TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST.parent
+                / "component-conformance.xml",
+                {"name": "different GPU", "uuid": "GPU-forged"},
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

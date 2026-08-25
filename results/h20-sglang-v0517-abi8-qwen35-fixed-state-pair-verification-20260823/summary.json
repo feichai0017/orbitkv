@@ -1,0 +1,51 @@
+{
+  "groups": [
+    {
+      "batch_size": 1,
+      "epoch_count": 3,
+      "manager_over_stock_percent": 0.5073531715689361,
+      "manager_seconds": {
+        "mean": 1.589884785314401,
+        "p50": 1.5903785079717636,
+        "p95": 1.5960599519312382,
+        "p99": 1.5960599519312382
+      },
+      "performance_go": false,
+      "profile": "hybrid_full_gdn",
+      "sample_count_per_mode": 3,
+      "stock_seconds": {
+        "mean": 1.5818591726322968,
+        "p50": 1.5502636693418026,
+        "p95": 1.6607680395245552,
+        "p99": 1.6607680395245552
+      }
+    },
+    {
+      "batch_size": 4,
+      "epoch_count": 3,
+      "manager_over_stock_percent": 3.7394025488338034,
+      "manager_seconds": {
+        "mean": 0.9498731474081675,
+        "p50": 0.7667891532182693,
+        "p95": 1.6564017497003078,
+        "p99": 1.7758305706083775
+      },
+      "performance_go": false,
+      "profile": "hybrid_full_gdn",
+      "sample_count_per_mode": 15,
+      "stock_seconds": {
+        "mean": 0.9156339096526305,
+        "p50": 0.7165292650461197,
+        "p95": 1.6816889271140099,
+        "p99": 1.8751880750060081
+      }
+    }
+  ],
+  "hardware_attested": false,
+  "pair_count": 6,
+  "performance_go": false,
+  "preflight_bound": true,
+  "qualification_claim": "pair_verification_only_not_qualified",
+  "qualified": false,
+  "schema": "orbitkv.abi8-h20-multi-epoch-summary.v1"
+}

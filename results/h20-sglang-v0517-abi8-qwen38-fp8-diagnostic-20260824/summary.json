@@ -1,0 +1,295 @@
+{
+  "all_pairs_passed": true,
+  "deepgemm_attempt": {
+    "end_to_end_record_produced": false,
+    "evidence_basis": "declared_external_observation_not_portably_verified",
+    "included_in_archive": false,
+    "included_in_steady_analysis": false,
+    "precompile_completed": false,
+    "requested_backend": "auto",
+    "result": "no_result",
+    "termination": "external_SIGQUIT",
+    "weight_shards_loaded": "66/66"
+  },
+  "epoch_count": 4,
+  "evidence_class": "diagnostic_only",
+  "exact_token_equality": true,
+  "groups": [
+    {
+      "batch_size": 1,
+      "epoch_count": 4,
+      "epochs": [
+        {
+          "epoch": 1,
+          "execution_order": [
+            "manager",
+            "stock"
+          ],
+          "manager_mean_seconds": 2.5569824213162065,
+          "manager_over_stock_percent": 2.7822171769500414,
+          "stock_mean_seconds": 2.487767331302166
+        },
+        {
+          "epoch": 2,
+          "execution_order": [
+            "stock",
+            "manager"
+          ],
+          "manager_mean_seconds": 2.5580550134181976,
+          "manager_over_stock_percent": 0.712922240674585,
+          "stock_mean_seconds": 2.5399471651762724
+        },
+        {
+          "epoch": 3,
+          "execution_order": [
+            "manager",
+            "stock"
+          ],
+          "manager_mean_seconds": 3.192074716091156,
+          "manager_over_stock_percent": 26.340662787783042,
+          "stock_mean_seconds": 2.5265616355463862
+        },
+        {
+          "epoch": 4,
+          "execution_order": [
+            "stock",
+            "manager"
+          ],
+          "manager_mean_seconds": 2.9056138042360544,
+          "manager_over_stock_percent": -1.9835067530708295,
+          "stock_mean_seconds": 2.964413139037788
+        }
+      ],
+      "excluded_iteration_indices": [
+        0
+      ],
+      "hot_iteration_indices": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "hot_sample_count_per_mode": 16,
+      "iterations_per_process": 5,
+      "manager": {
+        "mean_seconds": 2.8031814887654036,
+        "median_seconds": 2.645168337970972,
+        "output_tokens_per_second": 11.772338013880823,
+        "p95_seconds_inclusive": 3.336977801285684,
+        "sample_count": 16
+      },
+      "manager_over_stock_latency_percent": 6.598128969436612,
+      "manager_throughput_delta_percent": -6.18972305914337,
+      "percentile_method": "statistics.quantiles(n=100, method=inclusive)",
+      "stock": {
+        "mean_seconds": 2.629672317765653,
+        "median_seconds": 2.5374011378735304,
+        "output_tokens_per_second": 12.549092058754692,
+        "p95_seconds_inclusive": 3.0721712419763207,
+        "sample_count": 16
+      }
+    },
+    {
+      "batch_size": 4,
+      "epoch_count": 4,
+      "epochs": [
+        {
+          "epoch": 1,
+          "execution_order": [
+            "manager",
+            "stock"
+          ],
+          "manager_mean_seconds": 3.024631990119815,
+          "manager_over_stock_percent": 1.8441405612275918,
+          "stock_mean_seconds": 2.9698635321110487
+        },
+        {
+          "epoch": 2,
+          "execution_order": [
+            "stock",
+            "manager"
+          ],
+          "manager_mean_seconds": 3.05551574844867,
+          "manager_over_stock_percent": 2.885016506008853,
+          "stock_mean_seconds": 2.9698355039581656
+        },
+        {
+          "epoch": 3,
+          "execution_order": [
+            "manager",
+            "stock"
+          ],
+          "manager_mean_seconds": 3.0671159317716956,
+          "manager_over_stock_percent": 5.006970757020501,
+          "stock_mean_seconds": 2.920868881046772
+        },
+        {
+          "epoch": 4,
+          "execution_order": [
+            "stock",
+            "manager"
+          ],
+          "manager_mean_seconds": 3.0111163491383195,
+          "manager_over_stock_percent": 1.388493066869123,
+          "stock_mean_seconds": 2.96987977437675
+        }
+      ],
+      "excluded_iteration_indices": [
+        0
+      ],
+      "hot_iteration_indices": [
+        1,
+        2,
+        3,
+        4
+      ],
+      "hot_sample_count_per_mode": 16,
+      "iterations_per_process": 5,
+      "manager": {
+        "mean_seconds": 3.039595004869625,
+        "median_seconds": 3.0345056280493736,
+        "output_tokens_per_second": 43.42683804537367,
+        "p95_seconds_inclusive": 3.0800264924764633,
+        "sample_count": 16
+      },
+      "manager_over_stock_latency_percent": 2.77193506566602,
+      "manager_throughput_delta_percent": -2.697171230545481,
+      "percentile_method": "statistics.quantiles(n=100, method=inclusive)",
+      "stock": {
+        "mean_seconds": 2.957611922873184,
+        "median_seconds": 2.9602836295962334,
+        "output_tokens_per_second": 44.63060179706338,
+        "p95_seconds_inclusive": 3.000194113701582,
+        "sample_count": 16
+      }
+    }
+  ],
+  "hardware": {
+    "attestation": "recorded_observation_only",
+    "observed_name": "NVIDIA H20",
+    "observed_uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3",
+    "snapshot_count": 80
+  },
+  "hardware_attested": false,
+  "manager_census": {
+    "all_after_workload_equal_final_census": true,
+    "all_failure_counters_zero": true,
+    "all_fixed_state_drained": true,
+    "all_global_cleanup_successful": true,
+    "all_token_state_drained": true,
+    "batches": [
+      {
+        "batch_size": 1,
+        "fixed_state_slot_count": 2,
+        "free_fixed_state_slots": 2,
+        "free_pages": 64,
+        "manager_record_count": 4,
+        "page_count": 64
+      },
+      {
+        "batch_size": 4,
+        "fixed_state_slot_count": 4,
+        "free_fixed_state_slots": 4,
+        "free_pages": 256,
+        "manager_record_count": 4,
+        "page_count": 256
+      }
+    ],
+    "fixed_state_byte_count": 153944064,
+    "manager_record_count": 8
+  },
+  "memory": [
+    {
+      "batch_size": 1,
+      "full_tokens": {
+        "manager": 1024,
+        "stock": 1024
+      },
+      "manager_capacity_saving_percent": 0.0,
+      "manager_reported_kv_cache_saving_percent": 0.0,
+      "reported_kv_cache_gb": {
+        "manager": 0.063,
+        "stock": 0.063
+      }
+    },
+    {
+      "batch_size": 4,
+      "full_tokens": {
+        "manager": 4096,
+        "stock": 4096
+      },
+      "manager_capacity_saving_percent": 0.0,
+      "manager_reported_kv_cache_saving_percent": 0.0,
+      "reported_kv_cache_gb": {
+        "manager": 0.251,
+        "stock": 0.251
+      }
+    }
+  ],
+  "memory_claim": {
+    "metric": "observed_equal_configured_tensor_arena_reservation_difference_percent",
+    "qualified_end_to_end_memory_saving_result": false,
+    "value": 0.0
+  },
+  "model": {
+    "checkpoint_identity_sha256": "20dc2e14e5b2718f8d9bae6af8bf9be585f8b1a7a0a248562271d48d08fc249e",
+    "config_sha256": "74227dd615bf1ea975aa676bdf355a0379858c12f394b5365cd9dfa5fc2c70bc",
+    "external_provenance_note": "repository revision and tensor count are declared provenance; raw records bind config, index, and every weight shard hash and byte count",
+    "index_sha256": "f0838c766951bdfe76d6afbdb2771a8f67aaa2231dedb3d33cebd817729843a2",
+    "repository": "Qwen/Qwen3.8-27B-FP8",
+    "revision": "017b9c7af6b5689d5dd426a76e0bc077eb5ca20a",
+    "tensor_count": 1606,
+    "weight_bytes": 30866866928,
+    "weight_inventory_sha256": "0174512f33206947585ff17ad2e7e5507da30ab06fd103a20f298ed94df90cfe",
+    "weight_shard_count": 66
+  },
+  "pair_count": 8,
+  "performance_go": false,
+  "preflight_bound": false,
+  "qualification_claim": "diagnostic_only_not_qualified",
+  "qualified": false,
+  "record_count": 16,
+  "runtime": {
+    "attention_backend": "fa3",
+    "execution": "eager",
+    "fp8_gemm_runner_backend": "triton",
+    "harness_sha256": "f47afa653f7a59d5854b68e7778901aba782c93ef100950257bf8f3c2a903c75",
+    "kv_layout": "nhd",
+    "library": {
+      "abi_version": 8,
+      "bytes": 1719056,
+      "exact_symbol_count": 40,
+      "sha256": "fcff90dabd79e3ef69725cfff93f350db922acad9f3c58f6fb6086da7145ae23"
+    },
+    "linear_attention_backend": "triton",
+    "linear_attention_decode_backend": "triton",
+    "linear_attention_prefill_backend": "triton",
+    "page_tokens": 16,
+    "pair_schema": "orbitkv.abi8-h20-pair-verification.v1",
+    "record_schema": "orbitkv.sglang-v0517-abi8-single-run.v3",
+    "sglang_release": "v0.5.17",
+    "sglang_revision": "29481685462732237d80d86076d6563e1f658102",
+    "state_plan_sha256": "34edf5dfd0e2c3ca96cd7b41d909242ee0e4005e7520de0efc6b182638e9fa3e",
+    "token_plan_sha256": "521ff25f034bcabcac2d408174c84c2129dc778a0e2a006f424b4fd21c1e8a9c"
+  },
+  "schema": "orbitkv.abi8-h20-qwen38-fp8-diagnostic-summary.v1",
+  "sealed": false,
+  "source": {
+    "adapter_inventory_sha256": "e5b513aa0d0d2d8dae3ef5907f88d566d4cc50d4ee3c415cc35ff690c87d507a",
+    "pair_verifier_path": "integrations/sglang/qualify_abi8_h20.py",
+    "pair_verifier_sha256_at_packaging": "3292a57649b59c4f8872a9caf4ff19131cb42a25251c5bb713940e3e6fd80e1b",
+    "repository_head_at_packaging": "0eb74430b7e3228c45b137a539e6d266b51a5bed",
+    "source_bundle_included": false,
+    "worktree_clean": false
+  },
+  "source_clean": false,
+  "source_dirty": true,
+  "status": "diagnostic_pair_verification_passed",
+  "stderr": {
+    "all_completed_66_of_66_shards": true,
+    "cuda_ipc_shutdown_warning_log_count": 16,
+    "fatal_error_log_count": 0,
+    "transformers_use_fast_deprecation_line_count": 32
+  },
+  "stderr_log_count": 16
+}
