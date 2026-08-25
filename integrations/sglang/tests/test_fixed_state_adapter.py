@@ -28,6 +28,8 @@ from orbitkv_sglang.plugin.validation import (
     _validate_checkpoint_geometry,
     _validate_fixed_state_options,
     _validate_fixed_state_pool,
+    _validate_gdn_fixed_state_backend_contract,
+    _validate_radix_cache_contract,
 )
 from orbitkv_sglang.runtime import (
     FailStopped,
@@ -151,14 +153,19 @@ class _FaultDeviceModule(_DeviceModule):
 
 
 class _Mode:
+    def __init__(self, *, extend=True, target_verify=False, draft_extend_v2=False):
+        self._extend = extend
+        self._target_verify = target_verify
+        self._draft_extend_v2 = draft_extend_v2
+
     def is_extend(self):
-        return True
+        return self._extend
 
     def is_target_verify(self):
-        return False
+        return self._target_verify
 
     def is_draft_extend_v2(self):
-        return False
+        return self._draft_extend_v2
 
 
 def _coordinator(library: Path, size: int = 4):
@@ -222,6 +229,67 @@ def _publish_initial(coordinator, req_pool, req):
     )
     coordinator.poll()
     return records
+
+
+def test_decode_ignores_stale_deferred_indices_without_owner_records(
+    ffi_library, monkeypatch
+):
+    coordinator, req_pool = _coordinator(ffi_library, 2)
+    monkeypatch.setattr(plugin_state, "_FIXED_STATE", coordinator)
+    runner = SimpleNamespace(req_to_token_pool=req_pool, is_draft_worker=False)
+    forward = SimpleNamespace(
+        _orbitkv_state_records=(),
+        forward_mode=_Mode(extend=False),
+        mamba_clear_indices=torch.tensor([1], dtype=torch.int64),
+        mamba_cow_src_indices=None,
+        mamba_cow_dst_indices=None,
+    )
+    calls = []
+
+    result = _execute_fixed_state_deferred(
+        lambda _runner, value: calls.append(value) or "decode-noop",
+        runner,
+        forward,
+    )
+
+    assert result == "decode-noop"
+    assert calls == [forward]
+    assert coordinator.failed is None
+    assert coordinator.stats().free_slots == 2
+    coordinator.close()
+
+
+def test_target_extend_rejects_unowned_deferred_indices(ffi_library):
+    coordinator, req_pool = _coordinator(ffi_library, 2)
+    runner = SimpleNamespace(req_to_token_pool=req_pool, is_draft_worker=False)
+    forward = SimpleNamespace(
+        _orbitkv_state_records=(),
+        forward_mode=_Mode(),
+        mamba_clear_indices=torch.tensor([1], dtype=torch.int64),
+        mamba_cow_src_indices=None,
+        mamba_cow_dst_indices=None,
+    )
+
+    with pytest.raises(ManagerError, match="unowned deferred Mamba operation"):
+        coordinator.preflight_deferred(runner, forward)
+
+    assert coordinator.failed is None
+    coordinator.close()
+
+
+def test_owned_transition_rejects_decode_forward_mode(ffi_library):
+    coordinator, req_pool = _coordinator(ffi_library, 2)
+    req = _request("a", 1)
+    records = coordinator.prepare_for_allocated_rows((req,), (1,))
+    runner = SimpleNamespace(req_to_token_pool=req_pool, is_draft_worker=False)
+    forward = _forward(records)
+    forward.forward_mode = _Mode(extend=False)
+
+    with pytest.raises(ManagerError, match="unsupported forward mode"):
+        coordinator.preflight_deferred(runner, forward)
+
+    coordinator.abort_batch(records)
+    coordinator.close()
 
 
 def test_attention_state_plan_must_match_token_projection(tmp_path, ffi_library):
@@ -796,7 +864,65 @@ def test_restricted_fixed_state_options_fail_closed(field, monkeypatch):
         _validate_fixed_state_options(configurator)
 
 
-def _mixed_fixed_state_config(*, recurrent_kind="mamba"):
+@pytest.mark.parametrize(
+    ("kind", "disabled"), ((None, False), ("mamba", True), ("gdn", True))
+)
+def test_radix_cache_contract_keeps_orbitkv_backend(
+    monkeypatch, kind, disabled
+):
+    monkeypatch.setattr(
+        plugin_state,
+        "_CONFIG",
+        SimpleNamespace(
+            fixed_states=(SimpleNamespace(kind=kind),) if kind else ()
+        ),
+    )
+    configurator = SimpleNamespace(
+        server_args=SimpleNamespace(
+            disable_radix_cache=disabled, radix_cache_backend="orbitkv"
+        )
+    )
+    _validate_radix_cache_contract(configurator)
+
+    configurator.server_args.radix_cache_backend = None
+    with pytest.raises(RuntimeError, match="radix-cache-backend"):
+        _validate_radix_cache_contract(configurator)
+
+
+@pytest.mark.parametrize(
+    ("kind", "disabled"),
+    ((None, True), ("mamba", False), ("gdn", False)),
+)
+def test_radix_cache_contract_rejects_wrong_disable_mode(
+    monkeypatch, kind, disabled
+):
+    monkeypatch.setattr(
+        plugin_state,
+        "_CONFIG",
+        SimpleNamespace(
+            fixed_states=(SimpleNamespace(kind=kind),) if kind else ()
+        ),
+    )
+    configurator = SimpleNamespace(
+        server_args=SimpleNamespace(
+            disable_radix_cache=disabled, radix_cache_backend="orbitkv"
+        )
+    )
+    with pytest.raises(RuntimeError, match="disable-radix-cache"):
+        _validate_radix_cache_contract(configurator)
+
+
+def _mixed_fixed_state_config(
+    *,
+    recurrent_kind="gdn",
+    recurrent_layers=(1,),
+    convolution_layers=(1,),
+    recurrent_bytes=8,
+    convolution_bytes=6,
+    recurrent_slots=2,
+    convolution_slots=2,
+    kernel_width=4,
+):
     return ManagerPlanConfig(
         plan_path=Path("plan.json"),
         library_path=Path("liborbitkv_ffi.so"),
@@ -817,10 +943,110 @@ def _mixed_fixed_state_config(*, recurrent_kind="mamba"):
             ),
         ),
         fixed_states=(
-            FixedStateConfig("recurrent", recurrent_kind, (1,), 8, 2),
-            FixedStateConfig("conv", "convolution", (1,), 6, 2, 4),
+            FixedStateConfig(
+                "recurrent",
+                recurrent_kind,
+                recurrent_layers,
+                recurrent_bytes,
+                recurrent_slots,
+            ),
+            FixedStateConfig(
+                "conv",
+                "convolution",
+                convolution_layers,
+                convolution_bytes,
+                convolution_slots,
+                kernel_width,
+            ),
         ),
     )
+
+
+def _fixed_state_params(
+    *,
+    layers=(1,),
+    conv_shape=(1, 3),
+    temporal_shape=(1, 1, 2),
+    conv_kernel=4,
+    conv_dtype=torch.bfloat16,
+    temporal_dtype=torch.float32,
+    is_kda=False,
+):
+    shape = SimpleNamespace(
+        conv=[conv_shape], temporal=temporal_shape, conv_kernel=conv_kernel
+    )
+    dtype = SimpleNamespace(conv=conv_dtype, temporal=temporal_dtype)
+    conv_bytes = sum(
+        torch.empty((), dtype=conv_dtype).element_size()
+        * torch.Size(value).numel()
+        for value in shape.conv
+    )
+    recurrent_bytes = (
+        torch.empty((), dtype=temporal_dtype).element_size()
+        * torch.Size(temporal_shape).numel()
+    )
+    return SimpleNamespace(
+        layers=list(layers),
+        shape=shape,
+        dtype=dtype,
+        is_kda=is_kda,
+        mamba_cache_per_req=(conv_bytes + recurrent_bytes) * len(layers),
+    )
+
+
+def _checkpoint_configurator(*, architecture, params, hybrid_gdn):
+    mambaish = SimpleNamespace(
+        full_attention_layer_ids=[0],
+        mamba2_cache_params=params,
+        linear_conv_kernel_dim=params.shape.conv_kernel,
+    )
+    return SimpleNamespace(
+        model_config=SimpleNamespace(
+            hf_config=SimpleNamespace(architectures=[architecture]),
+            hf_text_config=SimpleNamespace(
+                num_hidden_layers=2, num_key_value_heads=2
+            ),
+            head_dim=16,
+            v_head_dim=16,
+            swa_head_dim=16,
+            swa_v_head_dim=16,
+            is_hybrid_swa=True,
+            full_attention_layer_ids=[0],
+            swa_attention_layer_ids=[],
+            sliding_window_size=32,
+            disable_hybrid_swa_memory=False,
+            is_deepseek_v4_arch=False,
+            is_hybrid_swa_compress=False,
+            attention_chunk_size=None,
+        ),
+        kv_cache_dtype=torch.bfloat16,
+        use_mla_backend=False,
+        mambaish_config=mambaish,
+        hybrid_gdn_config=mambaish if hybrid_gdn else None,
+    )
+
+
+def _gdn_production_backend_configurator(**overrides):
+    values = {
+        "linear_attn_backend": "triton",
+        "linear_attn_decode_backend": "triton",
+        "linear_attn_prefill_backend": "triton",
+        "mamba_ssm_dtype": "float32",
+        "mamba_radix_cache_strategy": "no_buffer",
+        "disable_radix_cache": True,
+    }
+    values.update(overrides)
+    attention_backends = values.pop("attention_backends", ("fa3", "fa3"))
+    params = values.pop("params", _fixed_state_params())
+    configurator = _checkpoint_configurator(
+        architecture="RenamedGdnForConditionalGeneration",
+        params=params,
+        hybrid_gdn=True,
+    )
+    configurator.server_args = SimpleNamespace(
+        get_attention_backends=lambda: attention_backends, **values
+    )
+    return configurator
 
 
 def _real_shape_hybrid_pool(size=2):
@@ -835,16 +1061,46 @@ def _real_shape_hybrid_pool(size=2):
     pool.mamba_pool.enable_linear_replayssm = False
     pool.mamba_pool.enable_linear_replayssm_spec = False
     pool.mamba_pool.mamba_cache = SimpleNamespace(
-        conv=[torch.zeros((1, size + 1, 3), dtype=torch.bfloat16)],
-        temporal=torch.zeros((1, size + 1, 2), dtype=torch.float32),
+        conv=[torch.zeros((1, size + 1, 1, 3), dtype=torch.bfloat16)],
+        temporal=torch.zeros((1, size + 1, 1, 1, 2), dtype=torch.float32),
     )
     return pool
 
 
-def test_fixed_state_pool_accepts_exact_mixed_recurrent_and_conv_bytes():
+def test_fixed_state_pool_accepts_exact_component_tensors():
     _validate_fixed_state_pool(
-        _real_shape_hybrid_pool(), _mixed_fixed_state_config()
+        _real_shape_hybrid_pool(),
+        _mixed_fixed_state_config(),
+        _fixed_state_params(),
     )
+
+
+def test_fixed_state_pool_keeps_legacy_mamba_aggregate_geometry():
+    config = _mixed_fixed_state_config(recurrent_kind="mamba")
+    recurrent = FixedStateConfig("recurrent", "mamba", (1,), 14, 2)
+    config = ManagerPlanConfig(
+        plan_path=config.plan_path,
+        library_path=config.library_path,
+        plan_json=config.plan_json,
+        plan_fingerprint=config.plan_fingerprint,
+        page_tokens=config.page_tokens,
+        classes=config.classes,
+        fixed_states=(recurrent,),
+    )
+    _validate_fixed_state_pool(
+        _real_shape_hybrid_pool(), config, _fixed_state_params()
+    )
+
+
+def test_fixed_state_pool_rejects_mamba_component_split_drift_at_same_total():
+    config = _mixed_fixed_state_config(
+        recurrent_kind="mamba", recurrent_bytes=6, convolution_bytes=8
+    )
+
+    with pytest.raises(RuntimeError, match="component geometry differs"):
+        _validate_fixed_state_pool(
+            _real_shape_hybrid_pool(), config, _fixed_state_params()
+        )
 
 
 @pytest.mark.parametrize("component", ("recurrent", "convolution"))
@@ -875,46 +1131,176 @@ def test_fixed_state_pool_rejects_component_byte_drift(component):
     )
 
     with pytest.raises(RuntimeError, match="component geometry differs"):
-        _validate_fixed_state_pool(_real_shape_hybrid_pool(), config)
+        _validate_fixed_state_pool(
+            _real_shape_hybrid_pool(), config, _fixed_state_params()
+        )
 
 
-@pytest.mark.parametrize("recurrent_kind", ("gdn", "kda", "linear_attention"))
-def test_checkpoint_geometry_rejects_unbound_recurrent_family(
-    monkeypatch, recurrent_kind
-):
-    config = _mixed_fixed_state_config(recurrent_kind=recurrent_kind)
+def test_checkpoint_geometry_keeps_legacy_mamba_aggregate_profile(monkeypatch):
+    config = _mixed_fixed_state_config(recurrent_kind="mamba")
+    config = ManagerPlanConfig(
+        plan_path=config.plan_path,
+        library_path=config.library_path,
+        plan_json=config.plan_json,
+        plan_fingerprint=config.plan_fingerprint,
+        page_tokens=config.page_tokens,
+        classes=config.classes,
+        fixed_states=(FixedStateConfig("recurrent", "mamba", (1,), 14, 2),),
+    )
     monkeypatch.setattr(plugin_state, "_CONFIG", config)
-    model = SimpleNamespace(
-        hf_config=SimpleNamespace(architectures=["HybridModel"]),
-        hf_text_config=SimpleNamespace(num_hidden_layers=2, num_key_value_heads=2),
-        head_dim=16,
-        v_head_dim=16,
-        swa_head_dim=16,
-        swa_v_head_dim=16,
-        is_hybrid_swa=True,
-        full_attention_layer_ids=[0],
-        swa_attention_layer_ids=[],
-        sliding_window_size=32,
-        disable_hybrid_swa_memory=False,
-        is_deepseek_v4_arch=False,
-        is_hybrid_swa_compress=False,
-        attention_chunk_size=None,
+    configurator = _checkpoint_configurator(
+        architecture="LegacyMambaForCausalLM",
+        params=_fixed_state_params(),
+        hybrid_gdn=False,
     )
-    configurator = SimpleNamespace(
-        model_config=model,
-        kv_cache_dtype=torch.bfloat16,
-        use_mla_backend=False,
-        mambaish_config=SimpleNamespace(
-            full_attention_layer_ids=[0],
-            mamba2_cache_params=SimpleNamespace(
-                layers=[1], mamba_cache_per_req=14, is_kda=False
-            ),
-        ),
-        hybrid_gdn_config=None,
+    _validate_checkpoint_geometry(configurator)
+
+
+def test_checkpoint_geometry_accepts_renamed_exact_gdn_profile(monkeypatch):
+    monkeypatch.setattr(plugin_state, "_CONFIG", _mixed_fixed_state_config())
+    configurator = _checkpoint_configurator(
+        architecture="RenamedGdnForConditionalGeneration",
+        params=_fixed_state_params(),
+        hybrid_gdn=True,
+    )
+    _validate_checkpoint_geometry(configurator)
+
+
+def test_gdn_production_backend_profile_accepts_renamed_architecture(monkeypatch):
+    monkeypatch.setattr(plugin_state, "_CONFIG", _mixed_fixed_state_config())
+    configurator = _gdn_production_backend_configurator()
+
+    _validate_gdn_fixed_state_backend_contract(configurator)
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    (
+        ("attention_backends", ("flashinfer", "flashinfer"), "Full attention FA3"),
+        ("linear_attn_backend", None, "linear_attn_backend=triton"),
+        ("linear_attn_decode_backend", None, "linear_attn_decode_backend=triton"),
+        ("linear_attn_prefill_backend", None, "linear_attn_prefill_backend=triton"),
+        ("mamba_ssm_dtype", None, "mamba_ssm_dtype=float32"),
+        ("mamba_radix_cache_strategy", "auto", "mamba_radix_cache_strategy=no_buffer"),
+    ),
+)
+def test_gdn_production_backend_profile_rejects_drift(
+    monkeypatch, field, value, message
+):
+    monkeypatch.setattr(plugin_state, "_CONFIG", _mixed_fixed_state_config())
+    configurator = _gdn_production_backend_configurator(**{field: value})
+
+    with pytest.raises(RuntimeError, match=message):
+        _validate_gdn_fixed_state_backend_contract(configurator)
+
+
+def test_gdn_production_backend_profile_rejects_actual_temporal_dtype(
+    monkeypatch,
+):
+    monkeypatch.setattr(plugin_state, "_CONFIG", _mixed_fixed_state_config())
+    configurator = _gdn_production_backend_configurator(
+        params=_fixed_state_params(temporal_dtype=torch.bfloat16)
     )
 
-    with pytest.raises(RuntimeError, match="Mamba family"):
+    with pytest.raises(
+        RuntimeError, match="mamba2_cache_params.dtype.temporal=float32"
+    ):
+        _validate_gdn_fixed_state_backend_contract(configurator)
+
+
+@pytest.mark.parametrize(
+    "drift",
+    (
+        "missing_gdn",
+        "foreign_gdn",
+        "kda",
+        "layers",
+        "slots",
+        "kernel",
+        "component_bytes",
+        "conv_dtype",
+        "temporal_dtype",
+    ),
+)
+def test_checkpoint_geometry_rejects_inexact_gdn_profile(monkeypatch, drift):
+    config_kwargs = {}
+    params_kwargs = {}
+    architecture = "RenamedGdnForConditionalGeneration"
+    if drift == "kda":
+        params_kwargs["is_kda"] = True
+    elif drift == "layers":
+        config_kwargs["convolution_layers"] = (0,)
+    elif drift == "slots":
+        config_kwargs["convolution_slots"] = 3
+    elif drift == "kernel":
+        config_kwargs["kernel_width"] = 5
+    elif drift == "component_bytes":
+        config_kwargs.update(recurrent_bytes=7, convolution_bytes=7)
+    elif drift == "conv_dtype":
+        params_kwargs["conv_dtype"] = torch.float32
+        config_kwargs.update(recurrent_bytes=8, convolution_bytes=12)
+    elif drift == "temporal_dtype":
+        params_kwargs["temporal_dtype"] = torch.bfloat16
+        config_kwargs.update(recurrent_bytes=4, convolution_bytes=6)
+    config = _mixed_fixed_state_config(**config_kwargs)
+    params = _fixed_state_params(**params_kwargs)
+    configurator = _checkpoint_configurator(
+        architecture=architecture, params=params, hybrid_gdn=drift != "missing_gdn"
+    )
+    if drift == "foreign_gdn":
+        configurator.hybrid_gdn_config = SimpleNamespace(linear_conv_kernel_dim=4)
+    monkeypatch.setattr(plugin_state, "_CONFIG", config)
+
+    with pytest.raises(RuntimeError):
         _validate_checkpoint_geometry(configurator)
+
+
+@pytest.mark.parametrize(
+    "drift",
+    (
+        "conv_count",
+        "conv_shape",
+        "temporal_shape",
+        "conv_dtype",
+        "temporal_dtype",
+        "layer_axis",
+        "slot_axis",
+    ),
+)
+def test_fixed_state_pool_rejects_tensor_geometry_drift(drift):
+    pool = _real_shape_hybrid_pool()
+    if drift == "conv_count":
+        pool.mamba_pool.mamba_cache.conv.append(
+            torch.zeros((1, 3, 3, 1), dtype=torch.bfloat16)
+        )
+    elif drift == "conv_shape":
+        pool.mamba_pool.mamba_cache.conv[0] = torch.zeros(
+            (1, 3, 3, 1), dtype=torch.bfloat16
+        )
+    elif drift == "temporal_shape":
+        pool.mamba_pool.mamba_cache.temporal = torch.zeros(
+            (1, 3, 1, 2), dtype=torch.float32
+        )
+    elif drift == "conv_dtype":
+        pool.mamba_pool.mamba_cache.conv[0] = torch.zeros(
+            (1, 3, 1, 3), dtype=torch.float32
+        )
+    elif drift == "temporal_dtype":
+        pool.mamba_pool.mamba_cache.temporal = torch.zeros(
+            (1, 3, 1, 1, 2), dtype=torch.bfloat16
+        )
+    elif drift == "layer_axis":
+        pool.mamba_pool.mamba_cache.temporal = torch.zeros(
+            (2, 3, 1, 1, 2), dtype=torch.float32
+        )
+    else:
+        pool.mamba_pool.mamba_cache.conv[0] = torch.zeros(
+            (1, 4, 1, 3), dtype=torch.bfloat16
+        )
+    with pytest.raises(RuntimeError, match="tensor geometry changed"):
+        _validate_fixed_state_pool(
+            pool, _mixed_fixed_state_config(), _fixed_state_params()
+        )
 
 
 def test_fixed_state_pool_clear_requires_quiescence(ffi_library, monkeypatch):

@@ -90,7 +90,7 @@ def test_mla_geometry_gate_rejects_dsa_and_component_drift(monkeypatch):
     monkeypatch.setattr(
         "sglang.srt.configs.model_config.is_deepseek_dsa", lambda _config: True
     )
-    with pytest.raises(RuntimeError, match="first MLA profile"):
+    with pytest.raises(RuntimeError, match="supported MLA profile"):
         validation._validate_checkpoint_geometry(configurator)
 
     monkeypatch.setattr(

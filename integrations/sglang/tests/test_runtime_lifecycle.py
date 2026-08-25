@@ -1,7 +1,5 @@
 from __future__ import annotations
 
-import json
-import subprocess
 from dataclasses import replace
 from pathlib import Path
 from types import MethodType, SimpleNamespace
@@ -13,21 +11,16 @@ import pytest
 INTEGRATION_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = INTEGRATION_ROOT.parents[1]
 
-from orbitkv_sglang.config import load_config
-from orbitkv_sglang.ffi import CtypesManagerFactory
 from orbitkv_sglang.ffi.manager import CtypesManager
 from orbitkv_sglang.runtime import (
     DETACHED_CLEAR,
     DETACHED_REPLACE,
-    ArenaRegistration,
     ArenaIdentity,
     ArenaStats,
     CanonicalRuntime,
-    ClassTokenDispositionUpdate,
     CompletionBatch,
     EvictedPrefix,
     FailStopped,
-    ManagerCreateSettings,
     ManagerError,
     ManagerStats,
     MirrorCleanupBinding,
@@ -39,191 +32,25 @@ from orbitkv_sglang.runtime import (
     PrefixSemanticKey,
     ReclamationCertificate,
     ReclamationLease,
-    RelocationCopyReceipt,
-    RelocationPolicy,
     ReleaseBatchItem,
     RequestLease,
     RetryableConflict,
     SnapshotLease,
     TAIL_FRESH,
-    TokenDisposition,
-    TokenDispositionKind,
     reclamation_receipts,
 )
 from orbitkv_sglang.runtime.completion import completion_cursor_delta
 
 
-@pytest.fixture(scope="session")
-def ffi_library() -> Path:
-    subprocess.run(
-        [
-            "cargo",
-            "build",
-            "--release",
-            "--locked",
-            "--manifest-path",
-            str(REPOSITORY_ROOT / "crates/orbitkv-ffi/Cargo.toml"),
-        ],
-        cwd=REPOSITORY_ROOT,
-        check=True,
-        capture_output=True,
-        text=True,
-        timeout=240,
-    )
-    return REPOSITORY_ROOT / "crates/orbitkv-ffi/target/release/liborbitkv_ffi.so"
+from runtime_test_support import (
+    ReadyEvent,
+    _policy_updates,
+    _runtime,
+    _step_batch,
+    ffi_library,
+)
 
-
-def _runtime(
-    tmp_path: Path,
-    library: Path,
-    *,
-    hybrid: bool = True,
-    window_tokens: int = 18,
-    requests: int = 16,
-) -> tuple[Any, CtypesManager, CanonicalRuntime]:
-    classes = [
-        {
-            "name": "full",
-            "layers": [0],
-            "retention": "full",
-            "bytes_per_token_per_layer": 128,
-            "window_tokens": None,
-        }
-    ]
-    if hybrid:
-        classes.append(
-            {
-                "name": "swa",
-                "layers": [1],
-                "retention": "sliding",
-                "bytes_per_token_per_layer": 128,
-                "window_tokens": window_tokens,
-            }
-        )
-    plan = tmp_path / f"plan-{hybrid}-{window_tokens}.json"
-    plan.write_text(json.dumps({"page_tokens": 16, "classes": classes}))
-    config = load_config(
-        {"ORBITKV_PLAN": str(plan), "ORBITKV_LIBRARY": str(library)}
-    )
-    arenas = tuple(
-        ArenaRegistration(
-            item.class_id, item.pool_id, item.backend_domain, 64, 0
-        )
-        for item in config.classes
-    )
-    manager = CtypesManagerFactory().create(
-        config,
-        ManagerCreateSettings(
-            requests,
-            4,
-            requests,
-            64 * len(arenas),
-            64,
-        ),
-        arenas,
-    )
-    assert isinstance(manager, CtypesManager)
-    return config, manager, CanonicalRuntime(config, manager)
-
-
-def test_token_reclamation_config_is_explicit_strict_and_full_only(
-    tmp_path: Path, ffi_library: Path
-) -> None:
-    full_plan = tmp_path / "full-reclamation-plan.json"
-    full_plan.write_text(
-        json.dumps(
-            {
-                "page_tokens": 16,
-                "classes": [
-                    {
-                        "name": "full",
-                        "layers": [0],
-                        "retention": "full",
-                        "bytes_per_token_per_layer": 128,
-                        "window_tokens": None,
-                    }
-                ],
-            }
-        )
-    )
-    base = {
-        "ORBITKV_PLAN": str(full_plan),
-        "ORBITKV_LIBRARY": str(ffi_library),
-    }
-    assert load_config(base).token_reclamation.mode == "off"
-    profile = {
-        "mode": "relocate",
-        "trigger_tokens": 48,
-        "retained_per_page": 8,
-        "policy_id": 7,
-        "policy_version": 1,
-        "quality_contract": 99,
-        "fragmentation_threshold_milli": 250,
-        "maximum_source_pages": 3,
-        "evacuation_headroom_pages": 2,
-    }
-    enabled = load_config(
-        {**base, "ORBITKV_TOKEN_RECLAMATION": json.dumps(profile)}
-    )
-    assert enabled.token_reclamation.mode == "relocate"
-    assert enabled.token_reclamation.retained_per_page == 8
-    with pytest.raises(ValueError, match="unknown fields"):
-        load_config(
-            {
-                **base,
-                "ORBITKV_TOKEN_RECLAMATION": json.dumps(
-                    {**profile, "silent_default": True}
-                ),
-            }
-        )
-    with pytest.raises(ValueError, match="below 16"):
-        load_config(
-            {
-                **base,
-                "ORBITKV_TOKEN_RECLAMATION": json.dumps(
-                    {**profile, "retained_per_page": 16}
-                ),
-            }
-        )
-    hybrid_plan = tmp_path / "hybrid-reclamation-plan.json"
-    hybrid_plan.write_text(
-        json.dumps(
-            {
-                "page_tokens": 16,
-                "classes": [
-                    {**json.loads(full_plan.read_text())["classes"][0], "layers": [0]},
-                    {
-                        "name": "swa",
-                        "layers": [1],
-                        "retention": "sliding",
-                        "bytes_per_token_per_layer": 128,
-                        "window_tokens": 128,
-                    },
-                ],
-            }
-        )
-    )
-    hybrid_base = {**base, "ORBITKV_PLAN": str(hybrid_plan)}
-    assert load_config(
-        {**hybrid_base, "ORBITKV_TOKEN_RECLAMATION": json.dumps(profile)}
-    ).token_reclamation.mode == "relocate"
-    with pytest.raises(ValueError, match="shared Full/SWA visibility"):
-        load_config(
-            {
-                **hybrid_base,
-                "ORBITKV_TOKEN_RECLAMATION": json.dumps(
-                    {**profile, "trigger_tokens": 128}
-                ),
-            }
-        )
-
-
-class ReadyEvent:
-    def query(self) -> bool:
-        return True
-
-    def synchronize(self) -> None:
-        return None
+__all__ = ["_policy_updates", "_runtime", "_step_batch", "ffi_library"]
 
 
 class NoIterationPages(dict[tuple[int, int], PageShadow]):
@@ -242,22 +69,6 @@ class NoRequestCensus(dict[Any, Any]):
     def values(self) -> Any:
         raise AssertionError("steady prepare scanned every live request")
 
-
-def _step_batch(
-    runtime: CanonicalRuntime,
-    values: Sequence[tuple[Any, int]],
-    *,
-    domain: int = 1,
-) -> Any:
-    batch, plans = runtime.prepare_batch(tuple(values))
-    assert len(plans) == len(values)
-    runtime.mark_lowered(batch)
-    submitted = runtime.submit_batch(batch)
-    assert len(submitted) == len(values)
-    runtime.mark_forward(batch)
-    runtime.register_event(batch, ReadyEvent(), domain)
-    runtime.poll()
-    return batch
 
 
 def test_prepare_uses_incremental_identity_indexes_not_live_request_scans(
@@ -379,137 +190,6 @@ def test_real_b2_b4_runtime_lifecycle_is_collective_and_reference_exact(
     assert stats.total_request_page_refs == stats.total_prefix_page_refs == 0
     runtime.close()
 
-
-def _policy_updates() -> tuple[ClassTokenDispositionUpdate, ...]:
-    return tuple(
-        ClassTokenDispositionUpdate(
-            0,
-            token_id,
-            TokenDisposition(TokenDispositionKind.POLICY_EVICTED, 7, 1, 99),
-        )
-        for token_id in range(48)
-        if token_id % 16 >= 8
-    )
-
-
-@pytest.mark.parametrize("mode", ["naive", "relocate"])
-def test_runtime_same_victim_set_naive_and_relocation_preserve_absolute_boundary(
-    tmp_path: Path, ffi_library: Path, mode: str
-) -> None:
-    _config_value, manager, runtime = _runtime(
-        tmp_path, ffi_library, hybrid=False
-    )
-    _step_batch(runtime, (("request", 48),))
-    record = runtime.record_for("request")
-    assert record.boundary == 48
-    before = runtime.token_view("request", 0)
-    assert len(before.placements) == 48
-    updates = _policy_updates()
-
-    if mode == "naive":
-        output = runtime.mark_token_dispositions("request", 0, updates)
-        assert len(output.retained_locations) == 24
-        assert len(record.cursor.pages) == 3
-        assert manager.stats().active_pages == 3
-    else:
-        def copied(prepared: Any) -> tuple[RelocationCopyReceipt, ...]:
-            return tuple(
-                RelocationCopyReceipt(
-                    prepared.relocation,
-                    movement.token_id,
-                    movement.source,
-                    movement.destination,
-                )
-                for movement in prepared.moves
-            )
-
-        output = runtime.relocate_tokens(
-            "request",
-            0,
-            updates,
-            RelocationPolicy(3, 2, 250, True),
-            copied,
-            9,
-            1,
-        )
-        assert len(output.retained_locations) == 24
-        assert len(output.prepared.source_pages) == 3
-        assert len(output.prepared.destination_pages) == 2
-        assert output.prepared.projected_reclaimed_pages == 1
-        runtime.acknowledge_relocation(output)
-        assert len(record.cursor.pages) == 2
-        assert manager.stats().active_pages == 2
-
-    assert record.boundary == 48
-    assert runtime.active_kv_length("request", 0) == 24
-    _step_batch(runtime, (("request", 49),), domain=10)
-    assert record.boundary == 49
-    assert runtime.active_kv_length("request", 0) == 25
-    after = runtime.token_view("request", 0)
-    assert len(after.placements) == 49
-    assert after.placements[48].location is not None
-
-    runtime.release_batch(("request",))
-    stats = runtime.stats()
-    assert stats.free_pages == 64
-    assert stats.active_requests == stats.active_snapshots == 0
-    assert stats.pending_reclamations == 0
-    runtime.close()
-
-
-def test_runtime_hybrid_full_relocation_preserves_swa_placements_and_appends(
-    tmp_path: Path, ffi_library: Path
-) -> None:
-    _config_value, manager, runtime = _runtime(
-        tmp_path, ffi_library, hybrid=True, window_tokens=128
-    )
-    _step_batch(runtime, (("request", 48),))
-    updates = tuple(
-        ClassTokenDispositionUpdate(
-            class_id,
-            token_id,
-            TokenDisposition(TokenDispositionKind.POLICY_EVICTED, 7, 1, 99),
-        )
-        for class_id in (0, 1)
-        for token_id in range(48)
-        if token_id % 16 >= 8
-    )
-
-    def copied(prepared: Any) -> tuple[RelocationCopyReceipt, ...]:
-        return tuple(
-            RelocationCopyReceipt(
-                prepared.relocation,
-                movement.token_id,
-                movement.source,
-                movement.destination,
-            )
-            for movement in prepared.moves
-        )
-
-    output = runtime.relocate_tokens(
-        "request",
-        0,
-        updates,
-        RelocationPolicy(3, 2, 250, True),
-        copied,
-        11,
-        1,
-    )
-    class_locations = dict(output.class_retained_locations)
-    assert len(class_locations[0]) == len(class_locations[1]) == 24
-    assert class_locations[0] != class_locations[1]
-    runtime.acknowledge_relocation(output)
-    record = runtime.record_for("request")
-    assert len([page for page in record.cursor.pages.values() if page.class_id == 0]) == 2
-    assert len([page for page in record.cursor.pages.values() if page.class_id == 1]) == 3
-    _step_batch(runtime, (("request", 49),), domain=12)
-    assert runtime.active_kv_length("request", 0) == 25
-    assert runtime.active_kv_length("request", 1) == 25
-    views = (runtime.token_view("request", 0), runtime.token_view("request", 1))
-    assert views[0].placements[48].location.offset == 8
-    assert views[1].placements[48].location.offset == 0
-    runtime.release_batch(("request",))
-    assert runtime.stats().free_pages == 128
     runtime.close()
 
 

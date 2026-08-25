@@ -210,6 +210,43 @@ def _activity_counters() -> dict[str, int]:
     return dict(_COUNTERS)
 
 
+def _requires_disabled_radix_cache() -> bool:
+    """Whether the plan requires request-private, no-prefix cache mode."""
+
+    config = _config()
+    reclamation = getattr(config, "token_reclamation", None)
+    return bool(getattr(config, "fixed_states", ())) or (
+        getattr(reclamation, "mode", "off") != "off"
+    )
+
+
+def _fixed_state_descriptors() -> list[dict[str, Any]]:
+    """Return the loaded fixed-width state projection as JSON-safe values."""
+
+    return [
+        {
+            "name": item.name,
+            "kind": item.kind,
+            "layers": list(item.layers),
+            "state_bytes_per_layer": item.state_bytes_per_layer,
+            "checkpoint_slots_per_request": item.checkpoint_slots_per_request,
+            "kernel_width": item.kernel_width,
+            "byte_count": item.byte_count,
+        }
+        for item in _config().fixed_states
+    ]
+
+
+def _tree_cache_type(tree_cache: Any) -> dict[str, str]:
+    """Return the concrete cache type without relying on its repr."""
+
+    tree_cache_type = type(tree_cache)
+    return {
+        "module": tree_cache_type.__module__,
+        "qualname": tree_cache_type.__qualname__,
+    }
+
+
 def _install_test_state(
     *,
     config: ManagerPlanConfig | None = None,

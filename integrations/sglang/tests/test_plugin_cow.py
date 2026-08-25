@@ -13,6 +13,7 @@ sys.path.insert(0, str(SOURCE_ROOT))
 import orbitkv_sglang.plugin.lowering as lowering  # noqa: E402
 import orbitkv_sglang.plugin.state as state  # noqa: E402
 from orbitkv_sglang.config import ClassConfig, ManagerPlanConfig  # noqa: E402
+from orbitkv_sglang.plugin.private_prefix import PrivatePrefixProvenance  # noqa: E402
 from orbitkv_sglang.runtime import (  # noqa: E402
     ArenaIdentity,
     ClassLoweringSpec,
@@ -128,7 +129,7 @@ class _ReqPool:
         self.req_to_token[rows, columns] = values
 
 
-def _install(*, fail_swa=False):
+def _install(*, fail_swa=False, hybrid=True):
     events = []
     config = ManagerPlanConfig(
         plan_path=Path("plan.json"),
@@ -136,7 +137,11 @@ def _install(*, fail_swa=False):
         plan_json=b"{}",
         plan_fingerprint="sha256:cow-test",
         page_tokens=PAGE_TOKENS,
-        classes=(_class(0, "full"), _class(1, "sliding")),
+        classes=(
+            (_class(0, "full"), _class(1, "sliding"))
+            if hybrid
+            else (_class(0, "full"),)
+        ),
     )
     runtime = _Runtime(config, events)
     allocator = _Allocator(events, fail_swa=fail_swa)
@@ -240,6 +245,50 @@ def _batch(allocator, events, count=1):
         ),
         tuple(plans),
     )
+
+
+def _compact_full_case(*, matches=True, private=True):
+    _runtime, _allocator, events = _install(hybrid=False)
+    source = _page(0, 3)
+    destination = _page(0, 4)
+    intent = CopyIntent(0, 1, 8, 0, 0, source, destination, 2, 3)
+    plan = LoweringPlan(
+        RequestLease(1, 0, 1),
+        SnapshotLease(1, 0, 1),
+        SnapshotLease(1, 1, 1),
+        40,
+        41,
+        (
+            ClassLoweringSpec(
+                0, 1, 71, (),
+                TailAction(0, TAIL_COPY_ON_WRITE, 8, 2, source, destination),
+                (intent,), 40, 41,
+            ),
+        ),
+    )
+    retained = tuple(range(16, 28)) + ((48, 50, 52, 54) if matches else tuple(range(28, 32)))
+    pool = _ReqPool(events)
+    pool.req_to_token[1, : len(retained)] = torch.tensor(retained, dtype=torch.int32)
+    req = SimpleNamespace(
+        rid="compact-full", req_pool_idx=1,
+        prefix_indices=torch.empty(0, dtype=torch.int64),
+        _orbitkv_active_kv_len=len(retained),
+        _orbitkv_retained_locations=retained,
+    )
+    if private:
+        key = ("str", req.rid)
+        lease = plan.request
+        req.prefix_indices = torch.tensor(retained, dtype=torch.int64)
+        req.cache_protected_len = 0
+        req._orbitkv_request_key = key
+        req._orbitkv_request_lease = lease
+        req._orbitkv_private_prefix = PrivatePrefixProvenance(
+            req.prefix_indices, key, lease, 40
+        )
+    batch = SimpleNamespace(
+        reqs=[req], req_to_token_pool=pool, device=torch.device("cpu")
+    )
+    return batch, req, plan, retained
 
 
 def _patch_decode(monkeypatch, batch, plans, events):
@@ -386,3 +435,53 @@ def test_compact_hybrid_tail_uses_class_specific_geometry_and_lut_authority():
     assert not mirror.assignments
     assert not mirror.mapping_assignments
     assert state._activity_counters()["cow_copy_intents"] == 0
+
+
+def test_compact_full_cow_rewrites_overlapping_row_prefix_and_tuple():
+    batch, req, plan, retained = _compact_full_case()
+    row_before = batch.req_to_token_pool.req_to_token.clone()
+    prefix_before = req.prefix_indices.clone()
+
+    mirror = lowering._preflight_cow_mirrors(batch, (plan,), (False,))
+
+    assert torch.equal(batch.req_to_token_pool.req_to_token, row_before)
+    assert torch.equal(req.prefix_indices, prefix_before)
+    assert req._orbitkv_retained_locations == retained
+    lowering._commit_cow_mirrors(mirror)
+    expected = retained[:12] + (64, 66, 68, 70)
+    assert tuple(batch.req_to_token_pool.req_to_token[1, :16].tolist()) == expected
+    assert tuple(req.prefix_indices.tolist()) == expected
+    assert req._orbitkv_retained_locations == expected
+
+
+def test_compact_full_cow_allows_policy_dead_source_with_zero_matches():
+    batch, req, plan, retained = _compact_full_case(matches=False, private=False)
+    before = batch.req_to_token_pool.req_to_token.clone()
+
+    mirror = lowering._preflight_cow_mirrors(batch, (plan,), (False,))
+    lowering._commit_cow_mirrors(mirror)
+
+    assert not mirror.assignments
+    assert torch.equal(batch.req_to_token_pool.req_to_token, before)
+    assert req._orbitkv_retained_locations == retained
+
+
+@pytest.mark.parametrize("fault", ("tuple", "row", "prefix"))
+def test_compact_full_cow_corruption_fails_before_mutation(fault):
+    batch, req, plan, retained = _compact_full_case()
+    if fault == "tuple":
+        req._orbitkv_retained_locations = retained[:-1] + (retained[-1] + 1,)
+    elif fault == "row":
+        batch.req_to_token_pool.req_to_token[1, 0] += 1
+    else:
+        req.prefix_indices[0] += 1
+    row_before = batch.req_to_token_pool.req_to_token.clone()
+    prefix_before = req.prefix_indices.clone()
+    tuple_before = req._orbitkv_retained_locations
+
+    with pytest.raises(RuntimeError):
+        lowering._preflight_cow_mirrors(batch, (plan,), (False,))
+
+    assert torch.equal(batch.req_to_token_pool.req_to_token, row_before)
+    assert torch.equal(req.prefix_indices, prefix_before)
+    assert req._orbitkv_retained_locations == tuple_before

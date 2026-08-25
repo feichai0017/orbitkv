@@ -50,7 +50,10 @@ from .token_relocation import (
     CompletedRelocationBatch,
     PrepareRelocationItem,
     PreparedRelocation,
+    RelocationBatchItem,
+    RelocationCopyBatch,
     RelocationCopyReceipt,
+    RelocationCopyUnobserved,
     RelocationPolicy,
     RelocationUnobservedReceipt,
     SubmittedRelocation,
@@ -83,7 +86,11 @@ from .reclamation import (
     ReleaseCompletion,
     reclamation_receipts,
 )
-from .relocation import DispositionPublication, RelocationPublication
+from .relocation import (
+    DispositionPublication,
+    RelocationBatchPublication,
+    RelocationPublication,
+)
 from .state_checkpoint import (
     StateCompletionReceipt,
     StateCopyIntent,
@@ -184,7 +191,11 @@ __all__ = [
     "ReclamationCertificate",
     "ReclamationLease",
     "ReclamationReceipt",
+    "RelocationBatchItem",
+    "RelocationBatchPublication",
+    "RelocationCopyBatch",
     "RelocationCopyReceipt",
+    "RelocationCopyUnobserved",
     "RelocationLease",
     "RelocationPolicy",
     "RelocationPublication",

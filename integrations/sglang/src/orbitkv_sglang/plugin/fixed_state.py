@@ -538,7 +538,22 @@ class FixedStateCoordinator:
             records = tuple(
                 getattr(forward_batch, "_orbitkv_state_records", ())
             )
+            mode = forward_batch.forward_mode
+            inactive = (
+                bool(model_runner.is_draft_worker)
+                or not bool(mode.is_extend())
+                or bool(mode.is_target_verify())
+                or bool(mode.is_draft_extend_v2())
+            )
             if not records:
+                # SGLang carries the previous extend batch's deferred Mamba
+                # tensors into decode ForwardBatch objects, but its native
+                # helper returns before observing them outside this exact
+                # target-extend domain. Match that execution boundary while
+                # retaining the ownership check wherever an operation could
+                # actually execute.
+                if inactive:
+                    return ()
                 if any(
                     getattr(forward_batch, name, None) is not None
                     for name in (
@@ -559,13 +574,7 @@ class FixedStateCoordinator:
             pending = records
             if model_runner.req_to_token_pool is not self.req_to_token_pool:
                 raise ManagerError("model runner references a foreign fixed-state pool")
-            mode = forward_batch.forward_mode
-            if (
-                bool(model_runner.is_draft_worker)
-                or not bool(mode.is_extend())
-                or bool(mode.is_target_verify())
-                or bool(mode.is_draft_extend_v2())
-            ):
+            if inactive:
                 raise ManagerError("fixed-state transition reached an unsupported forward mode")
             carried_keys = tuple(
                 getattr(forward_batch, "_orbitkv_state_forward_keys", ())

@@ -523,6 +523,24 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
         }]),
         Err(KvManagerError::StepAlreadySubmitted)
     );
+    let source = prepared.plan.source_pages[0];
+    manager.page_mut(source.page_id).unwrap().reader_pins = 2;
+    let stale_completion = state_image(&manager);
+    assert_eq!(
+        manager.complete_relocation_batch(
+            BatchCompletionReceipt {
+                engine_epoch: prepared.relocation.engine_epoch,
+                completion_domain: 5,
+                completion_value: 7,
+                confirmed: 1,
+                reserved: 0,
+            },
+            &[prepared.relocation],
+        ),
+        Err(KvManagerError::StalePage)
+    );
+    assert_eq!(state_image(&manager), stale_completion);
+    manager.page_mut(source.page_id).unwrap().reader_pins = 1;
     let output = manager
         .complete_relocation_batch(
             BatchCompletionReceipt {
@@ -605,11 +623,233 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
             .destination_pages
             .contains(&newest_location.page)
     );
+
+    let second_updates = appended_view
+        .placements
+        .iter()
+        .filter(|placement| {
+            placement.disposition.retained()
+                && placement
+                    .location
+                    .is_some_and(|location| location.offset >= 8)
+        })
+        .map(|placement| ClassTokenDispositionUpdate {
+            class_id: 0,
+            token_id: placement.token_id,
+            disposition: TokenDisposition::policy_evicted(72, 1, 99),
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(second_updates.len(), 17);
+    let second_marked = manager
+        .mark_token_dispositions_batch(&[TokenDispositionBatchItem {
+            request,
+            expected_snapshot: appended.publication.snapshot,
+            updates: second_updates.into_boxed_slice(),
+        }])
+        .unwrap()[0];
+    assert_eq!(second_marked.boundary, 65);
+    assert_eq!(
+        second_marked.view_version.0,
+        appended.publication.view_version.0 + 1
+    );
+    let second_marked_view = manager
+        .token_views_batch(&[TokenViewQuery {
+            request,
+            expected_snapshot: second_marked.snapshot,
+            class_id: 0,
+        }])
+        .unwrap()[0]
+        .clone();
+    assert_eq!(second_marked_view.placements.len(), 65);
+    assert_eq!(retained_tokens(&second_marked_view).len(), 24);
+    assert_eq!(
+        manager.request_snapshot(request).unwrap().roots[0].resident_tokens,
+        41
+    );
+
+    let image = state_image(&manager);
+    assert_eq!(
+        manager.prepare_relocation_batch(&[PrepareRelocationItem {
+            request,
+            expected_snapshot: appended.publication.snapshot,
+            class_id: 0,
+            policy: RelocationPolicy {
+                fragmentation_threshold_milli: 250,
+                maximum_source_pages: 8,
+                evacuation_headroom_pages: 2,
+                full_evacuation: true,
+            },
+        }]),
+        Err(KvManagerError::StaleTokenView)
+    );
+    assert_eq!(state_image(&manager), image);
+
+    manager.request_snapshot_mut(request).unwrap().roots = {
+        let snapshot = manager.request_snapshot(request).unwrap();
+        let mut roots = snapshot.roots.iter().cloned().collect::<Vec<_>>();
+        roots[0].resident_tokens = 40;
+        roots.into()
+    };
+    let malformed = state_image(&manager);
+    assert_eq!(
+        manager.prepare_relocation_batch(&[PrepareRelocationItem {
+            request,
+            expected_snapshot: second_marked.snapshot,
+            class_id: 0,
+            policy: RelocationPolicy {
+                fragmentation_threshold_milli: 250,
+                maximum_source_pages: 8,
+                evacuation_headroom_pages: 2,
+                full_evacuation: true,
+            },
+        }]),
+        Err(KvManagerError::TokenPlacementMismatch)
+    );
+    assert_eq!(state_image(&manager), malformed);
+    manager.request_snapshot_mut(request).unwrap().roots = {
+        let snapshot = manager.request_snapshot(request).unwrap();
+        let mut roots = snapshot.roots.iter().cloned().collect::<Vec<_>>();
+        roots[0].resident_tokens = 41;
+        roots.into()
+    };
+
+    let second_prepared = manager
+        .prepare_relocation_batch(&[PrepareRelocationItem {
+            request,
+            expected_snapshot: second_marked.snapshot,
+            class_id: 0,
+            policy: RelocationPolicy {
+                fragmentation_threshold_milli: 250,
+                maximum_source_pages: 8,
+                evacuation_headroom_pages: 2,
+                full_evacuation: true,
+            },
+        }])
+        .unwrap()[0]
+        .clone();
+    assert_ne!(second_prepared.relocation, prepared.relocation);
+    assert_eq!(second_prepared.plan.source_pages.len(), 3);
+    assert_eq!(second_prepared.plan.destination_pages.len(), 2);
+    assert_eq!(second_prepared.plan.projected_reclaimed_pages, 1);
+    assert_eq!(second_prepared.plan.moves.len(), 24);
+    assert!(second_prepared.plan.source_pages.iter().any(|current| {
+        prepared.plan.source_pages.iter().any(|previous| {
+            current.page_id == previous.page_id && current.generation > previous.generation
+        })
+    }));
+    let second_source_pages = second_prepared
+        .plan
+        .source_pages
+        .iter()
+        .copied()
+        .collect::<BTreeSet<_>>();
+    let current_root_pages = manager.request_snapshot(request).unwrap().roots[0]
+        .entries
+        .iter()
+        .map(|entry| entry.page)
+        .collect::<BTreeSet<_>>();
+    assert_eq!(second_source_pages, current_root_pages);
+
+    manager
+        .submit_relocation_batch(
+            &[second_prepared.relocation],
+            &relocation_receipts(&second_prepared),
+        )
+        .unwrap();
+    let second_output = manager
+        .complete_relocation_batch(
+            BatchCompletionReceipt {
+                engine_epoch: second_prepared.relocation.engine_epoch,
+                completion_domain: 5,
+                completion_value: 9,
+                confirmed: 1,
+                reserved: 0,
+            },
+            &[second_prepared.relocation],
+        )
+        .unwrap();
+    assert_eq!(second_output.publications.len(), 1);
+    assert_eq!(second_output.publications[0].boundary, 65);
+    assert_eq!(
+        second_output.publications[0].view_version.0,
+        second_marked.view_version.0 + 1
+    );
+    let second_retirement_spans = second_output
+        .retirements
+        .iter()
+        .map(|certificate| {
+            (
+                certificate.logical_ordinal,
+                certificate.token_begin,
+                certificate.token_end_exclusive,
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        second_retirement_spans,
+        vec![(0, 0, 16), (1, 16, 32), (2, 32, 41)]
+    );
+    let second_publication = second_output.publications[0];
+    let second_packed = manager
+        .token_views_batch(&[TokenViewQuery {
+            request,
+            expected_snapshot: second_publication.snapshot,
+            class_id: 0,
+        }])
+        .unwrap()[0]
+        .clone();
+    assert_eq!(second_packed.placements.len(), 65);
+    assert_eq!(
+        retained_tokens(&second_packed),
+        retained_tokens(&second_marked_view)
+    );
+    let second_root = &manager.request_snapshot(request).unwrap().roots[0];
+    assert_eq!(second_root.layout, RootLayout::Packed);
+    assert_eq!(second_root.resident_tokens, 24);
+    assert_eq!(second_root.entries.len(), 2);
+    assert_eq!(
+        second_root
+            .entries
+            .iter()
+            .map(|entry| entry.logical_ordinal)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    let retained = second_packed
+        .placements
+        .iter()
+        .filter(|placement| placement.disposition.retained())
+        .collect::<Vec<_>>();
+    for (slot, placement) in retained.iter().enumerate() {
+        let location = placement.location.unwrap();
+        assert_eq!(
+            location.page,
+            second_prepared.plan.destination_pages[slot / 16]
+        );
+        assert_eq!(location.offset, u32::try_from(slot % 16).unwrap());
+    }
+    assert!(
+        second_packed
+            .placements
+            .iter()
+            .filter(|placement| !placement.disposition.retained())
+            .all(|placement| placement.location.is_none())
+    );
+    assert_eq!(manager.stats().retiring_pages, 3);
+    manager
+        .acknowledge_reclamations_batch(&reclamation_receipts(&second_output.retirements))
+        .unwrap();
+    assert_eq!(manager.stats().retiring_pages, 0);
+    assert_eq!(manager.stats().active_pages, 2);
+    assert_eq!(manager.stats().free_pages, 6);
+    assert_incremental_census_matches_full_scan(&manager);
+    assert_reference_census_matches_full_scan(&manager);
+
     let extra = manager.acquire_request_leases_for_test(1).unwrap()[0];
     assert!(matches!(
         manager.fork_requests_batch(&[RequestForkItem {
             source_request: request,
-            expected_source_head: appended.publication.snapshot,
+            expected_source_head: second_publication.snapshot,
             target_empty_request: extra,
             expected_target_head: manager.request(extra).unwrap().head,
         }]),
@@ -617,20 +857,18 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
     ));
     let stats = manager.stats();
     assert_eq!(stats.retiring_pages, 0);
-    assert_eq!(stats.active_pages, 3);
+    assert_eq!(stats.active_pages, 2);
     let release = manager
         .release_batch(&[ReleaseBatchItem {
             request,
-            expected_head: appended.publication.snapshot,
+            expected_head: second_publication.snapshot,
         }])
         .unwrap();
-    assert_eq!(release.retirements.len(), 3);
+    assert_eq!(release.retirements.len(), 2);
     assert_eq!(release.retirements[0].token_begin, 0);
     assert_eq!(release.retirements[0].token_end_exclusive, 16);
     assert_eq!(release.retirements[1].token_begin, 16);
-    assert_eq!(release.retirements[1].token_end_exclusive, 32);
-    assert_eq!(release.retirements[2].token_begin, 32);
-    assert_eq!(release.retirements[2].token_end_exclusive, 41);
+    assert_eq!(release.retirements[1].token_end_exclusive, 24);
     manager
         .acknowledge_reclamations_batch(&reclamation_receipts(&release.retirements))
         .unwrap();
@@ -638,9 +876,17 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
     manager.release_current_for_test(&[extra]).unwrap();
     manager.recycle_requests_batch(&[extra]).unwrap();
     let stats = manager.stats();
+    assert_eq!(stats.active_requests, 0);
+    assert_eq!(stats.active_snapshots, 0);
     assert_eq!(stats.free_pages, 8);
+    assert_eq!(stats.reserved_pages, 0);
     assert_eq!(stats.active_pages, 0);
     assert_eq!(stats.retiring_pages, 0);
+    assert_eq!(stats.pending_reclamations, 0);
+    assert_eq!(stats.total_request_page_refs, 0);
+    assert_eq!(stats.total_reader_pins, 0);
+    assert_incremental_census_matches_full_scan(&manager);
+    assert_reference_census_matches_full_scan(&manager);
 }
 
 #[test]
@@ -775,6 +1021,7 @@ fn hybrid_full_relocation_keeps_swa_class_specific_placement_and_appends() {
 }
 
 #[test]
+#[allow(clippy::too_many_lines)]
 fn relocation_prepare_abort_and_receipt_faults_are_failure_atomic() {
     let plan = full_plan(CANONICAL_PAGE_TOKENS);
     let mut manager = manager_for_plan(&plan, &[backend(0, 1, 8, 0)], 64, 8);
@@ -827,13 +1074,37 @@ fn relocation_prepare_abort_and_receipt_faults_are_failure_atomic() {
         .clone();
     let reserved = manager.stats();
     assert_eq!(reserved.reserved_pages, 2);
+    let unobserved = RelocationUnobservedReceipt {
+        relocation: prepared.relocation,
+        backend_unobserved: 1,
+        reserved: 0,
+    };
+    let duplicate_abort = state_image(&manager);
+    assert_eq!(
+        manager.abort_relocations_batch(&[unobserved, unobserved]),
+        Err(KvManagerError::DuplicateStep)
+    );
+    assert_eq!(state_image(&manager), duplicate_abort);
+
+    let destination = prepared.plan.destination_pages[0];
     manager
-        .abort_relocations_batch(&[RelocationUnobservedReceipt {
-            relocation: prepared.relocation,
-            backend_unobserved: 1,
-            reserved: 0,
-        }])
+        .set_page_phase(destination.page_id, PagePhase::Free)
         .unwrap();
+    let stale_abort = state_image(&manager);
+    assert_eq!(
+        manager.abort_relocations_batch(&[unobserved]),
+        Err(KvManagerError::StalePage)
+    );
+    assert_eq!(state_image(&manager), stale_abort);
+    manager
+        .set_page_phase(
+            destination.page_id,
+            PagePhase::ReservedRelocation {
+                relocation: prepared.relocation,
+            },
+        )
+        .unwrap();
+    manager.abort_relocations_batch(&[unobserved]).unwrap();
     assert_eq!(manager.stats().reserved_pages, 0);
     assert_eq!(manager.stats().free_pages, 5);
 
@@ -846,6 +1117,33 @@ fn relocation_prepare_abort_and_receipt_faults_are_failure_atomic() {
         }])
         .unwrap()[0]
         .clone();
+    let valid_receipts = relocation_receipts(&prepared);
+    let duplicate_submit = state_image(&manager);
+    assert_eq!(
+        manager
+            .submit_relocation_batch(&[prepared.relocation, prepared.relocation], &valid_receipts),
+        Err(KvManagerError::DuplicateStep)
+    );
+    assert_eq!(state_image(&manager), duplicate_submit);
+    let source = prepared.plan.source_pages[0];
+    manager.page_mut(source.page_id).unwrap().generation += 1;
+    let stale_submit = state_image(&manager);
+    assert_eq!(
+        manager.submit_relocation_batch(&[prepared.relocation], &valid_receipts),
+        Err(KvManagerError::StalePage)
+    );
+    assert_eq!(state_image(&manager), stale_submit);
+    manager.page_mut(source.page_id).unwrap().generation = source.generation;
+    let destination = prepared.plan.destination_pages[0];
+    manager.page_mut(destination.page_id).unwrap().reader_pins = 1;
+    let stale_destination_submit = state_image(&manager);
+    assert_eq!(
+        manager.submit_relocation_batch(&[prepared.relocation], &valid_receipts),
+        Err(KvManagerError::StalePage)
+    );
+    assert_eq!(state_image(&manager), stale_destination_submit);
+    manager.page_mut(destination.page_id).unwrap().reader_pins = 0;
+
     let mut receipts = relocation_receipts(&prepared);
     receipts[0].token_id += 1;
     assert_eq!(
@@ -856,6 +1154,194 @@ fn relocation_prepare_abort_and_receipt_faults_are_failure_atomic() {
     );
     assert!(manager.request(request).unwrap().quarantined);
     assert_eq!(manager.stats().quarantined_pages, 2);
+}
+
+#[test]
+fn relocation_submit_page_preflight_is_collectively_zero_mutation() {
+    let plan = full_plan(CANONICAL_PAGE_TOKENS);
+    let mut manager = manager_for_plan(&plan, &[backend(0, 1, 16, 0)], 64, 16);
+    let requests = manager.acquire_request_leases_for_test(2).unwrap();
+    let policy = RelocationPolicy {
+        fragmentation_threshold_milli: 250,
+        maximum_source_pages: 8,
+        evacuation_headroom_pages: 2,
+        full_evacuation: true,
+    };
+    let mut marked_snapshots = Vec::with_capacity(requests.len());
+    for &request in &requests {
+        let initial = append_step(&mut manager, request, 48);
+        let updates = (0..48_u64)
+            .filter(|token_id| token_id % 16 >= 8)
+            .map(|token_id| ClassTokenDispositionUpdate {
+                class_id: 0,
+                token_id,
+                disposition: TokenDisposition::policy_evicted(82, 1, 102),
+            })
+            .collect::<Vec<_>>();
+        marked_snapshots.push(
+            manager
+                .mark_token_dispositions_batch(&[TokenDispositionBatchItem {
+                    request,
+                    expected_snapshot: initial.publication.snapshot,
+                    updates: updates.into_boxed_slice(),
+                }])
+                .unwrap()[0]
+                .snapshot,
+        );
+    }
+    let prepare_items = requests
+        .iter()
+        .copied()
+        .zip(marked_snapshots.iter().copied())
+        .map(|(request, expected_snapshot)| PrepareRelocationItem {
+            request,
+            expected_snapshot,
+            class_id: 0,
+            policy,
+        })
+        .collect::<Vec<_>>();
+    let prepared = manager.prepare_relocation_batch(&prepare_items).unwrap();
+    let relocations = prepared
+        .iter()
+        .map(|item| item.relocation)
+        .collect::<Vec<_>>();
+    let receipts = prepared
+        .iter()
+        .flat_map(relocation_receipts)
+        .collect::<Vec<_>>();
+
+    let stale_source = prepared[1].plan.source_pages[0];
+    manager.page_mut(stale_source.page_id).unwrap().generation += 1;
+    let before = state_image(&manager);
+    assert_eq!(
+        manager.submit_relocation_batch(&relocations, &receipts),
+        Err(KvManagerError::StalePage)
+    );
+    assert_eq!(state_image(&manager), before);
+    manager.page_mut(stale_source.page_id).unwrap().generation = stale_source.generation;
+
+    let abort_receipts = relocations
+        .iter()
+        .copied()
+        .map(|relocation| RelocationUnobservedReceipt {
+            relocation,
+            backend_unobserved: 1,
+            reserved: 0,
+        })
+        .collect::<Vec<_>>();
+    manager.abort_relocations_batch(&abort_receipts).unwrap();
+    assert_eq!(manager.stats().reserved_pages, 0);
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RelocationCompletionWitness {
+    image: String,
+    stats: ManagerStats,
+    arena_stats: Box<[ArenaStats]>,
+    heads: Vec<SnapshotLease>,
+    page_phases: Vec<PagePhase>,
+    reclamations: String,
+}
+
+fn relocation_completion_witness(
+    manager: &CanonicalKvManager,
+    requests: &[RequestLease],
+) -> RelocationCompletionWitness {
+    RelocationCompletionWitness {
+        image: state_image(manager),
+        stats: manager.stats(),
+        arena_stats: manager.arena_stats(),
+        heads: requests
+            .iter()
+            .map(|&request| manager.request(request).unwrap().head)
+            .collect(),
+        page_phases: manager.pages.iter().map(|page| page.phase).collect(),
+        reclamations: format!("{:#?}", manager.reclamations),
+    }
+}
+
+#[test]
+fn relocation_completion_page_preflight_is_collectively_zero_mutation() {
+    let plan = full_plan(CANONICAL_PAGE_TOKENS);
+    let mut manager = manager_for_plan(&plan, &[backend(0, 1, 16, 0)], 64, 16);
+    let requests = manager.acquire_request_leases_for_test(2).unwrap();
+    let policy = RelocationPolicy {
+        fragmentation_threshold_milli: 250,
+        maximum_source_pages: 8,
+        evacuation_headroom_pages: 2,
+        full_evacuation: true,
+    };
+    let mut marked_snapshots = Vec::with_capacity(requests.len());
+    for &request in &requests {
+        let initial = append_step(&mut manager, request, 48);
+        let updates = (0..48_u64)
+            .filter(|token_id| token_id % 16 >= 8)
+            .map(|token_id| ClassTokenDispositionUpdate {
+                class_id: 0,
+                token_id,
+                disposition: TokenDisposition::policy_evicted(83, 1, 103),
+            })
+            .collect::<Vec<_>>();
+        marked_snapshots.push(
+            manager
+                .mark_token_dispositions_batch(&[TokenDispositionBatchItem {
+                    request,
+                    expected_snapshot: initial.publication.snapshot,
+                    updates: updates.into_boxed_slice(),
+                }])
+                .unwrap()[0]
+                .snapshot,
+        );
+    }
+    let prepare_items = requests
+        .iter()
+        .copied()
+        .zip(marked_snapshots.iter().copied())
+        .map(|(request, expected_snapshot)| PrepareRelocationItem {
+            request,
+            expected_snapshot,
+            class_id: 0,
+            policy,
+        })
+        .collect::<Vec<_>>();
+    let prepared = manager.prepare_relocation_batch(&prepare_items).unwrap();
+    let relocations = prepared
+        .iter()
+        .map(|item| item.relocation)
+        .collect::<Vec<_>>();
+    let receipts = prepared
+        .iter()
+        .flat_map(relocation_receipts)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        manager
+            .submit_relocation_batch(&relocations, &receipts)
+            .unwrap()
+            .len(),
+        2
+    );
+
+    let stale_source = prepared[1].plan.source_pages[0];
+    assert_eq!(manager.page(stale_source.page_id).unwrap().reader_pins, 1);
+    manager.page_mut(stale_source.page_id).unwrap().reader_pins = 2;
+    let before = relocation_completion_witness(&manager, &requests);
+    assert_eq!(before.stats.pending_reclamations, 0);
+
+    assert_eq!(
+        manager.complete_relocation_batch(
+            BatchCompletionReceipt {
+                engine_epoch: relocations[0].engine_epoch,
+                completion_domain: 5,
+                completion_value: 11,
+                confirmed: 1,
+                reserved: 0,
+            },
+            &relocations,
+        ),
+        Err(KvManagerError::StalePage)
+    );
+
+    assert_eq!(relocation_completion_witness(&manager, &requests), before);
 }
 
 fn relocation_receipts(prepared: &PreparedRelocation) -> Vec<RelocationCopyReceipt> {

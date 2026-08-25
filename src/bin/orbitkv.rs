@@ -4,11 +4,12 @@ use std::process::ExitCode;
 
 use orbitkv::{
     AttentionStatePlanInput, HfRetentionOptions, KvPlanInput, compile_attention_state_manager_plan,
-    compile_attention_state_plan, compile_hf_manager_plan, compile_plan,
+    compile_attention_state_plan, compile_hf_attention_state_input,
+    compile_hf_attention_state_plan, compile_hf_token_manager_plan, compile_plan,
 };
 use serde::Serialize;
 
-const USAGE: &str = "usage:\n  orbitkv compile-plan <plan.json>\n  orbitkv compile-state-plan <state-plan.json>\n  orbitkv compile-state-manager-plan <state-plan.json>\n  orbitkv compile-hf-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>";
+const USAGE: &str = "usage:\n  orbitkv compile-plan <plan.json>\n  orbitkv compile-state-plan <state-plan.json>\n  orbitkv compile-state-manager-plan <state-plan.json>\n  orbitkv compile-hf-state-input <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-state-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-token-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>  (compatibility alias)\n\nnotes:\n  compile-hf-state-input emits the complete input schema for ORBITKV_STATE_PLAN.\n  compile-hf-state-plan emits compiled backend contracts, not ORBITKV_STATE_PLAN input.\n  compile-hf-token-manager-plan emits only token-addressable state; recurrent and convolution state are omitted.\n  compile-hf-manager-plan is a deprecated alias for compile-hf-token-manager-plan.";
 
 fn main() -> ExitCode {
     match run() {
@@ -26,9 +27,33 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("compile-plan") => compile_plan_command(&mut args),
         Some("compile-state-plan") => compile_state_plan_command(&mut args),
         Some("compile-state-manager-plan") => compile_state_manager_plan_command(&mut args),
-        Some("compile-hf-manager-plan") => compile_hf_manager_plan_command(&mut args),
+        Some("compile-hf-state-input") => compile_hf_state_input_command(&mut args),
+        Some("compile-hf-state-plan") => compile_hf_state_plan_command(&mut args),
+        Some("compile-hf-token-manager-plan" | "compile-hf-manager-plan") => {
+            compile_hf_token_manager_plan_command(&mut args)
+        }
         _ => Err(USAGE.into()),
     }
+}
+
+fn compile_hf_state_input_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (path, options) = parse_hf_args(args)?;
+    write_json(&compile_hf_attention_state_input(
+        &std::fs::read(path)?,
+        options,
+    )?)
+}
+
+fn compile_hf_state_plan_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (path, options) = parse_hf_args(args)?;
+    write_json(&compile_hf_attention_state_plan(
+        &std::fs::read(path)?,
+        options,
+    )?)
 }
 
 fn compile_state_manager_plan_command(
@@ -58,9 +83,17 @@ fn compile_plan_command(
     write_json(&compile_plan(input)?)
 }
 
-fn compile_hf_manager_plan_command(
+fn compile_hf_token_manager_plan_command(
     args: &mut impl Iterator<Item = String>,
 ) -> Result<(), Box<dyn std::error::Error>> {
+    let (path, options) = parse_hf_args(args)?;
+    let input = compile_hf_token_manager_plan(&std::fs::read(path)?, options)?;
+    write_json(&input)
+}
+
+fn parse_hf_args(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(String, HfRetentionOptions), Box<dyn std::error::Error>> {
     let path = required(args, "HF config path")?;
     let mut page_tokens = None;
     let mut kv_dtype_bytes = None;
@@ -75,12 +108,13 @@ fn compile_hf_manager_plan_command(
         }
         *destination = Some(required(args, &format!("value for {flag}"))?.parse::<u64>()?);
     }
-    let options = HfRetentionOptions {
-        page_tokens: page_tokens.ok_or("missing --page-tokens")?,
-        kv_dtype_bytes: kv_dtype_bytes.ok_or("missing --kv-dtype-bytes")?,
-    };
-    let input = compile_hf_manager_plan(&std::fs::read(path)?, options)?;
-    write_json(&input)
+    Ok((
+        path,
+        HfRetentionOptions {
+            page_tokens: page_tokens.ok_or("missing --page-tokens")?,
+            kv_dtype_bytes: kv_dtype_bytes.ok_or("missing --kv-dtype-bytes")?,
+        },
+    ))
 }
 
 fn required(

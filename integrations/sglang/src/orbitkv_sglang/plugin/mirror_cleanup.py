@@ -8,6 +8,7 @@ from ..runtime import (
     DETACHED_CLEAR,
     DETACHED_COPY_ON_WRITE,
     DETACHED_REPLACE,
+    DETACHED_REQUEST_RELEASE,
     DETACHED_RETENTION,
     DetachedBinding,
     MirrorCleanupItem,
@@ -15,6 +16,11 @@ from ..runtime import (
     sglang_page_id,
 )
 from . import state as _state
+from .private_prefix import (
+    PrivatePrefixProvenance,
+    clear_private_prefix,
+    validate_private_prefix,
+)
 from .state import _config, _runtime
 
 
@@ -50,6 +56,18 @@ class _MirrorCleanupPlan:
     mapping: Any | None
     mapping_indices: tuple[Any, ...]
     frontier_updates: tuple[tuple[Any, int], ...]
+    indexed_zeroes: tuple[tuple[Any, Any], ...] = ()
+    private_prefixes: tuple[tuple[Any, PrivatePrefixProvenance], ...] = ()
+
+    @property
+    def requires_device_sync(self) -> bool:
+        return any(
+            int(target.numel()) > 0
+            for targets in (self.zero_views, self.mapping_indices)
+            for target in targets
+        ) or any(
+            int(indices.numel()) > 0 for _target, indices in self.indexed_zeroes
+        )
 
 
 class _MirrorCleanupCoordinator:
@@ -114,6 +132,12 @@ class _MirrorCleanupCoordinator:
             or int(mapping.numel()) <= 1
         ):
             raise RuntimeError("SGLang Full-to-SWA mapping changed")
+        fast_plan = self._preflight_full_batch(
+            values, certificates, table, maximum, full, sliding
+        )
+        if fast_plan is not None:
+            _state._counter_add("mirror_validation_calls")
+            return fast_plan
 
         checks: list[Any] = []
         zero_views: list[Any] = []
@@ -132,6 +156,7 @@ class _MirrorCleanupCoordinator:
         covered_swa_keys = set()
         cold_alias_scan = False
         compact_hybrid_releases = 0
+        private_prefixes: list[tuple[Any, PrivatePrefixProvenance]] = []
 
         for item in values:
             context = item.context
@@ -168,6 +193,18 @@ class _MirrorCleanupCoordinator:
             prefix_count = int(prefix.numel()) if prefix is not None else 0
             if prefix_count > boundary:
                 raise RuntimeError("SGLang prefix mirror exceeds its KV boundary")
+            private_prefix = None
+            if _state._requires_disabled_radix_cache():
+                private_prefix = validate_private_prefix(
+                    req,
+                    mirror,
+                    getattr(req, "_orbitkv_request_key", None),
+                    getattr(req, "_orbitkv_request_lease", None),
+                    boundary,
+                )
+                if item.releasing and private_prefix is not None:
+                    private_prefixes.append((req, private_prefix))
+                    zero_views.append(prefix)
             retention_frontier = 0
             compact_locations = getattr(req, "_orbitkv_retained_locations", None)
             compact_swa_locations = getattr(
@@ -176,7 +213,7 @@ class _MirrorCleanupCoordinator:
             compact_release = compact_locations is not None and item.releasing
             if compact_release:
                 if (
-                    prefix_count != 0
+                    (prefix_count != 0 and private_prefix is None)
                     or not isinstance(compact_locations, tuple)
                     or not compact_locations
                     or len(compact_locations) > boundary
@@ -188,6 +225,8 @@ class _MirrorCleanupCoordinator:
                     )
                 ):
                     raise RuntimeError("compact release metadata is invalid")
+                if private_prefix is not None and prefix_count > len(compact_locations):
+                    raise RuntimeError("compact private-prefix length is invalid")
                 compact_view = mirror[: len(compact_locations)]
                 expected_compact = torch.tensor(
                     compact_locations, dtype=torch.int64, device=table.device
@@ -743,16 +782,21 @@ class _MirrorCleanupCoordinator:
             mapping,
             tuple(mapping_indices),
             tuple(frontier_updates),
+            private_prefixes=tuple(private_prefixes),
         )
 
     def commit(self, plan: _MirrorCleanupPlan) -> None:
         for target in plan.zero_views:
             target.zero_()
+        for target, indices in plan.indexed_zeroes:
+            target[indices] = 0
         if plan.mapping is not None:
             for indices in plan.mapping_indices:
                 plan.mapping[indices] = 0
 
-    def synchronize(self, _plan: _MirrorCleanupPlan) -> None:
+    def synchronize(self, plan: _MirrorCleanupPlan) -> None:
+        if not plan.requires_device_sync:
+            return
         _synchronize_mirror(self.req_to_token_pool)
         _state._counter_add("mirror_syncs")
 
@@ -760,6 +804,187 @@ class _MirrorCleanupCoordinator:
     def finalize(plan: _MirrorCleanupPlan) -> None:
         for state, frontier in plan.frontier_updates:
             state.swa_evicted_seqlen = frontier
+        for req, marker in plan.private_prefixes:
+            clear_private_prefix(req, marker)
+
+    def _preflight_full_batch(
+        self,
+        values: tuple[MirrorCleanupItem, ...],
+        certificates: tuple[ReclamationCertificate, ...],
+        table: Any,
+        maximum: int,
+        full: Any | None,
+        sliding: Any | None,
+    ) -> _MirrorCleanupPlan | None:
+        """Aggregate the strict Full-only fresh/release mirror profile."""
+
+        import torch
+
+        if (
+            full is None
+            or sliding is not None
+            or _state._requires_disabled_radix_cache()
+            or len(_config().classes_by_id) != 1
+            or full.storage != "token_kv"
+            or not values
+            or not table.is_contiguous()
+        ):
+            return None
+        fresh = all(
+            not item.releasing and not item.detached and bool(item.candidates)
+            for item in values
+        )
+        releasing = all(
+            item.releasing and not item.candidates and bool(item.detached)
+            for item in values
+        )
+        if not (fresh or releasing) or fresh and certificates:
+            return None
+        if fresh and any(
+            candidate.class_id != full.class_id
+            or not self._is_zero_page(candidate.source)
+            or candidate.retiring
+            or getattr(item.context.req, "_orbitkv_retained_locations", None)
+            is not None
+            for item in values
+            for candidate in item.candidates
+        ):
+            return None
+        if releasing and any(
+            detached.class_id != full.class_id
+            or detached.action != DETACHED_CLEAR
+            or detached.reason != DETACHED_REQUEST_RELEASE
+            or getattr(item.context.req, "_orbitkv_retained_locations", None)
+            is not None
+            for item in values
+            for detached in item.detached
+        ):
+            return None
+
+        spans: list[tuple[int, int, int, int]] = []
+        prefix_actual: list[Any] = []
+        prefix_spans: list[tuple[int, int]] = []
+        prefix_zeroes: list[Any] = []
+        rows: set[int] = set()
+        width = int(table.shape[1])
+        for item in values:
+            context = item.context
+            if not isinstance(context, _MirrorCleanupContext):
+                raise RuntimeError("mirror cleanup lost its request context")
+            req = context.req
+            raw_row = getattr(req, "req_pool_idx", None)
+            if isinstance(raw_row, bool) or not isinstance(raw_row, Integral):
+                raise RuntimeError("ReqToToken cleanup row is not an integer")
+            row = int(raw_row)
+            if (
+                row != context.request_row
+                or not 0 < row < int(table.shape[0])
+                or row in rows
+            ):
+                raise RuntimeError("ReqToToken cleanup names a dummy or aliased row")
+            rows.add(row)
+            if (
+                isinstance(item.boundary, bool)
+                or not isinstance(item.boundary, Integral)
+                or not 0 <= int(item.boundary) <= maximum
+            ):
+                raise RuntimeError("manager cleanup boundary exceeds ReqToToken")
+            boundary = int(item.boundary)
+            prefix = getattr(req, "prefix_indices", None)
+            if prefix is not None and (
+                type(prefix) is not torch.Tensor
+                or prefix.ndim != 1
+                or prefix.dtype is not torch.int64
+                or prefix.device != table.device
+            ):
+                raise RuntimeError("SGLang prefix mirror is not a device int64 vector")
+            prefix_count = int(prefix.numel()) if prefix is not None else 0
+            if prefix_count > boundary:
+                raise RuntimeError("SGLang prefix mirror exceeds its KV boundary")
+
+            transitions = item.candidates if fresh else item.detached
+            ordinals: set[int] = set()
+            covered: list[tuple[int, int]] = []
+            for transition in transitions:
+                if fresh:
+                    self._validate_candidate(
+                        transition, boundary, {full.class_id: full}
+                    )
+                    backend_index = transition.destination_backend_index
+                else:
+                    self._validate_detached(transition, boundary, {full.class_id: full})
+                    backend_index = transition.old_backend_index
+                if transition.logical_ordinal in ordinals:
+                    raise RuntimeError("Full mirror transition is duplicated")
+                ordinals.add(transition.logical_ordinal)
+                begin = transition.token_begin
+                end = transition.token_end_exclusive
+                covered.append((begin, end))
+                start = self._location_start(full.class_id, backend_index, begin)
+                spans.append((row, begin, end, start))
+                prefix_end = min(end, prefix_count)
+                if begin < prefix_end:
+                    assert prefix is not None
+                    prefix_actual.append(prefix[begin:prefix_end])
+                    prefix_spans.append((start, prefix_end - begin))
+            if releasing:
+                cursor = 0
+                for begin, end in sorted(covered):
+                    if begin != cursor:
+                        return None
+                    cursor = end
+                if cursor != boundary:
+                    return None
+                if prefix_count:
+                    assert prefix is not None
+                    prefix_zeroes.append(prefix[:prefix_count])
+
+        if not spans:
+            return None
+        total = sum(end - begin for _row, begin, end, _start in spans)
+        indices_cpu = torch.empty(total, dtype=torch.int64)
+        expected_cpu = torch.empty(total, dtype=torch.int64)
+        offsets = torch.arange(_config().page_tokens, dtype=torch.int64)
+        cursor = 0
+        for row, begin, end, start in spans:
+            count = end - begin
+            indices_cpu[cursor : cursor + count] = (
+                row * width + begin + offsets[:count]
+            )
+            expected_cpu[cursor : cursor + count] = start + offsets[:count]
+            cursor += count
+        indices = indices_cpu.to(device=table.device)
+        expected = expected_cpu.to(device=table.device)
+        actual_parts = [table.reshape(-1)[indices].to(torch.int64)]
+        expected_parts = [expected]
+        if prefix_actual:
+            actual_parts.append(torch.cat(prefix_actual).to(torch.int64))
+            prefix_total = sum(count for _start, count in prefix_spans)
+            prefix_expected_cpu = torch.empty(prefix_total, dtype=torch.int64)
+            cursor = 0
+            for start, count in prefix_spans:
+                prefix_expected_cpu[cursor : cursor + count] = (
+                    start + offsets[:count]
+                )
+                cursor += count
+            expected_parts.append(
+                prefix_expected_cpu.to(device=table.device)
+            )
+        actual = actual_parts[0] if len(actual_parts) == 1 else torch.cat(actual_parts)
+        expected = (
+            expected_parts[0]
+            if len(expected_parts) == 1
+            else torch.cat(expected_parts)
+        )
+        if not torch.equal(actual, expected):
+            raise RuntimeError("DetachedBinding disagrees with the SGLang mirror")
+        return _MirrorCleanupPlan(
+            tuple(prefix_zeroes),
+            None,
+            (),
+            (),
+            ((table.reshape(-1), indices),) if releasing else (),
+        )
 
     @staticmethod
     def _validate_detached(

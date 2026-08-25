@@ -41,6 +41,9 @@ def _get_internal_state(
     if not isinstance(state, dict) or "orbitkv_manager" in state:
         raise RuntimeError("SGLang returned an invalid internal-state namespace")
     runtime = _runtime()
+    runtime.poll()
+    if _state._FIXED_STATE is not None:
+        _state._FIXED_STATE.poll()
     stats, arena_stats = runtime.census()
     swa_activity = runtime.swa_activity()
     if tuple(item.class_id for item in arena_stats) != tuple(
@@ -49,6 +52,11 @@ def _get_internal_state(
         raise RuntimeError("manager internal-state arena order changed")
     state["orbitkv_manager"] = {
         "abi_version": 8,
+        "plan_fingerprint": _config().plan_fingerprint,
+        "state_plan_fingerprint": _config().state_plan_fingerprint,
+        "fixed_state_byte_count": _config().fixed_state_byte_count,
+        "fixed_state_descriptors": _state._fixed_state_descriptors(),
+        "tree_cache_type": _state._tree_cache_type(scheduler.tree_cache),
         "identities": [
             {
                 "engine_epoch": item.engine_epoch,

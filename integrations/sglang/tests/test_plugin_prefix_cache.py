@@ -14,7 +14,12 @@ sys.path.insert(0, str(SOURCE_ROOT))
 import orbitkv_sglang.plugin.prefix_cache as prefix_cache  # noqa: E402
 import orbitkv_sglang.plugin.state as state  # noqa: E402
 import orbitkv_sglang.ffi.manager as ffi_manager  # noqa: E402
-from orbitkv_sglang.config import ClassConfig, ManagerPlanConfig  # noqa: E402
+from orbitkv_sglang.config import (  # noqa: E402
+    ClassConfig,
+    FixedStateConfig,
+    ManagerPlanConfig,
+    TokenReclamationConfig,
+)
 from orbitkv_sglang.runtime import (  # noqa: E402
     ArenaIdentity,
     AttachedPrefix,
@@ -60,7 +65,12 @@ def _class(
     )
 
 
-def _config(*retentions: str, window_tokens: int = 32) -> ManagerPlanConfig:
+def _config(
+    *retentions: str,
+    window_tokens: int = 32,
+    fixed_states: tuple[FixedStateConfig, ...] = (),
+    reclamation_mode: str = "off",
+) -> ManagerPlanConfig:
     return ManagerPlanConfig(
         plan_path=Path("plan.json"),
         library_path=Path("liborbitkv_ffi.so"),
@@ -71,6 +81,8 @@ def _config(*retentions: str, window_tokens: int = 32) -> ManagerPlanConfig:
             _class(index, value, window_tokens=window_tokens)
             for index, value in enumerate(retentions)
         ),
+        token_reclamation=TokenReclamationConfig(mode=reclamation_mode),
+        fixed_states=fixed_states,
     )
 
 
@@ -280,9 +292,20 @@ class _PrefixRuntime:
 
 
 def _cache(
-    *retentions: str, window_tokens: int = 32, page_capacity: int = 64
+    *retentions: str,
+    window_tokens: int = 32,
+    page_capacity: int = 64,
+    fixed_states: tuple[FixedStateConfig, ...] = (),
+    disable: bool = False,
+    through_builder: bool = False,
+    reclamation_mode: str = "off",
 ):
-    config = _config(*retentions, window_tokens=window_tokens)
+    config = _config(
+        *retentions,
+        window_tokens=window_tokens,
+        fixed_states=fixed_states,
+        reclamation_mode=reclamation_mode,
+    )
     runtime = _PrefixRuntime(config, page_capacity)
     allocator = _Allocator(len(retentions) == 2)
     req_pool = _ReqPool()
@@ -293,17 +316,33 @@ def _cache(
     )
     state._ALLOCATOR = allocator
     params = CacheInitParams(
-        disable=False,
+        disable=disable,
         req_to_token_pool=req_pool,
         token_to_kv_pool_allocator=allocator,
         page_size=16,
         sliding_window_size=window_tokens - 1 if len(retentions) == 2 else None,
     )
-    return prefix_cache.OrbitKvPrefixCache(params), runtime, allocator, req_pool
+    cache = (
+        prefix_cache._build_prefix_cache(
+            SimpleNamespace(
+                disable_radix_cache=disable,
+                is_hybrid_ssm=bool(fixed_states),
+                enable_hierarchical_cache=False,
+                params=params,
+            )
+        )
+        if through_builder
+        else prefix_cache.OrbitKvPrefixCache(params)
+    )
+    return cache, runtime, allocator, req_pool
 
 
 def _tokens(count: int) -> tuple[int, ...]:
     return tuple(range(count))
+
+
+def _fixed_states(kind: str = "mamba") -> tuple[FixedStateConfig, ...]:
+    return (FixedStateConfig(kind, kind, (1,), 96, 2),)
 
 
 def _assert_size_census(cache: prefix_cache.OrbitKvPrefixCache) -> None:
@@ -457,6 +496,95 @@ def test_prefix_cache_is_official_backend_with_exact_namespace_and_linear_endpoi
     assert len(endpoints) == 512
     assert endpoints[-1].boundary == 8192
     cache.sanity_check()
+
+
+def test_fixed_state_disable_mode_keeps_orbitkv_lifecycle_without_prefixes():
+    cache, runtime, _allocator, pool = _cache(
+        "full", fixed_states=_fixed_states("gdn"), disable=True,
+        through_builder=True
+    )
+    tokens = _tokens(16)
+    semantic, lease, _node = _publish(cache, runtime, tokens, 101)
+    runtime.materialized[semantic] = (
+        lease,
+        _materialized(runtime, 16, hybrid=False),
+    )
+    req = _request("fixed-private", tokens)
+
+    miss = cache.match_prefix(
+        MatchPrefixParams(RadixKey(token_ids=tokens), req=req)
+    )
+
+    assert cache.disable is False
+    assert cache.disable_finished_insert is True
+    assert cache._no_prefix is True
+    assert cache.is_chunk_cache() is True
+    assert cache.is_tree_cache() is False
+    assert miss.device_indices.numel() == 0
+    assert miss.last_device_node is cache.root_node
+    assert runtime.calls == []
+    assert not hasattr(req, "_orbitkv_request_key")
+
+    key = ("str", req.rid)
+    request_lease = RequestLease(1, 7, 1)
+    req.req_pool_idx = 1
+    req.kv = SimpleNamespace(kv_allocated_len=16)
+    req._orbitkv_request_key = key
+    req._orbitkv_request_lease = request_lease
+    runtime.records[key] = SimpleNamespace(lease=request_lease, boundary=16)
+    runtime.request_rows[key] = 1
+    pool.req_to_token[1, :16] = torch.arange(16, 32, dtype=torch.int32)
+
+    cache.cache_unfinished_req(req)
+
+    assert torch.equal(req.prefix_indices, torch.arange(16, 32))
+    assert runtime.calls == [("wait", 1)]
+    assert cache.publication_for_release(req, is_insert=True) is None
+    assert cache.publication_for_release(req, is_insert=False) is None
+    assert req.cache_protected_len == 0
+    assert req._orbitkv_private_prefix.tensor is req.prefix_indices
+    cache._commit_release_node(req, None, provisional=False)
+    assert req.prefix_indices.numel() == 0
+    assert not hasattr(req, "_orbitkv_private_prefix")
+    assert cache._nodes
+    assert not any(
+        call[0] in ("lookup", "acquire", "attach", "publish")
+        for call in runtime.calls
+    )
+
+
+def test_prefix_disable_mode_is_rejected_without_no_prefix_plan():
+    with pytest.raises(RuntimeError, match="radix disable mode differs"):
+        _cache("full", disable=True)
+
+
+def test_gdn_mode_requires_disable_radix_cache_in_constructor_and_builder():
+    with pytest.raises(RuntimeError, match="radix disable mode differs"):
+        _cache("full", fixed_states=_fixed_states("gdn"))
+    cache, _runtime, _allocator, _pool = _cache(
+        "full", fixed_states=_fixed_states("gdn"), disable=True,
+        through_builder=True
+    )
+    assert cache._no_prefix is True
+
+
+def test_legacy_mamba_uses_no_prefix_mode():
+    cache, _runtime, _allocator, _pool = _cache(
+        "full", fixed_states=_fixed_states(), disable=True, through_builder=True
+    )
+    assert cache.disable is False
+    assert cache.disable_finished_insert is True
+    assert cache._no_prefix is True
+    assert cache.is_chunk_cache() is True
+
+
+def test_token_reclamation_uses_no_prefix_mode_without_fixed_state():
+    cache, _runtime, _allocator, _pool = _cache(
+        "full", reclamation_mode="relocate", disable=True, through_builder=True
+    )
+    assert cache._no_prefix is True
+    assert cache.disable_finished_insert is True
+    assert cache.is_chunk_cache() is True
 
 
 def test_prefix_sanity_check_recomputes_topology_residency_and_census():

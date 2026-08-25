@@ -2,15 +2,19 @@ from __future__ import annotations
 
 import os
 import pkgutil
+from dataclasses import dataclass
+from math import prod
 from numbers import Integral
 from pathlib import Path
 from typing import Any, Callable
 
 from ..pinned import validate_patched_checkout
+from ..runtime_policy import GDN_FIXED_STATE_BACKEND_PROFILE
 from . import state as _state
 from .state import RuntimeLimits, _config, _request_key, _runtime
 
 SUPPORTED_ATTENTION_BACKENDS = frozenset(("flashinfer", "fa3"))
+_SPARSE_RETAINED_SLOT_BACKENDS = frozenset(("flashinfer",))
 _ENTRYPOINT_NAME = "orbitkv_manager"
 
 _PROPAGATED_ALIASES = (
@@ -341,6 +345,108 @@ def _validate_attention_backend_contract(configurator: Any) -> str:
     return architecture
 
 
+def _validate_token_reclamation_backend_contract(configurator: Any) -> None:
+    config = _config()
+    policy = config.token_reclamation
+    if policy.mode != "naive":
+        return
+
+    retained = int(policy.retained_per_page)
+    page_tokens = int(config.page_tokens)
+    if not 0 < retained < page_tokens:
+        return
+    backends = tuple(configurator.server_args.get_attention_backends())
+    incompatible = tuple(
+        sorted(set(backends) - _SPARSE_RETAINED_SLOT_BACKENDS)
+    )
+    if incompatible:
+        raise RuntimeError(
+            "token_reclamation.mode='naive' requires token-granular KV "
+            "addressing for sparse retained slots; selected page-granular "
+            f"attention backend(s) {incompatible} cannot represent "
+            f"retained_per_page={retained} within page_tokens={page_tokens}; "
+            "use mode='relocate' or a backend with sparse-slot support"
+        )
+
+
+@dataclass(frozen=True, slots=True)
+class _FixedStateRuntimeGeometry:
+    layers: tuple[int, ...]
+    conv_shapes: tuple[tuple[int, ...], ...]
+    temporal_shape: tuple[int, ...]
+    conv_dtype: Any
+    temporal_dtype: Any
+    conv_bytes_per_layer: int
+    recurrent_bytes_per_layer: int
+    kernel_width: int
+
+
+def _positive_shape(name: str, value: Any) -> tuple[int, ...]:
+    try:
+        values = tuple(value)
+    except Exception as error:
+        raise RuntimeError(f"SGLang {name} is not a readable shape") from error
+    if not values:
+        raise RuntimeError(f"SGLang {name} must be nonempty")
+    return tuple(_positive_integer(f"{name} dimension", item) for item in values)
+
+
+def _fixed_state_runtime_geometry(params: Any) -> _FixedStateRuntimeGeometry:
+    shape = getattr(params, "shape", None)
+    dtype = getattr(params, "dtype", None)
+    try:
+        raw_conv_shapes = tuple(shape.conv)
+    except Exception as error:
+        raise RuntimeError(
+            "SGLang fixed-state convolution geometry is missing"
+        ) from error
+    if not raw_conv_shapes:
+        raise RuntimeError("SGLang fixed-state convolution geometry is empty")
+    conv_shapes = tuple(
+        _positive_shape(f"fixed-state convolution shape {index}", value)
+        for index, value in enumerate(raw_conv_shapes)
+    )
+    temporal_shape = _positive_shape(
+        "fixed-state recurrent shape", getattr(shape, "temporal", None)
+    )
+    conv_dtype = getattr(dtype, "conv", None)
+    temporal_dtype = getattr(dtype, "temporal", None)
+    return _FixedStateRuntimeGeometry(
+        tuple(params.layers),
+        conv_shapes,
+        temporal_shape,
+        conv_dtype,
+        temporal_dtype,
+        sum(prod(value) for value in conv_shapes) * _dtype_bytes(conv_dtype),
+        prod(temporal_shape) * _dtype_bytes(temporal_dtype),
+        _positive_integer(
+            "fixed-state convolution kernel width",
+            getattr(shape, "conv_kernel", None),
+        ),
+    )
+
+
+def _is_exact_gdn_fixed_state_profile(configurator: Any) -> bool:
+    fixed_states = _config().fixed_states
+    recurrent = tuple(
+        item for item in fixed_states if item.kind != "convolution"
+    )
+    convolution = tuple(
+        item for item in fixed_states if item.kind == "convolution"
+    )
+    mambaish = getattr(configurator, "mambaish_config", None)
+    return (
+        len(recurrent) == 1
+        and recurrent[0].kind == "gdn"
+        and len(convolution) == 1
+        and recurrent[0].layers == convolution[0].layers
+        and recurrent[0].checkpoint_slots_per_request == 2
+        and convolution[0].checkpoint_slots_per_request == 2
+        and mambaish is not None
+        and getattr(configurator, "hybrid_gdn_config", None) is mambaish
+    )
+
+
 def _validate_checkpoint_geometry(configurator: Any) -> None:
     plan = _config()
     model = configurator.model_config
@@ -356,7 +462,9 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
         raise RuntimeError("OrbitKV does not support attention chunking")
     retentions = tuple(item.retention for item in plan.classes)
     all_layers = tuple(range(plan.num_hidden_layers))
-    token_layers = tuple(sorted(layer for item in plan.classes for layer in item.layers))
+    token_layers = tuple(
+        sorted(layer for item in plan.classes for layer in item.layers)
+    )
     storage = {item.storage for item in plan.classes}
     if storage == {"latent_kv"}:
         from sglang.srt.configs.model_config import is_deepseek_dsa
@@ -371,7 +479,7 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
             or is_deepseek_dsa(model.hf_config)
         ):
             raise RuntimeError(
-                "first MLA profile requires one Full latent_kv class covering every layer"
+                "supported MLA profile requires one Full latent_kv class covering every layer"
             )
         latent = int(model.kv_lora_rank) * _dtype_bytes(configurator.kv_cache_dtype)
         rope = int(model.qk_rope_head_dim) * _dtype_bytes(configurator.kv_cache_dtype)
@@ -391,7 +499,7 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
         if bool(model.is_hybrid_swa) and not plan.fixed_states:
             raise RuntimeError("Full profile unexpectedly resolved hybrid SWA storage")
     elif retentions == ("full", "sliding"):
-        if retentions != ("full", "sliding") or not bool(model.is_hybrid_swa):
+        if not bool(model.is_hybrid_swa):
             raise RuntimeError("Hybrid profile requires ordered Full+SWA classes")
         full, sliding = plan.classes
         if (
@@ -433,7 +541,9 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
             )
     if plan.fixed_states:
         if configurator.mambaish_config is None:
-            raise RuntimeError("attention-state plan requires SGLang fixed-state storage")
+            raise RuntimeError(
+                "attention-state plan requires SGLang fixed-state storage"
+            )
         params = configurator.mambaish_config.mamba2_cache_params
         fixed_layers = tuple(
             sorted({layer for item in plan.fixed_states for layer in item.layers})
@@ -441,7 +551,9 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
         if tuple(params.layers) != fixed_layers:
             raise RuntimeError("SGLang fixed-state layers differ from the state plan")
         if int(params.mamba_cache_per_req) != plan.fixed_state_byte_count:
-            raise RuntimeError("SGLang fixed-state byte geometry differs from the state plan")
+            raise RuntimeError(
+                "SGLang fixed-state byte geometry differs from the state plan"
+            )
         if (
             set(token_layers) | set(fixed_layers) != set(all_layers)
             or set(token_layers) & set(fixed_layers)
@@ -454,31 +566,111 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
         recurrent = tuple(
             item for item in plan.fixed_states if item.kind != "convolution"
         )
-        if (
-            not recurrent
-            or any(item.kind != "mamba" for item in recurrent)
-            or getattr(configurator, "hybrid_gdn_config", None) is not None
-        ):
-            raise RuntimeError(
-                "first production fixed-state profile requires the Mamba family"
-            )
+        convolution = tuple(
+            item for item in plan.fixed_states if item.kind == "convolution"
+        )
         runtime_is_kda = bool(getattr(params, "is_kda", False))
-        if runtime_is_kda != any(item.kind == "kda" for item in recurrent):
+        if runtime_is_kda:
             raise RuntimeError(
                 "SGLang KDA family differs from the fixed-state plan"
             )
-        if runtime_is_kda and any(item.kind != "kda" for item in recurrent):
+        hybrid_gdn = getattr(configurator, "hybrid_gdn_config", None)
+        mamba_profile = (
+            bool(recurrent)
+            and all(item.kind == "mamba" for item in recurrent)
+            and hybrid_gdn is None
+        )
+        gdn_profile = _is_exact_gdn_fixed_state_profile(configurator)
+        if not mamba_profile and not gdn_profile:
             raise RuntimeError(
-                "SGLang KDA pool cannot satisfy mixed recurrent families"
+                "fixed-state profile requires the Mamba family or exact GDN "
+                "recurrent+convolution components"
             )
+        if gdn_profile:
+            import torch
+
+            geometry = _fixed_state_runtime_geometry(params)
+            runtime_kernel_width = _positive_integer(
+                "GDN runtime convolution kernel width",
+                getattr(hybrid_gdn, "linear_conv_kernel_dim", None),
+            )
+            plan_kernel_width = convolution[0].kernel_width
+            if (
+                geometry.layers != recurrent[0].layers
+                or geometry.conv_dtype is not torch.bfloat16
+                or geometry.temporal_dtype is not torch.float32
+                or recurrent[0].state_bytes_per_layer
+                != geometry.recurrent_bytes_per_layer
+                or convolution[0].state_bytes_per_layer
+                != geometry.conv_bytes_per_layer
+                or plan_kernel_width != runtime_kernel_width
+                or plan_kernel_width != geometry.kernel_width
+                or len(geometry.conv_shapes) != 1
+                or len(geometry.conv_shapes[0]) != 2
+                or geometry.conv_shapes[0][-1] + 1 != plan_kernel_width
+            ):
+                raise RuntimeError(
+                    "SGLang GDN component geometry differs from the state plan"
+                )
 
 
-def _fixed_state_profile(configurator: Any) -> bool:
-    return bool(_config().fixed_states)
+def _validate_gdn_fixed_state_backend_contract(configurator: Any) -> None:
+    if not _is_exact_gdn_fixed_state_profile(configurator):
+        return
+
+    import torch
+
+    profile = GDN_FIXED_STATE_BACKEND_PROFILE
+    server = configurator.server_args
+    mambaish = getattr(configurator, "mambaish_config", None)
+    params = getattr(mambaish, "mamba2_cache_params", None)
+    actual_dtype = getattr(getattr(params, "dtype", None), "temporal", None)
+    required = {
+        "Full attention FA3": tuple(server.get_attention_backends())
+        == (profile["attention_backend"],) * 2,
+        "linear_attn_backend=triton": getattr(
+            server, "linear_attn_backend", None
+        )
+        == profile["linear_attn_backend"],
+        "linear_attn_decode_backend=triton": getattr(
+            server, "linear_attn_decode_backend", None
+        )
+        == profile["linear_attn_decode_backend"],
+        "linear_attn_prefill_backend=triton": getattr(
+            server, "linear_attn_prefill_backend", None
+        )
+        == profile["linear_attn_prefill_backend"],
+        "mamba_ssm_dtype=float32": getattr(server, "mamba_ssm_dtype", None)
+        == profile["mamba_ssm_dtype"],
+        "mamba2_cache_params.dtype.temporal=float32": actual_dtype
+        is getattr(torch, profile["mamba_ssm_dtype"]),
+        "mamba_radix_cache_strategy=no_buffer": getattr(
+            server, "mamba_radix_cache_strategy", None
+        )
+        == profile["mamba_radix_cache_strategy"],
+    }
+    failed = [name for name, passed in required.items() if not passed]
+    if failed:
+        raise RuntimeError(
+            "GDN fixed-state backend contract failed: "
+            + ", ".join(failed)
+        )
+
+
+def _validate_radix_cache_contract(configurator: Any) -> None:
+    server = configurator.server_args
+    requires_disabled_radix = _state._requires_disabled_radix_cache()
+    if bool(server.disable_radix_cache) != requires_disabled_radix:
+        required = "true" if requires_disabled_radix else "false"
+        raise RuntimeError(
+            f"--disable-radix-cache must be {required} for this OrbitKV plan"
+        )
+    if getattr(server, "radix_cache_backend", None) != "orbitkv":
+        raise RuntimeError("--radix-cache-backend must remain 'orbitkv'")
 
 
 def _validate_fixed_state_options(configurator: Any) -> None:
-    if not _fixed_state_profile(configurator):
+    if not _config().fixed_states:
         return
     server = configurator.server_args
     unsupported = {
@@ -499,7 +691,7 @@ def _validate_fixed_state_options(configurator: Any) -> None:
         )
 
 
-def _validate_fixed_state_pool(req_pool: Any, config: Any) -> None:
+def _validate_fixed_state_pool(req_pool: Any, config: Any, params: Any) -> None:
     from sglang.srt.mem_cache.memory_pool import HybridReqToTokenPool
 
     if (
@@ -518,11 +710,29 @@ def _validate_fixed_state_pool(req_pool: Any, config: Any) -> None:
     temporal = mamba.mamba_cache.temporal
     tensors = conv_tensors + (temporal,)
     slot_count = int(req_pool.mamba_pool.size)
-    if not tensors or any(
-        tensor.ndim < 2 or int(tensor.shape[1]) != slot_count + 1
-        for tensor in tensors
+    geometry = _fixed_state_runtime_geometry(params)
+    expected_conv_shapes = tuple(
+        (len(geometry.layers), slot_count + 1, *shape)
+        for shape in geometry.conv_shapes
+    )
+    expected_temporal_shape = (
+        len(geometry.layers),
+        slot_count + 1,
+        *geometry.temporal_shape,
+    )
+    if (
+        len(conv_tensors) != len(expected_conv_shapes)
+        or any(
+            tuple(tensor.shape) != expected_shape
+            or tensor.dtype is not geometry.conv_dtype
+            for tensor, expected_shape in zip(
+                conv_tensors, expected_conv_shapes, strict=True
+            )
+        )
+        or tuple(temporal.shape) != expected_temporal_shape
+        or temporal.dtype is not geometry.temporal_dtype
     ):
-        raise RuntimeError("SGLang fixed-state tensor slot geometry changed")
+        raise RuntimeError("SGLang fixed-state tensor geometry changed")
     conv_bytes = sum(
         int(tensor[0, 0].numel()) * int(tensor.element_size())
         for tensor in conv_tensors
@@ -533,13 +743,29 @@ def _validate_fixed_state_pool(req_pool: Any, config: Any) -> None:
         * int(temporal.element_size())
         * int(temporal.shape[0])
     )
-    expected_conv = sum(
-        item.byte_count for item in config.fixed_states if item.kind == "convolution"
+    recurrent = tuple(
+        item for item in config.fixed_states if item.kind != "convolution"
     )
-    expected_recurrent = sum(
-        item.byte_count for item in config.fixed_states if item.kind != "convolution"
+    aggregate_mamba = (
+        len(config.fixed_states) == 1
+        and len(recurrent) == 1
+        and recurrent[0].kind == "mamba"
     )
-    if conv_bytes != expected_conv or recurrent_bytes != expected_recurrent:
+    if aggregate_mamba:
+        geometry_matches = (
+            conv_bytes + recurrent_bytes == config.fixed_state_byte_count
+        )
+    else:
+        expected_conv = sum(
+            item.byte_count
+            for item in config.fixed_states
+            if item.kind == "convolution"
+        )
+        expected_recurrent = sum(item.byte_count for item in recurrent)
+        geometry_matches = (
+            conv_bytes == expected_conv and recurrent_bytes == expected_recurrent
+        )
+    if not geometry_matches:
         raise RuntimeError(
             "SGLang fixed-state component geometry differs from the state plan"
         )
@@ -585,6 +811,28 @@ def _validate_physical_pool(
         raise RuntimeError(f"SGLang {name} KV pool is not NHD")
 
 
+def _validate_full_physical_pool(
+    pool: Any, *, expected_tokens: int, expected_dtype: Any, storage: str
+) -> None:
+    from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool
+
+    physical = pool
+    if isinstance(pool, HybridLinearKVPool):
+        expected_layers = _config().full_class.layers
+        mapping = getattr(pool, "full_attention_layer_id_mapping", None)
+        if (int(pool.size) != expected_tokens
+                or int(pool.page_size) != _config().page_tokens
+                or pool.dtype is not expected_dtype
+                or bool(getattr(pool, "use_mla", True))
+                or mapping != {layer: index for index, layer in enumerate(expected_layers)}):
+            raise RuntimeError("SGLang hybrid-linear KV pool envelope changed")
+        physical = pool.full_kv_pool
+    _validate_physical_pool(
+        physical, expected_tokens=expected_tokens, expected_dtype=expected_dtype,
+        name="Full", storage=storage,
+    )
+
+
 def _validate_mla_pool_geometry(pool: Any, class_config: Any) -> None:
     from sglang.srt.mem_cache.memory_pool import MLATokenToKVPool
 
@@ -613,14 +861,15 @@ def _validate_configurator(
     config = _config()
     server = configurator.server_args
     graph = server.cuda_graph_config
+    _validate_gdn_fixed_state_backend_contract(configurator)
+    _validate_radix_cache_contract(configurator)
     _validate_attention_backend_contract(configurator)
+    _validate_token_reclamation_backend_contract(configurator)
     required = {
         "CUDA platform": _is_cuda_platform(),
         "CUDA device": str(configurator.device).startswith("cuda"),
         "bfloat16 KV cache": configurator.kv_cache_dtype is torch.bfloat16,
         "NHD KV layout": not _uses_hnd_kv_cache(),
-        "radix cache": not bool(server.disable_radix_cache),
-        "radix backend": getattr(server, "radix_cache_backend", None) == "orbitkv",
         "FCFS scheduling": getattr(server, "schedule_policy", None) == "fcfs",
         "thinking-cache trimming": not bool(
             getattr(server, "strip_thinking_cache", False)
@@ -694,11 +943,10 @@ def _validate_configurator(
     elif config.full_class is not None:
         if int(result.max_total_num_tokens) != int(allocator.size):
             raise RuntimeError("SGLang Full result capacity differs from its arena")
-        _validate_physical_pool(
+        _validate_full_physical_pool(
             kv_pool,
             expected_tokens=allocator.size,
             expected_dtype=configurator.kv_cache_dtype,
-            name="Full",
             storage=config.full_class.storage,
         )
     else:
@@ -714,7 +962,9 @@ def _validate_configurator(
         raise RuntimeError("SGLang request capacity differs from the manager capacity")
     if config.fixed_states:
         req_pool = result.req_to_token_pool
-        _validate_fixed_state_pool(req_pool, config)
+        _validate_fixed_state_pool(
+            req_pool, config, configurator.mambaish_config.mamba2_cache_params
+        )
         if _state._FIXED_STATE is None:
             from .state import _new_fixed_state
 

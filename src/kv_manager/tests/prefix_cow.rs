@@ -798,6 +798,41 @@ fn private_partial_tail_is_in_place_but_shared_hybrid_tail_is_joint_cow() {
 }
 
 #[test]
+fn shared_packed_partial_tail_fails_before_append_reservation() {
+    let plan = full_plan(CANONICAL_PAGE_TOKENS);
+    let mut manager = manager_for_plan(&plan, &[backend(0, 231, 8, 150_000)], 64, 16);
+    let requests = manager
+        .acquire_request_leases_for_test(2)
+        .expect("shared requests");
+    complete_initial_18(&mut manager, requests[0]);
+    {
+        let snapshot = manager
+            .request_snapshot_mut(requests[0])
+            .expect("packed source snapshot");
+        let roots = Arc::make_mut(&mut snapshot.roots);
+        roots[0].layout = RootLayout::Packed;
+        roots[0].resident_tokens = 18;
+    }
+    share_snapshot_for_cow(&mut manager, requests[0], requests[1]);
+    let expected_head = manager.request(requests[0]).expect("expected head").head;
+    let before = state_image(&manager);
+
+    assert_eq!(
+        manager.prepare_batch(&[PrepareBatchItem {
+            request: requests[0],
+            expected_head,
+            target_boundary: 19,
+        }]),
+        Err(KvManagerError::UnsupportedProfile(
+            "packed copy-on-write append is not implemented"
+        ))
+    );
+    assert_eq!(state_image(&manager), before);
+    assert_eq!(manager.stats().reserved_pages, 0);
+    assert_eq!(manager.request(requests[0]).unwrap().pending_step, None);
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn shared_cow_completion_aggregates_sources_and_emits_one_cert_per_page() {
     let plan = hybrid_plan(18);

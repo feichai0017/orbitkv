@@ -74,9 +74,7 @@ from .snapshot_shadow import (
     page_shadow_from_snapshot,
 )
 _ZERO_SNAPSHOT = SnapshotLease(0, 0, 0)
-class CanonicalRuntime(
-    IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntimeMixin, RelocationRuntimeMixin
-):
+class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntimeMixin, RelocationRuntimeMixin):
     """Fail-closed host journal around the ABI8 canonical manager."""
 
     def __init__(self, config: Any, manager: ManagerProtocol):
@@ -143,7 +141,7 @@ class CanonicalRuntime(
         self._row_owners: dict[int, Hashable] = {}
         self._prefix_eviction_cleanup: MirrorCleanupProtocol | None = None
         self._events: list[EventGroup] = []
-        self._completion_value = 1
+        self._completion_value, self._completion_high_water = 1, {}
         self._swa_retirement_certificates = 0
         self._swa_pages_reclaimed = 0
         self._swa_wrap_events = 0
@@ -391,8 +389,8 @@ class CanonicalRuntime(
                 record = self._requests.get(key)
                 if record is None:
                     new_keys.append(key)
-                elif record.pending is not None:
-                    raise ManagerError("request already has a pending step")
+                elif record.pending is not None or key in getattr(self, "_pending_relocation_requests", {}):
+                    raise ManagerError("request is not ready for append")
                 elif target <= record.boundary:
                     raise ManagerError("step target must advance the request boundary")
                 records.append(record)
@@ -1462,8 +1460,10 @@ class CanonicalRuntime(
             records = tuple(self._requests[key] for key in keys)
         except KeyError as error:
             raise ManagerError("batch names an unknown request") from error
-        for record in records:
+        for key, record in zip(keys, records, strict=True):
             self._require_indexed_record(record)
+            if key in getattr(self, "_pending_relocation_requests", {}):
+                raise ManagerError("request awaits relocation reclamation ACK")
         return records
 
     def _records_for_idle_batch(self, keys: Sequence[Hashable]) -> tuple[RequestRecord, ...]:
@@ -1494,7 +1494,7 @@ class CanonicalRuntime(
                 or self._page_registry
                 or self._request_rows
                 or self._row_owners
-                or self._identity_indexes_live()
+                or self._identity_indexes_live() or getattr(self, "_pending_relocation_batches", {})
             ):
                 raise ManagerError("cannot destroy a manager with live requests")
             self.manager.destroy()
