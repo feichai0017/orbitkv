@@ -68,6 +68,19 @@ from .token_relocation import (
     relocation_copy_receipts,
 )
 from .census import SwaActivity
+from .pressure import (
+    ArenaPressureSample,
+    PRESSURE_ENV,
+    PRESSURE_SCHEMA,
+    PressureClassDescriptor,
+    PressureRuntimeMixin,
+    PressureTelemetry,
+    disabled_pressure_report,
+    pressure_enabled_from_environment,
+    pressure_instrumented,
+    retention_amplification_milli,
+    semantic_live_tokens_for_request,
+)
 from .journal import CanonicalRuntime, RequestRecord
 from .reclamation import (
     DetachedBinding,
@@ -135,6 +148,7 @@ from .snapshot_shadow import (
 __all__ = [
     "AttachedPrefix",
     "ArenaIdentity",
+    "ArenaPressureSample",
     "ArenaRegistration",
     "ArenaStats",
     "BackendBindReceipt",
@@ -175,6 +189,8 @@ __all__ = [
     "MirrorCleanupProtocol",
     "PageLease",
     "PageShadow",
+    "PRESSURE_ENV",
+    "PRESSURE_SCHEMA",
     "PrefixAttachItem",
     "PrefixEvictionBatch",
     "PrefixLease",
@@ -186,6 +202,9 @@ __all__ = [
     "PrepareBatchItem",
     "PrepareRelocationItem",
     "PreparedStep",
+    "PressureClassDescriptor",
+    "PressureRuntimeMixin",
+    "PressureTelemetry",
     "PreparedRelocation",
     "PublishedPrefix",
     "ReclamationCertificate",
@@ -246,10 +265,15 @@ __all__ = [
     "WriteIntent",
     "bind_receipts",
     "copy_receipts",
+    "disabled_pressure_report",
     "expected_new_ordinals",
     "lowering_plan",
     "page_shadow_from_snapshot",
+    "pressure_enabled_from_environment",
+    "pressure_instrumented",
     "reclamation_receipts",
     "relocation_copy_receipts",
+    "retention_amplification_milli",
+    "semantic_live_tokens_for_request",
     "sglang_page_id",
 ]

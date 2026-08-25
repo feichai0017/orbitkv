@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from ..config import load_config
+from ..runtime import disabled_pressure_report
 from . import state as _state
 from .facade import _build_token_to_kv_pool_allocator
 from .fixed_state import (
@@ -123,6 +124,11 @@ def _get_internal_state(
             **runtime.performance_counters(),
             **_state._activity_counters(),
         },
+        "pressure": (
+            runtime.pressure_report()
+            if callable(getattr(runtime, "pressure_report", None))
+            else disabled_pressure_report()
+        ),
     }
     if _state._FIXED_STATE is not None:
         state["orbitkv_manager"]["fixed_state"] = (

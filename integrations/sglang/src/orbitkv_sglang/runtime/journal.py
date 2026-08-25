@@ -51,6 +51,7 @@ from .page_registry import (
     canonical_shadows,
     shadow_identities,
 )
+from .pressure import pressure_instrumented
 from .records import MirrorTransaction, RequestRecord
 from .relocation import RelocationRuntimeMixin
 from .snapshot_shadow import (
@@ -74,6 +75,7 @@ from .snapshot_shadow import (
     page_shadow_from_snapshot,
 )
 _ZERO_SNAPSHOT = SnapshotLease(0, 0, 0)
+@pressure_instrumented
 class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntimeMixin, RelocationRuntimeMixin):
     """Fail-closed host journal around the ABI8 canonical manager."""
 
@@ -155,35 +157,8 @@ class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntime
         }
         self._failure: str | None = None
         self._lock = RLock()
-
-    def _healthy(self) -> None:
-        if self._failure is not None:
-            raise FailStopped("OrbitKV manager is fail-stopped: " + self._failure)
-
-    @property
-    def failure_reason(self) -> str | None:
-        return self._failure
-
-    def fail_stop(self, reason: str) -> None:
-        with self._lock:
-            if self._failure is None:
-                self._failure = str(reason)
-                self._runtime_counters["fail_stop_count"] += 1
-
-    def record_for(self, key: Hashable) -> RequestRecord:
-        with self._lock:
-            self._healthy()
-            try:
-                record = self._requests[key]
-            except KeyError as error:
-                raise ManagerError("request is not acquired") from error
-            self._require_indexed_record(record)
-            return record
-
-    def has_request(self, key: Hashable) -> bool:
-        with self._lock:
-            self._healthy()
-            return key in self._requests
+        self._pressure = None
+        self._pressure_options = expected_classes
 
     def bind_request_rows(self, assignments: Sequence[tuple[Hashable, int, bool]]) -> None:
         """Install new rows or revalidate rows already owned by a request.
@@ -397,6 +372,8 @@ class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntime
             acquired = self._acquire_missing(new_keys)
             self._requests.update(acquired)
             self._register_acquired(acquired.values())
+            if acquired:
+                self._pressure_checkpoint("request_acquired")
             ordered = tuple(
                 record if record is not None else acquired[key]
                 for (key, _target), record in zip(values, records, strict=True)
@@ -1479,22 +1456,3 @@ class CanonicalRuntime(IdentityIndexMixin, CensusRuntimeMixin, CompletionRuntime
             )
             if removed != shadow:
                 raise ManagerError("candidate page journal changed identity")
-
-    @staticmethod
-    def _zero_page() -> Any:
-        from .identity import PageLease
-        return PageLease(0, 0, 0, 0, 0)
-
-    def close(self) -> None:
-        with self._lock:
-            if self._failure is None and (
-                self._events
-                or self._requests
-                or self._candidate_pages
-                or self._page_registry
-                or self._request_rows
-                or self._row_owners
-                or self._identity_indexes_live() or getattr(self, "_pending_relocation_batches", {})
-            ):
-                raise ManagerError("cannot destroy a manager with live requests")
-            self.manager.destroy()
