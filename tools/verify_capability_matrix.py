@@ -37,7 +37,8 @@ MATRIX_REQUIRED_CLAIMS = (
     "`6f62a23`",
     "Scoped L4 correctness",
     "`9233c06d…`",
-    "Same-capacity intrinsic KV-memory reduction is **0%**",
+    "yielding an observed reservation difference of **0%**",
+    "not a qualified end-to-end memory-saving result",
     "`performance_go=false`",
 )
 

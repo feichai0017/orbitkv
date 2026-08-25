@@ -47,6 +47,31 @@ export const metrics = [
     detail: "Batch-only exported surface with C/C++ layout and dynamic symbol checks.",
   },
   {
+    value: "2 cycles",
+    label: "Repeated Full relocation",
+    detail: "Single-Full, request-private, full-evacuation core/Python path; the SGLang periodic trigger is also host-tested.",
+  },
+  {
+    value: "1 × batch",
+    label: "Multi-request relocation",
+    detail: "Host-tested ABI8 mark, prepare, submit, and complete, followed by one aggregate registry commit, one aggregate head replacement, checked non-atomic mirror writes, and one ACK.",
+  },
+  {
+    value: "7 / 7 H20",
+    label: "Relocation conformance",
+    detail: "Engine-neutral B1/B4/B32 opaque-byte cases pass with real append, copy, and consumer streams.",
+  },
+  {
+    value: "8 / 8",
+    label: "Relocation diagnostic pairs",
+    detail: "Qwen2.5-0.5B FlashInfer B1/B4 across four balanced epochs; every pair is token-exact and census-clean.",
+  },
+  {
+    value: "8 / 8",
+    label: "Qwen3.8 diagnostic pairs",
+    detail: "Four epochs each at B1 and B4; every pair is token-exact and census-clean under explicit Triton FP8.",
+  },
+  {
     value: "+3.99–11.87%",
     label: "Observed mean overhead",
     detail: "Full B1/B4: +7.37/+11.87%; Hybrid B1/B4: +3.99/+4.45%.",
@@ -96,10 +121,46 @@ export const evidenceRows = [
     boundary: "host wire only; manager and state-pool handles are separate, with no cross-handle atomicity or H20 inheritance",
   },
   {
+    result: "Repeated private Full relocation",
+    value: "L2 host / 2 cycles",
+    contract: "Rust core and Python runtime repeat append, disposition mark, full evacuation, publication, and exact ACK; the SGLang periodic trigger is host-tested across two reclamation boundaries",
+    boundary: "single-Full request-private profile only; Prefix publication, fork, and shared partial-tail COW on a packed root fail closed",
+  },
+  {
+    result: "ABI8 multi-request relocation",
+    value: "L2 host / one batch transaction",
+    contract: "One mark, prepare, submit, and complete call per scheduler batch; flattened copy plus one event, one aggregate registry commit, one aggregate head replacement, every mirror plan validated before writes, and one aggregate ACK",
+    boundary: "mirror writes are not rollback-atomic; post-mark failures fail-stop without rollback; a producer-to-copy event exists, but completion is eagerly host-blocking with no asynchronous overlap; formal L3/L4 remain pending",
+  },
+  {
+    result: "CUDA opaque-byte harness",
+    value: "7 / 7 H20 PASS",
+    contract: "Engine-neutral B1/B4/B32 conformance with two cycles, a 257-byte payload oracle, real append/copy/consumer streams, event-ordered readback, ACK-gated reuse, and final drain",
+    boundary: "component conformance only; no sealed L3/L4, performance, capacity, or complete-engine qualification",
+  },
+  {
+    result: "Qwen2.5 token relocation on H20",
+    value: "8 / 8 diagnostic PASS",
+    contract: "Four order-balanced epochs at B1/B4; five iterations per process, two reclamation rounds per iteration, exact Naive/Relocate output tokens, complete drain, and zero failure/quarantine counters",
+    boundary: "official SGLang v0.5.17, request-private Full, page16 BF16 NHD eager FlashInfer on one observed H20; diagnostic_only, dirty and unsealed, hardware_attested=false, qualified=false, performance_go=false",
+  },
+  {
+    result: "Relocation diagnostic throughput",
+    value: "+7.63% / −1.23%",
+    contract: "B1 / B4 pooled hot throughput; 16 samples per mode after excluding iteration 0 from each process",
+    boundary: "diagnostic only; B1 has material epoch jitter, so no speedup claim; no capacity or memory-saving claim",
+  },
+  {
     result: "ABI8 fixed-state seam",
-    value: "scoped host evidence",
-    contract: "Initial clear, forward event, and retire/clear/ACK on the production request-owned seam",
-    boundary: "excluded from the sealed H20 record; replacement trigger, family bindings, CUDA/model/H20/performance remain pending",
+    value: "host + scoped H20 pairs",
+    contract: "Integrated, structurally admitted exact GDN+convolution runtime: request allocation, initial clear, completion event, wait, retire, clear, and exact ACK",
+    boundary: "Qwen3.5 has scoped pair verification and Qwen3.8 is diagnostic; both are model-specific and below L4; replacement trigger and other families remain pending",
+  },
+  {
+    result: "Qwen3.8-27B-FP8 H20",
+    value: "8 / 8 diagnostic PASS",
+    contract: "Four epochs each at B1 and B4 (8 pairs total); exact output tokens, clean final census, zero failure/fail-stop counters, and explicit Triton FP8",
+    boundary: "dirty and unsealed; no preflight; hardware_attested=false; qualified=false; performance_go=false; hot throughput -6.19% B1 (noisy) and -2.70% B4; equal configured arena reservation observed difference 0%, not a qualified memory result",
   },
   {
     result: "Frozen ABI5-v5 H20",
@@ -123,12 +184,12 @@ export const evidenceRows = [
     result: "Historical ABI5 same-capacity memory",
     value: "0%",
     contract: "Equal page16 SGLang KV tensor capacity in manager and stock processes",
-    boundary: "no compression or intrinsic same-capacity memory-win claim",
+    boundary: "observed reservation difference only; not qualified end-to-end memory saving",
   },
   {
     result: "Unqualified ABI8 paths",
     value: "pending",
-    contract: "Relocation, MLA, fixed-state, overlap, Graph, speculation, and distributed execution",
+    contract: "Sealed relocation L3/L4, MLA, fixed-state L4, async overlap, Graph, speculation, and distributed execution",
     boundary: "not covered by the sealed Prefix record; no general SGLang replacement claim",
   },
 ];
@@ -137,12 +198,12 @@ export const roadmap = [
   {
     state: "NEXT",
     name: "Complete fixed-state integration",
-    detail: "Add the production replacement trigger and GDN, KDA, ShortConv, and linear-attention bindings, then qualify real CUDA/model/H20 behavior and performance.",
+    detail: "Add the production replacement trigger and KDA, ShortConv, and other family bindings; then run clean, preflighted fixed-state qualification.",
   },
   {
     state: "THEN",
     name: "Expand ABI8 H20 coverage",
-    detail: "Extend the sealed Prefix-only Full and Full+SWA record to relocation, MLA, and each bound fixed-state family.",
+    detail: "Repeat relocation from a clean, preflight-bound source, independently attest the H20, seal the record, replace eager host-blocking completion with qualified async overlap, and qualify exact-source L3/L4 behavior.",
   },
   {
     state: "LATER",
@@ -173,7 +234,7 @@ export const docs = [
   {
     key: "03 / ROADMAP",
     name: "Token virtualization",
-    detail: "H20 Prefix qualification, exact relocation, Graph, speculation, and distribution.",
+    detail: "H20 relocation diagnostics, the pending sealed L3/L4 gate, Graph, speculation, and distribution.",
     href: `${repositoryUrl}/blob/main/docs/token-virtualization-and-attention-roadmap.md`,
   },
   {
@@ -189,7 +250,19 @@ export const docs = [
     href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi5-v5-grouped-release-20260821`,
   },
   {
-    key: "06 / RECORDS",
+    key: "06 / DIAGNOSTIC EVIDENCE",
+    name: "Qwen3.8-27B-FP8 H20",
+    detail: "Four B1 plus four B4 token-exact, census-clean pairs under explicit Triton FP8; dirty, unsealed, and unqualified.",
+    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824`,
+  },
+  {
+    key: "07 / DIAGNOSTIC EVIDENCE",
+    name: "Qwen2.5 relocation on H20",
+    detail: "Eight token-exact, census-clean B1/B4 pairs across four balanced epochs; dirty, unsealed, unattested, and unqualified.",
+    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-token-relocation-diagnostic-20260825`,
+  },
+  {
+    key: "08 / RECORDS",
     name: "Evidence index",
     detail: "Append-only snapshots with explicit source and ABI boundaries.",
     href: `${repositoryUrl}/blob/main/results/README.md`,
