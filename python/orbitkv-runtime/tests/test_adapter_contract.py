@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+from dataclasses import FrozenInstanceError
 import os
 from pathlib import Path
 import subprocess
@@ -16,6 +17,9 @@ from orbitkv_runtime import (
     CompletionEvidence,
     CompletionFence,
     DataPlaneOperation,
+    ExternalAppendTicket,
+    ExternalTokenWrite,
+    ExternalWriteCompletionAdapter,
     KvDataPlaneAdapter,
     OperationContext,
     PageLease,
@@ -23,6 +27,7 @@ from orbitkv_runtime import (
     ReclamationLease,
     RelocationLease,
     RequestLease,
+    ResolvedTokenAddress,
     StepLease,
 )
 
@@ -41,6 +46,38 @@ def _context(operation: DataPlaneOperation) -> OperationContext:
     )
     return OperationContext(
         RequestLease(7, 0, 1), transaction_type(7, 0, 1), operation
+    )
+
+
+def _external_write(
+    *,
+    context: OperationContext | None = None,
+    token_id: int = 1,
+    destination: BackendTokenAddress | None = None,
+    byte_count: int = 32,
+) -> ExternalTokenWrite:
+    return ExternalTokenWrite(
+        context if context is not None else _context(DataPlaneOperation.APPEND),
+        token_id,
+        (
+            destination
+            if destination is not None
+            else BackendTokenAddress(_page(), 2, 13, 9, 4)
+        ),
+        byte_count,
+    )
+
+
+def _external_ticket(
+    write: ExternalTokenWrite | None = None,
+) -> ExternalAppendTicket:
+    write = write if write is not None else _external_write()
+    return ExternalAppendTicket(
+        "adapter:nonce",
+        1,
+        (write,),
+        (ResolvedTokenAddress(write.destination, object(), 0, 4, write.byte_count),),
+        7,
     )
 
 
@@ -143,7 +180,132 @@ class _StructurallyCompleteAdapter:
 
 
 def test_protocol_is_runtime_checkable_without_engine_base_class() -> None:
-    assert isinstance(_StructurallyCompleteAdapter(), KvDataPlaneAdapter)
+    adapter = _StructurallyCompleteAdapter()
+    assert isinstance(adapter, KvDataPlaneAdapter)
+    assert not isinstance(adapter, ExternalWriteCompletionAdapter)
+
+
+def test_external_write_protocol_is_an_optional_runtime_checkable_extension() -> None:
+    class ExternalExtension:
+        def prepare_external_append(self, writes, *, completion_domain=1):
+            raise NotImplementedError
+
+        def record_external_data_ready(self, ticket):
+            raise NotImplementedError
+
+        def record_last_use(self, pages, *, completion_domain=1):
+            raise NotImplementedError
+
+    assert isinstance(ExternalExtension(), ExternalWriteCompletionAdapter)
+
+
+def test_external_kernel_write_capability_defaults_to_false() -> None:
+    assert AdapterCapabilities().external_kernel_writes is False
+
+
+def test_external_append_ticket_retains_exact_resolved_write_contract() -> None:
+    write = _external_write(token_id=0)
+    ticket = _external_ticket(write)
+
+    assert ticket.adapter_id == "adapter:nonce"
+    assert ticket.ticket_id == 1
+    assert ticket.completion_domain == 7
+    assert ticket.writes == (write,)
+    assert ticket.resolved_destinations[0].address == write.destination
+    assert ticket.resolved_destinations[0].byte_length == write.byte_count
+    assert not hasattr(write, "__dict__")
+    assert not hasattr(ticket, "__dict__")
+    with pytest.raises(FrozenInstanceError):
+        write.byte_count = 64  # type: ignore[misc]
+    with pytest.raises(FrozenInstanceError):
+        ticket.ticket_id = 2  # type: ignore[misc]
+
+
+@pytest.mark.parametrize(
+    "factory",
+    [
+        lambda: ExternalTokenWrite(
+            object(), 1, BackendTokenAddress(_page(), 2, 13, 9, 4), 32
+        ),
+        lambda: _external_write(context=_context(DataPlaneOperation.RELOCATE)),
+        lambda: _external_write(token_id=True),
+        lambda: _external_write(token_id=-1),
+        lambda: _external_write(token_id=1 << 64),
+        lambda: _external_write(destination=object()),
+        lambda: _external_write(byte_count=True),
+        lambda: _external_write(byte_count=0),
+        lambda: _external_write(byte_count=1 << 64),
+        lambda: ExternalAppendTicket(
+            "", 1, (_external_write(),), _external_ticket().resolved_destinations
+        ),
+        lambda: ExternalAppendTicket(
+            object(),
+            1,
+            (_external_write(),),
+            _external_ticket().resolved_destinations,
+        ),
+        lambda: ExternalAppendTicket(
+            "adapter", 0, (_external_write(),), _external_ticket().resolved_destinations
+        ),
+        lambda: ExternalAppendTicket(
+            "adapter",
+            1 << 64,
+            (_external_write(),),
+            _external_ticket().resolved_destinations,
+        ),
+        lambda: ExternalAppendTicket(
+            "adapter",
+            1,
+            (_external_write(),),
+            _external_ticket().resolved_destinations,
+            0,
+        ),
+        lambda: ExternalAppendTicket("adapter", 1, (), ()),
+        lambda: ExternalAppendTicket(
+            "adapter", 1, [_external_write()], _external_ticket().resolved_destinations
+        ),
+        lambda: ExternalAppendTicket(
+            "adapter", 1, (_external_write(),), []
+        ),
+        lambda: ExternalAppendTicket(
+            "adapter", 1, (_external_write(),), ()
+        ),
+        lambda: ExternalAppendTicket(
+            "adapter", 1, (_external_write(),), (object(),)
+        ),
+        lambda: ExternalAppendTicket(
+            "adapter",
+            1,
+            (_external_write(),),
+            (
+                ResolvedTokenAddress(
+                    BackendTokenAddress(_page(), 2, 13, 9, 5),
+                    object(),
+                    0,
+                    5,
+                    32,
+                ),
+            ),
+        ),
+        lambda: ExternalAppendTicket(
+            "adapter",
+            1,
+            (_external_write(),),
+            (
+                ResolvedTokenAddress(
+                    BackendTokenAddress(_page(), 2, 13, 9, 4),
+                    object(),
+                    0,
+                    4,
+                    31,
+                ),
+            ),
+        ),
+    ],
+)
+def test_external_write_values_fail_closed(factory) -> None:
+    with pytest.raises((TypeError, ValueError)):
+        factory()
 
 
 def test_neutral_package_has_no_engine_or_torch_imports() -> None:

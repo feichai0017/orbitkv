@@ -293,6 +293,75 @@ class TokenWriteReceipt:
 
 
 @dataclass(frozen=True, slots=True)
+class ExternalTokenWrite:
+    """One exact destination an engine kernel is authorized to write."""
+
+    context: OperationContext
+    token_id: int
+    destination: BackendTokenAddress
+    byte_count: int
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.context, OperationContext):
+            raise TypeError("context must be an OperationContext")
+        if self.context.operation is not DataPlaneOperation.APPEND:
+            raise ValueError("external writes require an append context")
+        if not isinstance(self.destination, BackendTokenAddress):
+            raise TypeError("destination must be a BackendTokenAddress")
+        _u64("token_id", self.token_id)
+        _u64("byte_count", self.byte_count, positive=True)
+
+
+@dataclass(frozen=True, slots=True)
+class ExternalAppendTicket:
+    """Adapter-issued authorization for engine-owned append mutation.
+
+    The adapter must additionally reject tickets it did not issue.  Carrying
+    its identity, ticket id, original writes, and exact resolved destinations
+    gives implementations all information needed to perform that check.
+    """
+
+    adapter_id: str
+    ticket_id: int
+    writes: tuple[ExternalTokenWrite, ...]
+    resolved_destinations: tuple[ResolvedTokenAddress, ...]
+    completion_domain: int = 1
+    launch_context: object | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.adapter_id, str):
+            raise TypeError("adapter_id must be a string")
+        if not self.adapter_id:
+            raise ValueError("adapter_id must not be empty")
+        _u64("ticket_id", self.ticket_id, positive=True)
+        _u64("completion_domain", self.completion_domain, positive=True)
+        if not isinstance(self.writes, tuple) or any(
+            not isinstance(item, ExternalTokenWrite) for item in self.writes
+        ):
+            raise TypeError("writes must be ExternalTokenWrite values")
+        if not isinstance(self.resolved_destinations, tuple) or any(
+            not isinstance(item, ResolvedTokenAddress)
+            for item in self.resolved_destinations
+        ):
+            raise TypeError(
+                "resolved_destinations must be ResolvedTokenAddress values"
+            )
+        if not self.writes:
+            raise ValueError("writes must not be empty")
+        if len(self.writes) != len(self.resolved_destinations):
+            raise ValueError(
+                "writes and resolved_destinations must have matching lengths"
+            )
+        for write, resolved in zip(self.writes, self.resolved_destinations):
+            if write.context.operation is not DataPlaneOperation.APPEND:
+                raise ValueError("external writes require append contexts")
+            if write.destination != resolved.address:
+                raise ValueError("resolved destination does not match write")
+            if write.byte_count != resolved.byte_length:
+                raise ValueError("resolved byte length does not match write")
+
+
+@dataclass(frozen=True, slots=True)
 class CompletionFence:
     """Adapter-issued point on one totally ordered completion domain."""
 
@@ -531,6 +600,7 @@ class AdapterCapabilities:
     ack_gated_reuse: bool = True
     cpu_arenas: bool = True
     cuda_arenas: bool = False
+    external_kernel_writes: bool = False
 
     def __post_init__(self) -> None:
         for name in self.__dataclass_fields__:
@@ -603,6 +673,30 @@ class KvDataPlaneAdapter(Protocol):
     def poison(self, reason: str) -> None: ...
 
 
+@runtime_checkable
+class ExternalWriteCompletionAdapter(Protocol):
+    """Optional extension for writes performed by an engine kernel."""
+
+    def prepare_external_append(
+        self,
+        writes: Sequence[ExternalTokenWrite],
+        *,
+        completion_domain: int = 1,
+    ) -> ExternalAppendTicket: ...
+
+    def record_external_data_ready(
+        self,
+        ticket: ExternalAppendTicket,
+    ) -> DataPlaneEvidence: ...
+
+    def record_last_use(
+        self,
+        pages: Sequence[BackendPageAddress],
+        *,
+        completion_domain: int = 1,
+    ) -> CompletionFence: ...
+
+
 __all__ = [
     "AdapterCapabilities",
     "ArenaRegistration",
@@ -613,6 +707,9 @@ __all__ = [
     "CompletionFence",
     "DataPlaneOperation",
     "DataPlaneEvidence",
+    "ExternalAppendTicket",
+    "ExternalTokenWrite",
+    "ExternalWriteCompletionAdapter",
     "KvDataPlaneAdapter",
     "MirrorEvidence",
     "PageLease",

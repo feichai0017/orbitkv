@@ -23,6 +23,8 @@ from orbitkv_runtime import (
     CompletionFence,
     DataPlaneOperation,
     DataPlaneEvidence,
+    ExternalAppendTicket,
+    ExternalTokenWrite,
     MirrorEvidence,
     PageMirrorKey,
     PageMirrorUpdate,
@@ -36,6 +38,8 @@ from orbitkv_runtime import (
     TokenWrite,
     TokenWriteReceipt,
 )
+
+from .external_append import snapshot_external_writes
 
 
 class AdapterError(RuntimeError):
@@ -188,6 +192,17 @@ class _ResolvedToken:
     arena: _ArenaView
 
 
+@dataclass(frozen=True, slots=True)
+class _PendingExternalAppend:
+    ticket: ExternalAppendTicket
+    ticket_id: int
+    writes: tuple[ExternalTokenWrite, ...]
+    resolved_destinations: tuple[ResolvedTokenAddress, ...]
+    transactions: tuple[object, ...]
+    covered_pages: tuple[BackendPageAddress, ...]
+    timeline: _Timeline
+
+
 class ReferencePagedAdapter:
     """Production-reusable tensor-arena adapter and executable oracle.
 
@@ -248,14 +263,20 @@ class ReferencePagedAdapter:
         self._next_fence_id = 1
         self._next_operation_id = 1
         self._next_evidence_id = 1
+        self._next_external_ticket_id = 1
         self._pending_reuse: dict[int, ReuseEvidence] = {}
+        self._pending_external_appends: dict[int, _PendingExternalAppend] = {}
+        self._reserved_transactions: dict[object, int] = {}
+        self._reserved_external_pages: dict[BackendPageAddress, int] = {}
+        self._reserved_completion_domains: dict[int, int] = {}
         self._acknowledged_evidence: set[int] = set()
         self._observed_transactions = set()
 
     @property
     def capabilities(self) -> AdapterCapabilities:
         return AdapterCapabilities(
-            cuda_arenas=any(arena.is_cuda for arena in self._arenas.values())
+            cuda_arenas=any(arena.is_cuda for arena in self._arenas.values()),
+            external_kernel_writes=True,
         )
 
     @property
@@ -322,6 +343,10 @@ class ReferencePagedAdapter:
         batch_generations: dict[tuple[int, int], int] = {}
         for address in addresses:
             self._validate_page(address)
+            if address in self._reserved_external_pages:
+                raise AdapterPreflightError(
+                    "page generation is reserved by a pending external append"
+                )
             key = (address.page.pool_id, address.page.page_id)
             generation = address.page.generation
             if (
@@ -472,6 +497,10 @@ class ReferencePagedAdapter:
                 raise AdapterPreflightError(
                     "manager transaction was already observed by the adapter"
                 )
+            if context.transaction in self._reserved_transactions:
+                raise AdapterPreflightError(
+                    "manager transaction is reserved by a pending external append"
+                )
         generations = self._plan_generations(
             tuple(
                 address.page_address
@@ -577,6 +606,10 @@ class ReferencePagedAdapter:
         after_fence_ids: Sequence[int] = (),
     ) -> _Timeline:
         self._validate_completion_domain(completion_domain, touched)
+        if completion_domain in self._reserved_completion_domains:
+            raise AdapterPreflightError(
+                "completion domain is reserved by a pending external append"
+            )
         cuda = {str(arena.device): arena for arena in touched if arena.is_cuda}
         device_key = next(iter(cuda), "cpu")
         if (
@@ -648,7 +681,7 @@ class ReferencePagedAdapter:
             self._latest_page_fences[self._page_key(page)] = fence_id
         return fence
 
-    def record_completion(
+    def record_last_use(
         self,
         pages: Sequence[BackendPageAddress],
         *,
@@ -679,6 +712,310 @@ class ReferencePagedAdapter:
             )
             self._commit_generations(generations)
             return fence
+
+    def record_completion(
+        self,
+        pages: Sequence[BackendPageAddress],
+        *,
+        completion_domain: int = 1,
+    ) -> CompletionFence:
+        """Compatibility spelling for :meth:`record_last_use`."""
+
+        return self.record_last_use(
+            pages, completion_domain=completion_domain
+        )
+
+    def prepare_external_append(
+        self,
+        writes: Sequence[ExternalTokenWrite],
+        *,
+        completion_domain: int = 1,
+    ) -> ExternalAppendTicket:
+        """Authorize one fully preflighted engine-owned append batch."""
+
+        with self._lock:
+            self._ensure_healthy()
+            supplied_writes = tuple(writes)
+            if not supplied_writes:
+                raise AdapterPreflightError(
+                    "external append batch must not be empty"
+                )
+            if any(
+                not isinstance(item, ExternalTokenWrite)
+                for item in supplied_writes
+            ):
+                raise AdapterPreflightError(
+                    "external append batch must contain ExternalTokenWrite values"
+                )
+            try:
+                writes = snapshot_external_writes(supplied_writes)
+            except (AttributeError, TypeError, ValueError) as error:
+                raise AdapterPreflightError(
+                    "external append write changed after construction"
+                ) from error
+
+            contexts = tuple(dict.fromkeys(item.context for item in writes))
+            transaction_owners = {}
+            for context in contexts:
+                self._validate_context(context, DataPlaneOperation.APPEND)
+                previous = transaction_owners.setdefault(
+                    context.transaction, context.request
+                )
+                if previous != context.request:
+                    raise AdapterPreflightError(
+                        "one transaction cannot authorize multiple requests"
+                    )
+                if context.transaction in self._observed_transactions:
+                    raise AdapterPreflightError(
+                        "manager transaction was already observed by the adapter"
+                    )
+                if context.transaction in self._reserved_transactions:
+                    raise AdapterPreflightError(
+                        "manager transaction is already reserved by an external append"
+                    )
+
+            generation_plan = self._plan_generations(
+                tuple(item.destination.page_address for item in writes)
+            )
+            resolved = tuple(
+                self._validate_token(item.destination) for item in writes
+            )
+            for item, destination in zip(writes, resolved, strict=True):
+                if item.byte_count != destination.public.byte_length:
+                    raise AdapterPreflightError(
+                        "external write byte count does not match destination token width"
+                    )
+            self._reject_duplicates(
+                "data destination address",
+                (item.destination for item in writes),
+            )
+            self._reject_duplicates(
+                "logical transaction token",
+                (
+                    (item.context, item.destination.class_id, item.token_id)
+                    for item in writes
+                ),
+            )
+            if self._next_external_ticket_id >= 1 << 64:
+                raise AdapterPreflightError(
+                    "external append ticket sequence is exhausted"
+                )
+
+            ticket_id = self._next_external_ticket_id
+            transactions = tuple(
+                dict.fromkeys(context.transaction for context in contexts)
+            )
+            covered_pages = tuple(
+                dict.fromkeys(item.destination.page_address for item in writes)
+            )
+            timeline = self._prepare_timeline(
+                completion_domain,
+                tuple(item.arena for item in resolved),
+                after_fence_ids=tuple(
+                    self._latest_page_fences.get(self._page_key(page), 0)
+                    for page in covered_pages
+                    if self._latest_page_fences.get(self._page_key(page), 0)
+                ),
+            )
+            public_writes = snapshot_external_writes(writes)
+            public_destinations = tuple(
+                ResolvedTokenAddress(
+                    write.destination,
+                    private.public.arena,
+                    private.public.arena_page_index,
+                    private.public.token_index,
+                    private.public.byte_length,
+                )
+                for write, private in zip(public_writes, resolved, strict=True)
+            )
+            ticket = ExternalAppendTicket(
+                self._adapter_id,
+                ticket_id,
+                public_writes,
+                public_destinations,
+                completion_domain,
+                timeline.stream,
+            )
+
+            self._commit_generations(generation_plan)
+            self._next_external_ticket_id += 1
+            self._pending_external_appends[ticket_id] = _PendingExternalAppend(
+                ticket,
+                ticket_id,
+                writes,
+                tuple(item.public for item in resolved),
+                transactions,
+                covered_pages,
+                timeline,
+            )
+            for transaction in transactions:
+                self._reserved_transactions[transaction] = ticket_id
+            for page in covered_pages:
+                self._reserved_external_pages[page] = ticket_id
+                # External mutation may begin immediately after this method
+                # returns, so no earlier last-use point remains current.
+                self._latest_page_fences[self._page_key(page)] = 0
+            self._reserved_completion_domains[completion_domain] = ticket_id
+            return ticket
+
+    def record_external_data_ready(
+        self,
+        ticket: ExternalAppendTicket,
+    ) -> DataPlaneEvidence:
+        """Record readiness after the caller enqueued the authorized writes."""
+
+        with self._lock:
+            self._ensure_healthy()
+            if not isinstance(ticket, ExternalAppendTicket):
+                raise AdapterPreflightError(
+                    "external append ticket has an invalid type"
+                )
+            pending = next(
+                (
+                    item
+                    for item in self._pending_external_appends.values()
+                    if item.ticket is ticket
+                ),
+                None,
+            )
+            if pending is None and ticket.adapter_id != self._adapter_id:
+                raise AdapterPreflightError(
+                    "external append ticket belongs to another adapter"
+                )
+            if pending is None and (
+                isinstance(ticket.ticket_id, bool)
+                or not isinstance(ticket.ticket_id, int)
+                or ticket.ticket_id <= 0
+                or ticket.ticket_id >= 1 << 64
+            ):
+                raise AdapterPreflightError(
+                    "external append ticket id is no longer valid"
+                )
+            if pending is None:
+                candidate = self._pending_external_appends.get(ticket.ticket_id)
+                if candidate is not None:
+                    raise AdapterPreflightError(
+                        "external append ticket is forged or reconstructed"
+                    )
+                raise AdapterPreflightError(
+                    "external append ticket is unknown or already consumed"
+                )
+            try:
+                if (
+                    ticket.adapter_id != self._adapter_id
+                    or ticket.ticket_id != pending.ticket_id
+                    or not isinstance(ticket.writes, tuple)
+                ):
+                    raise ValueError(
+                        "external append ticket identity changed after issue"
+                    )
+                ticket_writes = snapshot_external_writes(ticket.writes)
+                if (
+                    ticket_writes != pending.writes
+                    or not isinstance(ticket.resolved_destinations, tuple)
+                    or len(ticket.resolved_destinations)
+                    != len(pending.resolved_destinations)
+                ):
+                    raise ValueError(
+                        "external append ticket writes changed after issue"
+                    )
+                for actual, expected in zip(
+                    ticket.resolved_destinations,
+                    pending.resolved_destinations,
+                    strict=True,
+                ):
+                    if (
+                        not isinstance(actual, ResolvedTokenAddress)
+                        or not isinstance(actual.address, BackendTokenAddress)
+                        or actual.address != expected.address
+                        or actual.arena is not expected.arena
+                        or actual.arena_page_index != expected.arena_page_index
+                        or actual.token_index != expected.token_index
+                        or actual.byte_length != expected.byte_length
+                    ):
+                        raise ValueError(
+                            "external append resolved destination changed after issue"
+                        )
+                if (
+                    ticket.completion_domain
+                    != pending.timeline.completion_domain
+                    or ticket.launch_context is not pending.timeline.stream
+                ):
+                    raise ValueError(
+                        "external append launch binding changed after issue"
+                    )
+            except Exception as error:
+                self.poison(
+                    "issued external append ticket failed integrity validation"
+                )
+                raise AdapterPoisonedError(
+                    "issued external append ticket changed after possible mutation"
+                ) from error
+
+            try:
+                for transaction in pending.transactions:
+                    if (
+                        self._reserved_transactions.get(transaction)
+                        != pending.ticket_id
+                    ):
+                        raise RuntimeError(
+                            "external append transaction reservation was lost"
+                        )
+                for page in pending.covered_pages:
+                    if self._reserved_external_pages.get(page) != pending.ticket_id:
+                        raise RuntimeError(
+                            "external append page reservation was lost"
+                        )
+                if (
+                    self._reserved_completion_domains.get(
+                        pending.timeline.completion_domain
+                    )
+                    != pending.ticket_id
+                ):
+                    raise RuntimeError(
+                        "external append completion-domain reservation was lost"
+                    )
+                operation_id = self._next_operation()
+                receipt_writes = snapshot_external_writes(pending.writes)
+                receipts = tuple(
+                    TokenWriteReceipt(
+                        item.context,
+                        item.token_id,
+                        item.destination,
+                        item.byte_count,
+                    )
+                    for item in receipt_writes
+                )
+                fence = self._record_completion(
+                    pending.timeline,
+                    purpose="data",
+                    covered_pages=pending.covered_pages,
+                )
+                evidence = DataPlaneEvidence(
+                    operation_id,
+                    DataPlaneOperation.APPEND,
+                    (),
+                    receipts,
+                    fence,
+                )
+            except Exception as error:
+                self.poison(
+                    f"external append completion became uncertain: {error}"
+                )
+                raise AdapterPoisonedError(
+                    "external append completion failed after possible mutation"
+                ) from error
+
+            del self._pending_external_appends[pending.ticket_id]
+            for transaction in pending.transactions:
+                del self._reserved_transactions[transaction]
+                self._observed_transactions.add(transaction)
+            for page in pending.covered_pages:
+                del self._reserved_external_pages[page]
+            del self._reserved_completion_domains[
+                pending.timeline.completion_domain
+            ]
+            return evidence
 
     def _execute_data(
         self,
@@ -983,6 +1320,11 @@ class ReferencePagedAdapter:
                 )
             page_mirrors = set(self._page_mirrors.values())
             token_pages = {item.page_address for item in self._token_mirrors.values()}
+            pending_external_pages = {
+                page
+                for pending in self._pending_external_appends.values()
+                for page in pending.covered_pages
+            }
             for certificate in certificates:
                 self._validate_page(certificate.page_address)
                 if certificate.page.engine_epoch != certificate.reclamation.engine_epoch:
@@ -1003,6 +1345,10 @@ class ReferencePagedAdapter:
                 if certificate.page_address not in last_use_state.covered_pages:
                     raise AdapterPreflightError(
                         "last-use fence does not cover a retiring page generation"
+                    )
+                if certificate.page_address in pending_external_pages:
+                    raise AdapterPreflightError(
+                        "retiring page has a pending external append"
                     )
                 if (
                     self._latest_page_fences.get(
@@ -1085,7 +1431,6 @@ class ReferencePagedAdapter:
             for certificate in evidence.certificates:
                 key = (certificate.page.pool_id, certificate.page.page_id)
                 self._reuse_allowed_after[key] = certificate.page.generation
-
 
 __all__ = [
     "AdapterError",
