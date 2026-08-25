@@ -846,15 +846,54 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
     assert_reference_census_matches_full_scan(&manager);
 
     let extra = manager.acquire_request_leases_for_test(1).unwrap()[0];
-    assert!(matches!(
-        manager.fork_requests_batch(&[RequestForkItem {
+    let extra_empty_head = manager.request(extra).unwrap().head;
+    let forked = manager
+        .fork_requests_batch(&[RequestForkItem {
             source_request: request,
             expected_source_head: second_publication.snapshot,
             target_empty_request: extra,
-            expected_target_head: manager.request(extra).unwrap().head,
-        }]),
-        Err(KvManagerError::UnsupportedProfile(_))
+            expected_target_head: extra_empty_head,
+        }])
+        .expect("fork packed request");
+    assert_eq!(forked.len(), 1);
+    assert_eq!(forked[0].source, request);
+    assert_eq!(forked[0].target.view.boundary, 65);
+    assert_eq!(forked[0].target.view.resident_count, 2);
+    assert_eq!(
+        forked[0]
+            .target
+            .pages
+            .iter()
+            .map(|page| (
+                page.logical_ordinal,
+                page.valid_token_count,
+                page.visible_token_offset,
+                page.visible_token_count,
+            ))
+            .collect::<Vec<_>>(),
+        vec![(0, 16, 0, 16), (1, 8, 0, 8)]
+    );
+    assert!(Arc::ptr_eq(
+        &manager.request_snapshot(request).unwrap().roots,
+        &manager.request_snapshot(extra).unwrap().roots,
     ));
+    let forked_view = manager
+        .token_views_batch(&[TokenViewQuery {
+            request: extra,
+            expected_snapshot: forked[0].target.view.snapshot,
+            class_id: 0,
+        }])
+        .unwrap()[0]
+        .clone();
+    assert_eq!(forked_view.class_id, second_packed.class_id);
+    assert_eq!(forked_view.version, forked[0].target.view.view_version);
+    assert_eq!(forked_view.page_tokens, second_packed.page_tokens);
+    assert_eq!(forked_view.placements, second_packed.placements);
+    for entry in snapshot_entries(&manager, request) {
+        assert_eq!(manager.page(entry.page.page_id).unwrap().request_refs, 2);
+    }
+    assert_reference_census_matches_full_scan(&manager);
+
     let stats = manager.stats();
     assert_eq!(stats.retiring_pages, 0);
     assert_eq!(stats.active_pages, 2);
@@ -864,16 +903,22 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
             expected_head: second_publication.snapshot,
         }])
         .unwrap();
-    assert_eq!(release.retirements.len(), 2);
-    assert_eq!(release.retirements[0].token_begin, 0);
-    assert_eq!(release.retirements[0].token_end_exclusive, 16);
-    assert_eq!(release.retirements[1].token_begin, 16);
-    assert_eq!(release.retirements[1].token_end_exclusive, 24);
-    manager
-        .acknowledge_reclamations_batch(&reclamation_receipts(&release.retirements))
-        .unwrap();
+    assert!(release.retirements.is_empty());
     manager.recycle_requests_batch(&[request]).unwrap();
-    manager.release_current_for_test(&[extra]).unwrap();
+    let last_release = manager
+        .release_batch(&[ReleaseBatchItem {
+            request: extra,
+            expected_head: forked[0].target.view.snapshot,
+        }])
+        .unwrap();
+    assert_eq!(last_release.retirements.len(), 2);
+    assert_eq!(last_release.retirements[0].token_begin, 0);
+    assert_eq!(last_release.retirements[0].token_end_exclusive, 16);
+    assert_eq!(last_release.retirements[1].token_begin, 16);
+    assert_eq!(last_release.retirements[1].token_end_exclusive, 24);
+    manager
+        .acknowledge_reclamations_batch(&reclamation_receipts(&last_release.retirements))
+        .unwrap();
     manager.recycle_requests_batch(&[extra]).unwrap();
     let stats = manager.stats();
     assert_eq!(stats.active_requests, 0);

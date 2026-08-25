@@ -521,12 +521,6 @@ impl CanonicalKvManager {
             if source_snapshot.roots.len() != self.classes.len() {
                 return Err(KvManagerError::Invariant("snapshot class cardinality"));
             }
-            if source_snapshot.roots.iter().any(|root| !root.is_dense()) {
-                return Err(KvManagerError::UnsupportedProfile(
-                    "fork after token relocation is not implemented",
-                ));
-            }
-
             let target_state = self.request(item.target_empty_request)?;
             if target_state.released || target_state.quarantined {
                 return Err(KvManagerError::RequestUnavailable);

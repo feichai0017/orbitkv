@@ -357,6 +357,301 @@ fn request_fork_aggregates_distinct_shared_sources_and_empty_roots_exactly() {
     assert_reference_census_matches_full_scan(&empty);
 }
 
+#[allow(clippy::too_many_lines)]
+fn packed_fork_fixture(
+    resident_tokens: u64,
+) -> (
+    CanonicalKvManager,
+    RequestLease,
+    Box<[RequestLease]>,
+    RequestView,
+) {
+    assert!(matches!(resident_tokens, 24 | 32));
+    let plan = full_plan(CANONICAL_PAGE_TOKENS);
+    let mut manager = CanonicalKvManager::new(
+        &plan,
+        ManagerConfig {
+            maximum_requests: 5,
+            maximum_operations: 4,
+            maximum_prefixes: 2,
+            maximum_reclamations: 64,
+            maximum_step_tokens: 64,
+        },
+        &[backend(0, 196, 16, 15_000)],
+    )
+    .expect("packed fork manager");
+    let acquired = manager
+        .acquire_requests_batch(5)
+        .expect("packed source plus B4 targets");
+    let source = acquired[0].request;
+    let targets = acquired[1..]
+        .iter()
+        .map(|view| view.request)
+        .collect::<Vec<_>>()
+        .into_boxed_slice();
+    let prepared = manager
+        .prepare_batch(&[PrepareBatchItem {
+            request: source,
+            expected_head: acquired[0].snapshot,
+            target_boundary: 48,
+        }])
+        .expect("prepare dense relocation source");
+    let submitted = submit(&mut manager, &prepared[0]);
+    let dense = complete(&mut manager, &submitted, 27, 29);
+    assert!(dense.retirements.is_empty());
+
+    let evicted = match resident_tokens {
+        32 => (8..16).chain(24..32).collect::<Vec<_>>(),
+        24 => (8..16).chain(24..32).chain(40..48).collect::<Vec<_>>(),
+        _ => unreachable!(),
+    };
+    let marked = manager
+        .mark_token_dispositions_batch(&[TokenDispositionBatchItem {
+            request: source,
+            expected_snapshot: dense.publication.snapshot,
+            updates: evicted
+                .into_iter()
+                .map(|token_id| ClassTokenDispositionUpdate {
+                    class_id: 0,
+                    token_id,
+                    disposition: TokenDisposition::policy_evicted(81, 1, 99),
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        }])
+        .expect("mark relocation victims")[0];
+    let prepared = manager
+        .prepare_relocation_batch(&[PrepareRelocationItem {
+            request: source,
+            expected_snapshot: marked.snapshot,
+            class_id: 0,
+            policy: RelocationPolicy {
+                fragmentation_threshold_milli: 250,
+                maximum_source_pages: 3,
+                evacuation_headroom_pages: 2,
+                full_evacuation: true,
+            },
+        }])
+        .expect("prepare packed relocation")[0]
+        .clone();
+    let receipts = prepared
+        .plan
+        .moves
+        .iter()
+        .map(|movement| RelocationCopyReceipt {
+            relocation: prepared.relocation,
+            token_id: movement.token_id,
+            source: movement.source,
+            destination: movement.destination,
+            observed: 1,
+            copied: 1,
+            reserved16: 0,
+            reserved32: 0,
+        })
+        .collect::<Vec<_>>();
+    manager
+        .submit_relocation_batch(&[prepared.relocation], &receipts)
+        .expect("submit packed relocation");
+    let relocated = manager
+        .complete_relocation_batch(
+            BatchCompletionReceipt {
+                engine_epoch: source.engine_epoch,
+                completion_domain: 29,
+                completion_value: 31,
+                confirmed: 1,
+                reserved: 0,
+            },
+            &[prepared.relocation],
+        )
+        .expect("complete packed relocation");
+    manager
+        .acknowledge_reclamations_batch(&reclamation_receipts(&relocated.retirements))
+        .expect("ack dense relocation sources");
+    let source_view = relocated.publications[0];
+    (manager, source, targets, source_view)
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn packed_aligned_b4_fork_is_atomic_and_last_reference_exact() {
+    let (mut manager, source, targets, source_view) = packed_fork_fixture(32);
+    let source_snapshot = manager.request_snapshot(source).unwrap();
+    assert_eq!(source_snapshot.boundary, 48);
+    assert_eq!(source_snapshot.roots[0].layout, RootLayout::Packed);
+    assert_eq!(source_snapshot.roots[0].resident_tokens, 32);
+    assert_eq!(
+        source_snapshot.roots[0]
+            .entries
+            .iter()
+            .map(|entry| entry.logical_ordinal)
+            .collect::<Vec<_>>(),
+        vec![0, 1]
+    );
+    let source_entries = snapshot_entries(&manager, source);
+    let source_tokens = manager
+        .token_views_batch(&[TokenViewQuery {
+            request: source,
+            expected_snapshot: source_view.snapshot,
+            class_id: 0,
+        }])
+        .unwrap()[0]
+        .clone();
+    let valid = fork_items(&manager, source, &targets);
+
+    let mut stale = valid.clone();
+    stale[2].expected_target_head.generation = stale[2]
+        .expected_target_head
+        .generation
+        .checked_add(1)
+        .unwrap();
+    let before = state_image(&manager);
+    assert_eq!(
+        manager.fork_requests_batch(&stale),
+        Err(KvManagerError::StaleView)
+    );
+    assert_eq!(state_image(&manager), before);
+
+    let shared_page = source_entries[0].page;
+    let original_refs = manager.page(shared_page.page_id).unwrap().request_refs;
+    manager.page_mut(shared_page.page_id).unwrap().request_refs = u32::MAX - 3;
+    let before = state_image(&manager);
+    assert_eq!(
+        manager.fork_requests_batch(&valid),
+        Err(KvManagerError::ReferenceCountOverflow(shared_page.page_id))
+    );
+    assert_eq!(state_image(&manager), before);
+    manager.page_mut(shared_page.page_id).unwrap().request_refs = original_refs;
+
+    let free_snapshots = manager.snapshots.free.clone();
+    manager.snapshots.free.truncate(3);
+    let before = state_image(&manager);
+    assert_eq!(
+        manager.fork_requests_batch(&valid),
+        Err(KvManagerError::ArenaExhausted("snapshot"))
+    );
+    assert_eq!(state_image(&manager), before);
+    manager.snapshots.free = free_snapshots;
+    assert_reference_census_matches_full_scan(&manager);
+
+    let old_target_heads = targets
+        .iter()
+        .map(|target| manager.request(*target).unwrap().head)
+        .collect::<Vec<_>>();
+    let forked = manager
+        .fork_requests_batch(&valid)
+        .expect("packed aligned B4 fork");
+    assert_eq!(forked.len(), 4);
+    assert_eq!(
+        forked
+            .iter()
+            .map(|item| item.target.view.snapshot)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        4
+    );
+    assert!(forked.iter().all(|item| {
+        item.source == source
+            && item.target.view.boundary == 48
+            && item.target.view.resident_count == 2
+            && item
+                .target
+                .pages
+                .iter()
+                .map(|page| {
+                    (
+                        page.logical_ordinal,
+                        page.valid_token_count,
+                        page.visible_token_offset,
+                        page.visible_token_count,
+                    )
+                })
+                .eq([(0, 16, 0, 16), (1, 16, 0, 16)])
+    }));
+    let source_roots = &manager.request_snapshot(source).unwrap().roots;
+    for item in &forked {
+        assert!(Arc::ptr_eq(
+            source_roots,
+            &manager
+                .request_snapshot(item.target.view.request)
+                .unwrap()
+                .roots,
+        ));
+        let target_tokens = manager
+            .token_views_batch(&[TokenViewQuery {
+                request: item.target.view.request,
+                expected_snapshot: item.target.view.snapshot,
+                class_id: 0,
+            }])
+            .unwrap()[0]
+            .clone();
+        assert_eq!(target_tokens.version, item.target.view.view_version);
+        assert_eq!(target_tokens.page_tokens, source_tokens.page_tokens);
+        assert_eq!(target_tokens.placements, source_tokens.placements);
+    }
+    assert_eq!(
+        manager.token_views_batch(&[TokenViewQuery {
+            request: targets[0],
+            expected_snapshot: old_target_heads[0],
+            class_id: 0,
+        }]),
+        Err(KvManagerError::StaleTokenView)
+    );
+    for entry in &source_entries {
+        assert_eq!(manager.page(entry.page.page_id).unwrap().request_refs, 5);
+    }
+    assert_reference_census_matches_full_scan(&manager);
+
+    let source_release = manager.release_current_for_test(&[source]).unwrap();
+    assert!(source_release.retirements.is_empty());
+    assert_eq!(source_release.releases[0].detached.len(), 2);
+    manager.recycle_requests_batch(&[source]).unwrap();
+    let siblings_release = manager.release_current_for_test(&targets[..3]).unwrap();
+    assert!(siblings_release.retirements.is_empty());
+    assert!(
+        siblings_release
+            .releases
+            .iter()
+            .all(|release| release.detached.len() == 2)
+    );
+    manager.recycle_requests_batch(&targets[..3]).unwrap();
+    let last_release = manager.release_current_for_test(&targets[3..]).unwrap();
+    assert_eq!(last_release.retirements.len(), 2);
+    for (certificate, entry) in last_release.retirements.iter().zip(&source_entries) {
+        assert_eq!(certificate.page, entry.page);
+        assert_eq!(certificate.class_id, entry.class_id);
+        assert_eq!(certificate.backend_domain, entry.backend_domain);
+        assert_eq!(certificate.logical_ordinal, entry.logical_ordinal);
+        assert_eq!(certificate.backend_index, entry.backend_index);
+        assert_eq!(certificate.token_begin, entry.logical_ordinal * 16);
+        assert_eq!(
+            certificate.token_end_exclusive,
+            (entry.logical_ordinal + 1) * 16
+        );
+        assert_eq!(certificate.completion_domain, 29);
+        assert_eq!(certificate.completion_value, 31);
+    }
+    assert_eq!(
+        last_release
+            .retirements
+            .iter()
+            .map(|certificate| certificate.reclamation)
+            .collect::<BTreeSet<_>>()
+            .len(),
+        2
+    );
+    manager
+        .acknowledge_reclamations_batch(&reclamation_receipts(&last_release.retirements))
+        .unwrap();
+    manager.recycle_requests_batch(&targets[3..]).unwrap();
+    let stats = manager.stats();
+    assert_eq!(stats.active_requests, 0);
+    assert_eq!(stats.active_snapshots, 0);
+    assert_eq!(stats.free_pages, 16);
+    assert_eq!(stats.pending_reclamations, 0);
+    assert_eq!(stats.total_request_page_refs, 0);
+    assert_reference_census_matches_full_scan(&manager);
+}
+
 #[test]
 #[allow(clippy::too_many_lines)]
 fn b4_prefix_attach_evict_and_last_close_are_reference_exact() {
