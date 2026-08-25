@@ -121,9 +121,23 @@ exact ACK, further append into the packed layout, and a second
 mark-relocate-ACK cycle. The SGLang periodic trigger is host-tested at two
 successive active-length thresholds and recomputes the next absolute boundary
 after each reclamation. Dense Prefix ownership, request fork, and shared COW
-remain separate capabilities: after a packed publication, Prefix publication,
-fork, and shared partial-tail COW are unsupported and fail closed before
-mutation.
+remain separate capabilities: generation-safe request fork from a packed
+publication is host- and FFI-tested, while packed Prefix operations and packed
+shared partial-tail COW remain unsupported and fail closed before mutation.
+
+The request-private pressure observer is also host-tested behind explicit
+opt-in. It samples lifecycle events and separates consumed capacity, resident
+data, request-reachable bytes, semantic-live bytes, free-space minima,
+high-water marks, and retention amplification. This is telemetry plumbing, not
+a memory result: no real asynchronous GPU pressure workload has run,
+fixed-state bytes are excluded, and shared Prefix/request-fork retention
+amplification is rejected.
+
+The engine-neutral `orbitkv-runtime` SPI and `orbitkv-reference` external
+tensor-arena adapter have separate buildable, clean-installable wheels. The
+reference adapter is a reusable effect implementation and contract oracle, not
+a complete engine. SGLang still uses its existing adapter and has not migrated
+to the SPI.
 
 ## Ownership and reuse frontiers
 
@@ -202,8 +216,9 @@ Shared Prefix generations are excluded initially. A request must first obtain
 private ownership through Snapshot/COW. No plan may overlap append, COW,
 relocation, or publication for the same request and class.
 The current repeated path does not perform that private-ownership transition
-for a packed shared root; packed Prefix, fork, and shared COW combinations are
-therefore not admitted.
+for a packed shared root; packed Prefix and packed shared-tail COW combinations
+are therefore not admitted. Packed request fork itself is generation-safe and
+host+FFI tested, but its shared child cannot yet enter packed COW append.
 
 ## Correctness invariants
 
@@ -234,25 +249,34 @@ This proves the component's bounded copy, ordering, generation-reuse, and drain
 contract on the recorded H20. It does not by itself qualify L3/L4, performance,
 capacity, or a complete engine path.
 
-The separate pinned SGLang diagnostic uses Qwen2.5-0.5B Full attention, page16
-BF16 NHD storage, eager single-GPU execution, and FlashInfer for both the Naive
-token-indexed oracle and Relocate mode. Four alternating-order epochs at B1 and
-B4 yield 8/8 exact-token pairs. Every process runs five iterations and each
-iteration reaches two reclamation rounds; relocation/reclaimed-page counters
-match exactly, manager census drains, and failure/quarantine/fail-stop counters
-remain zero. Excluding iteration 0 leaves 16 hot samples per mode and group.
-Relocate throughput is +7.629% at B1 and -1.232% at B4; mean/p95 latency deltas
-are -7.088%/-22.844% and +1.247%/+2.880%, respectively. B1 varies materially
-across epochs, so these observations do not support a speedup claim.
+The sealed pinned-SGLang qualification binds exact clean source
+`7e02931036123c0f830bcca7130a43543c9e6eb1` to the official SGLang v0.5.17
+base plus its manifest-bound canonical loader patch, Qwen2.5-0.5B
+request-private Full attention, page16 BF16 NHD storage, eager single-GPU
+execution, and FlashInfer for both the Naive token-indexed oracle and Relocate
+mode. Four alternating-order epochs at B1 and B4 yield 16 process records and
+8/8 exact-token pairs. Every process runs five iterations, the required
+relocation lifecycle completes, manager census drains, and
+failure/quarantine/fail-stop counters remain zero. Excluding iteration 0 leaves
+16 hot samples per mode and group. The bundled component suite passes 7/7 H20
+cases.
 
-This SGLang result is `diagnostic_only`, unsealed, dirty-source, based on
-recorded H20 observations rather than independent attestation,
-`qualified=false`, and `performance_go=false`. It does not establish capacity
-or end-to-end memory savings. A relocate-only FA3 E2E smoke passed, but sparse
-Naive+FA3 is not representable and now fails closed, so the valid paired oracle
-uses FlashInfer.
+| Case | Relocate throughput | Mean latency | Median latency | p95 latency |
+| --- | ---: | ---: | ---: | ---: |
+| B1 | -1.3467% | +1.3651% | +2.0033% | +0.5141% |
+| B4 | +2.8096% | -2.7328% | +0.9810% | -19.8635% |
 
-[Qwen2.5-0.5B relocation diagnostic archive](../results/h20-sglang-v0517-token-relocation-diagnostic-20260825/README.md)
+The result records `source_clean=true`, `preflight_bound=true`, `sealed=true`,
+and `qualified=true`, but its qualification claim is strictly Full
+token-relocation correctness and lifecycle. It remains
+`hardware_attested=false` and `performance_go=false`; the mixed observations
+support no general speedup. It establishes no capacity or end-to-end memory
+saving, production readiness, complete SGLang replacement, Prefix,
+Hybrid/SWA, MLA, async-overlap, Graph, speculation, distributed, or multi-GPU
+claim. The prior dirty-source relocation diagnostic is historical and
+superseded.
+
+[Sealed Qwen2.5-0.5B relocation qualification](../results/h20-sglang-v0517-abi8-token-relocation-20260825/README.md)
 
 For the Qwen3.5 fixed-state profile, the scoped fresh-prompt stock/manager
 pair-verification step was executed with runtime records observing one H20.
@@ -332,8 +356,9 @@ approximate policy, different capacities, or different victim sets cannot
 support a memory or throughput claim.
 
 Token relocation retains L2 qualification plus narrow H20 component conformance
-and an unqualified recorded-device SGLang diagnostic. No sealed L3/L4,
-same-capacity, speedup, or complete-SGLang-replacement claim is made.
+and a sealed, clean-source, scoped SGLang correctness/lifecycle qualification.
+No independent hardware attestation, performance GO, same-capacity benefit, or
+complete-SGLang-replacement claim is made.
 The existing qualified ABI8 H20 Prefix seal covers only Qwen2.5-7B Full and
 GPT-OSS-20B Full+SWA and explicitly excludes fixed state. The Qwen3.5 archive
 fills only its scoped pair-verification step, and the Qwen3.8 diagnostic adds

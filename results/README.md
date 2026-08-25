@@ -16,23 +16,24 @@ bindings remain pending, as do Qwen3.5 L4 and performance qualification.
 Manager and state-pool handles are separate, so only fail-stop containment—not
 cross-handle atomicity—is provided. The 73-layout Python runtime and
 token-manager paths outside the sealed Full/Full+SWA Prefix boundary retain
-their separately scoped host evidence. Token relocation additionally has the
-narrow recorded-H20 diagnostic below; it is unsealed, dirty-source,
-independently unattested, unqualified, and not a performance result.
-The latest qualified record below is
-exact-source ABI8; all preceding ABI records remain historical and qualify only
+their separately scoped host evidence. Token relocation now has a second,
+independent exact-source sealed qualification below. It qualifies only
+request-private Full token-relocation correctness and lifecycle; it is not a
+performance, capacity, memory, production, or complete-engine result.
+All preceding or dirty diagnostic records remain historical and qualify only
 their own source closures.
 OrbitKV is an attention-state compiler plus transactional ownership runtime;
 none of these records makes it a full SGLang replacement or a mature L5
 production system.
 
-## Latest sealed and qualified engine record
+## Current sealed and qualified engine records
 
 | Record | Scope |
 | --- | --- |
-| `h20-sglang-v0517-abi8-full-hybrid-20260823` | Sealed exact `6f62a23` ABI8 on official SGLang v0.5.17 and one H20; Scoped L4 correctness for Qwen Full and GPT-OSS Full+SWA Prefix B1/B4; `performance_go=false` |
+| `h20-sglang-v0517-abi8-full-hybrid-20260823` | Sealed exact `6f62a23` ABI8 on the official SGLang v0.5.17 base, with the manager-side canonical loader patch bound by the record, and one H20; Scoped L4 correctness for Qwen Full and GPT-OSS Full+SWA Prefix B1/B4; `performance_go=false` |
+| `h20-sglang-v0517-abi8-token-relocation-20260825` | Sealed exact clean `7e029310` ABI8 on the official SGLang v0.5.17 base plus its manifest-bound canonical loader patch and one observed H20; scoped Qwen2.5-0.5B request-private Full token-relocation correctness and lifecycle at B1/B4; `hardware_attested=false`, `performance_go=false` |
 
-The exact source commit is
+The Prefix record's exact source commit is
 `6f62a23b9abaa9bf12e9b060389259fa9185e70f`. The qualified profile is page16
 BF16 NHD, eager FA3, and TP/PP/DP/DCP = 1. All 12 manager/stock pairs pass
 across three epochs; manager and stock each contain 126 measured request traces
@@ -47,6 +48,32 @@ makes no memory-saving claim and does not establish a complete SGLang
 replacement or production readiness. Token relocation, MLA, fixed state,
 overlap, CUDA Graphs, speculation, distributed execution, and performance
 qualification are explicitly excluded.
+
+The token-relocation record's exact source commit is
+`7e02931036123c0f830bcca7130a43543c9e6eb1`. Its manifest records
+`source_clean=true`, `preflight_bound=true`, `sealed=true`, and
+`qualified=true`. The profile is Qwen2.5-0.5B request-private Full attention,
+the official SGLang v0.5.17 base plus its manifest-bound canonical loader
+patch, page16 BF16 NHD eager FlashInfer, and one observed H20. Four
+order-balanced epochs produce 16 process records and eight
+Naive/Relocate B1/B4 pairs. All eight pairs have exact output tokens, the
+required relocation lifecycle, complete final drain, and zero
+failure/quarantine/fail-stop counters. The bundled component suite passes 7/7
+H20 cases.
+
+| Case | Relocate throughput | Mean latency | Median latency | p95 latency |
+| --- | ---: | ---: | ---: | ---: |
+| B1 | -1.3467% | +1.3651% | +2.0033% | +0.5141% |
+| B4 | +2.8096% | -2.7328% | +0.9810% | -19.8635% |
+
+This second seal qualifies only scoped Full token-relocation correctness and
+lifecycle. It records `hardware_attested=false` and `performance_go=false`,
+and the mixed measurements do not establish a general speedup. It makes no
+capacity, memory-saving, production-readiness, full-replacement, Prefix,
+Hybrid/SWA, MLA, async-overlap, Graph, speculation, distributed, or multi-GPU
+claim. The two sealed records do not inherit or combine scopes.
+
+[Sealed Qwen2.5-0.5B token-relocation qualification](h20-sglang-v0517-abi8-token-relocation-20260825/README.md)
 
 ## Qwen3.5 fixed-state pair-verification record
 
@@ -105,11 +132,11 @@ because lengthy precompilation was externally terminated.
 
 [Qwen3.8-27B-FP8 diagnostic archive](h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824/README.md)
 
-## Qwen2.5-0.5B token-relocation diagnostic pair run
+## Historical superseded Qwen2.5-0.5B token-relocation diagnostic
 
 | Record | Scope |
 | --- | --- |
-| `h20-sglang-v0517-token-relocation-diagnostic-20260825` | Official SGLang v0.5.17, Qwen2.5-0.5B Full/FlashInfer, page16 BF16 NHD eager B1/B4 Naive-versus-byte-exact-Relocate diagnostic; four balanced epochs and eight passing pairs; recorded H20 observation only; unsealed, dirty-source, independently unattested, unqualified, and `performance_go=false` |
+| `h20-sglang-v0517-token-relocation-diagnostic-20260825` | Historical/superseded dirty-source diagnostic retained for auditability; official SGLang v0.5.17, Qwen2.5-0.5B Full/FlashInfer, page16 BF16 NHD eager B1/B4 Naive-versus-byte-exact-Relocate; recorded H20 observation only; unsealed, independently unattested, unqualified, and `performance_go=false` |
 
 All 8/8 pairs match output tokens exactly. Each process runs five iterations,
 each iteration reaches two reclamation rounds, relocation/reclaimed-page

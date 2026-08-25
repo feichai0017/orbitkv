@@ -16,7 +16,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <div class="hero-copy">
       <div class="hero-kicker">
         <span class="release-dot" aria-hidden="true"></span>
-        <span>ABI8 Prefix correctness · sealed H20 record · performance pending</span>
+        <span>ABI8 Prefix + Full relocation · scoped sealed H20 records · performance pending</span>
       </div>
       <h1>Attention semantics.<br /><span>Compiled into state.</span></h1>
       <p class="hero-lede">
@@ -92,15 +92,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 
   <section class="section performance-section" id="evidence">
     <header class="section-heading">
-      <div><p class="eyebrow">Qualification boundary</p><h2>Sealed ABI8 Prefix is the sole current formal L4 result.</h2></div>
+      <div><p class="eyebrow">Qualification boundary</p><h2>Two sealed ABI8 records, two non-transferable scopes.</h2></div>
       <p>
         Exact source 6f62a23 passed all 12 stock/manager pairs across three
         epochs on one H20: Qwen2.5-7B Full and GPT-OSS-20B Full+SWA at B1/B4,
-        using official SGLang v0.5.17 with page16 BF16 NHD eager FA3. Outputs
+        using the official SGLang v0.5.17 base with the record-bound
+        manager-side canonical loader patch, page16 BF16 NHD eager FA3. Outputs
         and request traces match exactly, seeded Prefix hits are observed, all
         arenas drain, and every Hybrid pair advances the required SWA counters.
         Relocation, MLA, fixed-state, overlap, Graph, speculation, distributed
-        execution, and performance qualification are excluded.
+        execution, and performance qualification are excluded from that Prefix
+        seal.
         The exact request-private GDN+convolution runtime is integrated through
         allocation, initial clear, completion event, wait, retire, clear, and
         exact ACK. Qwen3.5 has scoped pair verification and Qwen3.8-27B-FP8 has
@@ -109,8 +111,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         Separately, the Rust core and Python runtime have host-tested two
         relocation cycles for one request-private Full class under full
         evacuation, and the SGLang periodic trigger is host-tested across two
-        reclamation boundaries. Prefix publication, fork, and shared
-        partial-tail COW on a packed root remain unsupported and fail closed.
+        reclamation boundaries. Generation-safe packed fork is host- and
+        FFI-tested; packed Prefix and packed shared-tail COW remain unsupported
+        and fail closed.
         Multi-request ABI8 relocation is also host-tested: one mark, prepare,
         submit, and complete call covers the scheduler batch; copies and the
         completion event are flattened, followed by one aggregate registry
@@ -122,13 +125,25 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         The engine-neutral H20 component suite passes all seven cases at
         B1/B4/B32, including two cycles with real append, copy, and consumer
         streams, 257-byte payloads, ACK-gated generation reuse, and final drain.
-        Separately, a Qwen2.5-0.5B SGLang diagnostic passed all eight
-        Naive/Relocate B1/B4 pairs across four balanced epochs, with exact
-        tokens, two reclamation rounds per iteration, complete drain, and zero
-        failure, quarantine, and fail-stop counters. It is dirty-source,
-        unsealed, based on an observed rather than independently attested H20,
-        <code>qualified=false</code>, and <code>performance_go=false</code>;
-        formal L3/L4 and capacity qualification remain pending.
+        Separately, exact clean source <code>7e029310</code> is preflight-bound
+        and sealed for scoped Qwen2.5-0.5B request-private Full relocation
+        correctness and lifecycle. All 16 records / 8 Naive/Relocate B1/B4
+        pairs across four balanced epochs are token-exact, fully drained, and
+        failure-free; the bundled H20 component suite is 7/7. The manifest has
+        <code>qualified=true</code>, but also
+        <code>hardware_attested=false</code> and
+        <code>performance_go=false</code>. B1 throughput/mean/median/p95 deltas
+        are -1.3467%/+1.3651%/+2.0033%/+0.5141%; B4 deltas are
+        +2.8096%/-2.7328%/+0.9810%/-19.8635%. These mixed observations establish
+        no general speedup, capacity, memory, production, or full-replacement
+        claim. The earlier dirty relocation diagnostic is historical and
+        superseded.
+        Request-private pressure telemetry is host-tested, but no real
+        asynchronous GPU pressure run exists; fixed-state bytes and shared
+        Prefix/fork retention amplification are excluded. Separate
+        <code>orbitkv-runtime</code> and <code>orbitkv-reference</code> wheels
+        exist, but the reference is not a complete engine and SGLang has not
+        migrated to the SPI.
         The frozen ABI5-v5 H20 record remains historical only.
       </p>
     </header>
@@ -162,15 +177,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <p>
         Snapshot, Prefix, fork, joint COW, page-owned reclamation, and the
         official SGLang cache seam now have a sealed, scoped Full/Full+SWA H20
-        Prefix record, the sole current formal L4 result. The integrated exact
+        Prefix record. A second sealed clean-source record qualifies only
+        request-private Full relocation correctness and lifecycle. The integrated exact
         request-private GDN+convolution lifecycle has
         model-specific H20 pair diagnostics, while the replacement production
         trigger, other families, clean L4 qualification, and performance remain
         pending. Repeated private Full relocation, multi-request batch
         relocation, and the SGLang periodic trigger are host-tested, but the
-        batch event is still eager and host-blocking. Clean, preflighted,
-        independently attested and sealed relocation L3/L4 qualification, async
-        overlap, MLA, Graph, speculation, and distribution remain open gates.
+        batch event is still eager and host-blocking. Independent relocation
+        hardware attestation and performance qualification, real asynchronous
+        pressure/overlap, packed Prefix/shared-tail COW, MLA, Graph, speculation,
+        and distribution remain open gates.
       </p>
     </header>
     <div class="milestone-list">

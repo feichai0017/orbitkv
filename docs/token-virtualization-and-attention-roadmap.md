@@ -11,7 +11,7 @@ joint Full+SWA COW, detach actions, page-owned reclamation, and an independent
 fixed-state checkpoint pool.
 
 The ABI8 Python runtime, state-pool client, and SGLang Prefix adapter are
-host-qualified L2. The current sealed ABI8 H20 record provides scoped Prefix
+host-qualified L2. The sealed ABI8 Prefix H20 record provides scoped Prefix
 correctness only for Qwen2.5 Full and GPT-OSS Full+SWA; it has
 `performance_go=false`, reports an observed configured arena reservation
 difference of **0%** rather than an end-to-end memory saving, and explicitly
@@ -37,15 +37,26 @@ wrapper. The ABI8 core and Python runtime also repeat
 append-mark-full-evacuation-ACK for one request-private Full class, and the
 SGLang periodic trigger is host-tested across two boundaries. Post-mark failures
 are fail-stop and non-rollback. Event completion is currently eager and
-host-blocking, with no asynchronous overlap. Packed Prefix, fork, and shared
-partial-tail COW remain fail-closed. A new engine-neutral CUDA opaque-byte
+host-blocking, with no asynchronous overlap. Generation-safe packed fork is
+now host- and FFI-tested, while packed Prefix and packed shared-tail COW remain
+fail-closed. A new engine-neutral CUDA opaque-byte
 harness now passes all seven H20 component cases, including two real append,
 copy, and consumer-stream cycles at B1/B4/B32. A separate pinned SGLang
-Qwen2.5-0.5B diagnostic passes all 8/8 Naive/Relocate B1/B4 pairs with exact
-tokens, expected counters, complete drain, and zero failures. That engine record
-is unsealed, dirty-source, independently unattested, `diagnostic_only`,
-`qualified=false`, and `performance_go=false`; formal L3/L4, performance, and
-capacity qualification remain pending.
+Qwen2.5-0.5B qualification binds exact clean source
+`7e02931036123c0f830bcca7130a43543c9e6eb1`; all 16 records / 8
+Naive/Relocate B1/B4 pairs have exact tokens, expected lifecycle, complete
+drain, and zero failures. It is preflight-bound, sealed, and `qualified=true`
+for scoped request-private Full token-relocation correctness and lifecycle
+only. It remains independently unattested and `performance_go=false`; capacity,
+general speedup, and production qualification remain pending.
+
+Opt-in request-private pressure telemetry is host-tested for consumed,
+resident, request-reachable, and semantic-live bytes plus retention
+amplification. No real asynchronous GPU pressure run has executed; fixed-state
+bytes and shared Prefix/request-fork retention amplification are excluded. The
+separate `orbitkv-runtime` and `orbitkv-reference` wheels also provide an
+engine-neutral SPI and reference external-arena adapter. The reference is not a
+complete serving engine, and SGLang has not migrated to the SPI.
 
 ## Why the module split is a roadmap prerequisite
 
@@ -138,8 +149,9 @@ memory-saving result.
 ## M3: Token table and exact relocation
 
 Status: **core, C wire, Python wire, and eager SGLang adapter host L2 GO; H20
-component conformance and a recorded-device SGLang diagnostic pass; sealed
-L3/L4 and performance qualification pending**.
+component conformance plus sealed clean-source scoped Full relocation
+correctness/lifecycle qualification pass; independent hardware attestation and
+performance qualification pending**.
 
 The canonical-manager surface retains stable logical token IDs, canonical
 disposition batches, and class-specific physical placement without changing
@@ -182,9 +194,9 @@ publish, exact-ACK the retired generations, and repeat. The SGLang adapter
 stores an integer next-reclamation boundary rather than a one-shot flag, and
 host tests exercise two boundaries for both Naive and Relocate policy modes.
 It rejects a missed boundary and a nonempty Prefix mirror before manager
-mutation. Prefix publication and request fork after packed publication, plus
-shared partial-tail COW append on a packed root, remain unsupported and fail
-closed.
+mutation. Generation-safe packed request fork is now host- and FFI-tested.
+Packed Prefix operations and shared partial-tail COW append on a packed root
+remain unsupported and fail closed.
 
 Global invariants are token conservation, unique placement, completion
 visibility, snapshot isolation, generation safety, and deferred source reuse.
@@ -204,27 +216,30 @@ event-ordered byte checks, ACK-gated same-page/higher-generation reuse, and
 final drain. The component result is not sealed L3/L4, performance, or capacity
 qualification.
 
-The model-level diagnostic pins official SGLang `v0.5.17`, Qwen2.5-0.5B,
-page16 BF16 NHD Full attention, eager single-GPU execution, and FlashInfer in
-both Naive and Relocate modes. Four alternating-order epochs at B1/B4 produce
-8/8 token-exact pairs, five iterations/process, two reclamation rounds per
-iteration, expected relocation/reclaimed-page counters, complete drain, and
-zero failures. Iteration 0 is excluded, leaving 16 hot samples per mode/group.
+The model-level qualification pins exact clean source
+`7e02931036123c0f830bcca7130a43543c9e6eb1`, the official SGLang `v0.5.17`
+base plus its manifest-bound canonical loader patch, Qwen2.5-0.5B
+request-private Full attention, page16 BF16 NHD eager execution,
+and FlashInfer in both Naive and Relocate modes. Four alternating-order epochs
+at B1/B4 produce 16 records and 8/8 token-exact pairs, with five
+iterations/process, expected relocation lifecycle, complete drain, and zero
+failures. Iteration 0 is excluded, leaving 16 hot samples per mode/group.
 
-| Case | Relocate throughput delta | Mean latency delta | p95 latency delta |
-| --- | ---: | ---: | ---: |
-| B1 | +7.629% | -7.088% | -22.844% |
-| B4 | -1.232% | +1.247% | +2.880% |
+| Case | Relocate throughput | Mean latency | Median latency | p95 latency |
+| --- | ---: | ---: | ---: | ---: |
+| B1 | -1.3467% | +1.3651% | +2.0033% | +0.5141% |
+| B4 | +2.8096% | -2.7328% | +0.9810% | -19.8635% |
 
-B1 has material inter-epoch jitter and B4 is slightly slower. The archive
-therefore remains `performance_go=false`; it is also `diagnostic_only`,
-unsealed, dirty-source, independently unattested, and `qualified=false`. It
-makes no capacity or end-to-end memory claim. A relocate-only FA3 smoke passed,
-but sparse Naive+FA3 is invalid and fails closed, so FlashInfer is the paired
-same-policy oracle. The remaining gates are clean, preflight-bound, sealed,
-independently attested L3/L4 qualification and asynchronous overlap.
+The archive records `source_clean=true`, `preflight_bound=true`, `sealed=true`,
+and `qualified=true` for scoped correctness and lifecycle only. It also records
+`hardware_attested=false` and `performance_go=false`; the mixed timing
+observations establish no general speedup. It makes no capacity, end-to-end
+memory, production, complete-engine, Prefix, Hybrid/SWA, MLA, async-overlap,
+Graph, speculation, distributed, or multi-GPU claim. The earlier dirty-source
+diagnostic is historical and superseded. Remaining gates include independent
+hardware attestation, performance qualification, and asynchronous overlap.
 
-[Qwen2.5-0.5B relocation diagnostic archive](../results/h20-sglang-v0517-token-relocation-diagnostic-20260825/README.md)
+[Sealed Qwen2.5-0.5B relocation qualification](../results/h20-sglang-v0517-abi8-token-relocation-20260825/README.md)
 
 Relocation should run only when `source_pages > destination_pages` after
 accounting for temporary destination headroom. It should not scan every token

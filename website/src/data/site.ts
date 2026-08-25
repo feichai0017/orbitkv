@@ -62,9 +62,19 @@ export const metrics = [
     detail: "Engine-neutral B1/B4/B32 opaque-byte cases pass with real append, copy, and consumer streams.",
   },
   {
-    value: "8 / 8",
-    label: "Relocation diagnostic pairs",
-    detail: "Qwen2.5-0.5B FlashInfer B1/B4 across four balanced epochs; every pair is token-exact and census-clean.",
+    value: "16 / 8",
+    label: "Sealed relocation records / pairs",
+    detail: "Exact clean 7e029310 source; Qwen2.5-0.5B Full B1/B4 across four balanced epochs; every pair is token-exact and fully drained.",
+  },
+  {
+    value: "L2 host",
+    label: "Pressure telemetry",
+    detail: "Request-private consumed/resident/reachable/semantic-live metrics; real async-GPU pressure has not run.",
+  },
+  {
+    value: "2 wheels",
+    label: "Engine-neutral SPI",
+    detail: "orbitkv-runtime and orbitkv-reference build and clean-install; SGLang has not migrated to the SPI.",
   },
   {
     value: "8 / 8",
@@ -88,7 +98,7 @@ export const evidenceRows = [
     result: "Sealed ABI8 H20 Prefix",
     value: "12 / 12 PASS",
     contract: "Qwen Full and GPT-OSS Full+SWA B1/B4 over 3 epochs; stock and manager request traces and output digests match exactly",
-    boundary: "exact 6f62a23 source; official SGLang v0.5.17; one H20; page16 BF16 NHD eager FA3",
+    boundary: "exact 6f62a23 source; official SGLang v0.5.17 base with record-bound manager loader patch; one H20; page16 BF16 NHD eager FA3",
   },
   {
     result: "ABI8 Prefix / drain / SWA",
@@ -111,7 +121,7 @@ export const evidenceRows = [
   {
     result: "ABI8 Rust core",
     value: "L2 GO",
-    contract: "Immutable snapshots, Prefix/COW, token views, Full evacuation, packed publication, reclamation",
+    contract: "Immutable snapshots, Prefix/COW, token views, Full evacuation, packed publication and generation-safe packed fork, reclamation",
     boundary: "host only; no engine or GPU inheritance",
   },
   {
@@ -124,13 +134,13 @@ export const evidenceRows = [
     result: "Repeated private Full relocation",
     value: "L2 host / 2 cycles",
     contract: "Rust core and Python runtime repeat append, disposition mark, full evacuation, publication, and exact ACK; the SGLang periodic trigger is host-tested across two reclamation boundaries",
-    boundary: "single-Full request-private profile only; Prefix publication, fork, and shared partial-tail COW on a packed root fail closed",
+    boundary: "single-Full request-private profile only; packed fork is host+FFI tested, while packed Prefix and packed shared-tail COW fail closed",
   },
   {
     result: "ABI8 multi-request relocation",
     value: "L2 host / one batch transaction",
     contract: "One mark, prepare, submit, and complete call per scheduler batch; flattened copy plus one event, one aggregate registry commit, one aggregate head replacement, every mirror plan validated before writes, and one aggregate ACK",
-    boundary: "mirror writes are not rollback-atomic; post-mark failures fail-stop without rollback; a producer-to-copy event exists, but completion is eagerly host-blocking with no asynchronous overlap; formal L3/L4 remain pending",
+    boundary: "mirror writes are not rollback-atomic; post-mark failures fail-stop without rollback; a producer-to-copy event exists, but completion is eagerly host-blocking with no asynchronous overlap",
   },
   {
     result: "CUDA opaque-byte harness",
@@ -140,15 +150,33 @@ export const evidenceRows = [
   },
   {
     result: "Qwen2.5 token relocation on H20",
-    value: "8 / 8 diagnostic PASS",
-    contract: "Four order-balanced epochs at B1/B4; five iterations per process, two reclamation rounds per iteration, exact Naive/Relocate output tokens, complete drain, and zero failure/quarantine counters",
-    boundary: "official SGLang v0.5.17, request-private Full, page16 BF16 NHD eager FlashInfer on one observed H20; diagnostic_only, dirty and unsealed, hardware_attested=false, qualified=false, performance_go=false",
+    value: "16 records / 8 pairs PASS",
+    contract: "Four order-balanced epochs at B1/B4; exact Naive/Relocate output tokens, complete drain, zero failure/quarantine/fail-stop counters, and 7/7 bundled H20 component cases",
+    boundary: "exact clean 7e029310 source; official SGLang v0.5.17 base plus manifest-bound canonical loader patch, request-private Full, page16 BF16 NHD eager FlashInfer on one observed H20; source_clean/preflight_bound/sealed/qualified=true; hardware_attested=false; performance_go=false",
   },
   {
-    result: "Relocation diagnostic throughput",
-    value: "+7.63% / −1.23%",
-    contract: "B1 / B4 pooled hot throughput; 16 samples per mode after excluding iteration 0 from each process",
-    boundary: "diagnostic only; B1 has material epoch jitter, so no speedup claim; no capacity or memory-saving claim",
+    result: "Relocation sealed timing",
+    value: "−1.3467% / +2.8096%",
+    contract: "B1 / B4 hot throughput; mean latency +1.3651% / −2.7328%, median +2.0033% / +0.9810%, p95 +0.5141% / −19.8635%",
+    boundary: "descriptive mixed results only; performance_go=false; no general speedup, capacity, or memory-saving claim",
+  },
+  {
+    result: "Prior relocation diagnostic",
+    value: "historical / superseded",
+    contract: "The earlier dirty-source eight-pair record remains append-only for auditability",
+    boundary: "unsealed and unqualified; its timing values do not describe the clean-source sealed qualification",
+  },
+  {
+    result: "Request-private pressure telemetry",
+    value: "L2 host",
+    contract: "Opt-in event samples for consumed, resident, request-reachable, semantic-live, free-space, high-water, and retention-amplification fields",
+    boundary: "no real async-GPU pressure run; fixed-state bytes excluded; shared Prefix/request-fork RA fail closed",
+  },
+  {
+    result: "Engine-neutral adapter SPI",
+    value: "2 clean-installable wheels",
+    contract: "orbitkv-runtime typed SPI plus orbitkv-reference external CPU/CUDA tensor-arena implementation and contract oracle",
+    boundary: "reference is not a complete engine; SGLang has not migrated to this SPI; no engine, hardware, or performance inheritance",
   },
   {
     result: "ABI8 fixed-state seam",
@@ -189,8 +217,8 @@ export const evidenceRows = [
   {
     result: "Unqualified ABI8 paths",
     value: "pending",
-    contract: "Sealed relocation L3/L4, MLA, fixed-state L4, async overlap, Graph, speculation, and distributed execution",
-    boundary: "not covered by the sealed Prefix record; no general SGLang replacement claim",
+    contract: "Relocation hardware attestation/performance, packed Prefix/shared-tail COW, MLA, fixed-state L4, real async pressure/overlap, Graph, speculation, and distributed execution",
+    boundary: "not covered by either scoped sealed record; no general SGLang replacement claim",
   },
 ];
 
@@ -203,7 +231,7 @@ export const roadmap = [
   {
     state: "THEN",
     name: "Expand ABI8 H20 coverage",
-    detail: "Repeat relocation from a clean, preflight-bound source, independently attest the H20, seal the record, replace eager host-blocking completion with qualified async overlap, and qualify exact-source L3/L4 behavior.",
+    detail: "Independently attest the sealed Full-relocation hardware, qualify performance and real async pressure/overlap, and add packed Prefix/shared-tail COW only with separate evidence.",
   },
   {
     state: "LATER",
@@ -234,7 +262,7 @@ export const docs = [
   {
     key: "03 / ROADMAP",
     name: "Token virtualization",
-    detail: "H20 relocation diagnostics, the pending sealed L3/L4 gate, Graph, speculation, and distribution.",
+    detail: "Sealed scoped H20 relocation correctness/lifecycle, pending performance and hardware attestation, Graph, speculation, and distribution.",
     href: `${repositoryUrl}/blob/main/docs/token-virtualization-and-attention-roadmap.md`,
   },
   {
@@ -256,13 +284,19 @@ export const docs = [
     href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824`,
   },
   {
-    key: "07 / DIAGNOSTIC EVIDENCE",
-    name: "Qwen2.5 relocation on H20",
-    detail: "Eight token-exact, census-clean B1/B4 pairs across four balanced epochs; dirty, unsealed, unattested, and unqualified.",
-    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-token-relocation-diagnostic-20260825`,
+    key: "07 / SEALED EVIDENCE",
+    name: "Qwen2.5 Full relocation on H20",
+    detail: "Exact clean 7e029310; 16 records and eight exact, drained B1/B4 pairs; scoped correctness/lifecycle only, unattested and performance not GO.",
+    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-token-relocation-20260825`,
   },
   {
-    key: "08 / RECORDS",
+    key: "08 / ADAPTER SPI",
+    name: "Engine-neutral data plane",
+    detail: "Separate runtime/reference wheels and an external-arena contract oracle; not a complete engine and not yet used by SGLang.",
+    href: `${repositoryUrl}/blob/main/docs/engine-adapter-spi.md`,
+  },
+  {
+    key: "09 / RECORDS",
     name: "Evidence index",
     detail: "Append-only snapshots with explicit source and ABI boundaries.",
     href: `${repositoryUrl}/blob/main/results/README.md`,

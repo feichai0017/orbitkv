@@ -46,9 +46,10 @@ The live tree is **ABI8**:
   does not roll back the disposition mark or restore an older head. A
   producer-to-copy event orders relocation, but current completion handling is
   eager and host-blocking; asynchronous consumer-stream overlap is not
-  implemented. Packed Prefix publication, fork, and shared
-  partial-tail COW remain unsupported and fail closed; the dense
-  Prefix/fork/COW claims above do not extend through a packed root. The restricted
+  implemented. Generation-safe packed request fork is host- and FFI-tested.
+  Packed Prefix operations and packed shared partial-tail COW remain
+  unsupported and fail closed; the dense Prefix/COW claims above do not extend
+  through a packed root. The restricted
   production fixed-state seam connects request allocation, initial
   `MambaPool.clear_slots`, forward completion-event registration, and
   release-time wait/retire/clear/exact-ACK. The strict normalized official
@@ -65,21 +66,37 @@ The live tree is **ABI8**:
   recorded H20 runtime snapshots; it is independently unattested and does not
   promote the profile to L4 qualification.
 
-The formally qualified engine evidence remains the **sealed ABI8** record at
-`results/h20-sglang-v0517-abi8-full-hybrid-20260823`. It binds exact source
-commit `6f62a23b9abaa9bf12e9b060389259fa9185e70f` (short id `6f62a23`) to
-Scoped L4 correctness for the Prefix path on one H20 against official SGLang
-`v0.5.17`, peeled commit `29481685462732237d80d86076d6563e1f658102`.
+Request-private token-KV pressure telemetry is opt-in and host-tested. It
+separates consumed, resident, request-reachable, and semantic-live bytes and
+reports retention amplification, but no real asynchronous GPU pressure
+workload has run. Fixed-state bytes and shared-Prefix/fork retention
+amplification are excluded.
+
+The independent `orbitkv-runtime` SPI and `orbitkv-reference` adapter are
+wheel-packaged and clean-install tested. The reference adapter is an external
+CPU/CUDA tensor-arena implementation and contract oracle, not a complete
+serving engine. The SGLang adapter has not migrated to this SPI.
+
+The formally qualified engine evidence now consists of two separate
+**sealed ABI8** records whose scopes do not transfer. The Prefix record at
+`results/h20-sglang-v0517-abi8-full-hybrid-20260823` binds exact source commit
+`6f62a23b9abaa9bf12e9b060389259fa9185e70f` (short id `6f62a23`) to Scoped L4
+correctness for the Prefix path on one H20 against the official SGLang
+`v0.5.17` base at peeled commit
+`29481685462732237d80d86076d6563e1f658102`; the manager-side canonical
+loader patch is bound by the record. The token-relocation
+record at `results/h20-sglang-v0517-abi8-token-relocation-20260825` binds exact
+clean source `7e02931036123c0f830bcca7130a43543c9e6eb1` to scoped request-private
+Full token-relocation correctness and lifecycle: `source_clean=true`,
+`preflight_bound=true`, `sealed=true`, and `qualified=true`.
 The separate Qwen3.5 archive records six stock/manager pairs from H20 runtime
 snapshots but is explicitly `qualified=false` and
 `hardware_attested=false`, so the device remains independently unattested. A
 newer Qwen3.8-27B-FP8 run records eight passing diagnostic pairs and is
 `diagnostic_only`, `sealed=false`, dirty-source, `preflight_bound=false`,
 `hardware_attested=false`, `qualified=false`, and `performance_go=false`.
-A separate Qwen2.5-0.5B token-relocation diagnostic records 8/8 exact-token,
-census-clean Naive/Relocate pairs from H20 runtime observations. It has the
-same strict claim boundary: unsealed, dirty-source, independently unattested,
-`diagnostic_only`, `qualified=false`, and `performance_go=false`.
+The earlier dirty-source Qwen2.5-0.5B token-relocation diagnostic is retained
+only as historical, superseded diagnostic evidence.
 The earlier sealed ABI5-v5 record remains historical evidence for its exact
 `9233c06d…` source closure only.
 
@@ -157,16 +174,19 @@ for the invariants and module boundaries.
 | Pure MLA SGLang seam | L2 host / L4 pending | Explicit latent+RoPE geometry checked against the real SGLang pool; combined-row relocation host-tested; H20 and model correctness pending |
 | ABI8 C wire | L2 GO | Exact 40 symbols, C/C++ layouts, per-handle manager-batch and state-pool-batch atomicity, short-buffer and malformed-receipt gates; no cross-handle atomicity |
 | ABI8 Python/Prefix/state wire | L2 GO plus scoped Prefix L4 | 73 frozen ctypes layouts and broad host gates; the sealed Full/Full+SWA Prefix subset has exact-source H20 evidence |
-| ABI8 multi-request private Full relocation | L2 host plus recorded-device H20 diagnostic / L4 pending | ABI8-preserving scheduler batches invoke mark/prepare/submit/complete once each, perform one aggregate registry commit followed by one aggregate head replacement, flatten plugin moves behind one event, validate all mirror plans before writes, and use one batch ACK; the scalar API is a singleton compatibility wrapper. Mirror writes are not rollback-atomic: post-mark failure is fail-stop without rollback. A producer-to-copy event exists, but completion is eager and host-blocking with no asynchronous overlap. Repeated append/relocate cycles and the periodic trigger are host-tested; the Qwen2.5-0.5B diagnostic exercises the path on a recorded H20; packed Prefix, fork, and shared COW fail closed |
+| ABI8 multi-request private Full relocation | L2 host plus scoped sealed correctness/lifecycle qualification | ABI8-preserving scheduler batches invoke mark/prepare/submit/complete once each, perform one aggregate registry commit followed by one aggregate head replacement, flatten plugin moves behind one event, validate all mirror plans before writes, and use one batch ACK; the scalar API is a singleton compatibility wrapper. Mirror writes are not rollback-atomic: post-mark failure is fail-stop without rollback. A producer-to-copy event exists, but completion is eager and host-blocking with no asynchronous overlap. Exact clean source `7e029310…` has 8/8 passing B1/B4 Naive/Relocate pairs; packed fork is host+FFI tested, while packed Prefix and packed shared-tail COW fail closed |
 | Engine-neutral CUDA opaque-byte relocation harness | H20 component conformance: 7 passed | B1/B4/B32 each execute two cycles with an independent live-token/payload oracle, 257-byte coordinate-bearing records, real non-default append/copy/consumer streams, exact 3-page-to-2-page evacuation with 24 moves per request/cycle, event-ordered byte readback, ACK-gated same-page/higher-generation reuse, and final drain. This is component conformance, not sealed L3/L4, capacity, or performance qualification |
-| Qwen2.5-0.5B SGLang relocation diagnostic | Diagnostic only / L4 pending | Official SGLang v0.5.17, BF16 NHD page16 eager single-H20 observation, FlashInfer same-policy oracle, four alternating-order epochs, B1/B4, and five iterations per process. All 8/8 pairs are token-exact with expected relocation/reclamation counters, complete drain, and zero failures; dirty and unsealed, `hardware_attested=false`, `qualified=false`, and `performance_go=false` |
+| Qwen2.5-0.5B SGLang relocation | Scoped correctness + lifecycle qualified / performance pending | Exact clean source `7e02931036123c0f830bcca7130a43543c9e6eb1`; official SGLang v0.5.17 base plus the manifest-bound canonical loader patch, request-private Full, BF16 NHD page16 eager FlashInfer, four alternating-order B1/B4 epochs. All 16 records / 8 pairs are token-exact, fully drained, and failure-free; `source_clean=true`, `preflight_bound=true`, `sealed=true`, `qualified=true`, `hardware_attested=false`, and `performance_go=false` |
+| Request-private pressure telemetry | L2 host only | Opt-in event telemetry reports consumed/resident/reachable bytes and retention amplification; real async-GPU pressure has not run, and fixed-state bytes plus shared-Prefix/fork RA are excluded |
+| Engine-neutral adapter SPI | L2 host/package | Separate `orbitkv-runtime` and `orbitkv-reference` wheels build and clean-install; the reference adapter is not a complete engine, and SGLang has not migrated to this SPI |
 | ABI8 SGLang fixed state | Scoped L2 host plus recorded-device evidence / L4 pending | Request-private GDN+convolution allocation, clear, forward event, retire, clear, and ACK are wired and fail closed on geometry/backend drift; six Qwen3.5 verification pairs and eight Qwen3.8 diagnostic pairs pass their scoped checks, but both records have `hardware_attested=false` and `qualified=false` and neither qualifies performance or a full SGLang replacement |
 | Qwen3.8-27B-FP8 diagnostic | Diagnostic only / L4 pending | Four epochs for each of B1 and B4 yield eight stock/manager pairs total; all pass verifier and exact-token checks on recorded-device data; `diagnostic_only`, `sealed=false`, dirty source, `preflight_bound=false`, `hardware_attested=false`, `qualified=false`, and `performance_go=false` |
 | ABI8 H20 Prefix path | Scoped L4 correctness | Exact `6f62a23`; Qwen Full and GPT-OSS Full+SWA B1/B4 only; performance and excluded features remain unqualified |
 | Frozen ABI5-v5 | Historical scoped L4 | Qwen Full and GPT-OSS Full+SWA B1/B4 correctness on one H20 |
 
-The sealed ABI8 H20 record uses official SGLang `v0.5.17` on one H20
-with page16 BF16 NHD storage, eager FA3 execution, and TP/PP/DP/DCP = 1.
+The sealed ABI8 H20 record uses the official SGLang `v0.5.17` base, with its
+manager-side canonical loader patch bound by the record, on one H20 with
+page16 BF16 NHD storage, eager FA3 execution, and TP/PP/DP/DCP = 1.
 Across Qwen2.5-7B Full and GPT-OSS-20B Full+SWA at B1 and B4, all 12
 manager/stock pairs pass over three epochs. Manager and stock each contain 126
 measured request traces and 4,158 output tokens. The manager records exercise
@@ -258,31 +278,32 @@ was externally terminated; it contributes no pair or performance result.
 
 [Qwen3.8-27B-FP8 H20 diagnostic archive](results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824/README.md)
 
-The token-relocation diagnostic pins official SGLang `v0.5.17`,
-Qwen2.5-0.5B, BF16 NHD page16 storage, eager single-GPU execution, and
-FlashInfer as the token-indexed same-policy oracle. Four alternating-order
-epochs at B1 and B4 produce eight Naive/Relocate pairs; every process runs
-five iterations, and iteration 0 is excluded from the 16 hot samples per mode
-and batch size. All 8/8 pairs match output tokens exactly, exercise two
-reclamation rounds per iteration, drain fully, and report zero failure,
-quarantine, and fail-stop counters.
+The sealed token-relocation record pins exact clean source
+`7e02931036123c0f830bcca7130a43543c9e6eb1`, the official SGLang `v0.5.17`
+base plus its manifest-bound canonical loader patch, Qwen2.5-0.5B
+request-private Full attention, BF16 NHD page16 storage, eager
+single-GPU execution, and FlashInfer as the same-policy Naive/Relocate oracle.
+Four alternating-order epochs at B1 and B4 produce 16 records and eight pairs.
+All pairs match output tokens exactly, exercise the required relocation
+lifecycle, drain fully, and report zero failure, quarantine, and fail-stop
+counters. The attached component suite also passes 7/7 H20 cases.
 
-| Relocation case | Throughput delta | Mean latency delta | p95 latency delta |
-| --- | ---: | ---: | ---: |
-| B1 | +7.629% | -7.088% | -22.844% |
-| B4 | -1.232% | +1.247% | +2.880% |
+| Relocation case | Throughput delta | Mean latency delta | Median latency delta | p95 latency delta |
+| --- | ---: | ---: | ---: | ---: |
+| B1 | -1.3467% | +1.3651% | +2.0033% | +0.5141% |
+| B4 | +2.8096% | -2.7328% | +0.9810% | -19.8635% |
 
-B1 varies substantially across epochs, and B4 is slightly slower. These are
-descriptive observations only. The archive is `diagnostic_only`, unsealed,
-dirty-source, based on recorded H20 observations rather than independent
-hardware attestation, `qualified=false`, and `performance_go=false`. It makes
-no capacity, end-to-end memory-saving, general speedup, L3/L4, production, or
-complete-SGLang-replacement claim. The paired matrix uses FlashInfer because
-FA3 page tables cannot represent the sparse Naive oracle and that combination
-now fails closed; a separate relocate-only FA3 smoke passed but is not a valid
-same-policy comparison.
+This is scoped correctness and lifecycle qualification only:
+`source_clean=true`, `preflight_bound=true`, `sealed=true`, and
+`qualified=true`, while `hardware_attested=false` and
+`performance_go=false`. The mixed-sign latency and throughput observations do
+not establish a general speedup. The record makes no capacity, end-to-end
+memory-saving, production-readiness, complete-SGLang-replacement, Prefix,
+Hybrid/SWA, MLA, async-overlap, Graph, speculation, distributed, or multi-GPU
+claim. The earlier dirty relocation diagnostic is historical and superseded;
+its numbers do not describe this qualification.
 
-[Qwen2.5-0.5B token-relocation H20 diagnostic](results/h20-sglang-v0517-token-relocation-diagnostic-20260825/README.md)
+[Sealed Qwen2.5-0.5B token-relocation H20 qualification](results/h20-sglang-v0517-abi8-token-relocation-20260825/README.md)
 
 [Sealed ABI8 H20 record](results/h20-sglang-v0517-abi8-full-hybrid-20260823/README.md)
 
@@ -331,11 +352,11 @@ The ordered work is:
    qualified benchmark because both current manager aggregates are slower;
 3. add the production trigger for the host-tested same-owner
    `MambaPool.copy_from` replacement path;
-4. rerun the demonstrated SGLang relocation diagnostic from a clean, sealed,
-   preflight-bound source closure with independent hardware attestation and
-   complete L3/L4 qualification gates; separately implement
-   and qualify KDA, ShortConv, and other linear-attention family bindings and
-   extend exact-source H20 qualification to MLA;
+4. independently attest the sealed request-private Full relocation hardware,
+   run real asynchronous GPU pressure/overlap qualification, and extend the
+   scope only with separate evidence; independently implement and qualify
+   packed Prefix and packed shared-tail COW, KDA, ShortConv, other
+   linear-attention family bindings, and MLA;
 5. qualify overlap and CUDA Graph completion domains; and
 6. add speculation, multi-GPU placement, and disaggregation.
 
