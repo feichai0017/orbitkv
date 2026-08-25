@@ -27,7 +27,7 @@ def _fixed_state_config() -> ManagerPlanConfig:
         plan_path=Path("plan.json"),
         library_path=Path("liborbitkv_ffi.so"),
         plan_json=b"{}",
-        plan_fingerprint="sha256:qwen35-backend-test",
+        plan_fingerprint="sha256:hybrid-gdn-backend-test",
         page_tokens=16,
         classes=(
             ClassConfig(
@@ -143,6 +143,17 @@ def test_qualification_profile_mutation_cannot_change_gdn_runtime_policy(
         )
 
 
+def test_frozen_architecture_aliases_match_the_capability_name():
+    assert (
+        qualification.QWEN_HYBRID_GDN_ARCHITECTURE
+        == qualification.HYBRID_GDN_ARCHITECTURE
+    )
+    assert (
+        qualification.QWEN35_ARCHITECTURE
+        == qualification.HYBRID_GDN_ARCHITECTURE
+    )
+
+
 @pytest.mark.parametrize(
     ("field", "value", "message"),
     (
@@ -216,7 +227,7 @@ def test_gdn_backend_contract_does_not_narrow_non_gdn_profiles():
     validation._validate_gdn_fixed_state_backend_contract(config)
 
 
-def test_qwen35_full_pool_validation_checks_hybrid_wrapper_and_inner_pool(
+def test_hybrid_gdn_full_pool_validation_checks_wrapper_and_inner_pool(
     monkeypatch,
 ):
     from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool
@@ -251,7 +262,7 @@ def test_qwen35_full_pool_validation_checks_hybrid_wrapper_and_inner_pool(
         ("use_mla", True), ("full_attention_layer_id_mapping", {1: 0}),
     ),
 )
-def test_qwen35_full_pool_validation_rejects_hybrid_wrapper_drift(
+def test_hybrid_gdn_full_pool_validation_rejects_wrapper_drift(
     field, value
 ):
     from sglang.srt.mem_cache.memory_pool import HybridLinearKVPool
@@ -274,7 +285,7 @@ def test_qwen35_full_pool_validation_rejects_hybrid_wrapper_drift(
         )
 
 
-def test_validate_configurator_rejects_qwen35_backend_drift_before_build():
+def test_validate_configurator_rejects_hybrid_gdn_backend_drift_before_build():
     _install_fixed_state_config()
     config = _gdn_backend_configurator(linear_attn_backend="flashinfer")
     config.server_args.radix_cache_backend = "orbitkv"

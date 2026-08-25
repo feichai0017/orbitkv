@@ -200,7 +200,7 @@ fn hf_token_manager_plan_rejects_unproven_layer_semantics() {
 }
 
 #[test]
-fn qwen35_hf_state_input_uses_the_consumable_storage_schema() {
+fn hybrid_gdn_hf_state_input_uses_the_consumable_storage_schema() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let config = root.join("fixtures/qwen3.5-0.8b/config.json");
     let common = [
@@ -245,7 +245,7 @@ fn qwen35_hf_state_input_uses_the_consumable_storage_schema() {
 }
 
 #[test]
-fn qwen35_08b_hf_frontend_compiles_state_and_token_manager_plans() {
+fn hybrid_gdn_hf_frontend_compiles_state_and_token_manager_plans() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let config = root.join("fixtures/qwen3.5-0.8b/config.json");
     let common = [
@@ -333,7 +333,7 @@ fn qwen35_08b_hf_frontend_compiles_state_and_token_manager_plans() {
 }
 
 #[test]
-fn qwen38_27b_official_config_compiles_exact_heterogeneous_geometry() {
+fn heterogeneous_state_official_config_compiles_exact_geometry() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let config = root.join("fixtures/qwen3.8-27b/config.json");
     let common = [

@@ -118,7 +118,7 @@ class OrbitKvPrefixCache(BasePrefixCache):
         # SGLang's cache/scheduler contract stores the number of historical
         # tokens to the left of the current query.  KvPlanInput stores the
         # inclusive attention width, so a W-token window is represented as
-        # W - 1 at this engine seam (GPT-OSS 128 -> SGLang 127).
+        # W - 1 at this engine seam (for example, 128 -> 127).
         expected_window = None if sliding is None else sliding.kernel_window_left
         if getattr(params, "sliding_window_size", None) != expected_window:
             raise RuntimeError("SGLang sliding window differs from the manager plan")

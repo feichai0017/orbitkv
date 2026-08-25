@@ -67,7 +67,7 @@ struct HfConfigEnvelope {
 }
 
 #[derive(Clone, Debug, Deserialize)]
-struct QwenHybridGdnTextConfig {
+struct HybridGdnTextConfig {
     #[serde(default)]
     dtype: Option<String>,
     #[serde(default)]
@@ -97,7 +97,7 @@ struct QwenHybridGdnTextConfig {
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
-struct QwenHybridGdnGeometry {
+struct HybridGdnGeometry {
     full_layers: Vec<u32>,
     linear_layers: Vec<u32>,
     key_bytes_per_token_per_layer: u64,
@@ -107,11 +107,11 @@ struct QwenHybridGdnGeometry {
     convolution_kernel_width: u32,
 }
 
-const QWEN_HYBRID_GDN_ARCHITECTURE: &str = "Qwen3_5ForConditionalGeneration";
-const QWEN_HYBRID_GDN_MODEL_TYPE: &str = "qwen3_5";
-const QWEN_HYBRID_GDN_TEXT_MODEL_TYPE: &str = "qwen3_5_text";
-const QWEN_HYBRID_GDN_TOKEN_DTYPE: &str = "bfloat16";
-const QWEN_HYBRID_GDN_RECURRENT_DTYPE: &str = "float32";
+const HYBRID_GDN_ARCHITECTURE: &str = "Qwen3_5ForConditionalGeneration";
+const HYBRID_GDN_MODEL_TYPE: &str = "qwen3_5";
+const HYBRID_GDN_TEXT_MODEL_TYPE: &str = "qwen3_5_text";
+const HYBRID_GDN_TOKEN_DTYPE: &str = "bfloat16";
+const HYBRID_GDN_RECURRENT_DTYPE: &str = "float32";
 const BF16_BYTES: u64 = 2;
 const FP32_BYTES: u64 = 4;
 const CHECKPOINT_SLOTS_PER_REQUEST: u32 = 2;
@@ -139,23 +139,23 @@ pub enum HfConfigError {
     #[error("HF config layer {layer} uses unsupported type {layer_type:?}")]
     UnsupportedLayerType { layer: u32, layer_type: String },
     #[error(
-        "Qwen qwen3_5 dense config family requires architectures to be exactly [\"Qwen3_5ForConditionalGeneration\"], got {architectures:?}"
+        "dense Hybrid GDN config requires architectures to be exactly [\"Qwen3_5ForConditionalGeneration\"], got {architectures:?}"
     )]
     UnsupportedQwenHybridGdnArchitecture { architectures: Vec<String> },
-    #[error("Qwen qwen3_5 dense config family field {field} must be {expected:?}, got {actual:?}")]
+    #[error("dense Hybrid GDN config field {field} must be {expected:?}, got {actual:?}")]
     UnsupportedQwenHybridGdnModelType {
         field: &'static str,
         expected: &'static str,
         actual: Option<String>,
     },
-    #[error("Qwen qwen3_5 dense config family must contain a nested text_config object")]
+    #[error("dense Hybrid GDN config must contain a nested text_config object")]
     MissingQwenHybridGdnTextConfig,
-    #[error("Qwen qwen3_5 dense config family text_config is missing required field {0}")]
+    #[error("dense Hybrid GDN text_config is missing required field {0}")]
     MissingQwenHybridGdnField(&'static str),
-    #[error("Qwen qwen3_5 dense config family field {field} must be positive, got {actual}")]
+    #[error("dense Hybrid GDN config field {field} must be positive, got {actual}")]
     InvalidQwenHybridGdnGeometry { field: &'static str, actual: u64 },
     #[error(
-        "Qwen qwen3_5 dense config family layer {layer} must be {expected:?} for full_attention_interval {interval}, got {actual:?}"
+        "dense Hybrid GDN config layer {layer} must be {expected:?} for full_attention_interval {interval}, got {actual:?}"
     )]
     QwenHybridGdnLayerScheduleMismatch {
         layer: u32,
@@ -163,19 +163,15 @@ pub enum HfConfigError {
         expected: &'static str,
         actual: String,
     },
-    #[error(
-        "Qwen qwen3_5 dense config family field {field} does not fit its compiled representation"
-    )]
+    #[error("dense Hybrid GDN config field {field} does not fit its compiled representation")]
     QwenHybridGdnGeometryOutOfRange { field: &'static str },
-    #[error("Qwen qwen3_5 dense config family field {field} must be {expected:?}, got {actual:?}")]
+    #[error("dense Hybrid GDN config field {field} must be {expected:?}, got {actual:?}")]
     UnsupportedQwenHybridGdnDtype {
         field: &'static str,
         expected: &'static str,
         actual: Option<String>,
     },
-    #[error(
-        "Qwen qwen3_5 dense config family BF16 token/conv state requires --kv-dtype-bytes 2, got {actual}"
-    )]
+    #[error("dense Hybrid GDN BF16 token/conv state requires --kv-dtype-bytes 2, got {actual}")]
     QwenHybridGdnKvDtypeBytesMismatch { actual: u64 },
     #[error("HF config sliding_attention layers require a positive sliding_window")]
     MissingSlidingWindow,
@@ -290,8 +286,8 @@ pub fn compile_hf_config(
 /// Lowers a supported HF config to the heterogeneous attention-state input
 /// schema consumed by engines through `ORBITKV_STATE_PLAN`.
 ///
-/// This frontend supports the official nested Qwen `qwen3_5` dense config
-/// family. All cache geometry is derived from explicit text decoder fields.
+/// This frontend supports a manifest-bound nested Hybrid GDN config family.
+/// All cache geometry is derived from explicit text decoder fields.
 ///
 /// # Errors
 ///
@@ -303,14 +299,14 @@ pub fn compile_hf_attention_state_input(
 ) -> Result<AttentionStatePlanInput, HfConfigError> {
     validate_options(options)?;
     let envelope = parse_envelope(config_json)?;
-    compile_qwen_hybrid_gdn_state_input(envelope, options)
+    compile_hybrid_gdn_state_input(envelope, options)
 }
 
 /// Compiles a supported HF config into backend-specific heterogeneous
 /// attention-state contracts.
 ///
-/// This frontend supports the official nested Qwen `qwen3_5` dense config
-/// family. Use [`compile_hf_attention_state_input`] when the serialized result
+/// This frontend supports a manifest-bound nested Hybrid GDN config family.
+/// Use [`compile_hf_attention_state_input`] when the serialized result
 /// will be consumed as `ORBITKV_STATE_PLAN`; this function returns the compiled
 /// `backend` schema instead.
 ///
@@ -329,7 +325,7 @@ pub fn compile_hf_attention_state_plan(
 /// Compatibility alias for [`compile_hf_token_manager_plan`]. Produces only
 /// the token-addressable projection consumed by the canonical token manager.
 ///
-/// For the heterogeneous Qwen `qwen3_5` dense config family, recurrent and
+/// For the heterogeneous Hybrid GDN config family, recurrent and
 /// convolution state is deliberately absent. Use
 /// [`compile_hf_attention_state_input`] for the complete state ownership input.
 ///
@@ -347,7 +343,7 @@ pub fn compile_hf_manager_plan(
 /// Produces the token-addressable projection consumed by the canonical token
 /// manager.
 ///
-/// For the heterogeneous Qwen `qwen3_5` dense config family, recurrent and
+/// For the heterogeneous Hybrid GDN config family, recurrent and
 /// convolution state is deliberately absent. Use
 /// [`compile_hf_attention_state_input`] for the complete state ownership input.
 ///
@@ -361,8 +357,8 @@ pub fn compile_hf_token_manager_plan(
 ) -> Result<KvPlanInput, HfManagerPlanError> {
     validate_options(options)?;
     let envelope = parse_envelope(config_json)?;
-    if is_qwen_hybrid_gdn_candidate(&envelope) {
-        let input = compile_qwen_hybrid_gdn_state_input(envelope, options)?;
+    if is_hybrid_gdn_candidate(&envelope) {
+        let input = compile_hybrid_gdn_state_input(envelope, options)?;
         let compiled = compile_attention_state_plan(input)?;
         let input = compiled.token_manager_plan()?;
         // Keep this public projection behind the same canonical validation
@@ -398,7 +394,7 @@ fn parse_envelope(config_json: &[u8]) -> Result<HfConfigEnvelope, HfConfigError>
     serde_json::from_slice(config_json).map_err(|error| HfConfigError::Json(error.to_string()))
 }
 
-fn is_qwen_hybrid_gdn_candidate(envelope: &HfConfigEnvelope) -> bool {
+fn is_hybrid_gdn_candidate(envelope: &HfConfigEnvelope) -> bool {
     envelope
         .model_type
         .as_deref()
@@ -415,16 +411,16 @@ fn is_qwen_hybrid_gdn_candidate(envelope: &HfConfigEnvelope) -> bool {
             .is_some_and(|model_type| model_type.starts_with("qwen3_5"))
 }
 
-fn compile_qwen_hybrid_gdn_state_input(
+fn compile_hybrid_gdn_state_input(
     envelope: HfConfigEnvelope,
     options: HfRetentionOptions,
 ) -> Result<AttentionStatePlanInput, HfConfigError> {
     require_model_type(
         "model_type",
         envelope.model_type.as_deref(),
-        QWEN_HYBRID_GDN_MODEL_TYPE,
+        HYBRID_GDN_MODEL_TYPE,
     )?;
-    if envelope.architectures.as_slice() != [QWEN_HYBRID_GDN_ARCHITECTURE] {
+    if envelope.architectures.as_slice() != [HYBRID_GDN_ARCHITECTURE] {
         return Err(HfConfigError::UnsupportedQwenHybridGdnArchitecture {
             architectures: envelope.architectures,
         });
@@ -434,7 +430,7 @@ fn compile_qwen_hybrid_gdn_state_input(
             actual: options.kv_dtype_bytes,
         });
     }
-    let text = serde_json::from_value::<QwenHybridGdnTextConfig>(
+    let text = serde_json::from_value::<HybridGdnTextConfig>(
         envelope
             .text_config
             .ok_or(HfConfigError::MissingQwenHybridGdnTextConfig)?,
@@ -443,9 +439,9 @@ fn compile_qwen_hybrid_gdn_state_input(
     require_model_type(
         "text_config.model_type",
         text.model_type.as_deref(),
-        QWEN_HYBRID_GDN_TEXT_MODEL_TYPE,
+        HYBRID_GDN_TEXT_MODEL_TYPE,
     )?;
-    let geometry = derive_qwen_hybrid_gdn_geometry(&text)?;
+    let geometry = derive_hybrid_gdn_geometry(&text)?;
     Ok(AttentionStatePlanInput {
         page_tokens: options.page_tokens,
         states: vec![
@@ -481,14 +477,14 @@ fn compile_qwen_hybrid_gdn_state_input(
     })
 }
 
-fn derive_qwen_hybrid_gdn_geometry(
-    text: &QwenHybridGdnTextConfig,
-) -> Result<QwenHybridGdnGeometry, HfConfigError> {
-    require_dtype("dtype", text.dtype.as_deref(), QWEN_HYBRID_GDN_TOKEN_DTYPE)?;
+fn derive_hybrid_gdn_geometry(
+    text: &HybridGdnTextConfig,
+) -> Result<HybridGdnGeometry, HfConfigError> {
+    require_dtype("dtype", text.dtype.as_deref(), HYBRID_GDN_TOKEN_DTYPE)?;
     require_dtype(
         "mamba_ssm_dtype",
         text.mamba_ssm_dtype.as_deref(),
-        QWEN_HYBRID_GDN_RECURRENT_DTYPE,
+        HYBRID_GDN_RECURRENT_DTYPE,
     )?;
     let num_hidden_layers = required_positive(text.num_hidden_layers, "num_hidden_layers")?;
     let full_attention_interval =
@@ -530,31 +526,31 @@ fn derive_qwen_hybrid_gdn_geometry(
     })?;
 
     let (full_layers, linear_layers) =
-        derive_qwen_hybrid_gdn_layers(layer_types, full_attention_interval)?;
+        derive_hybrid_gdn_layers(layer_types, full_attention_interval)?;
     if full_layers.is_empty() || linear_layers.is_empty() {
         return Err(HfConfigError::MissingLayerSemantics);
     }
     let key_bytes_per_token_per_layer = checked_product(
         &[num_key_value_heads, head_dim, BF16_BYTES],
-        "Qwen qwen3_5 dense config family key bytes per token per layer",
+        "dense Hybrid GDN key bytes per token per layer",
     )?;
     let value_bytes_per_token_per_layer = key_bytes_per_token_per_layer;
     let key_channels = checked_product(
         &[linear_num_key_heads, linear_key_head_dim],
-        "Qwen qwen3_5 dense config family linear key channels",
+        "dense Hybrid GDN linear key channels",
     )?;
     let doubled_key_channels =
         key_channels
             .checked_mul(2)
             .ok_or(HfConfigError::ArithmeticOverflow(
-                "Qwen qwen3_5 dense config family doubled linear key channels",
+                "dense Hybrid GDN doubled linear key channels",
             ))?;
     let value_channels = checked_product(
         &[linear_num_value_heads, linear_value_head_dim],
-        "Qwen qwen3_5 dense config family linear value channels",
+        "dense Hybrid GDN linear value channels",
     )?;
     let convolution_channels = doubled_key_channels.checked_add(value_channels).ok_or(
-        HfConfigError::ArithmeticOverflow("Qwen qwen3_5 dense config family convolution channels"),
+        HfConfigError::ArithmeticOverflow("dense Hybrid GDN convolution channels"),
     )?;
     let recurrent_state_bytes_per_layer = checked_product(
         &[
@@ -563,7 +559,7 @@ fn derive_qwen_hybrid_gdn_geometry(
             linear_value_head_dim,
             FP32_BYTES,
         ],
-        "Qwen qwen3_5 dense config family GDN recurrent bytes per layer",
+        "dense Hybrid GDN recurrent bytes per layer",
     )?;
     // The causal convolution weight has K taps, but only K - 1 history
     // positions survive between decode steps.
@@ -573,10 +569,10 @@ fn derive_qwen_hybrid_gdn_geometry(
             convolution_kernel_width_u64 - 1,
             BF16_BYTES,
         ],
-        "Qwen qwen3_5 dense config family convolution state bytes per layer",
+        "dense Hybrid GDN convolution state bytes per layer",
     )?;
 
-    Ok(QwenHybridGdnGeometry {
+    Ok(HybridGdnGeometry {
         full_layers,
         linear_layers,
         key_bytes_per_token_per_layer,
@@ -587,7 +583,7 @@ fn derive_qwen_hybrid_gdn_geometry(
     })
 }
 
-fn derive_qwen_hybrid_gdn_layers(
+fn derive_hybrid_gdn_layers(
     layer_types: &[String],
     full_attention_interval: u64,
 ) -> Result<(Vec<u32>, Vec<u32>), HfConfigError> {
@@ -617,7 +613,7 @@ fn derive_qwen_hybrid_gdn_layers(
         match layer_type.as_str() {
             "full_attention" => full_layers.push(layer),
             "linear_attention" => linear_layers.push(layer),
-            _ => unreachable!("supported Qwen hybrid GDN layer type was checked above"),
+            _ => unreachable!("supported Hybrid GDN layer type was checked above"),
         }
     }
     Ok((full_layers, linear_layers))
@@ -767,9 +763,9 @@ mod tests {
         page_tokens: 16,
         kv_dtype_bytes: 2,
     };
-    const QWEN35_08B: &[u8] = include_bytes!("../fixtures/qwen3.5-0.8b/config.json");
-    const QWEN38_27B: &[u8] = include_bytes!("../fixtures/qwen3.8-27b/config.json");
-    const QWEN38_27B_PROVENANCE: &str = include_str!("../fixtures/qwen3.8-27b/PROVENANCE.md");
+    const SMALL_HYBRID_GDN_FIXTURE: &[u8] = include_bytes!("../fixtures/qwen3.5-0.8b/config.json");
+    const LARGE_HYBRID_GDN_FIXTURE: &[u8] = include_bytes!("../fixtures/qwen3.8-27b/config.json");
+    const LARGE_HYBRID_GDN_PROVENANCE: &str = include_str!("../fixtures/qwen3.8-27b/PROVENANCE.md");
 
     fn provenance_field<'a>(provenance: &'a str, field: &str) -> &'a str {
         let prefix = format!("- {field}: `");
@@ -779,8 +775,9 @@ mod tests {
             .unwrap_or_else(|| panic!("missing {field} in fixture provenance"))
     }
 
-    fn qwen35_with_text_fields(fields: &[(&str, u64)]) -> Vec<u8> {
-        let mut config = serde_json::from_slice::<serde_json::Value>(QWEN35_08B).unwrap();
+    fn hybrid_gdn_fixture_with_text_fields(fields: &[(&str, u64)]) -> Vec<u8> {
+        let mut config =
+            serde_json::from_slice::<serde_json::Value>(SMALL_HYBRID_GDN_FIXTURE).unwrap();
         let text = config["text_config"].as_object_mut().unwrap();
         for &(field, value) in fields {
             text.insert(field.to_owned(), value.into());
@@ -789,8 +786,8 @@ mod tests {
     }
 
     #[test]
-    fn qwen35_08b_compiles_exact_heterogeneous_geometry() {
-        let input = compile_hf_attention_state_input(QWEN35_08B, OPTIONS).unwrap();
+    fn small_hybrid_gdn_fixture_compiles_exact_heterogeneous_geometry() {
+        let input = compile_hf_attention_state_input(SMALL_HYBRID_GDN_FIXTURE, OPTIONS).unwrap();
         assert!(matches!(
             input.states[2].storage,
             AttentionStateStorage::Convolution {
@@ -800,7 +797,7 @@ mod tests {
                 ..
             }
         ));
-        let plan = compile_hf_attention_state_plan(QWEN35_08B, OPTIONS).unwrap();
+        let plan = compile_hf_attention_state_plan(SMALL_HYBRID_GDN_FIXTURE, OPTIONS).unwrap();
         assert_eq!(plan.page_tokens, 16);
         assert_eq!(plan.states.len(), 3);
         assert_eq!(plan.states[0].name, "full_attention_kv");
@@ -841,8 +838,8 @@ mod tests {
     }
 
     #[test]
-    fn qwen38_27b_compiles_exact_heterogeneous_geometry() {
-        let plan = compile_hf_attention_state_plan(QWEN38_27B, OPTIONS).unwrap();
+    fn large_hybrid_gdn_fixture_compiles_exact_heterogeneous_geometry() {
+        let plan = compile_hf_attention_state_plan(LARGE_HYBRID_GDN_FIXTURE, OPTIONS).unwrap();
         assert_eq!(plan.page_tokens, 16);
         assert_eq!(plan.states.len(), 3);
         assert_eq!(plan.states[0].name, "full_attention_kv");
@@ -879,7 +876,7 @@ mod tests {
             }
         ));
 
-        let manager = compile_hf_token_manager_plan(QWEN38_27B, OPTIONS).unwrap();
+        let manager = compile_hf_token_manager_plan(LARGE_HYBRID_GDN_FIXTURE, OPTIONS).unwrap();
         assert_eq!(manager.classes.len(), 1);
         assert_eq!(
             manager.classes[0].layers,
@@ -890,12 +887,13 @@ mod tests {
     }
 
     #[test]
-    fn qwen38_27b_fixture_matches_its_offline_provenance_contract() {
-        let repository = provenance_field(QWEN38_27B_PROVENANCE, "Repository");
-        let revision = provenance_field(QWEN38_27B_PROVENANCE, "Revision");
-        let source = provenance_field(QWEN38_27B_PROVENANCE, "Source");
-        let raw_sha256 = provenance_field(QWEN38_27B_PROVENANCE, "Source SHA-256");
-        let canonical_sha256 = provenance_field(QWEN38_27B_PROVENANCE, "Canonical JSON SHA-256");
+    fn large_hybrid_gdn_fixture_matches_its_offline_provenance_contract() {
+        let repository = provenance_field(LARGE_HYBRID_GDN_PROVENANCE, "Repository");
+        let revision = provenance_field(LARGE_HYBRID_GDN_PROVENANCE, "Revision");
+        let source = provenance_field(LARGE_HYBRID_GDN_PROVENANCE, "Source");
+        let raw_sha256 = provenance_field(LARGE_HYBRID_GDN_PROVENANCE, "Source SHA-256");
+        let canonical_sha256 =
+            provenance_field(LARGE_HYBRID_GDN_PROVENANCE, "Canonical JSON SHA-256");
 
         assert_eq!(repository, "Qwen/Qwen3.8-27B");
         assert_eq!(revision.len(), 40);
@@ -909,7 +907,7 @@ mod tests {
             assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
         }
 
-        let value = serde_json::from_slice::<serde_json::Value>(QWEN38_27B).unwrap();
+        let value = serde_json::from_slice::<serde_json::Value>(LARGE_HYBRID_GDN_FIXTURE).unwrap();
         let mut canonical = serde_json::to_vec(&value).unwrap();
         canonical.push(b'\n');
         assert_eq!(
@@ -919,8 +917,8 @@ mod tests {
     }
 
     #[test]
-    fn qwen35_manager_projection_contains_only_full_token_kv() {
-        let manager = compile_hf_token_manager_plan(QWEN35_08B, OPTIONS).unwrap();
+    fn hybrid_gdn_manager_projection_contains_only_full_token_kv() {
+        let manager = compile_hf_token_manager_plan(SMALL_HYBRID_GDN_FIXTURE, OPTIONS).unwrap();
         assert_eq!(manager.classes.len(), 1);
         assert_eq!(manager.classes[0].name, "full_attention_kv");
         assert_eq!(manager.classes[0].layers, vec![3, 7, 11, 15, 19, 23]);
@@ -934,12 +932,14 @@ mod tests {
     }
 
     #[test]
-    fn qwen_hybrid_gdn_missing_or_unsupported_contracts_fail_closed() {
-        let wrong_dtype = String::from_utf8(QWEN35_08B.to_vec()).unwrap().replacen(
-            "\"mamba_ssm_dtype\": \"float32\"",
-            "\"mamba_ssm_dtype\": \"bfloat16\"",
-            1,
-        );
+    fn hybrid_gdn_missing_or_unsupported_contracts_fail_closed() {
+        let wrong_dtype = String::from_utf8(SMALL_HYBRID_GDN_FIXTURE.to_vec())
+            .unwrap()
+            .replacen(
+                "\"mamba_ssm_dtype\": \"float32\"",
+                "\"mamba_ssm_dtype\": \"bfloat16\"",
+                1,
+            );
         assert!(matches!(
             compile_hf_attention_state_plan(wrong_dtype.as_bytes(), OPTIONS),
             Err(HfStatePlanError::Config(
@@ -950,11 +950,9 @@ mod tests {
             ))
         ));
 
-        let missing_layers = String::from_utf8(QWEN35_08B.to_vec()).unwrap().replacen(
-            "\"layer_types\"",
-            "\"unproven_layer_types\"",
-            1,
-        );
+        let missing_layers = String::from_utf8(SMALL_HYBRID_GDN_FIXTURE.to_vec())
+            .unwrap()
+            .replacen("\"layer_types\"", "\"unproven_layer_types\"", 1);
         assert_eq!(
             compile_hf_attention_state_plan(missing_layers.as_bytes(), OPTIONS),
             Err(HfStatePlanError::Config(
@@ -964,7 +962,7 @@ mod tests {
 
         assert_eq!(
             compile_hf_attention_state_plan(
-                QWEN35_08B,
+                SMALL_HYBRID_GDN_FIXTURE,
                 HfRetentionOptions {
                     kv_dtype_bytes: 4,
                     ..OPTIONS
@@ -977,8 +975,8 @@ mod tests {
     }
 
     #[test]
-    fn qwen_hybrid_gdn_full_attention_schedule_must_match_the_declared_interval() {
-        let config = qwen35_with_text_fields(&[("full_attention_interval", 3)]);
+    fn hybrid_gdn_full_attention_schedule_must_match_the_declared_interval() {
+        let config = hybrid_gdn_fixture_with_text_fields(&[("full_attention_interval", 3)]);
         assert_eq!(
             compile_hf_attention_state_input(&config, OPTIONS),
             Err(HfConfigError::QwenHybridGdnLayerScheduleMismatch {
@@ -989,7 +987,7 @@ mod tests {
             })
         );
 
-        let config = qwen35_with_text_fields(&[("full_attention_interval", 0)]);
+        let config = hybrid_gdn_fixture_with_text_fields(&[("full_attention_interval", 0)]);
         assert_eq!(
             compile_hf_attention_state_input(&config, OPTIONS),
             Err(HfConfigError::InvalidQwenHybridGdnGeometry {
@@ -1000,15 +998,16 @@ mod tests {
     }
 
     #[test]
-    fn qwen_hybrid_gdn_discriminators_fail_closed_in_state_and_manager_frontends() {
-        let mut wrong_top = serde_json::from_slice::<serde_json::Value>(QWEN35_08B).unwrap();
+    fn hybrid_gdn_discriminators_fail_closed_in_state_and_manager_frontends() {
+        let mut wrong_top =
+            serde_json::from_slice::<serde_json::Value>(SMALL_HYBRID_GDN_FIXTURE).unwrap();
         wrong_top["model_type"] = serde_json::json!("not_qwen3_5");
         let wrong_top = serde_json::to_vec(&wrong_top).unwrap();
         assert_eq!(
             compile_hf_attention_state_input(&wrong_top, OPTIONS),
             Err(HfConfigError::UnsupportedQwenHybridGdnModelType {
                 field: "model_type",
-                expected: QWEN_HYBRID_GDN_MODEL_TYPE,
+                expected: HYBRID_GDN_MODEL_TYPE,
                 actual: Some("not_qwen3_5".into()),
             })
         );
@@ -1023,7 +1022,7 @@ mod tests {
         ));
 
         let mut wrong_architecture =
-            serde_json::from_slice::<serde_json::Value>(QWEN35_08B).unwrap();
+            serde_json::from_slice::<serde_json::Value>(SMALL_HYBRID_GDN_FIXTURE).unwrap();
         wrong_architecture["architectures"] = serde_json::json!(["Qwen3_5ForCausalLM"]);
         let wrong_architecture = serde_json::to_vec(&wrong_architecture).unwrap();
         assert!(matches!(
@@ -1033,7 +1032,8 @@ mod tests {
             ))
         ));
 
-        let mut wrong_text = serde_json::from_slice::<serde_json::Value>(QWEN35_08B).unwrap();
+        let mut wrong_text =
+            serde_json::from_slice::<serde_json::Value>(SMALL_HYBRID_GDN_FIXTURE).unwrap();
         wrong_text["text_config"]["model_type"] = serde_json::json!("qwen3_5");
         let wrong_text = serde_json::to_vec(&wrong_text).unwrap();
         assert!(matches!(
@@ -1044,7 +1044,8 @@ mod tests {
             })
         ));
 
-        let mut missing_top = serde_json::from_slice::<serde_json::Value>(QWEN35_08B).unwrap();
+        let mut missing_top =
+            serde_json::from_slice::<serde_json::Value>(SMALL_HYBRID_GDN_FIXTURE).unwrap();
         missing_top.as_object_mut().unwrap().remove("model_type");
         let missing_top = serde_json::to_vec(&missing_top).unwrap();
         assert!(matches!(
@@ -1058,7 +1059,8 @@ mod tests {
             ))
         ));
 
-        let mut missing_text = serde_json::from_slice::<serde_json::Value>(QWEN35_08B).unwrap();
+        let mut missing_text =
+            serde_json::from_slice::<serde_json::Value>(SMALL_HYBRID_GDN_FIXTURE).unwrap();
         missing_text["text_config"]
             .as_object_mut()
             .unwrap()
@@ -1076,7 +1078,7 @@ mod tests {
         ));
 
         let mut other_model_with_nested_linear_geometry =
-            serde_json::from_slice::<serde_json::Value>(QWEN35_08B).unwrap();
+            serde_json::from_slice::<serde_json::Value>(SMALL_HYBRID_GDN_FIXTURE).unwrap();
         other_model_with_nested_linear_geometry
             .as_object_mut()
             .unwrap()
@@ -1099,28 +1101,28 @@ mod tests {
     }
 
     #[test]
-    fn qwen_hybrid_gdn_arithmetic_reports_the_exact_failed_derivation() {
+    fn hybrid_gdn_arithmetic_reports_the_exact_failed_derivation() {
         let cases = [
             (
                 vec![
                     ("linear_num_key_heads", u64::MAX),
                     ("linear_key_head_dim", 2),
                 ],
-                "Qwen qwen3_5 dense config family linear key channels",
+                "dense Hybrid GDN linear key channels",
             ),
             (
                 vec![
                     ("linear_num_key_heads", u64::MAX / 2 + 1),
                     ("linear_key_head_dim", 1),
                 ],
-                "Qwen qwen3_5 dense config family doubled linear key channels",
+                "dense Hybrid GDN doubled linear key channels",
             ),
             (
                 vec![
                     ("linear_num_value_heads", u64::MAX),
                     ("linear_value_head_dim", 2),
                 ],
-                "Qwen qwen3_5 dense config family linear value channels",
+                "dense Hybrid GDN linear value channels",
             ),
             (
                 vec![
@@ -1129,7 +1131,7 @@ mod tests {
                     ("linear_num_value_heads", 2),
                     ("linear_value_head_dim", 1),
                 ],
-                "Qwen qwen3_5 dense config family convolution channels",
+                "dense Hybrid GDN convolution channels",
             ),
             (
                 vec![
@@ -1137,13 +1139,13 @@ mod tests {
                     ("linear_key_head_dim", 1),
                     ("linear_conv_kernel_dim", u64::from(u32::MAX)),
                 ],
-                "Qwen qwen3_5 dense config family convolution state bytes per layer",
+                "dense Hybrid GDN convolution state bytes per layer",
             ),
         ];
         for (fields, expected) in cases {
             assert_eq!(
                 compile_hf_attention_state_input(
-                    &qwen35_with_text_fields(fields.as_slice()),
+                    &hybrid_gdn_fixture_with_text_fields(fields.as_slice()),
                     OPTIONS,
                 ),
                 Err(HfConfigError::ArithmeticOverflow(expected))

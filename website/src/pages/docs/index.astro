@@ -6,18 +6,17 @@ import { docs, repositoryUrl } from "../../data/site";
 
 <SiteLayout
   title="Architecture | OrbitKV"
-  description="OrbitKV ABI8 identities, token and fixed-state transactions, reclamation, and engine boundaries."
+  description="OrbitKV attention-state compilation, ownership, token-level reclamation, and adapter boundaries."
   active="Architecture"
 >
   <header class="page-hero">
     <p class="eyebrow">Architecture</p>
     <h1>One authority for snapshots, sharing, and reuse.</h1>
     <p>
-      OrbitKV is an attention-lifecycle compiler plus a transactional,
-      engine-neutral KV block runtime. ABI8 compiles retention semantics into
-      immutable token snapshots and separate generation-checked fixed-state
-      transactions. SGLang is the first adapter, not a full replacement; it
-      still owns tensor allocation, scheduling, kernels, and model execution.
+      OrbitKV is an attention-state compiler and transactional ownership
+      runtime. ABI8 turns retention semantics into immutable snapshots, exact
+      physical intents, and completion-gated reclamation while engines retain
+      their execution responsibilities.
     </p>
   </header>
 
@@ -25,198 +24,88 @@ import { docs, repositoryUrl } from "../../data/site";
     <DocsNav active="Architecture" />
     <article class="prose">
       <h2>Pipeline</h2>
-      <pre><code>{`Attention / state retention semantics
-    -> Retention IR
-    -> Lifetime / head stripes
-    -> LayoutProgram
-    -> PhysicalPlan
-    -> immutable SnapshotLease head
-    -> tail / COW copy / write intents
-    -> completion-gated publication
-    -> detach + final-ref certificate
-    -> backend ACK + reuse`}</code></pre>
+      <pre><code>{`Attention and state-retention semantics
+    -> checked retention IR
+    -> lifetime classes and address programs
+    -> immutable request snapshot
+    -> exact copy and write intents
+    -> adapter completion evidence
+    -> publication and reclamation ACK`}</code></pre>
 
-      <h2>Generated layouts</h2>
+      <h2>Ownership boundary</h2>
       <table class="evidence-table-native">
-        <thead><tr><th>Semantics</th><th>Layout</th></tr></thead>
+        <thead><tr><th>Layer</th><th>Authority</th></tr></thead>
         <tbody>
-          <tr><td>Full</td><td><code>AppendOnly</code></td></tr>
-          <tr><td>Sliding</td><td><code>Periodic</code></td></tr>
-          <tr><td>Sink + Sliding</td><td><code>Pinned + Periodic</code></td></tr>
-          <tr><td>Same Chunk</td><td><code>ResettableArena</code></td></tr>
-          <tr><td>Per-head windows</td><td>Lifetime-normalized stripes</td></tr>
+          <tr><td>OrbitKV</td><td>Plans, identities, generations, snapshots, references, transactions, and reuse decisions</td></tr>
+          <tr><td>Adapter</td><td>Checked tensor effects, mirror updates, and exact completion evidence</td></tr>
+          <tr><td>Engine</td><td>Allocation, scheduling, kernels, execution, and request protocol</td></tr>
         </tbody>
       </table>
 
-      <h2>Safety</h2>
+      <h2>Safety invariants</h2>
       <ul>
         <li>Logical identity is separate from physical slot and generation.</li>
-        <li>Address programs are the only logical addressing authority.</li>
-        <li>Reuse requires semantic death, reader completion, and backend commit.</li>
-        <li>Unsupported semantics and engine contracts fail closed.</li>
+        <li>Immutable snapshot heads are the ownership authority; adapter mirrors are not.</li>
+        <li>Unsupported semantics and engine contracts fail closed before mutation.</li>
+        <li>Ambiguous post-mutation outcomes fail stop instead of guessing ownership.</li>
       </ul>
 
-      <h2>ABI8 manager lifecycle</h2>
+      <h2>Semantic and execution frontiers</h2>
       <p>
-        A request points at an immutable, generation-checked snapshot head.
-        <code>prepare_batch</code> keeps a candidate private and returns tail,
-        exact COW copy, and fresh-write intents. <code>submit_batch</code>
-        validates exact backend receipts. <code>complete_batch</code> publishes
-        every request head atomically only after completion evidence validates.
+        Token-level reclamation requires two independent proofs. The Semantic
+        Frontier shows that a logical token is no longer reachable from live
+        snapshots. The Execution Frontier shows that prior device work can no
+        longer read or write its storage. A page becomes reusable only after
+        both proofs and the exact backend acknowledgement are present.
       </p>
       <p>
-        Request and Prefix refs, reader pins, and the writer live on the page.
-        Detach returns explicit mirror CLEAR/REPLACE actions; a reclamation
-        certificate appears only when the final ref is gone. Ambiguous copy,
-        launch, or completion outcomes enter fail-stop quarantine.
-      </p>
-
-      <h2>Repeated relocation boundary</h2>
-      <p>
-        For one request-private Full class under full evacuation, the Rust core
-        and ABI8 Python runtime are host-tested through two cycles of append,
-        disposition mark, relocation, publication, and exact ACK, including an
-        append into the first packed publication. The SGLang periodic trigger is
-        also host-tested across two successive reclamation boundaries. This does
-        not compose every dense-root feature with a packed root:
-        generation-safe packed request fork and packed shared partial-tail COW
-        are host-tested through Rust, raw ABI8, and Python FFI. Packed Prefix
-        remains unsupported; packed COW has no H20/model qualification and does
-        not inherit the relocation seal.
-      </p>
-      <p>
-        An engine-neutral CUDA opaque-byte conformance harness is checked in for
-        B1, B4, and B32 with repeated cycles, an independent payload oracle,
-        257-byte records, real append/copy/consumer streams, event-ordered copy
-        and readback, ACK-gated generation reuse, and final drain. All seven H20
-        component cases pass at B1/B4/B32. This remains component conformance,
-        not sealed L3/L4, performance, or capacity qualification.
-      </p>
-      <p>
-        Separately, exact clean source <code>7e029310</code> was
-        preflight-bound and sealed after the Qwen2.5-0.5B SGLang path executed
-        on an observed H20. All 16 records / 8 Naive/Relocate pairs across four
-        order-balanced B1/B4 epochs are token-exact, fully drained, and
-        failure-free. The paired same-policy oracle uses FlashInfer, and the
-        bundled H20 component suite passes 7/7 cases.
-      </p>
-      <p>
-        ABI8 multi-request relocation is host-tested as one scheduler-batch
-        transaction. The runtime issues disposition mark, relocation prepare,
-        submit, and complete exactly once each for the batch. The adapter
-        flattens all token moves into one copy and one completion event; the
-        runtime then performs one aggregate registry commit and one aggregate
-        request-head replacement. The adapter validates every mirror plan
-        before writes, but those writes are not rollback-atomic; all retirements
-        are discharged afterward by one aggregate ACK.
-      </p>
-      <p>
-        This guarantee has a deliberate failure boundary. Once disposition mark
-        succeeds, any later uncertain prepare, copy, completion, publication,
-        mirror, or ACK outcome fail-stops the runtime; it does not roll the batch
-        back. A producer-to-copy event exists, but the current copy event is
-        eagerly synchronized on the host, so the path provides no asynchronous
-        copy/compute overlap. The sealed engine record has
-        <code>source_clean=true</code>, <code>preflight_bound=true</code>,
-        <code>sealed=true</code>, and <code>qualified=true</code> for scoped
-        request-private Full relocation correctness and lifecycle only. It is
-        not independently hardware-attested and has
-        <code>performance_go=false</code>.
+        Relocation packs retained tokens out of partially dead pages. It is
+        byte-exact state movement and physical reclamation, not numerical
+        compression or an automatic capacity benefit.
       </p>
 
-      <h2>Current integration boundary</h2>
+      <h2>Sharing and packed copy-on-write</h2>
       <p>
-        The modular Rust token/fixed-state core and exact 40-symbol C ABI8 wire
-        retain host L2 GO. In addition, exact source <code>6f62a23</code> has a
-        sealed H20 correctness record for the <code>OrbitKVPrefixCache</code>
-        path: Qwen Full and GPT-OSS Full+SWA
-        at B1/B4, 12 matched pairs over three epochs, using official SGLang
-        v0.5.17 with page16 BF16 NHD eager FA3. It verifies exact outputs and
-        request traces, seeded Prefix hits, final all-free drain, and advancing
-        SWA retirement, reclamation, and wrap counters for every Hybrid pair.
-        That Prefix seal does not cover the separate relocation qualification,
-        MLA, fixed-state, overlap, Graph, speculation, distributed execution,
-        or performance qualification.
-      </p>
-      <p>
-        Request-private pressure telemetry is opt-in and host-tested for
-        consumed, resident, request-reachable, semantic-live, and retention
-        amplification metrics. No real asynchronous GPU pressure workload has
-        run; fixed-state bytes and shared Prefix/request-fork retention
-        amplification are excluded. The separately packaged
-        <code>orbitkv-runtime</code> SPI and <code>orbitkv-reference</code>
-        external-arena adapter build as clean-installable wheels. The reference
-        is not a complete engine, and SGLang has not migrated to this SPI.
-      </p>
-      <p>
-        The exact request-private GDN+convolution runtime is integrated with
-        structural admission. Request allocation, initial clear, forward-event
-        propagation, release-time wait, retire, clear, and exact ACK are wired.
-        Qwen3.5 has six scoped pairs across three epochs; Qwen3.8 has a separate
-        diagnostic. Neither result is L4- or performance-qualified. Replacement
-        copy is covered only by coordinator and real-CPU-tensor host tests; its
-        production trigger remains pending, as do KDA, ShortConv, and other
-        family bindings. Manager and state-pool handles are separate and provide
-        no cross-handle atomicity.
+        Prefix references and request forks share immutable roots. Extending a
+        shared or pinned partial tail creates an exact COW intent; publication
+        waits until the adapter proves the copy completed before new writes.
+        Packed fork and shared partial-tail COW have ABI8 host coverage. Packed
+        Prefix and broader device qualification remain pending.
       </p>
 
-      <h2>Capability levels</h2>
+      <h2>Engine-neutral adapter</h2>
       <p>
-        OrbitKV reports compiler, host/ABI, GPU-primitive, engine-E2E,
-        and production qualification separately. The{" "}
-        <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>
-          Capability Matrix
-        </a>{" "}
-        is the normative boundary.
+        The adapter SPI describes append, copy, clear, completion, and mirror
+        cleanup as typed effects. The reference external arena is a contract
+        oracle, not a scheduler, model runner, kernel library, or serving
+        engine. An integration inherits no qualification from another adapter.
       </p>
 
-      <h2>Records</h2>
+      <h2>Evidence boundary</h2>
+      <p>
+        The compiler and ownership core have broad ABI8 host gates. Sealed
+        engine records cover separate, narrow Prefix and token-relocation
+        correctness/lifecycle scopes; their claims do not transfer. Other state
+        families and execution modes retain narrower or pending coverage.
+        Performance and production qualification remain pending. Historical
+        records remain evidence only for their recorded ABI and source closure.
+      </p>
+      <p>
+        The <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>Capability Matrix</a>{" "}
+        is normative. Detailed manifests and methods belong in the{" "}
+        <a href={`${repositoryUrl}/blob/main/results/README.md`}>Results Index</a>.
+      </p>
+
+      <h2>Reference documents</h2>
       <div class="doc-grid">
         {docs.map((item) => (
           <div class="doc-card">
             <span>{item.key}</span>
             <h3>{item.name}</h3>
             <p>{item.detail}</p>
-            <a href={item.href}>Open record →</a>
+            <a href={item.href}>Open document →</a>
           </div>
         ))}
-      </div>
-
-      <div class="doc-note">
-        <strong>Boundary.</strong>
-        <p>
-          The sealed ABI8 Prefix record reports mean manager overheads of +7.37%
-          and +11.87% for Full B1/B4, and +3.99% and +4.45% for Hybrid B1/B4.
-          These are descriptive measurements: <code>performance_go=false</code>,
-          with no speedup, memory-saving, or general replacement claim. The
-          frozen 9233c06d ABI5-v5 snapshot remains historical scoped L4 evidence
-          only. The separate Qwen3.8 diagnostic ran four epochs each at B1 and
-          B4 (eight pairs total): tokens are exact, the final census is clean,
-          and explicit Triton FP8 is used. Hot throughput is -6.19% at noisy B1
-          and -2.70% at B4. Equal configured arena reservation has an observed
-          difference of 0%, not a qualified memory result. Its source is dirty
-          and unsealed, no qualification preflight ran, and
-          <code>hardware_attested=false</code>, <code>qualified=false</code>, and
-          <code>performance_go=false</code>; it is not a performance or L4 claim.
-          The relocation component has seven passing H20 conformance cases, and
-          the sealed clean-source Qwen2.5-0.5B engine qualification has 16
-          records / eight token-exact, census-clean pairs. B1
-          throughput/mean/median/p95 deltas are
-          -1.3467%/+1.3651%/+2.0033%/+0.5141%; B4 deltas are
-          +2.8096%/-2.7328%/+0.9810%/-19.8635%. The mixed measurements support
-          no general speedup claim. The record is scoped correctness and
-          lifecycle only, remains independently unattested, and has
-          <code>performance_go=false</code>.
-          The batch path is post-mark fail-stop/non-rollback and host-blocking,
-          without asynchronous overlap or a capacity claim. Packed Prefix and
-          packed shared-tail COW H20/model qualification, MLA, fixed-state L4, real asynchronous
-          pressure/overlap, Graph, speculation, multi-GPU, and disaggregation
-          remain outside the scoped sealed records. The earlier dirty relocation
-          diagnostic is historical and superseded.
-        </p>
-        <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>
-          Current capability matrix
-        </a>
       </div>
     </article>
   </div>

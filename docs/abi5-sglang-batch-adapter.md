@@ -3,39 +3,20 @@
 Status: **ABI5 and the subsequent ABI6 migration are historical. The live tree
 is ABI8.**
 
-This page is retained because it documents the historical ABI5-v5 H20
-evidence. It does not define the current C ABI and must not be used as a
+This page is retained because it documents the historical ABI5 protocol and
+its evidence boundary. It does not define the current C ABI and must not be used as a
 compatibility guide for the live ABI8 tree. Current capabilities are normative
 only in the
 [Capability Matrix](capability-matrix.md).
 
 ## Frozen ABI5-v5 boundary
 
-The append-only record
-`results/h20-sglang-v0517-abi5-v5-grouped-release-20260821` binds exact source
-closure `9233c06d…` to official SGLang `v0.5.17`, peeled commit
-`29481685462732237d80d86076d6563e1f658102`.
-
-Its qualified profiles are:
-
-- Qwen2.5-7B Full attention with FlashInfer;
-- GPT-OSS-20B ordered Full+SWA128 with FA3 and SGLang's built-in Triton MoE;
-- page16 BF16 NHD KV, eager ChunkCache, one H20, TP/PP/DP/DCP = 1; and
-- B1 and B4×5 with prompt 513 and decode 33.
-
-Radix/Prefix sharing, overlap, CUDA Graph, speculation, disaggregation,
-streaming, hierarchical cache, remote cache, and the external
-`triton_kernel` MoE backend were disabled.
-
-All eight JSON records pass independent verification, all 84 request traces
-match stock token-for-token, every arena drains, and Hybrid runs exercise SWA
-retirement and wraparound. Grouped B4 release converts 20 request releases into
-five release/recycle transactions.
-
-Same-capacity intrinsic KV-memory reduction is **0%**. The single epoch gives
-B4 steady manager overhead of +4.1932% for Qwen and -5.2048% for GPT-OSS, while
-Qwen B1 is +5.0009%. There are no repeated-epoch statistics, so
-`performance_go=false` and no general speedup is claimed.
+The append-only record binds the exact source, engine, frontend profiles,
+backends, hardware, and workload. Within that frozen scope, outputs, arena
+drain, Hybrid retirement, and grouped release pass. It remains a historical
+scoped correctness result with `performance_go=false`; no general speedup,
+same-capacity memory benefit, or live-ABI qualification follows. See the
+[ABI5-v5 result](../results/h20-sglang-v0517-abi5-v5-grouped-release-20260821/README.md).
 
 ## What ABI5 did
 
@@ -97,7 +78,7 @@ plugin/
   SGLang validation + lowering + mirror cleanup + hooks + facade
 ```
 
-This organization removes the former 1.6K–2.2K-line monoliths and prevents
+This organization removes the former monoliths and prevents
 ctypes layout, lifecycle journals, and SGLang hook policy from becoming one
 review surface. Its historical L2 gate required ABI6 host tests, fault paths,
 exact-symbol checks, and stale-lease cases against the frozen source under
@@ -137,9 +118,9 @@ Before that surface could be marked L2, it had to pass:
 - short buffers and malformed spans with zero mutation;
 - collective mirror CLEAR/REPLACE preflight before any mutation;
 - exceptions and ambiguous GPU outcomes entering fail-stop; and
-- official SGLang `v0.5.17` hook checks with all unsupported modes rejected.
+- pinned SGLang hook checks with all unsupported modes rejected.
 
-The next gate at that stage was a fresh H20 manifest binding the ABI6 core, C
+The next gate at that stage was a fresh manifest binding the ABI6 core, C
 library, Python runtime, SGLang patch, model profiles, commands, and outputs.
 ABI5-v5 results could not be copied forward, just as neither ABI5 nor ABI6
 evidence qualifies the live ABI8 tree.
