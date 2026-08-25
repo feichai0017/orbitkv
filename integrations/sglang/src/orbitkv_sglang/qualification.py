@@ -21,15 +21,16 @@ MOE_RUNNER_BACKENDS_BY_ARCHITECTURE = {
 }
 SUPPORTED_ARCHITECTURES = tuple(ATTENTION_BACKENDS_BY_ARCHITECTURE)
 PAGE_TOKENS = 16
-QWEN_HYBRID_GDN_ARCHITECTURE = "Qwen3_5ForConditionalGeneration"
-# Historical qualification code imports this name. Keep it as a value alias,
-# while current code names the config family rather than one model release.
-QWEN35_ARCHITECTURE = QWEN_HYBRID_GDN_ARCHITECTURE
+HYBRID_GDN_ARCHITECTURE = "Qwen3_5ForConditionalGeneration"
+# Deprecated compatibility aliases for frozen qualification callers. Active
+# implementation code uses the capability-oriented name above.
+QWEN_HYBRID_GDN_ARCHITECTURE = HYBRID_GDN_ARCHITECTURE
+QWEN35_ARCHITECTURE = HYBRID_GDN_ARCHITECTURE
 GDN_FIXED_STATE_BACKEND_PROFILE = dict(
     _RUNTIME_GDN_FIXED_STATE_BACKEND_PROFILE
 )
-# Historical qualification evidence imports and compares this plain dict. Keep
-# it independent from both the current qualification and immutable runtime views.
+# Frozen qualification compatibility. New runtime code uses the capability name
+# above; this alias keeps append-only evidence verifiers byte-reproducible.
 QWEN35_BACKEND_PROFILE = dict(_RUNTIME_GDN_FIXED_STATE_BACKEND_PROFILE)
 
 
@@ -40,15 +41,15 @@ def _positive_checkpoint_int(config: dict[str, Any], name: str) -> int:
     return value
 
 
-def _qwen_hybrid_gdn_geometry(text: dict[str, Any]) -> dict[str, Any]:
+def _hybrid_gdn_geometry(text: dict[str, Any]) -> dict[str, Any]:
     if text.get("dtype") != "bfloat16":
         raise RuntimeError(
-            "Qwen qwen3_5 dense config family requires "
+            "dense Hybrid GDN config requires "
             "text_config.dtype=bfloat16"
         )
     if text.get("mamba_ssm_dtype") != "float32":
         raise RuntimeError(
-            "Qwen qwen3_5 dense config family requires "
+            "dense Hybrid GDN config requires "
             "text_config.mamba_ssm_dtype=float32"
         )
     layers = _positive_checkpoint_int(text, "num_hidden_layers")
@@ -56,12 +57,12 @@ def _qwen_hybrid_gdn_geometry(text: dict[str, Any]) -> dict[str, Any]:
     raw = text.get("layer_types")
     if not isinstance(raw, list) or len(raw) != layers:
         raise RuntimeError(
-            "Qwen qwen3_5 dense config family requires one "
+            "dense Hybrid GDN config requires one "
             "text_config.layer_type per layer"
         )
     if any(value not in {"full_attention", "linear_attention"} for value in raw):
         raise RuntimeError(
-            "Qwen qwen3_5 dense config family has an unsupported layer_type"
+            "dense Hybrid GDN config has an unsupported layer_type"
         )
     expected = [
         "full_attention" if (index + 1) % interval == 0
@@ -70,14 +71,14 @@ def _qwen_hybrid_gdn_geometry(text: dict[str, Any]) -> dict[str, Any]:
     ]
     if raw != expected:
         raise RuntimeError(
-            "Qwen qwen3_5 dense config family text_config.layer_types differs from "
+            "dense Hybrid GDN config text_config.layer_types differs from "
             "full_attention_interval"
         )
     full = [index for index, value in enumerate(raw) if value == "full_attention"]
     linear = [index for index, value in enumerate(raw) if value == "linear_attention"]
     if not full or not linear:
         raise RuntimeError(
-            "Qwen qwen3_5 dense config family requires both Full and GDN layers"
+            "dense Hybrid GDN config requires both Full and GDN layers"
         )
     values = {
         name: _positive_checkpoint_int(text, name)
@@ -89,7 +90,7 @@ def _qwen_hybrid_gdn_geometry(text: dict[str, Any]) -> dict[str, Any]:
     }
     if values["linear_conv_kernel_dim"] < 2:
         raise RuntimeError(
-            "Qwen qwen3_5 dense config family linear_conv_kernel_dim "
+            "dense Hybrid GDN config linear_conv_kernel_dim "
             "must be at least two"
         )
     key_bytes = values["num_key_value_heads"] * values["head_dim"] * 2
@@ -114,7 +115,7 @@ def _qwen_hybrid_gdn_geometry(text: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _qwen_hybrid_gdn_control_token_ids(
+def _hybrid_gdn_control_token_ids(
     config: dict[str, Any], vocab_size: int
 ) -> dict[str, int]:
     names = (
@@ -126,7 +127,7 @@ def _qwen_hybrid_gdn_control_token_ids(
         value >= vocab_size for value in values.values()
     ):
         raise RuntimeError(
-            "Qwen qwen3_5 dense config family requires distinct in-vocabulary "
+            "dense Hybrid GDN config requires distinct in-vocabulary "
             "multimodal control token ids"
         )
     return values
@@ -184,23 +185,23 @@ def checkpoint_attention_contract(
     architectures = config.get("architectures")
     if not any(architectures == [item] for item in SUPPORTED_ARCHITECTURES):
         raise RuntimeError(
-            "qualification supports only Qwen2, GPT-OSS, DeepSeek-V2, or Qwen3.5"
+            "qualification does not support this model architecture"
         )
     architecture = architectures[0]
     text = config
-    if architecture == QWEN_HYBRID_GDN_ARCHITECTURE:
+    if architecture == HYBRID_GDN_ARCHITECTURE:
         text = config.get("text_config")
         if not isinstance(text, dict):
             raise RuntimeError(
-                "Qwen qwen3_5 dense config family requires nested text_config"
+                "dense Hybrid GDN config requires nested text_config"
             )
         if config.get("model_type") != "qwen3_5":
             raise RuntimeError(
-                "Qwen qwen3_5 dense config family requires model_type=qwen3_5"
+                "dense Hybrid GDN config requires model_type=qwen3_5"
             )
         if text.get("model_type") != "qwen3_5_text":
             raise RuntimeError(
-                "Qwen qwen3_5 dense config family requires "
+                "dense Hybrid GDN config requires "
                 "text_config.model_type=qwen3_5_text"
             )
     layers = _positive_checkpoint_int(text, "num_hidden_layers")
@@ -261,15 +262,15 @@ def checkpoint_attention_contract(
         profile = "mla"
         sliding_window = None
     else:
-        geometry = _qwen_hybrid_gdn_geometry(text)
-        control_token_ids = _qwen_hybrid_gdn_control_token_ids(config, vocab_size)
+        geometry = _hybrid_gdn_geometry(text)
+        control_token_ids = _hybrid_gdn_control_token_ids(config, vocab_size)
         prompt_token_upper_bound = _positive_checkpoint_int(text, "eos_token_id")
         if prompt_token_upper_bound <= 3 or any(
             value < prompt_token_upper_bound
             for value in control_token_ids.values()
         ):
             raise RuntimeError(
-                "Qwen qwen3_5 dense config family requires control tokens at or above "
+                "dense Hybrid GDN config requires control tokens at or above "
                 "the EOS prompt boundary"
             )
         key_bytes = geometry["key_bytes"]
@@ -336,6 +337,7 @@ def _class(
 __all__ = [
     "ATTENTION_BACKENDS_BY_ARCHITECTURE",
     "GDN_FIXED_STATE_BACKEND_PROFILE",
+    "HYBRID_GDN_ARCHITECTURE",
     "MOE_RUNNER_BACKENDS_BY_ARCHITECTURE",
     "PAGE_TOKENS",
     "QWEN_HYBRID_GDN_ARCHITECTURE",

@@ -734,7 +734,7 @@ def _patch_extend_allocation(monkeypatch, *, fail_write=False):
     monkeypatch.setattr(allocation, "write_cache_indices", write_cache_indices)
 
 
-def test_qwen_full_extend_writes_full_req_to_token(monkeypatch):
+def test_full_attention_extend_writes_full_req_to_token(monkeypatch):
     config = _config(("full",))
     runtime = TransactionRuntime(config)
     allocator = object()
@@ -763,7 +763,7 @@ def test_qwen_full_extend_writes_full_req_to_token(monkeypatch):
     ]
 
 
-def test_gpt_oss_hybrid_decode_writes_full_row_and_swa_lut(monkeypatch):
+def test_hybrid_full_swa_decode_writes_full_row_and_swa_lut(monkeypatch):
     config = _config(("full", "sliding"))
     runtime = TransactionRuntime(config)
     allocator = FakeHybridAllocator()

@@ -2,35 +2,63 @@
 import DocsNav from "../components/DocsNav.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
 import { evidenceRows, metrics, repositoryUrl } from "../data/site";
+
+const records = [
+  {
+    name: "Scoped Prefix correctness record",
+    status: "Sealed, narrow engine scope",
+    boundary: "Does not transfer to relocation, fixed state, performance, or production.",
+    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-full-hybrid-20260823`,
+  },
+  {
+    name: "Scoped token-relocation record",
+    status: "Sealed correctness and lifecycle scope",
+    boundary: "Does not qualify sharing, broader state families, performance, or production.",
+    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-token-relocation-20260825`,
+  },
+  {
+    name: "Fixed-state pair-verification record",
+    status: "Scoped verification",
+    boundary: "Not a general engine, performance, or production qualification.",
+    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-qwen35-fixed-state-pair-verification-20260823`,
+  },
+  {
+    name: "Fixed-state diagnostic record",
+    status: "Diagnostic only",
+    boundary: "Unsealed evidence does not promote the integration boundary.",
+    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824`,
+  },
+];
 ---
 
 <SiteLayout
   title="Evidence | OrbitKV"
-  description="Append-only OrbitKV correctness, lifecycle, memory, and performance-smoke evidence with explicit source boundaries."
+  description="OrbitKV capability status and scoped evidence boundaries."
   active="Evidence"
 >
   <header class="page-hero">
     <p class="eyebrow">Evidence</p>
     <h1>Each result keeps its boundary.</h1>
     <p>
-      A result fixes source, GPU, workload, method, and excluded claims.
+      Host, component, engine, performance, and production evidence are
+      separate claims. Qualification does not transfer between them.
     </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
-      <h2>Live host gates and scoped sealed ABI8 boundaries</h2>
+      <h2>Live ABI8 status</h2>
       <div class="metric-grid compact">
         {metrics.map((item) => (
           <article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>
         ))}
       </div>
 
-      <h2>Evidence</h2>
+      <h2>Capability summary</h2>
       <table class="evidence-table-native">
         <thead>
-          <tr><th>Result</th><th>Value</th><th>Contract</th><th>Boundary</th></tr>
+          <tr><th>Surface</th><th>Status</th><th>Contract</th><th>Boundary</th></tr>
         </thead>
         <tbody>
           {evidenceRows.map((item) => (
@@ -44,61 +72,32 @@ import { evidenceRows, metrics, repositoryUrl } from "../data/site";
         </tbody>
       </table>
 
-      <h2>Exclusions</h2>
+      <h2>Scoped records</h2>
+      <div class="doc-grid">
+        {records.map((record) => (
+          <div class="doc-card">
+            <span>{record.status}</span>
+            <h3>{record.name}</h3>
+            <p>{record.boundary}</p>
+            <a href={record.href}>Open record →</a>
+          </div>
+        ))}
+      </div>
+
+      <h2>Claim boundaries</h2>
       <ul>
-        <li>ABI8 Rust token/fixed-state core and the exact 40-symbol C wire retain host L2 GO; this does not qualify the complete production fixed-state seam.</li>
-        <li>The sealed ABI8 Prefix record qualifies only exact source <code>6f62a23</code> on the official SGLang v0.5.17 base with its record-bound manager-side canonical loader patch, one H20, and page16 BF16 NHD eager FA3.</li>
-        <li>Its 12 matched stock/manager pairs cover Qwen Full and GPT-OSS Full+SWA at B1/B4 over three epochs.</li>
-        <li>All 12 pairs have exact output and request-trace equality, seeded 512-token Prefix publication and hits, final all-free drain, and zero fail-stop/quarantine counters.</li>
-        <li>Every GPT-OSS Hybrid pair advances SWA retirement-certificate, reclaimed-page, and wrap counters.</li>
-        <li><code>performance_go=false</code>: observed mean manager overhead is +7.37% / +11.87% for Full B1/B4 and +3.99% / +4.45% for Hybrid B1/B4.</li>
-        <li>SGLang is OrbitKV's first adapter, not a full replacement target; no speedup, capacity, memory-saving, production, or general SGLang replacement is claimed.</li>
-        <li>The exact request-private GDN+convolution runtime is integrated through allocation, initial clear, completion event, wait, retire, clear, and exact ACK. Qwen3.5 has scoped pair verification and Qwen3.8 is diagnostic; both remain below L4 and performance qualification.</li>
-        <li>Same-owner replacement copy has coordinator/real-CPU-tensor host tests only; its production trigger remains pending.</li>
-        <li>KDA, ShortConv, other fixed-state families, and the same-owner replacement trigger remain pending.</li>
-        <li>Manager and state-pool handles are separate; no cross-handle atomicity is claimed.</li>
-        <li>Repeated relocation retains its L2 host boundary: the Rust core and Python runtime pass two cycles for one request-private Full class under full evacuation, and the SGLang periodic trigger is host-tested across two reclamation boundaries.</li>
-        <li>Generation-safe packed request fork and packed shared partial-tail COW are host-tested through Rust, raw ABI8, and Python FFI, including repeated COW. Packed Prefix remains unsupported; packed COW has no H20/model qualification and does not inherit the relocation seal.</li>
-        <li>ABI8 multi-request relocation is host-tested with exactly one disposition-mark, prepare, submit, and complete call per scheduler batch, a flattened copy and completion event, one aggregate registry commit, one aggregate head replacement, all mirror plans validated before writes, and one aggregate reclamation ACK. Mirror writes are not rollback-atomic.</li>
-        <li>After a successful mark, later uncertainty is fail-stop and non-rollback. A producer-to-copy event exists, but completion is currently eager and host-blocking, so no asynchronous overlap is claimed.</li>
-        <li>The engine-neutral CUDA opaque-byte harness passes all seven H20 component cases: payload uniqueness, stale-member atomicity at B1/B4/B32, and real append/copy/consumer-stream execution at B1/B4/B32 over two cycles with 257-byte payloads, ACK-gated generation reuse, and final drain.</li>
-        <li>A separate sealed Qwen2.5-0.5B SGLang relocation record binds exact clean source <code>7e02931036123c0f830bcca7130a43543c9e6eb1</code>: <code>source_clean=true</code>, <code>preflight_bound=true</code>, <code>sealed=true</code>, and <code>qualified=true</code>.</li>
-        <li>Its 16 records / 8 Naive/Relocate B1/B4 pairs across four order-balanced epochs are token-exact, fully drained, and free of failure/quarantine/fail-stop counters; its H20 component suite passes 7/7.</li>
-        <li>B1 throughput/mean/median/p95 deltas are -1.3467%/+1.3651%/+2.0033%/+0.5141%; B4 deltas are +2.8096%/-2.7328%/+0.9810%/-19.8635%.</li>
-        <li>The relocation seal qualifies only request-private Full token-relocation correctness and lifecycle. It remains <code>hardware_attested=false</code> and <code>performance_go=false</code>; the mixed timing values establish no general speedup, capacity, memory, production, or full-replacement claim.</li>
-        <li>The valid paired oracle uses FlashInfer. Prefix/Radix sharing, Hybrid/SWA, MLA, async overlap, CUDA Graphs, speculation, distributed execution, and multi-GPU are outside this seal.</li>
-        <li>The earlier dirty relocation diagnostic is historical and superseded; its measurements do not describe the sealed qualification.</li>
-        <li>Request-private pressure telemetry is host-tested, but no real asynchronous GPU pressure run has executed. Fixed-state bytes and shared Prefix/request-fork retention amplification are excluded.</li>
-        <li>Separate <code>orbitkv-runtime</code> and <code>orbitkv-reference</code> wheels exist and clean-install. The reference adapter is not a complete engine, and SGLang has not migrated to this SPI.</li>
-        <li>The frozen ABI5-v5 H20 record remains historical and qualifies only its exact 9233c06d source closure.</li>
-        <li>No same-capacity KV compression claim: historical paired page16 tensor bytes are identical.</li>
-        <li>The Qwen3.8 diagnostic ran four epochs each at B1 and B4, eight pairs total; all are token-exact with a clean final census and zero failure/fail-stop counters under explicit Triton FP8.</li>
-        <li>Its pooled hot throughput is -6.19% at noisy B1 and -2.70% at B4. Equal configured arena reservation has an observed 0% difference, not a qualified memory result.</li>
-        <li>It is dirty and unsealed, no qualification preflight ran, and <code>hardware_attested=false</code>, <code>qualified=false</code>, and <code>performance_go=false</code>.</li>
-        <li>Historical ABI5-v5 performance also remains NO GO: its single B4 epoch gives +4.1932% Qwen and −5.2048% GPT-OSS manager overhead.</li>
-        <li>Host compaction relocates retained logical tokens exactly; it is not numerical compression.</li>
-        <li>No VMM-backed SGLang tensor or multi-GPU claim.</li>
+        <li>ABI8 host gates do not by themselves establish engine or production qualification.</li>
+        <li>Each sealed engine record applies only to its recorded feature boundary; scopes do not transfer.</li>
+        <li>Packed COW has host coverage but remains outside the sealed engine scopes.</li>
+        <li>Performance, capacity, memory saving, and production readiness remain pending.</li>
+        <li>Historical and diagnostic records remain append-only and never qualify the live ABI8 tree automatically.</li>
       </ul>
 
       <p>
-        The sealed ABI8 manifest, summary, and 12 pair records are in{" "}
-        <a href={`${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-full-hybrid-20260823`}>
-          the ABI8 H20 Prefix evidence directory
-        </a>
-        . The unsealed Qwen3.8 records and strict diagnostic verifier are in{" "}
-        <a href={`${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824`}>
-          the Qwen3.8 H20 diagnostic directory
-        </a>
-        . The sealed clean-source Qwen2.5 relocation records and verifier summary are in{" "}
-        <a href={`${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-token-relocation-20260825`}>
-          the scoped token-relocation H20 qualification directory
-        </a>
-        . The normative levels and complete exclusions are in{" "}
-        <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>
-          the Capability Matrix
-        </a>
-        . The complete result index and source hashes are in{" "}
-        <a href={`${repositoryUrl}/tree/main/results`}>results/</a>.
+        The <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>Capability Matrix</a>{" "}
+        is the normative status surface. Full manifests, exact environments,
+        methods, exclusions, and all historical records are in the{" "}
+        <a href={`${repositoryUrl}/blob/main/results/README.md`}>Results Index</a>.
       </p>
     </article>
   </div>

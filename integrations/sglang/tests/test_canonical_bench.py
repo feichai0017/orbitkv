@@ -110,7 +110,7 @@ def _write_config(tmp_path: Path, value: dict) -> Path:
     return model
 
 
-def _qwen35_config() -> dict:
+def _hybrid_gdn_config() -> dict:
     return json.loads(
         (REPOSITORY_ROOT / "fixtures/qwen3.5-0.8b/config.json").read_text(
             encoding="utf-8"
@@ -294,7 +294,7 @@ def test_engine_profile_is_identical_and_explicitly_capacity_matched(mode):
 
 
 @pytest.mark.parametrize("mode", ("manager", "stock"))
-def test_gpt_oss_engine_profile_requires_fa3_for_both_modes(mode):
+def test_hybrid_full_swa_engine_profile_requires_fa3_for_both_modes(mode):
     contract = _attention_contract("GptOssForCausalLM")
     values = bench.engine_arguments(
         _arguments(mode=mode, attention_backend="fa3"), Path("/model"), contract
@@ -310,7 +310,7 @@ def test_gpt_oss_engine_profile_requires_fa3_for_both_modes(mode):
         )
 
 
-def test_qwen2_engine_profile_rejects_flashinfer():
+def test_full_attention_engine_profile_rejects_flashinfer():
     with pytest.raises(RuntimeError, match="requires --attention-backend fa3"):
         bench.engine_arguments(
             _arguments(attention_backend="flashinfer"),
@@ -320,7 +320,7 @@ def test_qwen2_engine_profile_rejects_flashinfer():
 
 
 @pytest.mark.parametrize("mode", ("manager", "stock"))
-def test_qwen35_engine_profile_is_exact_and_disables_radix(mode):
+def test_hybrid_gdn_engine_profile_is_exact_and_disables_radix(mode):
     contract = _attention_contract(
         "Qwen3_5ForConditionalGeneration",
         workload_profile="fresh_prompt",
@@ -384,7 +384,7 @@ def test_b4_inputs_share_only_the_exact_page_aligned_seed_prefix():
     assert len({tuple(prompt) for prompt in prompts}) == 4
 
 
-def test_qwen35_fresh_inputs_share_no_complete_prefix_page_across_iterations():
+def test_hybrid_gdn_fresh_inputs_share_no_complete_prefix_page_across_iterations():
     forbidden = (1019, 1020, 1021, 1022)
     rows = [
         bench.fresh_input_ids(
@@ -572,7 +572,7 @@ def test_abi8_qualification_accepts_only_complete_b1_or_b4_batches(tmp_path):
         )
 
 
-def test_qwen2_contract_is_strict_full_only(tmp_path, monkeypatch):
+def test_full_attention_contract_is_strict_full_only(tmp_path, monkeypatch):
     monkeypatch.setattr(bench, "checkpoint_identity", _checkpoint_identity)
     model = _write_config(
         tmp_path,
@@ -614,7 +614,9 @@ def test_qwen2_contract_is_strict_full_only(tmp_path, monkeypatch):
         bench.checkpoint_contract(model)
 
 
-def test_gpt_oss_contract_matches_ordered_full_plus_swa_plan(tmp_path, monkeypatch):
+def test_hybrid_full_swa_contract_matches_ordered_full_plus_swa_plan(
+    tmp_path, monkeypatch
+):
     monkeypatch.setattr(bench, "checkpoint_identity", _checkpoint_identity)
     model = _write_config(
         tmp_path,
@@ -695,11 +697,11 @@ def test_deepseek_v2_contract_matches_explicit_mla_geometry(tmp_path, monkeypatc
         bench.checkpoint_contract(model, manager_config)
 
 
-def test_qwen35_contract_uses_nested_text_config_and_exact_state_geometry(
+def test_hybrid_gdn_contract_uses_nested_text_config_and_exact_state_geometry(
     tmp_path, monkeypatch
 ):
     monkeypatch.setattr(bench, "checkpoint_identity", _checkpoint_identity)
-    model = _write_config(tmp_path, _qwen35_config())
+    model = _write_config(tmp_path, _hybrid_gdn_config())
     config = SimpleNamespace(
         page_tokens=16,
         num_hidden_layers=24,
@@ -741,7 +743,7 @@ def test_qwen35_contract_uses_nested_text_config_and_exact_state_geometry(
     assert contract["fixed_states"][0]["state_bytes_per_layer"] == 1_048_576
     assert contract["fixed_states"][1]["state_bytes_per_layer"] == 36_864
 
-    broken = _qwen35_config()
+    broken = _hybrid_gdn_config()
     broken["text_config"] = None
     (model / "config.json").write_text(json.dumps(broken), encoding="utf-8")
     with pytest.raises(RuntimeError, match="nested text_config"):
@@ -764,10 +766,10 @@ def test_qwen35_contract_uses_nested_text_config_and_exact_state_geometry(
         ),
     ),
 )
-def test_qwen35_checkpoint_contract_rejects_discriminator_or_schedule_drift(
+def test_hybrid_gdn_checkpoint_contract_rejects_discriminator_or_schedule_drift(
     tmp_path, path, value, message
 ):
-    config = _qwen35_config()
+    config = _hybrid_gdn_config()
     target = config
     for name in path[:-1]:
         target = target[name]

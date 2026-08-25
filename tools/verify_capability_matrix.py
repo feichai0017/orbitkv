@@ -33,12 +33,14 @@ MATRIX_REQUIRED_CLAIMS = (
     "| ABI8 Python FFI/runtime | L2 GO |",
     "| SGLang `OrbitKVPrefixCache` | L2 GO |",
     "Exactly 40 typed symbols",
-    "`results/h20-sglang-v0517-abi8-full-hybrid-20260823`",
-    "`6f62a23`",
+    "results/h20-sglang-v0517-abi8-full-hybrid-20260823/README.md",
+    "results/h20-sglang-v0517-abi8-token-relocation-20260825/README.md",
+    "results/h20-sglang-v0517-abi8-qwen35-fixed-state-pair-verification-20260823/README.md",
+    "results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824/README.md",
     "Scoped L4 correctness",
-    "`9233c06d…`",
-    "yielding an observed reservation difference of **0%**",
-    "not a qualified end-to-end memory-saving result",
+    "## Historical records",
+    "not a qualified end-to-end",
+    "memory-saving result",
     "`performance_go=false`",
 )
 
@@ -59,7 +61,11 @@ def main() -> None:
         if claim not in matrix:
             raise RuntimeError(f"Capability Matrix is missing current boundary: {claim}")
 
-    for relative in re.findall(r"`(results/[^`]+)`", matrix):
+    evidence_paths = set(re.findall(r"`(results/[^`]+)`", matrix))
+    evidence_paths.update(
+        re.findall(r"\(\.\./(results/[^)]+)\)", matrix)
+    )
+    for relative in evidence_paths:
         if not (ROOT / relative).exists():
             raise RuntimeError(f"Capability Matrix evidence does not exist: {relative}")
 

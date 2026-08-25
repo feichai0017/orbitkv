@@ -11,20 +11,11 @@ joint Full+SWA COW, detach actions, page-owned reclamation, and an independent
 fixed-state checkpoint pool.
 
 The ABI8 Python runtime, state-pool client, and SGLang Prefix adapter are
-host-qualified L2. The sealed ABI8 Prefix H20 record provides scoped Prefix
-correctness only for Qwen2.5 Full and GPT-OSS Full+SWA; it has
-`performance_go=false`, reports an observed configured arena reservation
-difference of **0%** rather than an end-to-end memory saving, and explicitly
-excludes fixed state. The frozen ABI5-v5 record remains historical scoped L4
-correctness only and does not qualify this source.
-The separate Qwen3.5 archive completes scoped fixed-state pair verification
-from recorded H20 runtime snapshots, including outputs, lifecycle counters,
-stream/event completion, and final drain. It remains independently unattested,
-`qualified=false`, `hardware_attested=false`, and
-`performance_go=false`, so it does not add L4 or performance qualification.
-A newer Qwen3.8-27B-FP8 diagnostic adds eight passing, token-exact pairs on a
-recorded H20, but its dirty source, missing qualification preflight, and
-`qualified=false`/`hardware_attested=false` flags keep it below L4. OrbitKV's
+host-qualified L2. The sealed Prefix record provides scoped correctness only
+for its manifest-bound engine profile and explicitly excludes fixed state. The
+frozen ABI5 record remains historical and does not qualify this source.
+Fixed-state pair verification and a later weight-backed diagnostic remain
+independently unattested and below L4/performance qualification. OrbitKV's
 target remains an attention-state compiler plus transactional ownership
 runtime, not a full SGLang replacement or a mature L5 system.
 For token relocation specifically, the ABI8-preserving runtime now executes one
@@ -40,21 +31,18 @@ are fail-stop and non-rollback. Event completion is currently eager and
 host-blocking, with no asynchronous overlap. Generation-safe packed fork and
 packed shared-tail COW append are host-tested through Rust, raw ABI8, and
 Python FFI. Packed Prefix remains fail-closed. The packed COW work postdates
-and does not inherit the sealed H20/model scope. A new engine-neutral CUDA opaque-byte
-harness now passes all seven H20 component cases, including two real append,
-copy, and consumer-stream cycles at B1/B4/B32. A separate pinned SGLang
-Qwen2.5-0.5B qualification binds exact clean source
-`7e02931036123c0f830bcca7130a43543c9e6eb1`; all 16 records / 8
-Naive/Relocate B1/B4 pairs have exact tokens, expected lifecycle, complete
-drain, and zero failures. It is preflight-bound, sealed, and `qualified=true`
-for scoped request-private Full token-relocation correctness and lifecycle
-only. It remains independently unattested and `performance_go=false`; capacity,
-general speedup, and production qualification remain pending.
+and does not inherit the sealed engine scope. An engine-neutral CUDA harness
+provides component conformance for payloads, ordering, reuse, and drain. A
+separate pinned engine record is preflight-bound, sealed, and `qualified=true`
+only for scoped request-private Full relocation correctness and lifecycle. It
+remains independently unattested and `performance_go=false`; capacity, general
+speedup, and production qualification remain pending.
 
 Opt-in request-private pressure telemetry is host-tested for consumed,
 resident, request-reachable, and semantic-live bytes plus retention
-amplification. No real asynchronous GPU pressure run has executed; fixed-state
-bytes and shared Prefix/request-fork retention amplification are excluded. The
+amplification. No append-only, sealed, or qualified asynchronous GPU pressure
+record is published; fixed-state bytes and shared Prefix/request-fork retention
+amplification are excluded. The
 separate `orbitkv-runtime` and `orbitkv-reference` wheels also provide an
 engine-neutral SPI and reference external-arena adapter. The reference is not a
 complete serving engine, and SGLang has not migrated to the SPI.
@@ -120,8 +108,8 @@ Exit gate: the ABI8 Python runtime is L2 against the exact release library.
 
 ## M2: Integrate SGLang Prefix ownership
 
-Status: **host L2 GO; scoped exact-source H20 correctness for the sealed
-Qwen2.5 Full and GPT-OSS Full+SWA boundary; performance pending**.
+Status: **host L2 GO; scoped exact-source correctness for the sealed
+manifest-bound Prefix profile; performance pending**.
 
 Register an `OrbitKVPrefixCache` at the official SGLang `v0.5.17` cache seam.
 Radix remains a token/digest/LRU index. It stores an opaque `PrefixLease`, not
@@ -129,27 +117,26 @@ page IDs, generations, free-list state, or CUDA tensors.
 
 The first profile is deliberately narrow:
 
-- eager, single GPU, page16 BF16 NHD;
-- Qwen2.5 Full and GPT-OSS ordered Full+SWA;
+- eager, single-device token KV with a manifest-bound backend;
+- Full and ordered Full+SWA retention;
 - page-aligned publish and attach only;
 - shared partial-tail divergence through exact COW; and
 - overlap, Graph, speculation, disaggregation, remote/hierarchical cache, and
   multi-GPU disabled.
 
-The sealed ABI8 H20 record compares cold and warm paths, verifies matching
+The sealed ABI8 record compares cold and warm paths, verifies matching
 request outputs, and proves Prefix activity and final drain for this exact
 boundary. Its timings are diagnostic and `performance_go=false`; it does not
-qualify Qwen3.5, fixed state, or a general SGLang replacement.
+qualify fixed state or a general SGLang replacement. See the
+[sealed Prefix record](../results/h20-sglang-v0517-abi8-full-hybrid-20260823/README.md).
 
 Expected benefits are fewer duplicated physical KV pages and less repeated
-prefill work for warm prefixes. No performance benefit is qualified. The
-compared runs reserve equal configured KV tensor arenas, so the observed
-configured arena reservation difference is **0%**; this is not an end-to-end
-memory-saving result.
+prefill work for warm prefixes. No performance or end-to-end memory benefit is
+qualified.
 
 ## M3: Token table and exact relocation
 
-Status: **core, C wire, Python wire, and eager SGLang adapter host L2 GO; H20
+Status: **core, C wire, Python wire, and eager SGLang adapter host L2 GO;
 component conformance plus sealed clean-source scoped Full relocation
 correctness/lifecycle qualification pass; independent hardware attestation and
 performance qualification pending**.
@@ -198,7 +185,7 @@ It rejects a missed boundary and a nonempty Prefix mirror before manager
 mutation. Generation-safe packed request fork and repeated shared partial-tail
 COW append on a packed root are now host/raw-ABI8/Python-FFI tested. Packed
 Prefix operations remain unsupported and fail closed; packed COW still needs
-separate H20/model qualification.
+separate engine qualification.
 
 Global invariants are token conservation, unique placement, completion
 visibility, snapshot isolation, generation safety, and deferred source reuse.
@@ -210,38 +197,17 @@ runtime. The eager adapter now contains Full KV copy, CUDA stream/event
 ordering, compact ReqToToken publication, and class-specific Full-to-SWA LUT
 handling. Its single completion event is synchronized by the host before
 publication; asynchronous consumer-stream waiting and copy/compute overlap are
-not implemented. An engine-neutral CUDA harness now passes seven H20 cases and
-encodes B1/B4/B32, two cycles on the same requests/cursors, an independent live-token/payload oracle,
-257-byte coordinate-bearing records, distinct non-default append/copy/consumer
-streams, exact 3-page-to-2-page evacuation with 24 moves per request/cycle,
-event-ordered byte checks, ACK-gated same-page/higher-generation reuse, and
-final drain. The component result is not sealed L3/L4, performance, or capacity
-qualification.
+not implemented. An engine-neutral CUDA harness verifies an independent
+payload oracle, real stream ordering, exact evacuation, ACK-gated generation
+reuse, and final drain. The component result is not sealed L3/L4, performance,
+or capacity qualification.
 
-The model-level qualification pins exact clean source
-`7e02931036123c0f830bcca7130a43543c9e6eb1`, the official SGLang `v0.5.17`
-base plus its manifest-bound canonical loader patch, Qwen2.5-0.5B
-request-private Full attention, page16 BF16 NHD eager execution,
-and FlashInfer in both Naive and Relocate modes. Four alternating-order epochs
-at B1/B4 produce 16 records and 8/8 token-exact pairs, with five
-iterations/process, expected relocation lifecycle, complete drain, and zero
-failures. Iteration 0 is excluded, leaving 16 hot samples per mode/group.
-
-| Case | Relocate throughput | Mean latency | Median latency | p95 latency |
-| --- | ---: | ---: | ---: | ---: |
-| B1 | -1.3467% | +1.3651% | +2.0033% | +0.5141% |
-| B4 | +2.8096% | -2.7328% | +0.9810% | -19.8635% |
-
-The archive records `source_clean=true`, `preflight_bound=true`, `sealed=true`,
-and `qualified=true` for scoped correctness and lifecycle only. It also records
-`hardware_attested=false` and `performance_go=false`; the mixed timing
-observations establish no general speedup. It makes no capacity, end-to-end
-memory, production, complete-engine, Prefix, Hybrid/SWA, MLA, async-overlap,
-Graph, speculation, distributed, or multi-GPU claim. The earlier dirty-source
-diagnostic is historical and superseded. Remaining gates include independent
-hardware attestation, performance qualification, and asynchronous overlap.
-
-[Sealed Qwen2.5-0.5B relocation qualification](../results/h20-sglang-v0517-abi8-token-relocation-20260825/README.md)
+The pinned engine record is clean, preflight-bound, and sealed for scoped
+request-private Full relocation correctness and lifecycle. It remains
+`hardware_attested=false` and `performance_go=false`; capacity, end-to-end
+memory, production, broader engine features, and asynchronous overlap remain
+unqualified. See the
+[sealed relocation qualification](../results/h20-sglang-v0517-abi8-token-relocation-20260825/README.md).
 
 Relocation should run only when `source_pages > destination_pages` after
 accounting for temporary destination headroom. It should not scan every token
@@ -257,11 +223,10 @@ experiments exist.
 
 ## M3b: Heterogeneous state backends
 
-Status: **compiler L1 and ABI8 checkpoint core/wire L2 GO; strict normalized
-official Qwen3.5-0.8B request-private GDN+convolution has scoped host
-implementation/evidence and scoped pair verification from recorded H20 runtime
-snapshots; replacement trigger, other families, independent hardware
-attestation, and L4/performance
+Status: **compiler L1 and ABI8 checkpoint core/wire L2 GO; a manifest-bound
+request-private GDN+convolution frontend profile has scoped host implementation
+and pair verification; replacement trigger, other families, independent
+hardware attestation, and L4/performance
 qualification pending**.
 
 The heterogeneous compiler separates token KV, MLA latent plus RoPE
@@ -291,88 +256,30 @@ between their commits has fail-stop containment only, with neither atomic joint
 commit nor cross-handle rollback. A future unified transaction is required
 before claiming cross-state atomicity.
 
-The pure-MLA host seam now validates compiled latent/RoPE byte widths against
-SGLang's real `MLATokenToKVPool` and exercises its combined-row copy API. It is
-limited to BF16 Full retention, page16, eager, single GPU, without DSA, FP4, or
-DCP. The same-owner fixed-state copy production trigger remains implementation
-work. The first bound family is
-the strict normalized official `Qwen/Qwen3.5-0.8B` profile: six Full layers use
-token KV and the other 18 layers use request-private FP32 GDN recurrent state
-plus BF16 convolution history. Its adapter accepts only fresh-prompt,
-Radix-disabled operation and fails closed unless Full attention uses FA3, all
-general/prefill/decode linear-attention selectors use Triton, temporal state is
-actually FP32, and the Mamba Radix strategy is `no_buffer`. Prefix-state
-sharing and a fixed-state copy trigger are not admitted by this production
-profile.
+The pure-MLA host seam validates compiled latent/RoPE byte widths against
+SGLang's real `MLATokenToKVPool` and exercises its combined-row copy API. DSA,
+reduced-precision variants, distributed execution, and Hybrid Linear remain
+outside that seam. The same-owner fixed-state copy production trigger remains
+implementation work. The first bound frontend family compiles Full token KV
+separately from request-private GDN recurrent and convolution state. Its adapter
+accepts only fresh-prompt, Radix-disabled operation and fails closed unless the
+backend, dtype, state layout, and cache settings match the compiled structural
+contract. Prefix-state sharing and a fixed-state copy trigger are not admitted.
 
 Other GDN profiles, KDA, ShortConv, and other linear-attention family bindings
-are still implementation work. The Qwen3.5 profile is restricted to eager,
-single-GPU operation without ReplaySSM, int8 checkpoints, extra/ping-pong
-buffers, speculation, overlap, Graph, or unified memory. The MLA path, this
-Qwen3.5 path, and every later fixed-state family need their own qualification
-and exact-byte or numerical-state oracle. Passing Full KV relocation or host
-fixed-state tests does not qualify any of them.
+are still implementation work. The bound profile excludes Prefix sharing,
+speculation, overlap, Graph, and unified memory. Every fixed-state family needs
+its own qualification and exact-byte or numerical-state oracle; Full KV
+relocation or host fixed-state tests do not transfer qualification.
 
-The Qwen3.5 scoped pair-verification step is now complete from recorded H20
-runtime snapshots for official
-`Qwen/Qwen3.5-0.8B` on official SGLang `v0.5.17` commit
-`29481685462732237d80d86076d6563e1f658102`. It records page16 BF16 NHD,
-eager Full FA3 plus Triton linear backends, fresh prompts, disabled Radix, and
-`cached_tokens=0` on one H20 snapshot. B1 uses one request, state capacity two,
-and one iteration; B4 uses four requests, state capacity four, and five
-iterations. Three epochs produce six passing stock/manager pairs with equal
-output-token totals, exact token/fixed-state lifecycle and CUDA event
-completion, and final drain. Fixed-state prepare/clear/retire/ACK counts are one
-per B1 epoch
-and 20 per B4 epoch; copies are zero.
+The scoped pair-verification record matches outputs, lifecycle, completion, and
+final drain, but remains `qualified=false`, `hardware_attested=false`, and
+`performance_go=false`. See the
+[fixed-state pair-verification record](../results/h20-sglang-v0517-abi8-qwen35-fixed-state-pair-verification-20260823/README.md).
 
-The timing result is negative: B1 manager 1.5898847853 s versus stock
-1.5818591726 s is +0.507353%, and B4 manager 0.9498731474 s versus stock
-0.9156339097 s is +3.739403%. Therefore `performance_go=false`. The observed
-configured arena reservation difference is **0%**; this is not a
-qualified end-to-end memory-saving result. The archive also records
-`qualified=false` and `hardware_attested=false`; the H20 runtime snapshots,
-with UUID prefix `GPU-3a35…`, are independently unattested. The remaining gate is L4
-qualification, not another claim of implementation or scoped pair execution.
-
-[Qwen3.5 H20 fixed-state pair-verification record](../results/h20-sglang-v0517-abi8-qwen35-fixed-state-pair-verification-20260823/README.md)
-
-The Qwen3.8-27B-FP8 diagnostic pair execution is no longer pending. The run
-declares `Qwen/Qwen3.8-27B-FP8` repository revision
-`017b9c7af6b5689d5dd426a76e0bc077eb5ca20a`; its raw records bind the
-downloaded config, index, and all 66 shards by hash and byte count
-(30,866,866,928 bytes and 1,606 tensors), while repository provenance is not
-independently online-attested. It records official SGLang `v0.5.17` revision
-`29481685462732237d80d86076d6563e1f658102`; and NVIDIA H20 UUID
-`GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3`. Both modes explicitly set
-`fp8_gemm_runner_backend=triton` and run eager single-GPU page16 BF16 NHD KV.
-
-Four epochs balance ordering completely: 1/3 manager to stock and 2/4 stock
-to manager. Each epoch contains one B1 and one B4 pair, yielding eight pairs
-total; every process runs five iterations. All eight pairs pass the verifier
-and match tokens exactly; final manager census and failure/fail-stop
-counts are zero. Hot statistics discard iteration 0 per process and therefore
-contain 16 samples per mode/batch. B1 stock/manager mean is
-2.6296723178/2.8031814888 s, median 2.5374011379/2.6451683380 s, and p95
-3.0721712420/3.3369778013 s: latency is +6.5981% and throughput -6.1897%.
-Its epoch deltas (+2.7822%, +0.7129%, +26.3407%, -1.9835%) show clear jitter
-and an outlier, so no positive claim follows. B4 mean is
-2.9576119229/3.0395950049 s, median 2.9602836296/3.0345056280 s, and p95
-3.0001941137/3.0800264925 s: latency is +2.7719%, throughput -2.6972%, and
-epoch deltas are +1.8441%, +2.8850%, +5.0070%, +1.3885%.
-
-This is diagnostic only. Manager and stock have the same configured
-tensor-arena capacity and reported KV-cache reservation, an observed configured
-arena reservation difference of **0%**; this is not a qualified end-to-end
-memory-saving result. The source is dirty and the record is `sealed=false`,
-`preflight_bound=false`, `hardware_attested=false`, `qualified=false`, and
-`performance_go=false`. The
-default-auto DeepGEMM path did load all 66/66 shards, but lengthy precompilation
-was externally terminated before E2E completion. The next gate is a clean,
-preflighted, independently attested qualification run, not model download or a
-first E2E diagnostic.
-
-[Qwen3.8-27B-FP8 diagnostic archive](../results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824/README.md)
+A later weight-backed execution is diagnostic-only because its source and
+qualification preflight do not meet the release gate. See the
+[diagnostic archive](../results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824/README.md).
 
 ## M4: Multiple completion domains and CUDA Graph
 
