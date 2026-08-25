@@ -98,6 +98,25 @@ manifests, methods, exclusions, and historical records live in the
 their model, device, source, or timing tables. No performance, capacity, memory
 saving, production-readiness, or general engine-replacement claim is made.
 
+## Qualification and evidence tools
+
+Use the capability-oriented entry points for new qualification and evidence
+workflows:
+
+```bash
+python integrations/sglang/qualify_token_relocation.py --help
+python tools/verify_token_relocation_evidence.py <evidence-root>
+python tools/verify_token_relocation_seal.py <archive>
+python tools/verify_fixed_state_pair_evidence.py <archive>
+```
+
+The qualifier and verifiers are thin facades over the currently selected,
+manifest-bound implementations. Their generic names improve discovery but do
+not add profiles, reinterpret evidence, or widen any correctness, lifecycle,
+hardware, performance, or production claim. Legacy hardware- or model-named
+paths remain compatibility and evidence entry points; immutable copies under
+`results/` preserve existing source closures and archive reproducibility.
+
 ## Build and verify
 
 ```bash

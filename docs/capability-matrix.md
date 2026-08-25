@@ -9,6 +9,11 @@ live project is not a mature L5 production system.
 The sealed Prefix and token-relocation records below are independent scoped
 qualifications; neither widens the other's model, feature, hardware-attestation,
 performance, or production boundary.
+Capability-oriented qualification and verifier entry points are routing
+facades over manifest-bound implementations. Their generic names add no new
+profile or claim. Legacy hardware- or model-named paths remain compatibility
+and evidence entry points; immutable copies under `results/` preserve existing
+source closures and archive reproducibility.
 
 ## Levels
 
