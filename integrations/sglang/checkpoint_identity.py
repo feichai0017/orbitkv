@@ -1,16 +1,18 @@
 from __future__ import annotations
 
-import hashlib
 import json
+import sys
 from pathlib import Path
+
+SOURCE_ROOT = Path(__file__).resolve().parent / "src"
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
+
+from orbitkv_sglang.qualification_primitives import sha256_file as _sha256_file
 
 
 def sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return _sha256_file(path)
 
 
 def checkpoint_identity(model_path: Path, load_format: str) -> dict:

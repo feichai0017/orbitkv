@@ -14,6 +14,7 @@ import json
 import math
 import os
 import statistics
+import sys
 from datetime import datetime, timedelta
 from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Sequence
@@ -21,8 +22,16 @@ from typing import Any, Iterable, Sequence
 
 ROOT = Path(__file__).resolve().parents[1]
 INTEGRATION_ROOT = ROOT / "integrations/sglang"
+SOURCE_ROOT = INTEGRATION_ROOT / "src"
 ADAPTER_ROOT = INTEGRATION_ROOT / "src/orbitkv_sglang"
 BENCHMARK_PATH = INTEGRATION_ROOT / "bench_token_relocation.py"
+sys.dont_write_bytecode = True
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
+
+from orbitkv_sglang import qualification_primitives  # noqa: E402
+
+
 RECORD_SCHEMA = "orbitkv.sglang-v0517-token-relocation-single-run.v1"
 SUMMARY_SCHEMA = (
     "orbitkv.sglang-v0517-token-relocation-diagnostic-summary.v1"
@@ -270,18 +279,17 @@ SHA256_LENGTH = 64
 
 
 def canonical_digest(value: Any) -> str:
-    encoded = json.dumps(
-        value, sort_keys=True, separators=(",", ":"), ensure_ascii=True
-    ).encode("ascii")
-    return hashlib.sha256(encoded).hexdigest()
+    try:
+        return qualification_primitives.canonical_json_sha256(value)
+    except ValueError as error:
+        cause = error.__cause__
+        if isinstance(cause, (TypeError, ValueError)):
+            raise cause from None
+        raise
 
 
 def _sha256_file(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as stream:
-        for chunk in iter(lambda: stream.read(1024 * 1024), b""):
-            digest.update(chunk)
-    return digest.hexdigest()
+    return qualification_primitives.sha256_file(path)
 
 
 def _current_adapter_identity() -> dict[str, Any]:
@@ -392,55 +400,45 @@ def _input_digest(inputs: Sequence[Sequence[int]]) -> str:
 
 
 def _strict_json(path: Path) -> dict[str, Any]:
-    def unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
-        result: dict[str, Any] = {}
-        for key, value in pairs:
-            if key in result:
-                raise ValueError(f"duplicate key {key!r}")
-            result[key] = value
-        return result
-
     try:
-        value = json.loads(
-            path.read_text(encoding="utf-8"),
-            object_pairs_hook=unique_object,
-            parse_constant=lambda value: (_ for _ in ()).throw(
-                ValueError(f"non-finite number {value}")
-            ),
+        value = qualification_primitives.parse_strict_json_object(
+            path.read_text(encoding="utf-8")
         )
-    except (OSError, UnicodeError, json.JSONDecodeError, ValueError) as error:
+    except (OSError, UnicodeError) as error:
         raise RuntimeError(f"cannot load strict JSON record {path}: {error}") from error
-    if not isinstance(value, dict):
-        raise RuntimeError(f"JSON record is not an object: {path}")
+    except ValueError as error:
+        if str(error) == "strict JSON value must be an object":
+            raise RuntimeError(f"JSON record is not an object: {path}") from error
+        detail = error.__cause__ or error
+        message = str(detail)
+        message = message.replace(
+            "duplicate JSON object key ", "duplicate key ", 1
+        ).replace("non-finite JSON number ", "non-finite number ", 1)
+        raise RuntimeError(
+            f"cannot load strict JSON record {path}: {message}"
+        ) from error
     return value
 
 
 def _safe_relative(value: str) -> PurePosixPath:
-    if (
-        not isinstance(value, str)
-        or not value
-        or "\\" in value
-        or any(character in value for character in ("\x00", "\n", "\r"))
-    ):
-        raise RuntimeError(f"unsafe or non-canonical archive path: {value!r}")
-    path = PurePosixPath(value)
-    if (
-        path.is_absolute()
-        or path.as_posix() != value
-        or any(part in {"", ".", ".."} for part in path.parts)
-    ):
-        raise RuntimeError(f"unsafe or non-canonical archive path: {value!r}")
-    return path
+    try:
+        return qualification_primitives.canonical_relative_path(value)
+    except ValueError as error:
+        raise RuntimeError(
+            f"unsafe or non-canonical archive path: {value!r}"
+        ) from error
 
 
 def _require_exact_keys(value: Any, expected: Iterable[str], label: str) -> None:
     expected_set = set(expected)
-    actual = set(value) if isinstance(value, dict) else set()
-    if not isinstance(value, dict) or actual != expected_set:
+    try:
+        qualification_primitives.require_exact_keys(value, expected_set, label)
+    except ValueError as error:
+        actual = set(value) if isinstance(value, dict) else set()
         raise RuntimeError(
             f"{label} keys differ: missing={sorted(expected_set - actual)} "
             f"extra={sorted(actual - expected_set)}"
-        )
+        ) from error
 
 
 def _nonnegative_int(value: Any, label: str) -> int:
@@ -497,13 +495,10 @@ def _artifact_identity(value: Any, label: str) -> dict[str, Any]:
 
 
 def _require_sha256(value: Any, label: str) -> str:
-    if (
-        not isinstance(value, str)
-        or len(value) != SHA256_LENGTH
-        or any(character not in "0123456789abcdef" for character in value)
-    ):
-        raise RuntimeError(f"{label} is not a canonical SHA-256")
-    return value
+    try:
+        return qualification_primitives.require_sha256(value, label)
+    except ValueError as error:
+        raise RuntimeError(f"{label} is not a canonical SHA-256") from error
 
 
 def _validate_checkpoint(value: Any, label: str) -> None:
