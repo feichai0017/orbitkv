@@ -4,7 +4,8 @@
 
 `orbitkv-runtime` defines a small typed Python boundary between OrbitKV's
 ownership runtime and engine-owned KV tensor arenas. `orbitkv-reference` is a
-production-reusable tensor-arena implementation and executable contract oracle.
+package-tested reusable tensor-arena implementation and executable contract
+oracle.
 It is not a second serving engine: it has no scheduler, attention kernel, model
 runner, page allocator, free list, or policy for deciding which state is live.
 
