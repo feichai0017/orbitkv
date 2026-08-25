@@ -1,0 +1,48 @@
+{
+  "batch_size": 4,
+  "epoch": 2,
+  "execution_order": [
+    "manager",
+    "stock"
+  ],
+  "hardware_attested": false,
+  "input_identity": {
+    "library_sha256": "c0ebbac79a2e1a2a7469d381d51a012110d6b3792b848b11e0fa3c8273c506a0",
+    "model_config_sha256": "b90b86f35c8e6925ef74ee04d0e758f0a845c83a42089ad82bbaa948de9b4204",
+    "model_index_sha256": "d8a08838a613b025eb7952ed9db11696213e57e76a375661ef5c12f9dd5dcf4e",
+    "model_weight_shards_sha256": "5d2c4457668ff6a8d4d214f7a1d013888a6ddb82a65f1173221bb61d386fd397",
+    "plan_sha256": "e6e41e81e88c03419eafdb533719c101bb4840802fc7427c72d0ba66ef8d778c",
+    "python_environment_sha256": "82763a52ce4bd07c9d1f1ff46122f991a4a207c6e69e93052e1a8b4e2fd9f3b9",
+    "sglang_checkouts_sha256": "97d425626d0c0838415101ec236b0e375d0427f7c9ed94d2d89d3344928bdf05",
+    "source_commit": "7385ee586974ffd09dffecc415d52098f373e32a",
+    "source_inventory_sha256": "2cf01995be39f4c90bdbdf4413f3ac3a20d8af18387a6c37b5f3160c6d544be2",
+    "state_plan_sha256": "a8cab7f35dd7b839979236253b49a864d0791ac1b57f2a84fc4c2d31076958b5"
+  },
+  "iterations": 5,
+  "manager_iteration_seconds": [
+    1.6189458779990673,
+    0.7630272246897221,
+    0.761814970523119,
+    0.7702712491154671,
+    0.7667581997811794
+  ],
+  "manager_output_sha256": "0639646e1a98bf91eb7c9d31ebfe0b8ea57455e16a2e112f5e62595c764f39a4",
+  "manager_record": "qwen3.5-0.8b-b4-manager.json",
+  "pair_key_sha256": "32d2bd17a17bbbc49c27da64f8a3701e0b8514c0c76f8c9b9abe3f43480d6b2e",
+  "preflight_bound": true,
+  "profile": "hybrid_full_gdn",
+  "qualification_claim": "pair_verification_only_not_qualified",
+  "qualified": false,
+  "schema": "orbitkv.abi8-h20-pair-verification.v1",
+  "status": "passed",
+  "stock_iteration_seconds": [
+    1.8751880750060081,
+    0.8149258382618427,
+    0.7033270336687565,
+    0.7013612017035484,
+    0.6998201832175255
+  ],
+  "stock_output_sha256": "0639646e1a98bf91eb7c9d31ebfe0b8ea57455e16a2e112f5e62595c764f39a4",
+  "stock_record": "qwen3.5-0.8b-b4-stock.json",
+  "workload_profile": "fresh_prompt"
+}

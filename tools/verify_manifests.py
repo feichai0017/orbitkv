@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib.util
 import json
 import os
 import re
 import subprocess
 import sys
 import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 
 
@@ -16,6 +18,70 @@ LOCAL_PUBLISH_GIT = Path("/tmp/orbitkv-publish.git")
 ABI8_H20_SCHEMA = "orbitkv.abi8-h20-sealed-manifest.v1"
 ABI8_H20_MANIFEST = (
     ROOT / "results/h20-sglang-v0517-abi8-full-hybrid-20260823/manifest.json"
+)
+QWEN35_H20_PAIR_EVIDENCE_SCHEMA = (
+    "orbitkv.abi8-h20-qwen35-pair-evidence.v1"
+)
+QWEN35_H20_PAIR_EVIDENCE_MANIFEST = (
+    ROOT
+    / "results/h20-sglang-v0517-abi8-qwen35-fixed-state-"
+    "pair-verification-20260823/manifest.json"
+)
+QWEN35_H20_PAIR_EVIDENCE_VERIFIER = (
+    ROOT / "tools/verify_qwen35_h20_pair_evidence.py"
+)
+QWEN38_H20_DIAGNOSTIC_SCHEMA = (
+    "orbitkv.abi8-h20-qwen38-fp8-diagnostic-manifest.v1"
+)
+QWEN38_H20_DIAGNOSTIC_MANIFEST = (
+    ROOT
+    / "results/h20-sglang-v0517-abi8-qwen38-fp8-"
+    "diagnostic-20260824/manifest.json"
+)
+QWEN38_H20_DIAGNOSTIC_VERIFIER = (
+    QWEN38_H20_DIAGNOSTIC_MANIFEST.parent / "verify.py"
+)
+QWEN38_H20_DIAGNOSTIC_VERIFIER_SHA256 = (
+    "d17adbf52576bd31c9e91eec45cb0c1a4df32163ea9a5d67eddba9d88033b6d5"
+)
+TOKEN_RELOCATION_H20_DIAGNOSTIC_SCHEMA = (
+    "orbitkv.sglang-v0517-token-relocation-diagnostic-manifest.v1"
+)
+TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST = (
+    ROOT
+    / "results/h20-sglang-v0517-token-relocation-"
+    "diagnostic-20260825/manifest.json"
+)
+TOKEN_RELOCATION_H20_DIAGNOSTIC_VERIFIER = (
+    ROOT / "tools/verify_token_relocation_h20_evidence.py"
+)
+TOKEN_RELOCATION_H20_DIAGNOSTIC_ARTIFACTS = (
+    "README.md",
+    "component-conformance.xml",
+    "summary.json",
+    *(
+        f"records/epoch-{epoch:03d}/qwen2.5-0.5b-b{batch}-{mode}.json"
+        for epoch in range(1, 5)
+        for batch in (1, 4)
+        for mode in ("naive", "relocate")
+    ),
+)
+TOKEN_RELOCATION_H20_DIAGNOSTIC_DIRECTORIES = (
+    "records",
+    *(f"records/epoch-{epoch:03d}" for epoch in range(1, 5)),
+)
+TOKEN_RELOCATION_COMPONENT_CASES = (
+    "test_opaque_payload_coordinates_are_embedded_without_collisions",
+    *(
+        "test_stale_member_makes_append_and_relocation_prepare_"
+        f"failure_atomic[{batch}]"
+        for batch in (1, 4, 32)
+    ),
+    *(
+        "test_real_cuda_opaque_token_relocation_conformance"
+        f"[{batch}]"
+        for batch in (1, 4, 32)
+    ),
 )
 ABI8_H20_QUALIFICATION_STATUS = (
     "abi8_sglang_full_full_swa_prefix_correctness_qualified_performance_pending"
@@ -88,7 +154,12 @@ _DEFAULT_MANIFESTS = (
     ROOT
     / "results/h20-sglang-v0517-abi5-v5-grouped-release-20260821/manifest.json",
 )
-DEFAULT_MANIFESTS = _DEFAULT_MANIFESTS + (ABI8_H20_MANIFEST,)
+DEFAULT_MANIFESTS = _DEFAULT_MANIFESTS + (
+    ABI8_H20_MANIFEST,
+    QWEN35_H20_PAIR_EVIDENCE_MANIFEST,
+    QWEN38_H20_DIAGNOSTIC_MANIFEST,
+    TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST,
+)
 
 
 def sha256(data: bytes) -> str:
@@ -528,6 +599,356 @@ def historical_unsealed_sources(path: Path, manifest: dict[str, object]) -> tupl
     return True, 4
 
 
+def verify_qwen35_h20_pair_evidence(root: Path) -> int:
+    """Run the trusted checkout verifier for a Qwen3.5 evidence archive."""
+
+    spec = importlib.util.spec_from_file_location(
+        "_orbitkv_verify_qwen35_h20_pair_evidence",
+        QWEN35_H20_PAIR_EVIDENCE_VERIFIER,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"{root}: cannot load trusted Qwen3.5 pair-evidence verifier"
+        )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    verify_archive = getattr(module, "verify_archive", None)
+    if not callable(verify_archive):
+        raise RuntimeError(
+            f"{root}: trusted Qwen3.5 pair-evidence verifier has no API"
+        )
+    result = verify_archive(root)
+    expected = {
+        "schema": (
+            "orbitkv.abi8-h20-qwen35-pair-evidence-verification.v1"
+        ),
+        "status": "passed",
+        "epoch_count": 3,
+        "pair_count": 6,
+        "abi_version": 8,
+        "exact_symbol_count": 40,
+        "qualified": False,
+        "hardware_attested": False,
+        "performance_go": False,
+    }
+    if not isinstance(result, dict) or any(
+        name not in result
+        or type(result[name]) is not type(value)
+        or result[name] != value
+        for name, value in expected.items()
+    ):
+        raise RuntimeError(
+            f"{root}: trusted Qwen3.5 pair-evidence verification is incomplete"
+        )
+    return expected["pair_count"]
+
+
+def verify_qwen38_h20_diagnostic(root: Path) -> int:
+    """Run the hash-pinned verifier for the unsealed Qwen3.8 diagnostic."""
+
+    expected_root = QWEN38_H20_DIAGNOSTIC_MANIFEST.parent.resolve(strict=True)
+    if root.resolve(strict=True) != expected_root:
+        raise RuntimeError(
+            f"{root}: Qwen3.8 diagnostic verifier is bound to {expected_root}"
+        )
+    verifier = QWEN38_H20_DIAGNOSTIC_VERIFIER.resolve(strict=True)
+    if sha256(verifier.read_bytes()) != QWEN38_H20_DIAGNOSTIC_VERIFIER_SHA256:
+        raise RuntimeError(f"{verifier}: trusted diagnostic verifier hash differs")
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(verifier)],
+            cwd=ROOT,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        result = json.loads(completed.stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            f"{root}: trusted Qwen3.8 diagnostic verifier failed"
+        ) from error
+    expected = {
+        "schema": "orbitkv.abi8-h20-qwen38-fp8-diagnostic-verification.v1",
+        "status": "passed",
+        "evidence_class": "diagnostic_only",
+        "artifact_count": 43,
+        "record_count": 16,
+        "stderr_log_count": 16,
+        "pair_count": 8,
+        "hot_sample_count_per_mode_per_batch": 16,
+        "sealed": False,
+        "source_clean": False,
+        "source_dirty": True,
+        "preflight_bound": False,
+        "hardware_attested": False,
+        "qualified": False,
+        "performance_go": False,
+    }
+    if result != expected:
+        raise RuntimeError(
+            f"{root}: trusted Qwen3.8 diagnostic verification is incomplete"
+        )
+    return expected["artifact_count"]
+
+
+def verify_token_relocation_h20_diagnostic(root: Path) -> int:
+    """Verify the unsealed token-relocation diagnostic with trusted code."""
+
+    expected_root = (
+        TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST.parent.resolve(strict=True)
+    )
+    if root.resolve(strict=True) != expected_root:
+        raise RuntimeError(
+            f"{root}: token-relocation diagnostic verifier is bound to "
+            f"{expected_root}"
+        )
+    path = root / "manifest.json"
+    manifest = load_json(path)
+    if not isinstance(manifest, dict):
+        raise RuntimeError(f"{path}: manifest must be a JSON object")
+
+    expected_values = {
+        "schema": TOKEN_RELOCATION_H20_DIAGNOSTIC_SCHEMA,
+        "artifact_count": len(TOKEN_RELOCATION_H20_DIAGNOSTIC_ARTIFACTS),
+        "directories": list(TOKEN_RELOCATION_H20_DIAGNOSTIC_DIRECTORIES),
+        "integrity_scope": (
+            "all_payload_artifacts_except_manifest_and_checksum_index"
+        ),
+        "evidence_class": "diagnostic_only",
+        "diagnostic_only": True,
+        "qualification_claim": "diagnostic_only_not_qualified",
+        "sealed": False,
+        "source_clean": False,
+        "source_dirty": True,
+        "hardware_attested": False,
+        "qualified": False,
+        "performance_go": False,
+        "record_schema": (
+            "orbitkv.sglang-v0517-token-relocation-single-run.v1"
+        ),
+        "summary_schema": (
+            "orbitkv.sglang-v0517-token-relocation-diagnostic-summary.v1"
+        ),
+        "epoch_count": 4,
+        "batch_sizes": [1, 4],
+        "record_count": 16,
+        "pair_count": 8,
+    }
+    expected_keys = set(expected_values) | {
+        "artifacts",
+        "identity",
+        "observed_hardware",
+    }
+    if set(manifest) != expected_keys:
+        raise RuntimeError(f"{path}: token-relocation manifest keys differ")
+    for field, expected in expected_values.items():
+        value = manifest.get(field)
+        if type(value) is not type(expected) or value != expected:
+            raise RuntimeError(
+                f"{path}: token-relocation manifest {field} differs"
+            )
+
+    artifacts = manifest.get("artifacts")
+    if not isinstance(artifacts, dict) or set(artifacts) != set(
+        TOKEN_RELOCATION_H20_DIAGNOSTIC_ARTIFACTS
+    ):
+        raise RuntimeError(
+            f"{path}: token-relocation artifact inventory differs"
+        )
+    expected_files = set(TOKEN_RELOCATION_H20_DIAGNOSTIC_ARTIFACTS) | {
+        "manifest.json",
+        "SHA256SUMS",
+    }
+    actual_files = sealed_regular_files(root)
+    if actual_files != expected_files:
+        raise RuntimeError(
+            f"{path}: token-relocation file inventory differs; "
+            f"missing={sorted(expected_files - actual_files)}, "
+            f"unlisted={sorted(actual_files - expected_files)}"
+        )
+    actual_directories = {
+        (Path(current_root) / name).relative_to(root).as_posix()
+        for current_root, directory_names, _ in os.walk(
+            root, followlinks=False
+        )
+        for name in directory_names
+    }
+    expected_directories = set(TOKEN_RELOCATION_H20_DIAGNOSTIC_DIRECTORIES)
+    if actual_directories != expected_directories:
+        raise RuntimeError(
+            f"{path}: token-relocation directory inventory differs; "
+            f"missing={sorted(expected_directories - actual_directories)}, "
+            f"unlisted={sorted(actual_directories - expected_directories)}"
+        )
+    for relative_path, identity in artifacts.items():
+        safe_path = checked_sealed_relative_path(relative_path)
+        if (
+            not isinstance(identity, dict)
+            or set(identity) != {"bytes", "sha256"}
+            or type(identity.get("bytes")) is not int
+            or identity["bytes"] < 0
+            or not isinstance(identity.get("sha256"), str)
+            or SHA256_PATTERN.fullmatch(identity["sha256"]) is None
+        ):
+            raise RuntimeError(
+                f"{path}: invalid artifact identity for {relative_path}"
+            )
+        artifact_path = root / safe_path
+        if artifact_path.stat().st_size != identity["bytes"]:
+            raise RuntimeError(
+                f"{path}: artifact byte count differs for {relative_path}"
+            )
+        if sha256(artifact_path.read_bytes()) != identity["sha256"]:
+            raise RuntimeError(
+                f"{path}: artifact hash differs for {relative_path}"
+            )
+
+    expected_sums = {
+        relative_path: identity["sha256"]
+        for relative_path, identity in artifacts.items()
+    }
+    expected_sums["manifest.json"] = sha256(path.read_bytes())
+    expected_sums_text = "".join(
+        f"{digest}  {relative_path}\n"
+        for relative_path, digest in sorted(expected_sums.items())
+    )
+    sums_path = root / "SHA256SUMS"
+    if sums_path.read_text(encoding="utf-8") != expected_sums_text:
+        raise RuntimeError(
+            f"{sums_path}: contents do not match the diagnostic inventory"
+        )
+
+    verifier = TOKEN_RELOCATION_H20_DIAGNOSTIC_VERIFIER.resolve(strict=True)
+    environment = dict(os.environ)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    try:
+        completed = subprocess.run(
+            [sys.executable, str(verifier), str(root)],
+            cwd=ROOT,
+            env=environment,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=120,
+        )
+        result = json.loads(completed.stdout)
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
+        raise RuntimeError(
+            f"{root}: trusted token-relocation diagnostic verifier failed"
+        ) from error
+    if not isinstance(result, dict):
+        raise RuntimeError(
+            f"{root}: trusted token-relocation verification is incomplete"
+        )
+    stored_summary = load_json(root / "summary.json")
+    if result != stored_summary:
+        raise RuntimeError(
+            f"{root}: stored token-relocation summary differs from records"
+        )
+    trusted_values = {
+        "schema": expected_values["summary_schema"],
+        "status": "diagnostic_pair_verification_passed",
+        "evidence_class": "diagnostic_only",
+        "diagnostic_only": True,
+        "qualification_claim": "diagnostic_only_not_qualified",
+        "sealed": False,
+        "source_clean": False,
+        "source_dirty": True,
+        "hardware_attested": False,
+        "qualified": False,
+        "performance_go": False,
+        "epoch_count": 4,
+        "batch_sizes": [1, 4],
+        "record_count": 16,
+        "pair_count": 8,
+        "all_pairs_passed": True,
+        "exact_token_equality": True,
+        "manager_census_fully_drained": True,
+        "failure_and_quarantine_counters_zero": True,
+    }
+    if any(
+        name not in result
+        or type(result[name]) is not type(expected)
+        or result[name] != expected
+        for name, expected in trusted_values.items()
+    ):
+        raise RuntimeError(
+            f"{root}: trusted token-relocation verification is incomplete"
+        )
+    hardware = result.get("hardware")
+    if (
+        not isinstance(hardware, dict)
+        or manifest.get("identity") != result.get("identity")
+        or manifest.get("observed_hardware")
+        != {
+            "name": hardware.get("observed_name"),
+            "uuid": hardware.get("observed_uuid"),
+            "snapshot_count": hardware.get("snapshot_count"),
+            "attestation": hardware.get("attestation"),
+        }
+    ):
+        raise RuntimeError(
+            f"{root}: token-relocation manifest identity differs from records"
+        )
+    verify_token_relocation_component_conformance(
+        root / "component-conformance.xml", manifest["observed_hardware"]
+    )
+    return expected_values["artifact_count"]
+
+
+def verify_token_relocation_component_conformance(
+    path: Path, observed_hardware: dict[str, object]
+) -> None:
+    """Validate real-CUDA cases and bind their JUnit record to the GPU."""
+
+    try:
+        document = ET.parse(path)
+    except (OSError, ET.ParseError) as error:
+        raise RuntimeError(f"{path}: invalid component-conformance XML") from error
+    root = document.getroot()
+    suites = [root] if root.tag == "testsuite" else root.findall("testsuite")
+    if len(suites) != 1:
+        raise RuntimeError(f"{path}: expected exactly one test suite")
+    suite = suites[0]
+    expected_counts = {
+        "tests": str(len(TOKEN_RELOCATION_COMPONENT_CASES)),
+        "errors": "0",
+        "failures": "0",
+        "skipped": "0",
+    }
+    if any(suite.get(name) != value for name, value in expected_counts.items()):
+        raise RuntimeError(f"{path}: component-conformance counts differ")
+    cases = tuple(case.get("name") for case in suite.findall("testcase"))
+    if len(cases) != len(set(cases)) or set(cases) != set(
+        TOKEN_RELOCATION_COMPONENT_CASES
+    ):
+        raise RuntimeError(f"{path}: component-conformance cases differ")
+
+    property_nodes = suite.findall("./properties/property")
+    properties = {node.get("name"): node.get("value") for node in property_nodes}
+    if len(properties) != len(property_nodes):
+        raise RuntimeError(f"{path}: duplicate component-conformance property")
+    expected_properties = {
+        "orbitkv.cuda.available": "true",
+        "orbitkv.cuda.device_name": observed_hardware.get("name"),
+        "orbitkv.cuda.device_uuid": observed_hardware.get("uuid"),
+    }
+    if any(properties.get(name) != value for name, value in expected_properties.items()):
+        raise RuntimeError(
+            f"{path}: component-conformance device identity differs"
+        )
+    for name in ("orbitkv.cuda.runtime_version", "orbitkv.torch.version"):
+        value = properties.get(name)
+        if not isinstance(value, str) or not value:
+            raise RuntimeError(
+                f"{path}: component-conformance runtime identity is incomplete"
+            )
+
+
 def verify_manifest(path: Path) -> int:
     path = Path(os.path.abspath(path))
     manifest = load_json(path)
@@ -536,6 +957,25 @@ def verify_manifest(path: Path) -> int:
     schema = manifest.get("schema")
     if schema == ABI8_H20_SCHEMA:
         return verify_abi8_h20_manifest(path, manifest)
+    if schema == QWEN35_H20_PAIR_EVIDENCE_SCHEMA:
+        if path.name != "manifest.json":
+            raise RuntimeError(
+                f"{path}: Qwen3.5 pair-evidence manifest must be named manifest.json"
+            )
+        return verify_qwen35_h20_pair_evidence(path.parent)
+    if schema == QWEN38_H20_DIAGNOSTIC_SCHEMA:
+        if path.name != "manifest.json":
+            raise RuntimeError(
+                f"{path}: Qwen3.8 diagnostic manifest must be named manifest.json"
+            )
+        return verify_qwen38_h20_diagnostic(path.parent)
+    if schema == TOKEN_RELOCATION_H20_DIAGNOSTIC_SCHEMA:
+        if path.name != "manifest.json":
+            raise RuntimeError(
+                f"{path}: token-relocation diagnostic manifest must be named "
+                "manifest.json"
+            )
+        return verify_token_relocation_h20_diagnostic(path.parent)
     if (
         isinstance(schema, str)
         and schema.startswith("orbitkv.abi8-h20-sealed-manifest.")

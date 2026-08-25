@@ -1,0 +1,36 @@
+{
+  "batch_size": 1,
+  "epoch": 4,
+  "execution_order": [
+    "stock",
+    "manager"
+  ],
+  "hardware_attested": false,
+  "iterations": 5,
+  "manager_iteration_seconds": [
+    4.174938332289457,
+    3.0900151655077934,
+    2.8484503142535686,
+    2.719040486961603,
+    2.9649492502212524
+  ],
+  "manager_output_sha256": "4b2ff92e1f048c499bf8e77d4d7a80b75a6d8377faead7d17ae8bf06e64654df",
+  "manager_record": "b1-manager.json",
+  "pair_key_sha256": "080802e12ac4371666899b31a7a274361e77903b306b538bc8b6c891e5b5c4a1",
+  "preflight_bound": false,
+  "profile": "hybrid_full_gdn",
+  "qualification_claim": "pair_verification_only_not_qualified",
+  "qualified": false,
+  "schema": "orbitkv.abi8-h20-pair-verification.v1",
+  "status": "passed",
+  "stock_iteration_seconds": [
+    3.9146739430725574,
+    2.7401961982250214,
+    2.8853510096669197,
+    3.2038155384361744,
+    3.028289809823036
+  ],
+  "stock_output_sha256": "4b2ff92e1f048c499bf8e77d4d7a80b75a6d8377faead7d17ae8bf06e64654df",
+  "stock_record": "b1-stock.json",
+  "workload_profile": "fresh_prompt"
+}
