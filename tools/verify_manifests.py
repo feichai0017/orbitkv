@@ -47,14 +47,18 @@ QWEN38_H20_DIAGNOSTIC_VERIFIER_SHA256 = (
 TOKEN_RELOCATION_H20_DIAGNOSTIC_SCHEMA = (
     "orbitkv.sglang-v0517-token-relocation-diagnostic-manifest.v1"
 )
+TOKEN_RELOCATION_H20_SEALED_SCHEMA = (
+    "orbitkv.abi8-h20-token-relocation-sealed-manifest.v1"
+)
 TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST = (
     ROOT
     / "results/h20-sglang-v0517-token-relocation-"
     "diagnostic-20260825/manifest.json"
 )
-TOKEN_RELOCATION_H20_DIAGNOSTIC_VERIFIER = (
+TOKEN_RELOCATION_H20_VERIFIER = (
     ROOT / "tools/verify_token_relocation_h20_evidence.py"
 )
+TOKEN_RELOCATION_H20_DIAGNOSTIC_VERIFIER = TOKEN_RELOCATION_H20_VERIFIER
 TOKEN_RELOCATION_H20_DIAGNOSTIC_ARTIFACTS = (
     "README.md",
     "component-conformance.xml",
@@ -900,6 +904,65 @@ def verify_token_relocation_h20_diagnostic(root: Path) -> int:
     return expected_values["artifact_count"]
 
 
+def verify_token_relocation_h20_sealed(root: Path) -> int:
+    """Verify a portable sealed token-relocation archive with trusted code."""
+
+    spec = importlib.util.spec_from_file_location(
+        "_orbitkv_verify_token_relocation_h20_evidence",
+        TOKEN_RELOCATION_H20_VERIFIER,
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError(
+            f"{root}: cannot load trusted token-relocation verifier"
+        )
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    verify_sealed_archive = getattr(module, "verify_sealed_archive", None)
+    if not callable(verify_sealed_archive):
+        raise RuntimeError(
+            f"{root}: trusted token-relocation verifier has no sealed API"
+        )
+    result = verify_sealed_archive(root)
+    expected = {
+        "schema": (
+            "orbitkv.abi8-h20-token-relocation-seal-verification.v1"
+        ),
+        "status": "passed",
+        "qualification_status": (
+            "abi8_sglang_full_token_relocation_correctness_lifecycle_"
+            "qualified_performance_pending"
+        ),
+        "qualification_claim": (
+            "scoped_correctness_and_lifecycle_only"
+        ),
+        "sealed": True,
+        "source_clean": True,
+        "preflight_bound": True,
+        "hardware_attested": False,
+        "qualified": True,
+        "performance_go": False,
+        "epoch_count": 4,
+        "record_count": 16,
+        "pair_count": 8,
+        "abi_version": 8,
+        "exact_symbol_count": 40,
+        "all_pairs_passed": True,
+        "exact_token_equality": True,
+        "manager_census_fully_drained": True,
+        "failure_and_quarantine_counters_zero": True,
+    }
+    if not isinstance(result, dict) or any(
+        name not in result
+        or type(result[name]) is not type(value)
+        or result[name] != value
+        for name, value in expected.items()
+    ):
+        raise RuntimeError(
+            f"{root}: trusted token-relocation sealed verification is incomplete"
+        )
+    return expected["pair_count"]
+
+
 def verify_token_relocation_component_conformance(
     path: Path, observed_hardware: dict[str, object]
 ) -> None:
@@ -976,9 +1039,21 @@ def verify_manifest(path: Path) -> int:
                 "manifest.json"
             )
         return verify_token_relocation_h20_diagnostic(path.parent)
+    if schema == TOKEN_RELOCATION_H20_SEALED_SCHEMA:
+        if path.name != "manifest.json":
+            raise RuntimeError(
+                f"{path}: token-relocation sealed manifest must be named "
+                "manifest.json"
+            )
+        return verify_token_relocation_h20_sealed(path.parent)
     if (
         isinstance(schema, str)
-        and schema.startswith("orbitkv.abi8-h20-sealed-manifest.")
+        and schema.startswith(
+            (
+                "orbitkv.abi8-h20-sealed-manifest.",
+                "orbitkv.abi8-h20-token-relocation-sealed-manifest.",
+            )
+        )
     ) or "artifacts" in manifest:
         raise RuntimeError(f"{path}: unsupported sealed manifest schema")
     historical_commit = manifest.get("base_source_commit") or manifest.get(

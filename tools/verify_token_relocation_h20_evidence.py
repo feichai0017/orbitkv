@@ -15,7 +15,7 @@ import math
 import os
 import statistics
 from datetime import datetime, timedelta
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Iterable, Sequence
 
 
@@ -59,6 +59,12 @@ CHECKPOINT_WEIGHT_SHA256 = (
     "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe"
 )
 CHECKPOINT_WEIGHT_BYTES = 988_097_824
+DIAGNOSTIC_HARNESS_SHA256 = (
+    "7163d7085c78715b77392da9fd5c90a2bc8d3bf14ef0b1b26fec369ce5b6ea5d"
+)
+DIAGNOSTIC_ADAPTER_IDENTITY_SHA256 = (
+    "db5ac3fab68b1e6d61c6962befde570147f855277b92ca37b54962ac365307b8"
+)
 
 TRIGGER_TOKENS = 48
 DECODE_TOKENS = 41
@@ -288,6 +294,66 @@ def _current_adapter_identity() -> dict[str, Any]:
     }
 
 
+def _verify_adapter_source_identity(
+    source_root: Path, expected: dict[str, Any]
+) -> None:
+    """Bind an adapter inventory to an explicit checkout/archive root."""
+
+    requested = Path(os.path.abspath(source_root.expanduser()))
+    if requested.is_symlink():
+        raise RuntimeError("expected adapter source root must not be a symlink")
+    try:
+        root = requested.resolve(strict=True)
+    except OSError as error:
+        raise RuntimeError(
+            f"cannot resolve expected adapter source root {requested}: {error}"
+        ) from error
+    if (
+        not root.is_dir()
+        or root.name != "src"
+        or root.parent.name != "sglang"
+        or root.parent.parent.name != "integrations"
+    ):
+        raise RuntimeError(
+            "expected adapter source root must end in integrations/sglang/src"
+        )
+    repository_root = root.parents[2]
+    files = expected.get("files") if isinstance(expected, dict) else None
+    if not isinstance(files, list) or not files:
+        raise RuntimeError("expected adapter identity is invalid")
+    indexed: dict[str, str] = {}
+    for item in files:
+        if (
+            not isinstance(item, dict)
+            or set(item) != {"path", "sha256"}
+            or not isinstance(item.get("path"), str)
+        ):
+            raise RuntimeError("expected adapter identity is invalid")
+        relative = _safe_relative(item["path"])
+        digest = _require_sha256(
+            item.get("sha256"), f"adapter source {relative} SHA-256"
+        )
+        name = relative.as_posix()
+        if name in indexed:
+            raise RuntimeError(f"duplicate adapter source path: {name}")
+        indexed[name] = digest
+    expected_paths = {
+        "integrations/sglang/pyproject.toml",
+        "integrations/sglang/prepare_pinned_checkout.py",
+        "integrations/sglang/patches/v0.5.17-orbitkv-fail-closed.patch",
+        *(
+            path.relative_to(repository_root).as_posix()
+            for path in sorted((root / "orbitkv_sglang").rglob("*.py"))
+        ),
+    }
+    if set(indexed) != expected_paths:
+        raise RuntimeError("adapter source closure is incomplete or excessive")
+    for name, digest in indexed.items():
+        path = repository_root / name
+        if path.is_symlink() or not path.is_file() or _sha256_file(path) != digest:
+            raise RuntimeError(f"adapter source differs from identity: {name}")
+
+
 def _fresh_input_ids(
     *, requests: int, prompt_tokens: int, vocab_size: int, seed: int,
     iteration: int, token_upper_bound: int,
@@ -339,6 +405,24 @@ def _strict_json(path: Path) -> dict[str, Any]:
     if not isinstance(value, dict):
         raise RuntimeError(f"JSON record is not an object: {path}")
     return value
+
+
+def _safe_relative(value: str) -> PurePosixPath:
+    if (
+        not isinstance(value, str)
+        or not value
+        or "\\" in value
+        or any(character in value for character in ("\x00", "\n", "\r"))
+    ):
+        raise RuntimeError(f"unsafe or non-canonical archive path: {value!r}")
+    path = PurePosixPath(value)
+    if (
+        path.is_absolute()
+        or path.as_posix() != value
+        or any(part in {"", ".", ".."} for part in path.parts)
+    ):
+        raise RuntimeError(f"unsafe or non-canonical archive path: {value!r}")
+    return path
 
 
 def _require_exact_keys(value: Any, expected: Iterable[str], label: str) -> None:
@@ -1257,6 +1341,7 @@ def _validate_h20(
 def _validate_record(
     record: dict[str, Any], epoch: int, batch: int, mode: str, label: str,
     *, expected_harness_sha256: str, expected_adapter: dict[str, Any],
+    expected_adapter_source_root: Path | None = None,
     expected_iterations: int = EXPECTED_ITERATIONS,
 ) -> dict[str, Any]:
     _require_exact_keys(record, RECORD_KEYS, label)
@@ -1319,20 +1404,36 @@ def _validate_record(
     if loader != expected_loader:
         raise RuntimeError(f"{label} source loader identity is invalid")
     plugin = source.get("plugin_selection")
-    adapter_source_root = (ROOT / "integrations/sglang/src").resolve()
-    expected_module_root = (adapter_source_root / "orbitkv_sglang").resolve()
+    trusted_adapter_source_root = (
+        ROOT / "integrations/sglang/src"
+        if expected_adapter_source_root is None
+        else Path(expected_adapter_source_root)
+    ).expanduser().resolve()
     plugin_module = (
         Path(plugin.get("module", "")).resolve()
         if isinstance(plugin, dict)
         else Path("/invalid")
     )
+    recorded_adapter_roots = [
+        path
+        for value in record.get("environment", {}).get("PYTHONPATH", "").split(
+            os.pathsep
+        )
+        if value and (path := Path(value).resolve()).name == "src"
+        and (path / "orbitkv_sglang").as_posix()
+    ]
+    if not recorded_adapter_roots:
+        raise RuntimeError(f"{label} PYTHONPATH omits its adapter source root")
     if (
         not isinstance(plugin, dict)
         or set(plugin) != {*MANAGER_ENTRYPOINT.keys(), "module"}
         or any(plugin.get(name) != value for name, value in MANAGER_ENTRYPOINT.items())
         or not isinstance(plugin.get("module"), str)
         or Path(plugin["module"]).name not in {"plugin.py", "__init__.py"}
-        or not plugin_module.is_relative_to(expected_module_root)
+        or not any(
+            plugin_module.is_relative_to(root / "orbitkv_sglang")
+            for root in recorded_adapter_roots
+        )
     ):
         raise RuntimeError(f"{label} manager plugin identity is invalid")
     adapter = source.get("adapter")
@@ -1369,15 +1470,13 @@ def _validate_record(
         or not _same_path(arguments["--sglang-root"], source.get("root"))
     ):
         raise RuntimeError(f"{label} command does not bind source artifacts")
-    python_paths = [
-        Path(value).resolve()
-        for value in record["environment"]["PYTHONPATH"].split(os.pathsep)
-        if value
-    ]
-    if adapter_source_root not in python_paths:
-        raise RuntimeError(f"{label} PYTHONPATH omits the current adapter source root")
-    if not plugin_module.is_relative_to(adapter_source_root):
+    if not any(
+        plugin_module.is_relative_to(root / "orbitkv_sglang")
+        for root in recorded_adapter_roots
+    ):
         raise RuntimeError(f"{label} plugin module is outside PYTHONPATH")
+    if not trusted_adapter_source_root.name == "src":
+        raise RuntimeError(f"{label} expected adapter source root is invalid")
     runtime = record.get("runtime_identity")
     if (
         not isinstance(runtime, dict)
@@ -1411,6 +1510,27 @@ def _validate_record(
         "plan": plan,
         "runtime": runtime,
     }
+
+
+def validate_record(
+    record: dict[str, Any], epoch: int, batch: int, mode: str, label: str,
+    *, expected_harness_sha256: str, expected_adapter: dict[str, Any],
+    expected_adapter_source_root: Path | None = None,
+    expected_iterations: int = EXPECTED_ITERATIONS,
+) -> dict[str, Any]:
+    """Validate one record against explicitly supplied source identities."""
+
+    if expected_adapter_source_root is not None:
+        _verify_adapter_source_identity(
+            Path(expected_adapter_source_root), expected_adapter
+        )
+    return _validate_record(
+        record, epoch, batch, mode, label,
+        expected_harness_sha256=expected_harness_sha256,
+        expected_adapter=expected_adapter,
+        expected_adapter_source_root=expected_adapter_source_root,
+        expected_iterations=expected_iterations,
+    )
 
 
 def _equal(value: Any, expected: Any, label: str) -> None:
@@ -1548,22 +1668,58 @@ def _build_summary(
     }
 
 
-def verify_evidence(root: Path) -> dict[str, Any]:
+def verify_evidence(
+    root: Path, *,
+    expected_harness_sha256: str | None = None,
+    expected_adapter: dict[str, Any] | None = None,
+    expected_adapter_source_root: Path | None = None,
+) -> dict[str, Any]:
     records_root = _records_directory(Path(root))
     paths = _expected_paths()
-    current_harness_sha256 = _sha256_file(BENCHMARK_PATH)
-    current_adapter = _current_adapter_identity()
+    raw_records = {
+        key: _strict_json(records_root / relative)
+        for key, relative in paths.items()
+    }
+    baseline_source = raw_records[(1, 1, "naive")].get("source_identity")
+    if not isinstance(baseline_source, dict):
+        raise RuntimeError("baseline source identity is missing")
+    if expected_harness_sha256 is None:
+        expected_harness_sha256 = _require_sha256(
+            baseline_source.get("harness_sha256"),
+            "historical diagnostic harness SHA-256",
+        )
+        if expected_harness_sha256 != DIAGNOSTIC_HARNESS_SHA256:
+            raise RuntimeError(
+                "record relocation harness differs from this checkout "
+                "(pinned historical diagnostic identity)"
+            )
+    else:
+        _require_sha256(expected_harness_sha256, "expected harness SHA-256")
+    if expected_adapter is None:
+        candidate = baseline_source.get("adapter")
+        if not isinstance(candidate, dict):
+            raise RuntimeError("baseline adapter identity is missing")
+        expected_adapter = candidate
+        if canonical_digest(expected_adapter) != DIAGNOSTIC_ADAPTER_IDENTITY_SHA256:
+            raise RuntimeError(
+                "record adapter identity is not the pinned historical diagnostic"
+            )
+    if expected_adapter_source_root is not None:
+        _verify_adapter_source_identity(
+            Path(expected_adapter_source_root), expected_adapter
+        )
     records: dict[tuple[int, int, str], dict[str, Any]] = {}
     for key, relative in paths.items():
         epoch, batch, mode = key
         records[key] = _validate_record(
-            _strict_json(records_root / relative),
+            raw_records[key],
             epoch,
             batch,
             mode,
             relative,
-            expected_harness_sha256=current_harness_sha256,
-            expected_adapter=current_adapter,
+            expected_harness_sha256=expected_harness_sha256,
+            expected_adapter=expected_adapter,
+            expected_adapter_source_root=expected_adapter_source_root,
         )
 
     baseline = records[(1, 1, "naive")]
@@ -1727,6 +1883,22 @@ def verify_evidence(root: Path) -> dict[str, Any]:
         baseline["gpu_uuid"],
         sum(item["snapshot_count"] for item in records.values()),
     )
+
+
+def verify_sealed_archive(root: Path) -> dict[str, Any]:
+    """Delegate sealed-envelope verification without importing it eagerly."""
+
+    import importlib.util
+
+    path = Path(__file__).with_name("verify_token_relocation_h20_seal.py")
+    spec = importlib.util.spec_from_file_location(
+        "_orbitkv_token_relocation_seal", path
+    )
+    if spec is None or spec.loader is None:
+        raise RuntimeError("cannot load trusted token-relocation seal verifier")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.verify_sealed_archive(Path(root))
 
 
 def build_parser() -> argparse.ArgumentParser:
