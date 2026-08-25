@@ -177,6 +177,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
       - uses: dtolnay/rust-toolchain@stable
       - uses: actions/setup-python@v5
         with:
@@ -209,20 +211,15 @@ jobs:
         run: python -m compileall -q -f integrations/sglang
       - name: Check current integration sources for Python defects
         run: |
-          python -m pyflakes \
-            integrations/sglang/src \
-            integrations/sglang/tests \
-            integrations/sglang/bench_canonical_manager.py \
-            integrations/sglang/bench_capacity_pressure.py \
-            integrations/sglang/bench_compact_control.py \
-            integrations/sglang/bench_token_relocation.py \
-            integrations/sglang/qualify_abi8_h20.py \
-            integrations/sglang/qualify_token_relocation_h20.py \
-            tools/verify_token_relocation_h20_evidence.py \
-            tools/verify_token_relocation_h20_seal.py
+          {
+            find integrations/sglang/src integrations/sglang/tests tests \
+              -type f -name '*.py' -print0
+            find integrations/sglang tools \
+              -maxdepth 1 -type f -name '*.py' -print0
+          } | xargs -0 python -m pyflakes
       - name: Test the canonical SGLang v0.5.17 adapter
         env:
           CUDA_VISIBLE_DEVICES: ""
           PYTHONDONTWRITEBYTECODE: "1"
           PYTHONPATH: integrations/sglang/src
-        run: python -m pytest -q integrations/sglang/tests
+        run: python -m pytest -q integrations/sglang/tests tests

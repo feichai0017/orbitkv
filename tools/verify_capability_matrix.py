@@ -15,6 +15,17 @@ PUBLIC_SURFACES = (
     ROOT / "website/src/pages/docs/index.astro",
     ROOT / "website/src/pages/evidence.astro",
 )
+PUBLIC_SUMMARY_SURFACES = (
+    ROOT / "README.md",
+    ROOT / "website/src/data/site.ts",
+    ROOT / "website/src/pages/index.astro",
+    ROOT / "website/src/pages/docs/index.astro",
+)
+SPECIFIC_SUMMARY_TERMS = (
+    re.compile(r"\bH20\b", re.IGNORECASE),
+    re.compile(r"\bQwen(?:2|3|-)", re.IGNORECASE),
+    re.compile(r"\bGPT-OSS\b", re.IGNORECASE),
+)
 STALE_CLAIMS = (
     "SGLang export and hydration are not yet",
     "Capsule persistence is host-qualified; SGLang export and hydration",
@@ -80,6 +91,14 @@ def main() -> None:
         for stale in STALE_CLAIMS:
             if stale in text:
                 raise RuntimeError(f"stale capability claim in {path}: {stale}")
+
+    for path in PUBLIC_SUMMARY_SURFACES:
+        text = path.read_text(encoding="utf-8")
+        for pattern in SPECIFIC_SUMMARY_TERMS:
+            if pattern.search(text):
+                raise RuntimeError(
+                    f"specific model or device name leaked into public summary: {path}"
+                )
 
     print(
         f"verified Capability Matrix: 5 levels, "
