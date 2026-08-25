@@ -356,6 +356,12 @@ class TokenRelocationDiagnosticManifestTest(unittest.TestCase):
 
 
 class TokenRelocationSealedManifestTest(unittest.TestCase):
+    def test_default_manifest_includes_sealed_relocation_archive(self) -> None:
+        self.assertIn(
+            verifier.TOKEN_RELOCATION_H20_SEALED_MANIFEST,
+            verifier.DEFAULT_MANIFESTS,
+        )
+
     def sealed_result(self) -> dict[str, object]:
         return {
             "schema": (

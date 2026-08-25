@@ -55,6 +55,11 @@ TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST = (
     / "results/h20-sglang-v0517-token-relocation-"
     "diagnostic-20260825/manifest.json"
 )
+TOKEN_RELOCATION_H20_SEALED_MANIFEST = (
+    ROOT
+    / "results/h20-sglang-v0517-abi8-token-relocation-"
+    "20260825/manifest.json"
+)
 TOKEN_RELOCATION_H20_VERIFIER = (
     ROOT / "tools/verify_token_relocation_h20_evidence.py"
 )
@@ -163,6 +168,7 @@ DEFAULT_MANIFESTS = _DEFAULT_MANIFESTS + (
     QWEN35_H20_PAIR_EVIDENCE_MANIFEST,
     QWEN38_H20_DIAGNOSTIC_MANIFEST,
     TOKEN_RELOCATION_H20_DIAGNOSTIC_MANIFEST,
+    TOKEN_RELOCATION_H20_SEALED_MANIFEST,
 )
 
 

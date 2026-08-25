@@ -17,3 +17,8 @@ build/
 !results/h20-sglang-v0517-abi8-qwen35-fixed-state-pair-verification-20260823/qualification/build/liborbitkv_ffi.so
 !results/h20-sglang-v0517-abi8-qwen35-fixed-state-pair-verification-20260823/records/epoch-*/*.stderr.log
 !results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824/records/epoch-*/*.stderr.log
+!results/h20-sglang-v0517-abi8-token-relocation-20260825/logs/
+!results/h20-sglang-v0517-abi8-token-relocation-20260825/logs/epoch-*/
+!results/h20-sglang-v0517-abi8-token-relocation-20260825/logs/epoch-*/*.stderr.log
+!results/h20-sglang-v0517-abi8-token-relocation-20260825/qualification/build/
+!results/h20-sglang-v0517-abi8-token-relocation-20260825/qualification/build/liborbitkv_ffi.so
