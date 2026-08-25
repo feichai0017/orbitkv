@@ -63,8 +63,22 @@ The installed module is `orbitkv_runtime`. Its central values are:
 - `CompletionEvidence`: confirmation returned only by querying or waiting on a
   fence issued by the same adapter; it also names every exact page generation
   covered by that fence.
+- `ExternalTokenWrite(context, token_id, destination, byte_count)`: a
+  payload-free description of one append that an engine-owned kernel will
+  perform. It binds an APPEND `OperationContext`, logical token id, exact
+  `BackendTokenAddress`, and exact positive byte count.
+- `ExternalAppendTicket(adapter_id, ticket_id, writes,
+  resolved_destinations, completion_domain, launch_context)`: adapter-issued
+  write authorization for one non-empty batch. It retains the original writes
+  and their one-to-one `ResolvedTokenAddress` values; each resolved address and
+  byte length must
+  exactly match its write. It also carries the positive completion domain and
+  opaque adapter-selected launch context bound before kernel enqueue. A ticket
+  is not completion evidence.
 - `AdapterCapabilities`: explicit feature disclosure. CUDA support describes
-  the supplied arenas; it is not a graph, overlap, or performance claim.
+  the supplied arenas, while `external_kernel_writes` advertises the optional
+  external-write extension. Neither capability is a graph, overlap, or
+  performance claim.
 - `ReclamationCertificate`: an exact, generation-bearing retirement statement
   supplied by the manager rather than minted by the adapter.
 - `ReuseEvidence`: the exact certificate batch, completed last-use fences, and
@@ -86,6 +100,58 @@ replacement means REPLACE. REPLACE is valid independently of retirement: a COW
 source may remain shared and therefore produce no reclamation certificate. All
 updates are preflighted before the dictionaries are published.
 
+## Optional external append protocol
+
+`ExternalWriteCompletionAdapter` is an optional extension for engines whose own
+kernel writes new-token bytes directly into an arena. It complements the
+adapter-executed `append`; it does not replace `KvDataPlaneAdapter`, grant the
+engine allocation authority, or permit retrospective validation after storage
+has already been mutated. The required order is:
+
+```text
+prepare_external_append(writes, completion_domain=...)
+    -> predecessor waits are enqueued; ticket pages/domain are reserved
+enqueue the engine-owned write kernel using the ticket's resolved destinations
+record_external_data_ready(ticket)
+    -> data-ready fence; the pending ticket is consumed
+enqueue every eventual consumer of those page generations
+record_last_use(pages)
+    -> explicit last-use fence for reclamation
+```
+
+The engine must call `prepare_external_append` with the complete write batch
+before the first kernel launch or any other destination mutation. Preparation
+validates the full batch, resolves every exact destination, binds a completion
+domain, enqueues its predecessor waits on the current stream when needed, and
+registers the ticket as pending. The kernel must use those resolved
+destinations in `ticket.launch_context` (the selected CUDA stream for the
+reference adapter; `None` for synchronous CPU storage). A foreign,
+stale, already-consumed, or write-mismatched ticket fails closed. A page
+generation named by a pending ticket cannot be otherwise resolved, accessed,
+mutated, declared last-used, or pass `prepare_reuse`; its completion domain is
+also reserved until data-ready recording. An abandoned or uncertain ticket
+must not be bypassed to recover either resource.
+Once an issued ticket is pending, changing any of its public fields is an
+unrecoverable protocol violation: the kernel may already have used a changed
+descriptor, so the reference adapter poisons instead of allowing repair and
+retry. Completion receipts and reservation cleanup are derived only from the
+adapter's private immutable snapshot.
+
+Only after all external writes have been enqueued in the ticket's completion
+domain may the engine call `record_external_data_ready`. This records a fence
+after the enqueued writes, consumes the ticket, and returns the corresponding
+`DataPlaneEvidence`. Calling it before enqueue would make readiness unsound.
+The resulting evidence says when the produced bytes may be consumed. It does
+not say that their final consumer has completed and must never be supplied as
+last-use evidence for reuse.
+
+After the final consumer has been enqueued, the engine calls the semantically
+explicit `record_last_use` for the exact page generations involved. The
+existing `record_completion` spelling remains the legacy compatibility alias
+for this last-use operation; new integrations should use `record_last_use`.
+Querying or waiting on that fence produces the last-use `CompletionEvidence`
+required by the reuse path.
+
 ## Completion and ACK-gated reuse
 
 Data readiness and last use are distinct. `append` and `relocate` return a
@@ -106,14 +172,16 @@ Physical reuse requires every gate below:
    `ReclamationCertificate`.
 2. The adapter confirms exact last-use completion points matching every
    certificate.
-3. No adapter page or token mirror still names a retiring generation.
-4. Mirror cleanup has completed after last use.
-5. The coordinator derives exact reclamation receipts and sends the manager ACK
+3. No pending external-append ticket names a retiring generation. Data-ready
+   evidence is not accepted in place of last-use evidence.
+4. No adapter page or token mirror still names a retiring generation.
+5. Mirror cleanup has completed after last use.
+6. The coordinator derives exact reclamation receipts and sends the manager ACK
    once.
-6. Only after that ACK succeeds does it call `note_reuse_acknowledged`.
+7. Only after that ACK succeeds does it call `note_reuse_acknowledged`.
 
 `prepare_reuse` produces evidence; it neither frees storage nor acknowledges
-the manager. Before step 6, old and new generations of the retiring page are
+the manager. Before step 7, old and new generations of the retiring page are
 both rejected. Afterwards the same physical page is accepted only with a
 strictly higher generation. A duplicate ACK notification is rejected. If the
 manager may have consumed an ACK but its return is lost, the caller must
@@ -168,6 +236,9 @@ SGLang import in either package and any Torch import in the neutral package.
 This initial SPI intentionally does not adapt the existing SGLang plugin or
 claim a second complete serving-engine integration. It supplies the reusable
 effect boundary and a real external-arena implementation needed for a future
-engine adapter. Distributed completion, multi-device operations in one fence,
-graph-stable descriptor storage, structured tensor layouts, and sealed hardware
-qualification remain outside this contract.
+engine adapter. The optional external append protocol likewise leaves native
+ABI8 unchanged, and SGLang has not migrated to it. It establishes ordering and
+reclamation safety only; it makes no throughput, latency, kernel-overlap, or
+CUDA Graph claim. Distributed completion, multi-device operations in one
+fence, graph-stable descriptor storage, structured tensor layouts, and sealed
+hardware qualification remain outside this contract.

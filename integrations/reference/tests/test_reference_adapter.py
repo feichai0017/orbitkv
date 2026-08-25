@@ -5,6 +5,7 @@ from dataclasses import replace
 import pytest
 
 from orbitkv_reference import (
+    AdapterPoisonedError,
     AdapterPreflightError,
     ArenaBinding,
     ReferencePagedAdapter,
@@ -14,6 +15,8 @@ from orbitkv_runtime import (
     BackendTokenAddress,
     CompletionEvidence,
     DataPlaneOperation,
+    ExternalTokenWrite,
+    ExternalWriteCompletionAdapter,
     KvDataPlaneAdapter,
     OperationContext,
     PageLease,
@@ -113,6 +116,17 @@ def _append(adapter, *items: tuple[int, BackendTokenAddress]):
     return adapter.append(writes, completion_domain=3)
 
 
+def _external_write(
+    context: OperationContext, token_id: int, destination: BackendTokenAddress
+) -> ExternalTokenWrite:
+    return ExternalTokenWrite(context, token_id, destination, TOKEN_BYTES)
+
+
+def _write_resolved_token(resolved, payload: bytes) -> None:
+    begin = resolved.token_index * resolved.byte_length
+    resolved.arena[begin : begin + resolved.byte_length] = payload
+
+
 def test_reference_adapter_satisfies_public_spi_and_resolves_external_arena() -> None:
     adapter, storage = _adapter()
     assert isinstance(adapter, KvDataPlaneAdapter)
@@ -126,6 +140,331 @@ def test_reference_adapter_satisfies_public_spi_and_resolves_external_arena() ->
     assert token.arena is storage
     assert token.token_index == 11
     assert token.byte_length == TOKEN_BYTES
+
+
+def test_external_append_cpu_happy_path_returns_exact_write_evidence() -> None:
+    adapter, storage = _adapter()
+    assert isinstance(adapter, ExternalWriteCompletionAdapter)
+    assert adapter.capabilities.external_kernel_writes
+    context = _context(DataPlaneOperation.APPEND, transaction=701)
+    write = _external_write(context, 17, _token(1, 2))
+    before = bytes(storage)
+
+    ticket = adapter.prepare_external_append(
+        (write,), completion_domain=37
+    )
+
+    assert bytes(storage) == before
+    assert ticket.adapter_id == adapter.adapter_id
+    assert ticket.writes == (write,)
+    assert ticket.resolved_destinations[0].address == write.destination
+    assert ticket.resolved_destinations[0].byte_length == TOKEN_BYTES
+    _write_resolved_token(ticket.resolved_destinations[0], _payload(17))
+
+    evidence = adapter.record_external_data_ready(ticket)
+
+    assert evidence.operation is DataPlaneOperation.APPEND
+    assert evidence.copies == ()
+    assert tuple(
+        (receipt.context, receipt.token_id, receipt.destination, receipt.byte_count)
+        for receipt in evidence.writes
+    ) == ((context, 17, write.destination, TOKEN_BYTES),)
+    assert evidence.completion.completion_domain == 37
+    adapter.wait_completion(evidence.completion)
+    assert adapter.read_tokens((write.destination,)) == (_payload(17),)
+
+
+def test_external_prepare_reserves_transaction_once_until_completion() -> None:
+    adapter, _storage = _adapter()
+    context = _context(DataPlaneOperation.APPEND, transaction=702)
+    ticket = adapter.prepare_external_append(
+        (_external_write(context, 0, _token(0, 0)),)
+    )
+
+    with pytest.raises(AdapterPreflightError, match="reserved"):
+        adapter.prepare_external_append(
+            (_external_write(context, 1, _token(0, 1)),)
+        )
+    with pytest.raises(AdapterPreflightError, match="reserved"):
+        adapter.append(
+            (TokenWrite(context, 1, _token(0, 1), _payload(1)),)
+        )
+
+    adapter.record_external_data_ready(ticket)
+    with pytest.raises(AdapterPreflightError, match="already observed"):
+        adapter.prepare_external_append(
+            (_external_write(context, 1, _token(0, 1)),)
+        )
+
+
+def test_external_prepare_preflight_is_atomic_for_width_and_duplicates() -> None:
+    adapter, storage = _adapter()
+    before = bytes(storage)
+    width_context = _context(DataPlaneOperation.APPEND, transaction=703)
+
+    with pytest.raises(AdapterPreflightError, match="byte count"):
+        adapter.prepare_external_append(
+            (
+                ExternalTokenWrite(
+                    width_context, 0, _token(0, 0), TOKEN_BYTES - 1
+                ),
+            )
+        )
+    # A failed full-batch preflight did not reserve the transaction.
+    width_ticket = adapter.prepare_external_append(
+        (_external_write(width_context, 0, _token(0, 0)),)
+    )
+    adapter.record_external_data_ready(width_ticket)
+
+    duplicate_destination = _context(
+        DataPlaneOperation.APPEND, transaction=704
+    )
+    with pytest.raises(AdapterPreflightError, match="destination"):
+        adapter.prepare_external_append(
+            (
+                _external_write(duplicate_destination, 0, _token(1, 0)),
+                _external_write(duplicate_destination, 1, _token(1, 0)),
+            )
+        )
+
+    duplicate_logical = _context(DataPlaneOperation.APPEND, transaction=705)
+    with pytest.raises(AdapterPreflightError, match="logical transaction token"):
+        adapter.prepare_external_append(
+            (
+                _external_write(duplicate_logical, 0, _token(2, 0)),
+                _external_write(duplicate_logical, 0, _token(2, 1)),
+            )
+        )
+
+    mixed_generation = _context(DataPlaneOperation.APPEND, transaction=706)
+    with pytest.raises(AdapterPreflightError, match="multiple generations"):
+        adapter.prepare_external_append(
+            (
+                _external_write(
+                    mixed_generation, 0, _token(3, 0, generation=1)
+                ),
+                _external_write(
+                    mixed_generation, 1, _token(3, 1, generation=2)
+                ),
+            )
+        )
+    assert bytes(storage) == before
+
+
+def test_external_ticket_replay_forgery_and_mismatch_fail_closed() -> None:
+    adapter, _storage = _adapter()
+    context = _context(DataPlaneOperation.APPEND, transaction=707)
+    ticket = adapter.prepare_external_append(
+        (_external_write(context, 0, _token(0, 0)),)
+    )
+
+    with pytest.raises(AdapterPreflightError, match="another adapter"):
+        adapter.record_external_data_ready(
+            replace(ticket, adapter_id="foreign")
+        )
+    with pytest.raises(AdapterPreflightError, match="forged|reconstructed"):
+        adapter.record_external_data_ready(replace(ticket))
+    mismatched_write = _external_write(context, 1, _token(0, 0))
+    with pytest.raises(AdapterPreflightError, match="forged|reconstructed"):
+        adapter.record_external_data_ready(
+            replace(ticket, writes=(mismatched_write,))
+        )
+
+    adapter.record_external_data_ready(ticket)
+    with pytest.raises(AdapterPreflightError, match="already consumed"):
+        adapter.record_external_data_ready(ticket)
+
+
+def test_external_pending_page_blocks_reuse_and_preparation_invalidates_last_use() -> None:
+    adapter, _storage = _adapter()
+    old = _token(0, 0)
+    _append(adapter, (0, old))
+    stale_last_use = adapter.wait_completion(
+        adapter.record_last_use((old.page_address,), completion_domain=41)
+    )
+    context = _context(DataPlaneOperation.APPEND, transaction=708)
+    ticket = adapter.prepare_external_append(
+        (_external_write(context, 1, old),)
+    )
+    with pytest.raises(AdapterPreflightError, match="stale completion"):
+        adapter.update_mirrors(
+            (), (), after=stale_last_use, completion_domain=41
+        )
+    with pytest.raises(AdapterPreflightError, match="reserved"):
+        adapter.record_last_use((old.page_address,), completion_domain=41)
+    adapter.record_external_data_ready(ticket)
+
+
+def test_external_pending_page_blocks_all_conflicting_adapter_access() -> None:
+    adapter, _storage = _adapter()
+    token = _token(0, 0)
+    ticket = adapter.prepare_external_append(
+        (
+            _external_write(
+                _context(DataPlaneOperation.APPEND, transaction=712),
+                0,
+                token,
+            ),
+        ),
+        completion_domain=55,
+    )
+
+    conflicting = _context(DataPlaneOperation.APPEND, transaction=713)
+    with pytest.raises(AdapterPreflightError, match="reserved"):
+        adapter.prepare_external_append(
+            (_external_write(conflicting, 1, _token(0, 1)),),
+            completion_domain=56,
+        )
+    with pytest.raises(AdapterPreflightError, match="reserved"):
+        adapter.append(
+            (TokenWrite(conflicting, 1, _token(0, 1), _payload(1)),),
+            completion_domain=56,
+        )
+    with pytest.raises(AdapterPreflightError, match="reserved"):
+        adapter.read_tokens((token,))
+    with pytest.raises(AdapterPreflightError, match="reserved"):
+        adapter.resolve_pages((token.page_address,))
+
+    adapter.record_external_data_ready(ticket)
+    assert adapter.resolve_tokens((token,))[0].address == token
+
+
+def test_external_prepare_reserves_completion_domain_until_data_ready() -> None:
+    adapter, _storage = _adapter()
+    ticket = adapter.prepare_external_append(
+        (
+            _external_write(
+                _context(DataPlaneOperation.APPEND, transaction=714),
+                0,
+                _token(0, 0),
+            ),
+        ),
+        completion_domain=57,
+    )
+
+    with pytest.raises(AdapterPreflightError, match="completion domain is reserved"):
+        adapter.record_last_use(
+            (_token(1, 0).page_address,), completion_domain=57
+        )
+    adapter.record_external_data_ready(ticket)
+    later = adapter.record_last_use(
+        (_token(1, 0).page_address,), completion_domain=57
+    )
+    assert later.completion_value == 2
+
+
+def test_external_ticket_nested_mutation_cannot_change_private_receipt() -> None:
+    adapter, _storage = _adapter()
+    original = _external_write(
+        _context(DataPlaneOperation.APPEND, transaction=715),
+        0,
+        _token(0, 0),
+    )
+    ticket = adapter.prepare_external_append((original,))
+
+    object.__setattr__(ticket.writes[0], "token_id", 99)
+    with pytest.raises(AdapterPoisonedError, match="possible mutation"):
+        adapter.record_external_data_ready(ticket)
+    object.__setattr__(ticket.writes[0], "token_id", 0)
+    with pytest.raises(AdapterPoisonedError, match="integrity validation"):
+        adapter.record_external_data_ready(ticket)
+
+
+@pytest.mark.parametrize(
+    "mutate",
+    (
+        lambda ticket: object.__setattr__(
+            ticket.resolved_destinations[0], "token_index", 999
+        ),
+        lambda ticket: object.__setattr__(ticket, "completion_domain", 999),
+        lambda ticket: object.__setattr__(ticket, "launch_context", object()),
+        lambda ticket: object.__setattr__(ticket, "ticket_id", 999),
+    ),
+)
+def test_issued_external_ticket_tampering_is_fail_stop(mutate) -> None:
+    adapter, _storage = _adapter()
+    ticket = adapter.prepare_external_append(
+        (
+            _external_write(
+                _context(DataPlaneOperation.APPEND, transaction=717),
+                0,
+                _token(0, 0),
+            ),
+        ),
+        completion_domain=61,
+    )
+
+    mutate(ticket)
+    with pytest.raises(AdapterPoisonedError, match="possible mutation"):
+        adapter.record_external_data_ready(ticket)
+
+
+def test_hostile_issued_ticket_value_still_poisons() -> None:
+    class HostileValue:
+        def __ne__(self, _other):
+            raise RuntimeError("hostile comparison")
+
+    adapter, _storage = _adapter()
+    ticket = adapter.prepare_external_append(
+        (
+            _external_write(
+                _context(DataPlaneOperation.APPEND, transaction=718),
+                0,
+                _token(0, 0),
+            ),
+        )
+    )
+    object.__setattr__(ticket, "adapter_id", HostileValue())
+
+    with pytest.raises(AdapterPoisonedError, match="possible mutation"):
+        adapter.record_external_data_ready(ticket)
+    with pytest.raises(AdapterPoisonedError, match="integrity validation"):
+        adapter.resolve_tokens((_token(1, 0),))
+
+
+def test_external_data_ready_cannot_substitute_for_last_use() -> None:
+    adapter, _storage = _adapter()
+    token = _token(0, 0)
+    context = _context(DataPlaneOperation.APPEND, transaction=709)
+    ticket = adapter.prepare_external_append(
+        (_external_write(context, 0, token),), completion_domain=43
+    )
+    data = adapter.record_external_data_ready(ticket)
+    data_ready = adapter.wait_completion(data.completion)
+    cleanup = adapter.update_mirrors(
+        (), (), after=data_ready, completion_domain=43
+    )
+    cleanup_done = adapter.wait_completion(cleanup.completion)
+    certificate = ReclamationCertificate(
+        ReclamationLease(7, 9, 1),
+        token.page,
+        2,
+        13,
+        0,
+        8,
+        0,
+        PAGE_TOKENS,
+        43,
+        data.completion.completion_value,
+    )
+
+    with pytest.raises(AdapterPreflightError, match="last-use"):
+        adapter.prepare_reuse(
+            (certificate,), last_use=(data_ready,), mirror_cleanup=cleanup_done
+        )
+
+
+def test_record_completion_delegates_to_explicit_last_use() -> None:
+    adapter, _storage = _adapter()
+    page = _token(0, 0).page_address
+
+    explicit = adapter.record_last_use((page,), completion_domain=47)
+    compatible = adapter.record_completion((page,), completion_domain=47)
+
+    assert explicit.completion_value == 1
+    assert compatible.completion_value == 2
+    assert adapter._fences[explicit.fence_id].purpose == "last_use"
+    assert adapter._fences[compatible.fence_id].purpose == "last_use"
 
 
 def test_append_in_place_and_partial_tail_cow_are_byte_exact() -> None:
@@ -481,6 +820,7 @@ class _FakeCudaEvent:
 
     def record(self, stream) -> None:
         self.recorded_on = stream
+        stream.actions.append(("record", self))
 
     def query(self) -> bool:
         return True
@@ -492,9 +832,11 @@ class _FakeCudaEvent:
 class _FakeCudaStream:
     def __init__(self) -> None:
         self.waited = []
+        self.actions = []
 
     def wait_event(self, event) -> None:
         self.waited.append(event)
+        self.actions.append(("wait", event))
 
 
 class _FakeCudaModule:
@@ -535,6 +877,103 @@ def test_cuda_domain_waits_on_predecessor_and_rejects_device_rebinding() -> None
     adapter._record_completion(second_timeline, purpose="test")
     with pytest.raises(AdapterPreflightError, match="device timeline"):
         adapter._prepare_timeline(31, ())
+
+
+def test_external_cuda_ready_records_after_kernel_and_last_use_waits_on_it() -> None:
+    adapter, _storage = _adapter()
+    arena = adapter._arenas[5]
+    arena.is_cuda = True
+    arena.device = "cuda:0"
+    arena._torch = _FakeTorch()
+    stream = arena._torch.cuda.stream
+    context = _context(DataPlaneOperation.APPEND, transaction=710)
+
+    ticket = adapter.prepare_external_append(
+        (_external_write(context, 0, _token(0, 0)),),
+        completion_domain=51,
+    )
+    assert stream.actions == []
+
+    # The engine-owned kernel is enqueued on the current stream before it asks
+    # the adapter to record readiness.
+    stream.actions.append(("kernel", ticket.ticket_id))
+    data = adapter.record_external_data_ready(ticket)
+    data_event = adapter._fences[data.completion.fence_id].event
+
+    assert stream.actions == [
+        ("kernel", ticket.ticket_id),
+        ("record", data_event),
+    ]
+    last_use = adapter.record_last_use(
+        (_token(0, 0).page_address,), completion_domain=52
+    )
+    last_use_event = adapter._fences[last_use.fence_id].event
+    assert stream.actions[-2:] == [
+        ("wait", data_event),
+        ("record", last_use_event),
+    ]
+
+
+def test_external_cuda_prepare_waits_before_kernel_and_binds_launch_stream() -> None:
+    adapter, _storage = _adapter()
+    arena = adapter._arenas[5]
+    arena.is_cuda = True
+    arena.device = "cuda:0"
+    arena._torch = _FakeTorch()
+    first_stream = arena._torch.cuda.stream
+    predecessor = adapter.record_last_use(
+        (_token(0, 0).page_address,), completion_domain=59
+    )
+    predecessor_event = adapter._fences[predecessor.fence_id].event
+    first_stream.actions.clear()
+
+    ticket = adapter.prepare_external_append(
+        (
+            _external_write(
+                _context(DataPlaneOperation.APPEND, transaction=716),
+                0,
+                _token(0, 0),
+            ),
+        ),
+        completion_domain=59,
+    )
+    assert ticket.launch_context is first_stream
+    assert first_stream.actions == [("wait", predecessor_event)]
+
+    first_stream.actions.append(("kernel", ticket.ticket_id))
+    arena._torch.cuda.stream = _FakeCudaStream()
+    data = adapter.record_external_data_ready(ticket)
+    data_event = adapter._fences[data.completion.fence_id].event
+    assert first_stream.actions[-2:] == [
+        ("kernel", ticket.ticket_id),
+        ("record", data_event),
+    ]
+    assert arena._torch.cuda.stream.actions == []
+
+
+def test_external_completion_recording_failure_poisons_adapter() -> None:
+    class FailingCudaModule(_FakeCudaModule):
+        @staticmethod
+        def Event():
+            raise RuntimeError("event allocation failed")
+
+    adapter, _storage = _adapter()
+    arena = adapter._arenas[5]
+    arena.is_cuda = True
+    arena.device = "cuda:0"
+    arena._torch = type(
+        "FailingTorch", (), {"cuda": FailingCudaModule()}
+    )()
+    context = _context(DataPlaneOperation.APPEND, transaction=711)
+    ticket = adapter.prepare_external_append(
+        (_external_write(context, 0, _token(0, 0)),),
+        completion_domain=53,
+    )
+
+    with pytest.raises(AdapterPoisonedError, match="possible mutation"):
+        adapter.record_external_data_ready(ticket)
+    with pytest.raises(AdapterPoisonedError, match="event allocation failed"):
+        adapter.record_external_data_ready(ticket)
 
 
 def test_torch_device_other_than_cpu_or_cuda_is_rejected(monkeypatch) -> None:
