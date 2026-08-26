@@ -429,6 +429,8 @@ def _class_kv_pool(class_id: int) -> Any:
     if _config().full_class is not None and _config().sliding_class is not None:
         name = "full_kv_pool" if class_config.retention == "full" else "swa_kv_pool"
         pool = getattr(kvcache, name, None)
+    elif _config().full_class is None and _config().sliding_class is not None:
+        pool = getattr(kvcache, "swa_kv_pool", None)
     else:
         pool = kvcache
     if pool is None or not callable(getattr(pool, "move_kv_cache", None)):

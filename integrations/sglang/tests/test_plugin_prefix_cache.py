@@ -320,7 +320,9 @@ def _cache(
         req_to_token_pool=req_pool,
         token_to_kv_pool_allocator=allocator,
         page_size=16,
-        sliding_window_size=window_tokens - 1 if len(retentions) == 2 else None,
+        sliding_window_size=(
+            window_tokens - 1 if "sliding" in retentions else None
+        ),
     )
     cache = (
         prefix_cache._build_prefix_cache(
@@ -585,6 +587,24 @@ def test_token_reclamation_uses_no_prefix_mode_without_fixed_state():
     assert cache._no_prefix is True
     assert cache.disable_finished_insert is True
     assert cache.is_chunk_cache() is True
+
+
+def test_pure_sliding_uses_request_private_prefix_mode():
+    cache, _runtime, _allocator, _pool = _cache(
+        "sliding", disable=True, through_builder=True
+    )
+    assert cache.disable is False
+    assert cache.disable_finished_insert is True
+    assert cache._no_prefix is True
+    assert cache.supports_swa() is True
+    assert cache.is_chunk_cache() is True
+    assert cache.full_evictable_size() == 0
+    assert cache.full_protected_size() == 0
+
+
+def test_pure_sliding_requires_disabled_radix_cache():
+    with pytest.raises(RuntimeError, match="--disable-radix-cache must be true"):
+        _cache("sliding", through_builder=True)
 
 
 def test_prefix_sanity_check_recomputes_topology_residency_and_census():

@@ -229,11 +229,10 @@ def test_structured_data_plane_is_explicit_opt_in(monkeypatch) -> None:
     monkeypatch.setenv("ORBITKV_STRUCTURED_DATA_PLANE", "invalid")
     with pytest.raises(RuntimeError, match="0/1"):
         state._uses_structured_data_plane()
-    incompatible = _config("sliding")
-    state._install_test_state(config=incompatible, runtime=_Runtime([]))
+    pure_sliding = _config("sliding")
+    state._install_test_state(config=pure_sliding, runtime=_Runtime([]))
     monkeypatch.setenv("ORBITKV_STRUCTURED_DATA_PLANE", "1")
-    with pytest.raises(RuntimeError, match="requires Full"):
-        state._uses_structured_data_plane()
+    assert state._uses_structured_data_plane()
 
 
 def test_completion_domain_tracks_nonzero_cuda_device() -> None:

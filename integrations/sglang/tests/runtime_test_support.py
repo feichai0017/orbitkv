@@ -49,10 +49,13 @@ def _runtime(
     library: Path,
     *,
     hybrid: bool = True,
+    pure_sliding: bool = False,
     window_tokens: int = 18,
     requests: int = 16,
 ) -> tuple[Any, CtypesManager, CanonicalRuntime]:
-    classes = [
+    if pure_sliding and hybrid:
+        raise ValueError("pure_sliding and hybrid are mutually exclusive")
+    classes = [] if pure_sliding else [
         {
             "name": "full",
             "layers": [0],
@@ -61,17 +64,17 @@ def _runtime(
             "window_tokens": None,
         }
     ]
-    if hybrid:
+    if hybrid or pure_sliding:
         classes.append(
             {
                 "name": "swa",
-                "layers": [1],
+                "layers": [1] if hybrid else [0],
                 "retention": "sliding",
                 "bytes_per_token_per_layer": 128,
                 "window_tokens": window_tokens,
             }
         )
-    plan = tmp_path / f"plan-{hybrid}-{window_tokens}.json"
+    plan = tmp_path / f"plan-{hybrid}-{pure_sliding}-{window_tokens}.json"
     plan.write_text(json.dumps({"page_tokens": 16, "classes": classes}))
     config = load_config(
         {"ORBITKV_PLAN": str(plan), "ORBITKV_LIBRARY": str(library)}

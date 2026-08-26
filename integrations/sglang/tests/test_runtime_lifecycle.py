@@ -394,6 +394,36 @@ def test_real_b2_b4_runtime_lifecycle_is_collective_and_reference_exact(
     assert stats.total_request_page_refs == stats.total_prefix_page_refs == 0
     runtime.close()
 
+
+def test_real_pure_sliding_runtime_wraps_reclaims_and_drains(
+    tmp_path: Path, ffi_library: Path
+) -> None:
+    config, manager, runtime = _runtime(
+        tmp_path,
+        ffi_library,
+        hybrid=False,
+        pure_sliding=True,
+        window_tokens=18,
+        requests=2,
+    )
+
+    _step_batch(runtime, (("request", 18),))
+    _step_batch(runtime, (("request", 49),))
+
+    record = runtime.record_for("request")
+    assert record.boundary == 49
+    assert set(record.cursor.pages) == {(0, 2), (0, 3)}
+    assert record.swa_temporal_cycles == {0: 1}
+    assert manager.performance_counters["complete_batch_calls"] == 2
+    activity = runtime.swa_activity()
+    assert activity.pages_reclaimed == 2
+    assert activity.wrap_events == 1
+
+    runtime.release_batch(("request",))
+    stats = runtime.stats()
+    assert stats.free_pages == 64
+    assert stats.active_requests == stats.active_snapshots == 0
+    assert stats.pending_reclamations == 0
     runtime.close()
 
 

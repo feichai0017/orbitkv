@@ -129,7 +129,9 @@ class _ReqPool:
         self.req_to_token[rows, columns] = values
 
 
-def _install(*, fail_swa=False, hybrid=True):
+def _install(*, fail_swa=False, hybrid=True, pure_sliding=False):
+    if hybrid and pure_sliding:
+        raise ValueError("hybrid and pure_sliding are mutually exclusive")
     events = []
     config = ManagerPlanConfig(
         plan_path=Path("plan.json"),
@@ -140,7 +142,11 @@ def _install(*, fail_swa=False, hybrid=True):
         classes=(
             (_class(0, "full"), _class(1, "sliding"))
             if hybrid
-            else (_class(0, "full"),)
+            else (
+                (_class(0, "sliding"),)
+                if pure_sliding
+                else (_class(0, "full"),)
+            )
         ),
     )
     runtime = _Runtime(config, events)
@@ -341,6 +347,49 @@ def test_hybrid_cow_moves_each_physical_subpool_before_submit_and_write(monkeypa
     assert counters["cow_copy_intents"] == 2
     assert counters["cow_move_calls"] == 2
     assert counters["cow_copied_tokens"] == 16
+
+
+def test_pure_sliding_cow_uses_only_the_swa_leaf_pool(monkeypatch):
+    _runtime, _allocator, events = _install(
+        hybrid=False, pure_sliding=True
+    )
+    source = _page(0, 3)
+    destination = _page(0, 4)
+    intent = CopyIntent(0, 1, 8, 0, 0, source, destination, 2, 3)
+    plan = LoweringPlan(
+        RequestLease(1, 0, 1),
+        SnapshotLease(1, 0, 1),
+        SnapshotLease(1, 1, 1),
+        8,
+        9,
+        (
+            ClassLoweringSpec(
+                0,
+                1,
+                71,
+                (),
+                TailAction(0, TAIL_COPY_ON_WRITE, 8, 0, source, destination),
+                (intent,),
+            ),
+        ),
+    )
+    monkeypatch.setattr(
+        torch,
+        "get_device_module",
+        lambda _device: SimpleNamespace(
+            current_stream=lambda _device: events.append("forward_stream")
+        ),
+    )
+
+    activity = lowering._execute_cow_copies(
+        SimpleNamespace(device=torch.device("cpu")), (plan,)
+    )
+
+    assert activity == (1, 1, 8)
+    assert events == [
+        "forward_stream",
+        ("swa_move", tuple(range(64, 72)), tuple(range(48, 56))),
+    ]
 
 
 def test_external_authorization_precedes_first_cow_mutation(monkeypatch):
