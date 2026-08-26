@@ -7,17 +7,12 @@ from orbitkv_sglang.runtime import (
     BatchCompletionReceipt,
     CompletedRelocationBatch,
     ManagerError,
-    PageLease,
     PrepareRelocationItem,
     PreparedRelocation,
-    ReclamationCertificate,
-    ReclamationLease,
     RelocationCopyReceipt,
     RelocationLease,
     RelocationUnobservedReceipt,
-    RequestLease,
     RequestView,
-    SnapshotLease,
     SubmittedRelocation,
     TokenDisposition,
     TokenDispositionBatchItem,
@@ -30,58 +25,19 @@ from orbitkv_sglang.runtime import (
 )
 
 from . import layouts as L
+from .conversions import (
+    lease_c as _lease_c,
+    page as _page,
+    page_to_c as _page_c,
+    reclamation_certificate as _certificate,
+    relocation as _relocation,
+    request as _request,
+    request_view as _request_view,
+    snapshot as _snapshot,
+    uint as _uint,
+)
 from .library import STATUS_BUFFER_TOO_SMALL
 from .workspace import array
-
-
-def _uint(name: str, value: int, bits: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 1 << bits:
-        raise ManagerError(f"{name} is outside uint{bits}_t")
-    return value
-
-
-def _lease_c(layout: Any, value: Any) -> Any:
-    return layout(
-        _uint("lease engine epoch", value.engine_epoch, 64),
-        _uint("lease slot", value.slot, 32),
-        _uint("lease generation", value.generation, 32),
-    )
-
-
-def _request(value: Any) -> RequestLease:
-    return RequestLease(int(value.engine_epoch), int(value.slot), int(value.generation))
-
-
-def _snapshot(value: Any) -> SnapshotLease:
-    return SnapshotLease(int(value.engine_epoch), int(value.slot), int(value.generation))
-
-
-def _relocation(value: Any) -> RelocationLease:
-    return RelocationLease(int(value.engine_epoch), int(value.slot), int(value.generation))
-
-
-def _reclamation(value: Any) -> ReclamationLease:
-    return ReclamationLease(int(value.engine_epoch), int(value.slot), int(value.generation))
-
-
-def _page_c(value: PageLease) -> L.PageLeaseLayout:
-    return L.PageLeaseLayout(
-        _uint("page engine epoch", value.engine_epoch, 64),
-        _uint("page pool epoch", value.pool_epoch, 64),
-        _uint("page generation", value.generation, 64),
-        _uint("page id", value.page_id, 32),
-        _uint("page pool id", value.pool_id, 32),
-    )
-
-
-def _page(value: Any) -> PageLease:
-    return PageLease(
-        int(value.engine_epoch),
-        int(value.pool_epoch),
-        int(value.generation),
-        int(value.page_id),
-        int(value.pool_id),
-    )
 
 
 def _location_c(value: TokenLocation) -> L.TokenLocationLayout:
@@ -140,35 +96,6 @@ def _disposition(value: Any) -> TokenDisposition:
     )
     _disposition_c(result, allow_retained=True)
     return result
-
-
-def _request_view(value: Any) -> RequestView:
-    if int(value.reserved) != 0:
-        raise ManagerError("request view reserved field is nonzero")
-    return RequestView(
-        _request(value.request),
-        _snapshot(value.snapshot),
-        int(value.view_version),
-        int(value.boundary),
-        int(value.resident_count),
-    )
-
-
-def _certificate(value: Any) -> ReclamationCertificate:
-    if int(value.reserved32) != 0:
-        raise ManagerError("reclamation certificate reserved field is nonzero")
-    return ReclamationCertificate(
-        _reclamation(value.reclamation),
-        _page(value.page),
-        int(value.class_id),
-        int(value.backend_domain),
-        int(value.logical_ordinal),
-        int(value.backend_index),
-        int(value.token_begin),
-        int(value.token_end_exclusive),
-        int(value.completion_domain),
-        int(value.completion_value),
-    )
 
 
 def _copy_receipt_c(value: RelocationCopyReceipt) -> L.RelocationCopyReceiptLayout:

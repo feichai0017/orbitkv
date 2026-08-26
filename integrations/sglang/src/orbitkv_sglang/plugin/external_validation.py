@@ -185,7 +185,7 @@ def device_key(value: object) -> tuple[str, int | None]:
 def compatible_device(
     left: tuple[str, int | None], right: tuple[str, int | None]
 ) -> bool:
-    """Return whether two normalized devices identify one timeline."""
+    """Compatibility helper for comparing normalized device identities."""
 
     return left == right
 
