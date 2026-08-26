@@ -84,6 +84,41 @@ integration, not a performance or full-engine replacement claim.
 See [Engine Adapter SPI](docs/engine-adapter-spi.md) and
 [Standalone KV Manager Architecture](docs/standalone-kv-manager-architecture.md).
 
+## Executable runtime manifest
+
+The preferred SGLang input is `orbitkv.runtime-manifest` v1: one versioned
+artifact containing the checked attention-state contract, an optional
+token-manager input plus compiled layout, exact capability requirements, and a
+stable content fingerprint. Generate it from a heterogeneous state plan or a
+supported Hugging Face config:
+
+```bash
+cargo run --locked --bin orbitkv -- \
+  compile-runtime-manifest \
+  examples/hybrid-attention-state-plan.json \
+  > runtime-manifest.json
+
+cargo run --locked --bin orbitkv -- \
+  compile-hf-runtime-manifest config.json \
+  --page-tokens 16 --kv-dtype-bytes 2 \
+  > runtime-manifest.json
+
+export ORBITKV_RUNTIME_MANIFEST=/absolute/path/runtime-manifest.json
+export ORBITKV_LIBRARY=/absolute/path/liborbitkv_ffi.so
+```
+
+`ORBITKV_RUNTIME_MANIFEST` cannot be combined with legacy `ORBITKV_PLAN` or
+`ORBITKV_STATE_PLAN`. The legacy plan path remains supported unchanged.
+`ORBITKV_TOKEN_RECLAMATION` is an orthogonal runtime policy and remains valid
+with either input path; it is not included in the manifest fingerprint. A
+fixed-state-only manifest is valid compiler output, but the current SGLang
+adapter rejects it because that adapter still requires a token-manager plan.
+
+This is the P1 compiled contract and admission artifact. It is not the P3
+token/fixed-state transaction graph: the two native handles still have no
+cross-handle atomic commit or rollback. It establishes no performance,
+capacity, memory-saving, or broader engine-replacement claim.
+
 ## Evidence boundary
 
 - The ABI8 compiler, ownership core, typed wire, and Python runtime have broad

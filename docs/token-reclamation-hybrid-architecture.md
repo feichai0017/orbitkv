@@ -54,11 +54,15 @@ SGLang seam validates the compiled component widths against
 latent+RoPE row through the same completion-gated relocation transaction; this
 is host L2 only and excludes DSA, FP4, DCP, and Hybrid Linear models. Frontend
 fixtures validate plan and runner geometry; they are not hardware evidence.
-The restricted fixed-state seam requires `ORBITKV_STATE_PLAN` in addition to
-the token-only `ORBITKV_PLAN`; their canonical token projection, page size,
-layer coverage, and byte geometry are checked together before pool creation.
-The token manager and state pool remain separate handles: a partial commit is
+The preferred fixed-state path is one `ORBITKV_RUNTIME_MANIFEST`, which binds
+the token projection and compiled fixed-state plan under one artifact
+fingerprint and validates their page size, layer coverage, and byte geometry
+before pool creation. The former `ORBITKV_PLAN` plus `ORBITKV_STATE_PLAN` route
+remains a compatibility path. Neither route creates a joint transaction: the
+token manager and state pool remain separate handles, so a partial commit is
 contained only by fail-stop, with no cross-handle atomic commit or rollback.
+`ORBITKV_TOKEN_RECLAMATION` is an orthogonal runtime policy applied after
+manifest admission and is not included in the manifest fingerprint.
 
 The first bound GDN frontend profile is deliberately narrow, not generic family
 support. Its compiled schedule sends Full token KV to `CanonicalKvManager` and

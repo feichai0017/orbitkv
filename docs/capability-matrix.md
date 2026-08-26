@@ -14,6 +14,9 @@ facades over manifest-bound implementations. Their generic names add no new
 profile or claim. Legacy hardware- or model-named paths remain compatibility
 and evidence entry points; immutable copies under `results/` preserve existing
 source closures and archive reproducibility.
+Here, the executable `orbitkv.runtime-manifest` is a live compiler/runtime
+artifact; it is distinct from the archival qualification manifests that bind
+historical evidence closures.
 
 ## Levels
 
@@ -31,6 +34,7 @@ source closures and archive reproducibility.
 | --- | --- | --- | --- |
 | Retention and plan compiler | L1 | Checked Full, sliding, and retained IR/compiler relations | `src/retention.rs`, `src/plan/`, compiler tests |
 | Heterogeneous attention-state compiler | L1 GO | Separates token KV, MLA latent+RoPE components, recurrent Mamba/GDN/KDA/linear state, and convolution state; token-only manager projection preserves explicit storage/component geometry and excludes fixed-width state | `src/attention_state.rs`, `compile-state-plan`, `compile-state-manager-plan`, mixed-state example/tests |
+| Versioned executable runtime manifest | L1 compiler + L2 host adapter load | `orbitkv.runtime-manifest` v1 packages the checked attention-state plan, optional token-manager input and compiled layout, canonical capability requirements, and SHA-256 fingerprint. Rust and SGLang independently validate derived sections before allocation. SGLang requires a supported token-manager projection; fixed-only artifacts fail closed. Legacy plan loading remains available but cannot be mixed with this path, and token reclamation remains an orthogonal policy. This is P1, not a P3 unified lifecycle transaction or performance qualification | `src/runtime_manifest.rs`, `compile-runtime-manifest`, `compile-hf-runtime-manifest`, `integrations/sglang/src/orbitkv_sglang/runtime_manifest.py`, CLI and SGLang cross-language/native-manager tests |
 | Dense Hybrid GDN HF frontend | L1 GO | The current frontend admits one exact external architecture/model-type discriminator tuple, then compiles its explicit geometry into Full token KV plus request-private GDN/convolution state. Structurally similar but unrecognized families are not admitted; malformed, defaulted, or schedule-inconsistent configs fail closed | `src/hf_config.rs`, fixture-backed CLI tests |
 | Strict token-only HF frontend | L1 | For supported profiles outside that dense config family, emits the sole token-addressable `KvPlanInput`; unknown semantics fail closed | `src/hf_config.rs`, `tests/canonical_cli.rs` |
 | Identity and arena ownership | L2 GO | Generation-checked request, snapshot, page, step, submission, Prefix, reclamation, and relocation leases; independent class pools | `src/kv_manager/identity.rs`, `arena.rs`, host tests |

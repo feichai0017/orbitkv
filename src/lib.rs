@@ -5,6 +5,7 @@ pub mod hf_config;
 pub mod kv_manager;
 pub mod plan;
 pub mod retention;
+pub mod runtime_manifest;
 pub mod state_checkpoint;
 pub use attention_state::{
     AttentionStateBackend, AttentionStateError, AttentionStatePlanInput, AttentionStateSpec,
@@ -20,6 +21,12 @@ pub use hf_config::{
 pub use plan::{
     CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, PlanError, TokenComponentSpec,
     TokenStorageKind, compile_plan,
+};
+pub use runtime_manifest::{
+    HfRuntimeManifestError, RUNTIME_MANIFEST_MAX_BYTES, RUNTIME_MANIFEST_SCHEMA,
+    RUNTIME_MANIFEST_VERSION, RuntimeCapability, RuntimeManifest, RuntimeManifestError,
+    RuntimeTokenManagerPlan, compile_hf_runtime_manifest, compile_runtime_manifest,
+    compile_runtime_manifest_from_plan,
 };
 pub use state_checkpoint::{
     StateCheckpointError, StateCheckpointPool, StateCompletionReceipt, StateCopyIntent,

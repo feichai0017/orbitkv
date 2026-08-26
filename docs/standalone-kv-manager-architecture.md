@@ -30,7 +30,10 @@ mature L5 production system.
 
 ```text
 attention-retention semantics
-    -> checked KvPlanInput / compiled classes
+    -> orbitkv.runtime-manifest v1
+         compiled attention-state plan
+         optional token-manager input + physical layout
+         exact capability requirements + fingerprint
     -> CanonicalKvManager
          identity + arena
          persistent snapshot
@@ -380,8 +383,11 @@ root.
 
 ABI8 exports exactly 40 `orbitkv_*` symbols listed in the
 [Capability Matrix](capability-matrix.md): 29 canonical-manager symbols and 11
-independent state-pool symbols. There are no ABI5 lifecycle aliases, older
-loaders, or silent native-allocation fallback paths.
+independent state-pool symbols. There are no ABI5 lifecycle aliases, obsolete
+native loaders, or silent native-allocation fallback paths. The preferred
+SGLang configuration is `ORBITKV_RUNTIME_MANIFEST`; the compatibility path
+using `ORBITKV_PLAN` and optional `ORBITKV_STATE_PLAN` remains supported, but
+the two input modes are mutually exclusive.
 
 An engine profile becomes a replacement claim only after its native allocator
 and Prefix owner cease to be authoritative; all fault and pressure gates pass;
