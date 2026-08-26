@@ -33,7 +33,6 @@ from .external_validation import (
     ExternalAppendError,
     ExternalAppendPoisonedError,
     canonical_integer as _integer,
-    compatible_device as _compatible_device,
     copy_page as _copy_page,
     copy_registration as _copy_registration,
     copy_write as _copy_write,
@@ -158,10 +157,7 @@ class SglangExternalWriteAdapter:
             raise ExternalAppendError(
                 "structured arena CUDA device must have a concrete index"
             )
-        if any(
-            not _compatible_device(observed_device, item)
-            for item in observed_devices[1:]
-        ):
+        if any(observed_device != item for item in observed_devices[1:]):
             raise ExternalAppendError(
                 "structured arena components span multiple devices"
             )
@@ -172,7 +168,7 @@ class SglangExternalWriteAdapter:
             raise ExternalAppendError(
                 "configured CUDA device must have a concrete index"
             )
-        if not _compatible_device(configured_device, observed_device):
+        if configured_device != observed_device:
             raise ExternalAppendError(
                 "configured device differs from structured arena storage"
             )

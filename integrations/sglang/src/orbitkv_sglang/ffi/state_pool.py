@@ -23,6 +23,7 @@ from orbitkv_sglang.runtime import (
 )
 
 from . import layouts as L
+from .conversions import uint as _uint
 from .library import (
     ERROR_BUFFER_BYTES,
     STATUS_BUFFER_TOO_SMALL,
@@ -35,12 +36,6 @@ from .library import (
     LoadedLibrary,
 )
 from .workspace import array
-
-
-def _uint(name: str, value: int, bits: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 1 << bits:
-        raise ManagerError(f"{name} is outside uint{bits}_t")
-    return value
 
 
 def _slot_c(value: StateSlotLease | None) -> L.StateSlotLeaseLayout:

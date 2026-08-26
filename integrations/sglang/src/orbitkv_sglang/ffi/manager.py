@@ -27,7 +27,6 @@ from orbitkv_sglang.runtime import (
     ManagerProtocol,
     ManagerStats,
     MaterializedRequestView,
-    PageLease,
     PrefixAttachItem,
     PrefixEvictionBatch,
     PrefixLease,
@@ -38,9 +37,6 @@ from orbitkv_sglang.runtime import (
     PrefixSemanticKey,
     PreparedStep,
     PublishedPrefix,
-    ReclamationCertificate,
-    ReclamationLease,
-    RelocationLease,
     ReclamationReceipt,
     ReleaseBatchCompletion,
     ReleaseBatchItem,
@@ -49,7 +45,6 @@ from orbitkv_sglang.runtime import (
     RequestLease,
     RequestView,
     RetryableConflict,
-    SnapshotLease,
     SnapshotPage,
     StepCompletion,
     StepLease,
@@ -60,6 +55,19 @@ from orbitkv_sglang.runtime import (
 )
 
 from . import layouts as L
+from .conversions import (
+    lease_to_c as _lease_to_c,
+    page as _page,
+    page_to_c as _page_to_c,
+    prefix as _prefix,
+    reclamation_certificate as _certificate,
+    request as _request,
+    request_view as _view,
+    snapshot as _snapshot,
+    step as _step,
+    submission as _submission,
+    uint as _uint,
+)
 from .library import (
     ERROR_BUFFER_BYTES,
     STATUS_BUFFER_TOO_SMALL,
@@ -73,12 +81,6 @@ from .library import (
 )
 from .workspace import HotBounds, HotWorkspace, array, cold_materialization, cold_reclamation
 from .token_relocation import TokenRelocationMixin
-
-
-def _uint(name: str, value: int, bits: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or not 0 <= value < 1 << bits:
-        raise ManagerError(f"{name} is outside uint{bits}_t")
-    return value
 
 
 def _discard_created_handle(loaded: LoadedLibrary, handle: ctypes.c_void_p) -> None:
@@ -101,70 +103,6 @@ def _discard_created_handle(loaded: LoadedLibrary, handle: ctypes.c_void_p) -> N
         handle.value = None
 
 
-def _lease_to_c(value: Any) -> Any:
-    layouts = (
-        (RequestLease, L.RequestLeaseLayout),
-        (SnapshotLease, L.SnapshotLeaseLayout),
-        (StepLease, L.StepLeaseLayout),
-        (SubmissionLease, L.SubmissionLeaseLayout),
-        (ReclamationLease, L.ReclamationLeaseLayout),
-        (RelocationLease, L.RelocationLeaseLayout),
-        (PrefixLease, L.PrefixLeaseLayout),
-    )
-    layout = next((item for kind, item in layouts if isinstance(value, kind)), None)
-    if layout is None:
-        raise ManagerError("value is not an ABI8 lease DTO")
-    return layout(
-        _uint("lease engine epoch", value.engine_epoch, 64),
-        _uint("lease slot", value.slot, 32),
-        _uint("lease generation", value.generation, 32),
-    )
-
-
-def _request(value: Any) -> RequestLease:
-    return RequestLease(int(value.engine_epoch), int(value.slot), int(value.generation))
-
-
-def _snapshot(value: Any) -> SnapshotLease:
-    return SnapshotLease(int(value.engine_epoch), int(value.slot), int(value.generation))
-
-
-def _step(value: Any) -> StepLease:
-    return StepLease(int(value.engine_epoch), int(value.slot), int(value.generation))
-
-
-def _submission(value: Any) -> SubmissionLease:
-    return SubmissionLease(int(value.engine_epoch), int(value.slot), int(value.generation))
-
-
-def _reclamation(value: Any) -> ReclamationLease:
-    return ReclamationLease(int(value.engine_epoch), int(value.slot), int(value.generation))
-
-
-def _prefix(value: Any) -> PrefixLease:
-    return PrefixLease(int(value.engine_epoch), int(value.slot), int(value.generation))
-
-
-def _page_to_c(value: PageLease) -> L.PageLeaseLayout:
-    return L.PageLeaseLayout(
-        _uint("page engine epoch", value.engine_epoch, 64),
-        _uint("page pool epoch", value.pool_epoch, 64),
-        _uint("page generation", value.generation, 64),
-        _uint("page id", value.page_id, 32),
-        _uint("page pool id", value.pool_id, 32),
-    )
-
-
-def _page(value: L.PageLeaseLayout) -> PageLease:
-    return PageLease(
-        int(value.engine_epoch),
-        int(value.pool_epoch),
-        int(value.generation),
-        int(value.page_id),
-        int(value.pool_id),
-    )
-
-
 def _key_to_c(value: PrefixSemanticKey) -> L.PrefixKeyLayout:
     if not isinstance(value.namespace, bytes) or len(value.namespace) != 32:
         raise ManagerError("prefix namespace must contain exactly 32 bytes")
@@ -179,18 +117,6 @@ def _key_to_c(value: PrefixSemanticKey) -> L.PrefixKeyLayout:
 
 def _key(value: L.PrefixKeyLayout) -> PrefixSemanticKey:
     return PrefixSemanticKey(bytes(value.namespace_bytes), bytes(value.digest), int(value.boundary))
-
-
-def _view(value: L.RequestViewLayout) -> RequestView:
-    if int(value.reserved) != 0:
-        raise ManagerError("request view reserved field is nonzero")
-    return RequestView(
-        _request(value.request),
-        _snapshot(value.snapshot),
-        int(value.view_version),
-        int(value.boundary),
-        int(value.resident_count),
-    )
 
 
 def _snapshot_page(value: L.SnapshotPageLayout) -> SnapshotPage:
@@ -251,23 +177,6 @@ def _detached(value: L.DetachedBindingLayout) -> DetachedBinding:
         int(value.action),
         int(value.reason),
         int(value.reserved),
-    )
-
-
-def _certificate(value: L.ReclamationCertificateLayout) -> ReclamationCertificate:
-    if int(value.reserved32) != 0:
-        raise ManagerError("reclamation certificate reserved field is nonzero")
-    return ReclamationCertificate(
-        _reclamation(value.reclamation),
-        _page(value.page),
-        int(value.class_id),
-        int(value.backend_domain),
-        int(value.logical_ordinal),
-        int(value.backend_index),
-        int(value.token_begin),
-        int(value.token_end_exclusive),
-        int(value.completion_domain),
-        int(value.completion_value),
     )
 
 

@@ -266,6 +266,34 @@ def test_cpu_external_append_resolves_normalized_structured_destination() -> Non
     assert adapter.event_for(last_use) is None
 
 
+@pytest.mark.parametrize(
+    ("first_device", "second_device"),
+    (("cpu", "cuda:0"), ("cuda:0", "cuda:1")),
+)
+def test_external_adapter_rejects_component_device_mismatch(
+    first_device: str, second_device: str
+) -> None:
+    arena = _arena(device=first_device)
+    arena.components[1].tensor.device = second_device
+
+    with pytest.raises(ExternalAppendError, match="span multiple devices"):
+        SglangExternalWriteAdapter((arena,), device_module=_DeviceModule())
+
+
+def test_external_adapter_rejects_configured_device_mismatch() -> None:
+    arena = _arena()
+
+    with pytest.raises(ExternalAppendError, match="differs from structured arena"):
+        SglangExternalWriteAdapter((arena,), device="cuda:0")
+
+
+def test_external_adapter_rejects_ambiguous_cuda_device() -> None:
+    arena = _arena(device="cuda")
+
+    with pytest.raises(ExternalAppendError, match="lacks an index"):
+        SglangExternalWriteAdapter((arena,), device_module=_DeviceModule())
+
+
 def test_multi_class_ticket_requires_canonical_full_swa_coverage() -> None:
     full = _arena()
     sliding = _arena(

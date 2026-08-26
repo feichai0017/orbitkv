@@ -50,6 +50,66 @@ complete serving engine. SGLang can opt into the two-phase external-write
 protocol only for its scoped eager BF16/NHD `token_kv` subset; broader
 migration and qualification remain roadmap work.
 
+## Definition of done: a compiled hybrid-attention manager
+
+OrbitKV becomes a compiled manager when the compiler output, rather than an
+engine adapter's model- or layout-specific branches, is the executable source
+of truth for allocation, addressing, mutation, completion, and reclamation.
+Code that merely recognizes more model names does not satisfy this definition.
+
+The required milestones are:
+
+| Phase | Required result | Exit gate |
+| --- | --- | --- |
+| P1: executable manifest | Emit one versioned artifact containing token and fixed-state classes, component geometry, physical layouts, address programs, lifecycle operations, capability requirements, and a stable fingerprint | SGLang consumes the compiled artifact directly; it no longer reparses separate manager and uncompiled state inputs or reconstructs their relationship |
+| P2: complete physical executor | Execute every admitted retention domain and storage kind, including whole-token Full/SWA, component-aware MLA, head/region partitions, pinned plus sliding regions, and resettable/chunked state | The compiler cannot emit a plan that the selected manager/adapter later rejects; unsupported opcodes fail before arena allocation |
+| P3: unified lifecycle schedule | Compile append, COW, relocation, fixed-state replacement, semantic-death proofs, stream dependencies, completion, mirror publication, and reuse into one transaction graph | External append and relocation can coexist, token and fixed state share an explicit commit group, and injected failures prove no premature reuse or split publication |
+| P4: cost-based physical planning | Select append-only, bounded ring, packed, shared Prefix, or relocation plans from state geometry, workload pressure, copy cost, and backend capabilities | Two semantically equivalent plans can be compared by a documented cost model, and the selected plan is recorded in telemetry |
+| P5: matched benefit qualification | Run released checkpoints against the same engine, kernels, capacity, prompts, batching, and sampling configuration | A sealed multi-epoch record passes the correctness, memory/capacity, latency, throughput, pressure, and long-running-reuse gates below |
+
+P1 through P3 are the architectural threshold for calling OrbitKV a compiled
+hybrid-attention manager. P4 and P5 are the additional threshold for claiming
+that compilation produces a real deployment benefit. The live tree has the
+semantic compiler and several individually executable mechanisms, but has not
+yet crossed either complete threshold.
+
+### Family-specific lowering targets
+
+| State family | Compiled physical strategy | Current gap | Expected source of benefit |
+| --- | --- | --- | --- |
+| Full MHA/GQA/MQA | Append-only paged KV with Prefix sharing and COW | Structured append exists, but remains a scoped SGLang path | Prefix reuse and low control overhead; Full attention alone has no semantic-death memory reduction |
+| SWA/local | Bounded cyclic or generation-indexed slots derived from the window and page size | Full+SWA is implemented, but multi-class execution is still adapter-shaped | Bounded resident KV and prompt-independent decode capacity |
+| Sink+window, dilated, chunked, and per-head windows | Separate lifetime-normal-form regions with independent address and retirement programs | Compiler representations exist, while the canonical manager rejects several non-whole-domain forms | Lower retention amplification by avoiding widest-window allocation for every head or region |
+| MLA | Component-aware latent and RoPE token rows | Compiler geometry and a host relocation seam exist; structured append and engine qualification are pending | Smaller token records and exact relocation without pretending the components are ordinary K/V |
+| Mamba/GDN/KDA/linear plus convolution | Request-owned recurrent checkpoints and finite convolution rings | One GDN/convolution profile is connected; component-specific pools, replacement triggers, and joint commit are pending | Bound state independently of context length without applying token relocation to non-token state |
+| Sparse or policy-selected retention | Token dispositions with exact semantic proof or an explicit lossy quality contract | No general selector/backend contract is qualified | Reclaim non-contiguous holes where relocation can reduce physical pages |
+
+### Benefit GO gates
+
+A result is a real systems benefit only when a matched, sealed experiment
+satisfies all applicable gates:
+
+- lossless plans match stock output tokens and, where practical, logits; lossy
+  policies carry and evaluate a separate quality contract;
+- the unoptimized Full baseline keeps throughput and inter-token-latency tax at
+  or below 2%, so ownership machinery does not consume the expected gain;
+- an optimized hybrid workload demonstrates either at least 15% lower measured
+  peak attention-state bytes or at least 15% more admitted requests/tokens at a
+  fixed memory limit, with no more than 3% throughput regression;
+- alternatively, at equal memory and semantics, throughput improves by at least
+  5% without more than 3% regression in TTFT or p95 inter-token latency;
+- pressure telemetry reports physical resident bytes, semantically live bytes,
+  temporary relocation headroom, and retention amplification instead of only
+  configured tensor capacity; and
+- a dynamic arrival/departure run crosses repeated reuse generations with zero
+  stale identity, leak, quarantine, or fail-stop events and bounded host/event
+  metadata.
+
+These are project promotion gates, not claims about the current implementation.
+They deliberately target non-contiguous or heterogeneous liveness, where a
+compiler can improve placement; dense Full attention and an already compact
+sliding window are control cases rather than expected memory wins.
+
 ## Why the module split is a roadmap prerequisite
 
 Relocation and Graph add two new forms of concurrency: physical placement can
