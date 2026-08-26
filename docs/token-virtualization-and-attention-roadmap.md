@@ -61,17 +61,19 @@ The required milestones are:
 
 | Phase | Required result | Exit gate |
 | --- | --- | --- |
-| P1: executable manifest | Emit one versioned artifact containing token and fixed-state classes, component geometry, physical layouts, address programs, lifecycle operations, capability requirements, and a stable fingerprint | SGLang consumes the compiled artifact directly; it no longer reparses separate manager and uncompiled state inputs or reconstructs their relationship |
+| P1: executable manifest | Emit one versioned admission artifact containing token and fixed-state classes, component geometry, physical layouts, address and retirement programs, capability requirements, and a stable fingerprint | SGLang consumes the compiled artifact directly; it no longer reparses separate manager and uncompiled state inputs or reconstructs their relationship. Lifecycle transactions remain P3 |
 | P2: complete physical executor | Execute every admitted retention domain and storage kind, including whole-token Full/SWA, component-aware MLA, head/region partitions, pinned plus sliding regions, and resettable/chunked state | The compiler cannot emit a plan that the selected manager/adapter later rejects; unsupported opcodes fail before arena allocation |
 | P3: unified lifecycle schedule | Compile append, COW, relocation, fixed-state replacement, semantic-death proofs, stream dependencies, completion, mirror publication, and reuse into one transaction graph | External append and relocation can coexist, token and fixed state share an explicit commit group, and injected failures prove no premature reuse or split publication |
 | P4: cost-based physical planning | Select append-only, bounded ring, packed, shared Prefix, or relocation plans from state geometry, workload pressure, copy cost, and backend capabilities | Two semantically equivalent plans can be compared by a documented cost model, and the selected plan is recorded in telemetry |
 | P5: matched benefit qualification | Run released checkpoints against the same engine, kernels, capacity, prompts, batching, and sampling configuration | A sealed multi-epoch record passes the correctness, memory/capacity, latency, throughput, pressure, and long-running-reuse gates below |
 
-P1 through P3 are the architectural threshold for calling OrbitKV a compiled
-hybrid-attention manager. P4 and P5 are the additional threshold for claiming
-that compilation produces a real deployment benefit. The live tree has the
-semantic compiler and several individually executable mechanisms, but has not
-yet crossed either complete threshold.
+P1 is implemented: the Rust compiler emits one versioned, self-validating
+runtime manifest and the SGLang adapter loads it directly while preserving the
+legacy path. The manifest is a compiled contract and admission artifact, not a
+transaction graph. P2 and P3 remain open, so OrbitKV has not crossed the full
+P1-through-P3 architectural threshold for calling it a compiled
+hybrid-attention manager. P4 and P5 remain the additional threshold for
+claiming a real deployment benefit.
 
 ### Family-specific lowering targets
 

@@ -5,11 +5,12 @@ use std::process::ExitCode;
 use orbitkv::{
     AttentionStatePlanInput, HfRetentionOptions, KvPlanInput, compile_attention_state_manager_plan,
     compile_attention_state_plan, compile_hf_attention_state_input,
-    compile_hf_attention_state_plan, compile_hf_token_manager_plan, compile_plan,
+    compile_hf_attention_state_plan, compile_hf_runtime_manifest, compile_hf_token_manager_plan,
+    compile_plan, compile_runtime_manifest,
 };
 use serde::Serialize;
 
-const USAGE: &str = "usage:\n  orbitkv compile-plan <plan.json>\n  orbitkv compile-state-plan <state-plan.json>\n  orbitkv compile-state-manager-plan <state-plan.json>\n  orbitkv compile-hf-state-input <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-state-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-token-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>  (compatibility alias)\n\nnotes:\n  compile-hf-state-input emits the complete input schema for ORBITKV_STATE_PLAN.\n  compile-hf-state-plan emits compiled backend contracts, not ORBITKV_STATE_PLAN input.\n  compile-hf-token-manager-plan emits only token-addressable state; recurrent and convolution state are omitted.\n  compile-hf-manager-plan is a deprecated alias for compile-hf-token-manager-plan.";
+const USAGE: &str = "usage:\n  orbitkv compile-plan <plan.json>\n  orbitkv compile-state-plan <state-plan.json>\n  orbitkv compile-state-manager-plan <state-plan.json>\n  orbitkv compile-runtime-manifest <state-plan.json>\n  orbitkv compile-hf-state-input <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-state-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-token-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-runtime-manifest <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>  (compatibility alias)\n\nnotes:\n  compile-runtime-manifest emits the versioned executable artifact for engine adapters.\n  compile-hf-runtime-manifest compiles a supported HF config into that same artifact.\n  compile-hf-state-input emits the complete input schema for ORBITKV_STATE_PLAN.\n  compile-hf-state-plan emits compiled backend contracts, not ORBITKV_STATE_PLAN input.\n  compile-hf-token-manager-plan emits only token-addressable state; recurrent and convolution state are omitted.\n  compile-hf-manager-plan is a deprecated alias for compile-hf-token-manager-plan.";
 
 fn main() -> ExitCode {
     match run() {
@@ -27,13 +28,34 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("compile-plan") => compile_plan_command(&mut args),
         Some("compile-state-plan") => compile_state_plan_command(&mut args),
         Some("compile-state-manager-plan") => compile_state_manager_plan_command(&mut args),
+        Some("compile-runtime-manifest") => compile_runtime_manifest_command(&mut args),
         Some("compile-hf-state-input") => compile_hf_state_input_command(&mut args),
         Some("compile-hf-state-plan") => compile_hf_state_plan_command(&mut args),
+        Some("compile-hf-runtime-manifest") => compile_hf_runtime_manifest_command(&mut args),
         Some("compile-hf-token-manager-plan" | "compile-hf-manager-plan") => {
             compile_hf_token_manager_plan_command(&mut args)
         }
         _ => Err(USAGE.into()),
     }
+}
+
+fn compile_runtime_manifest_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let path = required(args, "attention-state plan path")?;
+    require_end(args)?;
+    let input = serde_json::from_slice::<AttentionStatePlanInput>(&std::fs::read(path)?)?;
+    write_json(&compile_runtime_manifest(input)?)
+}
+
+fn compile_hf_runtime_manifest_command(
+    args: &mut impl Iterator<Item = String>,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let (path, options) = parse_hf_args(args)?;
+    write_json(&compile_hf_runtime_manifest(
+        &std::fs::read(path)?,
+        options,
+    )?)
 }
 
 fn compile_hf_state_input_command(

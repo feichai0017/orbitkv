@@ -2,6 +2,8 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use orbitkv::{RuntimeCapability, RuntimeManifest};
+
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
 struct TempJson(PathBuf);
@@ -551,4 +553,160 @@ fn removed_cli_commands_have_no_compatibility_aliases() {
         assert!(!output.status.success());
         assert!(String::from_utf8_lossy(&output.stderr).contains("usage:"));
     }
+}
+
+#[test]
+fn usage_discovers_both_runtime_manifest_commands() {
+    let output = run(&["unknown"]);
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("compile-runtime-manifest <state-plan.json>"));
+    assert!(stderr.contains("compile-hf-runtime-manifest <config.json>"));
+    assert!(stderr.contains("versioned executable artifact"));
+    assert!(stderr.contains("supported HF config into that same artifact"));
+}
+
+#[test]
+fn runtime_manifest_cli_emits_one_validated_executable_artifact() {
+    let plan = TempJson::new(
+        br#"{
+          "page_tokens": 16,
+          "states": [
+            {
+              "name": "full",
+              "layers": [0],
+              "storage": {
+                "kind": "token_kv",
+                "key_bytes_per_token_per_layer": 256,
+                "value_bytes_per_token_per_layer": 256,
+                "retention": "full"
+              }
+            },
+            {
+              "name": "state",
+              "layers": [1],
+              "storage": {
+                "kind": "recurrent",
+                "family": "linear_attention",
+                "state_bytes_per_layer": 4096,
+                "checkpoint_slots_per_request": 2
+              }
+            }
+          ]
+        }"#,
+    );
+    let output = run(&["compile-runtime-manifest", plan.0.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    assert!(output.stdout.ends_with(b"\n"));
+
+    let manifest = RuntimeManifest::from_json(&output.stdout).unwrap();
+    assert_eq!(manifest.schema, "orbitkv.runtime-manifest");
+    assert_eq!(manifest.version, 1);
+    assert!(manifest.token_manager_plan.is_some());
+    assert!(
+        manifest
+            .capability_requirements
+            .contains(&RuntimeCapability::RecurrentState)
+    );
+}
+
+#[test]
+fn runtime_manifest_cli_preserves_fixed_only_state() {
+    let plan = TempJson::new(
+        br#"{
+          "page_tokens": 16,
+          "states": [{
+            "name": "state",
+            "layers": [0],
+            "storage": {
+              "kind": "recurrent",
+              "family": "mamba",
+              "state_bytes_per_layer": 4096,
+              "checkpoint_slots_per_request": 2
+            }
+          }]
+        }"#,
+    );
+    let output = run(&["compile-runtime-manifest", plan.0.to_str().unwrap()]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let manifest = RuntimeManifest::from_json(&output.stdout).unwrap();
+    assert!(manifest.token_manager_plan.is_none());
+    assert_eq!(manifest.attention_state_plan.states.len(), 1);
+}
+
+#[test]
+fn hf_runtime_manifest_cli_supports_token_only_and_heterogeneous_configs() {
+    let token_only = TempJson::new(
+        br#"{
+          "architectures": ["MistralForCausalLM"],
+          "num_hidden_layers": 2,
+          "sliding_window": 18,
+          "num_key_value_heads": 8,
+          "head_dim": 64
+        }"#,
+    );
+    let token_output = run(&[
+        "compile-hf-runtime-manifest",
+        token_only.0.to_str().unwrap(),
+        "--page-tokens",
+        "16",
+        "--kv-dtype-bytes",
+        "2",
+    ]);
+    assert!(
+        token_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&token_output.stderr)
+    );
+    let token_manifest = RuntimeManifest::from_json(&token_output.stdout).unwrap();
+    assert_eq!(token_manifest.attention_state_plan.states.len(), 1);
+    assert!(token_manifest.token_manager_plan.is_some());
+
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
+    let config = root.join("fixtures/qwen3.5-0.8b/config.json");
+    let hybrid_output = run(&[
+        "compile-hf-runtime-manifest",
+        config.to_str().unwrap(),
+        "--page-tokens",
+        "16",
+        "--kv-dtype-bytes",
+        "2",
+    ]);
+    assert!(
+        hybrid_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&hybrid_output.stderr)
+    );
+    let hybrid_manifest = RuntimeManifest::from_json(&hybrid_output.stdout).unwrap();
+    assert_eq!(hybrid_manifest.attention_state_plan.states.len(), 3);
+    assert!(
+        hybrid_manifest
+            .capability_requirements
+            .contains(&RuntimeCapability::ConvolutionState)
+    );
+}
+
+#[test]
+fn runtime_manifest_cli_rejects_invalid_arguments_and_input() {
+    let plan = TempJson::new(br#"{"page_tokens":16,"states":[]}"#);
+    let extra = run(&[
+        "compile-runtime-manifest",
+        plan.0.to_str().unwrap(),
+        "unexpected",
+    ]);
+    assert!(!extra.status.success());
+    assert!(String::from_utf8_lossy(&extra.stderr).contains("unexpected argument"));
+
+    let invalid = run(&["compile-runtime-manifest", plan.0.to_str().unwrap()]);
+    assert!(!invalid.status.success());
+    assert!(String::from_utf8_lossy(&invalid.stderr).contains("must not be empty"));
 }

@@ -101,6 +101,9 @@ class ManagerPlanConfig:
     fixed_states: tuple[FixedStateConfig, ...] = ()
     state_plan_path: Path | None = None
     state_plan_fingerprint: str | None = None
+    runtime_manifest_path: Path | None = None
+    runtime_manifest_fingerprint: str | None = None
+    capability_requirements: tuple[str, ...] = ()
 
     @property
     def num_hidden_layers(self) -> int:
@@ -130,9 +133,19 @@ class ManagerPlanConfig:
 
 
 def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
-    """Load only the ABI8 Full, sliding, or Full+sliding plan schema."""
+    """Load a v1 runtime manifest, or the legacy ABI8 plan inputs."""
 
     source = os.environ if environ is None else environ
+    if "ORBITKV_RUNTIME_MANIFEST" in source:
+        from .runtime_manifest import load_runtime_manifest
+
+        return load_runtime_manifest(source)
+    return _load_legacy_config(source)
+
+
+def _load_legacy_config(source: Mapping[str, str]) -> ManagerPlanConfig:
+    """Preserve the ABI8 ORBITKV_PLAN plus ORBITKV_STATE_PLAN path."""
+
     plan_path = _configured_file(source, "ORBITKV_PLAN")
     library_path = _configured_file(source, "ORBITKV_LIBRARY")
     try:
@@ -192,6 +205,26 @@ def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
     fixed_states, state_plan_path, state_plan_fingerprint = _fixed_state_config(
         source, page_tokens, classes
     )
+    _validate_token_reclamation(token_reclamation, retentions, classes)
+    return ManagerPlanConfig(
+        plan_path=plan_path,
+        library_path=library_path,
+        plan_json=canonical,
+        plan_fingerprint="sha256:" + hashlib.sha256(canonical).hexdigest(),
+        page_tokens=page_tokens,
+        classes=classes,
+        token_reclamation=token_reclamation,
+        fixed_states=fixed_states,
+        state_plan_path=state_plan_path,
+        state_plan_fingerprint=state_plan_fingerprint,
+    )
+
+
+def _validate_token_reclamation(
+    token_reclamation: TokenReclamationConfig,
+    retentions: tuple[RetentionKind, ...],
+    classes: tuple[ClassConfig, ...],
+) -> None:
     if token_reclamation.mode != "off" and retentions not in (
         ("full",),
         ("full", "sliding"),
@@ -207,18 +240,6 @@ def load_config(environ: Mapping[str, str] | None = None) -> ManagerPlanConfig:
         raise ValueError(
             "token-reclamation trigger exceeds the shared Full/SWA visibility prefix"
         )
-    return ManagerPlanConfig(
-        plan_path=plan_path,
-        library_path=library_path,
-        plan_json=canonical,
-        plan_fingerprint="sha256:" + hashlib.sha256(canonical).hexdigest(),
-        page_tokens=page_tokens,
-        classes=classes,
-        token_reclamation=token_reclamation,
-        fixed_states=fixed_states,
-        state_plan_path=state_plan_path,
-        state_plan_fingerprint=state_plan_fingerprint,
-    )
 
 
 def _fixed_state_config(
@@ -692,6 +713,16 @@ def _canonical_json(value: Any) -> bytes:
     ).encode("utf-8")
 
 
+# runtime_manifest defines these before importing the shared config types and
+# helpers above, so both module import orders remain safe.
+from .runtime_manifest import (  # noqa: E402
+    RUNTIME_MANIFEST_CAPABILITIES,
+    RUNTIME_MANIFEST_MAX_BYTES,
+    RUNTIME_MANIFEST_SCHEMA,
+    RUNTIME_MANIFEST_VERSION,
+)
+
+
 __all__ = [
     "ClassConfig",
     "FixedStateConfig",
@@ -699,6 +730,10 @@ __all__ = [
     "ManagerPlanConfig",
     "PAGE_TOKENS",
     "ReclamationMode",
+    "RUNTIME_MANIFEST_CAPABILITIES",
+    "RUNTIME_MANIFEST_MAX_BYTES",
+    "RUNTIME_MANIFEST_SCHEMA",
+    "RUNTIME_MANIFEST_VERSION",
     "RetentionKind",
     "TokenReclamationConfig",
     "load_config",
