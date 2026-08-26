@@ -75,12 +75,23 @@ P1-through-P3 architectural threshold for calling it a compiled
 hybrid-attention manager. P4 and P5 remain the additional threshold for
 claiming a real deployment benefit.
 
+The first bounded P2a executor slice is implemented for whole-domain pure SWA.
+It carries one manifest-derived periodic class through the native ABI8 manager,
+the pure-SWA allocator, request-private cache lifecycle, SWA-leaf COW, semantic
+retirement cleanup, and the optional structured external-write bridge. This
+does not complete P2: head/region partitions, pinned and periodic-from regions,
+resettable/chunked arenas, structured MLA, and broader fixed-state executors
+remain open.
+The pinned engine's generic `is_hybrid_swa` plus all-SWA
+`hybrid_layer_pattern` route is host-checked; no released checkpoint is yet
+qualified for this executor slice.
+
 ### Family-specific lowering targets
 
 | State family | Compiled physical strategy | Current gap | Expected source of benefit |
 | --- | --- | --- | --- |
 | Full MHA/GQA/MQA | Append-only paged KV with Prefix sharing and COW | Structured append exists, but remains a scoped SGLang path | Prefix reuse and low control overhead; Full attention alone has no semantic-death memory reduction |
-| SWA/local | Bounded cyclic or generation-indexed slots derived from the window and page size | Full+SWA is implemented, but multi-class execution is still adapter-shaped | Bounded resident KV and prompt-independent decode capacity |
+| SWA/local | Bounded cyclic or generation-indexed slots derived from the window and page size | Whole-domain pure SWA and Full+SWA are host-executable; multi-class execution remains adapter-shaped and engine E2E qualification is pending | Bounded resident KV and prompt-independent decode capacity |
 | Sink+window, dilated, chunked, and per-head windows | Separate lifetime-normal-form regions with independent address and retirement programs | Compiler representations exist, while the canonical manager rejects several non-whole-domain forms | Lower retention amplification by avoiding widest-window allocation for every head or region |
 | MLA | Component-aware latent and RoPE token rows | Compiler geometry and a host relocation seam exist; structured append and engine qualification are pending | Smaller token records and exact relocation without pretending the components are ordinary K/V |
 | Mamba/GDN/KDA/linear plus convolution | Request-owned recurrent checkpoints and finite convolution rings | One GDN/convolution profile is connected; component-specific pools, replacement triggers, and joint commit are pending | Bound state independently of context length without applying token relocation to non-token state |

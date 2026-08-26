@@ -11,7 +11,13 @@ import pytest
 
 from orbitkv_sglang.config import RUNTIME_MANIFEST_MAX_BYTES, load_config
 from orbitkv_sglang.ffi import CtypesManagerFactory
-from orbitkv_sglang.runtime import ArenaRegistration, ManagerCreateSettings
+from orbitkv_sglang.runtime import (
+    ArenaRegistration,
+    CanonicalRuntime,
+    ManagerCreateSettings,
+)
+
+from runtime_test_support import _step_batch
 
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[3]
@@ -87,6 +93,26 @@ def _write_inputs(
     return path, library, environment
 
 
+def _rust_manifest_for_input(path: Path) -> dict[str, Any]:
+    completed = subprocess.run(
+        [
+            "cargo",
+            "run",
+            "--quiet",
+            "--bin",
+            "orbitkv",
+            "--",
+            "compile-runtime-manifest",
+            str(path),
+        ],
+        cwd=REPOSITORY_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return json.loads(completed.stdout)
+
+
 def test_rust_manifest_loads_as_unified_manager_config(
     tmp_path: Path, rust_manifest: dict[str, Any]
 ) -> None:
@@ -158,6 +184,93 @@ def test_rust_manifest_creates_the_native_abi8_manager(
         assert config.runtime_manifest_path == manifest_path.resolve()
     finally:
         manager.destroy()
+
+
+def test_rust_pure_sliding_manifest_executes_native_periodic_lifecycle(
+    tmp_path: Path,
+) -> None:
+    state_input = tmp_path / "pure-sliding-state.json"
+    state_input.write_text(
+        json.dumps(
+            {
+                "page_tokens": 16,
+                "states": [
+                    {
+                        "name": "local_attention",
+                        "layers": [0],
+                        "storage": {
+                            "kind": "token_kv",
+                            "key_bytes_per_token_per_layer": 64,
+                            "value_bytes_per_token_per_layer": 64,
+                            "retention": "sliding",
+                            "window_tokens": 18,
+                        },
+                    }
+                ],
+            }
+        ),
+        encoding="utf-8",
+    )
+    manifest = _rust_manifest_for_input(state_input)
+    manifest_path, _placeholder, environment = _write_inputs(tmp_path, manifest)
+    library = (
+        REPOSITORY_ROOT
+        / "crates/orbitkv-ffi/target/release/liborbitkv_ffi.so"
+    )
+    if not library.is_file():
+        subprocess.run(
+            [
+                "cargo",
+                "build",
+                "--release",
+                "--locked",
+                "--manifest-path",
+                str(REPOSITORY_ROOT / "crates/orbitkv-ffi/Cargo.toml"),
+            ],
+            cwd=REPOSITORY_ROOT,
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=240,
+        )
+    environment["ORBITKV_LIBRARY"] = str(library)
+    config = load_config(environment)
+    assert config.runtime_manifest_path == manifest_path.resolve()
+    assert config.full_class is None
+    assert config.sliding_class is not None
+    assert config.capability_requirements == (
+        "periodic_addressing",
+        "semantic_retirement",
+        "token_component_geometry",
+        "token_manager",
+    )
+    manager = CtypesManagerFactory().create(
+        config,
+        ManagerCreateSettings(2, 2, 2, 16, 64),
+        (
+            ArenaRegistration(
+                config.classes[0].class_id,
+                config.classes[0].pool_id,
+                config.classes[0].backend_domain,
+                16,
+                0,
+            ),
+        ),
+    )
+    runtime = CanonicalRuntime(config, manager)
+    try:
+        _step_batch(runtime, (("request", 18),))
+        _step_batch(runtime, (("request", 49),))
+        record = runtime.record_for("request")
+        assert set(record.cursor.pages) == {(0, 2), (0, 3)}
+        assert record.swa_temporal_cycles == {0: 1}
+        activity = runtime.swa_activity()
+        assert activity.pages_reclaimed == 2
+        assert activity.wrap_events == 1
+        runtime.release_batch(("request",))
+        assert runtime.stats().free_pages == 16
+    finally:
+        runtime.close()
 
 
 def test_manifest_keeps_token_reclamation_as_an_orthogonal_policy(

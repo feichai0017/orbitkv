@@ -36,7 +36,7 @@ def validate_private_prefix(
     import torch
 
     if any(hasattr(req, name) for name in SHARED_PREFIX_MARKERS):
-        raise RuntimeError("current token-reclamation profile forbids Prefix mirrors")
+        raise RuntimeError("current request-private profile forbids Prefix mirrors")
     prefix = getattr(req, "prefix_indices", None)
     if (
         type(prefix) is not torch.Tensor
@@ -51,7 +51,7 @@ def validate_private_prefix(
             raise RuntimeError("empty request retained private-prefix provenance")
         return None
     if type(marker) is not PrivatePrefixProvenance:
-        raise RuntimeError("current token-reclamation profile forbids Prefix mirrors")
+        raise RuntimeError("current request-private profile forbids Prefix mirrors")
     if (
         marker.tensor is not prefix
         or marker.request_key != key

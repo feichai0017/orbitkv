@@ -16,6 +16,9 @@ sys.path.insert(0, str(SOURCE_ROOT))
 import orbitkv_sglang.plugin.mirror_cleanup as mirror_cleanup  # noqa: E402
 import orbitkv_sglang.plugin.prefix_cache as prefix_cache  # noqa: E402
 import orbitkv_sglang.plugin.state as state  # noqa: E402
+from orbitkv_sglang.plugin.private_prefix import (  # noqa: E402
+    PrivatePrefixProvenance,
+)
 from orbitkv_sglang.config import ClassConfig, ManagerPlanConfig  # noqa: E402
 from orbitkv_sglang.config import load_config  # noqa: E402
 from orbitkv_sglang.ffi import CtypesManagerFactory  # noqa: E402
@@ -219,6 +222,7 @@ def test_compact_hybrid_release_validates_whole_row_and_lut_before_clear():
         swa_locations, dtype=torch.int64
     )
     req = SimpleNamespace(
+        rid="compact-hybrid",
         req_pool_idx=row,
         prefix_indices=torch.empty(0, dtype=torch.int64),
         _orbitkv_retained_locations=full_locations,
@@ -425,6 +429,7 @@ def _full_fresh_candidate_case():
     locations = torch.arange(48, 64, dtype=torch.int64)
     pool.req_to_token[row, :PAGE_TOKENS] = locations.int()
     req = SimpleNamespace(
+        rid="full-fresh-candidate",
         req_pool_idx=row,
         prefix_indices=locations.clone(),
     )
@@ -1129,12 +1134,22 @@ def test_pure_swa_cow_source_leaving_window_clears_current_destination_row():
     destination = torch.arange(48, 64, dtype=torch.int64)
     pool.req_to_token[row, 16:32] = destination.int()
     req = SimpleNamespace(
+        rid="pure-swa-cow",
         req_pool_idx=row,
         prefix_indices=torch.cat(
             (torch.zeros(16, dtype=torch.int64), destination[:2])
         ),
         kv=SimpleNamespace(kv_allocated_len=32, swa_evicted_seqlen=0),
     )
+    req._orbitkv_request_key = ("str", req.rid)
+    req._orbitkv_request_lease = SimpleNamespace(slot=1)
+    req._orbitkv_private_prefix = PrivatePrefixProvenance(
+        req.prefix_indices,
+        req._orbitkv_request_key,
+        req._orbitkv_request_lease,
+        32,
+    )
+    req.cache_protected_len = 0
     detached = DetachedBinding(
         old=_page(0, 1),
         replacement=PageLease(0, 0, 0, 0, 0),

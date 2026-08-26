@@ -498,6 +498,25 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
             raise RuntimeError("Full profile requires one class covering every layer")
         if bool(model.is_hybrid_swa) and not plan.fixed_states:
             raise RuntimeError("Full profile unexpectedly resolved hybrid SWA storage")
+    elif retentions == ("sliding",):
+        sliding = plan.classes[0]
+        if (
+            not bool(model.is_hybrid_swa)
+            or tuple(getattr(model, "full_attention_layer_ids", ()))
+            or tuple(getattr(model, "swa_attention_layer_ids", ()))
+            != sliding.layers
+            or token_layers != all_layers
+            or bool(plan.fixed_states)
+        ):
+            raise RuntimeError(
+                "pure sliding profile requires every model layer to use SWA"
+            )
+        if int(model.sliding_window_size) != int(sliding.window_tokens):
+            raise RuntimeError(
+                "SGLang sliding window differs from KvPlanInput"
+            )
+        if bool(getattr(model, "disable_hybrid_swa_memory", False)):
+            raise RuntimeError("SGLang hybrid SWA memory is disabled")
     elif retentions == ("full", "sliding"):
         if not bool(model.is_hybrid_swa):
             raise RuntimeError("Hybrid profile requires ordered Full+SWA classes")
@@ -512,7 +531,9 @@ def _validate_checkpoint_geometry(configurator: Any) -> None:
         if bool(getattr(model, "disable_hybrid_swa_memory", False)):
             raise RuntimeError("SGLang hybrid SWA memory is disabled")
     else:
-        raise RuntimeError("OrbitKV SGLang supports only Full or ordered Full+SWA")
+        raise RuntimeError(
+            "OrbitKV SGLang supports Full, pure sliding, or ordered Full+SWA"
+        )
 
     dtype_bytes = _dtype_bytes(configurator.kv_cache_dtype)
     kv_heads = int(text.num_key_value_heads)

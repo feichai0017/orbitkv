@@ -463,7 +463,7 @@ def test_structured_arena_rejects_unsupported_or_drifted_geometry(
         build_sglang_structured_arenas(config, runtime, pool)
 
 
-def test_structured_arena_rejects_mla_and_pure_swa_profiles():
+def test_structured_arena_rejects_mla_and_accepts_pure_swa_profiles():
     config, runtime, pool = _structured_fixture()
     latent = _class(0, "full", (0,), storage="latent_kv")
     latent_config = _config(latent)
@@ -476,8 +476,15 @@ def test_structured_arena_rejects_mla_and_pure_swa_profiles():
     sliding_runtime = _Runtime(
         (_identity(sliding, pages=4, base=7, first=101),)
     )
-    with pytest.raises(RuntimeError, match=r"Full or ordered Full\+SWA"):
-        build_sglang_structured_arenas(sliding_config, sliding_runtime, pool)
+    swa_pool = _pool(sliding, size=64)
+    wrapper = SimpleNamespace(swa_kv_pool=swa_pool)
+    arenas = build_sglang_structured_arenas(
+        sliding_config, sliding_runtime, wrapper
+    )
+    assert len(arenas) == 1
+    assert arenas[0].retention == "sliding"
+    assert arenas[0].storage == "token_kv"
+    assert arenas[0].components[0].tensor is swa_pool.k_buffer[0]
 
 
 @pytest.mark.parametrize(

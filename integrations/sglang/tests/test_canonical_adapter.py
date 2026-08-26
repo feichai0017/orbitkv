@@ -1046,6 +1046,16 @@ def _run_mirror_cleanup(req, pool, allocator, certificates, releasing):
     coordinator.finalize(plan)
 
 
+def _install_private_prefix(req, runtime, boundary):
+    key = state._request_key(req)
+    req._orbitkv_request_key = key
+    req._orbitkv_request_lease = runtime.records[key].lease
+    req._orbitkv_private_prefix = mirror_cleanup.PrivatePrefixProvenance(
+        req.prefix_indices, key, req._orbitkv_request_lease, boundary
+    )
+    req.cache_protected_len = 0
+
+
 def _b4_hybrid_cleanup_case():
     config = _config(("full", "sliding"))
     runtime = TransactionRuntime(config)
@@ -1200,6 +1210,7 @@ def _b4_pure_swa_cleanup_case():
         runtime.records[state._request_key(req)] = SimpleNamespace(
             lease=RequestLease(1, index, 1), boundary=16, reclamation_cleanup=None
         )
+        _install_private_prefix(req, runtime, 16)
         requests.append(req)
         certificate = _certificate(0, backend_index=index, begin=0, end=16)
         retirements.append(certificate)
@@ -1516,6 +1527,7 @@ def test_pure_swa_completion_clears_req_row_and_prefix_before_ack(monkeypatch):
     runtime.records[state._request_key(req)] = SimpleNamespace(
         lease=RequestLease(1, 0, 1), boundary=16, reclamation_cleanup=None
     )
+    _install_private_prefix(req, runtime, 16)
     pool = FakeReqToTokenPool()
     pool.req_to_token[1, :16] = torch.arange(16, 32, dtype=torch.int32)
     observed = []
@@ -1556,6 +1568,7 @@ def test_pure_swa_batches_multiple_certificates_before_one_cleanup_sync(
     runtime.records[state._request_key(req)] = SimpleNamespace(
         lease=RequestLease(1, 0, 1), boundary=48, reclamation_cleanup=None
     )
+    _install_private_prefix(req, runtime, 48)
     pool = FakeReqToTokenPool()
     pool.req_to_token[1, :48] = torch.arange(16, 64, dtype=torch.int32)
     certificates = tuple(
@@ -1597,7 +1610,7 @@ def test_pure_swa_batches_multiple_certificates_before_one_cleanup_sync(
     )
     monkeypatch.setattr(torch, "equal", original_equal)
 
-    assert equal_calls == [(1, 1)]
+    assert equal_calls == [(48, 48), (1, 1)]
     assert synchronization_observations == [(0, 0, 0)]
     assert req.kv.swa_evicted_seqlen == 48
 

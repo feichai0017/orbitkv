@@ -212,16 +212,21 @@ def build_sglang_structured_arenas(
 ) -> tuple[SglangStructuredArena, ...]:
     """Describe the exact MHA tensors backing every compiled KV class.
 
-    Only Full and ordered Full+SWA ``token_kv`` plans are accepted.  The
+    Full, pure-SWA, and ordered Full+SWA ``token_kv`` plans are accepted. The
     returned registrations use neutral, dummy-free arena geometry even though
     every component tensor retains SGLang's one-page storage prefix.
     """
 
     classes = _config_classes(config)
     retentions = tuple(getattr(item, "retention", None) for item in classes)
-    if retentions not in (("full",), ("full", "sliding")):
+    if retentions not in (
+        ("full",),
+        ("sliding",),
+        ("full", "sliding"),
+    ):
         raise RuntimeError(
-            "structured SGLang arenas require Full or ordered Full+SWA classes"
+            "structured SGLang arenas require Full, pure SWA, or ordered "
+            "Full+SWA classes"
         )
     if any(getattr(item, "storage", None) != "token_kv" for item in classes):
         raise RuntimeError("structured SGLang arenas do not support MLA storage")
@@ -303,6 +308,11 @@ def _physical_pools(root: Any, retentions: tuple[str, ...]) -> tuple[Any, ...]:
         if full is None or sliding is None or full is sliding:
             raise RuntimeError("SGLang Full+SWA physical pools are missing or aliased")
         return full, sliding
+    if retentions == ("sliding",):
+        sliding = getattr(root, "swa_kv_pool", None)
+        if sliding is None:
+            raise RuntimeError("SGLang pure-SWA physical pool is missing")
+        return (sliding,)
 
     if getattr(root, "swa_kv_pool", None) is not None:
         raise RuntimeError("Full-only plan received an SGLang SWA pool")

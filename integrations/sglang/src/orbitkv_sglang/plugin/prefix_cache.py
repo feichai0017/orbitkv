@@ -102,8 +102,10 @@ class OrbitKvPrefixCache(BasePrefixCache):
             raise RuntimeError("OrbitKV does not support KV cache events")
         if int(params.page_size) != config.page_tokens:
             raise RuntimeError("OrbitKV prefix page size differs from the manager plan")
-        if config.full_class is None:
-            raise RuntimeError("OrbitKV prefix cache requires a Full KV class")
+        if config.full_class is None and not no_prefix:
+            raise RuntimeError(
+                "OrbitKV shared Prefix cache requires a Full KV class"
+            )
         if params.token_to_kv_pool_allocator is not _state._ALLOCATOR:
             raise RuntimeError("OrbitKV prefix cache received a foreign KV allocator")
         self.disable = False
@@ -991,8 +993,11 @@ class OrbitKvPrefixCache(BasePrefixCache):
         )
         full = _config().full_class
         sliding = _config().sliding_class
-        full_tokens = self.page_size * sum(
-            item.class_id == full.class_id for item in output.retirements
+        full_tokens = (
+            self.page_size
+            * sum(item.class_id == full.class_id for item in output.retirements)
+            if full is not None
+            else 0
         )
         swa_tokens = self.page_size * sum(
             item.class_id == sliding.class_id for item in output.retirements

@@ -92,12 +92,16 @@ def _uses_structured_data_plane() -> bool:
     retentions = tuple(item.retention for item in config.classes)
     reclamation = getattr(config, "token_reclamation", None)
     if (
-        retentions not in (("full",), ("full", "sliding"))
+        retentions not in (
+            ("full",),
+            ("sliding",),
+            ("full", "sliding"),
+        )
         or not all(item.storage == "token_kv" for item in config.classes)
         or getattr(reclamation, "mode", "off") != "off"
     ):
         raise RuntimeError(
-            "structured data plane requires Full or Full+SWA token_kv "
+            "structured data plane requires Full, pure SWA, or Full+SWA token_kv "
             "with token relocation disabled"
         )
     return True
@@ -309,7 +313,11 @@ def _requires_disabled_radix_cache() -> bool:
 
     config = _config()
     reclamation = getattr(config, "token_reclamation", None)
-    return bool(getattr(config, "fixed_states", ())) or (
+    pure_sliding = (
+        getattr(config, "full_class", None) is None
+        and getattr(config, "sliding_class", None) is not None
+    )
+    return pure_sliding or bool(getattr(config, "fixed_states", ())) or (
         getattr(reclamation, "mode", "off") != "off"
     )
 
