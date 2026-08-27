@@ -34,6 +34,10 @@ attention-retention semantics
          compiled attention-state plan
          optional token-manager input + physical layout
          exact capability requirements + fingerprint
+    -> runtime target admission
+         complete structural execution signature
+         versioned executor contract
+         manifest + contract fingerprint binding
     -> CanonicalKvManager
          identity + arena
          persistent snapshot
@@ -45,6 +49,11 @@ attention-retention semantics
     -> engine adapter and checked device mirrors
     -> backend tensor arenas and attention kernels
 ```
+
+The target-binding layer does not change RuntimeManifest v1. It separates what
+the compiler can express from what one selected adapter can execute, and checks
+the exact structural topology before allocation. Device, dtype, stream, kernel,
+and live model geometry remain a second dynamic admission stage.
 
 The Rust token/fixed-state core, C wire, ABI8 Python adapter, independent
 fixed-state client, and SGLang `OrbitKVPrefixCache` retain their scoped host L2

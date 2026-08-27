@@ -86,6 +86,16 @@ The pinned engine's generic `is_hybrid_swa` plus all-SWA
 `hybrid_layer_pattern` route is host-checked; no released checkpoint is yet
 qualified for this executor slice.
 
+P2b now separates compiler identity from executor identity. RuntimeManifest v1
+remains byte-compatible; distinct `orbitkv.runtime-target-contract` and
+`orbitkv.runtime-target-binding` artifacts carry the target revision, complete
+structural execution signature, and both source fingerprints. The SGLang wheel
+packages its contract and runs the same static topology admission before its
+configurator crosses into request-pool or tensor-pool allocation. This closes
+the fail-early admission gap for the currently connected whole-domain shapes,
+but it does not make head/region, pinned/periodic-from, or resettable/chunked
+plans executable and does not qualify GPU performance.
+
 ### Family-specific lowering targets
 
 | State family | Compiled physical strategy | Current gap | Expected source of benefit |

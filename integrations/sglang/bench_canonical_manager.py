@@ -426,7 +426,7 @@ def _adapter_identity() -> dict[str, Any]:
         INTEGRATION_ROOT / "prepare_pinned_checkout.py",
         INTEGRATION_ROOT
         / "patches/v0.5.17-orbitkv-fail-closed.patch",
-        *sorted(ADAPTER_PACKAGE_ROOT.rglob("*.py")),
+        *sorted(ADAPTER_PACKAGE_ROOT.rglob("*.py")), *sorted(ADAPTER_PACKAGE_ROOT.rglob("*.json")),
     ]
     return {
         "files": [

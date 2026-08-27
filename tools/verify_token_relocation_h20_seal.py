@@ -540,7 +540,7 @@ def _validate_source_inventory(
     expected_closure = set(SOURCE_REQUIRED_PATHS) | {
         name for name in indexed
         if name.startswith("integrations/sglang/src/orbitkv_sglang/")
-        and name.endswith(".py")
+        and name.endswith((".py", ".json"))
     }
     if (closure_paths != expected_closure
             or normalized_closure
@@ -792,7 +792,7 @@ def _adapter_identity_from_closure(
         *(
             name for name in sorted(indexed)
             if name.startswith("integrations/sglang/src/orbitkv_sglang/")
-            and name.endswith(".py")
+            and name.endswith((".py", ".json"))
         ),
     ]
     if len(paths) != len(set(paths)) or any(path not in indexed for path in paths):

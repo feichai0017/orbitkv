@@ -2,7 +2,10 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use orbitkv::{RuntimeCapability, RuntimeManifest};
+use orbitkv::{
+    ExecutionTopologyV1, RuntimeAdmissionProfileV1, RuntimeCapability, RuntimeManifest,
+    RuntimeTargetBindingV1, RuntimeTargetContractV1, RuntimeTargetIdentityV1,
+};
 
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -562,6 +565,8 @@ fn usage_discovers_both_runtime_manifest_commands() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("compile-runtime-manifest <state-plan.json>"));
     assert!(stderr.contains("compile-hf-runtime-manifest <config.json>"));
+    assert!(stderr.contains("bind-runtime-manifest <manifest.json>"));
+    assert!(stderr.contains("check-runtime-manifest <manifest.json>"));
     assert!(stderr.contains("versioned executable artifact"));
     assert!(stderr.contains("supported HF config into that same artifact"));
 }
@@ -709,4 +714,118 @@ fn runtime_manifest_cli_rejects_invalid_arguments_and_input() {
     let invalid = run(&["compile-runtime-manifest", plan.0.to_str().unwrap()]);
     assert!(!invalid.status.success());
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("must not be empty"));
+}
+
+#[test]
+fn target_binding_cli_is_separate_and_binds_both_fingerprints() {
+    let plan = TempJson::new(
+        br#"{
+          "page_tokens": 16,
+          "states": [{
+            "name": "sliding",
+            "layers": [0, 1],
+            "storage": {
+              "kind": "token_kv",
+              "key_bytes_per_token_per_layer": 64,
+              "value_bytes_per_token_per_layer": 64,
+              "retention": "sliding",
+              "window_tokens": 18
+            }
+          }]
+        }"#,
+    );
+    let manifest_output = run(&["compile-runtime-manifest", plan.0.to_str().unwrap()]);
+    assert!(manifest_output.status.success());
+    let manifest = RuntimeManifest::from_json(&manifest_output.stdout).unwrap();
+    let manifest_file = TempJson::new(&manifest_output.stdout);
+    let target = RuntimeTargetContractV1::new(
+        RuntimeTargetIdentityV1 {
+            id: "sglang.abi8".into(),
+            contract_version: 1,
+        },
+        RuntimeAdmissionProfileV1 {
+            id: "eager-single-device-bf16-nhd".into(),
+            version: 1,
+        },
+        16,
+        vec![ExecutionTopologyV1::WholeDomainSlidingTokenKv],
+    )
+    .unwrap();
+    let target_file = TempJson::new(&serde_json::to_vec(&target).unwrap());
+
+    let output = run(&[
+        "bind-runtime-manifest",
+        manifest_file.0.to_str().unwrap(),
+        "--executor-capabilities",
+        target_file.0.to_str().unwrap(),
+    ]);
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let binding = RuntimeTargetBindingV1::from_json(&output.stdout).unwrap();
+    assert_eq!(binding.manifest_fingerprint, manifest.fingerprint);
+    assert_eq!(binding.target_contract_fingerprint, target.fingerprint);
+    binding.validate_against(&manifest, &target).unwrap();
+
+    let check = run(&[
+        "check-runtime-manifest",
+        manifest_file.0.to_str().unwrap(),
+        "--executor-capabilities",
+        target_file.0.to_str().unwrap(),
+    ]);
+    assert!(check.status.success());
+    assert!(check.stdout.is_empty());
+}
+
+#[test]
+fn target_binding_cli_rejects_unsupported_topology_and_bad_arguments() {
+    let plan = TempJson::new(
+        br#"{
+          "page_tokens": 16,
+          "states": [{
+            "name": "full", "layers": [0],
+            "storage": {
+              "kind": "token_kv",
+              "key_bytes_per_token_per_layer": 64,
+              "value_bytes_per_token_per_layer": 64,
+              "retention": "full", "window_tokens": null
+            }
+          }]
+        }"#,
+    );
+    let manifest_output = run(&["compile-runtime-manifest", plan.0.to_str().unwrap()]);
+    let manifest_file = TempJson::new(&manifest_output.stdout);
+    let target = RuntimeTargetContractV1::new(
+        RuntimeTargetIdentityV1 {
+            id: "sglang.abi8".into(),
+            contract_version: 1,
+        },
+        RuntimeAdmissionProfileV1 {
+            id: "eager-single-device-bf16-nhd".into(),
+            version: 1,
+        },
+        16,
+        vec![ExecutionTopologyV1::WholeDomainSlidingTokenKv],
+    )
+    .unwrap();
+    let target_file = TempJson::new(&serde_json::to_vec(&target).unwrap());
+    let unsupported = run(&[
+        "bind-runtime-manifest",
+        manifest_file.0.to_str().unwrap(),
+        "--executor-capabilities",
+        target_file.0.to_str().unwrap(),
+    ]);
+    assert!(!unsupported.status.success());
+    assert!(String::from_utf8_lossy(&unsupported.stderr).contains("does not support"));
+
+    let bad_flag = run(&[
+        "bind-runtime-manifest",
+        manifest_file.0.to_str().unwrap(),
+        "--target",
+        target_file.0.to_str().unwrap(),
+    ]);
+    assert!(!bad_flag.status.success());
+    assert!(String::from_utf8_lossy(&bad_flag.stderr).contains("unexpected argument"));
 }

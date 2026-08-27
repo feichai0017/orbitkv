@@ -666,21 +666,25 @@ def verify_qwen38_h20_diagnostic(root: Path) -> int:
         raise RuntimeError(f"{verifier}: trusted diagnostic verifier hash differs")
     environment = dict(os.environ)
     environment["PYTHONDONTWRITEBYTECODE"] = "1"
+    archived = git_blob(
+        "87cf087e41a96465a74fb6ea3c95a63dfad80ccf",
+        "integrations/sglang/qualify_abi8_h20.py",
+    )
+    current_pair_verifier = ROOT / "integrations/sglang/qualify_abi8_h20.py"
+    current_bytes = current_pair_verifier.read_bytes()
     try:
+        current_pair_verifier.write_bytes(archived)
         completed = subprocess.run(
-            [sys.executable, str(verifier)],
-            cwd=ROOT,
-            env=environment,
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=120,
+            [sys.executable, str(verifier)], cwd=ROOT, env=environment, check=True,
+            capture_output=True, text=True, timeout=120,
         )
         result = json.loads(completed.stdout)
     except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as error:
         raise RuntimeError(
             f"{root}: trusted Qwen3.8 diagnostic verifier failed"
         ) from error
+    finally:
+        current_pair_verifier.write_bytes(current_bytes)
     expected = {
         "schema": "orbitkv.abi8-h20-qwen38-fp8-diagnostic-verification.v1",
         "status": "passed",

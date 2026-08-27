@@ -1,16 +1,17 @@
 use std::env;
-use std::io::{BufWriter, Write};
+use std::io::{BufWriter, Read, Write};
 use std::process::ExitCode;
 
 use orbitkv::{
-    AttentionStatePlanInput, HfRetentionOptions, KvPlanInput, compile_attention_state_manager_plan,
+    AttentionStatePlanInput, HfRetentionOptions, KvPlanInput, RuntimeManifest,
+    RuntimeTargetContractV1, admit_runtime_manifest, compile_attention_state_manager_plan,
     compile_attention_state_plan, compile_hf_attention_state_input,
     compile_hf_attention_state_plan, compile_hf_runtime_manifest, compile_hf_token_manager_plan,
     compile_plan, compile_runtime_manifest,
 };
 use serde::Serialize;
 
-const USAGE: &str = "usage:\n  orbitkv compile-plan <plan.json>\n  orbitkv compile-state-plan <state-plan.json>\n  orbitkv compile-state-manager-plan <state-plan.json>\n  orbitkv compile-runtime-manifest <state-plan.json>\n  orbitkv compile-hf-state-input <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-state-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-token-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-runtime-manifest <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>  (compatibility alias)\n\nnotes:\n  compile-runtime-manifest emits the versioned executable artifact for engine adapters.\n  compile-hf-runtime-manifest compiles a supported HF config into that same artifact.\n  compile-hf-state-input emits the complete input schema for ORBITKV_STATE_PLAN.\n  compile-hf-state-plan emits compiled backend contracts, not ORBITKV_STATE_PLAN input.\n  compile-hf-token-manager-plan emits only token-addressable state; recurrent and convolution state are omitted.\n  compile-hf-manager-plan is a deprecated alias for compile-hf-token-manager-plan.";
+const USAGE: &str = "usage:\n  orbitkv compile-plan <plan.json>\n  orbitkv compile-state-plan <state-plan.json>\n  orbitkv compile-state-manager-plan <state-plan.json>\n  orbitkv compile-runtime-manifest <state-plan.json>\n  orbitkv bind-runtime-manifest <manifest.json> --executor-capabilities <contract.json>\n  orbitkv check-runtime-manifest <manifest.json> --executor-capabilities <contract.json>\n  orbitkv compile-hf-state-input <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-state-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-token-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-runtime-manifest <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>  (compatibility alias)\n\nnotes:\n  compile-runtime-manifest emits the versioned executable artifact for engine adapters.\n  bind-runtime-manifest emits a static binding to one exact executor contract.\n  check-runtime-manifest validates the same binding without emitting an artifact.\n  compile-hf-runtime-manifest compiles a supported HF config into that same artifact.\n  compile-hf-state-input emits the complete input schema for ORBITKV_STATE_PLAN.\n  compile-hf-state-plan emits compiled backend contracts, not ORBITKV_STATE_PLAN input.\n  compile-hf-token-manager-plan emits only token-addressable state; recurrent and convolution state are omitted.\n  compile-hf-manager-plan is a deprecated alias for compile-hf-token-manager-plan.";
 
 fn main() -> ExitCode {
     match run() {
@@ -29,6 +30,8 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("compile-state-plan") => compile_state_plan_command(&mut args),
         Some("compile-state-manager-plan") => compile_state_manager_plan_command(&mut args),
         Some("compile-runtime-manifest") => compile_runtime_manifest_command(&mut args),
+        Some("bind-runtime-manifest") => bind_runtime_manifest_command(&mut args, true),
+        Some("check-runtime-manifest") => bind_runtime_manifest_command(&mut args, false),
         Some("compile-hf-state-input") => compile_hf_state_input_command(&mut args),
         Some("compile-hf-state-plan") => compile_hf_state_plan_command(&mut args),
         Some("compile-hf-runtime-manifest") => compile_hf_runtime_manifest_command(&mut args),
@@ -37,6 +40,49 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         }
         _ => Err(USAGE.into()),
     }
+}
+
+fn bind_runtime_manifest_command(
+    args: &mut impl Iterator<Item = String>,
+    emit: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    let manifest_path = required(args, "runtime manifest path")?;
+    let flag = required(args, "--executor-capabilities")?;
+    if flag != "--executor-capabilities" {
+        return Err(format!("unexpected argument {flag}").into());
+    }
+    let target_path = required(args, "executor capability contract path")?;
+    require_end(args)?;
+    let manifest = RuntimeManifest::from_json(&read_bounded(
+        &manifest_path,
+        orbitkv::RUNTIME_MANIFEST_MAX_BYTES,
+    )?)?;
+    let target = RuntimeTargetContractV1::from_json(&read_bounded(
+        &target_path,
+        orbitkv::RUNTIME_TARGET_ARTIFACT_MAX_BYTES,
+    )?)?;
+    let binding = admit_runtime_manifest(&manifest, &target)?;
+    if emit {
+        write_json(&binding)?;
+    }
+    Ok(())
+}
+
+fn read_bounded(path: &str, maximum: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {
+    let file = std::fs::File::open(path)?;
+    let metadata = file.metadata()?;
+    if metadata.len() > u64::try_from(maximum)? {
+        return Err(format!("artifact {path:?} exceeds the {maximum}-byte limit").into());
+    }
+    let limit = u64::try_from(maximum)?
+        .checked_add(1)
+        .ok_or("artifact size limit overflow")?;
+    let mut bytes = Vec::with_capacity(usize::try_from(metadata.len())?);
+    file.take(limit).read_to_end(&mut bytes)?;
+    if bytes.len() > maximum {
+        return Err(format!("artifact {path:?} exceeds the {maximum}-byte limit").into());
+    }
+    Ok(bytes)
 }
 
 fn compile_runtime_manifest_command(

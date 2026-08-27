@@ -1493,6 +1493,7 @@ def _sealed_adapter_identity(source_root: Path) -> dict[str, Any]:
         source_root / "prepare_pinned_checkout.py",
         source_root / "patches/v0.5.17-orbitkv-fail-closed.patch",
         *sorted((source_root / "src/orbitkv_sglang").rglob("*.py")),
+        *sorted((source_root / "src/orbitkv_sglang").rglob("*.json")),
     ]
     return {
         "files": [
@@ -1505,11 +1506,12 @@ def _sealed_adapter_identity(source_root: Path) -> dict[str, Any]:
     }
 
 
-def _verify_source_closure(
-    root: Path, preflight: dict[str, Any]
-) -> dict[str, Any]:
+def _verify_source_closure(root: Path, preflight: dict[str, Any]) -> dict[str, Any]:
     source_root = root / "qualification/source"
+    historical = preflight.get("source", {}).get("commit") in {"6f62a23b9abaa9bf12e9b060389259fa9185e70f", "7385ee586974ffd09dffecc415d52098f373e32a"}
+    if not historical and not (source_root / "src/orbitkv_sglang/resources/executor_capabilities.v1.json").is_file(): raise RuntimeError("sealed source omits the executor target contract")
     adapter = _sealed_adapter_identity(source_root)
+    if historical: adapter["files"] = [item for item in adapter["files"] if not item["path"].endswith(".json")]
     expected_paths = {
         "qualify_abi8_h20.py", "bench_canonical_manager.py",
         "checkpoint_identity.py",

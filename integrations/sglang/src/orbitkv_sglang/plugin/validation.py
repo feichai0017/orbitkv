@@ -10,6 +10,7 @@ from typing import Any, Callable
 
 from ..pinned import validate_patched_checkout
 from ..runtime_policy import GDN_FIXED_STATE_BACKEND_PROFILE
+from ..executor_capabilities import admit_runtime_config
 from . import state as _state
 from .state import RuntimeLimits, _config, _request_key, _runtime
 
@@ -880,6 +881,13 @@ def _validate_configurator(
     import torch
 
     config = _config()
+    if config.runtime_manifest_path is not None:
+        try:
+            admit_runtime_config(config)
+        except ValueError as error:
+            raise RuntimeError(
+                f"OrbitKV executor target admission failed: {error}"
+            ) from error
     server = configurator.server_args
     graph = server.cuda_graph_config
     _validate_gdn_fixed_state_backend_contract(configurator)
