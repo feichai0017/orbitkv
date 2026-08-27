@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod attention_state;
+pub mod executor_capabilities;
 pub mod hf_config;
 pub mod kv_manager;
 pub mod plan;
@@ -11,6 +12,14 @@ pub use attention_state::{
     AttentionStateBackend, AttentionStateError, AttentionStatePlanInput, AttentionStateSpec,
     AttentionStateStorage, CompiledAttentionState, CompiledAttentionStatePlan, RecurrentFamily,
     StateComponentGeometry, compile_attention_state_manager_plan, compile_attention_state_plan,
+};
+pub use executor_capabilities::{
+    EXECUTION_SIGNATURE_SCHEMA, EXECUTION_SIGNATURE_VERSION, ExecutionSignatureV1,
+    ExecutionTopologyV1, RUNTIME_TARGET_ARTIFACT_MAX_BYTES, RUNTIME_TARGET_BINDING_SCHEMA,
+    RUNTIME_TARGET_BINDING_VERSION, RUNTIME_TARGET_CONTRACT_SCHEMA,
+    RUNTIME_TARGET_CONTRACT_VERSION, RuntimeAdmissionProfileV1, RuntimeTargetBindingV1,
+    RuntimeTargetContractV1, RuntimeTargetIdentityV1, TargetAdmissionError, admit_runtime_manifest,
+    derive_execution_signature,
 };
 pub use hf_config::{
     HfConfigError, HfLayerInference, HfManagerPlanError, HfRetentionCompilation,

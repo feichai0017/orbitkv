@@ -151,7 +151,7 @@ EXPECTED_SCOPE = {
     ],
 }
 
-SOURCE_CLOSURE_PATHS = frozenset(
+SOURCE_CLOSURE_PATHS_V1 = frozenset(
     {
         "bench_canonical_manager.py",
         "checkpoint_identity.py",
@@ -197,6 +197,32 @@ SOURCE_CLOSURE_PATHS = frozenset(
         "src/orbitkv_sglang/runtime/token_relocation.py",
     }
 )
+SOURCE_CLOSURE_PATHS = SOURCE_CLOSURE_PATHS_V1 | {
+    "src/orbitkv_sglang/executor_capabilities.py",
+    "src/orbitkv_sglang/resources/executor_capabilities.v1.json",
+    "src/orbitkv_sglang/ffi/conversions.py",
+    "src/orbitkv_sglang/plugin/cow_mirror.py",
+    "src/orbitkv_sglang/plugin/external_append.py",
+    "src/orbitkv_sglang/plugin/external_lifecycle.py",
+    "src/orbitkv_sglang/plugin/external_validation.py",
+    "src/orbitkv_sglang/plugin/prefix_tokens.py",
+    "src/orbitkv_sglang/plugin/private_prefix.py",
+    "src/orbitkv_sglang/plugin/structured_arena.py",
+    "src/orbitkv_sglang/qualification_primitives.py",
+    "src/orbitkv_sglang/runtime/pressure.py",
+    "src/orbitkv_sglang/runtime_manifest.py",
+    "src/orbitkv_sglang/runtime_policy.py",
+}
+
+
+def _source_closure_paths(manifest: dict[str, Any]) -> frozenset[str]:
+    # The archived 2026-08-23 record predates target-binding resources. Keep
+    # its immutable closure exact while requiring the expanded closure for any
+    # newly sealed source commit.
+    archived = manifest.get("source_commit") == "7385ee586974ffd09dffecc415d52098f373e32a"
+    if archived:
+        return SOURCE_CLOSURE_PATHS_V1
+    return SOURCE_CLOSURE_PATHS
 
 
 def sha256_file(path: Path) -> str:
@@ -278,7 +304,8 @@ def _expected_record_paths() -> set[str]:
     return paths
 
 
-def expected_artifact_paths() -> set[str]:
+def expected_artifact_paths(manifest: dict[str, Any]) -> set[str]:
+    source_closure = _source_closure_paths(manifest)
     return {
         "README.md",
         "preflight.json",
@@ -291,7 +318,7 @@ def expected_artifact_paths() -> set[str]:
         "qualification/plans/qwen3.5-0.8b-attention-state-input.json",
         "qualification/requirements.lock.txt",
         "qualification/source.bundle",
-        *(f"qualification/source/{path}" for path in SOURCE_CLOSURE_PATHS),
+        *(f"qualification/source/{path}" for path in source_closure),
         *_expected_record_paths(),
     }
 
@@ -437,7 +464,7 @@ def _verify_archive_inventory(
     root: Path, manifest_path: Path, manifest: dict[str, Any]
 ) -> dict[str, str]:
     files, directories = _archive_inventory(root)
-    expected_artifacts = expected_artifact_paths()
+    expected_artifacts = expected_artifact_paths(manifest)
     expected_files = expected_artifacts | {"manifest.json", "SHA256SUMS"}
     if files != expected_files:
         raise RuntimeError(
@@ -690,22 +717,26 @@ def _verify_source_bundle(
 
 
 def _verify_source_closure(
-    root: Path, preflight: dict[str, Any], indexed: dict[str, str]
+    root: Path, preflight: dict[str, Any], indexed: dict[str, str],
+    manifest: dict[str, Any] | None = None,
 ) -> tuple[dict[str, Any], str, str]:
     source_root = root / "qualification/source"
     actual_files, actual_directories = _archive_inventory(source_root)
     actual = actual_files
-    if actual != SOURCE_CLOSURE_PATHS:
+    source_closure = _source_closure_paths(
+        _strict_json(root / "manifest.json") if manifest is None else manifest
+    )
+    if actual != source_closure:
         raise RuntimeError("qualification source closure is incomplete or excessive")
     expected_directories = {
         parent.as_posix()
-        for name in SOURCE_CLOSURE_PATHS
+        for name in source_closure
         for parent in PurePosixPath(name).parents
         if parent.as_posix() != "."
     }
     if actual_directories != expected_directories:
         raise RuntimeError("qualification source directory closure is invalid")
-    for relative in SOURCE_CLOSURE_PATHS:
+    for relative in source_closure:
         repository_path = f"integrations/sglang/{relative}"
         if indexed.get(repository_path) != sha256_file(source_root / relative):
             raise RuntimeError(
@@ -1085,7 +1116,7 @@ def verify_archive(path: Path = DEFAULT_ARCHIVE) -> dict[str, Any]:
     inventory, indexed = _validate_preflight(preflight, manifest)
     _verify_source_bundle(root, inventory, manifest)
     adapter, harness_sha256, checkpoint_sha256 = _verify_source_closure(
-        root, preflight, indexed
+        root, preflight, indexed, manifest
     )
     library = _verify_library(root, preflight, manifest)
     _verify_model_provenance(root, preflight, manifest)

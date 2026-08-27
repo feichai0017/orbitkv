@@ -829,7 +829,7 @@ fn is_not_heterogeneous_profile(error: &HfConfigError) -> bool {
     )
 }
 
-fn is_sha256_fingerprint(value: &str) -> bool {
+pub(crate) fn is_sha256_fingerprint(value: &str) -> bool {
     let Some(digest) = value.strip_prefix("sha256:") else {
         return false;
     };
@@ -839,7 +839,10 @@ fn is_sha256_fingerprint(value: &str) -> bool {
             .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
 }
 
-fn write_canonical_json(value: &Value, output: &mut Vec<u8>) -> Result<(), serde_json::Error> {
+pub(crate) fn write_canonical_json(
+    value: &Value,
+    output: &mut Vec<u8>,
+) -> Result<(), serde_json::Error> {
     match value {
         Value::Null => output.extend_from_slice(b"null"),
         Value::Bool(value) => {

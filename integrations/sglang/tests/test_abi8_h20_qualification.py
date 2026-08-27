@@ -983,6 +983,7 @@ def test_seal_copies_complete_matrix_and_hashes_without_overwrite(tmp_path, monk
         qualification.INTEGRATION_ROOT / "pyproject.toml",
         qualification.INTEGRATION_ROOT / "patches/v0.5.17-orbitkv-fail-closed.patch",
         *sorted((qualification.SOURCE_ROOT / "orbitkv_sglang").rglob("*.py")),
+        *sorted((qualification.SOURCE_ROOT / "orbitkv_sglang").rglob("*.json")),
     ]
     source_inventory = [
         {
@@ -1154,7 +1155,22 @@ def test_seal_copies_complete_matrix_and_hashes_without_overwrite(tmp_path, monk
     )
     assert json.loads(completed.stdout)["status"] == "passed"
     assert not list(relocated.rglob("__pycache__"))
-
     (relocated / "unlisted.txt").write_text("not sealed\n", encoding="utf-8")
     with pytest.raises(RuntimeError, match="unlisted"):
         qualification.verify_seal(relocated)
+
+
+def test_new_source_closure_requires_packaged_target_contract(tmp_path) -> None:
+    source = tmp_path / "qualification/source"
+    qualification._copy_source_closure(source)
+    contract = (
+        source / "src/orbitkv_sglang/resources/executor_capabilities.v1.json"
+    )
+    assert contract.is_file()
+    contract.unlink()
+    preflight = {
+        "source": {"commit": "a" * 40, "inventory": []},
+        "benchmark": {},
+    }
+    with pytest.raises(RuntimeError, match="omits the executor target contract"):
+        qualification._verify_source_closure(tmp_path, preflight)

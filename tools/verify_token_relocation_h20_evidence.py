@@ -298,6 +298,7 @@ def _current_adapter_identity() -> dict[str, Any]:
         INTEGRATION_ROOT / "prepare_pinned_checkout.py",
         INTEGRATION_ROOT / "patches/v0.5.17-orbitkv-fail-closed.patch",
         *sorted(ADAPTER_ROOT.rglob("*.py")),
+        *sorted(ADAPTER_ROOT.rglob("*.json")),
     ]
     return {
         "files": [
@@ -360,6 +361,10 @@ def _verify_adapter_source_identity(
         *(
             path.relative_to(repository_root).as_posix()
             for path in sorted((root / "orbitkv_sglang").rglob("*.py"))
+        ),
+        *(
+            path.relative_to(repository_root).as_posix()
+            for path in sorted((root / "orbitkv_sglang").rglob("*.json"))
         ),
     }
     if set(indexed) != expected_paths:

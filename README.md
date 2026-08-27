@@ -103,6 +103,12 @@ cargo run --locked --bin orbitkv -- \
   --page-tokens 16 --kv-dtype-bytes 2 \
   > runtime-manifest.json
 
+cargo run --locked --bin orbitkv -- \
+  bind-runtime-manifest runtime-manifest.json \
+  --executor-capabilities \
+  integrations/sglang/src/orbitkv_sglang/resources/executor_capabilities.v1.json \
+  > runtime-target-binding.json
+
 export ORBITKV_RUNTIME_MANIFEST=/absolute/path/runtime-manifest.json
 export ORBITKV_LIBRARY=/absolute/path/liborbitkv_ffi.so
 ```
@@ -113,6 +119,13 @@ export ORBITKV_LIBRARY=/absolute/path/liborbitkv_ffi.so
 with either input path; it is not included in the manifest fingerprint. A
 fixed-state-only manifest is valid compiler output, but the current SGLang
 adapter rejects it because that adapter still requires a token-manager plan.
+The SGLang wheel carries a separate versioned target contract. On the manifest
+path it derives the same full execution signature as Rust and validates exact
+class order, storage/components, address/retirement pairing, whole-domain
+coverage, and fixed-state composition before SGLang allocates request or tensor
+pools. The binding references both the unchanged manifest fingerprint and the
+target-contract fingerprint. Dynamic CUDA, dtype, layout, backend, parallelism,
+and model-geometry checks remain separate adapter checks.
 
 This is the P1 compiled contract and admission artifact. It is not the P3
 token/fixed-state transaction graph: the two native handles still have no

@@ -153,6 +153,10 @@ def load_runtime_manifest(source: Mapping[str, str]) -> ManagerPlanConfig:
     )
     derived = _derive_manifest_capabilities(classes, fixed_states)
     _require_exact_capabilities(requirements, derived)
+    from .executor_capabilities import runtime_target_binding_from_manifest
+
+    runtime_target_binding = runtime_target_binding_from_manifest(root)
+    execution_signature = runtime_target_binding["execution_signature"]
     token_reclamation = _token_reclamation_config(source)
     retentions = tuple(item.retention for item in classes)
     _validate_token_reclamation(token_reclamation, retentions, classes)
@@ -178,6 +182,8 @@ def load_runtime_manifest(source: Mapping[str, str]) -> ManagerPlanConfig:
         runtime_manifest_path=manifest_path,
         runtime_manifest_fingerprint=fingerprint,
         capability_requirements=requirements,
+        execution_signature=execution_signature,
+        runtime_target_binding=runtime_target_binding,
     )
 
 

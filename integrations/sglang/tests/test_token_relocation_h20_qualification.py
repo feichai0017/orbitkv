@@ -244,7 +244,8 @@ def test_editable_requirement_template_binds_the_clean_commit() -> None:
 
 def test_source_closure_is_exactly_tracked_and_digest_bound() -> None:
     paths = set(qualification.SOURCE_REQUIRED_PATHS) | {
-        "integrations/sglang/src/orbitkv_sglang/runtime/example.py"
+        "integrations/sglang/src/orbitkv_sglang/runtime/example.py",
+        "integrations/sglang/src/orbitkv_sglang/resources/example.json",
     }
     inventory = [
         {"path": path, "sha256": hashlib.sha256(path.encode()).hexdigest()}

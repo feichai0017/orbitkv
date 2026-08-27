@@ -221,7 +221,7 @@ def _source_closure(source: dict[str, Any]) -> list[dict[str, str]]:
         path for path in indexed
         if isinstance(path, str)
         and path.startswith("integrations/sglang/src/orbitkv_sglang/")
-        and path.endswith(".py")
+        and path.endswith((".py", ".json"))
     }
     paths = SOURCE_REQUIRED_PATHS | adapter_paths
     missing = sorted(path for path in paths if path not in indexed)

@@ -104,6 +104,8 @@ class ManagerPlanConfig:
     runtime_manifest_path: Path | None = None
     runtime_manifest_fingerprint: str | None = None
     capability_requirements: tuple[str, ...] = ()
+    execution_signature: Mapping[str, Any] | None = None
+    runtime_target_binding: Mapping[str, Any] | None = None
 
     @property
     def num_hidden_layers(self) -> int:

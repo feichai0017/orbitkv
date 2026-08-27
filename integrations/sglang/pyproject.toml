@@ -19,5 +19,8 @@ orbitkv_manager = "orbitkv_sglang.plugin:register"
 [tool.setuptools]
 package-dir = { "" = "src" }
 
+[tool.setuptools.package-data]
+orbitkv_sglang = ["resources/*.json"]
+
 [tool.setuptools.packages.find]
 where = ["src"]

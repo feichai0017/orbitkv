@@ -181,7 +181,7 @@ jobs:
             orbitkv-runtime orbitkv-sglang --no-deps
           cd /tmp
           PYTHONPATH= /tmp/orbitkv-structured-venv/bin/python -I -c \
-            "import orbitkv_runtime, orbitkv_sglang; import orbitkv_sglang.plugin.external_append; import orbitkv_sglang.plugin.structured_arena"
+            "import importlib.metadata as m; import orbitkv_runtime, orbitkv_sglang; from orbitkv_sglang.executor_capabilities import load_executor_capabilities; import orbitkv_sglang.plugin.external_append; import orbitkv_sglang.plugin.structured_arena; c = load_executor_capabilities(); assert c['schema'] == 'orbitkv.runtime-target-contract'; assert any(str(p).endswith('orbitkv_sglang/resources/executor_capabilities.v1.json') for p in m.distribution('orbitkv-sglang').files)"
 
   sglang-plugin:
     runs-on: ubuntu-latest

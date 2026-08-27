@@ -1,0 +1,22 @@
+{
+  "schema": "orbitkv.runtime-target-contract",
+  "version": 1,
+  "fingerprint": "sha256:33a453794089618ff335bc9e5734fb32b5b4ecd6cf66a2b156dd61fd4bdf1efb",
+  "target": {
+    "id": "sglang.abi8",
+    "contract_version": 1
+  },
+  "admission_profile": {
+    "id": "eager-single-device-bf16-nhd",
+    "version": 1
+  },
+  "page_tokens": 16,
+  "supported_topologies": [
+    "whole_domain_full_latent_kv",
+    "whole_domain_full_sliding_token_kv",
+    "whole_domain_full_token_kv",
+    "whole_domain_full_token_kv_gdn_convolution",
+    "whole_domain_full_token_kv_mamba",
+    "whole_domain_sliding_token_kv"
+  ]
+}
