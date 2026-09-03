@@ -1,0 +1,154 @@
+{
+  "schema": "orbitkv.runtime-manifest",
+  "version": 3,
+  "fingerprint": "sha256:322f87f32823a812a6d00d46eb80e9fd05056a63cf947721c518b3479e61e0ce",
+  "source": {
+    "kind": "attention_state",
+    "input": {
+      "page_tokens": 16,
+      "states": [
+        {
+          "name": "full",
+          "layers": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "storage": {
+            "kind": "token_kv",
+            "key_bytes_per_token_per_layer": 256,
+            "value_bytes_per_token_per_layer": 256,
+            "retention": "full",
+            "window_tokens": null
+          }
+        }
+      ]
+    }
+  },
+  "token_manager_plan": {
+    "layout": {
+      "schema": "orbitkv.layout-program.v1",
+      "plan_fingerprint": "sha256:0f86be1a56184a95af8cc09da67e411d67276ae96117395392396406bfd1dc55",
+      "page_tokens": 16,
+      "classes": [
+        {
+          "name": "full",
+          "layers": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8,
+            9,
+            10,
+            11,
+            12,
+            13,
+            14,
+            15,
+            16,
+            17,
+            18,
+            19,
+            20,
+            21,
+            22,
+            23
+          ],
+          "bytes_per_token_per_layer": 512,
+          "address": {
+            "kind": "append_only"
+          },
+          "retirement": {
+            "kind": "never"
+          },
+          "minimum_slots_per_request": null
+        }
+      ]
+    }
+  },
+  "attention_state_plan": {
+    "schema": "orbitkv.attention-state-plan.v1",
+    "page_tokens": 16,
+    "states": [
+      {
+        "name": "full",
+        "layers": [
+          0,
+          1,
+          2,
+          3,
+          4,
+          5,
+          6,
+          7,
+          8,
+          9,
+          10,
+          11,
+          12,
+          13,
+          14,
+          15,
+          16,
+          17,
+          18,
+          19,
+          20,
+          21,
+          22,
+          23
+        ],
+        "backend": {
+          "kind": "token_slots",
+          "storage": "token_kv",
+          "components": [
+            {
+              "name": "key",
+              "bytes_per_token_per_layer": 256
+            },
+            {
+              "name": "value",
+              "bytes_per_token_per_layer": 256
+            }
+          ],
+          "bytes_per_token_per_layer": 512,
+          "page_bytes_per_layer": 8192,
+          "retention": "full",
+          "window_tokens": null,
+          "token_relocatable": true
+        }
+      }
+    ]
+  },
+  "capability_requirements": [
+    "append_only_addressing",
+    "token_component_geometry",
+    "token_manager"
+  ]
+}

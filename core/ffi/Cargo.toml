@@ -1,0 +1,26 @@
+[package]
+name = "orbitkv-ffi"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "RuntimeSession and state-pool C ABI for OrbitKV."
+license = "MIT"
+repository = "https://github.com/feichai0017/orbitkv"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+test-support = ["orbitkv/test-support"]
+
+[dependencies]
+orbitkv = { path = ".." }
+serde_json = "1.0.145"
+
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

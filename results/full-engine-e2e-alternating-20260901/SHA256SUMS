@@ -1,0 +1,12 @@
+55a4717eb7b13666d31f614ea2a9db65e2fd164440ad8cf280b806f5328764fa  ./README.md
+472d8f63cad22cd7ac4908059562bebde5e54b8d2432f750640a14d525d2fa97  ./environment/requirements.lock.txt
+40a93ebaf250955ade6e7886d68ca1144891fb150a01a63a35c7027903c2dceb  ./environment/runtime-manifest.json
+9202de5dd442fff9a82dc857da08e48c7d9ff97725a4fb08165f9556b7bafde1  ./environment/source-inventory.json
+34486545315bead910e62b2783f059d8489db0abcc8f767376ad9b0adb941ef2  ./records/manager-e1.json
+0a9fe1075caf9c1e5887179ebf7fcbc5dcdb2c32ac407cdb85c72c5290c04edc  ./records/manager-e2.json
+6214d97fe523b82b34fb4ef1a7b860c77cd592381f110ed8880ce7799b8b47cf  ./records/manager-e3.json
+6df3e99517e953f935ea47c036bc4cd3896a50d22b2200ba836b1409ca77250f  ./records/stock-e1.json
+f24198985b91de632a4d3da4419b5cc36d569d3b051809ddf42fdb8706001d5e  ./records/stock-e2.json
+873b032d173c5e8bb6023c786f8a4e422fe9850052b31aba1d91b6109f7758e2  ./records/stock-e3.json
+9afa68705c9a763b35b8733a6d82691b48045e7e72c27d8b75b0332fe7311b6a  ./summary.json
+5b4eaca52629e8e54b2875da4dde5438406f1fb2dbdc675ae7ca247666c2ddea  ./verification.json

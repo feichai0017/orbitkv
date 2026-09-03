@@ -16,14 +16,14 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <div class="hero-copy">
       <div class="hero-kicker">
         <span class="release-dot" aria-hidden="true"></span>
-        <span>ABI8 ownership runtime · scoped evidence · performance and production pending</span>
+        <span>One product · pinned SGLang · native RuntimeSession · wire 14</span>
       </div>
       <h1>Attention semantics.<br /><span>Compiled into state.</span></h1>
       <p class="hero-lede">
-        OrbitKV compiles attention and state-retention semantics into checked
-        physical plans. It owns logical identities, generations, immutable
-        snapshots, sharing, and reclamation while an inference engine keeps
-        ownership of scheduling, kernels, tensor allocation, and execution.
+        OrbitKV ships as one complete product: the pinned SGLang engine plus a
+        native Rust RuntimeSession. Attention and retention semantics compile
+        into checked physical plans; RuntimeSession owns KV lifecycle and page
+        selection while SGLang owns scheduling, tensors, kernels, and execution.
       </p>
       <div class="hero-actions">
         <a class="button primary" href={`${base}/docs/`}>Read the architecture</a>
@@ -31,9 +31,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <a class="button quiet" href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>Capability matrix ↗</a>
       </div>
       <ul class="hero-facts" aria-label="Project boundaries">
-        <li>Compiler-derived physical plans</li>
-        <li>Token-level reclamation</li>
-        <li>Packed copy-on-write</li>
+        <li>Wire 14</li>
+        <li>48 exact exports</li>
+        <li>78 checked layouts</li>
       </ul>
     </div>
 
@@ -46,17 +46,17 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
       <div class="console-body">
         <div class="console-ident">
           <span>RETENTION</span>
-          <strong>TOKEN + FIXED STATE · ABI8</strong>
+          <strong>PINNED SGLANG + NATIVE RUNTIMESESSION</strong>
         </div>
         <div class="provider-switch" aria-label="Physical lowering">
           <span class="selected">SEMANTICS</span>
           <span>PHYSICAL PLAN</span>
         </div>
         <div class="console-flow">
-          <div><small>analyze</small><strong>retention relation</strong><em>01</em></div>
-          <div><small>prepare</small><strong>copy + write intents</strong><em>02</em></div>
-          <div><small>publish</small><strong>immutable snapshot</strong><em>03</em></div>
-          <div class="flow-active"><small>reclaim</small><strong>death + done + ack</strong><em>04</em></div>
+          <div><small>compile</small><strong>RuntimeManifest</strong><em>01</em></div>
+          <div><small>admit</small><strong>RuntimeTarget → RuntimeBinding</strong><em>02</em></div>
+          <div><small>check</small><strong>WIRE_VERSION + runtime</strong><em>03</em></div>
+          <div class="flow-active"><small>execute</small><strong>publish + reclaim with proof</strong><em>04</em></div>
         </div>
       </div>
       <div class="console-footer">
@@ -67,16 +67,18 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
   </section>
 
   <section class="scope-strip" aria-label="Project boundary">
-    <div><span>ORBITKV OWNS</span><strong>plans · identities · snapshots · generations · reclamation</strong></div>
-    <div><span>ENGINE OWNS</span><strong>allocation · scheduling · kernels · model execution</strong></div>
+    <div><span>RUNTIMESESSION OWNS</span><strong>plans · identities · page selection · snapshots · reclamation</strong></div>
+    <div><span>SGLANG OWNS</span><strong>allocation · scheduling · kernels · model execution</strong></div>
   </section>
 
   <section class="section" id="compiler">
     <header class="section-heading">
       <div><p class="eyebrow">Compilation pipeline</p><h2>Ownership emitted from semantics.</h2></div>
       <p>
-        Physical layouts are lowering choices. The checked lifetime and
-        ownership program remains the source of truth.
+        RuntimeManifest carries the compiler source of truth, RuntimeTarget
+        publishes the pinned SGLang compatibility contract, and RuntimeBinding
+        records exact static admission. Physical layouts remain compiler
+        choices rather than product names.
       </p>
     </header>
     <ol class="execution-chain">
@@ -93,13 +95,13 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <header class="section-heading">
       <div><p class="eyebrow">Qualification boundary</p><h2>Evidence stays inside its recorded scope.</h2></div>
       <p>
-        ABI8 host gates cover the compiler, ownership lifecycle, packed COW,
-        relocation, and adapter contracts. Separate sealed engine records cover
-        narrow Prefix and token-relocation correctness scopes; one does not
-        qualify the other. Packed COW remains host-qualified, and performance,
-        capacity, broader execution modes, and production readiness remain
-        pending. Historical records stay bound to their original ABI and do not
-        qualify the live tree.
+        The compiler, ownership core, and five admitted RuntimeSession profiles
+        have host gates. Historical Full accelerator runs provide scoped
+        earlier-wire correctness evidence and reported no speedup; they are not
+        live wire-14 qualification. In particular, ordered Full+Sliding and pure
+        Sliding still require live real-device correctness and performance
+        qualification. Exact device, model, and source names remain attached to
+        the records as provenance, not to the general architecture.
       </p>
     </header>
     <div class="metric-grid">
@@ -114,7 +116,7 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <span role="columnheader">Contract</span>
         <span role="columnheader">Boundary</span>
       </div>
-      {evidenceRows.slice(0, 4).map((item) => (
+      {evidenceRows.slice(0, 5).map((item) => (
         <div class="evidence-row" role="row">
           <strong role="cell">{item.result}</strong>
           <code role="cell">{item.value}</code>
@@ -130,8 +132,9 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
     <header class="section-heading">
       <div><p class="eyebrow">Next gates</p><h2>Expand the qualified ownership surface.</h2></div>
       <p>
-        Each additional state family, packed operation, completion domain, and
-        engine adapter must close its own correctness and qualification gates.
+        Each additional state family, execution mode, and completion domain
+        must close its own correctness and qualification gates on the single
+        pinned-SGLang RuntimeSession route.
       </p>
     </header>
     <div class="milestone-list">

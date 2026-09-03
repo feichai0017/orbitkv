@@ -5,26 +5,34 @@ boundary. This directory is append-only evidence: every record qualifies only
 the exact source, ABI, engine, hardware, commands, and outputs bound by its
 manifest.
 
-The live tree is ABI8. Its Rust token/fixed-state core and exact 40-symbol C
-wire retain host L2 GO. The production request-owned fixed-state seam covers
-initial clear, forward-event propagation, and retire/clear/ACK. Its strict
-official Qwen3.5-0.8B GDN+convolution profile now also has the scoped recorded-H20
-pair-verification record below. Same-owner replacement is covered only by
-coordinator and real-CPU-tensor host tests; its production trigger remains
-pending. Other GDN profiles, KDA, ShortConv, and other linear-attention family
-bindings remain pending, as do Qwen3.5 L4 and performance qualification.
-Manager and state-pool handles are separate, so only fail-stop containment—not
-cross-handle atomicity—is provided. The 73-layout Python runtime and
-token-manager paths outside the sealed Full/Full+SWA Prefix boundary retain
-their separately scoped host evidence. Token relocation now has a second,
-independent exact-source sealed qualification below. It qualifies only
-request-private Full token-relocation correctness and lifecycle; it is not a
-performance, capacity, memory, production, or complete-engine result.
-All preceding or dirty diagnostic records remain historical and qualify only
-their own source closures.
+The live tree is the single native-session product at wire 14: 48 exported
+typed symbols and 78 frozen ctypes layouts. The raw manager ABI, neutral Python
+runtime, reference adapter, structured route, and second-engine surface are no
+longer active products. The current source contract admits five narrow
+SGLang-backed profiles; their host, real-device, benefit, and production claims
+remain independently gated. Manager and fixed-state pool handles are separate,
+so only fail-stop containment—not cross-handle atomicity—is provided. All
+earlier-wire, sealed, or dirty records below qualify only their own source
+closures and do not transfer to the live wire.
 OrbitKV is an attention-state compiler plus transactional ownership runtime;
 none of these records makes it a full SGLang replacement or a mature L5
 production system.
+
+## Current-wire Full+Sliding diagnostic
+
+| Record | Scope |
+| --- | --- |
+| `h20-sglang-wire14-full-sliding-diagnostic-20260902` | Current wire 14, pinned SGLang v0.5.17, released GPT-OSS 20B, one H20, three roomy stock/manager epochs and nine paired samples. Paired correctness and native current-stream/SWA lifecycle gates passed. Throughput gate failed: paired median regression `3.9195%`, bootstrap upper regression `5.2764%`. A subsequent exact-floor correction leaves the archive unsealed and capacity unqualified. |
+
+Every manager epoch directly observed 72 Sliding retirement certificates, 72
+reclaimed pages, 12 wraps, 88 page-generation reuse events, a current-forward-
+stream completion frontier, zero fail-stops, and complete final drain. This is
+the first real current-wire execution of the final native-session product path,
+but it is deliberately indexed as a diagnostic: it establishes no speedup,
+capacity advantage, memory saving, production readiness, or sealed current-HEAD
+L4 result.
+
+[Current-wire Full+Sliding diagnostic](h20-sglang-wire14-full-sliding-diagnostic-20260902/README.md)
 
 ## Current sealed and qualified engine records
 

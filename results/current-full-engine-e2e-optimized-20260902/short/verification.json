@@ -1,0 +1,89 @@
+{
+  "aggregate": {
+    "all_iteration_latency_ratio_median": 1.110648717926606,
+    "all_iteration_latency_ratio_p95": 1.3112733510246202,
+    "all_pairs_same_direction": false,
+    "available": true,
+    "conservative_direction_flag": null,
+    "minimum_pair_count": 3,
+    "pair_count": 3,
+    "pair_median_latency_ratio_median": 1.110648717926606,
+    "pair_median_latency_ratio_p95": 1.2446032090700658,
+    "pair_output_throughput_ratio_median": 0.9011844583047831,
+    "pair_total_throughput_ratio_median": 0.9011844583047831,
+    "scope": "descriptive_scoped_evidence_not_a_general_performance_claim"
+  },
+  "claim": "pairwise_correctness_and_descriptive_timing_only",
+  "pair_count": 3,
+  "pairs": [
+    {
+      "iterations": 3,
+      "latency_ratio_median": 1.259487041419339,
+      "latency_ratio_p95": 1.3371665058272606,
+      "manager": {
+        "path": "/tmp/orbitkv-current-full-final-short-manager-e1.json",
+        "sha256": "2b7b9916fa78ed84662308051c34cdba39f90fd6ad6a12bfb658a3c1ee906124"
+      },
+      "manager_to_stock_latency_ratios": [
+        1.345797557428141,
+        1.259487041419339,
+        1.171169499366921
+      ],
+      "manager_to_stock_output_throughput_ratio": 0.7939698137316242,
+      "manager_to_stock_total_throughput_ratio": 0.7939698137316241,
+      "observed_direction": "manager_higher_latency",
+      "pair_index": 0,
+      "stock": {
+        "path": "/tmp/orbitkv-current-full-final-short-stock-e1.json",
+        "sha256": "1941699df8cb597205048a5ae71fb0d311412c05fab0680352f0cb18345e26de"
+      }
+    },
+    {
+      "iterations": 3,
+      "latency_ratio_median": 1.110648717926606,
+      "latency_ratio_p95": 1.113325313664593,
+      "manager": {
+        "path": "/tmp/orbitkv-current-full-final-short-manager-e2.json",
+        "sha256": "6ef914cb261032ca1cb6457ed7541bb7951b66e974879688128c43dae90309f1"
+      },
+      "manager_to_stock_latency_ratios": [
+        1.110648717926606,
+        1.1046658154790465,
+        1.1136227131910361
+      ],
+      "manager_to_stock_output_throughput_ratio": 0.9011844583047831,
+      "manager_to_stock_total_throughput_ratio": 0.9011844583047831,
+      "observed_direction": "manager_higher_latency",
+      "pair_index": 1,
+      "stock": {
+        "path": "/tmp/orbitkv-current-full-final-short-stock-e2.json",
+        "sha256": "2066344978c3345b3268713219e462a255118f5f36fc685f342aa336ac095a52"
+      }
+    },
+    {
+      "iterations": 3,
+      "latency_ratio_median": 0.8477713392114213,
+      "latency_ratio_p95": 0.9273622300336953,
+      "manager": {
+        "path": "/tmp/orbitkv-current-full-final-short-manager-e3.json",
+        "sha256": "3438ec74d4f2db52c1477d7ba0478f42f76248938da1fdf5beb949f75a66b6b4"
+      },
+      "manager_to_stock_latency_ratios": [
+        0.9362056623472813,
+        0.8477713392114213,
+        0.8304278905311799
+      ],
+      "manager_to_stock_output_throughput_ratio": 1.1500732794161324,
+      "manager_to_stock_total_throughput_ratio": 1.1500732794161326,
+      "observed_direction": "manager_lower_latency",
+      "pair_index": 2,
+      "stock": {
+        "path": "/tmp/orbitkv-current-full-final-short-stock-e3.json",
+        "sha256": "713e29c3395225bd71dc643cd471869cdfd4d42911a62c4c62b28617d462668c"
+      }
+    }
+  ],
+  "schema": "orbitkv.sglang-engine-e2e-pairs-verification.v3",
+  "speedup_qualified": false,
+  "status": "passed"
+}

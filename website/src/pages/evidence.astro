@@ -3,52 +3,55 @@ import DocsNav from "../components/DocsNav.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
 import { evidenceRows, metrics, repositoryUrl } from "../data/site";
 
+const resultsIndexUrl = `${repositoryUrl}/blob/main/results/README.md`;
+
 const records = [
   {
-    name: "Scoped Prefix correctness record",
-    status: "Sealed, narrow engine scope",
-    boundary: "Does not transfer to relocation, fixed state, performance, or production.",
-    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-full-hybrid-20260823`,
+    name: "Historical Full accelerator records",
+    status: "Earlier wire · scoped correctness · no speedup",
+    boundary: "Useful only for the exact source, workload, interface, and environment preserved in their provenance. They do not qualify wire 14.",
+    href: resultsIndexUrl,
   },
   {
-    name: "Scoped token-relocation record",
-    status: "Sealed correctness and lifecycle scope",
-    boundary: "Does not qualify sharing, broader state families, performance, or production.",
-    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-token-relocation-20260825`,
+    name: "Full+Sliding live qualification",
+    status: "Pending · wire 14 real device",
+    boundary: "Native RuntimeSession host coverage exists, but live real-device correctness and performance gates have not closed.",
+    href: resultsIndexUrl,
   },
   {
-    name: "Fixed-state pair-verification record",
-    status: "Scoped verification",
-    boundary: "Not a general engine, performance, or production qualification.",
-    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-qwen35-fixed-state-pair-verification-20260823`,
+    name: "Pure Sliding live qualification",
+    status: "Pending · wire 14 real device",
+    boundary: "Native RuntimeSession host coverage exists, but live real-device correctness and performance gates have not closed.",
+    href: resultsIndexUrl,
   },
   {
-    name: "Fixed-state diagnostic record",
-    status: "Diagnostic only",
-    boundary: "Unsealed evidence does not promote the integration boundary.",
-    href: `${repositoryUrl}/tree/main/results/h20-sglang-v0517-abi8-qwen38-fp8-diagnostic-20260824`,
+    name: "Other archived scoped records",
+    status: "Append-only provenance",
+    boundary: "Each record remains limited to its captured feature, source, workload, interface, and qualification method. Scopes never combine automatically.",
+    href: resultsIndexUrl,
   },
 ];
 ---
 
 <SiteLayout
   title="Evidence | OrbitKV"
-  description="OrbitKV capability status and scoped evidence boundaries."
+  description="OrbitKV live wire-14 status, historical evidence, and pending real-device qualification."
   active="Evidence"
 >
   <header class="page-hero">
     <p class="eyebrow">Evidence</p>
-    <h1>Each result keeps its boundary.</h1>
+    <h1>Every claim keeps its wire and provenance.</h1>
     <p>
-      Host, component, engine, performance, and production evidence are
-      separate claims. Qualification does not transfer between them.
+      Product availability, host coverage, real-device correctness, performance,
+      capacity, and production readiness are separate claims. Historical records
+      do not qualify a newer live boundary.
     </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
-      <h2>Live ABI8 status</h2>
+      <h2>Live product status</h2>
       <div class="metric-grid compact">
         {metrics.map((item) => (
           <article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>
@@ -72,32 +75,51 @@ const records = [
         </tbody>
       </table>
 
-      <h2>Scoped records</h2>
+      <h2>Qualification contract</h2>
+      <p>
+        A live qualification must close the exact pinned source contract,
+        RuntimeManifest, RuntimeTarget, RuntimeBinding, wire-14 readback, all 48
+        exports, all 78 layouts, engine observations, and independent claim
+        gates. A single run or an earlier-wire artifact cannot make that
+        decision.
+      </p>
+      <p>
+        Device, checkpoint, runtime, and record-location names may appear in
+        provenance so a result can be reproduced and audited. They describe that
+        evidence only; the architecture remains the pinned SGLang plus native
+        RuntimeSession product.
+      </p>
+
+      <h2>Scoped records and open gates</h2>
       <div class="doc-grid">
         {records.map((record) => (
           <div class="doc-card">
             <span>{record.status}</span>
             <h3>{record.name}</h3>
             <p>{record.boundary}</p>
-            <a href={record.href}>Open record →</a>
+            <a href={record.href}>Open evidence index →</a>
           </div>
         ))}
       </div>
 
       <h2>Claim boundaries</h2>
       <ul>
-        <li>ABI8 host gates do not by themselves establish engine or production qualification.</li>
-        <li>Each sealed engine record applies only to its recorded feature boundary; scopes do not transfer.</li>
-        <li>Packed COW has host coverage but remains outside the sealed engine scopes.</li>
-        <li>Performance, capacity, memory saving, and production readiness remain pending.</li>
-        <li>Historical and diagnostic records remain append-only and never qualify the live ABI8 tree automatically.</li>
+        <li>The live product is wire 14 with exactly 48 exported symbols and 78 checked layouts.</li>
+        <li>The raw manager ABI, optional structured path, reference product, and second-engine path are absent from the live product.</li>
+        <li>All five admitted profiles run through the native RuntimeSession route and have profile-specific host gates.</li>
+        <li>Historical Full accelerator records establish only earlier-wire correctness within their recorded scope.</li>
+        <li>Those Full records reported no speedup and provide no live wire-14 performance claim.</li>
+        <li>Current-wire Full+Sliding real-device diagnostics passed correctness and native stream/reuse checks, but throughput failed the 3% gate and the record is unsealed after a floor correction.</li>
+        <li>Pure Sliding live real-device qualification is pending.</li>
+        <li>No performance, capacity, memory-saving, production, or general replacement claim follows from host or historical evidence.</li>
+        <li>Archived records remain append-only and never qualify the live tree automatically.</li>
       </ul>
 
       <p>
         The <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>Capability Matrix</a>{" "}
-        is the normative status surface. Full manifests, exact environments,
-        methods, exclusions, and all historical records are in the{" "}
-        <a href={`${repositoryUrl}/blob/main/results/README.md`}>Results Index</a>.
+        is the normative status surface. Exact environments, methods, exclusions,
+        and archived observations remain in the{" "}
+        <a href={resultsIndexUrl}>Results Index</a>.
       </p>
     </article>
   </div>

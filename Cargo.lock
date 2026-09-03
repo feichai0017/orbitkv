@@ -85,6 +85,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "orbitkv-executor"
+version = "0.1.0"
+dependencies = [
+ "orbitkv",
+ "thiserror",
+]
+
+[[package]]
+name = "orbitkv-ffi"
+version = "0.1.0"
+dependencies = [
+ "orbitkv",
+ "serde_json",
+]
+
+[[package]]
+name = "orbitkv-server"
+version = "0.1.0"
+dependencies = [
+ "thiserror",
+]
+
+[[package]]
 name = "proc-macro2"
 version = "1.0.107"
 source = "registry+https://github.com/rust-lang/crates.io-index"

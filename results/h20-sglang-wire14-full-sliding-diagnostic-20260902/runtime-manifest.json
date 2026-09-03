@@ -1,0 +1,207 @@
+{
+  "schema": "orbitkv.runtime-manifest",
+  "version": 3,
+  "fingerprint": "sha256:bec3b8aa119b28e21451eb0a8fb3e57ab42f6e7eba4ebf17054d496d620e0190",
+  "source": {
+    "kind": "attention_state",
+    "input": {
+      "page_tokens": 16,
+      "states": [
+        {
+          "name": "full",
+          "layers": [
+            1,
+            3,
+            5,
+            7,
+            9,
+            11,
+            13,
+            15,
+            17,
+            19,
+            21,
+            23
+          ],
+          "storage": {
+            "kind": "token_kv",
+            "key_bytes_per_token_per_layer": 1024,
+            "value_bytes_per_token_per_layer": 1024,
+            "retention": "full",
+            "window_tokens": null
+          }
+        },
+        {
+          "name": "swa",
+          "layers": [
+            0,
+            2,
+            4,
+            6,
+            8,
+            10,
+            12,
+            14,
+            16,
+            18,
+            20,
+            22
+          ],
+          "storage": {
+            "kind": "token_kv",
+            "key_bytes_per_token_per_layer": 1024,
+            "value_bytes_per_token_per_layer": 1024,
+            "retention": "sliding",
+            "window_tokens": 128
+          }
+        }
+      ]
+    }
+  },
+  "token_manager_plan": {
+    "layout": {
+      "schema": "orbitkv.layout-program.v1",
+      "plan_fingerprint": "sha256:45c5e2fa9cbc548b056656487b9e36e9245cf78238e43b223995d5437cd0f1b6",
+      "page_tokens": 16,
+      "classes": [
+        {
+          "name": "full",
+          "layers": [
+            1,
+            3,
+            5,
+            7,
+            9,
+            11,
+            13,
+            15,
+            17,
+            19,
+            21,
+            23
+          ],
+          "bytes_per_token_per_layer": 2048,
+          "address": {
+            "kind": "append_only"
+          },
+          "retirement": {
+            "kind": "never"
+          },
+          "minimum_slots_per_request": null
+        },
+        {
+          "name": "swa",
+          "layers": [
+            0,
+            2,
+            4,
+            6,
+            8,
+            10,
+            12,
+            14,
+            16,
+            18,
+            20,
+            22
+          ],
+          "bytes_per_token_per_layer": 2048,
+          "address": {
+            "kind": "periodic",
+            "period_blocks": 9
+          },
+          "retirement": {
+            "kind": "block_end_plus",
+            "offset_tokens": 127
+          },
+          "minimum_slots_per_request": 9
+        }
+      ]
+    }
+  },
+  "attention_state_plan": {
+    "schema": "orbitkv.attention-state-plan.v1",
+    "page_tokens": 16,
+    "states": [
+      {
+        "name": "full",
+        "layers": [
+          1,
+          3,
+          5,
+          7,
+          9,
+          11,
+          13,
+          15,
+          17,
+          19,
+          21,
+          23
+        ],
+        "backend": {
+          "kind": "token_slots",
+          "storage": "token_kv",
+          "components": [
+            {
+              "name": "key",
+              "bytes_per_token_per_layer": 1024
+            },
+            {
+              "name": "value",
+              "bytes_per_token_per_layer": 1024
+            }
+          ],
+          "bytes_per_token_per_layer": 2048,
+          "page_bytes_per_layer": 32768,
+          "retention": "full",
+          "window_tokens": null,
+          "token_relocatable": true
+        }
+      },
+      {
+        "name": "swa",
+        "layers": [
+          0,
+          2,
+          4,
+          6,
+          8,
+          10,
+          12,
+          14,
+          16,
+          18,
+          20,
+          22
+        ],
+        "backend": {
+          "kind": "token_slots",
+          "storage": "token_kv",
+          "components": [
+            {
+              "name": "key",
+              "bytes_per_token_per_layer": 1024
+            },
+            {
+              "name": "value",
+              "bytes_per_token_per_layer": 1024
+            }
+          ],
+          "bytes_per_token_per_layer": 2048,
+          "page_bytes_per_layer": 32768,
+          "retention": "sliding",
+          "window_tokens": 128,
+          "token_relocatable": true
+        }
+      }
+    ]
+  },
+  "capability_requirements": [
+    "append_only_addressing",
+    "periodic_addressing",
+    "semantic_retirement",
+    "token_component_geometry",
+    "token_manager"
+  ]
+}

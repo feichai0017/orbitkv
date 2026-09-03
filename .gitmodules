@@ -1,0 +1,4 @@
+[submodule "executor/luminal"]
+	path = executor/luminal
+	url = https://github.com/feichai0017/orbitkv-luminal.git
+	branch = main

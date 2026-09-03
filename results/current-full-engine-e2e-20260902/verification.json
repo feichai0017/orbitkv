@@ -1,0 +1,89 @@
+{
+  "aggregate": {
+    "all_iteration_latency_ratio_median": 1.083477833233289,
+    "all_iteration_latency_ratio_p95": 1.102793102350255,
+    "all_pairs_same_direction": true,
+    "available": true,
+    "conservative_direction_flag": "manager_higher_latency",
+    "minimum_pair_count": 3,
+    "pair_count": 3,
+    "pair_median_latency_ratio_median": 1.083477833233289,
+    "pair_median_latency_ratio_p95": 1.100400178042149,
+    "pair_output_throughput_ratio_median": 0.9228393784288481,
+    "pair_total_throughput_ratio_median": 0.9228393784288481,
+    "scope": "descriptive_scoped_evidence_not_a_general_performance_claim"
+  },
+  "claim": "pairwise_correctness_and_descriptive_timing_only",
+  "pair_count": 3,
+  "pairs": [
+    {
+      "iterations": 3,
+      "latency_ratio_median": 1.0753466158863305,
+      "latency_ratio_p95": 1.090324965629685,
+      "manager": {
+        "path": "/tmp/orbitkv-current-full-fixed-manager-e1.json",
+        "sha256": "fd42663403decdc3ef63aeb88cccfd5067a913f4e9c42e7fe873e77427a43127"
+      },
+      "manager_to_stock_latency_ratios": [
+        1.09198922671228,
+        1.0753466158863305,
+        1.074268170929501
+      ],
+      "manager_to_stock_output_throughput_ratio": 0.9254578164519949,
+      "manager_to_stock_total_throughput_ratio": 0.925457816451995,
+      "observed_direction": "manager_higher_latency",
+      "pair_index": 0,
+      "stock": {
+        "path": "/tmp/orbitkv-current-full-fixed-stock-e1.json",
+        "sha256": "25efde4a8ef0a8190c64ad985bb256ba490112436f776dc2b67382ba8f9d678f"
+      }
+    },
+    {
+      "iterations": 3,
+      "latency_ratio_median": 1.1022804385764668,
+      "latency_ratio_p95": 1.103049434237149,
+      "manager": {
+        "path": "/tmp/orbitkv-current-full-fixed-manager-e2.json",
+        "sha256": "9773d5ffb48f1f62d3ff6ce1b31c820e77038e3f8dd94872f47685be982f0410"
+      },
+      "manager_to_stock_latency_ratios": [
+        1.1022804385764668,
+        1.1031348781994472,
+        1.0773780356591651
+      ],
+      "manager_to_stock_output_throughput_ratio": 0.9138482369075129,
+      "manager_to_stock_total_throughput_ratio": 0.9138482369075129,
+      "observed_direction": "manager_higher_latency",
+      "pair_index": 1,
+      "stock": {
+        "path": "/tmp/orbitkv-current-full-fixed-stock-e2.json",
+        "sha256": "889f97862acb438dfa2324728bffde29cf981060ca40a4166a4e5db9668e2c90"
+      }
+    },
+    {
+      "iterations": 3,
+      "latency_ratio_median": 1.083477833233289,
+      "latency_ratio_p95": 1.0888218744370237,
+      "manager": {
+        "path": "/tmp/orbitkv-current-full-fixed-manager-e3.json",
+        "sha256": "f406ffd7ef2688946a1c2329b3889d3d0f16c8fc3be532d1899cec75877ace3b"
+      },
+      "manager_to_stock_latency_ratios": [
+        1.0894156567929942,
+        1.083477833233289,
+        1.0778533041732594
+      ],
+      "manager_to_stock_output_throughput_ratio": 0.9228393784288481,
+      "manager_to_stock_total_throughput_ratio": 0.9228393784288481,
+      "observed_direction": "manager_higher_latency",
+      "pair_index": 2,
+      "stock": {
+        "path": "/tmp/orbitkv-current-full-fixed-stock-e3.json",
+        "sha256": "555ab98fd0b3e4a54f1411148936662823ae76076ca8664e099bbb05ffb1fc56"
+      }
+    }
+  ],
+  "schema": "orbitkv.sglang-engine-e2e-pairs-verification.v3",
+  "speedup_qualified": false,
+  "status": "passed"
+}
