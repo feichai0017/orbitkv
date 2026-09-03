@@ -3,9 +3,11 @@
 use std::collections::BTreeSet;
 
 use orbitkv::{
-    EngineBatchPlan, ExecutionAddressProgram, ExecutionRetirementProgram, ExecutionTokenBackend,
-    RuntimeManifest, TargetAdmissionError, TokenStorageKind, derive_execution_signature,
-    kv_manager::TailActionKind,
+    AttentionStateBackend, EngineBatchPlan, EngineBindEvidence, EngineCopyEvidence,
+    EngineStepExecutionEvidence, ExecutionEvidence, RuntimeManifest, RuntimeManifestError,
+    RuntimeManifestSource, TokenStorageKind,
+    kv_manager::{ArenaStats, BackendArenaRegistration, PageLease, TailActionKind, WriteIntent},
+    plan::{AddressProgram, RetentionKind, RetirementProgram},
 };
 use thiserror::Error;
 
@@ -39,7 +41,11 @@ pub struct ExecutorPlan {
 /// the `OrbitKV` session and the Luminal KV buffers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExecutorArena {
+    pub engine_epoch: u64,
+    pub pool_epoch: u64,
+    pub pool_id: u32,
     pub class_id: u16,
+    pub backend_domain: u16,
     pub first_page_id: u32,
     pub page_count: u32,
     pub backend_base_index: u64,
@@ -67,8 +73,8 @@ pub struct AttentionBatch {
 /// Physical writes and copies that must precede one Luminal forward.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedBatch {
-    pub source: EngineBatchPlan,
-    pub steps: Box<[PreparedStep]>,
+    source: EngineBatchPlan,
+    steps: Box<[PreparedStep]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,7 +100,7 @@ pub struct TokenCopy {
 #[derive(Debug, Error)]
 pub enum ExecutorError {
     #[error(transparent)]
-    Admission(#[from] TargetAdmissionError),
+    Manifest(#[from] RuntimeManifestError),
     #[error("Luminal currently accepts token KV only")]
     UnsupportedStateStorage,
     #[error("Luminal fixed-state execution is not implemented")]
@@ -113,8 +119,45 @@ pub enum ExecutorError {
     UnknownClass,
     #[error("prepared batch and compiled executor geometry differ")]
     PreparedGeometryMismatch,
+    #[error("manager arena and executor buffer registration differ")]
+    ArenaRegistrationMismatch,
     #[error("physical token-slot arithmetic overflowed")]
     SlotOverflow,
+}
+
+impl ExecutorArena {
+    /// Binds a manager-owned page arena to its executor buffer range.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless every shared identity and geometry field agrees.
+    pub fn bind(
+        stats: ArenaStats,
+        registration: BackendArenaRegistration,
+    ) -> Result<Self, ExecutorError> {
+        if registration.reserved != 0
+            || stats.class_id != registration.class_id
+            || stats.backend_domain != registration.backend_domain
+            || stats.pool_id != registration.pool_id
+            || stats.page_count != registration.page_count
+        {
+            return Err(ExecutorError::ArenaRegistrationMismatch);
+        }
+        registration
+            .backend_base_index
+            .checked_add(u64::from(registration.page_count))
+            .ok_or(ExecutorError::ArenaRegistrationMismatch)?;
+        Ok(Self {
+            engine_epoch: stats.engine_epoch,
+            pool_epoch: stats.pool_epoch,
+            pool_id: stats.pool_id,
+            class_id: stats.class_id,
+            backend_domain: stats.backend_domain,
+            first_page_id: stats.first_page_id,
+            page_count: stats.page_count,
+            backend_base_index: registration.backend_base_index,
+        })
+    }
 }
 
 impl ExecutorPlan {
@@ -126,51 +169,70 @@ impl ExecutorPlan {
     /// Returns an error when the manifest cannot be projected to token KV
     /// classes supported by the current executor.
     pub fn compile(manifest: &RuntimeManifest) -> Result<Self, ExecutorError> {
-        let signature = derive_execution_signature(manifest)?;
-        if !signature.fixed_states.is_empty() {
+        manifest.validate()?;
+        let manager = manifest
+            .token_manager_plan
+            .as_ref()
+            .ok_or(ExecutorError::UnsupportedStateStorage)?;
+        let page_tokens = u32::try_from(manager.layout.page_tokens)
+            .map_err(|_| ExecutorError::PreparedGeometryMismatch)?;
+        let state_plan = manifest.attention_state_plan.as_ref();
+        if state_plan.is_some_and(|plan| {
+            plan.states
+                .iter()
+                .any(|state| !matches!(state.backend, AttentionStateBackend::TokenSlots { .. }))
+        }) {
             return Err(ExecutorError::UnsupportedFixedState);
         }
-        let page_tokens = u32::try_from(signature.page_tokens)
-            .map_err(|_| ExecutorError::PreparedGeometryMismatch)?;
-        let mut classes = Vec::with_capacity(signature.token_classes.len());
-        for (class_id, (layout, state)) in signature
-            .token_classes
-            .iter()
-            .zip(&signature.token_states)
-            .enumerate()
-        {
-            if layout.name != state.name || layout.layers != state.layers {
-                return Err(ExecutorError::ClassMismatch);
-            }
-            let ExecutionTokenBackend::TokenSlots {
-                storage,
-                retention,
-                window_tokens,
-                ..
-            } = state.backend;
+        let mut classes = Vec::with_capacity(manager.layout.classes.len());
+        for (class_id, layout) in manager.layout.classes.iter().enumerate() {
+            let (storage, retention, window_tokens) = match &manifest.source {
+                RuntimeManifestSource::AttentionState { .. } => {
+                    let state = state_plan
+                        .and_then(|plan| {
+                            plan.states.iter().find(|state| {
+                                state.name == layout.name && state.layers == layout.layers
+                            })
+                        })
+                        .ok_or(ExecutorError::ClassMismatch)?;
+                    let AttentionStateBackend::TokenSlots {
+                        storage,
+                        retention,
+                        window_tokens,
+                        ..
+                    } = state.backend
+                    else {
+                        return Err(ExecutorError::UnsupportedFixedState);
+                    };
+                    (storage, retention, window_tokens)
+                }
+                RuntimeManifestSource::RetentionIr { program } => {
+                    if program.states.len() != 1 || manager.layout.classes.len() != 1 {
+                        return Err(ExecutorError::ClassMismatch);
+                    }
+                    (TokenStorageKind::TokenKv, RetentionKind::Chunked, None)
+                }
+            };
             if storage != TokenStorageKind::TokenKv {
                 return Err(ExecutorError::UnsupportedStateStorage);
             }
             let visibility = match (&layout.address, &layout.retirement, retention) {
+                (AddressProgram::AppendOnly, RetirementProgram::Never, RetentionKind::Full) => {
+                    AttentionVisibility::Full
+                }
                 (
-                    ExecutionAddressProgram::AppendOnly,
-                    ExecutionRetirementProgram::Never,
-                    orbitkv::plan::RetentionKind::Full,
-                ) => AttentionVisibility::Full,
-                (
-                    ExecutionAddressProgram::Periodic { .. }
-                    | ExecutionAddressProgram::PeriodicFrom { .. },
-                    ExecutionRetirementProgram::BlockEndPlus { .. },
-                    orbitkv::plan::RetentionKind::Sliding,
+                    AddressProgram::Periodic { .. } | AddressProgram::PeriodicFrom { .. },
+                    RetirementProgram::BlockEndPlus { .. },
+                    RetentionKind::Sliding,
                 ) => AttentionVisibility::Sliding {
                     window_tokens: window_tokens.ok_or(ExecutorError::ClassMismatch)?,
                 },
                 (
-                    ExecutionAddressProgram::ResettableArena { blocks_per_epoch },
-                    ExecutionRetirementProgram::EpochEnd {
+                    AddressProgram::ResettableArena { blocks_per_epoch },
+                    RetirementProgram::EpochEnd {
                         blocks_per_epoch: retirement_blocks,
                     },
-                    orbitkv::plan::RetentionKind::Chunked,
+                    RetentionKind::Chunked,
                 ) if blocks_per_epoch == retirement_blocks => AttentionVisibility::Chunked {
                     blocks_per_epoch: *blocks_per_epoch,
                 },
@@ -179,8 +241,8 @@ impl ExecutorPlan {
             classes.push(AttentionClass {
                 class_id: u16::try_from(class_id)
                     .map_err(|_| ExecutorError::PreparedGeometryMismatch)?,
-                name: state.name.clone(),
-                layers: state.layers.clone().into_boxed_slice(),
+                name: layout.name.clone(),
+                layers: layout.layers.clone().into_boxed_slice(),
                 page_tokens,
                 visibility,
             });
@@ -274,11 +336,12 @@ impl ExecutorPlan {
         source: EngineBatchPlan,
         arenas: &[ExecutorArena],
     ) -> Result<PreparedBatch, ExecutorError> {
-        if arenas.len() != self.classes.len()
-            || arenas
+        validate_arenas(arenas, self.classes.len())?;
+        if source.steps.is_empty()
+            || source
+                .steps
                 .iter()
-                .enumerate()
-                .any(|(class_id, arena)| usize::from(arena.class_id) != class_id)
+                .any(|step| step.class_lowerings.len() != self.classes.len())
         {
             return Err(ExecutorError::PreparedGeometryMismatch);
         }
@@ -305,16 +368,122 @@ impl ExecutorPlan {
     }
 }
 
+impl PreparedBatch {
+    #[must_use]
+    pub const fn batch_id(&self) -> orbitkv::EngineBatchId {
+        self.source.batch_id
+    }
+
+    #[must_use]
+    pub fn steps(&self) -> &[PreparedStep] {
+        &self.steps
+    }
+
+    /// Builds exact success evidence after the executor has completed every
+    /// bind and copy in this prepared batch.
+    ///
+    /// Calling this method is an assertion by the device executor: it must be
+    /// done only after the listed mappings exist and every copy completed
+    /// before its dependent writes. `RuntimeSession` independently validates
+    /// the returned evidence against its private prepared transaction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if arena identity, class ordering, page placement, or
+    /// the lowered batch differs from the manager-authored source plan.
+    pub fn execution_evidence_after_success(
+        &self,
+        arenas: &[ExecutorArena],
+    ) -> Result<ExecutionEvidence, ExecutorError> {
+        validate_arenas(
+            arenas,
+            self.source
+                .steps
+                .first()
+                .map_or(0, |step| step.class_lowerings.len()),
+        )?;
+        if self.steps.len() != self.source.steps.len() {
+            return Err(ExecutorError::PreparedGeometryMismatch);
+        }
+        let steps = self
+            .source
+            .steps
+            .iter()
+            .zip(&self.steps)
+            .map(|(source, lowered)| {
+                if lowered.request_id != source.request_id.0
+                    || lowered.classes.len() != source.class_lowerings.len()
+                {
+                    return Err(ExecutorError::PreparedGeometryMismatch);
+                }
+                let mut binds = Vec::new();
+                for lowering in &source.class_lowerings {
+                    let arena = arena_for(arenas, lowering.class_id)?;
+                    for action in checked_span(
+                        &source.tail_actions,
+                        lowering.tail_offset,
+                        lowering.tail_count,
+                    )?
+                    .iter()
+                    .filter(|action| {
+                        matches!(
+                            action.kind,
+                            TailActionKind::CopyOnWrite | TailActionKind::Fresh
+                        )
+                    }) {
+                        binds.push(bind_evidence(action.destination, arena)?);
+                    }
+                    for write in checked_span(
+                        &source.write_intents,
+                        lowering.write_offset,
+                        lowering.write_count,
+                    )? {
+                        binds.push(bind_evidence(write_lease(*write, arena), arena)?);
+                    }
+                }
+                let copies = source
+                    .copy_intents
+                    .iter()
+                    .map(|copy| {
+                        let arena = arena_for(arenas, copy.class_id)?;
+                        validate_copy(copy, arena)?;
+                        Ok(EngineCopyEvidence {
+                            class_id: copy.class_id,
+                            backend_domain: copy.backend_domain,
+                            token_count: copy.token_count,
+                            source_token_offset: copy.source_token_offset,
+                            destination_token_offset: copy.destination_token_offset,
+                            observed: true,
+                            copied: true,
+                            ordered_before_writes: true,
+                            source: copy.source,
+                            destination: copy.destination,
+                            source_backend_index: copy.source_backend_index,
+                            destination_backend_index: copy.destination_backend_index,
+                        })
+                    })
+                    .collect::<Result<Vec<_>, ExecutorError>>()?;
+                Ok(EngineStepExecutionEvidence {
+                    request_id: source.request_id,
+                    bind_receipts: binds.into_boxed_slice(),
+                    copy_receipts: copies.into_boxed_slice(),
+                })
+            })
+            .collect::<Result<Vec<_>, ExecutorError>>()?;
+        Ok(ExecutionEvidence {
+            batch_id: self.source.batch_id,
+            steps: steps.into_boxed_slice(),
+        })
+    }
+}
+
 fn lower_class(
     step: &orbitkv::EngineStepPlan,
     lowering: &orbitkv::kv_manager::ClassLowering,
     arenas: &[ExecutorArena],
     page_tokens: u64,
 ) -> Result<PreparedClass, ExecutorError> {
-    let arena = *arenas
-        .get(usize::from(lowering.class_id))
-        .filter(|arena| arena.class_id == lowering.class_id)
-        .ok_or(ExecutorError::UnknownClass)?;
+    let arena = arena_for(arenas, lowering.class_id)?;
     let tail = checked_span(
         &step.tail_actions,
         lowering.tail_offset,
@@ -351,7 +520,7 @@ fn lower_class(
             } else {
                 tail.destination
             };
-            backend_page(page.page_id, arena)?
+            backend_page_for_lease(page, arena)?
         } else {
             let first_write = first.div_ceil(page_tokens);
             let index = usize::try_from(
@@ -360,11 +529,10 @@ fn lower_class(
                     .ok_or(ExecutorError::PreparedGeometryMismatch)?,
             )
             .map_err(|_| ExecutorError::PreparedGeometryMismatch)?;
-            backend_page(
-                writes
+            backend_page_for_write(
+                *writes
                     .get(index)
-                    .ok_or(ExecutorError::PreparedGeometryMismatch)?
-                    .page_id,
+                    .ok_or(ExecutorError::PreparedGeometryMismatch)?,
                 arena,
             )?
         };
@@ -378,14 +546,15 @@ fn lower_class(
     let copies = copies
         .iter()
         .map(|copy| {
+            validate_copy(copy, arena)?;
             Ok(TokenCopy {
                 source_slot: token_slot(
-                    copy.source_backend_index,
+                    backend_page_for_lease(copy.source, arena)?,
                     copy.source_token_offset,
                     page_tokens,
                 )?,
                 destination_slot: token_slot(
-                    copy.destination_backend_index,
+                    backend_page_for_lease(copy.destination, arena)?,
                     copy.destination_token_offset,
                     page_tokens,
                 )?,
@@ -400,14 +569,86 @@ fn lower_class(
     })
 }
 
+fn validate_arenas(arenas: &[ExecutorArena], class_count: usize) -> Result<(), ExecutorError> {
+    if arenas.len() != class_count
+        || arenas.iter().enumerate().any(|(class_id, arena)| {
+            usize::from(arena.class_id) != class_id
+                || arena.engine_epoch == 0
+                || arena.pool_epoch == 0
+                || arena.pool_id == 0
+                || arena.page_count == 0
+                || arena.first_page_id.checked_add(arena.page_count).is_none()
+        })
+    {
+        return Err(ExecutorError::PreparedGeometryMismatch);
+    }
+    Ok(())
+}
+
+fn arena_for(arenas: &[ExecutorArena], class_id: u16) -> Result<ExecutorArena, ExecutorError> {
+    arenas
+        .get(usize::from(class_id))
+        .copied()
+        .filter(|arena| arena.class_id == class_id)
+        .ok_or(ExecutorError::UnknownClass)
+}
+
+fn write_lease(write: WriteIntent, arena: ExecutorArena) -> PageLease {
+    PageLease {
+        engine_epoch: arena.engine_epoch,
+        pool_epoch: arena.pool_epoch,
+        generation: write.page_generation,
+        page_id: write.page_id,
+        pool_id: arena.pool_id,
+    }
+}
+
+fn bind_evidence(
+    page: PageLease,
+    arena: ExecutorArena,
+) -> Result<EngineBindEvidence, ExecutorError> {
+    Ok(EngineBindEvidence {
+        page,
+        backend_domain: arena.backend_domain,
+        mapped: true,
+        writable: true,
+        backend_index: backend_page_for_lease(page, arena)?,
+    })
+}
+
+fn validate_copy(
+    copy: &orbitkv::kv_manager::CopyIntent,
+    arena: ExecutorArena,
+) -> Result<(), ExecutorError> {
+    if copy.backend_domain != arena.backend_domain
+        || copy.source_backend_index != backend_page_for_lease(copy.source, arena)?
+        || copy.destination_backend_index != backend_page_for_lease(copy.destination, arena)?
+    {
+        return Err(ExecutorError::PreparedGeometryMismatch);
+    }
+    Ok(())
+}
+
 fn token_slot(page: u64, offset: u32, page_tokens: u64) -> Result<u64, ExecutorError> {
     page.checked_mul(page_tokens)
         .and_then(|base| base.checked_add(u64::from(offset)))
         .ok_or(ExecutorError::SlotOverflow)
 }
 
-fn backend_page(page_id: u32, arena: ExecutorArena) -> Result<u64, ExecutorError> {
-    let relative = page_id
+fn backend_page_for_write(write: WriteIntent, arena: ExecutorArena) -> Result<u64, ExecutorError> {
+    backend_page_for_lease(write_lease(write, arena), arena)
+}
+
+fn backend_page_for_lease(page: PageLease, arena: ExecutorArena) -> Result<u64, ExecutorError> {
+    if page.engine_epoch != arena.engine_epoch
+        || page.pool_epoch != arena.pool_epoch
+        || page.pool_id != arena.pool_id
+        || page.generation == 0
+    {
+        return Err(ExecutorError::PreparedGeometryMismatch);
+    }
+    let relative = page
+        .page_id
         .checked_sub(arena.first_page_id)
         .filter(|relative| *relative < arena.page_count)
         .ok_or(ExecutorError::PreparedGeometryMismatch)?;
@@ -445,10 +686,12 @@ fn push_indptr(values: &mut Vec<i32>, amount: u64) -> Result<(), ExecutorError> 
 mod tests {
     use super::*;
     use orbitkv::{
-        AttentionStatePlanInput, AttentionStateSpec, AttentionStateStorage, EngineBatchId,
-        EngineRequestId, EngineStepPlan, compile_runtime_manifest,
+        AttentionStatePlanInput, AttentionStateSpec, AttentionStateStorage, CacheSharingPolicy,
+        EngineAppendIntent, EngineBatchId, EngineCompletionEvidence, EnginePublicationEvidence,
+        EngineRequestId, EngineStepPlan, RuntimeSession, compile_plan, compile_runtime_manifest,
         kv_manager::{
-            ClassLowering, PageLease, TailAction, TailActionKind, ViewVersion, WriteIntent,
+            BackendArenaRegistration, CanonicalKvManager, ClassLowering, ManagerConfig, PageLease,
+            TailAction, TailActionKind, ViewVersion, WriteIntent,
         },
         plan::RetentionKind,
     };
@@ -598,17 +841,93 @@ mod tests {
             .lower_prepared(
                 source,
                 &[ExecutorArena {
+                    engine_epoch: 1,
+                    pool_epoch: 1,
+                    pool_id: 7,
                     class_id: 0,
+                    backend_domain: 0,
                     first_page_id: 10,
                     page_count: 8,
                     backend_base_index: 4,
                 }],
             )
             .unwrap();
-        assert_eq!(lowered.steps[0].request_id, 9);
+        assert_eq!(lowered.steps()[0].request_id, 9);
         assert_eq!(
-            &*lowered.steps[0].classes[0].write_slots,
+            &*lowered.steps()[0].classes[0].write_slots,
             &(64_u64..82).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn successful_lowering_produces_session_accepted_execution_evidence() {
+        let state = token_state("full", vec![0, 1], RetentionKind::Full, None);
+        let manifest = manifest(vec![state.clone()]);
+        let manager_plan = compile_plan(
+            orbitkv::compile_attention_state_plan(AttentionStatePlanInput {
+                page_tokens: 16,
+                states: vec![state],
+            })
+            .unwrap()
+            .token_manager_plan()
+            .unwrap(),
+        )
+        .unwrap();
+        let registration = BackendArenaRegistration {
+            pool_id: 7,
+            class_id: 0,
+            backend_domain: 11,
+            page_count: 8,
+            reserved: 0,
+            backend_base_index: 4,
+        };
+        let manager = CanonicalKvManager::new(
+            &manager_plan,
+            ManagerConfig {
+                maximum_requests: 2,
+                maximum_operations: 4,
+                maximum_prefixes: 1,
+                maximum_reclamations: 8,
+                maximum_step_tokens: 64,
+            },
+            &[registration],
+        )
+        .unwrap();
+        let mut session = RuntimeSession::new(manager, CacheSharingPolicy::RequestPrivate);
+        let request_id = EngineRequestId(9);
+        session.acquire_requests(&[request_id]).unwrap();
+        let source = session
+            .prepare_append_batch(&[EngineAppendIntent {
+                request_id,
+                target_boundary: 18,
+            }])
+            .unwrap();
+        let arena_stats = session.arena_stats()[0];
+        let arenas = [ExecutorArena::bind(arena_stats, registration).unwrap()];
+        let prepared = ExecutorPlan::compile(&manifest)
+            .unwrap()
+            .lower_prepared(source, &arenas)
+            .unwrap();
+        let evidence = prepared.execution_evidence_after_success(&arenas).unwrap();
+        let ticket = session.submit_execution(&evidence).unwrap();
+        assert_eq!(ticket.batch_id(), prepared.batch_id());
+        let publication = session
+            .complete_execution_by_batch(
+                ticket.batch_id(),
+                EngineCompletionEvidence {
+                    completion_domain: 1,
+                    completion_value: 1,
+                    confirmed: true,
+                },
+            )
+            .unwrap();
+        session
+            .confirm_publication(&EnginePublicationEvidence {
+                publication_id: publication.publication_id,
+                mirror_cleanup_confirmed: true,
+                reclamation_receipts: Box::default(),
+            })
+            .unwrap();
+        assert_eq!(session.stats().active_requests, 1);
     }
 }

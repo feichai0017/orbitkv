@@ -56,7 +56,7 @@ macro_rules! session_id {
         }
 
         impl $name {
-            /// Reconstructs an opaque session identity from its wire parts.
+            /// Reconstructs an opaque session identity from serialized parts.
             #[must_use]
             pub const fn from_parts(session_epoch: u64, sequence: u64) -> Self {
                 Self {
@@ -313,7 +313,7 @@ pub enum RuntimeSessionError {
         expected: u64,
         actual: u64,
     },
-    #[error("flattened evidence cardinality exceeds the manager wire limit")]
+    #[error("flattened evidence cardinality exceeds the manager batch limit")]
     EvidenceTooLarge,
     #[error("unknown publication id {0:?}")]
     UnknownPublication(EnginePublicationId),

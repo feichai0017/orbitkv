@@ -6,16 +6,12 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 .venv/
-.venv-sglang*/
 .qualification/
-compat/sglang/source/
-compat/build/
 dist/
 build/
 *.jsonl
 *.log
 !results/**/qualification/build/
-!results/**/qualification/build/liborbitkv_ffi.so
 !results/**/records/epoch-*/*.stderr.log
 !results/**/logs/
 !results/**/logs/epoch-*/

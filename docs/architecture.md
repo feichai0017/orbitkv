@@ -1,71 +1,73 @@
 # Architecture
 
-OrbitKV is organized as one inference product with three ownership layers and
-one temporary compatibility path.
+OrbitKV is one native inference stack with three ownership layers.
 
 ```text
-OpenAI HTTP / gRPC
+HTTP / SSE / WebSocket
         |
         v
-server/                 request admission, tokenization, scheduling, sampling
-        | BatchIntent (no physical addresses)
+server/                 admission, tokenization, scheduling, sampling
+        | BatchIntent (logical request state only)
         v
-core/                   attention-state compilation and KV lifecycle authority
-        | ExecutionPlan (pages, writes, copies, visibility, retirement)
+core/                   compile visibility and own the KV lifecycle
+        | prepared pages, copies, views, retirement rules
         v
-executor/               forked Luminal graph compiler and device executor
-        | one ordered CUDA stream / graph
+executor/               Luminal graph compilation and device execution
+        | completion evidence
         v
-CUDA + FlashInfer       kernels and completion evidence
-        |
-        v
-core/                   publication, retirement acknowledgement, safe reuse
+core/                   publish, retire, acknowledge, reuse
 ```
 
-## Ownership rules
+## Authority
 
-- `core/` is the only owner of page allocation, page generations, request and
-  Prefix snapshots, token disposition, retirement, and reuse.
-- `executor/` consumes immutable physical plans. It may cache device metadata
-  and compiled graphs, but it cannot invent, retain, or recycle a page.
-- `server/` emits scheduling intent and receives tokens. Its public contract
-  intentionally contains no page identifier.
-- `compat/sglang/` is a regression and migration route. Its tables are checked
-  execution mirrors, not an alternative manager.
+`core/` is the sole owner of request and snapshot identities, page allocation,
+page generations, Prefix/COW, semantic liveness, retirement, and reuse.
 
-Safe reuse requires both semantic death and completion of every device command
-that may still observe the old state. Device mirror cleanup and the exact
-retirement acknowledgement occur before a page generation returns to the free
-pool.
+`executor/` owns tensors, compiled graphs, kernel selection, streams, events,
+and sampling execution. It consumes immutable physical metadata selected by
+OrbitKV. Cached metadata is an execution artifact, never a second page table.
 
-## Source layout
+`server/` owns client protocols, admission queues, batching, cancellation, and
+backpressure. Its public types contain request IDs, tokens, logical boundaries,
+and output events; they contain no page or device-buffer identity.
+
+## Native data flow
+
+1. The compiler turns model attention semantics into a fingerprinted
+   `RuntimeManifest`.
+2. The executor derives an `ExecutorPlan` directly from that manifest.
+3. `RuntimeSession` prepares append, Prefix/COW, relocation, or release work.
+4. The executor lowers manager-selected pages into Luminal metadata and runs the
+   graph on the owning stream.
+5. Completion evidence advances the Execution Frontier.
+6. RuntimeSession publishes new request heads, retires unreachable generations,
+   validates cleanup acknowledgement, and only then permits reuse.
+
+The control path is in-process Rust. There is no C boundary, Python bridge,
+upstream inference HTTP hop, generic engine adapter, or parallel allocator.
+
+## Source boundaries
 
 ```text
 core/
-  src/                    compiler and RuntimeSession
-  ffi/                    compatibility C boundary
+  src/                    compiler, manager, RuntimeSession, checkpoint pool
 executor/
-  src/                    engine-neutral plan lowering
-  luminal/                complete fork, tracked as a Git submodule
+  src/                    OrbitKV-to-Luminal plan lowering
+  luminal/                complete pinned compiler/executor fork
 server/
-  src/                    engine-facing control-plane contract
-compat/
-  sglang/                 previous SGLang integration and qualification tools
-docs/                     active architecture and capability contracts
-results/                  append-only measured evidence
+  src/                    async local Engine and semantic request contracts
+docs/                     current product contracts
+results/                  append-only provenance, never active source
 ```
 
-The Luminal fork preserves upstream history and tracks
-`luminal-ai/luminal`. OrbitKV-specific runtime changes are committed in
-`feichai0017/orbitkv-luminal`; the parent repository pins the exact commit.
+The Luminal submodule preserves its upstream history. OrbitKV-specific changes
+are made in the fork and pinned here, rather than copied into model- or
+hardware-specific directories.
 
-## Migration state
+## Qualification boundary
 
-The repository currently has a host-tested `BatchIntent`, an engine-neutral
-OrbitKV-to-executor plan, and a forked Luminal paged-attention operation that
-accepts externally owned page tables including last-page lengths. The complete
-same-stream model execution and server integration remain in progress.
-
-No performance result from the SGLang compatibility route transfers to the
-Luminal executor. A speedup claim requires paired real-model runs against the
-same stock SGLang revision, model, dtype, workload, device, and capacity.
+The current tree proves compiler, manager, lifecycle, and executor-metadata
+contracts on the host. It does not yet prove complete model execution, exact
+output equivalence, CUDA stream/event provenance, throughput, capacity, or
+long-running behavior for this architecture. Those claims require a matched
+real-device end-to-end harness described in the roadmap.

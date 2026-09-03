@@ -6,142 +6,81 @@ import { docs, repositoryUrl } from "../../data/site";
 
 <SiteLayout
   title="Architecture | OrbitKV"
-  description="The complete pinned SGLang and OrbitKV native RuntimeSession product boundary."
+  description="OrbitKV core, Luminal executor, and Rust server architecture."
   active="Architecture"
 >
   <header class="page-hero">
     <p class="eyebrow">Architecture</p>
-    <h1>One product. One KV authority.</h1>
+    <h1>Three layers. One KV authority.</h1>
     <p>
-      OrbitKV combines the complete pinned SGLang source with one native Rust
-      RuntimeSession. The compiler turns retention semantics into checked plans;
-      RuntimeSession owns KV lifecycle and physical-page selection on every
-      admitted route.
+      OrbitKV compiles attention lifetimes and owns physical KV state. A forked
+      Luminal executes the resulting model graph, while a Rust server handles
+      requests without observing page identities.
     </p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Architecture" />
     <article class="prose">
-      <h2>Single-product pipeline</h2>
-      <pre><code>{`Attention and retention semantics
-    -> canonical RuntimeManifest
-    -> pinned SGLang RuntimeTarget admission
-    -> exact RuntimeBinding
-    -> wire 14 / 48 exports / 78 layouts
-    -> native RuntimeSession
-    -> SGLang tensor and kernel effects
+      <h2>Native pipeline</h2>
+      <pre><code>{`request and token intent
+    -> Rust server scheduler
+    -> RuntimeManifest + RuntimeSession
+    -> manager-selected pages, copies, and views
+    -> Luminal graph and kernels
     -> completion evidence
-    -> publication and reclamation ACK`}</code></pre>
-
-      <h2>Complete product boundary</h2>
-      <p>
-        The shipped source product preserves the complete pinned SGLang engine
-        and applies the reviewed OrbitKV integration inside that tree. It is not
-        a reduced fork, a sidecar manager, or a second engine. SGLang continues
-        to own serving, scheduling, tensor allocation, model execution, kernels,
-        and stream/event creation. One native <code>RuntimeSession</code> owns its
-        accepted retention plan, logical identities, physical-page selection,
-        Prefix and copy-on-write decisions, semantic and execution frontiers,
-        retirement, acknowledgement, and safe reuse.
-      </p>
-      <p>
-        The old raw manager ABI, optional structured data plane, neutral
-        reference product, and second-engine path have been deleted. Python
-        retains only the engine identities, checked mirrors, tickets, and
-        completion evidence needed to connect SGLang effects to the native
-        session; it is not a parallel lifecycle authority.
-      </p>
-
-      <h2>Closed typed boundary</h2>
-      <p>
-        The live boundary is <code>WIRE_VERSION = 14</code>, with exactly
-        <strong>48 exported symbols</strong> and <strong>78 checked layouts</strong>.
-        The native library, C declarations, Python loader, RuntimeTarget, and
-        RuntimeBinding must agree. A version, symbol-set, layout, target, or
-        binding mismatch fails closed before allocation or execution.
-      </p>
-
-      <h2>Compiler artifacts</h2>
-      <p>
-        <code>RuntimeManifest</code> is the canonical fingerprinted compiler
-        artifact. Its declarative source lowers into derived plans and capability
-        requirements. <code>RuntimeTarget</code> describes the pinned SGLang
-        admission boundary, and <code>RuntimeBinding</code> proves that one exact
-        manifest was admitted by one exact target. These are generic product
-        contracts: hardware, checkpoint, and evidence-directory names belong to
-        qualification provenance, not to architecture terminology.
-      </p>
+    -> publication, retirement, ACK, and reuse`}</code></pre>
 
       <h2>Ownership boundary</h2>
       <table class="evidence-table-native">
         <thead><tr><th>Layer</th><th>Authority</th></tr></thead>
         <tbody>
-          <tr><td>Compiler artifacts</td><td>Declarative semantics, derived physical plans, capabilities, fingerprints, and static admission</td></tr>
-          <tr><td>Native RuntimeSession</td><td>Request and snapshot identity, physical-page selection, generations, Prefix/COW decisions, frontiers, retirement, ACK, and reuse</td></tr>
-          <tr><td>Pinned SGLang</td><td>Serving, scheduling, tensor allocation, kernels, model execution, and stream/event creation</td></tr>
+          <tr><td>OrbitKV core</td><td>Semantics, request and Prefix snapshots, physical pages, generations, COW, token disposition, retirement, and reuse</td></tr>
+          <tr><td>Luminal executor</td><td>Tensor storage, graph compilation, kernel selection, streams, events, forward execution, and sampling</td></tr>
+          <tr><td>Rust server</td><td>Client protocols, tokenization, batching, cancellation, backpressure, and output streaming</td></tr>
         </tbody>
       </table>
 
-      <h2>Safety invariants</h2>
-      <ul>
-        <li>Logical identity is separate from physical slot and generation.</li>
-        <li>Immutable snapshot heads are authoritative; engine mirrors are checked effects.</li>
-        <li>Unsupported semantics and engine contracts fail closed before mutation.</li>
-        <li>Ambiguous post-mutation outcomes fail stop instead of guessing ownership.</li>
-        <li>Reuse requires semantic death, execution completion, and exact acknowledgement.</li>
-      </ul>
-
-      <h2>Native RuntimeSession profiles</h2>
+      <h2>Direct native composition</h2>
       <p>
-        Five constrained profiles have host coverage on the sole native route:
-        whole-domain Full token state, ordered Full+Sliding token state, pure
-        Sliding token state, exact Chunked token state, and request-private Full
-        latent state. Sharing and Prefix behavior remain profile-specific; no
-        profile inherits another profile's support or evidence. Layouts such as
-        rings are compiler-derived physical plans, not separate products or the
-        architectural contribution.
-      </p>
-      <p>
-        Full+Sliding and pure Sliding both still need live wire-14 real-device
-        correctness and performance qualification. Other profiles retain their
-        separately documented host and evidence boundaries.
+        The control path stays in one Rust process. The executor derives its
+        immutable plan directly from <code>RuntimeManifest</code>, then consumes
+        page metadata prepared by <code>RuntimeSession</code>. The active product
+        has no compatibility tree, C boundary, Python runtime, upstream
+        inference HTTP proxy, generic adapter framework, or parallel allocator.
       </p>
 
-      <h2>Semantic and execution frontiers</h2>
+      <h2>Compiled token lifetimes</h2>
       <p>
-        Token-level reclamation requires two independent proofs. The Semantic
-        Frontier shows that a logical token is no longer reachable from live
-        snapshots. The Execution Frontier shows that prior device work can no
-        longer read or write its storage. RuntimeSession permits reuse only after
-        both proofs and the exact SGLang acknowledgement are present. Relocation
-        is byte-exact state movement and reclamation, not numerical compression
-        or an automatic capacity benefit.
+        Full, Sliding, Full+Sliding, and exact Chunked attention compile to
+        different address and retirement programs. Ring layouts are derived
+        physical choices. Token-level placement and disposition are always part
+        of manager state; relocation is used only where semantically safe and
+        economically justified.
       </p>
 
-      <h2>Qualification boundary</h2>
+      <h2>Safe reuse</h2>
       <p>
-        Historical Full accelerator records are useful earlier-wire correctness
-        evidence for their captured source, workload, and environment. They
-        reported no speedup, and they do not qualify the live wire-14 product.
-        Evidence provenance may name the exact device, checkpoint, source
-        revision, or record location; those names do not become generic
-        architecture labels. Host, real-device correctness, performance,
-        capacity, and production qualification remain separate claims.
+        The Semantic Frontier proves that future attention cannot reach old
+        state. The Execution Frontier proves that submitted device work has
+        finished with it. OrbitKV requires both proofs plus exact acknowledgement
+        before a physical generation can return to the free pool.
       </p>
+
+      <h2>Current boundary</h2>
       <p>
-        The <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>Capability Matrix</a>{" "}
-        is normative. Detailed provenance and archived observations live in the{" "}
-        <a href={`${repositoryUrl}/blob/main/results/README.md`}>Results Index</a>.
+        Compiler, manager, RuntimeSession, server contracts, and executor
+        metadata lowering are host-tested. The complete native model path is not
+        yet real-device qualified, so no speed, capacity, memory-saving,
+        production, or replacement claim is made. Historical measurements remain
+        append-only provenance in the <a href={`${repositoryUrl}/blob/main/results/README.md`}>Results Index</a>.
       </p>
 
       <h2>Product documents</h2>
       <div class="doc-grid">
         {docs.map((item) => (
           <div class="doc-card">
-            <span>{item.key}</span>
-            <h3>{item.name}</h3>
-            <p>{item.detail}</p>
+            <span>{item.key}</span><h3>{item.name}</h3><p>{item.detail}</p>
             <a href={item.href}>Open document →</a>
           </div>
         ))}
