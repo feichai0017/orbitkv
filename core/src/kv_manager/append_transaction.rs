@@ -387,6 +387,85 @@ impl CanonicalKvManager {
             .into_boxed_slice())
     }
 
+    /// Materializes the exact page roots that one prepared step will expose to
+    /// device attention before the transaction is submitted.
+    ///
+    /// This is a read-only projection of the private base snapshot plus the
+    /// manager-authored append delta. It deliberately keeps pages needed by an
+    /// earlier query in a multi-token Sliding step; final retirement is applied
+    /// only after device completion.
+    pub(crate) fn materialize_prepared_step(
+        &self,
+        prepared: &PreparedStep,
+    ) -> Result<Box<[super::SnapshotPage]>, KvManagerError> {
+        self.check_step_epoch(prepared.step)?;
+        let stored = match self
+            .operations
+            .get(prepared.step.slot, prepared.step.generation)?
+        {
+            OperationState::Prepared(stored) => stored,
+            OperationState::Submitted(_) => return Err(KvManagerError::StepAlreadySubmitted),
+        };
+        let delta = &stored.delta;
+        if delta.request != prepared.request
+            || delta.base_snapshot != prepared.base_snapshot
+            || delta.target_snapshot != prepared.target_snapshot
+            || delta.base_view_version != prepared.base_view_version
+            || delta.target_view_version != prepared.target_view_version
+            || delta.previous_boundary != prepared.previous_boundary
+            || delta.target_boundary != prepared.target_boundary
+        {
+            return Err(KvManagerError::StaleView);
+        }
+        self.preflight_prepared_delta(stored, prepared.step)?;
+        let base = self
+            .snapshots
+            .get(delta.base_snapshot.slot, delta.base_snapshot.generation)?;
+        let mut roots = base.roots.iter().cloned().collect::<Vec<_>>();
+        for (((root, class), class_delta), public_lowering) in roots
+            .iter_mut()
+            .zip(self.classes.iter().copied())
+            .zip(delta.classes.iter())
+            .zip(prepared.class_lowerings.iter())
+        {
+            if class.class_id != class_delta.class_id
+                || class_delta.class_id != public_lowering.class_id
+            {
+                return Err(KvManagerError::Invariant("prepared class ordering"));
+            }
+            let candidate_count = root
+                .entries
+                .len()
+                .checked_add(usize::from(
+                    class_delta.tail_action == TailActionKind::Fresh,
+                ))
+                .and_then(|count| count.checked_add(class_delta.writes.len()))
+                .ok_or(KvManagerError::ArithmeticOverflow("candidate root length"))?;
+            let retain_first_ordinal = root
+                .entries
+                .front()
+                .or(class_delta.tail_destination.as_ref())
+                .or_else(|| class_delta.writes.first())
+                .map(|entry| entry.logical_ordinal)
+                .ok_or(KvManagerError::Invariant("empty prepared candidate"))?;
+            apply_class_transition(
+                self.page_tokens,
+                class,
+                root,
+                class_delta,
+                &ClassTransition {
+                    retire_from_root: 0,
+                    retire_from_writes: 0,
+                    retain_first_ordinal,
+                    resident_count: candidate_count,
+                },
+                delta.previous_boundary,
+                delta.target_boundary,
+            )?;
+        }
+        self.materialize_snapshot_roots(delta.target_boundary, &roots)
+    }
+
     fn preflight_prepare_item(&self, item: &PrepareBatchItem) -> Result<(), KvManagerError> {
         let state = self.request(item.request)?;
         if state.released || state.quarantined {

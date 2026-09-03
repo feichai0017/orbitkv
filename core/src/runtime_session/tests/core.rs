@@ -498,6 +498,67 @@ fn request_fork_b1_b4_abort_replay_confirm_and_quarantine() {
 }
 
 #[test]
+fn prepared_execution_view_uses_the_manager_selected_cow_tail() {
+    let backends = [backend(0, 84, 8, 35_000)];
+    let mut session = session(&full_plan(), &backends, 2);
+    let source = EngineRequestId(220);
+    let sibling = EngineRequestId(221);
+    session
+        .acquire_requests(&[source, sibling])
+        .expect("acquire fork pair");
+    let (_, publication) = append(
+        &mut session,
+        &backends,
+        &[EngineAppendIntent {
+            request_id: source,
+            target_boundary: 18,
+        }],
+        34,
+        1,
+    );
+    confirm_publication(&mut session, &publication);
+    let fork_id = session
+        .prepare_request_fork(&[(source, sibling)])
+        .expect("prepare fork");
+    let fork = session.commit_control(fork_id).expect("commit fork");
+    assert_eq!(
+        session.confirm_control(&EngineControlEvidence {
+            control_id: fork_id,
+            mirror_updates_confirmed: true,
+            reclamation_receipts: Box::new([]),
+        }),
+        Ok(EngineControlOutcome::Materialized)
+    );
+    assert_eq!(materialization(&fork).requests[0].request_id, sibling);
+
+    let plan = session
+        .prepare_append_batch(&[EngineAppendIntent {
+            request_id: source,
+            target_boundary: 19,
+        }])
+        .expect("prepare shared-tail append");
+    let action = plan.steps[0].tail_actions[0];
+    assert_eq!(action.kind, TailActionKind::CopyOnWrite);
+    let view = session
+        .prepared_execution_view(plan.batch_id)
+        .expect("materialize COW candidate");
+    let tail = view.requests[0].pages.last().expect("candidate tail");
+    assert_eq!(tail.page, action.destination);
+    assert_ne!(tail.page, action.source);
+    assert_eq!(tail.valid_token_count, 3);
+
+    session
+        .abort_prepared_execution(
+            plan.batch_id,
+            &[EngineStepAbortEvidence {
+                request_id: source,
+                backend_unobserved: true,
+            }],
+        )
+        .expect("abort COW probe");
+}
+
+#[test]
 fn attach_and_fork_reject_a_late_bad_output_without_partial_session_view_updates() {
     let backends = [backend(0, 82, 16, 32_000)];
     let mut attach_session = session_with_config(

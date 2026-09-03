@@ -11,6 +11,7 @@ use crate::kv_manager::{
 
 mod control;
 mod evidence;
+mod execution_view;
 mod prefix_release;
 mod relocation;
 
@@ -24,6 +25,7 @@ use control::{PendingControl, SessionPrefix};
 use evidence::{
     engine_retirements, flatten_evidence, validate_abort_evidence, validate_reclamation_evidence,
 };
+pub use execution_view::{EnginePreparedBatchView, EnginePreparedRequestView};
 pub use prefix_release::{EnginePrefixPublishReleasePlan, EnginePublishedPrefixRelease};
 use relocation::PendingRelocation;
 pub use relocation::{

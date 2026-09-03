@@ -137,6 +137,68 @@ fn pure_sliding_wrap_retires_detached_pages_and_ack_gates_generation_reuse() {
 }
 
 #[test]
+fn prepared_sliding_view_keeps_pages_needed_by_the_earliest_query() {
+    let (mut session, backends) = pure_sliding_session(4, 1);
+    let request_id = EngineRequestId(35);
+    session.acquire_requests(&[request_id]).expect("acquire");
+
+    let (_, initial) = append(
+        &mut session,
+        &backends,
+        &[EngineAppendIntent {
+            request_id,
+            target_boundary: 18,
+        }],
+        24,
+        1,
+    );
+    confirm_publication(&mut session, &initial);
+
+    let plan = session
+        .prepare_append_batch(&[EngineAppendIntent {
+            request_id,
+            target_boundary: 35,
+        }])
+        .expect("prepare window-crossing append");
+    let view = session
+        .prepared_execution_view(plan.batch_id)
+        .expect("materialize prepared execution view");
+    let pages = &view.requests[0].pages;
+    assert_eq!(
+        (
+            view.requests[0].previous_boundary,
+            view.requests[0].target_boundary
+        ),
+        (18, 35)
+    );
+    assert_eq!(
+        pages
+            .iter()
+            .map(|page| page.logical_ordinal)
+            .collect::<Vec<_>>(),
+        vec![0, 1, 2]
+    );
+    assert_eq!(pages.last().expect("last page").valid_token_count, 3);
+    assert_eq!(
+        pages
+            .iter()
+            .map(|page| (page.visible_token_offset, page.visible_token_count))
+            .collect::<Vec<_>>(),
+        vec![(16, 0), (2, 14), (0, 3)]
+    );
+
+    session
+        .abort_prepared_execution(
+            plan.batch_id,
+            &[EngineStepAbortEvidence {
+                request_id,
+                backend_unobserved: true,
+            }],
+        )
+        .expect("abort read-only probe");
+}
+
+#[test]
 fn pure_sliding_runtime_session_rejects_every_prefix_entrypoint() {
     let (mut session, _) = pure_sliding_session(3, 2);
     let source = EngineRequestId(41);

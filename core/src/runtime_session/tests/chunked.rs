@@ -58,6 +58,56 @@ fn chunked_session(
 }
 
 #[test]
+fn prepared_chunked_view_preserves_the_active_epoch_until_completion() {
+    let (mut session, backends) = chunked_session(3, 1);
+    let request_id = EngineRequestId(50);
+    session.acquire_requests(&[request_id]).expect("acquire");
+    let (_, initial) = append(
+        &mut session,
+        &backends,
+        &[EngineAppendIntent {
+            request_id,
+            target_boundary: 31,
+        }],
+        17,
+        1,
+    );
+    confirm_publication(&mut session, &initial);
+
+    let plan = session
+        .prepare_append_batch(&[EngineAppendIntent {
+            request_id,
+            target_boundary: 32,
+        }])
+        .expect("prepare epoch-ending token");
+    let view = session
+        .prepared_execution_view(plan.batch_id)
+        .expect("materialize active epoch");
+    assert_eq!(
+        view.requests[0]
+            .pages
+            .iter()
+            .map(|page| (
+                page.logical_ordinal,
+                page.valid_token_count,
+                page.visible_token_count
+            ))
+            .collect::<Vec<_>>(),
+        vec![(0, 16, 0), (1, 16, 0)]
+    );
+
+    session
+        .abort_prepared_execution(
+            plan.batch_id,
+            &[EngineStepAbortEvidence {
+                request_id,
+                backend_unobserved: true,
+            }],
+        )
+        .expect("abort read-only probe");
+}
+
+#[test]
 #[allow(clippy::too_many_lines)]
 fn exact_chunked_epoch_end_ack_gates_reset_page_generation_reuse() {
     let (mut session, backends) = chunked_session(2, 2);
