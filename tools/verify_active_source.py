@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+import subprocess
 from pathlib import Path
 
 
@@ -8,6 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_LIMIT = 1_500
 TEST_LIMIT = 2_000
 SOURCE_ROOTS = (Path("core/src"), Path("executor/src"), Path("server/src"))
+TEST_ROOTS = (Path("core/tests"), Path("executor/tests"))
 REMOVED_PATHS = (Path("compat"), Path("core/ffi"), Path("tests"))
 EXCLUDED = frozenset({".git", "target", "results", "node_modules", "luminal"})
 SPECIFIC_FILENAME = re.compile(
@@ -56,11 +58,42 @@ def main() -> int:
                 failures.append(
                     f"{path.relative_to(ROOT)}: {lines} lines exceeds {limit}"
                 )
+    for root in TEST_ROOTS:
+        for path in source_files(ROOT / root):
+            test_count += 1
+            lines = len(path.read_text(encoding="utf-8").splitlines())
+            if lines > TEST_LIMIT:
+                failures.append(
+                    f"{path.relative_to(ROOT)}: {lines} lines exceeds {TEST_LIMIT}"
+                )
 
     for path in active_files():
         relative = path.relative_to(ROOT)
         if SPECIFIC_FILENAME.search(relative.name):
             failures.append(f"specific active filename: {relative}")
+
+    executor_manifest = (ROOT / "executor/Cargo.toml").read_text(encoding="utf-8")
+    revisions = set(
+        re.findall(
+            r'orbitkv-luminal\.git", rev = "([0-9a-f]{40})"',
+            executor_manifest,
+        )
+    )
+    submodule = ROOT / "executor/luminal"
+    if len(revisions) != 1 or not submodule.is_dir():
+        failures.append("executor dependencies do not pin one Luminal fork revision")
+    else:
+        actual = subprocess.run(
+            ["git", "-C", str(submodule), "rev-parse", "HEAD"],
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        if actual not in revisions:
+            failures.append(
+                f"Luminal dependency revision {next(iter(revisions))} "
+                f"differs from submodule {actual}"
+            )
 
     if failures:
         for failure in failures:

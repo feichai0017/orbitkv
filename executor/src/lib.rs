@@ -2,10 +2,15 @@
 
 use std::collections::BTreeSet;
 
+#[cfg(feature = "cuda")]
+pub mod cuda;
+#[cfg(feature = "cuda")]
+pub mod model;
+
 use orbitkv::{
     AttentionStateBackend, EngineBatchPlan, EngineBindEvidence, EngineCopyEvidence,
-    EngineStepExecutionEvidence, ExecutionEvidence, RuntimeManifest, RuntimeManifestError,
-    RuntimeManifestSource, TokenStorageKind,
+    EnginePreparedBatchView, EngineStepExecutionEvidence, ExecutionEvidence, RuntimeManifest,
+    RuntimeManifestError, RuntimeManifestSource, TokenStorageKind,
     kv_manager::{ArenaStats, BackendArenaRegistration, PageLease, TailActionKind, WriteIntent},
     plan::{AddressProgram, RetentionKind, RetirementProgram},
 };
@@ -49,15 +54,6 @@ pub struct ExecutorArena {
     pub first_page_id: u32,
     pub page_count: u32,
     pub backend_base_index: u64,
-}
-
-/// One request's already-authoritative physical page view.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct RequestPageView {
-    pub request_id: u64,
-    pub query_tokens: u32,
-    pub visible_tokens: u64,
-    pub page_indices: Box<[u32]>,
 }
 
 /// Device metadata consumed directly by Luminal paged attention.
@@ -123,6 +119,8 @@ pub enum ExecutorError {
     ArenaRegistrationMismatch,
     #[error("physical token-slot arithmetic overflowed")]
     SlotOverflow,
+    #[error("attention kernel geometry is invalid")]
+    InvalidKernelGeometry,
 }
 
 impl ExecutorArena {
@@ -266,52 +264,66 @@ impl ExecutorPlan {
     pub fn attention_batch(
         &self,
         class_id: u16,
-        requests: &[RequestPageView],
+        prepared: &EnginePreparedBatchView,
     ) -> Result<AttentionBatch, ExecutorError> {
         let class = self
             .classes
             .get(usize::from(class_id))
             .filter(|class| class.class_id == class_id)
             .ok_or(ExecutorError::UnknownClass)?;
-        if requests.is_empty() {
+        if prepared.requests.is_empty() {
             return Err(ExecutorError::EmptyBatch);
         }
         let mut ids = BTreeSet::new();
         let mut query_indptr = vec![0_i32];
         let mut page_indptr = vec![0_i32];
         let mut page_indices = Vec::new();
-        let mut last_page_len = Vec::with_capacity(requests.len());
-        for request in requests {
-            if request.query_tokens == 0 || request.visible_tokens == 0 {
+        let mut last_page_len = Vec::with_capacity(prepared.requests.len());
+        for request in &prepared.requests {
+            let query_tokens = request
+                .target_boundary
+                .checked_sub(request.previous_boundary)
+                .ok_or(ExecutorError::InvalidRequestGeometry)?;
+            if query_tokens == 0 || !ids.insert(request.request_id) {
+                return Err(if query_tokens == 0 {
+                    ExecutorError::InvalidRequestGeometry
+                } else {
+                    ExecutorError::DuplicateRequest
+                });
+            }
+            let pages = request
+                .pages
+                .iter()
+                .filter(|page| page.class_id == class_id)
+                .collect::<Vec<_>>();
+            if pages.is_empty() {
                 return Err(ExecutorError::InvalidRequestGeometry);
             }
-            if !ids.insert(request.request_id) {
-                return Err(ExecutorError::DuplicateRequest);
-            }
-            let expected_pages = request
-                .visible_tokens
-                .div_ceil(u64::from(class.page_tokens));
-            if usize::try_from(expected_pages).ok() != Some(request.page_indices.len()) {
+            if pages.iter().enumerate().any(|(index, page)| {
+                page.logical_ordinal != pages[0].logical_ordinal.saturating_add(index as u64)
+                    || page.valid_token_count == 0
+                    || page.valid_token_count > class.page_tokens
+                    || page.visible_token_offset > page.valid_token_count
+                    || page.visible_token_count
+                        != page.valid_token_count - page.visible_token_offset
+            }) {
                 return Err(ExecutorError::InvalidRequestGeometry);
             }
-            push_indptr(&mut query_indptr, u64::from(request.query_tokens))?;
-            push_indptr(&mut page_indptr, expected_pages)?;
+            push_indptr(&mut query_indptr, query_tokens)?;
+            push_indptr(&mut page_indptr, pages.len() as u64)?;
             page_indices.extend(
-                request
-                    .page_indices
+                pages
                     .iter()
-                    .copied()
-                    .map(|page| i32::try_from(page).map_err(|_| ExecutorError::PageIndexOverflow))
+                    .map(|page| {
+                        i32::try_from(page.backend_index)
+                            .map_err(|_| ExecutorError::PageIndexOverflow)
+                    })
                     .collect::<Result<Vec<_>, _>>()?,
             );
-            let remainder = request.visible_tokens % u64::from(class.page_tokens);
+            let final_page = pages.last().ok_or(ExecutorError::InvalidRequestGeometry)?;
             last_page_len.push(
-                i32::try_from(if remainder == 0 {
-                    u64::from(class.page_tokens)
-                } else {
-                    remainder
-                })
-                .map_err(|_| ExecutorError::InvalidRequestGeometry)?,
+                i32::try_from(final_page.valid_token_count)
+                    .map_err(|_| ExecutorError::InvalidRequestGeometry)?,
             );
         }
         Ok(AttentionBatch {
@@ -687,11 +699,12 @@ mod tests {
     use super::*;
     use orbitkv::{
         AttentionStatePlanInput, AttentionStateSpec, AttentionStateStorage, CacheSharingPolicy,
-        EngineAppendIntent, EngineBatchId, EngineCompletionEvidence, EnginePublicationEvidence,
-        EngineRequestId, EngineStepPlan, RuntimeSession, compile_plan, compile_runtime_manifest,
+        EngineAppendIntent, EngineBatchId, EngineCompletionEvidence, EnginePreparedBatchView,
+        EnginePreparedRequestView, EnginePublicationEvidence, EngineRequestId, EngineStepPlan,
+        RuntimeSession, compile_plan, compile_runtime_manifest,
         kv_manager::{
             BackendArenaRegistration, CanonicalKvManager, ClassLowering, ManagerConfig, PageLease,
-            TailAction, TailActionKind, ViewVersion, WriteIntent,
+            SnapshotPage, TailAction, TailActionKind, ViewVersion, WriteIntent,
         },
         plan::RetentionKind,
     };
@@ -750,26 +763,86 @@ mod tests {
         let batch = plan
             .attention_batch(
                 0,
-                &[
-                    RequestPageView {
-                        request_id: 7,
-                        query_tokens: 1,
-                        visible_tokens: 18,
-                        page_indices: vec![4, 9].into_boxed_slice(),
-                    },
-                    RequestPageView {
-                        request_id: 8,
-                        query_tokens: 3,
-                        visible_tokens: 16,
-                        page_indices: vec![2].into_boxed_slice(),
-                    },
-                ],
+                &EnginePreparedBatchView {
+                    batch_id: EngineBatchId::from_parts(1, 1),
+                    requests: vec![
+                        prepared_request(7, 17, 18, &[(0, 4, 16), (1, 9, 2)]),
+                        prepared_request(8, 13, 16, &[(0, 2, 16)]),
+                    ]
+                    .into_boxed_slice(),
+                },
             )
             .unwrap();
         assert_eq!(&*batch.query_indptr, &[0, 1, 4]);
         assert_eq!(&*batch.page_indptr, &[0, 2, 3]);
         assert_eq!(&*batch.page_indices, &[4, 9, 2]);
         assert_eq!(&*batch.last_page_len, &[2, 16]);
+    }
+
+    #[test]
+    fn builds_prefill_csr_from_pages_retained_for_earlier_queries() {
+        let plan = ExecutorPlan::compile(&manifest(vec![token_state(
+            "sliding",
+            vec![0],
+            RetentionKind::Sliding,
+            Some(18),
+        )]))
+        .unwrap();
+        let mut request = prepared_request(7, 18, 35, &[(0, 4, 16), (1, 9, 16), (2, 6, 3)]);
+        request.pages[0].visible_token_offset = 16;
+        request.pages[0].visible_token_count = 0;
+        request.pages[1].visible_token_offset = 1;
+        request.pages[1].visible_token_count = 15;
+        let batch = plan
+            .attention_batch(
+                0,
+                &EnginePreparedBatchView {
+                    batch_id: EngineBatchId::from_parts(1, 1),
+                    requests: vec![request].into_boxed_slice(),
+                },
+            )
+            .unwrap();
+        assert_eq!(&*batch.query_indptr, &[0, 17]);
+        assert_eq!(&*batch.page_indptr, &[0, 3]);
+        assert_eq!(&*batch.page_indices, &[4, 9, 6]);
+        assert_eq!(&*batch.last_page_len, &[3]);
+    }
+
+    fn prepared_request(
+        request_id: u64,
+        previous_boundary: u64,
+        target_boundary: u64,
+        pages: &[(u64, u64, u32)],
+    ) -> EnginePreparedRequestView {
+        EnginePreparedRequestView {
+            request_id: EngineRequestId(request_id),
+            previous_boundary,
+            target_boundary,
+            pages: pages
+                .iter()
+                .map(
+                    |&(logical_ordinal, backend_index, valid_token_count)| SnapshotPage {
+                        class_id: 0,
+                        backend_domain: 0,
+                        logical_ordinal,
+                        temporal_cell_index: logical_ordinal,
+                        temporal_cycle: 0,
+                        page: PageLease {
+                            engine_epoch: 1,
+                            pool_epoch: 1,
+                            generation: 1,
+                            page_id: u32::try_from(logical_ordinal + 1).unwrap(),
+                            pool_id: 7,
+                        },
+                        backend_index,
+                        valid_token_count,
+                        visible_token_offset: 0,
+                        visible_token_count: valid_token_count,
+                    },
+                )
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        }
     }
 
     #[test]
@@ -902,12 +975,16 @@ mod tests {
                 target_boundary: 18,
             }])
             .unwrap();
+        let device_view = session.prepared_execution_view(source.batch_id).unwrap();
         let arena_stats = session.arena_stats()[0];
         let arenas = [ExecutorArena::bind(arena_stats, registration).unwrap()];
-        let prepared = ExecutorPlan::compile(&manifest)
-            .unwrap()
-            .lower_prepared(source, &arenas)
-            .unwrap();
+        let executor_plan = ExecutorPlan::compile(&manifest).unwrap();
+        let attention = executor_plan.attention_batch(0, &device_view).unwrap();
+        assert_eq!(&*attention.query_indptr, &[0, 18]);
+        assert_eq!(&*attention.page_indptr, &[0, 2]);
+        assert_eq!(&*attention.page_indices, &[4, 5]);
+        assert_eq!(&*attention.last_page_len, &[2]);
+        let prepared = executor_plan.lower_prepared(source, &arenas).unwrap();
         let evidence = prepared.execution_evidence_after_success(&arenas).unwrap();
         let ticket = session.submit_execution(&evidence).unwrap();
         assert_eq!(ticket.batch_id(), prepared.batch_id());
