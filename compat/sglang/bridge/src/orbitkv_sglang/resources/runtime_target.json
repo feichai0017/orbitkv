@@ -1,0 +1,40 @@
+{
+  "schema": "orbitkv.runtime-target",
+  "version": 1,
+  "fingerprint": "sha256:ac915458195e757e477cf04866dae76147cd71a7472661e0d791e9c4474173ba",
+  "target": {
+    "id": "sglang",
+    "contract_version": 4
+  },
+  "admission_profile": {
+    "id": "eager-single-device-bf16-nhd",
+    "version": 1
+  },
+  "page_tokens": 16,
+  "supported_manifest_versions": [3],
+  "required_wire_version": 14,
+  "supported_capabilities": [
+    "append_only_addressing",
+    "block_domain_partitioning",
+    "convolution_state",
+    "fixed_state_checkpoints",
+    "kv_head_partitioning",
+    "periodic_addressing",
+    "periodic_from_addressing",
+    "pinned_addressing",
+    "recurrent_state",
+    "resettable_arena_addressing",
+    "semantic_retirement",
+    "token_component_geometry",
+    "token_manager"
+  ],
+  "supported_topologies": [
+    "whole_domain_chunked_token_kv",
+    "whole_domain_full_latent_kv",
+    "whole_domain_full_sliding_token_kv",
+    "whole_domain_full_token_kv",
+    "whole_domain_full_token_kv_gdn_convolution",
+    "whole_domain_full_token_kv_mamba",
+    "whole_domain_sliding_token_kv"
+  ]
+}

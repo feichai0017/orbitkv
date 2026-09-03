@@ -1,0 +1,17 @@
+[package]
+name = "orbitkv-server"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Control-plane contracts for the OrbitKV inference engine."
+license = "MIT"
+
+[dependencies]
+thiserror = "2.0.17"
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"
