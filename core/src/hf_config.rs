@@ -822,24 +822,12 @@ mod tests {
         page_tokens: 16,
         kv_dtype_bytes: 2,
     };
-    const SMALL_HYBRID_FIXED_STATE_FIXTURE: &[u8] =
-        include_bytes!("../fixtures/hybrid-fixed-state-small/config.json");
-    const LARGE_HYBRID_FIXED_STATE_FIXTURE: &[u8] =
-        include_bytes!("../fixtures/hybrid-fixed-state-large/config.json");
-    const LARGE_HYBRID_FIXED_STATE_PROVENANCE: &str =
-        include_str!("../fixtures/hybrid-fixed-state-large/PROVENANCE.md");
-
-    fn provenance_field<'a>(provenance: &'a str, field: &str) -> &'a str {
-        let prefix = format!("- {field}: `");
-        provenance
-            .lines()
-            .find_map(|line| line.strip_prefix(&prefix)?.strip_suffix('`'))
-            .unwrap_or_else(|| panic!("missing {field} in fixture provenance"))
-    }
+    const HYBRID_FIXED_STATE_FIXTURE: &[u8] =
+        include_bytes!("../fixtures/hybrid-fixed-state/config.json");
 
     fn hybrid_linear_attention_fixture_with_text_fields(fields: &[(&str, u64)]) -> Vec<u8> {
         let mut config =
-            serde_json::from_slice::<serde_json::Value>(SMALL_HYBRID_FIXED_STATE_FIXTURE).unwrap();
+            serde_json::from_slice::<serde_json::Value>(HYBRID_FIXED_STATE_FIXTURE).unwrap();
         let text = config["text_config"].as_object_mut().unwrap();
         for &(field, value) in fields {
             text.insert(field.to_owned(), value.into());
@@ -848,20 +836,19 @@ mod tests {
     }
 
     #[test]
-    fn small_hybrid_fixed_state_fixture_compiles_exact_heterogeneous_geometry() {
-        let input =
-            compile_hf_attention_state_input(SMALL_HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
+    fn hybrid_fixed_state_fixture_compiles_exact_heterogeneous_geometry() {
+        let input = compile_hf_attention_state_input(HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
         assert!(matches!(
             input.states[2].storage,
             AttentionStateStorage::Convolution {
-                // SGLang persists 6,144 BF16 channels across K - 1 positions.
+                // The recurrent convolution state persists 6,144 BF16 channels
+                // across K - 1 positions.
                 state_bytes_per_layer: 36_864,
                 kernel_width: 4,
                 ..
             }
         ));
-        let plan =
-            compile_hf_attention_state_plan(SMALL_HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
+        let plan = compile_hf_attention_state_plan(HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
         assert_eq!(plan.page_tokens, 16);
         assert_eq!(plan.states.len(), 3);
         assert_eq!(plan.states[0].name, "full_attention_kv");
@@ -902,96 +889,8 @@ mod tests {
     }
 
     #[test]
-    fn large_hybrid_fixed_state_fixture_compiles_exact_heterogeneous_geometry() {
-        let plan =
-            compile_hf_attention_state_plan(LARGE_HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
-        assert_eq!(plan.page_tokens, 16);
-        assert_eq!(plan.states.len(), 3);
-        assert_eq!(plan.states[0].name, "full_attention_kv");
-        assert_eq!(
-            plan.states[0].layers,
-            (3..64).step_by(4).collect::<Vec<_>>()
-        );
-        assert_eq!(plan.states[1].layers.len(), 48);
-        assert_eq!(plan.states[2].layers, plan.states[1].layers);
-
-        assert!(matches!(
-            plan.states[0].backend,
-            AttentionStateBackend::TokenSlots {
-                bytes_per_token_per_layer: 4_096,
-                ..
-            }
-        ));
-        assert!(matches!(
-            plan.states[1].backend,
-            AttentionStateBackend::RecurrentCheckpoints {
-                family: RecurrentFamily::Gdn,
-                state_bytes_per_layer: 3_145_728,
-                checkpoint_slots_per_request: 2,
-                ..
-            }
-        ));
-        assert!(matches!(
-            plan.states[2].backend,
-            AttentionStateBackend::ConvolutionRing {
-                state_bytes_per_layer: 61_440,
-                kernel_width: 4,
-                checkpoint_slots_per_request: 2,
-                ..
-            }
-        ));
-
-        let manager =
-            compile_hf_token_manager_plan(LARGE_HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
-        assert_eq!(manager.classes.len(), 1);
-        assert_eq!(
-            manager.classes[0].layers,
-            (3..64).step_by(4).collect::<Vec<_>>()
-        );
-        assert_eq!(manager.classes[0].bytes_per_token_per_layer, 4_096);
-        compile_plan(manager).unwrap();
-    }
-
-    #[test]
-    fn large_hybrid_fixed_state_fixture_matches_its_offline_provenance_contract() {
-        let repository = provenance_field(LARGE_HYBRID_FIXED_STATE_PROVENANCE, "Repository");
-        let revision = provenance_field(LARGE_HYBRID_FIXED_STATE_PROVENANCE, "Revision");
-        let source = provenance_field(LARGE_HYBRID_FIXED_STATE_PROVENANCE, "Source");
-        let raw_sha256 = provenance_field(LARGE_HYBRID_FIXED_STATE_PROVENANCE, "Source SHA-256");
-        let canonical_sha256 = provenance_field(
-            LARGE_HYBRID_FIXED_STATE_PROVENANCE,
-            "Canonical JSON SHA-256",
-        );
-
-        assert_eq!(repository.split('/').count(), 2);
-        assert!(repository.bytes().all(|byte| {
-            byte.is_ascii_alphanumeric() || matches!(byte, b'/' | b'.' | b'-' | b'_')
-        }));
-        assert_eq!(revision.len(), 40);
-        assert!(revision.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        assert_eq!(
-            source,
-            format!("https://huggingface.co/{repository}/raw/{revision}/config.json")
-        );
-        for digest in [raw_sha256, canonical_sha256] {
-            assert_eq!(digest.len(), 64);
-            assert!(digest.bytes().all(|byte| byte.is_ascii_hexdigit()));
-        }
-
-        let value =
-            serde_json::from_slice::<serde_json::Value>(LARGE_HYBRID_FIXED_STATE_FIXTURE).unwrap();
-        let mut canonical = serde_json::to_vec(&value).unwrap();
-        canonical.push(b'\n');
-        assert_eq!(
-            format!("{:x}", Sha256::digest(&canonical)),
-            canonical_sha256
-        );
-    }
-
-    #[test]
     fn hybrid_fixed_state_manager_projection_contains_only_full_token_kv() {
-        let manager =
-            compile_hf_token_manager_plan(SMALL_HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
+        let manager = compile_hf_token_manager_plan(HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
         assert_eq!(manager.classes.len(), 1);
         assert_eq!(manager.classes[0].name, "full_attention_kv");
         assert_eq!(manager.classes[0].layers, vec![3, 7, 11, 15, 19, 23]);
@@ -1006,7 +905,7 @@ mod tests {
 
     #[test]
     fn hybrid_linear_attention_missing_or_unsupported_contracts_fail_closed() {
-        let wrong_dtype = String::from_utf8(SMALL_HYBRID_FIXED_STATE_FIXTURE.to_vec())
+        let wrong_dtype = String::from_utf8(HYBRID_FIXED_STATE_FIXTURE.to_vec())
             .unwrap()
             .replacen(
                 "\"mamba_ssm_dtype\": \"float32\"",
@@ -1023,7 +922,7 @@ mod tests {
             ))
         ));
 
-        let missing_layers = String::from_utf8(SMALL_HYBRID_FIXED_STATE_FIXTURE.to_vec())
+        let missing_layers = String::from_utf8(HYBRID_FIXED_STATE_FIXTURE.to_vec())
             .unwrap()
             .replacen("\"layer_types\"", "\"unproven_layer_types\"", 1);
         assert_eq!(
@@ -1035,7 +934,7 @@ mod tests {
 
         assert_eq!(
             compile_hf_attention_state_plan(
-                SMALL_HYBRID_FIXED_STATE_FIXTURE,
+                HYBRID_FIXED_STATE_FIXTURE,
                 HfRetentionOptions {
                     kv_dtype_bytes: 4,
                     ..OPTIONS
@@ -1075,11 +974,11 @@ mod tests {
     #[test]
     fn hybrid_linear_attention_admission_is_structural_and_has_priority() {
         let expected =
-            compile_hf_attention_state_input(SMALL_HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
+            compile_hf_attention_state_input(HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
         let expected_tokens =
-            compile_hf_token_manager_plan(SMALL_HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
+            compile_hf_token_manager_plan(HYBRID_FIXED_STATE_FIXTURE, OPTIONS).unwrap();
         let mut renamed =
-            serde_json::from_slice::<serde_json::Value>(SMALL_HYBRID_FIXED_STATE_FIXTURE).unwrap();
+            serde_json::from_slice::<serde_json::Value>(HYBRID_FIXED_STATE_FIXTURE).unwrap();
         renamed["architectures"] = serde_json::json!(["RenamedArchitecture"]);
         renamed["model_type"] = serde_json::json!("renamed_envelope");
         renamed["text_config"]["model_type"] = serde_json::json!("renamed_text");
@@ -1098,7 +997,7 @@ mod tests {
         );
 
         let mut anonymous =
-            serde_json::from_slice::<serde_json::Value>(SMALL_HYBRID_FIXED_STATE_FIXTURE).unwrap();
+            serde_json::from_slice::<serde_json::Value>(HYBRID_FIXED_STATE_FIXTURE).unwrap();
         anonymous.as_object_mut().unwrap().remove("architectures");
         anonymous.as_object_mut().unwrap().remove("model_type");
         anonymous["text_config"]

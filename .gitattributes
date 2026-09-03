@@ -1,3 +1,2 @@
 results/**/*.log -whitespace
 results/**/*.patch -whitespace
-compat/sglang/overlay/*.patch -whitespace

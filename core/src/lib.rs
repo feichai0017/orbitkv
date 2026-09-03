@@ -7,7 +7,6 @@ pub mod plan;
 pub mod retention;
 pub mod runtime_manifest;
 pub mod runtime_session;
-mod runtime_target;
 pub mod state_checkpoint;
 pub use attention_state::{
     AttentionStateBackend, AttentionStateError, AttentionStatePlanInput, AttentionStateSpec,
@@ -52,14 +51,6 @@ pub use runtime_session::{
     EngineStepAbortEvidence, EngineStepExecutionEvidence, EngineStepPlan, EngineStepPublication,
     EngineTokenDispositionBatchItem, EngineTokenDispositionUpdate, EngineTokenView,
     EngineTokenViewQuery, ExecutionEvidence, RuntimeSession, RuntimeSessionError,
-};
-pub use runtime_target::{
-    EXECUTION_SIGNATURE_SCHEMA, EXECUTION_SIGNATURE_VERSION, ExecutionAddressProgram,
-    ExecutionBlockDomain, ExecutionFixedBackend, ExecutionFixedState, ExecutionKvHeadRange,
-    ExecutionRetirementProgram, ExecutionSignature, ExecutionStateComponent, ExecutionTokenBackend,
-    ExecutionTokenClass, ExecutionTokenState, ExecutionTopology, RUNTIME_BINDING_SCHEMA,
-    RUNTIME_BINDING_VERSION, RuntimeAdmissionProfile, RuntimeBinding, RuntimeTargetIdentity,
-    TargetAdmissionError, admit_runtime_manifest, derive_execution_signature,
 };
 pub use state_checkpoint::{
     StateCheckpointError, StateCheckpointPool, StateCompletionReceipt, StateCopyIntent,

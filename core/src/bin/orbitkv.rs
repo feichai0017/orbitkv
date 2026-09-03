@@ -4,14 +4,14 @@ use std::process::ExitCode;
 
 use orbitkv::{
     AttentionStatePlanInput, HfRetentionOptions, KvPlanInput, RetentionProgramInput,
-    RuntimeManifest, admit_runtime_manifest, compile_attention_state_manager_plan,
-    compile_attention_state_plan, compile_hf_attention_state_input,
-    compile_hf_attention_state_plan, compile_hf_runtime_manifest, compile_hf_token_manager_plan,
-    compile_plan, compile_retention_runtime_manifest, compile_runtime_manifest,
+    compile_attention_state_manager_plan, compile_attention_state_plan,
+    compile_hf_attention_state_input, compile_hf_attention_state_plan, compile_hf_runtime_manifest,
+    compile_hf_token_manager_plan, compile_plan, compile_retention_runtime_manifest,
+    compile_runtime_manifest,
 };
 use serde::Serialize;
 
-const USAGE: &str = "usage:\n  orbitkv compile-plan <plan.json>\n  orbitkv compile-state-plan <state-plan.json>\n  orbitkv compile-state-manager-plan <state-plan.json>\n  orbitkv compile-runtime-manifest <state-plan.json>\n  orbitkv compile-retention-runtime-manifest <retention-ir.json>\n  orbitkv bind-runtime-manifest <manifest.json>\n  orbitkv check-runtime-manifest <manifest.json>\n  orbitkv compile-hf-state-input <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-state-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-token-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-runtime-manifest <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n\nnotes:\n  compile-runtime-manifest emits the canonical executable artifact.\n  compile-retention-runtime-manifest compiles Retention IR into the same canonical artifact.\n  bind-runtime-manifest emits a static binding to the packaged SGLang target.\n  check-runtime-manifest validates the same binding without emitting an artifact.\n  compile-hf-runtime-manifest compiles a supported HF config into the canonical artifact.\n  compile-hf-state-input emits declarative attention-state compiler input.\n  compile-hf-state-plan emits compiled backend contracts.\n  compile-hf-token-manager-plan emits only token-addressable state; recurrent and convolution state are omitted.";
+const USAGE: &str = "usage:\n  orbitkv compile-plan <plan.json>\n  orbitkv compile-state-plan <state-plan.json>\n  orbitkv compile-state-manager-plan <state-plan.json>\n  orbitkv compile-runtime-manifest <state-plan.json>\n  orbitkv compile-retention-runtime-manifest <retention-ir.json>\n  orbitkv compile-hf-state-input <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-state-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-token-manager-plan <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n  orbitkv compile-hf-runtime-manifest <config.json> --page-tokens <tokens> --kv-dtype-bytes <bytes>\n\nnotes:\n  compile-runtime-manifest emits the canonical executable artifact.\n  compile-retention-runtime-manifest compiles Retention IR into the same canonical artifact.\n  compile-hf-runtime-manifest compiles a supported HF config into the canonical artifact.\n  compile-hf-state-input emits declarative attention-state compiler input.\n  compile-hf-state-plan emits compiled backend contracts.\n  compile-hf-token-manager-plan emits only token-addressable state; recurrent and convolution state are omitted.";
 
 fn main() -> ExitCode {
     match run() {
@@ -33,8 +33,6 @@ fn run() -> Result<(), Box<dyn std::error::Error>> {
         Some("compile-retention-runtime-manifest") => {
             compile_retention_runtime_manifest_command(&mut args)
         }
-        Some("bind-runtime-manifest") => bind_runtime_manifest_command(&mut args, true),
-        Some("check-runtime-manifest") => bind_runtime_manifest_command(&mut args, false),
         Some("compile-hf-state-input") => compile_hf_state_input_command(&mut args),
         Some("compile-hf-state-plan") => compile_hf_state_plan_command(&mut args),
         Some("compile-hf-runtime-manifest") => compile_hf_runtime_manifest_command(&mut args),
@@ -53,23 +51,6 @@ fn compile_retention_runtime_manifest_command(
         orbitkv::RUNTIME_MANIFEST_MAX_BYTES,
     )?)?;
     write_json(&compile_retention_runtime_manifest(input)?)
-}
-
-fn bind_runtime_manifest_command(
-    args: &mut impl Iterator<Item = String>,
-    emit: bool,
-) -> Result<(), Box<dyn std::error::Error>> {
-    let manifest_path = required(args, "runtime manifest path")?;
-    require_end(args)?;
-    let manifest = RuntimeManifest::from_json(&read_bounded(
-        &manifest_path,
-        orbitkv::RUNTIME_MANIFEST_MAX_BYTES,
-    )?)?;
-    let binding = admit_runtime_manifest(&manifest)?;
-    if emit {
-        write_json(&binding)?;
-    }
-    Ok(())
 }
 
 fn read_bounded(path: &str, maximum: usize) -> Result<Vec<u8>, Box<dyn std::error::Error>> {

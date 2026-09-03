@@ -2,9 +2,7 @@ use std::path::PathBuf;
 use std::process::{Command, Output};
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use orbitkv::{
-    ExecutionTopology, RUNTIME_MANIFEST_VERSION, RuntimeBinding, RuntimeCapability, RuntimeManifest,
-};
+use orbitkv::{RUNTIME_MANIFEST_VERSION, RuntimeCapability, RuntimeManifest};
 
 static NEXT_FILE: AtomicU64 = AtomicU64::new(0);
 
@@ -74,7 +72,7 @@ fn compile_plan_accepts_only_the_canonical_source_shape() {
 fn hf_token_manager_plan_is_directly_consumable_by_compile_plan() {
     let config = TempJson::new(
         br#"{
-          "architectures": ["MistralForCausalLM"],
+          "architectures": ["GenericCausalLM"],
           "num_hidden_layers": 2,
           "sliding_window": 18,
           "use_sliding_window": true,
@@ -114,7 +112,7 @@ fn hf_token_manager_plan_is_directly_consumable_by_compile_plan() {
 fn hf_token_manager_plan_emits_full_and_hybrid_classes() {
     let full = TempJson::new(
         br#"{
-          "architectures": ["Qwen2ForCausalLM"],
+          "architectures": ["GenericCausalLM"],
           "num_hidden_layers": 2,
           "sliding_window": 131072,
           "use_sliding_window": false,
@@ -207,7 +205,7 @@ fn hf_token_manager_plan_rejects_unproven_layer_semantics() {
 #[test]
 fn hybrid_gdn_hf_state_input_uses_the_consumable_storage_schema() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let config = root.join("fixtures/hybrid-fixed-state-small/config.json");
+    let config = root.join("fixtures/hybrid-fixed-state/config.json");
     let common = [
         config.to_str().unwrap(),
         "--page-tokens",
@@ -252,7 +250,7 @@ fn hybrid_gdn_hf_state_input_uses_the_consumable_storage_schema() {
 #[test]
 fn hybrid_gdn_hf_frontend_compiles_state_and_token_manager_plans() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let config = root.join("fixtures/hybrid-fixed-state-small/config.json");
+    let config = root.join("fixtures/hybrid-fixed-state/config.json");
     let common = [
         config.to_str().unwrap(),
         "--page-tokens",
@@ -341,8 +339,7 @@ fn hybrid_gdn_hf_frontend_compiles_state_and_token_manager_plans() {
 fn renamed_hybrid_hf_frontend_compiles_every_public_artifact() {
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
     let source =
-        std::fs::read_to_string(root.join("fixtures/hybrid-fixed-state-small/config.json"))
-            .unwrap();
+        std::fs::read_to_string(root.join("fixtures/hybrid-fixed-state/config.json")).unwrap();
     let mut config: serde_json::Value = serde_json::from_str(&source).unwrap();
     config["architectures"] = serde_json::json!(["RenamedArchitecture"]);
     config["model_type"] = serde_json::json!("renamed_envelope");
@@ -368,70 +365,6 @@ fn renamed_hybrid_hf_frontend_compiles_every_public_artifact() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
-}
-
-#[test]
-fn heterogeneous_state_official_config_compiles_exact_geometry() {
-    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let config = root.join("fixtures/hybrid-fixed-state-large/config.json");
-    let common = [
-        config.to_str().unwrap(),
-        "--page-tokens",
-        "16",
-        "--kv-dtype-bytes",
-        "2",
-    ];
-    let output = run(&[
-        "compile-hf-state-plan",
-        common[0],
-        common[1],
-        common[2],
-        common[3],
-        common[4],
-    ]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let plan: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
-    let full_layers: Vec<u64> = (3..64).step_by(4).collect();
-    assert_eq!(plan["states"][0]["layers"], serde_json::json!(full_layers));
-    assert_eq!(
-        plan["states"][0]["backend"]["bytes_per_token_per_layer"],
-        4_096
-    );
-    assert_eq!(plan["states"][1]["layers"].as_array().unwrap().len(), 48);
-    assert_eq!(
-        plan["states"][1]["backend"]["state_bytes_per_layer"],
-        3_145_728
-    );
-    assert_eq!(
-        plan["states"][2]["backend"]["state_bytes_per_layer"],
-        61_440
-    );
-    assert_eq!(plan["states"][2]["backend"]["kernel_width"], 4);
-
-    let manager = run(&[
-        "compile-hf-token-manager-plan",
-        common[0],
-        common[1],
-        common[2],
-        common[3],
-        common[4],
-    ]);
-    assert!(
-        manager.status.success(),
-        "{}",
-        String::from_utf8_lossy(&manager.stderr)
-    );
-    let manager: serde_json::Value = serde_json::from_slice(&manager.stdout).unwrap();
-    assert_eq!(manager["classes"].as_array().unwrap().len(), 1);
-    assert_eq!(
-        manager["classes"][0]["layers"],
-        serde_json::json!(full_layers)
-    );
-    assert_eq!(manager["classes"][0]["bytes_per_token_per_layer"], 4_096);
 }
 
 #[test]
@@ -579,21 +512,17 @@ fn removed_cli_commands_have_no_compatibility_aliases() {
 }
 
 #[test]
-fn usage_discovers_canonical_runtime_manifest_commands_and_target() {
+fn usage_discovers_canonical_runtime_manifest_commands() {
     let output = run(&["unknown"]);
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("compile-runtime-manifest <state-plan.json>"));
     assert!(stderr.contains("compile-retention-runtime-manifest <retention-ir.json>"));
     assert!(stderr.contains("compile-hf-runtime-manifest <config.json>"));
-    assert!(stderr.contains("bind-runtime-manifest <manifest.json>"));
-    assert!(stderr.contains("check-runtime-manifest <manifest.json>"));
-    assert!(!stderr.contains("--runtime-target"));
-    assert!(!stderr.contains("target.json"));
-    assert!(!stderr.contains("--executor-capabilities"));
+    assert!(!stderr.contains("bind-runtime-manifest"));
+    assert!(!stderr.contains("check-runtime-manifest"));
     assert!(stderr.contains("canonical executable artifact"));
     assert!(stderr.contains("same canonical artifact"));
-    assert!(stderr.contains("packaged SGLang target"));
     assert!(stderr.contains("supported HF config into the canonical artifact"));
 }
 
@@ -724,7 +653,7 @@ fn runtime_manifest_cli_preserves_fixed_only_state() {
 fn hf_runtime_manifest_cli_supports_token_only_and_heterogeneous_configs() {
     let token_only = TempJson::new(
         br#"{
-          "architectures": ["MistralForCausalLM"],
+          "architectures": ["GenericCausalLM"],
           "num_hidden_layers": 2,
           "sliding_window": 18,
           "use_sliding_window": true,
@@ -758,7 +687,7 @@ fn hf_runtime_manifest_cli_supports_token_only_and_heterogeneous_configs() {
     assert!(token_manifest.token_manager_plan.is_some());
 
     let root = PathBuf::from(env!("CARGO_MANIFEST_DIR"));
-    let config = root.join("fixtures/hybrid-fixed-state-small/config.json");
+    let config = root.join("fixtures/hybrid-fixed-state/config.json");
     let hybrid_output = run(&[
         "compile-hf-runtime-manifest",
         config.to_str().unwrap(),
@@ -803,185 +732,6 @@ fn runtime_manifest_cli_rejects_invalid_arguments_and_input() {
     let invalid = run(&["compile-runtime-manifest", plan.0.to_str().unwrap()]);
     assert!(!invalid.status.success());
     assert!(String::from_utf8_lossy(&invalid.stderr).contains("must not be empty"));
-}
-
-#[test]
-fn runtime_binding_cli_binds_manifest_to_the_packaged_sglang_target() {
-    let plan = TempJson::new(
-        br#"{
-          "page_tokens": 16,
-          "states": [{
-            "name": "sliding",
-            "layers": [0, 1],
-            "storage": {
-              "kind": "token_kv",
-              "key_bytes_per_token_per_layer": 64,
-              "value_bytes_per_token_per_layer": 64,
-              "retention": "sliding",
-              "window_tokens": 18
-            }
-          }]
-        }"#,
-    );
-    let manifest_output = run(&["compile-runtime-manifest", plan.0.to_str().unwrap()]);
-    assert!(manifest_output.status.success());
-    let manifest = RuntimeManifest::from_json(&manifest_output.stdout).unwrap();
-    let manifest_file = TempJson::new(&manifest_output.stdout);
-    let output = run(&["bind-runtime-manifest", manifest_file.0.to_str().unwrap()]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let binding = RuntimeBinding::from_json(&output.stdout).unwrap();
-    assert_eq!(binding.manifest_fingerprint, manifest.fingerprint);
-    assert_eq!(binding.target.id, "sglang");
-    assert_eq!(
-        binding.target_contract_fingerprint,
-        "sha256:ac915458195e757e477cf04866dae76147cd71a7472661e0d791e9c4474173ba"
-    );
-    binding.validate_against(&manifest).unwrap();
-
-    let check = run(&["check-runtime-manifest", manifest_file.0.to_str().unwrap()]);
-    assert!(check.status.success());
-    assert!(check.stdout.is_empty());
-}
-
-#[test]
-fn packaged_sglang_cli_binds_exact_chunked_retention_manifest() {
-    let program = TempJson::new(
-        br#"{
-          "schema": "orbitkv.retention-ir.v1",
-          "page_tokens": 16,
-          "states": [{
-            "name": "chunked",
-            "layers": [0, 1],
-            "bytes_per_token_per_layer": 128,
-            "may_read": {
-              "op": "equal",
-              "lhs": {
-                "op": "floor_div",
-                "value": {"op": "query_position"},
-                "divisor": 32
-              },
-              "rhs": {
-                "op": "floor_div",
-                "value": {"op": "key_position"},
-                "divisor": 32
-              }
-            }
-          }]
-        }"#,
-    );
-    let manifest_output = run(&[
-        "compile-retention-runtime-manifest",
-        program.0.to_str().unwrap(),
-    ]);
-    assert!(
-        manifest_output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&manifest_output.stderr)
-    );
-    let manifest = RuntimeManifest::from_json(&manifest_output.stdout).unwrap();
-    let manifest_file = TempJson::new(&manifest_output.stdout);
-
-    let output = run(&["bind-runtime-manifest", manifest_file.0.to_str().unwrap()]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let binding = RuntimeBinding::from_json(&output.stdout).unwrap();
-    assert_eq!(binding.target.id, "sglang");
-    assert_eq!(binding.admission_profile.version, 1);
-    assert_eq!(
-        binding.execution_topology,
-        ExecutionTopology::WholeDomainChunkedTokenKv
-    );
-    assert_eq!(binding.manifest_fingerprint, manifest.fingerprint);
-
-    let check = run(&["check-runtime-manifest", manifest_file.0.to_str().unwrap()]);
-    assert!(check.status.success());
-    assert!(check.stdout.is_empty());
-}
-
-#[test]
-fn packaged_sglang_cli_binds_attention_state_manifest() {
-    let plan = TempJson::new(
-        br#"{
-          "page_tokens": 16,
-          "states": [{
-            "name": "sliding",
-            "layers": [0, 1],
-            "storage": {
-              "kind": "token_kv",
-              "key_bytes_per_token_per_layer": 64,
-              "value_bytes_per_token_per_layer": 64,
-              "retention": "sliding",
-              "window_tokens": 18
-            }
-          }]
-        }"#,
-    );
-    let manifest_output = run(&["compile-runtime-manifest", plan.0.to_str().unwrap()]);
-    assert!(
-        manifest_output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&manifest_output.stderr)
-    );
-    let manifest = RuntimeManifest::from_json(&manifest_output.stdout).unwrap();
-    let manifest_file = TempJson::new(&manifest_output.stdout);
-
-    let output = run(&["bind-runtime-manifest", manifest_file.0.to_str().unwrap()]);
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
-    let binding = RuntimeBinding::from_json(&output.stdout).unwrap();
-    assert_eq!(binding.target.id, "sglang");
-    assert_eq!(
-        binding.execution_topology,
-        ExecutionTopology::WholeDomainSlidingTokenKv
-    );
-    assert_eq!(binding.manifest_fingerprint, manifest.fingerprint);
-}
-
-#[test]
-fn runtime_binding_cli_rejects_any_runtime_target_argument() {
-    let plan = TempJson::new(
-        br#"{
-          "page_tokens": 16,
-          "states": [{
-            "name": "full", "layers": [0],
-            "storage": {
-              "kind": "token_kv",
-              "key_bytes_per_token_per_layer": 64,
-              "value_bytes_per_token_per_layer": 64,
-              "retention": "full", "window_tokens": null
-            }
-          }]
-        }"#,
-    );
-    let manifest_output = run(&["compile-runtime-manifest", plan.0.to_str().unwrap()]);
-    let manifest_file = TempJson::new(&manifest_output.stdout);
-    let target_file = TempJson::new(br#"{"target": "other-engine"}"#);
-    let target_flag = run(&[
-        "bind-runtime-manifest",
-        manifest_file.0.to_str().unwrap(),
-        "--runtime-target",
-        target_file.0.to_str().unwrap(),
-    ]);
-    assert!(!target_flag.status.success());
-    assert!(String::from_utf8_lossy(&target_flag.stderr).contains("unexpected argument"));
-
-    let named_target = run(&[
-        "bind-runtime-manifest",
-        manifest_file.0.to_str().unwrap(),
-        "sglang",
-    ]);
-    assert!(!named_target.status.success());
-    assert!(String::from_utf8_lossy(&named_target.stderr).contains("unexpected argument"));
 }
 
 #[test]

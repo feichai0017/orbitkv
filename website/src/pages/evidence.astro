@@ -4,122 +4,46 @@ import SiteLayout from "../layouts/SiteLayout.astro";
 import { evidenceRows, metrics, repositoryUrl } from "../data/site";
 
 const resultsIndexUrl = `${repositoryUrl}/blob/main/results/README.md`;
-
-const records = [
-  {
-    name: "Historical Full accelerator records",
-    status: "Earlier wire · scoped correctness · no speedup",
-    boundary: "Useful only for the exact source, workload, interface, and environment preserved in their provenance. They do not qualify wire 14.",
-    href: resultsIndexUrl,
-  },
-  {
-    name: "Full+Sliding live qualification",
-    status: "Pending · wire 14 real device",
-    boundary: "Native RuntimeSession host coverage exists, but live real-device correctness and performance gates have not closed.",
-    href: resultsIndexUrl,
-  },
-  {
-    name: "Pure Sliding live qualification",
-    status: "Pending · wire 14 real device",
-    boundary: "Native RuntimeSession host coverage exists, but live real-device correctness and performance gates have not closed.",
-    href: resultsIndexUrl,
-  },
-  {
-    name: "Other archived scoped records",
-    status: "Append-only provenance",
-    boundary: "Each record remains limited to its captured feature, source, workload, interface, and qualification method. Scopes never combine automatically.",
-    href: resultsIndexUrl,
-  },
-];
 ---
 
 <SiteLayout
   title="Evidence | OrbitKV"
-  description="OrbitKV live wire-14 status, historical evidence, and pending real-device qualification."
+  description="OrbitKV host status, open native-engine gates, and historical provenance."
   active="Evidence"
 >
   <header class="page-hero">
-    <p class="eyebrow">Evidence</p>
-    <h1>Every claim keeps its wire and provenance.</h1>
-    <p>
-      Product availability, host coverage, real-device correctness, performance,
-      capacity, and production readiness are separate claims. Historical records
-      do not qualify a newer live boundary.
-    </p>
+    <p class="eyebrow">Evidence</p><h1>Every claim keeps its source boundary.</h1>
+    <p>Implementation, host verification, device correctness, complete-engine behavior, measured benefit, and production readiness are separate levels.</p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
-      <h2>Live product status</h2>
-      <div class="metric-grid compact">
-        {metrics.map((item) => (
-          <article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>
-        ))}
-      </div>
+      <h2>Current architecture status</h2>
+      <div class="metric-grid compact">{metrics.map((item) => (<article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>))}</div>
 
       <h2>Capability summary</h2>
       <table class="evidence-table-native">
-        <thead>
-          <tr><th>Surface</th><th>Status</th><th>Contract</th><th>Boundary</th></tr>
-        </thead>
-        <tbody>
-          {evidenceRows.map((item) => (
-            <tr>
-              <td>{item.result}</td>
-              <td><code>{item.value}</code></td>
-              <td>{item.contract}</td>
-              <td>{item.boundary}</td>
-            </tr>
-          ))}
-        </tbody>
+        <thead><tr><th>Surface</th><th>Status</th><th>Contract</th><th>Boundary</th></tr></thead>
+        <tbody>{evidenceRows.map((item) => (<tr><td>{item.result}</td><td><code>{item.value}</code></td><td>{item.contract}</td><td>{item.boundary}</td></tr>))}</tbody>
       </table>
 
-      <h2>Qualification contract</h2>
-      <p>
-        A live qualification must close the exact pinned source contract,
-        RuntimeManifest, RuntimeTarget, RuntimeBinding, wire-14 readback, all 48
-        exports, all 78 layouts, engine observations, and independent claim
-        gates. A single run or an earlier-wire artifact cannot make that
-        decision.
-      </p>
-      <p>
-        Device, checkpoint, runtime, and record-location names may appear in
-        provenance so a result can be reproduced and audited. They describe that
-        evidence only; the architecture remains the pinned SGLang plus native
-        RuntimeSession product.
-      </p>
-
-      <h2>Scoped records and open gates</h2>
-      <div class="doc-grid">
-        {records.map((record) => (
-          <div class="doc-card">
-            <span>{record.status}</span>
-            <h3>{record.name}</h3>
-            <p>{record.boundary}</p>
-            <a href={record.href}>Open evidence index →</a>
-          </div>
-        ))}
-      </div>
-
-      <h2>Claim boundaries</h2>
+      <h2>Open end-to-end gates</h2>
       <ul>
-        <li>The live product is wire 14 with exactly 48 exported symbols and 78 checked layouts.</li>
-        <li>The raw manager ABI, optional structured path, reference product, and second-engine path are absent from the live product.</li>
-        <li>All five admitted profiles run through the native RuntimeSession route and have profile-specific host gates.</li>
-        <li>Historical Full accelerator records establish only earlier-wire correctness within their recorded scope.</li>
-        <li>Those Full records reported no speedup and provide no live wire-14 performance claim.</li>
-        <li>Current-wire Full+Sliding real-device diagnostics passed correctness and native stream/reuse checks, but throughput failed the 3% gate and the record is unsealed after a floor correction.</li>
-        <li>Pure Sliding live real-device qualification is pending.</li>
-        <li>No performance, capacity, memory-saving, production, or general replacement claim follows from host or historical evidence.</li>
-        <li>Archived records remain append-only and never qualify the live tree automatically.</li>
+        <li>Run one released model through the complete RuntimeSession and Luminal transaction.</li>
+        <li>Match output tokens or numerical state against an unchanged reference.</li>
+        <li>Bind completion evidence to the real device stream before page reuse.</li>
+        <li>Exercise Sliding and Chunked retirement boundaries and repeated generation reuse.</li>
+        <li>Measure reserved and resident memory, capacity, latency, throughput, and copy overhead under the same workload.</li>
+        <li>Pass cancellation, pressure, long-running reuse, and final-drain tests.</li>
       </ul>
 
+      <h2>Historical records</h2>
       <p>
-        The <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>Capability Matrix</a>{" "}
-        is the normative status surface. Exact environments, methods, exclusions,
-        and archived observations remain in the{" "}
-        <a href={resultsIndexUrl}>Results Index</a>.
+        Archived records remain unchanged because their exact model, hardware,
+        source, protocol, and failed or successful gates are provenance. They do
+        not qualify the current native architecture or imply a speedup. Open the
+        <a href={resultsIndexUrl}>Results Index</a> for those scoped records.
       </p>
     </article>
   </div>
