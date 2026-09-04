@@ -8,7 +8,12 @@ use crate::{BatchIntent, RequestId};
 /// Why generation stopped for one request.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum FinishReason {
-    Stop,
+    /// A token stop. The token is carried here rather than emitted as a
+    /// visible [`EngineEvent::Token`], so protocol adapters can apply their
+    /// own stop-token suppression rules without dropping a visible token.
+    Stop {
+        token_id: u32,
+    },
     Length,
     Cancelled,
 }
@@ -42,6 +47,9 @@ pub type EngineEventStream<E> =
 pub type EngineFuture<'a, E> =
     Pin<Box<dyn Future<Output = Result<EngineEventStream<E>, E>> + Send + 'a>>;
 
+/// Future that cancels one local generation request.
+pub type EngineAbortFuture<'a, E> = Pin<Box<dyn Future<Output = Result<(), E>> + Send + 'a>>;
+
 /// The only server-to-runtime execution boundary.
 ///
 /// Implementations own the complete `OrbitKV` transaction and Luminal execution.
@@ -51,6 +59,14 @@ pub trait Engine: Send + Sync {
     type Error: std::error::Error + Send + Sync + 'static;
 
     fn execute(&self, batch: BatchIntent) -> EngineFuture<'_, Self::Error>;
+
+    /// Requests cancellation of one generation and its complete KV lifetime.
+    ///
+    /// A successful return means that cancellation was accepted or that the
+    /// request had already terminated. Reclamation remains an `OrbitKV` concern:
+    /// implementations must not report cancellation by directly recycling
+    /// executor buffers.
+    fn abort(&self, request_id: RequestId) -> EngineAbortFuture<'_, Self::Error>;
 }
 
 #[cfg(test)]
