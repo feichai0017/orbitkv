@@ -200,7 +200,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     let prompt = [1_u32, 2, 3, 4];
     let mut prepared_run = prepare_model_run(&config_bytes, prompt.len());
     let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(0).unwrap();
-    let stream = context.default_stream();
+    let stream = context.new_stream().unwrap();
     let compile = DecoderCompileConfig {
         maximum_query_tokens: 8,
         representative_prefill_tokens: prompt.len(),
@@ -264,31 +264,45 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
 
     let (decode_attention, decode) =
         prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 1).unwrap());
-    let decode_output = execute_step(
-        "decode",
-        &mut decoder,
-        &[next_token],
-        &[u32::try_from(prompt.len()).unwrap()],
-        &decode_attention,
-        &decode,
+    let decode_started = Instant::now();
+    let decode_output = decoder
+        .capture_decode_with_logits(DecoderStep {
+            tokens: &[next_token],
+            positions: &[u32::try_from(prompt.len()).unwrap()],
+            write_slots: &decode.steps()[0].classes[0].write_slots,
+            attention: &decode_attention,
+        })
+        .unwrap();
+    eprintln!(
+        "decode capture: warmup and outer graph construction completed after {:.3}s",
+        decode_started.elapsed().as_secs_f64()
     );
     assert_eq!(decode_output.logits.len(), config.vocabulary_size);
     assert_eq!(decode_output.token_ids.len(), 1);
+    assert_eq!(
+        decode_output.token_ids[0],
+        greedy_token(&decode_output.logits, config.vocabulary_size)
+    );
+    assert!(decoder.has_captured_decode());
     assert_eq!(decoder.active_bucket_index(), 0);
     assert_eq!(decoder.cache_updates_in_place(), cache_updates_in_place);
     complete(&mut prepared_run.session, &decode, prepared_run.arena, 2);
 
-    let second_token = greedy_token(&decode_output.logits, config.vocabulary_size);
-    assert_eq!(decode_output.token_ids[0], second_token);
+    let second_token = decode_output.token_ids[0];
     let (second_attention, second_decode) =
         prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 2).unwrap());
-    let second_output = execute_step(
-        "second decode",
-        &mut decoder,
-        &[second_token],
-        &[u32::try_from(prompt.len() + 1).unwrap()],
-        &second_attention,
-        &second_decode,
+    let replay_started = Instant::now();
+    let second_output = decoder
+        .replay_decode_with_logits(DecoderStep {
+            tokens: &[second_token],
+            positions: &[u32::try_from(prompt.len() + 1).unwrap()],
+            write_slots: &second_decode.steps()[0].classes[0].write_slots,
+            attention: &second_attention,
+        })
+        .unwrap();
+    eprintln!(
+        "decode replay with diagnostic logits completed after {:.3}s",
+        replay_started.elapsed().as_secs_f64()
     );
     assert_eq!(second_output.logits.len(), config.vocabulary_size);
     assert_eq!(second_output.token_ids.len(), 1);
@@ -309,7 +323,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
         prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 3).unwrap());
     let started = Instant::now();
     let third_output = decoder
-        .execute(DecoderStep {
+        .replay_decode(DecoderStep {
             tokens: &[third_token],
             positions: &[u32::try_from(prompt.len() + 2).unwrap()],
             write_slots: &third_decode.steps()[0].classes[0].write_slots,
@@ -317,7 +331,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
         })
         .unwrap();
     eprintln!(
-        "device-only decode: dispatched after {:.3}s",
+        "device-only CUDA graph replay: dispatched after {:.3}s",
         started.elapsed().as_secs_f64()
     );
     assert_eq!(third_output.token_ids.len(), 1);

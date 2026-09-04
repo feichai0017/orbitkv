@@ -45,7 +45,12 @@ Both phases share the same runtime, preallocated dynamic inputs, and persistent
 K/V arena; requests update only tokens, positions, write slots, CSR metadata,
 and dynamic dimensions before dispatch. Greedy sampling is part of the graph,
 so the default execution path returns one token ID per query row instead of
-copying vocabulary-sized logits to the host.
+copying vocabulary-sized logits to the host. A fixed-signature decode can also
+be captured as one outer CUDA Graph after warmup. Replay updates the same input
+allocations before launching the graph; a change to query/batch/context shape
+or CSR indptr geometry is rejected and requires a new capture. The generic
+CUDA capture path has an explicit device test, while both it and the
+released-checkpoint replay remain to be run in a qualification environment.
 
 ## Compilation and execution
 

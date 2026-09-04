@@ -15,7 +15,7 @@ use thiserror::Error;
 
 use luminal_cuda_lite::{
     cudarc::driver::{CudaSlice, CudaStream},
-    runtime::CudaRuntime,
+    runtime::{CapturedCudaExecution, CudaRuntime},
 };
 
 use crate::{
@@ -62,6 +62,12 @@ pub enum DecoderError {
     Relocation(#[from] CudaRelocationError),
     #[error("decoder runtime input geometry exceeds its compiled capacity")]
     InputCapacity,
+    #[error("CUDA graph capture requires a single-token decode step")]
+    CaptureRequiresDecode,
+    #[error("no decode CUDA graph has been captured")]
+    MissingDecodeCapture,
+    #[error("decode step does not match the captured CUDA graph signature")]
+    DecodeCaptureMismatch,
 }
 
 /// Dynamic-shape and search policy for one compiled decoder executable.
@@ -114,10 +120,25 @@ pub struct DecoderStep<'a> {
 
 type InputAllocation = (GraphTensor, u64, usize);
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+struct DecodeCaptureSignature {
+    query_tokens: usize,
+    batch_size: usize,
+    context_pages: usize,
+    query_indptr: Box<[i32]>,
+    page_indptr: Box<[i32]>,
+}
+
+struct CapturedDecode {
+    signature: DecodeCaptureSignature,
+    execution: CapturedCudaExecution,
+}
+
 /// One compiled graph and one persistent K/V arena shared by prefill and decode.
 pub struct CompiledDecoder {
     graph: Graph,
     decoder: DecoderGraph,
+    captured_decode: Option<CapturedDecode>,
     runtime: CudaRuntime,
     persistent_cache: Vec<CudaSlice<u8>>,
     compile: DecoderCompileConfig,
@@ -479,6 +500,7 @@ impl CompiledDecoder {
         Ok(Self {
             graph,
             decoder,
+            captured_decode: None,
             runtime,
             persistent_cache,
             compile,
@@ -503,6 +525,121 @@ impl CompiledDecoder {
         self.execute_graph(step)?;
         Ok(DecoderStepOutput {
             token_ids: self.read_sampled_tokens(step.tokens.len())?,
+        })
+    }
+
+    /// Warms and captures one fixed-signature decode execution.
+    ///
+    /// The warmup is the execution represented by the returned token. The
+    /// subsequent stream capture records the already-prepared device work
+    /// without executing it a second time. Input buffers remain outside the
+    /// graph and keep their compile-time addresses.
+    ///
+    /// # Errors
+    ///
+    /// Rejects prefill, invalid geometry, unstable input allocations, and CUDA
+    /// graph construction failures.
+    pub fn capture_decode(
+        &mut self,
+        step: DecoderStep<'_>,
+    ) -> Result<DecoderStepOutput, DecoderError> {
+        if step.tokens.len() != 1 {
+            return Err(DecoderError::CaptureRequiresDecode);
+        }
+        let signature = DecodeCaptureSignature::from_step(step)?;
+        self.execute_graph(step)?;
+        let token_ids = self.read_sampled_tokens(1)?;
+        let execution = self.runtime.capture_execution(&self.graph.dyn_map)?;
+        self.captured_decode = Some(CapturedDecode {
+            signature,
+            execution,
+        });
+        Ok(DecoderStepOutput { token_ids })
+    }
+
+    /// Captures a decode and additionally reads the warmup logits for parity
+    /// diagnostics. Production serving should use [`Self::capture_decode`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates capture and output validation failures.
+    pub fn capture_decode_with_logits(
+        &mut self,
+        step: DecoderStep<'_>,
+    ) -> Result<DecoderDiagnosticOutput, DecoderError> {
+        let output = self.capture_decode(step)?;
+        let logits = self.runtime.get_f32(self.decoder.outputs.logits);
+        if logits.len() != self.vocabulary_size || logits.iter().any(|value| !value.is_finite()) {
+            return Err(DecoderError::InvalidGeometry("logits output"));
+        }
+        Ok(DecoderDiagnosticOutput {
+            token_ids: output.token_ids,
+            logits: logits.into_boxed_slice(),
+        })
+    }
+
+    /// Replays the captured decode graph after updating stable-address inputs.
+    ///
+    /// Page identities and the last-page token count may change. Query count,
+    /// batch count, context-page count, and CSR indptr contents must exactly
+    /// match the capture because they affect library planning and launch
+    /// geometry. A mismatch requires [`Self::capture_decode`] again.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing captures, changed capture signatures, invalid inputs,
+    /// unstable allocations, and CUDA launch failures.
+    pub fn replay_decode(
+        &mut self,
+        step: DecoderStep<'_>,
+    ) -> Result<DecoderStepOutput, DecoderError> {
+        validate_step(
+            step,
+            self.compile,
+            self.class_id,
+            self.page_tokens,
+            self.physical_pages,
+            self.cache_slots,
+            self.vocabulary_size,
+        )?;
+        let signature = DecodeCaptureSignature::from_step(step)?;
+        let captured = self
+            .captured_decode
+            .as_ref()
+            .ok_or(DecoderError::MissingDecodeCapture)?;
+        if captured.signature != signature {
+            return Err(DecoderError::DecodeCaptureMismatch);
+        }
+        self.bind_step_inputs(step)?;
+        self.runtime.prepare_captured_execution(&self.graph.dyn_map);
+        self.captured_decode
+            .as_ref()
+            .ok_or(DecoderError::MissingDecodeCapture)?
+            .execution
+            .launch()?;
+        Ok(DecoderStepOutput {
+            token_ids: self.read_sampled_tokens(1)?,
+        })
+    }
+
+    /// Replays a captured decode and additionally reads logits for parity
+    /// diagnostics. Production serving should use [`Self::replay_decode`].
+    ///
+    /// # Errors
+    ///
+    /// Propagates capture-signature, launch, and output validation failures.
+    pub fn replay_decode_with_logits(
+        &mut self,
+        step: DecoderStep<'_>,
+    ) -> Result<DecoderDiagnosticOutput, DecoderError> {
+        let output = self.replay_decode(step)?;
+        let logits = self.runtime.get_f32(self.decoder.outputs.logits);
+        if logits.len() != self.vocabulary_size || logits.iter().any(|value| !value.is_finite()) {
+            return Err(DecoderError::InvalidGeometry("logits output"));
+        }
+        Ok(DecoderDiagnosticOutput {
+            token_ids: output.token_ids,
+            logits: logits.into_boxed_slice(),
         })
     }
 
@@ -544,6 +681,17 @@ impl CompiledDecoder {
             self.cache_slots,
             self.vocabulary_size,
         )?;
+        // A normal runtime execution may replan library resources or switch
+        // buckets. Drop any graph that captured pointers into those resources
+        // before allowing that mutation. Invalid steps return above without
+        // disturbing an otherwise reusable capture.
+        self.captured_decode = None;
+        self.bind_step_inputs(step)?;
+        self.runtime.execute(&self.graph.dyn_map);
+        Ok(())
+    }
+
+    fn bind_step_inputs(&mut self, step: DecoderStep<'_>) -> Result<(), DecoderError> {
         self.graph.set_dim('s', step.tokens.len());
         self.graph.set_dim(
             'b',
@@ -589,7 +737,6 @@ impl CompiledDecoder {
                 "dynamic input address changed",
             ));
         }
-        self.runtime.execute(&self.graph.dyn_map);
         Ok(())
     }
 
@@ -671,6 +818,32 @@ impl CompiledDecoder {
     #[must_use]
     pub fn active_bucket_index(&self) -> usize {
         self.runtime.active_bucket_index()
+    }
+
+    /// Whether a fixed-signature decode CUDA graph is ready for replay.
+    #[must_use]
+    pub const fn has_captured_decode(&self) -> bool {
+        self.captured_decode.is_some()
+    }
+}
+
+impl DecodeCaptureSignature {
+    fn from_step(step: DecoderStep<'_>) -> Result<Self, DecoderError> {
+        if step.tokens.len() != 1 {
+            return Err(DecoderError::CaptureRequiresDecode);
+        }
+        Ok(Self {
+            query_tokens: step.tokens.len(),
+            batch_size: step
+                .attention
+                .query_indptr
+                .len()
+                .checked_sub(1)
+                .ok_or(DecoderError::InputCapacity)?,
+            context_pages: step.attention.page_indices.len(),
+            query_indptr: step.attention.query_indptr.clone(),
+            page_indptr: step.attention.page_indptr.clone(),
+        })
     }
 }
 
@@ -1225,5 +1398,72 @@ mod tests {
             )
             .is_err()
         );
+    }
+
+    #[test]
+    fn decode_capture_signature_freezes_planner_geometry_only() {
+        let first_attention = crate::AttentionBatch {
+            class_id: 0,
+            query_indptr: vec![0, 1].into_boxed_slice(),
+            page_indptr: vec![0, 2].into_boxed_slice(),
+            page_indices: vec![3, 7].into_boxed_slice(),
+            last_page_len: vec![4].into_boxed_slice(),
+        };
+        let second_attention = crate::AttentionBatch {
+            class_id: 0,
+            query_indptr: vec![0, 1].into_boxed_slice(),
+            page_indptr: vec![0, 2].into_boxed_slice(),
+            page_indices: vec![5, 9].into_boxed_slice(),
+            last_page_len: vec![8].into_boxed_slice(),
+        };
+        let first = DecodeCaptureSignature::from_step(DecoderStep {
+            tokens: &[1],
+            positions: &[16],
+            write_slots: &[16],
+            attention: &first_attention,
+        })
+        .unwrap();
+        let second = DecodeCaptureSignature::from_step(DecoderStep {
+            tokens: &[2],
+            positions: &[17],
+            write_slots: &[17],
+            attention: &second_attention,
+        })
+        .unwrap();
+        assert_eq!(first, second);
+
+        let changed_indptr = crate::AttentionBatch {
+            page_indptr: vec![0, 1].into_boxed_slice(),
+            page_indices: vec![5].into_boxed_slice(),
+            ..second_attention
+        };
+        let changed = DecodeCaptureSignature::from_step(DecoderStep {
+            tokens: &[2],
+            positions: &[17],
+            write_slots: &[17],
+            attention: &changed_indptr,
+        })
+        .unwrap();
+        assert_ne!(first, changed);
+    }
+
+    #[test]
+    fn decode_capture_signature_rejects_prefill() {
+        let attention = crate::AttentionBatch {
+            class_id: 0,
+            query_indptr: vec![0, 2].into_boxed_slice(),
+            page_indptr: vec![0, 1].into_boxed_slice(),
+            page_indices: vec![0].into_boxed_slice(),
+            last_page_len: vec![2].into_boxed_slice(),
+        };
+        assert!(matches!(
+            DecodeCaptureSignature::from_step(DecoderStep {
+                tokens: &[1, 2],
+                positions: &[0, 1],
+                write_slots: &[0, 1],
+                attention: &attention,
+            }),
+            Err(DecoderError::CaptureRequiresDecode)
+        ));
     }
 }

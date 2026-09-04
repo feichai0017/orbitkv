@@ -27,6 +27,7 @@ recorded source closure.
 | Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page and packed-page decode pass; Luminal never allocates or recycles pages |
 | Token relocation executor | L3 | Lowers manager-authored moves to per-layer K/V byte ranges, performs stream-ordered D2D copies, and exposes success evidence only after a CUDA event |
 | Bucketed model runtime | L4 correctness | One symbolic graph is searched once into decode/prefill executables; `s`, `b`, and `c` have bounded capacities, dynamic inputs are preallocated, and one K/V arena survives prefill plus repeated decode |
+| Fixed-signature decode CUDA Graph | L2; L3 pending | `capture_decode` records a warmed decode and `replay_decode` refreshes stable inputs before launch; generic and released-checkpoint CUDA tests exist but have not completed in the current qualification environment |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | vLLM frontend adapter | L2 protocol tests | Optional pinned Rust frontend dependency; tokenized Add/Abort, request-ID mapping, terminal token translation, and unsupported-field rejection pass host tests |

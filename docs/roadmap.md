@@ -18,6 +18,9 @@ server exposes client protocols. Planned work is not a current capability.
   by dynamic dimensions.
 - Greedy argmax executes inside that graph; the serving path reads token IDs
   instead of vocabulary-sized logits.
+- A warmed fixed-signature decode can be captured and replayed as one outer
+  CUDA Graph. Generic and released-checkpoint device tests exist; qualification
+  and recapture policy are still open.
 - The server has an async local `Engine` stream/cancellation boundary with no
   physical-page types. An optional vLLM Rust frontend supplies
   OpenAI/tokenizer/chat/SSE code through a narrow Add/Abort adapter; a
@@ -70,8 +73,8 @@ Predeclare pass/fail gates and retain failed runs.
 
 ## R6: Production hardening
 
-Capture the now address-stable decode bucket as one outer CUDA Graph, then add
-overlapping streams, bounded queues, failure
-containment, metrics, tracing, soak tests, distributed ownership, release
-artifacts, and supported-combination matrices only after the eager single-device
-path is closed.
+Qualify the fixed-signature outer decode CUDA Graph on released checkpoints,
+then add explicit recapture/cache policy for changed batch or CSR geometry,
+overlapping streams, bounded queues, failure containment, metrics, tracing,
+soak tests, distributed ownership, release artifacts, and supported-combination
+matrices only after the eager single-device path is closed.
