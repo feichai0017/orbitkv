@@ -68,5 +68,7 @@ advance and the executor acknowledges the exact retirement certificate.
 
 Host tests cover ordering, stale identities, hostile evidence, abort,
 quarantine, Prefix/COW, class-specific retirement, relocation, and repeated
-generation reuse. They do not authenticate a CUDA event or establish model
-correctness or performance.
+generation reuse. The executor now gates relocation success evidence on a real
+CUDA event, and real-device tests cover relocation followed by packed decode.
+Ordinary append completion evidence is still supplied by the embedding runtime,
+and no current test establishes matched model performance.

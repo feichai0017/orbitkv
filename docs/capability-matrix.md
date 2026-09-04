@@ -24,16 +24,17 @@ recorded source closure.
 | KV manager | L2 | Owns page allocation, generations, snapshots, Prefix/COW, token placement, retirement, ACK, and reuse |
 | RuntimeSession | L2 | Presents transactional engine operations without exposing manager capabilities |
 | Executor plan | L2 | Compiles a manifest directly into Full, Sliding, Full+Sliding, or exact Chunked attention classes |
-| Luminal paged-attention boundary | Source implemented; device qualification pending | Accepts OrbitKV-authored page geometry and CSR metadata; never allocates or recycles pages |
+| Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page and packed-page decode pass; Luminal never allocates or recycles pages |
+| Token relocation executor | L3 | Lowers manager-authored moves to per-layer K/V byte ranges, performs stream-ordered D2D copies, and exposes success evidence only after a CUDA event |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch intent and streams output events without physical state |
 | OpenAI-compatible API | Not implemented | HTTP/SSE/WebSocket, tokenizer, scheduler, and sampling integration remain roadmap work |
-| Complete model executor | Not implemented in the parent composition crate | The fork contains inference building blocks; the full OrbitKV lifecycle is not yet wired through a released model graph |
+| Complete model executor | Narrow L4 correctness closure | A configuration-driven full token-KV checkpoint completes prefill, greedy selection, decode, and two OrbitKV publications; scheduler and serving integration remain open |
 
 ## Attention-state coverage
 
 | State shape | Compiler and manager | Executor lowering | Real-device engine status |
 | --- | --- | --- | --- |
-| Full token KV | Host-tested, including shared Prefix and COW | Implemented | Current architecture unqualified |
+| Full token KV | Host-tested, including shared Prefix, COW, disposition, and relocation | Implemented, including CUDA relocation | Minimal released-checkpoint prefill/decode and packed relocation/decode pass |
 | Sliding token KV | Host-tested periodic placement, retirement, ACK, and reuse | Implemented | Current architecture unqualified |
 | Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Implemented | Current architecture unqualified |
 | Exact Chunked token KV | Host-tested resettable epoch lifecycle | Implemented | Current architecture unqualified |
@@ -67,8 +68,12 @@ Historical files under `results/**` may preserve such identities as provenance.
 
 ## Current claim boundary
 
-The current architecture is host-verified. It has no same-source L3/L4 closure
-and therefore no current speedup, capacity, memory-saving, production, or
-complete-replacement claim. A future benefit statement must compare the same
-model, weights, dtype, kernels, batching policy, request trace, device budget,
-and output semantics, and must report both successful and failed gates.
+The current architecture has same-source L3 device correctness for paged
+attention and token relocation, plus a narrow L4 released-checkpoint correctness
+closure for Full token KV. Sliding, Full+Sliding, and exact Chunked still lack
+independent model-level device qualification. No matched L5 benefit experiment
+has completed, so there is no current speedup, capacity, memory-saving,
+production, or complete-replacement claim. A future benefit statement must
+compare the same model, weights, dtype, kernels, batching policy, request trace,
+device budget, and output semantics, and must report both successful and failed
+gates.
