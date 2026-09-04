@@ -26,7 +26,14 @@ observed the latter. Prefill and repeated decode now use one runtime; there is
 no cross-runtime `transfer_cache` path. Throughput remains unqualified.
 Greedy argmax is compiled into the same graph; the default runtime API reads
 only token IDs. Full-logit transfer remains available through an explicit
-diagnostic API for correctness comparison.
+diagnostic API for correctness comparison. `capture_decode` performs one
+ordinary warmup and records the prepared decode work as a caller-owned outer
+CUDA Graph; `replay_decode` updates stable input allocations and launches it.
+The initial contract freezes query/batch/context shape and the CSR indptr
+arrays. Page identities and last-page lengths may change without recapture.
+The Luminal capture primitive has an explicit CUDA regression, but neither that
+test nor the complete released-checkpoint replay was executed in the current
+qualification environment, so no device-correctness or latency claim is made.
 
 The exact fork delta and upstream update procedure are documented in
 [`docs/executor-upstream.md`](../docs/executor-upstream.md).

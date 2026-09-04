@@ -45,7 +45,9 @@ import a second scheduler, KV allocator, or device runtime.
 4. `RuntimeSession` prepares append, Prefix/COW, relocation, or release work.
 5. The executor updates bounded dynamic inputs, dispatches the matching Luminal
    bucket, runs on the owning stream without recompiling the model, and samples
-   greedy token IDs on device.
+   greedy token IDs on device. A warmed fixed-signature decode may instead
+   replay one outer CUDA Graph; shape or CSR-indptr changes fail closed and
+   require recapture.
 6. Completion evidence advances the Execution Frontier.
 7. RuntimeSession publishes new request heads, retires unreachable generations,
    validates cleanup acknowledgement, and only then permits reuse.
@@ -81,7 +83,9 @@ attention, stream-ordered token relocation followed by packed-page decode, and
 a minimal released full-attention checkpoint completing prefill plus repeated
 decode through one precompiled two-bucket runtime. Relocation evidence is gated
 by a real CUDA event; ordinary model-step completion still relies on the
-embedding runtime's completion assertion. The
+embedding runtime's completion assertion. Generic stable-input and
+released-checkpoint outer-graph replay tests exist, but have not yet completed
+in the current device qualification environment. The
 tree does not yet prove matched output equivalence against a reference engine,
 throughput, capacity, model-backed HTTP execution, cancellation cleanup,
 continuous batching, or long-running behavior.

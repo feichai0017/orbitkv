@@ -22,8 +22,11 @@ The current OrbitKV patch stack adds the following general executor contracts:
   registered inputs in every compiled dynamic-shape bucket;
 - direct range copies within persistent graph inputs, so relocation always
   targets the stable K/V arena even when a bucket materializes its update;
+- caller-owned capture of an already-warmed execution, plus a preparation-only
+  path that refreshes stable input bindings before replay without replanning or
+  executing the model;
 - device regressions for external block pages and non-power-of-two grouped-query
-  attention.
+  attention, and for captured execution reading updated stable inputs.
 
 These changes live in generic runtime, paged-attention, and device-copy files.
 No production path or type is named for one GPU or model family.
@@ -60,6 +63,15 @@ The language-model head feeds a fused dynamic-row argmax in the same graph. The
 default execution API transfers only one `i32` token ID per query row. An
 explicit diagnostic API additionally transfers logits and was used to prove the
 device token matches the previous host `max_by` result across prefill and decode.
+
+After one same-shape warmup, `CompiledDecoder::capture_decode` records the
+prepared decode work into one outer CUDA Graph. `replay_decode` first updates
+the persistent input allocations, refreshes runtime bindings without executing
+or replanning, and then launches that graph on the original stream. The current
+contract fixes `s`, `b`, `c`, `query_indptr`, and `page_indptr`; page indices and
+last-page lengths may vary within that signature. A mismatch fails closed and
+requires recapture. The generic Luminal and released-checkpoint paths both have
+explicit tests and still need real-device qualification.
 
 The persistent K/V buffers are registered as paired input/output state before
 profiling. Search may select an in-place scatter or a materialized update with
