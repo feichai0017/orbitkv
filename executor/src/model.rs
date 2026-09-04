@@ -213,8 +213,25 @@ pub struct DecoderInputs {
 
 pub struct DecoderOutputs {
     pub logits: GraphTensor,
+    pub sampled_tokens: GraphTensor,
     pub cache_inputs: Vec<(GraphTensor, GraphTensor)>,
     pub cache_updates: Vec<(GraphTensor, GraphTensor)>,
+}
+
+/// Greedy token IDs returned by the default device execution path.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct DecoderStepOutput {
+    pub token_ids: Box<[u32]>,
+}
+
+/// Optional diagnostic readback used for correctness comparison.
+///
+/// Production decode should use [`CompiledDecoder::execute`], which transfers
+/// only sampled token IDs.
+#[derive(Clone, Debug, PartialEq)]
+pub struct DecoderDiagnosticOutput {
+    pub token_ids: Box<[u32]>,
+    pub logits: Box<[f32]>,
 }
 
 pub struct DecoderGraph {
@@ -339,11 +356,14 @@ impl DecoderGraph {
                 DType::Bf16,
             )
         };
-        let logits = normalized.matmul(lm_head.t()).cast(DType::F32).output();
+        let logits = normalized.matmul(lm_head.t()).cast(DType::F32);
+        let sampled_tokens = logits.argmax(1).output();
+        let logits = logits.output();
         Ok(Self {
             inputs,
             outputs: DecoderOutputs {
                 logits,
+                sampled_tokens,
                 cache_inputs,
                 cache_updates,
             },
@@ -472,13 +492,49 @@ impl CompiledDecoder {
         })
     }
 
-    /// Executes one precompiled decode or prefill bucket.
+    /// Executes one precompiled decode or prefill bucket and reads back only
+    /// the on-device greedy token IDs.
     ///
     /// # Errors
     ///
     /// Rejects inconsistent token geometry or values exceeding compile-time
     /// capacities. Executor metadata validation errors are propagated.
-    pub fn execute(&mut self, step: DecoderStep<'_>) -> Result<Vec<f32>, DecoderError> {
+    pub fn execute(&mut self, step: DecoderStep<'_>) -> Result<DecoderStepOutput, DecoderError> {
+        self.execute_graph(step)?;
+        Ok(DecoderStepOutput {
+            token_ids: self.read_sampled_tokens(step.tokens.len())?,
+        })
+    }
+
+    /// Executes one precompiled bucket and additionally reads logits for
+    /// correctness diagnostics.
+    ///
+    /// # Errors
+    ///
+    /// Propagates step validation and execution-output failures. This path is
+    /// not intended for the serving hot loop because it transfers full logits.
+    pub fn execute_with_logits(
+        &mut self,
+        step: DecoderStep<'_>,
+    ) -> Result<DecoderDiagnosticOutput, DecoderError> {
+        self.execute_graph(step)?;
+        let token_ids = self.read_sampled_tokens(step.tokens.len())?;
+        let logits = self.runtime.get_f32(self.decoder.outputs.logits);
+        let expected = step
+            .tokens
+            .len()
+            .checked_mul(self.vocabulary_size)
+            .ok_or(DecoderError::InputCapacity)?;
+        if logits.len() != expected || logits.iter().any(|value| !value.is_finite()) {
+            return Err(DecoderError::InvalidGeometry("logits output"));
+        }
+        Ok(DecoderDiagnosticOutput {
+            token_ids,
+            logits: logits.into_boxed_slice(),
+        })
+    }
+
+    fn execute_graph(&mut self, step: DecoderStep<'_>) -> Result<(), DecoderError> {
         validate_step(
             step,
             self.compile,
@@ -534,16 +590,26 @@ impl CompiledDecoder {
             ));
         }
         self.runtime.execute(&self.graph.dyn_map);
-        let logits = self.runtime.get_f32(self.decoder.outputs.logits);
-        let expected = step
-            .tokens
-            .len()
-            .checked_mul(self.vocabulary_size)
-            .ok_or(DecoderError::InputCapacity)?;
-        if logits.len() != expected || logits.iter().any(|value| !value.is_finite()) {
-            return Err(DecoderError::InvalidGeometry("logits output"));
+        Ok(())
+    }
+
+    fn read_sampled_tokens(&self, rows: usize) -> Result<Box<[u32]>, DecoderError> {
+        let raw = self.runtime.get_i32(self.decoder.outputs.sampled_tokens);
+        if raw.len() < rows {
+            return Err(DecoderError::InvalidGeometry("sampled token output"));
         }
-        Ok(logits)
+        raw[..rows]
+            .iter()
+            .map(|&token| {
+                u32::try_from(token)
+                    .ok()
+                    .filter(|&token| {
+                        token < u32::try_from(self.vocabulary_size).unwrap_or(u32::MAX)
+                    })
+                    .ok_or(DecoderError::InvalidGeometry("sampled token output"))
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(Vec::into_boxed_slice)
     }
 
     /// Returns the persistent cache bindings for relocation execution.

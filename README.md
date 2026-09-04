@@ -43,7 +43,9 @@ allocate or recycle KV pages.
 The native decoder compiles one symbolic graph into decode and prefill buckets.
 Both phases share the same runtime, preallocated dynamic inputs, and persistent
 K/V arena; requests update only tokens, positions, write slots, CSR metadata,
-and dynamic dimensions before dispatch.
+and dynamic dimensions before dispatch. Greedy sampling is part of the graph,
+so the default execution path returns one token ID per query row instead of
+copying vocabulary-sized logits to the host.
 
 ## Compilation and execution
 

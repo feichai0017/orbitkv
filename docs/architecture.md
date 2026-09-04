@@ -44,7 +44,8 @@ import a second scheduler, KV allocator, or device runtime.
    allocated to their configured capacities before search.
 4. `RuntimeSession` prepares append, Prefix/COW, relocation, or release work.
 5. The executor updates bounded dynamic inputs, dispatches the matching Luminal
-   bucket, and runs on the owning stream without recompiling the model.
+   bucket, runs on the owning stream without recompiling the model, and samples
+   greedy token IDs on device.
 6. Completion evidence advances the Execution Frontier.
 7. RuntimeSession publishes new request heads, retires unreachable generations,
    validates cleanup acknowledgement, and only then permits reuse.

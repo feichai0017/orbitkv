@@ -16,6 +16,8 @@ server exposes client protocols. Planned work is not a current capability.
 - `CompiledDecoder` searches one graph into decode/prefill buckets once, keeps
   one stable K/V arena, preallocates dynamic inputs, and dispatches later steps
   by dynamic dimensions.
+- Greedy argmax executes inside that graph; the serving path reads token IDs
+  instead of vocabulary-sized logits.
 - The server has an async local `Engine` stream/cancellation boundary with no
   physical-page types. An optional vLLM Rust frontend supplies
   OpenAI/tokenizer/chat/SSE code through a narrow Add/Abort adapter; a
@@ -30,9 +32,9 @@ Continue connecting the bucketed Luminal graph to the complete RuntimeSession
 lifecycle: prepare, COW copies, KV writes, attention metadata, forward,
 sampling, event recording, completion, publication, retirement acknowledgement,
 and reuse. The Full token-KV path now shares one compiled runtime and persistent
-arena across prefill/decode; remaining work is scheduler-owned
-sampling/cancellation, batched execution, and a unified event envelope for
-ordinary model steps.
+arena across prefill/decode and performs greedy sampling on device; remaining
+work is richer sampling semantics, scheduler cancellation, batched execution,
+and a unified event envelope for ordinary model steps.
 
 ## R2: Build the scheduler and API
 
