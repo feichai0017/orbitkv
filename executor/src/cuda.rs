@@ -1,15 +1,23 @@
 //! Direct Luminal graph boundary for OrbitKV-managed paged attention.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use luminal::{
     dtype::DType,
     prelude::{Expression, Graph, GraphTensor},
 };
 use luminal_cuda_lite::{
+    cudarc::driver::CudaEvent,
     host::flashinfer::{PagedAttentionPlan, PagedAttentionSpec, paged_attention_with_plan},
-    runtime::CudaRuntime,
+    runtime::{CudaRuntime, DeviceCopyError, DeviceCopyPlan, DeviceCopyRange},
 };
+use orbitkv::EngineRelocationExecutionEvidence;
+use thiserror::Error;
 
-use crate::{AttentionBatch, AttentionClass, AttentionVisibility, ExecutorError};
+use crate::{
+    AttentionBatch, AttentionClass, AttentionVisibility, ExecutorError, RelocationBatch,
+    relocation::RelocationByteRange,
+};
 
 /// Kernel geometry shared by every layer in one compiled attention class.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -39,6 +47,147 @@ pub struct PagedAttentionMetadata {
     pub query_indptr: GraphTensor,
     pub page_indptr: GraphTensor,
     pub last_page_len: GraphTensor,
+}
+
+/// Persistent K/V tensors backing one compiled attention layer.
+#[derive(Clone, Copy)]
+pub struct KvCacheBinding {
+    pub class_id: u16,
+    pub layer: u32,
+    pub key: GraphTensor,
+    pub value: GraphTensor,
+}
+
+#[derive(Debug, Error)]
+pub enum CudaRelocationError {
+    #[error(transparent)]
+    Executor(#[from] ExecutorError),
+    #[error("relocation cache bindings do not exactly cover the requested classes and layers")]
+    InvalidBindings,
+    #[error(transparent)]
+    Device(#[from] DeviceCopyError),
+}
+
+impl CudaRelocationError {
+    /// Whether some relocation copy may already have reached the device.
+    #[must_use]
+    pub const fn may_have_enqueued_work(&self) -> bool {
+        match self {
+            Self::Device(error) => error.may_have_enqueued_work(),
+            Self::Executor(_) | Self::InvalidBindings => false,
+        }
+    }
+}
+
+/// Device event gating canonical relocation submission.
+pub struct PendingRelocationCopy {
+    event: CudaEvent,
+    batch: RelocationBatch,
+}
+
+impl PendingRelocationCopy {
+    /// Waits for every K/V copy before exposing success evidence.
+    ///
+    /// # Errors
+    ///
+    /// Returns the CUDA driver error without manufacturing success evidence.
+    pub fn wait(self) -> Result<EngineRelocationExecutionEvidence, CudaRelocationError> {
+        self.event
+            .synchronize()
+            .map_err(DeviceCopyError::from)
+            .map_err(CudaRelocationError::from)?;
+        Ok(self.batch.execution_evidence_after_success())
+    }
+}
+
+impl RelocationBatch {
+    /// Enqueues every manager-selected token move for all affected K/V layers.
+    ///
+    /// Structural errors are rejected before any copy is enqueued. A returned
+    /// device error may be ambiguous and should quarantine the core operation.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing, duplicate, or unexpected cache bindings, byte-range
+    /// overflow, unresolved runtime tensors, and CUDA submission failures.
+    pub fn enqueue(
+        &self,
+        runtime: &CudaRuntime,
+        bindings: &[KvCacheBinding],
+    ) -> Result<PendingRelocationCopy, CudaRelocationError> {
+        let required = self
+            .requests()
+            .iter()
+            .filter(|request| !request.copies.is_empty())
+            .flat_map(|request| {
+                request
+                    .layers
+                    .iter()
+                    .map(move |&layer| (request.class_id, layer))
+            })
+            .collect::<BTreeSet<_>>();
+        let mut provided = BTreeMap::new();
+        let mut tensor_ids = BTreeSet::new();
+        let mut graph_ref = None;
+        for binding in bindings {
+            if binding.key.id == binding.value.id
+                || binding.key.graph_ref != binding.value.graph_ref
+                || graph_ref
+                    .replace(binding.key.graph_ref)
+                    .is_some_and(|expected| expected != binding.key.graph_ref)
+                || !tensor_ids.insert(binding.key.id)
+                || !tensor_ids.insert(binding.value.id)
+                || provided
+                    .insert((binding.class_id, binding.layer), *binding)
+                    .is_some()
+            {
+                return Err(CudaRelocationError::InvalidBindings);
+            }
+        }
+        if provided.keys().copied().collect::<BTreeSet<_>>() != required {
+            return Err(CudaRelocationError::InvalidBindings);
+        }
+        let mut plans = BTreeMap::new();
+        for request in self.requests() {
+            if request.copies.is_empty() {
+                continue;
+            }
+            let key_ranges = request.key_ranges()?;
+            let value_ranges = request.value_ranges()?;
+            for &layer in &request.layers {
+                let binding = provided
+                    .get(&(request.class_id, layer))
+                    .ok_or(CudaRelocationError::InvalidBindings)?;
+                extend_copy_plan(&mut plans, &binding.key, &key_ranges);
+                extend_copy_plan(&mut plans, &binding.value, &value_ranges);
+            }
+        }
+        let plans = plans
+            .into_iter()
+            .map(|(tensor, ranges)| DeviceCopyPlan {
+                tensor,
+                ranges: ranges.into_boxed_slice(),
+            })
+            .collect::<Vec<_>>();
+        let event = runtime.copy_output_ranges(&plans)?;
+        Ok(PendingRelocationCopy {
+            event,
+            batch: self.clone(),
+        })
+    }
+}
+
+fn extend_copy_plan(
+    plans: &mut BTreeMap<luminal::prelude::NodeIndex, Vec<DeviceCopyRange>>,
+    tensor: &GraphTensor,
+    ranges: &[RelocationByteRange],
+) {
+    let target = plans.entry(tensor.id).or_default();
+    target.extend(ranges.iter().map(|range| DeviceCopyRange {
+        source_offset: range.source_offset,
+        destination_offset: range.destination_offset,
+        bytes: range.bytes,
+    }));
 }
 
 impl PagedAttentionMetadata {
@@ -200,6 +349,9 @@ mod tests {
                 name: "attention".into(),
                 layers: vec![0].into_boxed_slice(),
                 page_tokens: 16,
+                key_bytes_per_token_per_layer: 128,
+                value_bytes_per_token_per_layer: 128,
+                token_relocatable: true,
                 visibility: AttentionVisibility::Sliding { window_tokens: 64 },
             },
             AttentionKernel {

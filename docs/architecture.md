@@ -67,7 +67,11 @@ hardware-specific directories.
 ## Qualification boundary
 
 The current tree proves compiler, manager, lifecycle, and executor-metadata
-contracts on the host. It does not yet prove complete model execution, exact
-output equivalence, CUDA stream/event provenance, throughput, capacity, or
-long-running behavior for this architecture. Those claims require a matched
-real-device end-to-end harness described in the roadmap.
+contracts on the host. Real-device tests additionally cover external block-page
+attention, stream-ordered token relocation followed by packed-page decode, and
+a minimal released full-attention checkpoint completing prefill plus one decode
+step. Relocation evidence is gated by a real CUDA event; ordinary model-step
+completion still relies on the embedding runtime's completion assertion. The
+tree does not yet prove matched output equivalence against a reference engine,
+throughput, capacity, cancellation, continuous batching, or long-running
+behavior.

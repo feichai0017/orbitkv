@@ -105,11 +105,14 @@ cargo run --locked -p orbitkv --bin orbitkv -- \
 
 ## Evidence boundary
 
-Core lifecycle and executor-lowering tests are host-verified. The forked
-executor source compiles on the current host, but this checkout has not yet
-closed a same-source, real-device, released-model end-to-end run for the new
-three-layer engine. Therefore OrbitKV currently makes no speedup, capacity,
-memory-saving, production-readiness, or replacement claim.
+Core lifecycle and executor lowering are host-verified. The current pinned
+executor also has two same-source real-device correctness closures: a released
+full-attention checkpoint completes prefill and one decode step with
+OrbitKV-owned pages, and a token-relocation transaction copies K/V on one CUDA
+stream, waits on an event, publishes the packed view, and serves a following
+paged decode. These are correctness qualifications, not matched performance
+measurements. OrbitKV therefore still makes no speedup, capacity,
+memory-saving, production-readiness, or complete-replacement claim.
 
 `results/**` is append-only provenance from earlier experiments. Those records
 retain their exact model, hardware, source, and outcome, but they do not qualify

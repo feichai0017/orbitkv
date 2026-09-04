@@ -6,6 +6,8 @@ use std::collections::BTreeSet;
 pub mod cuda;
 #[cfg(feature = "cuda")]
 pub mod model;
+mod relocation;
+pub use relocation::{RelocationBatch, RelocationCopy, RelocationRequest};
 
 use orbitkv::{
     AttentionStateBackend, EngineBatchPlan, EngineBindEvidence, EngineCopyEvidence,
@@ -23,6 +25,9 @@ pub struct AttentionClass {
     pub name: String,
     pub layers: Box<[u32]>,
     pub page_tokens: u32,
+    pub key_bytes_per_token_per_layer: u64,
+    pub value_bytes_per_token_per_layer: u64,
+    pub token_relocatable: bool,
     pub visibility: AttentionVisibility,
 }
 
@@ -182,69 +187,22 @@ impl ExecutorPlan {
         }) {
             return Err(ExecutorError::UnsupportedFixedState);
         }
-        let mut classes = Vec::with_capacity(manager.layout.classes.len());
-        for (class_id, layout) in manager.layout.classes.iter().enumerate() {
-            let (storage, retention, window_tokens) = match &manifest.source {
-                RuntimeManifestSource::AttentionState { .. } => {
-                    let state = state_plan
-                        .and_then(|plan| {
-                            plan.states.iter().find(|state| {
-                                state.name == layout.name && state.layers == layout.layers
-                            })
-                        })
-                        .ok_or(ExecutorError::ClassMismatch)?;
-                    let AttentionStateBackend::TokenSlots {
-                        storage,
-                        retention,
-                        window_tokens,
-                        ..
-                    } = state.backend
-                    else {
-                        return Err(ExecutorError::UnsupportedFixedState);
-                    };
-                    (storage, retention, window_tokens)
-                }
-                RuntimeManifestSource::RetentionIr { program } => {
-                    if program.states.len() != 1 || manager.layout.classes.len() != 1 {
-                        return Err(ExecutorError::ClassMismatch);
-                    }
-                    (TokenStorageKind::TokenKv, RetentionKind::Chunked, None)
-                }
-            };
-            if storage != TokenStorageKind::TokenKv {
-                return Err(ExecutorError::UnsupportedStateStorage);
-            }
-            let visibility = match (&layout.address, &layout.retirement, retention) {
-                (AddressProgram::AppendOnly, RetirementProgram::Never, RetentionKind::Full) => {
-                    AttentionVisibility::Full
-                }
-                (
-                    AddressProgram::Periodic { .. } | AddressProgram::PeriodicFrom { .. },
-                    RetirementProgram::BlockEndPlus { .. },
-                    RetentionKind::Sliding,
-                ) => AttentionVisibility::Sliding {
-                    window_tokens: window_tokens.ok_or(ExecutorError::ClassMismatch)?,
-                },
-                (
-                    AddressProgram::ResettableArena { blocks_per_epoch },
-                    RetirementProgram::EpochEnd {
-                        blocks_per_epoch: retirement_blocks,
-                    },
-                    RetentionKind::Chunked,
-                ) if blocks_per_epoch == retirement_blocks => AttentionVisibility::Chunked {
-                    blocks_per_epoch: *blocks_per_epoch,
-                },
-                _ => return Err(ExecutorError::ClassMismatch),
-            };
-            classes.push(AttentionClass {
-                class_id: u16::try_from(class_id)
-                    .map_err(|_| ExecutorError::PreparedGeometryMismatch)?,
-                name: layout.name.clone(),
-                layers: layout.layers.clone().into_boxed_slice(),
-                page_tokens,
-                visibility,
-            });
-        }
+        let classes = manager
+            .layout
+            .classes
+            .iter()
+            .enumerate()
+            .map(|(class_id, layout)| {
+                compile_attention_class(
+                    class_id,
+                    page_tokens,
+                    layout,
+                    state_plan,
+                    &manifest.source,
+                    manager.layout.classes.len(),
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
         if classes.is_empty() {
             return Err(ExecutorError::UnsupportedStateStorage);
         }
@@ -378,6 +336,103 @@ impl ExecutorPlan {
             steps: steps.into_boxed_slice(),
         })
     }
+}
+
+fn compile_attention_class(
+    class_id: usize,
+    page_tokens: u32,
+    layout: &orbitkv::plan::ClassLayoutProgram,
+    state_plan: Option<&orbitkv::CompiledAttentionStatePlan>,
+    source: &RuntimeManifestSource,
+    class_count: usize,
+) -> Result<AttentionClass, ExecutorError> {
+    let (storage, retention, window_tokens, key_bytes, value_bytes, token_relocatable) =
+        match source {
+            RuntimeManifestSource::AttentionState { .. } => {
+                let state = state_plan
+                    .and_then(|plan| {
+                        plan.states.iter().find(|state| {
+                            state.name == layout.name && state.layers == layout.layers
+                        })
+                    })
+                    .ok_or(ExecutorError::ClassMismatch)?;
+                let AttentionStateBackend::TokenSlots {
+                    storage,
+                    components,
+                    retention,
+                    window_tokens,
+                    token_relocatable,
+                    ..
+                } = &state.backend
+                else {
+                    return Err(ExecutorError::UnsupportedFixedState);
+                };
+                let component_bytes = |name| {
+                    components
+                        .iter()
+                        .find(|component| component.name == name)
+                        .map(|component| component.bytes_per_token_per_layer)
+                        .ok_or(ExecutorError::ClassMismatch)
+                };
+                (
+                    *storage,
+                    *retention,
+                    *window_tokens,
+                    component_bytes("key")?,
+                    component_bytes("value")?,
+                    *token_relocatable,
+                )
+            }
+            RuntimeManifestSource::RetentionIr { program } => {
+                if program.states.len() != 1 || class_count != 1 {
+                    return Err(ExecutorError::ClassMismatch);
+                }
+                let key_bytes = layout.bytes_per_token_per_layer / 2;
+                (
+                    TokenStorageKind::TokenKv,
+                    RetentionKind::Chunked,
+                    None,
+                    key_bytes,
+                    layout.bytes_per_token_per_layer - key_bytes,
+                    false,
+                )
+            }
+        };
+    if storage != TokenStorageKind::TokenKv || key_bytes == 0 || value_bytes == 0 {
+        return Err(ExecutorError::UnsupportedStateStorage);
+    }
+    let visibility = match (&layout.address, &layout.retirement, retention) {
+        (AddressProgram::AppendOnly, RetirementProgram::Never, RetentionKind::Full) => {
+            AttentionVisibility::Full
+        }
+        (
+            AddressProgram::Periodic { .. } | AddressProgram::PeriodicFrom { .. },
+            RetirementProgram::BlockEndPlus { .. },
+            RetentionKind::Sliding,
+        ) => AttentionVisibility::Sliding {
+            window_tokens: window_tokens.ok_or(ExecutorError::ClassMismatch)?,
+        },
+        (
+            AddressProgram::ResettableArena { blocks_per_epoch },
+            RetirementProgram::EpochEnd {
+                blocks_per_epoch: retirement_blocks,
+            },
+            RetentionKind::Chunked,
+        ) if blocks_per_epoch == retirement_blocks => AttentionVisibility::Chunked {
+            blocks_per_epoch: *blocks_per_epoch,
+        },
+        _ => return Err(ExecutorError::ClassMismatch),
+    };
+    Ok(AttentionClass {
+        class_id: u16::try_from(class_id).map_err(|_| ExecutorError::PreparedGeometryMismatch)?,
+        name: layout.name.clone(),
+        layers: layout.layers.clone().into_boxed_slice(),
+        page_tokens,
+        key_bytes_per_token_per_layer: key_bytes,
+        value_bytes_per_token_per_layer: value_bytes,
+        token_relocatable,
+        visibility,
+    })
 }
 
 impl PreparedBatch {
@@ -581,7 +636,10 @@ fn lower_class(
     })
 }
 
-fn validate_arenas(arenas: &[ExecutorArena], class_count: usize) -> Result<(), ExecutorError> {
+pub(crate) fn validate_arenas(
+    arenas: &[ExecutorArena],
+    class_count: usize,
+) -> Result<(), ExecutorError> {
     if arenas.len() != class_count
         || arenas.iter().enumerate().any(|(class_id, arena)| {
             usize::from(arena.class_id) != class_id
@@ -597,7 +655,10 @@ fn validate_arenas(arenas: &[ExecutorArena], class_count: usize) -> Result<(), E
     Ok(())
 }
 
-fn arena_for(arenas: &[ExecutorArena], class_id: u16) -> Result<ExecutorArena, ExecutorError> {
+pub(crate) fn arena_for(
+    arenas: &[ExecutorArena],
+    class_id: u16,
+) -> Result<ExecutorArena, ExecutorError> {
     arenas
         .get(usize::from(class_id))
         .copied()
@@ -641,7 +702,7 @@ fn validate_copy(
     Ok(())
 }
 
-fn token_slot(page: u64, offset: u32, page_tokens: u64) -> Result<u64, ExecutorError> {
+pub(crate) fn token_slot(page: u64, offset: u32, page_tokens: u64) -> Result<u64, ExecutorError> {
     page.checked_mul(page_tokens)
         .and_then(|base| base.checked_add(u64::from(offset)))
         .ok_or(ExecutorError::SlotOverflow)
@@ -651,7 +712,10 @@ fn backend_page_for_write(write: WriteIntent, arena: ExecutorArena) -> Result<u6
     backend_page_for_lease(write_lease(write, arena), arena)
 }
 
-fn backend_page_for_lease(page: PageLease, arena: ExecutorArena) -> Result<u64, ExecutorError> {
+pub(crate) fn backend_page_for_lease(
+    page: PageLease,
+    arena: ExecutorArena,
+) -> Result<u64, ExecutorError> {
     if page.engine_epoch != arena.engine_epoch
         || page.pool_epoch != arena.pool_epoch
         || page.pool_id != arena.pool_id

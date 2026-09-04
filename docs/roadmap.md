@@ -11,18 +11,22 @@ server exposes client protocols. Planned work is not a current capability.
   wire contracts have been removed.
 - `ExecutorPlan` consumes `RuntimeManifest` directly.
 - The Luminal fork accepts externally owned paged-attention metadata.
+- Manager-authored token moves lower to stream-ordered K/V copies and are
+  published only after CUDA event completion.
 - The server has an async local `Engine` stream boundary with no physical-page
   types.
 - Compiler, manager, RuntimeSession, and plan lowering have host tests.
-- Complete model execution and current-architecture real-device evidence remain
-  open.
+- A minimal released full-attention checkpoint passes real-device prefill and
+  decode; packed relocation followed by paged decode also passes.
 
 ## R1: Complete the native execution transaction
 
 Connect one Luminal model graph to the complete RuntimeSession lifecycle:
 prepare, COW copies, KV writes, attention metadata, forward, sampling, event
 recording, completion, publication, retirement acknowledgement, and reuse. The
-same stream or an explicitly synchronized dependency graph must own all effects.
+Full token-KV correctness path and relocation event gate now exist; remaining
+work is scheduler-owned sampling/cancellation, batched execution, and a unified
+event envelope for ordinary model steps.
 
 ## R2: Build the scheduler and API
 
@@ -32,12 +36,12 @@ OpenAI-compatible Responses/chat endpoints and SSE/WebSocket translation.
 Conversation persistence and tool loops should remain optional API concerns and
 must not enter KV ownership.
 
-## R3: Close a minimal real-device model path
+## R3: Extend the minimal real-device model path
 
-Start with one released architecture whose full-attention graph already works in
-the fork. Establish deterministic outputs, eager execution, stream/event
-provenance, cancellation, final drain, and repeated requests before enabling
-graph replay or more attention classes.
+The first released full-attention checkpoint now completes prefill and one
+decode step. Extend this to deterministic reference parity, repeated requests,
+cancellation, final drain, continuous batching, and ordinary-step event
+provenance before claiming a complete engine path.
 
 ## R4: Qualify compiled lifetimes
 

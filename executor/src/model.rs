@@ -13,7 +13,10 @@ use thiserror::Error;
 
 use crate::{
     ExecutorPlan,
-    cuda::{AttentionKernel, PagedAttentionInputs, PagedAttentionMetadata, paged_attention},
+    cuda::{
+        AttentionKernel, KvCacheBinding, PagedAttentionInputs, PagedAttentionMetadata,
+        paged_attention,
+    },
 };
 
 #[derive(Clone, Debug, PartialEq)]
@@ -149,6 +152,37 @@ struct DecoderDimensions {
 }
 
 impl DecoderGraph {
+    /// Returns the persistent K/V outputs indexed by compiled class and layer.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a plan that does not assign every decoder layer exactly once.
+    pub fn cache_bindings(
+        &self,
+        plan: &ExecutorPlan,
+    ) -> Result<Box<[KvCacheBinding]>, DecoderError> {
+        let mut bindings = Vec::with_capacity(self.outputs.cache_updates.len());
+        for (layer, &(key, value)) in self.outputs.cache_updates.iter().enumerate() {
+            let layer =
+                u32::try_from(layer).map_err(|_| DecoderError::InvalidGeometry("layer index"))?;
+            let mut classes = plan
+                .classes
+                .iter()
+                .filter(|class| class.layers.contains(&layer));
+            let class = classes.next().ok_or(DecoderError::UnsupportedPlan)?;
+            if classes.next().is_some() {
+                return Err(DecoderError::UnsupportedPlan);
+            }
+            bindings.push(KvCacheBinding {
+                class_id: class.class_id,
+                layer,
+                key,
+                value,
+            });
+        }
+        Ok(bindings.into_boxed_slice())
+    }
+
     /// Builds a decoder-only transformer whose KV state is addressed solely by
     /// one `ExecutorPlan` attention class.
     ///
@@ -245,6 +279,12 @@ fn validate_plan(
         u32::try_from(config.layers).map_err(|_| DecoderError::InvalidGeometry("layer count"))?;
     if plan.classes.len() != 1
         || physical_pages == 0
+        || plan.classes[0].key_bytes_per_token_per_layer
+            != u64::try_from(config.kv_heads * config.head_dim * 2)
+                .map_err(|_| DecoderError::InvalidGeometry("key bytes per token"))?
+        || plan.classes[0].value_bytes_per_token_per_layer
+            != u64::try_from(config.kv_heads * config.head_dim * 2)
+                .map_err(|_| DecoderError::InvalidGeometry("value bytes per token"))?
         || plan.classes[0]
             .layers
             .iter()
