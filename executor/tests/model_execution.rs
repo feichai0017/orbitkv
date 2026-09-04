@@ -4,8 +4,6 @@
 use std::path::PathBuf;
 use std::time::Instant;
 
-use luminal::prelude::*;
-use luminal_cuda_lite::{cudarc::driver::CudaStream, runtime::CudaRuntime};
 use orbitkv::{
     CacheSharingPolicy, EngineAppendIntent, EngineCompletionEvidence, EnginePublicationEvidence,
     EngineRequestId, HfRetentionOptions, RuntimeSession, compile_hf_runtime_manifest,
@@ -13,7 +11,9 @@ use orbitkv::{
 };
 use orbitkv_executor::{
     AttentionBatch, ExecutorArena, ExecutorPlan, PreparedBatch,
-    model::{DecoderConfig, DecoderGraph, DecoderWeightLayout},
+    model::{
+        CompiledDecoder, DecoderCompileConfig, DecoderConfig, DecoderStep, DecoderWeightLayout,
+    },
 };
 
 const PAGE_TOKENS: u64 = 16;
@@ -25,19 +25,19 @@ fn model_directory() -> PathBuf {
         .expect("ORBITKV_MODEL_DIR must point to a local released checkpoint")
 }
 
+fn search_graphs() -> usize {
+    std::env::var("ORBITKV_SEARCH_GRAPHS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(2)
+}
+
 struct PreparedModelRun {
     session: RuntimeSession,
     executor_plan: ExecutorPlan,
     arena: ExecutorArena,
     prepared: PreparedBatch,
     attention: AttentionBatch,
-}
-
-struct RuntimeBatch<'a> {
-    tokens: &'a [u32],
-    attention: &'a AttentionBatch,
-    writes: &'a [u64],
-    cache_bytes: usize,
 }
 
 fn prepare_model_run(config_bytes: &[u8], prompt_len: usize) -> PreparedModelRun {
@@ -70,7 +70,7 @@ fn prepare_model_run(config_bytes: &[u8], prompt_len: usize) -> PreparedModelRun
         &manager_plan,
         ManagerConfig {
             maximum_requests: 1,
-            maximum_operations: 2,
+            maximum_operations: 3,
             maximum_prefixes: 1,
             maximum_reclamations: PAGE_COUNT,
             maximum_step_tokens: 64,
@@ -101,41 +101,6 @@ fn prepare_model_run(config_bytes: &[u8], prompt_len: usize) -> PreparedModelRun
     }
 }
 
-fn upload_runtime_inputs(
-    runtime: &mut CudaRuntime,
-    decoder: &DecoderGraph,
-    attention: &AttentionBatch,
-    prompt: &[u32],
-    writes: &[u64],
-) {
-    runtime.set_data(
-        decoder.inputs.token_ids,
-        prompt
-            .iter()
-            .map(|token| i32::try_from(*token).unwrap())
-            .collect::<Vec<_>>(),
-    );
-    runtime.set_data(
-        decoder.inputs.positions,
-        (0..i32::try_from(prompt.len()).unwrap()).collect::<Vec<_>>(),
-    );
-    runtime.set_data(
-        decoder.inputs.write_slots,
-        writes
-            .iter()
-            .map(|slot| i32::try_from(*slot).unwrap())
-            .collect::<Vec<_>>(),
-    );
-    decoder.inputs.attention.upload(runtime, attention).unwrap();
-}
-
-fn initialize_cache(runtime: &mut CudaRuntime, decoder: &DecoderGraph, cache_bytes: usize) {
-    for &(key, value) in &decoder.outputs.cache_inputs {
-        runtime.set_zeros(key, cache_bytes);
-        runtime.set_zeros(value, cache_bytes);
-    }
-}
-
 fn complete(
     session: &mut RuntimeSession,
     prepared: &PreparedBatch,
@@ -161,77 +126,6 @@ fn complete(
             reclamation_receipts: Box::default(),
         })
         .unwrap();
-}
-
-fn prepare_runtime(
-    phase: &str,
-    graph: &mut Graph,
-    decoder: &DecoderGraph,
-    stream: std::sync::Arc<CudaStream>,
-    model_dir: &std::path::Path,
-    batch: &RuntimeBatch<'_>,
-) -> CudaRuntime {
-    let started = Instant::now();
-    let mut runtime = CudaRuntime::initialize(stream);
-    runtime.load_safetensors(graph, model_dir.join("model.safetensors").to_str().unwrap());
-    eprintln!(
-        "{phase}: weights loaded after {:.1}s",
-        started.elapsed().as_secs_f64()
-    );
-    initialize_cache(&mut runtime, decoder, batch.cache_bytes);
-    upload_runtime_inputs(
-        &mut runtime,
-        decoder,
-        batch.attention,
-        batch.tokens,
-        batch.writes,
-    );
-    eprintln!("{phase}: graph compile started");
-    let mut runtime = graph.compile(runtime, CompileOptions::default().search_graph_limit(1));
-    eprintln!(
-        "{phase}: graph compiled after {:.1}s",
-        started.elapsed().as_secs_f64()
-    );
-    initialize_cache(&mut runtime, decoder, batch.cache_bytes);
-    upload_runtime_inputs(
-        &mut runtime,
-        decoder,
-        batch.attention,
-        batch.tokens,
-        batch.writes,
-    );
-    runtime
-}
-
-fn greedy_token(logits: &[f32], vocabulary_size: usize) -> u32 {
-    u32::try_from(
-        logits[logits.len() - vocabulary_size..]
-            .iter()
-            .enumerate()
-            .max_by(|(_, left), (_, right)| left.total_cmp(right))
-            .expect("nonempty vocabulary")
-            .0,
-    )
-    .unwrap()
-}
-
-fn execute_and_read_logits(
-    phase: &str,
-    runtime: &mut CudaRuntime,
-    graph: &Graph,
-    logits: &GraphTensor,
-    expected_values: usize,
-) -> Vec<f32> {
-    let started = Instant::now();
-    runtime.execute(&graph.dyn_map);
-    eprintln!(
-        "{phase}: executed after {:.3}s",
-        started.elapsed().as_secs_f64()
-    );
-    let values = runtime.get_f32(*logits);
-    assert_eq!(values.len(), expected_values);
-    assert!(values.iter().all(|value| value.is_finite()));
-    values
 }
 
 fn prepare_decode_step(
@@ -260,93 +154,103 @@ fn prepare_decode_step(
     (attention, prepared)
 }
 
-fn build_graph(
-    config: &DecoderConfig,
-    plan: &ExecutorPlan,
-    query_tokens: usize,
-    context_pages: usize,
-) -> (Graph, DecoderGraph) {
-    let mut graph = Graph::default();
-    let decoder = DecoderGraph::build(
-        &mut graph,
-        config,
-        DecoderWeightLayout {
-            qkv_bias: true,
-            qk_norm: false,
-        },
-        plan,
-        usize::try_from(PAGE_COUNT).unwrap(),
+fn greedy_token(logits: &[f32], vocabulary_size: usize) -> u32 {
+    u32::try_from(
+        logits[logits.len() - vocabulary_size..]
+            .iter()
+            .enumerate()
+            .max_by(|(_, left), (_, right)| left.total_cmp(right))
+            .expect("nonempty vocabulary")
+            .0,
     )
-    .unwrap();
-    graph.set_dim('s', query_tokens);
-    graph.set_dim('b', 1);
-    graph.set_dim('c', context_pages);
-    (graph, decoder)
+    .unwrap()
 }
 
-fn transfer_cache(
-    source: &mut CudaRuntime,
-    source_graph: &DecoderGraph,
-    target: &mut CudaRuntime,
-    target_graph: &DecoderGraph,
-) {
-    for (&(source_key, source_value), &(target_key, target_value)) in source_graph
-        .outputs
-        .cache_updates
-        .iter()
-        .zip(&target_graph.outputs.cache_inputs)
-    {
-        let key = source.remove_buffer(source_key);
-        let value = source.remove_buffer(source_value);
-        target.set_buffer(target_key, key);
-        target.set_buffer(target_value, value);
-    }
+fn execute_step(
+    phase: &str,
+    decoder: &mut CompiledDecoder,
+    tokens: &[u32],
+    positions: &[u32],
+    attention: &AttentionBatch,
+    prepared: &PreparedBatch,
+) -> Vec<f32> {
+    let started = Instant::now();
+    let logits = decoder
+        .execute(DecoderStep {
+            tokens,
+            positions,
+            write_slots: &prepared.steps()[0].classes[0].write_slots,
+            attention,
+        })
+        .unwrap();
+    eprintln!(
+        "{phase}: dispatched precompiled bucket after {:.3}s",
+        started.elapsed().as_secs_f64()
+    );
+    logits
 }
 
 #[test]
 #[ignore = "requires ORBITKV_MODEL_DIR, a CUDA device, and FlashInfer headers"]
-fn released_decoder_runs_with_orbitkv_owned_pages() {
+fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     let model_dir = model_directory();
     let config_bytes = std::fs::read(model_dir.join("config.json")).unwrap();
     let config = DecoderConfig::from_json(&config_bytes).unwrap();
     let prompt = [1_u32, 2, 3, 4];
     let mut prepared_run = prepare_model_run(&config_bytes, prompt.len());
-    let writes = &prepared_run.prepared.steps()[0].classes[0].write_slots;
-
     let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(0).unwrap();
     let stream = context.default_stream();
-    let (mut graph, decoder) = build_graph(
+    let compile = DecoderCompileConfig {
+        maximum_query_tokens: 8,
+        representative_prefill_tokens: prompt.len(),
+        maximum_batch_size: 1,
+        maximum_context_pages: usize::try_from(PAGE_COUNT).unwrap(),
+        representative_context_pages: prepared_run.attention.page_indices.len(),
+        search_graphs: search_graphs(),
+        search_seed: 7,
+    };
+    let compile_started = Instant::now();
+    let mut decoder = CompiledDecoder::compile(
         &config,
+        DecoderWeightLayout {
+            qkv_bias: true,
+            qk_norm: false,
+        },
         &prepared_run.executor_plan,
-        prompt.len(),
-        prepared_run.attention.page_indices.len(),
+        usize::try_from(PAGE_COUNT).unwrap(),
+        &stream,
+        &[model_dir.join("model.safetensors")],
+        compile,
+    )
+    .unwrap();
+    eprintln!(
+        "decoder: one-time bucket search/compile completed after {:.1}s",
+        compile_started.elapsed().as_secs_f64()
+    );
+    assert_eq!(decoder.compile_config(), compile);
+    assert_eq!(decoder.compiled_bucket_count(), 2);
+    assert_eq!(decoder.persistent_cache_count(), config.layers * 2);
+    let cache_updates_in_place = decoder.cache_updates_in_place();
+    eprintln!("decoder: selected KV updates in-place={cache_updates_in_place}");
+    assert_eq!(
+        decoder
+            .cache_bindings(&prepared_run.executor_plan)
+            .unwrap()
+            .len(),
+        config.layers
     );
 
-    let cache_bytes = usize::try_from(PAGE_COUNT).unwrap()
-        * usize::try_from(PAGE_TOKENS).unwrap()
-        * config.kv_heads
-        * config.head_dim
-        * 2;
-    let mut runtime = prepare_runtime(
+    let positions = (0..u32::try_from(prompt.len()).unwrap()).collect::<Vec<_>>();
+    let logits = execute_step(
         "prefill",
-        &mut graph,
-        &decoder,
-        stream.clone(),
-        &model_dir,
-        &RuntimeBatch {
-            tokens: &prompt,
-            attention: &prepared_run.attention,
-            writes,
-            cache_bytes,
-        },
+        &mut decoder,
+        &prompt,
+        &positions,
+        &prepared_run.attention,
+        &prepared_run.prepared,
     );
-    let logits = execute_and_read_logits(
-        "prefill",
-        &mut runtime,
-        &graph,
-        &decoder.outputs.logits,
-        prompt.len() * config.vocabulary_size,
-    );
+    assert_eq!(logits.len(), prompt.len() * config.vocabulary_size);
+    assert_eq!(decoder.active_bucket_index(), 1);
     let next_token = greedy_token(&logits, config.vocabulary_size);
     complete(
         &mut prepared_run.session,
@@ -357,43 +261,36 @@ fn released_decoder_runs_with_orbitkv_owned_pages() {
 
     let (decode_attention, decode) =
         prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 1).unwrap());
-    let (mut decode_graph, decode_decoder) = build_graph(
-        &config,
-        &prepared_run.executor_plan,
-        1,
-        decode_attention.page_indices.len(),
-    );
-    let mut decode_runtime = prepare_runtime(
+    let decode_logits = execute_step(
         "decode",
-        &mut decode_graph,
-        &decode_decoder,
-        stream,
-        &model_dir,
-        &RuntimeBatch {
-            tokens: &[next_token],
-            attention: &decode_attention,
-            writes: &decode.steps()[0].classes[0].write_slots,
-            cache_bytes,
-        },
-    );
-    transfer_cache(&mut runtime, &decoder, &mut decode_runtime, &decode_decoder);
-    upload_runtime_inputs(
-        &mut decode_runtime,
-        &decode_decoder,
-        &decode_attention,
+        &mut decoder,
         &[next_token],
-        &decode.steps()[0].classes[0].write_slots,
+        &[u32::try_from(prompt.len()).unwrap()],
+        &decode_attention,
+        &decode,
     );
-    decode_runtime.set_data(
-        decode_decoder.inputs.positions,
-        vec![i32::try_from(prompt.len()).unwrap()],
-    );
-    execute_and_read_logits(
-        "decode",
-        &mut decode_runtime,
-        &decode_graph,
-        &decode_decoder.outputs.logits,
-        config.vocabulary_size,
-    );
+    assert_eq!(decode_logits.len(), config.vocabulary_size);
+    assert_eq!(decoder.active_bucket_index(), 0);
+    assert_eq!(decoder.cache_updates_in_place(), cache_updates_in_place);
     complete(&mut prepared_run.session, &decode, prepared_run.arena, 2);
+
+    let second_token = greedy_token(&decode_logits, config.vocabulary_size);
+    let (second_attention, second_decode) =
+        prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 2).unwrap());
+    let second_logits = execute_step(
+        "second decode",
+        &mut decoder,
+        &[second_token],
+        &[u32::try_from(prompt.len() + 1).unwrap()],
+        &second_attention,
+        &second_decode,
+    );
+    assert_eq!(second_logits.len(), config.vocabulary_size);
+    assert_eq!(decoder.active_bucket_index(), 0);
+    complete(
+        &mut prepared_run.session,
+        &second_decode,
+        prepared_run.arena,
+        3,
+    );
 }

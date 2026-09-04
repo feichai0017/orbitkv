@@ -39,11 +39,14 @@ import a second scheduler, KV allocator, or device runtime.
 1. The compiler turns model attention semantics into a fingerprinted
    `RuntimeManifest`.
 2. The executor derives an `ExecutorPlan` directly from that manifest.
-3. `RuntimeSession` prepares append, Prefix/COW, relocation, or release work.
-4. The executor lowers manager-selected pages into Luminal metadata and runs the
-   graph on the owning stream.
-5. Completion evidence advances the Execution Frontier.
-6. RuntimeSession publishes new request heads, retires unreachable generations,
+3. The model executor compiles one symbolic decoder graph into decode and
+   prefill buckets and retains one stable K/V arena. Dynamic input buffers are
+   allocated to their configured capacities before search.
+4. `RuntimeSession` prepares append, Prefix/COW, relocation, or release work.
+5. The executor updates bounded dynamic inputs, dispatches the matching Luminal
+   bucket, and runs on the owning stream without recompiling the model.
+6. Completion evidence advances the Execution Frontier.
+7. RuntimeSession publishes new request heads, retires unreachable generations,
    validates cleanup acknowledgement, and only then permits reuse.
 
 The execution control path is in-process Rust. The optional vLLM HTTP frontend
@@ -74,9 +77,10 @@ for the fork delta and update procedure.
 The current tree proves compiler, manager, lifecycle, and executor-metadata
 contracts on the host. Real-device tests additionally cover external block-page
 attention, stream-ordered token relocation followed by packed-page decode, and
-a minimal released full-attention checkpoint completing prefill plus one decode
-step. Relocation evidence is gated by a real CUDA event; ordinary model-step
-completion still relies on the embedding runtime's completion assertion. The
+a minimal released full-attention checkpoint completing prefill plus repeated
+decode through one precompiled two-bucket runtime. Relocation evidence is gated
+by a real CUDA event; ordinary model-step completion still relies on the
+embedding runtime's completion assertion. The
 tree does not yet prove matched output equivalence against a reference engine,
 throughput, capacity, model-backed HTTP execution, cancellation cleanup,
 continuous batching, or long-running behavior.

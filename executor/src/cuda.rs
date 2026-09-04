@@ -9,7 +9,7 @@ use luminal::{
 use luminal_cuda_lite::{
     cudarc::driver::CudaEvent,
     host::flashinfer::{PagedAttentionPlan, PagedAttentionSpec, paged_attention_with_plan},
-    runtime::{CudaRuntime, DeviceCopyError, DeviceCopyPlan, DeviceCopyRange},
+    runtime::{CudaRuntime, DeviceCopyError, DeviceCopyRange, DeviceInputCopyPlan},
 };
 use orbitkv::EngineRelocationExecutionEvidence;
 use thiserror::Error;
@@ -49,7 +49,7 @@ pub struct PagedAttentionMetadata {
     pub last_page_len: GraphTensor,
 }
 
-/// Persistent K/V tensors backing one compiled attention layer.
+/// Persistent K/V graph inputs backing one compiled attention layer.
 #[derive(Clone, Copy)]
 pub struct KvCacheBinding {
     pub class_id: u16,
@@ -115,17 +115,7 @@ impl RelocationBatch {
         runtime: &CudaRuntime,
         bindings: &[KvCacheBinding],
     ) -> Result<PendingRelocationCopy, CudaRelocationError> {
-        let required = self
-            .requests()
-            .iter()
-            .filter(|request| !request.copies.is_empty())
-            .flat_map(|request| {
-                request
-                    .layers
-                    .iter()
-                    .map(move |&layer| (request.class_id, layer))
-            })
-            .collect::<BTreeSet<_>>();
+        let required = required_bindings(self);
         let mut provided = BTreeMap::new();
         let mut tensor_ids = BTreeSet::new();
         let mut graph_ref = None;
@@ -158,18 +148,18 @@ impl RelocationBatch {
                 let binding = provided
                     .get(&(request.class_id, layer))
                     .ok_or(CudaRelocationError::InvalidBindings)?;
-                extend_copy_plan(&mut plans, &binding.key, &key_ranges);
-                extend_copy_plan(&mut plans, &binding.value, &value_ranges);
+                extend_copy_plan(&mut plans, binding.key.id, &key_ranges);
+                extend_copy_plan(&mut plans, binding.value.id, &value_ranges);
             }
         }
         let plans = plans
             .into_iter()
-            .map(|(tensor, ranges)| DeviceCopyPlan {
+            .map(|(tensor, ranges)| DeviceInputCopyPlan {
                 tensor,
                 ranges: ranges.into_boxed_slice(),
             })
             .collect::<Vec<_>>();
-        let event = runtime.copy_output_ranges(&plans)?;
+        let event = runtime.copy_input_ranges(&plans)?;
         Ok(PendingRelocationCopy {
             event,
             batch: self.clone(),
@@ -177,12 +167,26 @@ impl RelocationBatch {
     }
 }
 
+fn required_bindings(batch: &RelocationBatch) -> BTreeSet<(u16, u32)> {
+    batch
+        .requests()
+        .iter()
+        .filter(|request| !request.copies.is_empty())
+        .flat_map(|request| {
+            request
+                .layers
+                .iter()
+                .map(move |&layer| (request.class_id, layer))
+        })
+        .collect()
+}
+
 fn extend_copy_plan(
     plans: &mut BTreeMap<luminal::prelude::NodeIndex, Vec<DeviceCopyRange>>,
-    tensor: &GraphTensor,
+    tensor: luminal::prelude::NodeIndex,
     ranges: &[RelocationByteRange],
 ) {
-    let target = plans.entry(tensor.id).or_default();
+    let target = plans.entry(tensor).or_default();
     target.extend(ranges.iter().map(|range| DeviceCopyRange {
         source_offset: range.source_offset,
         destination_offset: range.destination_offset,
