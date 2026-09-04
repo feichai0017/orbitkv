@@ -40,6 +40,11 @@ accepts externally managed page indices, query/KV indptrs, last-page lengths,
 and page geometry. It may cache those inputs for execution, but it does not
 allocate or recycle KV pages.
 
+The native decoder compiles one symbolic graph into decode and prefill buckets.
+Both phases share the same runtime, preallocated dynamic inputs, and persistent
+K/V arena; requests update only tokens, positions, write slots, CSR metadata,
+and dynamic dimensions before dispatch.
+
 ## Compilation and execution
 
 ```text

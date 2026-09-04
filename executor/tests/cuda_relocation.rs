@@ -418,8 +418,8 @@ fn manager_authored_token_moves_execute_and_publish() {
             &[KvCacheBinding {
                 class_id: 0,
                 layer: 0,
-                key: key_output,
-                value: value_output,
+                key,
+                value,
             }],
         )
         .unwrap();

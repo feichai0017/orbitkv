@@ -18,6 +18,10 @@ The current OrbitKV patch stack adds the following general executor contracts:
   instead of unwinding a C++ exception through Rust;
 - stream-ordered tensor-range copies and completion events, used to execute
   manager-authored token relocation before the new page view is published;
+- runtime inspection that proves whether persistent-state outputs alias their
+  registered inputs in every compiled dynamic-shape bucket;
+- direct range copies within persistent graph inputs, so relocation always
+  targets the stable K/V arena even when a bucket materializes its update;
 - device regressions for external block pages and non-power-of-two grouped-query
   attention.
 
@@ -42,6 +46,26 @@ latent KV, recurrent and convolution state, quantized weights, multimodal
 encoders, speculative decoding, tensor/pipeline parallelism, and a complete
 multi-class hybrid model graph. Sliding and chunked policies compile and lower,
 but do not yet have independent model-level device qualification.
+
+## Current whole-graph runtime
+
+`CompiledDecoder` owns one graph, one runtime, and one K/V arena. It compiles
+separate `s=1` decode and `s>=2` prefill buckets once; batch and context-page
+dimensions have explicit capacity buckets. Tokens, positions, write slots, and
+CSR tensors are allocated to their maximum configured capacity before search,
+so later `set_data` calls update their contents and logical lengths without
+changing device addresses.
+
+The persistent K/V buffers are registered as paired input/output state before
+profiling. Search may select an in-place scatter or a materialized update with
+a graph-visible D2D epilogue back into the same arena. Both preserve the stable
+address contract; `cache_updates_in_place()` reports which result was selected.
+The current two-candidate real-device smoke selected the materialized-copy
+form, so no zero-copy KV-write benefit is claimed. The final source run observed
+one-time search/compile at roughly 183 seconds, a four-token prefill dispatch at
+roughly 13 ms, first decode dispatch at roughly 36 ms, and a warm second decode
+at roughly 5 ms. These are diagnostic timings from one correctness run, not an
+L5 benchmark or speedup claim.
 
 ## Updating Luminal
 

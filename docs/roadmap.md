@@ -13,6 +13,9 @@ server exposes client protocols. Planned work is not a current capability.
 - The Luminal fork accepts externally owned paged-attention metadata.
 - Manager-authored token moves lower to stream-ordered K/V copies and are
   published only after CUDA event completion.
+- `CompiledDecoder` searches one graph into decode/prefill buckets once, keeps
+  one stable K/V arena, preallocates dynamic inputs, and dispatches later steps
+  by dynamic dimensions.
 - The server has an async local `Engine` stream/cancellation boundary with no
   physical-page types. An optional vLLM Rust frontend supplies
   OpenAI/tokenizer/chat/SSE code through a narrow Add/Abort adapter; a
@@ -23,12 +26,13 @@ server exposes client protocols. Planned work is not a current capability.
 
 ## R1: Complete the native execution transaction
 
-Connect one Luminal model graph to the complete RuntimeSession lifecycle:
-prepare, COW copies, KV writes, attention metadata, forward, sampling, event
-recording, completion, publication, retirement acknowledgement, and reuse. The
-Full token-KV correctness path and relocation event gate now exist; remaining
-work is scheduler-owned sampling/cancellation, batched execution, and a unified
-event envelope for ordinary model steps.
+Continue connecting the bucketed Luminal graph to the complete RuntimeSession
+lifecycle: prepare, COW copies, KV writes, attention metadata, forward,
+sampling, event recording, completion, publication, retirement acknowledgement,
+and reuse. The Full token-KV path now shares one compiled runtime and persistent
+arena across prefill/decode; remaining work is scheduler-owned
+sampling/cancellation, batched execution, and a unified event envelope for
+ordinary model steps.
 
 ## R2: Build the scheduler and API
 
@@ -64,7 +68,8 @@ Predeclare pass/fail gates and retain failed runs.
 
 ## R6: Production hardening
 
-Add CUDA Graph address stability, overlapping streams, bounded queues, failure
+Capture the now address-stable decode bucket as one outer CUDA Graph, then add
+overlapping streams, bounded queues, failure
 containment, metrics, tracing, soak tests, distributed ownership, release
 artifacts, and supported-combination matrices only after the eager single-device
 path is closed.

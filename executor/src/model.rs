@@ -2,8 +2,10 @@
 
 use std::collections::BTreeSet;
 
+use luminal::prelude::rand::SeedableRng;
 use luminal::{
     dtype::DType,
+    op::Runtime,
     prelude::{Expression, F32Pow, Graph, GraphTensor},
     shape::ToShape,
 };
@@ -11,11 +13,16 @@ use luminal_nn::{LayerNorm, scatter_rows};
 use serde::Deserialize;
 use thiserror::Error;
 
+use luminal_cuda_lite::{
+    cudarc::driver::{CudaSlice, CudaStream},
+    runtime::CudaRuntime,
+};
+
 use crate::{
-    ExecutorPlan,
+    ExecutorPlan, RelocationBatch,
     cuda::{
-        AttentionKernel, KvCacheBinding, PagedAttentionInputs, PagedAttentionMetadata,
-        paged_attention,
+        AttentionKernel, CudaRelocationError, KvCacheBinding, PagedAttentionInputs,
+        PagedAttentionMetadata, PendingRelocationCopy, paged_attention,
     },
 };
 
@@ -49,6 +56,78 @@ pub enum DecoderError {
     UnsupportedPlan,
     #[error(transparent)]
     Executor(#[from] crate::ExecutorError),
+    #[error(transparent)]
+    Device(#[from] luminal_cuda_lite::cudarc::driver::DriverError),
+    #[error(transparent)]
+    Relocation(#[from] CudaRelocationError),
+    #[error("decoder runtime input geometry exceeds its compiled capacity")]
+    InputCapacity,
+}
+
+/// Dynamic-shape and search policy for one compiled decoder executable.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DecoderCompileConfig {
+    pub maximum_query_tokens: usize,
+    pub representative_prefill_tokens: usize,
+    pub maximum_batch_size: usize,
+    pub maximum_context_pages: usize,
+    pub representative_context_pages: usize,
+    pub search_graphs: usize,
+    pub search_seed: u64,
+}
+
+impl DecoderCompileConfig {
+    fn validate(self) -> Result<(), DecoderError> {
+        let int_bytes = std::mem::size_of::<i32>();
+        if self.maximum_query_tokens < 2
+            || !(2..=self.maximum_query_tokens).contains(&self.representative_prefill_tokens)
+            || self.maximum_batch_size == 0
+            || self.maximum_batch_size > self.maximum_query_tokens
+            || self.maximum_context_pages == 0
+            || !(1..=self.maximum_context_pages).contains(&self.representative_context_pages)
+            || self.search_graphs < 2
+            || self.maximum_query_tokens > i32::MAX as usize
+            || self.maximum_batch_size > i32::MAX as usize
+            || self.maximum_context_pages > i32::MAX as usize
+            || self.maximum_query_tokens.checked_mul(int_bytes).is_none()
+            || self.maximum_context_pages.checked_mul(int_bytes).is_none()
+            || self
+                .maximum_batch_size
+                .checked_add(1)
+                .and_then(|rows| rows.checked_mul(int_bytes))
+                .is_none()
+        {
+            return Err(DecoderError::InvalidGeometry("compile buckets"));
+        }
+        Ok(())
+    }
+}
+
+/// Inputs for one dispatch into the precompiled decoder buckets.
+#[derive(Clone, Copy)]
+pub struct DecoderStep<'a> {
+    pub tokens: &'a [u32],
+    pub positions: &'a [u32],
+    pub write_slots: &'a [u64],
+    pub attention: &'a crate::AttentionBatch,
+}
+
+type InputAllocation = (GraphTensor, u64, usize);
+
+/// One compiled graph and one persistent K/V arena shared by prefill and decode.
+pub struct CompiledDecoder {
+    graph: Graph,
+    decoder: DecoderGraph,
+    runtime: CudaRuntime,
+    persistent_cache: Vec<CudaSlice<u8>>,
+    compile: DecoderCompileConfig,
+    vocabulary_size: usize,
+    class_id: u16,
+    page_tokens: usize,
+    physical_pages: usize,
+    cache_slots: usize,
+    cache_updates_in_place: bool,
+    dynamic_input_allocations: Box<[InputAllocation]>,
 }
 
 #[derive(Deserialize)]
@@ -152,7 +231,7 @@ struct DecoderDimensions {
 }
 
 impl DecoderGraph {
-    /// Returns the persistent K/V outputs indexed by compiled class and layer.
+    /// Returns the persistent K/V inputs indexed by compiled class and layer.
     ///
     /// # Errors
     ///
@@ -162,7 +241,7 @@ impl DecoderGraph {
         plan: &ExecutorPlan,
     ) -> Result<Box<[KvCacheBinding]>, DecoderError> {
         let mut bindings = Vec::with_capacity(self.outputs.cache_updates.len());
-        for (layer, &(key, value)) in self.outputs.cache_updates.iter().enumerate() {
+        for (layer, &(key, value)) in self.outputs.cache_inputs.iter().enumerate() {
             let layer =
                 u32::try_from(layer).map_err(|_| DecoderError::InvalidGeometry("layer index"))?;
             let mut classes = plan
@@ -214,12 +293,14 @@ impl DecoderGraph {
                     format!("kv.{layer}.key"),
                     (dimensions.cache_slots, dimensions.kv_width),
                 )
+                .persist()
                 .as_dtype(DType::Bf16);
             let v_cache = graph
                 .named_tensor(
                     format!("kv.{layer}.value"),
                     (dimensions.cache_slots, dimensions.kv_width),
                 )
+                .persist()
                 .as_dtype(DType::Bf16);
             let block = DecoderLayer::new(graph, config, weights, layer);
             let (next, key_update, value_update) = block.forward(
@@ -268,6 +349,417 @@ impl DecoderGraph {
             },
         })
     }
+}
+
+impl CompiledDecoder {
+    /// Builds and searches one decoder graph with decode and prefill buckets.
+    ///
+    /// The K/V arena is registered before search, so every candidate is
+    /// measured against the deployed persistent-state contract. Each selected
+    /// bucket either updates the registered arena in place or
+    /// pays a graph-visible device copy back to that same stable address.
+    ///
+    /// # Errors
+    ///
+    /// Rejects invalid bucket geometry or incompatible model plans. Luminal
+    /// compile failures currently surface through its native panic boundary.
+    pub fn compile(
+        config: &DecoderConfig,
+        weights: DecoderWeightLayout,
+        plan: &ExecutorPlan,
+        physical_pages: usize,
+        stream: &std::sync::Arc<CudaStream>,
+        weight_files: &[std::path::PathBuf],
+        compile: DecoderCompileConfig,
+    ) -> Result<Self, DecoderError> {
+        compile.validate()?;
+        if weight_files.is_empty() {
+            return Err(DecoderError::InvalidGeometry("weight files"));
+        }
+        let mut graph = Graph::default();
+        let decoder = DecoderGraph::build(&mut graph, config, weights, plan, physical_pages)?;
+        let cache_bytes = physical_pages
+            .checked_mul(
+                usize::try_from(plan.page_tokens)
+                    .map_err(|_| DecoderError::InvalidGeometry("page tokens"))?,
+            )
+            .and_then(|tokens| tokens.checked_mul(config.kv_heads))
+            .and_then(|elements| elements.checked_mul(config.head_dim))
+            .and_then(|elements| elements.checked_mul(2))
+            .ok_or(DecoderError::InvalidGeometry("cache bytes"))?;
+        let page_tokens = usize::try_from(plan.page_tokens)
+            .map_err(|_| DecoderError::InvalidGeometry("page tokens"))?;
+        let cache_slots = physical_pages
+            .checked_mul(page_tokens)
+            .ok_or(DecoderError::InvalidGeometry("cache slots"))?;
+        if page_tokens > i32::MAX as usize
+            || physical_pages > i32::MAX as usize
+            || cache_slots > i32::MAX as usize
+        {
+            return Err(DecoderError::InvalidGeometry("backend index range"));
+        }
+        let mut runtime = CudaRuntime::initialize(stream.clone());
+        for weights_path in weight_files {
+            runtime.load_safetensors(
+                &graph,
+                weights_path
+                    .to_str()
+                    .ok_or(DecoderError::InvalidGeometry("weights path"))?,
+            );
+        }
+        let mut persistent_cache = decoder
+            .outputs
+            .cache_inputs
+            .iter()
+            .zip(&decoder.outputs.cache_updates)
+            .flat_map(|(&(key_input, value_input), &(key_output, value_output))| {
+                [
+                    runtime.alias_state(key_input, key_output, cache_bytes),
+                    runtime.alias_state(value_input, value_output, cache_bytes),
+                ]
+            })
+            .collect::<Vec<_>>();
+
+        graph.set_dim('s', compile.representative_prefill_tokens);
+        graph.set_dim('b', 1);
+        graph.set_dim('c', compile.representative_context_pages);
+        seed_compile_inputs(&mut runtime, &decoder, compile, page_tokens);
+        let options = luminal::prelude::CompileOptions::default()
+            .dim_buckets(
+                's',
+                &[
+                    luminal::prelude::DimBucket::new(1, 1),
+                    luminal::prelude::DimBucket::new(2, compile.maximum_query_tokens)
+                        .representative(compile.representative_prefill_tokens),
+                ],
+            )
+            .dim_buckets(
+                'b',
+                &[
+                    luminal::prelude::DimBucket::new(1, compile.maximum_batch_size)
+                        .representative(1),
+                ],
+            )
+            .dim_buckets(
+                'c',
+                &[
+                    luminal::prelude::DimBucket::new(1, compile.maximum_context_pages)
+                        .representative(compile.representative_context_pages),
+                ],
+            )
+            .search_graph_limit(compile.search_graphs);
+        let mut rng = luminal::prelude::rand::rngs::SmallRng::seed_from_u64(compile.search_seed);
+        let runtime = graph.compile_with_rng(runtime, options, &mut rng);
+        runtime.release_pooled_memory();
+        let dynamic_input_allocations = capture_input_allocations(&runtime, &decoder)?;
+        let cache_updates_in_place = cache_updates_in_place(&runtime, &decoder);
+        for cache in &mut persistent_cache {
+            stream.memset_zeros(cache)?;
+        }
+        Ok(Self {
+            graph,
+            decoder,
+            runtime,
+            persistent_cache,
+            compile,
+            vocabulary_size: config.vocabulary_size,
+            class_id: plan.classes[0].class_id,
+            page_tokens,
+            physical_pages,
+            cache_slots,
+            cache_updates_in_place,
+            dynamic_input_allocations,
+        })
+    }
+
+    /// Executes one precompiled decode or prefill bucket.
+    ///
+    /// # Errors
+    ///
+    /// Rejects inconsistent token geometry or values exceeding compile-time
+    /// capacities. Executor metadata validation errors are propagated.
+    pub fn execute(&mut self, step: DecoderStep<'_>) -> Result<Vec<f32>, DecoderError> {
+        validate_step(
+            step,
+            self.compile,
+            self.class_id,
+            self.page_tokens,
+            self.physical_pages,
+            self.cache_slots,
+            self.vocabulary_size,
+        )?;
+        self.graph.set_dim('s', step.tokens.len());
+        self.graph.set_dim(
+            'b',
+            step.attention
+                .query_indptr
+                .len()
+                .checked_sub(1)
+                .ok_or(DecoderError::InputCapacity)?,
+        );
+        self.graph.set_dim('c', step.attention.page_indices.len());
+        self.runtime.set_data(
+            self.decoder.inputs.token_ids,
+            step.tokens
+                .iter()
+                .map(|&token| i32::try_from(token).map_err(|_| DecoderError::InputCapacity))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        self.runtime.set_data(
+            self.decoder.inputs.positions,
+            step.positions
+                .iter()
+                .map(|&position| i32::try_from(position).map_err(|_| DecoderError::InputCapacity))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        self.runtime.set_data(
+            self.decoder.inputs.write_slots,
+            step.write_slots
+                .iter()
+                .map(|&slot| i32::try_from(slot).map_err(|_| DecoderError::InputCapacity))
+                .collect::<Result<Vec<_>, _>>()?,
+        );
+        self.decoder
+            .inputs
+            .attention
+            .upload(&mut self.runtime, step.attention)?;
+        if self.dynamic_input_allocations.iter().any(
+            |(input, expected_pointer, expected_capacity)| {
+                self.runtime.input_allocation(*input)
+                    != Some((*expected_pointer, *expected_capacity))
+            },
+        ) {
+            return Err(DecoderError::InvalidGeometry(
+                "dynamic input address changed",
+            ));
+        }
+        self.runtime.execute(&self.graph.dyn_map);
+        let logits = self.runtime.get_f32(self.decoder.outputs.logits);
+        let expected = step
+            .tokens
+            .len()
+            .checked_mul(self.vocabulary_size)
+            .ok_or(DecoderError::InputCapacity)?;
+        if logits.len() != expected || logits.iter().any(|value| !value.is_finite()) {
+            return Err(DecoderError::InvalidGeometry("logits output"));
+        }
+        Ok(logits)
+    }
+
+    /// Returns the persistent cache bindings for relocation execution.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a plan that does not assign every decoder layer exactly once.
+    pub fn cache_bindings(
+        &self,
+        plan: &ExecutorPlan,
+    ) -> Result<Box<[KvCacheBinding]>, DecoderError> {
+        self.decoder.cache_bindings(plan)
+    }
+
+    /// Enqueues manager-authored relocation on the same stream and persistent
+    /// K/V arena used by model execution.
+    ///
+    /// # Errors
+    ///
+    /// Propagates binding validation, lowering, and CUDA submission failures.
+    pub fn enqueue_relocation(
+        &self,
+        batch: &RelocationBatch,
+        plan: &ExecutorPlan,
+    ) -> Result<PendingRelocationCopy, DecoderError> {
+        let bindings = self.cache_bindings(plan)?;
+        if bindings.len().checked_mul(2) != Some(self.persistent_cache.len()) {
+            return Err(DecoderError::InvalidGeometry("cache binding"));
+        }
+        Ok(batch.enqueue(&self.runtime, &bindings)?)
+    }
+
+    #[must_use]
+    pub fn compile_config(&self) -> DecoderCompileConfig {
+        self.compile
+    }
+
+    #[must_use]
+    pub fn persistent_cache_count(&self) -> usize {
+        self.persistent_cache.len()
+    }
+
+    /// Whether every selected bucket writes directly into the persistent K/V
+    /// arena. `false` means Luminal selected a materializing update followed by
+    /// the registered device-to-device copy back into the same stable arena.
+    #[must_use]
+    pub const fn cache_updates_in_place(&self) -> bool {
+        self.cache_updates_in_place
+    }
+
+    /// Number of decode/prefill executables selected during the one-time
+    /// bucketed compile.
+    #[must_use]
+    pub fn compiled_bucket_count(&self) -> usize {
+        self.runtime.compiled_bucket_count()
+    }
+
+    /// Bucket used by the most recent execution.
+    #[must_use]
+    pub fn active_bucket_index(&self) -> usize {
+        self.runtime.active_bucket_index()
+    }
+}
+
+fn dynamic_inputs(decoder: &DecoderGraph) -> [GraphTensor; 7] {
+    [
+        decoder.inputs.token_ids,
+        decoder.inputs.positions,
+        decoder.inputs.write_slots,
+        decoder.inputs.attention.page_indices,
+        decoder.inputs.attention.query_indptr,
+        decoder.inputs.attention.page_indptr,
+        decoder.inputs.attention.last_page_len,
+    ]
+}
+
+fn capture_input_allocations(
+    runtime: &CudaRuntime,
+    decoder: &DecoderGraph,
+) -> Result<Box<[InputAllocation]>, DecoderError> {
+    dynamic_inputs(decoder)
+        .into_iter()
+        .map(|input| {
+            let (pointer, capacity) = runtime
+                .input_allocation(input)
+                .ok_or(DecoderError::InvalidGeometry("dynamic input allocation"))?;
+            Ok((input, pointer, capacity))
+        })
+        .collect::<Result<Vec<_>, DecoderError>>()
+        .map(Vec::into_boxed_slice)
+}
+
+fn cache_updates_in_place(runtime: &CudaRuntime, decoder: &DecoderGraph) -> bool {
+    decoder
+        .outputs
+        .cache_inputs
+        .iter()
+        .zip(&decoder.outputs.cache_updates)
+        .all(|(&(key_input, value_input), &(key_output, value_output))| {
+            runtime.output_aliases_input_in_all_buckets(key_output, key_input)
+                && runtime.output_aliases_input_in_all_buckets(value_output, value_input)
+        })
+}
+
+fn seed_compile_inputs(
+    runtime: &mut CudaRuntime,
+    decoder: &DecoderGraph,
+    compile: DecoderCompileConfig,
+    page_tokens: usize,
+) {
+    let int_bytes = std::mem::size_of::<i32>();
+    runtime.set_data_with_capacity(
+        decoder.inputs.token_ids,
+        vec![1_i32; compile.representative_prefill_tokens],
+        compile.maximum_query_tokens * int_bytes,
+    );
+    runtime.set_data_with_capacity(
+        decoder.inputs.positions,
+        (0..i32::try_from(compile.representative_prefill_tokens).unwrap()).collect::<Vec<_>>(),
+        compile.maximum_query_tokens * int_bytes,
+    );
+    runtime.set_data_with_capacity(
+        decoder.inputs.write_slots,
+        (0..i32::try_from(compile.representative_prefill_tokens).unwrap()).collect::<Vec<_>>(),
+        compile.maximum_query_tokens * int_bytes,
+    );
+    runtime.set_data_with_capacity(
+        decoder.inputs.attention.page_indices,
+        vec![0_i32; compile.representative_context_pages],
+        compile.maximum_context_pages * int_bytes,
+    );
+    runtime.set_data_with_capacity(
+        decoder.inputs.attention.query_indptr,
+        vec![
+            0_i32,
+            i32::try_from(compile.representative_prefill_tokens).unwrap(),
+        ],
+        (compile.maximum_batch_size + 1) * int_bytes,
+    );
+    runtime.set_data_with_capacity(
+        decoder.inputs.attention.page_indptr,
+        vec![
+            0_i32,
+            i32::try_from(compile.representative_context_pages).unwrap(),
+        ],
+        (compile.maximum_batch_size + 1) * int_bytes,
+    );
+    runtime.set_data_with_capacity(
+        decoder.inputs.attention.last_page_len,
+        vec![i32::try_from(page_tokens.min(compile.representative_prefill_tokens)).unwrap()],
+        compile.maximum_batch_size * int_bytes,
+    );
+}
+
+fn validate_step(
+    step: DecoderStep<'_>,
+    compile: DecoderCompileConfig,
+    class_id: u16,
+    page_tokens: usize,
+    physical_pages: usize,
+    cache_slots: usize,
+    vocabulary_size: usize,
+) -> Result<(), DecoderError> {
+    let batch = step
+        .attention
+        .query_indptr
+        .len()
+        .checked_sub(1)
+        .ok_or(DecoderError::InputCapacity)?;
+    if step.tokens.is_empty()
+        || step.attention.class_id != class_id
+        || step.tokens.len() != step.positions.len()
+        || step.tokens.len() != step.write_slots.len()
+        || step.tokens.len() > compile.maximum_query_tokens
+        || step
+            .tokens
+            .iter()
+            .any(|&token| usize::try_from(token).map_or(true, |token| token >= vocabulary_size))
+        || batch == 0
+        || batch > compile.maximum_batch_size
+        || step.attention.page_indices.is_empty()
+        || step.attention.page_indices.len() > compile.maximum_context_pages
+        || step.attention.page_indices.iter().any(|page| *page < 0)
+        || step
+            .attention
+            .page_indices
+            .iter()
+            .any(|&page| usize::try_from(page).map_or(true, |page| page >= physical_pages))
+        || step
+            .write_slots
+            .iter()
+            .any(|&slot| usize::try_from(slot).map_or(true, |slot| slot >= cache_slots))
+        || step.attention.query_indptr.first() != Some(&0)
+        || step.attention.query_indptr.last().copied() != i32::try_from(step.tokens.len()).ok()
+        || step.attention.page_indptr.first() != Some(&0)
+        || step.attention.page_indptr.last().copied()
+            != i32::try_from(step.attention.page_indices.len()).ok()
+        || step.attention.page_indptr.len() != batch + 1
+        || step.attention.last_page_len.len() != batch
+        || step.attention.last_page_len.iter().any(|&tokens| {
+            tokens <= 0 || usize::try_from(tokens).map_or(true, |tokens| tokens > page_tokens)
+        })
+        || step
+            .attention
+            .query_indptr
+            .windows(2)
+            .any(|row| row[0] >= row[1])
+        || step
+            .attention
+            .page_indptr
+            .windows(2)
+            .any(|row| row[0] >= row[1])
+    {
+        return Err(DecoderError::InputCapacity);
+    }
+    Ok(())
 }
 
 fn validate_plan(
@@ -590,4 +1082,82 @@ fn weight(
     dtype: DType,
 ) -> GraphTensor {
     graph.named_tensor(name, shape).persist().as_dtype(dtype)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn compile_config_requires_distinct_decode_and_prefill_ranges() {
+        let valid = DecoderCompileConfig {
+            maximum_query_tokens: 32,
+            representative_prefill_tokens: 8,
+            maximum_batch_size: 4,
+            maximum_context_pages: 64,
+            representative_context_pages: 8,
+            search_graphs: 2,
+            search_seed: 1,
+        };
+        assert!(valid.validate().is_ok());
+        assert!(
+            DecoderCompileConfig {
+                maximum_query_tokens: 1,
+                ..valid
+            }
+            .validate()
+            .is_err()
+        );
+        assert!(
+            DecoderCompileConfig {
+                search_graphs: 1,
+                ..valid
+            }
+            .validate()
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn step_validation_enforces_compiled_capacities() {
+        let compile = DecoderCompileConfig {
+            maximum_query_tokens: 4,
+            representative_prefill_tokens: 2,
+            maximum_batch_size: 1,
+            maximum_context_pages: 2,
+            representative_context_pages: 1,
+            search_graphs: 2,
+            search_seed: 1,
+        };
+        let attention = crate::AttentionBatch {
+            class_id: 0,
+            query_indptr: vec![0, 2].into_boxed_slice(),
+            page_indptr: vec![0, 1].into_boxed_slice(),
+            page_indices: vec![0].into_boxed_slice(),
+            last_page_len: vec![2].into_boxed_slice(),
+        };
+        let valid = DecoderStep {
+            tokens: &[1, 2],
+            positions: &[0, 1],
+            write_slots: &[0, 1],
+            attention: &attention,
+        };
+        assert!(validate_step(valid, compile, 0, 16, 4, 64, 32).is_ok());
+        assert!(
+            validate_step(
+                DecoderStep {
+                    tokens: &[1, 2],
+                    positions: &[0],
+                    ..valid
+                },
+                compile,
+                0,
+                16,
+                4,
+                64,
+                32,
+            )
+            .is_err()
+        );
+    }
 }
