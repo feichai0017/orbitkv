@@ -70,7 +70,7 @@ fn prepare_model_run(config_bytes: &[u8], prompt_len: usize) -> PreparedModelRun
         &manager_plan,
         ManagerConfig {
             maximum_requests: 1,
-            maximum_operations: 3,
+            maximum_operations: 4,
             maximum_prefixes: 1,
             maximum_reclamations: PAGE_COUNT,
             maximum_step_tokens: 64,
@@ -173,10 +173,10 @@ fn execute_step(
     positions: &[u32],
     attention: &AttentionBatch,
     prepared: &PreparedBatch,
-) -> Vec<f32> {
+) -> orbitkv_executor::model::DecoderDiagnosticOutput {
     let started = Instant::now();
     let logits = decoder
-        .execute(DecoderStep {
+        .execute_with_logits(DecoderStep {
             tokens,
             positions,
             write_slots: &prepared.steps()[0].classes[0].write_slots,
@@ -192,6 +192,7 @@ fn execute_step(
 
 #[test]
 #[ignore = "requires ORBITKV_MODEL_DIR, a CUDA device, and FlashInfer headers"]
+#[allow(clippy::too_many_lines)]
 fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     let model_dir = model_directory();
     let config_bytes = std::fs::read(model_dir.join("config.json")).unwrap();
@@ -241,7 +242,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     );
 
     let positions = (0..u32::try_from(prompt.len()).unwrap()).collect::<Vec<_>>();
-    let logits = execute_step(
+    let output = execute_step(
         "prefill",
         &mut decoder,
         &prompt,
@@ -249,9 +250,11 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
         &prepared_run.attention,
         &prepared_run.prepared,
     );
-    assert_eq!(logits.len(), prompt.len() * config.vocabulary_size);
+    assert_eq!(output.logits.len(), prompt.len() * config.vocabulary_size);
+    assert_eq!(output.token_ids.len(), prompt.len());
     assert_eq!(decoder.active_bucket_index(), 1);
-    let next_token = greedy_token(&logits, config.vocabulary_size);
+    let next_token = greedy_token(&output.logits, config.vocabulary_size);
+    assert_eq!(output.token_ids.last().copied(), Some(next_token));
     complete(
         &mut prepared_run.session,
         &prepared_run.prepared,
@@ -261,7 +264,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
 
     let (decode_attention, decode) =
         prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 1).unwrap());
-    let decode_logits = execute_step(
+    let decode_output = execute_step(
         "decode",
         &mut decoder,
         &[next_token],
@@ -269,15 +272,17 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
         &decode_attention,
         &decode,
     );
-    assert_eq!(decode_logits.len(), config.vocabulary_size);
+    assert_eq!(decode_output.logits.len(), config.vocabulary_size);
+    assert_eq!(decode_output.token_ids.len(), 1);
     assert_eq!(decoder.active_bucket_index(), 0);
     assert_eq!(decoder.cache_updates_in_place(), cache_updates_in_place);
     complete(&mut prepared_run.session, &decode, prepared_run.arena, 2);
 
-    let second_token = greedy_token(&decode_logits, config.vocabulary_size);
+    let second_token = greedy_token(&decode_output.logits, config.vocabulary_size);
+    assert_eq!(decode_output.token_ids[0], second_token);
     let (second_attention, second_decode) =
         prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 2).unwrap());
-    let second_logits = execute_step(
+    let second_output = execute_step(
         "second decode",
         &mut decoder,
         &[second_token],
@@ -285,12 +290,42 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
         &second_attention,
         &second_decode,
     );
-    assert_eq!(second_logits.len(), config.vocabulary_size);
+    assert_eq!(second_output.logits.len(), config.vocabulary_size);
+    assert_eq!(second_output.token_ids.len(), 1);
+    assert_eq!(
+        second_output.token_ids[0],
+        greedy_token(&second_output.logits, config.vocabulary_size)
+    );
     assert_eq!(decoder.active_bucket_index(), 0);
     complete(
         &mut prepared_run.session,
         &second_decode,
         prepared_run.arena,
         3,
+    );
+
+    let third_token = second_output.token_ids[0];
+    let (third_attention, third_decode) =
+        prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 3).unwrap());
+    let started = Instant::now();
+    let third_output = decoder
+        .execute(DecoderStep {
+            tokens: &[third_token],
+            positions: &[u32::try_from(prompt.len() + 2).unwrap()],
+            write_slots: &third_decode.steps()[0].classes[0].write_slots,
+            attention: &third_attention,
+        })
+        .unwrap();
+    eprintln!(
+        "device-only decode: dispatched after {:.3}s",
+        started.elapsed().as_secs_f64()
+    );
+    assert_eq!(third_output.token_ids.len(), 1);
+    assert_eq!(decoder.active_bucket_index(), 0);
+    complete(
+        &mut prepared_run.session,
+        &third_decode,
+        prepared_run.arena,
+        4,
     );
 }

@@ -56,6 +56,11 @@ CSR tensors are allocated to their maximum configured capacity before search,
 so later `set_data` calls update their contents and logical lengths without
 changing device addresses.
 
+The language-model head feeds a fused dynamic-row argmax in the same graph. The
+default execution API transfers only one `i32` token ID per query row. An
+explicit diagnostic API additionally transfers logits and was used to prove the
+device token matches the previous host `max_by` result across prefill and decode.
+
 The persistent K/V buffers are registered as paired input/output state before
 profiling. Search may select an in-place scatter or a materialized update with
 a graph-visible D2D epilogue back into the same arena. Both preserve the stable

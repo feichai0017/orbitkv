@@ -24,6 +24,9 @@ K/V arena across every dispatch. The selected plan may update that arena in
 place or pay a graph-visible device copy back into it; the current smoke
 observed the latter. Prefill and repeated decode now use one runtime; there is
 no cross-runtime `transfer_cache` path. Throughput remains unqualified.
+Greedy argmax is compiled into the same graph; the default runtime API reads
+only token IDs. Full-logit transfer remains available through an explicit
+diagnostic API for correctness comparison.
 
 The exact fork delta and upstream update procedure are documented in
 [`docs/executor-upstream.md`](../docs/executor-upstream.md).

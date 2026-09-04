@@ -26,6 +26,12 @@ production system.
 
 [Bucketed decoder correctness diagnostic](bucketed-decoder-correctness-20260904/README.md)
 
+| Record | Scope |
+| --- | --- |
+| `on-device-greedy-correctness-20260904` | Released dense decoder checkpoint and one H20; fused on-device greedy argmax matches host argmax across prefill/decode, and the default path reads one token ID per query row; correctness only, with no performance or richer-sampling claim |
+
+[On-device greedy correctness diagnostic](on-device-greedy-correctness-20260904/README.md)
+
 ## Current-wire Full+Sliding diagnostic
 
 | Record | Scope |
