@@ -6,9 +6,35 @@ rust-version = "1.88"
 description = "Control-plane contracts for the OrbitKV inference engine."
 license = "MIT"
 
+[features]
+default = []
+vllm-frontend = [
+    "dep:anyhow",
+    "dep:futures-util",
+    "dep:tempfile",
+    "dep:tokio",
+    "dep:tokio-util",
+    "dep:vllm-engine-core-client",
+    "dep:vllm-server",
+    "dep:zeromq",
+]
+
 [dependencies]
+anyhow = { version = "1.0.100", optional = true }
 futures-core = "=0.3.31"
+futures-util = { version = "0.3.31", optional = true }
+tempfile = { version = "3.23.0", optional = true }
 thiserror = "2.0.17"
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "sync", "time"], optional = true }
+tokio-util = { version = "0.7.18", features = ["rt"], optional = true }
+vllm-engine-core-client = { git = "https://github.com/vllm-project/vllm.git", rev = "60857baa53a743913d4e919f12b5fd8d608ded86", optional = true }
+vllm-server = { git = "https://github.com/vllm-project/vllm.git", rev = "60857baa53a743913d4e919f12b5fd8d608ded86", optional = true }
+zeromq = { version = "0.6.0", default-features = false, features = ["tokio-runtime", "all-transport"], optional = true }
+
+[dev-dependencies]
+reqwest = { version = "0.12.8", default-features = false, features = ["json"] }
+serde_json = "1.0.145"
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread", "sync"] }
 
 [lints.rust]
 unsafe_code = "forbid"

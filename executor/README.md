@@ -19,3 +19,6 @@ not qualified by host compilation alone. The current pin has real-device
 correctness coverage for externally planned block pages, packed relocation,
 and a minimal released-checkpoint prefill/decode path; throughput remains
 unqualified.
+
+The exact fork delta and upstream update procedure are documented in
+[`docs/executor-upstream.md`](../docs/executor-upstream.md).

@@ -20,6 +20,28 @@ pub struct RequestIntent {
     pub request_id: RequestId,
     pub input_tokens: Box<[u32]>,
     pub target_boundary: u64,
+    pub sampling: SamplingIntent,
+}
+
+/// Generation semantics supported by the local engine boundary.
+///
+/// Sampling is deliberately explicit here: a frontend adapter must reject
+/// parameters that the engine cannot honor instead of silently changing them.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct SamplingIntent {
+    pub max_output_tokens: u32,
+    pub stop_token_ids: Box<[u32]>,
+}
+
+impl SamplingIntent {
+    /// Creates the currently supported deterministic sampling contract.
+    #[must_use]
+    pub fn greedy(max_output_tokens: u32, stop_token_ids: impl Into<Box<[u32]>>) -> Self {
+        Self {
+            max_output_tokens,
+            stop_token_ids: stop_token_ids.into(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Error, Eq, PartialEq)]
@@ -30,6 +52,8 @@ pub enum BatchIntentError {
     DuplicateRequest,
     #[error("request input must be nonempty and fit its target boundary")]
     InvalidBoundary,
+    #[error("request must permit at least one output token")]
+    InvalidSampling,
 }
 
 impl BatchIntent {
@@ -56,6 +80,9 @@ impl BatchIntent {
             {
                 return Err(BatchIntentError::InvalidBoundary);
             }
+            if request.sampling.max_output_tokens == 0 {
+                return Err(BatchIntentError::InvalidSampling);
+            }
         }
         Ok(Self { requests })
     }
@@ -71,6 +98,7 @@ mod tests {
             request_id: RequestId(7),
             input_tokens: vec![1].into_boxed_slice(),
             target_boundary: 1,
+            sampling: SamplingIntent::greedy(1, []),
         };
         assert_eq!(
             BatchIntent::new(vec![request.clone(), request].into_boxed_slice()),
@@ -86,16 +114,34 @@ mod tests {
                     request_id: RequestId(1),
                     input_tokens: vec![10, 11, 12].into_boxed_slice(),
                     target_boundary: 3,
+                    sampling: SamplingIntent::greedy(8, [2]),
                 },
                 RequestIntent {
                     request_id: RequestId(2),
                     input_tokens: vec![20].into_boxed_slice(),
                     target_boundary: 41,
+                    sampling: SamplingIntent::greedy(1, []),
                 },
             ]
             .into_boxed_slice(),
         )
         .unwrap();
         assert_eq!(batch.requests.len(), 2);
+    }
+
+    #[test]
+    fn rejects_zero_output_budget() {
+        assert_eq!(
+            BatchIntent::new(
+                vec![RequestIntent {
+                    request_id: RequestId(1),
+                    input_tokens: vec![10].into_boxed_slice(),
+                    target_boundary: 1,
+                    sampling: SamplingIntent::greedy(0, []),
+                }]
+                .into_boxed_slice(),
+            ),
+            Err(BatchIntentError::InvalidSampling)
+        );
     }
 }

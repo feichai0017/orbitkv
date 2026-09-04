@@ -11,7 +11,7 @@ The product has three layers:
 | --- | --- |
 | `core/` | Attention-state compilation, request and snapshot identity, Prefix/COW, token disposition, physical-page ownership, retirement, acknowledgement, and safe reuse |
 | `executor/` | OrbitKV plan lowering plus the forked Luminal graph compiler and device executor |
-| `server/` | Rust API and scheduling boundary; submits semantic intent and receives streamed generation events |
+| `server/` | Rust API and scheduling boundary; optionally reuses vLLM's Rust OpenAI/tokenizer/chat frontend through a narrow protocol adapter |
 
 OrbitKV is the only KV authority. The executor consumes manager-authored pages
 and the server cannot name a physical page. There is no compatibility layer, C
@@ -79,12 +79,13 @@ Current compiled token lifetimes include:
 
 ## Server boundary
 
-`orbitkv-server` defines an async, in-process `Engine` interface. It deliberately
-does not proxy to a second inference server. OpenAI-compatible HTTP, SSE,
-WebSocket, conversation, and tool orchestration can be layered above it without
-changing KV ownership. The protocol design is informed by the Apache-2.0
-`vllm-project/agentic-api`, but its upstream HTTP backend and process launcher
-are not part of OrbitKV.
+`orbitkv-server` defines an async, in-process `Engine` interface with explicit
+execution and cancellation. Its optional `vllm-frontend` feature launches the
+pinned vLLM Rust OpenAI HTTP/tokenizer/chat/SSE stack and translates only
+tokenized Add/Abort traffic to the local engine. PegaInfer informed this bridge
+shape, but its scheduler, KV cache, model runtime, and CUDA ownership are not
+part of OrbitKV. The current adapter is greedy text-only and rejects unsupported
+semantics rather than silently dropping them.
 
 ## Build and test
 
@@ -123,6 +124,7 @@ and [Results Index](results/README.md).
 
 - [Architecture](docs/architecture.md)
 - [Capability Matrix](docs/capability-matrix.md)
+- [Executor fork and upstream policy](docs/executor-upstream.md)
 - [RuntimeSession](docs/runtime-session.md)
 - [State lifetime and reclamation](docs/state-lifecycle.md)
 - [Roadmap](docs/roadmap.md)

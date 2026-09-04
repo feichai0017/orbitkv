@@ -13,8 +13,10 @@ server exposes client protocols. Planned work is not a current capability.
 - The Luminal fork accepts externally owned paged-attention metadata.
 - Manager-authored token moves lower to stream-ordered K/V copies and are
   published only after CUDA event completion.
-- The server has an async local `Engine` stream boundary with no physical-page
-  types.
+- The server has an async local `Engine` stream/cancellation boundary with no
+  physical-page types. An optional vLLM Rust frontend supplies
+  OpenAI/tokenizer/chat/SSE code through a narrow Add/Abort adapter; a
+  test-engine HTTP closure passes.
 - Compiler, manager, RuntimeSession, and plan lowering have host tests.
 - A minimal released full-attention checkpoint passes real-device prefill and
   decode; packed relocation followed by paged decode also passes.
@@ -30,11 +32,13 @@ event envelope for ordinary model steps.
 
 ## R2: Build the scheduler and API
 
-Add tokenizer workers, request queues, continuous batching, sampling state,
-cancellation, and backpressure above the local `Engine`. Then add
-OpenAI-compatible Responses/chat endpoints and SSE/WebSocket translation.
-Conversation persistence and tool loops should remain optional API concerns and
-must not enter KV ownership.
+Implement the concrete local scheduler/engine behind the existing server
+contract: request queues, continuous batching, greedy sampling state,
+cancellation cleanup, and backpressure. Then exercise the optional vLLM Rust
+HTTP/tokenizer/chat/SSE frontend end to end. Extend sampling, logprobs, tool
+parsing, and multimodal fields only as their local semantics become real; the
+adapter rejects them today. Conversation persistence and tool loops remain API
+concerns and must not enter KV ownership.
 
 ## R3: Extend the minimal real-device model path
 
