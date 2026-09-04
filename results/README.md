@@ -18,6 +18,14 @@ OrbitKV is an attention-state compiler plus transactional ownership runtime;
 none of these records makes it a full SGLang replacement or a mature L5
 production system.
 
+## Native bucketed decoder diagnostic
+
+| Record | Scope |
+| --- | --- |
+| `bucketed-decoder-correctness-20260904` | Exact clean `903f8ce` parent source and pinned `beb24ac` Luminal fork; released dense decoder checkpoint and one H20; one real two-bucket search followed by prefill and repeated decode in one runtime/KV arena, plus persistent-input relocation correctness; no matched performance, memory, capacity, outer CUDA Graph, or production claim |
+
+[Bucketed decoder correctness diagnostic](bucketed-decoder-correctness-20260904/README.md)
+
 ## Current-wire Full+Sliding diagnostic
 
 | Record | Scope |
