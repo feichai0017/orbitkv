@@ -7,8 +7,8 @@ use super::arena::RuntimeClass;
 use super::manager_state::{ClassDelta, ClassTransition};
 use super::persistent_snapshot::{ClassRoot, RootEntry, RootLayout};
 use super::{
-    CanonicalKvManager, KvManagerError, PageLease, RequestLease, RequestSnapshot, RequestView,
-    SnapshotLease, TailActionKind, ViewVersion,
+    CanonicalKvManager, KvManagerError, PageLease, PhysicalResidencePolicy, RequestLease,
+    RequestSnapshot, RequestView, SnapshotLease, TailActionKind, ViewVersion,
 };
 
 const TOKEN_CHUNK_CAPACITY: usize = 16;
@@ -196,17 +196,30 @@ pub(super) fn append_class_token_delta(
     if root.tokens.len() != previous_boundary {
         return Err(KvManagerError::Invariant("token table boundary"));
     }
-    let retained_start = class.retained_start(target_boundary);
-    let previous_retained_start = class.retained_start(previous_boundary);
+    let retained_start = class.semantic_start(target_boundary);
+    let previous_retained_start = class.semantic_start(previous_boundary);
+    let prior_placements = if class.physical_residence == PhysicalResidencePolicy::RequestLifetime {
+        Some(root.tokens.materialize()?)
+    } else {
+        None
+    };
     let mut patches = Vec::new();
     for token_id in previous_retained_start..retained_start.min(previous_boundary) {
+        let location = prior_placements
+            .as_deref()
+            .and_then(|placements| {
+                usize::try_from(token_id)
+                    .ok()
+                    .and_then(|i| placements.get(i))
+            })
+            .and_then(|placement| placement.location);
         patches.push(TokenPlacement {
             token_id,
             disposition: TokenDisposition::semantically_dead(
                 u64::from(class.class_id) + 1,
                 target_boundary,
             ),
-            location: None,
+            location,
         });
     }
     if delta.tail_action == TailActionKind::CopyOnWrite {
@@ -239,7 +252,9 @@ pub(super) fn append_class_token_delta(
     );
     for token_id in previous_boundary..target_boundary {
         let retained = token_id >= retained_start;
-        let location = if retained {
+        let physically_resident =
+            retained || class.physical_residence == PhysicalResidencePolicy::RequestLifetime;
+        let location = if physically_resident {
             let physical_token_id = previous_layout_boundary
                 .checked_add(token_id - previous_boundary)
                 .ok_or(KvManagerError::ArithmeticOverflow(
@@ -330,7 +345,7 @@ pub(super) fn apply_class_transition(
         RootLayout::Dense => match class.retention {
             crate::plan::RetentionKind::Full => target_boundary,
             crate::plan::RetentionKind::Sliding | crate::plan::RetentionKind::Chunked => {
-                target_boundary.saturating_sub(class.retained_start(target_boundary))
+                target_boundary.saturating_sub(class.resident_start(target_boundary))
             }
         },
     };

@@ -54,12 +54,12 @@ pub use protocol::{
     BackendUnobservedReceipt, BatchCompletionReceipt, CLASS_LOWERING_EPOCH_START,
     CLASS_LOWERING_PACKED, CLASS_LOWERING_RESETTABLE, CancelAttachedRequestItem, ClassLowering,
     CompletionBatch, CopyIntent, DetachedAction, DetachedBinding, DetachedReason, EvictedPrefix,
-    ForkedRequest, ManagerConfig, ManagerStats, MaterializedRequestView, PrefixAttachItem,
-    PrefixEvictionBatch, PrefixLookupHint, PrefixPublishItem, PrefixPublishRelease,
-    PrepareBatchItem, PreparedStep, PublishedPrefix, PublishedReceipt, ReclamationCertificate,
-    ReclamationReceipt, ReleaseBatchCompletion, ReleaseBatchItem, ReleaseCompletion,
-    RequestForkItem, RequestView, SnapshotPage, StepCompletion, SubmitBatchItem, SubmittedStep,
-    TailAction, TailActionKind, WriteIntent,
+    ForkedRequest, ManagerConfig, ManagerStats, MaterializedRequestView, PhysicalResidencePolicy,
+    PrefixAttachItem, PrefixEvictionBatch, PrefixLookupHint, PrefixPublishItem,
+    PrefixPublishRelease, PrepareBatchItem, PreparedStep, PublishedPrefix, PublishedReceipt,
+    ReclamationCertificate, ReclamationReceipt, ReleaseBatchCompletion, ReleaseBatchItem,
+    ReleaseCompletion, RequestForkItem, RequestView, SnapshotPage, StepCompletion, SubmitBatchItem,
+    SubmittedStep, TailAction, TailActionKind, WriteIntent,
 };
 pub use token_virtualization::{
     ClassTokenDispositionUpdate, CompletedRelocationBatch, CompletedRelocationItem,

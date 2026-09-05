@@ -11,4 +11,5 @@ mod latent;
 include!("prefix_release.rs");
 mod relocation;
 include!("retirement.rs");
+mod residence;
 mod sliding;

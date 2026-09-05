@@ -463,7 +463,7 @@ impl CanonicalKvManager {
                 delta.target_boundary,
             )?;
         }
-        self.materialize_snapshot_roots(delta.target_boundary, &roots)
+        self.materialize_attention_roots(delta.previous_boundary, delta.target_boundary, &roots)
     }
 
     fn preflight_prepare_item(&self, item: &PrepareBatchItem) -> Result<(), KvManagerError> {
@@ -888,7 +888,7 @@ impl CanonicalKvManager {
                     .map(|entry| entry.logical_ordinal)
                     .ok_or(KvManagerError::Invariant("empty append candidate"))?;
                 let expected_first =
-                    class.candidate_start(delta.previous_boundary) / self.page_tokens;
+                    class.resident_candidate_start(delta.previous_boundary) / self.page_tokens;
                 let candidate_end = class_delta
                     .target_layout_boundary
                     .div_ceil(self.page_tokens);
@@ -911,7 +911,7 @@ impl CanonicalKvManager {
                 let retain_first_ordinal = match class.retention {
                     RetentionKind::Full => candidate_first,
                     RetentionKind::Sliding | RetentionKind::Chunked => {
-                        (class.retained_start(delta.target_boundary) / self.page_tokens)
+                        (class.resident_start(delta.target_boundary) / self.page_tokens)
                             .min(candidate_end)
                     }
                 };

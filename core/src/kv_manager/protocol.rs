@@ -84,6 +84,21 @@ pub struct ManagerConfig {
     pub maximum_step_tokens: u32,
 }
 
+/// Selects how long semantically dead token pages remain physically resident.
+///
+/// Attention visibility always comes from the compiled retention program. This
+/// policy changes only address reuse and physical retirement, which makes it a
+/// valid same-semantics ablation for the attention-state compiler.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[repr(u32)]
+pub enum PhysicalResidencePolicy {
+    /// Execute the compiler-authored address and retirement programs.
+    #[default]
+    Compiled = 1,
+    /// Use append-only addresses and retain pages until request release.
+    RequestLifetime = 2,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PreparedStep {
     pub step: StepLease,
@@ -462,6 +477,13 @@ pub struct ArenaStats {
     /// Starts this class pool's manager-global half-open page range. Distinct
     /// class-pool ranges need not be adjacent.
     pub first_page_id: u32,
+    /// Physical bytes occupied by one page across every layer in this class.
+    pub page_payload_bytes: u64,
+    pub physical_residence: PhysicalResidencePolicy,
+    /// Pages with a live, reserved, retiring, or quarantined generation.
+    pub resident_pages: u64,
+    /// `resident_pages * page_payload_bytes` for this class.
+    pub resident_bytes: u64,
     pub free_pages: u64,
     pub reserved_pages: u64,
     pub writing_pages: u64,

@@ -3,13 +3,14 @@ use std::ops::{Deref, DerefMut};
 
 use super::error::KvManagerError;
 use super::identity::{ReclamationLease, RelocationLease, StepLease, SubmissionLease};
-use super::protocol::BackendArenaRegistration;
+use super::protocol::{BackendArenaRegistration, PhysicalResidencePolicy};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RuntimeClass {
     pub(super) class_id: u16,
     pub(super) page_payload_bytes: u64,
     pub(super) retention: RetentionKind,
+    pub(super) physical_residence: PhysicalResidencePolicy,
     pub(super) window_tokens: Option<u64>,
     pub(super) period_blocks: Option<u64>,
     pub(super) chunk_tokens: Option<u64>,
@@ -19,7 +20,7 @@ pub(super) struct RuntimeClass {
 }
 
 impl RuntimeClass {
-    pub(super) fn candidate_start(self, previous_boundary: u64) -> u64 {
+    pub(super) fn semantic_candidate_start(self, previous_boundary: u64) -> u64 {
         match self.retention {
             RetentionKind::Full => 0,
             RetentionKind::Sliding => previous_boundary.saturating_sub(self.history_tokens()),
@@ -27,11 +28,25 @@ impl RuntimeClass {
         }
     }
 
-    pub(super) fn retained_start(self, target_boundary: u64) -> u64 {
+    pub(super) fn semantic_start(self, target_boundary: u64) -> u64 {
         match self.retention {
             RetentionKind::Full => 0,
             RetentionKind::Sliding => target_boundary.saturating_sub(self.history_tokens()),
             RetentionKind::Chunked => self.epoch_start_for_boundary(target_boundary),
+        }
+    }
+
+    pub(super) fn resident_candidate_start(self, previous_boundary: u64) -> u64 {
+        match self.physical_residence {
+            PhysicalResidencePolicy::Compiled => self.semantic_candidate_start(previous_boundary),
+            PhysicalResidencePolicy::RequestLifetime => 0,
+        }
+    }
+
+    pub(super) fn resident_start(self, target_boundary: u64) -> u64 {
+        match self.physical_residence {
+            PhysicalResidencePolicy::Compiled => self.semantic_start(target_boundary),
+            PhysicalResidencePolicy::RequestLifetime => 0,
         }
     }
 
@@ -61,6 +76,9 @@ impl RuntimeClass {
     }
 
     pub(super) fn temporal_address(self, ordinal: u64) -> (u64, u64) {
+        if self.physical_residence == PhysicalResidencePolicy::RequestLifetime {
+            return (ordinal, 0);
+        }
         match self.retention {
             RetentionKind::Full => (ordinal, 0),
             RetentionKind::Sliding => {
@@ -85,6 +103,10 @@ impl RuntimeClass {
 
     pub(super) fn contains_page(self, page_id: u32) -> bool {
         page_id >= self.first_page_id && page_id - self.first_page_id < self.backend.page_count
+    }
+
+    pub(super) fn uses_compiled_residence(self) -> bool {
+        self.physical_residence == PhysicalResidencePolicy::Compiled
     }
 
     pub(super) fn backend_index(self, page_id: u32) -> Result<u64, KvManagerError> {

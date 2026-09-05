@@ -4,11 +4,11 @@ use super::{
     BlockDomain, CANONICAL_PAGE_TOKENS, CanonicalKvManager, CensusWork, ClassLayoutProgram,
     ClassRoot, CompiledKvClass, CompiledKvPlan, FIRST_POOL_EPOCH, ForkedRequest, KvManagerError,
     ManagerConfig, ManagerStats, MaterializedRequestView, NEXT_ENGINE_EPOCH, Ordering, PageCounts,
-    PageLease, PagePhase, PageState, PersistentRootEntries, PersistentTokenTable, PrefixLease,
-    PrefixLookupHint, PrefixSemanticKey, ReclamationLease, RequestForkItem, RequestLease,
-    RequestSnapshot, RequestState, RequestView, RetentionKind, RetirementProgram, RootEntry,
-    RootLayout, SnapshotLease, SnapshotPage, StepLease, SubmissionLease, TokenView, TokenViewQuery,
-    ViewVersion,
+    PageLease, PagePhase, PageState, PersistentRootEntries, PersistentTokenTable,
+    PhysicalResidencePolicy, PrefixLease, PrefixLookupHint, PrefixSemanticKey, ReclamationLease,
+    RequestForkItem, RequestLease, RequestSnapshot, RequestState, RequestView, RetentionKind,
+    RetirementProgram, RootEntry, RootLayout, SnapshotLease, SnapshotPage, StepLease,
+    SubmissionLease, TokenView, TokenViewQuery, ViewVersion,
 };
 #[cfg(test)]
 use super::{DeviceKvEntry, HotPathInstrumentation};
@@ -32,7 +32,27 @@ impl CanonicalKvManager {
         config: ManagerConfig,
         backends: &[BackendArenaRegistration],
     ) -> Result<Self, KvManagerError> {
-        let classes = compile_manager_profile(plan, config, backends)?;
+        Self::new_with_residence(plan, config, backends, PhysicalResidencePolicy::Compiled)
+    }
+
+    /// Creates a manager with an explicit physical-residence policy.
+    ///
+    /// The policy never changes compiler-authored attention visibility. The
+    /// `RequestLifetime` variant exists as a same-semantics baseline for
+    /// attributing benefits to compiled physical reclamation.
+    ///
+    /// # Errors
+    ///
+    /// Returns the same validation errors as [`Self::new`], and rejects a
+    /// residence policy that is incompatible with the compiled address
+    /// program.
+    pub fn new_with_residence(
+        plan: &CompiledKvPlan,
+        config: ManagerConfig,
+        backends: &[BackendArenaRegistration],
+        physical_residence: PhysicalResidencePolicy,
+    ) -> Result<Self, KvManagerError> {
+        let classes = compile_manager_profile(plan, config, backends, physical_residence)?;
         let total_pages = classes.iter().try_fold(0_usize, |total, class| {
             total
                 .checked_add(
@@ -287,6 +307,24 @@ impl CanonicalKvManager {
         boundary: u64,
         roots: &[ClassRoot],
     ) -> Result<Box<[SnapshotPage]>, KvManagerError> {
+        self.materialize_roots(boundary, None, roots)
+    }
+
+    pub(super) fn materialize_attention_roots(
+        &self,
+        previous_boundary: u64,
+        target_boundary: u64,
+        roots: &[ClassRoot],
+    ) -> Result<Box<[SnapshotPage]>, KvManagerError> {
+        self.materialize_roots(target_boundary, Some(previous_boundary), roots)
+    }
+
+    fn materialize_roots(
+        &self,
+        boundary: u64,
+        attention_previous_boundary: Option<u64>,
+        roots: &[ClassRoot],
+    ) -> Result<Box<[SnapshotPage]>, KvManagerError> {
         if roots.len() != self.classes.len() {
             return Err(KvManagerError::Invariant("snapshot class cardinality"));
         }
@@ -305,13 +343,23 @@ impl CanonicalKvManager {
                     "materialized token begin",
                     "empty materialized token span",
                 )?;
-                let visible_begin = if root.is_dense() {
-                    class.retained_start(boundary)
+                let semantic_start = if root.is_dense() {
+                    class.semantic_start(boundary)
                 } else {
                     0
+                };
+                let required_start =
+                    attention_previous_boundary.map_or(semantic_start, |previous| {
+                        if root.is_dense() {
+                            class.semantic_candidate_start(previous)
+                        } else {
+                            0
+                        }
+                    });
+                if token_end <= required_start {
+                    continue;
                 }
-                .max(token_begin)
-                .min(token_end);
+                let visible_begin = semantic_start.max(token_begin).min(token_end);
                 pages.push(SnapshotPage {
                     class_id: entry.class_id,
                     backend_domain: entry.backend_domain,
@@ -495,6 +543,16 @@ impl CanonicalKvManager {
         &mut self,
         items: &[RequestForkItem],
     ) -> Result<Box<[ForkedRequest]>, KvManagerError> {
+        if self
+            .classes
+            .iter()
+            .copied()
+            .any(|class| !class.uses_compiled_residence())
+        {
+            return Err(KvManagerError::UnsupportedProfile(
+                "request fork requires compiled physical residence",
+            ));
+        }
         if items.is_empty() {
             return Err(KvManagerError::EmptyBatch);
         }
@@ -708,6 +766,8 @@ impl CanonicalKvManager {
                 if let Some(instrumentation) = work.as_deref_mut() {
                     instrumentation.classes += 1;
                 }
+                let resident_pages =
+                    u64::from(class.backend.page_count) - counts.free - counts.exhausted;
                 ArenaStats {
                     engine_epoch: self.engine_epoch,
                     pool_epoch: self.pool_epoch,
@@ -716,6 +776,10 @@ impl CanonicalKvManager {
                     pool_id: class.backend.pool_id,
                     page_count: class.backend.page_count,
                     first_page_id: class.first_page_id,
+                    page_payload_bytes: class.page_payload_bytes,
+                    physical_residence: class.physical_residence,
+                    resident_pages,
+                    resident_bytes: resident_pages * class.page_payload_bytes,
                     free_pages: counts.free,
                     reserved_pages: counts.reserved,
                     writing_pages: counts.writing,
@@ -1034,6 +1098,7 @@ fn compile_manager_profile(
     plan: &CompiledKvPlan,
     config: ManagerConfig,
     backends: &[BackendArenaRegistration],
+    physical_residence: PhysicalResidencePolicy,
 ) -> Result<Vec<RuntimeClass>, KvManagerError> {
     if plan.page_tokens != CANONICAL_PAGE_TOKENS {
         return Err(KvManagerError::UnsupportedProfile(
@@ -1071,6 +1136,17 @@ fn compile_manager_profile(
     }
     validate_backend_registrations(backends)?;
 
+    if physical_residence == PhysicalResidencePolicy::RequestLifetime
+        && plan
+            .classes
+            .iter()
+            .any(|class| class.spec.retention == RetentionKind::Chunked)
+    {
+        return Err(KvManagerError::UnsupportedProfile(
+            "request-lifetime residence does not support resettable classes",
+        ));
+    }
+
     let mut next_page_id = 1_u64;
     let mut runtime = Vec::with_capacity(plan.classes.len());
     for (index, (class, class_layout)) in plan.classes.iter().zip(&layout.classes).enumerate() {
@@ -1093,6 +1169,9 @@ fn compile_manager_profile(
             .ok_or(KvManagerError::ArithmeticOverflow(
                 "class page payload bytes",
             ))?;
+        page_payload_bytes
+            .checked_mul(u64::from(backend.page_count))
+            .ok_or(KvManagerError::ArithmeticOverflow("class arena bytes"))?;
         if u64::from(backend.page_count) < validated.minimum_pages {
             return Err(KvManagerError::InvalidConfiguration);
         }
@@ -1108,6 +1187,7 @@ fn compile_manager_profile(
             class_id,
             page_payload_bytes,
             retention: class.spec.retention,
+            physical_residence,
             window_tokens: validated.window_tokens,
             period_blocks: validated.period_blocks,
             chunk_tokens: validated.chunk_tokens,

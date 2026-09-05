@@ -653,6 +653,16 @@ impl CanonicalKvManager {
         snapshot: &RequestSnapshot,
         key: PrefixSemanticKey,
     ) -> Result<Vec<RootEntry>, KvManagerError> {
+        if self
+            .classes
+            .iter()
+            .copied()
+            .any(|class| !class.uses_compiled_residence())
+        {
+            return Err(KvManagerError::UnsupportedProfile(
+                "Prefix publication requires compiled physical residence",
+            ));
+        }
         if key.boundary == 0 || !key.boundary.is_multiple_of(self.page_tokens) {
             return Err(KvManagerError::PrefixBoundaryNotPageAligned);
         }
@@ -677,7 +687,7 @@ impl CanonicalKvManager {
                     "Prefix publication after token relocation is not implemented",
                 ));
             }
-            let first = class.retained_start(key.boundary) / self.page_tokens;
+            let first = class.semantic_start(key.boundary) / self.page_tokens;
             let expected_len = usize::try_from(end.saturating_sub(first))
                 .map_err(|_| KvManagerError::ArithmeticOverflow("prefix root length"))?;
             if root.entries.len() != expected_len {

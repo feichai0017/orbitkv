@@ -7,9 +7,11 @@ use std::time::{Duration, Instant};
 use orbitkv::{
     AttentionStatePlanInput, AttentionStateSpec, AttentionStateStorage, CacheSharingPolicy,
     EngineAppendIntent, EngineCompletionEvidence, EnginePublicationEvidence, EngineRequestId,
-    HfRetentionOptions, RuntimeSession, compile_attention_state_plan, compile_hf_runtime_manifest,
-    compile_plan, compile_runtime_manifest,
-    kv_manager::{BackendArenaRegistration, CanonicalKvManager, ManagerConfig},
+    EngineRetirementEvidence, HfRetentionOptions, RuntimeSession, compile_attention_state_plan,
+    compile_hf_runtime_manifest, compile_plan, compile_runtime_manifest,
+    kv_manager::{
+        BackendArenaRegistration, CanonicalKvManager, ManagerConfig, PhysicalResidencePolicy,
+    },
     plan::RetentionKind,
 };
 use orbitkv_executor::{
@@ -106,7 +108,11 @@ fn prepare_model_run(config_bytes: &[u8], prompt_len: usize) -> PreparedModelRun
     }
 }
 
-fn prepare_hybrid_policy_run(config: &DecoderConfig, prompt_len: usize) -> PreparedModelRun {
+fn prepare_hybrid_policy_run(
+    config: &DecoderConfig,
+    prompt_len: usize,
+    physical_residence: PhysicalResidencePolicy,
+) -> PreparedModelRun {
     let input = hybrid_policy_input(config);
     let manifest = compile_runtime_manifest(input.clone()).unwrap();
     let manager_plan = compile_plan(
@@ -117,16 +123,17 @@ fn prepare_hybrid_policy_run(config: &DecoderConfig, prompt_len: usize) -> Prepa
     )
     .unwrap();
     let registrations = hybrid_registrations();
-    let manager = CanonicalKvManager::new(
+    let manager = CanonicalKvManager::new_with_residence(
         &manager_plan,
         ManagerConfig {
             maximum_requests: 1,
             maximum_operations: 4,
             maximum_prefixes: 1,
             maximum_reclamations: PAGE_COUNT * 2,
-            maximum_step_tokens: 64,
+            maximum_step_tokens: u32::try_from(prompt_len.max(64)).unwrap(),
         },
         &registrations,
+        physical_residence,
     )
     .unwrap();
     let mut session = RuntimeSession::new(manager, CacheSharingPolicy::RequestPrivate);
@@ -241,7 +248,17 @@ fn complete(
         .confirm_publication(&EnginePublicationEvidence {
             publication_id: publication.publication_id,
             mirror_cleanup_confirmed: true,
-            reclamation_receipts: Box::default(),
+            reclamation_receipts: publication
+                .retirements
+                .iter()
+                .map(|retirement| EngineRetirementEvidence {
+                    page: retirement.page,
+                    backend_domain: retirement.backend_domain,
+                    acknowledged: true,
+                    backend_index: retirement.backend_index,
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
         })
         .unwrap();
 }
@@ -279,6 +296,115 @@ fn greedy_token(logits: &[f32], vocabulary_size: usize) -> u32 {
             .0,
     )
     .unwrap()
+}
+
+fn compile_hybrid_decoder(
+    config: &DecoderConfig,
+    run: &PreparedModelRun,
+    model_dir: &std::path::Path,
+    prompt_tokens: usize,
+) -> (CompiledDecoder, Duration) {
+    let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(0).unwrap();
+    let stream = context.new_stream().unwrap();
+    let compile = DecoderCompileConfig {
+        maximum_query_tokens: prompt_tokens,
+        representative_prefill_tokens: prompt_tokens,
+        maximum_batch_size: 1,
+        maximum_context_pages: usize::try_from(PAGE_COUNT).unwrap(),
+        representative_context_pages: run
+            .attention
+            .iter()
+            .map(|attention| attention.page_indices.len())
+            .max()
+            .unwrap(),
+        search_graphs: search_graphs(),
+        search_seed: 7,
+    };
+    let started = Instant::now();
+    let decoder = CompiledDecoder::compile(
+        config,
+        DecoderWeightLayout {
+            qkv_bias: true,
+            qk_norm: false,
+        },
+        &run.executor_plan,
+        &run.arenas,
+        &stream,
+        &[model_dir.join("model.safetensors")],
+        compile,
+    )
+    .unwrap();
+    (decoder, started.elapsed())
+}
+
+struct ResidenceArmResult {
+    prefill_token_ids: Box<[u32]>,
+    prefill_logits: Box<[f32]>,
+    decode_token_ids: Box<[u32]>,
+    decode_logits: Box<[f32]>,
+    sliding_resident_pages: u64,
+    sliding_resident_bytes: u64,
+}
+
+fn execute_residence_arm(
+    policy: PhysicalResidencePolicy,
+    run: &mut PreparedModelRun,
+    decoder: &mut CompiledDecoder,
+    prompt: &[u32],
+    positions: &[u32],
+    compile_elapsed: Duration,
+) -> ResidenceArmResult {
+    let before = run.session.arena_stats();
+    let execute_started = Instant::now();
+    let output = execute_step(
+        "residence ablation prefill",
+        decoder,
+        prompt,
+        positions,
+        &run.attention,
+        &run.prepared,
+    );
+    let prefill_elapsed = execute_started.elapsed();
+    let next_token = *output.token_ids.last().expect("prefill token");
+    complete(&mut run.session, &run.prepared, &run.arenas, 1);
+    let target_boundary = u64::try_from(prompt.len() + 1).unwrap();
+    let (decode_attention, decode) = prepare_decode_step(run, target_boundary);
+    let decode_classes = decoder_class_steps(&decode, &decode_attention);
+    let decode_started = Instant::now();
+    let decode_output = decoder
+        .execute_with_logits(DecoderStep {
+            tokens: &[next_token],
+            positions: &[u32::try_from(prompt.len()).unwrap()],
+            classes: &decode_classes,
+        })
+        .unwrap();
+    let decode_elapsed = decode_started.elapsed();
+    complete(&mut run.session, &decode, &run.arenas, 2);
+    let after = run.session.arena_stats();
+    let sliding = after
+        .iter()
+        .find(|arena| arena.class_id == 1)
+        .expect("Sliding arena");
+    eprintln!(
+        "residence ablation: policy={policy:?} compile_seconds={:.3} prefill_seconds={:.6} decode_seconds={:.6} sliding_resident_pages={} sliding_resident_bytes={} total_resident_pages={} total_resident_bytes={} free_before={} free_after={}",
+        compile_elapsed.as_secs_f64(),
+        prefill_elapsed.as_secs_f64(),
+        decode_elapsed.as_secs_f64(),
+        sliding.resident_pages,
+        sliding.resident_bytes,
+        after.iter().map(|arena| arena.resident_pages).sum::<u64>(),
+        after.iter().map(|arena| arena.resident_bytes).sum::<u64>(),
+        before.iter().map(|arena| arena.free_pages).sum::<u64>(),
+        after.iter().map(|arena| arena.free_pages).sum::<u64>(),
+    );
+    ResidenceArmResult {
+        prefill_token_ids: output.token_ids,
+        prefill_logits: output.logits,
+        decode_token_ids: decode_output.token_ids,
+        decode_logits: decode_output.logits,
+        sliding_resident_pages: sliding.resident_pages,
+        sliding_resident_bytes: sliding.resident_bytes,
+    }
 }
 
 fn assert_greedy_output(
@@ -564,7 +690,8 @@ fn released_dense_checkpoint_executes_multi_class_policy_plumbing() {
     let config_bytes = std::fs::read(model_dir.join("config.json")).unwrap();
     let config = DecoderConfig::from_json(&config_bytes).unwrap();
     let prompt = [1_u32, 2, 3, 4];
-    let mut prepared_run = prepare_hybrid_policy_run(&config, prompt.len());
+    let mut prepared_run =
+        prepare_hybrid_policy_run(&config, prompt.len(), PhysicalResidencePolicy::Compiled);
     assert_eq!(prepared_run.executor_plan.classes.len(), 2);
     assert_eq!(prepared_run.attention.len(), 2);
     assert_eq!(prepared_run.prepared.steps()[0].classes.len(), 2);
@@ -654,4 +781,71 @@ fn released_dense_checkpoint_executes_multi_class_policy_plumbing() {
         &prepared_run.arenas,
         2,
     );
+}
+
+#[test]
+#[ignore = "requires ORBITKV_MODEL_DIR, a CUDA device, and FlashInfer headers"]
+fn released_checkpoint_compares_compiled_and_request_lifetime_residence() {
+    let model_dir = model_directory();
+    let config_bytes = std::fs::read(model_dir.join("config.json")).unwrap();
+    let config = DecoderConfig::from_json(&config_bytes).unwrap();
+    let prompt_tokens = 80_usize;
+    let prompt = (1..=u32::try_from(prompt_tokens).unwrap()).collect::<Vec<_>>();
+    let positions = (0..u32::try_from(prompt_tokens).unwrap()).collect::<Vec<_>>();
+    let mut runs = [
+        (
+            PhysicalResidencePolicy::Compiled,
+            prepare_hybrid_policy_run(&config, prompt_tokens, PhysicalResidencePolicy::Compiled),
+        ),
+        (
+            PhysicalResidencePolicy::RequestLifetime,
+            prepare_hybrid_policy_run(
+                &config,
+                prompt_tokens,
+                PhysicalResidencePolicy::RequestLifetime,
+            ),
+        ),
+    ];
+    assert_eq!(runs[0].1.executor_plan, runs[1].1.executor_plan);
+    assert_eq!(runs[0].1.attention, runs[1].1.attention);
+    assert!(
+        runs[0]
+            .1
+            .arenas
+            .iter()
+            .zip(&runs[1].1.arenas)
+            .all(|(left, right)| {
+                left.class_id == right.class_id
+                    && left.backend_domain == right.backend_domain
+                    && left.page_count == right.page_count
+                    && left.backend_base_index == right.backend_base_index
+            })
+    );
+    let (mut decoder, compile_elapsed) =
+        compile_hybrid_decoder(&config, &runs[0].1, &model_dir, prompt_tokens);
+    eprintln!(
+        "residence ablation: one-time compile_seconds={:.3}",
+        compile_elapsed.as_secs_f64(),
+    );
+    let mut outputs = Vec::new();
+
+    for (policy, run) in &mut runs {
+        outputs.push(execute_residence_arm(
+            *policy,
+            run,
+            &mut decoder,
+            &prompt,
+            &positions,
+            compile_elapsed,
+        ));
+    }
+
+    assert_eq!(outputs[0].prefill_token_ids, outputs[1].prefill_token_ids);
+    assert_eq!(outputs[0].prefill_logits, outputs[1].prefill_logits);
+    assert_eq!(outputs[0].decode_token_ids, outputs[1].decode_token_ids);
+    assert_eq!(outputs[0].decode_logits, outputs[1].decode_logits);
+    assert_eq!(outputs[0].sliding_resident_pages, 5);
+    assert_eq!(outputs[1].sliding_resident_pages, 6);
+    assert_eq!(outputs[0].sliding_resident_bytes, 491_520);
+    assert_eq!(outputs[1].sliding_resident_bytes, 589_824);
 }

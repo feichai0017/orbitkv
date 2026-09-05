@@ -211,9 +211,12 @@ impl CanonicalKvManager {
                 return Err(KvManagerError::RequestBusy);
             }
             let class = self.runtime_class(item.class_id)?;
-            if class.retention != RetentionKind::Full || !item.policy.full_evacuation {
+            if class.retention != RetentionKind::Full
+                || !class.uses_compiled_residence()
+                || !item.policy.full_evacuation
+            {
                 return Err(KvManagerError::UnsupportedProfile(
-                    "relocation requires Full-class full evacuation",
+                    "relocation requires compiled Full-class full evacuation",
                 ));
             }
             let snapshot = self.request_snapshot(item.request)?;

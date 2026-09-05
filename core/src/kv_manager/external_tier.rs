@@ -66,6 +66,16 @@ impl CanonicalKvManager {
         request: RequestLease,
         expected: SnapshotLease,
     ) -> Result<Box<[PinnedSnapshotPage]>, KvManagerError> {
+        if self
+            .classes
+            .iter()
+            .copied()
+            .any(|class| !class.uses_compiled_residence())
+        {
+            return Err(KvManagerError::UnsupportedProfile(
+                "external export requires compiled physical residence",
+            ));
+        }
         let state = self.request(request)?;
         if state.released || state.quarantined {
             return Err(KvManagerError::RequestUnavailable);
