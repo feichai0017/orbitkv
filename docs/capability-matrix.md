@@ -22,6 +22,7 @@ recorded source closure.
 | --- | --- | --- |
 | Attention-state compiler | L1 + L2 | Compiles typed attention state or Retention IR into a fingerprinted `RuntimeManifest` |
 | KV manager | L2 | Owns page allocation, generations, snapshots, Prefix/COW, token placement, retirement, ACK, and reuse |
+| Physical-residence ablation | L2 + narrow L3 mechanism check | `Compiled` and explicit `RequestLifetime` policies preserve attention semantics while changing only addressing and physical retirement; conservative mode is diagnostic and rejects incompatible lifecycle surfaces |
 | RuntimeSession | L2 | Presents transactional engine operations without exposing manager capabilities |
 | External KV tier transactions | L2 host | Export/restore run through an object-safe async transport contract; a real-byte host adapter verifies compact partial tails, per-page checksums, deletion, cross-session restore, and unobserved/ambiguous fault mapping; Mooncake/NIXL and hybrid restore remain open |
 | Executor plan | L2 | Compiles a manifest directly into Full, Sliding, Full+Sliding, or exact Chunked attention classes |
@@ -60,7 +61,7 @@ addresses stable, but it is not evidence of zero-copy KV writes.
 | State shape | Compiler and manager | Executor lowering | Real-device engine status |
 | --- | --- | --- | --- |
 | Full token KV | Host-tested, including shared Prefix, COW, disposition, and relocation | Implemented, including CUDA relocation | Minimal released-checkpoint prefill/decode and packed relocation/decode pass |
-| Sliding token KV | Host-tested periodic placement, retirement, ACK, and reuse | Implemented | Current architecture unqualified |
+| Sliding token KV | Host-tested periodic placement, retirement, ACK, and reuse; same-semantics request-lifetime baseline | Implemented; CSR geometry matches across residence policies | Synthetic-policy H20 boundary-crossing output parity; no released Sliding model qualification |
 | Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Manifest-driven layer binding and independent per-class inputs/arenas; synthetic-policy H20 plumbing passes | Released hybrid-model execution unqualified |
 | Exact Chunked token KV | Host-tested resettable epoch lifecycle | Implemented | Current architecture unqualified |
 | Full latent KV | Host-tested component-aware core lifecycle | Rejected until a matching Luminal kernel contract exists | Unqualified |
@@ -98,10 +99,12 @@ Historical files under `results/**` may preserve such identities as provenance.
 The current architecture has same-source L3 device correctness for paged
 attention and token relocation, plus a narrow L4 released-checkpoint correctness
 closure for Full token KV. Full+Sliding has a synthetic-policy device plumbing
-smoke, while Sliding, Full+Sliding, and exact Chunked still lack independent
-released-model qualification. No matched L5 benefit experiment
-has completed, so there is no current speedup, capacity, memory-saving,
-production, or complete-replacement claim. A future benefit statement must
+smoke. A same-graph boundary-crossing prefill+decode check produced identical
+output while reducing the Sliding class from 6 pages / 589,824 bytes to 5 pages
+/ 491,520 bytes. Sliding, Full+Sliding, and exact Chunked still lack independent
+released-model qualification. No repeated matched L5 experiment has completed,
+so there is no current throughput, production-capacity, production, or
+complete-replacement claim. A future benefit statement must
 compare the same model, weights, dtype, kernels, batching policy, request trace,
 device budget, and output semantics, and must report both successful and failed
 gates.

@@ -10,7 +10,7 @@ operator passes all applicable layers.
 | State or attention family | Compiler and manager | Executor | Complete model | Benefit |
 | --- | --- | --- | --- | --- |
 | Full MHA/GQA token KV | Implemented and host-tested | Paged attention, Prefix/COW, writes, relocation | Narrow released-checkpoint H20 closure | No lifetime-management L5 result |
-| Sliding Window token KV | Periodic placement, retirement, ACK, and generation reuse host-tested | CSR/window lowering implemented | Not independently device-qualified | Unproven |
+| Sliding Window token KV | Periodic placement, retirement, ACK, and generation reuse host-tested; request-lifetime residence provides a same-semantics baseline | CSR/window lowering implemented; compiled/baseline CSR geometry is host-matched | Synthetic-policy boundary-crossing H20 prefill+decode check | 1-page / 98,304-byte reusable in-arena payload reduction after one 80-token prefill plus decode; no allocator/latency/throughput claim |
 | Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests; a synthetic-policy H20 plumbing smoke passes | No released hybrid-architecture checkpoint run | Unproven |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
@@ -26,6 +26,14 @@ policy whose window exceeds the test context. This proves device plumbing, not
 that a released hybrid-architecture checkpoint executes correctly.
 Unknown or incomplete contracts fail closed instead of silently becoming Full
 attention.
+
+The manager exposes `PhysicalResidencePolicy::RequestLifetime` only through an
+explicit constructor. It preserves compiler-authored Sliding token
+dispositions and execution visibility while retaining physical pages through
+request release. Host tests prove identical attention geometry and token
+semantics, different physical residency, generation reuse in compiled mode,
+and a fixed-capacity admission difference. Chunked reset, Prefix publication,
+external export, and relocation reject this diagnostic baseline.
 
 ## External tiers
 
@@ -44,7 +52,9 @@ and final drain is still required before the repository is a production server.
 
 ## Evidence interpretation
 
-The child CUDA Graph result demonstrates a narrow dispatch optimization. It does
-not validate the central compiler claim. That claim requires a same-executor
-ablation between conservative and compiled retention, followed by a matched
-end-to-end comparison with a tuned reference engine.
+The child CUDA Graph result demonstrates a narrow dispatch optimization. The
+new same-graph H20 residence check establishes output equivalence and a small
+physical-memory difference across one Sliding boundary. It is not yet the L5
+claim: that still requires repeated matched workloads with admission, latency,
+throughput, allocator-work, and final-drain gates, followed by comparison with a
+tuned reference engine.

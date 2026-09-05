@@ -66,6 +66,23 @@ reference implementation and fault oracle, not a performance backend.
 7. RuntimeSession publishes new request heads, retires unreachable generations,
    validates cleanup acknowledgement, and only then permits reuse.
 
+## Physical-residence ablation
+
+`CanonicalKvManager::new` executes the compiler-authored physical plan by
+default. `new_with_residence` additionally accepts a backend-neutral
+`PhysicalResidencePolicy` for controlled experiments:
+
+- `Compiled` uses generated address and retirement programs.
+- `RequestLifetime` keeps the same attention visibility and Luminal kernels,
+  but uses append-only addresses and retains physical pages until request
+  release.
+
+The conservative policy is an attribution baseline, not a serving mode. It
+fails closed for resettable Chunked layouts, relocation, Prefix publication,
+and external export. Prepared attention views omit old physically resident
+pages that are unnecessary for the current query range, so the executor sees
+the same CSR geometry while underlying page identities may differ.
+
 The execution control path is in-process Rust. The optional vLLM HTTP frontend
 uses a process-local IPC protocol adapter because that crate is coupled to its
 `EngineCoreClient`; no Python process or upstream inference HTTP hop is present.
@@ -110,3 +127,10 @@ The multi-class graph path has additionally executed a short synthetic
 Full/Sliding policy on H20 using released dense weights. Because the checkpoint
 was not trained with that policy and the window did not cross its boundary, this
 is plumbing evidence rather than hybrid-model correctness or benefit evidence.
+A separate same-graph H20 mechanism check crossed a 64-token Sliding boundary
+with an 80-token prefill and a following decode. Compiled and request-lifetime
+residence produced byte-identical logits and token IDs in both phases; after
+decode, the Sliding arena held 5 pages / 491,520 bytes versus 6 pages / 589,824
+bytes for the conservative baseline. This is a single synthetic-policy
+execution and establishes only physical-attribution plumbing, not throughput,
+capacity at workload scale, or a released hybrid-model benefit.

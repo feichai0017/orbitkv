@@ -96,6 +96,9 @@ Ring layouts, append-only layouts, resettable arenas, and page-level COW are
 compiled physical choices, not separate product modes. Token-level management
 is always present: the manager tracks logical token placement and disposition,
 then relocates only when the state semantics and cost policy permit it.
+For attribution testing, an explicit request-lifetime residence baseline keeps
+the same attention visibility but delays physical reclamation; normal
+construction always uses the compiled policy.
 
 Current compiled token lifetimes include:
 
@@ -144,9 +147,11 @@ full-attention checkpoint completes prefill and one decode step with
 OrbitKV-owned pages, and a token-relocation transaction copies K/V on one CUDA
 stream, waits on an event, publishes the packed view, and serves a following
 paged decode. A separate fixed-signature child-graph experiment records a narrow
-matched dispatch improvement. It does not establish a compiled-lifetime, serving
-throughput, capacity, memory-saving, production-readiness, or complete-replacement
-claim.
+matched dispatch improvement. A same-graph H20 mechanism check also crossed one
+synthetic Sliding boundary with byte-identical prefill/decode outputs and reduced
+the Sliding arena from 6 pages / 589,824 bytes to 5 pages / 491,520 bytes. This
+is not yet a repeated workload, serving-throughput, production-capacity,
+production-readiness, or complete-replacement claim.
 
 `results/**` contains only compact reviewed evidence directly relevant to the
 current architecture. Removed historical archives remain recoverable from Git

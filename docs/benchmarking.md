@@ -33,6 +33,24 @@ conservative: retain token state until request release
 compiled:     use the manifest-derived retirement and placement program
 ```
 
+The implementation exposes these as `PhysicalResidencePolicy::RequestLifetime`
+and `PhysicalResidencePolicy::Compiled`. The default constructor always selects
+`Compiled`; the conservative variant is available only through
+`CanonicalKvManager::new_with_residence`. Both arms preserve the same compiled
+attention visibility. The executor must compare CSR geometry and output values,
+not physical page IDs, because correct physical plans may bind different pages.
+
+A first H20 mechanism check now compiles one Luminal graph and executes both
+arms at an 80-token boundary plus one decode under an in-memory interleaved
+Full/Sliding policy. Token IDs and logits matched exactly in both phases; after
+decode, compiled residence used 5 active Sliding pages / 491,520 bytes and
+request-lifetime residence used 6 / 589,824 bytes. This is qualification of the
+ablation seam, not a statistically matched performance result. Raw repeated
+workload measurements still belong under `.qualification/` until the promotion
+rule below passes.
+The byte counts are live manager payload within equal preallocated arenas; they
+represent reusable admission headroom, not an immediate CUDA allocator release.
+
 ## Harness
 
 `tools/run_matched_serving.py` starts candidate and baseline sequentially in an
