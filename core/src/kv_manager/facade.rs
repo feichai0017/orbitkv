@@ -1081,6 +1081,17 @@ fn compile_manager_profile(
             .find(|backend| backend.class_id == class_id)
             .ok_or(KvManagerError::InvalidConfiguration)?;
         let validated = validate_class_program(class, class_layout)?;
+        let page_payload_bytes = class
+            .spec
+            .bytes_per_token_per_layer
+            .checked_mul(
+                u64::try_from(class.spec.layers.len())
+                    .map_err(|_| KvManagerError::ArithmeticOverflow("class layer count"))?,
+            )
+            .and_then(|bytes| bytes.checked_mul(plan.page_tokens))
+            .ok_or(KvManagerError::ArithmeticOverflow(
+                "class page payload bytes",
+            ))?;
         if u64::from(backend.page_count) < validated.minimum_pages {
             return Err(KvManagerError::InvalidConfiguration);
         }
@@ -1094,6 +1105,7 @@ fn compile_manager_profile(
         }
         runtime.push(RuntimeClass {
             class_id,
+            page_payload_bytes,
             retention: class.spec.retention,
             window_tokens: validated.window_tokens,
             period_blocks: validated.period_blocks,

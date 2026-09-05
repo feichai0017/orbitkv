@@ -64,6 +64,15 @@ Chunked attention. Each must exercise its actual visibility boundary, retirement
 trace, generation reuse, and final drain. Latent and fixed state require their
 own component-aware kernels and transactions.
 
+## R4.5: External KV tiers
+
+The immutable export transaction is host-tested. Next implement the symmetric
+restore transaction: allocate fresh manager-owned local generations, expand
+external logical-page records into executor iovecs, prove transport and device
+completion, and atomically install a restored request or Prefix snapshot. Add
+Mooncake and NIXL adapters only at this transport boundary. Then qualify remote
+lease races, backend deletion, node failure, and prefill/decode handoff.
+
 ## R5: Measure benefit
 
 Compare against an unchanged reference engine using the same model, weights,

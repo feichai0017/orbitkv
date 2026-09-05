@@ -12,6 +12,7 @@ use crate::kv_manager::{
 mod control;
 mod evidence;
 mod execution_view;
+mod external_tier;
 mod prefix_release;
 mod relocation;
 
@@ -26,6 +27,12 @@ use evidence::{
     engine_retirements, flatten_evidence, validate_abort_evidence, validate_reclamation_evidence,
 };
 pub use execution_view::{EnginePreparedBatchView, EnginePreparedRequestView};
+use external_tier::PendingExternalExport;
+pub use external_tier::{
+    ExternalExportAbortEvidence, ExternalExportCopy, ExternalExportPlan, ExternalExportReceipt,
+    ExternalObjectKey, ExternalReplica, ExternalReplicaDeletionEvidence, ExternalReplicaPage,
+    ExternalReplicaTarget, ExternalTierError, ExternalTransferCompletion, ExternalTransferId,
+};
 pub use prefix_release::{EnginePrefixPublishReleasePlan, EnginePublishedPrefixRelease};
 use relocation::PendingRelocation;
 pub use relocation::{
@@ -398,6 +405,7 @@ enum RequestPhase {
     RelocationPrepared(EngineRelocationId),
     RelocationSubmitted(EngineRelocationId),
     RelocationPublicationPending(EngineRelocationId),
+    ExternalExportPending(ExternalTransferId),
     Quarantined,
 }
 
@@ -414,6 +422,7 @@ impl RequestPhase {
             Self::RelocationPrepared(_) => "relocation prepared",
             Self::RelocationSubmitted(_) => "relocation submitted",
             Self::RelocationPublicationPending(_) => "relocation publication pending",
+            Self::ExternalExportPending(_) => "external export pending",
             Self::Quarantined => "quarantined",
         }
     }
@@ -497,6 +506,7 @@ pub struct RuntimeSession {
     next_prefix_sequence: u64,
     next_control_sequence: u64,
     next_relocation_sequence: u64,
+    next_external_sequence: u64,
     poisoned: Option<&'static str>,
     #[cfg(any(test, feature = "test-support"))]
     test_fault: Option<RuntimeSessionTestFault>,
@@ -510,7 +520,10 @@ pub struct RuntimeSession {
     prefix_index: BTreeMap<crate::kv_manager::PrefixSemanticKey, EnginePrefixId>,
     controls: BTreeMap<EngineControlId, PendingControl>,
     relocations: BTreeMap<EngineRelocationId, PendingRelocation>,
+    external_exports: BTreeMap<ExternalTransferId, PendingExternalExport>,
+    external_replicas: BTreeMap<ExternalObjectKey, ExternalReplica>,
     maximum_controls: usize,
+    maximum_external_operations: usize,
 }
 
 impl RuntimeSession {
@@ -538,6 +551,7 @@ impl RuntimeSession {
             next_prefix_sequence: 1,
             next_control_sequence: 1,
             next_relocation_sequence: 1,
+            next_external_sequence: 1,
             poisoned: None,
             #[cfg(any(test, feature = "test-support"))]
             test_fault: None,
@@ -551,7 +565,10 @@ impl RuntimeSession {
             prefix_index: BTreeMap::new(),
             controls: BTreeMap::new(),
             relocations: BTreeMap::new(),
+            external_exports: BTreeMap::new(),
+            external_replicas: BTreeMap::new(),
             maximum_controls,
+            maximum_external_operations: maximum_controls,
         }
     }
 
@@ -1466,18 +1483,5 @@ const fn was_issued(sequence: u64, next_sequence: u64) -> bool {
 }
 
 #[cfg(test)]
-mod tests {
-    use crate::kv_manager::TailActionKind;
-
-    use super::*;
-
-    include!("runtime_session/tests/core.rs");
-    mod chunked;
-    include!("runtime_session/tests/control.rs");
-    include!("runtime_session/tests/prefix_release.rs");
-    mod full_sliding_prefix;
-    mod latent;
-    mod sliding;
-    include!("runtime_session/tests/retirement.rs");
-    mod relocation;
-}
+#[path = "runtime_session/tests/mod.rs"]
+mod tests;

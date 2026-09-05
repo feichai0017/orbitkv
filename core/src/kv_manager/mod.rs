@@ -10,6 +10,7 @@ use crate::plan::{
 mod append_transaction;
 mod arena;
 mod error;
+mod external_tier;
 mod facade;
 mod identity;
 mod manager_state;
@@ -42,6 +43,7 @@ use test_model::{
 };
 
 pub use error::KvManagerError;
+pub(crate) use external_tier::PinnedSnapshotPage;
 pub use identity::{
     PageLease, PrefixLease, PrefixSemanticKey, ReclamationLease, RelocationLease, RequestLease,
     SnapshotLease, StepLease, SubmissionLease, ViewVersion,

@@ -34,6 +34,11 @@ identity. The optional vLLM frontend reuses OpenAI HTTP, tokenizer, chat
 template, and streaming code through a narrow Add/Abort transport. It does not
 import a second scheduler, KV allocator, or device runtime.
 
+External storage providers own byte movement and storage resources only. The
+core pins generation-checked source pages, validates exact durable receipts,
+and catalogs immutable replicas. External metadata cannot create, retire, or
+reuse an OrbitKV page. See [external-kv.md](external-kv.md).
+
 ## Native data flow
 
 1. The compiler turns model attention semantics into a fingerprinted

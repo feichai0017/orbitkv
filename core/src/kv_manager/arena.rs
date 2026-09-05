@@ -8,6 +8,7 @@ use super::protocol::BackendArenaRegistration;
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RuntimeClass {
     pub(super) class_id: u16,
+    pub(super) page_payload_bytes: u64,
     pub(super) retention: RetentionKind,
     pub(super) window_tokens: Option<u64>,
     pub(super) period_blocks: Option<u64>,

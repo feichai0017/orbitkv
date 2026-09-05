@@ -56,6 +56,14 @@ reducing matched fixed-step decode wall time by 8.3% over 20 iterations and
 5.8% over a 100-iteration confirmation. This is a narrow batch-one result, not
 a throughput or general model-speed claim.
 
+The core also has a backend-neutral external-export transaction for immutable
+request snapshots. It pins exact local page generations, emits logical-page
+copy records, requires per-page durable receipts and a monotonic completion
+frontier, then publishes an external replica catalog entry. This is the intended
+integration boundary for transports such as Mooncake or NIXL. Restore into new
+local pages and concrete transport adapters are not implemented yet; see
+[external KV tiers](docs/external-kv.md).
+
 ## Compilation and execution
 
 ```text

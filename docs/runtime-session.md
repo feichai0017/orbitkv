@@ -66,6 +66,15 @@ generation. The Execution Frontier proves that already-submitted device work no
 longer references it. A generation becomes reusable only after both frontiers
 advance and the executor acknowledges the exact retirement certificate.
 
+## External replicas
+
+External export is a RuntimeSession transaction, not a raw storage callback. It
+pins the exact immutable snapshot pages, blocks mutation of that request during
+the initial export, validates exact durable copy receipts and a monotonic
+completion point, and only then publishes an external replica catalog entry. A
+failed receipt retains pins; abort requires proof that the backend was
+unobserved. Concrete stores and transports never receive page-lifecycle authority.
+
 Host tests cover ordering, stale identities, hostile evidence, abort,
 quarantine, Prefix/COW, class-specific retirement, relocation, and repeated
 generation reuse. The executor now gates relocation success evidence on a real
