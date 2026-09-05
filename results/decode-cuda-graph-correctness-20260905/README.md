@@ -55,7 +55,7 @@ mismatch fails closed and requires recapture.
 - maximum context pages: 64
 - search candidates per bucket: 2
 - search seed: 7
-- parent source before evidence commit: `2cdd578` plus the captured-execution fix
+- parent test source: `c0643ce`
 - Luminal fork: `281d1062ff482e998580d5313b6436f88797c123`
 
 ## Reproduction
