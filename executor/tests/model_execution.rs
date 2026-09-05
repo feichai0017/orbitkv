@@ -2,7 +2,7 @@
 #![forbid(unsafe_code)]
 
 use std::path::PathBuf;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use orbitkv::{
     CacheSharingPolicy, EngineAppendIntent, EngineCompletionEvidence, EnginePublicationEvidence,
@@ -164,6 +164,66 @@ fn greedy_token(logits: &[f32], vocabulary_size: usize) -> u32 {
             .0,
     )
     .unwrap()
+}
+
+fn median_duration(samples: &mut [Duration]) -> Duration {
+    samples.sort_unstable();
+    samples[samples.len() / 2]
+}
+
+fn benchmark_decode_dispatch(
+    decoder: &mut CompiledDecoder,
+    step: DecoderStep<'_>,
+    expected_token: u32,
+) {
+    let iterations = std::env::var("ORBITKV_DECODE_BENCH_ITERATIONS")
+        .ok()
+        .and_then(|value| value.parse().ok())
+        .unwrap_or(20usize);
+    let mut eager = Vec::with_capacity(iterations);
+    let mut replay = Vec::with_capacity(iterations);
+    for iteration in 0..iterations {
+        if iteration.is_multiple_of(2) {
+            benchmark_eager_decode(decoder, step, expected_token, &mut eager);
+            benchmark_replay_decode(decoder, step, expected_token, &mut replay);
+        } else {
+            benchmark_replay_decode(decoder, step, expected_token, &mut replay);
+            benchmark_eager_decode(decoder, step, expected_token, &mut eager);
+        }
+    }
+    let eager_median = median_duration(&mut eager);
+    let replay_median = median_duration(&mut replay);
+    eprintln!(
+        "matched decode dispatch: iterations={iterations} eager_median_us={:.1} outer_graph_median_us={:.1} ratio={:.3}",
+        eager_median.as_secs_f64() * 1e6,
+        replay_median.as_secs_f64() * 1e6,
+        replay_median.as_secs_f64() / eager_median.as_secs_f64(),
+    );
+}
+
+fn benchmark_eager_decode(
+    decoder: &mut CompiledDecoder,
+    step: DecoderStep<'_>,
+    expected_token: u32,
+    samples: &mut Vec<Duration>,
+) {
+    let started = Instant::now();
+    let output = decoder.execute(step).unwrap();
+    samples.push(started.elapsed());
+    assert_eq!(output.token_ids.as_ref(), &[expected_token]);
+    assert!(decoder.has_captured_decode());
+}
+
+fn benchmark_replay_decode(
+    decoder: &mut CompiledDecoder,
+    step: DecoderStep<'_>,
+    expected_token: u32,
+    samples: &mut Vec<Duration>,
+) {
+    let started = Instant::now();
+    let output = decoder.replay_decode(step).unwrap();
+    samples.push(started.elapsed());
+    assert_eq!(output.token_ids.as_ref(), &[expected_token]);
 }
 
 fn execute_step(
@@ -336,6 +396,16 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     );
     assert_eq!(third_output.token_ids.len(), 1);
     assert_eq!(decoder.active_bucket_index(), 0);
+    benchmark_decode_dispatch(
+        &mut decoder,
+        DecoderStep {
+            tokens: &[third_token],
+            positions: &[u32::try_from(prompt.len() + 2).unwrap()],
+            write_slots: &third_decode.steps()[0].classes[0].write_slots,
+            attention: &third_attention,
+        },
+        third_output.token_ids[0],
+    );
     complete(
         &mut prepared_run.session,
         &third_decode,

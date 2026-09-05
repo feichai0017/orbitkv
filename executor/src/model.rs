@@ -547,6 +547,7 @@ impl CompiledDecoder {
             return Err(DecoderError::CaptureRequiresDecode);
         }
         let signature = DecodeCaptureSignature::from_step(step)?;
+        self.captured_decode = None;
         self.execute_graph(step)?;
         let token_ids = self.read_sampled_tokens(1)?;
         let execution = self.runtime.capture_execution(&self.graph.dyn_map)?;
@@ -681,11 +682,18 @@ impl CompiledDecoder {
             self.cache_slots,
             self.vocabulary_size,
         )?;
-        // A normal runtime execution may replan library resources or switch
-        // buckets. Drop any graph that captured pointers into those resources
-        // before allowing that mutation. Invalid steps return above without
-        // disturbing an otherwise reusable capture.
-        self.captured_decode = None;
+        // A same-signature eager execution keeps all captured pointers and
+        // library plans valid. Prefill or changed decode geometry may replan
+        // resources or switch buckets, so drop the old graph before allowing
+        // that mutation. Invalid steps return above without disturbing an
+        // otherwise reusable capture.
+        let preserves_capture = self.captured_decode.as_ref().is_some_and(|captured| {
+            DecodeCaptureSignature::from_step(step)
+                .is_ok_and(|signature| signature == captured.signature)
+        });
+        if !preserves_capture {
+            self.captured_decode = None;
+        }
         self.bind_step_inputs(step)?;
         self.runtime.execute(&self.graph.dyn_map);
         Ok(())
