@@ -52,8 +52,10 @@ pub use runtime_session::{
     EngineTokenDispositionBatchItem, EngineTokenDispositionUpdate, EngineTokenView,
     EngineTokenViewQuery, ExecutionEvidence, ExternalExportAbortEvidence, ExternalExportCopy,
     ExternalExportPlan, ExternalExportReceipt, ExternalObjectKey, ExternalReplica,
-    ExternalReplicaDeletionEvidence, ExternalReplicaPage, ExternalReplicaTarget, ExternalTierError,
-    ExternalTransferCompletion, ExternalTransferId, RuntimeSession, RuntimeSessionError,
+    ExternalReplicaDeletionEvidence, ExternalReplicaPage, ExternalReplicaTarget,
+    ExternalRestoreAbortEvidence, ExternalRestoreCopy, ExternalRestorePlan, ExternalRestoreReceipt,
+    ExternalRestoreTicket, ExternalTierError, ExternalTierStats, ExternalTransferCompletion,
+    ExternalTransferId, RuntimeSession, RuntimeSessionError,
 };
 pub use state_checkpoint::{
     StateCheckpointError, StateCheckpointPool, StateCompletionReceipt, StateCopyIntent,

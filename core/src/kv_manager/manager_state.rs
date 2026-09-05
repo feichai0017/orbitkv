@@ -98,6 +98,7 @@ pub(super) struct ReclamationState {
 pub struct CanonicalKvManager {
     pub(super) engine_epoch: u64,
     pub(super) pool_epoch: u64,
+    pub(super) plan_fingerprint: [u8; 32],
     pub(super) page_tokens: u64,
     pub(super) classes: Box<[RuntimeClass]>,
     pub(super) maximum_step_tokens: u64,

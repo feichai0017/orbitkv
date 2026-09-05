@@ -75,6 +75,7 @@ impl CanonicalKvManager {
             pool_epoch: engine_epoch
                 .checked_add(FIRST_POOL_EPOCH)
                 .ok_or(KvManagerError::EngineEpochExhausted)?,
+            plan_fingerprint: plan.fingerprint_digest(),
             page_tokens: plan.page_tokens,
             classes: classes.into_boxed_slice(),
             maximum_step_tokens: u64::from(config.maximum_step_tokens),

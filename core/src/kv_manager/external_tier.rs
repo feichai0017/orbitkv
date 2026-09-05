@@ -19,6 +19,27 @@ pub(crate) struct PinnedSnapshotPage {
 }
 
 impl CanonicalKvManager {
+    pub(crate) const fn plan_fingerprint(&self) -> [u8; 32] {
+        self.plan_fingerprint
+    }
+
+    pub(crate) fn external_payload_bytes(
+        &self,
+        class_id: u16,
+        valid_token_count: u32,
+    ) -> Result<u64, KvManagerError> {
+        if valid_token_count == 0 || u64::from(valid_token_count) > self.page_tokens {
+            return Err(KvManagerError::InvalidBatchRange);
+        }
+        self.runtime_class(class_id)?
+            .page_payload_bytes
+            .checked_mul(u64::from(valid_token_count))
+            .and_then(|bytes| bytes.checked_div(self.page_tokens))
+            .ok_or(KvManagerError::ArithmeticOverflow(
+                "external page payload bytes",
+            ))
+    }
+
     pub(crate) fn validate_external_completion(
         &self,
         completion_domain: u64,
@@ -77,13 +98,8 @@ impl CanonicalKvManager {
             if state.reader_pins == u32::MAX {
                 return Err(KvManagerError::ReaderCountOverflow(page.page.page_id));
             }
-            let payload_bytes = class
-                .page_payload_bytes
-                .checked_mul(u64::from(page.valid_token_count))
-                .and_then(|bytes| bytes.checked_div(self.page_tokens))
-                .ok_or(KvManagerError::ArithmeticOverflow(
-                    "external page payload bytes",
-                ))?;
+            let payload_bytes =
+                self.external_payload_bytes(page.class_id, page.valid_token_count)?;
             pinned.push(PinnedSnapshotPage {
                 page: page.page,
                 class_id: page.class_id,

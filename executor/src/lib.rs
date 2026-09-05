@@ -9,7 +9,10 @@ pub mod model;
 mod relocation;
 pub use relocation::{RelocationBatch, RelocationCopy, RelocationRequest};
 mod external_tier;
-pub use external_tier::{ExternalTransferBatch, ExternalTransferSpan, KvComponent};
+pub use external_tier::{
+    ExternalRestoreBatch, ExternalRestoreSpan, ExternalTransferBatch, ExternalTransferSpan,
+    KvComponent,
+};
 
 use orbitkv::{
     AttentionStateBackend, EngineBatchPlan, EngineBindEvidence, EngineCopyEvidence,
