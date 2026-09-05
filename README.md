@@ -26,7 +26,8 @@ orbitkv/
 │   ├── examples/            generic attention-state inputs
 │   └── fixtures/            generic compiler fixtures
 ├── executor/
-│   ├── src/                 native execution-plan lowering
+│   ├── src/                 native plan lowering and external byte transport
+│   ├── tests/               executor and transport protocol closures
 │   └── luminal/             pinned Luminal fork (Git submodule)
 ├── server/                  local async Engine and request contracts
 ├── docs/                    architecture and qualification boundary
@@ -63,8 +64,11 @@ frontier, then publishes an external replica catalog entry. This is the intended
 integration boundary for transports such as Mooncake or NIXL. The symmetric
 request-private restore transaction allocates fresh OrbitKV-owned pages,
 validates external copy receipts, and publishes through the native append
-lifecycle. Concrete transport adapters and external-system qualification remain
-open; see [external KV tiers](docs/external-kv.md).
+lifecycle. An object-safe async transport contract and a host-memory reference
+adapter now execute the plans against real byte buffers, including compact
+partial tails, checksums, deletion, and deterministic unobserved/ambiguous
+faults. Mooncake/NIXL adapters and external-system qualification remain open;
+see [external KV tiers](docs/external-kv.md).
 
 ## Compilation and execution
 
@@ -79,8 +83,9 @@ RuntimeManifest
         v
 ExecutorPlan: attention classes and physical metadata
         |
-        v
-Luminal graph + kernels
+        +--> Luminal graph + kernels (local execution)
+        |
+        +--> ExternalKvTransport (tier movement)
         |
         v
 completion evidence -> RuntimeSession publication and acknowledgement

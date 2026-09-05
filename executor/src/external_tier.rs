@@ -7,7 +7,7 @@ use orbitkv::{
 
 use crate::{AttentionClass, ExecutorArena, ExecutorError, ExecutorPlan, arena_for};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd)]
 pub enum KvComponent {
     Key,
     Value,
@@ -49,6 +49,7 @@ pub struct ExternalRestoreSpan {
     pub destination_backend_domain: u16,
     pub destination_tensor_offset: u64,
     pub bytes: u64,
+    pub expected_checksum: [u8; 32],
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -292,6 +293,7 @@ fn expand_restore_copy(
                     .checked_mul(page_bytes)
                     .ok_or(ExecutorError::SlotOverflow)?,
                 bytes,
+                expected_checksum: copy.expected_checksum,
             });
             source_offset = source_offset
                 .checked_add(bytes)

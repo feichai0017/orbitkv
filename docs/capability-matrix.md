@@ -23,7 +23,7 @@ recorded source closure.
 | Attention-state compiler | L1 + L2 | Compiles typed attention state or Retention IR into a fingerprinted `RuntimeManifest` |
 | KV manager | L2 | Owns page allocation, generations, snapshots, Prefix/COW, token placement, retirement, ACK, and reuse |
 | RuntimeSession | L2 | Presents transactional engine operations without exposing manager capabilities |
-| External KV tier transactions | L2 host | Export pins immutable snapshots and publishes durable replicas; request-private Full-token-KV restore allocates fresh manager-owned pages and reuses native append/submission/publication; executor expands both directions into K/V iovecs; hybrid restore and concrete transports remain open |
+| External KV tier transactions | L2 host | Export/restore run through an object-safe async transport contract; a real-byte host adapter verifies compact partial tails, per-page checksums, deletion, cross-session restore, and unobserved/ambiguous fault mapping; Mooncake/NIXL and hybrid restore remain open |
 | Executor plan | L2 | Compiles a manifest directly into Full, Sliding, Full+Sliding, or exact Chunked attention classes |
 | Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page and packed-page decode pass; Luminal never allocates or recycles pages |
 | Token relocation executor | L3 | Lowers manager-authored moves to per-layer K/V byte ranges, performs stream-ordered D2D copies, and exposes success evidence only after a CUDA event |
@@ -87,8 +87,10 @@ feature. Reclamation behavior follows compiled semantics:
 ## Removed surfaces
 
 The active product intentionally has no compatibility tree, Python runtime, C
-ABI, packaged engine target, numbered wire contract, generic adapter framework,
-or second page allocator. These are breaking removals, not deprecated aliases.
+ABI, packaged engine target, numbered wire contract, general plugin framework,
+or second page allocator. It has one narrow external byte-transport contract;
+this does not grant adapters KV lifecycle authority. These are breaking removals,
+not deprecated aliases.
 Historical files under `results/**` may preserve such identities as provenance.
 
 ## Current claim boundary

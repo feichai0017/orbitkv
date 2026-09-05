@@ -13,7 +13,7 @@ core/                   compile visibility and own the KV lifecycle
         | prepared pages, copies, views, retirement rules
         v
 executor/               Luminal graph compilation and device execution
-        | completion evidence
+        | local or external completion evidence
         v
 core/                   publish, retire, acknowledge, reuse
 ```
@@ -40,6 +40,13 @@ and catalogs immutable replicas. Restore allocates fresh local generations and
 uses the native append/submission/publication transaction. External metadata
 cannot create, retire, or reuse an OrbitKV page. See
 [external-kv.md](external-kv.md).
+
+`executor::transport::ExternalKvTransport` is the single object-safe async data
+plane seam. It accepts only executor-lowered tensor spans and returns checksums
+computed from moved bytes plus confirmed completion evidence. Failures are
+classified as `Unobserved` or `Ambiguous`, mapping respectively to safe abort or
+fail-stop quarantine in `RuntimeSession`. The included host-memory adapter is a
+reference implementation and fault oracle, not a performance backend.
 
 ## Native data flow
 
@@ -69,7 +76,8 @@ uses a process-local IPC protocol adapter because that crate is coupled to its
 core/
   src/                    compiler, manager, RuntimeSession, checkpoint pool
 executor/
-  src/                    OrbitKV-to-Luminal plan lowering
+  src/                    OrbitKV-to-Luminal lowering and transport contract
+  tests/                  real-byte reference transport closures
   luminal/                complete pinned compiler/executor fork
 server/
   src/                    local Engine, semantic requests, optional HTTP adapter
