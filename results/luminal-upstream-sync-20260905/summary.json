@@ -1,0 +1,27 @@
+{
+  "schema": "orbitkv.luminal-upstream-sync",
+  "status": "passed",
+  "qualification": "compatibility_and_narrow_fixed_step",
+  "source": {
+    "parent_base_commit": "b14a50f",
+    "fork_merge_commit": "9b8ac26243bae5bc5c37fb56ee3eb6554a05e7bc",
+    "upstream_commit": "c28a9fb07ac122c1c897588fd83147cfa2f9bcc6"
+  },
+  "accelerator": {
+    "name": "NVIDIA H20",
+    "compute_capability": "9.0"
+  },
+  "matched_decode": {
+    "iterations_per_path": 20,
+    "eager_median_us": 4662.4,
+    "child_graph_median_us": 4435.4,
+    "replay_over_eager_ratio": 0.951,
+    "wall_time_reduction_percent": 4.9
+  },
+  "claims": {
+    "upstream_compatibility": true,
+    "fixed_signature_batch_one_dispatch_benefit": true,
+    "serving_throughput": false,
+    "production_ready": false
+  }
+}
