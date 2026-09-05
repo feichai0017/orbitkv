@@ -508,6 +508,18 @@ impl LayoutProgram {
 impl CompiledKvPlan {
     #[must_use]
     pub fn fingerprint(&self) -> String {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut fingerprint = String::with_capacity(71);
+        fingerprint.push_str("sha256:");
+        for byte in self.fingerprint_digest() {
+            fingerprint.push(char::from(HEX[usize::from(byte >> 4)]));
+            fingerprint.push(char::from(HEX[usize::from(byte & 0x0f)]));
+        }
+        fingerprint
+    }
+
+    #[must_use]
+    pub fn fingerprint_digest(&self) -> [u8; 32] {
         let mut hash = Sha256::new();
         hash.update(self.page_tokens.to_le_bytes());
         hash.update((self.classes.len() as u64).to_le_bytes());
@@ -565,7 +577,7 @@ impl CompiledKvPlan {
                 );
             }
         }
-        format!("sha256:{:x}", hash.finalize())
+        hash.finalize().into()
     }
 
     /// Emits the temporal address and retirement program consumed by a block

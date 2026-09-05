@@ -66,12 +66,12 @@ own component-aware kernels and transactions.
 
 ## R4.5: External KV tiers
 
-The immutable export transaction is host-tested. Next implement the symmetric
-restore transaction: allocate fresh manager-owned local generations, expand
-external logical-page records into executor iovecs, prove transport and device
-completion, and atomically install a restored request or Prefix snapshot. Add
-Mooncake and NIXL adapters only at this transport boundary. Then qualify remote
-lease races, backend deletion, node failure, and prefill/decode handoff.
+Immutable export and symmetric request-private restore are host-tested. Restore
+allocates fresh manager-owned generations, expands external logical pages into
+executor iovecs, validates exact checksums/order, and reuses native append
+publication. Next add Mooncake and NIXL adapters at this transport boundary,
+then qualify remote lease races, backend deletion, node failure, shared Prefix
+restore, and prefill/decode handoff.
 
 ## R5: Measure benefit
 

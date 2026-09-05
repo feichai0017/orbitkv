@@ -60,9 +60,11 @@ The core also has a backend-neutral external-export transaction for immutable
 request snapshots. It pins exact local page generations, emits logical-page
 copy records, requires per-page durable receipts and a monotonic completion
 frontier, then publishes an external replica catalog entry. This is the intended
-integration boundary for transports such as Mooncake or NIXL. Restore into new
-local pages and concrete transport adapters are not implemented yet; see
-[external KV tiers](docs/external-kv.md).
+integration boundary for transports such as Mooncake or NIXL. The symmetric
+request-private restore transaction allocates fresh OrbitKV-owned pages,
+validates external copy receipts, and publishes through the native append
+lifecycle. Concrete transport adapters and external-system qualification remain
+open; see [external KV tiers](docs/external-kv.md).
 
 ## Compilation and execution
 

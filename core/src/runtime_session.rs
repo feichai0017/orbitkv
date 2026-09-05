@@ -27,12 +27,14 @@ use evidence::{
     engine_retirements, flatten_evidence, validate_abort_evidence, validate_reclamation_evidence,
 };
 pub use execution_view::{EnginePreparedBatchView, EnginePreparedRequestView};
-use external_tier::PendingExternalExport;
 pub use external_tier::{
     ExternalExportAbortEvidence, ExternalExportCopy, ExternalExportPlan, ExternalExportReceipt,
     ExternalObjectKey, ExternalReplica, ExternalReplicaDeletionEvidence, ExternalReplicaPage,
-    ExternalReplicaTarget, ExternalTierError, ExternalTransferCompletion, ExternalTransferId,
+    ExternalReplicaTarget, ExternalRestoreAbortEvidence, ExternalRestoreCopy, ExternalRestorePlan,
+    ExternalRestoreReceipt, ExternalRestoreTicket, ExternalTierError, ExternalTierStats,
+    ExternalTransferCompletion, ExternalTransferId,
 };
+use external_tier::{PendingExternalExport, PendingExternalRestore};
 pub use prefix_release::{EnginePrefixPublishReleasePlan, EnginePublishedPrefixRelease};
 use relocation::PendingRelocation;
 pub use relocation::{
@@ -521,9 +523,11 @@ pub struct RuntimeSession {
     controls: BTreeMap<EngineControlId, PendingControl>,
     relocations: BTreeMap<EngineRelocationId, PendingRelocation>,
     external_exports: BTreeMap<ExternalTransferId, PendingExternalExport>,
+    external_restores: BTreeMap<ExternalTransferId, PendingExternalRestore>,
     external_replicas: BTreeMap<ExternalObjectKey, ExternalReplica>,
     maximum_controls: usize,
     maximum_external_operations: usize,
+    maximum_external_replicas: usize,
 }
 
 impl RuntimeSession {
@@ -566,9 +570,11 @@ impl RuntimeSession {
             controls: BTreeMap::new(),
             relocations: BTreeMap::new(),
             external_exports: BTreeMap::new(),
+            external_restores: BTreeMap::new(),
             external_replicas: BTreeMap::new(),
             maximum_controls,
             maximum_external_operations: maximum_controls,
+            maximum_external_replicas: maximum_controls,
         }
     }
 

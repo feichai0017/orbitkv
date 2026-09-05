@@ -23,7 +23,7 @@ recorded source closure.
 | Attention-state compiler | L1 + L2 | Compiles typed attention state or Retention IR into a fingerprinted `RuntimeManifest` |
 | KV manager | L2 | Owns page allocation, generations, snapshots, Prefix/COW, token placement, retirement, ACK, and reuse |
 | RuntimeSession | L2 | Presents transactional engine operations without exposing manager capabilities |
-| External KV export catalog | L2 host | Pins immutable snapshot pages, emits backend-neutral logical-page copy plans, validates durable per-page receipts and completion frontiers, and gates catalog deletion; restore and concrete transports remain open |
+| External KV tier transactions | L2 host | Export pins immutable snapshots and publishes durable replicas; request-private Full-token-KV restore allocates fresh manager-owned pages and reuses native append/submission/publication; executor expands both directions into K/V iovecs; hybrid restore and concrete transports remain open |
 | Executor plan | L2 | Compiles a manifest directly into Full, Sliding, Full+Sliding, or exact Chunked attention classes |
 | Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page and packed-page decode pass; Luminal never allocates or recycles pages |
 | Token relocation executor | L3 | Lowers manager-authored moves to per-layer K/V byte ranges, performs stream-ordered D2D copies, and exposes success evidence only after a CUDA event |

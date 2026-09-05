@@ -74,6 +74,10 @@ the initial export, validates exact durable copy receipts and a monotonic
 completion point, and only then publishes an external replica catalog entry. A
 failed receipt retains pins; abort requires proof that the backend was
 unobserved. Concrete stores and transports never receive page-lifecycle authority.
+Restore into an empty request is the symmetric transaction: the normal append
+allocator selects fresh local pages, an adapter fills only those destinations,
+and exact restore receipts are submitted through the normal binding and
+completion path before the request head becomes visible.
 
 Host tests cover ordering, stale identities, hostile evidence, abort,
 quarantine, Prefix/COW, class-specific retirement, relocation, and repeated
