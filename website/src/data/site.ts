@@ -48,13 +48,13 @@ export const metrics = [
   },
   {
     value: "4",
-    label: "Token lifetime classes",
-    detail: "Full, Sliding, Full+Sliding, and exact Chunked compile into executor plans on the host.",
+    label: "Compiled lifetime profiles",
+    detail: "Full, Sliding, Full+Sliding, and exact Chunked compile into lifecycle and executor plans on the host.",
   },
   {
-    value: "OPEN",
-    label: "Current device qualification",
-    detail: "The new native engine still needs same-source model correctness, stream/event, capacity, and performance runs.",
+    value: "L4 narrow",
+    label: "Model qualification",
+    detail: "One Full checkpoint closes prefill and decode; hybrid models and lifecycle benefit remain open.",
   },
 ];
 
@@ -79,9 +79,15 @@ export const evidenceRows = [
   },
   {
     result: "Luminal fork",
-    value: "Source integrated",
-    contract: "Paged attention accepts external page geometry and CSR metadata without owning allocation.",
-    boundary: "Host compilation does not establish accelerator correctness or throughput.",
+    value: "L3 + narrow L4",
+    contract: "Paged attention consumes OrbitKV page metadata; one released Full checkpoint and child-graph decode run on H20.",
+    boundary: "No hybrid model, continuous-batch, or serving-throughput qualification.",
+  },
+  {
+    result: "External KV transport",
+    value: "L2 host",
+    contract: "Async export, restore, deletion, checksums, partial tails, and ambiguous-failure quarantine move real host bytes.",
+    boundary: "Mooncake, NIXL, remote leases, and network benefit remain open.",
   },
   {
     result: "Rust server boundary",
@@ -90,28 +96,28 @@ export const evidenceRows = [
     boundary: "HTTP endpoints, tokenizer, scheduler, sampling, and tool orchestration remain open.",
   },
   {
-    result: "Historical measurements",
-    value: "Provenance only",
-    contract: "Archived records preserve their exact source, model, hardware, method, and outcome.",
-    boundary: "They do not qualify the current core + Luminal + server architecture.",
+    result: "Current device evidence",
+    value: "4 compact records",
+    contract: "Correctness, failed flattened capture, and narrow child-graph benefit retain their exact environments.",
+    boundary: "No compiler-lifecycle L5 or complete product comparison yet.",
   },
 ];
 
 export const roadmap = [
   {
     state: "NEXT",
-    name: "Close one native model transaction",
-    detail: "Wire RuntimeSession prepare through Luminal forward, sampling, completion, publication, and reuse.",
+    name: "Close a multi-class hybrid graph",
+    detail: "Build every decoder layer from its manifest class and run Full+Sliding through one Luminal runtime.",
   },
   {
     state: "NEXT",
     name: "Build the Rust serving loop",
-    detail: "Add tokenization, continuous batching, cancellation, backpressure, and OpenAI-compatible streaming above the local Engine.",
+    detail: "Connect tokenization, continuous batching, cancellation, RuntimeSession, Luminal, and OpenAI-compatible streaming.",
   },
   {
     state: "THEN",
-    name: "Prove correctness and benefit",
-    detail: "Run matched real-device model tests for each lifetime class before making capacity or performance claims.",
+    name: "Prove compiler and product benefit",
+    detail: "Run conservative-vs-compiled ablation, then use vllm bench serve against tuned SGLang.",
   },
 ];
 
@@ -149,7 +155,25 @@ export const docs = [
   {
     key: "05 / RECORDS",
     name: "Evidence index",
-    detail: "Append-only provenance for historical experiments.",
+    detail: "Compact evidence that directly qualifies the current architecture.",
     href: `${repositoryUrl}/blob/main/results/README.md`,
+  },
+  {
+    key: "06 / COMPONENTS",
+    name: "Components and dependencies",
+    detail: "Owned boundaries and the precise roles of Luminal, vLLM, PegaInfer, Dynamo, Mooncake, and NIXL.",
+    href: `${repositoryUrl}/blob/main/docs/components.md`,
+  },
+  {
+    key: "07 / STATUS",
+    name: "Implementation status",
+    detail: "Compiler, manager, executor, model, and benefit support without overclaiming.",
+    href: `${repositoryUrl}/blob/main/docs/implementation-status.md`,
+  },
+  {
+    key: "08 / BENCHMARKS",
+    name: "Matched serving benchmarks",
+    detail: "Common-client compiler ablation and OrbitKV-versus-SGLang methodology.",
+    href: `${repositoryUrl}/blob/main/docs/benchmarking.md`,
   },
 ];

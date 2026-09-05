@@ -1,95 +1,114 @@
 # Roadmap
 
-The target product is one Rust inference process: OrbitKV owns attention-state
-lifetimes, the Luminal fork compiles and executes model graphs, and the Rust
-server exposes client protocols. Planned work is not a current capability.
+The target product is one Rust inference process: OrbitKV compiles and owns
+attention-state lifetimes, the Luminal fork compiles and executes model graphs,
+and the Rust server schedules requests and exposes client protocols. Planned
+work is not a current capability.
 
 ## Current checkpoint
 
-- The active workspace contains only `core`, `executor`, and `server`.
-- The compatibility tree, C ABI, Python runtime, packaged target, and numbered
-  wire contracts have been removed.
-- `ExecutorPlan` consumes `RuntimeManifest` directly.
-- The Luminal fork accepts externally owned paged-attention metadata.
-- Manager-authored token moves lower to stream-ordered K/V copies and are
-  published only after CUDA event completion.
-- `CompiledDecoder` searches one graph into decode/prefill buckets once, keeps
-  one stable K/V arena, preallocates dynamic inputs, and dispatches later steps
-  by dynamic dimensions.
-- Greedy argmax executes inside that graph; the serving path reads token IDs
-  instead of vocabulary-sized logits.
-- A warmed fixed-signature decode can be captured and replayed as one outer
-  CUDA Graph. Generic and released-checkpoint correctness paths pass on H20;
-  selected child-graph composition has a narrow batch-one matched benefit,
-  while throughput and recapture policy remain open.
-- The server has an async local `Engine` stream/cancellation boundary with no
-  physical-page types. An optional vLLM Rust frontend supplies
-  OpenAI/tokenizer/chat/SSE code through a narrow Add/Abort adapter; a
-  test-engine HTTP closure passes.
-- Compiler, manager, RuntimeSession, and plan lowering have host tests.
-- The async external transport contract has a real-byte host reference adapter
-  with checksum, deletion, partial-tail, and fault-observation tests.
-- A minimal released full-attention checkpoint passes real-device prefill and
-  decode; packed relocation followed by paged decode also passes.
+- `core`, `executor`, and `server` are the only active product layers.
+- `RuntimeManifest` is the shared source of truth for manager and executor plans.
+- OrbitKV owns page allocation, generations, Prefix/COW, token disposition,
+  retirement, publication, and reuse.
+- Full, Sliding, Full+Sliding, and exact Chunked lifetimes compile and pass host
+  lifecycle tests.
+- Luminal consumes manager-authored page metadata, keeps stable K/V arenas,
+  compiles decode/prefill buckets once, samples greedy tokens on device, and can
+  replay fixed-signature decode through child CUDA graphs.
+- One released Full checkpoint has a narrow H20 model closure. The current
+  decoder still rejects multi-class model graphs.
+- External export/restore/delete transactions and an async transport contract
+  move real bytes through a host reference adapter. Production transports and
+  remote leases remain open.
+- The server has a local async `Engine` contract and optional vLLM Rust frontend,
+  but no complete continuous-batching model-backed executable.
+- No experiment yet proves that compiled lifetime management improves admission
+  capacity, memory, tail latency, or end-to-end throughput.
 
-## R1: Complete the native execution transaction
+## R1: Execute a multi-class hybrid graph
 
-Continue connecting the bucketed Luminal graph to the complete RuntimeSession
-lifecycle: prepare, COW copies, KV writes, attention metadata, forward,
-sampling, event recording, completion, publication, retirement acknowledgement,
-and reuse. The Full token-KV path now shares one compiled runtime and persistent
-arena across prefill/decode and performs greedy sampling on device; remaining
-work is richer sampling semantics, scheduler cancellation, batched execution,
-and a unified event envelope for ordinary model steps.
+Remove the single-class restriction from `DecoderGraph`. Build every layer from
+its manifest-assigned class, bind independent persistent arenas and CSR metadata,
+and select Full or Sliding attention parameters per layer. Complete prefill,
+repeated decode, cancellation, publication, retirement, generation reuse, and
+final drain on a released Full+Sliding checkpoint.
 
-## R2: Build the scheduler and API
+This is the first priority because hybrid state is where compiler-derived
+lifetimes differ materially from conservative Full retention.
 
-Implement the concrete local scheduler/engine behind the existing server
-contract: request queues, continuous batching, greedy sampling state,
-cancellation cleanup, and backpressure. Then exercise the optional vLLM Rust
-HTTP/tokenizer/chat/SSE frontend end to end. Extend sampling, logprobs, tool
-parsing, and multimodal fields only as their local semantics become real; the
-adapter rejects them today. Conversation persistence and tool loops remain API
-concerns and must not enter KV ownership.
+## R2: Prove the compiler contribution
 
-## R3: Extend the minimal real-device model path
+Run a same-executor ablation with identical Luminal graphs, kernels, weights,
+dtype, scheduler, request trace, and device budget:
 
-The first released full-attention checkpoint now completes prefill and one
-decode step. Extend this to deterministic reference parity, repeated requests,
-cancellation, final drain, continuous batching, and ordinary-step event
-provenance before claiming a complete engine path.
+```text
+conservative retention  versus  manifest-compiled retention
+```
 
-## R4: Qualify compiled lifetimes
+Measure semantic-live bytes, physical-resident bytes, Retention Amplification,
+admission failures, maximum admitted requests, allocator work, relocation bytes,
+TTFT, TPOT, throughput, and p95/p99 latency. Require output equivalence and final
+drain before interpreting performance.
 
-Run independent end-to-end closures for Full, Sliding, Full+Sliding, and exact
-Chunked attention. Each must exercise its actual visibility boundary, retirement
-trace, generation reuse, and final drain. Latent and fixed state require their
-own component-aware kernels and transactions.
+This is the experiment that can validate the central compiler claim. CUDA Graph
+dispatch speedups are useful but do not substitute for this ablation.
 
-## R4.5: External KV tiers
+## R3: Complete the single-process serving engine
 
-Immutable export and symmetric request-private restore are host-tested. Restore
-allocates fresh manager-owned generations, expands external logical pages into
-executor iovecs, validates exact checksums/order, and reuses native append
-publication. An object-safe async transport trait and host-memory reference
-adapter close real-byte export/restore/deletion and failure-injection paths. Next
-add Mooncake at this boundary, then qualify remote leases and eviction races,
-node failure, shared Prefix restore, and prefill/decode handoff. Add NIXL only
-after the same conformance suite can compare both production transports.
+Implement the concrete coordinator behind the server `Engine` trait: request
+queues, continuous batching, tokenization, sampling state, cancellation,
+backpressure, `RuntimeSession` transactions, Luminal execution, and final drain.
+Exercise the optional vLLM Rust OpenAI/tokenizer/chat/SSE frontend against the
+real model engine rather than its current test engine.
 
-## R5: Measure benefit
+PegaInfer is a useful reference for a small Rust server/model boundary and for a
+full-plus-linear-attention execution loop. It is not a Dynamo integration: its
+current source has no Dynamo, KVBM, or NIXL dependency. Do not copy its
+model-named dispatch or model-owned contiguous KV cache into this architecture.
 
-Compare against an unchanged reference engine using the same model, weights,
-dtype, kernels, batching policy, request trace, and device budget. Report output
-correctness, TTFT, inter-token latency, throughput, tail latency, resident and
-reserved memory, capacity, copy cost, allocator work, and long-running pressure.
-Predeclare pass/fail gates and retain failed runs.
+## R4: Run the product comparison
 
-## R6: Production hardening
+Use `tools/run_matched_serving.py` and one vLLM benchmark client for both
+OrbitKV/Luminal and a tuned stock SGLang. Alternate launch order across an even
+number of epochs and hold model, weights, dtype, request trace, device budget,
+sampling, and concurrency constant. Report correctness separately from TTFT,
+TPOT, ITL, throughput, tail latency, memory, and capacity.
 
-Extend the fixed-step child-graph benefit to realistic token progression,
-multiple context-page geometries, and continuous batches. Add recapture/cache
-policy for changed batch or CSR geometry,
-overlapping streams, bounded queues, failure containment, metrics, tracing,
-soak tests, distributed ownership, release artifacts, and supported-combination
-matrices only after the eager single-device path is closed.
+The same-executor ablation from R2 establishes attribution to the compiler. The
+SGLang comparison establishes product competitiveness. Neither replaces the
+other.
+
+## R5: Add distributed KV tiers
+
+Implement Mooncake first behind `ExternalKvTransport`, reusing the host adapter's
+conformance suite. Then add remote lease epochs, renewal, eviction intent, active
+restore pins, exact deletion acknowledgement, timeout reconciliation, and node
+failure recovery. Add shared Prefix restore and independently qualify Sliding,
+Full+Sliding, and Chunked transfers.
+
+Use Dynamo as an architectural and optional outer-control-plane source: routing,
+events, topology, discovery, and telemetry may feed OrbitKV policy. Do not import
+`kvbm-logical`, Dynamo `KvBlockManager`, lifecycle pins, or another allocator.
+Add NIXL as a transport-only adapter after Mooncake semantics are stable, then
+compare both data planes with identical restore/offload workloads.
+
+## R6: Execute heterogeneous state
+
+Integrate one component-aware heterogeneous model path. The preferred first
+target is Full attention interleaved with recurrent/linear attention and
+convolution state because it exercises token pages and fixed-size checkpoints
+in one transaction. MLA is the alternative path and requires latent/RoPE-aware
+attention kernels. Model configuration—not model-name branches—must drive both
+OrbitKV state compilation and Luminal graph construction.
+
+## R7: Formalize MPSR and harden production
+
+State the Minimum Persistent State Realization objective and constraints
+formally. Prove optimality for bounded-window and exact-chunked subclasses, and
+compare generated plans with a small exact oracle for randomized instances.
+
+Then add graph recapture policy, overlap, bounded queues, authenticated completion
+envelopes, metrics, tracing, crash recovery, soak tests, multi-device placement,
+release artifacts, and a supported-combination matrix. Production claims require
+all applicable correctness, pressure, cancellation, and long-running gates.

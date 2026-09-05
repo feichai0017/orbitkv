@@ -10,7 +10,7 @@ The product has three layers:
 | Layer | Responsibility |
 | --- | --- |
 | `core/` | Attention-state compilation, request and snapshot identity, Prefix/COW, token disposition, physical-page ownership, retirement, acknowledgement, and safe reuse |
-| `executor/` | OrbitKV plan lowering plus the forked Luminal graph compiler and device executor |
+| `executor/` | OrbitKV plan lowering, forked Luminal graph/device execution, and external byte transports |
 | `server/` | Rust API and scheduling boundary; optionally reuses vLLM's Rust OpenAI/tokenizer/chat frontend through a narrow protocol adapter |
 
 OrbitKV is the only KV authority. The executor consumes manager-authored pages
@@ -33,7 +33,7 @@ orbitkv/
 ├── docs/                    architecture and qualification boundary
 ├── tools/                   repository invariants
 ├── website/                 project documentation site
-└── results/                 append-only historical evidence
+└── results/                 compact current evidence only
 ```
 
 The Luminal fork is pinned by the parent repository. Its paged-attention path
@@ -142,20 +142,24 @@ executor also has two same-source real-device correctness closures: a released
 full-attention checkpoint completes prefill and one decode step with
 OrbitKV-owned pages, and a token-relocation transaction copies K/V on one CUDA
 stream, waits on an event, publishes the packed view, and serves a following
-paged decode. These are correctness qualifications, not matched performance
-measurements. OrbitKV therefore still makes no speedup, capacity,
-memory-saving, production-readiness, or complete-replacement claim.
+paged decode. A separate fixed-signature child-graph experiment records a narrow
+matched dispatch improvement. It does not establish a compiled-lifetime, serving
+throughput, capacity, memory-saving, production-readiness, or complete-replacement
+claim.
 
-`results/**` is append-only provenance from earlier experiments. Those records
-retain their exact model, hardware, source, and outcome, but they do not qualify
-the current architecture. See the [Capability Matrix](docs/capability-matrix.md)
-and [Results Index](results/README.md).
+`results/**` contains only compact reviewed evidence directly relevant to the
+current architecture. Removed historical archives remain recoverable from Git
+history. See the [Capability Matrix](docs/capability-matrix.md) and
+[Results Index](results/README.md).
 
 ## Documentation
 
 - [Architecture](docs/architecture.md)
+- [Components and external projects](docs/components.md)
+- [Implementation status](docs/implementation-status.md)
 - [Capability Matrix](docs/capability-matrix.md)
 - [Executor fork and upstream policy](docs/executor-upstream.md)
+- [Matched serving benchmarks](docs/benchmarking.md)
 - [RuntimeSession](docs/runtime-session.md)
 - [State lifetime and reclamation](docs/state-lifecycle.md)
 - [Roadmap](docs/roadmap.md)
