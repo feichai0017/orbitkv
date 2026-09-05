@@ -17,7 +17,11 @@ page indices, query/KV indptrs, and last-page lengths directly. This is a
 source-level integration boundary. Accelerator correctness and throughput are
 not qualified by host compilation alone. The current pin has real-device
 correctness coverage for externally planned block pages, packed relocation,
-and a released-checkpoint prefill/decode path. `CompiledDecoder` builds one
+and a released-checkpoint prefill/decode path. `DecoderGraph` now assigns each
+layer to its manifest class and keeps per-class write slots, CSR metadata,
+context dimensions, and arena geometry. A synthetic interleaved Full/Sliding
+policy completes a short prefill and captured decode on H20; this validates the
+device plumbing, not a released hybrid model. `CompiledDecoder` builds one
 symbolic graph, performs one real search over separate decode and prefill
 buckets, reserves stable-capacity dynamic inputs, and retains one persistent
 K/V arena across every dispatch. The selected plan may update that arena in

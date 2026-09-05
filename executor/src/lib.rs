@@ -306,6 +306,26 @@ impl ExecutorPlan {
         })
     }
 
+    /// Builds one ordered attention batch for every compiled token class.
+    ///
+    /// The returned order is the canonical class-id order shared by
+    /// `PreparedStep::classes` and `DecoderStep::classes`.
+    ///
+    /// # Errors
+    ///
+    /// Propagates validation failures from any individual class without
+    /// returning a partial list.
+    pub fn attention_batches(
+        &self,
+        prepared: &EnginePreparedBatchView,
+    ) -> Result<Box<[AttentionBatch]>, ExecutorError> {
+        self.classes
+            .iter()
+            .map(|class| self.attention_batch(class.class_id, prepared))
+            .collect::<Result<Vec<_>, _>>()
+            .map(Vec::into_boxed_slice)
+    }
+
     /// Lowers manager-selected write and COW destinations to flat token slots.
     /// No page-table state is inferred or retained here.
     ///

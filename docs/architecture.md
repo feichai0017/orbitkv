@@ -54,7 +54,7 @@ reference implementation and fault oracle, not a performance backend.
    `RuntimeManifest`.
 2. The executor derives an `ExecutorPlan` directly from that manifest.
 3. The model executor compiles one symbolic decoder graph into decode and
-   prefill buckets and retains one stable K/V arena. Dynamic input buffers are
+   prefill buckets and retains one stable K/V arena per attention class. Dynamic input buffers are
    allocated to their configured capacities before search.
 4. `RuntimeSession` prepares append, Prefix/COW, relocation, or release work.
 5. The executor updates bounded dynamic inputs, dispatches the matching Luminal
@@ -106,3 +106,7 @@ matched tests improved decode wall time by 5.8-8.3%; broader performance remains
 unqualified. The tree does not yet prove matched output equivalence against a reference engine,
 throughput, capacity, model-backed HTTP execution, cancellation cleanup,
 continuous batching, or long-running behavior.
+The multi-class graph path has additionally executed a short synthetic
+Full/Sliding policy on H20 using released dense weights. Because the checkpoint
+was not trained with that policy and the window did not cross its boundary, this
+is plumbing evidence rather than hybrid-model correctness or benefit evidence.

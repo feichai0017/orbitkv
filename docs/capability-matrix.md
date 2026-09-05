@@ -27,13 +27,13 @@ recorded source closure.
 | Executor plan | L2 | Compiles a manifest directly into Full, Sliding, Full+Sliding, or exact Chunked attention classes |
 | Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page and packed-page decode pass; Luminal never allocates or recycles pages |
 | Token relocation executor | L3 | Lowers manager-authored moves to per-layer K/V byte ranges, performs stream-ordered D2D copies, and exposes success evidence only after a CUDA event |
-| Bucketed model runtime | L4 correctness | One symbolic graph is searched once into decode/prefill executables; `s`, `b`, and `c` have bounded capacities, dynamic inputs are preallocated, and one K/V arena survives prefill plus repeated decode |
+| Bucketed model runtime | L4 correctness | One symbolic graph is searched once into decode/prefill executables; query, batch, and per-class context dimensions have bounded capacities, dynamic inputs are preallocated, and one stable K/V arena per class survives prefill plus repeated decode |
 | Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; narrow matched benefit | Flattened replay failed at +24.9%; selected child-graph composition passed correctness and reduced matched batch-one fixed-step wall time by 8.3% over 20 iterations and 5.8% over 100 iterations; throughput remains unqualified |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | vLLM frontend adapter | L2 protocol tests | Optional pinned Rust frontend dependency; tokenized Add/Abort, request-ID mapping, terminal token translation, and unsupported-field rejection pass host tests |
 | OpenAI-compatible API | L2 HTTP protocol closure | A real HTTP completion smoke passes through tokenizer, Add bridge, a local test `Engine`, event translation, detokenization, and OpenAI JSON; model execution is not part of that smoke |
-| Complete model executor | Narrow L4 correctness closure | A configuration-driven full token-KV checkpoint completes prefill, repeated greedy decode, and OrbitKV publications through one compiled runtime; scheduler and serving integration remain open |
+| Complete model executor | Narrow L4 correctness closure | A configuration-driven Full token-KV checkpoint completes prefill and repeated decode; multi-class Full+Sliding graph construction and a synthetic-policy H20 plumbing smoke pass, but no released hybrid-architecture checkpoint is qualified; scheduler and serving integration remain open |
 
 ## Decoder operator and model boundary
 
@@ -44,7 +44,7 @@ recorded source closure.
 | KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, Prefix/COW lowering, stream-ordered token relocation |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
 | Checkpoint family | Configuration-driven dense decoder with the expected tensor layout; one released full-attention checkpoint has real-device correctness evidence |
-| Not yet executable as complete models | MoE, MLA/latent KV, recurrent or convolution state, quantized weights, multimodal encoders, speculative decoding, and multi-class hybrid decoder graphs |
+| Not yet executable as complete models | MoE, MLA/latent KV, recurrent or convolution state, quantized weights, multimodal encoders, speculative decoding, and device-qualified multi-class hybrid checkpoints |
 
 Core support for a retention policy means its lifecycle can be compiled and
 host-tested. It does not by itself imply that all model operators or the
@@ -61,7 +61,7 @@ addresses stable, but it is not evidence of zero-copy KV writes.
 | --- | --- | --- | --- |
 | Full token KV | Host-tested, including shared Prefix, COW, disposition, and relocation | Implemented, including CUDA relocation | Minimal released-checkpoint prefill/decode and packed relocation/decode pass |
 | Sliding token KV | Host-tested periodic placement, retirement, ACK, and reuse | Implemented | Current architecture unqualified |
-| Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Implemented | Current architecture unqualified |
+| Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Manifest-driven layer binding and independent per-class inputs/arenas; synthetic-policy H20 plumbing passes | Released hybrid-model execution unqualified |
 | Exact Chunked token KV | Host-tested resettable epoch lifecycle | Implemented | Current architecture unqualified |
 | Full latent KV | Host-tested component-aware core lifecycle | Rejected until a matching Luminal kernel contract exists | Unqualified |
 | Recurrent checkpoints | Host-tested independent pool | Not integrated into one model transaction | Unqualified |
@@ -97,8 +97,9 @@ Historical files under `results/**` may preserve such identities as provenance.
 
 The current architecture has same-source L3 device correctness for paged
 attention and token relocation, plus a narrow L4 released-checkpoint correctness
-closure for Full token KV. Sliding, Full+Sliding, and exact Chunked still lack
-independent model-level device qualification. No matched L5 benefit experiment
+closure for Full token KV. Full+Sliding has a synthetic-policy device plumbing
+smoke, while Sliding, Full+Sliding, and exact Chunked still lack independent
+released-model qualification. No matched L5 benefit experiment
 has completed, so there is no current speedup, capacity, memory-saving,
 production, or complete-replacement claim. A future benefit statement must
 compare the same model, weights, dtype, kernels, batching policy, request trace,
