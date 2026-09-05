@@ -18,6 +18,7 @@ move a compact reviewed result here only after its checks pass.
 | `on-device-greedy-correctness-20260904` | Device argmax matches host argmax and the default path returns token IDs rather than vocabulary logits | Greedy only; no sampling-performance claim |
 | `decode-cuda-graph-correctness-20260905` | Stable-input outer-graph replay is correct; flattened capture is 24.9% slower than eager | Retained negative result; no benefit claim |
 | `decode-child-graph-benefit-20260905` | Selected Luminal executables composed as child graphs reduce matched fixed-step batch-one median wall time by 5.8-8.3% in two runs | Narrow dispatch result; not serving throughput or lifecycle benefit |
+| `multi-class-attention-plumbing-20260905` | One released dense checkpoint executes a synthetic alternating Full/Sliding policy through two OrbitKV arenas and one Luminal graph on H20 | Device plumbing only; not released hybrid-model correctness or performance |
 
 The normative current support boundary is the
 [Capability Matrix](../docs/capability-matrix.md). No retained record proves

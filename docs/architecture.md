@@ -103,9 +103,9 @@ replay and a released-checkpoint prefill/capture/replay lifecycle pass on H20.
 The current parent graph preserves Luminal's searched executables as child
 graphs and orders persistent-state D2D epilogues after them. Narrow fixed-step
 matched tests improved decode wall time by 5.8-8.3%; broader performance remains
-unqualified. The tree does not yet prove matched output equivalence against a reference engine,
-throughput, capacity, model-backed HTTP execution, cancellation cleanup,
-continuous batching, or long-running behavior.
+unqualified. The tree does not yet prove matched output equivalence against a
+reference engine, throughput, capacity, model-backed HTTP execution,
+cancellation cleanup, continuous batching, or long-running behavior.
 The multi-class graph path has additionally executed a short synthetic
 Full/Sliding policy on H20 using released dense weights. Because the checkpoint
 was not trained with that policy and the window did not cross its boundary, this

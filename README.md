@@ -43,8 +43,9 @@ allocate or recycle KV pages.
 
 The native decoder compiles one symbolic graph into decode and prefill buckets.
 Both phases share the same runtime, preallocated dynamic inputs, and one
-persistent K/V arena per attention class; requests update only tokens, positions, write slots, CSR metadata,
-and dynamic dimensions before dispatch. Greedy sampling is part of the graph,
+persistent K/V arena per attention class; requests update only tokens, positions,
+write slots, CSR metadata, and dynamic dimensions before dispatch. Greedy
+sampling is part of the graph,
 so the default execution path returns one token ID per query row instead of
 copying vocabulary-sized logits to the host. A fixed-signature decode can also
 be captured as one outer CUDA Graph after warmup. Replay updates the same input

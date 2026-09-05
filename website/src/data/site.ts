@@ -97,8 +97,8 @@ export const evidenceRows = [
   },
   {
     result: "Current device evidence",
-    value: "4 compact records",
-    contract: "Correctness, failed flattened capture, and narrow child-graph benefit retain their exact environments.",
+    value: "5 compact records",
+    contract: "Correctness, multi-class plumbing, failed flattened capture, and narrow child-graph benefit retain their exact environments.",
     boundary: "No compiler-lifecycle L5 or complete product comparison yet.",
   },
 ];
