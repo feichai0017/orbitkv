@@ -11,8 +11,3 @@ dist/
 build/
 *.jsonl
 *.log
-!results/**/qualification/build/
-!results/**/records/epoch-*/*.stderr.log
-!results/**/logs/
-!results/**/logs/epoch-*/
-!results/**/logs/epoch-*/*.stderr.log
