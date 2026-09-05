@@ -20,7 +20,8 @@ server exposes client protocols. Planned work is not a current capability.
   instead of vocabulary-sized logits.
 - A warmed fixed-signature decode can be captured and replayed as one outer
   CUDA Graph. Generic and released-checkpoint correctness paths pass on H20;
-  matched performance and recapture policy are still open.
+  selected child-graph composition has a narrow batch-one matched benefit,
+  while throughput and recapture policy remain open.
 - The server has an async local `Engine` stream/cancellation boundary with no
   physical-page types. An optional vLLM Rust frontend supplies
   OpenAI/tokenizer/chat/SSE code through a narrow Add/Abort adapter; a
@@ -73,9 +74,9 @@ Predeclare pass/fail gates and retain failed runs.
 
 ## R6: Production hardening
 
-Replace the correctness-first flattened outer graph with explicit composition
-of Luminal's selected materialized graphs, then rerun the matched eager gate.
-After that, add recapture/cache policy for changed batch or CSR geometry,
+Extend the fixed-step child-graph benefit to realistic token progression,
+multiple context-page geometries, and continuous batches. Add recapture/cache
+policy for changed batch or CSR geometry,
 overlapping streams, bounded queues, failure containment, metrics, tracing,
 soak tests, distributed ownership, release artifacts, and supported-combination
 matrices only after the eager single-device path is closed.

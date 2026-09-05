@@ -50,9 +50,11 @@ be captured as one outer CUDA Graph after warmup. Replay updates the same input
 allocations before launching the graph; a change to query/batch/context shape
 or CSR indptr geometry is rejected and requires a new capture. The generic
 CUDA capture path and a released-checkpoint prefill/capture/replay lifecycle
-both pass on H20. A matched diagnostic found the first flattened outer graph
-24.9% slower than eager materialized-graph dispatch, so there is currently no
-CUDA Graph speedup claim.
+both pass on H20. The first flattened outer graph was 24.9% slower than eager;
+composing Luminal's selected executables as child graphs reversed that result,
+reducing matched fixed-step decode wall time by 8.3% over 20 iterations and
+5.8% over a 100-iteration confirmation. This is a narrow batch-one result, not
+a throughput or general model-speed claim.
 
 ## Compilation and execution
 

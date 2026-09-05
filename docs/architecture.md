@@ -85,7 +85,10 @@ decode through one precompiled two-bucket runtime. Relocation evidence is gated
 by a real CUDA event; ordinary model-step completion still relies on the
 embedding runtime's completion assertion. Generic stable-input outer-graph
 replay and a released-checkpoint prefill/capture/replay lifecycle pass on H20.
-The
+The current parent graph preserves Luminal's searched executables as child
+graphs and orders persistent-state D2D epilogues after them. Narrow fixed-step
+matched tests improved decode wall time by 5.8-8.3%; broader performance remains
+unqualified. The
 tree does not yet prove matched output equivalence against a reference engine,
 throughput, capacity, model-backed HTTP execution, cancellation cleanup,
 continuous batching, or long-running behavior.
