@@ -44,6 +44,12 @@ production system.
 
 [Decode child-graph benefit diagnostic](decode-child-graph-benefit-20260905/README.md)
 
+| Record | Scope |
+| --- | --- |
+| `luminal-upstream-sync-20260905` | Luminal upstream through `c28a9fb` merged into the OrbitKV fork; host gates, H20 child/D2D tests, released-checkpoint lifecycle, and a 20-iteration matched fixed-step check pass |
+
+[Luminal upstream synchronization diagnostic](luminal-upstream-sync-20260905/README.md)
+
 ## Current-wire Full+Sliding diagnostic
 
 | Record | Scope |

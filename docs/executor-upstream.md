@@ -112,3 +112,12 @@ parent repository:
 
 An upstream update is therefore an explicit compiler-backend upgrade with
 qualification, rather than an automatic floating dependency.
+
+The current fork includes upstream through `c28a9fb`. That update retains
+shape-specific CUDA Graph variants on a shared arena and reclaims CUDA pools
+around graph replacement. After merging it with OrbitKV's external-page and
+child-graph changes, the generic child/D2D tests and the released-checkpoint
+prefill/capture/replay lifecycle passed on H20. A 20-iteration matched check
+remained favorable at 4662.4 us eager versus 4435.4 us child-graph replay
+(ratio 0.951). This is compatibility evidence for the upstream sync, not a new
+broad performance claim.
