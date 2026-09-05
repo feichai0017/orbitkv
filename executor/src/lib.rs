@@ -13,6 +13,12 @@ pub use external_tier::{
     ExternalRestoreBatch, ExternalRestoreSpan, ExternalTransferBatch, ExternalTransferSpan,
     KvComponent,
 };
+pub mod transport;
+pub use transport::{
+    ExternalCopyChecksum, ExternalKvTransport, ExternalTransferOperation, ExternalTransferOutcome,
+    ExternalTransportError, HostFaultPoint, HostMemoryTransport, HostTensorRegion,
+    HostTransportFault, TransferObservation,
+};
 
 use orbitkv::{
     AttentionStateBackend, EngineBatchPlan, EngineBindEvidence, EngineCopyEvidence,

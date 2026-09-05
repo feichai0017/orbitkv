@@ -27,6 +27,8 @@ server exposes client protocols. Planned work is not a current capability.
   OpenAI/tokenizer/chat/SSE code through a narrow Add/Abort adapter; a
   test-engine HTTP closure passes.
 - Compiler, manager, RuntimeSession, and plan lowering have host tests.
+- The async external transport contract has a real-byte host reference adapter
+  with checksum, deletion, partial-tail, and fault-observation tests.
 - A minimal released full-attention checkpoint passes real-device prefill and
   decode; packed relocation followed by paged decode also passes.
 
@@ -69,9 +71,11 @@ own component-aware kernels and transactions.
 Immutable export and symmetric request-private restore are host-tested. Restore
 allocates fresh manager-owned generations, expands external logical pages into
 executor iovecs, validates exact checksums/order, and reuses native append
-publication. Next add Mooncake and NIXL adapters at this transport boundary,
-then qualify remote lease races, backend deletion, node failure, shared Prefix
-restore, and prefill/decode handoff.
+publication. An object-safe async transport trait and host-memory reference
+adapter close real-byte export/restore/deletion and failure-injection paths. Next
+add Mooncake at this boundary, then qualify remote leases and eviction races,
+node failure, shared Prefix restore, and prefill/decode handoff. Add NIXL only
+after the same conformance suite can compare both production transports.
 
 ## R5: Measure benefit
 

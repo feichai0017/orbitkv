@@ -11,13 +11,19 @@ default = []
 cuda = ["dep:luminal", "dep:luminal_cuda_lite", "dep:luminal_nn"]
 
 [dependencies]
+async-trait = "0.1.89"
 luminal = { git = "https://github.com/feichai0017/orbitkv-luminal.git", rev = "9b8ac26243bae5bc5c37fb56ee3eb6554a05e7bc", optional = true }
 luminal_cuda_lite = { git = "https://github.com/feichai0017/orbitkv-luminal.git", rev = "9b8ac26243bae5bc5c37fb56ee3eb6554a05e7bc", optional = true }
 luminal_nn = { git = "https://github.com/feichai0017/orbitkv-luminal.git", rev = "9b8ac26243bae5bc5c37fb56ee3eb6554a05e7bc", optional = true }
 orbitkv = { path = "../core" }
+parking_lot = "0.12.5"
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0.145"
+sha2 = "0.10.9"
 thiserror = "2.0.17"
+
+[dev-dependencies]
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
 
 [lints.rust]
 unsafe_code = "forbid"

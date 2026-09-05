@@ -3025,13 +3025,17 @@ dependencies = [
 name = "orbitkv-executor"
 version = "0.1.0"
 dependencies = [
+ "async-trait",
  "luminal",
  "luminal_cuda_lite",
  "luminal_nn",
  "orbitkv",
+ "parking_lot",
  "serde",
  "serde_json",
+ "sha2",
  "thiserror 2.0.20",
+ "tokio",
 ]
 
 [[package]]

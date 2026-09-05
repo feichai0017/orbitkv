@@ -80,6 +80,29 @@ stored compactly in the external object and restored into the start of the new
 full-stride local page; valid/visible token metadata prevents unwritten bytes
 from entering attention.
 
+## Transport contract and reference backend
+
+The executor exposes one object-safe async `ExternalKvTransport` contract for
+export, restore, and exact replica deletion. It consumes only lowered
+layer/component tensor spans; it cannot allocate, retire, or publish manager
+pages. A successful result contains transport-computed per-page checksums and a
+confirmed completion coordinate. The executor binds those values back to the
+original manager plan before constructing public receipts.
+
+Errors explicitly distinguish `Unobserved` from `Ambiguous`. The former permits
+the matching native transaction to abort; the latter requires quarantine
+because bytes may already have become visible. Dropping an in-flight adapter
+future is ambiguous unless the backend can independently prove non-observation.
+
+`HostMemoryTransport` is the reference adapter. It registers distinct logical
+tensor regions by backend domain, layer, and K/V component; moves real bytes to
+and from compact external objects; computes SHA-256 over each logical page; and
+supports deterministic faults before or after mutation. Cross-session tests
+cover a 17-token partial tail, exact restored bytes, untouched destination
+padding, deletion, safe abort before observation, and quarantine after an
+ambiguous export or restore. This qualifies the protocol on the host, not
+network performance or production durability.
+
 ## Mooncake adapter mapping
 
 Mooncake's Transfer Engine can implement the copy executor:
@@ -127,7 +150,7 @@ to reuse.
 - independent restore qualification for Sliding, Full+Sliding, and Chunked views;
 - remote replica lease renewal and concurrent external eviction races;
 - cross-node request handoff and failure recovery;
-- Mooncake, NIXL, RDMA, TCP, NVMe, or object-store adapter crates;
+- Mooncake, NIXL, RDMA, TCP, NVMe, or object-store production adapter crates;
 - matched offload/restore latency, throughput, capacity, or cost benefit.
 
 Those features must preserve the implemented transaction pattern: OrbitKV
