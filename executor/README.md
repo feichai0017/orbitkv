@@ -31,9 +31,11 @@ ordinary warmup and records the prepared decode work as a caller-owned outer
 CUDA Graph; `replay_decode` updates stable input allocations and launches it.
 The initial contract freezes query/batch/context shape and the CSR indptr
 arrays. Page identities and last-page lengths may change without recapture.
-The Luminal capture primitive has an explicit CUDA regression, but neither that
-test nor the complete released-checkpoint replay was executed in the current
-qualification environment, so no device-correctness or latency claim is made.
+The Luminal capture primitive and the complete released-checkpoint replay path
+pass their H20 correctness tests. A matched diagnostic found flattened replay
+24.9% slower than eager materialized-graph dispatch; composing selected graphs
+as parent/child CUDA Graphs is the next optimization, and no latency benefit is
+claimed yet.
 
 The exact fork delta and upstream update procedure are documented in
 [`docs/executor-upstream.md`](../docs/executor-upstream.md).

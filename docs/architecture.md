@@ -83,9 +83,9 @@ attention, stream-ordered token relocation followed by packed-page decode, and
 a minimal released full-attention checkpoint completing prefill plus repeated
 decode through one precompiled two-bucket runtime. Relocation evidence is gated
 by a real CUDA event; ordinary model-step completion still relies on the
-embedding runtime's completion assertion. Generic stable-input and
-released-checkpoint outer-graph replay tests exist, but have not yet completed
-in the current device qualification environment. The
+embedding runtime's completion assertion. Generic stable-input outer-graph
+replay and a released-checkpoint prefill/capture/replay lifecycle pass on H20.
+The
 tree does not yet prove matched output equivalence against a reference engine,
 throughput, capacity, model-backed HTTP execution, cancellation cleanup,
 continuous batching, or long-running behavior.
