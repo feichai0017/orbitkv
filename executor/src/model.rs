@@ -612,7 +612,8 @@ impl CompiledDecoder {
             return Err(DecoderError::DecodeCaptureMismatch);
         }
         self.bind_step_inputs(step)?;
-        self.runtime.prepare_captured_execution(&self.graph.dyn_map);
+        self.runtime
+            .prepare_captured_execution(&self.graph.dyn_map)?;
         self.captured_decode
             .as_ref()
             .ok_or(DecoderError::MissingDecodeCapture)?
