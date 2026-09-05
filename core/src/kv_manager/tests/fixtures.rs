@@ -194,7 +194,7 @@ fn operation_entries(
                     let page_end = token_begin.saturating_add(manager.page_tokens);
                     let valid_end = delta.target_boundary.min(page_end);
                     let visible_begin = class
-                        .candidate_start(delta.previous_boundary)
+                        .resident_candidate_start(delta.previous_boundary)
                         .max(token_begin);
                     let visible_end = delta.target_boundary.min(page_end);
                     let mut access_flags = DEVICE_KV_ACCESS_READ;
@@ -290,7 +290,7 @@ fn published_entries(manager: &CanonicalKvManager, request: RequestLease) -> Vec
                 .saturating_add(manager.page_tokens)
                 .min(snapshot.boundary);
             let visible_begin = class
-                .retained_start(snapshot.boundary)
+                .resident_start(snapshot.boundary)
                 .max(token_begin)
                 .min(token_end);
             let visible_end = snapshot
