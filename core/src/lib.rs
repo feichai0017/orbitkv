@@ -50,7 +50,10 @@ pub use runtime_session::{
     EngineRequestId, EngineRequestView, EngineRetirement, EngineRetirementEvidence,
     EngineStepAbortEvidence, EngineStepExecutionEvidence, EngineStepPlan, EngineStepPublication,
     EngineTokenDispositionBatchItem, EngineTokenDispositionUpdate, EngineTokenView,
-    EngineTokenViewQuery, ExecutionEvidence, RuntimeSession, RuntimeSessionError,
+    EngineTokenViewQuery, ExecutionEvidence, ExternalExportAbortEvidence, ExternalExportCopy,
+    ExternalExportPlan, ExternalExportReceipt, ExternalObjectKey, ExternalReplica,
+    ExternalReplicaDeletionEvidence, ExternalReplicaPage, ExternalReplicaTarget, ExternalTierError,
+    ExternalTransferCompletion, ExternalTransferId, RuntimeSession, RuntimeSessionError,
 };
 pub use state_checkpoint::{
     StateCheckpointError, StateCheckpointPool, StateCompletionReceipt, StateCopyIntent,

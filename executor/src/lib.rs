@@ -8,6 +8,8 @@ pub mod cuda;
 pub mod model;
 mod relocation;
 pub use relocation::{RelocationBatch, RelocationCopy, RelocationRequest};
+mod external_tier;
+pub use external_tier::{ExternalTransferBatch, ExternalTransferSpan, KvComponent};
 
 use orbitkv::{
     AttentionStateBackend, EngineBatchPlan, EngineBindEvidence, EngineCopyEvidence,
@@ -126,6 +128,8 @@ pub enum ExecutorError {
     SlotOverflow,
     #[error("attention kernel geometry is invalid")]
     InvalidKernelGeometry,
+    #[error("external transfer plan and executor geometry differ")]
+    ExternalTransferMismatch,
 }
 
 impl ExecutorArena {
