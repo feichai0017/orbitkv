@@ -25,8 +25,10 @@ work is not a current capability.
   remote leases remain open.
 - The server has a local async `Engine` contract and optional vLLM Rust frontend,
   but no complete continuous-batching model-backed executable.
-- No experiment yet proves that compiled lifetime management improves admission
-  capacity, memory, tail latency, or end-to-end throughput.
+- A same-semantics conservative/compiled residence seam now passes host
+  correctness, fixed-capacity admission, executor CSR, and one H20
+  boundary-crossing mechanism check. Repeated workload-level admission, tail
+  latency, and throughput benefit remain unproven.
 
 ## R1: Execute a multi-class hybrid graph
 
@@ -43,7 +45,9 @@ lifetimes differ materially from conservative Full retention.
 
 ## R2: Prove the compiler contribution
 
-Run a same-executor ablation with identical Luminal graphs, kernels, weights,
+The backend-neutral `PhysicalResidencePolicy` now provides the two arms and a
+single compiled Luminal graph has executed both on H20 with exact output parity.
+Next run repeated same-executor workloads with identical graphs, kernels, weights,
 dtype, scheduler, request trace, and device budget:
 
 ```text
@@ -55,8 +59,12 @@ admission failures, maximum admitted requests, allocator work, relocation bytes,
 TTFT, TPOT, throughput, and p95/p99 latency. Require output equivalence and final
 drain before interpreting performance.
 
-This is the experiment that can validate the central compiler claim. CUDA Graph
-dispatch speedups are useful but do not substitute for this ablation.
+The first mechanism run reduced the Sliding arena after an 80-token prefill plus
+decode from 6 pages / 589,824 bytes to 5 pages / 491,520 bytes. The host capacity
+test also admits a second request with three pages only in compiled mode. These
+validate the experimental seam; repeated confidence intervals and scheduler-
+level admission/latency measurements are still required for an L5 claim. CUDA
+Graph dispatch speedups remain separate evidence.
 
 ## R3: Complete the single-process serving engine
 

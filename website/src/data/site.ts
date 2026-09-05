@@ -54,7 +54,7 @@ export const metrics = [
   {
     value: "L4 narrow",
     label: "Model qualification",
-    detail: "One Full checkpoint closes prefill and decode; hybrid models and lifecycle benefit remain open.",
+    detail: "One Full checkpoint closes prefill/decode; a synthetic hybrid boundary check shows exact output parity and lower compiled residency.",
   },
 ];
 
@@ -84,6 +84,12 @@ export const evidenceRows = [
     boundary: "No hybrid model, continuous-batch, or serving-throughput qualification.",
   },
   {
+    result: "Residence ablation",
+    value: "L2 + narrow L3",
+    contract: "One compiled Luminal graph gives byte-identical output for compiled and request-lifetime residency across a Sliding boundary.",
+    boundary: "One synthetic-policy prefill; no repeated workload latency, throughput, or production-capacity claim.",
+  },
+  {
     result: "External KV transport",
     value: "L2 host",
     contract: "Async export, restore, deletion, checksums, partial tails, and ambiguous-failure quarantine move real host bytes.",
@@ -97,9 +103,9 @@ export const evidenceRows = [
   },
   {
     result: "Current device evidence",
-    value: "5 compact records",
-    contract: "Correctness, multi-class plumbing, failed flattened capture, and narrow child-graph benefit retain their exact environments.",
-    boundary: "No compiler-lifecycle L5 or complete product comparison yet.",
+    value: "6 compact records",
+    contract: "Correctness, multi-class plumbing, physical-residence attribution, and narrow child-graph benefit retain their exact environments.",
+    boundary: "No repeated compiler-lifecycle L5 or complete product comparison yet.",
   },
 ];
 
@@ -117,7 +123,7 @@ export const roadmap = [
   {
     state: "THEN",
     name: "Prove compiler and product benefit",
-    detail: "Run conservative-vs-compiled ablation, then use vllm bench serve against tuned SGLang.",
+    detail: "Scale the validated conservative-vs-compiled seam to repeated workloads, then compare against tuned SGLang.",
   },
 ];
 
