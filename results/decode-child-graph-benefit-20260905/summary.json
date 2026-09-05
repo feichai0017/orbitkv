@@ -1,0 +1,51 @@
+{
+  "schema": "orbitkv.decode-child-graph-benefit",
+  "status": "passed_narrow_gate",
+  "qualification": "fixed_signature_batch_one_dispatch",
+  "accelerator": {
+    "name": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "memory_mib": 97871,
+    "driver_version": "535.161.08"
+  },
+  "checkpoint": {
+    "path": "/workspace/models/qwen2.5-0.5b-instruct",
+    "dtype": "bf16"
+  },
+  "runtime": {
+    "page_tokens": 16,
+    "physical_pages": 64,
+    "maximum_batch_size": 1,
+    "maximum_context_pages": 64,
+    "search_graphs_per_bucket": 2,
+    "search_seed": 7,
+    "cache_updates_in_place": false
+  },
+  "matched_runs": [
+    {
+      "iterations_per_path": 20,
+      "eager_median_us": 2228.1,
+      "child_graph_median_us": 2043.2,
+      "replay_over_eager_ratio": 0.917,
+      "wall_time_reduction_percent": 8.3
+    },
+    {
+      "iterations_per_path": 100,
+      "eager_median_us": 4441.8,
+      "child_graph_median_us": 4182.6,
+      "replay_over_eager_ratio": 0.942,
+      "wall_time_reduction_percent": 5.8
+    }
+  ],
+  "source": {
+    "parent_commit": "b14a50f",
+    "luminal_commit": "06ea1928a673b53de5aad132fbc896c534a22621"
+  },
+  "claims": {
+    "fixed_signature_batch_one_dispatch_benefit": true,
+    "serving_throughput": false,
+    "memory": false,
+    "capacity": false,
+    "production_ready": false
+  }
+}

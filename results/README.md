@@ -38,6 +38,12 @@ production system.
 
 [Decode CUDA Graph correctness diagnostic](decode-cuda-graph-correctness-20260905/README.md)
 
+| Record | Scope |
+| --- | --- |
+| `decode-child-graph-benefit-20260905` | H20 released-checkpoint correctness plus alternating matched fixed-step decode; selected child-graph composition improved median wall time by 8.3% over 20 iterations and 5.8% over a 100-iteration confirmation; batch one only, no throughput claim |
+
+[Decode child-graph benefit diagnostic](decode-child-graph-benefit-20260905/README.md)
+
 ## Current-wire Full+Sliding diagnostic
 
 | Record | Scope |

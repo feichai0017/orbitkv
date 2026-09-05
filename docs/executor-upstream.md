@@ -25,6 +25,8 @@ The current OrbitKV patch stack adds the following general executor contracts:
 - caller-owned capture of an already-warmed execution, plus a preparation-only
   path that refreshes stable input bindings before replay without replanning or
   executing the model;
+- explicit parent-graph composition that retains the searched materialized
+  executables as child nodes and orders persistent-output D2D copies after them;
 - device regressions for external block pages and non-power-of-two grouped-query
   attention, and for captured execution reading updated stable inputs.
 
@@ -72,6 +74,13 @@ contract fixes `s`, `b`, `c`, `query_indptr`, and `page_indptr`; page indices an
 last-page lengths may vary within that signature. A mismatch fails closed and
 requires recapture. Both the generic Luminal path and a released-checkpoint
 OrbitKV lifecycle pass on H20.
+
+The first implementation flattened every selected executable back into raw
+launches and was 24.9% slower in a matched diagnostic. The current implementation
+preserves each selected graph as one child node. On the same fixed batch-one
+decode step, it reduced median wall time by 8.3% over 20 alternating iterations
+and 5.8% over a 100-iteration confirmation. This narrow result does not qualify
+continuous batching or end-to-end serving throughput.
 
 The persistent K/V buffers are registered as paired input/output state before
 profiling. Search may select an in-place scatter or a materialized update with
