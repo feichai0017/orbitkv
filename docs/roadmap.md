@@ -16,8 +16,10 @@ work is not a current capability.
 - Luminal consumes manager-authored page metadata, keeps stable K/V arenas,
   compiles decode/prefill buckets once, samples greedy tokens on device, and can
   replay fixed-signature decode through child CUDA graphs.
-- One released Full checkpoint has a narrow H20 model closure. The current
-  decoder still rejects multi-class model graphs.
+- One released Full checkpoint has a narrow H20 model closure. Multi-class
+  Full+Sliding graph construction and manager-to-executor input wiring pass host
+  tests, and a synthetic interleaved policy completes prefill plus captured
+  decode on H20. A released hybrid-architecture checkpoint remains open.
 - External export/restore/delete transactions and an async transport contract
   move real bytes through a host reference adapter. Production transports and
   remote leases remain open.
@@ -28,11 +30,13 @@ work is not a current capability.
 
 ## R1: Execute a multi-class hybrid graph
 
-Remove the single-class restriction from `DecoderGraph`. Build every layer from
-its manifest-assigned class, bind independent persistent arenas and CSR metadata,
-and select Full or Sliding attention parameters per layer. Complete prefill,
-repeated decode, cancellation, publication, retirement, generation reuse, and
-final drain on a released Full+Sliding checkpoint.
+The single-class restriction has been removed from `DecoderGraph`: every layer
+is built from its manifest-assigned class, with independent persistent arenas,
+write slots, CSR metadata, context dimensions, and capture signatures. The
+device plumbing smoke passes. Next run that path on a released Full+Sliding
+checkpoint and complete a long enough sequence to cross the Sliding boundary,
+including repeated decode, cancellation, publication, retirement, generation
+reuse, and final drain.
 
 This is the first priority because hybrid state is where compiler-derived
 lifetimes differ materially from conservative Full retention.

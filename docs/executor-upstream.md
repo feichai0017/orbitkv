@@ -46,15 +46,17 @@ executable only when its tensor names, dense decoder topology, dimensions,
 dtype, and attention-state plan match this vocabulary. The current real-device
 closure is one released dense decoder checkpoint with full token KV.
 
-The following remain outside the executable model closure: MoE routing, MLA or
-latent KV, recurrent and convolution state, quantized weights, multimodal
-encoders, speculative decoding, tensor/pipeline parallelism, and a complete
-multi-class hybrid model graph. Sliding and chunked policies compile and lower,
-but do not yet have independent model-level device qualification.
+The following remain outside the released-model execution closure: MoE routing,
+MLA or latent KV, recurrent and convolution state, quantized weights, multimodal
+encoders, speculative decoding, tensor/pipeline parallelism, and a qualified
+hybrid checkpoint. Multi-class Full+Sliding graph construction and a synthetic
+policy device smoke pass, but Sliding and Chunked still lack independent
+released-model qualification.
 
 ## Current whole-graph runtime
 
-`CompiledDecoder` owns one graph, one runtime, and one K/V arena. It compiles
+`CompiledDecoder` owns one graph, one runtime, and one stable K/V arena per
+attention class. It compiles
 separate `s=1` decode and `s>=2` prefill buckets once; batch and context-page
 dimensions have explicit capacity buckets. Tokens, positions, write slots, and
 CSR tensors are allocated to their maximum configured capacity before search,
