@@ -70,8 +70,8 @@ the persistent input allocations, refreshes runtime bindings without executing
 or replanning, and then launches that graph on the original stream. The current
 contract fixes `s`, `b`, `c`, `query_indptr`, and `page_indptr`; page indices and
 last-page lengths may vary within that signature. A mismatch fails closed and
-requires recapture. The generic Luminal and released-checkpoint paths both have
-explicit tests and still need real-device qualification.
+requires recapture. Both the generic Luminal path and a released-checkpoint
+OrbitKV lifecycle pass on H20.
 
 The persistent K/V buffers are registered as paired input/output state before
 profiling. Search may select an in-place scatter or a materialized update with

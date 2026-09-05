@@ -49,8 +49,10 @@ copying vocabulary-sized logits to the host. A fixed-signature decode can also
 be captured as one outer CUDA Graph after warmup. Replay updates the same input
 allocations before launching the graph; a change to query/batch/context shape
 or CSR indptr geometry is rejected and requires a new capture. The generic
-CUDA capture path has an explicit device test, while both it and the
-released-checkpoint replay remain to be run in a qualification environment.
+CUDA capture path and a released-checkpoint prefill/capture/replay lifecycle
+both pass on H20. A matched diagnostic found the first flattened outer graph
+24.9% slower than eager materialized-graph dispatch, so there is currently no
+CUDA Graph speedup claim.
 
 ## Compilation and execution
 

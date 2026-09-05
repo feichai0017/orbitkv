@@ -1,0 +1,52 @@
+{
+  "schema": "orbitkv.decode-cuda-graph-correctness",
+  "status": "passed",
+  "qualification": "correctness_only",
+  "accelerator": {
+    "name": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "memory_mib": 97871,
+    "driver_version": "535.161.08"
+  },
+  "checkpoint": {
+    "path": "/workspace/models/qwen2.5-0.5b-instruct",
+    "dtype": "bf16"
+  },
+  "runtime": {
+    "page_tokens": 16,
+    "physical_pages": 64,
+    "decode_bucket": [1, 1],
+    "prefill_bucket": [2, 8],
+    "representative_prefill_tokens": 4,
+    "maximum_batch_size": 1,
+    "maximum_context_pages": 64,
+    "search_graphs_per_bucket": 2,
+    "search_seed": 7,
+    "cache_updates_in_place": false
+  },
+  "observations": {
+    "search_compile_seconds": 220.6,
+    "prefill_seconds": 0.013,
+    "decode_warmup_and_capture_seconds": 0.068,
+    "diagnostic_replay_seconds": 0.007,
+    "token_only_replay_seconds": 0.005,
+    "matched_iterations": 20,
+    "matched_eager_median_us": 4437.9,
+    "matched_flattened_outer_graph_median_us": 5544.1,
+    "matched_replay_over_eager_ratio": 1.249,
+    "matched_speedup_gate_passed": false,
+    "device_argmax_matches_host": true,
+    "orbitkv_publications": 4
+  },
+  "source": {
+    "parent_base_commit": "2cdd578",
+    "luminal_commit": "281d1062ff482e998580d5313b6436f88797c123"
+  },
+  "claims": {
+    "correctness": true,
+    "performance": false,
+    "memory": false,
+    "capacity": false,
+    "production_ready": false
+  }
+}

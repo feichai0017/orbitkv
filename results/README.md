@@ -32,6 +32,12 @@ production system.
 
 [On-device greedy correctness diagnostic](on-device-greedy-correctness-20260904/README.md)
 
+| Record | Scope |
+| --- | --- |
+| `decode-cuda-graph-correctness-20260905` | Generic stable-input replay plus released dense checkpoint lifecycle on one H20; a 20-iteration matched diagnostic found flattened replay 24.9% slower than eager, so the performance gate failed |
+
+[Decode CUDA Graph correctness diagnostic](decode-cuda-graph-correctness-20260905/README.md)
+
 ## Current-wire Full+Sliding diagnostic
 
 | Record | Scope |
