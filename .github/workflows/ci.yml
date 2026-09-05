@@ -23,6 +23,7 @@ jobs:
       - run: cargo test --locked -p orbitkv-server --features vllm-frontend
       - run: cargo clippy --locked -p orbitkv-server --features vllm-frontend --all-targets -- -D warnings
       - run: python tools/verify_active_source.py
+      - run: python -m unittest discover -s tools/tests -p 'test_*.py'
 
   executor:
     runs-on: ubuntu-latest

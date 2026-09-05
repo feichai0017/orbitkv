@@ -1,0 +1,29 @@
+{
+  "schema": "orbitkv.matched-serving-profiles",
+  "profiles": {
+    "decode-heavy": {
+      "input_tokens": 128,
+      "output_tokens": 256,
+      "requests": 32,
+      "max_concurrency": 1
+    },
+    "prefill-heavy": {
+      "input_tokens": 4096,
+      "output_tokens": 32,
+      "requests": 16,
+      "max_concurrency": 1
+    },
+    "hybrid-pressure": {
+      "input_tokens": 2048,
+      "output_tokens": 512,
+      "requests": 64,
+      "max_concurrency": 8
+    },
+    "capacity-sweep": {
+      "input_tokens": 8192,
+      "output_tokens": 256,
+      "requests": 128,
+      "max_concurrency": 16
+    }
+  }
+}

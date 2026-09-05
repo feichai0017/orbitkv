@@ -39,5 +39,13 @@ D2D copies to one parent graph; matched fixed-step decode improved by 8.3% over
 20 iterations and 5.8% over a 100-iteration confirmation. This does not qualify
 throughput, larger batches, or other checkpoints.
 
+The executor also owns the byte-movement edge for external KV tiers.
+`ExternalKvTransport` is an object-safe async contract over manager-authored,
+executor-lowered layer/component spans. The included host-memory implementation
+moves real bytes, verifies per-page checksums and partial tails, and injects
+unobserved or ambiguous failures. It is a protocol reference and test oracle,
+not a performance backend. Mooncake and NIXL must implement this boundary
+without acquiring page-allocation or lifecycle authority.
+
 The exact fork delta and upstream update procedure are documented in
 [`docs/executor-upstream.md`](../docs/executor-upstream.md).

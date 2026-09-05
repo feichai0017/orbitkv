@@ -82,7 +82,7 @@ executor/
 server/
   src/                    local Engine, semantic requests, optional HTTP adapter
 docs/                     current product contracts
-results/                  append-only provenance, never active source
+results/                  compact reviewed current evidence, never active source
 ```
 
 The Luminal submodule preserves its upstream history. OrbitKV-specific changes
@@ -103,7 +103,6 @@ replay and a released-checkpoint prefill/capture/replay lifecycle pass on H20.
 The current parent graph preserves Luminal's searched executables as child
 graphs and orders persistent-state D2D epilogues after them. Narrow fixed-step
 matched tests improved decode wall time by 5.8-8.3%; broader performance remains
-unqualified. The
-tree does not yet prove matched output equivalence against a reference engine,
+unqualified. The tree does not yet prove matched output equivalence against a reference engine,
 throughput, capacity, model-backed HTTP execution, cancellation cleanup,
 continuous batching, or long-running behavior.
