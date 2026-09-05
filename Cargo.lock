@@ -2489,7 +2489,7 @@ dependencies = [
 [[package]]
 name = "luminal"
 version = "0.2.0"
-source = "git+https://github.com/feichai0017/orbitkv-luminal.git?rev=281d1062ff482e998580d5313b6436f88797c123#281d1062ff482e998580d5313b6436f88797c123"
+source = "git+https://github.com/feichai0017/orbitkv-luminal.git?rev=06ea1928a673b53de5aad132fbc896c534a22621#06ea1928a673b53de5aad132fbc896c534a22621"
 dependencies = [
  "anyhow",
  "as-any",
@@ -2523,7 +2523,7 @@ dependencies = [
 [[package]]
 name = "luminal_cuda_lite"
 version = "0.2.0"
-source = "git+https://github.com/feichai0017/orbitkv-luminal.git?rev=281d1062ff482e998580d5313b6436f88797c123#281d1062ff482e998580d5313b6436f88797c123"
+source = "git+https://github.com/feichai0017/orbitkv-luminal.git?rev=06ea1928a673b53de5aad132fbc896c534a22621#06ea1928a673b53de5aad132fbc896c534a22621"
 dependencies = [
  "anyhow",
  "as-any",
@@ -2553,7 +2553,7 @@ dependencies = [
 [[package]]
 name = "luminal_nn"
 version = "0.1.0"
-source = "git+https://github.com/feichai0017/orbitkv-luminal.git?rev=281d1062ff482e998580d5313b6436f88797c123#281d1062ff482e998580d5313b6436f88797c123"
+source = "git+https://github.com/feichai0017/orbitkv-luminal.git?rev=06ea1928a673b53de5aad132fbc896c534a22621#06ea1928a673b53de5aad132fbc896c534a22621"
 dependencies = [
  "itertools 0.12.1",
  "luminal",
@@ -2564,7 +2564,7 @@ dependencies = [
 [[package]]
 name = "luminal_tracing"
 version = "0.1.0"
-source = "git+https://github.com/feichai0017/orbitkv-luminal.git?rev=281d1062ff482e998580d5313b6436f88797c123#281d1062ff482e998580d5313b6436f88797c123"
+source = "git+https://github.com/feichai0017/orbitkv-luminal.git?rev=06ea1928a673b53de5aad132fbc896c534a22621#06ea1928a673b53de5aad132fbc896c534a22621"
 dependencies = [
  "prost 0.13.5",
  "tracing-appender",
