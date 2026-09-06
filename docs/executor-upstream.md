@@ -95,6 +95,14 @@ roughly 13 ms, first decode dispatch at roughly 36 ms, and a warm second decode
 at roughly 5 ms. These are diagnostic timings from one correctness run, not an
 L5 benchmark or speedup claim.
 
+The embedded decoder keeps all searched decode/prefill buckets but bounds active
+CUDA Graph materialization to one bucket. Explicit-CSR attention can rebuild
+captured library resources when context geometry changes; retaining another
+phase's materialization across such pool reclamation produced stale device
+state on the tested driver. Switching phase therefore rematerializes the target
+bucket without re-running graph search. A dedicated bucket-switch regression and
+the repeated released-hybrid residence workload cover this contract.
+
 ## Updating Luminal
 
 The submodule has separate `origin` (the OrbitKV fork) and `upstream` (Luminal).

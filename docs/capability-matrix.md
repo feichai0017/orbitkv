@@ -22,7 +22,7 @@ recorded source closure.
 | --- | --- | --- |
 | Attention-state compiler | L1 + L2 | Compiles typed attention state or Retention IR into a fingerprinted `RuntimeManifest` |
 | KV manager | L2 | Owns page allocation, generations, snapshots, Prefix/COW, token placement, retirement, ACK, and reuse |
-| Physical-residence ablation | L2 + narrow L3 mechanism check | `Compiled` and explicit `RequestLifetime` policies preserve attention semantics while changing only addressing and physical retirement; conservative mode is diagnostic and rejects incompatible lifecycle surfaces |
+| Physical-residence ablation | Narrow L5 same-executor closure | Released-hybrid paired runs preserve 256 output tokens while compiled residence lowers live payload by 27.8%, extends the fixed-budget boundary by 32 tokens, and slightly reduces total test-path time; serving throughput remains open |
 | RuntimeSession | L2 | Presents transactional engine operations without exposing manager capabilities |
 | External KV tier transactions | L2 host | Export/restore run through an object-safe async transport contract; a real-byte host adapter verifies compact partial tails, per-page checksums, deletion, cross-session restore, and unobserved/ambiguous fault mapping; Mooncake/NIXL and hybrid restore remain open |
 | Executor plan | L2 | Compiles a manifest directly into Full, Sliding, Full+Sliding, or exact Chunked attention classes |
@@ -100,12 +100,16 @@ The current architecture has same-source L3 device correctness for paged
 attention and token relocation, plus narrow L4 released-checkpoint correctness
 closures for Full and Full+Sliding token KV. The Full+Sliding run crosses the
 native Sliding boundary and matches independently generated greedy tokens while
-qualifying lifecycle reuse and cancellation. A separate same-graph synthetic
-ablation reduced the Sliding class from 6 pages / 589,824 bytes to 5 pages /
-491,520 bytes with identical output. Exact Chunked still lacks independent
-released-model qualification. No repeated matched L5 experiment has completed,
-so there is no current throughput, production-capacity, production, broad-model,
-or complete-replacement claim. A future benefit statement must
+qualifying lifecycle reuse and cancellation. A ten-pair release-mode
+same-executor ablation produced identical 256-token outputs, reduced physical
+resident payload from 14,155,776 to 10,223,616 bytes, and increased the
+fixed-budget boundary from 528 to 560; Retention Amplification fell from 1.387
+to 1.002. Median batch-one test-path time improved
+by 0.77%, with a paired mean improvement of 11.633 ms and 95% confidence interval
+5.697-17.570 ms. This qualifies a narrow lifecycle-management benefit, not
+serving throughput or multi-user capacity. Exact Chunked still lacks independent
+released-model qualification. There is no production, broad-model, or
+complete-replacement claim. A future serving statement must
 compare the same model, weights, dtype, kernels, batching policy, request trace,
 device budget, and output semantics, and must report both successful and failed
 gates.

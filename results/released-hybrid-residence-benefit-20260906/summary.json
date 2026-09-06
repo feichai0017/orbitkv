@@ -1,0 +1,82 @@
+{
+  "schema": "orbitkv.released-hybrid-residence-benefit",
+  "status": "passed",
+  "qualification": "narrow_same_executor_l5",
+  "workload": {
+    "paired_epochs": 10,
+    "alternating_order": true,
+    "prefill_tokens": 512,
+    "decode_steps": 255,
+    "generated_tokens": 256,
+    "batch_size": 1,
+    "search_graphs_per_bucket": 2,
+    "shared_compiled_graph": true
+  },
+  "correctness": {
+    "all_arm_outputs_identical": true,
+    "independent_reference_prefix_tokens": 13,
+    "independent_reference_prefix_match": true,
+    "reference_token_14_top_two_margin": 0.125,
+    "final_drain_each_arm": true
+  },
+  "residence": {
+    "compiled_full_pages": 48,
+    "compiled_sliding_pages": 32,
+    "request_lifetime_full_pages": 48,
+    "request_lifetime_sliding_pages": 48,
+    "compiled_sliding_bytes": 7864320,
+    "request_lifetime_sliding_bytes": 11796480,
+    "compiled_total_bytes": 10223616,
+    "request_lifetime_total_bytes": 14155776,
+    "total_byte_reduction_percent": 27.7778,
+    "semantic_live_bytes": 10205184,
+    "compiled_retention_amplification": 1.001806,
+    "request_lifetime_retention_amplification": 1.387116,
+    "metric_scope": "live manager payload inside equal preallocated device arenas"
+  },
+  "fixed_budget_capacity": {
+    "full_pages": 35,
+    "sliding_pages": 33,
+    "compiled_max_boundary": 560,
+    "request_lifetime_max_boundary": 528,
+    "additional_tokens": 32,
+    "relative_increase_percent": 6.0606
+  },
+  "timing_seconds": {
+    "one_time_search_compile": 37.312,
+    "compiled_total_median": 1.075590,
+    "request_lifetime_total_median": 1.083926,
+    "median_reduction_percent": 0.7691,
+    "paired_mean_improvement": 0.011633,
+    "paired_95ci_low": 0.005697,
+    "paired_95ci_high": 0.017570,
+    "compiled_prefill_median": 0.127246,
+    "request_lifetime_prefill_median": 0.127312,
+    "compiled_decode_accumulated_median": 0.941748,
+    "request_lifetime_decode_accumulated_median": 0.942466,
+    "compiled_manager_median": 0.006727,
+    "request_lifetime_manager_median": 0.013529
+  },
+  "paired_total_samples_seconds": [
+    {"compiled": 1.071906, "request_lifetime": 1.102294},
+    {"compiled": 1.071261, "request_lifetime": 1.083550},
+    {"compiled": 1.074873, "request_lifetime": 1.082184},
+    {"compiled": 1.074638, "request_lifetime": 1.082800},
+    {"compiled": 1.073540, "request_lifetime": 1.086105},
+    {"compiled": 1.076787, "request_lifetime": 1.085545},
+    {"compiled": 1.079744, "request_lifetime": 1.082777},
+    {"compiled": 1.076308, "request_lifetime": 1.082612},
+    {"compiled": 1.078944, "request_lifetime": 1.100338},
+    {"compiled": 1.078172, "request_lifetime": 1.084302}
+  ],
+  "claims": {
+    "lifecycle_compiler_live_payload_benefit": true,
+    "fixed_budget_sequence_capacity_benefit": true,
+    "single_request_test_path_latency_benefit": true,
+    "cuda_allocator_memory_return": false,
+    "continuous_batching_throughput": false,
+    "serving_tail_latency": false,
+    "sglang_comparison": false,
+    "production_ready": false
+  }
+}
