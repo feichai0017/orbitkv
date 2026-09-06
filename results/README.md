@@ -18,16 +18,16 @@ move a compact reviewed result here only after its checks pass.
 | `on-device-greedy-correctness-20260904` | Device argmax matches host argmax and the default path returns token IDs rather than vocabulary logits | Greedy only; no sampling-performance claim |
 | `decode-cuda-graph-correctness-20260905` | Stable-input outer-graph replay is correct; flattened capture is 24.9% slower than eager | Retained negative result; no benefit claim |
 | `decode-child-graph-benefit-20260905` | Selected Luminal executables composed as child graphs reduce matched fixed-step batch-one median wall time by 5.8-8.3% in two runs | Narrow dispatch result; not serving throughput or lifecycle benefit |
-| `physical-residence-ablation-20260905` | One compiled Luminal graph executes compiled and request-lifetime residence across a Sliding boundary with byte-identical prefill/decode output; compiled Sliding residency is 1 page / 98,304 bytes lower | Single synthetic-policy sample; not latency, throughput, workload-capacity, or released hybrid-model evidence |
 | `released-hybrid-lifecycle-20260906` | Released 18-layer Full+Sliding checkpoint crosses its native window on H20, matches an independent greedy-token reference, reuses retired storage, cancels a second request, and fully drains | Correctness and lifecycle only; diagnostic timing is not a benefit result |
+| `released-hybrid-residence-benefit-20260906` | Ten paired release-mode runs compare compiled and request-lifetime residence through one searched graph; output parity, resident bytes, fixed-budget reach, and paired timing interval pass | Narrow batch-one same-executor L5 result; not serving throughput or SGLang comparison |
 
 The normative current support boundary is the
 [Capability Matrix](../docs/capability-matrix.md). The mechanism ablation proves
 a same-semantics physical-residence reduction and host fixed-capacity admission
-difference. The released hybrid record closes R1 but does not establish that the
-compiler policy outperforms conservative retention. No retained record yet
-proves repeated workload capacity, tail latency, or end-to-end throughput. Those
-remain the next L5 gates.
+difference. The released hybrid benefit record now establishes a narrow
+same-executor compiler benefit. No retained record yet proves continuous-batching
+capacity, tail latency, or end-to-end serving throughput. Those remain R3/R4
+gates.
 
 ## Result-package policy
 
