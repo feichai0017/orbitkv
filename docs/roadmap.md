@@ -58,13 +58,13 @@ conservative retention  versus  manifest-compiled retention
 
 Ten paired alternating release-mode epochs each ran a 512-token prefill and 255
 decode steps. All 256 output tokens matched between arms, and the independently
-known first 34 tokens matched Transformers. Compiled residence reduced physical
+stable first 13 tokens matched Transformers. Compiled residence reduced physical
 resident payload from 14,155,776 to 10,223,616 bytes (27.8%) and Sliding pages
 from 48 to 32 (33.3%). Retention Amplification fell from 1.387 to 1.002. With
 Full=35 and Sliding=33 pages, compiled residence
 advanced to boundary 560 while request-lifetime residence stopped at 528. Median
-total test-path time fell from 1.219458 s to 1.210898 s (0.70%); paired mean
-improvement was 10.597 ms with a 95% confidence interval of 6.310-14.884 ms.
+total test-path time fell from 1.083926 s to 1.075590 s (0.77%); paired mean
+improvement was 11.633 ms with a 95% confidence interval of 5.697-17.570 ms.
 Model compute stayed nearly equal; the main difference was manager time.
 
 This is a narrow same-executor L5 result: it proves that compiler-derived
