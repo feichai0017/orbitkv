@@ -9,8 +9,10 @@ Full / 15 Sliding layer schedule with BF16 weights, a 512-token prefill, and 255
 decode steps. The only independent variable was OrbitKV physical residence:
 compiler-derived retirement versus request-lifetime retention.
 
-All 256 output tokens matched across every arm; the first 34 also matched the
-independent Transformers reference from the R1 qualification. Every request
+All 256 output tokens matched across every arm. The first 13 stable tokens also
+matched the independent Transformers reference. Reference token 14 has only a
+0.125 BF16 top-two logit margin and is therefore not used as a discrete-token
+gate across independently searched valid graphs. Every request
 finished with a complete drain. At the final boundary, compiled residence used
 48 Full pages plus 32 Sliding pages while the baseline used 48 Full plus 48
 Sliding pages. Total live payload fell by 3,932,160 bytes, or 27.8%.
@@ -23,11 +25,11 @@ at boundary 529 and therefore had a maximum successful boundary of 528. This is
 32 additional sequence positions, or 6.1% over the baseline boundary, for the
 same registered arena budget.
 
-Median complete test-path time was 1.210898 s for compiled residence and
-1.219458 s for request-lifetime residence, a 0.70% reduction. The paired mean
-improvement was 10.597 ms with a two-sided 95% Student-t interval of
-6.310-14.884 ms. Median prefill and accumulated model-decode times were nearly
-equal; median measured manager time was 6.486 ms versus 13.089 ms.
+Median complete test-path time was 1.075590 s for compiled residence and
+1.083926 s for request-lifetime residence, a 0.77% reduction. The paired mean
+improvement was 11.633 ms with a two-sided 95% Student-t interval of
+5.697-17.570 ms. Median prefill and accumulated model-decode times were nearly
+equal; median measured manager time was 6.727 ms versus 13.529 ms.
 
 These byte counts describe live manager payload inside equally preallocated
 device arenas. They do not mean CUDA returned memory to its allocator. The

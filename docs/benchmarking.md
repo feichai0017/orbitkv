@@ -43,14 +43,16 @@ not physical page IDs, because correct physical plans may bind different pages.
 A release-mode H20 compiler ablation now executes a released native
 Full+Sliding checkpoint for ten paired alternating epochs. Each arm uses the
 same searched graph for a 512-token prefill plus 255 decode steps. All 256
-generated tokens match between arms and the known independent reference prefix.
+generated tokens match between arms. The first 13 stable tokens also match the
+independent reference; the next reference choice has a BF16 top-two margin of
+only 0.125 and is not used as a cross-search-winner discrete-token gate.
 Compiled residence uses 32 Sliding pages versus 48, reducing total live payload
 from 14,155,776 to 10,223,616 bytes. Under a fixed 35-Full/33-Sliding-page budget,
 it advances to boundary 560 while request-lifetime residence stops at 528. At
 the measured boundary, semantic-live payload is 10,205,184 bytes, so Retention
 Amplification is 1.002 for compiled residence and 1.387 for the baseline.
-Median total test-path time is 1.210898 s versus 1.219458 s; paired mean
-improvement is 10.597 ms with a 95% confidence interval of 6.310-14.884 ms.
+Median total test-path time is 1.075590 s versus 1.083926 s; paired mean
+improvement is 11.633 ms with a 95% confidence interval of 5.697-17.570 ms.
 
 This qualifies a narrow same-executor lifecycle benefit. The byte counts are
 live manager payload within equal preallocated arenas; they represent reusable

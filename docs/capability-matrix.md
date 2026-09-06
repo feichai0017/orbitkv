@@ -105,8 +105,8 @@ same-executor ablation produced identical 256-token outputs, reduced physical
 resident payload from 14,155,776 to 10,223,616 bytes, and increased the
 fixed-budget boundary from 528 to 560; Retention Amplification fell from 1.387
 to 1.002. Median batch-one test-path time improved
-by 0.70%, with a paired mean improvement of 10.597 ms and 95% confidence interval
-6.310-14.884 ms. This qualifies a narrow lifecycle-management benefit, not
+by 0.77%, with a paired mean improvement of 11.633 ms and 95% confidence interval
+5.697-17.570 ms. This qualifies a narrow lifecycle-management benefit, not
 serving throughput or multi-user capacity. Exact Chunked still lacks independent
 released-model qualification. There is no production, broad-model, or
 complete-replacement claim. A future serving statement must
