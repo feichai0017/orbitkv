@@ -1,0 +1,61 @@
+{
+  "schema": "orbitkv.bucketed-decoder-correctness",
+  "status": "passed",
+  "claim": "real_device_released_checkpoint_correctness_only",
+  "configuration": {
+    "dtype": "bfloat16",
+    "page_tokens": 16,
+    "physical_pages": 64,
+    "query_token_buckets": [
+      {
+        "minimum": 1,
+        "maximum": 1,
+        "role": "decode"
+      },
+      {
+        "minimum": 2,
+        "maximum": 8,
+        "representative": 4,
+        "role": "prefill"
+      }
+    ],
+    "maximum_batch_size": 1,
+    "maximum_context_pages": 64,
+    "search_graphs_per_bucket": 2,
+    "search_seed": 7
+  },
+  "observations": {
+    "compiled_bucket_count": 2,
+    "single_graph": true,
+    "single_runtime": true,
+    "single_stream": true,
+    "persistent_kv_arena": true,
+    "stable_dynamic_input_addresses": true,
+    "cross_runtime_cache_transfer": false,
+    "all_layer_kv_updates_in_place": false,
+    "materialized_kv_update_epilogue": "device_to_device_copy_to_stable_arena",
+    "alias_hazard_candidates_rejected": 5,
+    "prefill_tokens": 4,
+    "decode_steps": 2,
+    "finite_logits": true,
+    "orbitkv_publications": 3,
+    "persistent_input_relocation_passed": true,
+    "packed_decode_after_relocation_passed": true
+  },
+  "diagnostic_timings": {
+    "one_time_search_compile_seconds": 215.8,
+    "prefill_dispatch_seconds": 0.015,
+    "first_decode_dispatch_seconds": 0.036,
+    "second_decode_dispatch_seconds": 0.004,
+    "benchmark_qualified": false
+  },
+  "not_qualified": [
+    "matched_output_equivalence_against_reference_engine",
+    "latency_or_throughput_improvement",
+    "memory_or_capacity_improvement",
+    "zero_copy_kv_write",
+    "continuous_batching",
+    "outer_cuda_graph_replay",
+    "production_readiness"
+  ]
+}

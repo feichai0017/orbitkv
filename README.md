@@ -1,132 +1,177 @@
 # OrbitKV
 
-OrbitKV compiles attention-retention semantics into a generation-checked KV
-page manager. It is designed to own page choice, immutable request snapshots,
-Prefix references, GPU completion pins, and reclamation while an inference
-engine continues to own tensor allocation, scheduling, kernels, and model
-execution.
+OrbitKV is a Rust attention-state compiler and KV block manager for a native
+inference engine. It compiles attention visibility into physical layouts and
+lifetime rules, owns every KV page generation, and reuses storage only after
+both semantic death and device completion are proven.
 
-OrbitKV is still developed with breaking interfaces. There is one live core,
-one typed C wire, and no compatibility loader for superseded lifecycle ABIs.
+The product has three layers:
 
-## Current boundary
+| Layer | Responsibility |
+| --- | --- |
+| `core/` | Attention-state compilation, request and snapshot identity, Prefix/COW, token disposition, physical-page ownership, retirement, acknowledgement, and safe reuse |
+| `executor/` | OrbitKV plan lowering, forked Luminal graph/device execution, and external byte transports |
+| `server/` | Rust API and scheduling boundary; optionally reuses vLLM's Rust OpenAI/tokenizer/chat frontend through a narrow protocol adapter |
 
-The live tree is **ABI6**:
+OrbitKV is the only KV authority. The executor consumes manager-authored pages
+and the server cannot name a physical page. There is no compatibility layer, C
+boundary, Python runtime, or second allocator in the active product.
 
-- the modular Rust host core is L2 GO for immutable snapshots, shared-page
-  references, request fork, page-aligned Prefix lookup/publish/attach/evict,
-  Full+SWA joint copy-on-write, and page-owned reclamation;
-- the typed, batch-only C wire is L2 GO with exactly 23 exported
-  `orbitkv_*` symbols, C/C++ layout checks, short-buffer zero-mutation checks,
-  and no ABI5 scalar-named lifecycle aliases; and
-- the split ABI6 Python FFI/runtime and SGLang `OrbitKVPrefixCache` are L2 GO
-  on the host against the release library and pinned official `v0.5.17`
-  source contract. No ABI6 H20 Prefix result exists yet.
-
-The latest engine evidence is an immutable **historical ABI5-v5** snapshot,
-not evidence for ABI6. Its exact `9233c06d…` source closure has scoped L4
-correctness on one H20 against official SGLang `v0.5.17`, peeled commit
-`29481685462732237d80d86076d6563e1f658102`.
-
-The normative current/historical distinction is in the
-[Capability Matrix](docs/capability-matrix.md).
-
-## Architecture
+## Repository layout
 
 ```text
-compiled retention plan
-          |
-          v
-CanonicalKvManager                         sole ownership authority
-  identity + arena                         generations and physical pages
-  persistent snapshot                     immutable request roots
-  append transaction                      prepare / submit / complete / COW
-  Prefix                                  lookup / publish / attach / evict
-  reclamation                             detach / certificate / ACK / recycle
-          |
-          | compact leases, intents, copies, detached bindings, certificates
-          v
-ABI6 C wire                                exact 23-symbol batch surface
-          |
-          v
-Python runtime + SGLang adapter            host-qualified Prefix/COW path
-          |
-          v
-ReqToToken / class LUT mirrors             checked mirrors, never authorities
-          |
-          v
-FlashInfer / FA3 / engine KV tensor arenas
+orbitkv/
+├── core/
+│   ├── src/                 compiler, KV manager, RuntimeSession
+│   ├── examples/            generic attention-state inputs
+│   └── fixtures/            generic compiler fixtures
+├── executor/
+│   ├── src/                 plan lowering, device execution, external transport
+│   │   └── model/           config, weight contract, block math, step validation
+│   ├── tests/               executor and transport protocol closures
+│   └── luminal/             pinned Luminal fork (Git submodule)
+├── server/                  local async Engine and request contracts
+├── docs/                    architecture and qualification boundary
+├── tools/                   repository invariants
+├── website/                 project documentation site
+└── results/                 compact current evidence only
 ```
 
-Requests hold generation-checked `SnapshotLease` heads. Snapshot class roots
-are immutable persistent trees, so append work is proportional to changed
-pages rather than total resident pages. Physical pages carry request refs,
-Prefix refs, reader pins, writer state, and generation. A page is reusable
-only after every reference is gone and an exact reclamation receipt is
-acknowledged.
+The Luminal fork is pinned by the parent repository. Its paged-attention path
+accepts externally managed page indices, query/KV indptrs, last-page lengths,
+and page geometry. It may cache those inputs for execution, but it does not
+allocate or recycle KV pages. The executor depends on the visible submodule by
+local path, so the reviewed fork and the code linked into the product cannot
+silently diverge.
 
-If a shared or pinned partial tail must be extended, the manager emits an
-exact copy intent and publishes the new root only after the backend proves
-that the copy was observed, completed, and ordered before new writes. For a
-Hybrid request, partial Full and SWA tails enter the same joint-COW decision.
+The native decoder compiles one symbolic graph into decode and prefill buckets.
+Both phases share the same runtime, preallocated dynamic inputs, and one
+persistent K/V arena per attention class; requests update only tokens, positions,
+write slots, CSR metadata, and dynamic dimensions before dispatch. Greedy
+sampling is part of the graph,
+so the default execution path returns one token ID per query row instead of
+copying vocabulary-sized logits to the host. A fixed-signature decode can also
+be captured as one outer CUDA Graph after warmup. Replay updates the same input
+allocations before launching the graph; a change to query/batch/context shape
+or CSR indptr geometry is rejected and requires a new capture. The generic
+CUDA capture path and a released-checkpoint prefill/capture/replay lifecycle
+both pass on H20. The first flattened outer graph was 24.9% slower than eager;
+composing Luminal's selected executables as child graphs reversed that result,
+reducing matched fixed-step decode wall time by 8.3% over 20 iterations and
+5.8% over a 100-iteration confirmation. This is a narrow batch-one result, not
+a throughput or general model-speed claim.
 
-See [Standalone KV Manager Architecture](docs/standalone-kv-manager-architecture.md)
-for the invariants and module boundaries.
+The core also has a backend-neutral external-export transaction for immutable
+request snapshots. It pins exact local page generations, emits logical-page
+copy records, requires per-page durable receipts and a monotonic completion
+frontier, then publishes an external replica catalog entry. This is the intended
+integration boundary for transports such as Mooncake or NIXL. The symmetric
+request-private restore transaction allocates fresh OrbitKV-owned pages,
+validates external copy receipts, and publishes through the native append
+lifecycle. An object-safe async transport contract and a host-memory reference
+adapter now execute the plans against real byte buffers, including compact
+partial tails, checksums, deletion, and deterministic unobserved/ambiguous
+faults. Mooncake/NIXL adapters and external-system qualification remain open;
+see [external KV tiers](docs/external-kv.md).
 
-## What is proven
+## Compilation and execution
 
-| Surface | Status | Boundary |
-| --- | --- | --- |
-| ABI6 Rust core | L2 GO | Host unit, property, fault, stale-lease, Prefix, fork, COW, and reclamation tests |
-| ABI6 C wire | L2 GO | Exact 23 symbols, C/C++ layouts, batch atomicity, short-buffer and malformed-receipt gates |
-| ABI6 Python/SGLang | L2 GO | Exact ctypes layouts, incremental journals, pinned cache seam, warm Prefix, joint COW, mirror cleanup, fail-stop, and teardown host gates |
-| ABI6 H20 Prefix | Pending | No engine run may inherit ABI5 evidence |
-| Frozen ABI5-v5 | Historical scoped L4 | Qwen Full and GPT-OSS Full+SWA B1/B4 correctness on one H20 |
+```text
+attention visibility / retention semantics
+        |
+        v
+RuntimeManifest
+        |
+        +--> RuntimeSession: identities, pages, COW, retirement, reuse
+        |
+        v
+ExecutorPlan: attention classes and physical metadata
+        |
+        +--> Luminal graph + kernels (local execution)
+        |
+        +--> ExternalKvTransport (tier movement)
+        |
+        v
+completion evidence -> RuntimeSession publication and acknowledgement
+```
 
-In the frozen ABI5-v5 H20 record, all eight manager/stock JSON records pass
-independent verification, all request traces match, and every Full/SWA arena
-drains. Grouped B4 release reduces 20 request-level release/recycle calls to
-five batch transactions.
+Ring layouts, append-only layouts, resettable arenas, and page-level COW are
+compiled physical choices, not separate product modes. Token-level management
+is always present: the manager tracks logical token placement and disposition,
+then relocates only when the state semantics and cost policy permit it.
+For attribution testing, an explicit request-lifetime residence baseline keeps
+the same attention visibility but delays physical reclamation; normal
+construction always uses the compiled policy.
 
-The same-capacity intrinsic memory reduction is **0%** because the compared
-SGLang processes reserve identical KV tensor arenas. The one H20 epoch reports
-B4 steady manager overhead of +4.1932% for Qwen and -5.2048% for GPT-OSS, while
-Qwen B1 is +5.0009%. There are no repeated-epoch statistics, so
-`performance_go=false` and no general speedup is claimed.
+Current compiled token lifetimes include:
 
-[Frozen ABI5-v5 H20 record](results/h20-sglang-v0517-abi5-v5-grouped-release-20260821/README.md)
+- Full attention: append-only placement, optional shared Prefix, and COW.
+- Sliding attention: periodic placement and retirement after the visibility
+  window passes.
+- Full + Sliding: class-separated placement and independent retirement.
+- Exact Chunked attention: resettable epoch arenas.
+- Full latent KV: component-aware token storage in the core; executor support is
+  still pending.
+- Recurrent and convolution state: generation-checked checkpoints in the core;
+  unified executor transactions are still pending.
 
-## Build and verify
+## Server boundary
+
+`orbitkv-server` defines an async, in-process `Engine` interface with explicit
+execution and cancellation. Its optional `vllm-frontend` feature launches the
+pinned vLLM Rust OpenAI HTTP/tokenizer/chat/SSE stack and translates only
+tokenized Add/Abort traffic to the local engine. PegaInfer informed this bridge
+shape, but its scheduler, KV cache, model runtime, and CUDA ownership are not
+part of OrbitKV. The current adapter is greedy text-only and rejects unsupported
+semantics rather than silently dropping them.
+
+## Build and test
 
 ```bash
-cargo fmt --all -- --check
+git submodule update --init --recursive
 cargo test --locked --all-targets
 cargo clippy --locked --all-targets -- -D warnings
-
-cargo test --locked --manifest-path crates/orbitkv-ffi/Cargo.toml --all-targets
+cargo fmt --all -- --check
 python tools/verify_active_source.py
-python tools/verify_capability_matrix.py
-python tools/verify_manifests.py
 ```
 
-The active-source gate limits production Rust/Python modules to 1,500 lines,
-test/benchmark modules to 2,000 lines, verifies ABI6 markers, and rejects the
-removed ABI5 lifecycle aliases. It deliberately ignores append-only evidence
-under `results/`.
+Compile a canonical runtime manifest:
 
-## Next gates
+```bash
+cargo run --locked -p orbitkv --bin orbitkv -- \
+  compile-runtime-manifest core/examples/hybrid-attention-state-plan.json
+```
 
-The ordered work is:
+## Evidence boundary
 
-1. run exact-source SGLang `OrbitKVPrefixCache` correctness on H20;
-2. implement token-exact relocation/compaction against immutable snapshots;
-3. qualify overlap and CUDA Graph completion domains; and
-4. add speculation, multi-GPU placement, and disaggregation.
+Core lifecycle and executor lowering are host-verified. On H20, the current
+source also executes a released 18-layer Full+Sliding checkpoint with its native
+3 Full / 15 Sliding schedule and 512-token window. A 512-token prefill plus 33
+decode steps matches a separately generated Transformers greedy-token sequence,
+crosses the window, reclaims and reuses a page generation, executes a second
+request from reused storage, and drains every arena after release. The direct
+explicit-CSR prefill kernel also matches its independent BF16 reference within
+`1.93e-4`. See `results/released-hybrid-lifecycle-20260906`.
 
-Compaction means byte-exact K/V relocation and physical defragmentation. It is
-not quantization, numerical compression, or evidence of a same-capacity memory
-win. See the [Token Virtualization and Attention Roadmap](docs/token-virtualization-and-attention-roadmap.md).
+A separate fixed-signature child-graph experiment records a narrow matched
+dispatch improvement, and a synthetic-policy ablation records less live payload
+inside a fixed arena. Neither is an end-to-end throughput or capacity result.
+There is still no production-serving, broad model-family, or complete SGLang
+replacement claim.
 
-Historical records and their source hashes are indexed in
-[results/README.md](results/README.md). They are append-only and never qualify a
-later ABI automatically.
+`results/**` contains only compact reviewed evidence directly relevant to the
+current architecture. Removed historical archives remain recoverable from Git
+history. See the [Capability Matrix](docs/capability-matrix.md) and
+[Results Index](results/README.md).
+
+## Documentation
+
+- [Architecture](docs/architecture.md)
+- [Components and external projects](docs/components.md)
+- [Implementation status](docs/implementation-status.md)
+- [Capability Matrix](docs/capability-matrix.md)
+- [Executor fork and upstream policy](docs/executor-upstream.md)
+- [Matched serving benchmarks](docs/benchmarking.md)
+- [RuntimeSession](docs/runtime-session.md)
+- [State lifetime and reclamation](docs/state-lifecycle.md)
+- [Roadmap](docs/roadmap.md)

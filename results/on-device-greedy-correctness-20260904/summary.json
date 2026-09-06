@@ -1,0 +1,43 @@
+{
+  "schema": "orbitkv.on-device-greedy-correctness",
+  "status": "passed",
+  "claim": "real_device_greedy_token_parity_only",
+  "source": {
+    "orbitkv_base_commit": "b6d229b3fb96ac60a77640712e83a07c65c6c82c",
+    "luminal_commit": "beb24ac3a8ce7c61cef4b0cbb23b1d881eabbf8d"
+  },
+  "environment": {
+    "accelerator": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "dtype": "bfloat16",
+    "checkpoint": "Qwen2.5-0.5B-Instruct"
+  },
+  "observations": {
+    "fused_device_argmax": true,
+    "prefill_device_token_matches_host_argmax": true,
+    "decode_device_tokens_match_host_argmax": true,
+    "device_token_only_decode_passed": true,
+    "token_bytes_read_per_query_row": 4,
+    "full_logits_read_by_default_execute": false,
+    "prefill_tokens": 4,
+    "decode_steps": 3,
+    "orbitkv_publications": 4
+  },
+  "diagnostic_timings": {
+    "one_time_search_compile_seconds": 208.4,
+    "prefill_dispatch_seconds": 0.014,
+    "first_decode_dispatch_seconds": 0.035,
+    "second_decode_dispatch_seconds": 0.005,
+    "device_token_only_decode_seconds": 0.004,
+    "benchmark_qualified": false
+  },
+  "not_qualified": [
+    "sampling_performance_improvement",
+    "temperature_sampling",
+    "top_k_or_top_p_sampling",
+    "penalties_or_logprobs",
+    "continuous_batching",
+    "outer_cuda_graph_replay",
+    "production_readiness"
+  ]
+}
