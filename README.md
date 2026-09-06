@@ -154,8 +154,12 @@ explicit-CSR prefill kernel also matches its independent BF16 reference within
 `1.93e-4`. See `results/released-hybrid-lifecycle-20260906`.
 
 A separate fixed-signature child-graph experiment records a narrow matched
-dispatch improvement, and a synthetic-policy ablation records less live payload
-inside a fixed arena. Neither is an end-to-end throughput or capacity result.
+dispatch improvement. A release-mode same-executor test on the released hybrid
+checkpoint now gives the first narrow compiler-benefit closure: over ten paired
+alternating runs, compiled residence reduced live payload by 27.8%, extended a
+fixed page budget from boundary 528 to 560, and reduced median single-request
+test-path time by 0.70% while preserving all 256 generated tokens. This remains
+a batch-one engine microbenchmark, not an end-to-end serving-throughput result.
 There is still no production-serving, broad model-family, or complete SGLang
 replacement claim.
 

@@ -10,8 +10,8 @@ operator passes all applicable layers.
 | State or attention family | Compiler and manager | Executor | Complete model | Benefit |
 | --- | --- | --- | --- | --- |
 | Full MHA/GQA token KV | Implemented and host-tested | Paged attention, Prefix/COW, writes, relocation | Narrow released-checkpoint H20 closure | No lifetime-management L5 result |
-| Sliding Window token KV | Periodic placement, retirement, ACK, and generation reuse host-tested; request-lifetime residence provides a same-semantics baseline | CSR/window lowering implemented; compiled/baseline CSR geometry is host-matched | Native Sliding layers cross a 512-token window in the released hybrid H20 closure | 1-page / 98,304-byte reusable in-arena payload reduction in a separate synthetic ablation; no allocator/latency/throughput claim |
-| Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Unproven |
+| Sliding Window token KV | Periodic placement, retirement, ACK, and generation reuse host-tested; request-lifetime residence provides a same-semantics baseline | CSR/window lowering implemented; compiled/baseline CSR geometry is host-matched | Native Sliding layers cross a 512-token window in the released hybrid H20 closure | Released-hybrid matched run: Sliding residency 48 to 32 pages; no serving-throughput claim |
+| Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Narrow same-executor L5: 27.8% less resident payload, 6.1% longer fixed-budget boundary, 0.70% lower median test-path time |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
 | Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Recurrent operators are not integrated into one transaction | Unsupported | Unproven |
@@ -62,8 +62,8 @@ and final drain is still required before the repository is a production server.
 ## Evidence interpretation
 
 The child CUDA Graph result demonstrates a narrow dispatch optimization. The
-new same-graph H20 residence check establishes output equivalence and a small
-physical-memory difference across one Sliding boundary. It is not yet the L5
-claim: that still requires repeated matched workloads with admission, latency,
-throughput, allocator-work, and final-drain gates, followed by comparison with a
-tuned reference engine.
+released-hybrid residence experiment is the first narrow L5 compiler result:
+ten paired release-mode epochs show a 27.8% live-payload reduction, a fixed-budget
+boundary increase from 528 to 560, and a positive paired total-time interval.
+It is not a serving claim: continuous batching, TTFT/TPOT, p95/p99, throughput,
+and comparison with a tuned reference engine remain open.
