@@ -26,7 +26,8 @@ orbitkv/
 │   ├── examples/            generic attention-state inputs
 │   └── fixtures/            generic compiler fixtures
 ├── executor/
-│   ├── src/                 native plan lowering and external byte transport
+│   ├── src/                 plan lowering, device execution, external transport
+│   │   └── model/           config, weight contract, block math, step validation
 │   ├── tests/               executor and transport protocol closures
 │   └── luminal/             pinned Luminal fork (Git submodule)
 ├── server/                  local async Engine and request contracts
@@ -39,7 +40,9 @@ orbitkv/
 The Luminal fork is pinned by the parent repository. Its paged-attention path
 accepts externally managed page indices, query/KV indptrs, last-page lengths,
 and page geometry. It may cache those inputs for execution, but it does not
-allocate or recycle KV pages.
+allocate or recycle KV pages. The executor depends on the visible submodule by
+local path, so the reviewed fork and the code linked into the product cannot
+silently diverge.
 
 The native decoder compiles one symbolic graph into decode and prefill buckets.
 Both phases share the same runtime, preallocated dynamic inputs, and one
@@ -126,8 +129,8 @@ semantics rather than silently dropping them.
 
 ```bash
 git submodule update --init --recursive
-cargo test --locked --workspace --all-targets
-cargo clippy --locked --workspace --all-targets -- -D warnings
+cargo test --locked --all-targets
+cargo clippy --locked --all-targets -- -D warnings
 cargo fmt --all -- --check
 python tools/verify_active_source.py
 ```
@@ -141,17 +144,20 @@ cargo run --locked -p orbitkv --bin orbitkv -- \
 
 ## Evidence boundary
 
-Core lifecycle and executor lowering are host-verified. The current pinned
-executor also has two same-source real-device correctness closures: a released
-full-attention checkpoint completes prefill and one decode step with
-OrbitKV-owned pages, and a token-relocation transaction copies K/V on one CUDA
-stream, waits on an event, publishes the packed view, and serves a following
-paged decode. A separate fixed-signature child-graph experiment records a narrow
-matched dispatch improvement. A same-graph H20 mechanism check also crossed one
-synthetic Sliding boundary with byte-identical prefill/decode outputs and reduced
-the Sliding arena from 6 pages / 589,824 bytes to 5 pages / 491,520 bytes. This
-is not yet a repeated workload, serving-throughput, production-capacity,
-production-readiness, or complete-replacement claim.
+Core lifecycle and executor lowering are host-verified. On H20, the current
+source also executes a released 18-layer Full+Sliding checkpoint with its native
+3 Full / 15 Sliding schedule and 512-token window. A 512-token prefill plus 33
+decode steps matches a separately generated Transformers greedy-token sequence,
+crosses the window, reclaims and reuses a page generation, executes a second
+request from reused storage, and drains every arena after release. The direct
+explicit-CSR prefill kernel also matches its independent BF16 reference within
+`1.93e-4`. See `results/released-hybrid-lifecycle-20260906`.
+
+A separate fixed-signature child-graph experiment records a narrow matched
+dispatch improvement, and a synthetic-policy ablation records less live payload
+inside a fixed arena. Neither is an end-to-end throughput or capacity result.
+There is still no production-serving, broad model-family, or complete SGLang
+replacement claim.
 
 `results/**` contains only compact reviewed evidence directly relevant to the
 current architecture. Removed historical archives remain recoverable from Git

@@ -18,14 +18,16 @@ move a compact reviewed result here only after its checks pass.
 | `on-device-greedy-correctness-20260904` | Device argmax matches host argmax and the default path returns token IDs rather than vocabulary logits | Greedy only; no sampling-performance claim |
 | `decode-cuda-graph-correctness-20260905` | Stable-input outer-graph replay is correct; flattened capture is 24.9% slower than eager | Retained negative result; no benefit claim |
 | `decode-child-graph-benefit-20260905` | Selected Luminal executables composed as child graphs reduce matched fixed-step batch-one median wall time by 5.8-8.3% in two runs | Narrow dispatch result; not serving throughput or lifecycle benefit |
-| `multi-class-attention-plumbing-20260905` | One released dense checkpoint executes a synthetic alternating Full/Sliding policy through two OrbitKV arenas and one Luminal graph on H20 | Device plumbing only; not released hybrid-model correctness or performance |
 | `physical-residence-ablation-20260905` | One compiled Luminal graph executes compiled and request-lifetime residence across a Sliding boundary with byte-identical prefill/decode output; compiled Sliding residency is 1 page / 98,304 bytes lower | Single synthetic-policy sample; not latency, throughput, workload-capacity, or released hybrid-model evidence |
+| `released-hybrid-lifecycle-20260906` | Released 18-layer Full+Sliding checkpoint crosses its native window on H20, matches an independent greedy-token reference, reuses retired storage, cancels a second request, and fully drains | Correctness and lifecycle only; diagnostic timing is not a benefit result |
 
 The normative current support boundary is the
 [Capability Matrix](../docs/capability-matrix.md). The mechanism ablation proves
 a same-semantics physical-residence reduction and host fixed-capacity admission
-difference. No retained record yet proves repeated workload capacity, tail
-latency, or end-to-end throughput. Those remain the next L5 gates.
+difference. The released hybrid record closes R1 but does not establish that the
+compiler policy outperforms conservative retention. No retained record yet
+proves repeated workload capacity, tail latency, or end-to-end throughput. Those
+remain the next L5 gates.
 
 ## Result-package policy
 

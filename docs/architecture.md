@@ -93,7 +93,14 @@ uses a process-local IPC protocol adapter because that crate is coupled to its
 core/
   src/                    compiler, manager, RuntimeSession, checkpoint pool
 executor/
-  src/                    OrbitKV-to-Luminal lowering and transport contract
+  src/
+    model.rs              graph/runtime orchestration
+    model/config.rs       structural decoder semantics from model config
+    model/weights.rs      fail-closed checkpoint tensor contract
+    model/block.rs        generic dense transformer block math
+    model/runtime_input.rs bounded multi-class step validation
+    cuda.rs               direct paged-attention and stream/event boundary
+    transport.rs          external byte-movement contract
   tests/                  real-byte reference transport closures
   luminal/                complete pinned compiler/executor fork
 server/
@@ -102,35 +109,51 @@ docs/                     current product contracts
 results/                  compact reviewed current evidence, never active source
 ```
 
-The Luminal submodule preserves its upstream history. OrbitKV-specific changes
-are made in the fork and pinned here, rather than copied into model- or
-hardware-specific directories. See [executor-upstream.md](executor-upstream.md)
-for the fork delta and update procedure.
+The Luminal submodule preserves its upstream history. `executor/Cargo.toml`
+depends directly on its local crates, so the reviewed fork source and the code
+compiled into the product are the same tree. OrbitKV-specific changes are made
+in the fork and pinned by the parent submodule pointer, rather than copied into
+model- or hardware-specific directories. See
+[executor-upstream.md](executor-upstream.md) for the update procedure.
+
+## Enforced dependency boundaries
+
+The crate graph is intentionally one-way. `core` has no executor, Luminal,
+server, async-runtime, or HTTP dependency. `executor` depends inward on `core`
+and the embedded compiler crates, but never on `server`. `server` owns only
+logical protocol contracts and currently depends on neither `core` nor
+`executor`; the future coordinator will implement its `Engine` trait from the
+composition root rather than moving page types into the server. External KV
+transports live in `executor` because they operate on lowered tensor spans, while
+replica identity, pins, publication, and deletion authority stay in `core`.
+
+`tools/verify_active_source.py` enforces these forbidden dependency edges,
+rejects physical KV ownership types in server source, requires all product
+Luminal dependencies to resolve through the visible submodule, rejects removed
+compatibility paths and model/hardware/version-specific active filenames, and
+bounds source-file size. The gate cannot prove every semantic ownership rule,
+so transaction and failure-atomicity tests remain the executable authority.
 
 ## Qualification boundary
 
 The current tree proves compiler, manager, lifecycle, and executor-metadata
 contracts on the host. Real-device tests additionally cover external block-page
-attention, stream-ordered token relocation followed by packed-page decode, and
-a minimal released full-attention checkpoint completing prefill plus repeated
-decode through one precompiled two-bucket runtime. Relocation evidence is gated
-by a real CUDA event; ordinary model-step completion still relies on the
-embedding runtime's completion assertion. Generic stable-input outer-graph
-replay and a released-checkpoint prefill/capture/replay lifecycle pass on H20.
-The current parent graph preserves Luminal's searched executables as child
-graphs and orders persistent-state D2D epilogues after them. Narrow fixed-step
-matched tests improved decode wall time by 5.8-8.3%; broader performance remains
-unqualified. The tree does not yet prove matched output equivalence against a
-reference engine, throughput, capacity, model-backed HTTP execution,
-cancellation cleanup, continuous batching, or long-running behavior.
-The multi-class graph path has additionally executed a short synthetic
-Full/Sliding policy on H20 using released dense weights. Because the checkpoint
-was not trained with that policy and the window did not cross its boundary, this
-is plumbing evidence rather than hybrid-model correctness or benefit evidence.
-A separate same-graph H20 mechanism check crossed a 64-token Sliding boundary
-with an 80-token prefill and a following decode. Compiled and request-lifetime
-residence produced byte-identical logits and token IDs in both phases; after
-decode, the Sliding arena held 5 pages / 491,520 bytes versus 6 pages / 589,824
-bytes for the conservative baseline. This is a single synthetic-policy
-execution and establishes only physical-attribution plumbing, not throughput,
-capacity at workload scale, or a released hybrid-model benefit.
+attention, explicit-CSR causal prefill, stream-ordered token relocation followed
+by packed-page decode, and released Full and Full+Sliding checkpoints. The
+released hybrid closure runs its native 3 Full / 15 Sliding layer schedule,
+crosses the 512-token window with 512 prefill plus 33 decode steps, matches a
+separate Transformers greedy-token reference, reuses an acknowledged retired
+generation, executes a second request from recycled storage, and drains all
+state after token-boundary cancellation.
+
+Relocation evidence is gated by a real CUDA event; ordinary model-step completion
+still relies on the embedding runtime's completion assertion. Generic
+stable-input outer-graph replay and a released-checkpoint capture/replay lifecycle
+pass on H20. The current parent graph preserves Luminal's searched executables
+as child graphs and orders persistent-state D2D epilogues after them. Narrow
+fixed-step matched tests improved decode wall time by 5.8-8.3%; broader
+performance remains unqualified. The tree does not yet prove repeated
+workload-level retention benefit, throughput, production capacity, model-backed
+HTTP execution, continuous batching, or long-running behavior. A separate
+same-graph synthetic ablation reduced Sliding live payload by one page with
+byte-identical output; it remains mechanism evidence, not a serving result.

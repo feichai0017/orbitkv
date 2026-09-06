@@ -34,18 +34,18 @@ recorded source closure.
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | vLLM frontend adapter | L2 protocol tests | Optional pinned Rust frontend dependency; tokenized Add/Abort, request-ID mapping, terminal token translation, and unsupported-field rejection pass host tests |
 | OpenAI-compatible API | L2 HTTP protocol closure | A real HTTP completion smoke passes through tokenizer, Add bridge, a local test `Engine`, event translation, detokenization, and OpenAI JSON; model execution is not part of that smoke |
-| Complete model executor | Narrow L4 correctness closure | A configuration-driven Full token-KV checkpoint completes prefill and repeated decode; multi-class Full+Sliding graph construction and a synthetic-policy H20 plumbing smoke pass, but no released hybrid-architecture checkpoint is qualified; scheduler and serving integration remain open |
+| Complete model executor | Narrow L4 correctness closure | Configuration-driven Full and released Full+Sliding dense checkpoints complete on H20; the hybrid closure includes independent reference-token parity, native-window retirement/reuse, cancellation, and final drain; scheduler and serving integration remain open |
 
 ## Decoder operator and model boundary
 
 | Capability | Current status |
 | --- | --- |
-| Dense decoder blocks | BF16 embedding, linear projections, residuals, RMSNorm, RoPE, SwiGLU, optional QKV bias and QK norm |
+| Dense decoder blocks | BF16 embedding, linear projections, pre-norm or sandwich-norm residuals, direct or unit-offset RMSNorm weights, global/local RoPE, SwiGLU or GeGLU, optional QKV bias and QK norm |
 | Attention | MHA/GQA paged attention; query-head count must divide by KV-head count; head dimension 64, 128, or 256 |
 | KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, Prefix/COW lowering, stream-ordered token relocation |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
-| Checkpoint family | Configuration-driven dense decoder with the expected tensor layout; one released full-attention checkpoint has real-device correctness evidence |
-| Not yet executable as complete models | MoE, MLA/latent KV, recurrent or convolution state, quantized weights, multimodal encoders, speculative decoding, and device-qualified multi-class hybrid checkpoints |
+| Checkpoint family | Configuration-driven dense decoder with fail-closed config and safetensors-header validation; released Full and Full+Sliding checkpoints have real-device correctness evidence |
+| Not yet executable as complete models | MoE, MLA/latent KV, recurrent or convolution state, quantized weights, multimodal encoders, speculative decoding, and tensor/pipeline parallel models |
 
 Core support for a retention policy means its lifecycle can be compiled and
 host-tested. It does not by itself imply that all model operators or the
@@ -61,8 +61,8 @@ addresses stable, but it is not evidence of zero-copy KV writes.
 | State shape | Compiler and manager | Executor lowering | Real-device engine status |
 | --- | --- | --- | --- |
 | Full token KV | Host-tested, including shared Prefix, COW, disposition, and relocation | Implemented, including CUDA relocation | Minimal released-checkpoint prefill/decode and packed relocation/decode pass |
-| Sliding token KV | Host-tested periodic placement, retirement, ACK, and reuse; same-semantics request-lifetime baseline | Implemented; CSR geometry matches across residence policies | Synthetic-policy H20 boundary-crossing output parity; no released Sliding model qualification |
-| Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Manifest-driven layer binding and independent per-class inputs/arenas; synthetic-policy H20 plumbing passes | Released hybrid-model execution unqualified |
+| Sliding token KV | Host-tested periodic placement, retirement, ACK, and reuse; same-semantics request-lifetime baseline | Implemented; CSR geometry matches across residence policies | Native Sliding layers cross their 512-token window in the released hybrid H20 closure |
+| Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Manifest-driven layer binding and independent per-class inputs/arenas | Released 3-Full/15-Sliding checkpoint passes reference parity, retirement/reuse, cancellation, and final drain on H20 |
 | Exact Chunked token KV | Host-tested resettable epoch lifecycle | Implemented | Current architecture unqualified |
 | Full latent KV | Host-tested component-aware core lifecycle | Rejected until a matching Luminal kernel contract exists | Unqualified |
 | Recurrent checkpoints | Host-tested independent pool | Not integrated into one model transaction | Unqualified |
@@ -97,14 +97,15 @@ Historical files under `results/**` may preserve such identities as provenance.
 ## Current claim boundary
 
 The current architecture has same-source L3 device correctness for paged
-attention and token relocation, plus a narrow L4 released-checkpoint correctness
-closure for Full token KV. Full+Sliding has a synthetic-policy device plumbing
-smoke. A same-graph boundary-crossing prefill+decode check produced identical
-output while reducing the Sliding class from 6 pages / 589,824 bytes to 5 pages
-/ 491,520 bytes. Sliding, Full+Sliding, and exact Chunked still lack independent
+attention and token relocation, plus narrow L4 released-checkpoint correctness
+closures for Full and Full+Sliding token KV. The Full+Sliding run crosses the
+native Sliding boundary and matches independently generated greedy tokens while
+qualifying lifecycle reuse and cancellation. A separate same-graph synthetic
+ablation reduced the Sliding class from 6 pages / 589,824 bytes to 5 pages /
+491,520 bytes with identical output. Exact Chunked still lacks independent
 released-model qualification. No repeated matched L5 experiment has completed,
-so there is no current throughput, production-capacity, production, or
-complete-replacement claim. A future benefit statement must
+so there is no current throughput, production-capacity, production, broad-model,
+or complete-replacement claim. A future benefit statement must
 compare the same model, weights, dtype, kernels, batching policy, request trace,
 device budget, and output semantics, and must report both successful and failed
 gates.

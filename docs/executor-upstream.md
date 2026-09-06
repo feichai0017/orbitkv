@@ -37,27 +37,27 @@ No production path or type is named for one GPU or model family.
 
 The OrbitKV decoder path currently composes token embedding, BF16 linear
 projections with optional Q/K/V bias, optional per-head Q/K normalization,
-RoPE, RMS normalization, paged MHA/GQA, SwiGLU, residuals, KV scatter writes,
-and an untied or tied language-model head. Head dimensions 64, 128, and 256 are
+global or local RoPE, direct or unit-offset RMS normalization, pre-norm or
+sandwich-norm residuals, paged MHA/GQA, SwiGLU or GeGLU, KV scatter writes, and
+an untied or tied language-model head. Head dimensions 64, 128, and 256 are
 admitted by the graph contract.
 
 This is an architectural family, not a model-name allowlist. A checkpoint is
 executable only when its tensor names, dense decoder topology, dimensions,
-dtype, and attention-state plan match this vocabulary. The current real-device
-closure is one released dense decoder checkpoint with full token KV.
+dtype, and attention-state plan match this vocabulary. Configuration semantics
+and the safetensors header are both checked before search. Current real-device
+closures include released dense Full and Full+Sliding checkpoints.
 
 The following remain outside the released-model execution closure: MoE routing,
 MLA or latent KV, recurrent and convolution state, quantized weights, multimodal
-encoders, speculative decoding, tensor/pipeline parallelism, and a qualified
-hybrid checkpoint. Multi-class Full+Sliding graph construction and a synthetic
-policy device smoke pass, but Sliding and Chunked still lack independent
-released-model qualification.
+encoders, speculative decoding, tensor/pipeline parallelism, and independently
+qualified exact Chunked execution.
 
 ## Current whole-graph runtime
 
 `CompiledDecoder` owns one graph, one runtime, and one stable K/V arena per
-attention class. It compiles
-separate `s=1` decode and `s>=2` prefill buckets once; batch and context-page
+attention class. It compiles separate `s=1` decode and `s>=2` prefill buckets
+once; batch and context-page
 dimensions have explicit capacity buckets. Tokens, positions, write slots, and
 CSR tensors are allocated to their maximum configured capacity before search,
 so later `set_data` calls update their contents and logical lengths without
@@ -108,9 +108,10 @@ parent repository:
 3. run Luminal's host tests and the paged-attention/device-copy regressions;
 4. run OrbitKV host gates, CUDA compile checks, and the released-model and
    relocation device closures;
-5. push the fork commit, then update both the parent submodule pointer and the
-   three Luminal dependency revisions in `executor/Cargo.toml`;
-6. let `tools/verify_active_source.py` reject a mismatched pin or submodule.
+5. push the fork commit, then update the parent submodule pointer;
+6. keep `executor/Cargo.toml` path dependencies pointed at that visible
+   submodule and let `tools/verify_active_source.py` reject any second remote
+   Luminal source.
 
 An upstream update is therefore an explicit compiler-backend upgrade with
 qualification, rather than an automatic floating dependency.
