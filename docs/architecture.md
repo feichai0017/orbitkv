@@ -152,8 +152,9 @@ stable-input outer-graph replay and a released-checkpoint capture/replay lifecyc
 pass on H20. The current parent graph preserves Luminal's searched executables
 as child graphs and orders persistent-state D2D epilogues after them. Narrow
 fixed-step matched tests improved decode wall time by 5.8-8.3%; broader
-performance remains unqualified. The tree does not yet prove repeated
-workload-level retention benefit, throughput, production capacity, model-backed
-HTTP execution, continuous batching, or long-running behavior. A separate
-same-graph synthetic ablation reduced Sliding live payload by one page with
-byte-identical output; it remains mechanism evidence, not a serving result.
+performance remains unqualified. A released-hybrid same-executor ablation now
+also proves a narrow lifecycle benefit: ten paired release-mode runs reduce live
+payload by 27.8%, increase the fixed-budget sequence boundary by 32 tokens, and
+show a positive paired total-time confidence interval with identical output. The
+tree does not yet prove continuous-batching throughput, multi-user capacity,
+model-backed HTTP execution, or long-running behavior.

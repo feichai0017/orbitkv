@@ -394,7 +394,13 @@ impl CompiledDecoder {
         seed_compile_inputs(&mut runtime, &decoder, compile, page_tokens);
         let options = decoder_compile_options(&decoder, compile);
         let mut rng = luminal::prelude::rand::rngs::SmallRng::seed_from_u64(compile.search_seed);
-        let runtime = graph.compile_with_rng(runtime, options, &mut rng);
+        let mut runtime = graph.compile_with_rng(runtime, options, &mut rng);
+        // Explicit-CSR attention may recapture library islands as context
+        // geometry changes. Keep every searched bucket, but only one
+        // materialized CUDA graph at a time so graph-pool reclamation cannot
+        // leave an inactive phase holding stale captured resources. A bucket
+        // switch rematerializes the target without repeating graph search.
+        runtime.set_max_materialized_buckets(Some(1));
         runtime.release_pooled_memory();
         let dynamic_input_allocations = capture_input_allocations(&runtime, &decoder)?;
         let cache_updates_in_place = cache_updates_in_place(&runtime, &decoder);

@@ -1,0 +1,32 @@
+{
+  "schema": "orbitkv.device-environment",
+  "captured_at_utc": "2026-09-06T13:10:40Z",
+  "source": {
+    "orbitkv_commit": "6f73b3804f8b6f2d48a1ca828d044619b1764e9a",
+    "luminal_commit": "c9f03f46d049a352eda2ab76c865cb6212157a3e",
+    "worktree_clean_before_run": true,
+    "test_source_sha256": "82f6487f26983d024eb0c2274c8792924b8183ead563ea712b169dec581f9730",
+    "executor_source_sha256": "dfb4ff9d63b144719dab4f85e9a97da149b7c2c827189f69cf528a72b484b1dd",
+    "runtime_source_sha256": "a7d65258ee6dcfa432bb919636e92dc1a5cdee40c29fe0741ae2972a1dfa331f",
+    "note": "The exact tested implementation is commit 6f73b38; only documentation and this evidence package were uncommitted during the run."
+  },
+  "accelerator": {
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3",
+    "compute_capability": "9.0",
+    "memory_mib": 97871,
+    "driver_version": "535.161.08",
+    "cuda_compiler_build": "cuda_13.1.r13.1/compiler.37061995_0"
+  },
+  "toolchain": {
+    "profile": "release",
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo": "1.97.1 (c980f4866 2026-06-30)"
+  },
+  "checkpoint": {
+    "identity": "unsloth/gemma-3-270m-it",
+    "upstream_identity": "google/gemma-3-270m-it",
+    "config_sha256": "2706d3533059c6e1086badab27cc234e8ca2228975c3f73eeaef7f57cb5ec1db",
+    "weights_sha256": "700b710a9a99c295ed546647aa81cacf9f81f4c573ea2be613a0e2517a44afab"
+  }
+}

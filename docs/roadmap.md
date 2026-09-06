@@ -25,10 +25,11 @@ work is not a current capability.
   remote leases remain open.
 - The server has a local async `Engine` contract and optional vLLM Rust frontend,
   but no complete continuous-batching model-backed executable.
-- A same-semantics conservative/compiled residence seam now passes host
-  correctness, fixed-capacity admission, executor CSR, and one H20
-  boundary-crossing mechanism check. Repeated workload-level admission, tail
-  latency, and throughput benefit remain unproven.
+- A released-hybrid same-executor residence experiment passes ten paired
+  release-mode epochs with full token parity. Compiled residence reduces live
+  payload by 27.8%, raises the fixed-budget boundary from 528 to 560, and has a
+  positive paired total-time confidence interval. Serving concurrency, tail
+  latency, and throughput remain unproven.
 
 ## R1: Execute a multi-class hybrid graph — completed
 
@@ -41,32 +42,37 @@ greedy-token sequence, observes retirement and post-ACK generation reuse, runs
 a second 16-token request from reused storage, releases that request at a token
 boundary, and verifies both final drains.
 
-This closes R1 correctness and lifecycle qualification. It does not close an L5
-benefit or production-serving claim. The next priority is R2.
+This closes R1 correctness and lifecycle qualification. It does not by itself
+close a benefit or production-serving claim; the narrow R2 result below is a
+separate matched experiment.
 
-## R2: Prove the compiler contribution
+## R2: Prove the compiler contribution — narrow closure completed
 
-The backend-neutral `PhysicalResidencePolicy` provides the two arms and a
-single compiled Luminal graph has executed both on H20 with exact output parity.
-Use the released hybrid checkpoint from R1 to run repeated same-executor
-workloads with identical graphs, kernels, weights, dtype, scheduler, request
-trace, and device budget:
+The backend-neutral `PhysicalResidencePolicy` provides the two arms. A single
+compiled Luminal graph executed both on H20 with identical weights, dtype,
+request trace, kernel selection, and arena geometry:
 
 ```text
 conservative retention  versus  manifest-compiled retention
 ```
 
-Measure semantic-live bytes, physical-resident bytes, Retention Amplification,
-admission failures, maximum admitted requests, allocator work, relocation bytes,
-TTFT, TPOT, throughput, and p95/p99 latency. Require output equivalence and final
-drain before interpreting performance.
+Ten paired alternating release-mode epochs each ran a 512-token prefill and 255
+decode steps. All 256 output tokens matched between arms, and the independently
+stable first 13 tokens matched Transformers. Compiled residence reduced physical
+resident payload from 14,155,776 to 10,223,616 bytes (27.8%) and Sliding pages
+from 48 to 32 (33.3%). Retention Amplification fell from 1.387 to 1.002. With
+Full=35 and Sliding=33 pages, compiled residence
+advanced to boundary 560 while request-lifetime residence stopped at 528. Median
+total test-path time fell from 1.083926 s to 1.075590 s (0.77%); paired mean
+improvement was 11.633 ms with a 95% confidence interval of 5.697-17.570 ms.
+Model compute stayed nearly equal; the main difference was manager time.
 
-The first mechanism run reduced the Sliding arena after an 80-token prefill plus
-decode from 6 pages / 589,824 bytes to 5 pages / 491,520 bytes. The host capacity
-test also admits a second request with three pages only in compiled mode. These
-validate the experimental seam; repeated confidence intervals and scheduler-
-level admission/latency measurements are still required for an L5 claim. CUDA
-Graph dispatch speedups remain separate evidence.
+This is a narrow same-executor L5 result: it proves that compiler-derived
+lifetime management reduces real resident payload and improves admission without
+adding net cost in this one batch-one workload. It does not establish
+continuous-batching throughput, TTFT/TPOT tails, multi-user capacity, or a win
+over SGLang. Those product-level measurements remain R3/R4. CUDA Graph dispatch
+speedups remain separate evidence.
 
 ## R3: Complete the single-process serving engine
 
