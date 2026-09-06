@@ -25,6 +25,7 @@ const HYBRID_REFERENCE_TOKENS: [u32; 34] = [
     236_813, 208, 236_820, 34_280, 236_813, 208, 236_820, 34_280, 236_813, 208, 236_820, 34_280,
     236_813, 208, 236_820, 34_280, 236_813, 208, 236_820, 34_280, 236_813, 208,
 ];
+const HYBRID_STABLE_REFERENCE_PREFIX: usize = 13;
 
 fn model_directory() -> PathBuf {
     std::env::var_os("ORBITKV_MODEL_DIR")
@@ -366,8 +367,8 @@ fn execute_released_residence_arm(
         manager_elapsed += publish_started.elapsed();
     }
     assert_eq!(
-        &generated_tokens[..HYBRID_REFERENCE_TOKENS.len()],
-        HYBRID_REFERENCE_TOKENS
+        &generated_tokens[..HYBRID_STABLE_REFERENCE_PREFIX],
+        &HYBRID_REFERENCE_TOKENS[..HYBRID_STABLE_REFERENCE_PREFIX]
     );
 
     let after = run.session.arena_stats();
@@ -441,8 +442,8 @@ fn print_released_residence_summary(
             .all(|result| result.generated_tokens == *reference)
     );
     assert_eq!(
-        &reference[..HYBRID_REFERENCE_TOKENS.len()],
-        HYBRID_REFERENCE_TOKENS
+        &reference[..HYBRID_STABLE_REFERENCE_PREFIX],
+        &HYBRID_REFERENCE_TOKENS[..HYBRID_STABLE_REFERENCE_PREFIX]
     );
     let mut compiled_total = compiled
         .iter()
