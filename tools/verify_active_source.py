@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import re
-import subprocess
+import tomllib
 from pathlib import Path
 
 
@@ -16,6 +16,20 @@ SPECIFIC_FILENAME = re.compile(
     r"(?:^|[._-])(?:abi\d+|wire\d+|h\d+|v\d+)(?:$|[._-])"
     r"|qwen|mistral|deepseek|llama|gemma|sglang",
     re.IGNORECASE,
+)
+LAYER_MANIFESTS = {
+    "core": Path("core/Cargo.toml"),
+    "executor": Path("executor/Cargo.toml"),
+    "server": Path("server/Cargo.toml"),
+}
+FORBIDDEN_LAYER_DEPENDENCIES = {
+    "core": frozenset({"orbitkv-executor", "orbitkv-server", "luminal", "luminal_cuda_lite", "luminal_nn"}),
+    "executor": frozenset({"orbitkv-server"}),
+    "server": frozenset({"orbitkv", "orbitkv-executor", "luminal", "luminal_cuda_lite", "luminal_nn"}),
+}
+SERVER_PHYSICAL_TYPES = re.compile(
+    r"\b(?:BackendArenaRegistration|CanonicalKvManager|ExecutorArena|ExecutorPlan|"
+    r"PageLease|RuntimeSession)\b"
 )
 
 
@@ -37,6 +51,11 @@ def active_files() -> list[Path]:
         and not EXCLUDED.intersection(path.relative_to(ROOT).parts)
         and not path.relative_to(ROOT).is_relative_to(Path(".qualification"))
     )
+
+
+def direct_dependencies(manifest: Path) -> set[str]:
+    document = tomllib.loads(manifest.read_text(encoding="utf-8"))
+    return set(document.get("dependencies", {}))
 
 
 def main() -> int:
@@ -72,28 +91,34 @@ def main() -> int:
         if SPECIFIC_FILENAME.search(relative.name):
             failures.append(f"specific active filename: {relative}")
 
-    executor_manifest = (ROOT / "executor/Cargo.toml").read_text(encoding="utf-8")
-    revisions = set(
-        re.findall(
-            r'orbitkv-luminal\.git", rev = "([0-9a-f]{40})"',
-            executor_manifest,
-        )
-    )
-    submodule = ROOT / "executor/luminal"
-    if len(revisions) != 1 or not submodule.is_dir():
-        failures.append("executor dependencies do not pin one Luminal fork revision")
-    else:
-        actual = subprocess.run(
-            ["git", "-C", str(submodule), "rev-parse", "HEAD"],
-            check=True,
-            capture_output=True,
-            text=True,
-        ).stdout.strip()
-        if actual not in revisions:
+    for layer, relative in LAYER_MANIFESTS.items():
+        forbidden = direct_dependencies(ROOT / relative) & FORBIDDEN_LAYER_DEPENDENCIES[layer]
+        if forbidden:
             failures.append(
-                f"Luminal dependency revision {next(iter(revisions))} "
-                f"differs from submodule {actual}"
+                f"{layer} has forbidden inward dependency: {', '.join(sorted(forbidden))}"
             )
+
+    for path in source_files(ROOT / "server/src"):
+        if SERVER_PHYSICAL_TYPES.search(path.read_text(encoding="utf-8")):
+            failures.append(
+                f"server source names a physical KV ownership type: {path.relative_to(ROOT)}"
+            )
+
+    executor_manifest = (ROOT / "executor/Cargo.toml").read_text(encoding="utf-8")
+    submodule = ROOT / "executor/luminal"
+    expected_paths = {
+        "luminal": "luminal",
+        "luminal_cuda_lite": "luminal/crates/luminal_cuda_lite",
+        "luminal_nn": "luminal/crates/luminal_nn",
+    }
+    if not submodule.is_dir():
+        failures.append("Luminal submodule is missing")
+    for dependency, path in expected_paths.items():
+        pattern = rf'{dependency} = \{{ path = "{re.escape(path)}", optional = true \}}'
+        if re.search(pattern, executor_manifest) is None:
+            failures.append(f"{dependency} does not use the visible Luminal submodule")
+    if "orbitkv-luminal.git" in executor_manifest:
+        failures.append("executor manifest still has a second remote Luminal source")
 
     if failures:
         for failure in failures:

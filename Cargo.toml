@@ -1,4 +1,7 @@
 [workspace]
 members = ["core", "executor", "server"]
-exclude = ["executor/luminal"]
+default-members = ["core", "executor", "server"]
 resolver = "3"
+
+[patch.crates-io]
+candle-kernels = { git = "https://github.com/huggingface/candle.git", rev = "a0dbd8b8aef6bde9adca3e8ad90791609d64974b" }

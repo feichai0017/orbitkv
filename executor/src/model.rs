@@ -6,11 +6,9 @@ use luminal::prelude::rand::SeedableRng;
 use luminal::{
     dtype::DType,
     op::Runtime,
-    prelude::{Expression, F32Pow, Graph, GraphTensor, Symbol, sym},
+    prelude::{Expression, Graph, GraphTensor, Symbol, sym},
     shape::ToShape,
 };
-use luminal_nn::{LayerNorm, scatter_rows};
-use serde::Deserialize;
 use thiserror::Error;
 
 use luminal_cuda_lite::{
@@ -20,35 +18,20 @@ use luminal_cuda_lite::{
 
 use crate::{
     ExecutorArena, ExecutorPlan, RelocationBatch,
-    cuda::{
-        AttentionKernel, CudaRelocationError, KvCacheBinding, PagedAttentionInputs,
-        PagedAttentionMetadata, PendingRelocationCopy, paged_attention,
-    },
+    cuda::{CudaRelocationError, KvCacheBinding, PagedAttentionMetadata, PendingRelocationCopy},
 };
 
 #[path = "model/runtime_input.rs"]
 mod runtime_input;
 use runtime_input::validate_step;
-
-#[derive(Clone, Debug, PartialEq)]
-pub struct DecoderConfig {
-    pub layers: usize,
-    pub hidden_size: usize,
-    pub intermediate_size: usize,
-    pub query_heads: usize,
-    pub kv_heads: usize,
-    pub head_dim: usize,
-    pub vocabulary_size: usize,
-    pub rope_theta: f32,
-    pub rms_epsilon: f32,
-    pub tied_embeddings: bool,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct DecoderWeightLayout {
-    pub qkv_bias: bool,
-    pub qk_norm: bool,
-}
+#[path = "model/config.rs"]
+mod config;
+pub use config::{
+    DecoderActivation, DecoderAttentionKind, DecoderBlockLayout, DecoderConfig, DecoderNormWeights,
+};
+#[path = "model/weights.rs"]
+mod weights;
+use weights::{DecoderWeightFeatures, inspect_weight_features};
 
 #[derive(Debug, Error)]
 pub enum DecoderError {
@@ -165,79 +148,6 @@ pub struct CompiledDecoder {
     dynamic_input_allocations: Box<[InputAllocation]>,
 }
 
-#[derive(Deserialize)]
-struct DecoderConfigInput {
-    num_hidden_layers: usize,
-    hidden_size: usize,
-    intermediate_size: usize,
-    num_attention_heads: usize,
-    num_key_value_heads: usize,
-    #[serde(default)]
-    head_dim: Option<usize>,
-    vocab_size: usize,
-    rope_theta: f32,
-    rms_norm_eps: f32,
-    tie_word_embeddings: bool,
-}
-
-impl DecoderConfig {
-    /// Parses the common decoder geometry required by the graph builder.
-    ///
-    /// # Errors
-    ///
-    /// Rejects missing JSON fields, zero dimensions, inconsistent head
-    /// geometry, unsupported head dimensions, or invalid floating constants.
-    pub fn from_json(bytes: &[u8]) -> Result<Self, DecoderError> {
-        let input = serde_json::from_slice::<DecoderConfigInput>(bytes)?;
-        let head_dim = input.head_dim.unwrap_or_else(|| {
-            input
-                .hidden_size
-                .checked_div(input.num_attention_heads.max(1))
-                .unwrap_or_default()
-        });
-        if input.layers_or_width_is_zero()
-            || head_dim == 0
-            || input.num_attention_heads.checked_mul(head_dim) != Some(input.hidden_size)
-            || !input
-                .num_attention_heads
-                .is_multiple_of(input.num_key_value_heads)
-            || !matches!(head_dim, 64 | 128 | 256)
-        {
-            return Err(DecoderError::InvalidGeometry("dimensions"));
-        }
-        if !input.rope_theta.is_finite()
-            || input.rope_theta <= 0.0
-            || !input.rms_norm_eps.is_finite()
-            || input.rms_norm_eps <= 0.0
-        {
-            return Err(DecoderError::InvalidGeometry("floating constants"));
-        }
-        Ok(Self {
-            layers: input.num_hidden_layers,
-            hidden_size: input.hidden_size,
-            intermediate_size: input.intermediate_size,
-            query_heads: input.num_attention_heads,
-            kv_heads: input.num_key_value_heads,
-            head_dim,
-            vocabulary_size: input.vocab_size,
-            rope_theta: input.rope_theta,
-            rms_epsilon: input.rms_norm_eps,
-            tied_embeddings: input.tie_word_embeddings,
-        })
-    }
-}
-
-impl DecoderConfigInput {
-    fn layers_or_width_is_zero(&self) -> bool {
-        self.num_hidden_layers == 0
-            || self.hidden_size == 0
-            || self.intermediate_size == 0
-            || self.num_attention_heads == 0
-            || self.num_key_value_heads == 0
-            || self.vocab_size == 0
-    }
-}
-
 #[derive(Clone)]
 pub struct DecoderInputs {
     pub token_ids: GraphTensor,
@@ -335,10 +245,10 @@ impl DecoderGraph {
     ///
     /// Rejects duplicate or incomplete layer coverage, incompatible arena or
     /// model geometry, and paged-attention construction failures.
-    pub fn build(
+    fn build(
         graph: &mut Graph,
         config: &DecoderConfig,
-        weights: DecoderWeightLayout,
+        weights: DecoderWeightFeatures,
         plan: &ExecutorPlan,
         arenas: &[ExecutorArena],
     ) -> Result<Self, DecoderError> {
@@ -350,7 +260,8 @@ impl DecoderGraph {
             (config.vocabulary_size, config.hidden_size),
             DType::Bf16,
         );
-        let mut hidden = token_embedding(&embedding, &inputs.token_ids, config.hidden_size);
+        let mut hidden = token_embedding(&embedding, &inputs.token_ids, config.hidden_size)
+            * config.embedding_scale;
         let mut cache_inputs = Vec::with_capacity(config.layers);
         let mut cache_updates = Vec::with_capacity(config.layers);
         for layer in 0..config.layers {
@@ -404,15 +315,8 @@ impl DecoderGraph {
             cache_inputs.push((k_cache, v_cache));
             cache_updates.push((key_update.output(), value_update.output()));
         }
-        let norm = LayerNorm::new(
-            config.hidden_size,
-            Some("model.norm.weight"),
-            None,
-            false,
-            config.rms_epsilon,
-            graph,
-        );
-        let normalized = norm.forward(hidden.cast(DType::F32)).cast(DType::Bf16);
+        let norm = DecoderNorm::new(graph, config, "model.norm.weight");
+        let normalized = norm.forward(&hidden);
         let lm_head = if config.tied_embeddings {
             embedding
         } else {
@@ -453,7 +357,6 @@ impl CompiledDecoder {
     /// compile failures currently surface through its native panic boundary.
     pub fn compile(
         config: &DecoderConfig,
-        weights: DecoderWeightLayout,
         plan: &ExecutorPlan,
         arenas: &[ExecutorArena],
         stream: &std::sync::Arc<CudaStream>,
@@ -465,6 +368,7 @@ impl CompiledDecoder {
             return Err(DecoderError::InvalidGeometry("weight files"));
         }
         let mut graph = Graph::default();
+        let weights = inspect_weight_features(weight_files, config)?;
         let decoder = DecoderGraph::build(&mut graph, config, weights, plan, arenas)?;
         let page_tokens = usize::try_from(plan.page_tokens)
             .map_err(|_| DecoderError::InvalidGeometry("page tokens"))?;
@@ -1095,6 +999,25 @@ fn validate_plan(
     if layers != (0..layer_count).collect() {
         return Err(DecoderError::UnsupportedPlan);
     }
+    if let Some(layer_attention) = &config.layer_attention {
+        for (layer, expected) in layer_attention.iter().enumerate() {
+            let class = class_for_layer(
+                plan,
+                u32::try_from(layer).map_err(|_| DecoderError::InvalidGeometry("layer index"))?,
+            )?;
+            let matches = matches!(
+                (expected, class.visibility),
+                (DecoderAttentionKind::Full, crate::AttentionVisibility::Full)
+                    | (
+                        DecoderAttentionKind::Sliding,
+                        crate::AttentionVisibility::Sliding { .. }
+                    )
+            );
+            if !matches {
+                return Err(DecoderError::UnsupportedPlan);
+            }
+        }
+    }
     Ok((
         DecoderDimensions {
             query_tokens: Expression::from('s'),
@@ -1158,246 +1081,9 @@ fn decoder_inputs(
     }
 }
 
-struct DecoderLayer {
-    attention_norm: LayerNorm,
-    feed_forward_norm: LayerNorm,
-    q_weight: GraphTensor,
-    k_weight: GraphTensor,
-    v_weight: GraphTensor,
-    o_weight: GraphTensor,
-    q_bias: Option<GraphTensor>,
-    k_bias: Option<GraphTensor>,
-    v_bias: Option<GraphTensor>,
-    q_norm: Option<GraphTensor>,
-    k_norm: Option<GraphTensor>,
-    gate: GraphTensor,
-    up: GraphTensor,
-    down: GraphTensor,
-}
-
-struct LayerInputs<'a> {
-    hidden: &'a GraphTensor,
-    positions: &'a GraphTensor,
-    write_slots: &'a GraphTensor,
-    metadata: &'a PagedAttentionMetadata,
-    k_cache: &'a GraphTensor,
-    v_cache: &'a GraphTensor,
-}
-
-impl DecoderLayer {
-    fn new(
-        graph: &mut Graph,
-        config: &DecoderConfig,
-        layout: DecoderWeightLayout,
-        layer: usize,
-    ) -> Self {
-        let prefix = format!("model.layers.{layer}");
-        let q_width = config.query_heads * config.head_dim;
-        let kv_width = config.kv_heads * config.head_dim;
-        let projection = |graph: &mut Graph, name: &str, width| {
-            weight(
-                graph,
-                format!("{prefix}.self_attn.{name}.weight"),
-                (width, config.hidden_size),
-                DType::Bf16,
-            )
-        };
-        Self {
-            attention_norm: LayerNorm::new(
-                config.hidden_size,
-                Some(&format!("{prefix}.input_layernorm.weight")),
-                None,
-                false,
-                config.rms_epsilon,
-                graph,
-            ),
-            feed_forward_norm: LayerNorm::new(
-                config.hidden_size,
-                Some(&format!("{prefix}.post_attention_layernorm.weight")),
-                None,
-                false,
-                config.rms_epsilon,
-                graph,
-            ),
-            q_weight: projection(graph, "q_proj", q_width),
-            k_weight: projection(graph, "k_proj", kv_width),
-            v_weight: projection(graph, "v_proj", kv_width),
-            o_weight: weight(
-                graph,
-                format!("{prefix}.self_attn.o_proj.weight"),
-                (config.hidden_size, q_width),
-                DType::Bf16,
-            ),
-            q_bias: layout.qkv_bias.then(|| {
-                weight(
-                    graph,
-                    format!("{prefix}.self_attn.q_proj.bias"),
-                    q_width,
-                    DType::Bf16,
-                )
-            }),
-            k_bias: layout.qkv_bias.then(|| {
-                weight(
-                    graph,
-                    format!("{prefix}.self_attn.k_proj.bias"),
-                    kv_width,
-                    DType::Bf16,
-                )
-            }),
-            v_bias: layout.qkv_bias.then(|| {
-                weight(
-                    graph,
-                    format!("{prefix}.self_attn.v_proj.bias"),
-                    kv_width,
-                    DType::Bf16,
-                )
-            }),
-            q_norm: layout.qk_norm.then(|| {
-                weight(
-                    graph,
-                    format!("{prefix}.self_attn.q_norm.weight"),
-                    config.head_dim,
-                    DType::F32,
-                )
-            }),
-            k_norm: layout.qk_norm.then(|| {
-                weight(
-                    graph,
-                    format!("{prefix}.self_attn.k_norm.weight"),
-                    config.head_dim,
-                    DType::F32,
-                )
-            }),
-            gate: weight(
-                graph,
-                format!("{prefix}.mlp.gate_proj.weight"),
-                (config.intermediate_size, config.hidden_size),
-                DType::Bf16,
-            ),
-            up: weight(
-                graph,
-                format!("{prefix}.mlp.up_proj.weight"),
-                (config.intermediate_size, config.hidden_size),
-                DType::Bf16,
-            ),
-            down: weight(
-                graph,
-                format!("{prefix}.mlp.down_proj.weight"),
-                (config.hidden_size, config.intermediate_size),
-                DType::Bf16,
-            ),
-        }
-    }
-
-    fn forward(
-        &self,
-        inputs: &LayerInputs<'_>,
-        class: &crate::AttentionClass,
-        config: &DecoderConfig,
-        dimensions: DecoderDimensions,
-        class_dimensions: DecoderClassDimensions,
-    ) -> Result<(GraphTensor, GraphTensor, GraphTensor), DecoderError> {
-        let normalized = self
-            .attention_norm
-            .forward((*inputs.hidden).cast(DType::F32))
-            .cast(DType::Bf16);
-        let project = |weight: GraphTensor, bias: Option<GraphTensor>| {
-            let output = normalized.matmul(weight.t());
-            bias.map_or(output, |bias| bias.expand_lhs(&output.dims()[..1]) + output)
-        };
-        let mut q = project(self.q_weight, self.q_bias)
-            .split_dims(1, config.head_dim)
-            .transpose(0, 1);
-        let mut k = project(self.k_weight, self.k_bias)
-            .split_dims(1, config.head_dim)
-            .transpose(0, 1);
-        if let Some(norm) = self.q_norm {
-            q = qk_norm(&q, &norm);
-        }
-        if let Some(norm) = self.k_norm {
-            k = qk_norm(&k, &norm);
-        }
-        q = rotary(&q, inputs.positions, config.rope_theta);
-        k = rotary(&k, inputs.positions, config.rope_theta);
-        let value = project(self.v_weight, self.v_bias);
-        let key_rows = k.transpose(0, 1).merge_dims(1, 2);
-        let key_update = scatter_rows(
-            key_rows,
-            *inputs.write_slots,
-            *inputs.k_cache,
-            config.kv_heads * config.head_dim,
-        );
-        let value_update = scatter_rows(
-            value,
-            *inputs.write_slots,
-            *inputs.v_cache,
-            config.kv_heads * config.head_dim,
-        );
-        let attention = paged_attention(
-            PagedAttentionInputs {
-                q,
-                k_cache: key_update,
-                v_cache: value_update,
-                query_tokens: dimensions.query_tokens,
-                context_pages: Expression::from(class_dimensions.context_pages),
-            },
-            *inputs.metadata,
-            class,
-            AttentionKernel {
-                query_heads: config.query_heads,
-                kv_heads: config.kv_heads,
-                head_dim: config.head_dim,
-                dtype: DType::Bf16,
-                softmax_scale: 0.0,
-            },
-        )?;
-        let attention = attention
-            .transpose(0, 1)
-            .merge_dims(1, 2)
-            .matmul(self.o_weight.t());
-        let hidden = *inputs.hidden + attention;
-        let normalized = self
-            .feed_forward_norm
-            .forward(hidden.cast(DType::F32))
-            .cast(DType::Bf16);
-        let gate = normalized.matmul(self.gate.t()).cast(DType::F32);
-        let up = normalized.matmul(self.up.t()).cast(DType::F32);
-        let feed_forward = (gate.swish() * up).cast(DType::Bf16).matmul(self.down.t());
-        Ok((hidden + feed_forward, key_update, value_update))
-    }
-}
-
-fn qk_norm(input: &GraphTensor, weight: &GraphTensor) -> GraphTensor {
-    let dtype = input.dtype;
-    let normalized =
-        (*input).cast(DType::F32).std_norm(2, 1e-6) * (*weight).expand_lhs(&input.dims()[..2]);
-    normalized.cast(dtype)
-}
-
-fn rotary(input: &GraphTensor, positions: &GraphTensor, theta: f32) -> GraphTensor {
-    let head_dim = input.dims()[2];
-    let frequencies = input
-        .graph()
-        .arange_options(0, head_dim, 2)
-        .cast(DType::F32)
-        / head_dim;
-    let inverse = theta.pow(frequencies).reciprocal();
-    let angles = (*positions)
-        .cast(DType::F32)
-        .expand_dim(1, 1)
-        .matmul(inverse.expand_dim(0, 1));
-    let first = input.slice((.., .., ..head_dim / 2));
-    let second = input.slice((.., .., head_dim / 2..));
-    let cosine = angles
-        .cos()
-        .cast(input.dtype)
-        .expand_dim(0, input.dims()[0]);
-    let sine = angles
-        .sin()
-        .cast(input.dtype)
-        .expand_dim(0, input.dims()[0]);
-    (first * cosine - second * sine).concat_along(first * sine + second * cosine, 2)
-}
+#[path = "model/block.rs"]
+mod block;
+use block::{DecoderLayer, DecoderNorm, LayerInputs};
 
 fn token_embedding(table: &GraphTensor, tokens: &GraphTensor, hidden: usize) -> GraphTensor {
     let count = tokens.dims1();
@@ -1407,7 +1093,7 @@ fn token_embedding(table: &GraphTensor, tokens: &GraphTensor, hidden: usize) -> 
     )
 }
 
-fn weight(
+pub(super) fn weight(
     graph: &mut Graph,
     name: impl ToString,
     shape: impl ToShape,

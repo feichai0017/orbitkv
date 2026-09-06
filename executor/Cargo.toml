@@ -8,13 +8,17 @@ license = "MIT"
 
 [features]
 default = []
-cuda = ["dep:luminal", "dep:luminal_cuda_lite", "dep:luminal_nn"]
+cuda = [
+    "dep:luminal",
+    "dep:luminal_cuda_lite",
+    "dep:luminal_nn",
+]
 
 [dependencies]
 async-trait = "0.1.89"
-luminal = { git = "https://github.com/feichai0017/orbitkv-luminal.git", rev = "9b8ac26243bae5bc5c37fb56ee3eb6554a05e7bc", optional = true }
-luminal_cuda_lite = { git = "https://github.com/feichai0017/orbitkv-luminal.git", rev = "9b8ac26243bae5bc5c37fb56ee3eb6554a05e7bc", optional = true }
-luminal_nn = { git = "https://github.com/feichai0017/orbitkv-luminal.git", rev = "9b8ac26243bae5bc5c37fb56ee3eb6554a05e7bc", optional = true }
+luminal = { path = "luminal", optional = true }
+luminal_cuda_lite = { path = "luminal/crates/luminal_cuda_lite", optional = true }
+luminal_nn = { path = "luminal/crates/luminal_nn", optional = true }
 orbitkv = { path = "../core" }
 parking_lot = "0.12.5"
 serde = { version = "1.0.228", features = ["derive"] }

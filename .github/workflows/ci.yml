@@ -18,8 +18,8 @@ jobs:
         with:
           components: clippy,rustfmt
       - run: cargo fmt --all -- --check
-      - run: cargo test --locked --workspace --all-targets
-      - run: cargo clippy --locked --workspace --all-targets -- -D warnings
+      - run: cargo test --locked --all-targets
+      - run: cargo clippy --locked --all-targets -- -D warnings
       - run: cargo test --locked -p orbitkv-server --features vllm-frontend
       - run: cargo clippy --locked -p orbitkv-server --features vllm-frontend --all-targets -- -D warnings
       - run: python tools/verify_active_source.py
