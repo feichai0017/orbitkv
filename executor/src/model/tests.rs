@@ -241,7 +241,131 @@ fn test_config(layers: usize) -> DecoderConfig {
         rope_theta: 10_000.0,
         rms_epsilon: 1e-6,
         tied_embeddings: false,
+        embedding_scale: 1.0,
+        activation: DecoderActivation::Silu,
+        block_layout: DecoderBlockLayout::PreNorm,
+        norm_weights: DecoderNormWeights::Direct,
+        local_rope_theta: None,
+        attention_softmax_scale: 0.0,
+        layer_attention: None,
     }
+}
+
+#[test]
+fn parses_structural_decoder_semantics_without_model_name_dispatch() {
+    let config = DecoderConfig::from_json(
+        br#"{
+            "num_hidden_layers": 6,
+            "hidden_size": 640,
+            "intermediate_size": 2048,
+            "num_attention_heads": 4,
+            "num_key_value_heads": 1,
+            "head_dim": 256,
+            "vocab_size": 262144,
+            "rope_theta": 1000000.0,
+            "rope_local_base_freq": 10000.0,
+            "rms_norm_eps": 0.000001,
+            "tie_word_embeddings": true,
+            "attention_bias": false,
+            "hidden_activation": "gelu_pytorch_tanh",
+            "query_pre_attn_scalar": 256,
+            "layer_types": [
+                "sliding_attention", "sliding_attention",
+                "sliding_attention", "sliding_attention",
+                "sliding_attention", "full_attention"
+            ],
+            "attn_logit_softcapping": null,
+            "final_logit_softcapping": null,
+            "rope_scaling": null
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(config.query_heads * config.head_dim, 1024);
+    assert_eq!(config.hidden_size, 640);
+    assert!((config.embedding_scale - 25.25).abs() < f32::EPSILON);
+    assert_eq!(config.activation, DecoderActivation::GeluTanh);
+    assert_eq!(config.block_layout, DecoderBlockLayout::SandwichNorm);
+    assert_eq!(config.norm_weights, DecoderNormWeights::UnitOffset);
+    assert_eq!(config.local_rope_theta, Some(10_000.0));
+    assert!((config.attention_softmax_scale - 1.0 / 16.0).abs() < f64::EPSILON);
+    assert_eq!(
+        config.layer_attention.as_deref(),
+        Some(
+            &[
+                DecoderAttentionKind::Sliding,
+                DecoderAttentionKind::Sliding,
+                DecoderAttentionKind::Sliding,
+                DecoderAttentionKind::Sliding,
+                DecoderAttentionKind::Sliding,
+                DecoderAttentionKind::Full,
+            ][..]
+        )
+    );
+}
+
+#[test]
+fn config_accepts_non_hidden_query_width_and_rejects_unimplemented_semantics() {
+    let hybrid = br#"{
+        "num_hidden_layers": 2, "hidden_size": 640,
+        "intermediate_size": 2048, "num_attention_heads": 4,
+        "num_key_value_heads": 1, "head_dim": 256,
+        "vocab_size": 262144, "rope_theta": 1000000.0,
+        "rope_local_base_freq": 10000.0, "rms_norm_eps": 0.000001,
+        "tie_word_embeddings": true, "hidden_activation": "gelu_pytorch_tanh",
+        "query_pre_attn_scalar": 256,
+        "layer_types": ["sliding_attention", "full_attention"]
+    }"#;
+    assert!(DecoderConfig::from_json(hybrid).is_ok());
+
+    let unsupported = String::from_utf8(hybrid.to_vec()).unwrap().replace(
+        "\"query_pre_attn_scalar\": 256",
+        "\"query_pre_attn_scalar\": 256, \"final_logit_softcapping\": 30.0",
+    );
+    assert!(matches!(
+        DecoderConfig::from_json(unsupported.as_bytes()),
+        Err(DecoderError::InvalidGeometry(
+            "unsupported decoder semantics"
+        ))
+    ));
+}
+
+#[test]
+fn omitted_tied_embedding_field_uses_the_hf_default() {
+    let config = DecoderConfig::from_json(
+        br#"{
+            "num_hidden_layers": 1, "hidden_size": 128,
+            "intermediate_size": 256, "num_attention_heads": 2,
+            "num_key_value_heads": 1, "head_dim": 64,
+            "vocab_size": 320, "rope_theta": 10000.0,
+            "rms_norm_eps": 0.000001, "hidden_act": "silu"
+        }"#,
+    )
+    .unwrap();
+    assert!(config.tied_embeddings);
+}
+
+#[test]
+fn graph_rejects_manifest_layer_semantics_that_disagree_with_model_config() {
+    let mut config = test_config(4);
+    config.layer_attention = Some(
+        vec![
+            DecoderAttentionKind::Sliding,
+            DecoderAttentionKind::Full,
+            DecoderAttentionKind::Sliding,
+            DecoderAttentionKind::Full,
+        ]
+        .into_boxed_slice(),
+    );
+    assert!(matches!(
+        DecoderGraph::build(
+            &mut Graph::default(),
+            &config,
+            DecoderWeightFeatures::default(),
+            &hybrid_executor_plan(),
+            &hybrid_arenas(),
+        ),
+        Err(DecoderError::UnsupportedPlan)
+    ));
 }
 
 fn hybrid_executor_plan() -> ExecutorPlan {
@@ -376,7 +500,7 @@ fn graph_builds_layers_from_independent_full_and_sliding_classes() {
     let decoder = DecoderGraph::build(
         &mut graph,
         &test_config(4),
-        DecoderWeightLayout::default(),
+        DecoderWeightFeatures::default(),
         &plan,
         &hybrid_arenas(),
     )
@@ -410,7 +534,7 @@ fn graph_rejects_duplicate_or_missing_layer_ownership() {
         DecoderGraph::build(
             &mut Graph::default(),
             &test_config(4),
-            DecoderWeightLayout::default(),
+            DecoderWeightFeatures::default(),
             &duplicate,
             &hybrid_arenas(),
         ),
@@ -423,7 +547,7 @@ fn graph_rejects_duplicate_or_missing_layer_ownership() {
         DecoderGraph::build(
             &mut Graph::default(),
             &test_config(4),
-            DecoderWeightLayout::default(),
+            DecoderWeightFeatures::default(),
             &missing,
             &hybrid_arenas(),
         ),
@@ -548,7 +672,7 @@ fn runtime_session_hybrid_plan_feeds_one_multi_class_decoder_step() {
     let graph = DecoderGraph::build(
         &mut Graph::default(),
         &test_config(4),
-        DecoderWeightLayout::default(),
+        DecoderWeightFeatures::default(),
         &executor,
         &arenas,
     )

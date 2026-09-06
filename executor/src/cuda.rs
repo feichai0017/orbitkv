@@ -253,8 +253,10 @@ impl PagedAttentionMetadata {
 
 /// Adds one fused paged-attention node that consumes `OrbitKV` metadata.
 ///
-/// The K/V buffers remain Luminal tensors, but their page identities and
-/// lifetime are controlled by `RuntimeSession`.
+/// Q must be a contiguous `(query_tokens, heads, head_dim)` NHD tensor,
+/// matching `FlashInfer`'s ABI. The result stays heads-first for the surrounding
+/// graph. The K/V buffers remain Luminal tensors, but their page identities
+/// and lifetime are controlled by `RuntimeSession`.
 ///
 /// # Errors
 ///
@@ -274,6 +276,12 @@ pub fn paged_attention(
         || !kernel.query_heads.is_multiple_of(kernel.kv_heads)
         || !matches!(kernel.dtype, DType::F16 | DType::Bf16)
         || inputs.q.dtype != kernel.dtype
+        || inputs.q.dims()
+            != [
+                inputs.query_tokens,
+                kernel.query_heads.into(),
+                kernel.head_dim.into(),
+            ]
         || inputs.k_cache.dtype != kernel.dtype
         || inputs.v_cache.dtype != kernel.dtype
         || [
@@ -330,7 +338,7 @@ mod tests {
         let query_tokens = Expression::from('s');
         let context_pages = Expression::from('c');
         let q = graph
-            .named_tensor("q", (4, query_tokens, 64))
+            .named_tensor("q", (query_tokens, 4, 64))
             .as_dtype(DType::Bf16);
         let k = graph
             .named_tensor("k", (8, 16, 1, 64))

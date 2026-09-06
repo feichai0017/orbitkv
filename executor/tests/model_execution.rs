@@ -6,9 +6,10 @@ use std::time::{Duration, Instant};
 
 use orbitkv::{
     AttentionStatePlanInput, AttentionStateSpec, AttentionStateStorage, CacheSharingPolicy,
-    EngineAppendIntent, EngineCompletionEvidence, EnginePublicationEvidence, EngineRequestId,
-    EngineRetirementEvidence, HfRetentionOptions, RuntimeSession, compile_attention_state_plan,
-    compile_hf_runtime_manifest, compile_plan, compile_runtime_manifest,
+    EngineAppendIntent, EngineCompletionEvidence, EnginePublicationEvidence, EngineReleaseEvidence,
+    EngineReleaseOutcome, EngineRequestId, EngineRetirementEvidence, HfRetentionOptions,
+    RuntimeSession, compile_attention_state_plan, compile_hf_runtime_manifest, compile_plan,
+    compile_runtime_manifest,
     kv_manager::{
         BackendArenaRegistration, CanonicalKvManager, ManagerConfig, PhysicalResidencePolicy,
     },
@@ -16,10 +17,7 @@ use orbitkv::{
 };
 use orbitkv_executor::{
     AttentionBatch, ExecutorArena, ExecutorPlan, PreparedBatch,
-    model::{
-        CompiledDecoder, DecoderClassStep, DecoderCompileConfig, DecoderConfig, DecoderStep,
-        DecoderWeightLayout,
-    },
+    model::{CompiledDecoder, DecoderClassStep, DecoderCompileConfig, DecoderConfig, DecoderStep},
 };
 
 const PAGE_TOKENS: u64 = 16;
@@ -64,27 +62,32 @@ fn prepare_model_run(config_bytes: &[u8], prompt_len: usize) -> PreparedModelRun
             .unwrap(),
     )
     .unwrap();
-    let registration = BackendArenaRegistration {
-        pool_id: 1,
-        class_id: 0,
-        backend_domain: 1,
-        page_count: PAGE_COUNT,
-        reserved: 0,
-        backend_base_index: 0,
-    };
+    let registrations = manager_plan
+        .classes
+        .iter()
+        .enumerate()
+        .map(|(index, _)| BackendArenaRegistration {
+            pool_id: u32::try_from(index + 1).unwrap(),
+            class_id: u16::try_from(index).unwrap(),
+            backend_domain: u16::try_from(index + 1).unwrap(),
+            page_count: PAGE_COUNT,
+            reserved: 0,
+            backend_base_index: 0,
+        })
+        .collect::<Vec<_>>();
     let manager = CanonicalKvManager::new(
         &manager_plan,
         ManagerConfig {
-            maximum_requests: 1,
+            maximum_requests: 2,
             maximum_operations: 4,
             maximum_prefixes: 1,
-            maximum_reclamations: PAGE_COUNT,
-            maximum_step_tokens: 64,
+            maximum_reclamations: PAGE_COUNT * u32::try_from(registrations.len()).unwrap(),
+            maximum_step_tokens: u32::try_from(prompt_len.max(64)).unwrap(),
         },
-        &[registration],
+        &registrations,
     )
     .unwrap();
-    let mut session = RuntimeSession::new(manager, CacheSharingPolicy::SharedPrefix);
+    let mut session = RuntimeSession::new(manager, CacheSharingPolicy::RequestPrivate);
     let request_id = EngineRequestId(1);
     session.acquire_requests(&[request_id]).unwrap();
     let source = session
@@ -94,7 +97,13 @@ fn prepare_model_run(config_bytes: &[u8], prompt_len: usize) -> PreparedModelRun
         }])
         .unwrap();
     let view = session.prepared_execution_view(source.batch_id).unwrap();
-    let arenas = vec![ExecutorArena::bind(session.arena_stats()[0], registration).unwrap()]
+    let arenas = session
+        .arena_stats()
+        .iter()
+        .copied()
+        .zip(registrations)
+        .map(|(stats, registration)| ExecutorArena::bind(stats, registration).unwrap())
+        .collect::<Vec<_>>()
         .into_boxed_slice();
     let executor_plan = ExecutorPlan::compile(&manifest).unwrap();
     let attention = executor_plan.attention_batches(&view).unwrap();
@@ -263,10 +272,49 @@ fn complete(
         .unwrap();
 }
 
+fn release_and_drain(session: &mut RuntimeSession, request_id: EngineRequestId) {
+    let release = session
+        .prepare_release_batch(&[request_id])
+        .expect("prepare release");
+    assert_eq!(
+        session.confirm_release(&EngineReleaseEvidence {
+            release_id: release.release_id,
+            mirror_cleanup_confirmed: true,
+            reclamation_receipts: release
+                .retirements
+                .iter()
+                .map(|retirement| EngineRetirementEvidence {
+                    page: retirement.page,
+                    backend_domain: retirement.backend_domain,
+                    acknowledged: true,
+                    backend_index: retirement.backend_index,
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        }),
+        Ok(EngineReleaseOutcome::Completed)
+    );
+    let stats = session.stats();
+    assert_eq!(stats.active_requests, 0);
+    assert_eq!(stats.active_snapshots, 0);
+    assert_eq!(stats.active_pages, 0);
+    assert_eq!(stats.retiring_pages, 0);
+    assert_eq!(stats.quarantined_pages, 0);
+    assert_eq!(stats.pending_reclamations, 0);
+    assert_eq!(stats.total_request_page_refs, 0);
+    assert_eq!(stats.total_reader_pins, 0);
+    assert!(
+        session
+            .arena_stats()
+            .iter()
+            .all(|arena| arena.free_pages == u64::from(arena.page_count))
+    );
+}
+
 fn prepare_decode_step(
     prepared_run: &mut PreparedModelRun,
     target_boundary: u64,
-) -> (Box<[AttentionBatch]>, PreparedBatch) {
+) -> (Box<[AttentionBatch]>, PreparedBatch, bool) {
     let source = prepared_run
         .session
         .prepare_append_batch(&[EngineAppendIntent {
@@ -279,11 +327,16 @@ fn prepare_decode_step(
         .prepared_execution_view(source.batch_id)
         .unwrap();
     let attention = prepared_run.executor_plan.attention_batches(&view).unwrap();
+    let reused_generation = source
+        .steps
+        .iter()
+        .flat_map(|step| step.write_intents.iter())
+        .any(|write| write.page_generation > 1);
     let prepared = prepared_run
         .executor_plan
         .lower_prepared(source, &prepared_run.arenas)
         .unwrap();
-    (attention, prepared)
+    (attention, prepared, reused_generation)
 }
 
 fn greedy_token(logits: &[f32], vocabulary_size: usize) -> u32 {
@@ -323,10 +376,6 @@ fn compile_hybrid_decoder(
     let started = Instant::now();
     let decoder = CompiledDecoder::compile(
         config,
-        DecoderWeightLayout {
-            qkv_bias: true,
-            qk_norm: false,
-        },
         &run.executor_plan,
         &run.arenas,
         &stream,
@@ -368,7 +417,7 @@ fn execute_residence_arm(
     let next_token = *output.token_ids.last().expect("prefill token");
     complete(&mut run.session, &run.prepared, &run.arenas, 1);
     let target_boundary = u64::try_from(prompt.len() + 1).unwrap();
-    let (decode_attention, decode) = prepare_decode_step(run, target_boundary);
+    let (decode_attention, decode, _) = prepare_decode_step(run, target_boundary);
     let decode_classes = decoder_class_steps(&decode, &decode_attention);
     let decode_started = Instant::now();
     let decode_output = decoder
@@ -520,6 +569,145 @@ fn decoder_class_steps<'a>(
         .collect()
 }
 
+fn qualify_hybrid_reference_probes(config_bytes: &[u8], decoder: &mut CompiledDecoder) {
+    for (prompt_len, expected) in [(1_usize, 9_450_u32), (2, 3_302), (4, 236_764), (16, 106)] {
+        let mut probe = prepare_model_run(config_bytes, prompt_len);
+        let tokens = (0..u32::try_from(prompt_len).unwrap()).collect::<Vec<_>>();
+        let output = execute_step(
+            "released hybrid parity probe",
+            decoder,
+            &tokens,
+            &tokens,
+            &probe.attention,
+            &probe.prepared,
+        );
+        assert_eq!(output.token_ids.last().copied(), Some(expected));
+        complete(&mut probe.session, &probe.prepared, &probe.arenas, 1);
+        release_and_drain(&mut probe.session, EngineRequestId(1));
+    }
+}
+
+struct HybridGenerationMetrics {
+    prefill_elapsed: Duration,
+    decode_durations: Vec<Duration>,
+    full_pages: u64,
+    sliding_pages: u64,
+    final_token: u32,
+}
+
+fn qualify_hybrid_generation(
+    run: &mut PreparedModelRun,
+    decoder: &mut CompiledDecoder,
+    config: &DecoderConfig,
+    prompt: &[u32],
+    positions: &[u32],
+    reference_tokens: &[u32],
+) -> HybridGenerationMetrics {
+    let prefill_started = Instant::now();
+    let output = execute_step(
+        "released hybrid prefill",
+        decoder,
+        prompt,
+        positions,
+        &run.attention,
+        &run.prepared,
+    );
+    let prefill_elapsed = prefill_started.elapsed();
+    assert_greedy_output(&output, prompt.len(), config.vocabulary_size);
+    assert_eq!(output.token_ids.last().copied(), Some(reference_tokens[0]));
+    complete(&mut run.session, &run.prepared, &run.arenas, 1);
+
+    let mut token = *output.token_ids.last().unwrap();
+    let mut generated = vec![token];
+    let mut decode_durations = Vec::new();
+    let mut reused_generation = false;
+    for offset in 1..u64::try_from(reference_tokens.len()).unwrap() {
+        let boundary = u64::try_from(prompt.len()).unwrap() + offset;
+        let (attention, prepared, reused) = prepare_decode_step(run, boundary);
+        reused_generation |= reused;
+        let classes = decoder_class_steps(&prepared, &attention);
+        let started = Instant::now();
+        let output = decoder
+            .execute(DecoderStep {
+                tokens: &[token],
+                positions: &[u32::try_from(boundary - 1).unwrap()],
+                classes: &classes,
+            })
+            .unwrap();
+        decode_durations.push(started.elapsed());
+        token = output.token_ids[0];
+        generated.push(token);
+        complete(&mut run.session, &prepared, &run.arenas, offset + 1);
+    }
+
+    let arenas = run.session.arena_stats();
+    let full_pages = arenas
+        .iter()
+        .find(|arena| arena.class_id == 0)
+        .unwrap()
+        .active_pages;
+    let sliding = arenas.iter().find(|arena| arena.class_id == 1).unwrap();
+    let sliding_pages = sliding.active_pages;
+    assert_eq!(full_pages, 35);
+    assert_eq!(sliding_pages, 33);
+    assert!(sliding.free_pages > 0);
+    assert!(reused_generation);
+    assert_eq!(generated, reference_tokens);
+    release_and_drain(&mut run.session, EngineRequestId(1));
+
+    HybridGenerationMetrics {
+        prefill_elapsed,
+        decode_durations,
+        full_pages,
+        sliding_pages,
+        final_token: token,
+    }
+}
+
+fn qualify_reused_cancelled_request(
+    run: &mut PreparedModelRun,
+    decoder: &mut CompiledDecoder,
+    prompt: &[u32],
+    positions: &[u32],
+) {
+    let request_id = EngineRequestId(2);
+    run.session.acquire_requests(&[request_id]).unwrap();
+    let source = run
+        .session
+        .prepare_append_batch(&[EngineAppendIntent {
+            request_id,
+            target_boundary: 16,
+        }])
+        .unwrap();
+    assert!(
+        source
+            .steps
+            .iter()
+            .flat_map(|step| step.write_intents.iter())
+            .any(|write| write.page_generation > 1)
+    );
+    let view = run
+        .session
+        .prepared_execution_view(source.batch_id)
+        .unwrap();
+    let attention = run.executor_plan.attention_batches(&view).unwrap();
+    let prepared = run
+        .executor_plan
+        .lower_prepared(source, &run.arenas)
+        .unwrap();
+    let output = execute_step(
+        "released hybrid cancellation prefill",
+        decoder,
+        &prompt[..16],
+        &positions[..16],
+        &attention,
+        &prepared,
+    );
+    assert_eq!(output.token_ids.last().copied(), Some(106));
+    complete(&mut run.session, &prepared, &run.arenas, 35);
+    release_and_drain(&mut run.session, request_id);
+}
+
 #[test]
 #[ignore = "requires ORBITKV_MODEL_DIR, a CUDA device, and FlashInfer headers"]
 #[allow(clippy::too_many_lines)]
@@ -543,10 +731,6 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     let compile_started = Instant::now();
     let mut decoder = CompiledDecoder::compile(
         &config,
-        DecoderWeightLayout {
-            qkv_bias: true,
-            qk_norm: false,
-        },
         &prepared_run.executor_plan,
         &prepared_run.arenas,
         &stream,
@@ -592,7 +776,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
         1,
     );
 
-    let (decode_attention, decode) =
+    let (decode_attention, decode, _) =
         prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 1).unwrap());
     let decode_started = Instant::now();
     let decode_classes = decoder_class_steps(&decode, &decode_attention);
@@ -619,7 +803,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     complete(&mut prepared_run.session, &decode, &prepared_run.arenas, 2);
 
     let second_token = decode_output.token_ids[0];
-    let (second_attention, second_decode) =
+    let (second_attention, second_decode, _) =
         prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 2).unwrap());
     let replay_started = Instant::now();
     let second_classes = decoder_class_steps(&second_decode, &second_attention);
@@ -649,7 +833,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     );
 
     let third_token = second_output.token_ids[0];
-    let (third_attention, third_decode) =
+    let (third_attention, third_decode, _) =
         prepare_decode_step(&mut prepared_run, u64::try_from(prompt.len() + 3).unwrap());
     let started = Instant::now();
     let third_classes = decoder_class_steps(&third_decode, &third_attention);
@@ -715,10 +899,6 @@ fn released_dense_checkpoint_executes_multi_class_policy_plumbing() {
     let compile_started = Instant::now();
     let mut decoder = CompiledDecoder::compile(
         &config,
-        DecoderWeightLayout {
-            qkv_bias: true,
-            qk_norm: false,
-        },
         &prepared_run.executor_plan,
         &prepared_run.arenas,
         &stream,
@@ -759,7 +939,7 @@ fn released_dense_checkpoint_executes_multi_class_policy_plumbing() {
     );
 
     let next_token = *output.token_ids.last().unwrap();
-    let (attention, prepared) = prepare_decode_step(&mut prepared_run, 5);
+    let (attention, prepared, _) = prepare_decode_step(&mut prepared_run, 5);
     let classes = decoder_class_steps(&prepared, &attention);
     let decode_started = Instant::now();
     let decode_output = decoder
@@ -848,4 +1028,50 @@ fn released_checkpoint_compares_compiled_and_request_lifetime_residence() {
     assert_eq!(outputs[1].sliding_resident_pages, 6);
     assert_eq!(outputs[0].sliding_resident_bytes, 491_520);
     assert_eq!(outputs[1].sliding_resident_bytes, 589_824);
+}
+
+#[test]
+#[ignore = "requires ORBITKV_MODEL_DIR, a CUDA device, and FlashInfer headers"]
+fn released_hybrid_checkpoint_crosses_window_and_drains() {
+    const REFERENCE_TOKENS: [u32; 34] = [
+        236_743, 199, 236_820, 34_280, 236_813, 208, 236_820, 34_280, 236_813, 208, 236_820,
+        34_280, 236_813, 208, 236_820, 34_280, 236_813, 208, 236_820, 34_280, 236_813, 208,
+        236_820, 34_280, 236_813, 208, 236_820, 34_280, 236_813, 208, 236_820, 34_280, 236_813,
+        208,
+    ];
+    let model_dir = model_directory();
+    let config_bytes = std::fs::read(model_dir.join("config.json")).unwrap();
+    let config = DecoderConfig::from_json(&config_bytes).unwrap();
+    let prompt_tokens = 512_usize;
+    let prompt = (0..prompt_tokens)
+        .map(|index| u32::try_from(index % config.vocabulary_size).unwrap())
+        .collect::<Vec<_>>();
+    let positions = (0..u32::try_from(prompt_tokens).unwrap()).collect::<Vec<_>>();
+    let mut run = prepare_model_run(&config_bytes, prompt_tokens);
+    assert_eq!(run.executor_plan.classes.len(), 2);
+    assert_eq!(run.executor_plan.classes[0].layers.len(), 3);
+    assert_eq!(run.executor_plan.classes[1].layers.len(), 15);
+    let (mut decoder, compile_elapsed) =
+        compile_hybrid_decoder(&config, &run, &model_dir, prompt_tokens);
+    qualify_hybrid_reference_probes(&config_bytes, &mut decoder);
+    let mut metrics = qualify_hybrid_generation(
+        &mut run,
+        &mut decoder,
+        &config,
+        &prompt,
+        &positions,
+        &REFERENCE_TOKENS,
+    );
+    qualify_reused_cancelled_request(&mut run, &mut decoder, &prompt, &positions);
+    let median_decode = median_duration(&mut metrics.decode_durations);
+    eprintln!(
+        "released hybrid lifecycle: compile_seconds={:.3} prefill_seconds={:.6} decode_iterations={} decode_median_seconds={:.6} full_pages={} sliding_pages={} final_token={}",
+        compile_elapsed.as_secs_f64(),
+        metrics.prefill_elapsed.as_secs_f64(),
+        metrics.decode_durations.len(),
+        median_decode.as_secs_f64(),
+        metrics.full_pages,
+        metrics.sliding_pages,
+        metrics.final_token,
+    );
 }
