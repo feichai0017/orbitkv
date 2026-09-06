@@ -10,22 +10,31 @@ operator passes all applicable layers.
 | State or attention family | Compiler and manager | Executor | Complete model | Benefit |
 | --- | --- | --- | --- | --- |
 | Full MHA/GQA token KV | Implemented and host-tested | Paged attention, Prefix/COW, writes, relocation | Narrow released-checkpoint H20 closure | No lifetime-management L5 result |
-| Sliding Window token KV | Periodic placement, retirement, ACK, and generation reuse host-tested; request-lifetime residence provides a same-semantics baseline | CSR/window lowering implemented; compiled/baseline CSR geometry is host-matched | Synthetic-policy boundary-crossing H20 prefill+decode check | 1-page / 98,304-byte reusable in-arena payload reduction after one 80-token prefill plus decode; no allocator/latency/throughput claim |
-| Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests; a synthetic-policy H20 plumbing smoke passes | No released hybrid-architecture checkpoint run | Unproven |
+| Sliding Window token KV | Periodic placement, retirement, ACK, and generation reuse host-tested; request-lifetime residence provides a same-semantics baseline | CSR/window lowering implemented; compiled/baseline CSR geometry is host-matched | Native Sliding layers cross a 512-token window in the released hybrid H20 closure | 1-page / 98,304-byte reusable in-arena payload reduction in a separate synthetic ablation; no allocator/latency/throughput claim |
+| Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Unproven |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
 | Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Recurrent operators are not integrated into one transaction | Unsupported | Unproven |
 | Convolution state | Generation-checked checkpoint lifecycle host-tested | Convolution operator/state transaction missing | Unsupported | Unproven |
 | Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
 
-The native dense decoder now accepts multiple token-KV classes with exact,
+The native dense decoder accepts multiple token-KV classes with exact,
 non-overlapping layer coverage. Each class owns independent dynamic page
-metadata and arena geometry. A real released dense checkpoint also completes a
-short H20 prefill and captured decode under a synthetic interleaved Full/Sliding
-policy whose window exceeds the test context. This proves device plumbing, not
-that a released hybrid-architecture checkpoint executes correctly.
-Unknown or incomplete contracts fail closed instead of silently becoming Full
+metadata and arena geometry. Its configuration-driven block vocabulary now
+covers both pre-norm/SwiGLU and sandwich-norm/GeGLU dense decoders, direct or
+unit-offset RMSNorm weights, optional QKV bias and QK norm, non-hidden query
+widths, and per-layer local/global RoPE. A safetensors-header contract verifies
+every required tensor, shape, dtype, and optional family before graph search.
+Unknown or incomplete semantics fail closed instead of silently becoming Full
 attention.
+
+The released hybrid qualification uses the checkpoint's unmodified native
+attention schedule. Four short probes and the complete 34-token greedy sequence
+match a separate Transformers run. The 512-token prefill plus 33 decodes cross
+the Sliding window, observe retirement and generation reuse, then execute and
+cancel a second request using recycled storage; both releases drain all manager
+state and arenas. This is an L4 correctness/lifecycle result, not a performance
+or model-family-wide claim.
 
 The manager exposes `PhysicalResidencePolicy::RequestLifetime` only through an
 explicit constructor. It preserves compiler-authored Sliding token

@@ -16,10 +16,10 @@ work is not a current capability.
 - Luminal consumes manager-authored page metadata, keeps stable K/V arenas,
   compiles decode/prefill buckets once, samples greedy tokens on device, and can
   replay fixed-signature decode through child CUDA graphs.
-- One released Full checkpoint has a narrow H20 model closure. Multi-class
-  Full+Sliding graph construction and manager-to-executor input wiring pass host
-  tests, and a synthetic interleaved policy completes prefill plus captured
-  decode on H20. A released hybrid-architecture checkpoint remains open.
+- A released 18-layer Full+Sliding checkpoint has an H20 correctness and
+  lifecycle closure: native 3 Full / 15 Sliding layer assignment, 512-token
+  prefill, 33 decode steps, independent reference-token parity, Sliding
+  retirement and generation reuse, cancellation, and complete arena drain.
 - External export/restore/delete transactions and an async transport contract
   move real bytes through a host reference adapter. Production transports and
   remote leases remain open.
@@ -30,25 +30,27 @@ work is not a current capability.
   boundary-crossing mechanism check. Repeated workload-level admission, tail
   latency, and throughput benefit remain unproven.
 
-## R1: Execute a multi-class hybrid graph
+## R1: Execute a multi-class hybrid graph — completed
 
-The single-class restriction has been removed from `DecoderGraph`: every layer
-is built from its manifest-assigned class, with independent persistent arenas,
+The single-class restriction is removed from `DecoderGraph`: every layer is
+built from its manifest-assigned class, with independent persistent arenas,
 write slots, CSR metadata, context dimensions, and capture signatures. The
-device plumbing smoke passes. Next run that path on a released Full+Sliding
-checkpoint and complete a long enough sequence to cross the Sliding boundary,
-including repeated decode, cancellation, publication, retirement, generation
-reuse, and final drain.
+released-checkpoint qualification crosses the native Sliding window with 512
+prefill tokens and 33 decode steps. It matches an independent Transformers
+greedy-token sequence, observes retirement and post-ACK generation reuse, runs
+a second 16-token request from reused storage, releases that request at a token
+boundary, and verifies both final drains.
 
-This is the first priority because hybrid state is where compiler-derived
-lifetimes differ materially from conservative Full retention.
+This closes R1 correctness and lifecycle qualification. It does not close an L5
+benefit or production-serving claim. The next priority is R2.
 
 ## R2: Prove the compiler contribution
 
-The backend-neutral `PhysicalResidencePolicy` now provides the two arms and a
+The backend-neutral `PhysicalResidencePolicy` provides the two arms and a
 single compiled Luminal graph has executed both on H20 with exact output parity.
-Next run repeated same-executor workloads with identical graphs, kernels, weights,
-dtype, scheduler, request trace, and device budget:
+Use the released hybrid checkpoint from R1 to run repeated same-executor
+workloads with identical graphs, kernels, weights, dtype, scheduler, request
+trace, and device budget:
 
 ```text
 conservative retention  versus  manifest-compiled retention
