@@ -653,7 +653,12 @@ fn assert_greedy_output(
 
 fn median_duration(samples: &mut [Duration]) -> Duration {
     samples.sort_unstable();
-    samples[samples.len() / 2]
+    let middle = samples.len() / 2;
+    if samples.len().is_multiple_of(2) {
+        (samples[middle - 1] + samples[middle]) / 2
+    } else {
+        samples[middle]
+    }
 }
 
 fn benchmark_decode_dispatch(
