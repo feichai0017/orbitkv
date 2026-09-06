@@ -1,0 +1,69 @@
+{
+  "schema": "orbitkv.released-hybrid-lifecycle",
+  "status": "passed",
+  "qualification": "released_checkpoint_correctness_and_lifecycle_only",
+  "configuration": {
+    "dtype": "bfloat16",
+    "layers": 18,
+    "full_layers": [5, 11, 17],
+    "sliding_layer_count": 15,
+    "sliding_window_tokens": 512,
+    "page_tokens": 16,
+    "query_heads": 4,
+    "kv_heads": 1,
+    "head_dim": 256,
+    "prefill_tokens": 512,
+    "decode_tokens": 33,
+    "search_graphs_per_bucket": 2
+  },
+  "reference": {
+    "runtime": "Transformers 4.55.2 with PyTorch 2.10.0a0+git89fc82e.aml",
+    "short_probe_tokens": {
+      "1": 9450,
+      "2": 3302,
+      "4": 236764,
+      "16": 106
+    },
+    "generated_tokens": [
+      236743, 199, 236820, 34280, 236813, 208, 236820, 34280,
+      236813, 208, 236820, 34280, 236813, 208, 236820, 34280,
+      236813, 208, 236820, 34280, 236813, 208, 236820, 34280,
+      236813, 208, 236820, 34280, 236813, 208, 236820, 34280,
+      236813, 208
+    ],
+    "all_token_ids_match": true
+  },
+  "lifecycle": {
+    "crossed_native_sliding_window": true,
+    "full_active_pages_after_decode": 35,
+    "sliding_active_pages_after_decode": 33,
+    "retirement_acknowledged": true,
+    "generation_reused": true,
+    "second_request_prefill_tokens": 16,
+    "second_request_used_recycled_generation": true,
+    "token_boundary_cancellation_release": true,
+    "final_drains_passed": 2
+  },
+  "kernel_reference": {
+    "explicit_csr_causal_prefill_passed": true,
+    "maximum_absolute_error": 0.000193,
+    "maximum_error_index": 813
+  },
+  "diagnostic_timings": {
+    "one_time_search_compile_seconds": 674.900,
+    "prefill_seconds": 1.458377,
+    "decode_iterations": 33,
+    "decode_median_seconds": 0.004114,
+    "benchmark_qualified": false
+  },
+  "claims": {
+    "released_full_sliding_model_correctness": true,
+    "token_lifecycle_correctness": true,
+    "independent_reference_parity": true,
+    "latency_benefit": false,
+    "throughput_benefit": false,
+    "capacity_benefit": false,
+    "broad_model_family_support": false,
+    "production_ready": false
+  }
+}

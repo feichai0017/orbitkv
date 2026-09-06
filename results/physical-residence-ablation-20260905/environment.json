@@ -1,0 +1,29 @@
+{
+  "schema": "orbitkv.device-environment",
+  "captured_at_utc": "2026-09-05T15:59:22Z",
+  "source": {
+    "orbitkv_commit": "b8ac569d9d1429c9f642a98bd0b14c1db9436d44",
+    "luminal_commit": "9b8ac26243bae5bc5c37fb56ee3eb6554a05e7bc",
+    "worktree_clean_before_run": false,
+    "core_test_source_sha256": "327b810139ff9d5041922b9231c4489d7f2f5d6ab29913668eb2d0442ce68677",
+    "device_test_source_sha256": "b66e8d103bc91d949f388e17e270c61cfb3ef0436913ca4bb4d6df988df2bc0e",
+    "note": "The exact tested implementation is commit b8ac569; only documentation and this evidence package were uncommitted during the run."
+  },
+  "accelerator": {
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3",
+    "compute_capability": "9.0",
+    "memory_mib": 97871,
+    "driver_version": "535.161.08",
+    "cuda_compiler_build": "cuda_13.1.r13.1/compiler.37061995_0"
+  },
+  "toolchain": {
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo": "1.97.1 (c980f4866 2026-06-30)"
+  },
+  "checkpoint": {
+    "identity": "Qwen2.5-0.5B-Instruct",
+    "config_sha256": "18e18afcaccafade98daf13a54092927904649e1dd4eba8299ab717d5d94ff45",
+    "weights_sha256": "fdf756fa7fcbe7404d5c60e26bff1a0c8b8aa1f72ced49e7dd0210fe288fb7fe"
+  }
+}

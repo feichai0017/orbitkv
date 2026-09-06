@@ -1,0 +1,69 @@
+# Implementation status
+
+Support is reported separately for compiler representation, manager lifecycle,
+executor lowering, device execution, complete-model execution, and measured
+benefit. A model is supported end to end only when every required state and
+operator passes all applicable layers.
+
+## Current implementation
+
+| State or attention family | Compiler and manager | Executor | Complete model | Benefit |
+| --- | --- | --- | --- | --- |
+| Full MHA/GQA token KV | Implemented and host-tested | Paged attention, Prefix/COW, writes, relocation | Narrow released-checkpoint H20 closure | No lifetime-management L5 result |
+| Sliding Window token KV | Periodic placement, retirement, ACK, and generation reuse host-tested; request-lifetime residence provides a same-semantics baseline | CSR/window lowering implemented; compiled/baseline CSR geometry is host-matched | Native Sliding layers cross a 512-token window in the released hybrid H20 closure | 1-page / 98,304-byte reusable in-arena payload reduction in a separate synthetic ablation; no allocator/latency/throughput claim |
+| Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Unproven |
+| Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
+| MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
+| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Recurrent operators are not integrated into one transaction | Unsupported | Unproven |
+| Convolution state | Generation-checked checkpoint lifecycle host-tested | Convolution operator/state transaction missing | Unsupported | Unproven |
+| Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
+
+The native dense decoder accepts multiple token-KV classes with exact,
+non-overlapping layer coverage. Each class owns independent dynamic page
+metadata and arena geometry. Its configuration-driven block vocabulary now
+covers both pre-norm/SwiGLU and sandwich-norm/GeGLU dense decoders, direct or
+unit-offset RMSNorm weights, optional QKV bias and QK norm, non-hidden query
+widths, and per-layer local/global RoPE. A safetensors-header contract verifies
+every required tensor, shape, dtype, and optional family before graph search.
+Unknown or incomplete semantics fail closed instead of silently becoming Full
+attention.
+
+The released hybrid qualification uses the checkpoint's unmodified native
+attention schedule. Four short probes and the complete 34-token greedy sequence
+match a separate Transformers run. The 512-token prefill plus 33 decodes cross
+the Sliding window, observe retirement and generation reuse, then execute and
+cancel a second request using recycled storage; both releases drain all manager
+state and arenas. This is an L4 correctness/lifecycle result, not a performance
+or model-family-wide claim.
+
+The manager exposes `PhysicalResidencePolicy::RequestLifetime` only through an
+explicit constructor. It preserves compiler-authored Sliding token
+dispositions and execution visibility while retaining physical pages through
+request release. Host tests prove identical attention geometry and token
+semantics, different physical residency, generation reuse in compiled mode,
+and a fixed-capacity admission difference. Chunked reset, Prefix publication,
+external export, and relocation reject this diagnostic baseline.
+
+## External tiers
+
+Backend-neutral export, restore, replica admission, deletion acknowledgement,
+completion ordering, and ambiguity quarantine are implemented. A host-memory
+reference adapter moves real bytes and verifies a partial-tail round trip across
+sessions. Mooncake/NIXL, remote lease renewal, eviction races, shared Prefix
+restore, and distributed recovery remain open.
+
+## Serving
+
+The async local `Engine` contract and optional vLLM Rust frontend adapter are
+implemented and host-tested. A complete scheduler that connects HTTP requests,
+continuous batches, `RuntimeSession`, Luminal execution, sampling, cancellation,
+and final drain is still required before the repository is a production server.
+
+## Evidence interpretation
+
+The child CUDA Graph result demonstrates a narrow dispatch optimization. The
+new same-graph H20 residence check establishes output equivalence and a small
+physical-memory difference across one Sliding boundary. It is not yet the L5
+claim: that still requires repeated matched workloads with admission, latency,
+throughput, allocator-work, and final-drain gates, followed by comparison with a
+tuned reference engine.

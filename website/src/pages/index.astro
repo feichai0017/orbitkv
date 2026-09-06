@@ -1,12 +1,6 @@
 ---
 import SiteLayout from "../layouts/SiteLayout.astro";
-import {
-  compilerStages,
-  evidenceRows,
-  metrics,
-  repositoryUrl,
-  roadmap,
-} from "../data/site";
+import { compilerStages, evidenceRows, metrics, repositoryUrl, roadmap } from "../data/site";
 
 const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 ---
@@ -14,15 +8,12 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
 <SiteLayout active="Overview">
   <section class="hero">
     <div class="hero-copy">
-      <div class="hero-kicker">
-        <span class="release-dot" aria-hidden="true"></span>
-        <span>ABI6 Rust core + exact C wire · host L2 GO</span>
-      </div>
-      <h1>Attention semantics.<br /><span>Compiled into state.</span></h1>
+      <div class="hero-kicker"><span class="release-dot" aria-hidden="true"></span><span>Rust core · Luminal executor · Rust server</span></div>
+      <h1>Compile attention lifetimes.<br /><span>Reuse KV with proof.</span></h1>
       <p class="hero-lede">
-        OrbitKV derives when model state can die, synthesizes its physical
-        address plan, and authorizes block reuse only after semantic and GPU
-        execution frontiers agree.
+        OrbitKV is the sole KV authority in a native inference engine. It turns
+        visibility semantics into physical plans, while Luminal executes model
+        graphs and a Rust server streams results without owning page state.
       </p>
       <div class="hero-actions">
         <a class="button primary" href={`${base}/docs/`}>Read the architecture</a>
@@ -30,118 +21,59 @@ const base = import.meta.env.BASE_URL.replace(/\/$/, "");
         <a class="button quiet" href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>Capability matrix ↗</a>
       </div>
       <ul class="hero-facts" aria-label="Project boundaries">
-        <li>Compiler-generated block plans</li>
-        <li>Proof-carrying reclamation</li>
-        <li>Explicit L1–L5 qualification</li>
+        <li>One KV authority</li><li>Native Rust control path</li><li>Proof-gated reuse</li>
       </ul>
     </div>
 
-    <div class="kernel-console" aria-label="OrbitKV layout program">
-      <div class="console-bar">
-        <span>orbitkv://layout/full-swa</span>
-        <span class="console-state"><i></i> verified</span>
-      </div>
+    <div class="kernel-console" aria-label="OrbitKV ownership program">
+      <div class="console-bar"><span>orbitkv://lifetime/plan</span><span class="console-state"><i></i> host checked</span></div>
       <div class="console-grid" aria-hidden="true"></div>
       <div class="console-body">
-        <div class="console-ident">
-          <span>RETENTION</span>
-          <strong>SNAPSHOT + PREFIX + JOINT COW · ABI6</strong>
-        </div>
-        <div class="provider-switch" aria-label="Physical lowering">
-          <span class="selected">PAGED</span>
-          <span>CUDA VMM</span>
-        </div>
+        <div class="console-ident"><span>AUTHORITY</span><strong>RUNTIMESESSION + LUMINAL + SERVER</strong></div>
+        <div class="provider-switch" aria-label="Physical lowering"><span class="selected">SEMANTICS</span><span>PHYSICAL PLAN</span></div>
         <div class="console-flow">
-          <div><small>analyze</small><strong>last_read(q, k)</strong><em>01</em></div>
-          <div><small>prepare</small><strong>tail + copy + writes</strong><em>02</em></div>
-          <div><small>publish</small><strong>immutable snapshot</strong><em>03</em></div>
-          <div class="flow-active"><small>reclaim</small><strong>refs + done + ack</strong><em>04</em></div>
+          <div><small>compile</small><strong>RuntimeManifest</strong><em>01</em></div>
+          <div><small>prepare</small><strong>pages + views + COW</strong><em>02</em></div>
+          <div><small>execute</small><strong>Luminal graph</strong><em>03</em></div>
+          <div class="flow-active"><small>reclaim</small><strong>semantic + execution proof</strong><em>04</em></div>
         </div>
       </div>
-      <div class="console-footer">
-        <span>fingerprint / sha256</span>
-        <span>frontier / bitemporal</span>
-      </div>
+      <div class="console-footer"><span>identity / generation</span><span>semantic / execution frontier</span></div>
     </div>
   </section>
 
   <section class="scope-strip" aria-label="Project boundary">
-    <div><span>ORBITKV OWNS</span><strong>state semantics · logical blocks · generations · reclamation proof</strong></div>
-    <div><span>ENGINE OWNS</span><strong>model execution · scheduling · attention kernels · request protocol</strong></div>
+    <div><span>ORBITKV OWNS</span><strong>plans · identities · pages · snapshots · reclamation</strong></div>
+    <div><span>LUMINAL OWNS</span><strong>graphs · tensors · kernels · streams · execution</strong></div>
   </section>
 
   <section class="section" id="compiler">
     <header class="section-heading">
-      <div><p class="eyebrow">Compilation pipeline</p><h2>A block manager emitted from semantics.</h2></div>
-      <p>
-        Ring, append-only log, pinned region, and VMM are lowering choices.
-        The checked lifetime program remains the source of truth.
-      </p>
+      <div><p class="eyebrow">Compilation pipeline</p><h2>One path from semantics to reuse.</h2></div>
+      <p>RuntimeManifest is the compiler source of truth. RuntimeSession owns physical state, and ExecutorPlan lowers it directly into the forked Luminal backend.</p>
     </header>
     <ol class="execution-chain">
-      {compilerStages.slice(0, 4).map((stage) => (
-        <li>
-          <span class="chain-key">{stage.key}</span>
-          <div><h3>{stage.name}</h3><p>{stage.detail}</p></div>
-        </li>
-      ))}
+      {compilerStages.map((stage) => (<li><span class="chain-key">{stage.key}</span><div><h3>{stage.name}</h3><p>{stage.detail}</p></div></li>))}
     </ol>
   </section>
 
   <section class="section performance-section" id="evidence">
     <header class="section-heading">
-      <div><p class="eyebrow">Qualification boundary</p><h2>Host ABI6 is green; H20 Prefix is next.</h2></div>
-      <p>
-        The modular Rust core, exact 23-symbol C wire, ABI6 Python runtime, and
-        SGLang <code>OrbitKVPrefixCache</code> are host L2 GO. The H20 Prefix
-        gate remains pending. Frozen ABI5-v5 H20 evidence is historical only.
-      </p>
+      <div><p class="eyebrow">Qualification boundary</p><h2>Implementation is not a performance claim.</h2></div>
+      <p>The new native architecture has host evidence. It still needs current-source device, model, stream/event, capacity, and matched performance qualification.</p>
     </header>
-    <div class="metric-grid">
-      {metrics.map((item) => (
-        <article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>
-      ))}
-    </div>
+    <div class="metric-grid">{metrics.map((item) => (<article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>))}</div>
     <div class="evidence-table" role="table" aria-label="OrbitKV evidence summary">
-      <div class="evidence-row evidence-head" role="row">
-        <span role="columnheader">Result</span>
-        <span role="columnheader">Value</span>
-        <span role="columnheader">Contract</span>
-        <span role="columnheader">Boundary</span>
-      </div>
-      {evidenceRows.slice(0, 4).map((item) => (
-        <div class="evidence-row" role="row">
-          <strong role="cell">{item.result}</strong>
-          <code role="cell">{item.value}</code>
-          <span role="cell">{item.contract}</span>
-          <small role="cell">{item.boundary}</small>
-        </div>
-      ))}
+      <div class="evidence-row evidence-head" role="row"><span role="columnheader">Result</span><span role="columnheader">Value</span><span role="columnheader">Contract</span><span role="columnheader">Boundary</span></div>
+      {evidenceRows.slice(0, 5).map((item) => (<div class="evidence-row" role="row"><strong role="cell">{item.result}</strong><code role="cell">{item.value}</code><span role="cell">{item.contract}</span><small role="cell">{item.boundary}</small></div>))}
     </div>
-    <a class="text-link" href={`${base}/evidence/`}>Inspect methods and exclusions <span>→</span></a>
+    <a class="text-link" href={`${base}/evidence/`}>Inspect records and exclusions <span>→</span></a>
   </section>
 
   <section class="section roadmap-section" id="roadmap">
-    <header class="section-heading">
-      <div><p class="eyebrow">Next gates</p><h2>Expand the qualified ownership surface.</h2></div>
-      <p>
-        Snapshot, Prefix, fork, joint COW, page-owned reclamation, and the
-        official SGLang cache seam are host-qualified. Next are the H20 Prefix
-        gate, token-exact relocation, Graph, and distribution.
-      </p>
-    </header>
-    <div class="milestone-list">
-      {roadmap.map((item) => (
-        <article><span>{item.state}</span><div><h3>{item.name}</h3><p>{item.detail}</p></div></article>
-      ))}
-    </div>
+    <header class="section-heading"><div><p class="eyebrow">Next gates</p><h2>Close the complete native loop.</h2></div><p>Execution, serving, and measurement proceed in that order so every claim remains tied to the code that produced it.</p></header>
+    <div class="milestone-list">{roadmap.map((item) => (<article><span>{item.state}</span><div><h3>{item.name}</h3><p>{item.detail}</p></div></article>))}</div>
   </section>
 
-  <section class="closing-band">
-    <div><p class="eyebrow">Open source</p><h2>Compile lifetimes. Reuse with proof.</h2></div>
-    <div class="closing-actions">
-      <a class="button primary" href={`${base}/docs/`}>Architecture</a>
-      <a class="button quiet" href={repositoryUrl} target="_blank" rel="noreferrer">GitHub ↗</a>
-    </div>
-  </section>
+  <section class="closing-band"><div><p class="eyebrow">Open source</p><h2>Compile lifetimes. Reuse with proof.</h2></div><div class="closing-actions"><a class="button primary" href={`${base}/docs/`}>Architecture</a><a class="button quiet" href={repositoryUrl} target="_blank" rel="noreferrer">GitHub ↗</a></div></section>
 </SiteLayout>

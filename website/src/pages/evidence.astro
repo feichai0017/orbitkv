@@ -2,66 +2,48 @@
 import DocsNav from "../components/DocsNav.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
 import { evidenceRows, metrics, repositoryUrl } from "../data/site";
+
+const resultsIndexUrl = `${repositoryUrl}/blob/main/results/README.md`;
 ---
 
 <SiteLayout
   title="Evidence | OrbitKV"
-  description="Append-only OrbitKV correctness, lifecycle, memory, and performance-smoke evidence with explicit source boundaries."
+  description="OrbitKV host status, open native-engine gates, and historical provenance."
   active="Evidence"
 >
   <header class="page-hero">
-    <p class="eyebrow">Evidence</p>
-    <h1>Each result keeps its boundary.</h1>
-    <p>
-      A result fixes source, GPU, workload, method, and excluded claims.
-    </p>
+    <p class="eyebrow">Evidence</p><h1>Every claim keeps its source boundary.</h1>
+    <p>Implementation, host verification, device correctness, complete-engine behavior, measured benefit, and production readiness are separate levels.</p>
   </header>
 
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
-      <h2>Live host gate and historical engine boundary</h2>
-      <div class="metric-grid compact">
-        {metrics.map((item) => (
-          <article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>
-        ))}
-      </div>
+      <h2>Current architecture status</h2>
+      <div class="metric-grid compact">{metrics.map((item) => (<article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>))}</div>
 
-      <h2>Evidence</h2>
+      <h2>Capability summary</h2>
       <table class="evidence-table-native">
-        <thead>
-          <tr><th>Result</th><th>Value</th><th>Contract</th><th>Boundary</th></tr>
-        </thead>
-        <tbody>
-          {evidenceRows.map((item) => (
-            <tr>
-              <td>{item.result}</td>
-              <td><code>{item.value}</code></td>
-              <td>{item.contract}</td>
-              <td>{item.boundary}</td>
-            </tr>
-          ))}
-        </tbody>
+        <thead><tr><th>Surface</th><th>Status</th><th>Contract</th><th>Boundary</th></tr></thead>
+        <tbody>{evidenceRows.map((item) => (<tr><td>{item.result}</td><td><code>{item.value}</code></td><td>{item.contract}</td><td>{item.boundary}</td></tr>))}</tbody>
       </table>
 
-      <h2>Exclusions</h2>
+      <h2>Open end-to-end gates</h2>
       <ul>
-        <li>ABI6 Rust core, exact 23-symbol C wire, Python runtime, and SGLang Prefix adapter are host L2 GO.</li>
-        <li>The frozen ABI5-v5 H20 record qualifies only its exact 9233c06d source closure.</li>
-        <li>No same-capacity KV compression claim: historical paired page16 tensor bytes are identical.</li>
-        <li><code>performance_go</code> is false: the ABI5-v5 B4 epoch gives +4.1932% Qwen and −5.2048% GPT-OSS manager overhead, without repeated statistics.</li>
-        <li>Token compaction will relocate retained K/V exactly; it is not numerical compression.</li>
-        <li>No ABI6 H20 Prefix, speculative, overlap, Graph, or disaggregation qualification.</li>
-        <li>No VMM-backed SGLang tensor or multi-GPU claim.</li>
+        <li>Run a multi-class Full+Sliding model through one RuntimeSession and Luminal graph.</li>
+        <li>Ablate conservative versus compiled retention on the same executor and kernels.</li>
+        <li>Use vllm bench serve for matched OrbitKV/Luminal versus tuned SGLang runs.</li>
+        <li>Exercise Sliding and Chunked device retirement boundaries and repeated generation reuse.</li>
+        <li>Measure reserved and resident memory, capacity, latency, throughput, and copy overhead under the same workload.</li>
+        <li>Pass cancellation, pressure, long-running reuse, and final-drain tests.</li>
       </ul>
 
+      <h2>Current records</h2>
       <p>
-        The normative levels and complete exclusions are in{" "}
-        <a href={`${repositoryUrl}/blob/main/docs/capability-matrix.md`}>
-          the Capability Matrix
-        </a>
-        . The complete result index and source hashes are in{" "}
-        <a href={`${repositoryUrl}/tree/main/results`}>results/</a>.
+        The repository retains only compact records directly relevant to the
+        current architecture. Their exact model, hardware, source, method, and
+        failed or successful gates remain scoped. Open the
+        <a href={resultsIndexUrl}>Results Index</a> for the retained evidence.
       </p>
     </article>
   </div>

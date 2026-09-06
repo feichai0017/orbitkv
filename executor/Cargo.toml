@@ -1,0 +1,37 @@
+[package]
+name = "orbitkv-executor"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Native Luminal execution boundary for OrbitKV."
+license = "MIT"
+
+[features]
+default = []
+cuda = [
+    "dep:luminal",
+    "dep:luminal_cuda_lite",
+    "dep:luminal_nn",
+]
+
+[dependencies]
+async-trait = "0.1.89"
+luminal = { path = "luminal", optional = true }
+luminal_cuda_lite = { path = "luminal/crates/luminal_cuda_lite", optional = true }
+luminal_nn = { path = "luminal/crates/luminal_nn", optional = true }
+orbitkv = { path = "../core" }
+parking_lot = "0.12.5"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+sha2 = "0.10.9"
+thiserror = "2.0.17"
+
+[dev-dependencies]
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

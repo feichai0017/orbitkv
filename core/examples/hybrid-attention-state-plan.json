@@ -1,0 +1,47 @@
+{
+  "page_tokens": 16,
+  "states": [
+    {
+      "name": "full_mha",
+      "layers": [0, 2],
+      "storage": {
+        "kind": "token_kv",
+        "key_bytes_per_token_per_layer": 256,
+        "value_bytes_per_token_per_layer": 256,
+        "retention": "full",
+        "window_tokens": null
+      }
+    },
+    {
+      "name": "latent_mla",
+      "layers": [1],
+      "storage": {
+        "kind": "latent_kv",
+        "latent_bytes_per_token_per_layer": 1024,
+        "rope_bytes_per_token_per_layer": 128,
+        "retention": "full",
+        "window_tokens": null
+      }
+    },
+    {
+      "name": "gdn_state",
+      "layers": [3],
+      "storage": {
+        "kind": "recurrent",
+        "family": "gdn",
+        "state_bytes_per_layer": 4096,
+        "checkpoint_slots_per_request": 2
+      }
+    },
+    {
+      "name": "shortconv_state",
+      "layers": [3],
+      "storage": {
+        "kind": "convolution",
+        "state_bytes_per_layer": 2048,
+        "kernel_width": 4,
+        "checkpoint_slots_per_request": 2
+      }
+    }
+  ]
+}
