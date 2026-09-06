@@ -1076,8 +1076,29 @@ fn released_checkpoint_compares_compiled_and_request_lifetime_residence() {
         compile_elapsed.as_secs_f64(),
     );
     drop((compiled, conservative));
-    let epochs = benchmark_epochs();
     let generated_token_count = residence_decode_tokens();
+    let warmup_compiled = execute_released_residence_arm(
+        PhysicalResidencePolicy::Compiled,
+        &config_bytes,
+        &mut decoder,
+        &prompt,
+        &positions,
+        generated_token_count,
+    );
+    let warmup_conservative = execute_released_residence_arm(
+        PhysicalResidencePolicy::RequestLifetime,
+        &config_bytes,
+        &mut decoder,
+        &prompt,
+        &positions,
+        generated_token_count,
+    );
+    assert_eq!(
+        warmup_compiled.generated_tokens,
+        warmup_conservative.generated_tokens
+    );
+
+    let epochs = benchmark_epochs();
     let mut compiled_outputs = Vec::with_capacity(epochs / 2);
     let mut conservative_outputs = Vec::with_capacity(epochs / 2);
     for epoch in 0..epochs {
