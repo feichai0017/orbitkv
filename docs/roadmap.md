@@ -26,9 +26,10 @@ work is not a current capability.
   remote leases remain open.
 - The server has a local async `Engine` contract and optional vLLM Rust frontend.
   `orbitkv-engine::ModelEngine` now implements that contract with one dedicated
-  model thread, a real `RuntimeSession`, one compiled Luminal decoder, streamed
-  greedy tokens, stop/cancel handling, and exact final drain. It is serial and
-  is not yet wired into the HTTP executable.
+  model thread, bounded admission/output queues, a decode-first token-budgeted
+  active set, a real `RuntimeSession`, one compiled Luminal decoder, streamed
+  greedy tokens, stop/cancel handling, and exact final drain. It is not yet
+  wired into the HTTP executable.
 - A released-hybrid same-executor residence experiment passes ten paired
   release-mode epochs with full token parity. Compiled residence reduces live
   payload by 27.8%, raises the fixed-budget boundary from 528 to 560, and has a
@@ -80,22 +81,24 @@ speedups remain separate evidence.
 
 ## R3: Complete the single-process serving engine
 
-Status: serial model-backed composition closure completed; continuous serving
-remains in progress.
+Status: bounded continuous-batching model closure completed; HTTP serving and
+load qualification remain in progress.
 
 The concrete coordinator now implements the server `Engine` trait. A dedicated
-thread owns `RuntimeSession`, stable class arenas, and `CompiledDecoder`; logical
-requests stream greedy outputs and converge through release/ACK on length, stop,
-and cancellation. Invalid continuation, overlength, duplicate, unsupported
-batch, and insufficient per-class capacity inputs fail closed. Device ambiguity
-quarantines state and fail-stops the worker. A released hybrid checkpoint passes
-the serial length/stop/cancel/final-drain closure on H20.
+thread owns `RuntimeSession`, stable class arenas, and `CompiledDecoder`; bounded
+admission feeds an active set whose decode-first batches obey a configurable
+token budget. Logical requests stream through bounded output queues and converge
+through release/ACK on length, stop, cancellation, or disconnect. Invalid
+continuation, overlength, duplicate, unsupported batch, queue pressure, and
+insufficient per-class capacity inputs fail closed. Device ambiguity quarantines
+state and fail-stops the worker. Released hybrid H20 tests pass B=2 prefill and
+decode with reference-token parity, late prefill during decode, stop/cancel, and
+final drain.
 
-Next, replace the serial admission loop with bounded continuous batching, add
-backpressure and fairness, carry per-request sampling state, and exercise the
-optional vLLM Rust OpenAI/tokenizer/chat/SSE frontend against `ModelEngine` rather
-than its current test engine. This remaining work is required before R3 is
-complete.
+Next, exercise the optional vLLM Rust OpenAI/tokenizer/chat/SSE frontend against
+`ModelEngine` rather than its current test engine, then qualify fairness,
+pressure behavior, and serving metrics. Chunked prefill and richer per-request
+sampling state also remain open. This work is required before R3 is complete.
 
 PegaInfer is a useful reference for a small Rust server/model boundary and for a
 full-plus-linear-attention execution loop. It is not a Dynamo integration: its

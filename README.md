@@ -126,12 +126,14 @@ shape, but its scheduler, KV cache, model runtime, and CUDA ownership are not
 part of OrbitKV. The current adapter is greedy text-only and rejects unsupported
 semantics rather than silently dropping them.
 
-`orbitkv-engine` provides the first concrete model-backed implementation of
-that interface. It owns a dedicated execution thread, compiles the model before
-admission, streams greedy token events, honors stop tokens and token-boundary
-cancellation, and performs release plus exact reclamation acknowledgement before
-the next request. This first closure is deliberately serial: it accepts one
-fresh request per logical batch and is not yet a continuous-batching scheduler.
+`orbitkv-engine` provides the concrete model-backed implementation of that
+interface. Its dedicated execution thread owns a bounded admission queue and an
+active-request set. Each iteration builds one token-budgeted, decode-first batch,
+then executes one atomic `RuntimeSession` transaction and one Luminal dispatch.
+Slow output consumers are skipped until their bounded event buffer has room;
+stop, cancellation, and disconnect still converge through release and exact
+reclamation acknowledgement. Submissions remain one fresh request each, while
+the engine combines them internally.
 
 ## Build and test
 
@@ -161,12 +163,13 @@ request from reused storage, and drains every arena after release. The direct
 explicit-CSR prefill kernel also matches its independent BF16 reference within
 `1.93e-4`. See `results/released-hybrid-lifecycle-20260906`.
 
-The concrete `ModelEngine` composition root also passes a released-checkpoint
-H20 closure on the same hybrid model. One initialized engine processes a
-512-token prompt with eight generated tokens, stop-token suppression on a second
-request, and immediate cancellation of a third request; manager state fully
-drains after every request. This qualifies the serial in-process execution
-boundary, not HTTP serving, concurrency, or throughput.
+The concrete `ModelEngine` composition root also passes released-checkpoint H20
+closures on the same hybrid model. In addition to length, stop, cancellation,
+and drain coverage, two concurrent 512-token prompts are combined into B=2
+prefill and decode dispatches and both match the independent eight-token
+reference. A separate run inserts a new prefill while another request is already
+decoding and observes a mixed-phase dispatch. These qualify continuous-batching
+correctness, not HTTP serving, fairness, capacity, or throughput.
 
 A separate fixed-signature child-graph experiment records a narrow matched
 dispatch improvement. A release-mode same-executor test on the released hybrid

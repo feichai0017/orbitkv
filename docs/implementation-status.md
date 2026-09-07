@@ -55,13 +55,15 @@ restore, and distributed recovery remain open.
 ## Serving
 
 The async local `Engine` contract and optional vLLM Rust frontend adapter are
-implemented and host-tested. The `orbitkv-engine` composition root now connects
-one logical request at a time to a real `RuntimeSession` and compiled Luminal
-decoder. On H20 it streams a released hybrid model through length, stop-token,
-and cancellation termination and proves a complete manager drain after each.
-It currently accepts only one fresh prompt per batch, uses greedy sampling, and
-has an unbounded output event channel. Continuous batching, bounded
-backpressure, model-backed HTTP execution, and production soak remain open.
+implemented and host-tested. The `orbitkv-engine` composition root has bounded
+admission and output queues and combines independently submitted fresh prompts
+into decode-first token-budgeted batches over one `RuntimeSession` and compiled
+Luminal decoder. On H20, two concurrent 512-token hybrid requests execute with
+B=2 prefill/decode and match the existing reference prefix; a late prefill also
+joins an active decode request. Length, stop-token, cancellation, backpressure,
+and complete drain are covered. Sampling remains greedy. Chunked prefill,
+model-backed HTTP execution, fairness/pressure qualification, and production
+soak remain open.
 
 ## Evidence interpretation
 

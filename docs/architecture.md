@@ -40,8 +40,9 @@ import a second scheduler, KV allocator, or device runtime.
 trait while holding `RuntimeSession`, `ExecutorPlan`, stable device arenas, and
 `CompiledDecoder` behind one dedicated execution thread. It is allowed to join
 the other three layers, but it cannot mint pages or bypass manager transactions.
-The current implementation is serial and fresh-prompt-only; queuing multiple
-requests does not imply continuous batching.
+The scheduler has bounded admission and per-request output queues, keeps a
+bounded active set, and forms decode-first token-budgeted dispatches. Each public
+submission is one fresh prompt; continuation is internal scheduler state.
 
 External storage providers own byte movement and storage resources only. The
 core pins generation-checked source pages, validates exact durable receipts,
@@ -77,7 +78,7 @@ reference implementation and fault oracle, not a performance backend.
    validates cleanup acknowledgement, and only then permits reuse.
 8. Normal length, stop, cancellation, or disconnected-output termination all
    converge on request release and final drain. Ambiguous device execution is
-   quarantined and the serial worker stops instead of fabricating completion.
+   quarantined and the worker stops instead of fabricating completion.
 
 ## Physical-residence ablation
 
@@ -162,10 +163,12 @@ separate Transformers greedy-token reference, reuses an acknowledged retired
 generation, executes a second request from recycled storage, and drains all
 state after token-boundary cancellation.
 
-The concrete serial `ModelEngine` is separately exercised on that released
-checkpoint. It keeps one compiled decoder alive across length, stop, and cancel
-requests and proves complete manager drain after each. The model-backed HTTP
-path and continuous batching remain outside this closure.
+The concrete `ModelEngine` is separately exercised on that released checkpoint.
+It keeps one compiled decoder alive across length, stop, and cancel requests;
+executes two 512-token requests through B=2 prefill/decode; admits a new prefill
+while another request is decoding; and proves complete manager drain. The
+model-backed HTTP path and serving-performance qualification remain outside this
+closure.
 
 Relocation evidence is gated by a real CUDA event; ordinary model-step completion
 still relies on the embedding runtime's completion assertion. Generic

@@ -1,11 +1,12 @@
-use std::collections::{BTreeMap, btree_map::Entry};
+use std::collections::{BTreeMap, VecDeque, btree_map::Entry};
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
-    mpsc,
+    mpsc::{self, Receiver, SyncSender, TryRecvError, TrySendError},
 };
 use std::thread::JoinHandle;
+use std::time::{Duration, Instant};
 use std::{any::Any, panic::AssertUnwindSafe};
 
 use futures_util::stream;
@@ -16,7 +17,7 @@ use orbitkv::{
     kv_manager::{BackendArenaRegistration, CanonicalKvManager, ManagerConfig, ManagerStats},
 };
 use orbitkv_executor::{
-    AttentionBatch, ExecutorArena, ExecutorPlan, PreparedBatch,
+    AttentionBatch, ExecutorArena, ExecutorPlan,
     model::{CompiledDecoder, DecoderClassStep, DecoderCompileConfig, DecoderConfig, DecoderStep},
 };
 use orbitkv_server::{
@@ -36,7 +37,12 @@ pub struct ModelEngineConfig {
     pub page_counts: Vec<u32>,
     pub maximum_model_tokens: u64,
     pub maximum_prefill_tokens: usize,
+    pub maximum_batch_tokens: usize,
     pub representative_prefill_tokens: usize,
+    pub maximum_active_requests: usize,
+    pub maximum_queued_requests: usize,
+    pub event_buffer_size: usize,
+    pub batch_wait_timeout: Duration,
     pub search_graphs: usize,
     pub search_seed: u64,
 }
@@ -53,7 +59,14 @@ impl ModelEngineConfig {
             || self.maximum_model_tokens > u64::from(u32::MAX)
             || self.maximum_prefill_tokens < 2
             || maximum_prefill_tokens > self.maximum_model_tokens
+            || self.maximum_batch_tokens < self.maximum_prefill_tokens
             || !(2..=self.maximum_prefill_tokens).contains(&self.representative_prefill_tokens)
+            || self.maximum_active_requests == 0
+            || self.maximum_active_requests > self.maximum_batch_tokens
+            || self.maximum_queued_requests == 0
+            || self.event_buffer_size < 3
+            || self.batch_wait_timeout.is_zero()
+            || self.batch_wait_timeout > Duration::from_secs(1)
             || self.search_graphs < 2
         {
             return Err(ModelEngineError::InvalidConfig);
@@ -66,9 +79,9 @@ impl ModelEngineConfig {
 pub enum ModelEngineError {
     #[error("invalid model-engine configuration")]
     InvalidConfig,
-    #[error("the serial model engine accepts exactly one request per batch")]
+    #[error("each engine submission must contain exactly one request")]
     BatchSize,
-    #[error("the serial model engine currently accepts only a fresh prompt")]
+    #[error("the model engine currently accepts only a fresh prompt")]
     ContinuationUnsupported,
     #[error("invalid request intent: {0}")]
     InvalidIntent(String),
@@ -76,6 +89,8 @@ pub enum ModelEngineError {
     ModelLength,
     #[error("request is already queued or active")]
     DuplicateRequest,
+    #[error("model engine admission queue is full")]
+    QueueFull,
     #[error("model engine worker is unavailable")]
     WorkerUnavailable,
     #[error("model engine worker panicked: {0}")]
@@ -91,21 +106,24 @@ pub enum ModelEngineError {
 enum WorkerCommand {
     Run {
         request: RequestIntent,
-        output: async_mpsc::UnboundedSender<Result<EngineEvent, ModelEngineError>>,
+        output: async_mpsc::Sender<Result<EngineEvent, ModelEngineError>>,
         cancelled: Arc<AtomicBool>,
     },
     Stats {
-        reply: oneshot::Sender<ManagerStats>,
+        reply: oneshot::Sender<EngineStats>,
     },
     Shutdown,
 }
 
 struct EngineShared {
-    commands: mpsc::Sender<WorkerCommand>,
+    commands: SyncSender<WorkerCommand>,
     registry: Arc<Mutex<RequestRegistry>>,
+    shutdown: Arc<AtomicBool>,
     worker: Mutex<Option<JoinHandle<()>>>,
     maximum_model_tokens: u64,
     maximum_prefill_tokens: usize,
+    maximum_total_requests: usize,
+    event_buffer_size: usize,
 }
 
 struct RequestRegistry {
@@ -113,15 +131,30 @@ struct RequestRegistry {
     cancellations: BTreeMap<RequestId, Arc<AtomicBool>>,
 }
 
+/// Point-in-time manager and continuous-batching scheduler census.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct EngineStats {
+    pub manager: ManagerStats,
+    pub queued_requests: u64,
+    pub active_requests: u64,
+    pub admitted_requests: u64,
+    pub completed_requests: u64,
+    pub model_dispatches: u64,
+    pub multi_request_dispatches: u64,
+    pub mixed_phase_dispatches: u64,
+    pub maximum_observed_batch_size: u64,
+}
+
 impl Drop for EngineShared {
     fn drop(&mut self) {
+        self.shutdown.store(true, Ordering::Release);
         if let Ok(mut registry) = self.registry.lock() {
             registry.accepting = false;
             for cancelled in registry.cancellations.values() {
                 cancelled.store(true, Ordering::Release);
             }
         }
-        let _ = self.commands.send(WorkerCommand::Shutdown);
+        let _ = self.commands.try_send(WorkerCommand::Shutdown);
         if let Ok(worker) = self.worker.get_mut()
             && let Some(worker) = worker.take()
         {
@@ -147,19 +180,26 @@ impl ModelEngine {
         config.validate()?;
         let maximum_model_tokens = config.maximum_model_tokens;
         let maximum_prefill_tokens = config.maximum_prefill_tokens;
-        let (commands, receiver) = mpsc::channel();
+        let maximum_total_requests = config
+            .maximum_active_requests
+            .checked_add(config.maximum_queued_requests)
+            .ok_or(ModelEngineError::InvalidConfig)?;
+        let event_buffer_size = config.event_buffer_size;
+        let (commands, receiver) = mpsc::sync_channel(config.maximum_queued_requests);
         let (ready_tx, ready_rx) = mpsc::sync_channel(1);
         let registry = Arc::new(Mutex::new(RequestRegistry {
             accepting: true,
             cancellations: BTreeMap::new(),
         }));
         let worker_registry = Arc::clone(&registry);
+        let shutdown = Arc::new(AtomicBool::new(false));
+        let worker_shutdown = Arc::clone(&shutdown);
         let worker = std::thread::Builder::new()
             .name("orbitkv-model-engine".into())
             .spawn(move || match ModelWorker::initialize(&config) {
                 Ok(mut worker) => {
                     let _ = ready_tx.send(Ok(()));
-                    worker.run(&receiver, &worker_registry);
+                    worker.run(&receiver, &worker_registry, &worker_shutdown);
                 }
                 Err(error) => {
                     let _ = ready_tx.send(Err(error));
@@ -171,9 +211,12 @@ impl ModelEngine {
                 shared: Arc::new(EngineShared {
                     commands,
                     registry,
+                    shutdown,
                     worker: Mutex::new(Some(worker)),
                     maximum_model_tokens,
                     maximum_prefill_tokens,
+                    maximum_total_requests,
+                    event_buffer_size,
                 }),
             }),
             Ok(Err(error)) => {
@@ -192,12 +235,19 @@ impl ModelEngine {
     /// # Errors
     ///
     /// Returns an error when the worker has stopped.
-    pub async fn stats(&self) -> Result<ManagerStats, ModelEngineError> {
+    pub async fn stats(&self) -> Result<EngineStats, ModelEngineError> {
         let (reply, response) = oneshot::channel();
-        self.shared
+        match self
+            .shared
             .commands
-            .send(WorkerCommand::Stats { reply })
-            .map_err(|_| ModelEngineError::WorkerUnavailable)?;
+            .try_send(WorkerCommand::Stats { reply })
+        {
+            Ok(()) => {}
+            Err(TrySendError::Full(_)) => return Err(ModelEngineError::QueueFull),
+            Err(TrySendError::Disconnected(_)) => {
+                return Err(ModelEngineError::WorkerUnavailable);
+            }
+        }
         response
             .await
             .map_err(|_| ModelEngineError::WorkerUnavailable)
@@ -225,25 +275,31 @@ impl Engine for ModelEngine {
                 if !registry.accepting {
                     return Err(ModelEngineError::WorkerUnavailable);
                 }
+                if registry.cancellations.len() >= shared.maximum_total_requests {
+                    return Err(ModelEngineError::QueueFull);
+                }
                 match registry.cancellations.entry(request_id) {
                     Entry::Vacant(entry) => {
                         entry.insert(Arc::clone(&cancelled));
                     }
                     Entry::Occupied(_) => return Err(ModelEngineError::DuplicateRequest),
                 }
-                let (output, receiver) = async_mpsc::unbounded_channel();
-                if shared
-                    .commands
-                    .send(WorkerCommand::Run {
-                        request,
-                        output,
-                        cancelled,
-                    })
-                    .is_err()
-                {
-                    registry.cancellations.remove(&request_id);
-                    registry.accepting = false;
-                    return Err(ModelEngineError::WorkerUnavailable);
+                let (output, receiver) = async_mpsc::channel(shared.event_buffer_size);
+                match shared.commands.try_send(WorkerCommand::Run {
+                    request,
+                    output,
+                    cancelled,
+                }) {
+                    Ok(()) => {}
+                    Err(TrySendError::Full(_)) => {
+                        registry.cancellations.remove(&request_id);
+                        return Err(ModelEngineError::QueueFull);
+                    }
+                    Err(TrySendError::Disconnected(_)) => {
+                        registry.cancellations.remove(&request_id);
+                        registry.accepting = false;
+                        return Err(ModelEngineError::WorkerUnavailable);
+                    }
                 }
                 drop(registry);
                 let events = stream::unfold(receiver, |mut receiver| async move {
@@ -274,6 +330,43 @@ struct ModelWorker {
     arenas: Box<[ExecutorArena]>,
     decoder: CompiledDecoder,
     completion_value: u64,
+    maximum_active_requests: usize,
+    maximum_batch_tokens: usize,
+    batch_wait_timeout: Duration,
+    counters: SchedulerCounters,
+}
+
+#[derive(Default)]
+struct SchedulerCounters {
+    admitted_requests: u64,
+    completed_requests: u64,
+    model_dispatches: u64,
+    multi_request_dispatches: u64,
+    mixed_phase_dispatches: u64,
+    maximum_observed_batch_size: u64,
+}
+
+struct QueuedRequest {
+    request: RequestIntent,
+    output: async_mpsc::Sender<Result<EngineEvent, ModelEngineError>>,
+    cancelled: Arc<AtomicBool>,
+}
+
+struct ActiveRequest {
+    request: RequestIntent,
+    output: async_mpsc::Sender<Result<EngineEvent, ModelEngineError>>,
+    cancelled: Arc<AtomicBool>,
+    boundary: u64,
+    next_token: Option<u32>,
+    generated_tokens: u32,
+}
+
+struct DispatchInput {
+    active_indices: Vec<usize>,
+    request_ids: Vec<EngineRequestId>,
+    target_boundaries: Vec<u64>,
+    tokens: Vec<u32>,
+    positions: Vec<u32>,
 }
 
 impl ModelWorker {
@@ -303,8 +396,10 @@ impl ModelWorker {
         let manager = CanonicalKvManager::new(
             &manager_plan,
             ManagerConfig {
-                maximum_requests: 1,
-                maximum_operations: 2,
+                maximum_requests: u32::try_from(config.maximum_active_requests)
+                    .map_err(|_| ModelEngineError::InvalidConfig)?,
+                maximum_operations: u32::try_from(config.maximum_active_requests)
+                    .map_err(|_| ModelEngineError::InvalidConfig)?,
                 maximum_prefixes: 1,
                 maximum_reclamations: config.page_counts.iter().try_fold(
                     0_u32,
@@ -340,9 +435,9 @@ impl ModelWorker {
             config.device_index,
             &weights,
             DecoderCompileConfig {
-                maximum_query_tokens: config.maximum_prefill_tokens,
+                maximum_query_tokens: config.maximum_batch_tokens,
                 representative_prefill_tokens: config.representative_prefill_tokens,
-                maximum_batch_size: 1,
+                maximum_batch_size: config.maximum_active_requests,
                 maximum_context_pages: config
                     .page_counts
                     .iter()
@@ -368,142 +463,286 @@ impl ModelWorker {
             arenas,
             decoder,
             completion_value: 1,
+            maximum_active_requests: config.maximum_active_requests,
+            maximum_batch_tokens: config.maximum_batch_tokens,
+            batch_wait_timeout: config.batch_wait_timeout,
+            counters: SchedulerCounters::default(),
         })
     }
 
-    fn run(&mut self, receiver: &mpsc::Receiver<WorkerCommand>, registry: &Mutex<RequestRegistry>) {
-        while let Ok(command) = receiver.recv() {
-            match command {
-                WorkerCommand::Run {
-                    request,
-                    output,
-                    cancelled,
-                } => {
-                    let request_id = request.request_id;
-                    let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
-                        self.run_request(&request, &output, &cancelled)
-                    }))
-                    .unwrap_or_else(|payload| {
-                        Err(ModelEngineError::WorkerPanicked(panic_message(&payload)))
-                    });
-                    if let Ok(mut registry) = registry.lock() {
-                        registry.cancellations.remove(&request_id);
-                    }
-                    if let Err(error) = result {
-                        let _ = output.send(Err(error));
-                        fail_pending_requests(receiver, registry);
-                        break;
-                    }
-                }
-                WorkerCommand::Stats { reply } => {
-                    let _ = reply.send(self.session.stats());
-                }
-                WorkerCommand::Shutdown => break,
-            }
-        }
-    }
-
-    fn run_request(
+    fn run(
         &mut self,
-        request: &RequestIntent,
-        output: &async_mpsc::UnboundedSender<Result<EngineEvent, ModelEngineError>>,
-        cancelled: &AtomicBool,
-    ) -> Result<(), ModelEngineError> {
-        if output
-            .send(Ok(EngineEvent::BatchStarted {
-                request_ids: vec![request.request_id].into_boxed_slice(),
+        receiver: &Receiver<WorkerCommand>,
+        registry: &Mutex<RequestRegistry>,
+        shutdown_requested: &AtomicBool,
+    ) {
+        let mut queued = VecDeque::new();
+        let mut active = Vec::new();
+        let mut shutdown = false;
+        loop {
+            shutdown |= shutdown_requested.load(Ordering::Acquire);
+            if active.is_empty() && queued.is_empty() && !shutdown {
+                match receiver.recv() {
+                    Ok(command) => {
+                        self.handle_command(command, &mut queued, &active, &mut shutdown);
+                    }
+                    Err(_) => shutdown = true,
+                }
+                if !shutdown && !queued.is_empty() {
+                    self.collect_arrivals(receiver, &mut queued, &active, &mut shutdown);
+                }
+            }
+            self.drain_commands(receiver, &mut queued, &active, &mut shutdown);
+            if shutdown {
+                for request in &queued {
+                    request.cancelled.store(true, Ordering::Release);
+                }
+                for request in &active {
+                    request.cancelled.store(true, Ordering::Release);
+                }
+            }
+            let result = std::panic::catch_unwind(AssertUnwindSafe(|| {
+                self.run_cycle(&mut queued, &mut active, registry)
             }))
-            .is_err()
-        {
-            return Ok(());
-        }
-        let request_id = EngineRequestId(request.request_id.0);
-        self.session
-            .acquire_requests(&[request_id])
-            .map_err(lifecycle_error)?;
-        if cancelled.load(Ordering::Acquire) {
-            self.release(request_id)?;
-            let _ = output.send(Ok(EngineEvent::Finished {
-                request_id: request.request_id,
-                reason: FinishReason::Cancelled,
-            }));
-            return Ok(());
-        }
-
-        let boundary = request.target_boundary;
-        let positions = (boundary - u64::try_from(request.input_tokens.len()).unwrap()..boundary)
-            .map(|position| u32::try_from(position).map_err(|_| ModelEngineError::ModelLength))
-            .collect::<Result<Vec<_>, _>>()?;
-        let generated = self.generate(request, request_id, boundary, &positions, output, cancelled);
-        let release = self.release(request_id);
-        match (generated, release) {
-            (Ok(reason), Ok(())) => {
-                let _ = output.send(Ok(EngineEvent::Finished {
-                    request_id: request.request_id,
-                    reason,
-                }));
-                Ok(())
+            .unwrap_or_else(|payload| {
+                Err(ModelEngineError::WorkerPanicked(panic_message(&payload)))
+            });
+            if let Err(error) = result {
+                fail_all_requests(&mut queued, &mut active, receiver, registry, &error);
+                break;
             }
-            (Err(error), _) | (Ok(_), Err(error)) => Err(error),
+            if shutdown && queued.is_empty() && active.is_empty() {
+                break;
+            }
         }
     }
 
-    fn generate(
+    fn handle_command(
+        &self,
+        command: WorkerCommand,
+        queued: &mut VecDeque<QueuedRequest>,
+        active: &[ActiveRequest],
+        shutdown: &mut bool,
+    ) {
+        match command {
+            WorkerCommand::Run {
+                request,
+                output,
+                cancelled,
+            } => queued.push_back(QueuedRequest {
+                request,
+                output,
+                cancelled,
+            }),
+            WorkerCommand::Stats { reply } => {
+                let _ = reply.send(self.stats(queued.len(), active.len()));
+            }
+            WorkerCommand::Shutdown => *shutdown = true,
+        }
+    }
+
+    fn collect_arrivals(
+        &self,
+        receiver: &Receiver<WorkerCommand>,
+        queued: &mut VecDeque<QueuedRequest>,
+        active: &[ActiveRequest],
+        shutdown: &mut bool,
+    ) {
+        let deadline = Instant::now() + self.batch_wait_timeout;
+        while active.len() + queued.len() < self.maximum_active_requests {
+            let Some(remaining) = deadline.checked_duration_since(Instant::now()) else {
+                break;
+            };
+            match receiver.recv_timeout(remaining) {
+                Ok(command) => self.handle_command(command, queued, active, shutdown),
+                Err(mpsc::RecvTimeoutError::Timeout) => break,
+                Err(mpsc::RecvTimeoutError::Disconnected) => {
+                    *shutdown = true;
+                    break;
+                }
+            }
+            if *shutdown {
+                break;
+            }
+        }
+    }
+
+    fn drain_commands(
+        &self,
+        receiver: &Receiver<WorkerCommand>,
+        queued: &mut VecDeque<QueuedRequest>,
+        active: &[ActiveRequest],
+        shutdown: &mut bool,
+    ) {
+        loop {
+            match receiver.try_recv() {
+                Ok(command) => self.handle_command(command, queued, active, shutdown),
+                Err(TryRecvError::Empty) => break,
+                Err(TryRecvError::Disconnected) => {
+                    *shutdown = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    fn run_cycle(
         &mut self,
-        request: &RequestIntent,
-        request_id: EngineRequestId,
-        mut boundary: u64,
-        positions: &[u32],
-        output: &async_mpsc::UnboundedSender<Result<EngineEvent, ModelEngineError>>,
-        cancelled: &AtomicBool,
-    ) -> Result<FinishReason, ModelEngineError> {
-        let mut token =
-            self.execute_step(request_id, boundary, &request.input_tokens, positions)?;
-        for generated in 0..request.sampling.max_output_tokens {
-            if cancelled.load(Ordering::Acquire) || output.is_closed() {
-                return Ok(FinishReason::Cancelled);
-            }
-            if request.sampling.stop_token_ids.contains(&token) {
-                return Ok(FinishReason::Stop { token_id: token });
-            }
-            if output
-                .send(Ok(EngineEvent::Token(TokenOutput {
-                    request_id: request.request_id,
+        queued: &mut VecDeque<QueuedRequest>,
+        active: &mut Vec<ActiveRequest>,
+        registry: &Mutex<RequestRegistry>,
+    ) -> Result<(), ModelEngineError> {
+        self.finish_cancelled_queued(queued, registry);
+        self.admit(queued, active, registry)?;
+        let cancelled = active
+            .iter()
+            .enumerate()
+            .filter(|(_, request)| {
+                request.output.is_closed() || request.cancelled.load(Ordering::Acquire)
+            })
+            .map(|(index, _)| (index, FinishReason::Cancelled))
+            .collect::<Vec<_>>();
+        self.finish_active(active, cancelled, registry)?;
+        if active.is_empty() {
+            return Ok(());
+        }
+        let dispatch = build_dispatch(active, self.maximum_batch_tokens)?;
+        if dispatch.active_indices.is_empty() {
+            std::thread::sleep(Duration::from_micros(100));
+            return Ok(());
+        }
+        let sampled = self.execute_batch(&dispatch)?;
+        self.counters.model_dispatches += 1;
+        if dispatch.active_indices.len() > 1 {
+            self.counters.multi_request_dispatches += 1;
+        }
+        let contains_prefill = dispatch
+            .active_indices
+            .iter()
+            .any(|&index| active[index].next_token.is_none());
+        let contains_decode = dispatch
+            .active_indices
+            .iter()
+            .any(|&index| active[index].next_token.is_some());
+        if contains_prefill && contains_decode {
+            self.counters.mixed_phase_dispatches += 1;
+        }
+        self.counters.maximum_observed_batch_size = self
+            .counters
+            .maximum_observed_batch_size
+            .max(dispatch.active_indices.len() as u64);
+        let mut finished = Vec::new();
+        for ((&active_index, &target_boundary), token) in dispatch
+            .active_indices
+            .iter()
+            .zip(&dispatch.target_boundaries)
+            .zip(sampled)
+        {
+            let request = &mut active[active_index];
+            request.boundary = target_boundary;
+            request.next_token = None;
+            let reason = if request.cancelled.load(Ordering::Acquire) || request.output.is_closed()
+            {
+                Some(FinishReason::Cancelled)
+            } else if request.request.sampling.stop_token_ids.contains(&token) {
+                Some(FinishReason::Stop { token_id: token })
+            } else if request
+                .output
+                .try_send(Ok(EngineEvent::Token(TokenOutput {
+                    request_id: request.request.request_id,
                     token_id: token,
                 })))
                 .is_err()
             {
-                return Ok(FinishReason::Cancelled);
+                Some(FinishReason::Cancelled)
+            } else {
+                request.generated_tokens += 1;
+                if request.generated_tokens == request.request.sampling.max_output_tokens {
+                    Some(FinishReason::Length)
+                } else {
+                    request.next_token = Some(token);
+                    None
+                }
+            };
+            if let Some(reason) = reason {
+                finished.push((active_index, reason));
             }
-            if generated + 1 == request.sampling.max_output_tokens {
-                return Ok(FinishReason::Length);
-            }
-            boundary = boundary
-                .checked_add(1)
-                .ok_or(ModelEngineError::ModelLength)?;
-            token = self.execute_step(
-                request_id,
-                boundary,
-                &[token],
-                &[u32::try_from(boundary - 1).map_err(|_| ModelEngineError::ModelLength)?],
-            )?;
         }
-        unreachable!("sampling validation rejects zero output budgets")
+        self.finish_active(active, finished, registry)
     }
 
-    fn execute_step(
+    fn admit(
         &mut self,
-        request_id: EngineRequestId,
-        target_boundary: u64,
-        tokens: &[u32],
-        positions: &[u32],
-    ) -> Result<u32, ModelEngineError> {
-        let source = self
-            .session
-            .prepare_append_batch(&[EngineAppendIntent {
+        queued: &mut VecDeque<QueuedRequest>,
+        active: &mut Vec<ActiveRequest>,
+        registry: &Mutex<RequestRegistry>,
+    ) -> Result<(), ModelEngineError> {
+        let count = self
+            .maximum_active_requests
+            .saturating_sub(active.len())
+            .min(queued.len());
+        if count == 0 {
+            return Ok(());
+        }
+        let mut admitted = Vec::new();
+        for _ in 0..count {
+            let request = queued.pop_front().expect("admission count was bounded");
+            if request.cancelled.load(Ordering::Acquire) || request.output.is_closed() {
+                finish_unacquired(request, registry);
+                continue;
+            }
+            admitted.push(request);
+        }
+        let ids = admitted
+            .iter()
+            .map(|request| EngineRequestId(request.request.request_id.0))
+            .collect::<Vec<_>>();
+        if !ids.is_empty()
+            && let Err(error) = self.session.acquire_requests(&ids)
+        {
+            for request in admitted.into_iter().rev() {
+                queued.push_front(request);
+            }
+            return Err(lifecycle_error(error));
+        }
+        self.counters.admitted_requests += admitted.len() as u64;
+        active.extend(admitted.into_iter().map(|queued| {
+            if queued
+                .output
+                .try_send(Ok(EngineEvent::BatchStarted {
+                    request_ids: vec![queued.request.request_id].into_boxed_slice(),
+                }))
+                .is_err()
+            {
+                queued.cancelled.store(true, Ordering::Release);
+            }
+            ActiveRequest {
+                boundary: queued.request.target_boundary,
+                request: queued.request,
+                output: queued.output,
+                cancelled: queued.cancelled,
+                next_token: None,
+                generated_tokens: 0,
+            }
+        }));
+        Ok(())
+    }
+
+    #[allow(clippy::too_many_lines)]
+    fn execute_batch(&mut self, dispatch: &DispatchInput) -> Result<Vec<u32>, ModelEngineError> {
+        let intents = dispatch
+            .request_ids
+            .iter()
+            .copied()
+            .zip(&dispatch.target_boundaries)
+            .map(|(request_id, &target_boundary)| EngineAppendIntent {
                 request_id,
                 target_boundary,
-            }])
+            })
+            .collect::<Vec<_>>();
+        let source = self
+            .session
+            .prepare_append_batch(&intents)
             .map_err(lifecycle_error)?;
         let batch_id = source.batch_id;
         let lowered = (|| {
@@ -524,7 +763,7 @@ impl ModelWorker {
         let (attention, prepared) = match lowered {
             Ok(lowered) => lowered,
             Err(error) => {
-                self.abort_prepared(batch_id, request_id)?;
+                self.abort_prepared(batch_id, &dispatch.request_ids)?;
                 return Err(error);
             }
         };
@@ -534,22 +773,42 @@ impl ModelWorker {
             .flat_map(|step| &step.classes)
             .any(|class| !class.copies.is_empty())
         {
-            self.abort_prepared(batch_id, request_id)?;
+            self.abort_prepared(batch_id, &dispatch.request_ids)?;
             return Err(ModelEngineError::Executor(
-                "append copy execution is not implemented by the serial coordinator".into(),
+                "append copy execution is not implemented by the model coordinator".into(),
             ));
         }
-        let classes = decoder_class_steps(&prepared, &attention);
+        let write_slots = match decoder_class_write_slots(prepared.steps(), attention.len()) {
+            Ok(write_slots) => write_slots,
+            Err(error) => {
+                self.abort_prepared(batch_id, &dispatch.request_ids)?;
+                return Err(error);
+            }
+        };
+        let classes = decoder_class_steps(&write_slots, &attention);
         let executed = self.decoder.execute(DecoderStep {
-            tokens,
-            positions,
+            tokens: &dispatch.tokens,
+            positions: &dispatch.positions,
             classes: &classes,
         });
-        let token = match executed {
-            Ok(result) => *result
-                .token_ids
-                .last()
-                .ok_or_else(|| ModelEngineError::Executor("decoder returned no token".into()))?,
+        let sampled = match executed {
+            Ok(result) => match sampled_rows(&result.token_ids, &attention[0].query_indptr) {
+                Ok(sampled) if sampled.len() == dispatch.active_indices.len() => sampled,
+                Ok(_) => {
+                    self.session
+                        .quarantine_prepared_execution(batch_id)
+                        .map_err(lifecycle_error)?;
+                    return Err(ModelEngineError::Executor(
+                        "sampled-token row count does not match the dispatched batch".into(),
+                    ));
+                }
+                Err(error) => {
+                    self.session
+                        .quarantine_prepared_execution(batch_id)
+                        .map_err(lifecycle_error)?;
+                    return Err(error);
+                }
+            },
             Err(error) => {
                 self.session
                     .quarantine_prepared_execution(batch_id)
@@ -596,29 +855,45 @@ impl ModelWorker {
                 reclamation_receipts: retirement_evidence(&publication.retirements),
             })
             .map_err(lifecycle_error)?;
-        Ok(token)
+        Ok(sampled)
     }
 
     fn abort_prepared(
         &mut self,
         batch_id: orbitkv::EngineBatchId,
-        request_id: EngineRequestId,
+        request_ids: &[EngineRequestId],
     ) -> Result<(), ModelEngineError> {
+        let evidence = request_ids
+            .iter()
+            .copied()
+            .map(|request_id| orbitkv::EngineStepAbortEvidence {
+                request_id,
+                backend_unobserved: true,
+            })
+            .collect::<Vec<_>>();
         self.session
-            .abort_prepared_execution(
-                batch_id,
-                &[orbitkv::EngineStepAbortEvidence {
-                    request_id,
-                    backend_unobserved: true,
-                }],
-            )
+            .abort_prepared_execution(batch_id, &evidence)
             .map_err(lifecycle_error)
     }
 
-    fn release(&mut self, request_id: EngineRequestId) -> Result<(), ModelEngineError> {
+    fn finish_active(
+        &mut self,
+        active: &mut Vec<ActiveRequest>,
+        mut finished: Vec<(usize, FinishReason)>,
+        registry: &Mutex<RequestRegistry>,
+    ) -> Result<(), ModelEngineError> {
+        if finished.is_empty() {
+            return Ok(());
+        }
+        finished.sort_by_key(|(index, _)| *index);
+        finished.dedup_by_key(|(index, _)| *index);
+        let ids = finished
+            .iter()
+            .map(|(index, _)| EngineRequestId(active[*index].request.request_id.0))
+            .collect::<Vec<_>>();
         let release = self
             .session
-            .prepare_release_batch(&[request_id])
+            .prepare_release_batch(&ids)
             .map_err(lifecycle_error)?;
         let outcome = self
             .session
@@ -633,22 +908,151 @@ impl ModelWorker {
                 "request release requires a retry".into(),
             ));
         }
+        for (index, reason) in finished.into_iter().rev() {
+            let request = active.remove(index);
+            let _ = request.output.try_send(Ok(EngineEvent::Finished {
+                request_id: request.request.request_id,
+                reason,
+            }));
+            remove_registry(registry, request.request.request_id);
+            self.counters.completed_requests += 1;
+        }
         Ok(())
+    }
+
+    fn finish_cancelled_queued(
+        &mut self,
+        queued: &mut VecDeque<QueuedRequest>,
+        registry: &Mutex<RequestRegistry>,
+    ) {
+        let mut retained = VecDeque::new();
+        while let Some(request) = queued.pop_front() {
+            if request.cancelled.load(Ordering::Acquire) || request.output.is_closed() {
+                finish_unacquired(request, registry);
+                self.counters.completed_requests += 1;
+            } else {
+                retained.push_back(request);
+            }
+        }
+        *queued = retained;
+    }
+
+    fn stats(&self, queued_requests: usize, active_requests: usize) -> EngineStats {
+        EngineStats {
+            manager: self.session.stats(),
+            queued_requests: queued_requests as u64,
+            active_requests: active_requests as u64,
+            admitted_requests: self.counters.admitted_requests,
+            completed_requests: self.counters.completed_requests,
+            model_dispatches: self.counters.model_dispatches,
+            multi_request_dispatches: self.counters.multi_request_dispatches,
+            mixed_phase_dispatches: self.counters.mixed_phase_dispatches,
+            maximum_observed_batch_size: self.counters.maximum_observed_batch_size,
+        }
     }
 }
 
-fn fail_pending_requests(
-    receiver: &mpsc::Receiver<WorkerCommand>,
+fn fail_all_requests(
+    queued: &mut VecDeque<QueuedRequest>,
+    active: &mut Vec<ActiveRequest>,
+    receiver: &Receiver<WorkerCommand>,
     registry: &Mutex<RequestRegistry>,
+    error: &ModelEngineError,
 ) {
+    for request in queued.drain(..) {
+        let _ = request.output.try_send(Err(error.clone()));
+    }
+    for request in active.drain(..) {
+        let _ = request.output.try_send(Err(error.clone()));
+    }
     if let Ok(mut registry) = registry.lock() {
         registry.accepting = false;
         registry.cancellations.clear();
         while let Ok(command) = receiver.try_recv() {
             if let WorkerCommand::Run { output, .. } = command {
-                let _ = output.send(Err(ModelEngineError::WorkerUnavailable));
+                let _ = output.try_send(Err(ModelEngineError::WorkerUnavailable));
             }
         }
+    }
+}
+
+fn finish_unacquired(request: QueuedRequest, registry: &Mutex<RequestRegistry>) {
+    let QueuedRequest {
+        request,
+        output,
+        cancelled: _,
+    } = request;
+    let _ = output.try_send(Ok(EngineEvent::BatchStarted {
+        request_ids: vec![request.request_id].into_boxed_slice(),
+    }));
+    let _ = output.try_send(Ok(EngineEvent::Finished {
+        request_id: request.request_id,
+        reason: FinishReason::Cancelled,
+    }));
+    remove_registry(registry, request.request_id);
+}
+
+fn build_dispatch(
+    active: &[ActiveRequest],
+    maximum_batch_tokens: usize,
+) -> Result<DispatchInput, ModelEngineError> {
+    let mut dispatch = DispatchInput {
+        active_indices: Vec::new(),
+        request_ids: Vec::new(),
+        target_boundaries: Vec::new(),
+        tokens: Vec::new(),
+        positions: Vec::new(),
+    };
+    // Decode-first scheduling bounds TPOT under prefill arrivals. Remaining
+    // token budget is filled by waiting prefills in stable admission order.
+    for pending_prefill in [false, true] {
+        for (index, request) in active.iter().enumerate() {
+            if request.next_token.is_none() != pending_prefill || request.output.capacity() < 2 {
+                continue;
+            }
+            let query_tokens = request
+                .next_token
+                .map_or(request.request.input_tokens.len(), |_| 1);
+            if dispatch.tokens.len() + query_tokens > maximum_batch_tokens {
+                continue;
+            }
+            let target_boundary = if request.next_token.is_some() {
+                request
+                    .boundary
+                    .checked_add(1)
+                    .ok_or(ModelEngineError::ModelLength)?
+            } else {
+                request.boundary
+            };
+            dispatch.active_indices.push(index);
+            dispatch
+                .request_ids
+                .push(EngineRequestId(request.request.request_id.0));
+            dispatch.target_boundaries.push(target_boundary);
+            if let Some(token) = request.next_token {
+                dispatch.tokens.push(token);
+                dispatch.positions.push(
+                    u32::try_from(request.boundary).map_err(|_| ModelEngineError::ModelLength)?,
+                );
+            } else {
+                dispatch.tokens.extend(&request.request.input_tokens);
+                let begin = target_boundary - request.request.input_tokens.len() as u64;
+                dispatch.positions.extend(
+                    (begin..target_boundary)
+                        .map(|position| {
+                            u32::try_from(position).map_err(|_| ModelEngineError::ModelLength)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?,
+                );
+            }
+        }
+    }
+    Ok(dispatch)
+}
+
+fn remove_registry(registry: &Mutex<RequestRegistry>, request_id: RequestId) {
+    if let Ok(mut registry) = registry.lock() {
+        registry.cancellations.remove(&request_id);
     }
 }
 
@@ -679,10 +1083,17 @@ fn validate_page_budgets(
     if plan.classes.len() != config.page_counts.len() {
         return Err(ModelEngineError::InvalidConfig);
     }
-    let maximum_pages = config.maximum_model_tokens.div_ceil(config.page_tokens);
+    let requests = u64::try_from(config.maximum_active_requests)
+        .map_err(|_| ModelEngineError::InvalidConfig)?;
+    let maximum_pages = config
+        .maximum_model_tokens
+        .div_ceil(config.page_tokens)
+        .checked_mul(requests)
+        .ok_or(ModelEngineError::InvalidConfig)?;
     for (class, &available) in plan.classes.iter().zip(&config.page_counts) {
         let required = class
             .slot_count
+            .and_then(|slots| slots.checked_mul(requests))
             .map_or(maximum_pages, |slots| slots.min(maximum_pages));
         if u64::from(available) < required {
             return Err(ModelEngineError::InvalidConfig);
@@ -742,18 +1153,57 @@ fn checkpoint_weights(directory: &Path) -> Result<Vec<PathBuf>, ModelEngineError
     Ok(files)
 }
 
+fn decoder_class_write_slots(
+    steps: &[orbitkv_executor::PreparedStep],
+    class_count: usize,
+) -> Result<Vec<Vec<u64>>, ModelEngineError> {
+    let mut slots = vec![Vec::new(); class_count];
+    for step in steps {
+        if step.classes.len() != class_count {
+            return Err(ModelEngineError::Executor(
+                "prepared class count does not match attention metadata".into(),
+            ));
+        }
+        for (class_id, class) in step.classes.iter().enumerate() {
+            if usize::from(class.class_id) != class_id {
+                return Err(ModelEngineError::Executor(
+                    "prepared classes are not in canonical order".into(),
+                ));
+            }
+            slots[class_id].extend(&class.write_slots);
+        }
+    }
+    Ok(slots)
+}
+
 fn decoder_class_steps<'a>(
-    prepared: &'a PreparedBatch,
+    write_slots: &'a [Vec<u64>],
     attention: &'a [AttentionBatch],
 ) -> Vec<DecoderClassStep<'a>> {
-    prepared.steps()[0]
-        .classes
+    write_slots
         .iter()
         .zip(attention)
-        .map(|(class, attention)| DecoderClassStep {
-            class_id: class.class_id,
-            write_slots: &class.write_slots,
+        .map(|(write_slots, attention)| DecoderClassStep {
+            class_id: attention.class_id,
+            write_slots,
             attention,
+        })
+        .collect()
+}
+
+fn sampled_rows(token_ids: &[u32], query_indptr: &[i32]) -> Result<Vec<u32>, ModelEngineError> {
+    query_indptr
+        .windows(2)
+        .map(|row| {
+            let start = usize::try_from(row[0])
+                .ok()
+                .filter(|&start| start < token_ids.len())
+                .ok_or_else(|| ModelEngineError::Executor("invalid sampled-token rows".into()))?;
+            let end = usize::try_from(row[1])
+                .ok()
+                .filter(|&end| end > start && end <= token_ids.len())
+                .ok_or_else(|| ModelEngineError::Executor("invalid sampled-token rows".into()))?;
+            Ok(token_ids[end - 1])
         })
         .collect()
 }
@@ -790,172 +1240,4 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> String {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use orbitkv::{KvClassSpec, KvPlanInput, TokenStorageKind, plan::RetentionKind};
-    use orbitkv_server::SamplingIntent;
-
-    fn config(page_counts: Vec<u32>) -> ModelEngineConfig {
-        ModelEngineConfig {
-            model_directory: PathBuf::from("/unused"),
-            device_index: 0,
-            page_tokens: 16,
-            page_counts,
-            maximum_model_tokens: 1_024,
-            maximum_prefill_tokens: 512,
-            representative_prefill_tokens: 512,
-            search_graphs: 2,
-            search_seed: 7,
-        }
-    }
-
-    fn request(
-        request_id: u64,
-        input_tokens: &[u32],
-        target_boundary: u64,
-        output_tokens: u32,
-    ) -> BatchIntent {
-        BatchIntent {
-            requests: vec![RequestIntent {
-                request_id: RequestId(request_id),
-                input_tokens: input_tokens.into(),
-                target_boundary,
-                sampling: SamplingIntent::greedy(output_tokens, []),
-            }]
-            .into_boxed_slice(),
-        }
-    }
-
-    fn hybrid_plan() -> orbitkv::CompiledKvPlan {
-        orbitkv::compile_plan(KvPlanInput {
-            page_tokens: 16,
-            classes: vec![
-                KvClassSpec {
-                    name: "full".into(),
-                    layers: vec![1],
-                    retention: RetentionKind::Full,
-                    bytes_per_token_per_layer: 128,
-                    window_tokens: None,
-                    storage: TokenStorageKind::TokenKv,
-                    components: Vec::new(),
-                },
-                KvClassSpec {
-                    name: "sliding".into(),
-                    layers: vec![0],
-                    retention: RetentionKind::Sliding,
-                    bytes_per_token_per_layer: 128,
-                    window_tokens: Some(512),
-                    storage: TokenStorageKind::TokenKv,
-                    components: Vec::new(),
-                },
-            ],
-        })
-        .unwrap()
-    }
-
-    fn engine_with_channel(
-        commands: mpsc::Sender<WorkerCommand>,
-    ) -> (ModelEngine, Arc<Mutex<RequestRegistry>>) {
-        let registry = Arc::new(Mutex::new(RequestRegistry {
-            accepting: true,
-            cancellations: BTreeMap::new(),
-        }));
-        let engine = ModelEngine {
-            shared: Arc::new(EngineShared {
-                commands,
-                registry: Arc::clone(&registry),
-                worker: Mutex::new(None),
-                maximum_model_tokens: 32,
-                maximum_prefill_tokens: 16,
-            }),
-        };
-        (engine, registry)
-    }
-
-    #[test]
-    fn rejects_invalid_capacity_configuration_without_starting_a_worker() {
-        let mut invalid = config(vec![64, 33]);
-        invalid.page_tokens = 0;
-        assert_eq!(invalid.validate(), Err(ModelEngineError::InvalidConfig));
-    }
-
-    #[test]
-    fn validates_each_compiled_class_page_budget_independently() {
-        let plan = hybrid_plan();
-        assert_eq!(validate_page_budgets(&plan, &config(vec![64, 33])), Ok(()));
-        assert_eq!(
-            validate_page_budgets(&plan, &config(vec![64, 32])),
-            Err(ModelEngineError::InvalidConfig)
-        );
-        assert_eq!(
-            validate_page_budgets(&plan, &config(vec![64])),
-            Err(ModelEngineError::InvalidConfig)
-        );
-    }
-
-    #[test]
-    fn validates_serial_fresh_prompt_and_model_length_contract() {
-        let accepted = validate_batch(request(1, &[10, 11], 2, 3), 4, 2).unwrap();
-        assert_eq!(accepted.request_id, RequestId(1));
-
-        assert_eq!(
-            validate_batch(request(2, &[10], 2, 1), 4, 2),
-            Err(ModelEngineError::ContinuationUnsupported)
-        );
-        assert_eq!(
-            validate_batch(request(3, &[10, 11], 2, 4), 4, 2),
-            Err(ModelEngineError::ModelLength)
-        );
-        assert_eq!(
-            validate_batch(request(6, &[10, 11, 12], 3, 1), 4, 2),
-            Err(ModelEngineError::ModelLength)
-        );
-        assert_eq!(
-            validate_batch(
-                BatchIntent {
-                    requests: vec![
-                        request(4, &[10], 1, 1).requests[0].clone(),
-                        request(5, &[11], 1, 1).requests[0].clone(),
-                    ]
-                    .into_boxed_slice(),
-                },
-                4,
-                2,
-            ),
-            Err(ModelEngineError::BatchSize)
-        );
-    }
-
-    #[tokio::test]
-    async fn duplicate_submission_preserves_the_active_cancellation_handle() {
-        let (commands, _receiver) = mpsc::channel();
-        let (engine, registry) = engine_with_channel(commands);
-        let active = Arc::new(AtomicBool::new(false));
-        registry
-            .lock()
-            .unwrap()
-            .cancellations
-            .insert(RequestId(7), Arc::clone(&active));
-
-        let result = engine.execute(request(7, &[10], 1, 1)).await;
-        assert!(matches!(result, Err(ModelEngineError::DuplicateRequest)));
-        let registry = registry.lock().unwrap();
-        assert!(Arc::ptr_eq(
-            registry.cancellations.get(&RequestId(7)).unwrap(),
-            &active
-        ));
-    }
-
-    #[tokio::test]
-    async fn failed_worker_send_removes_the_request_registry_entry() {
-        let (commands, receiver) = mpsc::channel();
-        drop(receiver);
-        let (engine, registry) = engine_with_channel(commands);
-
-        let result = engine.execute(request(8, &[10], 1, 1)).await;
-        assert!(matches!(result, Err(ModelEngineError::WorkerUnavailable)));
-        let registry = registry.lock().unwrap();
-        assert!(!registry.accepting);
-        assert!(registry.cancellations.is_empty());
-    }
-}
+mod tests;

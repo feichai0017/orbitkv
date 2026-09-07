@@ -1,14 +1,14 @@
 {
   "schema": "orbitkv.device-environment",
-  "captured_at_utc": "2026-09-07T03:41:55Z",
+  "captured_at_utc": "2026-09-07T05:25:59Z",
   "source": {
-    "orbitkv_base_commit": "43981dd070f7e0f8b2679ee2b02a265a483f4a1c",
+    "orbitkv_base_commit": "ce2a40af4b870ad6d505236d59b6149e57504079",
     "luminal_commit": "c9f03f46d049a352eda2ab76c865cb6212157a3e",
     "worktree_clean_before_run": false,
-    "engine_source_sha256": "5be44fb6c1710c547e3e55e71fc0f1e342ea35061e2bfbbf0f57eab9805c78d3",
-    "test_source_sha256": "848a21672e65a3f115e70c37ec9fd05d2e5fe9bc91eb706e64d7e95963e2981c",
-    "executor_model_source_sha256": "d1fd4b58dc6af465b27d4c42f8d8431c15529456e12bc3d3b474ac144685dd94",
-    "note": "The exact tested implementation and evidence were committed together after the run."
+    "engine_source_sha256": "9a97b17dd7475b844fd600ef0eb8b81e7aba128d538f08b2d783488d2bb15f26",
+    "engine_test_source_sha256": "a661cdeb90a98afee3a078e2fb3949a32ef56e0c02703e6e8a8f050579eacd57",
+    "host_contract_test_source_sha256": "4fbd8d3cabd8ede23ad0d24507d6acf342b3f8a8264f8ec19919f7e0be0f785a",
+    "note": "The exact tested implementation and evidence are committed together after the run."
   },
   "accelerator": {
     "name": "NVIDIA H20",
