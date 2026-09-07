@@ -54,7 +54,7 @@ pub enum DecoderError {
     Artifact(String),
     #[error("decoder runtime input geometry exceeds its compiled capacity")]
     InputCapacity,
-    #[error("CUDA graph capture requires a single-token decode step")]
+    #[error("CUDA graph capture requires exactly one query token per request")]
     CaptureRequiresDecode,
     #[error("no decode CUDA graph has been captured")]
     MissingDecodeCapture,
@@ -238,6 +238,16 @@ pub struct DecoderOutputs {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecoderStepOutput {
     pub token_ids: Box<[u32]>,
+}
+
+/// Persistent K/V update behavior selected for one dynamic-shape bucket.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct CacheUpdateBucket {
+    pub bucket_index: usize,
+    pub tensor_count: usize,
+    pub in_place_tensors: usize,
+    pub copy_back_tensors: usize,
+    pub copy_back_bytes: usize,
 }
 
 /// Optional diagnostic readback used for correctness comparison.
@@ -624,13 +634,10 @@ impl CompiledDecoder {
         &mut self,
         step: DecoderStep<'_>,
     ) -> Result<DecoderStepOutput, DecoderError> {
-        if step.tokens.len() != 1 {
-            return Err(DecoderError::CaptureRequiresDecode);
-        }
         let signature = DecodeCaptureSignature::from_step(step)?;
         self.captured_decode = None;
         self.execute_graph(step)?;
-        let token_ids = self.read_sampled_tokens(1)?;
+        let token_ids = self.read_sampled_tokens(step.tokens.len())?;
         let execution = self.runtime.capture_execution(&self.graph.dyn_map)?;
         self.captured_decode = Some(CapturedDecode {
             signature,
@@ -651,7 +658,12 @@ impl CompiledDecoder {
     ) -> Result<DecoderDiagnosticOutput, DecoderError> {
         let output = self.capture_decode(step)?;
         let logits = self.runtime.get_f32(self.decoder.outputs.logits);
-        if logits.len() != self.vocabulary_size || logits.iter().any(|value| !value.is_finite()) {
+        let expected = step
+            .tokens
+            .len()
+            .checked_mul(self.vocabulary_size)
+            .ok_or(DecoderError::InputCapacity)?;
+        if logits.len() != expected || logits.iter().any(|value| !value.is_finite()) {
             return Err(DecoderError::InvalidGeometry("logits output"));
         }
         Ok(DecoderDiagnosticOutput {
@@ -699,7 +711,7 @@ impl CompiledDecoder {
             .execution
             .launch()?;
         Ok(DecoderStepOutput {
-            token_ids: self.read_sampled_tokens(1)?,
+            token_ids: self.read_sampled_tokens(step.tokens.len())?,
         })
     }
 
@@ -715,7 +727,12 @@ impl CompiledDecoder {
     ) -> Result<DecoderDiagnosticOutput, DecoderError> {
         let output = self.replay_decode(step)?;
         let logits = self.runtime.get_f32(self.decoder.outputs.logits);
-        if logits.len() != self.vocabulary_size || logits.iter().any(|value| !value.is_finite()) {
+        let expected = step
+            .tokens
+            .len()
+            .checked_mul(self.vocabulary_size)
+            .ok_or(DecoderError::InputCapacity)?;
+        if logits.len() != expected || logits.iter().any(|value| !value.is_finite()) {
             return Err(DecoderError::InvalidGeometry("logits output"));
         }
         Ok(DecoderDiagnosticOutput {
@@ -905,6 +922,53 @@ impl CompiledDecoder {
         self.cache_updates_in_place
     }
 
+    /// Reports persistent K/V mutation behavior for every compiled bucket.
+    ///
+    /// A non-aliasing update is registered back to the same stable arena and
+    /// therefore requires a graph-visible full-tensor device copy.
+    #[must_use]
+    pub fn cache_update_buckets(&self) -> Box<[CacheUpdateBucket]> {
+        (0..self.runtime.compiled_bucket_count())
+            .map(|bucket_index| {
+                let mut in_place_tensors = 0usize;
+                let mut copy_back_bytes = 0usize;
+                for (layer, (&(key_input, value_input), &(key_output, value_output))) in self
+                    .decoder
+                    .outputs
+                    .cache_inputs
+                    .iter()
+                    .zip(&self.decoder.outputs.cache_updates)
+                    .enumerate()
+                {
+                    for (component, (output, input)) in
+                        [(key_output, key_input), (value_output, value_input)]
+                            .into_iter()
+                            .enumerate()
+                    {
+                        if self
+                            .runtime
+                            .output_aliases_input_in_bucket(output, input, bucket_index)
+                            == Some(true)
+                        {
+                            in_place_tensors += 1;
+                        } else {
+                            copy_back_bytes += self.persistent_cache[layer * 2 + component].len();
+                        }
+                    }
+                }
+                let tensor_count = self.decoder.outputs.cache_updates.len() * 2;
+                CacheUpdateBucket {
+                    bucket_index,
+                    tensor_count,
+                    in_place_tensors,
+                    copy_back_tensors: tensor_count - in_place_tensors,
+                    copy_back_bytes,
+                }
+            })
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    }
+
     /// Number of decode/prefill executables selected during the one-time
     /// bucketed compile.
     #[must_use]
@@ -977,8 +1041,8 @@ fn register_persistent_cache(
                     .and_then(|elements| elements.checked_mul(2))
                     .ok_or(DecoderError::InvalidGeometry("cache bytes"))?;
                 Ok([
-                    runtime.alias_state(key_input, key_output, cache_bytes),
-                    runtime.alias_state(value_input, value_output, cache_bytes),
+                    runtime.alias_state_required(key_input, key_output, cache_bytes),
+                    runtime.alias_state_required(value_input, value_output, cache_bytes),
                 ])
             },
         )
@@ -1025,15 +1089,33 @@ fn decoder_compile_options(
 
 impl DecodeCaptureSignature {
     fn from_step(step: DecoderStep<'_>) -> Result<Self, DecoderError> {
-        if step.tokens.len() != 1 || step.classes.is_empty() {
+        let Some(first_class) = step.classes.first() else {
             return Err(DecoderError::CaptureRequiresDecode);
-        }
-        let batch_size = step.classes[0]
+        };
+        let batch_size = first_class
             .attention
             .query_indptr
             .len()
             .checked_sub(1)
             .ok_or(DecoderError::InputCapacity)?;
+        let decode_indptr = first_class.attention.query_indptr.first() == Some(&0)
+            && first_class.attention.query_indptr.last().copied() == i32::try_from(batch_size).ok()
+            && first_class
+                .attention
+                .query_indptr
+                .windows(2)
+                .all(|row| row[1] == row[0] + 1);
+        if batch_size == 0
+            || step.tokens.len() != batch_size
+            || step.positions.len() != batch_size
+            || !decode_indptr
+            || step.classes.iter().any(|class| {
+                class.write_slots.len() != batch_size
+                    || class.attention.query_indptr != first_class.attention.query_indptr
+            })
+        {
+            return Err(DecoderError::CaptureRequiresDecode);
+        }
         Ok(Self {
             query_tokens: step.tokens.len(),
             batch_size,

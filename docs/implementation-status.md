@@ -84,6 +84,14 @@ ops and verifies LLIR fingerprints plus the manifest/model/arena/bucket identity
 Four artifact-loaded H20 restarts produced identical candidate output digests
 and 0.74% output-throughput coefficient of variation.
 
+Persistent K/V state is now a compiler constraint rather than a post-search
+observation. Luminal rejects candidates and stored artifacts unless every K/V
+output aliases its registered input arena in every retained bucket. A deeper
+16-candidate search produced 36/36 in-place tensors and zero copy-back bytes.
+Four alternating C2 epochs improved the same engine's throughput by 14.4%, TTFT
+by 32.0%, TPOT by 10.1%, and E2E by 12.6% versus the previous artifact. The new
+artifact passes the existing independent B2 reference-token probe.
+
 ## Evidence interpretation
 
 The child CUDA Graph result demonstrates a narrow dispatch optimization. The
@@ -92,8 +100,8 @@ ten paired release-mode epochs show a 27.8% live-payload reduction, a fixed-budg
 boundary increase from 528 to 560, and a positive paired total-time interval.
 It is not a comparative serving benefit. TTFT/TPOT/tails and internal concurrency
 scaling are measured through C8, while fairness, soak, and the capacity limit
-remain open. The first tuned comparison is complete and negative: at C2 OrbitKV reaches
-0.534x stock SGLang throughput with 1.76x TPOT and 6.50x TTFT. Its configured
+remain open. The current tuned comparison remains negative: at C2 OrbitKV
+reaches 0.598x stock SGLang throughput with 1.59x TPOT and 4.69x TTFT. Its configured
 persistent K/V tensor payload is 40.4% smaller on the same Gemma3 capacity
 because SGLang disables hybrid SWA memory. Executor performance, not KV lifetime
 correctness, is the next blocker.

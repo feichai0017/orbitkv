@@ -24,6 +24,7 @@ move a compact reviewed result here only after its checks pass.
 | `single-process-http-engine-20260907` | Real released checkpoint serves OpenAI non-streaming and SSE completions through `orbitkv-serve`; concurrent requests, dropped-stream cancellation, shutdown, and final drain pass | HTTP correctness only; no fairness, capacity, or throughput claim |
 | `serving-load-qualification-20260907` | One warm single-process engine completes fixed 16-request traces at C1/C2/C4/C8 with full outputs; B=8 row isolation and bounded B=1/B=8 logit parity pass | Narrow internal scaling frontier; no fairness, soak, capacity-limit, SGLang comparison, or performance-advantage claim |
 | `sglang-product-comparison-20260907` | Four artifact-fixed alternating H20 epochs compare the released hybrid checkpoint against clean stock SGLang v0.5.17; request gates and per-arm repeatability pass | Negative serving-performance result: 0.534x throughput, 1.76x TPOT, 6.50x TTFT; configured KV payload is 40.4% smaller; cross-engine output digest differs |
+| `compiler-constrained-schedule-benefit-20260907` | Required persistent-state aliases plus deeper search improve the same OrbitKV engine by 14.4% throughput, 32.0% TTFT, 10.1% TPOT, and 12.6% E2E; B2 reference probe passes | Current SGLang comparison remains negative at 0.598x throughput, 1.59x TPOT, and 4.69x TTFT; random-trace digests differ |
 
 The normative current support boundary is the
 [Capability Matrix](../docs/capability-matrix.md). The mechanism ablation proves
@@ -31,8 +32,9 @@ a same-semantics physical-residence reduction and host fixed-capacity admission
 difference. The released hybrid benefit record now establishes a narrow
 same-executor compiler benefit. The HTTP record closes model-backed serving
 correctness. The serving-load record adds a narrow C1-C8 throughput/latency
-frontier. The SGLang record closes R4 as a negative performance result and
-redirects work to the continuous-batching executor hot path.
+frontier. The first SGLang record closes R4 as a negative performance result.
+The compiler-constrained follow-up proves a real same-engine schedule-selection
+improvement while keeping R4.1 open for graph-internal kernel and fusion work.
 
 ## Result-package policy
 

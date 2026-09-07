@@ -29,8 +29,9 @@ recorded source closure.
 | Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page and packed-page decode pass; Luminal never allocates or recycles pages |
 | Token relocation executor | L3 | Lowers manager-authored moves to per-layer K/V byte ranges, performs stream-ordered D2D copies, and exposes success evidence only after a CUDA event |
 | Bucketed model runtime | L4 correctness | One symbolic graph is searched once into decode/prefill executables; query, batch, and per-class context dimensions have bounded capacities, dynamic inputs are preallocated, and one stable K/V arena per class survives prefill plus repeated decode |
-| Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity and LLIR fingerprints fail closed, and four H20 restarts load without search and preserve output digest |
-| Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; narrow matched benefit | Flattened replay failed at +24.9%; selected child-graph composition passed correctness and reduced matched batch-one fixed-step wall time by 8.3% over 20 iterations and 5.8% over 100 iterations; throughput remains unqualified |
+| Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity, LLIR fingerprints, and required persistent-state aliases fail closed |
+| Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; narrow matched benefit | Capture accepts one-token-per-request decode batches. Batch-one child-graph replay reduced matched fixed-step wall time by 5.8-8.3%; exact-signature automatic C2 recapture reduced throughput by 13.7% and is not used by serving |
+| Compiler-constrained persistent state | Reference-gated measured improvement | A 16-candidate search selected 36/36 in-place K/V tensors in both buckets; four C2 epochs improved throughput 14.4%, TTFT 32.0%, TPOT 10.1%, and E2E 12.6% versus the prior OrbitKV artifact; random-trace digests differ |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | Single-process model engine | Narrow L4 correctness + load closure | One dedicated thread owns bounded admission/output queues, an active set, `RuntimeSession`, and `CompiledDecoder`; released hybrid tests cover B=2 mixed scheduling and direct B=1/B=8 logit parity. Fresh-prompt/greedy only |
@@ -53,10 +54,10 @@ Core support for a retention policy means its lifecycle can be compiled and
 host-tested. It does not by itself imply that all model operators or the
 corresponding device kernel path exist.
 
-The current two-candidate device smoke selected materialized KV updates with a
-graph-visible D2D epilogue into the stable arena, not all-layer
-`ScatterNoCopy`. That still removes runtime-to-runtime cache transfer and keeps
-addresses stable, but it is not evidence of zero-copy KV writes.
+Persistent K/V state now uses a required-alias contract. Luminal rejects a
+candidate or stored artifact unless every K/V output resolves to the same
+registered input arena in every bucket. The qualified artifact reports 36/36
+in-place tensors and zero copy-back bytes for both decode/prefill buckets.
 
 ## Attention-state coverage
 
@@ -112,9 +113,11 @@ by 0.77%, with a paired mean improvement of 11.633 ms and 95% confidence interva
 serving advantage. The single-process HTTP path now completes a fixed load
 through C8, but the measured increase from 184.24 to 518.88 output token/s costs
 substantially higher TTFT and TPOT. A subsequent artifact-fixed four-epoch C2
-comparison reaches only 0.534x tuned SGLang throughput, with 1.76x TPOT and
-6.50x TTFT. The configured K/V tensor payload is 40.4% smaller than SGLang's
-Gemma3 fallback, but this does not offset the executor gap. Exact Chunked still lacks independent
+comparison initially reached 0.534x tuned SGLang throughput. Compiler-constrained
+search improves the same engine by 14.4% and raises the current ratio to 0.598x,
+with 1.59x TPOT and 4.69x TTFT. The configured K/V tensor payload is 40.4%
+smaller than SGLang's Gemma3 fallback, but this still does not offset the
+executor gap. Exact Chunked still lacks independent
 released-model qualification. There is no production, broad-model, or
 complete-replacement claim. A future serving statement must
 compare the same model, weights, dtype, kernels, batching policy, request trace,

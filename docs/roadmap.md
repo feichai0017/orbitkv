@@ -165,14 +165,21 @@ persistent-state objective.
 Do not expand the product surface until the fixed trace is competitive. Attack
 the measured hot path in this order:
 
-1. integrate fixed-signature decode child-CUDA-Graph replay into continuous
-   batching for B1/B2/B4/B8 signatures;
-2. eliminate selected materialized KV updates and their graph-visible D2D
-   epilogues where alias legality permits true in-place writes;
-3. profile the artifact-fixed schedule against SGLang FA3 at kernel and launch
-   granularity, then feed those costs back into Luminal search;
-4. rerun the four alternating epochs and require stable outputs within each arm,
-   complete request gates, and a predeclared throughput/latency threshold.
+1. Fixed-signature capture now accepts pure decode batches, but automatically
+   recapturing exact context-page signatures reduced C2 throughput by 13.7%; do
+   not connect that policy to serving until padded/stable signatures remove the
+   recapture cliffs.
+2. Completed: persistent K/V aliases are now compiler hard constraints. Search
+   candidates and loaded artifacts fail closed unless every selected bucket
+   updates all K/V tensors in place. A 16-candidate constrained search produced
+   36/36 in-place tensors and zero copy-back bytes in both retained buckets.
+3. Completed narrow gate: four alternating epochs against the previous
+   artifact improved throughput by 14.4%, TTFT by 32.0%, TPOT by 10.1%, and
+   E2E by 12.6%. The independent B2 reference-token probe passes; random-trace
+   text differs across schedules, so strict output equivalence remains false.
+4. Continue with graph-internal kernel/fusion profiling against SGLang FA3.
+   The improved artifact reaches 0.598x SGLang throughput, 1.59x TPOT, and
+   4.69x TTFT, so the product competitiveness gate still fails.
 
 Only after this gate passes should R5/R6 become the primary product work.
 

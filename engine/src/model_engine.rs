@@ -988,6 +988,16 @@ fn initialize_decoder(
             eprintln!("decoder: stored schedule artifact {}", path.display());
         }
     }
+    for bucket in decoder.cache_update_buckets() {
+        eprintln!(
+            "decoder: bucket {} persistent KV in-place={}/{} copy-back tensors={} bytes={}",
+            bucket.bucket_index,
+            bucket.in_place_tensors,
+            bucket.tensor_count,
+            bucket.copy_back_tensors,
+            bucket.copy_back_bytes,
+        );
+    }
     Ok(decoder)
 }
 
