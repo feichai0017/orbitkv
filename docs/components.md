@@ -11,13 +11,14 @@ KV lifecycle authority.
 | `orbitkv` core | Compile attention-state semantics; own request/snapshot identity, page generations, Prefix/COW, token disposition, retirement, publication, and reuse | Kernels, HTTP, network byte movement |
 | `orbitkv-executor` | Lower manager plans, bind persistent tensor arenas, execute Luminal graphs, move local or external bytes, and produce completion evidence | Page allocation, semantic liveness, final publication |
 | `orbitkv-server` | Tokenization/protocol adaptation, admission, batching, cancellation, backpressure, and output streaming | Physical page names, tensor addresses, retirement decisions |
-| `orbitkv-engine` | Join one server batch to one `RuntimeSession` transaction and one Luminal execution; own serial worker, cancellation, release, and failure policy | A second cache index, allocator, protocol stack, or kernel runtime |
+| `orbitkv-engine` | Join logical requests into bounded token-step batches and one `RuntimeSession`/Luminal transaction; own admission, active-set scheduling, backpressure, cancellation, release, and failure policy | A second cache index, allocator, protocol stack, or kernel runtime |
 
-The first model coordinator is implemented and real-device qualified for serial
-fresh-prompt execution. It compiles once at startup, streams tokens, suppresses
-stop tokens, cancels at token boundaries, and drains manager state after every
-request. The remaining serving gap is a bounded continuous-batching scheduler
-and wiring the real coordinator into the optional HTTP frontend executable.
+The model coordinator is implemented and real-device qualified for bounded
+continuous batching. It compiles once at startup, merges fresh requests into
+decode-first token-budgeted dispatches, streams through bounded event queues,
+suppresses stop tokens, cancels at token boundaries, and drains manager state.
+The remaining serving gap is wiring the real coordinator into the optional HTTP
+frontend executable, then qualifying fairness, load behavior, and performance.
 
 ## External projects
 
