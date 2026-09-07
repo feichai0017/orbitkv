@@ -1,6 +1,6 @@
 # OrbitKV executor
 
-`executor/` joins OrbitKV's state compiler with the forked Luminal model
+`crates/orbitkv-executor/` joins OrbitKV's state compiler with the forked Luminal model
 compiler. It does not own a second page allocator.
 
 The Rust composition crate lowers an OrbitKV `RuntimeManifest` into immutable
@@ -24,9 +24,9 @@ policy completes a short prefill and captured decode on H20; this validates the
 device plumbing, not a released hybrid model. `CompiledDecoder` builds one
 symbolic graph, performs one real search over separate decode and prefill
 buckets, reserves stable-capacity dynamic inputs, and retains one persistent
-K/V arena across every dispatch. The selected plan may update that arena in
-place or pay a graph-visible device copy back into it; the current smoke
-observed the latter. Prefill and repeated decode now use one runtime; there is
+K/V arena across every dispatch. OrbitKV registers those updates as required
+aliases, so materializing candidates and incompatible stored artifacts fail
+closed. Prefill and repeated decode now use one runtime; there is
 no cross-runtime `transfer_cache` path. Throughput remains unqualified.
 Greedy argmax is compiled into the same graph; the default runtime API reads
 only token IDs. Full-logit transfer remains available through an explicit
@@ -52,4 +52,4 @@ not a performance backend. Mooncake and NIXL must implement this boundary
 without acquiring page-allocation or lifecycle authority.
 
 The exact fork delta and upstream update procedure are documented in
-[`docs/executor-upstream.md`](../docs/executor-upstream.md).
+[`docs/executor-upstream.md`](../../docs/executor-upstream.md).

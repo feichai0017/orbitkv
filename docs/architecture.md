@@ -6,37 +6,37 @@ OrbitKV is one native inference stack with four owned crates.
 HTTP / SSE / WebSocket
         |
         v
-server/                 HTTP/tokenization + local scheduling/sampling boundary
+crates/orbitkv-server/  HTTP/tokenization + local scheduling/sampling boundary
         | BatchIntent (logical request state only)
         v
-engine/                 single-process request/lifecycle/execution coordinator
+crates/orbitkv-engine/  single-process request/lifecycle/execution coordinator
         |
-        +--> core/      compile visibility and own the KV lifecycle
+        +--> crates/orbitkv/ compile visibility and own the KV lifecycle
         |       | prepared pages, copies, views, retirement rules
         |       v
-        +--> executor/  Luminal graph compilation and device execution
+        +--> crates/orbitkv-executor/ Luminal graph and device execution
                 | local or external completion evidence
                 v
-        core/           publish, retire, acknowledge, reuse
+        crates/orbitkv/ publish, retire, acknowledge, reuse
 ```
 
 ## Authority
 
-`core/` is the sole owner of request and snapshot identities, page allocation,
+The `orbitkv` crate is the sole owner of request and snapshot identities, page allocation,
 page generations, Prefix/COW, semantic liveness, retirement, and reuse.
 
-`executor/` owns tensors, compiled graphs, kernel selection, streams, events,
+The `orbitkv-executor` crate owns tensors, compiled graphs, kernel selection, streams, events,
 and sampling execution. It consumes immutable physical metadata selected by
 OrbitKV. Cached metadata is an execution artifact, never a second page table.
 
-`server/` owns client protocols, admission queues, batching, cancellation, and
+The `orbitkv-server` crate owns client protocols, admission queues, batching, cancellation, and
 backpressure. Its public types contain request IDs, tokens, logical boundaries,
 sampling intent, and output events; they contain no page or device-buffer
 identity. The optional vLLM frontend reuses OpenAI HTTP, tokenizer, chat
 template, and streaming code through a narrow Add/Abort transport. It does not
 import a second scheduler, KV allocator, or device runtime.
 
-`engine/` is the composition root. It implements the server's logical `Engine`
+The `orbitkv-engine` crate is the composition root. It implements the server's logical `Engine`
 trait while holding `RuntimeSession`, `ExecutorPlan`, stable device arenas, and
 `CompiledDecoder` behind one dedicated execution thread. It is allowed to join
 the other three layers, but it cannot mint pages or bypass manager transactions.
@@ -111,13 +111,13 @@ never the sum of heterogeneous physical class arenas.
 ## Source boundaries
 
 ```text
-core/
+crates/orbitkv/
   src/                    compiler, manager, RuntimeSession, checkpoint pool
-engine/
+crates/orbitkv-engine/
   src/                    single-process model coordinator and failure policy
   src/bin/serve.rs        typed single-process OpenAI server entry point
   tests/                  released-model stream/stop/cancel/drain closure
-executor/
+crates/orbitkv-executor/
   src/
     model.rs              graph/runtime orchestration
     model/config.rs       structural decoder semantics from model config
@@ -127,38 +127,46 @@ executor/
     cuda.rs               direct paged-attention and stream/event boundary
     transport.rs          external byte-movement contract
   tests/                  real-byte reference transport closures
-  luminal/                complete pinned compiler/executor fork
-server/
+crates/orbitkv-server/
   src/                    local Engine, semantic requests, optional HTTP adapter
 docs/                     current product contracts
+third_party/luminal/      complete pinned compiler/executor fork
 results/                  compact reviewed current evidence, never active source
 ```
 
-The Luminal submodule preserves its upstream history. `executor/Cargo.toml`
+The Luminal submodule preserves its upstream history. `crates/orbitkv-executor/Cargo.toml`
 depends directly on its local crates, so the reviewed fork source and the code
 compiled into the product are the same tree. OrbitKV-specific changes are made
 in the fork and pinned by the parent submodule pointer, rather than copied into
 model- or hardware-specific directories. See
 [executor-upstream.md](executor-upstream.md) for the update procedure.
 
+The root Cargo workspace contains exactly the four owned `crates/orbitkv-*`
+packages. `third_party/luminal` is a path dependency but is explicitly excluded
+from workspace membership, so upstream crates remain visibly third-party and
+can be synchronized and qualified independently.
+
 ## Enforced dependency boundaries
 
-The crate graph is intentionally one-way. `core` has no executor, Luminal,
-server, async-runtime, or HTTP dependency. `executor` depends inward on `core`
-and the embedded compiler crates, but never on `server`. `server` owns only
-logical protocol contracts and depends on neither `core` nor `executor`.
-`engine` is the only outer crate allowed to depend on all three and implements
-the server trait without moving page types into the server. External KV
-transports live in `executor` because they operate on lowered tensor spans, while
-replica identity, pins, publication, and deletion authority stay in `core`.
+The crate graph is intentionally one-way. `orbitkv` has no executor, Luminal,
+server, async-runtime, or HTTP dependency. `orbitkv-executor` depends inward on
+`orbitkv` and the embedded compiler crates, but never on `orbitkv-server`.
+`orbitkv-server` owns only logical protocol contracts and depends on neither
+`orbitkv` nor `orbitkv-executor`. `orbitkv-engine` is the only outer crate
+allowed to depend on all three and implements the server trait without moving
+page types into the server. External KV transports live in `orbitkv-executor`
+because they operate on lowered tensor spans, while replica identity, pins,
+publication, and deletion authority stay in `orbitkv`.
 
-The compiler boundary is bidirectional but not authority-sharing. OrbitKV
-supplies semantic lifetime, physical arena, and persistent-state constraints;
-Luminal supplies equivalent compute schedules and measured device costs. A
-candidate that violates a required state alias is rejected before profiling,
-and an artifact containing such a candidate is rejected during load. Luminal
-therefore optimizes the implementation without gaining page identity or
-lifecycle authority.
+The current compiler boundary shares semantic lifetime, physical arena, and
+persistent-state constraints in the OrbitKV-to-Luminal direction. A candidate
+that violates a required state alias is rejected before profiling, and an
+artifact containing such a candidate is rejected during load. The next boundary
+is a typed feedback path: Luminal returns bucket- and layout-specific measured
+costs, and OrbitKV chooses among already legal physical alternatives. This makes
+the compile-time exchange bidirectional without giving Luminal page identity,
+publication, or lifecycle authority. Backend-specific egglog and CUDA types stay
+inside the fork and executor.
 
 `tools/verify_active_source.py` enforces these forbidden dependency edges,
 rejects physical KV ownership types in server source, requires all product

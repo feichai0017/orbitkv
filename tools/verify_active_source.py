@@ -9,13 +9,25 @@ ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_LIMIT = 1_500
 TEST_LIMIT = 2_000
 SOURCE_ROOTS = (
-    Path("core/src"),
-    Path("engine/src"),
-    Path("executor/src"),
-    Path("server/src"),
+    Path("crates/orbitkv/src"),
+    Path("crates/orbitkv-engine/src"),
+    Path("crates/orbitkv-executor/src"),
+    Path("crates/orbitkv-server/src"),
 )
-TEST_ROOTS = (Path("core/tests"), Path("engine/tests"), Path("executor/tests"))
-REMOVED_PATHS = (Path("compat"), Path("core/ffi"), Path("tests"))
+TEST_ROOTS = (
+    Path("crates/orbitkv/tests"),
+    Path("crates/orbitkv-engine/tests"),
+    Path("crates/orbitkv-executor/tests"),
+)
+REMOVED_PATHS = (
+    Path("compat"),
+    Path("core"),
+    Path("engine"),
+    Path("executor"),
+    Path("server"),
+    Path("tests"),
+    Path("crates/orbitkv/ffi"),
+)
 EXCLUDED = frozenset({".git", "target", "results", "node_modules", "luminal"})
 SPECIFIC_FILENAME = re.compile(
     r"(?:^|[._-])(?:abi\d+|wire\d+|h\d+|v\d+)(?:$|[._-])"
@@ -23,13 +35,19 @@ SPECIFIC_FILENAME = re.compile(
     re.IGNORECASE,
 )
 LAYER_MANIFESTS = {
-    "core": Path("core/Cargo.toml"),
-    "executor": Path("executor/Cargo.toml"),
-    "engine": Path("engine/Cargo.toml"),
-    "server": Path("server/Cargo.toml"),
+    "orbitkv": Path("crates/orbitkv/Cargo.toml"),
+    "executor": Path("crates/orbitkv-executor/Cargo.toml"),
+    "engine": Path("crates/orbitkv-engine/Cargo.toml"),
+    "server": Path("crates/orbitkv-server/Cargo.toml"),
 }
+WORKSPACE_MEMBERS = (
+    "crates/orbitkv",
+    "crates/orbitkv-engine",
+    "crates/orbitkv-executor",
+    "crates/orbitkv-server",
+)
 FORBIDDEN_LAYER_DEPENDENCIES = {
-    "core": frozenset({"orbitkv-executor", "orbitkv-server", "luminal", "luminal_cuda_lite", "luminal_nn"}),
+    "orbitkv": frozenset({"orbitkv-executor", "orbitkv-server", "luminal", "luminal_cuda_lite", "luminal_nn"}),
     "executor": frozenset({"orbitkv-server"}),
     "engine": frozenset(),
     "server": frozenset({"orbitkv", "orbitkv-executor", "luminal", "luminal_cuda_lite", "luminal_nn"}),
@@ -67,6 +85,15 @@ def direct_dependencies(manifest: Path) -> set[str]:
 
 def main() -> int:
     failures: list[str] = []
+    workspace = tomllib.loads((ROOT / "Cargo.toml").read_text(encoding="utf-8"))[
+        "workspace"
+    ]
+    if tuple(workspace.get("members", ())) != WORKSPACE_MEMBERS:
+        failures.append("root workspace members are not the four owned OrbitKV crates")
+    if tuple(workspace.get("default-members", ())) != WORKSPACE_MEMBERS:
+        failures.append("root default members are not the four owned OrbitKV crates")
+    if "third_party/luminal" not in workspace.get("exclude", ()):
+        failures.append("third-party Luminal must be excluded from the OrbitKV workspace")
     for path in REMOVED_PATHS:
         if (ROOT / path).exists():
             failures.append(f"removed product path still exists: {path}")
@@ -105,18 +132,18 @@ def main() -> int:
                 f"{layer} has forbidden inward dependency: {', '.join(sorted(forbidden))}"
             )
 
-    for path in source_files(ROOT / "server/src"):
+    for path in source_files(ROOT / "crates/orbitkv-server/src"):
         if SERVER_PHYSICAL_TYPES.search(path.read_text(encoding="utf-8")):
             failures.append(
                 f"server source names a physical KV ownership type: {path.relative_to(ROOT)}"
             )
 
-    executor_manifest = (ROOT / "executor/Cargo.toml").read_text(encoding="utf-8")
-    submodule = ROOT / "executor/luminal"
+    executor_manifest = (ROOT / "crates/orbitkv-executor/Cargo.toml").read_text(encoding="utf-8")
+    submodule = ROOT / "third_party/luminal"
     expected_paths = {
-        "luminal": "luminal",
-        "luminal_cuda_lite": "luminal/crates/luminal_cuda_lite",
-        "luminal_nn": "luminal/crates/luminal_nn",
+        "luminal": "../../third_party/luminal",
+        "luminal_cuda_lite": "../../third_party/luminal/crates/luminal_cuda_lite",
+        "luminal_nn": "../../third_party/luminal/crates/luminal_nn",
     }
     if not submodule.is_dir():
         failures.append("Luminal submodule is missing")

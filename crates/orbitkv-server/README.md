@@ -1,6 +1,6 @@
 # OrbitKV server
 
-`server/` is the Rust control plane for the composed engine. Its async `Engine`
+`crates/orbitkv-server/` is the Rust control plane for the composed engine. Its async `Engine`
 trait accepts validated request intent and returns an ordered local event
 stream. No public server type can name, allocate, retire, or recycle a physical
 KV page.
@@ -13,7 +13,7 @@ distributed, utility, and KV-transfer semantics are explicitly rejected.
 
 The feature does not import PegaInfer's scheduler, KV cache, model execution, or
 CUDA runtime. PegaInfer's useful architectural idea is the frontend protocol
-bridge; OrbitKV's local engine still drives the `core/` manager and the Luminal
+bridge; OrbitKV's local engine still drives the `orbitkv` manager and the Luminal
 executor. The default build has no vLLM dependencies.
 
 The source-level HTTP launcher is `serve_openai`. A runnable product still needs

@@ -7,8 +7,10 @@ work is not a current capability.
 
 ## Current checkpoint
 
-- `core`, `executor`, `server`, and the outer `engine` composition root are the
-  active product crates.
+- `crates/orbitkv`, `crates/orbitkv-executor`, `crates/orbitkv-server`, and
+  `crates/orbitkv-engine` are the four owned workspace crates. The pinned
+  Luminal fork lives under `third_party/luminal` and is explicitly excluded
+  from the owned workspace member set.
 - `RuntimeManifest` is the shared source of truth for manager and executor plans.
 - OrbitKV owns page allocation, generations, Prefix/COW, token disposition,
   retirement, publication, and reuse.
@@ -183,6 +185,37 @@ the measured hot path in this order:
 
 Only after this gate passes should R5/R6 become the primary product work.
 
+## R4.2: Join state and graph compilation
+
+Status: the ownership boundary and persistent-alias constraint exist, but the
+two compilers do not yet share a cost model. OrbitKV currently freezes a
+physical plan before Luminal searches the graph, and token relocation still
+uses a fixed fragmentation threshold. This is not the intended end state.
+
+Build the joint path without making `orbitkv` depend on Luminal internals:
+
+1. Define backend-neutral `StateLayoutFacts` in `orbitkv`: attention class,
+   retention geometry, page geometry, immutable Prefix ranges, contiguity,
+   address stability, component widths, and legal relocation alternatives.
+2. Translate those facts in `orbitkv-executor` into Luminal search facts and
+   candidate requirements. The fork may use egglog and backend-specific
+   analyses internally; those types must not leak into the reusable manager.
+3. Make every selected executable return a typed `ExecutionCostProfile` keyed
+   by manifest, bucket, layout alternative, and kernel fingerprint. Reject
+   stale or geometry-mismatched profiles.
+4. Replace `fragmentation_threshold_milli` as the production decision rule with
+   a costed choice among keep, compact, and defer. The manager remains the only
+   component allowed to reserve destinations or publish a relocated view.
+5. Search and persist layout plus executable as one qualified artifact, while
+   keeping semantic validity independent from measured profitability. A missing
+   cost profile may disable relocation; it may never weaken reclamation proof.
+
+The first closure is deliberately narrow: Full+Sliding, decode and prefill
+buckets, stable arenas, and packed versus non-packed token layout on one
+released checkpoint. It must report copy bytes, graph time, end-to-end time,
+resident bytes, and output correctness. Only a positive matched result becomes
+the default policy.
+
 ## R5: Add distributed KV tiers
 
 Implement Mooncake first behind `ExternalKvTransport`, reusing the host adapter's
@@ -205,6 +238,23 @@ convolution state because it exercises token pages and fixed-size checkpoints
 in one transaction. MLA is the alternative path and requires latent/RoPE-aware
 attention kernels. Model configuration—not model-name branches—must drive both
 OrbitKV state compilation and Luminal graph construction.
+
+Coverage advances by attention/state family rather than by adding model-name
+adapters:
+
+1. qualify exact Chunked token KV on device, closing the already implemented
+   manager and lowering path;
+2. add latent/RoPE-aware MLA operators and bind component-aware latent state;
+3. compose recurrent and convolution checkpoints with token KV in one atomic
+   execution transaction for Mamba/GDN/KDA-style hybrids;
+4. add MoE routing and quantized linear operators only when required by the
+   selected released checkpoint;
+5. defer sparse, tree, cross-attention, speculative, and multi-device claims
+   until their visibility and completion contracts are explicit.
+
+For each family, the gate order is compiler plan, randomized lifecycle oracle,
+executor lowering, operator parity, released-checkpoint end-to-end correctness,
+then matched benefit. Unsupported combinations continue to fail closed.
 
 ## R7: Formalize MPSR and harden production
 

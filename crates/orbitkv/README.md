@@ -1,11 +1,11 @@
-# OrbitKV core
+# orbitkv crate
 
-`core/` contains the attention-state compiler and the sole KV lifecycle
+`crates/orbitkv/` contains the attention-state compiler and the sole KV lifecycle
 authority. It has no C ABI, Python package, device runtime, or engine-specific
 target contract.
 
 ```text
-core/
+crates/orbitkv/
 ├── src/       compiler, manager, RuntimeSession, checkpoint pool, CLI
 ├── tests/     CLI integration tests
 ├── examples/  generic attention-state and manager-plan inputs
