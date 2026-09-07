@@ -1,0 +1,31 @@
+{
+  "schema": "orbitkv.device-environment",
+  "captured_at_utc": "2026-09-07T03:41:55Z",
+  "source": {
+    "orbitkv_base_commit": "43981dd070f7e0f8b2679ee2b02a265a483f4a1c",
+    "luminal_commit": "c9f03f46d049a352eda2ab76c865cb6212157a3e",
+    "worktree_clean_before_run": false,
+    "engine_source_sha256": "5be44fb6c1710c547e3e55e71fc0f1e342ea35061e2bfbbf0f57eab9805c78d3",
+    "test_source_sha256": "848a21672e65a3f115e70c37ec9fd05d2e5fe9bc91eb706e64d7e95963e2981c",
+    "executor_model_source_sha256": "d1fd4b58dc6af465b27d4c42f8d8431c15529456e12bc3d3b474ac144685dd94",
+    "note": "The exact tested implementation and evidence were committed together after the run."
+  },
+  "accelerator": {
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3",
+    "compute_capability": "9.0",
+    "memory_mib": 97871,
+    "driver_version": "535.161.08"
+  },
+  "toolchain": {
+    "rustc": "1.97.1 (8bab26f4f 2026-07-14)",
+    "cargo": "1.97.1 (c980f4866 2026-06-30)"
+  },
+  "checkpoint": {
+    "identity": "unsloth/gemma-3-270m-it",
+    "upstream_identity": "google/gemma-3-270m-it",
+    "config_sha256": "2706d3533059c6e1086badab27cc234e8ca2228975c3f73eeaef7f57cb5ec1db",
+    "weights_sha256": "700b710a9a99c295ed546647aa81cacf9f81f4c573ea2be613a0e2517a44afab",
+    "weights_bytes": 536223056
+  }
+}

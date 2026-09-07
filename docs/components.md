@@ -1,6 +1,6 @@
 # Components and external projects
 
-OrbitKV is one Rust inference product assembled from three owned layers and a
+OrbitKV is one Rust inference product assembled from four owned crates and a
 small number of explicit external boundaries. An imported component never gains
 KV lifecycle authority.
 
@@ -11,11 +11,13 @@ KV lifecycle authority.
 | `orbitkv` core | Compile attention-state semantics; own request/snapshot identity, page generations, Prefix/COW, token disposition, retirement, publication, and reuse | Kernels, HTTP, network byte movement |
 | `orbitkv-executor` | Lower manager plans, bind persistent tensor arenas, execute Luminal graphs, move local or external bytes, and produce completion evidence | Page allocation, semantic liveness, final publication |
 | `orbitkv-server` | Tokenization/protocol adaptation, admission, batching, cancellation, backpressure, and output streaming | Physical page names, tensor addresses, retirement decisions |
-| Engine coordinator | Join one server batch to one `RuntimeSession` transaction, one Luminal execution, and optional tier operations | A second cache index or allocator |
+| `orbitkv-engine` | Join one server batch to one `RuntimeSession` transaction and one Luminal execution; own serial worker, cancellation, release, and failure policy | A second cache index, allocator, protocol stack, or kernel runtime |
 
-The engine coordinator is the largest missing production component. The public
-`Engine` trait exists, but the scheduler, continuous batching loop, cancellation
-drain, and model-backed HTTP path are not yet one released executable.
+The first model coordinator is implemented and real-device qualified for serial
+fresh-prompt execution. It compiles once at startup, streams tokens, suppresses
+stop tokens, cancels at token boundaries, and drains manager state after every
+request. The remaining serving gap is a bounded continuous-batching scheduler
+and wiring the real coordinator into the optional HTTP frontend executable.
 
 ## External projects
 

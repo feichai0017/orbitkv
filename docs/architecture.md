@@ -1,6 +1,6 @@
 # Architecture
 
-OrbitKV is one native inference stack with three ownership layers.
+OrbitKV is one native inference stack with four owned crates.
 
 ```text
 HTTP / SSE / WebSocket
@@ -9,13 +9,15 @@ HTTP / SSE / WebSocket
 server/                 HTTP/tokenization + local scheduling/sampling boundary
         | BatchIntent (logical request state only)
         v
-core/                   compile visibility and own the KV lifecycle
-        | prepared pages, copies, views, retirement rules
-        v
-executor/               Luminal graph compilation and device execution
-        | local or external completion evidence
-        v
-core/                   publish, retire, acknowledge, reuse
+engine/                 single-process request/lifecycle/execution coordinator
+        |
+        +--> core/      compile visibility and own the KV lifecycle
+        |       | prepared pages, copies, views, retirement rules
+        |       v
+        +--> executor/  Luminal graph compilation and device execution
+                | local or external completion evidence
+                v
+        core/           publish, retire, acknowledge, reuse
 ```
 
 ## Authority
@@ -34,6 +36,13 @@ identity. The optional vLLM frontend reuses OpenAI HTTP, tokenizer, chat
 template, and streaming code through a narrow Add/Abort transport. It does not
 import a second scheduler, KV allocator, or device runtime.
 
+`engine/` is the composition root. It implements the server's logical `Engine`
+trait while holding `RuntimeSession`, `ExecutorPlan`, stable device arenas, and
+`CompiledDecoder` behind one dedicated execution thread. It is allowed to join
+the other three layers, but it cannot mint pages or bypass manager transactions.
+The current implementation is serial and fresh-prompt-only; queuing multiple
+requests does not imply continuous batching.
+
 External storage providers own byte movement and storage resources only. The
 core pins generation-checked source pages, validates exact durable receipts,
 and catalogs immutable replicas. Restore allocates fresh local generations and
@@ -50,7 +59,8 @@ reference implementation and fault oracle, not a performance backend.
 
 ## Native data flow
 
-1. The compiler turns model attention semantics into a fingerprinted
+1. The engine loads model configuration and the compiler turns its attention
+   semantics into a fingerprinted
    `RuntimeManifest`.
 2. The executor derives an `ExecutorPlan` directly from that manifest.
 3. The model executor compiles one symbolic decoder graph into decode and
@@ -65,6 +75,9 @@ reference implementation and fault oracle, not a performance backend.
 6. Completion evidence advances the Execution Frontier.
 7. RuntimeSession publishes new request heads, retires unreachable generations,
    validates cleanup acknowledgement, and only then permits reuse.
+8. Normal length, stop, cancellation, or disconnected-output termination all
+   converge on request release and final drain. Ambiguous device execution is
+   quarantined and the serial worker stops instead of fabricating completion.
 
 ## Physical-residence ablation
 
@@ -92,6 +105,9 @@ uses a process-local IPC protocol adapter because that crate is coupled to its
 ```text
 core/
   src/                    compiler, manager, RuntimeSession, checkpoint pool
+engine/
+  src/                    single-process model coordinator and failure policy
+  tests/                  released-model stream/stop/cancel/drain closure
 executor/
   src/
     model.rs              graph/runtime orchestration
@@ -121,9 +137,9 @@ model- or hardware-specific directories. See
 The crate graph is intentionally one-way. `core` has no executor, Luminal,
 server, async-runtime, or HTTP dependency. `executor` depends inward on `core`
 and the embedded compiler crates, but never on `server`. `server` owns only
-logical protocol contracts and currently depends on neither `core` nor
-`executor`; the future coordinator will implement its `Engine` trait from the
-composition root rather than moving page types into the server. External KV
+logical protocol contracts and depends on neither `core` nor `executor`.
+`engine` is the only outer crate allowed to depend on all three and implements
+the server trait without moving page types into the server. External KV
 transports live in `executor` because they operate on lowered tensor spans, while
 replica identity, pins, publication, and deletion authority stay in `core`.
 
@@ -145,6 +161,11 @@ crosses the 512-token window with 512 prefill plus 33 decode steps, matches a
 separate Transformers greedy-token reference, reuses an acknowledged retired
 generation, executes a second request from recycled storage, and drains all
 state after token-boundary cancellation.
+
+The concrete serial `ModelEngine` is separately exercised on that released
+checkpoint. It keeps one compiled decoder alive across length, stop, and cancel
+requests and proves complete manager drain after each. The model-backed HTTP
+path and continuous batching remain outside this closure.
 
 Relocation evidence is gated by a real CUDA event; ordinary model-step completion
 still relies on the embedding runtime's completion assertion. Generic

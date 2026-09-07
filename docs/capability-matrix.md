@@ -2,7 +2,7 @@
 
 This matrix separates implemented source, host verification, device execution,
 measured benefit, and production readiness for the current
-`core + executor + server` architecture. Historical results qualify only their
+`core + executor + server + engine` architecture. Historical results qualify only their
 recorded source closure.
 
 ## Evidence levels
@@ -32,9 +32,10 @@ recorded source closure.
 | Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; narrow matched benefit | Flattened replay failed at +24.9%; selected child-graph composition passed correctness and reduced matched batch-one fixed-step wall time by 8.3% over 20 iterations and 5.8% over 100 iterations; throughput remains unqualified |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
+| Single-process model engine | Narrow L4 correctness | One dedicated thread owns `RuntimeSession` and `CompiledDecoder`; a released hybrid checkpoint passes length, stop-token suppression, immediate cancel, and final drain on one reused engine. Serial fresh-prompt only; no continuous batching or HTTP claim |
 | vLLM frontend adapter | L2 protocol tests | Optional pinned Rust frontend dependency; tokenized Add/Abort, request-ID mapping, terminal token translation, and unsupported-field rejection pass host tests |
 | OpenAI-compatible API | L2 HTTP protocol closure | A real HTTP completion smoke passes through tokenizer, Add bridge, a local test `Engine`, event translation, detokenization, and OpenAI JSON; model execution is not part of that smoke |
-| Complete model executor | Narrow L4 correctness closure | Configuration-driven Full and released Full+Sliding dense checkpoints complete on H20; the hybrid closure includes independent reference-token parity, native-window retirement/reuse, cancellation, and final drain; scheduler and serving integration remain open |
+| Complete model executor | Narrow L4 correctness closure | Configuration-driven Full and released Full+Sliding dense checkpoints complete on H20; the hybrid closure includes independent reference-token parity, native-window retirement/reuse, cancellation, and final drain; the serial composition root is qualified, while HTTP and continuous scheduling remain open |
 
 ## Decoder operator and model boundary
 

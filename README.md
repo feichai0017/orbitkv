@@ -5,13 +5,14 @@ inference engine. It compiles attention visibility into physical layouts and
 lifetime rules, owns every KV page generation, and reuses storage only after
 both semantic death and device completion are proven.
 
-The product has three layers:
+The product has four owned crates:
 
 | Layer | Responsibility |
 | --- | --- |
 | `core/` | Attention-state compilation, request and snapshot identity, Prefix/COW, token disposition, physical-page ownership, retirement, acknowledgement, and safe reuse |
 | `executor/` | OrbitKV plan lowering, forked Luminal graph/device execution, and external byte transports |
 | `server/` | Rust API and scheduling boundary; optionally reuses vLLM's Rust OpenAI/tokenizer/chat frontend through a narrow protocol adapter |
+| `engine/` | Single-process composition root that joins logical requests, one `RuntimeSession`, and one compiled Luminal decoder without creating a second KV authority |
 
 OrbitKV is the only KV authority. The executor consumes manager-authored pages
 and the server cannot name a physical page. There is no compatibility layer, C
@@ -30,6 +31,7 @@ orbitkv/
 │   │   └── model/           config, weight contract, block math, step validation
 │   ├── tests/               executor and transport protocol closures
 │   └── luminal/             pinned Luminal fork (Git submodule)
+├── engine/                  in-process RuntimeSession + decoder composition
 ├── server/                  local async Engine and request contracts
 ├── docs/                    architecture and qualification boundary
 ├── tools/                   repository invariants
@@ -83,16 +85,15 @@ attention visibility / retention semantics
 RuntimeManifest
         |
         +--> RuntimeSession: identities, pages, COW, retirement, reuse
-        |
-        v
-ExecutorPlan: attention classes and physical metadata
-        |
-        +--> Luminal graph + kernels (local execution)
-        |
-        +--> ExternalKvTransport (tier movement)
-        |
-        v
-completion evidence -> RuntimeSession publication and acknowledgement
+        +--> ExecutorPlan: attention classes and physical metadata
+                         |
+                         v
+BatchIntent --> ModelEngine coordinator --> Luminal graph + kernels
+                         |
+                         +--> ExternalKvTransport (tier movement)
+                         |
+                         v
+              completion evidence --> RuntimeSession publication + ACK
 ```
 
 Ring layouts, append-only layouts, resettable arenas, and page-level COW are
@@ -125,6 +126,13 @@ shape, but its scheduler, KV cache, model runtime, and CUDA ownership are not
 part of OrbitKV. The current adapter is greedy text-only and rejects unsupported
 semantics rather than silently dropping them.
 
+`orbitkv-engine` provides the first concrete model-backed implementation of
+that interface. It owns a dedicated execution thread, compiles the model before
+admission, streams greedy token events, honors stop tokens and token-boundary
+cancellation, and performs release plus exact reclamation acknowledgement before
+the next request. This first closure is deliberately serial: it accepts one
+fresh request per logical batch and is not yet a continuous-batching scheduler.
+
 ## Build and test
 
 ```bash
@@ -152,6 +160,13 @@ crosses the window, reclaims and reuses a page generation, executes a second
 request from reused storage, and drains every arena after release. The direct
 explicit-CSR prefill kernel also matches its independent BF16 reference within
 `1.93e-4`. See `results/released-hybrid-lifecycle-20260906`.
+
+The concrete `ModelEngine` composition root also passes a released-checkpoint
+H20 closure on the same hybrid model. One initialized engine processes a
+512-token prompt with eight generated tokens, stop-token suppression on a second
+request, and immediate cancellation of a third request; manager state fully
+drains after every request. This qualifies the serial in-process execution
+boundary, not HTTP serving, concurrency, or throughput.
 
 A separate fixed-signature child-graph experiment records a narrow matched
 dispatch improvement. A release-mode same-executor test on the released hybrid

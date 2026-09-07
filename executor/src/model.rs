@@ -12,7 +12,7 @@ use luminal::{
 use thiserror::Error;
 
 use luminal_cuda_lite::{
-    cudarc::driver::{CudaSlice, CudaStream},
+    cudarc::driver::{CudaContext, CudaSlice, CudaStream},
     runtime::{CapturedCudaExecution, CudaRuntime},
 };
 
@@ -344,6 +344,28 @@ impl DecoderGraph {
 }
 
 impl CompiledDecoder {
+    /// Builds and searches one decoder on a CUDA device selected by ordinal.
+    ///
+    /// This is the high-level composition boundary. Callers that do not need
+    /// to coordinate another CUDA subsystem should use it instead of depending
+    /// directly on Luminal's stream type.
+    ///
+    /// # Errors
+    ///
+    /// Returns device initialization or decoder compilation failures.
+    pub fn compile_on_device(
+        config: &DecoderConfig,
+        plan: &ExecutorPlan,
+        arenas: &[ExecutorArena],
+        device_index: usize,
+        weight_files: &[std::path::PathBuf],
+        compile: DecoderCompileConfig,
+    ) -> Result<Self, DecoderError> {
+        let context = CudaContext::new(device_index)?;
+        let stream = context.new_stream()?;
+        Self::compile(config, plan, arenas, &stream, weight_files, compile)
+    }
+
     /// Builds and searches one decoder graph with decode and prefill buckets.
     ///
     /// The K/V arena is registered before search, so every candidate is

@@ -1,7 +1,7 @@
 # Current evidence
 
 This directory contains only compact evidence that directly qualifies the
-current `core + Luminal executor + Rust server` architecture. A record keeps
+current `core + Luminal executor + Rust server + engine` architecture. A record keeps
 the concrete model, hardware/software environment, measured result, source
 identity, and claim boundary. It must not embed source trees, binaries, package
 caches, model weights, or superseded integration snapshots.
@@ -20,6 +20,7 @@ move a compact reviewed result here only after its checks pass.
 | `decode-child-graph-benefit-20260905` | Selected Luminal executables composed as child graphs reduce matched fixed-step batch-one median wall time by 5.8-8.3% in two runs | Narrow dispatch result; not serving throughput or lifecycle benefit |
 | `released-hybrid-lifecycle-20260906` | Released 18-layer Full+Sliding checkpoint crosses its native window on H20, matches an independent greedy-token reference, reuses retired storage, cancels a second request, and fully drains | Correctness and lifecycle only; diagnostic timing is not a benefit result |
 | `released-hybrid-residence-benefit-20260906` | Ten paired release-mode runs compare compiled and request-lifetime residence through one searched graph; output parity, resident bytes, fixed-budget reach, and paired timing interval pass | Narrow batch-one same-executor L5 result; not serving throughput or SGLang comparison |
+| `serial-model-engine-20260906` | One concrete in-process `Engine` keeps a released hybrid model alive across length, stop, and cancel requests and fully drains after each | Serial fresh-prompt composition correctness only; no HTTP, concurrency, or performance claim |
 
 The normative current support boundary is the
 [Capability Matrix](../docs/capability-matrix.md). The mechanism ablation proves
