@@ -174,12 +174,12 @@ the measured hot path in this order:
    updates all K/V tensors in place. A 16-candidate constrained search produced
    36/36 in-place tensors and zero copy-back bytes in both retained buckets.
 3. Completed narrow gate: four alternating epochs against the previous
-   artifact improved throughput by 14.4%, TTFT by 32.0%, TPOT by 10.1%, and
-   E2E by 12.6%. The independent B2 reference-token probe passes; random-trace
+   artifact improved throughput by 14.5%, TTFT by 32.2%, TPOT by 10.2%, and
+   E2E by 12.8%. The independent B2 reference-token probe passes; random-trace
    text differs across schedules, so strict output equivalence remains false.
 4. Continue with graph-internal kernel/fusion profiling against SGLang FA3.
    The improved artifact reaches 0.598x SGLang throughput, 1.59x TPOT, and
-   4.69x TTFT, so the product competitiveness gate still fails.
+   4.79x TTFT, so the product competitiveness gate still fails.
 
 Only after this gate passes should R5/R6 become the primary product work.
 

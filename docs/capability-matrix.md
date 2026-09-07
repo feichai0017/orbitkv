@@ -31,7 +31,7 @@ recorded source closure.
 | Bucketed model runtime | L4 correctness | One symbolic graph is searched once into decode/prefill executables; query, batch, and per-class context dimensions have bounded capacities, dynamic inputs are preallocated, and one stable K/V arena per class survives prefill plus repeated decode |
 | Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity, LLIR fingerprints, and required persistent-state aliases fail closed |
 | Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; narrow matched benefit | Capture accepts one-token-per-request decode batches. Batch-one child-graph replay reduced matched fixed-step wall time by 5.8-8.3%; exact-signature automatic C2 recapture reduced throughput by 13.7% and is not used by serving |
-| Compiler-constrained persistent state | Reference-gated measured improvement | A 16-candidate search selected 36/36 in-place K/V tensors in both buckets; four C2 epochs improved throughput 14.4%, TTFT 32.0%, TPOT 10.1%, and E2E 12.6% versus the prior OrbitKV artifact; random-trace digests differ |
+| Compiler-constrained persistent state | Reference-gated measured improvement | A 16-candidate search selected 36/36 in-place K/V tensors in both buckets; four C2 epochs improved throughput 14.5%, TTFT 32.2%, TPOT 10.2%, and E2E 12.8% versus the prior OrbitKV artifact; random-trace digests differ |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | Single-process model engine | Narrow L4 correctness + load closure | One dedicated thread owns bounded admission/output queues, an active set, `RuntimeSession`, and `CompiledDecoder`; released hybrid tests cover B=2 mixed scheduling and direct B=1/B=8 logit parity. Fresh-prompt/greedy only |
@@ -114,8 +114,8 @@ serving advantage. The single-process HTTP path now completes a fixed load
 through C8, but the measured increase from 184.24 to 518.88 output token/s costs
 substantially higher TTFT and TPOT. A subsequent artifact-fixed four-epoch C2
 comparison initially reached 0.534x tuned SGLang throughput. Compiler-constrained
-search improves the same engine by 14.4% and raises the current ratio to 0.598x,
-with 1.59x TPOT and 4.69x TTFT. The configured K/V tensor payload is 40.4%
+search improves the same engine by 14.5% and raises the current ratio to 0.598x,
+with 1.59x TPOT and 4.79x TTFT. The configured K/V tensor payload is 40.4%
 smaller than SGLang's Gemma3 fallback, but this still does not offset the
 executor gap. Exact Chunked still lacks independent
 released-model qualification. There is no production, broad-model, or

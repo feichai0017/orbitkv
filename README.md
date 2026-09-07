@@ -224,9 +224,9 @@ recorded. The first fixed decoder artifact reached 53.4% of SGLang's C2 output
 throughput. Persistent K/V updates are now compiler constraints: every selected
 bucket must alias all 36 K/V tensors back to the stable arena or compilation and
 artifact loading fail closed. A deeper constrained search improved the same
-engine's median throughput by 14.4%, TTFT by 32.0%, TPOT by 10.1%, and E2E by
-12.6% over four alternating epochs. Against stock SGLang, the improved artifact
-reached 59.8% throughput with 1.59x TPOT and 4.69x TTFT. OrbitKV's configured
+engine's median throughput by 14.5%, TTFT by 32.2%, TPOT by 10.2%, and E2E by
+12.8% over four alternating epochs. Against stock SGLang, the improved artifact
+reached 59.8% throughput with 1.59x TPOT and 4.79x TTFT. OrbitKV's configured
 K/V tensor payload remained 40.4% smaller because SGLang disabled hybrid
 Sliding-Window memory for this Gemma3 path. This is a reference-gated,
 measured compiler-selection improvement and a smaller—but still clear—serving

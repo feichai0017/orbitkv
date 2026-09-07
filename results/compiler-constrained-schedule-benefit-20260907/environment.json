@@ -2,8 +2,8 @@
   "schema": "orbitkv.compiler-constrained-schedule-environment",
   "captured_at_utc": "2026-09-07T16:45:06Z",
   "source": {
-    "orbitkv_base_commit": "34c411d39a1d7fa924de31d86daab55a0486e859",
-    "luminal_base_commit": "2803d72e936668000b3ca69d46cdf5d06d40c51f",
+    "orbitkv_base_commit": "e8c1dc45a64bf1a26a483295cc1bd54daf7efe2a",
+    "luminal_commit": "b53452412ebfdb5827d1dbbde0cdc222fc97072f",
     "note": "The required-alias implementation and compact evidence are committed together after qualification."
   },
   "accelerator": {
@@ -27,7 +27,7 @@
   },
   "candidate": {
     "search_graphs": 16,
-    "binary_sha256": "226df09df848c123ac3527be7cd2eedffb8d682fcc71d6111e0c79c39b7ed1a3",
+    "binary_sha256": "4094cf8e7174262693e09d3605c469b1b0578befff3202bd2aee040b86f33f71",
     "artifact_bytes": 2528535,
     "artifact_sha256": "3bc4e211b8094d6f6ad4a48194a59c1644d91c9b8604f2f5556550ca595ffe03",
     "persistent_kv_in_place_tensors_per_bucket": [36, 36],
