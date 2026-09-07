@@ -5,6 +5,7 @@ use orbitkv_server::SamplingIntent;
 fn config(page_counts: Vec<u32>) -> ModelEngineConfig {
     ModelEngineConfig {
         model_directory: PathBuf::from("/unused"),
+        decoder_artifact: None,
         device_index: 0,
         page_tokens: 16,
         page_counts,
@@ -92,6 +93,42 @@ fn rejects_invalid_capacity_configuration_without_starting_a_worker() {
     let mut invalid = config(vec![64, 33]);
     invalid.page_tokens = 0;
     assert_eq!(invalid.validate(), Err(ModelEngineError::InvalidConfig));
+}
+
+#[test]
+fn persists_decoder_artifact_without_overwriting_an_existing_file() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("decoder.json");
+    let artifact = DecoderArtifact::from_bytes(
+        br#"{"schema":1,"identity":"test","schedule":{"dim_buckets":{},"buckets":[]}}"#,
+    )
+    .unwrap();
+
+    persist_decoder_artifact(&path, &artifact).unwrap();
+    let first = std::fs::read(&path).unwrap();
+    assert_eq!(first, artifact.to_bytes().unwrap());
+    assert!(persist_decoder_artifact(&path, &artifact).is_err());
+    assert_eq!(std::fs::read(&path).unwrap(), first);
+}
+
+#[test]
+fn decoder_artifact_rejects_unknown_schema() {
+    let error = DecoderArtifact::from_bytes(
+        br#"{"schema":2,"identity":"test","schedule":{"dim_buckets":{},"buckets":[]}}"#,
+    )
+    .unwrap_err();
+    assert!(error.to_string().contains("schema 2 != 1"));
+}
+
+#[test]
+fn decoder_artifact_read_rejects_oversized_input() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("oversized.json");
+    let file = std::fs::File::create(&path).unwrap();
+    file.set_len(MAX_DECODER_ARTIFACT_BYTES + 1).unwrap();
+
+    let error = read_decoder_artifact(&path).unwrap_err();
+    assert!(error.to_string().contains("decoder artifact exceeds"));
 }
 
 #[test]

@@ -122,6 +122,33 @@ B=8 has maximum absolute logit difference 0.4296875 over 16 positions, and no te
 argmax differs. The C2/C4/C8 text digests match; C1 differs and is reported, not
 hidden.
 
+## Current stock-SGLang product comparison
+
+The released Full+Sliding checkpoint was compared with clean stock SGLang
+v0.5.17 for four alternating epochs. Both arms used BF16 weights/KV, page size
+16, 1024-token context, an eight-request/8192-token logical capacity, greedy
+sampling, and the same 16-request 127-to-256-token trace at C2. Radix prefix
+reuse was disabled because the trace contains no intentional shared prefix.
+Each arm passed the full-output and per-request error gates.
+
+OrbitKV loaded one strict selected-schedule artifact in every measured epoch;
+candidate logs contain no search and all candidate digests match across starts.
+Median output throughput was 592.32 token/s versus 1112.60 for SGLang
+(0.534x). Median TPOT was 2.997 versus 1.699 ms (1.76x), and median TTFT was
+98.08 versus 15.14 ms (6.50x). The candidate is therefore not serving-speed
+competitive on this trace.
+
+The persistent-state result points in the other direction. SGLang reports that
+hybrid SWA memory is disabled for this Gemma3 path, so its resolved 8192-token
+pool carries 144.0 MiB of BF16 K/V tensor payload across all 18 layers. OrbitKV
+uses separate Full and Sliding arenas totaling 85.875 MiB, 40.4% less. These are
+geometry-derived K/V payload bytes, not allocator peak.
+
+Both engines match the existing independent eight-token reference probe, but
+their full random-trace text digests differ. Consequently this is retained as a
+product diagnostic and negative performance result, not a matched-output
+benefit claim.
+
 ## Promotion rule
 
 Only reviewed runs move from `.qualification/` to `results/`. A promoted result

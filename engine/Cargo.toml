@@ -28,6 +28,7 @@ orbitkv = { path = "../core" }
 orbitkv-executor = { path = "../executor" }
 orbitkv-server = { path = "../server" }
 thiserror = "2.0.17"
+tempfile = "3.23.0"
 tokio = { version = "1.47.1", features = ["sync"] }
 tokio-util = { version = "0.7.18", features = ["rt"], optional = true }
 

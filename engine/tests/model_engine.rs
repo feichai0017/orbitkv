@@ -15,6 +15,7 @@ fn engine_config(maximum_active_requests: usize) -> ModelEngineConfig {
         model_directory: std::env::var_os("ORBITKV_MODEL_DIR")
             .map(std::path::PathBuf::from)
             .expect("ORBITKV_MODEL_DIR must point to a released checkpoint"),
+        decoder_artifact: None,
         device_index: 0,
         page_tokens: 16,
         page_counts: vec![64 * concurrent_requests, 33 * concurrent_requests],

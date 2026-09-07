@@ -1,8 +1,8 @@
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::DecoderError;
 
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct DecoderConfig {
     pub layers: usize,
     pub hidden_size: usize,
@@ -23,25 +23,25 @@ pub struct DecoderConfig {
     pub layer_attention: Option<Box<[DecoderAttentionKind]>>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum DecoderActivation {
     Silu,
     GeluTanh,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum DecoderBlockLayout {
     PreNorm,
     SandwichNorm,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum DecoderNormWeights {
     Direct,
     UnitOffset,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub enum DecoderAttentionKind {
     Full,
     Sliding,

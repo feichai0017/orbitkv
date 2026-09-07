@@ -854,7 +854,7 @@ fn batch_write_slots(prepared: &PreparedBatch, class_count: usize) -> Vec<Vec<u6
     write_slots
 }
 
-fn row_logits<'a>(logits: &'a [f32], row: usize, vocabulary_size: usize) -> &'a [f32] {
+fn row_logits(logits: &[f32], row: usize, vocabulary_size: usize) -> &[f32] {
     &logits[row * vocabulary_size..(row + 1) * vocabulary_size]
 }
 
@@ -1021,6 +1021,7 @@ fn qualify_reused_cancelled_request(
 
 #[test]
 #[ignore = "requires ORBITKV_MODEL_DIR, a CUDA device, and FlashInfer headers"]
+#[allow(clippy::too_many_lines)]
 fn released_checkpoint_bounds_single_and_multi_request_logits() {
     let model_dir = model_directory();
     let config_bytes = std::fs::read(model_dir.join("config.json")).unwrap();

@@ -15,6 +15,7 @@ const EXPECTED_TOKENS: [u64; 4] = [106, 107, 106, 106];
 fn engine_config(model_directory: PathBuf) -> ModelEngineConfig {
     ModelEngineConfig {
         model_directory,
+        decoder_artifact: None,
         device_index: 0,
         page_tokens: 16,
         page_counts: vec![128, 66],

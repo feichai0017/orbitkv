@@ -103,6 +103,15 @@ state on the tested driver. Switching phase therefore rematerializes the target
 bucket without re-running graph search. A dedicated bucket-switch regression and
 the repeated released-hybrid residence workload cover this contract.
 
+Selected schedules, including graphs with explicit paged-attention custom ops,
+can be serialized independently of weights and KV contents. Loading replays the
+deterministic graph normalization, resolves the current custom-op table, and
+verifies the unrolled LLIR fingerprint of every bucket. OrbitKV wraps this in a
+decoder artifact identity covering the canonical manifest, decoder and weight
+family geometry, arena shape, and compile buckets. Incompatible artifacts fail
+closed. The artifact removes cross-process search variation; CUDA module and
+FlashInfer prepared-resource materialization are not yet fully serialized.
+
 ## Updating Luminal
 
 The submodule has separate `origin` (the OrbitKV fork) and `upstream` (Luminal).
