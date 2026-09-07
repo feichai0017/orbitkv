@@ -314,14 +314,14 @@ mod tests {
     };
 
     use super::*;
-    use crate::{AttentionVisibility, ExecutorPlan};
+    use crate::AttentionVisibility;
 
     #[test]
     fn expands_logical_pages_into_layer_component_iovecs() {
-        let plan = ExecutorPlan {
-            manifest_fingerprint: "test".into(),
-            page_tokens: 16,
-            classes: vec![AttentionClass {
+        let plan = crate::test_executor_plan(
+            "test",
+            16,
+            vec![AttentionClass {
                 class_id: 0,
                 name: "attention".into(),
                 layers: vec![2, 5].into_boxed_slice(),
@@ -330,9 +330,8 @@ mod tests {
                 value_bytes_per_token_per_layer: 12,
                 token_relocatable: true,
                 visibility: AttentionVisibility::Full,
-            }]
-            .into_boxed_slice(),
-        };
+            }],
+        );
         let transfer_id = ExternalTransferId::from_parts(1, 1);
         let target = ExternalReplicaTarget {
             storage_domain: 7,
@@ -394,10 +393,10 @@ mod tests {
 
     #[test]
     fn expands_restore_into_external_to_tensor_iovecs() {
-        let plan = ExecutorPlan {
-            manifest_fingerprint: "test".into(),
-            page_tokens: 16,
-            classes: vec![AttentionClass {
+        let plan = crate::test_executor_plan(
+            "test",
+            16,
+            vec![AttentionClass {
                 class_id: 0,
                 name: "attention".into(),
                 layers: vec![2, 5].into_boxed_slice(),
@@ -406,9 +405,8 @@ mod tests {
                 value_bytes_per_token_per_layer: 12,
                 token_relocatable: true,
                 visibility: AttentionVisibility::Full,
-            }]
-            .into_boxed_slice(),
-        };
+            }],
+        );
         let transfer_id = ExternalTransferId::from_parts(1, 2);
         let source = ExternalRestorePlan {
             transfer_id,

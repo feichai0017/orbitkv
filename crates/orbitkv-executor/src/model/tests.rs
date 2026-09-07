@@ -57,6 +57,7 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
         &arenas,
         DecoderWeightFeatures::default(),
         compile,
+        "facts-a",
     )
     .unwrap();
     let mut changed_arena = arenas;
@@ -67,6 +68,7 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
         &changed_arena,
         DecoderWeightFeatures::default(),
         compile,
+        "facts-a",
     )
     .unwrap();
     let compile_identity = decoder_artifact_identity(
@@ -78,11 +80,22 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
             maximum_batch_size: 2,
             ..compile
         },
+        "facts-a",
+    )
+    .unwrap();
+    let facts_identity = decoder_artifact_identity(
+        &config,
+        &plan,
+        &arenas,
+        DecoderWeightFeatures::default(),
+        compile,
+        "facts-b",
     )
     .unwrap();
 
     assert_ne!(identity, arena_identity);
     assert_ne!(identity, compile_identity);
+    assert_ne!(identity, facts_identity);
 }
 
 #[test]
@@ -442,10 +455,10 @@ fn graph_rejects_manifest_layer_semantics_that_disagree_with_model_config() {
 }
 
 fn hybrid_executor_plan() -> ExecutorPlan {
-    ExecutorPlan {
-        manifest_fingerprint: "hybrid".into(),
-        page_tokens: 16,
-        classes: vec![
+    crate::test_executor_plan(
+        "hybrid",
+        16,
+        vec![
             crate::AttentionClass {
                 class_id: 0,
                 name: "global".into(),
@@ -466,9 +479,8 @@ fn hybrid_executor_plan() -> ExecutorPlan {
                 token_relocatable: true,
                 visibility: crate::AttentionVisibility::Sliding { window_tokens: 64 },
             },
-        ]
-        .into_boxed_slice(),
-    }
+        ],
+    )
 }
 
 fn hybrid_arenas() -> [ExecutorArena; 2] {

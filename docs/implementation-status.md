@@ -92,6 +92,15 @@ Four alternating C2 epochs improved the same engine's throughput by 14.5%, TTFT
 by 32.2%, TPOT by 10.2%, and E2E by 12.8% versus the previous artifact. The new
 artifact passes the existing independent B2 reference-token probe.
 
+The next joint-compiler seam is implemented structurally. A validated manifest
+now derives backend-neutral facts for storage components, retention, addressing,
+retirement, legal layout alternatives, and token-relocation eligibility. The
+executor binds token classes to stable arenas, lowers deterministic facts into
+every Luminal search bucket, and tags each paged-attention custom op with its
+manager class. The facts digest is part of decoder artifact identity. This does
+not yet change a selected layout or provide a profiler-backed relocation policy;
+those remain the unclosed half of R4.2.
+
 ## Evidence interpretation
 
 The child CUDA Graph result demonstrates a narrow dispatch optimization. The

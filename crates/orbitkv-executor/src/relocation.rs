@@ -307,10 +307,10 @@ mod tests {
     }
 
     fn plan() -> ExecutorPlan {
-        ExecutorPlan {
-            manifest_fingerprint: "test".into(),
-            page_tokens: 16,
-            classes: vec![AttentionClass {
+        crate::test_executor_plan(
+            "test",
+            16,
+            vec![AttentionClass {
                 class_id: 0,
                 name: "attention".into(),
                 layers: vec![1, 3].into_boxed_slice(),
@@ -319,9 +319,8 @@ mod tests {
                 value_bytes_per_token_per_layer: 12,
                 token_relocatable: true,
                 visibility: crate::AttentionVisibility::Full,
-            }]
-            .into_boxed_slice(),
-        }
+            }],
+        )
     }
 
     fn arena() -> ExecutorArena {

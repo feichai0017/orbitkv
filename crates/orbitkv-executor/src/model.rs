@@ -92,6 +92,7 @@ pub struct DecoderArtifact {
 #[derive(Serialize)]
 struct DecoderArtifactIdentity<'a> {
     manifest_fingerprint: &'a str,
+    compiler_facts_digest: &'a str,
     page_tokens: u32,
     decoder: &'a DecoderConfig,
     weights: DecoderWeightFeatures,
@@ -524,7 +525,15 @@ impl CompiledDecoder {
         }
         let mut graph = Graph::default();
         let weights = inspect_weight_features(weight_files, config)?;
-        let identity = decoder_artifact_identity(config, plan, arenas, weights, compile)?;
+        let compiler_facts = plan.luminal_compiler_facts(arenas)?;
+        let identity = decoder_artifact_identity(
+            config,
+            plan,
+            arenas,
+            weights,
+            compile,
+            compiler_facts.digest(),
+        )?;
         if let Some(artifact) = artifact
             && artifact.identity != identity
         {
@@ -555,7 +564,8 @@ impl CompiledDecoder {
             graph.set_dim(class.context_pages, compile.representative_context_pages);
         }
         seed_compile_inputs(&mut runtime, &decoder, compile, page_tokens);
-        let options = decoder_compile_options(&decoder, compile);
+        let options = decoder_compile_options(&decoder, compile)
+            .compiler_facts(compiler_facts.egglog().to_owned());
         let effective_artifact = if let Some(artifact) = artifact {
             graph.prepare_selected_schedule(&options);
             graph.install_selected_schedule(artifact.schedule.clone());
@@ -995,9 +1005,11 @@ fn decoder_artifact_identity(
     arenas: &[ExecutorArena],
     weights: DecoderWeightFeatures,
     compile: DecoderCompileConfig,
+    compiler_facts_digest: &str,
 ) -> Result<String, DecoderError> {
     let identity = DecoderArtifactIdentity {
         manifest_fingerprint: &plan.manifest_fingerprint,
+        compiler_facts_digest,
         page_tokens: plan.page_tokens,
         decoder: config,
         weights,
