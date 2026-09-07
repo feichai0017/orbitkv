@@ -1,0 +1,90 @@
+{
+  "schema": "orbitkv.compiler-constrained-schedule-benefit",
+  "status": "same_engine_improvement_reference_qualified_product_competitiveness_failed",
+  "workload": {
+    "epochs": 4,
+    "alternating_order": true,
+    "requests_per_arm": 16,
+    "observed_input_tokens_per_request": 127,
+    "output_tokens_per_request": 256,
+    "max_concurrency": 2,
+    "temperature": 0,
+    "ignore_eos": true,
+    "seed": 7
+  },
+  "correctness": {
+    "all_requests_complete": true,
+    "per_request_errors_empty": true,
+    "candidate_digest_stable_across_four_epochs": true,
+    "previous_candidate_digest_stable_across_four_epochs": true,
+    "stock_sglang_digest_stable_across_four_epochs": true,
+    "candidate_matches_independent_eight_token_reference": true,
+    "candidate_matches_previous_random_trace_text": false,
+    "candidate_matches_stock_sglang_random_trace_text": false
+  },
+  "candidate_vs_previous_orbitkv": {
+    "candidate_median": {
+      "output_tokens_per_second": 679.521930,
+      "ttft_ms": 66.676996,
+      "tpot_ms": 2.681607,
+      "itl_ms": 2.545310,
+      "e2el_ms": 750.563102
+    },
+    "previous_median": {
+      "output_tokens_per_second": 593.572318,
+      "ttft_ms": 98.143524,
+      "tpot_ms": 2.984237,
+      "itl_ms": 2.851903,
+      "e2el_ms": 858.925872
+    },
+    "candidate_over_previous": {
+      "output_throughput": 1.144177,
+      "ttft": 0.679991,
+      "tpot": 0.898973,
+      "itl": 0.892702,
+      "e2el": 0.873986
+    }
+  },
+  "candidate_vs_stock_sglang": {
+    "orbitkv_median": {
+      "output_tokens_per_second": 678.643437,
+      "ttft_ms": 66.915056,
+      "tpot_ms": 2.685391,
+      "itl_ms": 2.550698,
+      "e2el_ms": 751.746109
+    },
+    "sglang_median": {
+      "output_tokens_per_second": 1135.113650,
+      "ttft_ms": 14.278862,
+      "tpot_ms": 1.692016,
+      "itl_ms": 1.686676,
+      "e2el_ms": 444.738368
+    },
+    "orbitkv_over_sglang": {
+      "output_throughput": 0.597864,
+      "ttft": 4.687055,
+      "tpot": 1.587510,
+      "itl": 1.512047,
+      "e2el": 1.690312
+    }
+  },
+  "persistent_kv_payload": {
+    "orbitkv_mib": 85.875,
+    "sglang_mib": 144.0,
+    "orbitkv_reduction_fraction": 0.403646,
+    "nvidia_smi_allocator_peak_measurement": false
+  },
+  "raw_qualification_checksums": {
+    "same_engine_run_json_sha256": "1511a6c2402b4767f778931de53e27b30d82d81e835870c11230c27b7a2edb57",
+    "same_engine_completed_json_sha256": "2dd1777994dac03376d2c4a30c0d3d5180b704051cb17c8cc4a60f99bdd10e43",
+    "sglang_run_json_sha256": "29f9781db14116ec472e3fc244e0a3497c6811449e1b3303549b0ebff8ce15fd",
+    "sglang_completed_json_sha256": "63bbb0540f100a7faacfc0da9037a4e0044db22b0985cce70e0b26e36e133d59"
+  },
+  "claims": {
+    "compiler_constrained_same_engine_improvement_measured": true,
+    "strict_matched_output_benefit": false,
+    "serving_performance_advantage_over_sglang": false,
+    "strict_cross_schedule_output_equivalence": false,
+    "production_ready": false
+  }
+}

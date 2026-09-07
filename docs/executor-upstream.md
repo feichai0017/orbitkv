@@ -84,16 +84,14 @@ decode step, it reduced median wall time by 8.3% over 20 alternating iterations
 and 5.8% over a 100-iteration confirmation. This narrow result does not qualify
 continuous batching or end-to-end serving throughput.
 
-The persistent K/V buffers are registered as paired input/output state before
-profiling. Search may select an in-place scatter or a materialized update with
-a graph-visible D2D epilogue back into the same arena. Both preserve the stable
-address contract; `cache_updates_in_place()` reports which result was selected.
-The current two-candidate real-device smoke selected the materialized-copy
-form, so no zero-copy KV-write benefit is claimed. The final source run observed
-one-time search/compile at roughly 183 seconds, a four-token prefill dispatch at
-roughly 13 ms, first decode dispatch at roughly 36 ms, and a warm second decode
-at roughly 5 ms. These are diagnostic timings from one correctness run, not an
-L5 benchmark or speedup claim.
+The persistent K/V buffers are registered as required paired input/output
+state before profiling. Unlike an ordinary output registration, this contract
+rejects a candidate or loaded artifact unless every selected bucket resolves
+the output directly to the input arena. `cache_update_buckets()` reports the
+per-bucket in-place tensor count and any copy-back bytes. The qualified
+16-candidate artifact has 36/36 in-place K/V tensors and zero copy-back in both
+buckets. This compiler constraint produced a measured same-engine C2 benefit;
+it does not by itself close the remaining kernel gap to SGLang.
 
 The embedded decoder keeps all searched decode/prefill buckets but bounds active
 CUDA Graph materialization to one bucket. Explicit-CSR attention can rebuild

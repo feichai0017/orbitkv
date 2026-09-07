@@ -277,6 +277,31 @@ fn decode_capture_signature_rejects_prefill() {
     ));
 }
 
+#[test]
+fn decode_capture_signature_accepts_one_token_per_request() {
+    let attention = crate::AttentionBatch {
+        class_id: 0,
+        query_indptr: vec![0, 1, 2].into_boxed_slice(),
+        page_indptr: vec![0, 2, 5].into_boxed_slice(),
+        page_indices: vec![2, 3, 7, 8, 9].into_boxed_slice(),
+        last_page_len: vec![4, 8].into_boxed_slice(),
+    };
+    let classes = [DecoderClassStep {
+        class_id: 0,
+        write_slots: &[48, 144],
+        attention: &attention,
+    }];
+    let signature = DecodeCaptureSignature::from_step(DecoderStep {
+        tokens: &[1, 2],
+        positions: &[16, 32],
+        classes: &classes,
+    })
+    .unwrap();
+
+    assert_eq!(signature.query_tokens, 2);
+    assert_eq!(signature.batch_size, 2);
+}
+
 fn test_config(layers: usize) -> DecoderConfig {
     DecoderConfig {
         layers,

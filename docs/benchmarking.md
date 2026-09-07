@@ -149,6 +149,27 @@ their full random-trace text digests differ. Consequently this is retained as a
 product diagnostic and negative performance result, not a matched-output
 benefit claim.
 
+## Compiler-constrained schedule follow-up
+
+R4.1 moved the persistent K/V address contract into Luminal candidate
+selection. All selected buckets must resolve every K/V output directly to its
+registered input arena; candidates and stored artifacts that require copy-back
+are rejected before deployment. A 16-candidate search produced two buckets
+with 36/36 K/V tensors in place and zero copy-back bytes.
+
+Against the prior two-candidate OrbitKV artifact, four alternating C2 epochs
+improved median throughput from 593.57 to 679.52 token/s (+14.4%), TTFT from
+98.14 to 66.68 ms (-32.0%), TPOT from 2.984 to 2.682 ms (-10.1%), and E2E from
+858.93 to 750.56 ms (-12.6%). Both arms were deterministic across their own
+epochs, but their random-trace text digests differ. The new artifact passes the
+existing independent B2 eight-token reference probe.
+
+The corresponding four-epoch stock-SGLang comparison remains negative:
+OrbitKV reached 678.64 versus 1135.11 token/s (0.598x), with 2.685 versus
+1.692 ms TPOT (1.59x), 66.92 versus 14.28 ms TTFT (4.69x), and 751.75 versus
+444.74 ms E2E (1.69x). This improves the previous executor baseline but does
+not qualify an OrbitKV-over-SGLang serving advantage.
+
 ## Promotion rule
 
 Only reviewed runs move from `.qualification/` to `results/`. A promoted result

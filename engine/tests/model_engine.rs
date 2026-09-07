@@ -15,7 +15,8 @@ fn engine_config(maximum_active_requests: usize) -> ModelEngineConfig {
         model_directory: std::env::var_os("ORBITKV_MODEL_DIR")
             .map(std::path::PathBuf::from)
             .expect("ORBITKV_MODEL_DIR must point to a released checkpoint"),
-        decoder_artifact: None,
+        decoder_artifact: std::env::var_os("ORBITKV_DECODER_ARTIFACT")
+            .map(std::path::PathBuf::from),
         device_index: 0,
         page_tokens: 16,
         page_counts: vec![64 * concurrent_requests, 33 * concurrent_requests],
@@ -190,6 +191,39 @@ async fn released_hybrid_engine_batches_concurrent_prefill_and_decode() {
     assert_eq!(stats.completed_requests, 2);
     assert_eq!(stats.queued_requests, 0);
     assert_eq!(stats.active_requests, 0);
+    assert_drained(stats.manager);
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[ignore = "requires ORBITKV_MODEL_DIR, ORBITKV_DECODER_ARTIFACT, a CUDA device, and FlashInfer headers"]
+async fn released_hybrid_artifact_preserves_batched_reference_tokens() {
+    let mut config = engine_config(8);
+    assert!(config.decoder_artifact.is_some());
+    config.maximum_batch_tokens = 1_024;
+    config.batch_wait_timeout = std::time::Duration::from_millis(10);
+    let engine = ModelEngine::start(config).unwrap();
+    let (first, second) = tokio::join!(
+        engine.execute(request(31, 512, 8, &[])),
+        engine.execute(request(32, 512, 8, &[])),
+    );
+    let (first_events, second_events) = tokio::join!(
+        first.unwrap().collect::<Vec<_>>(),
+        second.unwrap().collect::<Vec<_>>(),
+    );
+    let first_events = first_events
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+    let second_events = second_events
+        .into_iter()
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
+
+    assert_eq!(visible_tokens(&first_events), REFERENCE_TOKENS);
+    assert_eq!(visible_tokens(&second_events), REFERENCE_TOKENS);
+    let stats = engine.stats().await.unwrap();
+    assert_eq!(stats.maximum_observed_batch_size, 2);
+    assert_eq!(stats.completed_requests, 2);
     assert_drained(stats.manager);
 }
 

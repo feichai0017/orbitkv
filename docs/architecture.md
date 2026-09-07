@@ -66,7 +66,9 @@ reference implementation and fault oracle, not a performance backend.
 2. The executor derives an `ExecutorPlan` directly from that manifest.
 3. The model executor compiles one symbolic decoder graph into decode and
    prefill buckets and retains one stable K/V arena per attention class. Dynamic input buffers are
-   allocated to their configured capacities before search.
+   allocated to their configured capacities before search. OrbitKV registers
+   every persistent K/V update as a required output-to-input alias; Luminal may
+   search freely only among schedules that preserve that state contract.
 4. `RuntimeSession` prepares append, Prefix/COW, relocation, or release work.
 5. The executor updates bounded dynamic inputs, dispatches the matching Luminal
    bucket, runs on the owning stream without recompiling the model, and samples
@@ -149,6 +151,14 @@ logical protocol contracts and depends on neither `core` nor `executor`.
 the server trait without moving page types into the server. External KV
 transports live in `executor` because they operate on lowered tensor spans, while
 replica identity, pins, publication, and deletion authority stay in `core`.
+
+The compiler boundary is bidirectional but not authority-sharing. OrbitKV
+supplies semantic lifetime, physical arena, and persistent-state constraints;
+Luminal supplies equivalent compute schedules and measured device costs. A
+candidate that violates a required state alias is rejected before profiling,
+and an artifact containing such a candidate is rejected during load. Luminal
+therefore optimizes the implementation without gaining page identity or
+lifecycle authority.
 
 `tools/verify_active_source.py` enforces these forbidden dependency edges,
 rejects physical KV ownership types in server source, requires all product
