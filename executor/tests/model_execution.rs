@@ -66,6 +66,44 @@ fn prepare_model_run_with_page_counts(
     physical_residence: PhysicalResidencePolicy,
     page_counts: Option<&[u32]>,
 ) -> PreparedModelRun {
+    let mut harness = model_harness(
+        config_bytes,
+        2,
+        4,
+        prompt_len.max(64),
+        physical_residence,
+        page_counts,
+    );
+    let request_id = EngineRequestId(1);
+    harness.session.acquire_requests(&[request_id]).unwrap();
+    let (attention, prepared) = prepare_model_batch(
+        &mut harness,
+        &[request_id],
+        u64::try_from(prompt_len).unwrap(),
+    );
+    PreparedModelRun {
+        session: harness.session,
+        executor_plan: harness.executor_plan,
+        arenas: harness.arenas,
+        prepared,
+        attention,
+    }
+}
+
+struct ModelBatchHarness {
+    session: RuntimeSession,
+    executor_plan: ExecutorPlan,
+    arenas: Box<[ExecutorArena]>,
+}
+
+fn model_harness(
+    config_bytes: &[u8],
+    maximum_requests: usize,
+    maximum_operations: usize,
+    maximum_step_tokens: usize,
+    physical_residence: PhysicalResidencePolicy,
+    page_counts: Option<&[u32]>,
+) -> ModelBatchHarness {
     let manifest = compile_hf_runtime_manifest(
         config_bytes,
         HfRetentionOptions {
@@ -102,26 +140,17 @@ fn prepare_model_run_with_page_counts(
     let manager = CanonicalKvManager::new_with_residence(
         &manager_plan,
         ManagerConfig {
-            maximum_requests: 2,
-            maximum_operations: 4,
+            maximum_requests: u32::try_from(maximum_requests).unwrap(),
+            maximum_operations: u32::try_from(maximum_operations).unwrap(),
             maximum_prefixes: 1,
-            maximum_reclamations: PAGE_COUNT * u32::try_from(registrations.len()).unwrap(),
-            maximum_step_tokens: u32::try_from(prompt_len.max(64)).unwrap(),
+            maximum_reclamations: registrations.iter().map(|arena| arena.page_count).sum(),
+            maximum_step_tokens: u32::try_from(maximum_step_tokens).unwrap(),
         },
         &registrations,
         physical_residence,
     )
     .unwrap();
-    let mut session = RuntimeSession::new(manager, CacheSharingPolicy::RequestPrivate);
-    let request_id = EngineRequestId(1);
-    session.acquire_requests(&[request_id]).unwrap();
-    let source = session
-        .prepare_append_batch(&[EngineAppendIntent {
-            request_id,
-            target_boundary: u64::try_from(prompt_len).unwrap(),
-        }])
-        .unwrap();
-    let view = session.prepared_execution_view(source.batch_id).unwrap();
+    let session = RuntimeSession::new(manager, CacheSharingPolicy::RequestPrivate);
     let arenas = session
         .arena_stats()
         .iter()
@@ -131,15 +160,57 @@ fn prepare_model_run_with_page_counts(
         .collect::<Vec<_>>()
         .into_boxed_slice();
     let executor_plan = ExecutorPlan::compile(&manifest).unwrap();
-    let attention = executor_plan.attention_batches(&view).unwrap();
-    let prepared = executor_plan.lower_prepared(source, &arenas).unwrap();
-    PreparedModelRun {
+    ModelBatchHarness {
         session,
         executor_plan,
         arenas,
-        prepared,
-        attention,
     }
+}
+
+fn model_batch_harness(
+    config_bytes: &[u8],
+    maximum_requests: usize,
+    maximum_step_tokens: usize,
+) -> ModelBatchHarness {
+    let mut harness = model_harness(
+        config_bytes,
+        maximum_requests,
+        maximum_requests,
+        maximum_step_tokens,
+        PhysicalResidencePolicy::Compiled,
+        None,
+    );
+    let request_ids = (0..maximum_requests)
+        .map(|index| EngineRequestId(u64::try_from(index + 1).unwrap()))
+        .collect::<Vec<_>>();
+    harness.session.acquire_requests(&request_ids).unwrap();
+    harness
+}
+
+fn prepare_model_batch(
+    harness: &mut ModelBatchHarness,
+    request_ids: &[EngineRequestId],
+    target_boundary: u64,
+) -> (Box<[AttentionBatch]>, PreparedBatch) {
+    let intents = request_ids
+        .iter()
+        .copied()
+        .map(|request_id| EngineAppendIntent {
+            request_id,
+            target_boundary,
+        })
+        .collect::<Vec<_>>();
+    let source = harness.session.prepare_append_batch(&intents).unwrap();
+    let view = harness
+        .session
+        .prepared_execution_view(source.batch_id)
+        .unwrap();
+    let attention = harness.executor_plan.attention_batches(&view).unwrap();
+    let prepared = harness
+        .executor_plan
+        .lower_prepared(source, &harness.arenas)
+        .unwrap();
+    (attention, prepared)
 }
 
 fn complete(
@@ -756,6 +827,59 @@ fn decoder_class_steps<'a>(
         .collect()
 }
 
+fn batch_decoder_class_steps<'a>(
+    write_slots: &'a [Vec<u64>],
+    attention: &'a [AttentionBatch],
+) -> Vec<DecoderClassStep<'a>> {
+    write_slots
+        .iter()
+        .zip(attention)
+        .map(|(write_slots, attention)| DecoderClassStep {
+            class_id: attention.class_id,
+            write_slots,
+            attention,
+        })
+        .collect()
+}
+
+fn batch_write_slots(prepared: &PreparedBatch, class_count: usize) -> Vec<Vec<u64>> {
+    let mut write_slots = vec![Vec::new(); class_count];
+    for step in prepared.steps() {
+        assert_eq!(step.classes.len(), class_count);
+        for (class_index, class) in step.classes.iter().enumerate() {
+            assert_eq!(usize::from(class.class_id), class_index);
+            write_slots[class_index].extend(&class.write_slots);
+        }
+    }
+    write_slots
+}
+
+fn row_logits<'a>(logits: &'a [f32], row: usize, vocabulary_size: usize) -> &'a [f32] {
+    &logits[row * vocabulary_size..(row + 1) * vocabulary_size]
+}
+
+fn top_two(logits: &[f32]) -> [(u32, f32); 2] {
+    let mut ranked = logits
+        .iter()
+        .copied()
+        .enumerate()
+        .map(|(token, value)| (u32::try_from(token).unwrap(), value))
+        .collect::<Vec<_>>();
+    ranked.select_nth_unstable_by(1, |left, right| right.1.total_cmp(&left.1));
+    let mut top = [ranked[0], ranked[1]];
+    top.sort_unstable_by(|left, right| right.1.total_cmp(&left.1));
+    top
+}
+
+fn maximum_absolute_difference(left: &[f32], right: &[f32]) -> f32 {
+    assert_eq!(left.len(), right.len());
+    left.iter()
+        .zip(right)
+        .map(|(left, right)| (left - right).abs())
+        .max_by(f32::total_cmp)
+        .unwrap()
+}
+
 fn qualify_hybrid_reference_probes(config_bytes: &[u8], decoder: &mut CompiledDecoder) {
     for (prompt_len, expected) in [(1_usize, 9_450_u32), (2, 3_302), (4, 236_764), (16, 106)] {
         let mut probe = prepare_model_run(config_bytes, prompt_len);
@@ -893,6 +1017,199 @@ fn qualify_reused_cancelled_request(
     assert_eq!(output.token_ids.last().copied(), Some(106));
     complete(&mut run.session, &prepared, &run.arenas, 35);
     release_and_drain(&mut run.session, request_id);
+}
+
+#[test]
+#[ignore = "requires ORBITKV_MODEL_DIR, a CUDA device, and FlashInfer headers"]
+fn released_checkpoint_bounds_single_and_multi_request_logits() {
+    let model_dir = model_directory();
+    let config_bytes = std::fs::read(model_dir.join("config.json")).unwrap();
+    let config = DecoderConfig::from_json(&config_bytes).unwrap();
+    let prompt = std::iter::once(2_u32)
+        .chain((0..31).map(|index| 100 + ((2 * 97 + index * 13) % 5_000)))
+        .collect::<Vec<_>>();
+    let prompt_positions = (0..u32::try_from(prompt.len()).unwrap()).collect::<Vec<_>>();
+    let batch_size = 8_usize;
+    let mut run = model_batch_harness(&config_bytes, batch_size + 1, prompt.len() * batch_size);
+    let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(0).unwrap();
+    let stream = context.new_stream().unwrap();
+    let compile = DecoderCompileConfig {
+        maximum_query_tokens: 1_024,
+        representative_prefill_tokens: 512,
+        maximum_batch_size: batch_size,
+        maximum_context_pages: 512,
+        representative_context_pages: 32,
+        search_graphs: search_graphs(),
+        search_seed: 7,
+    };
+    let mut decoder = CompiledDecoder::compile(
+        &config,
+        &run.executor_plan,
+        &run.arenas,
+        &stream,
+        &[model_dir.join("model.safetensors")],
+        compile,
+    )
+    .unwrap();
+
+    let (single_attention, single_prepared) =
+        prepare_model_batch(&mut run, &[EngineRequestId(1)], prompt.len() as u64);
+    let single_slots = batch_write_slots(&single_prepared, single_attention.len());
+    let single_classes = batch_decoder_class_steps(&single_slots, &single_attention);
+    let single_prefill = decoder
+        .execute_with_logits(DecoderStep {
+            tokens: &prompt,
+            positions: &prompt_positions,
+            classes: &single_classes,
+        })
+        .unwrap();
+    complete(&mut run.session, &single_prepared, &run.arenas, 1);
+
+    let batch_ids = (2..=u64::try_from(batch_size + 1).unwrap())
+        .map(EngineRequestId)
+        .collect::<Vec<_>>();
+    let (batch_attention, batch_prepared) =
+        prepare_model_batch(&mut run, &batch_ids, prompt.len() as u64);
+    let batch_slots = batch_write_slots(&batch_prepared, batch_attention.len());
+    let batch_classes = batch_decoder_class_steps(&batch_slots, &batch_attention);
+    let batch_tokens = prompt.repeat(batch_size);
+    let batch_positions = prompt_positions.repeat(batch_size);
+    let batch_prefill = decoder
+        .execute_with_logits(DecoderStep {
+            tokens: &batch_tokens,
+            positions: &batch_positions,
+            classes: &batch_classes,
+        })
+        .unwrap();
+    complete(&mut run.session, &batch_prepared, &run.arenas, 2);
+
+    let single_row = row_logits(
+        &single_prefill.logits,
+        prompt.len() - 1,
+        config.vocabulary_size,
+    );
+    let batch_first_row = row_logits(
+        &batch_prefill.logits,
+        prompt.len() - 1,
+        config.vocabulary_size,
+    );
+    for row in 1..batch_size {
+        assert_eq!(
+            batch_first_row,
+            row_logits(
+                &batch_prefill.logits,
+                (row + 1) * prompt.len() - 1,
+                config.vocabulary_size,
+            )
+        );
+    }
+    let single_token = single_prefill.token_ids[prompt.len() - 1];
+    let batch_token = batch_prefill.token_ids[prompt.len() - 1];
+    for row in 1..batch_size {
+        assert_eq!(
+            batch_token,
+            batch_prefill.token_ids[(row + 1) * prompt.len() - 1]
+        );
+    }
+    let single_top = top_two(single_row);
+    let batch_top = top_two(batch_first_row);
+    let mut maximum_difference = maximum_absolute_difference(single_row, batch_first_row);
+    let mut argmax_mismatches = usize::from(single_token != batch_token);
+    eprintln!(
+        "batch parity token=0 single_top={single_top:?} batch_top={batch_top:?} single_margin={} batch_margin={} max_abs={}",
+        single_top[0].1 - single_top[1].1,
+        batch_top[0].1 - batch_top[1].1,
+        maximum_difference,
+    );
+    let teacher_tokens = [
+        506_u32, 236_743, 236_778, 236_771, 236_778, 236_800, 236_772, 236_778, 236_771, 236_778,
+        236_812, 13_434, 1_051, 236_761, 108, 818,
+    ];
+
+    for generated in 1..16 {
+        let target = u64::try_from(prompt.len() + generated).unwrap();
+        let position = u32::try_from(prompt.len() + generated - 1).unwrap();
+        let input_token = teacher_tokens[generated - 1];
+        let (single_attention, single_prepared) =
+            prepare_model_batch(&mut run, &[EngineRequestId(1)], target);
+        let single_slots = batch_write_slots(&single_prepared, single_attention.len());
+        let single_classes = batch_decoder_class_steps(&single_slots, &single_attention);
+        let single_output = decoder
+            .execute_with_logits(DecoderStep {
+                tokens: &[input_token],
+                positions: &[position],
+                classes: &single_classes,
+            })
+            .unwrap();
+        complete(
+            &mut run.session,
+            &single_prepared,
+            &run.arenas,
+            u64::try_from(generated * 2 + 1).unwrap(),
+        );
+
+        let (batch_attention, batch_prepared) = prepare_model_batch(&mut run, &batch_ids, target);
+        let batch_slots = batch_write_slots(&batch_prepared, batch_attention.len());
+        let batch_classes = batch_decoder_class_steps(&batch_slots, &batch_attention);
+        let batch_input = vec![input_token; batch_size];
+        let batch_position = vec![position; batch_size];
+        let batch_output = decoder
+            .execute_with_logits(DecoderStep {
+                tokens: &batch_input,
+                positions: &batch_position,
+                classes: &batch_classes,
+            })
+            .unwrap();
+        complete(
+            &mut run.session,
+            &batch_prepared,
+            &run.arenas,
+            u64::try_from(generated * 2 + 2).unwrap(),
+        );
+
+        let single_logits = row_logits(&single_output.logits, 0, config.vocabulary_size);
+        let batch_first = row_logits(&batch_output.logits, 0, config.vocabulary_size);
+        for row in 1..batch_size {
+            assert_eq!(
+                batch_first,
+                row_logits(&batch_output.logits, row, config.vocabulary_size)
+            );
+        }
+        let single_token = single_output.token_ids[0];
+        let batch_token = batch_output.token_ids[0];
+        assert!(
+            batch_output
+                .token_ids
+                .iter()
+                .all(|&token| token == batch_token)
+        );
+        let single_top = top_two(single_logits);
+        let batch_top = top_two(batch_first);
+        let difference = maximum_absolute_difference(single_logits, batch_first);
+        maximum_difference = maximum_difference.max(difference);
+        argmax_mismatches += usize::from(single_token != batch_token);
+        if single_token != batch_token {
+            let single_gap = single_logits[usize::try_from(single_token).unwrap()]
+                - single_logits[usize::try_from(batch_token).unwrap()];
+            let batch_gap = batch_first[usize::try_from(batch_token).unwrap()]
+                - batch_first[usize::try_from(single_token).unwrap()];
+            assert!(single_gap <= 2.0 * difference && batch_gap <= 2.0 * difference);
+        }
+        eprintln!(
+            "batch parity token={generated} single_top={single_top:?} batch_top={batch_top:?} single_margin={} batch_margin={} max_abs={}",
+            single_top[0].1 - single_top[1].1,
+            batch_top[0].1 - batch_top[1].1,
+            difference,
+        );
+    }
+
+    let mut request_ids = vec![EngineRequestId(1)];
+    request_ids.extend(&batch_ids);
+    release_requests_and_drain(&mut run.session, &request_ids);
+    eprintln!(
+        "batch parity summary: maximum_absolute_logit_difference={maximum_difference} argmax_mismatches={argmax_mismatches}"
+    );
+    assert!(maximum_difference <= 1.0);
 }
 
 #[test]

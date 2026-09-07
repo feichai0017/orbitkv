@@ -33,12 +33,15 @@ work is not a current capability.
 - `orbitkv-serve` composes `ModelEngine` with the pinned vLLM Rust OpenAI,
   tokenizer/chat, SSE, request-ID, and stream-drop auto-abort components in the
   same process. Real H20 tests cover non-streaming and SSE completions,
-  concurrency, disconnect cancellation, graceful shutdown, and final drain.
+  concurrency, disconnect cancellation, graceful shutdown, and final drain. A
+  fixed 16-request load trace also completes at C1/C2/C4/C8 with every requested
+  output token and no per-request errors.
 - A released-hybrid same-executor residence experiment passes ten paired
   release-mode epochs with full token parity. Compiled residence reduces live
   payload by 27.8%, raises the fixed-budget boundary from 528 to 560, and has a
-  positive paired total-time confidence interval. Serving concurrency, tail
-  latency, and throughput remain unproven.
+  positive paired total-time confidence interval. HTTP concurrency and latency
+  metrics are now measured through C8, but comparative serving benefit remains
+  unproven.
 
 ## R1: Execute a multi-class hybrid graph — completed
 
@@ -83,10 +86,10 @@ continuous-batching throughput, TTFT/TPOT tails, multi-user capacity, or a win
 over SGLang. Those product-level measurements remain R3/R4. CUDA Graph dispatch
 speedups remain separate evidence.
 
-## R3: Complete the single-process serving engine
+## R3: Complete the single-process serving engine — narrow load closure completed
 
-Status: single-process HTTP correctness closure completed; load qualification
-remains in progress.
+Status: single-process HTTP correctness and a narrow C1-C8 load qualification
+are completed for one released Full+Sliding checkpoint.
 
 The concrete coordinator now implements the server `Engine` trait. A dedicated
 thread owns `RuntimeSession`, stable class arenas, and `CompiledDecoder`; bounded
@@ -107,10 +110,18 @@ passes non-streaming and SSE OpenAI completions, two concurrent HTTP requests,
 client-disconnect auto-abort with an explicit cancellation counter, and final
 manager drain on H20.
 
-Next, run `vllm bench serve` against this executable to qualify fairness,
-pressure behavior, TTFT/TPOT/ITL, throughput, and capacity. Chunked prefill and
-richer per-request sampling state also remain open. R3 correctness is closed;
-R3 load qualification is the remaining gate before the R4 SGLang comparison.
+The pinned Rust `vllm-bench` client then ran one fixed trace through the same
+warm server at C1/C2/C4/C8. Every arm completed 16 requests with 256 output
+tokens each and zero detailed errors. Output throughput increased from 184.24
+to 518.88 token/s, while median TTFT increased from 163.06 to 1127.81 ms and
+median TPOT from 4.80 to 11.06 ms. A direct B=1/B=8 teacher-forced diagnostic
+also proves bit-identical rows within B=8, maximum absolute cross-batch logit
+difference 0.4296875, and zero argmax mismatches over 16 positions.
+
+This closes a narrow R3 load gate and exposes a real throughput/latency tradeoff.
+Fairness, soak, the capacity failure point, Chunked prefill, and richer sampling
+remain open. R4 is now the next product gate; no SGLang-relative benefit follows
+from this internal scaling result.
 
 PegaInfer is a useful reference for a small Rust server/model boundary and for a
 full-plus-linear-attention execution loop. It is not a Dynamo integration: its

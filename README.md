@@ -179,8 +179,11 @@ reference. A separate run inserts a new prefill while another request is already
 decoding and observes a mixed-phase dispatch. These qualify continuous-batching
 correctness. A final real-device HTTP closure covers non-streaming completions,
 ordered SSE token IDs plus `[DONE]`, two concurrent requests, dropped-stream
-auto-abort, graceful shutdown, and final manager drain. It does not qualify
-fairness, capacity, or throughput.
+auto-abort, graceful shutdown, and final manager drain. A subsequent fixed-load
+HTTP run completed 16 requests at each of C1/C2/C4/C8, with all 256 requested
+output tokens and no per-request errors. Throughput scaled from 184.24 to 518.88
+output token/s while TTFT and TPOT increased, so this is a narrow load closure
+and measured tradeoff, not a performance-advantage claim.
 
 Run the server with explicit per-class page budgets:
 

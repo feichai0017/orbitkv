@@ -215,7 +215,7 @@ def bench_command(
 
 
 def benchmark_result(
-    payload: Any, expected_requests: int
+    payload: Any, expected_requests: int, expected_output_tokens: int
 ) -> tuple[dict[str, float], str | None]:
     if not isinstance(payload, dict):
         raise ValueError("benchmark result must be a JSON object")
@@ -226,6 +226,34 @@ def benchmark_result(
             f"benchmark request gate failed: completed={completed}, failed={failed}, "
             f"expected={expected_requests}"
         )
+    output_lens = payload.get("output_lens")
+    if (
+        not isinstance(output_lens, list)
+        or len(output_lens) != expected_requests
+        or any(
+            isinstance(length, bool)
+            or not isinstance(length, int)
+            or length != expected_output_tokens
+            for length in output_lens
+        )
+    ):
+        raise RuntimeError(
+            "benchmark output-length gate failed: "
+            f"expected {expected_requests} requests with {expected_output_tokens} tokens each"
+        )
+    expected_total = expected_requests * expected_output_tokens
+    if payload.get("total_output_tokens") != expected_total:
+        raise RuntimeError(
+            "benchmark total-output gate failed: "
+            f"reported={payload.get('total_output_tokens')}, expected={expected_total}"
+        )
+    errors = payload.get("errors")
+    if (
+        not isinstance(errors, list)
+        or len(errors) != expected_requests
+        or any(error not in (None, "") for error in errors)
+    ):
+        raise RuntimeError("benchmark per-request error gate failed")
     metrics = {}
     for name in METRICS:
         value = payload.get(name)
@@ -320,7 +348,9 @@ def run_one(
         if not result_path.is_file():
             raise RuntimeError(f"benchmark did not create {result_path}")
         result = json.loads(result_path.read_text(encoding="utf-8"))
-        metrics, output_digest = benchmark_result(result, workload.requests)
+        metrics, output_digest = benchmark_result(
+            result, workload.requests, workload.output_tokens
+        )
         return {
             "server": server.name,
             "epoch": epoch,
