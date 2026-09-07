@@ -92,13 +92,35 @@ It fixes the random dataset seed and explicitly requests p95/p99 for TTFT,
 TPOT, ITL, and end-to-end latency. It also fixes the random length range to zero
 instead of relying on a client-version default.
 Every run must report all requested completions, zero failures, and numeric
-TTFT/TPOT/ITL/throughput metrics. The generated paired summary reports
+TTFT/TPOT/ITL/throughput metrics. Detailed output lengths must equal the
+requested generation length, their sum must equal `total_output_tokens`, and
+every per-request error must be empty. These gates are mandatory because a
+streaming client can otherwise count an initial empty SSE frame followed by an
+error frame as a completed request. The generated paired summary reports
 candidate-over-baseline ratios. When the client emits detailed generated text,
 it also checks an output digest for each epoch; otherwise output equivalence is
 explicitly marked unevaluated. Raw metrics are never automatically promoted to
 a performance claim. Ratios above one favor the candidate for throughput;
 ratios below one favor it for latency. The run manifest records the benchmark
 client version when the client exposes one.
+
+## Current single-process load closure
+
+A same-instance release-mode run of the released Full+Sliding checkpoint held
+the request trace fixed at 16 requests, 127 observed input tokens, and 256 output
+tokens per request while sweeping C1/C2/C4/C8. Every arm passed the strengthened
+completion gate. Output throughput was 184.24, 350.59, 448.43, and 518.88
+token/s. Median TTFT was 163.06, 296.07, 574.80, and 1127.81 ms; median TPOT was
+4.80, 4.51, 6.70, and 11.06 ms. This establishes executable capacity through
+C8 and a clear throughput/latency frontier; it does not locate the failure point
+or establish a win over another engine.
+
+Cross-batch-size generated text is not a correctness gate by itself for BF16
+greedy decoding near tied logits. The direct executor qualification instead
+teacher-forces the same inputs: all eight B=8 rows are bit-identical, B=1 versus
+B=8 has maximum absolute logit difference 0.4296875 over 16 positions, and no tested
+argmax differs. The C2/C4/C8 text digests match; C1 differs and is reported, not
+hidden.
 
 ## Promotion rule
 

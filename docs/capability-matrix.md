@@ -32,17 +32,17 @@ recorded source closure.
 | Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; narrow matched benefit | Flattened replay failed at +24.9%; selected child-graph composition passed correctness and reduced matched batch-one fixed-step wall time by 8.3% over 20 iterations and 5.8% over 100 iterations; throughput remains unqualified |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
-| Single-process model engine | Narrow L4 correctness | One dedicated thread owns bounded admission/output queues, an active set, `RuntimeSession`, and `CompiledDecoder`; released hybrid tests cover B=2 prefill/decode, late-prefill plus decode, length, stop, cancel, and final drain. Fresh-prompt/greedy only; no HTTP or throughput claim |
+| Single-process model engine | Narrow L4 correctness + load closure | One dedicated thread owns bounded admission/output queues, an active set, `RuntimeSession`, and `CompiledDecoder`; released hybrid tests cover B=2 mixed scheduling and direct B=1/B=8 logit parity. Fresh-prompt/greedy only |
 | vLLM frontend adapter | L2 protocol + narrow L4 integration | Pinned Rust request/tokenizer/chat/SSE crates; tokenized Add/Abort, request-ID mapping, unsupported-field rejection, and dropped-stream auto-abort pass through the real model engine |
-| OpenAI-compatible API | Narrow L4 correctness | `orbitkv-serve` passes real-checkpoint non-streaming, ordered SSE, concurrent request, client-disconnect cancellation, graceful shutdown, and final drain on H20; load metrics remain unqualified |
-| Complete model executor | Narrow L4 correctness closure | Configuration-driven Full and released Full+Sliding dense checkpoints complete on H20; the hybrid closure includes independent reference-token parity, native-window retirement/reuse, cancellation, final drain, bounded continuous batching at B=2, and the real HTTP path; load qualification remains open |
+| OpenAI-compatible API | Narrow L4 correctness + load closure | `orbitkv-serve` passes real-checkpoint non-streaming, ordered SSE, cancellation, shutdown, final drain, and a fixed C1/C2/C4/C8 load trace with complete outputs; fairness, soak, capacity limit, and comparative benefit remain open |
+| Complete model executor | Narrow L4 correctness closure | Configuration-driven Full and released Full+Sliding dense checkpoints complete on H20; the hybrid closure includes independent reference-token parity, native-window retirement/reuse, cancellation, final drain, B=8 logit isolation, bounded continuous batching, and the real HTTP path |
 
 ## Decoder operator and model boundary
 
 | Capability | Current status |
 | --- | --- |
 | Dense decoder blocks | BF16 embedding, linear projections, pre-norm or sandwich-norm residuals, direct or unit-offset RMSNorm weights, global/local RoPE, SwiGLU or GeGLU, optional QKV bias and QK norm |
-| Attention | MHA/GQA paged attention; query-head count must divide by KV-head count; head dimension 64, 128, or 256 |
+| Attention | MHA/GQA paged attention; query-head count must divide by KV-head count; head dimension 64, 128, 256, or 512 when the compiled FlashInfer specialization exists |
 | KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, Prefix/COW lowering, stream-ordered token relocation |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
 | Checkpoint family | Configuration-driven dense decoder with fail-closed config and safetensors-header validation; released Full and Full+Sliding checkpoints have real-device correctness evidence |
@@ -108,7 +108,9 @@ fixed-budget boundary from 528 to 560; Retention Amplification fell from 1.387
 to 1.002. Median batch-one test-path time improved
 by 0.77%, with a paired mean improvement of 11.633 ms and 95% confidence interval
 5.697-17.570 ms. This qualifies a narrow lifecycle-management benefit, not
-serving throughput or multi-user capacity. Exact Chunked still lacks independent
+serving advantage. The single-process HTTP path now completes a fixed load
+through C8, but the measured increase from 184.24 to 518.88 output token/s costs
+substantially higher TTFT and TPOT. Exact Chunked still lacks independent
 released-model qualification. There is no production, broad-model, or
 complete-replacement claim. A future serving statement must
 compare the same model, weights, dtype, kernels, batching policy, request trace,

@@ -61,15 +61,22 @@ into decode-first token-budgeted batches over one `RuntimeSession` and compiled
 Luminal decoder. On H20, two concurrent 512-token hybrid requests execute with
 B=2 prefill/decode and match the existing reference prefix; a late prefill also
 joins an active decode request. Length, stop-token, cancellation, backpressure,
-and complete drain are covered. Sampling remains greedy. Chunked prefill,
-fairness/pressure qualification, and production soak remain open.
+and complete drain are covered. The same released checkpoint also passes a
+direct B=1/B=8 teacher-forced parity gate: all B=8 rows are bit-identical,
+maximum absolute cross-batch logit difference is 0.4296875, and 16 tested
+argmax decisions match. Sampling remains
+greedy. Chunked prefill, fairness, and production soak remain open.
 
 The `orbitkv-serve` binary provides the complete single-process HTTP product
 path. A released hybrid checkpoint passes real H20 OpenAI completion tests with
 pre-tokenized prompts, matching tokenizer assets, non-streaming output, ordered
 SSE token IDs plus `[DONE]`, concurrent requests, client-disconnect auto-abort,
 graceful shutdown, and manager final drain. This is a correctness closure, not a
-serving-performance result.
+general performance result. A fixed 16-request trace completes at C1/C2/C4/C8
+with full 256-token outputs and no errors. Throughput rises from 184.24 to
+518.88 output token/s, but median TTFT rises from 163.06 to 1127.81 ms and TPOT
+from 4.80 to 11.06 ms. This qualifies a narrow internal scaling frontier, not a
+win over SGLang.
 
 ## Evidence interpretation
 
@@ -77,5 +84,6 @@ The child CUDA Graph result demonstrates a narrow dispatch optimization. The
 released-hybrid residence experiment is the first narrow L5 compiler result:
 ten paired release-mode epochs show a 27.8% live-payload reduction, a fixed-budget
 boundary increase from 528 to 560, and a positive paired total-time interval.
-It is not a serving claim: continuous batching, TTFT/TPOT, p95/p99, throughput,
+It is not a comparative serving claim. TTFT/TPOT/tails and internal concurrency
+scaling are now measured through C8, while fairness, soak, the capacity limit,
 and comparison with a tuned reference engine remain open.

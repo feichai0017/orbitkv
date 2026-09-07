@@ -18,8 +18,10 @@ continuous batching. It compiles once at startup, merges fresh requests into
 decode-first token-budgeted dispatches, streams through bounded event queues,
 suppresses stop tokens, cancels at token boundaries, and drains manager state.
 The `orbitkv-serve` binary now wires that coordinator into the optional vLLM
-Rust HTTP frontend. The remaining serving gap is fairness, pressure, soak, and
-performance qualification.
+Rust HTTP frontend. A released-checkpoint H20 load qualification reaches eight
+concurrent requests with complete fixed-length outputs; the remaining serving
+gaps are fairness, long soak, the actual capacity failure point, and a matched
+reference-engine comparison.
 
 ## External projects
 

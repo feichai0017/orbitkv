@@ -22,14 +22,16 @@ move a compact reviewed result here only after its checks pass.
 | `released-hybrid-residence-benefit-20260906` | Ten paired release-mode runs compare compiled and request-lifetime residence through one searched graph; output parity, resident bytes, fixed-budget reach, and paired timing interval pass | Narrow batch-one same-executor L5 result; not serving throughput or SGLang comparison |
 | `continuous-batching-engine-20260907` | Released hybrid model executes B=2 prefill/decode with reference-token parity and admits late prefill during active decode | Continuous-batching correctness only; no HTTP, fairness, capacity, or performance claim |
 | `single-process-http-engine-20260907` | Real released checkpoint serves OpenAI non-streaming and SSE completions through `orbitkv-serve`; concurrent requests, dropped-stream cancellation, shutdown, and final drain pass | HTTP correctness only; no fairness, capacity, or throughput claim |
+| `serving-load-qualification-20260907` | One warm single-process engine completes fixed 16-request traces at C1/C2/C4/C8 with full outputs; B=8 row isolation and bounded B=1/B=8 logit parity pass | Narrow internal scaling frontier; no fairness, soak, capacity-limit, SGLang comparison, or performance-advantage claim |
 
 The normative current support boundary is the
 [Capability Matrix](../docs/capability-matrix.md). The mechanism ablation proves
 a same-semantics physical-residence reduction and host fixed-capacity admission
 difference. The released hybrid benefit record now establishes a narrow
 same-executor compiler benefit. The HTTP record closes model-backed serving
-correctness but not continuous-batching capacity, tail latency, or throughput.
-Those remain R3/R4 gates.
+correctness. The serving-load record adds a narrow C1-C8 throughput/latency
+frontier; R4 still owns matched SGLang comparison and any product-level benefit
+claim.
 
 ## Result-package policy
 
@@ -37,7 +39,7 @@ A promoted result directory contains only:
 
 - `environment.json`: hardware, driver/runtime, model and weight identity,
   dependency versions, and source revisions;
-- raw benchmark JSON emitted by the common client;
+- raw benchmark JSON or a compact reviewed projection of its measured fields;
 - `summary.json`: paired metrics, correctness gate, and qualified claims;
 - optional checksums for those files.
 
