@@ -8,8 +8,13 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 PRODUCTION_LIMIT = 1_500
 TEST_LIMIT = 2_000
-SOURCE_ROOTS = (Path("core/src"), Path("executor/src"), Path("server/src"))
-TEST_ROOTS = (Path("core/tests"), Path("executor/tests"))
+SOURCE_ROOTS = (
+    Path("core/src"),
+    Path("engine/src"),
+    Path("executor/src"),
+    Path("server/src"),
+)
+TEST_ROOTS = (Path("core/tests"), Path("engine/tests"), Path("executor/tests"))
 REMOVED_PATHS = (Path("compat"), Path("core/ffi"), Path("tests"))
 EXCLUDED = frozenset({".git", "target", "results", "node_modules", "luminal"})
 SPECIFIC_FILENAME = re.compile(
@@ -20,11 +25,13 @@ SPECIFIC_FILENAME = re.compile(
 LAYER_MANIFESTS = {
     "core": Path("core/Cargo.toml"),
     "executor": Path("executor/Cargo.toml"),
+    "engine": Path("engine/Cargo.toml"),
     "server": Path("server/Cargo.toml"),
 }
 FORBIDDEN_LAYER_DEPENDENCIES = {
     "core": frozenset({"orbitkv-executor", "orbitkv-server", "luminal", "luminal_cuda_lite", "luminal_nn"}),
     "executor": frozenset({"orbitkv-server"}),
+    "engine": frozenset(),
     "server": frozenset({"orbitkv", "orbitkv-executor", "luminal", "luminal_cuda_lite", "luminal_nn"}),
 }
 SERVER_PHYSICAL_TYPES = re.compile(

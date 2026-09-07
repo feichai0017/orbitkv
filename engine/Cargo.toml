@@ -1,0 +1,29 @@
+[package]
+name = "orbitkv-engine"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.88"
+description = "Single-process composition root for OrbitKV and Luminal."
+license = "MIT"
+
+[features]
+default = []
+cuda = ["orbitkv-executor/cuda"]
+
+[dependencies]
+futures-util = "0.3.31"
+orbitkv = { path = "../core" }
+orbitkv-executor = { path = "../executor" }
+orbitkv-server = { path = "../server" }
+thiserror = "2.0.17"
+tokio = { version = "1.47.1", features = ["sync"] }
+
+[dev-dependencies]
+tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = "deny"
+pedantic = "deny"

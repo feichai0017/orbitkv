@@ -1,0 +1,52 @@
+{
+  "schema": "orbitkv.serial-model-engine",
+  "status": "passed",
+  "qualification": "released_checkpoint_serial_composition_correctness_only",
+  "configuration": {
+    "dtype": "bfloat16",
+    "layers": 18,
+    "full_layers": [5, 11, 17],
+    "sliding_layer_count": 15,
+    "sliding_window_tokens": 512,
+    "page_tokens": 16,
+    "page_counts": [64, 33],
+    "maximum_model_tokens": 1024,
+    "maximum_prefill_tokens": 512,
+    "search_graphs_per_bucket": 2
+  },
+  "requests": {
+    "length": {
+      "prompt_tokens": 512,
+      "generated_tokens": [236743, 199, 236820, 34280, 236813, 208, 236820, 34280],
+      "reference_prefix_match": true,
+      "final_drain": true
+    },
+    "stop": {
+      "prompt_tokens": 16,
+      "stop_token_id": 106,
+      "stop_token_suppressed": true,
+      "final_drain": true
+    },
+    "cancel": {
+      "prompt_tokens": 512,
+      "cancelled_after_admission": true,
+      "final_drain": true
+    }
+  },
+  "diagnostic": {
+    "rust_profile": "release",
+    "complete_test_seconds": 29.99,
+    "compiler_and_kernel_caches": "warm",
+    "benchmark_qualified": false
+  },
+  "claims": {
+    "single_process_model_composition": true,
+    "serial_request_lifecycle": true,
+    "stop_and_cancellation_drain": true,
+    "continuous_batching": false,
+    "model_backed_http": false,
+    "latency_benefit": false,
+    "throughput_benefit": false,
+    "production_ready": false
+  }
+}
