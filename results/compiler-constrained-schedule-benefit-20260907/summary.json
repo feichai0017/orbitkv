@@ -24,48 +24,48 @@
   },
   "candidate_vs_previous_orbitkv": {
     "candidate_median": {
-      "output_tokens_per_second": 679.521930,
-      "ttft_ms": 66.676996,
-      "tpot_ms": 2.681607,
-      "itl_ms": 2.545310,
-      "e2el_ms": 750.563102
+      "output_tokens_per_second": 679.329711,
+      "ttft_ms": 66.637345,
+      "tpot_ms": 2.679935,
+      "itl_ms": 2.546879,
+      "e2el_ms": 749.980476
     },
     "previous_median": {
-      "output_tokens_per_second": 593.572318,
-      "ttft_ms": 98.143524,
-      "tpot_ms": 2.984237,
-      "itl_ms": 2.851903,
-      "e2el_ms": 858.925872
+      "output_tokens_per_second": 592.728086,
+      "ttft_ms": 98.300668,
+      "tpot_ms": 2.989699,
+      "itl_ms": 2.854288,
+      "e2el_ms": 860.485441
     },
     "candidate_over_previous": {
-      "output_throughput": 1.144177,
-      "ttft": 0.679991,
-      "tpot": 0.898973,
-      "itl": 0.892702,
-      "e2el": 0.873986
+      "output_throughput": 1.144648,
+      "ttft": 0.678191,
+      "tpot": 0.897585,
+      "itl": 0.893130,
+      "e2el": 0.872441
     }
   },
   "candidate_vs_stock_sglang": {
     "orbitkv_median": {
-      "output_tokens_per_second": 678.643437,
-      "ttft_ms": 66.915056,
-      "tpot_ms": 2.685391,
-      "itl_ms": 2.550698,
-      "e2el_ms": 751.746109
+      "output_tokens_per_second": 679.317409,
+      "ttft_ms": 66.748075,
+      "tpot_ms": 2.682120,
+      "itl_ms": 2.547332,
+      "e2el_ms": 750.316211
     },
     "sglang_median": {
-      "output_tokens_per_second": 1135.113650,
-      "ttft_ms": 14.278862,
-      "tpot_ms": 1.692016,
-      "itl_ms": 1.686676,
-      "e2el_ms": 444.738368
+      "output_tokens_per_second": 1136.681602,
+      "ttft_ms": 13.958455,
+      "tpot_ms": 1.691319,
+      "itl_ms": 1.686532,
+      "e2el_ms": 444.511234
     },
     "orbitkv_over_sglang": {
-      "output_throughput": 0.597864,
-      "ttft": 4.687055,
-      "tpot": 1.587510,
-      "itl": 1.512047,
-      "e2el": 1.690312
+      "output_throughput": 0.597796,
+      "ttft": 4.793660,
+      "tpot": 1.585015,
+      "itl": 1.509730,
+      "e2el": 1.688158
     }
   },
   "persistent_kv_payload": {
@@ -75,10 +75,10 @@
     "nvidia_smi_allocator_peak_measurement": false
   },
   "raw_qualification_checksums": {
-    "same_engine_run_json_sha256": "1511a6c2402b4767f778931de53e27b30d82d81e835870c11230c27b7a2edb57",
-    "same_engine_completed_json_sha256": "2dd1777994dac03376d2c4a30c0d3d5180b704051cb17c8cc4a60f99bdd10e43",
-    "sglang_run_json_sha256": "29f9781db14116ec472e3fc244e0a3497c6811449e1b3303549b0ebff8ce15fd",
-    "sglang_completed_json_sha256": "63bbb0540f100a7faacfc0da9037a4e0044db22b0985cce70e0b26e36e133d59"
+    "same_engine_run_json_sha256": "1be97d0b89b8707adeed747eaaf927139d615c41c23a7cee44067d8c59b2a0e9",
+    "same_engine_completed_json_sha256": "afa295f76768b5a3a64f838dc4f9cc599a3a093d140edf927edd7439cf19a158",
+    "sglang_run_json_sha256": "3d49864dbca7496b14c85ab1c7071cc2f103150ad14bd1c084c58ab0adb24e34",
+    "sglang_completed_json_sha256": "730c46a23cd316f2692b1e7aefb8f58012364f8ec834d232f66dcb384de7b0f0"
   },
   "claims": {
     "compiler_constrained_same_engine_improvement_measured": true,
