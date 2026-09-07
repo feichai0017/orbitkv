@@ -23,6 +23,7 @@ move a compact reviewed result here only after its checks pass.
 | `continuous-batching-engine-20260907` | Released hybrid model executes B=2 prefill/decode with reference-token parity and admits late prefill during active decode | Continuous-batching correctness only; no HTTP, fairness, capacity, or performance claim |
 | `single-process-http-engine-20260907` | Real released checkpoint serves OpenAI non-streaming and SSE completions through `orbitkv-serve`; concurrent requests, dropped-stream cancellation, shutdown, and final drain pass | HTTP correctness only; no fairness, capacity, or throughput claim |
 | `serving-load-qualification-20260907` | One warm single-process engine completes fixed 16-request traces at C1/C2/C4/C8 with full outputs; B=8 row isolation and bounded B=1/B=8 logit parity pass | Narrow internal scaling frontier; no fairness, soak, capacity-limit, SGLang comparison, or performance-advantage claim |
+| `sglang-product-comparison-20260907` | Four artifact-fixed alternating H20 epochs compare the released hybrid checkpoint against clean stock SGLang v0.5.17; request gates and per-arm repeatability pass | Negative serving-performance result: 0.534x throughput, 1.76x TPOT, 6.50x TTFT; configured KV payload is 40.4% smaller; cross-engine output digest differs |
 
 The normative current support boundary is the
 [Capability Matrix](../docs/capability-matrix.md). The mechanism ablation proves
@@ -30,8 +31,8 @@ a same-semantics physical-residence reduction and host fixed-capacity admission
 difference. The released hybrid benefit record now establishes a narrow
 same-executor compiler benefit. The HTTP record closes model-backed serving
 correctness. The serving-load record adds a narrow C1-C8 throughput/latency
-frontier; R4 still owns matched SGLang comparison and any product-level benefit
-claim.
+frontier. The SGLang record closes R4 as a negative performance result and
+redirects work to the continuous-batching executor hot path.
 
 ## Result-package policy
 

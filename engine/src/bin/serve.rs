@@ -15,6 +15,10 @@ use tokio_util::sync::CancellationToken;
 struct Args {
     #[arg(long)]
     model: PathBuf,
+    /// Strict compiled decoder schedule. Loads when present; otherwise creates
+    /// it atomically after the one-time search.
+    #[arg(long)]
+    decoder_artifact: Option<PathBuf>,
     #[arg(long)]
     frontend_model: Option<PathBuf>,
     #[arg(long)]
@@ -85,6 +89,7 @@ impl ServeConfig {
         Ok(Self {
             engine: ModelEngineConfig {
                 model_directory: args.model,
+                decoder_artifact: args.decoder_artifact,
                 device_index: args.device,
                 page_tokens: args.page_tokens,
                 page_counts: args.page_counts,
@@ -167,6 +172,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(config.engine.page_counts, [128, 66]);
+        assert_eq!(config.engine.decoder_artifact, None);
         assert_eq!(config.frontend.logical_kv_page_count, 128);
         assert_eq!(config.frontend.served_model_names, ["checkpoint"]);
         assert_eq!(config.frontend.model, "/models/checkpoint");
@@ -213,5 +219,26 @@ mod tests {
         );
         assert_eq!(config.frontend.model, "/models/tokenizer");
         assert_eq!(config.frontend.served_model_names, ["public-model"]);
+    }
+
+    #[test]
+    fn decoder_artifact_path_is_forwarded_to_the_engine() {
+        let config = ServeConfig::from_args(
+            [
+                "orbitkv-serve",
+                "--model",
+                "/models/weights",
+                "--decoder-artifact",
+                "/artifacts/decoder.json",
+                "--page-counts",
+                "128,66",
+            ]
+            .map(str::to_string),
+        )
+        .unwrap();
+        assert_eq!(
+            config.engine.decoder_artifact,
+            Some(PathBuf::from("/artifacts/decoder.json"))
+        );
     }
 }

@@ -120,15 +120,15 @@ difference 0.4296875, and zero argmax mismatches over 16 positions.
 
 This closes a narrow R3 load gate and exposes a real throughput/latency tradeoff.
 Fairness, soak, the capacity failure point, Chunked prefill, and richer sampling
-remain open. R4 is now the next product gate; no SGLang-relative benefit follows
-from this internal scaling result.
+remain open. The R4 comparison below now quantifies the remaining executor gap;
+no SGLang-relative benefit follows from this internal scaling result.
 
 PegaInfer is a useful reference for a small Rust server/model boundary and for a
 full-plus-linear-attention execution loop. It is not a Dynamo integration: its
 current source has no Dynamo, KVBM, or NIXL dependency. Do not copy its
 model-named dispatch or model-owned contiguous KV cache into this architecture.
 
-## R4: Run the product comparison
+## R4: Run the product comparison — completed, competitiveness gate failed
 
 Use `tools/run_matched_serving.py` and one vLLM benchmark client for both
 OrbitKV/Luminal and a tuned stock SGLang. Alternate launch order across an even
@@ -137,8 +137,44 @@ sampling, and concurrency constant. Report correctness separately from TTFT,
 TPOT, ITL, throughput, tail latency, memory, and capacity.
 
 The same-executor ablation from R2 establishes attribution to the compiler. The
-SGLang comparison establishes product competitiveness. Neither replaces the
-other.
+SGLang comparison tests product competitiveness. Neither replaces the other.
+
+The first run exposed cross-process Luminal search variation, so it was not
+promoted. Native schedule artifacts were then added: paged-attention custom-op
+schedules are reloaded without search and are strictly bound to the manifest,
+decoder/weight geometry, arenas, and compile buckets. Four independent H20
+restarts produced one stable candidate digest and a 0.74% throughput coefficient
+of variation.
+
+The artifact-fixed four-epoch C2 comparison completed every 127-to-256-token
+request without errors. OrbitKV median output throughput was 592.32 token/s
+versus 1112.60 for stock SGLang v0.5.17 (0.534x). OrbitKV had 2.997 ms TPOT
+versus 1.699 ms (1.76x) and 98.08 ms TTFT versus 15.14 ms (6.50x). Cross-engine
+text digests differed, so this is a transparent product diagnostic rather than
+a matched-output benefit claim.
+
+OrbitKV did preserve a state-capacity advantage: its Full/Sliding class arenas
+encode 85.875 MiB of persistent K/V payload for the tested capacity, versus
+144.0 MiB for SGLang after SGLang disabled hybrid SWA memory on Gemma3, a 40.4%
+reduction. Those are resolved tensor-payload bytes, not allocator peak. The R4
+competitiveness gate therefore fails on serving speed while passing the narrower
+persistent-state objective.
+
+## R4.1: Close the executor gap
+
+Do not expand the product surface until the fixed trace is competitive. Attack
+the measured hot path in this order:
+
+1. integrate fixed-signature decode child-CUDA-Graph replay into continuous
+   batching for B1/B2/B4/B8 signatures;
+2. eliminate selected materialized KV updates and their graph-visible D2D
+   epilogues where alias legality permits true in-place writes;
+3. profile the artifact-fixed schedule against SGLang FA3 at kernel and launch
+   granularity, then feed those costs back into Luminal search;
+4. rerun the four alternating epochs and require stable outputs within each arm,
+   complete request gates, and a predeclared throughput/latency threshold.
+
+Only after this gate passes should R5/R6 become the primary product work.
 
 ## R5: Add distributed KV tiers
 

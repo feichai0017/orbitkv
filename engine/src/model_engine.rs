@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, VecDeque, btree_map::Entry};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::sync::{
     Arc, Mutex,
@@ -18,6 +19,7 @@ use orbitkv::{
 };
 use orbitkv_executor::{
     AttentionBatch, ExecutorArena, ExecutorPlan,
+    model::DecoderArtifact,
     model::{CompiledDecoder, DecoderClassStep, DecoderCompileConfig, DecoderConfig, DecoderStep},
 };
 use orbitkv_server::{
@@ -27,10 +29,15 @@ use orbitkv_server::{
 use thiserror::Error;
 use tokio::sync::{mpsc as async_mpsc, oneshot};
 
+const MAX_DECODER_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
+
 /// Startup and capacity policy for the single-process model engine.
 #[derive(Clone, Debug)]
 pub struct ModelEngineConfig {
     pub model_directory: PathBuf,
+    /// Optional strict schedule artifact. Existing files are loaded; missing
+    /// files are atomically created after a successful search.
+    pub decoder_artifact: Option<PathBuf>,
     pub device_index: usize,
     pub page_tokens: u64,
     /// Physical pages for each manifest class, in canonical class-id order.
@@ -429,36 +436,7 @@ impl ModelWorker {
             .into_boxed_slice();
         let plan = ExecutorPlan::compile(&manifest)
             .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
-        let weights = checkpoint_weights(&config.model_directory)?;
-        let decoder = CompiledDecoder::compile_on_device(
-            &decoder_config,
-            &plan,
-            &arenas,
-            config.device_index,
-            &weights,
-            DecoderCompileConfig {
-                maximum_query_tokens: config.maximum_batch_tokens,
-                representative_prefill_tokens: config.representative_prefill_tokens,
-                maximum_batch_size: config.maximum_active_requests,
-                maximum_context_pages: config
-                    .page_counts
-                    .iter()
-                    .copied()
-                    .max()
-                    .and_then(|pages| usize::try_from(pages).ok())
-                    .ok_or(ModelEngineError::InvalidConfig)?,
-                representative_context_pages: config
-                    .representative_prefill_tokens
-                    .div_ceil(
-                        usize::try_from(config.page_tokens)
-                            .map_err(|_| ModelEngineError::InvalidConfig)?,
-                    )
-                    .max(1),
-                search_graphs: config.search_graphs,
-                search_seed: config.search_seed,
-            },
-        )
-        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
+        let decoder = initialize_decoder(config, &decoder_config, &plan, &arenas)?;
         Ok(Self {
             session,
             plan,
@@ -957,6 +935,100 @@ impl ModelWorker {
             maximum_observed_batch_size: self.counters.maximum_observed_batch_size,
         }
     }
+}
+
+fn initialize_decoder(
+    config: &ModelEngineConfig,
+    decoder_config: &DecoderConfig,
+    plan: &ExecutorPlan,
+    arenas: &[ExecutorArena],
+) -> Result<CompiledDecoder, ModelEngineError> {
+    let weights = checkpoint_weights(&config.model_directory)?;
+    let artifact = config
+        .decoder_artifact
+        .as_deref()
+        .filter(|path| path.exists())
+        .map(read_decoder_artifact)
+        .transpose()?;
+    let page_tokens =
+        usize::try_from(config.page_tokens).map_err(|_| ModelEngineError::InvalidConfig)?;
+    let maximum_context_pages = config
+        .page_counts
+        .iter()
+        .copied()
+        .max()
+        .and_then(|pages| usize::try_from(pages).ok())
+        .ok_or(ModelEngineError::InvalidConfig)?;
+    let (decoder, selected_artifact) = CompiledDecoder::compile_or_load_on_device(
+        decoder_config,
+        plan,
+        arenas,
+        config.device_index,
+        &weights,
+        DecoderCompileConfig {
+            maximum_query_tokens: config.maximum_batch_tokens,
+            representative_prefill_tokens: config.representative_prefill_tokens,
+            maximum_batch_size: config.maximum_active_requests,
+            maximum_context_pages,
+            representative_context_pages: config
+                .representative_prefill_tokens
+                .div_ceil(page_tokens)
+                .max(1),
+            search_graphs: config.search_graphs,
+            search_seed: config.search_seed,
+        },
+        artifact.as_ref(),
+    )
+    .map_err(initialization_error)?;
+    if let Some(path) = &config.decoder_artifact {
+        if artifact.is_some() {
+            eprintln!("decoder: loaded schedule artifact {}", path.display());
+        } else {
+            persist_decoder_artifact(path, &selected_artifact)?;
+            eprintln!("decoder: stored schedule artifact {}", path.display());
+        }
+    }
+    Ok(decoder)
+}
+
+fn initialization_error(error: impl std::fmt::Display) -> ModelEngineError {
+    ModelEngineError::Initialization(error.to_string())
+}
+
+fn read_decoder_artifact(path: &Path) -> Result<DecoderArtifact, ModelEngineError> {
+    let metadata = std::fs::metadata(path).map_err(initialization_error)?;
+    if metadata.len() > MAX_DECODER_ARTIFACT_BYTES {
+        return Err(ModelEngineError::Initialization(format!(
+            "decoder artifact exceeds {MAX_DECODER_ARTIFACT_BYTES} bytes"
+        )));
+    }
+    let bytes = std::fs::read(path).map_err(initialization_error)?;
+    DecoderArtifact::from_bytes(&bytes).map_err(initialization_error)
+}
+
+fn persist_decoder_artifact(
+    path: &Path,
+    artifact: &DecoderArtifact,
+) -> Result<(), ModelEngineError> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or(Path::new("."));
+    std::fs::create_dir_all(parent)
+        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)
+        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
+    let bytes = artifact
+        .to_bytes()
+        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
+    temporary
+        .write_all(&bytes)
+        .and_then(|()| temporary.as_file().sync_all())
+        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
+    temporary
+        .persist_noclobber(path)
+        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
+    Ok(())
 }
 
 fn fail_all_requests(

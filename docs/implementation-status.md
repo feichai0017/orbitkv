@@ -78,12 +78,22 @@ with full 256-token outputs and no errors. Throughput rises from 184.24 to
 from 4.80 to 11.06 ms. This qualifies a narrow internal scaling frontier, not a
 win over SGLang.
 
+A strict schedule artifact now removes cross-process search variation. It stores
+no model weights, device pointers, or KV bytes; loading rebinds current custom
+ops and verifies LLIR fingerprints plus the manifest/model/arena/bucket identity.
+Four artifact-loaded H20 restarts produced identical candidate output digests
+and 0.74% output-throughput coefficient of variation.
+
 ## Evidence interpretation
 
 The child CUDA Graph result demonstrates a narrow dispatch optimization. The
 released-hybrid residence experiment is the first narrow L5 compiler result:
 ten paired release-mode epochs show a 27.8% live-payload reduction, a fixed-budget
 boundary increase from 528 to 560, and a positive paired total-time interval.
-It is not a comparative serving claim. TTFT/TPOT/tails and internal concurrency
-scaling are now measured through C8, while fairness, soak, the capacity limit,
-and comparison with a tuned reference engine remain open.
+It is not a comparative serving benefit. TTFT/TPOT/tails and internal concurrency
+scaling are measured through C8, while fairness, soak, and the capacity limit
+remain open. The first tuned comparison is complete and negative: at C2 OrbitKV reaches
+0.534x stock SGLang throughput with 1.76x TPOT and 6.50x TTFT. Its configured
+persistent K/V tensor payload is 40.4% smaller on the same Gemma3 capacity
+because SGLang disables hybrid SWA memory. Executor performance, not KV lifetime
+correctness, is the next blocker.

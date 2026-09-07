@@ -3,7 +3,7 @@ use std::fs::File;
 use std::io::Read;
 use std::path::PathBuf;
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use super::{DecoderBlockLayout, DecoderConfig, DecoderError};
 
@@ -16,7 +16,7 @@ struct HeaderTensor {
     shape: Vec<usize>,
 }
 
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub(super) struct DecoderWeightFeatures {
     pub(super) qkv_bias: bool,
     pub(super) qk_norm: bool,

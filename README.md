@@ -63,6 +63,14 @@ reducing matched fixed-step decode wall time by 8.3% over 20 iterations and
 5.8% over a 100-iteration confirmation. This is a narrow batch-one result, not
 a throughput or general model-speed claim.
 
+The selected decode/prefill schedule can be persisted with
+`--decoder-artifact`. A missing path is atomically created after search; an
+existing artifact is loaded without re-running search. The artifact contains no
+weights, pointers, or KV data and is bound to the manifest, decoder and weight
+geometry, arena shape, and compile buckets. Custom-op schedules are re-extracted
+against the current paged-attention operators and LLIR-fingerprint checked; any
+mismatch fails closed instead of silently searching a replacement.
+
 The core also has a backend-neutral external-export transaction for immutable
 request snapshots. It pins exact local page generations, emits logical-page
 copy records, requires per-page durable receipts and a monotonic completion
@@ -190,6 +198,7 @@ Run the server with explicit per-class page budgets:
 ```bash
 cargo run --release --locked -p orbitkv-engine --features server --bin orbitkv-serve -- \
   --model /models/checkpoint \
+  --decoder-artifact /artifacts/decoder.json \
   --page-counts 128,66 \
   --max-model-tokens 1024 \
   --max-prefill-tokens 512 \
@@ -209,6 +218,13 @@ test-path time by 0.77% while preserving all 256 generated tokens. This remains
 a batch-one engine microbenchmark, not an end-to-end serving-throughput result.
 There is still no production-serving, broad model-family, or complete SGLang
 replacement claim.
+
+A four-epoch product comparison with tuned stock SGLang v0.5.17 is now also
+recorded. With a fixed decoder artifact, OrbitKV reached 53.4% of SGLang's C2
+output throughput and had 1.76x TPOT and 6.50x TTFT. OrbitKV's configured K/V
+tensor payload was 40.4% smaller because SGLang disabled hybrid Sliding-Window
+memory for this Gemma3 path. This is a useful state-capacity advantage and a
+clear serving-performance deficit, not a win claim.
 
 `results/**` contains only compact reviewed evidence directly relevant to the
 current architecture. Removed historical archives remain recoverable from Git

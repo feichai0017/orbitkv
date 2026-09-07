@@ -5,10 +5,13 @@ use std::collections::BTreeSet;
 use luminal::prelude::rand::SeedableRng;
 use luminal::{
     dtype::DType,
+    graph::SelectedSchedule,
     op::Runtime,
     prelude::{Expression, Graph, GraphTensor, Symbol, sym},
     shape::ToShape,
 };
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use luminal_cuda_lite::{
@@ -47,6 +50,8 @@ pub enum DecoderError {
     Device(#[from] luminal_cuda_lite::cudarc::driver::DriverError),
     #[error(transparent)]
     Relocation(#[from] CudaRelocationError),
+    #[error("decoder artifact is incompatible: {0}")]
+    Artifact(String),
     #[error("decoder runtime input geometry exceeds its compiled capacity")]
     InputCapacity,
     #[error("CUDA graph capture requires a single-token decode step")]
@@ -58,7 +63,7 @@ pub enum DecoderError {
 }
 
 /// Dynamic-shape and search policy for one compiled decoder executable.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct DecoderCompileConfig {
     pub maximum_query_tokens: usize,
     pub representative_prefill_tokens: usize,
@@ -67,6 +72,66 @@ pub struct DecoderCompileConfig {
     pub representative_context_pages: usize,
     pub search_graphs: usize,
     pub search_seed: u64,
+}
+
+const DECODER_ARTIFACT_SCHEMA: u32 = 1;
+
+/// Portable graph-selection artifact for one native decoder configuration.
+///
+/// It contains no weights, device pointers, or KV contents. The identity binds
+/// the selected Luminal schedule to the canonical manifest, model semantics,
+/// weight-family geometry, physical arena shape, and compile buckets.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct DecoderArtifact {
+    schema: u32,
+    identity: String,
+    schedule: SelectedSchedule,
+}
+
+#[derive(Serialize)]
+struct DecoderArtifactIdentity<'a> {
+    manifest_fingerprint: &'a str,
+    page_tokens: u32,
+    decoder: &'a DecoderConfig,
+    weights: DecoderWeightFeatures,
+    arenas: Vec<DecoderArtifactArena>,
+    compile: DecoderCompileConfig,
+}
+
+#[derive(Serialize)]
+struct DecoderArtifactArena {
+    class_id: u16,
+    backend_base_index: u64,
+    page_count: u32,
+}
+
+impl DecoderArtifact {
+    /// Serializes the artifact as compact JSON bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns serialization failures without emitting partial data.
+    pub fn to_bytes(&self) -> Result<Vec<u8>, DecoderError> {
+        serde_json::to_vec(self).map_err(DecoderError::from)
+    }
+
+    /// Parses a decoder artifact. Compatibility is checked when it is loaded
+    /// against a concrete model and executor plan.
+    ///
+    /// # Errors
+    ///
+    /// Rejects malformed JSON or an unknown artifact schema.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DecoderError> {
+        let artifact = serde_json::from_slice::<Self>(bytes)?;
+        if artifact.schema != DECODER_ARTIFACT_SCHEMA {
+            return Err(DecoderError::Artifact(format!(
+                "schema {} != {DECODER_ARTIFACT_SCHEMA}",
+                artifact.schema
+            )));
+        }
+        Ok(artifact)
+    }
 }
 
 impl DecoderCompileConfig {
@@ -361,9 +426,48 @@ impl CompiledDecoder {
         weight_files: &[std::path::PathBuf],
         compile: DecoderCompileConfig,
     ) -> Result<Self, DecoderError> {
+        Self::compile_or_load_on_device(
+            config,
+            plan,
+            arenas,
+            device_index,
+            weight_files,
+            compile,
+            None,
+        )
+        .map(|(decoder, _)| decoder)
+    }
+
+    /// Builds a decoder from a stored schedule or searches a new schedule and
+    /// returns the exact artifact selected for this executable.
+    ///
+    /// A supplied artifact is strict: identity or LLIR validation failure is
+    /// returned to the caller and never falls back to a new search.
+    ///
+    /// # Errors
+    ///
+    /// Returns device, model, artifact, or compilation failures.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compile_or_load_on_device(
+        config: &DecoderConfig,
+        plan: &ExecutorPlan,
+        arenas: &[ExecutorArena],
+        device_index: usize,
+        weight_files: &[std::path::PathBuf],
+        compile: DecoderCompileConfig,
+        artifact: Option<&DecoderArtifact>,
+    ) -> Result<(Self, DecoderArtifact), DecoderError> {
         let context = CudaContext::new(device_index)?;
         let stream = context.new_stream()?;
-        Self::compile(config, plan, arenas, &stream, weight_files, compile)
+        Self::compile_or_load(
+            config,
+            plan,
+            arenas,
+            &stream,
+            weight_files,
+            compile,
+            artifact,
+        )
     }
 
     /// Builds and searches one decoder graph with decode and prefill buckets.
@@ -385,12 +489,39 @@ impl CompiledDecoder {
         weight_files: &[std::path::PathBuf],
         compile: DecoderCompileConfig,
     ) -> Result<Self, DecoderError> {
+        Self::compile_or_load(config, plan, arenas, stream, weight_files, compile, None)
+            .map(|(decoder, _)| decoder)
+    }
+
+    /// Compiles or strictly loads one selected decoder schedule.
+    ///
+    /// # Errors
+    ///
+    /// Rejects incompatible artifacts and propagates model or device failures.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compile_or_load(
+        config: &DecoderConfig,
+        plan: &ExecutorPlan,
+        arenas: &[ExecutorArena],
+        stream: &std::sync::Arc<CudaStream>,
+        weight_files: &[std::path::PathBuf],
+        compile: DecoderCompileConfig,
+        artifact: Option<&DecoderArtifact>,
+    ) -> Result<(Self, DecoderArtifact), DecoderError> {
         compile.validate()?;
         if weight_files.is_empty() {
             return Err(DecoderError::InvalidGeometry("weight files"));
         }
         let mut graph = Graph::default();
         let weights = inspect_weight_features(weight_files, config)?;
+        let identity = decoder_artifact_identity(config, plan, arenas, weights, compile)?;
+        if let Some(artifact) = artifact
+            && artifact.identity != identity
+        {
+            return Err(DecoderError::Artifact(
+                "model, plan, arena, or compile identity changed".into(),
+            ));
+        }
         let decoder = DecoderGraph::build(&mut graph, config, weights, plan, arenas)?;
         let page_tokens = usize::try_from(plan.page_tokens)
             .map_err(|_| DecoderError::InvalidGeometry("page tokens"))?;
@@ -415,8 +546,26 @@ impl CompiledDecoder {
         }
         seed_compile_inputs(&mut runtime, &decoder, compile, page_tokens);
         let options = decoder_compile_options(&decoder, compile);
-        let mut rng = luminal::prelude::rand::rngs::SmallRng::seed_from_u64(compile.search_seed);
-        let mut runtime = graph.compile_with_rng(runtime, options, &mut rng);
+        let effective_artifact = if let Some(artifact) = artifact {
+            graph.prepare_selected_schedule(&options);
+            graph.install_selected_schedule(artifact.schedule.clone());
+            graph
+                .load_selected_schedule(&mut runtime)
+                .map_err(DecoderError::Artifact)?;
+            artifact.clone()
+        } else {
+            let mut rng =
+                luminal::prelude::rand::rngs::SmallRng::seed_from_u64(compile.search_seed);
+            runtime = graph.compile_with_rng(runtime, options, &mut rng);
+            DecoderArtifact {
+                schema: DECODER_ARTIFACT_SCHEMA,
+                identity,
+                schedule: graph
+                    .selected_schedule()
+                    .cloned()
+                    .ok_or_else(|| DecoderError::Artifact("selected schedule missing".into()))?,
+            }
+        };
         // Explicit-CSR attention may recapture library islands as context
         // geometry changes. Keep every searched bucket, but only one
         // materialized CUDA graph at a time so graph-pool reclamation cannot
@@ -429,18 +578,21 @@ impl CompiledDecoder {
         for cache in &mut persistent_cache {
             stream.memset_zeros(cache)?;
         }
-        Ok(Self {
-            graph,
-            decoder,
-            captured_decode: None,
-            runtime,
-            persistent_cache,
-            compile,
-            vocabulary_size: config.vocabulary_size,
-            page_tokens,
-            cache_updates_in_place,
-            dynamic_input_allocations,
-        })
+        Ok((
+            Self {
+                graph,
+                decoder,
+                captured_decode: None,
+                runtime,
+                persistent_cache,
+                compile,
+                vocabulary_size: config.vocabulary_size,
+                page_tokens,
+                cache_updates_in_place,
+                dynamic_input_allocations,
+            },
+            effective_artifact,
+        ))
     }
 
     /// Executes one precompiled decode or prefill bucket and reads back only
@@ -771,6 +923,32 @@ impl CompiledDecoder {
     pub const fn has_captured_decode(&self) -> bool {
         self.captured_decode.is_some()
     }
+}
+
+fn decoder_artifact_identity(
+    config: &DecoderConfig,
+    plan: &ExecutorPlan,
+    arenas: &[ExecutorArena],
+    weights: DecoderWeightFeatures,
+    compile: DecoderCompileConfig,
+) -> Result<String, DecoderError> {
+    let identity = DecoderArtifactIdentity {
+        manifest_fingerprint: &plan.manifest_fingerprint,
+        page_tokens: plan.page_tokens,
+        decoder: config,
+        weights,
+        arenas: arenas
+            .iter()
+            .map(|arena| DecoderArtifactArena {
+                class_id: arena.class_id,
+                backend_base_index: arena.backend_base_index,
+                page_count: arena.page_count,
+            })
+            .collect(),
+        compile,
+    };
+    let bytes = serde_json::to_vec(&identity)?;
+    Ok(format!("{:x}", Sha256::digest(bytes)))
 }
 
 fn register_persistent_cache(

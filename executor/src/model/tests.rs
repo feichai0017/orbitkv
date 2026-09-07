@@ -38,6 +38,54 @@ fn compile_config_requires_distinct_decode_and_prefill_ranges() {
 }
 
 #[test]
+fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
+    let config = test_config(4);
+    let plan = hybrid_executor_plan();
+    let arenas = hybrid_arenas();
+    let compile = DecoderCompileConfig {
+        maximum_query_tokens: 32,
+        representative_prefill_tokens: 8,
+        maximum_batch_size: 4,
+        maximum_context_pages: 64,
+        representative_context_pages: 8,
+        search_graphs: 2,
+        search_seed: 1,
+    };
+    let identity = decoder_artifact_identity(
+        &config,
+        &plan,
+        &arenas,
+        DecoderWeightFeatures::default(),
+        compile,
+    )
+    .unwrap();
+    let mut changed_arena = arenas;
+    changed_arena[1].page_count += 1;
+    let arena_identity = decoder_artifact_identity(
+        &config,
+        &plan,
+        &changed_arena,
+        DecoderWeightFeatures::default(),
+        compile,
+    )
+    .unwrap();
+    let compile_identity = decoder_artifact_identity(
+        &config,
+        &plan,
+        &arenas,
+        DecoderWeightFeatures::default(),
+        DecoderCompileConfig {
+            maximum_batch_size: 2,
+            ..compile
+        },
+    )
+    .unwrap();
+
+    assert_ne!(identity, arena_identity);
+    assert_ne!(identity, compile_identity);
+}
+
+#[test]
 fn step_validation_enforces_compiled_capacities() {
     let compile = DecoderCompileConfig {
         maximum_query_tokens: 4,
