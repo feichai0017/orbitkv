@@ -33,9 +33,9 @@ recorded source closure.
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | Single-process model engine | Narrow L4 correctness | One dedicated thread owns bounded admission/output queues, an active set, `RuntimeSession`, and `CompiledDecoder`; released hybrid tests cover B=2 prefill/decode, late-prefill plus decode, length, stop, cancel, and final drain. Fresh-prompt/greedy only; no HTTP or throughput claim |
-| vLLM frontend adapter | L2 protocol tests | Optional pinned Rust frontend dependency; tokenized Add/Abort, request-ID mapping, terminal token translation, and unsupported-field rejection pass host tests |
-| OpenAI-compatible API | L2 HTTP protocol closure | A real HTTP completion smoke passes through tokenizer, Add bridge, a local test `Engine`, event translation, detokenization, and OpenAI JSON; model execution is not part of that smoke |
-| Complete model executor | Narrow L4 correctness closure | Configuration-driven Full and released Full+Sliding dense checkpoints complete on H20; the hybrid closure includes independent reference-token parity, native-window retirement/reuse, cancellation, final drain, and bounded continuous batching at B=2; HTTP serving and load qualification remain open |
+| vLLM frontend adapter | L2 protocol + narrow L4 integration | Pinned Rust request/tokenizer/chat/SSE crates; tokenized Add/Abort, request-ID mapping, unsupported-field rejection, and dropped-stream auto-abort pass through the real model engine |
+| OpenAI-compatible API | Narrow L4 correctness | `orbitkv-serve` passes real-checkpoint non-streaming, ordered SSE, concurrent request, client-disconnect cancellation, graceful shutdown, and final drain on H20; load metrics remain unqualified |
+| Complete model executor | Narrow L4 correctness closure | Configuration-driven Full and released Full+Sliding dense checkpoints complete on H20; the hybrid closure includes independent reference-token parity, native-window retirement/reuse, cancellation, final drain, bounded continuous batching at B=2, and the real HTTP path; load qualification remains open |
 
 ## Decoder operator and model boundary
 

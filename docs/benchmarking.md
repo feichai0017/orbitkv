@@ -69,11 +69,11 @@ It writes unreviewed data under `.qualification/` by default. The command fails
 if the client is missing, a server never becomes ready, a benchmark exits
 non-zero, or the expected JSON is absent.
 
-Example, after a runnable OrbitKV engine binary is available:
+Example with the single-process OrbitKV server:
 
 ```bash
 python tools/run_matched_serving.py \
-  --candidate-command 'target/release/orbitkv-server --model /models/model --port 8000' \
+  --candidate-command 'target/release/orbitkv-serve --model /models/model --page-counts 128,66 --max-model-tokens 1024 --max-prefill-tokens 512 --max-batch-tokens 1024 --max-active-requests 2 --port 8000' \
   --baseline-command 'python -m sglang.launch_server --model-path /models/model --port 8000' \
   --candidate-url http://127.0.0.1:8000 \
   --baseline-url http://127.0.0.1:8000 \

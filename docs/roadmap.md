@@ -29,7 +29,11 @@ work is not a current capability.
   model thread, bounded admission/output queues, a decode-first token-budgeted
   active set, a real `RuntimeSession`, one compiled Luminal decoder, streamed
   greedy tokens, stop/cancel handling, and exact final drain. It is not yet
-  wired into the HTTP executable.
+  performance-qualified.
+- `orbitkv-serve` composes `ModelEngine` with the pinned vLLM Rust OpenAI,
+  tokenizer/chat, SSE, request-ID, and stream-drop auto-abort components in the
+  same process. Real H20 tests cover non-streaming and SSE completions,
+  concurrency, disconnect cancellation, graceful shutdown, and final drain.
 - A released-hybrid same-executor residence experiment passes ten paired
   release-mode epochs with full token parity. Compiled residence reduces live
   payload by 27.8%, raises the fixed-budget boundary from 528 to 560, and has a
@@ -81,8 +85,8 @@ speedups remain separate evidence.
 
 ## R3: Complete the single-process serving engine
 
-Status: bounded continuous-batching model closure completed; HTTP serving and
-load qualification remain in progress.
+Status: single-process HTTP correctness closure completed; load qualification
+remains in progress.
 
 The concrete coordinator now implements the server `Engine` trait. A dedicated
 thread owns `RuntimeSession`, stable class arenas, and `CompiledDecoder`; bounded
@@ -95,10 +99,18 @@ state and fail-stops the worker. Released hybrid H20 tests pass B=2 prefill and
 decode with reference-token parity, late prefill during decode, stop/cancel, and
 final drain.
 
-Next, exercise the optional vLLM Rust OpenAI/tokenizer/chat/SSE frontend against
-`ModelEngine` rather than its current test engine, then qualify fairness,
-pressure behavior, and serving metrics. Chunked prefill and richer per-request
-sampling state also remain open. This work is required before R3 is complete.
+The generic `orbitkv-serve` binary now starts the real model engine and vLLM
+Rust frontend together. It uses typed CLI configuration, supports separately
+stored tokenizer assets, reports logical rather than class-summed KV capacity,
+and handles Ctrl-C/SIGTERM through graceful frontend shutdown. A released model
+passes non-streaming and SSE OpenAI completions, two concurrent HTTP requests,
+client-disconnect auto-abort with an explicit cancellation counter, and final
+manager drain on H20.
+
+Next, run `vllm bench serve` against this executable to qualify fairness,
+pressure behavior, TTFT/TPOT/ITL, throughput, and capacity. Chunked prefill and
+richer per-request sampling state also remain open. R3 correctness is closed;
+R3 load qualification is the remaining gate before the R4 SGLang comparison.
 
 PegaInfer is a useful reference for a small Rust server/model boundary and for a
 full-plus-linear-attention execution loop. It is not a Dynamo integration: its

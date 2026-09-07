@@ -62,8 +62,14 @@ Luminal decoder. On H20, two concurrent 512-token hybrid requests execute with
 B=2 prefill/decode and match the existing reference prefix; a late prefill also
 joins an active decode request. Length, stop-token, cancellation, backpressure,
 and complete drain are covered. Sampling remains greedy. Chunked prefill,
-model-backed HTTP execution, fairness/pressure qualification, and production
-soak remain open.
+fairness/pressure qualification, and production soak remain open.
+
+The `orbitkv-serve` binary provides the complete single-process HTTP product
+path. A released hybrid checkpoint passes real H20 OpenAI completion tests with
+pre-tokenized prompts, matching tokenizer assets, non-streaming output, ordered
+SSE token IDs plus `[DONE]`, concurrent requests, client-disconnect auto-abort,
+graceful shutdown, and manager final drain. This is a correctness closure, not a
+serving-performance result.
 
 ## Evidence interpretation
 

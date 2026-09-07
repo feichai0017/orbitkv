@@ -58,7 +58,9 @@ pub struct HttpFrontendConfig {
     pub port: u16,
     pub maximum_model_tokens: u64,
     pub kv_page_tokens: u64,
-    pub kv_page_count: u64,
+    /// Logical scheduler blocks guaranteed by the engine's per-class arenas.
+    /// This is not the sum of heterogeneous physical class pages.
+    pub logical_kv_page_count: u64,
     pub maximum_sequences: u64,
     pub maximum_batch_tokens: u64,
     pub dtype: FrontendDtype,
@@ -69,14 +71,14 @@ impl HttpFrontendConfig {
         if self.model.is_empty()
             || self.maximum_model_tokens == 0
             || self.kv_page_tokens == 0
-            || self.kv_page_count == 0
+            || self.logical_kv_page_count == 0
             || self.maximum_sequences == 0
             || self.maximum_batch_tokens == 0
             || self.served_model_names.iter().any(String::is_empty)
         {
             bail!("invalid HTTP frontend configuration");
         }
-        self.kv_page_count
+        self.logical_kv_page_count
             .checked_mul(self.kv_page_tokens)
             .context("KV capacity overflow")?;
         Ok(())
@@ -382,11 +384,13 @@ fn send_outputs(
 }
 
 fn ready_response(config: &HttpFrontendConfig) -> EngineCoreReadyResponse {
-    let kv_tokens = config.kv_page_count.checked_mul(config.kv_page_tokens);
+    let kv_tokens = config
+        .logical_kv_page_count
+        .checked_mul(config.kv_page_tokens);
     let blocks_per_request = config.maximum_model_tokens.div_ceil(config.kv_page_tokens);
     EngineCoreReadyResponse {
         max_model_len: config.maximum_model_tokens,
-        num_gpu_blocks: config.kv_page_count,
+        num_gpu_blocks: config.logical_kv_page_count,
         block_size: config.kv_page_tokens,
         dp_stats_address: None,
         dtype: config.dtype.into(),
@@ -403,7 +407,7 @@ fn ready_response(config: &HttpFrontendConfig) -> EngineCoreReadyResponse {
         supports_lora: false,
         max_loras: 0,
         kv_cache_size_tokens: kv_tokens,
-        kv_cache_max_concurrency: u32::try_from(config.kv_page_count)
+        kv_cache_max_concurrency: u32::try_from(config.logical_kv_page_count)
             .ok()
             .zip(u32::try_from(blocks_per_request).ok())
             .map(|(pages, request_pages)| f64::from(pages) / f64::from(request_pages)),
@@ -463,7 +467,7 @@ mod tests {
             port: 8000,
             maximum_model_tokens: 4096,
             kv_page_tokens: 16,
-            kv_page_count: 128,
+            logical_kv_page_count: 128,
             maximum_sequences: 8,
             maximum_batch_tokens: 512,
             dtype: FrontendDtype::Bfloat16,
@@ -483,7 +487,7 @@ mod tests {
             port: 8000,
             maximum_model_tokens: 4096,
             kv_page_tokens: 16,
-            kv_page_count: 128,
+            logical_kv_page_count: 128,
             maximum_sequences: 8,
             maximum_batch_tokens: 512,
             dtype: FrontendDtype::Bfloat16,
@@ -554,7 +558,7 @@ mod tests {
                 port,
                 maximum_model_tokens: 4096,
                 kv_page_tokens: 16,
-                kv_page_count: 128,
+                logical_kv_page_count: 128,
                 maximum_sequences: 8,
                 maximum_batch_tokens: 512,
                 dtype: FrontendDtype::Bfloat16,

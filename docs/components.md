@@ -17,15 +17,16 @@ The model coordinator is implemented and real-device qualified for bounded
 continuous batching. It compiles once at startup, merges fresh requests into
 decode-first token-budgeted dispatches, streams through bounded event queues,
 suppresses stop tokens, cancels at token boundaries, and drains manager state.
-The remaining serving gap is wiring the real coordinator into the optional HTTP
-frontend executable, then qualifying fairness, load behavior, and performance.
+The `orbitkv-serve` binary now wires that coordinator into the optional vLLM
+Rust HTTP frontend. The remaining serving gap is fairness, pressure, soak, and
+performance qualification.
 
 ## External projects
 
 | Project | Relationship | Reused or planned surface | Excluded surface |
 | --- | --- | --- | --- |
 | Luminal fork | Embedded compiler/executor | Graph IR, search, CUDA kernels, persistent inputs, bucket dispatch, child CUDA graphs | Luminal page allocation as KV authority |
-| vLLM | Optional frontend and benchmark client | Rust OpenAI/tokenizer/chat/SSE crates; `vllm bench serve` as the common load generator | vLLM scheduler or KV block manager in the OrbitKV process |
+| vLLM | Embedded frontend and benchmark client | Rust OpenAI/tokenizer/chat/SSE, request identity, stream-drop auto-abort; `vllm bench serve` as the common load generator | vLLM scheduler or KV block manager in the OrbitKV process |
 | PegaInfer | Design and measurement reference only | Small Rust server boundary, hybrid full/linear-attention operator structure, matched vLLM-client workflow | Source copying, model-name dispatch, contiguous model-owned KV cache |
 | Dynamo | Distributed-system reference and optional outer control plane | KV-aware routing ideas, event schemas, telemetry, service discovery where justified | `kvbm-logical`, `KvBlockManager`, lifecycle pins, or any second page manager |
 | Mooncake | Planned external storage transport | Registered memory, Store objects, placement/lease observations, RDMA/TCP transfer completion | Local page allocation, generation, retirement, or publication |
