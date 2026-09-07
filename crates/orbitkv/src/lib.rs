@@ -3,6 +3,7 @@
 pub mod attention_state;
 pub mod hf_config;
 pub mod kv_manager;
+pub mod layout_facts;
 pub mod plan;
 pub mod retention;
 pub mod runtime_manifest;
@@ -17,6 +18,10 @@ pub use hf_config::{
     HfConfigError, HfLayerInference, HfManagerPlanError, HfRetentionCompilation,
     HfRetentionOptions, HfStatePlanError, compile_hf_attention_state_input,
     compile_hf_attention_state_plan, compile_hf_config, compile_hf_token_manager_plan,
+};
+pub use layout_facts::{
+    StateClassLayoutFacts, StateComponentFact, StateLayoutAlternative, StateLayoutFacts,
+    StateLayoutFactsError, StateStorageFacts, StateStorageKind,
 };
 pub use plan::{
     CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, PlanError, TokenComponentSpec,

@@ -20,6 +20,8 @@ The current OrbitKV patch stack adds the following general executor contracts:
   manager-authored token relocation before the new page view is published;
 - runtime inspection that proves whether persistent-state outputs alias their
   registered inputs in every compiled dynamic-shape bucket;
+- caller and custom-op compiler facts injected into every e-graph bucket, with
+  paged-attention nodes bound to an external persistent-state class ID;
 - direct range copies within persistent graph inputs, so relocation always
   targets the stable K/V arena even when a bucket materializes its update;
 - caller-owned capture of an already-warmed execution, plus a preparation-only
@@ -132,7 +134,7 @@ An upstream update is therefore an explicit compiler-backend upgrade with
 qualification, rather than an automatic floating dependency.
 
 The current fork includes upstream through `d18376d1` and is pinned by the
-parent at `e15311b3`. The fork retains its own upstream workspace so it can be
+parent at `7531d8c3`. The fork retains its own upstream workspace so it can be
 built and tested independently even though the parent explicitly excludes it
 from the four owned OrbitKV workspace members. The latest sync includes the
 upstream CUDA correctness fixes, dynamic-bucket warmup behavior, and scatter

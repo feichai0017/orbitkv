@@ -42,6 +42,14 @@ allocate or recycle KV pages. The executor depends on the visible submodule by
 local path, so the reviewed fork and the code linked into the product cannot
 silently diverge.
 
+The same boundary now carries compiler-visible persistent-state facts. The
+reusable `orbitkv` crate derives storage components, retention and retirement
+geometry, address programs, and legal layout alternatives from a validated
+manifest. `orbitkv-executor` binds those facts to stable arenas and injects them
+into Luminal's e-graph; each paged-attention custom op identifies its owning
+state class. Selected artifacts include the facts digest in their identity. No
+layout-changing rewrite or profiler-driven relocation policy is enabled yet.
+
 The native decoder compiles one symbolic graph into decode and prefill buckets.
 Both phases share the same runtime, preallocated dynamic inputs, and one
 persistent K/V arena per attention class; requests update only tokens, positions,

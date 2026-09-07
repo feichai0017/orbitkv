@@ -187,20 +187,25 @@ Only after this gate passes should R5/R6 become the primary product work.
 
 ## R4.2: Join state and graph compilation
 
-Status: the ownership boundary and persistent-alias constraint exist, but the
-two compilers do not yet share a cost model. OrbitKV currently freezes a
-physical plan before Luminal searches the graph, and token relocation still
-uses a fixed fragmentation threshold. This is not the intended end state.
+Status: the ownership boundary, persistent-alias constraint, and forward facts
+path are implemented. OrbitKV now emits backend-neutral state/layout facts; the
+executor binds them to stable arenas and injects them into Luminal's e-graph,
+with each paged-attention node linked to its state class. The two compilers still
+do not share a cost model, and token relocation still uses a fixed fragmentation
+threshold. This is not the intended end state.
 
 Build the joint path without making `orbitkv` depend on Luminal internals:
 
-1. Define backend-neutral `StateLayoutFacts` in `orbitkv`: attention class,
-   retention geometry, page geometry, immutable Prefix ranges, contiguity,
-   address stability, component widths, and legal relocation alternatives.
-2. Translate those facts in `orbitkv-executor` into Luminal search facts and
-   candidate requirements. The fork may use egglog and backend-specific
-   analyses internally; those types must not leak into the reusable manager.
-3. Make every selected executable return a typed `ExecutionCostProfile` keyed
+1. Completed for static facts: define backend-neutral `StateLayoutFacts` in
+   `orbitkv` for attention class, retention/page/component geometry, address and
+   retirement programs, and legal relocation alternatives. Dynamic Prefix
+   immutability and observed contiguity remain runtime binding facts.
+2. Completed infrastructure: translate those facts in `orbitkv-executor` into
+   Luminal search facts, bind paged-attention nodes to their state class, and
+   include the fact digest in artifact identity. The fork may use egglog and
+   backend-specific analyses internally; those types do not leak into the
+   reusable manager. Layout-selecting rewrite rules remain open.
+3. Next: make every selected executable return a typed `ExecutionCostProfile` keyed
    by manifest, bucket, layout alternative, and kernel fingerprint. Reject
    stale or geometry-mismatched profiles.
 4. Replace `fragmentation_threshold_milli` as the production decision rule with

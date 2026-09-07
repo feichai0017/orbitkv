@@ -168,6 +168,14 @@ the compile-time exchange bidirectional without giving Luminal page identity,
 publication, or lifecycle authority. Backend-specific egglog and CUDA types stay
 inside the fork and executor.
 
+Concretely, `RuntimeManifest::state_layout_facts` emits a backend-neutral view
+of every state class. `orbitkv-executor` joins token classes with stable arena
+registrations, emits deterministic e-graph facts, and binds each paged-attention
+custom op to its manager class. The fact digest participates in decoder artifact
+identity, so an artifact cannot silently survive a changed state/search
+contract. These facts currently constrain identity and provide a rewrite input;
+they do not yet select a packed layout or replace the relocation heuristic.
+
 `tools/verify_active_source.py` enforces these forbidden dependency edges,
 rejects physical KV ownership types in server source, requires all product
 Luminal dependencies to resolve through the visible submodule, rejects removed
