@@ -139,6 +139,7 @@ pub struct EngineStats {
     pub active_requests: u64,
     pub admitted_requests: u64,
     pub completed_requests: u64,
+    pub cancelled_requests: u64,
     pub model_dispatches: u64,
     pub multi_request_dispatches: u64,
     pub mixed_phase_dispatches: u64,
@@ -340,6 +341,7 @@ struct ModelWorker {
 struct SchedulerCounters {
     admitted_requests: u64,
     completed_requests: u64,
+    cancelled_requests: u64,
     model_dispatches: u64,
     multi_request_dispatches: u64,
     mixed_phase_dispatches: u64,
@@ -909,6 +911,9 @@ impl ModelWorker {
             ));
         }
         for (index, reason) in finished.into_iter().rev() {
+            if reason == FinishReason::Cancelled {
+                self.counters.cancelled_requests += 1;
+            }
             let request = active.remove(index);
             let _ = request.output.try_send(Ok(EngineEvent::Finished {
                 request_id: request.request.request_id,
@@ -930,6 +935,7 @@ impl ModelWorker {
             if request.cancelled.load(Ordering::Acquire) || request.output.is_closed() {
                 finish_unacquired(request, registry);
                 self.counters.completed_requests += 1;
+                self.counters.cancelled_requests += 1;
             } else {
                 retained.push_back(request);
             }
@@ -944,6 +950,7 @@ impl ModelWorker {
             active_requests: active_requests as u64,
             admitted_requests: self.counters.admitted_requests,
             completed_requests: self.counters.completed_requests,
+            cancelled_requests: self.counters.cancelled_requests,
             model_dispatches: self.counters.model_dispatches,
             multi_request_dispatches: self.counters.multi_request_dispatches,
             mixed_phase_dispatches: self.counters.mixed_phase_dispatches,

@@ -21,14 +21,15 @@ move a compact reviewed result here only after its checks pass.
 | `released-hybrid-lifecycle-20260906` | Released 18-layer Full+Sliding checkpoint crosses its native window on H20, matches an independent greedy-token reference, reuses retired storage, cancels a second request, and fully drains | Correctness and lifecycle only; diagnostic timing is not a benefit result |
 | `released-hybrid-residence-benefit-20260906` | Ten paired release-mode runs compare compiled and request-lifetime residence through one searched graph; output parity, resident bytes, fixed-budget reach, and paired timing interval pass | Narrow batch-one same-executor L5 result; not serving throughput or SGLang comparison |
 | `continuous-batching-engine-20260907` | Released hybrid model executes B=2 prefill/decode with reference-token parity and admits late prefill during active decode | Continuous-batching correctness only; no HTTP, fairness, capacity, or performance claim |
+| `single-process-http-engine-20260907` | Real released checkpoint serves OpenAI non-streaming and SSE completions through `orbitkv-serve`; concurrent requests, dropped-stream cancellation, shutdown, and final drain pass | HTTP correctness only; no fairness, capacity, or throughput claim |
 
 The normative current support boundary is the
 [Capability Matrix](../docs/capability-matrix.md). The mechanism ablation proves
 a same-semantics physical-residence reduction and host fixed-capacity admission
 difference. The released hybrid benefit record now establishes a narrow
-same-executor compiler benefit. No retained record yet proves continuous-batching
-capacity, tail latency, or end-to-end serving throughput. Those remain R3/R4
-gates.
+same-executor compiler benefit. The HTTP record closes model-backed serving
+correctness but not continuous-batching capacity, tail latency, or throughput.
+Those remain R3/R4 gates.
 
 ## Result-package policy
 

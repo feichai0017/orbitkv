@@ -9,16 +9,36 @@ license = "MIT"
 [features]
 default = []
 cuda = ["orbitkv-executor/cuda"]
+server = [
+    "cuda",
+    "dep:anyhow",
+    "dep:clap",
+    "dep:tokio-util",
+    "orbitkv-server/vllm-frontend",
+    "tokio/macros",
+    "tokio/rt-multi-thread",
+    "tokio/signal",
+]
 
 [dependencies]
 futures-util = "0.3.31"
+anyhow = { version = "1.0.100", optional = true }
+clap = { version = "4.6.0", features = ["derive"], optional = true }
 orbitkv = { path = "../core" }
 orbitkv-executor = { path = "../executor" }
 orbitkv-server = { path = "../server" }
 thiserror = "2.0.17"
 tokio = { version = "1.47.1", features = ["sync"] }
+tokio-util = { version = "0.7.18", features = ["rt"], optional = true }
+
+[[bin]]
+name = "orbitkv-serve"
+path = "src/bin/serve.rs"
+required-features = ["server"]
 
 [dev-dependencies]
+reqwest = { version = "0.12.8", default-features = false, features = ["json"] }
+serde_json = "1.0.145"
 tokio = { version = "1.47.1", features = ["macros", "rt-multi-thread"] }
 
 [lints.rust]

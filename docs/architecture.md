@@ -100,6 +100,11 @@ the same CSR geometry while underlying page identities may differ.
 The execution control path is in-process Rust. The optional vLLM HTTP frontend
 uses a process-local IPC protocol adapter because that crate is coupled to its
 `EngineCoreClient`; no Python process or upstream inference HTTP hop is present.
+The `orbitkv-serve` composition binary starts that frontend and `ModelEngine`
+in the same process. vLLM owns OpenAI schemas, tokenization, chat rendering, SSE,
+request IDs, and stream-drop auto-abort. OrbitKV still owns every KV page and
+lifecycle transition. The frontend handshake reports logical scheduler blocks,
+never the sum of heterogeneous physical class arenas.
 
 ## Source boundaries
 
@@ -108,6 +113,7 @@ core/
   src/                    compiler, manager, RuntimeSession, checkpoint pool
 engine/
   src/                    single-process model coordinator and failure policy
+  src/bin/serve.rs        typed single-process OpenAI server entry point
   tests/                  released-model stream/stop/cancel/drain closure
 executor/
   src/
@@ -167,8 +173,9 @@ The concrete `ModelEngine` is separately exercised on that released checkpoint.
 It keeps one compiled decoder alive across length, stop, and cancel requests;
 executes two 512-token requests through B=2 prefill/decode; admits a new prefill
 while another request is decoding; and proves complete manager drain. The
-model-backed HTTP path and serving-performance qualification remain outside this
-closure.
+model-backed HTTP path passes non-streaming, SSE, concurrent-request,
+dropped-stream cancellation, graceful shutdown, and final-drain checks. Serving
+performance qualification remains outside this closure.
 
 Relocation evidence is gated by a real CUDA event; ordinary model-step completion
 still relies on the embedding runtime's completion assertion. Generic
@@ -180,5 +187,5 @@ performance remains unqualified. A released-hybrid same-executor ablation now
 also proves a narrow lifecycle benefit: ten paired release-mode runs reduce live
 payload by 27.8%, increase the fixed-budget sequence boundary by 32 tokens, and
 show a positive paired total-time confidence interval with identical output. The
-tree does not yet prove continuous-batching throughput, multi-user capacity,
-model-backed HTTP execution, or long-running behavior.
+tree does not yet prove continuous-batching throughput, multi-user capacity, or
+long-running behavior.

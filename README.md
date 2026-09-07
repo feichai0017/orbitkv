@@ -135,6 +135,14 @@ stop, cancellation, and disconnect still converge through release and exact
 reclamation acknowledgement. Submissions remain one fresh request each, while
 the engine combines them internally.
 
+With the optional `server` feature, `orbitkv-serve` composes this engine with
+the pinned vLLM Rust OpenAI frontend in the same process. It reuses vLLM's
+request schemas, tokenizer/chat backends, SSE framing, request identity, and
+stream-drop auto-abort instead of reimplementing them. The narrow local IPC is
+an adapter required by `EngineCoreClient`; it does not start another inference
+server or grant vLLM KV ownership. Model weights/config and frontend tokenizer
+assets may be supplied from separate directories without model-specific code.
+
 ## Build and test
 
 ```bash
@@ -169,7 +177,25 @@ and drain coverage, two concurrent 512-token prompts are combined into B=2
 prefill and decode dispatches and both match the independent eight-token
 reference. A separate run inserts a new prefill while another request is already
 decoding and observes a mixed-phase dispatch. These qualify continuous-batching
-correctness, not HTTP serving, fairness, capacity, or throughput.
+correctness. A final real-device HTTP closure covers non-streaming completions,
+ordered SSE token IDs plus `[DONE]`, two concurrent requests, dropped-stream
+auto-abort, graceful shutdown, and final manager drain. It does not qualify
+fairness, capacity, or throughput.
+
+Run the server with explicit per-class page budgets:
+
+```bash
+cargo run --release --locked -p orbitkv-engine --features server --bin orbitkv-serve -- \
+  --model /models/checkpoint \
+  --page-counts 128,66 \
+  --max-model-tokens 1024 \
+  --max-prefill-tokens 512 \
+  --max-batch-tokens 1024 \
+  --max-active-requests 2
+```
+
+Use `--frontend-model` only when tokenizer/chat assets and compatible model
+metadata are stored separately from the weight directory.
 
 A separate fixed-signature child-graph experiment records a narrow matched
 dispatch improvement. A release-mode same-executor test on the released hybrid
