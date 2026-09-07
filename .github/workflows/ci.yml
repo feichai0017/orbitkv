@@ -33,7 +33,7 @@ jobs:
           submodules: recursive
       - uses: dtolnay/rust-toolchain@stable
       - run: cargo check --locked -p orbitkv-executor --features cuda
-      - run: cargo check --manifest-path executor/luminal/Cargo.toml -p luminal_cuda_lite --lib
+      - run: cargo check --manifest-path third_party/luminal/Cargo.toml -p luminal_cuda_lite --lib
 
   website:
     runs-on: ubuntu-latest

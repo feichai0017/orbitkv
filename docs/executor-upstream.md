@@ -1,7 +1,7 @@
 # Executor fork and upstream policy
 
 OrbitKV embeds a complete Luminal fork as the graph compiler and device
-executor. The fork is not a second inference engine: `core/` remains the only
+executor. The fork is not a second inference engine: `orbitkv` remains the only
 authority for logical visibility, page selection, generations, retirement, and
 reuse.
 
@@ -124,18 +124,19 @@ parent repository:
 4. run OrbitKV host gates, CUDA compile checks, and the released-model and
    relocation device closures;
 5. push the fork commit, then update the parent submodule pointer;
-6. keep `executor/Cargo.toml` path dependencies pointed at that visible
+6. keep `crates/orbitkv-executor/Cargo.toml` path dependencies pointed at that visible
    submodule and let `tools/verify_active_source.py` reject any second remote
    Luminal source.
 
 An upstream update is therefore an explicit compiler-backend upgrade with
 qualification, rather than an automatic floating dependency.
 
-The current fork includes upstream through `c28a9fb`. That update retains
-shape-specific CUDA Graph variants on a shared arena and reclaims CUDA pools
-around graph replacement. After merging it with OrbitKV's external-page and
-child-graph changes, the generic child/D2D tests and the released-checkpoint
-prefill/capture/replay lifecycle passed on H20. A 20-iteration matched check
-remained favorable at 4662.4 us eager versus 4435.4 us child-graph replay
-(ratio 0.951). This is compatibility evidence for the upstream sync, not a new
-broad performance claim.
+The current fork includes upstream through `d18376d1` and is pinned by the
+parent at `e15311b3`. The fork retains its own upstream workspace so it can be
+built and tested independently even though the parent explicitly excludes it
+from the four owned OrbitKV workspace members. The latest sync includes the
+upstream CUDA correctness fixes, dynamic-bucket warmup behavior, and scatter
+reuse rules while preserving OrbitKV's external-page, required-alias, artifact,
+and child-graph contracts. Independent Luminal core tests and CUDA-lite compile
+checks pass. Existing H20 measurements remain compatibility evidence for the
+fork, not a new broad performance claim.

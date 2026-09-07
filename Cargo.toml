@@ -1,7 +1,15 @@
 [workspace]
-members = ["core", "engine", "executor", "server"]
-default-members = ["core", "engine", "executor", "server"]
+members = [
+    "crates/orbitkv",
+    "crates/orbitkv-engine",
+    "crates/orbitkv-executor",
+    "crates/orbitkv-server",
+]
+exclude = ["third_party/luminal"]
+default-members = [
+    "crates/orbitkv",
+    "crates/orbitkv-engine",
+    "crates/orbitkv-executor",
+    "crates/orbitkv-server",
+]
 resolver = "3"
-
-[patch.crates-io]
-candle-kernels = { git = "https://github.com/huggingface/candle.git", rev = "a0dbd8b8aef6bde9adca3e8ad90791609d64974b" }

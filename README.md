@@ -9,10 +9,10 @@ The product has four owned crates:
 
 | Layer | Responsibility |
 | --- | --- |
-| `core/` | Attention-state compilation, request and snapshot identity, Prefix/COW, token disposition, physical-page ownership, retirement, acknowledgement, and safe reuse |
-| `executor/` | OrbitKV plan lowering, forked Luminal graph/device execution, and external byte transports |
-| `server/` | Rust API and scheduling boundary; optionally reuses vLLM's Rust OpenAI/tokenizer/chat frontend through a narrow protocol adapter |
-| `engine/` | Single-process composition root that joins logical requests, one `RuntimeSession`, and one compiled Luminal decoder without creating a second KV authority |
+| `crates/orbitkv/` | Attention-state compilation, request and snapshot identity, Prefix/COW, token disposition, physical-page ownership, retirement, acknowledgement, and safe reuse |
+| `crates/orbitkv-executor/` | OrbitKV plan lowering, Luminal graph/device execution, and external byte transports |
+| `crates/orbitkv-server/` | Rust API and scheduling boundary; optionally reuses vLLM's Rust OpenAI/tokenizer/chat frontend through a narrow protocol adapter |
+| `crates/orbitkv-engine/` | Single-process composition root that joins logical requests, one `RuntimeSession`, and one compiled Luminal decoder without creating a second KV authority |
 
 OrbitKV is the only KV authority. The executor consumes manager-authored pages
 and the server cannot name a physical page. There is no compatibility layer, C
@@ -22,17 +22,13 @@ boundary, Python runtime, or second allocator in the active product.
 
 ```text
 orbitkv/
-├── core/
-│   ├── src/                 compiler, KV manager, RuntimeSession
-│   ├── examples/            generic attention-state inputs
-│   └── fixtures/            generic compiler fixtures
-├── executor/
-│   ├── src/                 plan lowering, device execution, external transport
-│   │   └── model/           config, weight contract, block math, step validation
-│   ├── tests/               executor and transport protocol closures
-│   └── luminal/             pinned Luminal fork (Git submodule)
-├── engine/                  in-process RuntimeSession + decoder composition
-├── server/                  local async Engine and request contracts
+├── crates/
+│   ├── orbitkv/             compiler, KV manager, RuntimeSession
+│   ├── orbitkv-executor/    plan lowering and device execution
+│   ├── orbitkv-engine/      in-process composition root
+│   └── orbitkv-server/      local Engine and protocol contracts
+├── third_party/
+│   └── luminal/             pinned compiler/executor fork
 ├── docs/                    architecture and qualification boundary
 ├── tools/                   repository invariants
 ├── website/                 project documentation site
@@ -165,7 +161,7 @@ Compile a canonical runtime manifest:
 
 ```bash
 cargo run --locked -p orbitkv --bin orbitkv -- \
-  compile-runtime-manifest core/examples/hybrid-attention-state-plan.json
+  compile-runtime-manifest crates/orbitkv/examples/hybrid-attention-state-plan.json
 ```
 
 ## Evidence boundary

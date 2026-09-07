@@ -1,4 +1,4 @@
-[submodule "executor/luminal"]
-	path = executor/luminal
+[submodule "third_party/luminal"]
+	path = third_party/luminal
 	url = https://github.com/feichai0017/orbitkv-luminal.git
 	branch = main

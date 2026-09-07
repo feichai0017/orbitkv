@@ -2,8 +2,8 @@
 
 This matrix separates implemented source, host verification, device execution,
 measured benefit, and production readiness for the current
-`core + executor + server + engine` architecture. Historical results qualify only their
-recorded source closure.
+`orbitkv + orbitkv-executor + orbitkv-server + orbitkv-engine` architecture.
+Historical results qualify only their recorded source closure.
 
 ## Evidence levels
 
