@@ -173,9 +173,14 @@ custom op to its manager class, and preserves recurrent/convolution class
 identity, layer coverage, byte geometry, and checkpoint slots. The fact digest
 participates in decoder artifact identity, so an artifact cannot silently
 survive a changed state/search contract. Fixed-state lifecycle joins token KV in
-one host-qualified RuntimeSession transaction, but its device arenas are not yet
-bound, so those facts describe the required device contract rather than
-completed execution. These facts currently constrain identity and provide a rewrite input.
+one RuntimeSession transaction. The executor owns stable per-class CUDA
+allocations, lowers session-authored generation leases to byte ranges, and
+shares those allocations with Luminal through required aliases without
+transferring lifecycle authority. Success evidence is withheld until a CUDA
+event recorded after the state writes has completed. The reference zero/copy
+transition and an ignored real-device qualification gate exist; recurrent and
+convolution math are still missing. These facts currently constrain identity and
+provide a rewrite input.
 The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
 search can optimize the surrounding decoder graph and schedule but does not yet
 choose among multiple attention implementations or jointly derive a KV layout.

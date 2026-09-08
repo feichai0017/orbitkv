@@ -51,8 +51,10 @@ sessions until recurrent-state sharing semantics are defined.
 
 The public plan exposes state id, source/destination slot, and byte count but
 never the private transition or retirement capability. The ordinary token-KV
-executor cannot manufacture a fixed-state success receipt; a future GDN device
-operator must supply the observed write evidence.
+executor cannot manufacture a fixed-state success receipt. The CUDA state
+executor resolves those leases into stable arena ranges and releases observed
+write evidence only after its stream event completes; the future GDN semantic
+operator must perform the mathematical state update before that event.
 
 ## Prefix and copy-on-write
 

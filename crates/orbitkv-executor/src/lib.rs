@@ -4,9 +4,22 @@ use std::collections::BTreeSet;
 
 mod compiler_facts;
 pub use compiler_facts::{LuminalCompilerFacts, LuminalFixedStateFacts, LuminalStateClassFacts};
+mod fixed_state;
+use fixed_state::compile_fixed_state;
+pub use fixed_state::{
+    FixedStateArenaRegistration, FixedStateClass, FixedStateExecutionEvidence, FixedStateSlotRange,
+    FixedStateStorage,
+};
 
 #[cfg(feature = "cuda")]
 pub mod cuda;
+#[cfg(feature = "cuda")]
+mod state_arena;
+#[cfg(feature = "cuda")]
+pub use state_arena::{
+    FixedStateDeviceArenas, FixedStateDeviceBatch, FixedStateDeviceError, FixedStateDeviceRange,
+    PendingFixedStateCompletion, PreparedFixedStateDeviceBatch,
+};
 mod external_tier;
 #[cfg(feature = "cuda")]
 pub mod model;
@@ -48,32 +61,6 @@ pub enum AttentionVisibility {
     Full,
     Sliding { window_tokens: u64 },
     Chunked { blocks_per_epoch: u64 },
-}
-
-/// Request-scoped persistent state whose storage is not addressed by token pages.
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub struct FixedStateClass {
-    pub state_id: u16,
-    pub name: String,
-    pub layers: Box<[u32]>,
-    pub storage: FixedStateStorage,
-}
-
-/// Physical geometry required by a recurrent or convolution state arena.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FixedStateStorage {
-    Recurrent {
-        family: orbitkv::RecurrentFamily,
-        bytes_per_layer: u64,
-        slots_per_request: u32,
-        bytes_per_request: u64,
-    },
-    Convolution {
-        bytes_per_layer: u64,
-        kernel_width: u32,
-        slots_per_request: u32,
-        bytes_per_request: u64,
-    },
 }
 
 /// Immutable part of the joint OrbitKV/Luminal execution contract.
@@ -169,6 +156,8 @@ pub enum ExecutorError {
     CompilerFactsMismatch,
     #[error("fixed-state execution has not produced device evidence")]
     FixedStateExecutionMissing,
+    #[error("fixed-state pool and executor plan geometry differ")]
+    FixedStateRegistrationMismatch,
 }
 
 impl ExecutorArena {
@@ -497,43 +486,6 @@ fn compile_attention_class(
     })
 }
 
-fn compile_fixed_state(
-    state_id: usize,
-    state: &orbitkv::CompiledAttentionState,
-) -> Result<Option<FixedStateClass>, ExecutorError> {
-    let storage = match state.backend {
-        AttentionStateBackend::TokenSlots { .. } => return Ok(None),
-        AttentionStateBackend::RecurrentCheckpoints {
-            family,
-            state_bytes_per_layer,
-            checkpoint_slots_per_request,
-            checkpoint_bytes_per_request,
-        } => FixedStateStorage::Recurrent {
-            family,
-            bytes_per_layer: state_bytes_per_layer,
-            slots_per_request: checkpoint_slots_per_request,
-            bytes_per_request: checkpoint_bytes_per_request,
-        },
-        AttentionStateBackend::ConvolutionRing {
-            state_bytes_per_layer,
-            kernel_width,
-            checkpoint_slots_per_request,
-            checkpoint_bytes_per_request,
-        } => FixedStateStorage::Convolution {
-            bytes_per_layer: state_bytes_per_layer,
-            kernel_width,
-            slots_per_request: checkpoint_slots_per_request,
-            bytes_per_request: checkpoint_bytes_per_request,
-        },
-    };
-    Ok(Some(FixedStateClass {
-        state_id: u16::try_from(state_id).map_err(|_| ExecutorError::PreparedGeometryMismatch)?,
-        name: state.name.clone(),
-        layers: state.layers.clone().into_boxed_slice(),
-        storage,
-    }))
-}
-
 impl PreparedBatch {
     #[must_use]
     pub const fn batch_id(&self) -> orbitkv::EngineBatchId {
@@ -569,6 +521,30 @@ impl PreparedBatch {
         {
             return Err(ExecutorError::FixedStateExecutionMissing);
         }
+        self.execution_evidence(arenas, &[])
+    }
+
+    /// Builds complete page and fixed-state evidence after all corresponding
+    /// device operations have completed.
+    ///
+    /// # Errors
+    ///
+    /// Rejects missing, duplicate, reordered, or extraneous fixed-state
+    /// evidence before producing a session submission.
+    pub fn execution_evidence_after_state_success(
+        &self,
+        arenas: &[ExecutorArena],
+        fixed: &[FixedStateExecutionEvidence],
+    ) -> Result<ExecutionEvidence, ExecutorError> {
+        self.execution_evidence(arenas, fixed)
+    }
+
+    fn execution_evidence(
+        &self,
+        arenas: &[ExecutorArena],
+        fixed: &[FixedStateExecutionEvidence],
+    ) -> Result<ExecutionEvidence, ExecutorError> {
+        validate_fixed_execution(&self.source, fixed)?;
         validate_arenas(
             arenas,
             self.source
@@ -584,7 +560,8 @@ impl PreparedBatch {
             .steps
             .iter()
             .zip(&self.steps)
-            .map(|(source, lowered)| {
+            .enumerate()
+            .map(|(index, (source, lowered))| {
                 if lowered.request_id != source.request_id.0
                     || lowered.classes.len() != source.class_lowerings.len()
                 {
@@ -641,7 +618,9 @@ impl PreparedBatch {
                     request_id: source.request_id,
                     bind_receipts: binds.into_boxed_slice(),
                     copy_receipts: copies.into_boxed_slice(),
-                    fixed_states: Box::default(),
+                    fixed_states: fixed
+                        .get(index)
+                        .map_or_else(Box::default, |state| state.states.clone()),
                 })
             })
             .collect::<Result<Vec<_>, ExecutorError>>()?;
@@ -650,6 +629,37 @@ impl PreparedBatch {
             steps: steps.into_boxed_slice(),
         })
     }
+}
+
+fn validate_fixed_execution(
+    source: &EngineBatchPlan,
+    fixed: &[FixedStateExecutionEvidence],
+) -> Result<(), ExecutorError> {
+    let has_fixed_states = source
+        .steps
+        .iter()
+        .any(|step| !step.fixed_states.is_empty());
+    let mismatched = fixed.len() != source.steps.len()
+        || fixed.iter().zip(&source.steps).any(|(state, step)| {
+            state.request_id != step.request_id.0
+                || state.states.len() != step.fixed_states.len()
+                || state
+                    .states
+                    .iter()
+                    .zip(&step.fixed_states)
+                    .any(|(evidence, planned)| {
+                        evidence.state_id != planned.state_id
+                            || evidence.source != planned.source
+                            || evidence.destination != planned.destination
+                            || evidence.byte_count != planned.byte_count
+                            || !evidence.observed
+                            || !evidence.written
+                    })
+        });
+    if has_fixed_states && mismatched || !has_fixed_states && !fixed.is_empty() {
+        return Err(ExecutorError::FixedStateExecutionMissing);
+    }
+    Ok(())
 }
 
 fn lower_class(
