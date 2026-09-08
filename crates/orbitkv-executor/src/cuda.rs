@@ -38,6 +38,7 @@ pub struct PagedAttentionInputs {
     pub v_cache: GraphTensor,
     pub query_tokens: Expression,
     pub context_pages: Expression,
+    pub page_tokens: Expression,
 }
 
 /// Graph inputs that carry one OrbitKV-authored CSR page plan.
@@ -258,6 +259,7 @@ impl PagedAttentionMetadata {
         self,
         runtime: &mut CudaRuntime,
         batch: &AttentionBatch,
+        compiled_page_tokens: usize,
     ) -> Result<(), ExecutorError> {
         let rows = batch
             .query_indptr
@@ -265,6 +267,11 @@ impl PagedAttentionMetadata {
             .checked_sub(1)
             .ok_or(ExecutorError::InvalidRequestGeometry)?;
         if batch.class_id != self.class_id
+            || batch.page_tokens == 0
+            || !matches!(
+                usize::try_from(batch.page_tokens),
+                Ok(page_tokens) if page_tokens == 1 || page_tokens == compiled_page_tokens
+            )
             || batch.page_indptr.len() != rows + 1
             || batch.last_page_len.len() != rows
             || batch.page_indptr.last().copied() != i32::try_from(batch.page_indices.len()).ok()
@@ -347,7 +354,7 @@ pub fn paged_attention(
             num_qo_heads: kernel.query_heads,
             num_kv_heads: kernel.kv_heads,
             head_dim: kernel.head_dim,
-            page_size: class.page_tokens as usize,
+            page_size: inputs.page_tokens,
             query_tokens: inputs.query_tokens,
             context_pages: inputs.context_pages,
             dtype: kernel.dtype,
@@ -383,6 +390,7 @@ mod tests {
                 v_cache: v,
                 query_tokens,
                 context_pages,
+                page_tokens: 16.into(),
             },
             metadata,
             &AttentionClass {
@@ -465,6 +473,7 @@ mod tests {
                 v_cache: v,
                 query_tokens,
                 context_pages,
+                page_tokens: 16.into(),
             },
             metadata,
             &plan.classes[0],

@@ -12,6 +12,10 @@ The current OrbitKV patch stack adds the following general executor contracts:
 - externally managed paged attention: page size and CSR request/page metadata
   are graph inputs authored by OrbitKV instead of an executor-private page
   table;
+- dynamic paged-attention geometry: page size is resolved from the current
+  runtime dimensions and participates in capture invalidation, allowing one
+  installed graph and K/V arena to switch between token-slot selection and
+  packed physical pages;
 - grouped-query specialization: the query-to-KV head ratio participates in JIT
   identity and both planning and execution compile for that exact ratio;
 - guarded native calls: FlashInfer failures cross the C boundary as Rust errors
@@ -24,9 +28,10 @@ The current OrbitKV patch stack adds the following general executor contracts:
   paged-attention nodes bound to an external persistent-state class ID;
 - direct range copies within persistent graph inputs, so relocation always
   targets the stable K/V arena even when a bucket materializes its update;
-- fresh selected-bucket profiles with device time, actual sample count, bucket
-  geometry, and exact final LLIR fingerprints, plus timing-capable device-copy
-  batches used by the executor's relocation cost contract;
+- fresh profiles of an already installed executable at exact runtime geometry,
+  including device time, sample count, bucket identity, and dynamic dimensions,
+  plus timing-capable device-copy batches used by the executor's relocation
+  cost contract;
 - caller-owned capture of an already-warmed execution, plus a preparation-only
   path that refreshes stable input bindings before replay without replanning or
   executing the model;
@@ -67,6 +72,14 @@ dimensions have explicit capacity buckets. Tokens, positions, write slots, and
 CSR tensors are allocated to their maximum configured capacity before search,
 so later `set_data` calls update their contents and logical lengths without
 changing device addresses.
+
+For a relocatable Full class, the physical K/V allocation retains its compiled
+page width while attention page size is a dynamic symbol. A sparse
+manager-authored view binds that symbol to `1` and expands physical token slots
+into CSR indices; a packed view binds it to the storage page width. The switch
+does not compile another decoder or allocate another cache. Because page size
+affects FlashInfer planning, it is included in the capture-sensitive dimension
+set and safely rematerializes the library plan when changed.
 
 The language-model head feeds a fused dynamic-row argmax in the same graph. The
 default execution API transfers only one `i32` token ID per query row. An

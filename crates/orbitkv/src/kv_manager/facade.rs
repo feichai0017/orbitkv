@@ -302,6 +302,26 @@ impl CanonicalKvManager {
         self.materialize_snapshot_roots(snapshot.boundary, &snapshot.roots)
     }
 
+    pub(crate) fn materialize_attention_view(
+        &self,
+        request: RequestLease,
+        expected: SnapshotLease,
+        previous_boundary: u64,
+    ) -> Result<Box<[SnapshotPage]>, KvManagerError> {
+        let state = self.request(request)?;
+        if state.released || state.quarantined {
+            return Err(KvManagerError::RequestUnavailable);
+        }
+        if state.head != expected {
+            return Err(KvManagerError::StaleView);
+        }
+        let snapshot = self.request_snapshot(request)?;
+        if previous_boundary >= snapshot.boundary {
+            return Err(KvManagerError::InvalidBatchRange);
+        }
+        self.materialize_attention_roots(previous_boundary, snapshot.boundary, &snapshot.roots)
+    }
+
     pub(super) fn materialize_snapshot_roots(
         &self,
         boundary: u64,
@@ -360,6 +380,8 @@ impl CanonicalKvManager {
                     continue;
                 }
                 let visible_begin = semantic_start.max(token_begin).min(token_end);
+                let valid_token_count = u32::try_from(token_end - token_begin)
+                    .map_err(|_| KvManagerError::ArithmeticOverflow("materialized valid tokens"))?;
                 pages.push(SnapshotPage {
                     class_id: entry.class_id,
                     backend_domain: entry.backend_domain,
@@ -368,15 +390,15 @@ impl CanonicalKvManager {
                     temporal_cycle: entry.temporal_cycle,
                     page: entry.page,
                     backend_index: entry.backend_index,
-                    valid_token_count: u32::try_from(token_end - token_begin).map_err(|_| {
-                        KvManagerError::ArithmeticOverflow("materialized valid tokens")
-                    })?,
+                    valid_token_count,
                     visible_token_offset: u32::try_from(visible_begin - token_begin).map_err(
                         |_| KvManagerError::ArithmeticOverflow("materialized visible offset"),
                     )?,
                     visible_token_count: u32::try_from(token_end - visible_begin).map_err(
                         |_| KvManagerError::ArithmeticOverflow("materialized visible tokens"),
                     )?,
+                    retained_token_bits: root
+                        .retained_token_bits(entry.backend_index, valid_token_count),
                 });
             }
         }
@@ -463,6 +485,7 @@ impl CanonicalKvManager {
                         .map(|_| ClassRoot {
                             entries: PersistentRootEntries::default(),
                             tokens: PersistentTokenTable::default(),
+                            selection_masks: Arc::new(BTreeMap::new()),
                             layout: RootLayout::Dense,
                             resident_tokens: 0,
                         })

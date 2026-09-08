@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use luminal_cuda_lite::runtime::SelectedBucketProfile;
+use luminal_cuda_lite::runtime::{RuntimeExecutionProfile, SelectedBucketDimension};
 use orbitkv::{
     StateLayoutAlternative,
     kv_manager::{
@@ -10,68 +10,34 @@ use orbitkv::{
 };
 use sha2::{Digest, Sha256};
 
-use crate::{ExecutorArena, ExecutorPlan};
-
-use super::{
-    CompiledDecoder, DecoderArtifactArena, DecoderCompileConfig, DecoderConfig, DecoderError,
-    DecoderWeightFeatures,
-};
+use super::{CompiledDecoder, DecoderError, DecoderStep};
 
 const MINIMUM_PROFILE_SAMPLES: u32 = 3;
 const NANOS_PER_SECOND: u128 = 1_000_000_000;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct DecoderProfileIdentity {
-    pub matched_execution_fingerprint: [u8; 32],
     pub manager_plan_fingerprint: [u8; 32],
     pub compiler_facts_digest: [u8; 32],
     pub artifact_fingerprint: [u8; 32],
     pub schedule_fingerprint: [u8; 32],
     pub bucket_program_fingerprints: Box<[[u64; 2]]>,
-    pub class_layouts: Box<[(u16, StateLayoutAlternative)]>,
 }
 
-pub(super) fn decoder_measurement_identity(
-    config: &DecoderConfig,
-    plan: &ExecutorPlan,
-    arenas: &[ExecutorArena],
-    weights: DecoderWeightFeatures,
-    compile: DecoderCompileConfig,
-) -> Result<[u8; 32], DecoderError> {
-    #[derive(serde::Serialize)]
-    struct MeasurementIdentity<'a> {
-        manifest_fingerprint: &'a str,
-        manager_plan_fingerprint: [u8; 32],
-        page_tokens: u32,
-        decoder: &'a DecoderConfig,
-        weights: DecoderWeightFeatures,
-        arenas: Vec<DecoderArtifactArena>,
-        compile: DecoderCompileConfig,
+impl DecoderProfileIdentity {
+    pub(super) fn fingerprint(&self) -> [u8; 32] {
+        let mut hash = Sha256::new();
+        hash.update(self.manager_plan_fingerprint);
+        hash.update(self.compiler_facts_digest);
+        hash.update(self.artifact_fingerprint);
+        hash.update(self.schedule_fingerprint);
+        hash.update((self.bucket_program_fingerprints.len() as u64).to_le_bytes());
+        for program in &self.bucket_program_fingerprints {
+            hash.update(program[0].to_le_bytes());
+            hash.update(program[1].to_le_bytes());
+        }
+        hash.finalize().into()
     }
-
-    let manager_plan_fingerprint =
-        plan.state_layout_facts
-            .manager_plan_fingerprint
-            .ok_or(DecoderError::RelocationProfile(
-                "manager plan identity missing",
-            ))?;
-    let identity = MeasurementIdentity {
-        manifest_fingerprint: &plan.manifest_fingerprint,
-        manager_plan_fingerprint,
-        page_tokens: plan.page_tokens,
-        decoder: config,
-        weights,
-        arenas: arenas
-            .iter()
-            .map(|arena| DecoderArtifactArena {
-                class_id: arena.class_id,
-                backend_base_index: arena.backend_base_index,
-                page_count: arena.page_count,
-            })
-            .collect(),
-        compile,
-    };
-    Ok(Sha256::digest(serde_json::to_vec(&identity)?).into())
 }
 
 /// One real relocation-copy observation measured with CUDA events.
@@ -96,6 +62,27 @@ pub struct RelocationProfileEnvelopeInput {
     pub maximum_fragmentation_milli: u16,
     pub minimum_moved_bytes: u64,
     pub maximum_moved_bytes: u64,
+}
+
+/// Fresh profile of one deployed decoder at an exact request geometry.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ExecutionGeometryProfile {
+    executable_fingerprint: [u8; 32],
+    bucket_index: usize,
+    bucket_dimensions: Vec<SelectedBucketDimension>,
+    execution_dimensions: Vec<(String, usize)>,
+    state_geometry: Box<[ExecutionStateGeometry]>,
+    fingerprint: [u8; 32],
+    device_time: Duration,
+    trials: usize,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+struct ExecutionStateGeometry {
+    class_id: u16,
+    page_tokens: u32,
+    page_count: usize,
+    token_count: u64,
 }
 
 impl RelocationBandwidthProfile {
@@ -145,98 +132,142 @@ impl RelocationBandwidthProfile {
     }
 }
 
-/// Builds manager-consumable evidence from two freshly searched executables.
+pub(super) fn execution_geometry_profile(
+    step: DecoderStep<'_>,
+    profile: RuntimeExecutionProfile,
+    executable_fingerprint: [u8; 32],
+) -> Result<ExecutionGeometryProfile, DecoderError> {
+    let state_geometry = step
+        .classes
+        .iter()
+        .map(|class| {
+            let mut token_count = 0_u64;
+            for row in class.attention.page_indptr.windows(2) {
+                let page_count = i64::from(row[1]) - i64::from(row[0]);
+                if page_count <= 0 {
+                    return Err(DecoderError::RelocationProfile(
+                        "execution profile contains an empty state row",
+                    ));
+                }
+            }
+            for (row, &last_page_len) in class
+                .attention
+                .page_indptr
+                .windows(2)
+                .zip(class.attention.last_page_len.iter())
+            {
+                let page_count = u64::try_from(i64::from(row[1]) - i64::from(row[0]))
+                    .map_err(|_| DecoderError::RelocationProfile("invalid state page count"))?;
+                token_count = token_count
+                    .checked_add(
+                        page_count
+                            .saturating_sub(1)
+                            .checked_mul(u64::from(class.attention.page_tokens))
+                            .and_then(|tokens| {
+                                tokens.checked_add(u64::try_from(last_page_len).ok()?)
+                            })
+                            .ok_or(DecoderError::RelocationProfile(
+                                "state token count overflow",
+                            ))?,
+                    )
+                    .ok_or(DecoderError::RelocationProfile(
+                        "state token count overflow",
+                    ))?;
+            }
+            Ok(ExecutionStateGeometry {
+                class_id: class.class_id,
+                page_tokens: class.attention.page_tokens,
+                page_count: class.attention.page_indices.len(),
+                token_count,
+            })
+        })
+        .collect::<Result<Vec<_>, DecoderError>>()?
+        .into_boxed_slice();
+    let fingerprint = execution_fingerprint(
+        profile.bucket_index,
+        &profile.execution_dimensions,
+        &state_geometry,
+    );
+    Ok(ExecutionGeometryProfile {
+        executable_fingerprint,
+        bucket_index: profile.bucket_index,
+        bucket_dimensions: profile.bucket_dimensions,
+        execution_dimensions: profile.execution_dimensions,
+        state_geometry,
+        fingerprint,
+        device_time: profile.device_time,
+        trials: profile.trials,
+    })
+}
+
+/// Builds manager-consumable evidence from two exact runtime geometries.
 ///
-/// The source and target must differ only in the selected physical layout for
-/// `class_id`. Bucket geometry, model/weight/arena identity, and manager plan
-/// must match exactly. Loading a stored schedule yields no fresh selected
-/// profile and is therefore rejected.
+/// Both profiles must come from the same executable and bucket. The target
+/// must preserve every unrelated state class while representing the selected
+/// class with no more tokens or pages than the source.
 ///
 /// # Errors
 ///
 /// Fails closed for stale or weak profiles, mismatched executables or buckets,
 /// illegal source/target layouts, and invalid proposal envelopes.
 pub fn build_relocation_cost_profile(
-    source: &CompiledDecoder,
-    target: &CompiledDecoder,
-    bucket_index: usize,
+    decoder: &CompiledDecoder,
+    source: &ExecutionGeometryProfile,
+    target: &ExecutionGeometryProfile,
     envelope: RelocationProfileEnvelopeInput,
     relocation: RelocationBandwidthProfile,
 ) -> Result<RelocationCostProfile, DecoderError> {
-    let source_profile = source
-        .runtime
-        .selected_bucket_profiles()
-        .iter()
-        .find(|profile| profile.bucket_index == bucket_index)
-        .ok_or(DecoderError::RelocationProfile(
-            "source bucket has no fresh selected profile",
-        ))?;
-    let target_profile = target
-        .runtime
-        .selected_bucket_profiles()
-        .iter()
-        .find(|profile| profile.bucket_index == bucket_index)
-        .ok_or(DecoderError::RelocationProfile(
-            "target bucket has no fresh selected profile",
-        ))?;
     build_profile_from_parts(
-        &source.profile_identity,
-        source_profile,
-        &target.profile_identity,
-        target_profile,
+        &decoder.profile_identity,
+        source,
+        target,
         envelope,
         relocation,
     )
 }
 
 fn build_profile_from_parts(
-    source: &DecoderProfileIdentity,
-    source_profile: &SelectedBucketProfile,
-    target: &DecoderProfileIdentity,
-    target_profile: &SelectedBucketProfile,
+    identity: &DecoderProfileIdentity,
+    source: &ExecutionGeometryProfile,
+    target: &ExecutionGeometryProfile,
     envelope: RelocationProfileEnvelopeInput,
     relocation: RelocationBandwidthProfile,
 ) -> Result<RelocationCostProfile, DecoderError> {
-    if source.matched_execution_fingerprint != target.matched_execution_fingerprint
-        || source.manager_plan_fingerprint != target.manager_plan_fingerprint
-        || source.compiler_facts_digest == target.compiler_facts_digest
-        || source.schedule_fingerprint == [0; 32]
-        || target.schedule_fingerprint == [0; 32]
-        || source.artifact_fingerprint == target.artifact_fingerprint
-        || source.schedule_fingerprint == target.schedule_fingerprint
-        || source.bucket_program_fingerprints.len() != target.bucket_program_fingerprints.len()
-        || source
-            .bucket_program_fingerprints
-            .get(source_profile.bucket_index)
-            .zip(
-                target
-                    .bucket_program_fingerprints
-                    .get(target_profile.bucket_index),
-            )
-            .is_none_or(|(source_program, target_program)| source_program == target_program)
-        || source.class_layouts.len() != target.class_layouts.len()
+    if source.executable_fingerprint != identity.fingerprint()
+        || target.executable_fingerprint != identity.fingerprint()
+        || source.bucket_index != target.bucket_index
+        || non_layout_dimensions(&source.bucket_dimensions, &source.state_geometry)
+            != non_layout_dimensions(&target.bucket_dimensions, &target.state_geometry)
+        || non_layout_execution_dimensions(&source.execution_dimensions, &source.state_geometry)
+            != non_layout_execution_dimensions(&target.execution_dimensions, &target.state_geometry)
+        || source.state_geometry.len() != target.state_geometry.len()
+        || source.fingerprint == target.fingerprint
+        || source.trials < usize::try_from(MINIMUM_PROFILE_SAMPLES).unwrap()
+        || target.trials < usize::try_from(MINIMUM_PROFILE_SAMPLES).unwrap()
+        || source.device_time.is_zero()
+        || target.device_time.is_zero()
     {
         return Err(DecoderError::RelocationProfile(
-            "source and target executable identities do not match",
+            "source and target execution measurements are weak or unmatched",
         ));
     }
-    let source_layout = class_layout(source, envelope.class_id)?;
-    let target_layout = class_layout(target, envelope.class_id)?;
-    if source_layout != StateLayoutAlternative::Compiled
-        || target_layout != StateLayoutAlternative::PackedTokenSlots
+    let source_class = state_geometry(source, envelope.class_id)?;
+    let target_class = state_geometry(target, envelope.class_id)?;
+    if source_class.page_tokens != 1
+        || target_class.page_tokens <= 1
+        || target_class.page_count > source_class.page_count
+        || target_class.token_count != source_class.token_count
         || source
-            .class_layouts
+            .state_geometry
             .iter()
-            .zip(target.class_layouts.iter())
-            .any(
-                |(&(source_id, source_layout), &(target_id, target_layout))| {
-                    source_id != target_id
-                        || (source_id != envelope.class_id && source_layout != target_layout)
-                },
-            )
+            .zip(target.state_geometry.iter())
+            .any(|(source, target)| {
+                source.class_id != target.class_id
+                    || (source.class_id != envelope.class_id && source != target)
+            })
     {
         return Err(DecoderError::RelocationProfile(
-            "executables do not represent one compiled-to-packed layout change",
+            "measurements do not represent one token-selection-to-packed transition",
         ));
     }
     if envelope.minimum_fragmentation_milli > envelope.maximum_fragmentation_milli
@@ -248,39 +279,32 @@ fn build_profile_from_parts(
             "relocation proposal envelope is invalid",
         ));
     }
-    if source_profile.bucket_index != target_profile.bucket_index
-        || source_profile.bucket_dimensions != target_profile.bucket_dimensions
-        || source_profile.representative_dimensions != target_profile.representative_dimensions
-        || source_profile.trials < usize::try_from(MINIMUM_PROFILE_SAMPLES).unwrap()
-        || target_profile.trials < usize::try_from(MINIMUM_PROFILE_SAMPLES).unwrap()
-        || source_profile.device_time.is_zero()
-        || target_profile.device_time.is_zero()
-    {
-        return Err(DecoderError::RelocationProfile(
-            "selected bucket measurements are weak or unmatched",
-        ));
-    }
-    let source_step_ns = duration_ns(source_profile.device_time)?;
-    let target_step_ns = duration_ns(target_profile.device_time)?;
-    let source_samples = u32::try_from(source_profile.trials)
+    let source_step_ns = duration_ns(source.device_time)?;
+    let target_step_ns = duration_ns(target.device_time)?;
+    let source_samples = u32::try_from(source.trials)
         .map_err(|_| DecoderError::RelocationProfile("source sample count overflow"))?;
-    let target_samples = u32::try_from(target_profile.trials)
+    let target_samples = u32::try_from(target.trials)
         .map_err(|_| DecoderError::RelocationProfile("target sample count overflow"))?;
-    let bucket_fingerprint = bucket_fingerprint(source_profile);
-
+    let bucket_fingerprint = bucket_fingerprint(source);
+    let bucket_program_fingerprint = identity
+        .bucket_program_fingerprints
+        .get(source.bucket_index)
+        .copied()
+        .map(program_fingerprint)
+        .ok_or(DecoderError::RelocationProfile("bucket program missing"))?;
     Ok(RelocationCostProfile {
         identity: RelocationCostIdentity {
-            plan_fingerprint: source.manager_plan_fingerprint,
-            source_compiler_facts_digest: source.compiler_facts_digest,
-            target_compiler_facts_digest: target.compiler_facts_digest,
+            plan_fingerprint: identity.manager_plan_fingerprint,
+            compiler_facts_digest: identity.compiler_facts_digest,
             bucket_fingerprint,
-            source_artifact_fingerprint: source.artifact_fingerprint,
-            target_artifact_fingerprint: target.artifact_fingerprint,
-            source_schedule_fingerprint: source.schedule_fingerprint,
-            target_schedule_fingerprint: target.schedule_fingerprint,
+            artifact_fingerprint: identity.artifact_fingerprint,
+            schedule_fingerprint: identity.schedule_fingerprint,
+            bucket_program_fingerprint,
+            source_execution_fingerprint: source.fingerprint,
+            target_execution_fingerprint: target.fingerprint,
             class_id: envelope.class_id,
-            source_layout,
-            target_layout,
+            source_layout: StateLayoutAlternative::TokenSelectionMask,
+            target_layout: StateLayoutAlternative::PackedTokenSlots,
         },
         envelope: RelocationCostEnvelope {
             minimum_fragmentation_milli: envelope.minimum_fragmentation_milli,
@@ -299,16 +323,17 @@ fn build_profile_from_parts(
     })
 }
 
-fn class_layout(
-    identity: &DecoderProfileIdentity,
+fn state_geometry(
+    profile: &ExecutionGeometryProfile,
     class_id: u16,
-) -> Result<StateLayoutAlternative, DecoderError> {
-    identity
-        .class_layouts
+) -> Result<ExecutionStateGeometry, DecoderError> {
+    profile
+        .state_geometry
         .iter()
-        .find_map(|&(candidate, layout)| (candidate == class_id).then_some(layout))
+        .find(|state| state.class_id == class_id)
+        .copied()
         .ok_or(DecoderError::RelocationProfile(
-            "relocation class is absent from compiler facts",
+            "relocation class is absent from execution geometry",
         ))
 }
 
@@ -321,7 +346,7 @@ fn duration_ns(duration: Duration) -> Result<u64, DecoderError> {
         ))
 }
 
-fn bucket_fingerprint(profile: &SelectedBucketProfile) -> [u8; 32] {
+fn bucket_fingerprint(profile: &ExecutionGeometryProfile) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update((profile.bucket_index as u64).to_le_bytes());
     hash.update((profile.bucket_dimensions.len() as u64).to_le_bytes());
@@ -332,11 +357,69 @@ fn bucket_fingerprint(profile: &SelectedBucketProfile) -> [u8; 32] {
         hash.update((dimension.maximum as u64).to_le_bytes());
         hash.update((dimension.representative as u64).to_le_bytes());
     }
-    hash.update((profile.representative_dimensions.len() as u64).to_le_bytes());
-    for (name, value) in &profile.representative_dimensions {
+    hash.finalize().into()
+}
+
+fn non_layout_dimensions<'a>(
+    dimensions: &'a [SelectedBucketDimension],
+    states: &[ExecutionStateGeometry],
+) -> Vec<(&'a str, usize, usize, usize, usize)> {
+    dimensions
+        .iter()
+        .filter(|dimension| !is_layout_dimension(&dimension.name, states))
+        .map(|dimension| {
+            (
+                dimension.name.as_str(),
+                dimension.bucket_index,
+                dimension.minimum,
+                dimension.maximum,
+                dimension.representative,
+            )
+        })
+        .collect()
+}
+
+fn non_layout_execution_dimensions<'a>(
+    dimensions: &'a [(String, usize)],
+    states: &[ExecutionStateGeometry],
+) -> Vec<(&'a str, usize)> {
+    dimensions
+        .iter()
+        .filter(|(name, _)| !is_layout_dimension(name, states))
+        .map(|(name, value)| (name.as_str(), *value))
+        .collect()
+}
+
+fn is_layout_dimension(name: &str, states: &[ExecutionStateGeometry]) -> bool {
+    states.iter().any(|state| {
+        name == format!("c_{}", state.class_id) || name == format!("p_{}", state.class_id)
+    })
+}
+
+fn execution_fingerprint(
+    bucket_index: usize,
+    dimensions: &[(String, usize)],
+    states: &[ExecutionStateGeometry],
+) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update((bucket_index as u64).to_le_bytes());
+    for (name, value) in dimensions {
         hash_bytes(&mut hash, name.as_bytes());
         hash.update((*value as u64).to_le_bytes());
     }
+    for state in states {
+        hash.update(state.class_id.to_le_bytes());
+        hash.update(state.page_tokens.to_le_bytes());
+        hash.update((state.page_count as u64).to_le_bytes());
+        hash.update(state.token_count.to_le_bytes());
+    }
+    hash.finalize().into()
+}
+
+fn program_fingerprint(program: [u64; 2]) -> [u8; 32] {
+    let mut hash = Sha256::new();
+    hash.update(program[0].to_le_bytes());
+    hash.update(program[1].to_le_bytes());
     hash.finalize().into()
 }
 
@@ -351,30 +434,44 @@ mod tests {
 
     use super::*;
 
-    fn identity(layout: StateLayoutAlternative, facts: u8) -> DecoderProfileIdentity {
+    fn identity() -> DecoderProfileIdentity {
         DecoderProfileIdentity {
-            matched_execution_fingerprint: [1; 32],
             manager_plan_fingerprint: [2; 32],
-            compiler_facts_digest: [facts; 32],
-            artifact_fingerprint: [facts + 5; 32],
-            schedule_fingerprint: [facts + 10; 32],
-            bucket_program_fingerprints: vec![[u64::from(facts), 1]].into_boxed_slice(),
-            class_layouts: vec![(0, layout), (1, StateLayoutAlternative::Compiled)]
-                .into_boxed_slice(),
+            compiler_facts_digest: [3; 32],
+            artifact_fingerprint: [4; 32],
+            schedule_fingerprint: [5; 32],
+            bucket_program_fingerprints: vec![[6, 1]].into_boxed_slice(),
         }
     }
 
-    fn bucket(time_ns: u64) -> SelectedBucketProfile {
-        SelectedBucketProfile {
+    fn geometry(page_tokens: u32, pages: usize, time_ns: u64) -> ExecutionGeometryProfile {
+        let identity = identity();
+        let bucket_dimensions = vec![SelectedBucketDimension {
+            name: "s".into(),
             bucket_index: 0,
-            bucket_dimensions: vec![SelectedBucketDimension {
-                name: "s".into(),
-                bucket_index: 0,
-                minimum: 1,
-                maximum: 1,
-                representative: 1,
-            }],
-            representative_dimensions: vec![("s".into(), 1)],
+            minimum: 1,
+            maximum: 1,
+            representative: 1,
+        }];
+        let execution_dimensions = vec![
+            ("c_0".into(), pages),
+            ("p_0".into(), usize::try_from(page_tokens).unwrap()),
+            ("s".into(), 1),
+        ];
+        let state_geometry = vec![ExecutionStateGeometry {
+            class_id: 0,
+            page_tokens,
+            page_count: pages,
+            token_count: 8,
+        }]
+        .into_boxed_slice();
+        ExecutionGeometryProfile {
+            executable_fingerprint: identity.fingerprint(),
+            bucket_index: 0,
+            bucket_dimensions,
+            fingerprint: execution_fingerprint(0, &execution_dimensions, &state_geometry),
+            execution_dimensions,
+            state_geometry,
             device_time: Duration::from_nanos(time_ns),
             trials: 3,
         }
@@ -402,11 +499,11 @@ mod tests {
 
     #[test]
     fn builds_identity_bound_matched_cost_profile() {
+        let source_identity = identity();
         let profile = build_profile_from_parts(
-            &identity(StateLayoutAlternative::Compiled, 3),
-            &bucket(100),
-            &identity(StateLayoutAlternative::PackedTokenSlots, 4),
-            &bucket(70),
+            &source_identity,
+            &geometry(1, 8, 100),
+            &geometry(16, 1, 70),
             envelope(),
             bandwidth(),
         )
@@ -421,15 +518,15 @@ mod tests {
 
     #[test]
     fn rejects_geometry_layout_and_sample_mismatches() {
-        let source = identity(StateLayoutAlternative::Compiled, 3);
-        let target = identity(StateLayoutAlternative::PackedTokenSlots, 4);
-        let mut wrong_bucket = bucket(70);
+        let source_identity = identity();
+        let source = geometry(1, 8, 100);
+        let target = geometry(16, 1, 70);
+        let mut wrong_bucket = target.clone();
         wrong_bucket.bucket_dimensions[0].maximum = 2;
         assert!(
             build_profile_from_parts(
+                &source_identity,
                 &source,
-                &bucket(100),
-                &target,
                 &wrong_bucket,
                 envelope(),
                 bandwidth(),
@@ -437,46 +534,42 @@ mod tests {
             .is_err()
         );
 
-        let wrong_layout = identity(StateLayoutAlternative::Compiled, 4);
+        let wrong_layout = geometry(1, 8, 70);
         assert!(
             build_profile_from_parts(
+                &source_identity,
                 &source,
-                &bucket(100),
                 &wrong_layout,
-                &bucket(70),
                 envelope(),
                 bandwidth(),
             )
             .is_err()
         );
 
-        let mut no_execution_change = target.clone();
-        no_execution_change.bucket_program_fingerprints =
-            source.bucket_program_fingerprints.clone();
+        let no_execution_change = source.clone();
         assert!(
             build_profile_from_parts(
+                &source_identity,
                 &source,
-                &bucket(100),
                 &no_execution_change,
-                &bucket(70),
                 envelope(),
                 bandwidth(),
             )
             .is_err()
         );
 
-        let mut weak = bucket(70);
+        let mut weak = target;
         weak.trials = 2;
         assert!(
-            build_profile_from_parts(
-                &source,
-                &bucket(100),
-                &target,
-                &weak,
-                envelope(),
-                bandwidth(),
-            )
-            .is_err()
+            build_profile_from_parts(&source_identity, &source, &weak, envelope(), bandwidth(),)
+                .is_err()
+        );
+
+        let mut foreign = geometry(16, 1, 70);
+        foreign.executable_fingerprint = [99; 32];
+        assert!(
+            build_profile_from_parts(&source_identity, &source, &foreign, envelope(), bandwidth(),)
+                .is_err()
         );
     }
 

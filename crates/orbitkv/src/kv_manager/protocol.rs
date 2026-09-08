@@ -416,6 +416,10 @@ pub struct SnapshotPage {
     pub valid_token_count: u32,
     pub visible_token_offset: u32,
     pub visible_token_count: u32,
+    /// Bit `i` is set when physical token slot `i` remains logically visible.
+    /// The canonical manager currently fixes page size to 16, so this field
+    /// has ample width without introducing per-page heap allocation.
+    pub retained_token_bits: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

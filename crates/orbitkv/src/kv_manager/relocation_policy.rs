@@ -20,13 +20,13 @@ pub(super) struct RelocationPlanningContext {
 #[serde(deny_unknown_fields)]
 pub struct RelocationCostIdentity {
     pub plan_fingerprint: [u8; 32],
-    pub source_compiler_facts_digest: [u8; 32],
-    pub target_compiler_facts_digest: [u8; 32],
+    pub compiler_facts_digest: [u8; 32],
     pub bucket_fingerprint: [u8; 32],
-    pub source_artifact_fingerprint: [u8; 32],
-    pub target_artifact_fingerprint: [u8; 32],
-    pub source_schedule_fingerprint: [u8; 32],
-    pub target_schedule_fingerprint: [u8; 32],
+    pub artifact_fingerprint: [u8; 32],
+    pub schedule_fingerprint: [u8; 32],
+    pub bucket_program_fingerprint: [u8; 32],
+    pub source_execution_fingerprint: [u8; 32],
+    pub target_execution_fingerprint: [u8; 32],
     pub class_id: u16,
     pub source_layout: StateLayoutAlternative,
     pub target_layout: StateLayoutAlternative,
@@ -218,7 +218,7 @@ fn validate_profile_identity(
 ) -> Result<(), KvManagerError> {
     if identity.plan_fingerprint != context.plan_fingerprint
         || identity.class_id != plan.class_id
-        || identity.source_layout != StateLayoutAlternative::Compiled
+        || identity.source_layout != StateLayoutAlternative::TokenSelectionMask
         || identity.target_layout != StateLayoutAlternative::PackedTokenSlots
     {
         return Err(KvManagerError::RelocationCostProfileMismatch);
@@ -253,16 +253,14 @@ fn validate_profile_shape(profile: &RelocationCostProfile) -> Result<(), KvManag
     let envelope = &profile.envelope;
     let measurement = &profile.measurement;
     if identity.plan_fingerprint == [0; 32]
-        || identity.source_compiler_facts_digest == [0; 32]
-        || identity.target_compiler_facts_digest == [0; 32]
-        || identity.source_compiler_facts_digest == identity.target_compiler_facts_digest
+        || identity.compiler_facts_digest == [0; 32]
         || identity.bucket_fingerprint == [0; 32]
-        || identity.source_artifact_fingerprint == [0; 32]
-        || identity.target_artifact_fingerprint == [0; 32]
-        || identity.source_artifact_fingerprint == identity.target_artifact_fingerprint
-        || identity.source_schedule_fingerprint == [0; 32]
-        || identity.target_schedule_fingerprint == [0; 32]
-        || identity.source_schedule_fingerprint == identity.target_schedule_fingerprint
+        || identity.artifact_fingerprint == [0; 32]
+        || identity.schedule_fingerprint == [0; 32]
+        || identity.bucket_program_fingerprint == [0; 32]
+        || identity.source_execution_fingerprint == [0; 32]
+        || identity.target_execution_fingerprint == [0; 32]
+        || identity.source_execution_fingerprint == identity.target_execution_fingerprint
         || envelope.minimum_fragmentation_milli > envelope.maximum_fragmentation_milli
         || envelope.maximum_fragmentation_milli > 1000
         || envelope.minimum_moved_bytes == 0
@@ -337,15 +335,15 @@ mod tests {
         RelocationCostProfile {
             identity: RelocationCostIdentity {
                 plan_fingerprint: [1; 32],
-                source_compiler_facts_digest: [2; 32],
-                target_compiler_facts_digest: [3; 32],
+                compiler_facts_digest: [2; 32],
                 bucket_fingerprint: [4; 32],
-                source_artifact_fingerprint: [5; 32],
-                target_artifact_fingerprint: [6; 32],
-                source_schedule_fingerprint: [7; 32],
-                target_schedule_fingerprint: [8; 32],
+                artifact_fingerprint: [5; 32],
+                schedule_fingerprint: [6; 32],
+                bucket_program_fingerprint: [7; 32],
+                source_execution_fingerprint: [9; 32],
+                target_execution_fingerprint: [10; 32],
                 class_id: 0,
-                source_layout: StateLayoutAlternative::Compiled,
+                source_layout: StateLayoutAlternative::TokenSelectionMask,
                 target_layout: StateLayoutAlternative::PackedTokenSlots,
             },
             envelope: RelocationCostEnvelope {

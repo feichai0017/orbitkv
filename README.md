@@ -48,12 +48,22 @@ geometry, address programs, and legal layout alternatives from a validated
 manifest. `orbitkv-executor` binds those facts to stable arenas and injects them
 into Luminal's e-graph; each paged-attention custom op identifies its owning
 state class. Selected artifacts include the facts digest in their identity.
-Luminal now exports fresh selected-bucket device costs and exact bucket-program
-fingerprints; the executor can combine matched source/target searches with
-CUDA-event relocation bandwidth into a strongly identity-bound cost profile.
-OrbitKV accepts a relocation only when that evidence predicts a positive
-amortized benefit. Automatic relocation remains disabled because no
-layout-changing rewrite yet produces a distinct packed executable.
+Luminal now exports exact bucket-program fingerprints and can reprofile an
+already installed executable at the manager-authored runtime geometry. The
+executor compares token-selection and packed views inside the same decoder,
+schedule, bucket program, and persistent K/V arena, then combines those device
+times with CUDA-event relocation bandwidth into a strongly identity-bound cost
+profile. OrbitKV accepts a relocation only when that evidence predicts a
+positive amortized benefit. Automatic relocation remains disabled until this
+path is qualified on a released checkpoint and representative long-context
+traces.
+
+Disposition-only Full-attention snapshots carry a sparse per-page retained
+token mask. Before compaction, the executor lowers holes into a page-size-one
+token-slot CSR view; after relocation it returns to the normal physical page
+width. Page size is therefore a runtime graph dimension, not a second decoder
+or a second K/V allocation. The canonical manager still owns 16-token physical
+pages; `1` is only the attention execution representation for selected slots.
 
 The native decoder compiles one symbolic graph into decode and prefill buckets.
 Both phases share the same runtime, preallocated dynamic inputs, and one

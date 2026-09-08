@@ -162,13 +162,14 @@ The compiler boundary shares semantic lifetime, physical arena, and
 persistent-state constraints in the OrbitKV-to-Luminal direction. A candidate
 that violates a required state alias is rejected before profiling, and an
 artifact containing such a candidate is rejected during load. The typed return
-path now exports fresh selected-bucket device time, sample count, bucket
-geometry, final LLIR fingerprints, and CUDA-event relocation bandwidth. The
-executor accepts only matched source/target searches and emits a backend-neutral
-`RelocationCostProfile`; OrbitKV then chooses among already legal physical
-alternatives. This makes the exchange bidirectional without giving Luminal page
-identity, publication, or lifecycle authority. Backend-specific egglog and CUDA
-types stay inside the fork and executor.
+path exports exact bucket identity and can freshly remeasure the installed
+program at a concrete runtime geometry. The executor accepts only source and
+target measurements bound to the same decoder artifact, schedule, bucket
+program, and unrelated dynamic dimensions, then emits a backend-neutral
+`RelocationCostProfile` using CUDA-event relocation bandwidth. OrbitKV chooses
+among already legal physical alternatives. This makes the exchange bidirectional
+without giving Luminal page identity, publication, or lifecycle authority.
+Backend-specific egglog and CUDA types stay inside the fork and executor.
 
 Concretely, `RuntimeManifest::state_layout_facts` emits a backend-neutral view
 of every state class. `orbitkv-executor` joins token classes with stable arena
@@ -178,9 +179,14 @@ identity, so an artifact cannot silently survive a changed state/search
 contract. The manager no longer enables relocation from a default fragmentation
 heuristic: absent matched measured evidence, the default is disabled. A static
 fragmentation policy remains explicit for deterministic correctness
-qualification. The remaining joint-compiler gap is a legal packed-layout
-rewrite that changes the final executable and can therefore produce qualifying
-source/target evidence.
+qualification. Full-attention token holes are represented as manager-authored
+per-page masks and lowered to page-size-one token-slot indices. The same
+`CompiledDecoder`, bucket program, and K/V arena execute that view and the
+post-relocation packed-page view by changing only runtime CSR/page geometry.
+Selected layout remains request-local runtime state; it is not frozen into the
+global compiler facts or duplicated into a second executable. The remaining
+gap is released-checkpoint, long-context qualification and integration of the
+measured profile into the engine's relocation control loop.
 
 `tools/verify_active_source.py` enforces these forbidden dependency edges,
 rejects physical KV ownership types in server source, requires all product

@@ -32,7 +32,7 @@ Historical results qualify only their recorded source closure.
 | Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity, LLIR fingerprints, and required persistent-state aliases fail closed |
 | Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; narrow matched benefit | Capture accepts one-token-per-request decode batches. Batch-one child-graph replay reduced matched fixed-step wall time by 5.8-8.3%; exact-signature automatic C2 recapture reduced throughput by 13.7% and is not used by serving |
 | Compiler-constrained persistent state | Reference-gated measured improvement | A 16-candidate search selected 36/36 in-place K/V tensors in both buckets; four C2 epochs improved throughput 14.5%, TTFT 32.2%, TPOT 10.2%, and E2E 12.8% versus the prior OrbitKV artifact; random-trace digests differ |
-| Joint state/graph cost contract | L2 + compile-path integration | `orbitkv` derives legal layouts; Luminal exports fresh bucket cost and final LLIR identity; the executor builds strongly matched relocation profiles; the manager defaults to no relocation and admits measured positive amortized benefit only. No packed-layout rewrite or benefit result exists yet |
+| Joint state/graph cost contract | L2 + L3 narrow device closure | `orbitkv` derives legal layouts and request-local token masks; one Luminal decoder dynamically executes token-selection and packed CSR geometry over the same K/V arena; exact-geometry device profiles plus measured copy cost produce identity-bound evidence. Automatic relocation remains disabled pending released-model long-context benefit |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | Single-process model engine | Narrow L4 correctness + load closure | One dedicated thread owns bounded admission/output queues, an active set, `RuntimeSession`, and `CompiledDecoder`; released hybrid tests cover B=2 mixed scheduling and direct B=1/B=8 logit parity. Fresh-prompt/greedy only |
@@ -60,18 +60,21 @@ candidate or stored artifact unless every K/V output resolves to the same
 registered input arena in every bucket. The qualified artifact reports 36/36
 in-place tensors and zero copy-back bytes for both decode/prefill buckets.
 
-Validated state-layout facts enter the same e-graph as the decoder, and fresh
-selected-bucket measurements can return as manager-neutral cost evidence. The
-profile is bound to plan/facts/artifact/schedule/bucket/LLIR identities and real
-CUDA-event copy bandwidth. This is not yet a performance feature: Luminal has
-no packed-layout rewrite, so identical final programs are rejected and automatic
-relocation stays disabled.
+Validated state-layout facts enter the same e-graph as the decoder. Request-local
+layout remains dynamic: sparse Full state becomes a page-size-one token-slot
+view and packed state uses the physical page width, both within the same
+artifact, selected bucket program, and stable K/V arena. Fresh exact-geometry
+measurements return as manager-neutral cost evidence bound to
+plan/facts/artifact/schedule/bucket-program/execution identities and real
+CUDA-event copy bandwidth. The narrow H20 path is correct, but it is not yet a
+performance feature: released-model long-context benefit remains unqualified,
+so automatic relocation stays disabled.
 
 ## Attention-state coverage
 
 | State shape | Compiler and manager | Executor lowering | Real-device engine status |
 | --- | --- | --- | --- |
-| Full token KV | Host-tested, including shared Prefix, COW, disposition, and relocation | Implemented, including CUDA relocation | Minimal released-checkpoint prefill/decode and packed relocation/decode pass |
+| Full token KV | Host-tested, including shared Prefix, COW, disposition, retained-token masks, and relocation | Token holes lower to page-size-one CSR; packed pages use physical width; CUDA relocation implemented | Minimal released-checkpoint prefill/decode plus synthetic same-runtime token-selection/packed parity pass |
 | Sliding token KV | Host-tested periodic placement, retirement, ACK, and reuse; same-semantics request-lifetime baseline | Implemented; CSR geometry matches across residence policies | Native Sliding layers cross their 512-token window in the released hybrid H20 closure |
 | Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Manifest-driven layer binding and independent per-class inputs/arenas | Released 3-Full/15-Sliding checkpoint passes reference parity, retirement/reuse, cancellation, and final drain on H20 |
 | Exact Chunked token KV | Host-tested resettable epoch lifecycle | Implemented | Current architecture unqualified |

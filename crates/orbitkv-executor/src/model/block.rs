@@ -207,6 +207,7 @@ impl DecoderLayer {
                 v_cache: value_update,
                 query_tokens: dimensions.query_tokens,
                 context_pages: Expression::from(class_dimensions.context_pages),
+                page_tokens: Expression::from(class_dimensions.page_tokens),
             },
             *inputs.metadata,
             class,

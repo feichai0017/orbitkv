@@ -102,6 +102,11 @@ impl CanonicalKvManager {
         }
 
         let physical_boundary = root.mirror_boundary(snapshot_boundary);
+        if *root.selection_masks
+            != super::token_virtualization::selection_masks(&view.placements, class.retention)?
+        {
+            return Err(KvManagerError::TokenPlacementMismatch);
+        }
         if root.is_dense() && root.resident_tokens != snapshot_boundary {
             return Err(KvManagerError::Invariant("dense resident token boundary"));
         }
@@ -581,6 +586,7 @@ impl CanonicalKvManager {
             target_root.entries = entries;
             target_root.tokens =
                 super::PersistentTokenTable::from_materialized(&target_view.placements)?;
+            target_root.selection_masks = Arc::new(BTreeMap::new());
             target_root.layout = RootLayout::Packed;
             target_root.resident_tokens = u64::try_from(
                 target_view
