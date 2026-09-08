@@ -425,12 +425,7 @@ fn packed_fork_fixture(
             request: source,
             expected_snapshot: marked.snapshot,
             class_id: 0,
-            policy: RelocationPolicy {
-                fragmentation_threshold_milli: 250,
-                maximum_source_pages: 3,
-                evacuation_headroom_pages: 2,
-                full_evacuation: true,
-            },
+            policy: RelocationPolicy::static_fragmentation(250, 3, 2, true),
         }])
         .expect("prepare packed relocation")[0]
         .clone();

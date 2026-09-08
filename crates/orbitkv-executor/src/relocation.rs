@@ -478,12 +478,7 @@ mod tests {
             .prepare_relocation_batch(&[orbitkv::EnginePrepareRelocationItem {
                 request_id,
                 class_id: 0,
-                policy: RelocationPolicy {
-                    fragmentation_threshold_milli: 250,
-                    maximum_source_pages: 8,
-                    evacuation_headroom_pages: 2,
-                    full_evacuation: true,
-                },
+                policy: RelocationPolicy::static_fragmentation(250, 8, 2, true),
             }])
             .unwrap()
     }

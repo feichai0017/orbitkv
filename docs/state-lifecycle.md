@@ -22,7 +22,8 @@ the reuse protocol.
 
 Full attention keeps all reachable tokens. Prefix sharing and immutable partial
 tails can reduce duplicated prefill state, while COW preserves isolation. Token
-relocation is available as a fragmentation policy but is not a default copy on
+relocation is available through explicit static qualification or matched
+cost evidence, but is not a default copy on
 every step.
 
 ### Sliding

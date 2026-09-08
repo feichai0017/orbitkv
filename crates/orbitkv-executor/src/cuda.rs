@@ -7,9 +7,10 @@ use luminal::{
     prelude::{Expression, Graph, GraphTensor},
 };
 use luminal_cuda_lite::{
-    cudarc::driver::CudaEvent,
     host::flashinfer::{PagedAttentionPlan, PagedAttentionSpec, paged_attention_with_plan},
-    runtime::{CudaRuntime, DeviceCopyError, DeviceCopyRange, DeviceInputCopyPlan},
+    runtime::{
+        CudaRuntime, DeviceCopyError, DeviceCopyRange, DeviceInputCopyPlan, PendingDeviceCopy,
+    },
 };
 use orbitkv::EngineRelocationExecutionEvidence;
 use thiserror::Error;
@@ -66,6 +67,8 @@ pub enum CudaRelocationError {
     InvalidBindings,
     #[error(transparent)]
     Device(#[from] DeviceCopyError),
+    #[error("relocation copy completed without a valid timing measurement")]
+    InvalidMeasurement,
 }
 
 impl CudaRelocationError {
@@ -74,6 +77,7 @@ impl CudaRelocationError {
     pub const fn may_have_enqueued_work(&self) -> bool {
         match self {
             Self::Device(error) => error.may_have_enqueued_work(),
+            Self::InvalidMeasurement => true,
             Self::Executor(_) | Self::InvalidBindings => false,
         }
     }
@@ -81,8 +85,14 @@ impl CudaRelocationError {
 
 /// Device event gating canonical relocation submission.
 pub struct PendingRelocationCopy {
-    event: CudaEvent,
+    copy: PendingDeviceCopy,
     batch: RelocationBatch,
+}
+
+/// Successful relocation execution plus its CUDA-event copy measurement.
+pub struct CompletedRelocationCopy {
+    pub evidence: EngineRelocationExecutionEvidence,
+    pub sample: crate::model::RelocationBandwidthSample,
 }
 
 impl PendingRelocationCopy {
@@ -92,11 +102,29 @@ impl PendingRelocationCopy {
     ///
     /// Returns the CUDA driver error without manufacturing success evidence.
     pub fn wait(self) -> Result<EngineRelocationExecutionEvidence, CudaRelocationError> {
-        self.event
-            .synchronize()
-            .map_err(DeviceCopyError::from)
-            .map_err(CudaRelocationError::from)?;
+        self.copy.wait()?;
         Ok(self.batch.execution_evidence_after_success())
+    }
+
+    /// Waits for the copy and returns both canonical evidence and a real
+    /// device-side bandwidth sample usable by relocation profiling.
+    ///
+    /// # Errors
+    ///
+    /// Returns CUDA measurement or synchronization failures without
+    /// manufacturing manager success evidence.
+    pub fn wait_measured(self) -> Result<CompletedRelocationCopy, CudaRelocationError> {
+        let measurement = self.copy.wait()?;
+        if measurement.bytes == 0 || measurement.device_time.is_zero() {
+            return Err(CudaRelocationError::InvalidMeasurement);
+        }
+        Ok(CompletedRelocationCopy {
+            evidence: self.batch.execution_evidence_after_success(),
+            sample: crate::model::RelocationBandwidthSample {
+                bytes: measurement.bytes,
+                device_time: measurement.device_time,
+            },
+        })
     }
 }
 
@@ -159,9 +187,9 @@ impl RelocationBatch {
                 ranges: ranges.into_boxed_slice(),
             })
             .collect::<Vec<_>>();
-        let event = runtime.copy_input_ranges(&plans)?;
+        let copy = runtime.copy_input_ranges(&plans)?;
         Ok(PendingRelocationCopy {
-            event,
+            copy,
             batch: self.clone(),
         })
     }

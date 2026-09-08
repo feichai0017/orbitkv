@@ -1,8 +1,22 @@
 use std::collections::BTreeSet;
 
 use super::*;
+use crate::kv_manager::relocation_policy::RelocationPlanningContext;
+use crate::kv_manager::token_virtualization::plan_token_relocation;
 
 const PAGE_TOKENS: u32 = 4;
+
+fn relocation_context() -> RelocationPlanningContext {
+    RelocationPlanningContext {
+        plan_fingerprint: [1; 32],
+        page_tokens: PAGE_TOKENS,
+        page_payload_bytes: u64::from(PAGE_TOKENS) * 128,
+    }
+}
+
+fn relocation_policy() -> RelocationPolicy {
+    RelocationPolicy::static_fragmentation(250, 32, 8, false)
+}
 
 fn page(page_id: u32) -> PageLease {
     PageLease {
@@ -78,7 +92,8 @@ fn profitable_plan_conserves_tokens_and_reclaims_fragmented_pages() {
         &view,
         &[page_state(1), page_state(2), page_state(3)],
         &[destination(4)],
-        RelocationPolicy::default(),
+        relocation_context(),
+        &relocation_policy(),
     )
     .unwrap()
     .expect("two sparse pages pack into one destination");
@@ -116,7 +131,8 @@ fn planner_defers_for_shared_pages_headroom_and_nonpositive_gain() {
             &view,
             &[page_state(1), shared, page_state(3)],
             &[destination(4)],
-            RelocationPolicy::default(),
+            relocation_context(),
+            &relocation_policy(),
         )
         .unwrap()
         .is_none()
@@ -126,7 +142,8 @@ fn planner_defers_for_shared_pages_headroom_and_nonpositive_gain() {
             &view,
             &[page_state(1), page_state(2), page_state(3)],
             &[],
-            RelocationPolicy::default(),
+            relocation_context(),
+            &relocation_policy(),
         )
         .unwrap()
         .is_none()
@@ -141,7 +158,8 @@ fn planner_defers_for_shared_pages_headroom_and_nonpositive_gain() {
             &dense,
             &[page_state(1), page_state(2)],
             &[destination(4)],
-            RelocationPolicy::default(),
+            relocation_context(),
+            &relocation_policy(),
         )
         .unwrap()
         .is_none()
@@ -156,7 +174,8 @@ fn stale_forged_and_cross_pool_plans_fail_closed() {
         &view,
         &pages,
         &[destination(4)],
-        RelocationPolicy::default(),
+        relocation_context(),
+        &relocation_policy(),
     )
     .unwrap()
     .unwrap();
@@ -200,7 +219,8 @@ fn stale_forged_and_cross_pool_plans_fail_closed() {
             &wrong_pool,
             &pages,
             &[destination(4)],
-            RelocationPolicy::default(),
+            relocation_context(),
+            &relocation_policy(),
         ),
         Err(KvManagerError::WrongPageArena)
     );
@@ -339,10 +359,14 @@ fn randomized_plans_preserve_every_retained_token_and_unique_slot() {
             .map(page_state)
             .collect::<Vec<_>>();
         let destinations = (100..108).map(destination).collect::<Vec<_>>();
-        let Some(plan) =
-            plan_token_relocation(&view, &pages, &destinations, RelocationPolicy::default())
-                .unwrap()
-        else {
+        let Some(plan) = plan_token_relocation(
+            &view,
+            &pages,
+            &destinations,
+            relocation_context(),
+            &relocation_policy(),
+        )
+        .unwrap() else {
             continue;
         };
         let next_view = apply_token_relocation(&view, &plan).unwrap();
@@ -467,12 +491,7 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
             request,
             expected_snapshot: marked.snapshot,
             class_id: 0,
-            policy: RelocationPolicy {
-                fragmentation_threshold_milli: 250,
-                maximum_source_pages: 8,
-                evacuation_headroom_pages: 2,
-                full_evacuation: true,
-            },
+            policy: RelocationPolicy::static_fragmentation(250, 8, 2, true),
         }])
         .unwrap()[0]
         .clone();
@@ -702,12 +721,7 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
             request,
             expected_snapshot: appended.publication.snapshot,
             class_id: 0,
-            policy: RelocationPolicy {
-                fragmentation_threshold_milli: 250,
-                maximum_source_pages: 8,
-                evacuation_headroom_pages: 2,
-                full_evacuation: true,
-            },
+            policy: RelocationPolicy::static_fragmentation(250, 8, 2, true),
         }]),
         Err(KvManagerError::StaleTokenView)
     );
@@ -725,12 +739,7 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
             request,
             expected_snapshot: second_marked.snapshot,
             class_id: 0,
-            policy: RelocationPolicy {
-                fragmentation_threshold_milli: 250,
-                maximum_source_pages: 8,
-                evacuation_headroom_pages: 2,
-                full_evacuation: true,
-            },
+            policy: RelocationPolicy::static_fragmentation(250, 8, 2, true),
         }]),
         Err(KvManagerError::TokenPlacementMismatch)
     );
@@ -747,12 +756,7 @@ fn full_evacuation_relocates_exact_tokens_and_reclaims_source_pages() {
             request,
             expected_snapshot: second_marked.snapshot,
             class_id: 0,
-            policy: RelocationPolicy {
-                fragmentation_threshold_milli: 250,
-                maximum_source_pages: 8,
-                evacuation_headroom_pages: 2,
-                full_evacuation: true,
-            },
+            policy: RelocationPolicy::static_fragmentation(250, 8, 2, true),
         }])
         .unwrap()[0]
         .clone();
@@ -1014,12 +1018,7 @@ fn hybrid_full_relocation_keeps_swa_class_specific_placement_and_appends() {
             request,
             expected_snapshot: marked.snapshot,
             class_id: 0,
-            policy: RelocationPolicy {
-                fragmentation_threshold_milli: 250,
-                maximum_source_pages: 3,
-                evacuation_headroom_pages: 2,
-                full_evacuation: true,
-            },
+            policy: RelocationPolicy::static_fragmentation(250, 3, 2, true),
         }])
         .unwrap()[0]
         .clone();
@@ -1300,12 +1299,7 @@ fn relocation_prepare_abort_and_receipt_faults_are_failure_atomic() {
             updates: updates.into_boxed_slice(),
         }])
         .unwrap()[0];
-    let policy = RelocationPolicy {
-        fragmentation_threshold_milli: 250,
-        maximum_source_pages: 8,
-        evacuation_headroom_pages: 2,
-        full_evacuation: true,
-    };
+    let policy = RelocationPolicy::static_fragmentation(250, 8, 2, true);
     let before = state_image(&manager);
     assert_eq!(
         manager.prepare_relocation_batch(&[PrepareRelocationItem {
@@ -1314,7 +1308,7 @@ fn relocation_prepare_abort_and_receipt_faults_are_failure_atomic() {
             class_id: 0,
             policy: RelocationPolicy {
                 evacuation_headroom_pages: 1,
-                ..policy
+                ..policy.clone()
             },
         }]),
         Err(KvManagerError::InvalidRelocationPlan)
@@ -1326,7 +1320,7 @@ fn relocation_prepare_abort_and_receipt_faults_are_failure_atomic() {
             request,
             expected_snapshot: marked.snapshot,
             class_id: 0,
-            policy,
+            policy: policy.clone(),
         }])
         .unwrap()[0]
         .clone();
@@ -1371,7 +1365,7 @@ fn relocation_prepare_abort_and_receipt_faults_are_failure_atomic() {
             request,
             expected_snapshot: marked.snapshot,
             class_id: 0,
-            policy,
+            policy: policy.clone(),
         }])
         .unwrap()[0]
         .clone();
@@ -1419,12 +1413,7 @@ fn relocation_submit_page_preflight_is_collectively_zero_mutation() {
     let plan = full_plan(CANONICAL_PAGE_TOKENS);
     let mut manager = manager_for_plan(&plan, &[backend(0, 1, 16, 0)], 64, 16);
     let requests = manager.acquire_request_leases_for_test(2).unwrap();
-    let policy = RelocationPolicy {
-        fragmentation_threshold_milli: 250,
-        maximum_source_pages: 8,
-        evacuation_headroom_pages: 2,
-        full_evacuation: true,
-    };
+    let policy = RelocationPolicy::static_fragmentation(250, 8, 2, true);
     let mut marked_snapshots = Vec::with_capacity(requests.len());
     for &request in &requests {
         let initial = append_step(&mut manager, request, 48);
@@ -1455,7 +1444,7 @@ fn relocation_submit_page_preflight_is_collectively_zero_mutation() {
             request,
             expected_snapshot,
             class_id: 0,
-            policy,
+            policy: policy.clone(),
         })
         .collect::<Vec<_>>();
     let prepared = manager.prepare_relocation_batch(&prepare_items).unwrap();
@@ -1523,12 +1512,7 @@ fn relocation_completion_page_preflight_is_collectively_zero_mutation() {
     let plan = full_plan(CANONICAL_PAGE_TOKENS);
     let mut manager = manager_for_plan(&plan, &[backend(0, 1, 16, 0)], 64, 16);
     let requests = manager.acquire_request_leases_for_test(2).unwrap();
-    let policy = RelocationPolicy {
-        fragmentation_threshold_milli: 250,
-        maximum_source_pages: 8,
-        evacuation_headroom_pages: 2,
-        full_evacuation: true,
-    };
+    let policy = RelocationPolicy::static_fragmentation(250, 8, 2, true);
     let mut marked_snapshots = Vec::with_capacity(requests.len());
     for &request in &requests {
         let initial = append_step(&mut manager, request, 48);
@@ -1559,7 +1543,7 @@ fn relocation_completion_page_preflight_is_collectively_zero_mutation() {
             request,
             expected_snapshot,
             class_id: 0,
-            policy,
+            policy: policy.clone(),
         })
         .collect::<Vec<_>>();
     let prepared = manager.prepare_relocation_batch(&prepare_items).unwrap();

@@ -47,8 +47,13 @@ reusable `orbitkv` crate derives storage components, retention and retirement
 geometry, address programs, and legal layout alternatives from a validated
 manifest. `orbitkv-executor` binds those facts to stable arenas and injects them
 into Luminal's e-graph; each paged-attention custom op identifies its owning
-state class. Selected artifacts include the facts digest in their identity. No
-layout-changing rewrite or profiler-driven relocation policy is enabled yet.
+state class. Selected artifacts include the facts digest in their identity.
+Luminal now exports fresh selected-bucket device costs and exact bucket-program
+fingerprints; the executor can combine matched source/target searches with
+CUDA-event relocation bandwidth into a strongly identity-bound cost profile.
+OrbitKV accepts a relocation only when that evidence predicts a positive
+amortized benefit. Automatic relocation remains disabled because no
+layout-changing rewrite yet produces a distinct packed executable.
 
 The native decoder compiles one symbolic graph into decode and prefill buckets.
 Both phases share the same runtime, preallocated dynamic inputs, and one

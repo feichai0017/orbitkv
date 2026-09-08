@@ -149,12 +149,7 @@ fn prepare_relocation(fixture: &mut RelocationFixture) -> RelocationBatch {
         .prepare_relocation_batch(&[orbitkv::EnginePrepareRelocationItem {
             request_id: fixture.request_id,
             class_id: 0,
-            policy: RelocationPolicy {
-                fragmentation_threshold_milli: 250,
-                maximum_source_pages: 8,
-                evacuation_headroom_pages: 2,
-                full_evacuation: true,
-            },
+            policy: RelocationPolicy::static_fragmentation(250, 8, 2, true),
         }])
         .unwrap();
     fixture
@@ -412,18 +407,28 @@ fn manager_authored_token_moves_execute_and_publish() {
     runtime.set_data(value, value_data.clone());
     runtime.execute(&graph.dyn_map);
 
-    let pending = batch
-        .enqueue(
-            &runtime,
-            &[KvCacheBinding {
-                class_id: 0,
-                layer: 0,
-                key,
-                value,
-            }],
-        )
-        .unwrap();
-    let evidence = pending.wait().unwrap();
+    let bindings = [KvCacheBinding {
+        class_id: 0,
+        layer: 0,
+        key,
+        value,
+    }];
+    let mut samples = Vec::new();
+    let mut evidence = None;
+    for _ in 0..3 {
+        let completed = batch
+            .enqueue(&runtime, &bindings)
+            .unwrap()
+            .wait_measured()
+            .unwrap();
+        assert!(completed.sample.bytes > 0);
+        assert!(!completed.sample.device_time.is_zero());
+        samples.push(completed.sample);
+        evidence = Some(completed.evidence);
+    }
+    let _bandwidth =
+        orbitkv_executor::model::RelocationBandwidthProfile::from_samples(&samples).unwrap();
+    let evidence = evidence.unwrap();
     let key_buffer = runtime.remove_buffer(key_output);
     let value_buffer = runtime.remove_buffer(value_output);
     let copied_key_bytes = stream.clone_dtoh(&key_buffer).unwrap();

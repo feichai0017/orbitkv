@@ -92,14 +92,19 @@ Four alternating C2 epochs improved the same engine's throughput by 14.5%, TTFT
 by 32.2%, TPOT by 10.2%, and E2E by 12.8% versus the previous artifact. The new
 artifact passes the existing independent B2 reference-token probe.
 
-The next joint-compiler seam is implemented structurally. A validated manifest
+The joint-compiler seam is implemented in both directions. A validated manifest
 now derives backend-neutral facts for storage components, retention, addressing,
 retirement, legal layout alternatives, and token-relocation eligibility. The
 executor binds token classes to stable arenas, lowers deterministic facts into
 every Luminal search bucket, and tags each paged-attention custom op with its
-manager class. The facts digest is part of decoder artifact identity. This does
-not yet change a selected layout or provide a profiler-backed relocation policy;
-those remain the unclosed half of R4.2.
+manager class. The facts digest is part of decoder artifact identity. Luminal
+exports fresh selected-bucket device time, sample count, geometry, and final
+LLIR fingerprints. CUDA-event relocation copies provide measured bandwidth. The
+executor builds a manager-neutral cost profile only for matched, distinct
+source/target executables, and OrbitKV admits relocation only for positive
+amortized benefit. Missing evidence disables relocation; the static threshold is
+an explicit correctness-test mode. The unclosed R4.2 work is the packed-layout
+egglog rewrite/kernel and a released-checkpoint matched benefit result.
 
 ## Evidence interpretation
 

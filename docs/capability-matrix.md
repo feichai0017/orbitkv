@@ -27,12 +27,12 @@ Historical results qualify only their recorded source closure.
 | External KV tier transactions | L2 host | Export/restore run through an object-safe async transport contract; a real-byte host adapter verifies compact partial tails, per-page checksums, deletion, cross-session restore, and unobserved/ambiguous fault mapping; Mooncake/NIXL and hybrid restore remain open |
 | Executor plan | L2 | Compiles a manifest directly into Full, Sliding, Full+Sliding, or exact Chunked attention classes |
 | Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page and packed-page decode pass; Luminal never allocates or recycles pages |
-| Token relocation executor | L3 | Lowers manager-authored moves to per-layer K/V byte ranges, performs stream-ordered D2D copies, and exposes success evidence only after a CUDA event |
+| Token relocation executor | L3 | Lowers manager-authored moves to per-layer K/V byte ranges, performs stream-ordered D2D copies, and exposes success evidence plus device-time/byte measurement only after CUDA events |
 | Bucketed model runtime | L4 correctness | One symbolic graph is searched once into decode/prefill executables; query, batch, and per-class context dimensions have bounded capacities, dynamic inputs are preallocated, and one stable K/V arena per class survives prefill plus repeated decode |
 | Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity, LLIR fingerprints, and required persistent-state aliases fail closed |
 | Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; narrow matched benefit | Capture accepts one-token-per-request decode batches. Batch-one child-graph replay reduced matched fixed-step wall time by 5.8-8.3%; exact-signature automatic C2 recapture reduced throughput by 13.7% and is not used by serving |
 | Compiler-constrained persistent state | Reference-gated measured improvement | A 16-candidate search selected 36/36 in-place K/V tensors in both buckets; four C2 epochs improved throughput 14.5%, TTFT 32.2%, TPOT 10.2%, and E2E 12.8% versus the prior OrbitKV artifact; random-trace digests differ |
-| Joint compiler facts | L2 + compile-path integration | `orbitkv` derives backend-neutral storage, retention, address, retirement, and legal-layout facts; the executor binds stable arenas, injects deterministic facts into every Luminal bucket, binds paged-attention nodes to class IDs, and fingerprints the contract in schedule identity. No cost-driven rewrite is enabled yet |
+| Joint state/graph cost contract | L2 + compile-path integration | `orbitkv` derives legal layouts; Luminal exports fresh bucket cost and final LLIR identity; the executor builds strongly matched relocation profiles; the manager defaults to no relocation and admits measured positive amortized benefit only. No packed-layout rewrite or benefit result exists yet |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | Single-process model engine | Narrow L4 correctness + load closure | One dedicated thread owns bounded admission/output queues, an active set, `RuntimeSession`, and `CompiledDecoder`; released hybrid tests cover B=2 mixed scheduling and direct B=1/B=8 logit parity. Fresh-prompt/greedy only |
@@ -60,10 +60,12 @@ candidate or stored artifact unless every K/V output resolves to the same
 registered input arena in every bucket. The qualified artifact reports 36/36
 in-place tensors and zero copy-back bytes for both decode/prefill buckets.
 
-Validated state-layout facts now enter the same e-graph as the decoder. This is
-the first half of joint compilation, not yet a performance feature: Luminal has
-no packed-layout rewrite or exported cost profile, and the manager's relocation
-decision still uses its conservative static policy.
+Validated state-layout facts enter the same e-graph as the decoder, and fresh
+selected-bucket measurements can return as manager-neutral cost evidence. The
+profile is bound to plan/facts/artifact/schedule/bucket/LLIR identities and real
+CUDA-event copy bandwidth. This is not yet a performance feature: Luminal has
+no packed-layout rewrite, so identical final programs are rejected and automatic
+relocation stays disabled.
 
 ## Attention-state coverage
 

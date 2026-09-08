@@ -24,6 +24,9 @@ The current OrbitKV patch stack adds the following general executor contracts:
   paged-attention nodes bound to an external persistent-state class ID;
 - direct range copies within persistent graph inputs, so relocation always
   targets the stable K/V arena even when a bucket materializes its update;
+- fresh selected-bucket profiles with device time, actual sample count, bucket
+  geometry, and exact final LLIR fingerprints, plus timing-capable device-copy
+  batches used by the executor's relocation cost contract;
 - caller-owned capture of an already-warmed execution, plus a preparation-only
   path that refreshes stable input bindings before replay without replanning or
   executing the model;
@@ -133,8 +136,8 @@ parent repository:
 An upstream update is therefore an explicit compiler-backend upgrade with
 qualification, rather than an automatic floating dependency.
 
-The current fork includes upstream through `d18376d1` and is pinned by the
-parent at `7531d8c3`. The fork retains its own upstream workspace so it can be
+The current fork includes upstream through `d18376d1`; the parent pin is updated
+with each qualified fork commit. The fork retains its own upstream workspace so it can be
 built and tested independently even though the parent explicitly excludes it
 from the four owned OrbitKV workspace members. The latest sync includes the
 upstream CUDA correctness fixes, dynamic-bucket warmup behavior, and scatter

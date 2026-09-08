@@ -236,6 +236,25 @@ impl ExecutorPlan {
         })
     }
 
+    /// Selects a compiler-proven physical layout for one manager class.
+    ///
+    /// This changes only compiler-visible layout facts; it never transfers KV
+    /// ownership to the executor. Unsupported class/layout pairs fail closed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error unless the manifest compiler listed the alternative as
+    /// semantically legal for the class.
+    pub fn select_state_layout(
+        &mut self,
+        class_id: u16,
+        selected: orbitkv::StateLayoutAlternative,
+    ) -> Result<(), ExecutorError> {
+        self.state_layout_facts
+            .select_layout(class_id, selected)
+            .map_err(|_| ExecutorError::CompilerFactsMismatch)
+    }
+
     /// Builds the explicit CSR page-table metadata consumed by Luminal.
     ///
     /// # Errors
@@ -875,6 +894,7 @@ pub(crate) fn test_executor_plan(
                 address: Some(address),
                 retirement: Some(retirement),
                 block_domain: Some(BlockDomain::all()),
+                selected_layout: StateLayoutAlternative::Compiled,
                 legal_layouts: legal_layouts.into_boxed_slice(),
             }
         })
@@ -885,6 +905,7 @@ pub(crate) fn test_executor_plan(
         page_tokens,
         state_layout_facts: StateLayoutFacts {
             manifest_fingerprint: manifest_fingerprint.into(),
+            manager_plan_fingerprint: Some([1; 32]),
             page_tokens: u64::from(page_tokens),
             classes: state_classes,
         },

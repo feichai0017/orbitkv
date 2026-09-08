@@ -1,10 +1,10 @@
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 
 use crate::{
     AttentionStateBackend, RecurrentFamily, RuntimeManifest, RuntimeManifestError,
     RuntimeManifestSource, StateComponentGeometry, TokenStorageKind,
-    plan::{AddressProgram, BlockDomain, RetentionKind, RetirementProgram},
+    plan::{AddressProgram, BlockDomain, PlanError, RetentionKind, RetirementProgram},
 };
 
 /// Backend-neutral persistent-state facts derived from one validated manifest.
@@ -16,6 +16,7 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StateLayoutFacts {
     pub manifest_fingerprint: String,
+    pub manager_plan_fingerprint: Option<[u8; 32]>,
     pub page_tokens: u64,
     pub classes: Box<[StateClassLayoutFacts]>,
 }
@@ -32,6 +33,7 @@ pub struct StateClassLayoutFacts {
     pub address: Option<AddressProgram>,
     pub retirement: Option<RetirementProgram>,
     pub block_domain: Option<BlockDomain>,
+    pub selected_layout: StateLayoutAlternative,
     pub legal_layouts: Box<[StateLayoutAlternative]>,
 }
 
@@ -75,7 +77,7 @@ pub struct StateComponentFact {
 
 /// A semantically legal physical realization. Profitability is deliberately
 /// absent: an executor cost profile must choose among these alternatives.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum StateLayoutAlternative {
     Compiled,
@@ -88,10 +90,19 @@ pub enum StateLayoutAlternative {
 pub enum StateLayoutFactsError {
     #[error(transparent)]
     Manifest(#[from] RuntimeManifestError),
+    #[error(transparent)]
+    Plan(#[from] PlanError),
     #[error("state layout facts do not match the compiled manifest")]
     ManifestMismatch,
     #[error("manager class count exceeds the layout-facts identity range")]
     ClassIdOverflow,
+    #[error("unknown manager class {0} in state-layout facts")]
+    UnknownManagerClass(u16),
+    #[error("layout {selected:?} is not legal for manager class {class_id}")]
+    IllegalLayoutAlternative {
+        class_id: u16,
+        selected: StateLayoutAlternative,
+    },
 }
 
 impl RuntimeManifest {
@@ -146,6 +157,7 @@ impl RuntimeManifest {
                     address: Some(layout.address.clone()),
                     retirement: Some(layout.retirement.clone()),
                     block_domain: Some(layout.block_domain.clone()),
+                    selected_layout: StateLayoutAlternative::Compiled,
                     legal_layouts: legal_layouts.into_boxed_slice(),
                 });
             }
@@ -158,8 +170,14 @@ impl RuntimeManifest {
                 classes.push(fixed_state_facts(state));
             }
         }
+        let manager_plan_fingerprint = self
+            .token_manager_input()?
+            .map(crate::compile_plan)
+            .transpose()?
+            .map(|plan| plan.fingerprint_digest());
         Ok(StateLayoutFacts {
             manifest_fingerprint: self.fingerprint.clone(),
+            manager_plan_fingerprint,
             page_tokens: self.token_manager_plan.as_ref().map_or_else(
                 || {
                     self.attention_state_plan
@@ -170,6 +188,31 @@ impl RuntimeManifest {
             ),
             classes: classes.into_boxed_slice(),
         })
+    }
+}
+
+impl StateLayoutFacts {
+    /// Selects one compiler-visible physical alternative for a token class.
+    ///
+    /// # Errors
+    ///
+    /// Rejects fixed-state classes, unknown class IDs, and alternatives that
+    /// were not proven legal by the manifest compiler.
+    pub fn select_layout(
+        &mut self,
+        class_id: u16,
+        selected: StateLayoutAlternative,
+    ) -> Result<(), StateLayoutFactsError> {
+        let class = self
+            .classes
+            .iter_mut()
+            .find(|class| class.manager_class_id == Some(class_id))
+            .ok_or(StateLayoutFactsError::UnknownManagerClass(class_id))?;
+        if !class.legal_layouts.contains(&selected) {
+            return Err(StateLayoutFactsError::IllegalLayoutAlternative { class_id, selected });
+        }
+        class.selected_layout = selected;
+        Ok(())
     }
 }
 
@@ -302,6 +345,7 @@ fn fixed_state_facts(state: &crate::CompiledAttentionState) -> StateClassLayoutF
         address: None,
         retirement: None,
         block_domain: None,
+        selected_layout: StateLayoutAlternative::Compiled,
         legal_layouts: vec![StateLayoutAlternative::Compiled].into_boxed_slice(),
     }
 }
@@ -377,6 +421,19 @@ mod tests {
                 family: RecurrentFamily::Gdn,
                 ..
             }
+        ));
+
+        let mut selected = facts.clone();
+        selected
+            .select_layout(0, StateLayoutAlternative::PackedTokenSlots)
+            .unwrap();
+        assert_eq!(
+            selected.classes[0].selected_layout,
+            StateLayoutAlternative::PackedTokenSlots
+        );
+        assert!(matches!(
+            selected.select_layout(1, StateLayoutAlternative::PackedTokenSlots),
+            Err(StateLayoutFactsError::IllegalLayoutAlternative { class_id: 1, .. })
         ));
     }
 }
