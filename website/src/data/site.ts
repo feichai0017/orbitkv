@@ -54,7 +54,7 @@ export const metrics = [
   {
     value: "L4 narrow",
     label: "Model qualification",
-    detail: "One Full checkpoint closes prefill/decode; a synthetic hybrid boundary check shows exact output parity and lower compiled residency.",
+    detail: "Qwen2.5 Full and Gemma 3 Full+Sliding checkpoints have narrow H20 correctness closures.",
   },
 ];
 
@@ -68,7 +68,7 @@ export const evidenceRows = [
   {
     result: "RuntimeSession",
     value: "L2 host",
-    contract: "Page generations, Prefix/COW, frontiers, retirement, ACK, relocation, and failures are host-tested.",
+    contract: "Page generations, Prefix/COW, frontiers, retirement, ACK, external transfer, and failures are host-tested.",
     boundary: "Raw completion fields are not yet authenticated against the integrated device executor.",
   },
   {
@@ -80,14 +80,14 @@ export const evidenceRows = [
   {
     result: "Luminal fork",
     value: "L3 + narrow L4",
-    contract: "Paged attention consumes OrbitKV page metadata; one released Full checkpoint and child-graph decode run on H20.",
-    boundary: "No hybrid model, continuous-batch, or serving-throughput qualification.",
+    contract: "One bucketed decoder graph consumes OrbitKV page metadata; Full and Full+Sliding checkpoints run on H20.",
+    boundary: "Paged attention is currently a FlashInfer custom op, not a multi-backend compiler choice.",
   },
   {
     result: "Residence ablation",
-    value: "L2 + narrow L3",
-    contract: "One compiled Luminal graph gives byte-identical output for compiled and request-lifetime residency across a Sliding boundary.",
-    boundary: "One synthetic-policy prefill; no repeated workload latency, throughput, or production-capacity claim.",
+    value: "narrow L5",
+    contract: "Released-hybrid paired runs preserve outputs while reducing live payload and increasing fixed-budget reach.",
+    boundary: "Batch-one same-executor result; no SGLang-relative serving win.",
   },
   {
     result: "External KV transport",
@@ -97,33 +97,33 @@ export const evidenceRows = [
   },
   {
     result: "Rust server boundary",
-    value: "L2 contract",
-    contract: "Async local Engine accepts semantic batch intent and returns ordered events.",
-    boundary: "HTTP endpoints, tokenizer, scheduler, sampling, and tool orchestration remain open.",
+    value: "narrow L4",
+    contract: "The single-process engine serves OpenAI completions, batches requests, cancels streams, and drains state.",
+    boundary: "Greedy text-only; fairness, soak, capacity limit, and competitive performance remain open.",
   },
   {
     result: "Current device evidence",
-    value: "6 compact records",
-    contract: "Correctness, multi-class plumbing, physical-residence attribution, and narrow child-graph benefit retain their exact environments.",
-    boundary: "No repeated compiler-lifecycle L5 or complete product comparison yet.",
+    value: "11 indexed records",
+    contract: "Released-checkpoint correctness, lifecycle, HTTP serving, compiler attribution, and matched product comparisons retain their exact environments.",
+    boundary: "Historical measurements qualify only their recorded source closure; the current SGLang comparison remains negative.",
   },
 ];
 
 export const roadmap = [
   {
     state: "NEXT",
-    name: "Close a multi-class hybrid graph",
-    detail: "Build every decoder layer from its manifest class and run Full+Sliding through one Luminal runtime.",
+    name: "Make attention searchable",
+    detail: "Offer FlashInfer and a Luminal-native CUDA candidate behind one semantic paged-attention op.",
   },
   {
     state: "NEXT",
-    name: "Build the Rust serving loop",
-    detail: "Connect tokenization, continuous batching, cancellation, RuntimeSession, Luminal, and OpenAI-compatible streaming.",
+    name: "Execute heterogeneous state",
+    detail: "Integrate linear/recurrent plus convolution state, then MLA, through generic state-family contracts.",
   },
   {
     state: "THEN",
-    name: "Prove compiler and product benefit",
-    detail: "Scale the validated conservative-vs-compiled seam to repeated workloads, then compare against tuned SGLang.",
+    name: "Close serving performance",
+    detail: "Attribute the warm path and rerun matched SGLang/vLLM traces after attention becomes a real compiler choice.",
   },
 ];
 

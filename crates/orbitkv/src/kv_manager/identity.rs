@@ -62,14 +62,6 @@ pub struct ReclamationLease {
     pub generation: u32,
 }
 
-#[derive(Clone, Copy, Debug, Eq, Ord, PartialEq, PartialOrd, Serialize)]
-#[repr(C)]
-pub struct RelocationLease {
-    pub engine_epoch: u64,
-    pub slot: u32,
-    pub generation: u32,
-}
-
 #[derive(Clone, Copy, Debug, Default, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[repr(C)]
 pub struct PageLease {

@@ -66,13 +66,7 @@ fn final_representable_page_materialization_and_reclamation_are_clamped() {
 
     let mut entries = PersistentRootEntries::default();
     entries.push_back(entry);
-    let roots = [ClassRoot {
-        entries,
-        tokens: PersistentTokenTable::default(),
-        selection_masks: Arc::new(BTreeMap::new()),
-        layout: RootLayout::Dense,
-        resident_tokens: u64::MAX,
-    }];
+    let roots = [ClassRoot { entries }];
     let materialized = manager
         .materialize_snapshot_roots(u64::MAX, &roots)
         .expect("final partial page materializes");

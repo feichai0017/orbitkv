@@ -35,7 +35,7 @@ import { docs, repositoryUrl } from "../../data/site";
       <table class="evidence-table-native">
         <thead><tr><th>Layer</th><th>Authority</th></tr></thead>
         <tbody>
-          <tr><td>OrbitKV core</td><td>Semantics, request and Prefix snapshots, physical pages, generations, COW, token disposition, retirement, and reuse</td></tr>
+          <tr><td>OrbitKV core</td><td>Semantics, request and Prefix snapshots, physical pages, generations, COW, retirement, and reuse</td></tr>
           <tr><td>Luminal executor</td><td>Tensor storage, graph compilation, kernel selection, streams, events, forward execution, and sampling</td></tr>
           <tr><td>Rust server</td><td>Client protocols, tokenization, batching, cancellation, backpressure, and output streaming</td></tr>
         </tbody>
@@ -55,10 +55,9 @@ import { docs, repositoryUrl } from "../../data/site";
       <h2>Compiled token lifetimes</h2>
       <p>
         Full, Sliding, Full+Sliding, and exact Chunked attention compile to
-        different address and retirement programs. Ring layouts are derived
-        physical choices. Token-level placement and disposition are always part
-        of manager state; relocation is used only where semantically safe and
-        economically justified.
+        different address and retirement programs. Periodic and resettable
+        layouts are derived physical choices. The active manager deliberately
+        performs page-granular lifecycle management and no live-token compaction.
       </p>
 
       <h2>Safe reuse</h2>
@@ -71,12 +70,12 @@ import { docs, repositoryUrl } from "../../data/site";
 
       <h2>Current boundary</h2>
       <p>
-        Compiler, manager, RuntimeSession, server contracts, and executor
-        metadata lowering are host-tested. One Full checkpoint has a narrow
-        real-device closure and child-graph dispatch benefit, but hybrid models,
-        compiler-lifecycle L5 benefit, serving throughput, capacity, production,
-        and replacement remain unqualified. Compact current evidence is listed in
-        the <a href={`${repositoryUrl}/blob/main/results/README.md`}>Results Index</a>.
+        Full and Full+Sliding checkpoints have narrow H20 correctness closures,
+        and compiled residence has a narrow same-executor benefit. Paged
+        attention still resolves to FlashInfer rather than a compiler-selected
+        backend, and the recorded SGLang comparison remains negative. Broad
+        models, production, and replacement remain unqualified. Compact evidence
+        is listed in the <a href={`${repositoryUrl}/blob/main/results/README.md`}>Results Index</a>.
       </p>
 
       <h2>Product documents</h2>

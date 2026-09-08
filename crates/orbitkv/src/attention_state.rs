@@ -74,21 +74,18 @@ pub enum AttentionStateBackend {
         page_bytes_per_layer: u64,
         retention: RetentionKind,
         window_tokens: Option<u64>,
-        token_relocatable: bool,
     },
     RecurrentCheckpoints {
         family: RecurrentFamily,
         state_bytes_per_layer: u64,
         checkpoint_slots_per_request: u32,
         checkpoint_bytes_per_request: u64,
-        token_relocatable: bool,
     },
     ConvolutionRing {
         state_bytes_per_layer: u64,
         kernel_width: u32,
         checkpoint_slots_per_request: u32,
         checkpoint_bytes_per_request: u64,
-        token_relocatable: bool,
     },
 }
 
@@ -188,7 +185,8 @@ pub enum AttentionStateError {
 }
 
 /// Compiles heterogeneous attention state into backend-specific ownership
-/// contracts. Only token-slot backends admit token relocation.
+/// contracts. Token-slot and fixed-state backends retain separate lifecycle
+/// contracts.
 ///
 /// # Errors
 ///
@@ -315,7 +313,6 @@ fn compile_storage(
                         .ok_or(AttentionStateError::ArithmeticOverflow)?,
                     retention: *retention,
                     window_tokens: *window_tokens,
-                    token_relocatable: true,
                 },
             ))
         }
@@ -356,7 +353,6 @@ fn compile_storage(
                         .ok_or(AttentionStateError::ArithmeticOverflow)?,
                     retention: *retention,
                     window_tokens: *window_tokens,
-                    token_relocatable: true,
                 },
             ))
         }
@@ -378,7 +374,6 @@ fn compile_storage(
                     state_bytes_per_layer: *state_bytes_per_layer,
                     checkpoint_slots_per_request: *checkpoint_slots_per_request,
                     checkpoint_bytes_per_request,
-                    token_relocatable: false,
                 },
             ))
         }
@@ -403,7 +398,6 @@ fn compile_storage(
                     kernel_width: *kernel_width,
                     checkpoint_slots_per_request: *checkpoint_slots_per_request,
                     checkpoint_bytes_per_request,
-                    token_relocatable: false,
                 },
             ))
         }
@@ -511,28 +505,6 @@ mod tests {
                 },
             ]
         );
-        assert!(matches!(
-            &output.states[1].backend,
-            AttentionStateBackend::TokenSlots {
-                token_relocatable: true,
-                ..
-            }
-        ));
-        assert!(matches!(
-            &output.states[2].backend,
-            AttentionStateBackend::RecurrentCheckpoints {
-                token_relocatable: false,
-                ..
-            }
-        ));
-        assert!(matches!(
-            &output.states[3].backend,
-            AttentionStateBackend::ConvolutionRing {
-                token_relocatable: false,
-                ..
-            }
-        ));
-
         let manager = output.token_manager_plan().unwrap();
         assert_eq!(manager.page_tokens, 16);
         assert_eq!(manager.classes.len(), 2);

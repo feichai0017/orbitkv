@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 
 use serde::Serialize;
 
@@ -10,8 +10,8 @@ use super::{
 #[cfg(any(test, feature = "test-support"))]
 use crate::kv_manager::PrefixPublishRelease;
 use crate::kv_manager::{
-    ArenaStats, DetachedAction, DetachedBinding, DetachedReason, PageLease, PrefixPublishItem,
-    PrefixSemanticKey, TokenView, TokenViewQuery,
+    DetachedAction, DetachedBinding, DetachedReason, MaterializedRequestView, PageLease,
+    PrefixPublishItem, PrefixSemanticKey,
 };
 
 /// One request-to-prefix ownership transfer committed by the canonical manager.
@@ -112,20 +112,16 @@ impl RuntimeSession {
                 key: *key,
             })
             .collect::<Vec<_>>();
-        let arenas = self.manager.arena_stats();
-        let token_queries = records
+        let materialized_items = records
             .iter()
-            .flat_map(|record| {
-                arenas.iter().map(move |arena| TokenViewQuery {
-                    request: record.view.request,
-                    expected_snapshot: record.view.snapshot,
-                    class_id: arena.class_id,
-                })
-            })
+            .map(|record| (record.view.request, record.view.snapshot))
             .collect::<Vec<_>>();
-        let token_views = self.manager.token_views_batch(&token_queries)?;
-        let expected_detached = expected_detached(&records, &arenas, &token_views)
-            .ok_or_else(|| self.poison("prefix publish-release snapshot changed"))?;
+        let materialized = self
+            .manager
+            .materialize_request_views_batch(&materialized_items)?;
+        let expected_detached =
+            expected_detached(&records, &materialized, self.manager.page_tokens())
+                .ok_or_else(|| self.poison("prefix publish-release snapshot changed"))?;
 
         let transferred = self
             .manager
@@ -243,85 +239,49 @@ impl RuntimeSession {
 
 fn expected_detached(
     records: &[SessionRequest],
-    arenas: &[ArenaStats],
-    token_views: &[TokenView],
+    materialized: &[MaterializedRequestView],
+    page_tokens: u64,
 ) -> Option<Vec<Box<[DetachedBinding]>>> {
-    let expected_view_count = records.len().checked_mul(arenas.len())?;
-    if arenas.is_empty() || token_views.len() != expected_view_count {
+    if materialized.len() != records.len() {
         return None;
     }
     records
         .iter()
-        .zip(token_views.chunks_exact(arenas.len()))
-        .map(|(record, views)| expected_request_detached(record, arenas, views))
+        .zip(materialized)
+        .map(|(record, view)| expected_request_detached(record, view, page_tokens))
         .collect()
 }
 
 fn expected_request_detached(
     record: &SessionRequest,
-    arenas: &[ArenaStats],
-    token_views: &[TokenView],
+    materialized: &MaterializedRequestView,
+    page_tokens: u64,
 ) -> Option<Box<[DetachedBinding]>> {
     let mut bindings = Vec::new();
     let mut all_pages = BTreeSet::new();
-    for (arena, view) in arenas.iter().zip(token_views) {
-        let page_tokens = u64::from(view.page_tokens);
-        if page_tokens == 0
-            || view.class_id != arena.class_id
-            || view.version != record.view.view_version
-        {
+    if materialized.view != record.view {
+        return None;
+    }
+    for page in &materialized.pages {
+        if !all_pages.insert(page.page) {
             return None;
         }
-        let mut pages = BTreeMap::<u64, (PageLease, u64)>::new();
-        for placement in &view.placements {
-            let Some(location) = placement.location else {
-                continue;
-            };
-            let offset = u64::from(location.offset);
-            let token_begin = placement.token_id.checked_sub(offset)?;
-            if location.reserved != 0
-                || !token_begin.is_multiple_of(page_tokens)
-                || location.page.engine_epoch != arena.engine_epoch
-                || location.page.pool_epoch != arena.pool_epoch
-                || location.page.pool_id != arena.pool_id
-                || location.page.page_id.checked_sub(arena.first_page_id)? >= arena.page_count
-            {
-                return None;
-            }
-            let logical_ordinal = token_begin / page_tokens;
-            match pages.insert(logical_ordinal, (location.page, location.backend_index)) {
-                Some(expected) if expected != (location.page, location.backend_index) => {
-                    return None;
-                }
-                _ => {}
-            }
-        }
-        for (logical_ordinal, (page, backend_index)) in pages {
-            if !all_pages.insert(page) {
-                return None;
-            }
-            let token_begin = logical_ordinal.checked_mul(page_tokens)?;
-            let token_end_exclusive = token_begin
-                .checked_add(page_tokens)?
-                .min(record.view.boundary);
-            if token_begin >= token_end_exclusive {
-                return None;
-            }
-            bindings.push(DetachedBinding {
-                old: page,
-                replacement: PageLease::default(),
-                logical_ordinal,
-                old_backend_index: backend_index,
-                replacement_backend_index: 0,
-                token_begin,
-                token_end_exclusive,
-                class_id: arena.class_id,
-                backend_domain: arena.backend_domain,
-                action: DetachedAction::Clear,
-                reason: DetachedReason::PrefixTransfer,
-                reserved: 0,
-            });
-        }
+        let token_begin = page.logical_ordinal.checked_mul(page_tokens)?;
+        let token_end_exclusive = token_begin.checked_add(u64::from(page.valid_token_count))?;
+        bindings.push(DetachedBinding {
+            old: page.page,
+            replacement: PageLease::default(),
+            logical_ordinal: page.logical_ordinal,
+            old_backend_index: page.backend_index,
+            replacement_backend_index: 0,
+            token_begin,
+            token_end_exclusive,
+            class_id: page.class_id,
+            backend_domain: page.backend_domain,
+            action: DetachedAction::Clear,
+            reason: DetachedReason::PrefixTransfer,
+            reserved: 0,
+        });
     }
     bindings.sort_by_key(|binding| {
         (

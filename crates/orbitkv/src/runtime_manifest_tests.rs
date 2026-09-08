@@ -306,7 +306,7 @@ fn fingerprint_is_stable_and_covers_array_order() {
     );
     assert_eq!(
         manifest.fingerprint,
-        "sha256:2182b85ff1da2391854fcd9927e4a0882ca06cc041a27199b3e207545dc5b082"
+        "sha256:aae0e001a612d07031568f80c948517a0613da02e4e16af8b5afac5a4763fb80"
     );
 
     let mut reordered = manifest.clone();

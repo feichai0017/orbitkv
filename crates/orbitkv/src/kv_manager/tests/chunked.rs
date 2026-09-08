@@ -105,7 +105,6 @@ fn chunked_exact_epoch_end_retires_absolute_root_and_publishes_empty_epoch() {
 
     let snapshot = manager.request_snapshot(request).unwrap();
     assert_eq!(snapshot.boundary, CHUNK_TOKENS);
-    assert_eq!(snapshot.roots[0].resident_tokens, 0);
     assert!(snapshot.roots[0].entries.is_empty());
     assert!(
         manager
@@ -187,7 +186,6 @@ fn first_append_in_next_epoch_starts_fresh_with_absolute_ordinal() {
     assert!(completion.retirements.is_empty());
     let snapshot = manager.request_snapshot(request).unwrap();
     assert_eq!(snapshot.boundary, CHUNK_TOKENS + 1);
-    assert_eq!(snapshot.roots[0].resident_tokens, 1);
     assert_eq!(snapshot.roots[0].entries.len(), 1);
     assert_eq!(snapshot.roots[0].entries.front(), Some(&reset_entry));
 
@@ -432,44 +430,7 @@ fn unconfirmed_epoch_end_preserves_old_epoch_and_submission() {
 }
 
 #[test]
-fn epoch_end_marks_previous_epoch_tokens_semantically_dead() {
-    let mut manager = chunked_manager(CHUNK_TOKENS, 5, 32, 5);
-    let request = manager.acquire_request_leases_for_test(1).unwrap()[0];
-    let epoch_end = append_to(&mut manager, request, CHUNK_TOKENS, 1);
-    let at_boundary = manager
-        .token_views_batch(&[TokenViewQuery {
-            request,
-            expected_snapshot: epoch_end.publication.snapshot,
-            class_id: 0,
-        }])
-        .unwrap()[0]
-        .clone();
-    assert!(at_boundary.placements.iter().all(|placement| {
-        placement.disposition.kind == TokenDispositionKind::SemanticallyDead
-            && placement.location.is_none()
-    }));
-    let completion = append_to(&mut manager, request, CHUNK_TOKENS + 1, 2);
-    let view = manager
-        .token_views_batch(&[TokenViewQuery {
-            request,
-            expected_snapshot: completion.publication.snapshot,
-            class_id: 0,
-        }])
-        .unwrap()[0]
-        .clone();
-    assert_eq!(view.placements.len(), 33);
-    assert!(view.placements[..32].iter().all(|placement| {
-        placement.disposition.kind == TokenDispositionKind::SemanticallyDead
-            && placement.location.is_none()
-    }));
-    let newest = view.placements[32];
-    assert_eq!(newest.token_id, 32);
-    assert!(newest.disposition.retained());
-    assert!(newest.location.is_some());
-}
-
-#[test]
-fn chunked_prefix_and_relocation_paths_fail_closed_without_mutation() {
+fn chunked_prefix_paths_fail_closed_without_mutation() {
     let mut manager = chunked_manager(CHUNK_TOKENS, 5, 32, 5);
     let request = manager.acquire_request_leases_for_test(1).unwrap()[0];
     let completion = append_to(&mut manager, request, CHUNK_TOKENS, 1);
@@ -491,18 +452,6 @@ fn chunked_prefix_and_relocation_paths_fail_closed_without_mutation() {
             request,
             expected_head: completion.publication.snapshot,
             key: prefix_key(0xCD, CHUNK_TOKENS),
-        }]),
-        Err(KvManagerError::UnsupportedProfile(_))
-    ));
-    assert_eq!(state_image(&manager), before);
-
-    let before = state_image(&manager);
-    assert!(matches!(
-        manager.prepare_relocation_batch(&[PrepareRelocationItem {
-            request,
-            expected_snapshot: completion.publication.snapshot,
-            class_id: 0,
-            policy: RelocationPolicy::static_fragmentation(250, 8, 2, true),
         }]),
         Err(KvManagerError::UnsupportedProfile(_))
     ));

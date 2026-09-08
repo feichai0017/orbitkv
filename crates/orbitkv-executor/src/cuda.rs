@@ -1,24 +1,15 @@
 //! Direct Luminal graph boundary for OrbitKV-managed paged attention.
 
-use std::collections::{BTreeMap, BTreeSet};
-
 use luminal::{
     dtype::DType,
     prelude::{Expression, Graph, GraphTensor},
 };
 use luminal_cuda_lite::{
     host::flashinfer::{PagedAttentionPlan, PagedAttentionSpec, paged_attention_with_plan},
-    runtime::{
-        CudaRuntime, DeviceCopyError, DeviceCopyRange, DeviceInputCopyPlan, PendingDeviceCopy,
-    },
+    runtime::CudaRuntime,
 };
-use orbitkv::EngineRelocationExecutionEvidence;
-use thiserror::Error;
 
-use crate::{
-    AttentionBatch, AttentionClass, AttentionVisibility, ExecutorError, RelocationBatch,
-    relocation::RelocationByteRange,
-};
+use crate::{AttentionBatch, AttentionClass, AttentionVisibility, ExecutorError};
 
 /// Kernel geometry shared by every layer in one compiled attention class.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -38,7 +29,6 @@ pub struct PagedAttentionInputs {
     pub v_cache: GraphTensor,
     pub query_tokens: Expression,
     pub context_pages: Expression,
-    pub page_tokens: Expression,
 }
 
 /// Graph inputs that carry one OrbitKV-authored CSR page plan.
@@ -58,169 +48,6 @@ pub struct KvCacheBinding {
     pub layer: u32,
     pub key: GraphTensor,
     pub value: GraphTensor,
-}
-
-#[derive(Debug, Error)]
-pub enum CudaRelocationError {
-    #[error(transparent)]
-    Executor(#[from] ExecutorError),
-    #[error("relocation cache bindings do not exactly cover the requested classes and layers")]
-    InvalidBindings,
-    #[error(transparent)]
-    Device(#[from] DeviceCopyError),
-    #[error("relocation copy completed without a valid timing measurement")]
-    InvalidMeasurement,
-}
-
-impl CudaRelocationError {
-    /// Whether some relocation copy may already have reached the device.
-    #[must_use]
-    pub const fn may_have_enqueued_work(&self) -> bool {
-        match self {
-            Self::Device(error) => error.may_have_enqueued_work(),
-            Self::InvalidMeasurement => true,
-            Self::Executor(_) | Self::InvalidBindings => false,
-        }
-    }
-}
-
-/// Device event gating canonical relocation submission.
-pub struct PendingRelocationCopy {
-    copy: PendingDeviceCopy,
-    batch: RelocationBatch,
-}
-
-/// Successful relocation execution plus its CUDA-event copy measurement.
-pub struct CompletedRelocationCopy {
-    pub evidence: EngineRelocationExecutionEvidence,
-    pub sample: crate::model::RelocationBandwidthSample,
-}
-
-impl PendingRelocationCopy {
-    /// Waits for every K/V copy before exposing success evidence.
-    ///
-    /// # Errors
-    ///
-    /// Returns the CUDA driver error without manufacturing success evidence.
-    pub fn wait(self) -> Result<EngineRelocationExecutionEvidence, CudaRelocationError> {
-        self.copy.wait()?;
-        Ok(self.batch.execution_evidence_after_success())
-    }
-
-    /// Waits for the copy and returns both canonical evidence and a real
-    /// device-side bandwidth sample usable by relocation profiling.
-    ///
-    /// # Errors
-    ///
-    /// Returns CUDA measurement or synchronization failures without
-    /// manufacturing manager success evidence.
-    pub fn wait_measured(self) -> Result<CompletedRelocationCopy, CudaRelocationError> {
-        let measurement = self.copy.wait()?;
-        if measurement.bytes == 0 || measurement.device_time.is_zero() {
-            return Err(CudaRelocationError::InvalidMeasurement);
-        }
-        Ok(CompletedRelocationCopy {
-            evidence: self.batch.execution_evidence_after_success(),
-            sample: crate::model::RelocationBandwidthSample {
-                bytes: measurement.bytes,
-                device_time: measurement.device_time,
-            },
-        })
-    }
-}
-
-impl RelocationBatch {
-    /// Enqueues every manager-selected token move for all affected K/V layers.
-    ///
-    /// Structural errors are rejected before any copy is enqueued. A returned
-    /// device error may be ambiguous and should quarantine the core operation.
-    ///
-    /// # Errors
-    ///
-    /// Rejects missing, duplicate, or unexpected cache bindings, byte-range
-    /// overflow, unresolved runtime tensors, and CUDA submission failures.
-    pub fn enqueue(
-        &self,
-        runtime: &CudaRuntime,
-        bindings: &[KvCacheBinding],
-    ) -> Result<PendingRelocationCopy, CudaRelocationError> {
-        let required = required_bindings(self);
-        let mut provided = BTreeMap::new();
-        let mut tensor_ids = BTreeSet::new();
-        let mut graph_ref = None;
-        for binding in bindings {
-            if binding.key.id == binding.value.id
-                || binding.key.graph_ref != binding.value.graph_ref
-                || graph_ref
-                    .replace(binding.key.graph_ref)
-                    .is_some_and(|expected| expected != binding.key.graph_ref)
-                || !tensor_ids.insert(binding.key.id)
-                || !tensor_ids.insert(binding.value.id)
-                || provided
-                    .insert((binding.class_id, binding.layer), *binding)
-                    .is_some()
-            {
-                return Err(CudaRelocationError::InvalidBindings);
-            }
-        }
-        if provided.keys().copied().collect::<BTreeSet<_>>() != required {
-            return Err(CudaRelocationError::InvalidBindings);
-        }
-        let mut plans = BTreeMap::new();
-        for request in self.requests() {
-            if request.copies.is_empty() {
-                continue;
-            }
-            let key_ranges = request.key_ranges()?;
-            let value_ranges = request.value_ranges()?;
-            for &layer in &request.layers {
-                let binding = provided
-                    .get(&(request.class_id, layer))
-                    .ok_or(CudaRelocationError::InvalidBindings)?;
-                extend_copy_plan(&mut plans, binding.key.id, &key_ranges);
-                extend_copy_plan(&mut plans, binding.value.id, &value_ranges);
-            }
-        }
-        let plans = plans
-            .into_iter()
-            .map(|(tensor, ranges)| DeviceInputCopyPlan {
-                tensor,
-                ranges: ranges.into_boxed_slice(),
-            })
-            .collect::<Vec<_>>();
-        let copy = runtime.copy_input_ranges(&plans)?;
-        Ok(PendingRelocationCopy {
-            copy,
-            batch: self.clone(),
-        })
-    }
-}
-
-fn required_bindings(batch: &RelocationBatch) -> BTreeSet<(u16, u32)> {
-    batch
-        .requests()
-        .iter()
-        .filter(|request| !request.copies.is_empty())
-        .flat_map(|request| {
-            request
-                .layers
-                .iter()
-                .map(move |&layer| (request.class_id, layer))
-        })
-        .collect()
-}
-
-fn extend_copy_plan(
-    plans: &mut BTreeMap<luminal::prelude::NodeIndex, Vec<DeviceCopyRange>>,
-    tensor: luminal::prelude::NodeIndex,
-    ranges: &[RelocationByteRange],
-) {
-    let target = plans.entry(tensor).or_default();
-    target.extend(ranges.iter().map(|range| DeviceCopyRange {
-        source_offset: range.source_offset,
-        destination_offset: range.destination_offset,
-        bytes: range.bytes,
-    }));
 }
 
 impl PagedAttentionMetadata {
@@ -259,7 +86,6 @@ impl PagedAttentionMetadata {
         self,
         runtime: &mut CudaRuntime,
         batch: &AttentionBatch,
-        compiled_page_tokens: usize,
     ) -> Result<(), ExecutorError> {
         let rows = batch
             .query_indptr
@@ -267,11 +93,6 @@ impl PagedAttentionMetadata {
             .checked_sub(1)
             .ok_or(ExecutorError::InvalidRequestGeometry)?;
         if batch.class_id != self.class_id
-            || batch.page_tokens == 0
-            || !matches!(
-                usize::try_from(batch.page_tokens),
-                Ok(page_tokens) if page_tokens == 1 || page_tokens == compiled_page_tokens
-            )
             || batch.page_indptr.len() != rows + 1
             || batch.last_page_len.len() != rows
             || batch.page_indptr.last().copied() != i32::try_from(batch.page_indices.len()).ok()
@@ -354,7 +175,7 @@ pub fn paged_attention(
             num_qo_heads: kernel.query_heads,
             num_kv_heads: kernel.kv_heads,
             head_dim: kernel.head_dim,
-            page_size: inputs.page_tokens,
+            page_size: class.page_tokens as usize,
             query_tokens: inputs.query_tokens,
             context_pages: inputs.context_pages,
             dtype: kernel.dtype,
@@ -390,7 +211,6 @@ mod tests {
                 v_cache: v,
                 query_tokens,
                 context_pages,
-                page_tokens: 16.into(),
             },
             metadata,
             &AttentionClass {
@@ -400,7 +220,6 @@ mod tests {
                 page_tokens: 16,
                 key_bytes_per_token_per_layer: 128,
                 value_bytes_per_token_per_layer: 128,
-                token_relocatable: true,
                 visibility: AttentionVisibility::Sliding { window_tokens: 64 },
             },
             AttentionKernel {
@@ -473,7 +292,6 @@ mod tests {
                 v_cache: v,
                 query_tokens,
                 context_pages,
-                page_tokens: 16.into(),
             },
             metadata,
             &plan.classes[0],
@@ -498,12 +316,6 @@ mod tests {
                 .enodes
                 .values()
                 .any(|(op, _)| op == "persistent-state-attention-op")
-        );
-        assert!(
-            egraph
-                .enodes
-                .values()
-                .any(|(op, _)| { op == "persistent-state-layout-packed-token-slots" })
         );
     }
 }

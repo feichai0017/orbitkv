@@ -1,10 +1,10 @@
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use thiserror::Error;
 
 use crate::{
     AttentionStateBackend, RecurrentFamily, RuntimeManifest, RuntimeManifestError,
     RuntimeManifestSource, StateComponentGeometry, TokenStorageKind,
-    plan::{AddressProgram, BlockDomain, PlanError, RetentionKind, RetirementProgram},
+    plan::{AddressProgram, BlockDomain, RetentionKind, RetirementProgram},
 };
 
 /// Backend-neutral persistent-state facts derived from one validated manifest.
@@ -16,7 +16,6 @@ use crate::{
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct StateLayoutFacts {
     pub manifest_fingerprint: String,
-    pub manager_plan_fingerprint: Option<[u8; 32]>,
     pub page_tokens: u64,
     pub classes: Box<[StateClassLayoutFacts]>,
 }
@@ -33,7 +32,6 @@ pub struct StateClassLayoutFacts {
     pub address: Option<AddressProgram>,
     pub retirement: Option<RetirementProgram>,
     pub block_domain: Option<BlockDomain>,
-    pub legal_layouts: Box<[StateLayoutAlternative]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -44,7 +42,6 @@ pub enum StateStorageFacts {
         components: Box<[StateComponentFact]>,
         bytes_per_token_per_layer: u64,
         page_bytes_per_layer: u64,
-        token_relocatable: bool,
     },
     RecurrentCheckpoints {
         family: RecurrentFamily,
@@ -74,27 +71,10 @@ pub struct StateComponentFact {
     pub bytes_per_token_per_layer: u64,
 }
 
-/// A semantically legal physical realization. Profitability is deliberately
-/// absent: an executor cost profile must choose among these alternatives.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum StateLayoutAlternative {
-    Compiled,
-    /// Retain the compiled page layout but apply an explicit per-token
-    /// visibility mask before attention. This is the semantic baseline for
-    /// token-level eviction before physical compaction.
-    TokenSelectionMask,
-    /// Pack retained token payload into fewer pages. The runtime must prove
-    /// private ownership and completed component copies before publication.
-    PackedTokenSlots,
-}
-
 #[derive(Debug, Error)]
 pub enum StateLayoutFactsError {
     #[error(transparent)]
     Manifest(#[from] RuntimeManifestError),
-    #[error(transparent)]
-    Plan(#[from] PlanError),
     #[error("state layout facts do not match the compiled manifest")]
     ManifestMismatch,
     #[error("manager class count exceeds the layout-facts identity range")]
@@ -129,21 +109,6 @@ impl RuntimeManifest {
                     }
                     _ => return Err(StateLayoutFactsError::ManifestMismatch),
                 };
-                let mut legal_layouts = vec![StateLayoutAlternative::Compiled];
-                if matches!(
-                    storage,
-                    StateStorageFacts::TokenSlots {
-                        token_relocatable: true,
-                        ..
-                    }
-                ) && retention == RetentionKind::Full
-                    && matches!(layout.address, AddressProgram::AppendOnly)
-                    && layout.retirement == RetirementProgram::Never
-                    && layout.block_domain.is_all()
-                {
-                    legal_layouts.push(StateLayoutAlternative::TokenSelectionMask);
-                    legal_layouts.push(StateLayoutAlternative::PackedTokenSlots);
-                }
                 classes.push(StateClassLayoutFacts {
                     manager_class_id: Some(manager_class_id),
                     name: layout.name.clone(),
@@ -154,7 +119,6 @@ impl RuntimeManifest {
                     address: Some(layout.address.clone()),
                     retirement: Some(layout.retirement.clone()),
                     block_domain: Some(layout.block_domain.clone()),
-                    legal_layouts: legal_layouts.into_boxed_slice(),
                 });
             }
         }
@@ -166,14 +130,8 @@ impl RuntimeManifest {
                 classes.push(fixed_state_facts(state));
             }
         }
-        let manager_plan_fingerprint = self
-            .token_manager_input()?
-            .map(crate::compile_plan)
-            .transpose()?
-            .map(|plan| plan.fingerprint_digest());
         Ok(StateLayoutFacts {
             manifest_fingerprint: self.fingerprint.clone(),
-            manager_plan_fingerprint,
             page_tokens: self.token_manager_plan.as_ref().map_or_else(
                 || {
                     self.attention_state_plan
@@ -197,7 +155,6 @@ fn token_storage_facts(
         page_bytes_per_layer,
         retention,
         window_tokens,
-        token_relocatable,
     } = backend
     else {
         return Err(StateLayoutFactsError::ManifestMismatch);
@@ -211,7 +168,6 @@ fn token_storage_facts(
             components: component_facts(components),
             bytes_per_token_per_layer: *bytes_per_token_per_layer,
             page_bytes_per_layer: *page_bytes_per_layer,
-            token_relocatable: *token_relocatable,
         },
         *retention,
         *window_tokens,
@@ -260,7 +216,6 @@ fn retention_ir_storage_facts(
             .into_boxed_slice(),
             bytes_per_token_per_layer: layout.bytes_per_token_per_layer,
             page_bytes_per_layer,
-            token_relocatable: false,
         },
         retention,
         window_tokens,
@@ -316,7 +271,6 @@ fn fixed_state_facts(state: &crate::CompiledAttentionState) -> StateClassLayoutF
         address: None,
         retirement: None,
         block_domain: None,
-        legal_layouts: vec![StateLayoutAlternative::Compiled].into_boxed_slice(),
     }
 }
 
@@ -329,7 +283,7 @@ mod tests {
     };
 
     #[test]
-    fn facts_preserve_static_geometry_and_only_offer_legal_compaction() {
+    fn facts_preserve_static_geometry() {
         let manifest = compile_runtime_manifest(AttentionStatePlanInput {
             page_tokens: 16,
             states: vec![
@@ -371,20 +325,8 @@ mod tests {
         assert_eq!(facts.page_tokens, 16);
         assert_eq!(facts.classes.len(), 3);
         assert_eq!(facts.classes[0].manager_class_id, Some(0));
-        assert_eq!(
-            facts.classes[0].legal_layouts.as_ref(),
-            [
-                StateLayoutAlternative::Compiled,
-                StateLayoutAlternative::TokenSelectionMask,
-                StateLayoutAlternative::PackedTokenSlots,
-            ]
-        );
         assert_eq!(facts.classes[1].manager_class_id, Some(1));
         assert_eq!(facts.classes[1].window_tokens, Some(64));
-        assert_eq!(
-            facts.classes[1].legal_layouts.as_ref(),
-            [StateLayoutAlternative::Compiled]
-        );
         assert_eq!(facts.classes[2].manager_class_id, None);
         assert!(matches!(
             facts.classes[2].storage,

@@ -20,8 +20,8 @@ use luminal_cuda_lite::{
 };
 
 use crate::{
-    ExecutorArena, ExecutorPlan, RelocationBatch,
-    cuda::{CudaRelocationError, KvCacheBinding, PagedAttentionMetadata, PendingRelocationCopy},
+    ExecutorArena, ExecutorPlan,
+    cuda::{KvCacheBinding, PagedAttentionMetadata},
 };
 
 #[path = "model/runtime_input.rs"]
@@ -35,13 +35,6 @@ pub use config::{
 #[path = "model/weights.rs"]
 mod weights;
 use weights::{DecoderWeightFeatures, inspect_weight_features};
-#[path = "model/relocation_profile.rs"]
-mod relocation_profile;
-use relocation_profile::DecoderProfileIdentity;
-pub use relocation_profile::{
-    ExecutionGeometryProfile, RelocationBandwidthProfile, RelocationBandwidthSample,
-    RelocationProfileEnvelopeInput, build_relocation_cost_profile,
-};
 
 #[derive(Debug, Error)]
 pub enum DecoderError {
@@ -55,8 +48,6 @@ pub enum DecoderError {
     Executor(#[from] crate::ExecutorError),
     #[error(transparent)]
     Device(#[from] luminal_cuda_lite::cudarc::driver::DriverError),
-    #[error(transparent)]
-    Relocation(#[from] CudaRelocationError),
     #[error("decoder artifact is incompatible: {0}")]
     Artifact(String),
     #[error("decoder runtime input geometry exceeds its compiled capacity")]
@@ -67,8 +58,6 @@ pub enum DecoderError {
     MissingDecodeCapture,
     #[error("decode step does not match the captured CUDA graph signature")]
     DecodeCaptureMismatch,
-    #[error("invalid relocation cost evidence: {0}")]
-    RelocationProfile(&'static str),
 }
 
 /// Dynamic-shape and search policy for one compiled decoder executable.
@@ -142,19 +131,6 @@ impl DecoderArtifact {
         }
         Ok(artifact)
     }
-
-    /// Stable digest of the complete portable decoder artifact.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if canonical JSON serialization fails.
-    pub fn fingerprint(&self) -> Result<[u8; 32], DecoderError> {
-        Ok(Sha256::digest(self.to_bytes()?).into())
-    }
-
-    fn schedule_fingerprint(&self) -> Result<[u8; 32], DecoderError> {
-        Ok(Sha256::digest(serde_json::to_vec(&self.schedule)?).into())
-    }
 }
 
 impl DecoderCompileConfig {
@@ -165,8 +141,6 @@ impl DecoderCompileConfig {
             || self.maximum_batch_size == 0
             || self.maximum_batch_size > self.maximum_query_tokens
             || self.maximum_context_pages == 0
-            || self.maximum_context_pages.checked_mul(16).is_none()
-            || self.maximum_context_pages.saturating_mul(16) > i32::MAX as usize
             || !(1..=self.maximum_context_pages).contains(&self.representative_context_pages)
             || self.search_graphs < 2
             || self.maximum_query_tokens > i32::MAX as usize
@@ -215,7 +189,6 @@ struct DecodeCaptureSignature {
 struct DecodeClassCaptureSignature {
     class_id: u16,
     context_pages: usize,
-    page_tokens: u32,
     query_indptr: Box<[i32]>,
     page_indptr: Box<[i32]>,
 }
@@ -237,7 +210,6 @@ pub struct CompiledDecoder {
     page_tokens: usize,
     cache_updates_in_place: bool,
     dynamic_input_allocations: Box<[InputAllocation]>,
-    profile_identity: DecoderProfileIdentity,
 }
 
 #[derive(Clone)]
@@ -303,9 +275,6 @@ struct DecoderDimensions {
 struct DecoderClassDimensions {
     class_id: u16,
     context_pages: Symbol,
-    page_tokens: Symbol,
-    storage_page_tokens: usize,
-    supports_token_selection: bool,
     backend_base_index: u64,
     page_count: u32,
     cache_slots: usize,
@@ -538,7 +507,6 @@ impl CompiledDecoder {
     /// # Errors
     ///
     /// Rejects incompatible artifacts and propagates model or device failures.
-    #[allow(clippy::too_many_lines)]
     #[allow(clippy::too_many_arguments)]
     pub fn compile_or_load(
         config: &DecoderConfig,
@@ -592,7 +560,6 @@ impl CompiledDecoder {
         graph.set_dim('b', 1);
         for class in &decoder.class_dimensions {
             graph.set_dim(class.context_pages, compile.representative_context_pages);
-            graph.set_dim(class.page_tokens, class.storage_page_tokens);
         }
         seed_compile_inputs(&mut runtime, &decoder, compile, page_tokens);
         let options = decoder_compile_options(&decoder, compile)
@@ -626,16 +593,6 @@ impl CompiledDecoder {
         runtime.release_pooled_memory();
         let dynamic_input_allocations = capture_input_allocations(&runtime, &decoder)?;
         let cache_updates_in_place = cache_updates_in_place(&runtime, &decoder);
-        let profile_identity = DecoderProfileIdentity {
-            manager_plan_fingerprint: compiler_facts.manager_plan_fingerprint(),
-            compiler_facts_digest: compiler_facts.digest_bytes(),
-            artifact_fingerprint: effective_artifact.fingerprint()?,
-            schedule_fingerprint: effective_artifact.schedule_fingerprint()?,
-            bucket_program_fingerprints: effective_artifact
-                .schedule
-                .bucket_program_fingerprints()
-                .into_boxed_slice(),
-        };
         for cache in &mut persistent_cache {
             stream.memset_zeros(cache)?;
         }
@@ -651,7 +608,6 @@ impl CompiledDecoder {
                 page_tokens,
                 cache_updates_in_place,
                 dynamic_input_allocations,
-                profile_identity,
             },
             effective_artifact,
         ))
@@ -821,45 +777,6 @@ impl CompiledDecoder {
         })
     }
 
-    /// Profiles one already-installed bucket at the exact manager-authored
-    /// runtime geometry supplied by `step`. This performs an untimed warmup
-    /// followed by `trials` CUDA-event measurements and leaves graph outputs
-    /// unpublished.
-    ///
-    /// # Errors
-    ///
-    /// Rejects invalid step geometry, fewer than three samples, or a failed
-    /// device measurement.
-    pub fn profile_execution(
-        &mut self,
-        step: DecoderStep<'_>,
-        trials: usize,
-    ) -> Result<ExecutionGeometryProfile, DecoderError> {
-        if trials < 3 {
-            return Err(DecoderError::RelocationProfile(
-                "execution profile requires at least three trials",
-            ));
-        }
-        validate_step(
-            step,
-            self.compile,
-            &self.decoder.class_dimensions,
-            self.page_tokens,
-            self.vocabulary_size,
-        )?;
-        self.captured_decode = None;
-        self.bind_step_inputs(step)?;
-        let profile = self
-            .runtime
-            .profile_current_execution(&self.graph.dyn_map, trials)
-            .map_err(DecoderError::RelocationProfile)?;
-        relocation_profile::execution_geometry_profile(
-            step,
-            profile,
-            self.profile_identity.fingerprint(),
-        )
-    }
-
     fn execute_graph(&mut self, step: DecoderStep<'_>) -> Result<(), DecoderError> {
         validate_step(
             step,
@@ -921,11 +838,6 @@ impl CompiledDecoder {
                 class_dimensions.context_pages,
                 class_step.attention.page_indices.len(),
             );
-            self.graph.set_dim(
-                class_dimensions.page_tokens,
-                usize::try_from(class_step.attention.page_tokens)
-                    .map_err(|_| DecoderError::InputCapacity)?,
-            );
             self.runtime.set_data(
                 class_inputs.write_slots,
                 class_step
@@ -934,11 +846,9 @@ impl CompiledDecoder {
                     .map(|&slot| i32::try_from(slot).map_err(|_| DecoderError::InputCapacity))
                     .collect::<Result<Vec<_>, _>>()?,
             );
-            class_inputs.attention.upload(
-                &mut self.runtime,
-                class_step.attention,
-                class_dimensions.storage_page_tokens,
-            )?;
+            class_inputs
+                .attention
+                .upload(&mut self.runtime, class_step.attention)?;
         }
         if self.dynamic_input_allocations.iter().any(
             |(input, expected_pointer, expected_capacity)| {
@@ -972,7 +882,7 @@ impl CompiledDecoder {
             .map(Vec::into_boxed_slice)
     }
 
-    /// Returns the persistent cache bindings for relocation execution.
+    /// Returns the stable persistent cache bindings for every compiled layer.
     ///
     /// # Errors
     ///
@@ -982,24 +892,6 @@ impl CompiledDecoder {
         plan: &ExecutorPlan,
     ) -> Result<Box<[KvCacheBinding]>, DecoderError> {
         self.decoder.cache_bindings(plan)
-    }
-
-    /// Enqueues manager-authored relocation on the same stream and persistent
-    /// K/V arena used by model execution.
-    ///
-    /// # Errors
-    ///
-    /// Propagates binding validation, lowering, and CUDA submission failures.
-    pub fn enqueue_relocation(
-        &self,
-        batch: &RelocationBatch,
-        plan: &ExecutorPlan,
-    ) -> Result<PendingRelocationCopy, DecoderError> {
-        let bindings = self.cache_bindings(plan)?;
-        if bindings.len().checked_mul(2) != Some(self.persistent_cache.len()) {
-            return Err(DecoderError::InvalidGeometry("cache binding"));
-        }
-        Ok(batch.enqueue(&self.runtime, &bindings)?)
     }
 
     #[must_use]
@@ -1175,19 +1067,63 @@ fn decoder_compile_options(
                     ],
                 ),
             |options, class| {
-                let maximum_context_pages = if class.supports_token_selection {
-                    compile.maximum_context_pages * class.storage_page_tokens
-                } else {
-                    compile.maximum_context_pages
-                };
                 options.dim_buckets(
                     class.context_pages,
-                    &[luminal::prelude::DimBucket::new(1, maximum_context_pages)
-                        .representative(compile.representative_context_pages)],
+                    &[
+                        luminal::prelude::DimBucket::new(1, compile.maximum_context_pages)
+                            .representative(compile.representative_context_pages),
+                    ],
                 )
             },
         )
         .search_graph_limit(compile.search_graphs)
+}
+
+impl DecodeCaptureSignature {
+    fn from_step(step: DecoderStep<'_>) -> Result<Self, DecoderError> {
+        let Some(first_class) = step.classes.first() else {
+            return Err(DecoderError::CaptureRequiresDecode);
+        };
+        let batch_size = first_class
+            .attention
+            .query_indptr
+            .len()
+            .checked_sub(1)
+            .ok_or(DecoderError::InputCapacity)?;
+        let decode_indptr = first_class.attention.query_indptr.first() == Some(&0)
+            && first_class.attention.query_indptr.last().copied() == i32::try_from(batch_size).ok()
+            && first_class
+                .attention
+                .query_indptr
+                .windows(2)
+                .all(|row| row[1] == row[0] + 1);
+        if batch_size == 0
+            || step.tokens.len() != batch_size
+            || step.positions.len() != batch_size
+            || !decode_indptr
+            || step.classes.iter().any(|class| {
+                class.write_slots.len() != batch_size
+                    || class.attention.query_indptr != first_class.attention.query_indptr
+            })
+        {
+            return Err(DecoderError::CaptureRequiresDecode);
+        }
+        Ok(Self {
+            query_tokens: step.tokens.len(),
+            batch_size,
+            classes: step
+                .classes
+                .iter()
+                .map(|class| DecodeClassCaptureSignature {
+                    class_id: class.class_id,
+                    context_pages: class.attention.page_indices.len(),
+                    query_indptr: class.attention.query_indptr.clone(),
+                    page_indptr: class.attention.page_indptr.clone(),
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        })
+    }
 }
 
 fn dynamic_inputs(decoder: &DecoderGraph) -> Vec<GraphTensor> {
@@ -1251,16 +1187,6 @@ fn seed_compile_inputs(
     );
     for (class, dimensions) in decoder.inputs.classes.iter().zip(&decoder.class_dimensions) {
         let base_page = i32::try_from(dimensions.backend_base_index).unwrap();
-        let context_capacity = if dimensions.supports_token_selection {
-            compile.maximum_context_pages * dimensions.storage_page_tokens
-        } else {
-            compile.maximum_context_pages
-        };
-        runtime.set_data_with_capacity(
-            class.attention.page_indices,
-            vec![base_page; compile.representative_context_pages],
-            context_capacity * int_bytes,
-        );
         let base_slot = dimensions
             .backend_base_index
             .checked_mul(page_tokens as u64)
@@ -1272,6 +1198,11 @@ fn seed_compile_inputs(
                 .map(|offset| base_slot.checked_add(offset).unwrap())
                 .collect::<Vec<_>>(),
             compile.maximum_query_tokens * int_bytes,
+        );
+        runtime.set_data_with_capacity(
+            class.attention.page_indices,
+            vec![base_page; compile.representative_context_pages],
+            compile.maximum_context_pages * int_bytes,
         );
         runtime.set_data_with_capacity(
             class.attention.query_indptr,
@@ -1291,14 +1222,7 @@ fn seed_compile_inputs(
         );
         runtime.set_data_with_capacity(
             class.attention.last_page_len,
-            vec![
-                i32::try_from(
-                    dimensions
-                        .storage_page_tokens
-                        .min(compile.representative_prefill_tokens),
-                )
-                .unwrap(),
-            ],
+            vec![i32::try_from(page_tokens.min(compile.representative_prefill_tokens)).unwrap()],
             compile.maximum_batch_size * int_bytes,
         );
     }
@@ -1347,10 +1271,6 @@ fn validate_plan(
         class_dimensions.push(DecoderClassDimensions {
             class_id: class.class_id,
             context_pages: sym(&format!("c_{}", class.class_id)),
-            page_tokens: sym(&format!("p_{}", class.class_id)),
-            storage_page_tokens: page_tokens,
-            supports_token_selection: class.token_relocatable
-                && class.visibility == crate::AttentionVisibility::Full,
             backend_base_index: arena.backend_base_index,
             page_count: arena.page_count,
             cache_slots,

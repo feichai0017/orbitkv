@@ -1,7 +1,7 @@
 use std::fmt::Write;
 
 use orbitkv::{
-    StateClassLayoutFacts, StateLayoutAlternative, StateLayoutFacts, StateStorageFacts,
+    StateClassLayoutFacts, StateLayoutFacts, StateStorageFacts,
     plan::{AddressProgram, RetentionKind},
 };
 use sha2::{Digest, Sha256};
@@ -12,7 +12,6 @@ use crate::{ExecutorArena, ExecutorError, ExecutorPlan};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LuminalCompilerFacts {
     manifest_fingerprint: String,
-    manager_plan_fingerprint: [u8; 32],
     digest: String,
     classes: Box<[LuminalStateClassFacts]>,
     egglog: String,
@@ -36,17 +35,6 @@ impl LuminalCompilerFacts {
     #[must_use]
     pub fn digest(&self) -> &str {
         &self.digest
-    }
-
-    /// Binary SHA-256 digest of the exact declarations injected into Luminal.
-    #[must_use]
-    pub fn digest_bytes(&self) -> [u8; 32] {
-        Sha256::digest(self.egglog.as_bytes()).into()
-    }
-
-    #[must_use]
-    pub const fn manager_plan_fingerprint(&self) -> [u8; 32] {
-        self.manager_plan_fingerprint
     }
 
     #[must_use]
@@ -79,9 +67,6 @@ impl ExecutorPlan {
         {
             return Err(ExecutorError::CompilerFactsMismatch);
         }
-        let manager_plan_fingerprint = state_layout_facts
-            .manager_plan_fingerprint
-            .ok_or(ExecutorError::CompilerFactsMismatch)?;
         let token_states = state_layout_facts
             .classes
             .iter()
@@ -116,7 +101,6 @@ impl ExecutorPlan {
         let digest = format!("sha256:{:x}", Sha256::digest(egglog.as_bytes()));
         Ok(LuminalCompilerFacts {
             manifest_fingerprint: self.manifest_fingerprint.clone(),
-            manager_plan_fingerprint,
             digest,
             classes,
             egglog,
@@ -145,7 +129,6 @@ fn lower_egglog(
 (relation persistent-state-block-domain (i64 i64 i64))
 (relation persistent-state-arena (i64 i64 i64))
 (relation persistent-state-address-stable (i64))
-(relation persistent-state-token-relocatable (i64))
 (relation persistent-state-retention-full (i64))
 (relation persistent-state-retention-sliding (i64 i64))
 (relation persistent-state-retention-chunked (i64 i64))
@@ -156,9 +139,6 @@ fn lower_egglog(
 (relation persistent-state-address-pinned (i64))
 (relation persistent-state-address-periodic (i64 i64 i64))
 (relation persistent-state-address-resettable (i64 i64))
-(relation persistent-state-layout-compiled (i64))
-(relation persistent-state-layout-token-selection-mask (i64))
-(relation persistent-state-layout-packed-token-slots (i64))
 ",
     );
     writeln!(
@@ -236,18 +216,6 @@ fn write_class_facts(
     write_retention_facts(output, class_id, class)?;
     write_address_facts(output, class_id, class)?;
     write_retirement_facts(output, class_id, class)?;
-    for layout in &class.state.legal_layouts {
-        let relation = match layout {
-            StateLayoutAlternative::Compiled => "persistent-state-layout-compiled",
-            StateLayoutAlternative::TokenSelectionMask => {
-                "persistent-state-layout-token-selection-mask"
-            }
-            StateLayoutAlternative::PackedTokenSlots => {
-                "persistent-state-layout-packed-token-slots"
-            }
-        };
-        write_unary_fact(output, relation, class_id);
-    }
     Ok(())
 }
 
@@ -260,7 +228,6 @@ fn write_storage_facts(
         components,
         bytes_per_token_per_layer,
         page_bytes_per_layer,
-        token_relocatable,
         storage,
     } = storage_facts
     else {
@@ -297,9 +264,6 @@ fn write_storage_facts(
             component.bytes_per_token_per_layer
         )
         .expect("writing to String cannot fail");
-    }
-    if *token_relocatable {
-        write_unary_fact(output, "persistent-state-token-relocatable", class_id);
     }
     Ok(())
 }
@@ -518,14 +482,6 @@ mod tests {
         let repeated = plan.luminal_compiler_facts(&arenas).unwrap();
         assert_eq!(facts.digest(), repeated.digest());
         assert_eq!(facts.manifest_fingerprint(), plan.manifest_fingerprint);
-        assert_eq!(
-            facts.manager_plan_fingerprint(),
-            plan.state_layout_facts.manager_plan_fingerprint.unwrap()
-        );
-        assert_eq!(
-            facts.digest(),
-            format!("sha256:{:x}", Sha256::digest(facts.egglog().as_bytes()))
-        );
         assert_eq!(facts.classes().len(), 2);
         assert!(
             facts
@@ -535,17 +491,7 @@ mod tests {
         assert!(
             facts
                 .egglog()
-                .contains("(persistent-state-layout-packed-token-slots 0)")
-        );
-        assert!(
-            facts
-                .egglog()
                 .contains("(persistent-state-retention-sliding 1 64)")
-        );
-        assert!(
-            !facts
-                .egglog()
-                .contains("(persistent-state-layout-packed-token-slots 1)")
         );
         assert!(facts.egglog().contains("(persistent-state-arena 1 8 8)"));
     }

@@ -346,7 +346,7 @@ fn assert_canonical_prepared_spans(prepared: &PreparedStep) {
     let mut expected_write_offset = 0_u32;
     for (class_index, lowering) in prepared.class_lowerings.iter().enumerate() {
         assert_eq!(usize::from(lowering.class_id), class_index);
-        assert!(matches!(lowering.flags, 0 | 1 | 2 | 6));
+        assert!(matches!(lowering.flags, 0 | 1 | 3));
         assert_eq!(lowering.reserved, 0);
         assert!(lowering.target_layout_boundary >= lowering.previous_layout_boundary);
         assert_eq!(lowering.tail_offset, expected_tail_offset);

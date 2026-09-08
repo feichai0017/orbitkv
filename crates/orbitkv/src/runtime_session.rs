@@ -14,7 +14,6 @@ mod evidence;
 mod execution_view;
 mod external_tier;
 mod prefix_release;
-mod relocation;
 
 pub use control::{
     EngineControlEvidence, EngineControlOutcome, EngineControlPlan, EngineMaterializationPlan,
@@ -36,15 +35,6 @@ pub use external_tier::{
 };
 use external_tier::{PendingExternalExport, PendingExternalRestore};
 pub use prefix_release::{EnginePrefixPublishReleasePlan, EnginePublishedPrefixRelease};
-use relocation::PendingRelocation;
-pub use relocation::{
-    EngineAttentionViewQuery, EnginePrepareRelocationItem, EnginePreparedRelocation,
-    EngineRelocationAbortEvidence, EngineRelocationCopyEvidence, EngineRelocationExecutionEvidence,
-    EngineRelocationPlan, EngineRelocationPublication, EngineRelocationPublicationEvidence,
-    EngineRelocationRequestEvidence, EngineRelocationRequestPublication, EngineRelocationTicket,
-    EngineTokenDispositionBatchItem, EngineTokenDispositionUpdate, EngineTokenView,
-    EngineTokenViewQuery,
-};
 
 /// Controls whether requests may share cache state through Prefix operations.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -96,7 +86,6 @@ session_id!(EnginePublicationId);
 session_id!(EngineReleaseId);
 session_id!(EnginePrefixId);
 session_id!(EngineControlId);
-session_id!(EngineRelocationId);
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct EngineRequestView {
@@ -316,14 +305,6 @@ pub enum RuntimeSessionError {
         expected: EngineRequestId,
         actual: EngineRequestId,
     },
-    #[error(
-        "engine token-view boundary mismatch for {request_id:?}: expected {expected}, got {actual}"
-    )]
-    TokenViewBoundary {
-        request_id: EngineRequestId,
-        expected: u64,
-        actual: u64,
-    },
     #[error("flattened evidence cardinality exceeds the manager batch limit")]
     EvidenceTooLarge,
     #[error("unknown publication id {0:?}")]
@@ -357,18 +338,6 @@ pub enum RuntimeSessionError {
     ForeignControl(EngineControlId),
     #[error("stale engine control id {0:?}")]
     StaleControl(EngineControlId),
-    #[error("unknown engine relocation id {0:?}")]
-    UnknownRelocation(EngineRelocationId),
-    #[error("engine relocation id {0:?} belongs to a different runtime session")]
-    ForeignRelocation(EngineRelocationId),
-    #[error("stale engine relocation id {0:?}")]
-    StaleRelocation(EngineRelocationId),
-    #[error("engine relocation {0:?} is not prepared")]
-    RelocationNotPrepared(EngineRelocationId),
-    #[error("engine relocation {0:?} is not submitted")]
-    RelocationNotSubmitted(EngineRelocationId),
-    #[error("engine relocation {0:?} has no publication pending")]
-    RelocationPublicationNotPending(EngineRelocationId),
     #[error("engine control {0:?} has already committed")]
     ControlAlreadyCommitted(EngineControlId),
     #[error("engine control {0:?} has not committed")]
@@ -404,9 +373,6 @@ enum RequestPhase {
     ReleasePending(EngineReleaseId),
     ControlSource(EngineControlId),
     ControlTarget(EngineControlId),
-    RelocationPrepared(EngineRelocationId),
-    RelocationSubmitted(EngineRelocationId),
-    RelocationPublicationPending(EngineRelocationId),
     ExternalExportPending(ExternalTransferId),
     Quarantined,
 }
@@ -421,9 +387,6 @@ impl RequestPhase {
             Self::ReleasePending(_) => "release confirmation pending",
             Self::ControlSource(_) => "control source reserved",
             Self::ControlTarget(_) => "control materialization pending",
-            Self::RelocationPrepared(_) => "relocation prepared",
-            Self::RelocationSubmitted(_) => "relocation submitted",
-            Self::RelocationPublicationPending(_) => "relocation publication pending",
             Self::ExternalExportPending(_) => "external export pending",
             Self::Quarantined => "quarantined",
         }
@@ -494,7 +457,6 @@ pub enum RuntimeSessionTestFault {
     PrefixRecycleFatalOnce,
     ReleaseRecycleOnce,
     ReleaseRecycleFatalOnce,
-    TokenViewOrdering,
 }
 
 #[derive(Debug)]
@@ -507,7 +469,6 @@ pub struct RuntimeSession {
     next_release_sequence: u64,
     next_prefix_sequence: u64,
     next_control_sequence: u64,
-    next_relocation_sequence: u64,
     next_external_sequence: u64,
     poisoned: Option<&'static str>,
     #[cfg(any(test, feature = "test-support"))]
@@ -521,7 +482,6 @@ pub struct RuntimeSession {
     prefix_leases: BTreeMap<crate::kv_manager::PrefixLease, EnginePrefixId>,
     prefix_index: BTreeMap<crate::kv_manager::PrefixSemanticKey, EnginePrefixId>,
     controls: BTreeMap<EngineControlId, PendingControl>,
-    relocations: BTreeMap<EngineRelocationId, PendingRelocation>,
     external_exports: BTreeMap<ExternalTransferId, PendingExternalExport>,
     external_restores: BTreeMap<ExternalTransferId, PendingExternalRestore>,
     external_replicas: BTreeMap<ExternalObjectKey, ExternalReplica>,
@@ -554,7 +514,6 @@ impl RuntimeSession {
             next_release_sequence: 1,
             next_prefix_sequence: 1,
             next_control_sequence: 1,
-            next_relocation_sequence: 1,
             next_external_sequence: 1,
             poisoned: None,
             #[cfg(any(test, feature = "test-support"))]
@@ -568,7 +527,6 @@ impl RuntimeSession {
             prefix_leases: BTreeMap::new(),
             prefix_index: BTreeMap::new(),
             controls: BTreeMap::new(),
-            relocations: BTreeMap::new(),
             external_exports: BTreeMap::new(),
             external_restores: BTreeMap::new(),
             external_replicas: BTreeMap::new(),

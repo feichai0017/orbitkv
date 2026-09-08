@@ -38,9 +38,7 @@
     "prefill_tokens": 4,
     "decode_steps": 2,
     "finite_logits": true,
-    "orbitkv_publications": 3,
-    "persistent_input_relocation_passed": true,
-    "packed_decode_after_relocation_passed": true
+    "orbitkv_publications": 3
   },
   "diagnostic_timings": {
     "one_time_search_compile_seconds": 215.8,

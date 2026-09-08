@@ -1,3 +1,5 @@
+//! Generation-safe storage for recurrent and convolution state.
+
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::Serialize;
@@ -80,7 +82,7 @@ pub struct StatePublication {
 enum SlotPhase {
     Free,
     Reserved(StateTransitionLease),
-    Relocating(StateTransitionLease),
+    Copying(StateTransitionLease),
     Live(u64),
     Retiring(StateRetirementLease),
     Quarantined,
@@ -164,7 +166,7 @@ pub struct StatePoolStats {
     pub identity: StatePoolIdentity,
     pub free_slots: u64,
     pub reserved_slots: u64,
-    pub relocating_slots: u64,
+    pub copying_slots: u64,
     pub live_slots: u64,
     pub retiring_slots: u64,
     pub quarantined_slots: u64,
@@ -334,7 +336,7 @@ impl StateCheckpointPool {
             return Err(StateCheckpointError::CopyReceiptMismatch);
         }
         self.slots[operation.destination.slot_id as usize].phase =
-            SlotPhase::Relocating(receipt.transition);
+            SlotPhase::Copying(receipt.transition);
         self.operations
             .get_mut(&receipt.transition)
             .ok_or(StateCheckpointError::StaleTransition)?
@@ -399,7 +401,7 @@ impl StateCheckpointPool {
             return Err(StateCheckpointError::NotSubmitted);
         }
         if self.slots[operation.destination.slot_id as usize].phase
-            != SlotPhase::Relocating(transition)
+            != SlotPhase::Copying(transition)
         {
             return Err(StateCheckpointError::StaleLease);
         }
@@ -669,7 +671,7 @@ impl StateCheckpointPool {
             identity: self.identity(),
             free_slots: 0,
             reserved_slots: 0,
-            relocating_slots: 0,
+            copying_slots: 0,
             live_slots: 0,
             retiring_slots: 0,
             quarantined_slots: 0,
@@ -681,7 +683,7 @@ impl StateCheckpointPool {
             match slot.phase {
                 SlotPhase::Free => stats.free_slots += 1,
                 SlotPhase::Reserved(_) => stats.reserved_slots += 1,
-                SlotPhase::Relocating(_) => stats.relocating_slots += 1,
+                SlotPhase::Copying(_) => stats.copying_slots += 1,
                 SlotPhase::Live(_) => stats.live_slots += 1,
                 SlotPhase::Retiring(_) => stats.retiring_slots += 1,
                 SlotPhase::Quarantined => stats.quarantined_slots += 1,

@@ -111,7 +111,6 @@ fn step_validation_enforces_compiled_capacities() {
     };
     let attention = crate::AttentionBatch {
         class_id: 0,
-        page_tokens: 16,
         query_indptr: vec![0, 2].into_boxed_slice(),
         page_indptr: vec![0, 1].into_boxed_slice(),
         page_indices: vec![0].into_boxed_slice(),
@@ -120,9 +119,6 @@ fn step_validation_enforces_compiled_capacities() {
     let classes = [DecoderClassDimensions {
         class_id: 0,
         context_pages: sym("c_0"),
-        page_tokens: sym("p_0"),
-        storage_page_tokens: 16,
-        supports_token_selection: true,
         backend_base_index: 0,
         page_count: 4,
         cache_slots: 64,
@@ -158,7 +154,6 @@ fn step_validation_enforces_compiled_capacities() {
 fn decode_capture_signature_freezes_planner_geometry_only() {
     let first_attention = crate::AttentionBatch {
         class_id: 0,
-        page_tokens: 16,
         query_indptr: vec![0, 1].into_boxed_slice(),
         page_indptr: vec![0, 2].into_boxed_slice(),
         page_indices: vec![3, 7].into_boxed_slice(),
@@ -166,7 +161,6 @@ fn decode_capture_signature_freezes_planner_geometry_only() {
     };
     let second_attention = crate::AttentionBatch {
         class_id: 0,
-        page_tokens: 16,
         query_indptr: vec![0, 1].into_boxed_slice(),
         page_indptr: vec![0, 2].into_boxed_slice(),
         page_indices: vec![5, 9].into_boxed_slice(),
@@ -219,7 +213,6 @@ fn decode_capture_signature_freezes_planner_geometry_only() {
 fn decode_capture_signature_covers_every_attention_class() {
     let full = crate::AttentionBatch {
         class_id: 0,
-        page_tokens: 16,
         query_indptr: vec![0, 1].into_boxed_slice(),
         page_indptr: vec![0, 2].into_boxed_slice(),
         page_indices: vec![2, 3].into_boxed_slice(),
@@ -227,7 +220,6 @@ fn decode_capture_signature_covers_every_attention_class() {
     };
     let sliding = crate::AttentionBatch {
         class_id: 1,
-        page_tokens: 16,
         query_indptr: vec![0, 1].into_boxed_slice(),
         page_indptr: vec![0, 1].into_boxed_slice(),
         page_indices: vec![9].into_boxed_slice(),
@@ -254,7 +246,6 @@ fn decode_capture_signature_covers_every_attention_class() {
 
     let changed_sliding = crate::AttentionBatch {
         class_id: sliding.class_id,
-        page_tokens: sliding.page_tokens,
         query_indptr: sliding.query_indptr.clone(),
         page_indptr: vec![0, 2].into_boxed_slice(),
         page_indices: vec![8, 9].into_boxed_slice(),
@@ -280,7 +271,6 @@ fn decode_capture_signature_covers_every_attention_class() {
 fn decode_capture_signature_rejects_prefill() {
     let attention = crate::AttentionBatch {
         class_id: 0,
-        page_tokens: 16,
         query_indptr: vec![0, 2].into_boxed_slice(),
         page_indptr: vec![0, 1].into_boxed_slice(),
         page_indices: vec![0].into_boxed_slice(),
@@ -304,7 +294,6 @@ fn decode_capture_signature_rejects_prefill() {
 fn decode_capture_signature_accepts_one_token_per_request() {
     let attention = crate::AttentionBatch {
         class_id: 0,
-        page_tokens: 16,
         query_indptr: vec![0, 1, 2].into_boxed_slice(),
         page_indptr: vec![0, 2, 5].into_boxed_slice(),
         page_indices: vec![2, 3, 7, 8, 9].into_boxed_slice(),
@@ -477,7 +466,6 @@ fn hybrid_executor_plan() -> ExecutorPlan {
                 page_tokens: 16,
                 key_bytes_per_token_per_layer: 128,
                 value_bytes_per_token_per_layer: 128,
-                token_relocatable: true,
                 visibility: crate::AttentionVisibility::Full,
             },
             crate::AttentionClass {
@@ -487,7 +475,6 @@ fn hybrid_executor_plan() -> ExecutorPlan {
                 page_tokens: 16,
                 key_bytes_per_token_per_layer: 128,
                 value_bytes_per_token_per_layer: 128,
-                token_relocatable: true,
                 visibility: crate::AttentionVisibility::Sliding { window_tokens: 64 },
             },
         ],
@@ -664,7 +651,6 @@ fn multi_class_step_validates_each_absolute_arena() {
     };
     let full = crate::AttentionBatch {
         class_id: 0,
-        page_tokens: 16,
         query_indptr: vec![0, 1].into_boxed_slice(),
         page_indptr: vec![0, 2].into_boxed_slice(),
         page_indices: vec![10, 11].into_boxed_slice(),
@@ -672,7 +658,6 @@ fn multi_class_step_validates_each_absolute_arena() {
     };
     let sliding = crate::AttentionBatch {
         class_id: 1,
-        page_tokens: 16,
         query_indptr: vec![0, 1].into_boxed_slice(),
         page_indptr: vec![0, 1].into_boxed_slice(),
         page_indices: vec![30].into_boxed_slice(),
@@ -682,9 +667,6 @@ fn multi_class_step_validates_each_absolute_arena() {
         DecoderClassDimensions {
             class_id: 0,
             context_pages: sym("c_0"),
-            page_tokens: sym("p_0"),
-            storage_page_tokens: 16,
-            supports_token_selection: true,
             backend_base_index: 10,
             page_count: 4,
             cache_slots: 224,
@@ -692,9 +674,6 @@ fn multi_class_step_validates_each_absolute_arena() {
         DecoderClassDimensions {
             class_id: 1,
             context_pages: sym("c_1"),
-            page_tokens: sym("p_1"),
-            storage_page_tokens: 16,
-            supports_token_selection: false,
             backend_base_index: 30,
             page_count: 2,
             cache_slots: 512,

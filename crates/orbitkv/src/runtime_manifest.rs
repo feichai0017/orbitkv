@@ -29,8 +29,8 @@ pub const RUNTIME_MANIFEST_MAX_BYTES: usize = 16 * 1024 * 1024;
 ///
 /// The compiler emits this vector in lexical order with no duplicates. These
 /// values describe what the serialized physical plan requires to be admitted;
-/// optional runtime policies such as token relocation and future lifecycle
-/// operations are deliberately not inferred from storage geometry alone.
+/// optional runtime policies and future lifecycle operations are deliberately
+/// not inferred from storage geometry alone.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, Ord, PartialEq, PartialOrd, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum RuntimeCapability {
@@ -311,21 +311,18 @@ enum AttentionStateBackendWire {
         page_bytes_per_layer: u64,
         retention: crate::plan::RetentionKind,
         window_tokens: Option<u64>,
-        token_relocatable: bool,
     },
     RecurrentCheckpoints {
         family: RecurrentFamily,
         state_bytes_per_layer: u64,
         checkpoint_slots_per_request: u32,
         checkpoint_bytes_per_request: u64,
-        token_relocatable: bool,
     },
     ConvolutionRing {
         state_bytes_per_layer: u64,
         kernel_width: u32,
         checkpoint_slots_per_request: u32,
         checkpoint_bytes_per_request: u64,
-        token_relocatable: bool,
     },
 }
 
@@ -339,7 +336,6 @@ impl AttentionStateBackendWire {
                 page_bytes_per_layer,
                 retention,
                 window_tokens,
-                token_relocatable,
             } => AttentionStateBackend::TokenSlots {
                 storage,
                 components: components
@@ -350,33 +346,28 @@ impl AttentionStateBackendWire {
                 page_bytes_per_layer,
                 retention,
                 window_tokens,
-                token_relocatable,
             },
             Self::RecurrentCheckpoints {
                 family,
                 state_bytes_per_layer,
                 checkpoint_slots_per_request,
                 checkpoint_bytes_per_request,
-                token_relocatable,
             } => AttentionStateBackend::RecurrentCheckpoints {
                 family,
                 state_bytes_per_layer,
                 checkpoint_slots_per_request,
                 checkpoint_bytes_per_request,
-                token_relocatable,
             },
             Self::ConvolutionRing {
                 state_bytes_per_layer,
                 kernel_width,
                 checkpoint_slots_per_request,
                 checkpoint_bytes_per_request,
-                token_relocatable,
             } => AttentionStateBackend::ConvolutionRing {
                 state_bytes_per_layer,
                 kernel_width,
                 checkpoint_slots_per_request,
                 checkpoint_bytes_per_request,
-                token_relocatable,
             },
         })
     }

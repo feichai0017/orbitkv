@@ -2,14 +2,13 @@
 use super::root_instrumentation;
 use super::{
     Arc, BTreeMap, BTreeSet, BackendBindReceipt, BackendCopyReceipt, BatchCompletionReceipt,
-    CLASS_LOWERING_EPOCH_START, CLASS_LOWERING_PACKED, CLASS_LOWERING_RESETTABLE,
-    CanonicalKvManager, ClassDelta, ClassLowering, ClassRoot, ClassTransition, CompletionBatch,
-    CopyIntent, DetachedReason, KvManagerError, OperationState, PageLease, PagePhase,
-    PersistentRootEntries, PersistentTokenTable, PrepareBatchItem, PreparedState, PreparedStep,
-    PublishedReceipt, ReclamationState, RequestSnapshot, RetentionKind, RootEntry, RootLayout,
-    SnapshotLease, StepCompletion, StepDelta, StepLease, SubmissionLease, SubmitBatchItem,
-    SubmittedState, SubmittedStep, TailAction, TailActionKind, ViewVersion, WriteIntent,
-    apply_class_transition,
+    CLASS_LOWERING_EPOCH_START, CLASS_LOWERING_RESETTABLE, CanonicalKvManager, ClassDelta,
+    ClassLowering, ClassRoot, ClassTransition, CompletionBatch, CopyIntent, DetachedReason,
+    KvManagerError, OperationState, PageLease, PagePhase, PersistentRootEntries, PrepareBatchItem,
+    PreparedState, PreparedStep, PublishedReceipt, ReclamationState, RequestSnapshot,
+    RetentionKind, RootEntry, SnapshotLease, StepCompletion, StepDelta, StepLease, SubmissionLease,
+    SubmitBatchItem, SubmittedState, SubmittedStep, TailAction, TailActionKind, ViewVersion,
+    WriteIntent,
 };
 impl CanonicalKvManager {
     /// Atomically reserves manager-selected pages for an ordered request batch.
@@ -52,7 +51,6 @@ impl CanonicalKvManager {
         {
             let state = self.request(item.request)?;
             let snapshot = self.request_snapshot(item.request)?;
-            let step_tokens = item.target_boundary - snapshot.boundary;
             let target_version = ViewVersion(
                 snapshot
                     .view_version
@@ -77,18 +75,8 @@ impl CanonicalKvManager {
                 .iter()
                 .copied()
                 .map(|class| {
-                    let root = snapshot
-                        .roots
-                        .get(usize::from(class.class_id))
-                        .ok_or(KvManagerError::Invariant("snapshot class cardinality"))?;
-                    let previous_layout_boundary = root.mirror_boundary(previous_boundary);
-                    let target_layout_boundary = if root.is_dense() {
-                        item.target_boundary
-                    } else {
-                        previous_layout_boundary
-                            .checked_add(step_tokens)
-                            .ok_or(KvManagerError::ArithmeticOverflow("packed target boundary"))?
-                    };
+                    let previous_layout_boundary = previous_boundary;
+                    let target_layout_boundary = item.target_boundary;
                     Ok((
                         previous_layout_boundary,
                         target_layout_boundary,
@@ -144,7 +132,6 @@ impl CanonicalKvManager {
                 .zip(tails)
                 .zip(class_boundaries.iter().copied())
             {
-                let root = &snapshot.roots[usize::from(class.class_id)];
                 let first_new_ordinal = previous_layout_boundary.div_ceil(self.page_tokens);
                 let new_end_ordinal = target_layout_boundary.div_ceil(self.page_tokens);
                 let previous_tail_ordinal = (!epoch_reset
@@ -270,9 +257,6 @@ impl CanonicalKvManager {
                             .expect("validated chunked class has a chunk size"),
                     );
                 let mut flags = 0;
-                if !root.is_dense() {
-                    flags |= CLASS_LOWERING_PACKED;
-                }
                 if class.retention == RetentionKind::Chunked {
                     flags |= CLASS_LOWERING_RESETTABLE;
                 }
@@ -300,7 +284,6 @@ impl CanonicalKvManager {
                 }
                 class_deltas.push(ClassDelta {
                     class_id: class.class_id,
-                    layout: root.layout,
                     previous_layout_boundary,
                     target_layout_boundary,
                     epoch_reset,
@@ -359,10 +342,6 @@ impl CanonicalKvManager {
                     roots: (0..self.classes.len())
                         .map(|_| ClassRoot {
                             entries: PersistentRootEntries::default(),
-                            tokens: PersistentTokenTable::default(),
-                            selection_masks: Arc::new(BTreeMap::new()),
-                            layout: RootLayout::Dense,
-                            resident_tokens: 0,
                         })
                         .collect::<Vec<_>>()
                         .into(),
@@ -450,8 +429,6 @@ impl CanonicalKvManager {
                 .map(|entry| entry.logical_ordinal)
                 .ok_or(KvManagerError::Invariant("empty prepared candidate"))?;
             apply_class_transition(
-                self.page_tokens,
-                class,
                 root,
                 class_delta,
                 &ClassTransition {
@@ -460,8 +437,6 @@ impl CanonicalKvManager {
                     retain_first_ordinal,
                     resident_count: candidate_count,
                 },
-                delta.previous_boundary,
-                delta.target_boundary,
             )?;
         }
         self.materialize_attention_roots(delta.previous_boundary, delta.target_boundary, &roots)
@@ -481,16 +456,6 @@ impl CanonicalKvManager {
         let snapshot = self.request_snapshot(item.request)?;
         if snapshot.roots.len() != self.classes.len() {
             return Err(KvManagerError::Invariant("snapshot class cardinality"));
-        }
-        if snapshot
-            .roots
-            .iter()
-            .zip(self.classes.iter())
-            .any(|(root, class)| !root.is_dense() && class.retention != RetentionKind::Full)
-        {
-            return Err(KvManagerError::UnsupportedProfile(
-                "only Full classes may use packed append layout",
-            ));
         }
         if item.target_boundary <= snapshot.boundary {
             return Err(KvManagerError::NonMonotonicBoundary {
@@ -840,10 +805,7 @@ impl CanonicalKvManager {
                 if class_delta.class_id != class.class_id {
                     return Err(KvManagerError::Invariant("delta class ordering"));
                 }
-                if root.layout != class_delta.layout
-                    || root.mirror_boundary(delta.previous_boundary)
-                        != class_delta.previous_layout_boundary
-                {
+                if delta.previous_boundary != class_delta.previous_layout_boundary {
                     return Err(KvManagerError::StaleView);
                 }
                 if let (Some(front), Some(back)) = (root.entries.front(), root.entries.back()) {
@@ -1145,21 +1107,13 @@ impl CanonicalKvManager {
                 )
                 .expect("batch completion preflight retained base snapshot");
             let mut candidate_roots = base_snapshot.roots.iter().cloned().collect::<Vec<_>>();
-            for (((root, class), class_delta), transition) in candidate_roots
+            for (((root, _class), class_delta), transition) in candidate_roots
                 .iter_mut()
                 .zip(self.classes.iter().copied())
                 .zip(submitted.delta.classes.iter())
                 .zip(transitions.iter())
             {
-                apply_class_transition(
-                    self.page_tokens,
-                    class,
-                    root,
-                    class_delta,
-                    transition,
-                    submitted.delta.previous_boundary,
-                    submitted.delta.target_boundary,
-                )?;
+                apply_class_transition(root, class_delta, transition)?;
             }
             let resident_count = u32::try_from(resident_count)
                 .map_err(|_| KvManagerError::ArithmeticOverflow("published resident count"))?;
@@ -1424,4 +1378,44 @@ impl CanonicalKvManager {
         }
         Ok(())
     }
+}
+
+fn apply_class_transition(
+    root: &mut ClassRoot,
+    delta: &ClassDelta,
+    transition: &ClassTransition,
+) -> Result<(), KvManagerError> {
+    for _ in 0..transition.retire_from_root {
+        root.entries
+            .pop_front()
+            .ok_or(KvManagerError::Invariant("root retirement"))?;
+    }
+    if let Some(destination) = delta.tail_destination
+        && destination.logical_ordinal >= transition.retain_first_ordinal
+    {
+        if delta.tail_action == TailActionKind::CopyOnWrite {
+            let source = delta
+                .tail_source
+                .ok_or(KvManagerError::Invariant("COW tail source"))?;
+            let removed = root
+                .entries
+                .pop_back()
+                .ok_or(KvManagerError::Invariant("COW tail retirement"))?;
+            if removed != source {
+                return Err(KvManagerError::Invariant("COW tail identity"));
+            }
+        }
+        root.entries.push_back(destination);
+    }
+    root.entries.extend(
+        delta
+            .writes
+            .iter()
+            .skip(transition.retire_from_writes)
+            .copied(),
+    );
+    if root.entries.len() != transition.resident_count {
+        return Err(KvManagerError::Invariant("published root count"));
+    }
+    Ok(())
 }

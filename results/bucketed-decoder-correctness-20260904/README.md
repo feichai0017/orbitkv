@@ -22,10 +22,6 @@ epilogue back into the same stable K/V arena. The search rejected five invalid
 aliasing candidates. This is evidence for address stability and correct repeated
 execution, not for zero-copy K/V writes.
 
-The same source also passed manager-authored token relocation against persistent
-K/V graph inputs, CUDA-event completion, publication, and a following packed
-decode.
-
 Observed diagnostic timings from the single correctness run were approximately:
 
 - one-time two-bucket search and compile: 215.8 seconds;
@@ -59,6 +55,3 @@ env \
     released_decoder_reuses_one_compiled_runtime_and_kv_arena \
     -- --ignored --nocapture
 ```
-
-The relocation closure used the same CUDA and FlashInfer environment and ran
-`manager_authored_token_moves_execute_and_publish` from `cuda_relocation`.
