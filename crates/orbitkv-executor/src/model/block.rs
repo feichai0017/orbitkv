@@ -73,7 +73,7 @@ impl DecoderLayer {
         weights: DecoderWeightFeatures,
         layer: usize,
     ) -> Self {
-        let prefix = format!("model.layers.{layer}");
+        let prefix = format!("{}.layers.{layer}", config.tensor_prefix);
         let q_width = config.query_heads * config.head_dim;
         let kv_width = config.kv_heads * config.head_dim;
         let projection = |graph: &mut Graph, name: &str, width| {
@@ -185,8 +185,20 @@ impl DecoderLayer {
                 config.rope_theta
             }
         };
-        q = rotary(&q, inputs.positions, rope_theta);
-        k = rotary(&k, inputs.positions, rope_theta);
+        q = rotary(
+            &q,
+            inputs.positions,
+            rope_theta,
+            config.rotary_dimensions,
+            config.head_dim,
+        );
+        k = rotary(
+            &k,
+            inputs.positions,
+            rope_theta,
+            config.rotary_dimensions,
+            config.head_dim,
+        );
         let value = project(self.v_weight, self.v_bias);
         let key_update = scatter_rows(
             k.merge_dims(1, 2),
@@ -292,20 +304,26 @@ fn gelu_tanh(input: &GraphTensor) -> GraphTensor {
     *input * scaled.sigmoid()
 }
 
-fn rotary(input: &GraphTensor, positions: &GraphTensor, theta: f32) -> GraphTensor {
-    let head_dim = input.dims()[2];
+fn rotary(
+    input: &GraphTensor,
+    positions: &GraphTensor,
+    theta: f32,
+    rotary_dimensions: usize,
+    head_dim: usize,
+) -> GraphTensor {
     let frequencies = input
         .graph()
-        .arange_options(0, head_dim, 2)
+        .arange_options(0, rotary_dimensions, 2)
         .cast(DType::F32)
-        / head_dim;
+        / rotary_dimensions;
     let inverse = theta.pow(frequencies).reciprocal();
     let angles = (*positions)
         .cast(DType::F32)
         .expand_dim(1, 1)
         .matmul(inverse.expand_dim(0, 1));
-    let first = input.slice((.., .., ..head_dim / 2));
-    let second = input.slice((.., .., head_dim / 2..));
+    let rotary = input.slice((.., .., ..rotary_dimensions));
+    let first = rotary.slice((.., .., ..rotary_dimensions / 2));
+    let second = rotary.slice((.., .., rotary_dimensions / 2..));
     let cosine = angles
         .cos()
         .cast(input.dtype)
@@ -314,5 +332,10 @@ fn rotary(input: &GraphTensor, positions: &GraphTensor, theta: f32) -> GraphTens
         .sin()
         .cast(input.dtype)
         .expand_dim(1, input.dims()[1]);
-    (first * cosine - second * sine).concat_along(first * sine + second * cosine, 2)
+    let rotated = (first * cosine - second * sine).concat_along(first * sine + second * cosine, 2);
+    if rotary_dimensions == head_dim {
+        rotated
+    } else {
+        rotated.concat_along(input.slice((.., .., rotary_dimensions..)), 2)
+    }
 }

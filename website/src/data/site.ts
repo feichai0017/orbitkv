@@ -112,18 +112,18 @@ export const evidenceRows = [
 export const roadmap = [
   {
     state: "NEXT",
+    name: "Run the primary hybrid model",
+    detail: "Integrate recurrent and convolution state, GDN execution, partial RoPE, then block-FP8 loading for the 27B target.",
+  },
+  {
+    state: "NEXT",
     name: "Make attention searchable",
     detail: "Offer FlashInfer and a Luminal-native CUDA candidate behind one semantic paged-attention op.",
   },
   {
-    state: "NEXT",
-    name: "Execute heterogeneous state",
-    detail: "Integrate linear/recurrent plus convolution state, then MLA, through generic state-family contracts.",
-  },
-  {
     state: "THEN",
-    name: "Close serving performance",
-    detail: "Attribute the warm path and rerun matched SGLang/vLLM traces after attention becomes a real compiler choice.",
+    name: "Beat both reference engines",
+    detail: "Use one matched client and require higher throughput without worse p95 TTFT or TPOT than vLLM and SGLang.",
   },
 ];
 

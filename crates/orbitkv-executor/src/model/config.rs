@@ -11,7 +11,10 @@ pub struct DecoderConfig {
     pub kv_heads: usize,
     pub head_dim: usize,
     pub vocabulary_size: usize,
+    /// Canonical weight namespace containing embeddings, layers, and final norm.
+    pub tensor_prefix: String,
     pub rope_theta: f32,
+    pub rotary_dimensions: usize,
     pub rms_epsilon: f32,
     pub tied_embeddings: bool,
     pub embedding_scale: f32,
@@ -20,7 +23,8 @@ pub struct DecoderConfig {
     pub norm_weights: DecoderNormWeights,
     pub local_rope_theta: Option<f32>,
     pub attention_softmax_scale: f64,
-    pub layer_attention: Option<Box<[DecoderAttentionKind]>>,
+    pub layer_kinds: Option<Box<[DecoderLayerKind]>>,
+    pub weight_format: DecoderWeightFormat,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -42,9 +46,16 @@ pub enum DecoderNormWeights {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-pub enum DecoderAttentionKind {
+pub enum DecoderLayerKind {
     Full,
     Sliding,
+    Linear,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub enum DecoderWeightFormat {
+    Float,
+    Fp8E4M3Block { rows: usize, columns: usize },
 }
 
 #[derive(Deserialize)]
@@ -57,10 +68,13 @@ struct DecoderConfigInput {
     #[serde(default)]
     head_dim: Option<usize>,
     vocab_size: usize,
-    rope_theta: f32,
+    #[serde(default)]
+    rope_theta: Option<f32>,
+    #[serde(default)]
+    rope_parameters: Option<RopeParameters>,
     rms_norm_eps: f32,
-    #[serde(default = "default_true")]
-    tie_word_embeddings: bool,
+    #[serde(default)]
+    tie_word_embeddings: Option<bool>,
     #[serde(default)]
     hidden_act: Option<String>,
     #[serde(default)]
@@ -83,8 +97,29 @@ struct DecoderConfigInput {
     quantization_config: Option<serde_json::Value>,
 }
 
-const fn default_true() -> bool {
-    true
+#[derive(Clone, Debug, Deserialize)]
+struct RopeParameters {
+    #[serde(default)]
+    rope_type: Option<String>,
+    #[serde(default)]
+    rope_theta: Option<f32>,
+    #[serde(default)]
+    partial_rotary_factor: Option<f64>,
+    #[serde(default)]
+    mrope_interleaved: Option<bool>,
+    #[serde(default)]
+    mrope_section: Option<[usize; 3]>,
+}
+
+#[derive(Clone, Debug, Deserialize)]
+struct QuantizationConfig {
+    quant_method: String,
+    #[serde(default)]
+    fmt: Option<String>,
+    #[serde(default)]
+    activation_scheme: Option<String>,
+    #[serde(default)]
+    weight_block_size: Option<[usize; 2]>,
 }
 
 impl DecoderConfig {
@@ -94,20 +129,33 @@ impl DecoderConfig {
     ///
     /// Rejects incomplete, ambiguous, or unsupported decoder semantics.
     pub fn from_json(bytes: &[u8]) -> Result<Self, DecoderError> {
-        let input = serde_json::from_slice::<DecoderConfigInput>(bytes)?;
+        let document = serde_json::from_slice::<serde_json::Value>(bytes)?;
+        let nested = document
+            .get("text_config")
+            .filter(|value| value.is_object());
+        let mut input = serde_json::from_value::<DecoderConfigInput>(
+            nested.cloned().unwrap_or_else(|| document.clone()),
+        )?;
+        if input.tie_word_embeddings.is_none() {
+            input.tie_word_embeddings = document
+                .get("tie_word_embeddings")
+                .and_then(serde_json::Value::as_bool);
+        }
+        if input.quantization_config.is_none() {
+            input.quantization_config = document.get("quantization_config").cloned();
+        }
         input.validate()?;
         let head_dim = input
             .head_dim
             .unwrap_or(input.hidden_size / input.num_attention_heads);
         let activation = input.activation()?;
-        let layer_attention = input
+        let layer_kinds = input
             .layer_types
             .as_ref()
-            .map(|layers| parse_layer_attention(layers, input.num_hidden_layers))
+            .map(|layers| parse_layer_kinds(layers, input.num_hidden_layers))
             .transpose()?;
         let sandwich_norm = input.rope_local_base_freq.is_some();
-        if sandwich_norm && (activation != DecoderActivation::GeluTanh || layer_attention.is_none())
-        {
+        if sandwich_norm && (activation != DecoderActivation::GeluTanh || layer_kinds.is_none()) {
             return Err(DecoderError::InvalidGeometry(
                 "incomplete sandwich-norm decoder semantics",
             ));
@@ -115,6 +163,9 @@ impl DecoderConfig {
         let attention_softmax_scale = input
             .query_pre_attn_scalar
             .map_or(0.0, |scalar| scalar.sqrt().recip());
+        let rope_theta = input.rope_theta()?;
+        let rotary_dimensions = input.rotary_dimensions(head_dim)?;
+        let weight_format = input.weight_format()?;
         Ok(Self {
             layers: input.num_hidden_layers,
             hidden_size: input.hidden_size,
@@ -123,9 +174,15 @@ impl DecoderConfig {
             kv_heads: input.num_key_value_heads,
             head_dim,
             vocabulary_size: input.vocab_size,
-            rope_theta: input.rope_theta,
+            tensor_prefix: if nested.is_some() {
+                "model.language_model".into()
+            } else {
+                "model".into()
+            },
+            rope_theta,
+            rotary_dimensions,
             rms_epsilon: input.rms_norm_eps,
-            tied_embeddings: input.tie_word_embeddings,
+            tied_embeddings: input.tie_word_embeddings.unwrap_or(true),
             embedding_scale: if sandwich_norm {
                 round_to_bfloat16(
                     f32::from(
@@ -150,8 +207,27 @@ impl DecoderConfig {
             },
             local_rope_theta: input.rope_local_base_freq,
             attention_softmax_scale,
-            layer_attention,
+            layer_kinds,
+            weight_format,
         })
+    }
+
+    pub(super) fn require_executable(&self) -> Result<(), DecoderError> {
+        if self
+            .layer_kinds
+            .as_deref()
+            .is_some_and(|layers| layers.contains(&DecoderLayerKind::Linear))
+        {
+            return Err(DecoderError::UnsupportedExecution(
+                "linear-attention state execution",
+            ));
+        }
+        if self.weight_format != DecoderWeightFormat::Float {
+            return Err(DecoderError::UnsupportedExecution(
+                "quantized weight execution",
+            ));
+        }
+        Ok(())
     }
 }
 
@@ -178,9 +254,7 @@ impl DecoderConfigInput {
         {
             return Err(DecoderError::InvalidGeometry("dimensions"));
         }
-        if !self.rope_theta.is_finite()
-            || self.rope_theta <= 0.0
-            || !self.rms_norm_eps.is_finite()
+        if !self.rms_norm_eps.is_finite()
             || self.rms_norm_eps <= 0.0
             || self
                 .query_pre_attn_scalar
@@ -188,7 +262,7 @@ impl DecoderConfigInput {
         {
             return Err(DecoderError::InvalidGeometry("floating constants"));
         }
-        if self.num_local_experts.is_some() || self.quantization_config.is_some() {
+        if self.num_local_experts.is_some() {
             return Err(DecoderError::InvalidGeometry("unsupported decoder state"));
         }
         if self.attn_logit_softcapping.is_some()
@@ -203,6 +277,80 @@ impl DecoderConfigInput {
             ));
         }
         Ok(())
+    }
+
+    fn rope_theta(&self) -> Result<f32, DecoderError> {
+        let nested = self
+            .rope_parameters
+            .as_ref()
+            .and_then(|parameters| parameters.rope_theta);
+        let theta = match (self.rope_theta, nested) {
+            (Some(left), Some(right)) if left.to_bits() != right.to_bits() => {
+                return Err(DecoderError::InvalidGeometry("ambiguous RoPE theta"));
+            }
+            (Some(value), _) | (None, Some(value)) => value,
+            (None, None) => return Err(DecoderError::InvalidGeometry("missing RoPE theta")),
+        };
+        if !theta.is_finite() || theta <= 0.0 {
+            return Err(DecoderError::InvalidGeometry("RoPE theta"));
+        }
+        Ok(theta)
+    }
+
+    fn rotary_dimensions(&self, head_dim: usize) -> Result<usize, DecoderError> {
+        let parameters = self.rope_parameters.as_ref();
+        if parameters
+            .and_then(|parameters| parameters.rope_type.as_deref())
+            .is_some_and(|rope_type| rope_type != "default")
+        {
+            return Err(DecoderError::InvalidGeometry("unsupported RoPE type"));
+        }
+        let factor = parameters
+            .and_then(|parameters| parameters.partial_rotary_factor)
+            .unwrap_or(1.0);
+        if !(factor.is_finite() && 0.0 < factor && factor <= 1.0) {
+            return Err(DecoderError::InvalidGeometry("partial rotary factor"));
+        }
+        #[allow(clippy::cast_precision_loss)]
+        let dimensions = head_dim as f64 * factor;
+        if dimensions.fract() != 0.0 {
+            return Err(DecoderError::InvalidGeometry("partial rotary dimensions"));
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let dimensions = dimensions as usize;
+        if dimensions == 0 || !dimensions.is_multiple_of(2) {
+            return Err(DecoderError::InvalidGeometry("partial rotary dimensions"));
+        }
+        if let Some(section) = parameters.and_then(|parameters| parameters.mrope_section) {
+            let frequency_dimensions = section.into_iter().try_fold(0_usize, usize::checked_add);
+            if frequency_dimensions != Some(dimensions / 2) {
+                return Err(DecoderError::InvalidGeometry("MRoPE sections"));
+            }
+            if parameters.and_then(|parameters| parameters.mrope_interleaved) != Some(true) {
+                return Err(DecoderError::InvalidGeometry("MRoPE layout"));
+            }
+        }
+        Ok(dimensions)
+    }
+
+    fn weight_format(&self) -> Result<DecoderWeightFormat, DecoderError> {
+        let Some(value) = self.quantization_config.as_ref() else {
+            return Ok(DecoderWeightFormat::Float);
+        };
+        let config = serde_json::from_value::<QuantizationConfig>(value.clone())?;
+        match (
+            config.quant_method.as_str(),
+            config.fmt.as_deref(),
+            config.activation_scheme.as_deref(),
+            config.weight_block_size,
+        ) {
+            ("fp8", Some("e4m3"), Some("dynamic"), Some([rows, columns]))
+                if rows > 0 && columns > 0 =>
+            {
+                Ok(DecoderWeightFormat::Fp8E4M3Block { rows, columns })
+            }
+            _ => Err(DecoderError::InvalidGeometry("unsupported weight format")),
+        }
     }
 
     fn activation(&self) -> Result<DecoderActivation, DecoderError> {
@@ -231,18 +379,19 @@ impl DecoderConfigInput {
     }
 }
 
-fn parse_layer_attention(
+fn parse_layer_kinds(
     layers: &[String],
     expected: usize,
-) -> Result<Box<[DecoderAttentionKind]>, DecoderError> {
+) -> Result<Box<[DecoderLayerKind]>, DecoderError> {
     if layers.len() != expected {
         return Err(DecoderError::InvalidGeometry("attention layer count"));
     }
     layers
         .iter()
         .map(|layer| match layer.as_str() {
-            "full_attention" => Ok(DecoderAttentionKind::Full),
-            "sliding_attention" => Ok(DecoderAttentionKind::Sliding),
+            "full_attention" => Ok(DecoderLayerKind::Full),
+            "sliding_attention" => Ok(DecoderLayerKind::Sliding),
+            "linear_attention" => Ok(DecoderLayerKind::Linear),
             _ => Err(DecoderError::InvalidGeometry("unsupported attention layer")),
         })
         .collect::<Result<Vec<_>, _>>()

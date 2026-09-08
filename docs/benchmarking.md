@@ -10,7 +10,8 @@ source of measurement drift; it does not by itself make the systems comparable.
    must pass before timings are interpreted.
 2. Compiler ablation: run conservative retention and compiled retention through
    the same OrbitKV/Luminal executor. This isolates the compiler contribution.
-3. Product comparison: run OrbitKV/Luminal and tuned stock SGLang with the same
+3. Product comparison: run OrbitKV/Luminal, tuned stock SGLang, and tuned stock
+   vLLM with the same
    model, weights, dtype, kernels where possible, request trace, batching limits,
    device budget, and sampling semantics.
 4. Tier comparison: separately compare cold prefill, local retention, and
@@ -176,5 +177,10 @@ Only reviewed runs move from `.qualification/` to `results/`. A promoted result
 contains environment identity, raw client JSON, a summary, and checksums—never a
 source checkout, build directory, model weights, or dependency cache. A positive
 claim requires all predeclared correctness, sample-count, confidence, and
-regression gates to pass. Failed experiments remain valid compact evidence when
-they inform an architectural decision.
+regression gates to pass. For the primary model, an overall performance-win
+claim additionally requires the lower confidence bound of output throughput to
+exceed both tuned vLLM and tuned SGLang while p95 TTFT and p95 TPOT are no worse.
+Decode-heavy, prefill-heavy, concurrency, long-context, and memory-pressure
+profiles remain separate rows; a single favorable row is not an overall win.
+Failed experiments remain valid compact evidence when they inform an
+architectural decision.

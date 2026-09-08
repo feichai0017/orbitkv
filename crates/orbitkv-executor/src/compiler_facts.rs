@@ -14,6 +14,7 @@ pub struct LuminalCompilerFacts {
     manifest_fingerprint: String,
     digest: String,
     classes: Box<[LuminalStateClassFacts]>,
+    fixed_states: Box<[LuminalFixedStateFacts]>,
     egglog: String,
 }
 
@@ -24,6 +25,13 @@ pub struct LuminalStateClassFacts {
     pub backend_base_index: u64,
     pub page_count: u32,
     pub address_stable: bool,
+}
+
+/// One non-token persistent-state class made visible to Luminal compilation.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct LuminalFixedStateFacts {
+    pub state_id: u16,
+    pub state: StateClassLayoutFacts,
 }
 
 impl LuminalCompilerFacts {
@@ -40,6 +48,11 @@ impl LuminalCompilerFacts {
     #[must_use]
     pub fn classes(&self) -> &[LuminalStateClassFacts] {
         &self.classes
+    }
+
+    #[must_use]
+    pub fn fixed_states(&self) -> &[LuminalFixedStateFacts] {
+        &self.fixed_states
     }
 
     #[must_use]
@@ -97,12 +110,34 @@ impl ExecutorPlan {
             })
             .collect::<Result<Vec<_>, ExecutorError>>()?
             .into_boxed_slice();
-        let egglog = lower_egglog(state_layout_facts, &classes)?;
+        let fixed_states = self
+            .fixed_states
+            .iter()
+            .map(|fixed| {
+                let state = state_layout_facts
+                    .classes
+                    .iter()
+                    .find(|state| {
+                        state.manager_class_id.is_none()
+                            && state.name == fixed.name
+                            && state.layers.as_ref() == fixed.layers.as_ref()
+                    })
+                    .cloned()
+                    .ok_or(ExecutorError::CompilerFactsMismatch)?;
+                Ok::<_, ExecutorError>(LuminalFixedStateFacts {
+                    state_id: fixed.state_id,
+                    state,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()?
+            .into_boxed_slice();
+        let egglog = lower_egglog(state_layout_facts, &classes, &fixed_states)?;
         let digest = format!("sha256:{:x}", Sha256::digest(egglog.as_bytes()));
         Ok(LuminalCompilerFacts {
             manifest_fingerprint: self.manifest_fingerprint.clone(),
             digest,
             classes,
+            fixed_states,
             egglog,
         })
     }
@@ -111,6 +146,7 @@ impl ExecutorPlan {
 fn lower_egglog(
     facts: &StateLayoutFacts,
     classes: &[LuminalStateClassFacts],
+    fixed_states: &[LuminalFixedStateFacts],
 ) -> Result<String, ExecutorError> {
     let mut output = String::from(
         r"(relation persistent-state-manifest (String))
@@ -123,6 +159,11 @@ fn lower_egglog(
 (relation persistent-state-storage-token-kv (i64))
 (relation persistent-state-storage-latent-kv (i64))
 (relation persistent-state-storage-generic-token-state (i64))
+(relation persistent-fixed-state (i64))
+(relation persistent-fixed-state-name (i64 String))
+(relation persistent-fixed-state-layer (i64 i64))
+(relation persistent-fixed-state-recurrent (i64 String i64 i64 i64))
+(relation persistent-fixed-state-convolution (i64 i64 i64 i64 i64))
 (relation persistent-state-component-bytes (i64 String i64))
 (relation persistent-state-layer (i64 i64))
 ; The final block-domain value is -1 when the domain is unbounded.
@@ -150,7 +191,76 @@ fn lower_egglog(
     for class in classes {
         write_class_facts(&mut output, class)?;
     }
+    for state in fixed_states {
+        write_fixed_state_facts(&mut output, state)?;
+    }
     Ok(output)
+}
+
+fn write_fixed_state_facts(
+    output: &mut String,
+    fixed: &LuminalFixedStateFacts,
+) -> Result<(), ExecutorError> {
+    let state_id = i64::from(fixed.state_id);
+    let state = &fixed.state;
+    writeln!(output, "(persistent-fixed-state {state_id})").expect("writing to String cannot fail");
+    writeln!(
+        output,
+        "(persistent-fixed-state-name {state_id} {})",
+        egglog_string(&state.name)?
+    )
+    .expect("writing to String cannot fail");
+    for &layer in &state.layers {
+        write_integer_fact(
+            output,
+            "persistent-fixed-state-layer",
+            state_id,
+            u64::from(layer),
+        )?;
+    }
+    match state.storage {
+        StateStorageFacts::RecurrentCheckpoints {
+            family,
+            state_bytes_per_layer,
+            checkpoint_slots_per_request,
+            checkpoint_bytes_per_request,
+        } => writeln!(
+            output,
+            "(persistent-fixed-state-recurrent {state_id} {} {} {} {})",
+            egglog_string(recurrent_family_name(family))?,
+            to_egglog_i64(state_bytes_per_layer)?,
+            checkpoint_slots_per_request,
+            to_egglog_i64(checkpoint_bytes_per_request)?,
+        )
+        .expect("writing to String cannot fail"),
+        StateStorageFacts::ConvolutionRing {
+            state_bytes_per_layer,
+            kernel_width,
+            checkpoint_slots_per_request,
+            checkpoint_bytes_per_request,
+        } => writeln!(
+            output,
+            "(persistent-fixed-state-convolution {state_id} {} {} {} {})",
+            to_egglog_i64(state_bytes_per_layer)?,
+            kernel_width,
+            checkpoint_slots_per_request,
+            to_egglog_i64(checkpoint_bytes_per_request)?,
+        )
+        .expect("writing to String cannot fail"),
+        StateStorageFacts::TokenSlots { .. } => {
+            return Err(ExecutorError::CompilerFactsMismatch);
+        }
+    }
+    Ok(())
+}
+
+const fn recurrent_family_name(family: orbitkv::RecurrentFamily) -> &'static str {
+    match family {
+        orbitkv::RecurrentFamily::Mamba => "mamba",
+        orbitkv::RecurrentFamily::Gdn => "gdn",
+        orbitkv::RecurrentFamily::Kda => "kda",
+        orbitkv::RecurrentFamily::LinearAttention => "linear_attention",
+    }
 }
 
 fn write_class_facts(
@@ -511,5 +621,54 @@ mod tests {
             plan.luminal_compiler_facts(&arenas),
             Err(ExecutorError::CompilerFactsMismatch)
         ));
+    }
+
+    #[test]
+    fn lowers_fixed_state_geometry_alongside_token_arenas() {
+        let manifest = compile_runtime_manifest(AttentionStatePlanInput {
+            page_tokens: 16,
+            states: vec![
+                AttentionStateSpec {
+                    name: "global".into(),
+                    layers: vec![3],
+                    storage: AttentionStateStorage::TokenKv {
+                        key_bytes_per_token_per_layer: 128,
+                        value_bytes_per_token_per_layer: 128,
+                        retention: RetentionKind::Full,
+                        window_tokens: None,
+                    },
+                },
+                AttentionStateSpec {
+                    name: "recurrent".into(),
+                    layers: vec![0, 1, 2],
+                    storage: AttentionStateStorage::Recurrent {
+                        family: orbitkv::RecurrentFamily::Gdn,
+                        state_bytes_per_layer: 256,
+                        checkpoint_slots_per_request: 2,
+                    },
+                },
+            ],
+        })
+        .unwrap();
+        let plan = ExecutorPlan::compile(&manifest).unwrap();
+        let arenas = [ExecutorArena {
+            engine_epoch: 1,
+            pool_epoch: 1,
+            pool_id: 1,
+            class_id: 0,
+            backend_domain: 1,
+            first_page_id: 1,
+            page_count: 8,
+            backend_base_index: 0,
+        }];
+        let facts = plan.luminal_compiler_facts(&arenas).unwrap();
+        assert_eq!(facts.classes().len(), 1);
+        assert_eq!(facts.fixed_states().len(), 1);
+        assert_eq!(facts.fixed_states()[0].state_id, 1);
+        assert!(
+            facts
+                .egglog()
+                .contains("(persistent-fixed-state-recurrent 1 \"gdn\" 256 2 1536)")
+        );
     }
 }

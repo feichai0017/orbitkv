@@ -168,10 +168,13 @@ page-allocation, publication, or lifecycle authority.
 
 Concretely, `RuntimeManifest::state_layout_facts` emits a backend-neutral view
 of every state class. `orbitkv-executor` joins token classes with stable arena
-registrations, emits deterministic e-graph facts, and binds each paged-attention
-custom op to its manager class. The fact digest participates in decoder artifact
-identity, so an artifact cannot silently survive a changed state/search
-contract. These facts currently constrain identity and provide a rewrite input.
+registrations, emits deterministic e-graph facts, binds each paged-attention
+custom op to its manager class, and preserves recurrent/convolution class
+identity, layer coverage, byte geometry, and checkpoint slots. The fact digest
+participates in decoder artifact identity, so an artifact cannot silently
+survive a changed state/search contract. Fixed-state device arenas are not yet
+bound, so those facts describe the required contract rather than completed
+execution. These facts currently constrain identity and provide a rewrite input.
 The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
 search can optimize the surrounding decoder graph and schedule but does not yet
 choose among multiple attention implementations or jointly derive a KV layout.
