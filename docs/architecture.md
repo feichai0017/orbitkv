@@ -176,11 +176,14 @@ survive a changed state/search contract. Fixed-state lifecycle joins token KV in
 one RuntimeSession transaction. The executor owns stable per-class CUDA
 allocations, lowers session-authored generation leases to byte ranges, and
 shares those allocations with Luminal through required aliases without
-transferring lifecycle authority. Success evidence is withheld until a CUDA
-event recorded after the state writes has completed. The reference zero/copy
-transition and an ignored real-device qualification gate exist; recurrent and
-convolution math are still missing. These facts currently constrain identity and
-provide a rewrite input.
+transferring lifecycle authority. A fixed graph sees the complete arena plus a
+small dynamic destination-slot tensor; manifest layer order determines the
+per-layer byte region. Search uses a private scratch allocation, so profiling
+cannot mutate live manager state. Success evidence is withheld until a Luminal
+execution receipt tied to the exact shared allocation and runtime registration
+has synchronized its CUDA event. The ignored real-device qualification gate
+executes two recurrent transitions and final drain; causal convolution and
+complete decoder wiring remain missing.
 
 The recurrent computation boundary is semantic rather than model-specific. A
 normalized gated-delta transition is expressed as pure Luminal HLIR over
@@ -192,8 +195,10 @@ token per invocation. The Luminal fork recognizes the exact rank-four
 `state * decay + key * delta` subgraph and adds an in-place CUDA state-update
 candidate to the same e-class. Its static resource pass proves ordered reads of
 the old state precede mutation and rejects competing reads. Binding selected
-source/destination slots, real-device parity, fused readout, and chunked
-prefill remain open.
+source/destination slots is now represented by generic Gather/Scatter graph
+views over the stable arena, with source-to-destination initialization outside
+the graph and dynamic destination ids inside it. Real-device parity, complete
+decoder integration, fused readout, and chunked prefill remain open.
 The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
 search can optimize the surrounding decoder graph and schedule but does not yet
 choose among multiple attention implementations or jointly derive a KV layout.

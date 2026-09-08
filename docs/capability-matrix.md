@@ -48,7 +48,7 @@ Historical results qualify only their recorded source closure.
 | KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, and Prefix/COW lowering |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
 | Checkpoint family | Configuration-driven dense decoder plus nested hybrid text-config parsing with fail-closed capability gates; released Full and Full+Sliding checkpoints have real-device correctness evidence |
-| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Nested geometry, partial RoPE, weight namespace, FP8 format, fixed-state compiler facts, stable CUDA state arenas, and an egglog-derived single-token state-update candidate exist; arena-slot wiring, causal convolution, full GDN execution, FP8 model loading, and real-device qualification remain unsupported |
+| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Nested geometry, partial RoPE, weight namespace, FP8 format, fixed-state compiler facts, stable CUDA state arenas, manager-authored dynamic slot/layer graph addressing, and an egglog-derived single-token state-update candidate exist; complete decoder wiring, causal convolution, full GDN execution, FP8 model loading, and real-device qualification remain unsupported |
 | Not yet executable as complete models | GDN/recurrent or convolution state, quantized weights, MoE, sparse/latent attention, multimodal encoders, speculative decoding, and tensor/pipeline parallel models |
 
 Core support for a retention policy means its lifecycle can be compiled and
