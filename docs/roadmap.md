@@ -77,6 +77,10 @@ single-device bring-up model.
    license-compatible mature implementation, then select it through Luminal's
    egglog/search pipeline. The unfused HLIR expression remains the semantic
    fallback and parity authority.
+   The first Luminal-native in-place state-update candidate now exists and is
+   introduced only by an exact rank-four egglog match. Remaining work is to
+   bind manager-selected source/destination slots, qualify it on device, and
+   add fused token readout plus a chunked-prefill candidate.
 3. Qualify recurrent decode, chunked prefill, causal-convolution history,
    cancellation, Prefix boundaries, and state-slot reuse on the small BF16
    checkpoint.

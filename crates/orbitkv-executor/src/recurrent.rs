@@ -478,6 +478,37 @@ mod tests {
 
         assert_close(runtime.get_f32(values), &expected.values);
         assert_close(runtime.get_f32(next_state), &expected.state);
+
+        graph.build_search_space::<luminal_cuda_lite::runtime::CudaRuntime>(
+            CompileOptions::default(),
+        );
+        assert!(
+            egraph_has_kernel(&graph, "KernelDeltaStateUpdate"),
+            "the complete recurrence graph must expose the in-place CUDA state candidate",
+        );
+    }
+
+    #[cfg(feature = "cuda")]
+    fn egraph_has_kernel(graph: &luminal::prelude::Graph, kind: &str) -> bool {
+        let egraph = graph.egraph().expect("CUDA search space");
+        egraph.eclasses.values().any(|(sort, nodes)| {
+            sort == "IR"
+                && nodes.iter().any(|node| {
+                    let Some(("Op", children)) = egraph
+                        .enodes
+                        .get(node)
+                        .map(|(label, children)| (label.as_str(), children))
+                    else {
+                        return false;
+                    };
+                    children.first().is_some_and(|kind_class| {
+                        egraph.eclasses[kind_class]
+                            .1
+                            .iter()
+                            .any(|kind_node| egraph.enodes[kind_node].0 == kind)
+                    })
+                })
+        })
     }
 
     fn assert_close(actual: &[f32], expected: &[f32]) {

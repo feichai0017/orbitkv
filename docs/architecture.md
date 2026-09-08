@@ -188,8 +188,12 @@ normalized gated-delta transition is expressed as pure Luminal HLIR over
 both token values and next state. An independent Rust sequence oracle defines
 f32 accumulation and proves that chunked continuation from a returned state is
 equivalent to one-shot execution. The current HLIR implementation covers one
-token per invocation; a CUDA in-place state-update rewrite and chunked prefill
-candidate remain future work.
+token per invocation. The Luminal fork recognizes the exact rank-four
+`state * decay + key * delta` subgraph and adds an in-place CUDA state-update
+candidate to the same e-class. Its static resource pass proves ordered reads of
+the old state precede mutation and rejects competing reads. Binding selected
+source/destination slots, real-device parity, fused readout, and chunked
+prefill remain open.
 The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
 search can optimize the surrounding decoder graph and schedule but does not yet
 choose among multiple attention implementations or jointly derive a KV layout.
