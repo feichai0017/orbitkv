@@ -97,14 +97,19 @@ now derives backend-neutral facts for storage components, retention, addressing,
 retirement, legal layout alternatives, and token-relocation eligibility. The
 executor binds token classes to stable arenas, lowers deterministic facts into
 every Luminal search bucket, and tags each paged-attention custom op with its
-manager class. The facts digest is part of decoder artifact identity. Luminal
-exports fresh selected-bucket device time, sample count, geometry, and final
-LLIR fingerprints. CUDA-event relocation copies provide measured bandwidth. The
-executor builds a manager-neutral cost profile only for matched, distinct
-source/target executables, and OrbitKV admits relocation only for positive
+manager class. The facts digest is part of decoder artifact identity.
+Disposition-only Full snapshots carry sparse retained-token masks, and the
+executor lowers them to page-size-one token-slot CSR metadata. Luminal resolves
+page size from the current dynamic geometry, so the same decoder, selected
+bucket program, and K/V arena execute both token-selection and packed views. It
+can freshly profile both geometries; CUDA-event relocation copies provide the
+measured bandwidth. The executor builds a manager-neutral cost profile only
+when both measurements belong to the same executable and preserve token count
+and unrelated class geometry. OrbitKV admits relocation only for positive
 amortized benefit. Missing evidence disables relocation; the static threshold is
-an explicit correctness-test mode. The unclosed R4.2 work is the packed-layout
-egglog rewrite/kernel and a released-checkpoint matched benefit result.
+an explicit correctness-test mode. The unclosed R4.2 work is a released-model
+long-context matched benefit result and the engine-side qualification/control
+loop.
 
 ## Evidence interpretation
 

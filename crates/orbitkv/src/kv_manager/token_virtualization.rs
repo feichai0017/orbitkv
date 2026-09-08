@@ -334,6 +334,7 @@ pub(super) fn apply_class_transition(
     if root.entries.len() != transition.resident_count {
         return Err(KvManagerError::Invariant("published root count"));
     }
+    let had_selection_masks = !root.selection_masks.is_empty();
     root.tokens = append_class_token_delta(
         page_tokens,
         class,
@@ -343,6 +344,12 @@ pub(super) fn apply_class_transition(
         target_boundary,
         delta.previous_layout_boundary,
     )?;
+    if had_selection_masks {
+        root.selection_masks = Arc::new(selection_masks(
+            &root.tokens.materialize()?,
+            class.retention,
+        )?);
+    }
     root.resident_tokens = match root.layout {
         RootLayout::Packed => delta.target_layout_boundary,
         RootLayout::Dense => match class.retention {
@@ -572,6 +579,10 @@ impl CanonicalKvManager {
                     return Err(KvManagerError::Invariant("token view target version"));
                 }
                 root.tokens = PersistentTokenTable::from_materialized(&target.placements)?;
+                root.selection_masks = Arc::new(selection_masks(
+                    &target.placements,
+                    self.runtime_class(class_id)?.retention,
+                )?);
                 offset = end;
             }
             let target_snapshot = SnapshotLease {
@@ -617,6 +628,39 @@ impl CanonicalKvManager {
         }
         Ok(outputs.into_boxed_slice())
     }
+}
+
+pub(super) fn selection_masks(
+    placements: &[TokenPlacement],
+    retention: crate::plan::RetentionKind,
+) -> Result<BTreeMap<u64, u64>, KvManagerError> {
+    let mut present = BTreeMap::<u64, u64>::new();
+    let mut retained = BTreeMap::<u64, u64>::new();
+    for placement in placements {
+        let Some(location) = placement.location else {
+            continue;
+        };
+        let bit = 1_u64
+            .checked_shl(location.offset)
+            .ok_or(KvManagerError::InvalidTokenView)?;
+        *present.entry(location.backend_index).or_default() |= bit;
+        if placement.disposition.retained()
+            || retention != crate::plan::RetentionKind::Full
+                && matches!(
+                    placement.disposition.kind,
+                    TokenDispositionKind::SemanticallyDead
+                )
+        {
+            *retained.entry(location.backend_index).or_default() |= bit;
+        }
+    }
+    Ok(present
+        .into_iter()
+        .filter_map(|(backend_index, present)| {
+            let retained = retained.get(&backend_index).copied().unwrap_or_default();
+            (retained != present).then_some((backend_index, retained))
+        })
+        .collect())
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

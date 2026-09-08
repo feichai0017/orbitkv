@@ -69,6 +69,7 @@ fn final_representable_page_materialization_and_reclamation_are_clamped() {
     let roots = [ClassRoot {
         entries,
         tokens: PersistentTokenTable::default(),
+        selection_masks: Arc::new(BTreeMap::new()),
         layout: RootLayout::Dense,
         resident_tokens: u64::MAX,
     }];

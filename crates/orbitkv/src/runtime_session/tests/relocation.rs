@@ -358,6 +358,59 @@ fn token_view_expected_boundary_is_checked_before_readback() {
 }
 
 #[test]
+fn attention_view_materializes_disposition_only_token_masks() {
+    let backends = [backend(0, 410, 4, 49_000)];
+    let request_id = EngineRequestId(1_013);
+    let mut session = session(&full_plan(), &backends, 1);
+    session.acquire_requests(&[request_id]).expect("acquire");
+    let (_, publication) = append(
+        &mut session,
+        &backends,
+        &[EngineAppendIntent {
+            request_id,
+            target_boundary: 48,
+        }],
+        209,
+        1,
+    );
+    confirm_publication(&mut session, &publication);
+    session
+        .mark_token_dispositions_batch(&[EngineTokenDispositionBatchItem {
+            request_id,
+            updates: (0..48_u64)
+                .filter(|token_id| token_id % PAGE_TOKENS >= 8)
+                .map(|token_id| EngineTokenDispositionUpdate {
+                    class_id: 0,
+                    token_id,
+                    disposition: crate::kv_manager::TokenDisposition::policy_evicted(93, 1, 9),
+                })
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        }])
+        .expect("mark dispositions");
+
+    let [view] = session
+        .attention_views_batch(&[EngineAttentionViewQuery {
+            request_id,
+            previous_boundary: 47,
+            expected_boundary: 48,
+        }])
+        .expect("materialize attention view")
+        .into_vec()
+        .try_into()
+        .expect("one request view");
+
+    assert_eq!(view.previous_boundary, 47);
+    assert_eq!(view.target_boundary, 48);
+    assert_eq!(view.pages.len(), 3);
+    assert!(
+        view.pages
+            .iter()
+            .all(|page| page.retained_token_bits == 0xff)
+    );
+}
+
+#[test]
 fn session_relocation_rejects_foreign_stale_and_reordered_ids() {
     let backends = [backend(0, 403, 16, 42_000)];
     let requests = [EngineRequestId(1_003), EngineRequestId(1_004)];

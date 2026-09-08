@@ -157,9 +157,8 @@ fn lower_egglog(
 (relation persistent-state-address-periodic (i64 i64 i64))
 (relation persistent-state-address-resettable (i64 i64))
 (relation persistent-state-layout-compiled (i64))
+(relation persistent-state-layout-token-selection-mask (i64))
 (relation persistent-state-layout-packed-token-slots (i64))
-(relation persistent-state-selected-layout-compiled (i64))
-(relation persistent-state-selected-layout-packed-token-slots (i64))
 ",
     );
     writeln!(
@@ -240,22 +239,15 @@ fn write_class_facts(
     for layout in &class.state.legal_layouts {
         let relation = match layout {
             StateLayoutAlternative::Compiled => "persistent-state-layout-compiled",
+            StateLayoutAlternative::TokenSelectionMask => {
+                "persistent-state-layout-token-selection-mask"
+            }
             StateLayoutAlternative::PackedTokenSlots => {
                 "persistent-state-layout-packed-token-slots"
             }
         };
         write_unary_fact(output, relation, class_id);
     }
-    write_unary_fact(
-        output,
-        match class.state.selected_layout {
-            StateLayoutAlternative::Compiled => "persistent-state-selected-layout-compiled",
-            StateLayoutAlternative::PackedTokenSlots => {
-                "persistent-state-selected-layout-packed-token-slots"
-            }
-        },
-        class_id,
-    );
     Ok(())
 }
 

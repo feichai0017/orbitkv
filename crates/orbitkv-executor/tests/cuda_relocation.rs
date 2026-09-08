@@ -129,6 +129,11 @@ fn append_initial(fixture: &mut RelocationFixture) {
 }
 
 fn prepare_relocation(fixture: &mut RelocationFixture) -> RelocationBatch {
+    mark_relocation_tokens(fixture);
+    prepare_marked_relocation(fixture)
+}
+
+fn mark_relocation_tokens(fixture: &mut RelocationFixture) {
     let updates = (0..48)
         .filter(|token| token % PAGE_TOKENS >= 8)
         .map(|token_id| EngineTokenDispositionUpdate {
@@ -144,6 +149,9 @@ fn prepare_relocation(fixture: &mut RelocationFixture) -> RelocationBatch {
             updates: updates.into_boxed_slice(),
         }])
         .unwrap();
+}
+
+fn prepare_marked_relocation(fixture: &mut RelocationFixture) -> RelocationBatch {
     let prepared = fixture
         .session
         .prepare_relocation_batch(&[orbitkv::EnginePrepareRelocationItem {
@@ -263,6 +271,7 @@ fn build_decode_graph(fixture: &RelocationFixture) -> DecodeGraph {
             v_cache: value_update,
             query_tokens: 1.into(),
             context_pages: 2.into(),
+            page_tokens: usize::try_from(PAGE_TOKENS).unwrap().into(),
         },
         metadata,
         &fixture.executor.classes[0],
@@ -299,7 +308,170 @@ fn upload_decode_inputs(
     runtime.set_data(decoder.new_key, vec![bf16::from_f32(0.0); HEAD_DIM]);
     runtime.set_data(decoder.new_value, vec![bf16::from_f32(100.0); HEAD_DIM]);
     runtime.set_data(decoder.write_slot, vec![i32::try_from(write_slot).unwrap()]);
-    decoder.metadata.upload(runtime, attention).unwrap();
+    decoder
+        .metadata
+        .upload(runtime, attention, usize::try_from(PAGE_TOKENS).unwrap())
+        .unwrap();
+}
+
+struct DynamicAttentionGraph {
+    graph: Graph,
+    query: GraphTensor,
+    key_cache: GraphTensor,
+    value_cache: GraphTensor,
+    metadata: PagedAttentionMetadata,
+    output: GraphTensor,
+}
+
+fn dynamic_attention_graph(plan: &ExecutorPlan) -> DynamicAttentionGraph {
+    let slots = usize::try_from(PAGE_COUNT).unwrap() * usize::try_from(PAGE_TOKENS).unwrap();
+    let mut graph = Graph::default();
+    let context_pages = sym("c");
+    let page_tokens = sym("p");
+    let query = graph
+        .named_tensor("q", (1, 1, HEAD_DIM))
+        .as_dtype(DType::Bf16);
+    let key_cache = graph
+        .named_tensor("key", (slots, HEAD_DIM))
+        .as_dtype(DType::Bf16)
+        .persist();
+    let value_cache = graph
+        .named_tensor("value", (slots, HEAD_DIM))
+        .as_dtype(DType::Bf16)
+        .persist();
+    let metadata = PagedAttentionMetadata::new(&mut graph, 0, 1.into(), context_pages.into());
+    let output = paged_attention(
+        PagedAttentionInputs {
+            q: query,
+            k_cache: key_cache,
+            v_cache: value_cache,
+            query_tokens: 1.into(),
+            context_pages: context_pages.into(),
+            page_tokens: page_tokens.into(),
+        },
+        metadata,
+        &plan.classes[0],
+        AttentionKernel {
+            query_heads: 1,
+            kv_heads: 1,
+            head_dim: HEAD_DIM,
+            dtype: DType::Bf16,
+            softmax_scale: 0.0,
+        },
+    )
+    .unwrap()
+    .output();
+    DynamicAttentionGraph {
+        graph,
+        query,
+        key_cache,
+        value_cache,
+        metadata,
+        output,
+    }
+}
+
+fn compile_dynamic_attention(
+    decoder: &mut DynamicAttentionGraph,
+    attention: &orbitkv_executor::AttentionBatch,
+    key_data: &[bf16],
+    value_data: &[bf16],
+    stream: std::sync::Arc<luminal_cuda_lite::cudarc::driver::CudaStream>,
+) -> CudaRuntime {
+    decoder.graph.set_dim('c', attention.page_indices.len());
+    decoder
+        .graph
+        .set_dim('p', usize::try_from(attention.page_tokens).unwrap());
+    let mut runtime = CudaRuntime::initialize(stream);
+    runtime.set_data(decoder.key_cache, key_data.to_vec());
+    runtime.set_data(decoder.value_cache, value_data.to_vec());
+    upload_attention_view(decoder, &mut runtime, attention);
+    runtime = decoder
+        .graph
+        .compile(runtime, CompileOptions::default().search_graph_limit(1));
+    upload_attention_view(decoder, &mut runtime, attention);
+    runtime
+}
+
+fn upload_attention_view(
+    decoder: &mut DynamicAttentionGraph,
+    runtime: &mut CudaRuntime,
+    attention: &orbitkv_executor::AttentionBatch,
+) {
+    decoder.graph.set_dim('c', attention.page_indices.len());
+    decoder
+        .graph
+        .set_dim('p', usize::try_from(attention.page_tokens).unwrap());
+    runtime.set_data(decoder.query, vec![bf16::from_f32(0.0); HEAD_DIM]);
+    decoder
+        .metadata
+        .upload(runtime, attention, usize::try_from(PAGE_TOKENS).unwrap())
+        .unwrap();
+}
+
+fn profile_attention_view(
+    decoder: &mut DynamicAttentionGraph,
+    runtime: &mut CudaRuntime,
+    attention: &orbitkv_executor::AttentionBatch,
+) -> (Box<[bf16]>, std::time::Duration) {
+    upload_attention_view(decoder, runtime, attention);
+    let profile = runtime
+        .profile_current_execution(&decoder.graph.dyn_map, 20)
+        .unwrap();
+    (
+        runtime.get_bf16(decoder.output).into_boxed_slice(),
+        profile.device_time,
+    )
+}
+
+fn current_attention_view(
+    fixture: &mut RelocationFixture,
+    batch_sequence: u64,
+) -> orbitkv_executor::AttentionBatch {
+    let [view] = fixture
+        .session
+        .attention_views_batch(&[orbitkv::EngineAttentionViewQuery {
+            request_id: fixture.request_id,
+            previous_boundary: 47,
+            expected_boundary: 48,
+        }])
+        .unwrap()
+        .into_vec()
+        .try_into()
+        .unwrap();
+    fixture
+        .executor
+        .attention_batch(
+            0,
+            &orbitkv::EnginePreparedBatchView {
+                batch_id: orbitkv::EngineBatchId::from_parts(1, batch_sequence),
+                requests: vec![view].into_boxed_slice(),
+            },
+        )
+        .unwrap()
+}
+
+fn relocate_attention_arena(
+    fixture: &mut RelocationFixture,
+    runtime: &CudaRuntime,
+    graph: &DynamicAttentionGraph,
+) -> orbitkv_executor::model::RelocationBandwidthSample {
+    let batch = prepare_marked_relocation(fixture);
+    let completed = batch
+        .enqueue(
+            runtime,
+            &[KvCacheBinding {
+                class_id: 0,
+                layer: 0,
+                key: graph.key_cache,
+                value: graph.value_cache,
+            }],
+        )
+        .unwrap()
+        .wait_measured()
+        .unwrap();
+    complete_relocation(fixture, &batch, &completed.evidence);
+    completed.sample
 }
 
 fn run_packed_decode(
@@ -439,4 +611,64 @@ fn manager_authored_token_moves_execute_and_publish() {
     assert_eq!(fixture.session.stats().active_pages, 2);
     run_packed_decode(&mut fixture, key_buffer, value_buffer, stream);
     assert_eq!(fixture.session.stats().active_pages, 2);
+}
+
+#[test]
+#[ignore = "requires a CUDA device"]
+fn token_selection_and_packed_attention_match_on_cuda() {
+    let mut fixture = fixture();
+    append_initial(&mut fixture);
+    mark_relocation_tokens(&mut fixture);
+    let source_attention = current_attention_view(&mut fixture, 99);
+    assert_eq!(source_attention.page_tokens, 1);
+    assert_eq!(source_attention.page_indices.len(), 24);
+    let slots = usize::try_from(PAGE_COUNT).unwrap() * usize::try_from(PAGE_TOKENS).unwrap();
+    let key_data = vec![bf16::from_f32(0.0); slots * HEAD_DIM];
+    let value_data = token_rows(slots, 1.0);
+    let context = CudaContext::new(0).unwrap();
+    let stream = context.default_stream();
+    let mut attention_graph = dynamic_attention_graph(&fixture.executor);
+    let mut attention_runtime = compile_dynamic_attention(
+        &mut attention_graph,
+        &source_attention,
+        &key_data,
+        &value_data,
+        stream.clone(),
+    );
+    let (source_output, source_time) = profile_attention_view(
+        &mut attention_graph,
+        &mut attention_runtime,
+        &source_attention,
+    );
+    assert!(
+        source_output
+            .iter()
+            .all(|value| (value.to_f32() - 20.5).abs() <= 0.125)
+    );
+
+    let relocation_sample =
+        relocate_attention_arena(&mut fixture, &attention_runtime, &attention_graph);
+    let packed_attention = current_attention_view(&mut fixture, 100);
+    assert_eq!(packed_attention.page_tokens, 16);
+    assert_eq!(packed_attention.page_indices.len(), 2);
+    let (packed_output, packed_time) = profile_attention_view(
+        &mut attention_graph,
+        &mut attention_runtime,
+        &packed_attention,
+    );
+    assert_eq!(source_output, packed_output);
+    let per_step_saving = source_time.saturating_sub(packed_time);
+    let break_even_steps = (!per_step_saving.is_zero()).then(|| {
+        relocation_sample
+            .device_time
+            .as_nanos()
+            .div_ceil(per_step_saving.as_nanos())
+    });
+    eprintln!(
+        "token-selection packed profile: source_ns={} packed_ns={} relocation_bytes={} relocation_ns={} break_even_steps={break_even_steps:?}",
+        source_time.as_nanos(),
+        packed_time.as_nanos(),
+        relocation_sample.bytes,
+        relocation_sample.device_time.as_nanos(),
+    );
 }

@@ -45,7 +45,7 @@ fn upload_inputs(
     runtime.set_data(*q, vec![zero; HEAD_DIM]);
     runtime.set_data(*k, vec![zero; PHYSICAL_PAGES * PAGE_TOKENS * HEAD_DIM]);
     runtime.set_data(*v, values);
-    (*metadata).upload(runtime, batch).unwrap();
+    (*metadata).upload(runtime, batch, PAGE_TOKENS).unwrap();
 }
 
 fn prepared_full_batch() -> (
@@ -165,6 +165,7 @@ fn external_block_page_plan_executes_on_cuda() {
             v_cache: v,
             query_tokens: 1.into(),
             context_pages: 2.into(),
+            page_tokens: PAGE_TOKENS.into(),
         },
         metadata,
         &executor_plan.classes[0],

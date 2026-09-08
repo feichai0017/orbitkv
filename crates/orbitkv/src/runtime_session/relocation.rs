@@ -32,6 +32,14 @@ pub struct EngineTokenView {
     pub placements: Box<[TokenPlacement]>,
 }
 
+/// Rebuilds one execution page view after a disposition-only snapshot update.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct EngineAttentionViewQuery {
+    pub request_id: EngineRequestId,
+    pub previous_boundary: u64,
+    pub expected_boundary: u64,
+}
+
 /// One capability-free semantic disposition update.
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct EngineTokenDispositionUpdate {
@@ -179,6 +187,52 @@ impl PendingRelocation {
 }
 
 impl RuntimeSession {
+    /// Materializes exact manager-authored attention pages for ready requests.
+    ///
+    /// This cold path is used after token disposition changes, where no append
+    /// transaction exists to carry a prepared execution view.
+    ///
+    /// # Errors
+    ///
+    /// Rejects empty, duplicate, non-ready, stale, or non-monotonic queries.
+    pub fn attention_views_batch(
+        &mut self,
+        queries: &[EngineAttentionViewQuery],
+    ) -> Result<Box<[super::EnginePreparedRequestView]>, RuntimeSessionError> {
+        self.ensure_healthy()?;
+        if queries.is_empty() {
+            return Err(RuntimeSessionError::EmptyBatch);
+        }
+        let mut seen = BTreeSet::new();
+        let mut outputs = Vec::with_capacity(queries.len());
+        for query in queries {
+            if !seen.insert(query.request_id) {
+                return Err(RuntimeSessionError::DuplicateRequest(query.request_id));
+            }
+            let record = self.ready_request(query.request_id)?.clone();
+            if record.view.boundary != query.expected_boundary
+                || query.previous_boundary > query.expected_boundary
+            {
+                return Err(RuntimeSessionError::TokenViewBoundary {
+                    request_id: query.request_id,
+                    expected: query.expected_boundary,
+                    actual: record.view.boundary,
+                });
+            }
+            outputs.push(super::EnginePreparedRequestView {
+                request_id: query.request_id,
+                previous_boundary: query.previous_boundary,
+                target_boundary: query.expected_boundary,
+                pages: self.manager.materialize_attention_view(
+                    record.view.request,
+                    record.view.snapshot,
+                    query.previous_boundary,
+                )?,
+            });
+        }
+        Ok(outputs.into_boxed_slice())
+    }
+
     /// Reads logical token views through current private session heads.
     ///
     /// All named requests must be Ready. The returned values expose neither

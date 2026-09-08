@@ -27,7 +27,9 @@ use orbitkv::{
     AttentionStateBackend, EngineBatchPlan, EngineBindEvidence, EngineCopyEvidence,
     EnginePreparedBatchView, EngineStepExecutionEvidence, ExecutionEvidence, RuntimeManifest,
     RuntimeManifestError, RuntimeManifestSource, TokenStorageKind,
-    kv_manager::{ArenaStats, BackendArenaRegistration, PageLease, TailActionKind, WriteIntent},
+    kv_manager::{
+        ArenaStats, BackendArenaRegistration, PageLease, SnapshotPage, TailActionKind, WriteIntent,
+    },
     plan::{AddressProgram, RetentionKind, RetirementProgram},
 };
 use thiserror::Error;
@@ -80,6 +82,7 @@ pub struct ExecutorArena {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttentionBatch {
     pub class_id: u16,
+    pub page_tokens: u32,
     pub query_indptr: Box<[i32]>,
     pub page_indptr: Box<[i32]>,
     pub page_indices: Box<[i32]>,
@@ -236,25 +239,6 @@ impl ExecutorPlan {
         })
     }
 
-    /// Selects a compiler-proven physical layout for one manager class.
-    ///
-    /// This changes only compiler-visible layout facts; it never transfers KV
-    /// ownership to the executor. Unsupported class/layout pairs fail closed.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error unless the manifest compiler listed the alternative as
-    /// semantically legal for the class.
-    pub fn select_state_layout(
-        &mut self,
-        class_id: u16,
-        selected: orbitkv::StateLayoutAlternative,
-    ) -> Result<(), ExecutorError> {
-        self.state_layout_facts
-            .select_layout(class_id, selected)
-            .map_err(|_| ExecutorError::CompilerFactsMismatch)
-    }
-
     /// Builds the explicit CSR page-table metadata consumed by Luminal.
     ///
     /// # Errors
@@ -279,6 +263,17 @@ impl ExecutorPlan {
         let mut page_indptr = vec![0_i32];
         let mut page_indices = Vec::new();
         let mut last_page_len = Vec::with_capacity(prepared.requests.len());
+        let token_selection = prepared.requests.iter().any(|request| {
+            request.pages.iter().any(|page| {
+                page.class_id == class_id
+                    && page.retained_token_bits != low_bits(page.valid_token_count)
+            })
+        });
+        if token_selection
+            && (!class.token_relocatable || class.visibility != AttentionVisibility::Full)
+        {
+            return Err(ExecutorError::InvalidRequestGeometry);
+        }
         for request in &prepared.requests {
             let query_tokens = request
                 .target_boundary
@@ -303,6 +298,7 @@ impl ExecutorPlan {
                 page.logical_ordinal != pages[0].logical_ordinal.saturating_add(index as u64)
                     || page.valid_token_count == 0
                     || page.valid_token_count > class.page_tokens
+                    || page.retained_token_bits & !low_bits(page.valid_token_count) != 0
                     || page.visible_token_offset > page.valid_token_count
                     || page.visible_token_count
                         != page.valid_token_count - page.visible_token_offset
@@ -310,24 +306,22 @@ impl ExecutorPlan {
                 return Err(ExecutorError::InvalidRequestGeometry);
             }
             push_indptr(&mut query_indptr, query_tokens)?;
-            push_indptr(&mut page_indptr, pages.len() as u64)?;
-            page_indices.extend(
-                pages
-                    .iter()
-                    .map(|page| {
-                        i32::try_from(page.backend_index)
-                            .map_err(|_| ExecutorError::PageIndexOverflow)
-                    })
-                    .collect::<Result<Vec<_>, _>>()?,
-            );
-            let final_page = pages.last().ok_or(ExecutorError::InvalidRequestGeometry)?;
-            last_page_len.push(
-                i32::try_from(final_page.valid_token_count)
-                    .map_err(|_| ExecutorError::InvalidRequestGeometry)?,
-            );
+            lower_attention_pages(
+                class,
+                &pages,
+                token_selection,
+                &mut page_indptr,
+                &mut page_indices,
+                &mut last_page_len,
+            )?;
         }
         Ok(AttentionBatch {
             class_id,
+            page_tokens: if token_selection {
+                1
+            } else {
+                class.page_tokens
+            },
             query_indptr: query_indptr.into_boxed_slice(),
             page_indptr: page_indptr.into_boxed_slice(),
             page_indices: page_indices.into_boxed_slice(),
@@ -398,6 +392,69 @@ impl ExecutorPlan {
             steps: steps.into_boxed_slice(),
         })
     }
+}
+
+fn low_bits(count: u32) -> u64 {
+    if count >= u64::BITS {
+        u64::MAX
+    } else {
+        (1_u64 << count) - 1
+    }
+}
+
+fn lower_attention_pages(
+    class: &AttentionClass,
+    pages: &[&SnapshotPage],
+    token_selection: bool,
+    page_indptr: &mut Vec<i32>,
+    page_indices: &mut Vec<i32>,
+    last_page_len: &mut Vec<i32>,
+) -> Result<(), ExecutorError> {
+    if token_selection {
+        let previous_len = page_indices.len();
+        for page in pages {
+            let token_base = page
+                .backend_index
+                .checked_mul(u64::from(class.page_tokens))
+                .ok_or(ExecutorError::PageIndexOverflow)?;
+            for offset in 0..page.valid_token_count {
+                if page.retained_token_bits & (1_u64 << offset) != 0 {
+                    page_indices.push(
+                        i32::try_from(token_base + u64::from(offset))
+                            .map_err(|_| ExecutorError::PageIndexOverflow)?,
+                    );
+                }
+            }
+        }
+        let selected = page_indices.len() - previous_len;
+        if selected == 0 {
+            return Err(ExecutorError::InvalidRequestGeometry);
+        }
+        push_indptr(page_indptr, selected as u64)?;
+        last_page_len.push(1);
+        return Ok(());
+    }
+    if pages
+        .iter()
+        .any(|page| page.retained_token_bits != low_bits(page.valid_token_count))
+    {
+        return Err(ExecutorError::InvalidRequestGeometry);
+    }
+    push_indptr(page_indptr, pages.len() as u64)?;
+    page_indices.extend(
+        pages
+            .iter()
+            .map(|page| {
+                i32::try_from(page.backend_index).map_err(|_| ExecutorError::PageIndexOverflow)
+            })
+            .collect::<Result<Vec<_>, _>>()?,
+    );
+    let final_page = pages.last().ok_or(ExecutorError::InvalidRequestGeometry)?;
+    last_page_len.push(
+        i32::try_from(final_page.valid_token_count)
+            .map_err(|_| ExecutorError::InvalidRequestGeometry)?,
+    );
+    Ok(())
 }
 
 fn compile_attention_class(
@@ -866,6 +923,7 @@ pub(crate) fn test_executor_plan(
                 .unwrap();
             let mut legal_layouts = vec![StateLayoutAlternative::Compiled];
             if class.token_relocatable && retention == RetentionKind::Full {
+                legal_layouts.push(StateLayoutAlternative::TokenSelectionMask);
                 legal_layouts.push(StateLayoutAlternative::PackedTokenSlots);
             }
             StateClassLayoutFacts {
@@ -894,7 +952,6 @@ pub(crate) fn test_executor_plan(
                 address: Some(address),
                 retirement: Some(retirement),
                 block_domain: Some(BlockDomain::all()),
-                selected_layout: StateLayoutAlternative::Compiled,
                 legal_layouts: legal_layouts.into_boxed_slice(),
             }
         })
@@ -1044,6 +1101,86 @@ mod tests {
         assert_eq!(&*batch.last_page_len, &[3]);
     }
 
+    #[test]
+    fn token_selection_layout_lowers_only_retained_physical_slots() {
+        let plan = ExecutorPlan::compile(&manifest(vec![token_state(
+            "full",
+            vec![0],
+            RetentionKind::Full,
+            None,
+        )]))
+        .unwrap();
+        let mut request = prepared_request(7, 17, 18, &[(0, 4, 16), (1, 9, 2)]);
+        request.pages[0].retained_token_bits = 0b0101_0000_0000_0011;
+        request.pages[1].retained_token_bits = 0b10;
+
+        let batch = plan
+            .attention_batch(
+                0,
+                &EnginePreparedBatchView {
+                    batch_id: EngineBatchId::from_parts(1, 1),
+                    requests: vec![request].into_boxed_slice(),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(batch.page_tokens, 1);
+        assert_eq!(&*batch.query_indptr, &[0, 1]);
+        assert_eq!(&*batch.page_indptr, &[0, 5]);
+        assert_eq!(&*batch.page_indices, &[64, 65, 76, 78, 145]);
+        assert_eq!(&*batch.last_page_len, &[1]);
+    }
+
+    #[test]
+    fn token_holes_automatically_lower_to_token_selection() {
+        let plan = ExecutorPlan::compile(&manifest(vec![token_state(
+            "full",
+            vec![0],
+            RetentionKind::Full,
+            None,
+        )]))
+        .unwrap();
+        let mut request = prepared_request(7, 17, 18, &[(0, 4, 16), (1, 9, 2)]);
+        request.pages[0].retained_token_bits &= !0b10;
+        let batch = plan
+            .attention_batch(
+                0,
+                &EnginePreparedBatchView {
+                    batch_id: EngineBatchId::from_parts(1, 1),
+                    requests: vec![request].into_boxed_slice(),
+                },
+            )
+            .unwrap();
+        assert_eq!(batch.page_tokens, 1);
+        assert_eq!(batch.page_indices.len(), 17);
+        assert!(!batch.page_indices.contains(&65));
+    }
+
+    #[test]
+    fn token_holes_fail_closed_for_a_non_relocatable_class() {
+        let mut plan = ExecutorPlan::compile(&manifest(vec![token_state(
+            "full",
+            vec![0],
+            RetentionKind::Full,
+            None,
+        )]))
+        .unwrap();
+        plan.classes[0].token_relocatable = false;
+        let mut request = prepared_request(7, 17, 18, &[(0, 4, 16), (1, 9, 2)]);
+        request.pages[0].retained_token_bits &= !0b10;
+
+        assert!(matches!(
+            plan.attention_batch(
+                0,
+                &EnginePreparedBatchView {
+                    batch_id: EngineBatchId::from_parts(1, 1),
+                    requests: vec![request].into_boxed_slice(),
+                },
+            ),
+            Err(ExecutorError::InvalidRequestGeometry)
+        ));
+    }
+
     fn prepared_request(
         request_id: u64,
         previous_boundary: u64,
@@ -1074,6 +1211,11 @@ mod tests {
                         valid_token_count,
                         visible_token_offset: 0,
                         visible_token_count: valid_token_count,
+                        retained_token_bits: if valid_token_count == 64 {
+                            u64::MAX
+                        } else {
+                            (1_u64 << valid_token_count) - 1
+                        },
                     },
                 )
                 .collect::<Vec<_>>()

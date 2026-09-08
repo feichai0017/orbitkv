@@ -38,9 +38,9 @@ use external_tier::{PendingExternalExport, PendingExternalRestore};
 pub use prefix_release::{EnginePrefixPublishReleasePlan, EnginePublishedPrefixRelease};
 use relocation::PendingRelocation;
 pub use relocation::{
-    EnginePrepareRelocationItem, EnginePreparedRelocation, EngineRelocationAbortEvidence,
-    EngineRelocationCopyEvidence, EngineRelocationExecutionEvidence, EngineRelocationPlan,
-    EngineRelocationPublication, EngineRelocationPublicationEvidence,
+    EngineAttentionViewQuery, EnginePrepareRelocationItem, EnginePreparedRelocation,
+    EngineRelocationAbortEvidence, EngineRelocationCopyEvidence, EngineRelocationExecutionEvidence,
+    EngineRelocationPlan, EngineRelocationPublication, EngineRelocationPublicationEvidence,
     EngineRelocationRequestEvidence, EngineRelocationRequestPublication, EngineRelocationTicket,
     EngineTokenDispositionBatchItem, EngineTokenDispositionUpdate, EngineTokenView,
     EngineTokenViewQuery,

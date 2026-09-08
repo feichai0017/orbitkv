@@ -360,6 +360,7 @@ impl CanonicalKvManager {
                         .map(|_| ClassRoot {
                             entries: PersistentRootEntries::default(),
                             tokens: PersistentTokenTable::default(),
+                            selection_masks: Arc::new(BTreeMap::new()),
                             layout: RootLayout::Dense,
                             resident_tokens: 0,
                         })
