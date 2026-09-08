@@ -47,6 +47,7 @@ pub use runtime_session::{
     CacheSharingPolicy, EngineAppendIntent, EngineBatchId, EngineBatchPlan, EngineBatchPublication,
     EngineBatchTicket, EngineBindEvidence, EngineCompletionEvidence, EngineControlEvidence,
     EngineControlId, EngineControlOutcome, EngineControlPlan, EngineCopyEvidence,
+    EngineFixedStateEvidence, EngineFixedStatePlan, EngineFixedStatePublication,
     EngineMaterializationPlan, EngineMaterializedRequest, EnginePendingAttachCancel,
     EnginePendingAttachCancelDisposition, EnginePendingAttachCancelOutcome,
     EnginePrefixEvictionPlan, EnginePrefixId, EnginePrefixLookup, EnginePrefixPublishReleasePlan,

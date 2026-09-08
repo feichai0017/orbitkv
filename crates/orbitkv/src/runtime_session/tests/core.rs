@@ -187,6 +187,7 @@ fn execution_evidence(
                 request_id: step.request_id,
                 bind_receipts: binds.into_boxed_slice(),
                 copy_receipts: copies.into_boxed_slice(),
+                fixed_states: Box::default(),
             }
         })
         .collect::<Vec<_>>();

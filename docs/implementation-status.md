@@ -14,8 +14,8 @@ operator passes all applicable layers.
 | Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Narrow same-executor L5: 27.8% less resident payload, 6.1% longer fixed-budget boundary, 0.77% lower median test-path time |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
-| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Executor plan and Luminal compiler facts preserve state identity/layers/bytes/slots; operator and atomic transaction are missing | Unsupported | Unproven |
-| Convolution state | Generation-checked checkpoint lifecycle host-tested | Executor plan and Luminal compiler facts preserve ring geometry; operator and atomic transaction are missing | Unsupported | Unproven |
+| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Executor plan/compiler facts plus one token-KV/fixed-state RuntimeSession transaction are host-tested; device operator/arena binding is missing | Unsupported | Unproven |
+| Convolution state | Generation-checked checkpoint lifecycle host-tested | Ring geometry plus the same atomic RuntimeSession transaction are host-tested; device operator/arena binding is missing | Unsupported | Unproven |
 | Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
 
 The native dense decoder accepts multiple token-KV classes with exact,
@@ -40,9 +40,11 @@ attention and 48 GDN layers. Its canonical state manifest compiles from the real
 checkpoint configuration. The executor now parses nested text-decoder geometry,
 the `linear_attention` schedule, partial rotary dimensions, the language-model
 tensor namespace, and the block-FP8 format; it also carries recurrent and
-convolution state geometry into Luminal compiler facts. Execution remains
-fail-closed because the GDN operator/state transaction and model-level FP8
-loader are not implemented. A small BF16 checkpoint with the same 3:1 state
+convolution state geometry into Luminal compiler facts. Token KV, recurrent, and
+convolution state now share one host-qualified RuntimeSession lifecycle and one
+completion frontier. Execution remains fail-closed because the GDN device
+operator, fixed-state device arena binding, and model-level FP8 loader are not
+implemented. A small BF16 checkpoint with the same 3:1 state
 schedule is the correctness bring-up target.
 
 The latest open DeepSeek V4 Flash Vision checkpoint is tracked as a second

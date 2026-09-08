@@ -66,6 +66,18 @@ pub(super) fn flatten_evidence(
                 actual: step_evidence.request_id,
             });
         }
+        let expected_fixed_states = batch
+            .fixed_states
+            .iter()
+            .filter(|state| state.request_id == request_id)
+            .count();
+        if step_evidence.fixed_states.len() != expected_fixed_states {
+            return Err(RuntimeSessionError::EvidenceCardinality {
+                field: "fixed states",
+                expected: expected_fixed_states,
+                actual: step_evidence.fixed_states.len(),
+            });
+        }
         let expected_binds = prepared
             .tail_actions
             .iter()

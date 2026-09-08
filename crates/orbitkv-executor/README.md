@@ -8,8 +8,11 @@ attention-class geometry, produces FlashInfer CSR metadata from authoritative
 request page views, and translates prepared write/COW actions into physical
 token slots. Recurrent and convolution state identities, layer assignments, and
 checkpoint geometry are also retained in `ExecutorPlan` and Luminal compiler
-facts. Their device operators and atomic session transaction remain explicit
-fail-closed gaps. The complete Luminal fork lives in `third_party/luminal/` as a Git
+facts. Their atomic session transaction is host-tested; device operators and
+stable fixed-state arena bindings remain explicit fail-closed gaps. The
+ordinary paged-attention executor refuses to sign fixed-state success evidence
+until a real device operator supplies it. The complete Luminal fork lives in
+`third_party/luminal/` as a Git
 submodule tracking `feichai0017/orbitkv-luminal`; its `upstream` remote is
 `luminal-ai/luminal`.
 

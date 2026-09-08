@@ -144,10 +144,12 @@ pub struct StateCheckpointPool {
     slots: Vec<SlotState>,
     free: Vec<u32>,
     owners: BTreeMap<u64, StateSlotLease>,
+    owner_completions: BTreeMap<u64, StateCompletionReceipt>,
     owner_operations: BTreeMap<u64, StateTransitionLease>,
     quarantined_owners: BTreeSet<u64>,
     operations: BTreeMap<StateTransitionLease, TransitionState>,
     retirements: BTreeMap<StateRetirementLease, StateRetirementCertificate>,
+    completion_high_water: BTreeMap<u64, u64>,
     next_operation: u32,
     next_retirement: u32,
 }
@@ -207,10 +209,12 @@ impl StateCheckpointPool {
             ],
             free: (0..slot_count).rev().collect(),
             owners: BTreeMap::new(),
+            owner_completions: BTreeMap::new(),
             owner_operations: BTreeMap::new(),
             quarantined_owners: BTreeSet::new(),
             operations: BTreeMap::new(),
             retirements: BTreeMap::new(),
+            completion_high_water: BTreeMap::new(),
             next_operation: 0,
             next_retirement: 0,
         })
@@ -390,6 +394,17 @@ impl StateCheckpointPool {
         transition: StateTransitionLease,
         completion: StateCompletionReceipt,
     ) -> Result<StatePublication, StateCheckpointError> {
+        self.validate_completion(completion)?;
+        let publication = self.complete_transition(transition, completion)?;
+        self.commit_completion(completion);
+        Ok(publication)
+    }
+
+    fn complete_transition(
+        &mut self,
+        transition: StateTransitionLease,
+        completion: StateCompletionReceipt,
+    ) -> Result<StatePublication, StateCheckpointError> {
         if completion.engine_epoch != self.engine_epoch || !completion.confirmed {
             return Err(StateCheckpointError::CompletionNotConfirmed);
         }
@@ -439,6 +454,8 @@ impl StateCheckpointPool {
             SlotPhase::Live(operation.owner_id);
         self.owners
             .insert(operation.owner_id, operation.destination);
+        self.owner_completions
+            .insert(operation.owner_id, completion);
         self.operations.remove(&transition);
         self.owner_operations.remove(&operation.owner_id);
         Ok(StatePublication {
@@ -458,13 +475,45 @@ impl StateCheckpointPool {
         transitions: &[StateTransitionLease],
         completion: StateCompletionReceipt,
     ) -> Result<Vec<StatePublication>, StateCheckpointError> {
+        self.validate_completion(completion)?;
         let mut candidate = self.clone();
         let output = transitions
             .iter()
-            .map(|transition| candidate.complete(*transition, completion))
+            .map(|transition| candidate.complete_transition(*transition, completion))
             .collect::<Result<Vec<_>, _>>()?;
+        candidate.commit_completion(completion);
         *self = candidate;
         Ok(output)
+    }
+
+    /// Fail-stops submitted transitions whose device outcome is ambiguous.
+    ///
+    /// # Errors
+    ///
+    /// Leaves the pool unchanged unless every transition is current, submitted,
+    /// and owns a destination in the copying phase.
+    pub fn quarantine_submitted_batch(
+        &mut self,
+        transitions: &[StateTransitionLease],
+    ) -> Result<(), StateCheckpointError> {
+        for transition in transitions {
+            let operation = self
+                .operations
+                .get(transition)
+                .ok_or(StateCheckpointError::StaleTransition)?;
+            if !operation.submitted
+                || self.slots[operation.destination.slot_id as usize].phase
+                    != SlotPhase::Copying(*transition)
+            {
+                return Err(StateCheckpointError::NotSubmitted);
+            }
+        }
+        let mut candidate = self.clone();
+        for transition in transitions {
+            candidate.quarantine_transition(*transition)?;
+        }
+        *self = candidate;
+        Ok(())
     }
 
     /// Acknowledges backend detachment and makes old state reusable.
@@ -546,9 +595,29 @@ impl StateCheckpointPool {
             completion_value: completion.completion_value,
         };
         self.owners.remove(&owner_id);
+        self.owner_completions.remove(&owner_id);
         self.slots[expected.slot_id as usize].phase = SlotPhase::Retiring(retirement);
         self.retirements.insert(retirement, certificate);
         Ok(certificate)
+    }
+
+    /// Detaches an owner using the completion frontier that published its
+    /// current state. No new device work is implied by request release.
+    ///
+    /// # Errors
+    ///
+    /// Rejects an owner without current, completion-backed state.
+    pub fn retire_owner_after_last_completion(
+        &mut self,
+        owner_id: u64,
+        expected: StateSlotLease,
+    ) -> Result<StateRetirementCertificate, StateCheckpointError> {
+        let completion = self
+            .owner_completions
+            .get(&owner_id)
+            .copied()
+            .ok_or(StateCheckpointError::StaleLease)?;
+        self.retire_owner(owner_id, expected, completion)
     }
 
     /// Atomically detaches a batch of final owners at one completion frontier.
@@ -649,6 +718,37 @@ impl StateCheckpointPool {
         Ok(())
     }
 
+    /// Quarantines a prepared batch after an ambiguous or contradictory
+    /// backend observation.
+    ///
+    /// # Errors
+    ///
+    /// Leaves the pool unchanged unless every transition is current and still
+    /// prepared.
+    pub fn quarantine_prepared_batch(
+        &mut self,
+        transitions: &[StateTransitionLease],
+    ) -> Result<(), StateCheckpointError> {
+        for transition in transitions {
+            let operation = self
+                .operations
+                .get(transition)
+                .ok_or(StateCheckpointError::StaleTransition)?;
+            if operation.submitted
+                || self.slots[operation.destination.slot_id as usize].phase
+                    != SlotPhase::Reserved(*transition)
+            {
+                return Err(StateCheckpointError::AlreadySubmitted);
+            }
+        }
+        let mut candidate = self.clone();
+        for transition in transitions {
+            candidate.quarantine_transition(*transition)?;
+        }
+        *self = candidate;
+        Ok(())
+    }
+
     #[must_use]
     pub fn current(&self, owner_id: u64) -> Option<StateSlotLease> {
         self.owners.get(&owner_id).copied()
@@ -704,6 +804,29 @@ impl StateCheckpointPool {
         self.owner_operations.remove(&operation.owner_id);
         self.quarantined_owners.insert(operation.owner_id);
         Ok(())
+    }
+
+    fn validate_completion(
+        &self,
+        completion: StateCompletionReceipt,
+    ) -> Result<(), StateCheckpointError> {
+        if completion.engine_epoch != self.engine_epoch
+            || !completion.confirmed
+            || completion.completion_domain == 0
+            || completion.completion_value == 0
+            || self
+                .completion_high_water
+                .get(&completion.completion_domain)
+                .is_some_and(|previous| completion.completion_value <= *previous)
+        {
+            return Err(StateCheckpointError::CompletionNotConfirmed);
+        }
+        Ok(())
+    }
+
+    fn commit_completion(&mut self, completion: StateCompletionReceipt) {
+        self.completion_high_water
+            .insert(completion.completion_domain, completion.completion_value);
     }
 
     fn validate_live(

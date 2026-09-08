@@ -172,9 +172,10 @@ registrations, emits deterministic e-graph facts, binds each paged-attention
 custom op to its manager class, and preserves recurrent/convolution class
 identity, layer coverage, byte geometry, and checkpoint slots. The fact digest
 participates in decoder artifact identity, so an artifact cannot silently
-survive a changed state/search contract. Fixed-state device arenas are not yet
-bound, so those facts describe the required contract rather than completed
-execution. These facts currently constrain identity and provide a rewrite input.
+survive a changed state/search contract. Fixed-state lifecycle joins token KV in
+one host-qualified RuntimeSession transaction, but its device arenas are not yet
+bound, so those facts describe the required device contract rather than
+completed execution. These facts currently constrain identity and provide a rewrite input.
 The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
 search can optimize the surrounding decoder graph and schedule but does not yet
 choose among multiple attention implementations or jointly derive a KV layout.

@@ -129,8 +129,9 @@ Current compiled token lifetimes include:
 - Full latent KV: component-aware token storage in the core; executor support is
   still pending.
 - Recurrent and convolution state: generation-checked checkpoints in the core;
-  executor plans and compiler facts now preserve their geometry, while unified
-  device transactions are still pending.
+  executor plans and compiler facts preserve their geometry, and
+  `RuntimeSession` now owns their prepare/submit/complete/abort/release lifecycle
+  atomically with token KV. Device operators and arena bindings remain pending.
 
 The primary model target is a 27B block-FP8 hybrid decoder with a 3:1 Gated
 DeltaNet/Full-attention schedule. Its real configuration already compiles to 16
