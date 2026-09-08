@@ -108,8 +108,8 @@ in a Luminal custom op does not satisfy this gate.
 
 Coverage advances by state family rather than checkpoint-name branches:
 
-1. Complete recurrent/linear attention plus convolution state for the primary
-   model through the generation-safe fixed-state pool and one atomic engine step.
+1. Bind recurrent/linear attention plus convolution state to stable device
+   arenas and execute the host-qualified atomic engine step for the primary model.
 2. Independently qualify exact Chunked token KV on device.
 3. Add sparse retrieval/index state and low-rank attention components for the
    second architecture target.
