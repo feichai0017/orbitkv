@@ -14,8 +14,8 @@ operator passes all applicable layers.
 | Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Narrow same-executor L5: 27.8% less resident payload, 6.1% longer fixed-budget boundary, 0.77% lower median test-path time |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
-| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Recurrent operators are not integrated into one transaction | Unsupported | Unproven |
-| Convolution state | Generation-checked checkpoint lifecycle host-tested | Convolution operator/state transaction missing | Unsupported | Unproven |
+| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Executor plan and Luminal compiler facts preserve state identity/layers/bytes/slots; operator and atomic transaction are missing | Unsupported | Unproven |
+| Convolution state | Generation-checked checkpoint lifecycle host-tested | Executor plan and Luminal compiler facts preserve ring geometry; operator and atomic transaction are missing | Unsupported | Unproven |
 | Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
 
 The native dense decoder accepts multiple token-KV classes with exact,
@@ -34,6 +34,21 @@ attention. This names tested artifacts, not model-specific dispatch: admission
 is derived from config and tensor structure. Other dense checkpoints matching
 the same vocabulary are structurally admissible but are not claimed as
 released-model-qualified until they run the same H20 gates.
+
+The primary product target is a 27B block-FP8 hybrid checkpoint with 16 Full
+attention and 48 GDN layers. Its canonical state manifest compiles from the real
+checkpoint configuration. The executor now parses nested text-decoder geometry,
+the `linear_attention` schedule, partial rotary dimensions, the language-model
+tensor namespace, and the block-FP8 format; it also carries recurrent and
+convolution state geometry into Luminal compiler facts. Execution remains
+fail-closed because the GDN operator/state transaction and model-level FP8
+loader are not implemented. A small BF16 checkpoint with the same 3:1 state
+schedule is the correctness bring-up target.
+
+The latest open DeepSeek V4 Flash Vision checkpoint is tracked as a second
+architecture target, not a current capability. Its sparse index, low-rank
+projection, MoE, mixed low-precision, vision, and multi-device requirements make
+it downstream of the primary model's fixed-state and quantized-linear work.
 
 The released hybrid qualification uses the checkpoint's unmodified native
 attention schedule. Four short probes and the complete 34-token greedy sequence

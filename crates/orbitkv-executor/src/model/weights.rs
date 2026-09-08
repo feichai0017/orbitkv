@@ -29,10 +29,14 @@ pub(super) fn inspect_weight_features(
     let catalog = read_catalog(weight_files)?;
     require(
         &catalog,
-        "model.embed_tokens.weight",
+        &format!("{}.embed_tokens.weight", config.tensor_prefix),
         &[config.vocabulary_size, config.hidden_size],
     )?;
-    require(&catalog, "model.norm.weight", &[config.hidden_size])?;
+    require(
+        &catalog,
+        &format!("{}.norm.weight", config.tensor_prefix),
+        &[config.hidden_size],
+    )?;
     if !config.tied_embeddings {
         require(
             &catalog,
@@ -42,10 +46,16 @@ pub(super) fn inspect_weight_features(
     }
     let qkv_bias = family_presence(
         &catalog,
+        &config.tensor_prefix,
         config.layers,
         &["q_proj.bias", "k_proj.bias", "v_proj.bias"],
     )?;
-    let qk_norm = family_presence(&catalog, config.layers, &["q_norm.weight", "k_norm.weight"])?;
+    let qk_norm = family_presence(
+        &catalog,
+        &config.tensor_prefix,
+        config.layers,
+        &["q_norm.weight", "k_norm.weight"],
+    )?;
     for layer in 0..config.layers {
         validate_layer(&catalog, config, layer, qkv_bias, qk_norm)?;
     }
@@ -76,7 +86,7 @@ fn validate_layer(
     qkv_bias: bool,
     qk_norm: bool,
 ) -> Result<(), DecoderError> {
-    let prefix = format!("model.layers.{layer}");
+    let prefix = format!("{}.layers.{layer}", config.tensor_prefix);
     let q_width = config.query_heads * config.head_dim;
     let kv_width = config.kv_heads * config.head_dim;
     for (suffix, shape) in [
@@ -143,6 +153,7 @@ fn optional_suffixes<'a>(enabled: bool, suffixes: &'a [&str]) -> &'a [&'a str] {
 
 fn family_presence(
     catalog: &WeightCatalog,
+    tensor_prefix: &str,
     layers: usize,
     suffixes: &[&str],
 ) -> Result<bool, DecoderError> {
@@ -151,7 +162,9 @@ fn family_presence(
         .map(|suffix| {
             (0..layers)
                 .filter(|layer| {
-                    catalog.contains_key(&format!("model.layers.{layer}.self_attn.{suffix}"))
+                    catalog.contains_key(&format!(
+                        "{tensor_prefix}.layers.{layer}.self_attn.{suffix}"
+                    ))
                 })
                 .collect::<BTreeSet<_>>()
         })

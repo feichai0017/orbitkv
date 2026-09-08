@@ -6,7 +6,10 @@ compiler. It does not own a second page allocator.
 The Rust composition crate lowers an OrbitKV `RuntimeManifest` into immutable
 attention-class geometry, produces FlashInfer CSR metadata from authoritative
 request page views, and translates prepared write/COW actions into physical
-token slots. The complete Luminal fork lives in `third_party/luminal/` as a Git
+token slots. Recurrent and convolution state identities, layer assignments, and
+checkpoint geometry are also retained in `ExecutorPlan` and Luminal compiler
+facts. Their device operators and atomic session transaction remain explicit
+fail-closed gaps. The complete Luminal fork lives in `third_party/luminal/` as a Git
 submodule tracking `feichai0017/orbitkv-luminal`; its `upstream` remote is
 `luminal-ai/luminal`.
 
@@ -35,11 +38,13 @@ The initial contract freezes query/batch/context shape and the CSR indptr
 arrays. Page identities and last-page lengths may change without recapture.
 The Luminal capture primitive and the complete released-checkpoint replay path
 pass their H20 correctness tests. A matched diagnostic found flattened replay
-24.9% slower than eager materialized-graph dispatch. The current path instead
+24.9% slower than eager materialized-graph dispatch in its recorded source
+closure. That source closure instead
 composes those selected executables as child nodes and appends persistent-state
 D2D copies to one parent graph; matched fixed-step decode improved by 8.3% over
-20 iterations and 5.8% over a 100-iteration confirmation. This does not qualify
-throughput, larger batches, or other checkpoints.
+20 iterations and 5.8% over a 100-iteration confirmation. This historical
+result does not qualify the current tree, throughput, larger batches, or other
+checkpoints.
 
 The executor also owns the byte-movement edge for external KV tiers.
 `ExternalKvTransport` is an object-safe async contract over manager-authored,

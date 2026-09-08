@@ -35,10 +35,56 @@ provides the client protocol. Planned work is not a current capability.
   host-memory reference transport. Mooncake, NIXL, remote leases, and network
   benefit remain open.
 
+## Product model strategy
+
+The primary release target is the Qwen3.8 27B block-FP8 checkpoint. Its text
+decoder is the forcing function for the product architecture: 64 layers with a
+3:1 Gated DeltaNet/Full-attention schedule, persistent recurrent and causal
+convolution state, partial rotary dimensions, and dynamic block-FP8 linear
+operators. OrbitKV already compiles the checkpoint into 16 Full token-KV layers
+plus 48 recurrent and convolution layers. The executor now parses the nested
+text configuration and carries fixed-state geometry into its compiler contract,
+but GDN execution and checkpoint FP8 loading are still explicit fail-closed
+gaps.
+
+Use the structurally equivalent small BF16 checkpoint as the bring-up target.
+It must exercise the same 3:1 layer schedule and state transitions before the
+27B FP8 qualification. Existing dense Full and Full+Sliding checkpoints remain
+regression and lifecycle witnesses; they are not parallel product targets.
+Model support stays structural, so no checkpoint name may select an operator or
+physical layout in product code.
+
+The second architecture target is the latest openly released DeepSeek family.
+At this roadmap revision that is DeepSeek V4 Flash Vision, whose text path adds
+sparse retrieval/index state, low-rank projections, MoE, mixed FP8/FP4 storage,
+and speculative heads. It follows the Qwen target because it needs several of
+the same quantized-linear and persistent-state foundations but is not a
+single-device bring-up model.
+
+## Primary model closure
+
+1. Join token-KV, recurrent, and convolution state into one atomic
+   `RuntimeSession`/executor step with stream-ordered completion evidence.
+2. Add a backend-neutral GDN semantic op. Start with an independent reference
+   implementation and a production CUDA candidate derived from an attributed,
+   license-compatible mature implementation; selection remains in Luminal's
+   egglog/search pipeline.
+3. Qualify recurrent decode, chunked prefill, causal-convolution history,
+   cancellation, Prefix boundaries, and state-slot reuse on the small BF16
+   checkpoint.
+4. Add partial RoPE and text-only nested checkpoint loading without admitting
+   unimplemented image/video inputs.
+5. Add block-FP8 weights, dynamic activation scaling, scaled matrix products,
+   and safetensors scale validation. Luminal already has FP8 dtypes, quantization
+   and cuBLASLt primitives; the model loader and block-scale graph remain open.
+6. Run the 27B FP8 text path on H20, first for deterministic token parity and
+   complete state drain, then for continuous batching and long-context pressure.
+
 ## Searchable attention execution
 
-This is the immediate milestone. It turns the current FlashInfer integration
-from a fixed custom-op implementation into a genuine Luminal compiler choice.
+This is the first performance-compiler milestone after the primary hybrid model
+can execute. It turns the current FlashInfer integration from a fixed custom-op
+implementation into a genuine Luminal compiler choice.
 
 1. Define one backend-neutral paged-attention semantic op carrying OrbitKV
    class identity, visibility, page geometry, dtype, head geometry, and bucket
@@ -61,20 +107,19 @@ in a Luminal custom op does not satisfy this gate.
 
 Coverage advances by state family rather than checkpoint-name branches:
 
-1. Independently qualify exact Chunked token KV on device.
-2. Integrate recurrent/linear attention plus convolution state through the
-   generation-safe fixed-state pool and one atomic engine step.
-3. Add latent/RoPE-aware MLA attention and bind component-aware latent state.
-4. Add MoE routing and then quantized linear operators only as required by the
-   selected released checkpoints.
-5. Defer sparse, tree, cross-attention, speculative decoding, and multi-device
-   claims until their visibility and completion contracts are explicit.
+1. Complete recurrent/linear attention plus convolution state for the primary
+   model through the generation-safe fixed-state pool and one atomic engine step.
+2. Independently qualify exact Chunked token KV on device.
+3. Add sparse retrieval/index state and low-rank attention components for the
+   second architecture target.
+4. Add MoE routing, mixed low-precision experts, and multi-device placement only
+   after the dense primary target closes.
+5. Defer tree, cross-attention, speculative decoding, and vision execution until
+   their visibility and completion contracts are explicit.
 
-The first heterogeneous target should be a released Full + linear-attention +
-convolution checkpoint because the core already compiles that state shape. The
-second should exercise MLA. Each family must pass plan compilation, randomized
-lifecycle checks, executor lowering, operator parity, released-checkpoint
-end-to-end correctness, and then a matched benefit experiment.
+Each family must pass plan compilation, randomized lifecycle checks, executor
+lowering, operator parity, released-checkpoint end-to-end correctness, and then
+a matched benefit experiment.
 
 ## Serving performance
 
@@ -90,8 +135,14 @@ After attention becomes a real compiler choice, optimize the complete warm path:
 5. Promote a claim only when output, completion, final drain, p95/p99 latency,
    throughput, and admission-capacity gates all pass.
 
-No date or performance target is promised before the attribution profile shows
-which layer owns the current gap.
+The product goal is to beat both current vLLM and SGLang on the primary 27B FP8
+checkpoint. A win requires the lower confidence bound of output throughput to
+exceed both baselines while p95 TTFT and p95 TPOT are no worse, under the same
+weights, quantization, device budget, request trace, scheduler limits, output
+semantics, and benchmark client. Long-prompt, decode-heavy, concurrency, and
+memory-pressure suites are reported separately; winning one selected point is
+not an overall claim. No date or speedup is promised before the attribution
+profile shows which layer owns the current gap.
 
 ## External KV transports
 

@@ -324,7 +324,9 @@ fn test_config(layers: usize) -> DecoderConfig {
         kv_heads: 1,
         head_dim: 64,
         vocabulary_size: 320,
+        tensor_prefix: "model".into(),
         rope_theta: 10_000.0,
+        rotary_dimensions: 64,
         rms_epsilon: 1e-6,
         tied_embeddings: false,
         embedding_scale: 1.0,
@@ -333,7 +335,8 @@ fn test_config(layers: usize) -> DecoderConfig {
         norm_weights: DecoderNormWeights::Direct,
         local_rope_theta: None,
         attention_softmax_scale: 0.0,
-        layer_attention: None,
+        layer_kinds: None,
+        weight_format: DecoderWeightFormat::Float,
     }
 }
 
@@ -375,15 +378,15 @@ fn parses_structural_decoder_semantics_without_model_name_dispatch() {
     assert_eq!(config.local_rope_theta, Some(10_000.0));
     assert!((config.attention_softmax_scale - 1.0 / 16.0).abs() < f64::EPSILON);
     assert_eq!(
-        config.layer_attention.as_deref(),
+        config.layer_kinds.as_deref(),
         Some(
             &[
-                DecoderAttentionKind::Sliding,
-                DecoderAttentionKind::Sliding,
-                DecoderAttentionKind::Sliding,
-                DecoderAttentionKind::Sliding,
-                DecoderAttentionKind::Sliding,
-                DecoderAttentionKind::Full,
+                DecoderLayerKind::Sliding,
+                DecoderLayerKind::Sliding,
+                DecoderLayerKind::Sliding,
+                DecoderLayerKind::Sliding,
+                DecoderLayerKind::Sliding,
+                DecoderLayerKind::Full,
             ][..]
         )
     );
@@ -431,14 +434,153 @@ fn omitted_tied_embedding_field_uses_the_hf_default() {
 }
 
 #[test]
+fn parses_nested_hybrid_decoder_without_checkpoint_name_dispatch() {
+    let config = DecoderConfig::from_json(
+        br#"{
+            "tie_word_embeddings": false,
+            "quantization_config": {
+                "quant_method": "fp8", "fmt": "e4m3",
+                "activation_scheme": "dynamic",
+                "weight_block_size": [128, 128]
+            },
+            "text_config": {
+                "num_hidden_layers": 4, "hidden_size": 1024,
+                "intermediate_size": 3584, "num_attention_heads": 8,
+                "num_key_value_heads": 2, "head_dim": 256,
+                "vocab_size": 248320, "rms_norm_eps": 0.000001,
+                "hidden_act": "silu",
+                "rope_parameters": {
+                    "rope_type": "default",
+                    "rope_theta": 10000000.0,
+                    "partial_rotary_factor": 0.25,
+                    "mrope_interleaved": true,
+                    "mrope_section": [11, 11, 10]
+                },
+                "layer_types": [
+                    "linear_attention", "linear_attention",
+                    "linear_attention", "full_attention"
+                ]
+            }
+        }"#,
+    )
+    .unwrap();
+    assert_eq!(config.tensor_prefix, "model.language_model");
+    assert!((config.rope_theta - 10_000_000.0).abs() < f32::EPSILON);
+    assert_eq!(config.rotary_dimensions, 64);
+    assert!(!config.tied_embeddings);
+    assert_eq!(
+        config.layer_kinds.as_deref(),
+        Some(
+            &[
+                DecoderLayerKind::Linear,
+                DecoderLayerKind::Linear,
+                DecoderLayerKind::Linear,
+                DecoderLayerKind::Full,
+            ][..]
+        )
+    );
+    assert_eq!(
+        config.weight_format,
+        DecoderWeightFormat::Fp8E4M3Block {
+            rows: 128,
+            columns: 128,
+        }
+    );
+    assert!(matches!(
+        config.require_executable(),
+        Err(DecoderError::UnsupportedExecution(
+            "linear-attention state execution"
+        ))
+    ));
+}
+
+#[test]
+fn nested_rope_contract_rejects_unknown_or_inconsistent_layouts() {
+    let base = r#"{
+        "text_config": {
+            "num_hidden_layers": 1, "hidden_size": 128,
+            "intermediate_size": 256, "num_attention_heads": 2,
+            "num_key_value_heads": 1, "head_dim": 64,
+            "vocab_size": 320, "rms_norm_eps": 0.000001,
+            "hidden_act": "silu", "layer_types": ["full_attention"],
+            "rope_parameters": {
+                "rope_type": "TYPE", "rope_theta": 10000.0,
+                "partial_rotary_factor": 0.5,
+                "mrope_interleaved": true, "mrope_section": SECTION
+            }
+        }
+    }"#;
+    let unknown = base
+        .replace("\"TYPE\"", "\"yarn\"")
+        .replace("SECTION", "[6, 5, 5]");
+    assert!(matches!(
+        DecoderConfig::from_json(unknown.as_bytes()),
+        Err(DecoderError::InvalidGeometry("unsupported RoPE type"))
+    ));
+    let inconsistent = base
+        .replace("\"TYPE\"", "\"default\"")
+        .replace("SECTION", "[5, 5, 5]");
+    assert!(matches!(
+        DecoderConfig::from_json(inconsistent.as_bytes()),
+        Err(DecoderError::InvalidGeometry("MRoPE sections"))
+    ));
+}
+
+#[test]
+fn nested_dense_decoder_inherits_top_level_embedding_policy() {
+    let config = DecoderConfig::from_json(
+        br#"{
+            "tie_word_embeddings": false,
+            "text_config": {
+                "num_hidden_layers": 1, "hidden_size": 128,
+                "intermediate_size": 256, "num_attention_heads": 2,
+                "num_key_value_heads": 1, "head_dim": 64,
+                "vocab_size": 320, "rope_theta": 10000.0,
+                "rms_norm_eps": 0.000001, "hidden_act": "silu",
+                "layer_types": ["full_attention"]
+            }
+        }"#,
+    )
+    .unwrap();
+    assert!(!config.tied_embeddings);
+    assert_eq!(config.tensor_prefix, "model.language_model");
+    assert_eq!(config.rotary_dimensions, 64);
+    assert!(config.require_executable().is_ok());
+}
+
+#[test]
+#[ignore = "requires ORBITKV_MODEL_DIR containing an external hybrid-state checkpoint"]
+fn external_hybrid_checkpoint_reaches_the_explicit_execution_gate() {
+    let directory = std::env::var_os("ORBITKV_MODEL_DIR")
+        .map(std::path::PathBuf::from)
+        .expect("ORBITKV_MODEL_DIR is required");
+    let bytes = std::fs::read(directory.join("config.json")).unwrap();
+    let config = DecoderConfig::from_json(&bytes).unwrap();
+    assert_eq!(config.tensor_prefix, "model.language_model");
+    assert!(config.rotary_dimensions < config.head_dim);
+    assert!(
+        config
+            .layer_kinds
+            .as_deref()
+            .is_some_and(|layers| layers.contains(&DecoderLayerKind::Linear))
+    );
+    assert!(matches!(
+        config.require_executable(),
+        Err(DecoderError::UnsupportedExecution(
+            "linear-attention state execution"
+        ))
+    ));
+}
+
+#[test]
 fn graph_rejects_manifest_layer_semantics_that_disagree_with_model_config() {
     let mut config = test_config(4);
-    config.layer_attention = Some(
+    config.layer_kinds = Some(
         vec![
-            DecoderAttentionKind::Sliding,
-            DecoderAttentionKind::Full,
-            DecoderAttentionKind::Sliding,
-            DecoderAttentionKind::Full,
+            DecoderLayerKind::Sliding,
+            DecoderLayerKind::Full,
+            DecoderLayerKind::Sliding,
+            DecoderLayerKind::Full,
         ]
         .into_boxed_slice(),
     );

@@ -25,7 +25,7 @@ Historical results qualify only their recorded source closure.
 | Physical-residence ablation | Narrow L5 same-executor closure | Released-hybrid paired runs preserve 256 output tokens while compiled residence lowers live payload by 27.8%, extends the fixed-budget boundary by 32 tokens, and slightly reduces total test-path time; serving throughput remains open |
 | RuntimeSession | L2 | Presents transactional engine operations without exposing manager capabilities |
 | External KV tier transactions | L2 host | Export/restore run through an object-safe async transport contract; a real-byte host adapter verifies compact partial tails, per-page checksums, deletion, cross-session restore, and unobserved/ambiguous fault mapping; Mooncake/NIXL and hybrid restore remain open |
-| Executor plan | L2 | Compiles a manifest directly into Full, Sliding, Full+Sliding, or exact Chunked attention classes |
+| Executor plan | L2 | Compiles token classes plus recurrent/convolution fixed-state identities and geometry; only token classes currently have device operators |
 | Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page decode/prefill pass; Luminal never allocates or recycles pages |
 | Bucketed model runtime | L4 correctness | One symbolic graph is searched once into decode/prefill executables; query, batch, and per-class context dimensions have bounded capacities, dynamic inputs are preallocated, and one stable K/V arena per class survives prefill plus repeated decode |
 | Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity, LLIR fingerprints, and required persistent-state aliases fail closed |
@@ -47,8 +47,9 @@ Historical results qualify only their recorded source closure.
 | Attention | MHA/GQA paged attention; query-head count must divide by KV-head count; head dimension 64, 128, 256, or 512 when the compiled FlashInfer specialization exists |
 | KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, and Prefix/COW lowering |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
-| Checkpoint family | Configuration-driven dense decoder with fail-closed config and safetensors-header validation; released Full and Full+Sliding checkpoints have real-device correctness evidence |
-| Not yet executable as complete models | MoE, MLA/latent KV, recurrent or convolution state, quantized weights, multimodal encoders, speculative decoding, and tensor/pipeline parallel models |
+| Checkpoint family | Configuration-driven dense decoder plus nested hybrid text-config parsing with fail-closed capability gates; released Full and Full+Sliding checkpoints have real-device correctness evidence |
+| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Nested geometry, partial RoPE, weight namespace, FP8 format, and fixed-state compiler facts parse; GDN and FP8 model execution remain unsupported |
+| Not yet executable as complete models | GDN/recurrent or convolution state, quantized weights, MoE, sparse/latent attention, multimodal encoders, speculative decoding, and tensor/pipeline parallel models |
 
 Core support for a retention policy means its lifecycle can be compiled and
 host-tested. It does not by itself imply that all model operators or the
@@ -74,8 +75,8 @@ constraints.
 | Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Manifest-driven layer binding and independent per-class inputs/arenas | Released 3-Full/15-Sliding checkpoint passes reference parity, retirement/reuse, cancellation, and final drain on H20 |
 | Exact Chunked token KV | Host-tested resettable epoch lifecycle | Implemented | Current architecture unqualified |
 | Full latent KV | Host-tested component-aware core lifecycle | Rejected until a matching Luminal kernel contract exists | Unqualified |
-| Recurrent checkpoints | Host-tested independent pool | Not integrated into one model transaction | Unqualified |
-| Convolution state | Host-tested independent pool | Not integrated into one model transaction | Unqualified |
+| Recurrent checkpoints | Host-tested independent pool | Geometry and compiler facts implemented; not integrated into one model transaction | Unqualified |
+| Convolution state | Host-tested independent pool | Ring geometry and compiler facts implemented; not integrated into one model transaction | Unqualified |
 | Per-head or region-partitioned layouts | Compiler primitives exist | Not generally admitted by the current executor plan | Unqualified |
 
 ## Compiled lifecycle

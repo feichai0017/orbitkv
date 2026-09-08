@@ -30,7 +30,8 @@ use runtime_input::validate_step;
 #[path = "model/config.rs"]
 mod config;
 pub use config::{
-    DecoderActivation, DecoderAttentionKind, DecoderBlockLayout, DecoderConfig, DecoderNormWeights,
+    DecoderActivation, DecoderBlockLayout, DecoderConfig, DecoderLayerKind, DecoderNormWeights,
+    DecoderWeightFormat,
 };
 #[path = "model/weights.rs"]
 mod weights;
@@ -44,6 +45,8 @@ pub enum DecoderError {
     InvalidGeometry(&'static str),
     #[error("decoder attention classes do not exactly cover the model layers")]
     UnsupportedPlan,
+    #[error("decoder execution does not yet support {0}")]
+    UnsupportedExecution(&'static str),
     #[error(transparent)]
     Executor(#[from] crate::ExecutorError),
     #[error(transparent)]
@@ -330,7 +333,7 @@ impl DecoderGraph {
         let inputs = decoder_inputs(graph, &class_dimensions, dimensions);
         let embedding = weight(
             graph,
-            "model.embed_tokens.weight",
+            format!("{}.embed_tokens.weight", config.tensor_prefix),
             (config.vocabulary_size, config.hidden_size),
             DType::Bf16,
         );
@@ -389,7 +392,11 @@ impl DecoderGraph {
             cache_inputs.push((k_cache, v_cache));
             cache_updates.push((key_update.output(), value_update.output()));
         }
-        let norm = DecoderNorm::new(graph, config, "model.norm.weight");
+        let norm = DecoderNorm::new(
+            graph,
+            config,
+            &format!("{}.norm.weight", config.tensor_prefix),
+        );
         let normalized = norm.forward(&hidden);
         let lm_head = if config.tied_embeddings {
             embedding
@@ -518,6 +525,7 @@ impl CompiledDecoder {
         artifact: Option<&DecoderArtifact>,
     ) -> Result<(Self, DecoderArtifact), DecoderError> {
         compile.validate()?;
+        config.require_executable()?;
         if weight_files.is_empty() {
             return Err(DecoderError::InvalidGeometry("weight files"));
         }
@@ -1279,17 +1287,22 @@ fn validate_plan(
     if layers != (0..layer_count).collect() {
         return Err(DecoderError::UnsupportedPlan);
     }
-    if let Some(layer_attention) = &config.layer_attention {
-        for (layer, expected) in layer_attention.iter().enumerate() {
+    if let Some(layer_kinds) = &config.layer_kinds {
+        for (layer, expected) in layer_kinds.iter().enumerate() {
+            if *expected == DecoderLayerKind::Linear {
+                return Err(DecoderError::UnsupportedExecution(
+                    "linear-attention state execution",
+                ));
+            }
             let class = class_for_layer(
                 plan,
                 u32::try_from(layer).map_err(|_| DecoderError::InvalidGeometry("layer index"))?,
             )?;
             let matches = matches!(
                 (expected, class.visibility),
-                (DecoderAttentionKind::Full, crate::AttentionVisibility::Full)
+                (DecoderLayerKind::Full, crate::AttentionVisibility::Full)
                     | (
-                        DecoderAttentionKind::Sliding,
+                        DecoderLayerKind::Sliding,
                         crate::AttentionVisibility::Sliding { .. }
                     )
             );

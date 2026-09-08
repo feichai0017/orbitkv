@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 mod compiler_facts;
-pub use compiler_facts::{LuminalCompilerFacts, LuminalStateClassFacts};
+pub use compiler_facts::{LuminalCompilerFacts, LuminalFixedStateFacts, LuminalStateClassFacts};
 
 #[cfg(feature = "cuda")]
 pub mod cuda;
@@ -50,12 +50,39 @@ pub enum AttentionVisibility {
     Chunked { blocks_per_epoch: u64 },
 }
 
+/// Request-scoped persistent state whose storage is not addressed by token pages.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct FixedStateClass {
+    pub state_id: u16,
+    pub name: String,
+    pub layers: Box<[u32]>,
+    pub storage: FixedStateStorage,
+}
+
+/// Physical geometry required by a recurrent or convolution state arena.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FixedStateStorage {
+    Recurrent {
+        family: orbitkv::RecurrentFamily,
+        bytes_per_layer: u64,
+        slots_per_request: u32,
+        bytes_per_request: u64,
+    },
+    Convolution {
+        bytes_per_layer: u64,
+        kernel_width: u32,
+        slots_per_request: u32,
+        bytes_per_request: u64,
+    },
+}
+
 /// Immutable part of the joint OrbitKV/Luminal execution contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutorPlan {
     pub manifest_fingerprint: String,
     pub page_tokens: u32,
     pub classes: Box<[AttentionClass]>,
+    pub fixed_states: Box<[FixedStateClass]>,
     state_layout_facts: orbitkv::StateLayoutFacts,
 }
 
@@ -116,8 +143,6 @@ pub enum ExecutorError {
     Manifest(#[from] RuntimeManifestError),
     #[error("Luminal currently accepts token KV only")]
     UnsupportedStateStorage,
-    #[error("Luminal fixed-state execution is not implemented")]
-    UnsupportedFixedState,
     #[error("compiled attention classes do not match their layout classes")]
     ClassMismatch,
     #[error("attention batch is empty")]
@@ -199,13 +224,6 @@ impl ExecutorPlan {
         let page_tokens = u32::try_from(manager.layout.page_tokens)
             .map_err(|_| ExecutorError::PreparedGeometryMismatch)?;
         let state_plan = manifest.attention_state_plan.as_ref();
-        if state_plan.is_some_and(|plan| {
-            plan.states
-                .iter()
-                .any(|state| !matches!(state.backend, AttentionStateBackend::TokenSlots { .. }))
-        }) {
-            return Err(ExecutorError::UnsupportedFixedState);
-        }
         let classes = manager
             .layout
             .classes
@@ -225,10 +243,17 @@ impl ExecutorPlan {
         if classes.is_empty() {
             return Err(ExecutorError::UnsupportedStateStorage);
         }
+        let fixed_states = state_plan
+            .map_or(&[][..], |plan| plan.states.as_slice())
+            .iter()
+            .enumerate()
+            .filter_map(|(state_id, state)| compile_fixed_state(state_id, state).transpose())
+            .collect::<Result<Vec<_>, _>>()?;
         Ok(Self {
             manifest_fingerprint: manifest.fingerprint.clone(),
             page_tokens,
             classes: classes.into_boxed_slice(),
+            fixed_states: fixed_states.into_boxed_slice(),
             state_layout_facts,
         })
     }
@@ -403,7 +428,7 @@ fn compile_attention_class(
                 ..
             } = &state.backend
             else {
-                return Err(ExecutorError::UnsupportedFixedState);
+                return Err(ExecutorError::ClassMismatch);
             };
             let component_bytes = |name| {
                 components
@@ -468,6 +493,43 @@ fn compile_attention_class(
         value_bytes_per_token_per_layer: value_bytes,
         visibility,
     })
+}
+
+fn compile_fixed_state(
+    state_id: usize,
+    state: &orbitkv::CompiledAttentionState,
+) -> Result<Option<FixedStateClass>, ExecutorError> {
+    let storage = match state.backend {
+        AttentionStateBackend::TokenSlots { .. } => return Ok(None),
+        AttentionStateBackend::RecurrentCheckpoints {
+            family,
+            state_bytes_per_layer,
+            checkpoint_slots_per_request,
+            checkpoint_bytes_per_request,
+        } => FixedStateStorage::Recurrent {
+            family,
+            bytes_per_layer: state_bytes_per_layer,
+            slots_per_request: checkpoint_slots_per_request,
+            bytes_per_request: checkpoint_bytes_per_request,
+        },
+        AttentionStateBackend::ConvolutionRing {
+            state_bytes_per_layer,
+            kernel_width,
+            checkpoint_slots_per_request,
+            checkpoint_bytes_per_request,
+        } => FixedStateStorage::Convolution {
+            bytes_per_layer: state_bytes_per_layer,
+            kernel_width,
+            slots_per_request: checkpoint_slots_per_request,
+            bytes_per_request: checkpoint_bytes_per_request,
+        },
+    };
+    Ok(Some(FixedStateClass {
+        state_id: u16::try_from(state_id).map_err(|_| ExecutorError::PreparedGeometryMismatch)?,
+        name: state.name.clone(),
+        layers: state.layers.clone().into_boxed_slice(),
+        storage,
+    }))
 }
 
 impl PreparedBatch {
@@ -875,6 +937,7 @@ pub(crate) fn test_executor_plan(
             classes: state_classes,
         },
         classes: classes.into_boxed_slice(),
+        fixed_states: Box::default(),
     }
 }
 
@@ -950,6 +1013,81 @@ mod tests {
             plan.classes[1].visibility,
             AttentionVisibility::Sliding { window_tokens: 64 }
         );
+    }
+
+    #[test]
+    fn compiles_hybrid_fixed_state_geometry_without_claiming_execution() {
+        let plan = ExecutorPlan::compile(&manifest(vec![
+            token_state("full", vec![3], RetentionKind::Full, None),
+            AttentionStateSpec {
+                name: "recurrent".into(),
+                layers: vec![0, 1, 2],
+                storage: AttentionStateStorage::Recurrent {
+                    family: orbitkv::RecurrentFamily::Gdn,
+                    state_bytes_per_layer: 1_048_576,
+                    checkpoint_slots_per_request: 2,
+                },
+            },
+            AttentionStateSpec {
+                name: "convolution".into(),
+                layers: vec![0, 1, 2],
+                storage: AttentionStateStorage::Convolution {
+                    state_bytes_per_layer: 36_864,
+                    kernel_width: 4,
+                    checkpoint_slots_per_request: 2,
+                },
+            },
+        ]))
+        .unwrap();
+        assert_eq!(plan.classes.len(), 1);
+        assert_eq!(plan.fixed_states.len(), 2);
+        assert_eq!(plan.fixed_states[0].state_id, 1);
+        assert!(matches!(
+            plan.fixed_states[0].storage,
+            FixedStateStorage::Recurrent {
+                family: orbitkv::RecurrentFamily::Gdn,
+                bytes_per_layer: 1_048_576,
+                slots_per_request: 2,
+                bytes_per_request: 6_291_456,
+            }
+        ));
+        assert!(matches!(
+            plan.fixed_states[1].storage,
+            FixedStateStorage::Convolution {
+                bytes_per_layer: 36_864,
+                kernel_width: 4,
+                slots_per_request: 2,
+                bytes_per_request: 221_184,
+            }
+        ));
+    }
+
+    #[test]
+    #[ignore = "requires ORBITKV_MODEL_DIR containing an external hybrid-state checkpoint"]
+    fn external_hybrid_checkpoint_compiles_executor_state_contract() {
+        let directory = std::env::var_os("ORBITKV_MODEL_DIR")
+            .map(std::path::PathBuf::from)
+            .expect("ORBITKV_MODEL_DIR is required");
+        let bytes = std::fs::read(directory.join("config.json")).unwrap();
+        let manifest = orbitkv::compile_hf_runtime_manifest(
+            &bytes,
+            orbitkv::HfRetentionOptions {
+                page_tokens: 16,
+                kv_dtype_bytes: 2,
+            },
+        )
+        .unwrap();
+        let plan = ExecutorPlan::compile(&manifest).unwrap();
+        assert!(!plan.classes.is_empty());
+        assert_eq!(plan.fixed_states.len(), 2);
+        assert!(matches!(
+            plan.fixed_states[0].storage,
+            FixedStateStorage::Recurrent { .. }
+        ));
+        assert!(matches!(
+            plan.fixed_states[1].storage,
+            FixedStateStorage::Convolution { .. }
+        ));
     }
 
     #[test]
