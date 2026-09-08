@@ -14,8 +14,8 @@ operator passes all applicable layers.
 | Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Narrow same-executor L5: 27.8% less resident payload, 6.1% longer fixed-budget boundary, 0.77% lower median test-path time |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
-| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Executor plan/compiler facts plus one token-KV/fixed-state RuntimeSession transaction are host-tested; device operator/arena binding is missing | Unsupported | Unproven |
-| Convolution state | Generation-checked checkpoint lifecycle host-tested | Ring geometry plus the same atomic RuntimeSession transaction are host-tested; device operator/arena binding is missing | Unsupported | Unproven |
+| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Stable per-class CUDA arenas, generation-checked slot lowering, Luminal required aliases, and event-gated evidence are implemented; GDN math is missing | Unsupported | Unproven |
+| Convolution state | Generation-checked checkpoint lifecycle host-tested | Stable per-class CUDA arenas and the atomic state transaction are implemented; convolution math is missing | Unsupported | Unproven |
 | Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
 
 The native dense decoder accepts multiple token-KV classes with exact,
@@ -42,10 +42,14 @@ the `linear_attention` schedule, partial rotary dimensions, the language-model
 tensor namespace, and the block-FP8 format; it also carries recurrent and
 convolution state geometry into Luminal compiler facts. Token KV, recurrent, and
 convolution state now share one host-qualified RuntimeSession lifecycle and one
-completion frontier. Execution remains fail-closed because the GDN device
-operator, fixed-state device arena binding, and model-level FP8 loader are not
-implemented. A small BF16 checkpoint with the same 3:1 state
-schedule is the correctness bring-up target.
+completion frontier. The executor allocates stable per-class CUDA arenas, maps
+generation-checked state slots to byte ranges, binds those allocations to
+Luminal as required in-place aliases, and releases success evidence only after
+a stream event completes. The two-step CUDA qualification is present but has
+not run on an accessible GPU in this revision. Execution remains fail-closed
+because the GDN and convolution math plus the model-level FP8 loader are not
+implemented. A small BF16 checkpoint with the same 3:1 state schedule is the
+correctness bring-up target.
 
 The latest open DeepSeek V4 Flash Vision checkpoint is tracked as a second
 architecture target, not a current capability. Its sparse index, low-rank

@@ -1,11 +1,11 @@
 use orbitkv::{
     AttentionStatePlanInput, AttentionStateSpec, AttentionStateStorage, CacheSharingPolicy,
-    EngineAppendIntent, EngineRequestId, RecurrentFamily, RuntimeSession, StateCheckpointPool,
-    compile_attention_state_plan, compile_plan, compile_runtime_manifest,
+    EngineAppendIntent, EngineFixedStateEvidence, EngineRequestId, RecurrentFamily, RuntimeSession,
+    StateCheckpointPool, compile_attention_state_plan, compile_plan, compile_runtime_manifest,
     kv_manager::{BackendArenaRegistration, CanonicalKvManager, ManagerConfig},
     plan::RetentionKind,
 };
-use orbitkv_executor::{ExecutorArena, ExecutorError, ExecutorPlan};
+use orbitkv_executor::{ExecutorArena, ExecutorError, ExecutorPlan, FixedStateExecutionEvidence};
 
 #[test]
 fn token_executor_does_not_forge_fixed_state_evidence() {
@@ -81,6 +81,7 @@ fn token_executor_does_not_forge_fixed_state_evidence() {
             target_boundary: 1,
         }])
         .unwrap();
+    let fixed_plan = source.steps[0].fixed_states[0];
     let arena = ExecutorArena::bind(arena_stats, registration).unwrap();
     let lowered = ExecutorPlan::compile(&manifest)
         .unwrap()
@@ -88,6 +89,22 @@ fn token_executor_does_not_forge_fixed_state_evidence() {
         .unwrap();
     assert!(matches!(
         lowered.execution_evidence_after_success(&[arena]),
+        Err(ExecutorError::FixedStateExecutionMissing)
+    ));
+    let mismatched = FixedStateExecutionEvidence {
+        request_id: request_id.0,
+        states: vec![EngineFixedStateEvidence {
+            state_id: fixed_plan.state_id,
+            source: fixed_plan.source,
+            destination: fixed_plan.destination,
+            byte_count: fixed_plan.byte_count,
+            observed: true,
+            written: false,
+        }]
+        .into_boxed_slice(),
+    };
+    assert!(matches!(
+        lowered.execution_evidence_after_state_success(&[arena], &[mismatched]),
         Err(ExecutorError::FixedStateExecutionMissing)
     ));
 }

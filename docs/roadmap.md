@@ -18,6 +18,11 @@ provides the client protocol. Planned work is not a current capability.
   K/V arena.
 - Persistent K/V updates are required aliases during search and artifact load.
   Candidates that materialize incompatible state fail closed.
+- Recurrent and convolution classes now have stable per-class CUDA arenas,
+  generation-checked byte-range lowering, shared Luminal required aliases, and
+  event-gated completion evidence. The reference zero/copy path compiles, but
+  its explicit real-device gate has not run in the current environment and it
+  is not a substitute for GDN or convolution math.
 - The current direct paged-attention node uses FlashInfer. Luminal searches the
   surrounding decoder graph, but does not yet select among multiple attention
   implementations or jointly derive a KV layout.
@@ -63,9 +68,9 @@ single-device bring-up model.
 
 ## Primary model closure
 
-1. Bind the host-qualified atomic token-KV/recurrent/convolution
-   `RuntimeSession` lifecycle to stable device arenas and stream-ordered
-   completion evidence.
+1. Run the stable fixed-state arena, shared-alias, and stream-ordered completion
+   gate on the qualification GPU; keep it as a regression prerequisite for all
+   recurrent/convolution kernels.
 2. Add a backend-neutral GDN semantic op. Start with an independent reference
    implementation and a production CUDA candidate derived from an attributed,
    license-compatible mature implementation; selection remains in Luminal's
