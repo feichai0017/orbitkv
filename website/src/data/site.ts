@@ -113,7 +113,7 @@ export const roadmap = [
   {
     state: "NEXT",
     name: "Run the primary hybrid model",
-    detail: "Integrate recurrent and convolution state, GDN execution, partial RoPE, then block-FP8 loading for the 27B target.",
+    detail: "Bind recurrent and convolution arenas, add GDN execution and partial RoPE, then load block-FP8 weights for the 27B target.",
   },
   {
     state: "NEXT",

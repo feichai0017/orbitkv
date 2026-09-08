@@ -67,6 +67,38 @@ fn state_stats(session: &RuntimeSession, state_id: u16) -> StatePoolStats {
         .unwrap()
 }
 
+fn assert_released_slots_reuse_with_new_generations(
+    session: &mut RuntimeSession,
+    previous: &EngineBatchPublication,
+) {
+    let request_id = EngineRequestId(8);
+    session.acquire_requests(&[request_id]).unwrap();
+    let reused = session
+        .prepare_append_batch(&[EngineAppendIntent {
+            request_id,
+            target_boundary: 1,
+        }])
+        .unwrap();
+    for state in &reused.steps[0].fixed_states {
+        let old = previous.steps[0]
+            .fixed_states
+            .iter()
+            .find(|old| old.state_id == state.state_id)
+            .unwrap();
+        assert_eq!(state.destination.slot_id, old.slot.slot_id);
+        assert!(state.destination.generation > old.slot.generation);
+    }
+    session
+        .abort_prepared_execution(
+            reused.batch_id,
+            &[EngineStepAbortEvidence {
+                request_id,
+                backend_unobserved: true,
+            }],
+        )
+        .unwrap();
+}
+
 #[test]
 fn token_and_fixed_state_share_prepare_submit_complete_and_release() {
     let (mut session, backends) = fixed_session();
@@ -152,6 +184,8 @@ fn token_and_fixed_state_share_prepare_submit_complete_and_release() {
     release_ready_request(&mut session, request);
     assert_eq!(state_stats(&session, 1).free_slots, 2);
     assert_eq!(state_stats(&session, 2).free_slots, 2);
+
+    assert_released_slots_reuse_with_new_generations(&mut session, &second_publication);
 }
 
 #[test]
