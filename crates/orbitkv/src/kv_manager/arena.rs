@@ -2,7 +2,7 @@ use crate::plan::RetentionKind;
 use std::ops::{Deref, DerefMut};
 
 use super::error::KvManagerError;
-use super::identity::{ReclamationLease, RelocationLease, StepLease, SubmissionLease};
+use super::identity::{ReclamationLease, StepLease, SubmissionLease};
 use super::protocol::{BackendArenaRegistration, PhysicalResidencePolicy};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -123,8 +123,6 @@ impl RuntimeClass {
 pub(super) enum PagePhase {
     Free,
     Reserved { step: StepLease },
-    ReservedRelocation { relocation: RelocationLease },
-    Relocating { relocation: RelocationLease },
     Live,
     Retiring { reclamation: ReclamationLease },
     Quarantined,
@@ -172,8 +170,8 @@ impl PageCounts {
     fn counter_mut(&mut self, phase: PagePhase) -> &mut u64 {
         match phase {
             PagePhase::Free => &mut self.free,
-            PagePhase::Reserved { .. } | PagePhase::ReservedRelocation { .. } => &mut self.reserved,
-            PagePhase::Relocating { .. } | PagePhase::Live => &mut self.active,
+            PagePhase::Reserved { .. } => &mut self.reserved,
+            PagePhase::Live => &mut self.active,
             PagePhase::Retiring { .. } => &mut self.retiring,
             PagePhase::Quarantined => &mut self.quarantined,
             PagePhase::Exhausted => &mut self.exhausted,
@@ -230,8 +228,7 @@ impl PageCounts {
     }
 
     fn is_writing(page: PageState) -> bool {
-        matches!(page.phase, PagePhase::Relocating { .. })
-            || page.phase == PagePhase::Live && page.writer.is_some()
+        page.phase == PagePhase::Live && page.writer.is_some()
     }
 }
 

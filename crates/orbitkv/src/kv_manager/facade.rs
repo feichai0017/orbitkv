@@ -4,16 +4,19 @@ use super::{
     BlockDomain, CANONICAL_PAGE_TOKENS, CanonicalKvManager, CensusWork, ClassLayoutProgram,
     ClassRoot, CompiledKvClass, CompiledKvPlan, FIRST_POOL_EPOCH, ForkedRequest, KvManagerError,
     ManagerConfig, ManagerStats, MaterializedRequestView, NEXT_ENGINE_EPOCH, Ordering, PageCounts,
-    PageLease, PagePhase, PageState, PersistentRootEntries, PersistentTokenTable,
-    PhysicalResidencePolicy, PrefixLease, PrefixLookupHint, PrefixSemanticKey, ReclamationLease,
-    RequestForkItem, RequestLease, RequestSnapshot, RequestState, RequestView, RetentionKind,
-    RetirementProgram, RootEntry, RootLayout, SnapshotLease, SnapshotPage, StepLease,
-    SubmissionLease, TokenView, TokenViewQuery, ViewVersion,
+    PageLease, PagePhase, PageState, PersistentRootEntries, PhysicalResidencePolicy, PrefixLease,
+    PrefixLookupHint, PrefixSemanticKey, ReclamationLease, RequestForkItem, RequestLease,
+    RequestSnapshot, RequestState, RequestView, RetentionKind, RetirementProgram, RootEntry,
+    SnapshotLease, SnapshotPage, StepLease, SubmissionLease, ViewVersion,
 };
 #[cfg(test)]
 use super::{DeviceKvEntry, HotPathInstrumentation};
 
 impl CanonicalKvManager {
+    pub(crate) const fn page_tokens(&self) -> u64 {
+        self.page_tokens
+    }
+
     pub(crate) fn operation_capacity(&self) -> usize {
         self.operations.slots.len()
     }
@@ -104,7 +107,6 @@ impl CanonicalKvManager {
             prefixes: Arena::new("prefix", config.maximum_prefixes)?,
             prefix_index: BTreeMap::new(),
             operations: Arena::new("operation", config.maximum_operations)?,
-            relocations: Arena::new("relocation", config.maximum_operations)?,
             reclamations: Arena::new("reclamation", config.maximum_reclamations)?,
             pages,
             free_pages,
@@ -173,73 +175,6 @@ impl CanonicalKvManager {
             .map(Vec::into_boxed_slice)
     }
 
-    /// Materializes generation-checked logical token views for cold planning.
-    ///
-    /// Normal append never calls this path. The complete ordered query batch is
-    /// preflighted before any view is returned, and every retained placement is
-    /// revalidated against the canonical page generation and backend arena.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error for an empty or duplicate query, stale request/snapshot,
-    /// unavailable request, invalid class, malformed token table, or placement
-    /// that no longer names a live canonical page generation.
-    pub fn token_views_batch(
-        &self,
-        queries: &[TokenViewQuery],
-    ) -> Result<Box<[TokenView]>, KvManagerError> {
-        if queries.is_empty() {
-            return Err(KvManagerError::EmptyBatch);
-        }
-        let mut seen = BTreeSet::new();
-        queries
-            .iter()
-            .map(|query| {
-                if !seen.insert((query.request, query.class_id)) {
-                    return Err(KvManagerError::DuplicateRequest);
-                }
-                let state = self.request(query.request)?;
-                if state.released || state.quarantined {
-                    return Err(KvManagerError::RequestUnavailable);
-                }
-                if state.head != query.expected_snapshot {
-                    return Err(KvManagerError::StaleTokenView);
-                }
-                let class = self.runtime_class(query.class_id)?;
-                let snapshot = self.request_snapshot(query.request)?;
-                let root = snapshot
-                    .roots
-                    .get(usize::from(query.class_id))
-                    .ok_or(KvManagerError::InvalidClass(query.class_id))?;
-                let placements = root.tokens.materialize()?;
-                let view = TokenView {
-                    class_id: query.class_id,
-                    version: snapshot.view_version,
-                    page_tokens: u32::try_from(self.page_tokens)
-                        .map_err(|_| KvManagerError::ArithmeticOverflow("page tokens"))?,
-                    placements,
-                };
-                super::validate_token_view(&view)?;
-                for placement in &view.placements {
-                    let Some(location) = placement.location else {
-                        continue;
-                    };
-                    self.validate_page_lease(class, location.page)?;
-                    let page = self.page(location.page.page_id)?;
-                    if page.class_id != query.class_id
-                        || page.generation != location.page.generation
-                        || page.phase != PagePhase::Live
-                        || class.backend_index(location.page.page_id)? != location.backend_index
-                    {
-                        return Err(KvManagerError::TokenPlacementMismatch);
-                    }
-                }
-                Ok(view)
-            })
-            .collect::<Result<Vec<_>, KvManagerError>>()
-            .map(Vec::into_boxed_slice)
-    }
-
     /// Produces non-owning lookup hints. Attach always revalidates the exact
     /// key and generation, so an eviction/recycle race degrades to a miss.
     ///
@@ -285,7 +220,6 @@ impl CanonicalKvManager {
     ///
     /// Returns an error for a stale request/snapshot or unrepresentable token
     /// geometry. No manager state is changed.
-    #[cfg(test)]
     pub(super) fn materialize_request_view(
         &self,
         request: RequestLease,
@@ -300,26 +234,6 @@ impl CanonicalKvManager {
         }
         let snapshot = self.request_snapshot(request)?;
         self.materialize_snapshot_roots(snapshot.boundary, &snapshot.roots)
-    }
-
-    pub(crate) fn materialize_attention_view(
-        &self,
-        request: RequestLease,
-        expected: SnapshotLease,
-        previous_boundary: u64,
-    ) -> Result<Box<[SnapshotPage]>, KvManagerError> {
-        let state = self.request(request)?;
-        if state.released || state.quarantined {
-            return Err(KvManagerError::RequestUnavailable);
-        }
-        if state.head != expected {
-            return Err(KvManagerError::StaleView);
-        }
-        let snapshot = self.request_snapshot(request)?;
-        if previous_boundary >= snapshot.boundary {
-            return Err(KvManagerError::InvalidBatchRange);
-        }
-        self.materialize_attention_roots(previous_boundary, snapshot.boundary, &snapshot.roots)
     }
 
     pub(super) fn materialize_snapshot_roots(
@@ -355,33 +269,22 @@ impl CanonicalKvManager {
         })?;
         let mut pages = Vec::with_capacity(resident_count);
         for (class, root) in self.classes.iter().copied().zip(roots.iter()) {
-            let mirror_boundary = root.mirror_boundary(boundary);
             for entry in root.entries.iter().copied() {
                 let (token_begin, token_end) = self.clamped_page_token_span(
                     entry.logical_ordinal,
-                    mirror_boundary,
+                    boundary,
                     "materialized token begin",
                     "empty materialized token span",
                 )?;
-                let semantic_start = if root.is_dense() {
-                    class.semantic_start(boundary)
-                } else {
-                    0
-                };
-                let required_start =
-                    attention_previous_boundary.map_or(semantic_start, |previous| {
-                        if root.is_dense() {
-                            class.semantic_candidate_start(previous)
-                        } else {
-                            0
-                        }
+                let semantic_start = class.semantic_start(boundary);
+                let required_start = attention_previous_boundary
+                    .map_or(semantic_start, |previous| {
+                        class.semantic_candidate_start(previous)
                     });
                 if token_end <= required_start {
                     continue;
                 }
                 let visible_begin = semantic_start.max(token_begin).min(token_end);
-                let valid_token_count = u32::try_from(token_end - token_begin)
-                    .map_err(|_| KvManagerError::ArithmeticOverflow("materialized valid tokens"))?;
                 pages.push(SnapshotPage {
                     class_id: entry.class_id,
                     backend_domain: entry.backend_domain,
@@ -390,15 +293,15 @@ impl CanonicalKvManager {
                     temporal_cycle: entry.temporal_cycle,
                     page: entry.page,
                     backend_index: entry.backend_index,
-                    valid_token_count,
+                    valid_token_count: u32::try_from(token_end - token_begin).map_err(|_| {
+                        KvManagerError::ArithmeticOverflow("materialized valid tokens")
+                    })?,
                     visible_token_offset: u32::try_from(visible_begin - token_begin).map_err(
                         |_| KvManagerError::ArithmeticOverflow("materialized visible offset"),
                     )?,
                     visible_token_count: u32::try_from(token_end - visible_begin).map_err(
                         |_| KvManagerError::ArithmeticOverflow("materialized visible tokens"),
                     )?,
-                    retained_token_bits: root
-                        .retained_token_bits(entry.backend_index, valid_token_count),
                 });
             }
         }
@@ -412,8 +315,7 @@ impl CanonicalKvManager {
     ///
     /// Rejects empty/duplicate input, stale heads, unavailable requests, or
     /// unrepresentable geometry without returning partial materialization.
-    #[cfg(test)]
-    pub(super) fn materialize_request_views_batch(
+    pub(crate) fn materialize_request_views_batch(
         &self,
         items: &[(RequestLease, SnapshotLease)],
     ) -> Result<Box<[MaterializedRequestView]>, KvManagerError> {
@@ -484,10 +386,6 @@ impl CanonicalKvManager {
                     roots: (0..self.classes.len())
                         .map(|_| ClassRoot {
                             entries: PersistentRootEntries::default(),
-                            tokens: PersistentTokenTable::default(),
-                            selection_masks: Arc::new(BTreeMap::new()),
-                            layout: RootLayout::Dense,
-                            resident_tokens: 0,
                         })
                         .collect::<Vec<_>>()
                         .into(),
@@ -499,7 +397,6 @@ impl CanonicalKvManager {
                     head,
                     pending_step: None,
                     inflight_submission: None,
-                    pending_relocation: None,
                     last_completion_domain: 0,
                     last_completion_value: 0,
                     released: false,

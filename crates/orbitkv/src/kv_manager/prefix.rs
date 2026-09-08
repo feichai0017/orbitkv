@@ -682,11 +682,6 @@ impl CanonicalKvManager {
         let mut seen = BTreeSet::new();
         let mut entries = Vec::new();
         for (class, root) in self.classes.iter().copied().zip(snapshot.roots.iter()) {
-            if !root.is_dense() {
-                return Err(KvManagerError::UnsupportedProfile(
-                    "Prefix publication after token relocation is not implemented",
-                ));
-            }
             let first = class.semantic_start(key.boundary) / self.page_tokens;
             let expected_len = usize::try_from(end.saturating_sub(first))
                 .map_err(|_| KvManagerError::ArithmeticOverflow("prefix root length"))?;

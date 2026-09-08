@@ -21,18 +21,17 @@ Historical results qualify only their recorded source closure.
 | Surface | Current status | Boundary |
 | --- | --- | --- |
 | Attention-state compiler | L1 + L2 | Compiles typed attention state or Retention IR into a fingerprinted `RuntimeManifest` |
-| KV manager | L2 | Owns page allocation, generations, snapshots, Prefix/COW, token placement, retirement, ACK, and reuse |
+| KV manager | L2 | Owns page allocation, generations, snapshots, Prefix/COW, compiled retirement, ACK, and reuse |
 | Physical-residence ablation | Narrow L5 same-executor closure | Released-hybrid paired runs preserve 256 output tokens while compiled residence lowers live payload by 27.8%, extends the fixed-budget boundary by 32 tokens, and slightly reduces total test-path time; serving throughput remains open |
 | RuntimeSession | L2 | Presents transactional engine operations without exposing manager capabilities |
 | External KV tier transactions | L2 host | Export/restore run through an object-safe async transport contract; a real-byte host adapter verifies compact partial tails, per-page checksums, deletion, cross-session restore, and unobserved/ambiguous fault mapping; Mooncake/NIXL and hybrid restore remain open |
 | Executor plan | L2 | Compiles a manifest directly into Full, Sliding, Full+Sliding, or exact Chunked attention classes |
-| Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page and packed-page decode pass; Luminal never allocates or recycles pages |
-| Token relocation executor | L3 | Lowers manager-authored moves to per-layer K/V byte ranges, performs stream-ordered D2D copies, and exposes success evidence plus device-time/byte measurement only after CUDA events |
+| Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page decode/prefill pass; Luminal never allocates or recycles pages |
 | Bucketed model runtime | L4 correctness | One symbolic graph is searched once into decode/prefill executables; query, batch, and per-class context dimensions have bounded capacities, dynamic inputs are preallocated, and one stable K/V arena per class survives prefill plus repeated decode |
 | Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity, LLIR fingerprints, and required persistent-state aliases fail closed |
-| Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; narrow matched benefit | Capture accepts one-token-per-request decode batches. Batch-one child-graph replay reduced matched fixed-step wall time by 5.8-8.3%; exact-signature automatic C2 recapture reduced throughput by 13.7% and is not used by serving |
+| Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; historical narrow matched benefit | Capture accepts one-token-per-request decode batches. In its recorded source closure, batch-one child-graph replay reduced matched fixed-step wall time by 5.8-8.3%; exact-signature automatic C2 recapture reduced throughput by 13.7% and is not used by serving |
 | Compiler-constrained persistent state | Reference-gated measured improvement | A 16-candidate search selected 36/36 in-place K/V tensors in both buckets; four C2 epochs improved throughput 14.5%, TTFT 32.2%, TPOT 10.2%, and E2E 12.8% versus the prior OrbitKV artifact; random-trace digests differ |
-| Joint state/graph cost contract | L2 + L3 narrow device closure | `orbitkv` derives legal layouts and request-local token masks; one Luminal decoder dynamically executes token-selection and packed CSR geometry over the same K/V arena; exact-geometry device profiles plus measured copy cost produce identity-bound evidence. Automatic relocation remains disabled pending released-model long-context benefit |
+| Joint compiler facts | L2 + compile-path integration | `orbitkv` derives backend-neutral storage, retention, address, and retirement facts; the executor binds stable arenas, injects deterministic facts into every Luminal bucket, binds paged-attention nodes to class IDs, and fingerprints the contract in schedule identity. No attention-backend selection rewrite consumes these facts yet |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | Single-process model engine | Narrow L4 correctness + load closure | One dedicated thread owns bounded admission/output queues, an active set, `RuntimeSession`, and `CompiledDecoder`; released hybrid tests cover B=2 mixed scheduling and direct B=1/B=8 logit parity. Fresh-prompt/greedy only |
@@ -46,7 +45,7 @@ Historical results qualify only their recorded source closure.
 | --- | --- |
 | Dense decoder blocks | BF16 embedding, linear projections, pre-norm or sandwich-norm residuals, direct or unit-offset RMSNorm weights, global/local RoPE, SwiGLU or GeGLU, optional QKV bias and QK norm |
 | Attention | MHA/GQA paged attention; query-head count must divide by KV-head count; head dimension 64, 128, 256, or 512 when the compiled FlashInfer specialization exists |
-| KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, Prefix/COW lowering, stream-ordered token relocation |
+| KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, and Prefix/COW lowering |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
 | Checkpoint family | Configuration-driven dense decoder with fail-closed config and safetensors-header validation; released Full and Full+Sliding checkpoints have real-device correctness evidence |
 | Not yet executable as complete models | MoE, MLA/latent KV, recurrent or convolution state, quantized weights, multimodal encoders, speculative decoding, and tensor/pipeline parallel models |
@@ -60,21 +59,17 @@ candidate or stored artifact unless every K/V output resolves to the same
 registered input arena in every bucket. The qualified artifact reports 36/36
 in-place tensors and zero copy-back bytes for both decode/prefill buckets.
 
-Validated state-layout facts enter the same e-graph as the decoder. Request-local
-layout remains dynamic: sparse Full state becomes a page-size-one token-slot
-view and packed state uses the physical page width, both within the same
-artifact, selected bucket program, and stable K/V arena. Fresh exact-geometry
-measurements return as manager-neutral cost evidence bound to
-plan/facts/artifact/schedule/bucket-program/execution identities and real
-CUDA-event copy bandwidth. The narrow H20 path is correct, but it is not yet a
-performance feature: released-model long-context benefit remains unqualified,
-so automatic relocation stays disabled.
+Validated state facts enter the same e-graph as the decoder. This is the first
+half of joint compilation, not yet attention-kernel/layout search: the direct
+paged-attention node currently resolves to a FlashInfer custom op, while Luminal
+searches the surrounding equivalent graph schedules under stable-state alias
+constraints.
 
 ## Attention-state coverage
 
 | State shape | Compiler and manager | Executor lowering | Real-device engine status |
 | --- | --- | --- | --- |
-| Full token KV | Host-tested, including shared Prefix, COW, disposition, retained-token masks, and relocation | Token holes lower to page-size-one CSR; packed pages use physical width; CUDA relocation implemented | Minimal released-checkpoint prefill/decode plus synthetic same-runtime token-selection/packed parity pass |
+| Full token KV | Host-tested, including shared Prefix and COW | Implemented with stable arenas and paged attention | Released dense prefill/decode passes |
 | Sliding token KV | Host-tested periodic placement, retirement, ACK, and reuse; same-semantics request-lifetime baseline | Implemented; CSR geometry matches across residence policies | Native Sliding layers cross their 512-token window in the released hybrid H20 closure |
 | Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Manifest-driven layer binding and independent per-class inputs/arenas | Released 3-Full/15-Sliding checkpoint passes reference parity, retirement/reuse, cancellation, and final drain on H20 |
 | Exact Chunked token KV | Host-tested resettable epoch lifecycle | Implemented | Current architecture unqualified |
@@ -83,35 +78,32 @@ so automatic relocation stays disabled.
 | Convolution state | Host-tested independent pool | Not integrated into one model transaction | Unqualified |
 | Per-head or region-partitioned layouts | Compiler primitives exist | Not generally admitted by the current executor plan | Unqualified |
 
-## Token-level lifecycle
+## Compiled lifecycle
 
-Token placement and disposition are core manager state, not an optional server
-feature. Reclamation behavior follows compiled semantics:
+Reclamation behavior follows compiled semantics:
 
-- Full state remains live unless the request, Prefix, or explicit disposition
-  proves otherwise. Relocation is policy-gated because it can add copy cost
-  without reducing semantic state.
+- Full state remains live until request or Prefix ownership ends.
 - Sliding state retires pages as the visibility frontier advances and reuses a
   generation only after executor completion and exact acknowledgement.
 - Full + Sliding keeps independent class frontiers; one class cannot justify
   reclaiming another.
 - Chunked state retires at proved epoch boundaries.
-- Latent and fixed state do not relocate until their component-specific device
-  copy and publication contracts are validated.
+- Latent and fixed state require their component-specific device copy and
+  publication contracts before end-to-end admission.
 
 ## Removed surfaces
 
 The active product intentionally has no compatibility tree, Python runtime, C
 ABI, packaged engine target, numbered wire contract, general plugin framework,
-or second page allocator. It has one narrow external byte-transport contract;
-this does not grant adapters KV lifecycle authority. These are breaking removals,
-not deprecated aliases.
+second page allocator, or live-token relocation/compaction state machine. It has
+one narrow external byte-transport contract; this does not grant adapters KV
+lifecycle authority. These are breaking removals, not deprecated aliases.
 Historical files under `results/**` may preserve such identities as provenance.
 
 ## Current claim boundary
 
 The current architecture has same-source L3 device correctness for paged
-attention and token relocation, plus narrow L4 released-checkpoint correctness
+attention, plus narrow L4 released-checkpoint correctness
 closures for Full and Full+Sliding token KV. The Full+Sliding run crosses the
 native Sliding boundary and matches independently generated greedy tokens while
 qualifying lifecycle reuse and cancellation. A ten-pair release-mode

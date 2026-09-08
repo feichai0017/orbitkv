@@ -69,11 +69,10 @@ impl CanonicalKvManager {
                 .roots
                 .iter()
                 .flat_map(|root| {
-                    let boundary = root.mirror_boundary(snapshot.boundary);
                     root.entries
                         .iter()
                         .copied()
-                        .map(move |entry| (entry, boundary))
+                        .map(move |entry| (entry, snapshot.boundary))
                 })
                 .collect::<Vec<_>>();
             for (entry, boundary) in &entries {

@@ -1,293 +1,118 @@
 # Roadmap
 
-The target product is one Rust inference process: OrbitKV compiles and owns
+OrbitKV targets one native Rust inference process. `orbitkv` compiles and owns
 attention-state lifetimes, the Luminal fork compiles and executes model graphs,
-and the Rust server schedules requests and exposes client protocols. Planned
-work is not a current capability.
+`orbitkv-engine` coordinates requests and device work, and `orbitkv-server`
+provides the client protocol. Planned work is not a current capability.
 
-## Current checkpoint
+## Current baseline
 
-- `crates/orbitkv`, `crates/orbitkv-executor`, `crates/orbitkv-server`, and
-  `crates/orbitkv-engine` are the four owned workspace crates. The pinned
-  Luminal fork lives under `third_party/luminal` and is explicitly excluded
-  from the owned workspace member set.
-- `RuntimeManifest` is the shared source of truth for manager and executor plans.
-- OrbitKV owns page allocation, generations, Prefix/COW, token disposition,
-  retirement, publication, and reuse.
+- `RuntimeManifest` is the shared source of truth for lifecycle and execution.
+- OrbitKV is the sole KV authority: it owns pages, generations, snapshots,
+  Prefix/COW, retirement, acknowledgement, and reuse.
 - Full, Sliding, Full+Sliding, and exact Chunked lifetimes compile and pass host
-  lifecycle tests.
-- Luminal consumes manager-authored page metadata, keeps stable K/V arenas,
-  compiles decode/prefill buckets once, samples greedy tokens on device, and can
-  replay fixed-signature decode through child CUDA graphs.
-- A released 18-layer Full+Sliding checkpoint has an H20 correctness and
-  lifecycle closure: native 3 Full / 15 Sliding layer assignment, 512-token
-  prefill, 33 decode steps, independent reference-token parity, Sliding
-  retirement and generation reuse, cancellation, and complete arena drain.
-- External export/restore/delete transactions and an async transport contract
-  move real bytes through a host reference adapter. Production transports and
-  remote leases remain open.
-- The server has a local async `Engine` contract and optional vLLM Rust frontend.
-  `orbitkv-engine::ModelEngine` now implements that contract with one dedicated
-  model thread, bounded admission/output queues, a decode-first token-budgeted
-  active set, a real `RuntimeSession`, one compiled Luminal decoder, streamed
-  greedy tokens, stop/cancel handling, and exact final drain. It is not yet
-  performance-qualified.
-- `orbitkv-serve` composes `ModelEngine` with the pinned vLLM Rust OpenAI,
-  tokenizer/chat, SSE, request-ID, and stream-drop auto-abort components in the
-  same process. Real H20 tests cover non-streaming and SSE completions,
-  concurrency, disconnect cancellation, graceful shutdown, and final drain. A
-  fixed 16-request load trace also completes at C1/C2/C4/C8 with every requested
-  output token and no per-request errors.
-- A released-hybrid same-executor residence experiment passes ten paired
-  release-mode epochs with full token parity. Compiled residence reduces live
-  payload by 27.8%, raises the fixed-budget boundary from 528 to 560, and has a
-  positive paired total-time confidence interval. HTTP concurrency and latency
-  metrics are now measured through C8, but comparative serving benefit remains
-  unproven.
+  lifecycle tests. Token-level relocation and live-token compaction are not part
+  of the product.
+- One symbolic decoder graph is searched once into decode and prefill buckets.
+  Dynamic inputs use stable addresses and each attention class has one persistent
+  K/V arena.
+- Persistent K/V updates are required aliases during search and artifact load.
+  Candidates that materialize incompatible state fail closed.
+- The current direct paged-attention node uses FlashInfer. Luminal searches the
+  surrounding decoder graph, but does not yet select among multiple attention
+  implementations or jointly derive a KV layout.
+- Released H20 closures exist for a dense Full checkpoint and an interleaved
+  Full+Sliding checkpoint. Exact Chunked, MLA, recurrent/linear attention,
+  convolution state, MoE, quantization, and multi-device execution are not
+  released-model-qualified.
+- The single-process Rust engine and OpenAI-compatible server pass bounded
+  batching, cancellation, streaming, shutdown, and final-drain tests.
+- The best recorded matched product comparison remains negative: 0.598x stock
+  SGLang output throughput on the recorded C2 trace. The same configuration used
+  40.4% less K/V tensor payload because the reference disabled hybrid Sliding
+  memory. This is not a replacement or superiority claim.
+- External export, restore, deletion, and failure semantics pass through the
+  host-memory reference transport. Mooncake, NIXL, remote leases, and network
+  benefit remain open.
 
-## R1: Execute a multi-class hybrid graph — completed
+## Searchable attention execution
 
-The single-class restriction is removed from `DecoderGraph`: every layer is
-built from its manifest-assigned class, with independent persistent arenas,
-write slots, CSR metadata, context dimensions, and capture signatures. The
-released-checkpoint qualification crosses the native Sliding window with 512
-prefill tokens and 33 decode steps. It matches an independent Transformers
-greedy-token sequence, observes retirement and post-ACK generation reuse, runs
-a second 16-token request from reused storage, releases that request at a token
-boundary, and verifies both final drains.
+This is the immediate milestone. It turns the current FlashInfer integration
+from a fixed custom-op implementation into a genuine Luminal compiler choice.
 
-This closes R1 correctness and lifecycle qualification. It does not by itself
-close a benefit or production-serving claim; the narrow R2 result below is a
-separate matched experiment.
+1. Define one backend-neutral paged-attention semantic op carrying OrbitKV
+   class identity, visibility, page geometry, dtype, head geometry, and bucket
+   dimensions.
+2. Provide at least two semantically equivalent implementations for an admitted
+   geometry: initially FlashInfer and a Luminal-native CUDA implementation.
+3. Express matching and selection through egglog and Luminal extraction/search.
+   Do not add model-name, release-name, or GPU-name dispatch in product code.
+4. Preserve OrbitKV's required K/V aliases for every candidate and persist the
+   chosen implementation and kernel identity in the decoder artifact.
+5. Prove Full, Sliding, decode, and causal-prefill equivalence against an
+   independent reference before interpreting performance.
 
-## R2: Prove the compiler contribution — narrow closure completed
+The milestone closes only when a real search containing more than one legal
+attention implementation selects by measured device cost and the selected
+artifact replays correctly on a released checkpoint. Merely wrapping FlashInfer
+in a Luminal custom op does not satisfy this gate.
 
-The backend-neutral `PhysicalResidencePolicy` provides the two arms. A single
-compiled Luminal graph executed both on H20 with identical weights, dtype,
-request trace, kernel selection, and arena geometry:
+## Additional attention-state families
 
-```text
-conservative retention  versus  manifest-compiled retention
-```
+Coverage advances by state family rather than checkpoint-name branches:
 
-Ten paired alternating release-mode epochs each ran a 512-token prefill and 255
-decode steps. All 256 output tokens matched between arms, and the independently
-stable first 13 tokens matched Transformers. Compiled residence reduced physical
-resident payload from 14,155,776 to 10,223,616 bytes (27.8%) and Sliding pages
-from 48 to 32 (33.3%). Retention Amplification fell from 1.387 to 1.002. With
-Full=35 and Sliding=33 pages, compiled residence
-advanced to boundary 560 while request-lifetime residence stopped at 528. Median
-total test-path time fell from 1.083926 s to 1.075590 s (0.77%); paired mean
-improvement was 11.633 ms with a 95% confidence interval of 5.697-17.570 ms.
-Model compute stayed nearly equal; the main difference was manager time.
+1. Independently qualify exact Chunked token KV on device.
+2. Integrate recurrent/linear attention plus convolution state through the
+   generation-safe fixed-state pool and one atomic engine step.
+3. Add latent/RoPE-aware MLA attention and bind component-aware latent state.
+4. Add MoE routing and then quantized linear operators only as required by the
+   selected released checkpoints.
+5. Defer sparse, tree, cross-attention, speculative decoding, and multi-device
+   claims until their visibility and completion contracts are explicit.
 
-This is a narrow same-executor L5 result: it proves that compiler-derived
-lifetime management reduces real resident payload and improves admission without
-adding net cost in this one batch-one workload. It does not establish
-continuous-batching throughput, TTFT/TPOT tails, multi-user capacity, or a win
-over SGLang. Those product-level measurements remain R3/R4. CUDA Graph dispatch
-speedups remain separate evidence.
+The first heterogeneous target should be a released Full + linear-attention +
+convolution checkpoint because the core already compiles that state shape. The
+second should exercise MLA. Each family must pass plan compilation, randomized
+lifecycle checks, executor lowering, operator parity, released-checkpoint
+end-to-end correctness, and then a matched benefit experiment.
 
-## R3: Complete the single-process serving engine — narrow load closure completed
+## Serving performance
 
-Status: single-process HTTP correctness and a narrow C1-C8 load qualification
-are completed for one released Full+Sliding checkpoint.
+After attention becomes a real compiler choice, optimize the complete warm path:
 
-The concrete coordinator now implements the server `Engine` trait. A dedicated
-thread owns `RuntimeSession`, stable class arenas, and `CompiledDecoder`; bounded
-admission feeds an active set whose decode-first batches obey a configurable
-token budget. Logical requests stream through bounded output queues and converge
-through release/ACK on length, stop, cancellation, or disconnect. Invalid
-continuation, overlength, duplicate, unsupported batch, queue pressure, and
-insufficient per-class capacity inputs fail closed. Device ambiguity quarantines
-state and fail-stops the worker. Released hybrid H20 tests pass B=2 prefill and
-decode with reference-token parity, late prefill during decode, stop/cancel, and
-final drain.
+1. Attribute TTFT and TPOT to attention, graph dispatch, scheduler, metadata
+   upload, sampling, and frontend overhead.
+2. Remove exact-shape CUDA Graph recapture cliffs with stable capacity
+   signatures and measured capture policy.
+3. Add on-device temperature, top-k, and top-p sampling.
+4. Run fixed-model, fixed-weight, fixed-dtype, fixed-memory, and fixed-trace
+   comparisons with SGLang and vLLM through the same benchmark client.
+5. Promote a claim only when output, completion, final drain, p95/p99 latency,
+   throughput, and admission-capacity gates all pass.
 
-The generic `orbitkv-serve` binary now starts the real model engine and vLLM
-Rust frontend together. It uses typed CLI configuration, supports separately
-stored tokenizer assets, reports logical rather than class-summed KV capacity,
-and handles Ctrl-C/SIGTERM through graceful frontend shutdown. A released model
-passes non-streaming and SSE OpenAI completions, two concurrent HTTP requests,
-client-disconnect auto-abort with an explicit cancellation counter, and final
-manager drain on H20.
+No date or performance target is promised before the attribution profile shows
+which layer owns the current gap.
 
-The pinned Rust `vllm-bench` client then ran one fixed trace through the same
-warm server at C1/C2/C4/C8. Every arm completed 16 requests with 256 output
-tokens each and zero detailed errors. Output throughput increased from 184.24
-to 518.88 token/s, while median TTFT increased from 163.06 to 1127.81 ms and
-median TPOT from 4.80 to 11.06 ms. A direct B=1/B=8 teacher-forced diagnostic
-also proves bit-identical rows within B=8, maximum absolute cross-batch logit
-difference 0.4296875, and zero argmax mismatches over 16 positions.
+## External KV transports
 
-This closes a narrow R3 load gate and exposes a real throughput/latency tradeoff.
-Fairness, soak, the capacity failure point, Chunked prefill, and richer sampling
-remain open. The R4 comparison below now quantifies the remaining executor gap;
-no SGLang-relative benefit follows from this internal scaling result.
+Implement Mooncake behind `ExternalKvTransport` and reuse the host adapter's
+conformance suite. Add remote lease epochs, renewal, eviction intent, active
+restore pins, exact deletion acknowledgement, timeout reconciliation, shared
+Prefix restore, and node-failure recovery. Add NIXL only after Mooncake
+semantics are stable, then compare cold prefill, local retention, and external
+restore with identical workloads.
 
-PegaInfer is a useful reference for a small Rust server/model boundary and for a
-full-plus-linear-attention execution loop. It is not a Dynamo integration: its
-current source has no Dynamo, KVBM, or NIXL dependency. Do not copy its
-model-named dispatch or model-owned contiguous KV cache into this architecture.
+Dynamo may provide routing, topology, discovery, events, and telemetry. Do not
+import `kvbm-logical`, Dynamo `KvBlockManager`, lifecycle pins, or another page
+allocator: OrbitKV remains the sole KV authority.
 
-## R4: Run the product comparison — completed, competitiveness gate failed
-
-Use `tools/run_matched_serving.py` and one vLLM benchmark client for both
-OrbitKV/Luminal and a tuned stock SGLang. Alternate launch order across an even
-number of epochs and hold model, weights, dtype, request trace, device budget,
-sampling, and concurrency constant. Report correctness separately from TTFT,
-TPOT, ITL, throughput, tail latency, memory, and capacity.
-
-The same-executor ablation from R2 establishes attribution to the compiler. The
-SGLang comparison tests product competitiveness. Neither replaces the other.
-
-The first run exposed cross-process Luminal search variation, so it was not
-promoted. Native schedule artifacts were then added: paged-attention custom-op
-schedules are reloaded without search and are strictly bound to the manifest,
-decoder/weight geometry, arenas, and compile buckets. Four independent H20
-restarts produced one stable candidate digest and a 0.74% throughput coefficient
-of variation.
-
-The artifact-fixed four-epoch C2 comparison completed every 127-to-256-token
-request without errors. OrbitKV median output throughput was 592.32 token/s
-versus 1112.60 for stock SGLang v0.5.17 (0.534x). OrbitKV had 2.997 ms TPOT
-versus 1.699 ms (1.76x) and 98.08 ms TTFT versus 15.14 ms (6.50x). Cross-engine
-text digests differed, so this is a transparent product diagnostic rather than
-a matched-output benefit claim.
-
-OrbitKV did preserve a state-capacity advantage: its Full/Sliding class arenas
-encode 85.875 MiB of persistent K/V payload for the tested capacity, versus
-144.0 MiB for SGLang after SGLang disabled hybrid SWA memory on Gemma3, a 40.4%
-reduction. Those are resolved tensor-payload bytes, not allocator peak. The R4
-competitiveness gate therefore fails on serving speed while passing the narrower
-persistent-state objective.
-
-## R4.1: Close the executor gap
-
-Do not expand the product surface until the fixed trace is competitive. Attack
-the measured hot path in this order:
-
-1. Fixed-signature capture now accepts pure decode batches, but automatically
-   recapturing exact context-page signatures reduced C2 throughput by 13.7%; do
-   not connect that policy to serving until padded/stable signatures remove the
-   recapture cliffs.
-2. Completed: persistent K/V aliases are now compiler hard constraints. Search
-   candidates and loaded artifacts fail closed unless every selected bucket
-   updates all K/V tensors in place. A 16-candidate constrained search produced
-   36/36 in-place tensors and zero copy-back bytes in both retained buckets.
-3. Completed narrow gate: four alternating epochs against the previous
-   artifact improved throughput by 14.5%, TTFT by 32.2%, TPOT by 10.2%, and
-   E2E by 12.8%. The independent B2 reference-token probe passes; random-trace
-   text differs across schedules, so strict output equivalence remains false.
-4. Continue with graph-internal kernel/fusion profiling against SGLang FA3.
-   The improved artifact reaches 0.598x SGLang throughput, 1.59x TPOT, and
-   4.79x TTFT, so the product competitiveness gate still fails.
-
-Only after this gate passes should R5/R6 become the primary product work.
-
-## R4.2: Join state and graph compilation
-
-Status: the ownership boundary, persistent-alias constraint, forward facts
-path, token-selection execution representation, and typed cost-feedback
-infrastructure are implemented. OrbitKV emits backend-neutral state/layout
-facts and request-local retained-token masks; the executor binds them to stable
-arenas and injects static facts into Luminal's e-graph, with each paged-attention
-node linked to its state class. One installed decoder can be freshly profiled at
-the token-selection and packed runtime geometries. The executor combines those
-matched measurements with relocation bandwidth, and OrbitKV admits only
-positive amortized benefit. Production relocation remains disabled because the
-released-checkpoint long-context qualification and engine control loop are not
-closed.
-
-Build the joint path without making `orbitkv` depend on Luminal internals:
-
-1. Completed for static facts: define backend-neutral `StateLayoutFacts` in
-   `orbitkv` for attention class, retention/page/component geometry, address and
-   retirement programs, and legal relocation alternatives. Dynamic Prefix
-   immutability and observed contiguity remain runtime binding facts.
-2. Completed infrastructure: translate those facts in `orbitkv-executor` into
-   Luminal search facts, bind paged-attention nodes to their state class, and
-   include the fact digest in artifact identity. The fork may use egglog and
-   backend-specific analyses internally; those types do not leak into the
-   reusable manager. Request-local selected layout deliberately remains outside
-   these global facts.
-3. Completed execution representation: a sparse Full-attention snapshot lowers
-   to page-size-one token-slot CSR metadata, while its packed successor uses the
-   physical page width. Page size is a capture-sensitive dynamic dimension, and
-   both views reuse one compiled graph, selected bucket program, and K/V arena.
-4. Completed cost infrastructure: the installed executable can be reprofiled
-   at exact source/target geometry. The executor creates a
-   `RelocationCostProfile` bound to manager plan, compiler facts, artifact,
-   schedule, bucket program, source/target execution fingerprints, class/layout
-   pair, and proposal envelope. Stale, weak, foreign-executable, token-count, or
-   unrelated-geometry mismatches are rejected.
-5. Completed manager gate: the default policy disables relocation. A measured
-   policy compares expected step savings with CUDA-event D2D copy cost and a
-   required margin; only positive amortized benefit may reserve destinations.
-   The old static fragmentation rule is explicit test/qualification mode only.
-   The manager remains the only component allowed to reserve destinations or
-   publish a relocated view.
-6. Next: run token-selection versus packed calibration on a released checkpoint
-   across context, fragmentation, batch, and remaining-decode buckets; persist
-   only qualified envelopes, then connect those envelopes to the engine's
-   relocation control loop. A missing or negative profile disables relocation;
-   it may never weaken reclamation proof. Kernel/layout rewrites remain a later
-   search optimization, not a prerequisite for measuring the current physical
-   geometry change.
-
-The first closure is deliberately narrow: Full+Sliding, decode and prefill
-buckets, stable arenas, and packed versus non-packed token layout on one
-released checkpoint. It must report copy bytes, graph time, end-to-end time,
-resident bytes, and output correctness. Only a positive matched result becomes
-the default policy.
-
-## R5: Add distributed KV tiers
-
-Implement Mooncake first behind `ExternalKvTransport`, reusing the host adapter's
-conformance suite. Then add remote lease epochs, renewal, eviction intent, active
-restore pins, exact deletion acknowledgement, timeout reconciliation, and node
-failure recovery. Add shared Prefix restore and independently qualify Sliding,
-Full+Sliding, and Chunked transfers.
-
-Use Dynamo as an architectural and optional outer-control-plane source: routing,
-events, topology, discovery, and telemetry may feed OrbitKV policy. Do not import
-`kvbm-logical`, Dynamo `KvBlockManager`, lifecycle pins, or another allocator.
-Add NIXL as a transport-only adapter after Mooncake semantics are stable, then
-compare both data planes with identical restore/offload workloads.
-
-## R6: Execute heterogeneous state
-
-Integrate one component-aware heterogeneous model path. The preferred first
-target is Full attention interleaved with recurrent/linear attention and
-convolution state because it exercises token pages and fixed-size checkpoints
-in one transaction. MLA is the alternative path and requires latent/RoPE-aware
-attention kernels. Model configuration—not model-name branches—must drive both
-OrbitKV state compilation and Luminal graph construction.
-
-Coverage advances by attention/state family rather than by adding model-name
-adapters:
-
-1. qualify exact Chunked token KV on device, closing the already implemented
-   manager and lowering path;
-2. add latent/RoPE-aware MLA operators and bind component-aware latent state;
-3. compose recurrent and convolution checkpoints with token KV in one atomic
-   execution transaction for Mamba/GDN/KDA-style hybrids;
-4. add MoE routing and quantized linear operators only when required by the
-   selected released checkpoint;
-5. defer sparse, tree, cross-attention, speculative, and multi-device claims
-   until their visibility and completion contracts are explicit.
-
-For each family, the gate order is compiler plan, randomized lifecycle oracle,
-executor lowering, operator parity, released-checkpoint end-to-end correctness,
-then matched benefit. Unsupported combinations continue to fail closed.
-
-## R7: Formalize MPSR and harden production
+## Formal and production closure
 
 State the Minimum Persistent State Realization objective and constraints
-formally. Prove optimality for bounded-window and exact-chunked subclasses, and
+formally. Prove optimality for bounded-window and exact-chunked subclasses and
 compare generated plans with a small exact oracle for randomized instances.
 
-Then add graph recapture policy, overlap, bounded queues, authenticated completion
-envelopes, metrics, tracing, crash recovery, soak tests, multi-device placement,
-release artifacts, and a supported-combination matrix. Production claims require
-all applicable correctness, pressure, cancellation, and long-running gates.
+Then add authenticated completion envelopes, metrics, tracing, crash recovery,
+long soak tests, multi-device placement, release artifacts, and a supported
+combination matrix. Production claims require every applicable correctness,
+pressure, cancellation, and long-running gate.

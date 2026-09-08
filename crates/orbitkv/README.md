@@ -14,8 +14,8 @@ crates/orbitkv/
 
 `RuntimeManifest` is the canonical compiler artifact. `RuntimeSession` owns
 request and snapshot identities, physical-page selection and generations,
-Prefix/COW, token disposition, semantic and execution frontiers, retirement,
-acknowledgement, and safe reuse. Device execution is supplied in-process by
+Prefix/COW, semantic and execution frontiers, retirement, acknowledgement, and
+safe reuse. Device execution is supplied in-process by
 `orbitkv-executor`.
 
 ```bash

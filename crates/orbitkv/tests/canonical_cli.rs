@@ -416,12 +416,10 @@ fn compile_state_plan_separates_mla_recurrent_and_convolution_contracts() {
     let compiled: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(compiled["schema"], "orbitkv.attention-state-plan.v1");
     assert_eq!(compiled["states"][0]["backend"]["kind"], "token_slots");
-    assert_eq!(compiled["states"][0]["backend"]["token_relocatable"], true);
     assert_eq!(
         compiled["states"][1]["backend"]["kind"],
         "recurrent_checkpoints"
     );
-    assert_eq!(compiled["states"][1]["backend"]["token_relocatable"], false);
     assert_eq!(compiled["states"][2]["backend"]["kind"], "convolution_ring");
 
     let manager = run(&["compile-state-manager-plan", plan.0.to_str().unwrap()]);

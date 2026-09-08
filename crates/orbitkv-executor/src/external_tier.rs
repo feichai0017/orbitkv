@@ -328,7 +328,6 @@ mod tests {
                 page_tokens: 16,
                 key_bytes_per_token_per_layer: 8,
                 value_bytes_per_token_per_layer: 12,
-                token_relocatable: true,
                 visibility: AttentionVisibility::Full,
             }],
         );
@@ -403,7 +402,6 @@ mod tests {
                 page_tokens: 16,
                 key_bytes_per_token_per_layer: 8,
                 value_bytes_per_token_per_layer: 12,
-                token_relocatable: true,
                 visibility: AttentionVisibility::Full,
             }],
         );

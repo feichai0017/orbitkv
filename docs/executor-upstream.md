@@ -12,26 +12,14 @@ The current OrbitKV patch stack adds the following general executor contracts:
 - externally managed paged attention: page size and CSR request/page metadata
   are graph inputs authored by OrbitKV instead of an executor-private page
   table;
-- dynamic paged-attention geometry: page size is resolved from the current
-  runtime dimensions and participates in capture invalidation, allowing one
-  installed graph and K/V arena to switch between token-slot selection and
-  packed physical pages;
 - grouped-query specialization: the query-to-KV head ratio participates in JIT
   identity and both planning and execution compile for that exact ratio;
 - guarded native calls: FlashInfer failures cross the C boundary as Rust errors
   instead of unwinding a C++ exception through Rust;
-- stream-ordered tensor-range copies and completion events, used to execute
-  manager-authored token relocation before the new page view is published;
 - runtime inspection that proves whether persistent-state outputs alias their
   registered inputs in every compiled dynamic-shape bucket;
 - caller and custom-op compiler facts injected into every e-graph bucket, with
   paged-attention nodes bound to an external persistent-state class ID;
-- direct range copies within persistent graph inputs, so relocation always
-  targets the stable K/V arena even when a bucket materializes its update;
-- fresh profiles of an already installed executable at exact runtime geometry,
-  including device time, sample count, bucket identity, and dynamic dimensions,
-  plus timing-capable device-copy batches used by the executor's relocation
-  cost contract;
 - caller-owned capture of an already-warmed execution, plus a preparation-only
   path that refreshes stable input bindings before replay without replanning or
   executing the model;
@@ -73,14 +61,6 @@ CSR tensors are allocated to their maximum configured capacity before search,
 so later `set_data` calls update their contents and logical lengths without
 changing device addresses.
 
-For a relocatable Full class, the physical K/V allocation retains its compiled
-page width while attention page size is a dynamic symbol. A sparse
-manager-authored view binds that symbol to `1` and expands physical token slots
-into CSR indices; a packed view binds it to the storage page width. The switch
-does not compile another decoder or allocate another cache. Because page size
-affects FlashInfer planning, it is included in the capture-sensitive dimension
-set and safely rematerializes the library plan when changed.
-
 The language-model head feeds a fused dynamic-row argmax in the same graph. The
 default execution API transfers only one `i32` token ID per query row. An
 explicit diagnostic API additionally transfers logits and was used to prove the
@@ -99,7 +79,8 @@ The first implementation flattened every selected executable back into raw
 launches and was 24.9% slower in a matched diagnostic. The current implementation
 preserves each selected graph as one child node. On the same fixed batch-one
 decode step, it reduced median wall time by 8.3% over 20 alternating iterations
-and 5.8% over a 100-iteration confirmation. This narrow result does not qualify
+and 5.8% over a 100-iteration confirmation in its recorded source closure. This
+narrow historical result does not qualify
 continuous batching or end-to-end serving throughput.
 
 The persistent K/V buffers are registered as required paired input/output
@@ -138,9 +119,9 @@ parent repository:
    fork head;
 2. merge or rebase the desired upstream commit while preserving the small
    generic patch stack above;
-3. run Luminal's host tests and the paged-attention/device-copy regressions;
-4. run OrbitKV host gates, CUDA compile checks, and the released-model and
-   relocation device closures;
+3. run Luminal's host tests and paged-attention regressions;
+4. run OrbitKV host gates, CUDA compile checks, and released-model device
+   closures;
 5. push the fork commit, then update the parent submodule pointer;
 6. keep `crates/orbitkv-executor/Cargo.toml` path dependencies pointed at that visible
    submodule and let `tools/verify_active_source.py` reject any second remote
@@ -149,12 +130,10 @@ parent repository:
 An upstream update is therefore an explicit compiler-backend upgrade with
 qualification, rather than an automatic floating dependency.
 
-The current fork includes upstream through `d18376d1`; the parent pin is updated
-with each qualified fork commit. The fork retains its own upstream workspace so it can be
-built and tested independently even though the parent explicitly excludes it
-from the four owned OrbitKV workspace members. The latest sync includes the
-upstream CUDA correctness fixes, dynamic-bucket warmup behavior, and scatter
-reuse rules while preserving OrbitKV's external-page, required-alias, artifact,
-and child-graph contracts. Independent Luminal core tests and CUDA-lite compile
-checks pass. Existing H20 measurements remain compatibility evidence for the
-fork, not a new broad performance claim.
+The exact fork revision is the parent repository's submodule pointer rather than
+a duplicated version string in this document. The fork retains its own upstream
+workspace so it can be built and tested independently even though the parent
+explicitly excludes it from the four owned OrbitKV workspace members. Upstream
+syncs must preserve OrbitKV's external-page, required-alias, artifact, and
+child-graph contracts. Existing H20 measurements remain compatibility evidence
+for their recorded source closure, not a new broad performance claim.

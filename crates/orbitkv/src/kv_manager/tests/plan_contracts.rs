@@ -1,3 +1,5 @@
+//! Admission tests for compiled manager plans.
+
 use super::*;
 
 #[test]

@@ -6,12 +6,11 @@ plans and opaque operation identities, never allocator authority.
 
 ## Owned state
 
-- request, Prefix, batch, publication, release, control, and relocation IDs;
-- immutable request heads and token placement views;
+- request, Prefix, batch, publication, release, control, and external-transfer IDs;
+- immutable request heads and manager-authored page views;
 - page identity and generation;
 - prepared and submitted append transactions;
 - Prefix lookup, attach, publish, eviction, fork, and COW state;
-- semantic token disposition;
 - execution completion high-water marks;
 - retirement certificates, acknowledgement, quarantine, and reuse.
 
@@ -46,19 +45,6 @@ Extending a shared partial page prepares a copy-on-write destination and exact
 copy intent. The executor proves copy ordering before RuntimeSession publishes
 the new request head. Request-private sessions reject Prefix operations.
 
-## Relocation
-
-Relocation starts from canonical token views and explicit token dispositions. A
-collective relocation transaction selects destinations, emits component-aware
-copy work, waits for device completion, atomically publishes changed request
-views, retires source generations, and requires exact acknowledgement before
-reuse.
-
-Relocation is not automatically profitable. Full state should move only when a
-fragmentation or pressure policy predicts a net benefit. Sliding and Chunked
-state normally obtain reuse from their compiled lifetime boundaries without
-copying live tokens.
-
 ## Frontiers
 
 The Semantic Frontier proves that admitted future queries cannot read a state
@@ -80,8 +66,7 @@ and exact restore receipts are submitted through the normal binding and
 completion path before the request head becomes visible.
 
 Host tests cover ordering, stale identities, hostile evidence, abort,
-quarantine, Prefix/COW, class-specific retirement, relocation, and repeated
-generation reuse. The executor now gates relocation success evidence on a real
-CUDA event, and real-device tests cover relocation followed by packed decode.
-Ordinary append completion evidence is still supplied by the embedding runtime,
-and no current test establishes matched model performance.
+quarantine, Prefix/COW, class-specific retirement, external transfer, and
+repeated generation reuse. Append completion evidence is still supplied by the
+embedding runtime. Released-model tests establish narrow correctness and
+lifecycle benefits; they do not establish broad model or serving superiority.

@@ -9,7 +9,6 @@ mod external_tier;
 mod full_sliding_prefix;
 mod latent;
 include!("prefix_release.rs");
-mod relocation;
 include!("retirement.rs");
 mod residence;
 mod sliding;

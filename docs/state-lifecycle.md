@@ -21,10 +21,8 @@ the reuse protocol.
 ### Full
 
 Full attention keeps all reachable tokens. Prefix sharing and immutable partial
-tails can reduce duplicated prefill state, while COW preserves isolation. Token
-relocation is available through explicit static qualification or matched
-cost evidence, but is not a default copy on
-every step.
+tails can reduce duplicated prefill state, while COW preserves isolation. The
+active manager does not compact or relocate live tokens inside pages.
 
 ### Sliding
 

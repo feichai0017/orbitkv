@@ -4,7 +4,6 @@ use std::sync::Arc;
 use std::cell::Cell;
 
 use super::identity::{PageLease, ViewVersion};
-use super::token_virtualization::PersistentTokenTable;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(super) struct RootEntry {
@@ -276,48 +275,6 @@ fn root_tree_remove_max(root: &Arc<RootTreeNode>) -> (Option<Arc<RootTreeNode>>,
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct ClassRoot {
     pub(super) entries: PersistentRootEntries,
-    pub(super) tokens: PersistentTokenTable,
-    /// Sparse overrides for physical pages containing non-retained token
-    /// slots. Missing ordinals mean every valid slot is retained.
-    pub(super) selection_masks: Arc<std::collections::BTreeMap<u64, u64>>,
-    pub(super) layout: RootLayout,
-    pub(super) resident_tokens: u64,
-}
-
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) enum RootLayout {
-    #[default]
-    Dense,
-    Packed,
-}
-
-impl ClassRoot {
-    pub(super) fn is_dense(&self) -> bool {
-        self.layout == RootLayout::Dense
-    }
-
-    pub(super) fn mirror_boundary(&self, snapshot_boundary: u64) -> u64 {
-        match self.layout {
-            RootLayout::Dense => snapshot_boundary,
-            RootLayout::Packed => self.resident_tokens,
-        }
-    }
-
-    pub(super) fn retained_token_bits(&self, backend_index: u64, valid_tokens: u32) -> u64 {
-        self.selection_masks
-            .get(&backend_index)
-            .copied()
-            .unwrap_or_else(|| low_bits(valid_tokens))
-            & low_bits(valid_tokens)
-    }
-}
-
-fn low_bits(count: u32) -> u64 {
-    if count >= u64::BITS {
-        u64::MAX
-    } else {
-        (1_u64 << count) - 1
-    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]

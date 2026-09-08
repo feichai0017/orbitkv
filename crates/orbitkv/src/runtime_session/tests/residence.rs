@@ -90,24 +90,6 @@ fn semantic_page_shape(view: &EnginePreparedRequestView) -> Vec<(u64, u32, u32, 
         .collect()
 }
 
-fn token_semantics(
-    session: &mut RuntimeSession,
-    request_id: EngineRequestId,
-    boundary: u64,
-) -> Vec<(u64, crate::kv_manager::TokenDisposition)> {
-    session
-        .token_views_batch(&[EngineTokenViewQuery {
-            request_id,
-            class_id: 0,
-            expected_boundary: boundary,
-        }])
-        .expect("token view")[0]
-        .placements
-        .iter()
-        .map(|placement| (placement.token_id, placement.disposition))
-        .collect()
-}
-
 #[test]
 fn compiled_and_request_lifetime_residence_preserve_attention_semantics() {
     let request_id = EngineRequestId(801);
@@ -151,11 +133,6 @@ fn compiled_and_request_lifetime_residence_preserve_attention_semantics() {
     assert!(conservative_publication.retirements.is_empty());
     confirm_publication(&mut compiled, &compiled_publication);
     confirm_publication(&mut conservative, &conservative_publication);
-    assert_eq!(
-        token_semantics(&mut compiled, request_id, 52),
-        token_semantics(&mut conservative, request_id, 52)
-    );
-
     let compiled_arena = compiled.arena_stats()[0];
     let conservative_arena = conservative.arena_stats()[0];
     assert_eq!(compiled_arena.active_pages, 2);

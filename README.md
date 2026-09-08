@@ -9,7 +9,7 @@ The product has four owned crates:
 
 | Layer | Responsibility |
 | --- | --- |
-| `crates/orbitkv/` | Attention-state compilation, request and snapshot identity, Prefix/COW, token disposition, physical-page ownership, retirement, acknowledgement, and safe reuse |
+| `crates/orbitkv/` | Attention-state compilation, request and snapshot identity, Prefix/COW, physical-page ownership, retirement, acknowledgement, and safe reuse |
 | `crates/orbitkv-executor/` | OrbitKV plan lowering, Luminal graph/device execution, and external byte transports |
 | `crates/orbitkv-server/` | Rust API and scheduling boundary; optionally reuses vLLM's Rust OpenAI/tokenizer/chat frontend through a narrow protocol adapter |
 | `crates/orbitkv-engine/` | Single-process composition root that joins logical requests, one `RuntimeSession`, and one compiled Luminal decoder without creating a second KV authority |
@@ -42,28 +42,14 @@ allocate or recycle KV pages. The executor depends on the visible submodule by
 local path, so the reviewed fork and the code linked into the product cannot
 silently diverge.
 
-The same boundary now carries compiler-visible persistent-state facts. The
-reusable `orbitkv` crate derives storage components, retention and retirement
-geometry, address programs, and legal layout alternatives from a validated
-manifest. `orbitkv-executor` binds those facts to stable arenas and injects them
-into Luminal's e-graph; each paged-attention custom op identifies its owning
-state class. Selected artifacts include the facts digest in their identity.
-Luminal now exports exact bucket-program fingerprints and can reprofile an
-already installed executable at the manager-authored runtime geometry. The
-executor compares token-selection and packed views inside the same decoder,
-schedule, bucket program, and persistent K/V arena, then combines those device
-times with CUDA-event relocation bandwidth into a strongly identity-bound cost
-profile. OrbitKV accepts a relocation only when that evidence predicts a
-positive amortized benefit. Automatic relocation remains disabled until this
-path is qualified on a released checkpoint and representative long-context
-traces.
-
-Disposition-only Full-attention snapshots carry a sparse per-page retained
-token mask. Before compaction, the executor lowers holes into a page-size-one
-token-slot CSR view; after relocation it returns to the normal physical page
-width. Page size is therefore a runtime graph dimension, not a second decoder
-or a second K/V allocation. The canonical manager still owns 16-token physical
-pages; `1` is only the attention execution representation for selected slots.
+The same boundary carries compiler-visible persistent-state facts. The reusable
+`orbitkv` crate derives storage components, retention and retirement geometry,
+and address programs from a validated manifest. `orbitkv-executor` binds those
+facts to stable arenas and injects them into Luminal's e-graph; each
+paged-attention custom op identifies its owning state class. Selected artifacts
+include the facts digest in their identity. Today these facts enforce ownership
+and artifact compatibility; no current rewrite uses them to choose among
+multiple attention backends or KV layouts.
 
 The native decoder compiles one symbolic graph into decode and prefill buckets.
 Both phases share the same runtime, preallocated dynamic inputs, and one
@@ -76,11 +62,12 @@ be captured as one outer CUDA Graph after warmup. Replay updates the same input
 allocations before launching the graph; a change to query/batch/context shape
 or CSR indptr geometry is rejected and requires a new capture. The generic
 CUDA capture path and a released-checkpoint prefill/capture/replay lifecycle
-both pass on H20. The first flattened outer graph was 24.9% slower than eager;
-composing Luminal's selected executables as child graphs reversed that result,
-reducing matched fixed-step decode wall time by 8.3% over 20 iterations and
-5.8% over a 100-iteration confirmation. This is a narrow batch-one result, not
-a throughput or general model-speed claim.
+both pass on H20. In its recorded source closure, the first flattened outer
+graph was 24.9% slower than eager; composing Luminal's selected executables as
+child graphs reversed that result, reducing matched fixed-step decode wall time
+by 8.3% over 20 iterations and 5.8% over a 100-iteration confirmation. This is
+a historical, narrow batch-one result, not a current-tree throughput or general
+model-speed claim.
 
 The selected decode/prefill schedule can be persisted with
 `--decoder-artifact`. A missing path is atomically created after search; an
@@ -123,10 +110,11 @@ BatchIntent --> ModelEngine coordinator --> Luminal graph + kernels
               completion evidence --> RuntimeSession publication + ACK
 ```
 
-Ring layouts, append-only layouts, resettable arenas, and page-level COW are
-compiled physical choices, not separate product modes. Token-level management
-is always present: the manager tracks logical token placement and disposition,
-then relocates only when the state semantics and cost policy permit it.
+Periodic layouts, append-only layouts, resettable arenas, and page-level COW are
+compiled physical choices, not separate product modes. Token-level relocation
+and compaction are intentionally absent: the manager compiles token visibility
+into page placement and retirement, then reuses only whole page generations
+after semantic and execution completion.
 For attribution testing, an explicit request-lifetime residence baseline keeps
 the same attention visibility but delays physical reclamation; normal
 construction always uses the compiled policy.
@@ -229,7 +217,8 @@ Use `--frontend-model` only when tokenizer/chat assets and compatible model
 metadata are stored separately from the weight directory.
 
 A separate fixed-signature child-graph experiment records a narrow matched
-dispatch improvement. A release-mode same-executor test on the released hybrid
+dispatch improvement for its exact source closure. A release-mode same-executor
+test on the released hybrid
 checkpoint now gives the first narrow compiler-benefit closure: over ten paired
 alternating runs, compiled residence reduced live payload by 27.8%, extended a
 fixed page budget from boundary 528 to 560, and reduced median single-request

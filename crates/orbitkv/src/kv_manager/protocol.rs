@@ -174,14 +174,11 @@ pub struct ClassLowering {
     pub target_layout_boundary: u64,
 }
 
-/// The class root uses packed physical ordinals after token relocation.
-pub const CLASS_LOWERING_PACKED: u16 = 1;
-
 /// The class reuses a resettable physical arena across semantic epochs.
-pub const CLASS_LOWERING_RESETTABLE: u16 = 2;
+pub const CLASS_LOWERING_RESETTABLE: u16 = 1;
 
 /// This append starts at the first token of a new resettable epoch.
-pub const CLASS_LOWERING_EPOCH_START: u16 = 4;
+pub const CLASS_LOWERING_EPOCH_START: u16 = 2;
 
 /// One exact manager-selected page that must be bound before submission.
 ///
@@ -283,8 +280,8 @@ pub struct SubmitBatchItem {
 
 /// One completion event shared by every submission in an atomic completion
 /// batch. The engine epoch binds the event to exactly one manager instance.
-/// Domain and value must both be nonzero. Successful append and relocation
-/// completion calls share one manager-wide high-water mark per domain, and each
+/// Domain and value must both be nonzero. Successful append completion calls
+/// share one manager-wide high-water mark per domain, and each
 /// new value must be strictly greater than the last accepted value in that
 /// domain. Different domains are independent timelines. Multiple submissions
 /// may share the receipt only within this one atomic batch.
@@ -416,10 +413,6 @@ pub struct SnapshotPage {
     pub valid_token_count: u32,
     pub visible_token_offset: u32,
     pub visible_token_count: u32,
-    /// Bit `i` is set when physical token slot `i` remains logically visible.
-    /// The canonical manager currently fixes page size to 16, so this field
-    /// has ample width without introducing per-page heap allocation.
-    pub retained_token_bits: u64,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

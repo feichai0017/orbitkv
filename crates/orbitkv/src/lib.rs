@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod attention_state;
+pub mod fixed_state;
 pub mod hf_config;
 pub mod kv_manager;
 pub mod layout_facts;
@@ -8,11 +9,15 @@ pub mod plan;
 pub mod retention;
 pub mod runtime_manifest;
 pub mod runtime_session;
-pub mod state_checkpoint;
 pub use attention_state::{
     AttentionStateBackend, AttentionStateError, AttentionStatePlanInput, AttentionStateSpec,
     AttentionStateStorage, CompiledAttentionState, CompiledAttentionStatePlan, RecurrentFamily,
     StateComponentGeometry, compile_attention_state_manager_plan, compile_attention_state_plan,
+};
+pub use fixed_state::{
+    StateCheckpointError, StateCheckpointPool, StateCompletionReceipt, StateCopyIntent,
+    StateCopyReceipt, StatePoolIdentity, StatePoolStats, StatePublication,
+    StateRetirementCertificate, StateRetirementLease, StateSlotLease, StateTransitionLease,
 };
 pub use hf_config::{
     HfConfigError, HfLayerInference, HfManagerPlanError, HfRetentionCompilation,
@@ -20,8 +25,8 @@ pub use hf_config::{
     compile_hf_attention_state_plan, compile_hf_config, compile_hf_token_manager_plan,
 };
 pub use layout_facts::{
-    StateClassLayoutFacts, StateComponentFact, StateLayoutAlternative, StateLayoutFacts,
-    StateLayoutFactsError, StateStorageFacts, StateStorageKind,
+    StateClassLayoutFacts, StateComponentFact, StateLayoutFacts, StateLayoutFactsError,
+    StateStorageFacts, StateStorageKind,
 };
 pub use plan::{
     CompiledKvClass, CompiledKvPlan, KvClassSpec, KvPlanInput, PlanError, TokenComponentSpec,
@@ -39,32 +44,21 @@ pub use runtime_manifest::{
 #[doc(hidden)]
 pub use runtime_session::RuntimeSessionTestFault;
 pub use runtime_session::{
-    CacheSharingPolicy, EngineAppendIntent, EngineAttentionViewQuery, EngineBatchId,
-    EngineBatchPlan, EngineBatchPublication, EngineBatchTicket, EngineBindEvidence,
-    EngineCompletionEvidence, EngineControlEvidence, EngineControlId, EngineControlOutcome,
-    EngineControlPlan, EngineCopyEvidence, EngineMaterializationPlan, EngineMaterializedRequest,
-    EnginePendingAttachCancel, EnginePendingAttachCancelDisposition,
-    EnginePendingAttachCancelOutcome, EnginePrefixEvictionPlan, EnginePrefixId, EnginePrefixLookup,
-    EnginePrefixPublishReleasePlan, EnginePrepareRelocationItem, EnginePreparedBatchView,
-    EnginePreparedRelocation, EnginePreparedRequestView, EnginePublicationEvidence,
+    CacheSharingPolicy, EngineAppendIntent, EngineBatchId, EngineBatchPlan, EngineBatchPublication,
+    EngineBatchTicket, EngineBindEvidence, EngineCompletionEvidence, EngineControlEvidence,
+    EngineControlId, EngineControlOutcome, EngineControlPlan, EngineCopyEvidence,
+    EngineMaterializationPlan, EngineMaterializedRequest, EnginePendingAttachCancel,
+    EnginePendingAttachCancelDisposition, EnginePendingAttachCancelOutcome,
+    EnginePrefixEvictionPlan, EnginePrefixId, EnginePrefixLookup, EnginePrefixPublishReleasePlan,
+    EnginePreparedBatchView, EnginePreparedRequestView, EnginePublicationEvidence,
     EnginePublicationId, EnginePublishedPrefix, EnginePublishedPrefixRelease,
     EngineReleaseEvidence, EngineReleaseId, EngineReleaseOutcome, EngineReleasePlan,
-    EngineReleasedRequest, EngineRelocationAbortEvidence, EngineRelocationCopyEvidence,
-    EngineRelocationExecutionEvidence, EngineRelocationId, EngineRelocationPlan,
-    EngineRelocationPublication, EngineRelocationPublicationEvidence,
-    EngineRelocationRequestEvidence, EngineRelocationRequestPublication, EngineRelocationTicket,
-    EngineRequestId, EngineRequestView, EngineRetirement, EngineRetirementEvidence,
-    EngineStepAbortEvidence, EngineStepExecutionEvidence, EngineStepPlan, EngineStepPublication,
-    EngineTokenDispositionBatchItem, EngineTokenDispositionUpdate, EngineTokenView,
-    EngineTokenViewQuery, ExecutionEvidence, ExternalExportAbortEvidence, ExternalExportCopy,
+    EngineReleasedRequest, EngineRequestId, EngineRequestView, EngineRetirement,
+    EngineRetirementEvidence, EngineStepAbortEvidence, EngineStepExecutionEvidence, EngineStepPlan,
+    EngineStepPublication, ExecutionEvidence, ExternalExportAbortEvidence, ExternalExportCopy,
     ExternalExportPlan, ExternalExportReceipt, ExternalObjectKey, ExternalReplica,
     ExternalReplicaDeletionEvidence, ExternalReplicaPage, ExternalReplicaTarget,
     ExternalRestoreAbortEvidence, ExternalRestoreCopy, ExternalRestorePlan, ExternalRestoreReceipt,
     ExternalRestoreTicket, ExternalTierError, ExternalTierStats, ExternalTransferCompletion,
     ExternalTransferId, RuntimeSession, RuntimeSessionError,
-};
-pub use state_checkpoint::{
-    StateCheckpointError, StateCheckpointPool, StateCompletionReceipt, StateCopyIntent,
-    StateCopyReceipt, StatePoolIdentity, StatePoolStats, StatePublication,
-    StateRetirementCertificate, StateRetirementLease, StateSlotLease, StateTransitionLease,
 };

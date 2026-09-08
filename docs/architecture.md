@@ -69,7 +69,8 @@ reference implementation and fault oracle, not a performance backend.
    allocated to their configured capacities before search. OrbitKV registers
    every persistent K/V update as a required output-to-input alias; Luminal may
    search freely only among schedules that preserve that state contract.
-4. `RuntimeSession` prepares append, Prefix/COW, relocation, or release work.
+4. `RuntimeSession` prepares append, Prefix/COW, external transfer, or release
+   work.
 5. The executor updates bounded dynamic inputs, dispatches the matching Luminal
    bucket, runs on the owning stream without recompiling the model, and samples
    greedy token IDs on device. A warmed fixed-signature decode may instead
@@ -94,8 +95,8 @@ default. `new_with_residence` additionally accepts a backend-neutral
   release.
 
 The conservative policy is an attribution baseline, not a serving mode. It
-fails closed for resettable Chunked layouts, relocation, Prefix publication,
-and external export. Prepared attention views omit old physically resident
+fails closed for resettable Chunked layouts, Prefix publication, and external
+export. Prepared attention views omit old physically resident
 pages that are unnecessary for the current query range, so the executor sees
 the same CSR geometry while underlying page identities may differ.
 
@@ -161,32 +162,19 @@ publication, and deletion authority stay in `orbitkv`.
 The compiler boundary shares semantic lifetime, physical arena, and
 persistent-state constraints in the OrbitKV-to-Luminal direction. A candidate
 that violates a required state alias is rejected before profiling, and an
-artifact containing such a candidate is rejected during load. The typed return
-path exports exact bucket identity and can freshly remeasure the installed
-program at a concrete runtime geometry. The executor accepts only source and
-target measurements bound to the same decoder artifact, schedule, bucket
-program, and unrelated dynamic dimensions, then emits a backend-neutral
-`RelocationCostProfile` using CUDA-event relocation bandwidth. OrbitKV chooses
-among already legal physical alternatives. This makes the exchange bidirectional
-without giving Luminal page identity, publication, or lifecycle authority.
-Backend-specific egglog and CUDA types stay inside the fork and executor.
+artifact containing such a candidate is rejected during load. Backend-specific
+egglog and CUDA types stay inside the fork and executor; Luminal never receives
+page-allocation, publication, or lifecycle authority.
 
 Concretely, `RuntimeManifest::state_layout_facts` emits a backend-neutral view
 of every state class. `orbitkv-executor` joins token classes with stable arena
 registrations, emits deterministic e-graph facts, and binds each paged-attention
 custom op to its manager class. The fact digest participates in decoder artifact
 identity, so an artifact cannot silently survive a changed state/search
-contract. The manager no longer enables relocation from a default fragmentation
-heuristic: absent matched measured evidence, the default is disabled. A static
-fragmentation policy remains explicit for deterministic correctness
-qualification. Full-attention token holes are represented as manager-authored
-per-page masks and lowered to page-size-one token-slot indices. The same
-`CompiledDecoder`, bucket program, and K/V arena execute that view and the
-post-relocation packed-page view by changing only runtime CSR/page geometry.
-Selected layout remains request-local runtime state; it is not frozen into the
-global compiler facts or duplicated into a second executable. The remaining
-gap is released-checkpoint, long-context qualification and integration of the
-measured profile into the engine's relocation control loop.
+contract. These facts currently constrain identity and provide a rewrite input.
+The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
+search can optimize the surrounding decoder graph and schedule but does not yet
+choose among multiple attention implementations or jointly derive a KV layout.
 
 `tools/verify_active_source.py` enforces these forbidden dependency edges,
 rejects physical KV ownership types in server source, requires all product
@@ -199,9 +187,9 @@ so transaction and failure-atomicity tests remain the executable authority.
 
 The current tree proves compiler, manager, lifecycle, and executor-metadata
 contracts on the host. Real-device tests additionally cover external block-page
-attention, explicit-CSR causal prefill, stream-ordered token relocation followed
-by packed-page decode, and released Full and Full+Sliding checkpoints. The
-released hybrid closure runs its native 3 Full / 15 Sliding layer schedule,
+attention, explicit-CSR causal prefill, and released Full and Full+Sliding
+checkpoints. The released hybrid closure runs its native 3 Full / 15 Sliding
+layer schedule,
 crosses the 512-token window with 512 prefill plus 33 decode steps, matches a
 separate Transformers greedy-token reference, reuses an acknowledged retired
 generation, executes a second request from recycled storage, and drains all
@@ -215,12 +203,13 @@ model-backed HTTP path passes non-streaming, SSE, concurrent-request,
 dropped-stream cancellation, graceful shutdown, and final-drain checks. Serving
 performance qualification remains outside this closure.
 
-Relocation evidence is gated by a real CUDA event; ordinary model-step completion
-still relies on the embedding runtime's completion assertion. Generic
-stable-input outer-graph replay and a released-checkpoint capture/replay lifecycle
-pass on H20. The current parent graph preserves Luminal's searched executables
-as child graphs and orders persistent-state D2D epilogues after them. Narrow
-fixed-step matched tests improved decode wall time by 5.8-8.3%; broader
+Model-step completion still relies on the embedding runtime's completion
+assertion. Generic stable-input outer-graph replay and a released-checkpoint
+capture/replay lifecycle pass on H20. The current parent graph preserves
+Luminal's searched executables
+as child graphs and orders persistent-state D2D epilogues after them. In their
+recorded source closure, narrow fixed-step matched tests improved decode wall
+time by 5.8-8.3%; that result is not a current-tree claim and broader
 performance remains unqualified. A released-hybrid same-executor ablation now
 also proves a narrow lifecycle benefit: ten paired release-mode runs reduce live
 payload by 27.8%, increase the fixed-budget sequence boundary by 32 tokens, and

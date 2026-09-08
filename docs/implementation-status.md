@@ -9,7 +9,7 @@ operator passes all applicable layers.
 
 | State or attention family | Compiler and manager | Executor | Complete model | Benefit |
 | --- | --- | --- | --- | --- |
-| Full MHA/GQA token KV | Implemented and host-tested | Paged attention, Prefix/COW, writes, relocation | Narrow released-checkpoint H20 closure | No lifetime-management L5 result |
+| Full MHA/GQA token KV | Implemented and host-tested | Paged attention, Prefix/COW, stable-arena writes | Narrow released-checkpoint H20 closure | No independent Full-lifetime L5 result |
 | Sliding Window token KV | Periodic placement, retirement, ACK, and generation reuse host-tested; request-lifetime residence provides a same-semantics baseline | CSR/window lowering implemented; compiled/baseline CSR geometry is host-matched | Native Sliding layers cross a 512-token window in the released hybrid H20 closure | Released-hybrid matched run: Sliding residency 48 to 32 pages; no serving-throughput claim |
 | Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Narrow same-executor L5: 27.8% less resident payload, 6.1% longer fixed-budget boundary, 0.77% lower median test-path time |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
@@ -28,6 +28,13 @@ every required tensor, shape, dtype, and optional family before graph search.
 Unknown or incomplete semantics fail closed instead of silently becoming Full
 attention.
 
+The released end-to-end checkpoint set is currently Qwen2.5-0.5B-Instruct for
+uniform Full attention and Gemma 3 270M text for interleaved Full+Sliding
+attention. This names tested artifacts, not model-specific dispatch: admission
+is derived from config and tensor structure. Other dense checkpoints matching
+the same vocabulary are structurally admissible but are not claimed as
+released-model-qualified until they run the same H20 gates.
+
 The released hybrid qualification uses the checkpoint's unmodified native
 attention schedule. Four short probes and the complete 34-token greedy sequence
 match a separate Transformers run. The 512-token prefill plus 33 decodes cross
@@ -37,12 +44,11 @@ state and arenas. This is an L4 correctness/lifecycle result, not a performance
 or model-family-wide claim.
 
 The manager exposes `PhysicalResidencePolicy::RequestLifetime` only through an
-explicit constructor. It preserves compiler-authored Sliding token
-dispositions and execution visibility while retaining physical pages through
-request release. Host tests prove identical attention geometry and token
-semantics, different physical residency, generation reuse in compiled mode,
-and a fixed-capacity admission difference. Chunked reset, Prefix publication,
-external export, and relocation reject this diagnostic baseline.
+explicit constructor. It preserves compiler-authored Sliding execution
+visibility while retaining physical pages through request release. Host tests
+prove identical attention geometry, different physical residency, generation
+reuse in compiled mode, and a fixed-capacity admission difference. Chunked
+reset, Prefix publication, and external export reject this diagnostic baseline.
 
 ## External tiers
 
@@ -92,24 +98,14 @@ Four alternating C2 epochs improved the same engine's throughput by 14.5%, TTFT
 by 32.2%, TPOT by 10.2%, and E2E by 12.8% versus the previous artifact. The new
 artifact passes the existing independent B2 reference-token probe.
 
-The joint-compiler seam is implemented in both directions. A validated manifest
-now derives backend-neutral facts for storage components, retention, addressing,
-retirement, legal layout alternatives, and token-relocation eligibility. The
-executor binds token classes to stable arenas, lowers deterministic facts into
-every Luminal search bucket, and tags each paged-attention custom op with its
-manager class. The facts digest is part of decoder artifact identity.
-Disposition-only Full snapshots carry sparse retained-token masks, and the
-executor lowers them to page-size-one token-slot CSR metadata. Luminal resolves
-page size from the current dynamic geometry, so the same decoder, selected
-bucket program, and K/V arena execute both token-selection and packed views. It
-can freshly profile both geometries; CUDA-event relocation copies provide the
-measured bandwidth. The executor builds a manager-neutral cost profile only
-when both measurements belong to the same executable and preserve token count
-and unrelated class geometry. OrbitKV admits relocation only for positive
-amortized benefit. Missing evidence disables relocation; the static threshold is
-an explicit correctness-test mode. The unclosed R4.2 work is a released-model
-long-context matched benefit result and the engine-side qualification/control
-loop.
+The joint-compiler seam is implemented structurally. A validated manifest now
+derives backend-neutral facts for storage components, retention, addressing, and
+retirement. The executor binds token classes to stable arenas, lowers
+deterministic facts into every Luminal search bucket, and tags each
+paged-attention custom op with its manager class. The facts digest is part of
+decoder artifact identity. The current custom op still dispatches FlashInfer;
+there is not yet a set of alternative attention implementations whose measured
+cost can be selected from these facts.
 
 ## Evidence interpretation
 

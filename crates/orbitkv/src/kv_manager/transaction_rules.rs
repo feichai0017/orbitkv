@@ -1,8 +1,10 @@
+//! Invariants shared by append preparation, submission, and completion.
+
 use super::arena::RuntimeClass;
 use super::{
     BTreeMap, BTreeSet, BackendBindReceipt, BackendCopyReceipt, CanonicalKvManager, ClassDelta,
-    KvManagerError, PagePhase, PreparedState, RequestLease, RetentionKind, RootEntry, RootLayout,
-    StepLease, SubmissionLease, SubmittedState, TailActionKind,
+    KvManagerError, PagePhase, PreparedState, RequestLease, RetentionKind, RootEntry, StepLease,
+    SubmissionLease, SubmittedState, TailActionKind,
 };
 
 impl CanonicalKvManager {
@@ -154,9 +156,7 @@ impl CanonicalKvManager {
                 .div_ceil(self.page_tokens);
             if class_delta.class_id != class.class_id
                 || class_index != usize::from(class.class_id)
-                || root.layout != class_delta.layout
-                || root.mirror_boundary(delta.previous_boundary)
-                    != class_delta.previous_layout_boundary
+                || delta.previous_boundary != class_delta.previous_layout_boundary
                 || class_delta
                     .target_layout_boundary
                     .checked_sub(class_delta.previous_layout_boundary)
@@ -407,8 +407,7 @@ impl CanonicalKvManager {
                 chunk_tokens,
             });
         }
-        if delta.layout != RootLayout::Dense
-            || delta.previous_layout_boundary != previous_boundary
+        if delta.previous_layout_boundary != previous_boundary
             || delta.target_layout_boundary != target_boundary
         {
             return Err(KvManagerError::Invariant(
