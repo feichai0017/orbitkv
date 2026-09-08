@@ -10,6 +10,13 @@ pub use fixed_state::{
     FixedStateArenaRegistration, FixedStateClass, FixedStateExecutionEvidence, FixedStateSlotRange,
     FixedStateStorage,
 };
+mod recurrent;
+pub use recurrent::{
+    GatedDeltaGeometry, GatedDeltaReferenceInput, GatedDeltaReferenceOutput, RecurrentError,
+    gated_delta_reference,
+};
+#[cfg(feature = "cuda")]
+pub use recurrent::{GatedDeltaStepInputs, GatedDeltaStepOutputs, gated_delta_step};
 
 #[cfg(feature = "cuda")]
 pub mod cuda;
