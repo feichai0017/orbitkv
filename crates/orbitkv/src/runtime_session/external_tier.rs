@@ -1019,6 +1019,7 @@ fn restore_execution_evidence(
             request_id: step.request_id,
             bind_receipts: binds.into_boxed_slice(),
             copy_receipts: Box::<[EngineCopyEvidence]>::default(),
+            fixed_states: Box::default(),
         }]
         .into_boxed_slice(),
     })

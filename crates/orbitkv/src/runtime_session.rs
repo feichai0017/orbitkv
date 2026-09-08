@@ -1,7 +1,8 @@
 use serde::Serialize;
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeMap;
 use thiserror::Error;
 
+use crate::fixed_state::{StateCheckpointError, StateCheckpointPool, StateCopyIntent};
 use crate::kv_manager::{
     ArenaStats, BackendUnobservedReceipt, BatchCompletionReceipt, CanonicalKvManager,
     ClassLowering, CopyIntent, DetachedBinding, KvManagerError, ManagerStats, PrepareBatchItem,
@@ -9,10 +10,12 @@ use crate::kv_manager::{
     SubmittedStep, TailAction, ViewVersion, WriteIntent,
 };
 
+mod bookkeeping;
 mod control;
 mod evidence;
 mod execution_view;
 mod external_tier;
+mod fixed_state;
 mod prefix_release;
 
 pub use control::{
@@ -34,6 +37,9 @@ pub use external_tier::{
     ExternalTransferCompletion, ExternalTransferId,
 };
 use external_tier::{PendingExternalExport, PendingExternalRestore};
+pub use fixed_state::{
+    EngineFixedStateEvidence, EngineFixedStatePlan, EngineFixedStatePublication,
+};
 pub use prefix_release::{EnginePrefixPublishReleasePlan, EnginePublishedPrefixRelease};
 
 /// Controls whether requests may share cache state through Prefix operations.
@@ -112,6 +118,7 @@ pub struct EngineStepPlan {
     pub tail_actions: Box<[TailAction]>,
     pub copy_intents: Box<[CopyIntent]>,
     pub write_intents: Box<[WriteIntent]>,
+    pub fixed_states: Box<[EngineFixedStatePlan]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -158,6 +165,7 @@ pub struct EngineStepExecutionEvidence {
     pub request_id: EngineRequestId,
     pub bind_receipts: Box<[EngineBindEvidence]>,
     pub copy_receipts: Box<[EngineCopyEvidence]>,
+    pub fixed_states: Box<[EngineFixedStateEvidence]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -209,6 +217,7 @@ pub struct EngineStepPublication {
     pub boundary: u64,
     pub resident_count: u32,
     pub detached: Box<[DetachedBinding]>,
+    pub fixed_states: Box<[EngineFixedStatePublication]>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -270,6 +279,8 @@ pub enum EngineReleaseOutcome {
 pub enum RuntimeSessionError {
     #[error(transparent)]
     Manager(#[from] KvManagerError),
+    #[error(transparent)]
+    FixedState(#[from] StateCheckpointError),
     #[error("engine batch must contain at least one item")]
     EmptyBatch,
     #[error("engine batch contains duplicate request id {0:?}")]
@@ -358,6 +369,14 @@ pub enum RuntimeSessionError {
     ReleaseRetryNotIdOnly,
     #[error("cache-sharing policy does not support Prefix/share operations")]
     PrefixOperationsUnsupported,
+    #[error("fixed-state sessions require request-private cache sharing")]
+    FixedStateSharingUnsupported,
+    #[error("fixed-state pool identity does not match the runtime session")]
+    FixedStatePoolMismatch,
+    #[error("fixed-state evidence does not exactly match the pending transition")]
+    FixedStateEvidenceMismatch,
+    #[error("fixed-state device observation is unknown or incomplete")]
+    FixedStateObservationUnknown,
     #[error("{0} identity space is exhausted")]
     IdentityExhausted(&'static str),
     #[error("runtime session is poisoned: {0}")]
@@ -403,12 +422,21 @@ struct SessionRequest {
 struct PreparedBatch {
     requests: Box<[EngineRequestId]>,
     steps: Box<[PreparedStep]>,
+    fixed_states: Box<[PreparedFixedState]>,
 }
 
 #[derive(Clone, Debug)]
 struct SubmittedBatch {
     requests: Box<[EngineRequestId]>,
     steps: Box<[SubmittedStep]>,
+    fixed_states: Box<[PreparedFixedState]>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct PreparedFixedState {
+    state_id: u16,
+    request_id: EngineRequestId,
+    intent: StateCopyIntent,
 }
 
 #[derive(Clone, Debug)]
@@ -462,6 +490,7 @@ pub enum RuntimeSessionTestFault {
 #[derive(Debug)]
 pub struct RuntimeSession {
     manager: CanonicalKvManager,
+    fixed_states: BTreeMap<u16, StateCheckpointPool>,
     cache_sharing_policy: CacheSharingPolicy,
     session_epoch: u64,
     next_batch_sequence: u64,
@@ -507,6 +536,7 @@ impl RuntimeSession {
             .engine_epoch;
         Self {
             manager,
+            fixed_states: BTreeMap::new(),
             cache_sharing_policy,
             session_epoch,
             next_batch_sequence: 1,
@@ -534,6 +564,32 @@ impl RuntimeSession {
             maximum_external_operations: maximum_controls,
             maximum_external_replicas: maximum_controls,
         }
+    }
+
+    /// Creates a request-private session that owns token KV and fixed-state
+    /// pools under one batch lifecycle.
+    ///
+    /// # Errors
+    ///
+    /// Rejects duplicate state ids, mismatched engine epochs, or shared-Prefix
+    /// mode before taking ownership of any pool.
+    pub fn with_fixed_states(
+        manager: CanonicalKvManager,
+        cache_sharing_policy: CacheSharingPolicy,
+        pools: impl IntoIterator<Item = (u16, StateCheckpointPool)>,
+    ) -> Result<Self, RuntimeSessionError> {
+        if cache_sharing_policy != CacheSharingPolicy::RequestPrivate {
+            return Err(RuntimeSessionError::FixedStateSharingUnsupported);
+        }
+        let mut session = Self::new(manager, cache_sharing_policy);
+        for (state_id, pool) in pools {
+            if pool.identity().engine_epoch != session.session_epoch
+                || session.fixed_states.insert(state_id, pool).is_some()
+            {
+                return Err(RuntimeSessionError::FixedStatePoolMismatch);
+            }
+        }
+        Ok(session)
     }
 
     fn ensure_prefix_operations_supported(&self) -> Result<(), RuntimeSessionError> {
@@ -596,6 +652,7 @@ impl RuntimeSession {
         self.ensure_healthy()?;
         let records = self.preflight_append_intents(intents)?;
         let batch_id = self.allocate_batch_id()?;
+        let (fixed_states, candidate_fixed_states) = self.prepare_fixed_states(intents)?;
         let items = intents
             .iter()
             .zip(&records)
@@ -634,15 +691,27 @@ impl RuntimeSession {
                 .iter()
                 .copied()
                 .zip(prepared.iter().cloned())
-                .map(|(request_id, prepared)| engine_step_plan(request_id, &prepared))
+                .map(|(request_id, prepared)| {
+                    engine_step_plan(
+                        request_id,
+                        &prepared,
+                        &fixed_states
+                            .iter()
+                            .copied()
+                            .filter(|state| state.request_id == request_id)
+                            .collect::<Vec<_>>(),
+                    )
+                })
                 .collect::<Vec<_>>()
                 .into_boxed_slice(),
         };
+        self.fixed_states = candidate_fixed_states;
         self.batches.insert(
             batch_id,
             PendingBatch::Prepared(PreparedBatch {
                 requests: request_ids,
                 steps: prepared,
+                fixed_states,
             }),
         );
         Ok(plan)
@@ -677,7 +746,9 @@ impl RuntimeSession {
                 reserved: 0,
             })
             .collect::<Vec<_>>();
+        let candidate_fixed_states = self.abort_fixed_states(&batch.fixed_states, evidence)?;
         self.manager.abort_steps_batch(&receipts)?;
+        self.fixed_states = candidate_fixed_states;
         self.finish_batch(batch_id, &batch.requests, RequestPhase::Ready);
         Ok(())
     }
@@ -699,7 +770,9 @@ impl RuntimeSession {
             .iter()
             .map(|prepared| prepared.step)
             .collect::<Vec<_>>();
+        let candidate_fixed_states = self.quarantine_prepared_fixed_states(&batch.fixed_states)?;
         self.manager.quarantine_steps_batch(&steps)?;
+        self.fixed_states = candidate_fixed_states;
         self.finish_batch(batch_id, &batch.requests, RequestPhase::Quarantined);
         Ok(())
     }
@@ -724,9 +797,48 @@ impl RuntimeSession {
         let batch = self.prepared_batch(evidence.batch_id)?.clone();
         self.preflight_request_phases(&batch.requests, RequestPhase::Prepared(evidence.batch_id))?;
         let (items, binds, copies) = flatten_evidence(&batch, evidence)?;
+        let candidate_fixed_states = match self
+            .submit_fixed_states(&batch.fixed_states, &evidence.steps)
+        {
+            Ok(pools) => pools,
+            Err(
+                error @ (RuntimeSessionError::FixedStateEvidenceMismatch
+                | RuntimeSessionError::FixedStateObservationUnknown),
+            ) => {
+                let fixed_states = self.quarantine_prepared_fixed_states(&batch.fixed_states)?;
+                let steps = batch
+                    .steps
+                    .iter()
+                    .map(|prepared| prepared.step)
+                    .collect::<Vec<_>>();
+                self.manager.quarantine_steps_batch(&steps)?;
+                self.fixed_states = fixed_states;
+                self.finish_batch(
+                    evidence.batch_id,
+                    &batch.requests,
+                    RequestPhase::Quarantined,
+                );
+                return Err(error);
+            }
+            Err(error) => return Err(error),
+        };
         let submitted = match self.manager.submit_batch(&items, &binds, &copies) {
             Ok(submitted) => submitted,
-            Err(error @ KvManagerError::BatchQuarantined(_)) => {
+            Err(error) => {
+                self.quarantine_submitted_fixed_candidates(
+                    candidate_fixed_states,
+                    &batch.fixed_states,
+                );
+                if !matches!(error, KvManagerError::BatchQuarantined(_)) {
+                    let steps = batch
+                        .steps
+                        .iter()
+                        .map(|prepared| prepared.step)
+                        .collect::<Vec<_>>();
+                    if self.manager.quarantine_steps_batch(&steps).is_err() {
+                        return Err(self.poison("page quarantine after fixed-state execution"));
+                    }
+                }
                 self.finish_batch(
                     evidence.batch_id,
                     &batch.requests,
@@ -734,11 +846,11 @@ impl RuntimeSession {
                 );
                 return Err(error.into());
             }
-            Err(error) => return Err(error.into()),
         };
         if submitted.len() != batch.requests.len() {
             return Err(self.poison("submit result cardinality"));
         }
+        self.fixed_states = candidate_fixed_states;
         if submitted
             .iter()
             .zip(&batch.steps)
@@ -760,6 +872,7 @@ impl RuntimeSession {
             PendingBatch::Submitted(SubmittedBatch {
                 requests: batch.requests.clone(),
                 steps: submitted,
+                fixed_states: batch.fixed_states,
             }),
         );
         Ok(EngineBatchTicket {
@@ -784,7 +897,9 @@ impl RuntimeSession {
             .iter()
             .map(|submitted| submitted.submission)
             .collect::<Vec<_>>();
+        let candidate_fixed_states = self.quarantine_submitted_fixed_states(&batch.fixed_states)?;
         self.manager.quarantine_submissions_batch(&submissions)?;
+        self.fixed_states = candidate_fixed_states;
         self.finish_batch(batch_id, &batch.requests, RequestPhase::Quarantined);
         Ok(())
     }
@@ -831,6 +946,8 @@ impl RuntimeSession {
         else {
             return Err(self.poison("empty submitted batch"));
         };
+        let (fixed_publications, candidate_fixed_states) =
+            self.complete_fixed_states(&batch.fixed_states, evidence)?;
         let completed = self.manager.complete_batch(
             BatchCompletionReceipt {
                 engine_epoch,
@@ -869,6 +986,12 @@ impl RuntimeSession {
                 boundary: completion.publication.boundary,
                 resident_count: completion.publication.resident_count,
                 detached: completion.detached.clone(),
+                fixed_states: fixed_publications
+                    .iter()
+                    .copied()
+                    .filter(|state| state.request_id == request_id)
+                    .collect::<Vec<_>>()
+                    .into_boxed_slice(),
             })
             .collect::<Vec<_>>();
         for (request_id, completion) in batch
@@ -890,6 +1013,7 @@ impl RuntimeSession {
             };
             record.phase = RequestPhase::PublicationPending(publication_id);
         }
+        self.fixed_states = candidate_fixed_states;
         self.batches.remove(&batch_id);
         let engine_retirements = engine_retirements(&completed.retirements);
         self.publications.insert(
@@ -969,6 +1093,7 @@ impl RuntimeSession {
         self.ensure_healthy()?;
         let records = self.preflight_ready_requests(request_ids)?;
         let release_id = self.allocate_release_id()?;
+        let candidate_fixed_states = self.release_fixed_states(request_ids)?;
         let items = records
             .iter()
             .map(|record| ReleaseBatchItem {
@@ -991,6 +1116,7 @@ impl RuntimeSession {
         {
             return Err(self.poison("release result request ordering"));
         }
+        self.fixed_states = candidate_fixed_states;
         let leases = records
             .iter()
             .map(|record| record.view.request)
@@ -1127,6 +1253,15 @@ impl RuntimeSession {
         self.manager.arena_stats()
     }
 
+    #[must_use]
+    pub fn fixed_state_stats(&self) -> Box<[(u16, crate::StatePoolStats)]> {
+        self.fixed_states
+            .iter()
+            .map(|(&state_id, pool)| (state_id, pool.stats()))
+            .collect::<Vec<_>>()
+            .into_boxed_slice()
+    }
+
     #[cfg(any(test, feature = "test-support"))]
     #[doc(hidden)]
     pub fn inject_test_fault(&mut self, fault: RuntimeSessionTestFault) {
@@ -1144,271 +1279,6 @@ impl RuntimeSession {
         }
         completed
     }
-
-    fn ensure_healthy(&self) -> Result<(), RuntimeSessionError> {
-        match self.poisoned {
-            Some(reason) => Err(RuntimeSessionError::SessionPoisoned(reason)),
-            None => Ok(()),
-        }
-    }
-
-    fn poison(&mut self, reason: &'static str) -> RuntimeSessionError {
-        let reason = *self.poisoned.get_or_insert(reason);
-        RuntimeSessionError::SessionPoisoned(reason)
-    }
-
-    fn allocate_batch_id(&mut self) -> Result<EngineBatchId, RuntimeSessionError> {
-        let sequence = allocate_sequence(&mut self.next_batch_sequence, "batch")?;
-        Ok(EngineBatchId {
-            session_epoch: self.session_epoch,
-            sequence,
-        })
-    }
-
-    fn allocate_publication_id(&mut self) -> Result<EnginePublicationId, RuntimeSessionError> {
-        let sequence = allocate_sequence(&mut self.next_publication_sequence, "publication")?;
-        Ok(EnginePublicationId {
-            session_epoch: self.session_epoch,
-            sequence,
-        })
-    }
-
-    fn allocate_release_id(&mut self) -> Result<EngineReleaseId, RuntimeSessionError> {
-        let sequence = allocate_sequence(&mut self.next_release_sequence, "release")?;
-        Ok(EngineReleaseId {
-            session_epoch: self.session_epoch,
-            sequence,
-        })
-    }
-
-    fn allocate_control_id(&mut self) -> Result<EngineControlId, RuntimeSessionError> {
-        let sequence = self
-            .next_control_sequence
-            .checked_add(1)
-            .ok_or(RuntimeSessionError::IdentityExhausted("control"))?;
-        while self
-            .controls
-            .len()
-            .checked_add(self.canceled_requests.len())
-            .is_some_and(|count| count >= self.maximum_controls)
-        {
-            let Some(oldest) = self
-                .canceled_requests
-                .iter()
-                .find_map(|(control_id, pending)| pending.finalized.then_some(*control_id))
-            else {
-                break;
-            };
-            self.canceled_requests.remove(&oldest);
-        }
-        if self
-            .controls
-            .len()
-            .checked_add(self.canceled_requests.len())
-            .is_none_or(|count| count >= self.maximum_controls)
-        {
-            return Err(KvManagerError::ArenaExhausted("control").into());
-        }
-        let current = self.next_control_sequence;
-        self.next_control_sequence = sequence;
-        Ok(EngineControlId {
-            session_epoch: self.session_epoch,
-            sequence: current,
-        })
-    }
-
-    fn finish_batch(
-        &mut self,
-        batch_id: EngineBatchId,
-        request_ids: &[EngineRequestId],
-        phase: RequestPhase,
-    ) {
-        for request_id in request_ids {
-            self.requests
-                .get_mut(request_id)
-                .expect("batch preflight retained request")
-                .phase = phase;
-        }
-        self.batches
-            .remove(&batch_id)
-            .expect("batch preflight retained operation");
-    }
-
-    fn ensure_batch_epoch(&self, batch_id: EngineBatchId) -> Result<(), RuntimeSessionError> {
-        if batch_id.session_epoch != self.session_epoch {
-            return Err(RuntimeSessionError::ForeignBatch(batch_id));
-        }
-        Ok(())
-    }
-
-    fn ensure_publication_epoch(
-        &self,
-        publication_id: EnginePublicationId,
-    ) -> Result<(), RuntimeSessionError> {
-        if publication_id.session_epoch != self.session_epoch {
-            return Err(RuntimeSessionError::ForeignPublication(publication_id));
-        }
-        Ok(())
-    }
-
-    fn ensure_release_epoch(&self, release_id: EngineReleaseId) -> Result<(), RuntimeSessionError> {
-        if release_id.session_epoch != self.session_epoch {
-            return Err(RuntimeSessionError::ForeignRelease(release_id));
-        }
-        Ok(())
-    }
-
-    fn preflight_new_request_ids(
-        &self,
-        request_ids: &[EngineRequestId],
-    ) -> Result<(), RuntimeSessionError> {
-        if request_ids.is_empty() {
-            return Err(RuntimeSessionError::EmptyBatch);
-        }
-        let mut seen = BTreeSet::new();
-        for &request_id in request_ids {
-            if !seen.insert(request_id) {
-                return Err(RuntimeSessionError::DuplicateRequest(request_id));
-            }
-            if self.requests.contains_key(&request_id) {
-                return Err(RuntimeSessionError::RequestAlreadyAcquired(request_id));
-            }
-        }
-        Ok(())
-    }
-
-    fn preflight_append_intents(
-        &self,
-        intents: &[EngineAppendIntent],
-    ) -> Result<Vec<SessionRequest>, RuntimeSessionError> {
-        if intents.is_empty() {
-            return Err(RuntimeSessionError::EmptyBatch);
-        }
-        let mut seen = BTreeSet::new();
-        intents
-            .iter()
-            .map(|intent| {
-                if !seen.insert(intent.request_id) {
-                    return Err(RuntimeSessionError::DuplicateRequest(intent.request_id));
-                }
-                self.ready_request(intent.request_id).cloned()
-            })
-            .collect()
-    }
-
-    fn preflight_ready_requests(
-        &self,
-        request_ids: &[EngineRequestId],
-    ) -> Result<Vec<SessionRequest>, RuntimeSessionError> {
-        if request_ids.is_empty() {
-            return Err(RuntimeSessionError::EmptyBatch);
-        }
-        let mut seen = BTreeSet::new();
-        request_ids
-            .iter()
-            .copied()
-            .map(|request_id| {
-                if !seen.insert(request_id) {
-                    return Err(RuntimeSessionError::DuplicateRequest(request_id));
-                }
-                self.ready_request(request_id).cloned()
-            })
-            .collect()
-    }
-
-    fn ready_request(
-        &self,
-        request_id: EngineRequestId,
-    ) -> Result<&SessionRequest, RuntimeSessionError> {
-        let record = self
-            .requests
-            .get(&request_id)
-            .ok_or(RuntimeSessionError::UnknownRequest(request_id))?;
-        if record.phase != RequestPhase::Ready {
-            return Err(RuntimeSessionError::RequestNotReady {
-                request_id,
-                state: record.phase.name(),
-            });
-        }
-        Ok(record)
-    }
-
-    fn prepared_batch(
-        &self,
-        batch_id: EngineBatchId,
-    ) -> Result<&PreparedBatch, RuntimeSessionError> {
-        self.ensure_batch_epoch(batch_id)?;
-        match self.batches.get(&batch_id) {
-            Some(PendingBatch::Prepared(batch)) => Ok(batch),
-            Some(PendingBatch::Submitted(_)) => {
-                Err(RuntimeSessionError::BatchNotPrepared(batch_id))
-            }
-            None => Err(self.batch_id_error(batch_id)),
-        }
-    }
-
-    fn submitted_batch(
-        &self,
-        batch_id: EngineBatchId,
-    ) -> Result<&SubmittedBatch, RuntimeSessionError> {
-        self.ensure_batch_epoch(batch_id)?;
-        match self.batches.get(&batch_id) {
-            Some(PendingBatch::Submitted(batch)) => Ok(batch),
-            Some(PendingBatch::Prepared(_)) => {
-                Err(RuntimeSessionError::BatchNotSubmitted(batch_id))
-            }
-            None => Err(self.batch_id_error(batch_id)),
-        }
-    }
-
-    fn preflight_request_phases(
-        &mut self,
-        request_ids: &[EngineRequestId],
-        expected: RequestPhase,
-    ) -> Result<(), RuntimeSessionError> {
-        for &request_id in request_ids {
-            let Some(record) = self.requests.get(&request_id) else {
-                return Err(self.poison("pending operation lost request"));
-            };
-            if record.phase != expected {
-                return Err(self.poison("pending request phase changed"));
-            }
-        }
-        Ok(())
-    }
-
-    fn batch_id_error(&self, batch_id: EngineBatchId) -> RuntimeSessionError {
-        if batch_id.session_epoch != self.session_epoch {
-            return RuntimeSessionError::ForeignBatch(batch_id);
-        }
-        if was_issued(batch_id.sequence, self.next_batch_sequence) {
-            RuntimeSessionError::StaleBatch(batch_id)
-        } else {
-            RuntimeSessionError::UnknownBatch(batch_id)
-        }
-    }
-
-    fn publication_id_error(&self, publication_id: EnginePublicationId) -> RuntimeSessionError {
-        if publication_id.session_epoch != self.session_epoch {
-            return RuntimeSessionError::ForeignPublication(publication_id);
-        }
-        if was_issued(publication_id.sequence, self.next_publication_sequence) {
-            RuntimeSessionError::StalePublication(publication_id)
-        } else {
-            RuntimeSessionError::UnknownPublication(publication_id)
-        }
-    }
-
-    fn release_id_error(&self, release_id: EngineReleaseId) -> RuntimeSessionError {
-        if release_id.session_epoch != self.session_epoch {
-            return RuntimeSessionError::ForeignRelease(release_id);
-        }
-        if was_issued(release_id.sequence, self.next_release_sequence) {
-            RuntimeSessionError::StaleRelease(release_id)
-        } else {
-            RuntimeSessionError::UnknownRelease(release_id)
-        }
-    }
 }
 
 fn engine_view(request_id: EngineRequestId, view: RequestView) -> EngineRequestView {
@@ -1420,7 +1290,11 @@ fn engine_view(request_id: EngineRequestId, view: RequestView) -> EngineRequestV
     }
 }
 
-fn engine_step_plan(request_id: EngineRequestId, prepared: &PreparedStep) -> EngineStepPlan {
+fn engine_step_plan(
+    request_id: EngineRequestId,
+    prepared: &PreparedStep,
+    fixed_states: &[PreparedFixedState],
+) -> EngineStepPlan {
     EngineStepPlan {
         request_id,
         base_view_version: prepared.base_view_version,
@@ -1431,6 +1305,11 @@ fn engine_step_plan(request_id: EngineRequestId, prepared: &PreparedStep) -> Eng
         tail_actions: prepared.tail_actions.clone(),
         copy_intents: prepared.copy_intents.clone(),
         write_intents: prepared.write_intents.clone(),
+        fixed_states: fixed_states
+            .iter()
+            .map(|state| EngineFixedStatePlan::from_intent(state.state_id, state.intent))
+            .collect::<Vec<_>>()
+            .into_boxed_slice(),
     }
 }
 

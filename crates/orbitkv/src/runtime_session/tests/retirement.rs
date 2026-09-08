@@ -93,3 +93,49 @@ fn public_retirement_dtos_hide_manager_reclamation_capabilities() {
         }
     }
 }
+
+#[test]
+fn public_fixed_state_dtos_hide_transition_capabilities() {
+    let slot = crate::StateSlotLease {
+        engine_epoch: 7,
+        pool_epoch: 8,
+        generation: 9,
+        slot_id: 10,
+        pool_id: 11,
+    };
+    let values = [
+        serde_json::to_value(EngineFixedStatePlan {
+            state_id: 2,
+            source: None,
+            destination: slot,
+            byte_count: 64,
+        })
+        .unwrap(),
+        serde_json::to_value(EngineFixedStateEvidence {
+            state_id: 2,
+            source: None,
+            destination: slot,
+            byte_count: 64,
+            observed: true,
+            written: true,
+        })
+        .unwrap(),
+        serde_json::to_value(EngineFixedStatePublication {
+            state_id: 2,
+            request_id: EngineRequestId(12),
+            slot,
+        })
+        .unwrap(),
+    ];
+    for value in values {
+        let object = value.to_string();
+        for forbidden in [
+            "transition",
+            "StateTransitionLease",
+            "StateRetirementLease",
+            "StateRetirementCertificate",
+        ] {
+            assert!(!object.contains(forbidden), "public DTO leaked {forbidden}");
+        }
+    }
+}

@@ -47,7 +47,12 @@ boundaries after completion.
 Latent KV carries component geometry for latent and positional payloads.
 Recurrent and convolution state use generation-checked checkpoint slots. These
 states cannot inherit ordinary K/V copy or reclamation assumptions; their
-executor transactions remain a separate qualification task.
+session lifecycle therefore carries explicit state plans and device receipts.
+Token KV and fixed state now prepare, submit, publish, abort, and release under
+one batch identity and one completion frontier. Transition and retirement
+capabilities stay private to `RuntimeSession`; the device executor sees only
+source/destination slots and byte counts. Fixed-state device operators and arena
+bindings remain a separate qualification task.
 
 ## Measuring a benefit
 

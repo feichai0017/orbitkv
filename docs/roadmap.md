@@ -63,8 +63,9 @@ single-device bring-up model.
 
 ## Primary model closure
 
-1. Join token-KV, recurrent, and convolution state into one atomic
-   `RuntimeSession`/executor step with stream-ordered completion evidence.
+1. Bind the host-qualified atomic token-KV/recurrent/convolution
+   `RuntimeSession` lifecycle to stable device arenas and stream-ordered
+   completion evidence.
 2. Add a backend-neutral GDN semantic op. Start with an independent reference
    implementation and a production CUDA candidate derived from an attributed,
    license-compatible mature implementation; selection remains in Luminal's

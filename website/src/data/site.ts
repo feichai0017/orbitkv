@@ -75,7 +75,7 @@ export const evidenceRows = [
     result: "Executor lowering",
     value: "L2 host",
     contract: "Full, Sliding, mixed, and Chunked manifests lower to manager-owned page metadata.",
-    boundary: "Latent and fixed-state execution are rejected until their kernels and transactions are integrated.",
+    boundary: "Fixed-state session transactions are host-tested; device kernels and arena bindings remain open.",
   },
   {
     result: "Luminal fork",

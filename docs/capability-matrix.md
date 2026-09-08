@@ -75,8 +75,8 @@ constraints.
 | Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Manifest-driven layer binding and independent per-class inputs/arenas | Released 3-Full/15-Sliding checkpoint passes reference parity, retirement/reuse, cancellation, and final drain on H20 |
 | Exact Chunked token KV | Host-tested resettable epoch lifecycle | Implemented | Current architecture unqualified |
 | Full latent KV | Host-tested component-aware core lifecycle | Rejected until a matching Luminal kernel contract exists | Unqualified |
-| Recurrent checkpoints | Host-tested independent pool | Geometry and compiler facts implemented; not integrated into one model transaction | Unqualified |
-| Convolution state | Host-tested independent pool | Ring geometry and compiler facts implemented; not integrated into one model transaction | Unqualified |
+| Recurrent checkpoints | Host-tested pool and joint RuntimeSession transaction | Geometry/compiler facts plus atomic prepare, submit, completion, abort, release, and reuse with token KV | Device operator unqualified |
+| Convolution state | Host-tested pool and joint RuntimeSession transaction | Ring geometry plus the same atomic token-KV/fixed-state lifecycle | Device operator unqualified |
 | Per-head or region-partitioned layouts | Compiler primitives exist | Not generally admitted by the current executor plan | Unqualified |
 
 ## Compiled lifecycle

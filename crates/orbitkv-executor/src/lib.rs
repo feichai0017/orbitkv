@@ -167,6 +167,8 @@ pub enum ExecutorError {
     ExternalTransferMismatch,
     #[error("compiler state/layout facts do not match the executor plan")]
     CompilerFactsMismatch,
+    #[error("fixed-state execution has not produced device evidence")]
+    FixedStateExecutionMissing,
 }
 
 impl ExecutorArena {
@@ -559,6 +561,14 @@ impl PreparedBatch {
         &self,
         arenas: &[ExecutorArena],
     ) -> Result<ExecutionEvidence, ExecutorError> {
+        if self
+            .source
+            .steps
+            .iter()
+            .any(|step| !step.fixed_states.is_empty())
+        {
+            return Err(ExecutorError::FixedStateExecutionMissing);
+        }
         validate_arenas(
             arenas,
             self.source
@@ -631,6 +641,7 @@ impl PreparedBatch {
                     request_id: source.request_id,
                     bind_receipts: binds.into_boxed_slice(),
                     copy_receipts: copies.into_boxed_slice(),
+                    fixed_states: Box::default(),
                 })
             })
             .collect::<Result<Vec<_>, ExecutorError>>()?;
@@ -1246,6 +1257,7 @@ mod tests {
                     },
                 ]
                 .into_boxed_slice(),
+                fixed_states: Box::default(),
             }]
             .into_boxed_slice(),
         };

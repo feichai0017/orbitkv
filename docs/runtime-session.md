@@ -1,8 +1,9 @@
 # RuntimeSession
 
 `RuntimeSession` is the transactional boundary between compiled attention-state
-semantics and device execution. It owns a `CanonicalKvManager`; callers receive
-plans and opaque operation identities, never allocator authority.
+semantics and device execution. It owns a `CanonicalKvManager` and, for hybrid
+models, generation-checked recurrent/convolution pools. Callers receive plans
+and opaque operation identities, never allocator authority.
 
 ## Owned state
 
@@ -13,6 +14,8 @@ plans and opaque operation identities, never allocator authority.
 - Prefix lookup, attach, publish, eviction, fork, and COW state;
 - execution completion high-water marks;
 - retirement certificates, acknowledgement, quarantine, and reuse.
+- fixed-state source/destination slots, private transition capabilities, and
+  the last real completion frontier that published each owner.
 
 The session is synchronous state-machine code. The async device executor owns
 streams and events and calls session transitions in their required order. This
@@ -36,6 +39,20 @@ Validation covers the complete batch before physical effects begin. A prepared
 transaction may be aborted only when the executor proves it was unobserved. An
 ambiguous post-mutation failure is quarantined or fail-stopped; OrbitKV does not
 invent rollback evidence.
+
+For hybrid fixed-state sessions, each append step contains token-KV actions and
+one state plan per recurrent/convolution class. The session preflights candidate
+pools before mutating the KV manager, validates all state receipts before either
+side is submitted, and publishes both sides from the same completion domain and
+value. A contradiction quarantines the complete request batch. Request release
+retires fixed slots against their last confirmed completion and makes them
+reusable only after semantic release. Prefix sharing is rejected for these
+sessions until recurrent-state sharing semantics are defined.
+
+The public plan exposes state id, source/destination slot, and byte count but
+never the private transition or retirement capability. The ordinary token-KV
+executor cannot manufacture a fixed-state success receipt; a future GDN device
+operator must supply the observed write evidence.
 
 ## Prefix and copy-on-write
 
@@ -66,7 +83,8 @@ and exact restore receipts are submitted through the normal binding and
 completion path before the request head becomes visible.
 
 Host tests cover ordering, stale identities, hostile evidence, abort,
-quarantine, Prefix/COW, class-specific retirement, external transfer, and
-repeated generation reuse. Append completion evidence is still supplied by the
-embedding runtime. Released-model tests establish narrow correctness and
-lifecycle benefits; they do not establish broad model or serving superiority.
+quarantine, Prefix/COW, class-specific retirement, external transfer, joint
+token-KV/fixed-state completion, and repeated generation reuse. Append
+completion evidence is still supplied by the embedding runtime. Released-model
+tests establish narrow correctness and lifecycle benefits; they do not establish
+broad model or serving superiority.
