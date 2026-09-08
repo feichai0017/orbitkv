@@ -42,6 +42,8 @@ pub enum RecurrentError {
         expected: usize,
         actual: usize,
     },
+    #[error("recurrent state batch does not match the compiled state class")]
+    InvalidStateBatch,
 }
 
 impl GatedDeltaGeometry {
@@ -307,9 +309,13 @@ mod graph {
         *input * inverse_norm
     }
 }
+#[cfg(feature = "cuda")]
+mod state_graph;
 
 #[cfg(feature = "cuda")]
 pub use graph::{GatedDeltaStepInputs, GatedDeltaStepOutputs, gated_delta_step};
+#[cfg(feature = "cuda")]
+pub use state_graph::{RecurrentStateGraphArena, RecurrentStateGraphBinding};
 
 #[cfg(test)]
 mod tests {

@@ -17,6 +17,8 @@ pub use recurrent::{
 };
 #[cfg(feature = "cuda")]
 pub use recurrent::{GatedDeltaStepInputs, GatedDeltaStepOutputs, gated_delta_step};
+#[cfg(feature = "cuda")]
+pub use recurrent::{RecurrentStateGraphArena, RecurrentStateGraphBinding};
 
 #[cfg(feature = "cuda")]
 pub mod cuda;
@@ -25,7 +27,8 @@ mod state_arena;
 #[cfg(feature = "cuda")]
 pub use state_arena::{
     FixedStateDeviceArenas, FixedStateDeviceBatch, FixedStateDeviceError, FixedStateDeviceRange,
-    PendingFixedStateCompletion, PreparedFixedStateDeviceBatch,
+    FixedStateRuntimeBinding, InitializedFixedStateDeviceBatch, PendingFixedStateCompletion,
+    PreparedFixedStateDeviceBatch, ReadyFixedStateDeviceBatch,
 };
 mod external_tier;
 #[cfg(feature = "cuda")]
@@ -502,6 +505,17 @@ impl PreparedBatch {
     #[must_use]
     pub fn steps(&self) -> &[PreparedStep] {
         &self.steps
+    }
+
+    /// Returns fixed-state plans in the same request order as this token batch.
+    #[must_use]
+    pub fn fixed_state_requests(
+        &self,
+    ) -> impl ExactSizeIterator<Item = (u64, &[orbitkv::EngineFixedStatePlan])> {
+        self.source
+            .steps
+            .iter()
+            .map(|step| (step.request_id.0, step.fixed_states.as_ref()))
     }
 
     /// Builds exact success evidence after the executor has completed every

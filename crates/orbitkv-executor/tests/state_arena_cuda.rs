@@ -2,8 +2,9 @@
 #![forbid(unsafe_code)]
 
 use luminal::{
+    dtype::DType,
     op::Runtime,
-    prelude::{Graph, ToId},
+    prelude::{CompileOptions, Graph, ToId},
 };
 use luminal_cuda_lite::{cudarc::driver::CudaContext, runtime::CudaRuntime};
 use orbitkv::{
@@ -17,7 +18,8 @@ use orbitkv::{
 };
 use orbitkv_executor::{
     ExecutorArena, ExecutorPlan, FixedStateDeviceArenas, FixedStateDeviceBatch,
-    FixedStateExecutionEvidence, PreparedBatch,
+    FixedStateExecutionEvidence, GatedDeltaGeometry, GatedDeltaStepInputs, PreparedBatch,
+    RecurrentStateGraphArena, RecurrentStateGraphBinding, gated_delta_step,
 };
 
 const STATE_ID: u16 = 1;
@@ -28,6 +30,14 @@ struct TestControlPlane {
     executor_plan: ExecutorPlan,
     token_arena: ExecutorArena,
     state_identity: orbitkv::StatePoolIdentity,
+}
+
+struct RecurrentExecution {
+    graph: Graph,
+    runtime: CudaRuntime,
+    binding: orbitkv_executor::FixedStateRuntimeBinding,
+    graph_binding: RecurrentStateGraphBinding,
+    value_output: luminal::prelude::GraphTensor,
 }
 
 fn state_input() -> AttentionStatePlanInput {
@@ -169,6 +179,7 @@ fn control_plane() -> TestControlPlane {
 fn execute_step(
     control: &mut TestControlPlane,
     state_arenas: &FixedStateDeviceArenas,
+    execution: &mut RecurrentExecution,
     request_id: EngineRequestId,
     target_boundary: u64,
     completion_value: u64,
@@ -180,28 +191,128 @@ fn execute_step(
             target_boundary,
         }])
         .expect("prepare step");
-    let states = plan.steps[0].fixed_states.clone();
     let prepared = control
         .executor_plan
         .lower_prepared(plan, &[control.token_arena])
         .expect("lower step");
     let device = state_arenas
-        .prepare(request_id.0, &states)
-        .expect("resolve state slot");
-    let ranges = device.ranges().clone();
-    let evidence = device
-        .enqueue_reference()
-        .expect("enqueue state transition")
+        .prepare_batch(prepared.fixed_state_requests())
+        .expect("resolve state batch slots");
+    let initialized = device.initialize().expect("initialize state transition");
+    let ranges = initialized.ranges()[0].clone();
+    let ready = initialized
+        .upload_destination_slots(&mut execution.runtime, &[execution.graph_binding])
+        .expect("upload manager destination slot");
+    let evidence = ready
+        .complete_after(
+            &mut execution.runtime,
+            &execution.graph,
+            std::slice::from_ref(&execution.binding),
+        )
+        .expect("bind model execution receipt")
         .wait()
         .expect("wait for state event");
     complete_step(
         &mut control.session,
         &prepared,
         control.token_arena,
-        evidence,
+        evidence[0].clone(),
         completion_value,
     );
+    let values = execution.runtime.get_f32(execution.value_output);
+    let expected = if completion_value == 1 {
+        [1.0, 0.75, 0.5, 0.25]
+    } else {
+        [1.5, 1.125, 0.75, 0.375]
+    };
+    for (actual, expected) in values.iter().zip(expected) {
+        assert!((actual - expected).abs() <= 1e-6, "{actual} != {expected}");
+    }
     ranges
+}
+
+fn recurrent_execution(
+    control: &TestControlPlane,
+    state_arenas: &FixedStateDeviceArenas,
+    stream: std::sync::Arc<luminal_cuda_lite::cudarc::driver::CudaStream>,
+) -> RecurrentExecution {
+    let registration = control
+        .executor_plan
+        .fixed_state_registrations(&[(STATE_ID, control.state_identity)])
+        .unwrap()[0];
+    let geometry = GatedDeltaGeometry {
+        heads: 1,
+        key_width: 4,
+        value_width: 4,
+        normalization_epsilon: 0.0,
+    };
+    let mut graph = Graph::new();
+    let mut state_graph = RecurrentStateGraphArena::new(
+        &mut graph,
+        &control.executor_plan.fixed_states[0],
+        registration,
+        1.into(),
+    )
+    .expect("build recurrent state arena graph");
+    let query = graph.named_tensor("query", (1, 1, 4)).as_dtype(DType::F32);
+    let key = graph.named_tensor("key", (1, 1, 4)).as_dtype(DType::F32);
+    let value = graph.named_tensor("value", (1, 1, 4)).as_dtype(DType::F32);
+    let log_decay = graph.named_tensor("log_decay", (1, 1)).as_dtype(DType::F32);
+    let update_gate = graph
+        .named_tensor("update_gate", (1, 1))
+        .as_dtype(DType::F32);
+    let previous_state = state_graph.layer_state(0, geometry).unwrap();
+    let recurrent = gated_delta_step(
+        GatedDeltaStepInputs {
+            query,
+            key,
+            value,
+            log_decay,
+            update_gate,
+            previous_state,
+            batch_size: 1.into(),
+        },
+        geometry,
+    )
+    .expect("build gated-delta semantics");
+    state_graph
+        .commit_layer(0, geometry, recurrent.next_state)
+        .expect("commit recurrent state");
+    let value_output = recurrent.values.output();
+    let graph_binding = state_graph.finish();
+    let mut runtime = CudaRuntime::initialize(stream);
+    let inputs = [query, key, value, log_decay, update_gate];
+    seed_recurrent_inputs(&mut runtime, &inputs);
+    graph_binding
+        .seed_destination_slots(&mut runtime, 1, 1)
+        .expect("seed slot metadata");
+    let compile_scratch = graph_binding.allocate_compile_scratch(&mut runtime);
+    runtime = graph.compile(runtime, CompileOptions::default().search_graph_limit(8));
+    let binding = state_arenas
+        .bind_required_state(
+            &mut runtime,
+            STATE_ID,
+            graph_binding.arena_input,
+            graph_binding.arena_output,
+        )
+        .expect("bind OrbitKV arena to Luminal");
+    drop(compile_scratch);
+    seed_recurrent_inputs(&mut runtime, &inputs);
+    RecurrentExecution {
+        graph,
+        runtime,
+        binding,
+        graph_binding,
+        value_output,
+    }
+}
+
+fn seed_recurrent_inputs(runtime: &mut CudaRuntime, inputs: &[luminal::prelude::GraphTensor; 5]) {
+    runtime.set_data(inputs[0], vec![1.0_f32, 0.0, 0.0, 0.0]);
+    runtime.set_data(inputs[1], vec![1.0_f32, 0.0, 0.0, 0.0]);
+    runtime.set_data(inputs[2], vec![4.0_f32, 3.0, 2.0, 1.0]);
+    runtime.set_data(inputs[3], vec![0.0_f32]);
+    runtime.set_data(inputs[4], vec![0.5_f32]);
 }
 
 #[test]
@@ -219,27 +330,37 @@ fn fixed_state_arena_preserves_address_and_event_order_across_steps() {
     .expect("allocate stable state arena");
     assert_eq!(state_arenas.arena_count(), 1);
 
-    let mut graph = Graph::new();
-    let state_input = graph.named_tensor("state_input", 32);
-    let state_output = graph.named_tensor("state_output", 32);
-    let mut runtime = CudaRuntime::initialize(stream);
-    state_arenas
-        .bind_required_state(&mut runtime, STATE_ID, state_input, state_output)
-        .expect("bind OrbitKV arena to Luminal");
+    let mut execution = recurrent_execution(&control, &state_arenas, stream);
 
     let request_id = EngineRequestId(9);
     control
         .session
         .acquire_requests(&[request_id])
         .expect("acquire request");
-    let first_ranges = execute_step(&mut control, &state_arenas, request_id, 1, 1);
+    let first_ranges = execute_step(
+        &mut control,
+        &state_arenas,
+        &mut execution,
+        request_id,
+        1,
+        1,
+    );
     assert!(first_ranges.sources[0].is_none());
     let arena_base = stable_base(&first_ranges);
     assert_eq!(
-        runtime.input_allocation(state_input.to_id()),
+        execution
+            .runtime
+            .input_allocation(execution.graph_binding.arena_input.to_id()),
         Some((arena_base, usize::try_from(STATE_BYTES * 2).unwrap()))
     );
-    let second_ranges = execute_step(&mut control, &state_arenas, request_id, 2, 2);
+    let second_ranges = execute_step(
+        &mut control,
+        &state_arenas,
+        &mut execution,
+        request_id,
+        2,
+        2,
+    );
     let source = second_ranges.sources[0].expect("published source state");
     assert_eq!(source, first_ranges.destinations[0]);
     assert_ne!(

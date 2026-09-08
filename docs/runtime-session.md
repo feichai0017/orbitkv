@@ -52,9 +52,12 @@ sessions until recurrent-state sharing semantics are defined.
 The public plan exposes state id, source/destination slot, and byte count but
 never the private transition or retirement capability. The ordinary token-KV
 executor cannot manufacture a fixed-state success receipt. The CUDA state
-executor resolves those leases into stable arena ranges and releases observed
-write evidence only after its stream event completes; the future GDN semantic
-operator must perform the mathematical state update before that event.
+executor resolves those leases into stable arena ranges, initializes each
+destination from its published source (or zero), uploads manager-selected slot
+ids, and executes the Luminal graph. Only an opaque receipt tied to the exact
+runtime alias and recorded after that execution can release observed write
+evidence. Rebinding the same pointer creates a new identity, so an older receipt
+cannot certify it.
 
 ## Prefix and copy-on-write
 

@@ -20,9 +20,10 @@ provides the client protocol. Planned work is not a current capability.
   Candidates that materialize incompatible state fail closed.
 - Recurrent and convolution classes now have stable per-class CUDA arenas,
   generation-checked byte-range lowering, shared Luminal required aliases, and
-  event-gated completion evidence. The reference zero/copy path compiles, but
-  its explicit real-device gate has not run in the current environment and it
-  is not a substitute for GDN or convolution math.
+  runtime-identity- and event-gated completion evidence. Dynamic slot metadata
+  selects manager-authored destinations while the arena address stays fixed;
+  graph search uses a private scratch arena and cannot mutate live OrbitKV
+  state. The explicit real-device gate has not run in the current environment.
 - The current direct paged-attention node uses FlashInfer. Luminal searches the
   surrounding decoder graph, but does not yet select among multiple attention
   implementations or jointly derive a KV layout.
@@ -78,9 +79,11 @@ single-device bring-up model.
    egglog/search pipeline. The unfused HLIR expression remains the semantic
    fallback and parity authority.
    The first Luminal-native in-place state-update candidate now exists and is
-   introduced only by an exact rank-four egglog match. Remaining work is to
-   bind manager-selected source/destination slots, qualify it on device, and
-   add fused token readout plus a chunked-prefill candidate.
+   introduced only by an exact rank-four egglog match. A generic graph arena
+   gathers and commits manager-selected request slots in manifest layer order,
+   while initialization copies the prior published slot before execution.
+   Remaining work is to embed this path in the complete decoder, qualify it on
+   device, and add fused token readout plus a chunked-prefill candidate.
 3. Qualify recurrent decode, chunked prefill, causal-convolution history,
    cancellation, Prefix boundaries, and state-slot reuse on the small BF16
    checkpoint.
