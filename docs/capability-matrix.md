@@ -25,7 +25,7 @@ Historical results qualify only their recorded source closure.
 | Physical-residence ablation | Narrow L5 same-executor closure | Released-hybrid paired runs preserve 256 output tokens while compiled residence lowers live payload by 27.8%, extends the fixed-budget boundary by 32 tokens, and slightly reduces total test-path time; serving throughput remains open |
 | RuntimeSession | L2 | Presents transactional engine operations without exposing manager capabilities |
 | External KV tier transactions | L2 host | Export/restore run through an object-safe async transport contract; a real-byte host adapter verifies compact partial tails, per-page checksums, deletion, cross-session restore, and unobserved/ambiguous fault mapping; Mooncake/NIXL and hybrid restore remain open |
-| Executor plan | L2 | Compiles token classes plus recurrent/convolution fixed-state identities and geometry; only token classes currently have device operators |
+| Executor plan | L2 | Compiles and jointly validates per-layer token-KV or recurrent-plus-convolution ownership; stateful execution remains outside the production decoder |
 | Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page decode/prefill pass; Luminal never allocates or recycles pages |
 | Bucketed model runtime | L4 correctness | One symbolic graph is searched once into decode/prefill executables; query, batch, and per-class context dimensions have bounded capacities, dynamic inputs are preallocated, and one stable K/V arena per class survives prefill plus repeated decode |
 | Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity, LLIR fingerprints, and required persistent-state aliases fail closed |
@@ -43,12 +43,12 @@ Historical results qualify only their recorded source closure.
 
 | Capability | Current status |
 | --- | --- |
-| Dense decoder blocks | BF16 embedding, linear projections, pre-norm or sandwich-norm residuals, direct or unit-offset RMSNorm weights, global/local RoPE, SwiGLU or GeGLU, optional QKV bias and QK norm |
-| Attention | MHA/GQA paged attention; query-head count must divide by KV-head count; head dimension 64, 128, 256, or 512 when the compiled FlashInfer specialization exists |
+| Dense decoder blocks | BF16 embedding, linear projections, pre-norm or sandwich-norm residuals, direct or unit-offset RMSNorm weights, global/local RoPE, SwiGLU or GeGLU, optional QKV bias, QK norm, and per-head attention output gates |
+| Attention | MHA/GQA paged attention; query-head count must divide by KV-head count; default scale is `head_dim^-0.5`; head dimension 64, 128, 256, or 512 when the compiled FlashInfer specialization exists |
 | KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, and Prefix/COW lowering |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
 | Checkpoint family | Configuration-driven dense decoder plus nested hybrid text-config parsing with fail-closed capability gates; released Full and Full+Sliding checkpoints have real-device correctness evidence |
-| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Nested geometry, partial RoPE, weight namespace, FP8 format, fixed-state compiler facts, stable CUDA state arenas, manager-authored dynamic slot/layer graph addressing, and an egglog-derived single-token state-update candidate exist; complete decoder wiring, causal convolution, full GDN execution, FP8 model loading, and real-device qualification remain unsupported |
+| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Nested geometry, gated Full Attention, grouped GDN heads, real tensor/scale shapes, fixed-state compiler facts, stable CUDA arenas, dynamic slot/layer addressing, a complete single-token GDN semantic graph, and an egglog-derived recurrent update candidate exist; production decoder wiring, packed prefill, FP8 execution, and real-device qualification remain unsupported |
 | Not yet executable as complete models | GDN/recurrent or convolution state, quantized weights, MoE, sparse/latent attention, multimodal encoders, speculative decoding, and tensor/pipeline parallel models |
 
 Core support for a retention policy means its lifecycle can be compiled and

@@ -19,7 +19,7 @@ provides the client protocol. Planned work is not a current capability.
 - Persistent K/V updates are required aliases during search and artifact load.
   Candidates that materialize incompatible state fail closed.
 - Recurrent and convolution classes now have stable per-class CUDA arenas,
-  generation-checked byte-range lowering, shared Luminal required aliases, and
+  generation-checked byte-range lowering, typed Luminal state bindings, and
   runtime-identity- and event-gated completion evidence. Dynamic slot metadata
   selects manager-authored destinations while the arena address stays fixed;
   graph search uses a private scratch arena and cannot mutate live OrbitKV
@@ -50,8 +50,10 @@ convolution state, partial rotary dimensions, and dynamic block-FP8 linear
 operators. OrbitKV already compiles the checkpoint into 16 Full token-KV layers
 plus 48 recurrent and convolution layers. The executor now parses the nested
 text configuration and carries fixed-state geometry into its compiler contract,
-but GDN execution and checkpoint FP8 loading are still explicit fail-closed
-gaps.
+and its standalone single-token GDN graph now covers split projections, minimal
+convolution history, grouped-head recurrence, gating, normalization, and output
+projection. Production decoder/runtime wiring, packed prefill, and checkpoint
+FP8 execution remain explicit fail-closed gaps.
 
 Use the structurally equivalent small BF16 checkpoint as the bring-up target.
 It must exercise the same 3:1 layer schedule and state transitions before the
@@ -72,18 +74,18 @@ single-device bring-up model.
 1. Run the stable fixed-state arena, shared-alias, and stream-ordered completion
    gate on the qualification GPU; keep it as a regression prerequisite for all
    recurrent/convolution kernels.
-2. Extend the backend-neutral gated-delta recurrence now represented by an
-   independent f32 oracle and a pure Luminal single-token HLIR graph. Add a
-   production CUDA state-update candidate derived from an attributed,
-   license-compatible mature implementation, then select it through Luminal's
-   egglog/search pipeline. The unfused HLIR expression remains the semantic
-   fallback and parity authority.
-   The first Luminal-native in-place state-update candidate now exists and is
+2. The backend-neutral gated-delta recurrence now has an independent f32 oracle,
+   grouped key/value heads, and a pure Luminal single-token graph. Projection,
+   minimal `K-1` causal-convolution history, gates, recurrent update, gated
+   RMSNorm, and output projection compose without model-name dispatch. The
+   first Luminal-native in-place state-update candidate exists and is
    introduced only by an exact rank-four egglog match. A generic graph arena
    gathers and commits manager-selected request slots in manifest layer order,
    while initialization copies the prior published slot before execution.
-   Remaining work is to embed this path in the complete decoder, qualify it on
-   device, and add fused token readout plus a chunked-prefill candidate.
+   Convolution currently uses graph-visible same-stream copy-back; the next
+   kernel milestone is a searchable fused convolution/update candidate.
+   Remaining work is to connect these bindings to the production decoder,
+   qualify them on device, and add packed-sequence prefill candidates.
 3. Qualify recurrent decode, chunked prefill, causal-convolution history,
    cancellation, Prefix boundaries, and state-slot reuse on the small BF16
    checkpoint.

@@ -75,6 +75,11 @@ impl DecoderLayer {
     ) -> Self {
         let prefix = format!("{}.layers.{layer}", config.tensor_prefix);
         let q_width = config.query_heads * config.head_dim;
+        let q_projection_width = if config.attention_output_gate {
+            q_width * 2
+        } else {
+            q_width
+        };
         let kv_width = config.kv_heads * config.head_dim;
         let projection = |graph: &mut Graph, name: &str, width| {
             weight(
@@ -111,7 +116,13 @@ impl DecoderLayer {
                 &format!("{prefix}.post_feedforward_layernorm.weight"),
             )
         });
-        let q_bias = projection_bias(graph, weights.qkv_bias, &prefix, "q_proj", q_width);
+        let q_bias = projection_bias(
+            graph,
+            weights.qkv_bias,
+            &prefix,
+            "q_proj",
+            q_projection_width,
+        );
         let k_bias = projection_bias(graph, weights.qkv_bias, &prefix, "k_proj", kv_width);
         let v_bias = projection_bias(graph, weights.qkv_bias, &prefix, "v_proj", kv_width);
         let q_norm = qk_weight(graph, weights.qk_norm, &prefix, "q_norm", config.head_dim);
@@ -121,7 +132,7 @@ impl DecoderLayer {
             post_attention_norm,
             feed_forward_norm,
             post_feed_forward_norm,
-            q_weight: projection(graph, "q_proj", q_width),
+            q_weight: projection(graph, "q_proj", q_projection_width),
             k_weight: projection(graph, "k_proj", kv_width),
             v_weight: projection(graph, "v_proj", kv_width),
             o_weight: weight(
@@ -169,7 +180,16 @@ impl DecoderLayer {
             let output = normalized.matmul(weight.t());
             bias.map_or(output, |bias| bias.expand_lhs(&output.dims()[..1]) + output)
         };
-        let mut q = project(self.q_weight, self.q_bias).split_dims(1, config.head_dim);
+        let projected_q = project(self.q_weight, self.q_bias);
+        let (q, output_gate) = if config.attention_output_gate {
+            let q_gate = projected_q.split_dims(1, config.head_dim * 2);
+            let q = q_gate.slice((.., .., ..config.head_dim));
+            let gate = q_gate.slice((.., .., config.head_dim..)).merge_dims(1, 2);
+            (q, Some(gate))
+        } else {
+            (projected_q.split_dims(1, config.head_dim), None)
+        };
+        let mut q = q;
         let mut k = project(self.k_weight, self.k_bias).split_dims(1, config.head_dim);
         if let Some(norm) = self.q_norm {
             q = qk_norm(&q, &norm, config);
@@ -230,10 +250,9 @@ impl DecoderLayer {
                 softmax_scale: config.attention_softmax_scale,
             },
         )?;
-        let mut attention = attention
-            .transpose(0, 1)
-            .merge_dims(1, 2)
-            .matmul(self.o_weight.t());
+        let attention = attention.transpose(0, 1).merge_dims(1, 2);
+        let attention = output_gate.map_or(attention, |gate| attention * gate.sigmoid());
+        let mut attention = attention.matmul(self.o_weight.t());
         if let Some(norm) = &self.post_attention_norm {
             attention = norm.forward(&attention);
         }
@@ -337,5 +356,30 @@ fn rotary(
         rotated
     } else {
         rotated.concat_along(input.slice((.., .., rotary_dimensions..)), 2)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use luminal::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
+
+    #[test]
+    fn gated_query_projection_deinterleaves_each_head() {
+        let mut graph = Graph::new();
+        let projected = graph.named_tensor("q_gate", (1, 8));
+        let per_head = projected.split_dims(1, 4);
+        let query = per_head.slice((.., .., ..2)).merge_dims(1, 2).output();
+        let gate = per_head.slice((.., .., 2..)).merge_dims(1, 2).output();
+        let mut runtime = graph.compile(
+            ReferenceRuntime::default(),
+            CompileOptions::default().search_graph_limit(1),
+        );
+        runtime.set_data(
+            projected,
+            vec![1.0_f32, 2.0, 10.0, 20.0, 3.0, 4.0, 30.0, 40.0],
+        );
+        runtime.execute(&graph.dyn_map);
+        assert_eq!(runtime.get_f32(query), &vec![1.0, 2.0, 3.0, 4.0]);
+        assert_eq!(runtime.get_f32(gate), &vec![10.0, 20.0, 30.0, 40.0]);
     }
 }

@@ -55,9 +55,11 @@ executor cannot manufacture a fixed-state success receipt. The CUDA state
 executor resolves those leases into stable arena ranges, initializes each
 destination from its published source (or zero), uploads manager-selected slot
 ids, and executes the Luminal graph. Only an opaque receipt tied to the exact
-runtime alias and recorded after that execution can release observed write
-evidence. Rebinding the same pointer creates a new identity, so an older receipt
-cannot certify it.
+runtime binding and recorded after both graph execution and any selected
+same-stream copy-back can release observed write evidence. Recurrent state
+currently requires direct in-place mutation; convolution history may use a
+measured copy-back schedule until a fused candidate is qualified. Rebinding the
+same pointer creates a new identity, so an older receipt cannot certify it.
 
 ## Prefix and copy-on-write
 

@@ -18,8 +18,8 @@ use orbitkv::{
 };
 use orbitkv_executor::{
     ExecutorArena, ExecutorPlan, FixedStateDeviceArenas, FixedStateDeviceBatch,
-    FixedStateExecutionEvidence, GatedDeltaGeometry, GatedDeltaStepInputs, PreparedBatch,
-    RecurrentStateGraphArena, RecurrentStateGraphBinding, gated_delta_step,
+    FixedStateExecutionEvidence, FixedStateGraphBinding, FixedStateWritePolicy, GatedDeltaGeometry,
+    GatedDeltaStepInputs, PreparedBatch, RecurrentStateGraphArena, gated_delta_step,
 };
 
 const STATE_ID: u16 = 1;
@@ -36,7 +36,7 @@ struct RecurrentExecution {
     graph: Graph,
     runtime: CudaRuntime,
     binding: orbitkv_executor::FixedStateRuntimeBinding,
-    graph_binding: RecurrentStateGraphBinding,
+    graph_binding: FixedStateGraphBinding,
     value_output: luminal::prelude::GraphTensor,
 }
 
@@ -241,7 +241,8 @@ fn recurrent_execution(
         .fixed_state_registrations(&[(STATE_ID, control.state_identity)])
         .unwrap()[0];
     let geometry = GatedDeltaGeometry {
-        heads: 1,
+        key_heads: 1,
+        value_heads: 1,
         key_width: 4,
         value_width: 4,
         normalization_epsilon: 0.0,
@@ -289,11 +290,10 @@ fn recurrent_execution(
     let compile_scratch = graph_binding.allocate_compile_scratch(&mut runtime);
     runtime = graph.compile(runtime, CompileOptions::default().search_graph_limit(8));
     let binding = state_arenas
-        .bind_required_state(
+        .bind_graph_state(
             &mut runtime,
-            STATE_ID,
-            graph_binding.arena_input,
-            graph_binding.arena_output,
+            graph_binding,
+            FixedStateWritePolicy::RequiredInPlace,
         )
         .expect("bind OrbitKV arena to Luminal");
     drop(compile_scratch);
