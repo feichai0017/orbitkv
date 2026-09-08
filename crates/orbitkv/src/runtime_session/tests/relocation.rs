@@ -1,12 +1,7 @@
 use super::*;
 
 fn relocation_policy() -> crate::kv_manager::RelocationPolicy {
-    crate::kv_manager::RelocationPolicy {
-        fragmentation_threshold_milli: 250,
-        maximum_source_pages: 8,
-        evacuation_headroom_pages: 2,
-        full_evacuation: true,
-    }
+    crate::kv_manager::RelocationPolicy::static_fragmentation(250, 8, 2, true)
 }
 
 fn prepare_relocatable(

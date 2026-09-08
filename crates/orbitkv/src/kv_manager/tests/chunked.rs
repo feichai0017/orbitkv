@@ -502,10 +502,7 @@ fn chunked_prefix_and_relocation_paths_fail_closed_without_mutation() {
             request,
             expected_snapshot: completion.publication.snapshot,
             class_id: 0,
-            policy: RelocationPolicy {
-                full_evacuation: true,
-                ..RelocationPolicy::default()
-            },
+            policy: RelocationPolicy::static_fragmentation(250, 8, 2, true),
         }]),
         Err(KvManagerError::UnsupportedProfile(_))
     ));

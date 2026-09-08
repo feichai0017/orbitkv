@@ -27,7 +27,7 @@ reference-engine comparison.
 
 | Project | Relationship | Reused or planned surface | Excluded surface |
 | --- | --- | --- | --- |
-| Luminal fork | Embedded compiler/executor | Graph IR, search, CUDA kernels, persistent inputs, bucket dispatch, child CUDA graphs, candidate filtering, and class-bound OrbitKV state/layout facts | Luminal page allocation or lifecycle decisions |
+| Luminal fork | Embedded compiler/executor | Graph IR, search, CUDA kernels, persistent inputs, bucket dispatch, child CUDA graphs, candidate filtering, class-bound OrbitKV state/layout facts, and fresh selected-program cost/identity export | Luminal page allocation or lifecycle decisions |
 | vLLM | Embedded frontend and benchmark client | Rust OpenAI/tokenizer/chat/SSE, request identity, stream-drop auto-abort; `vllm bench serve` as the common load generator | vLLM scheduler or KV block manager in the OrbitKV process |
 | PegaInfer | Design and measurement reference only | Small Rust server boundary, hybrid full/linear-attention operator structure, matched vLLM-client workflow | Source copying, model-name dispatch, contiguous model-owned KV cache |
 | Dynamo | Distributed-system reference and optional outer control plane | KV-aware routing ideas, event schemas, telemetry, service discovery where justified | `kvbm-logical`, `KvBlockManager`, lifecycle pins, or any second page manager |

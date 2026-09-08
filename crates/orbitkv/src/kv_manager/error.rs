@@ -88,6 +88,10 @@ pub enum KvManagerError {
     StaleTokenView,
     #[error("token relocation policy is invalid")]
     InvalidRelocationPolicy,
+    #[error("token relocation cost profile is invalid")]
+    InvalidRelocationCostProfile,
+    #[error("token relocation cost profile does not match the proposed move")]
+    RelocationCostProfileMismatch,
     #[error("token relocation plan is invalid")]
     InvalidRelocationPlan,
     #[error("step was already submitted")]

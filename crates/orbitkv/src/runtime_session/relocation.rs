@@ -48,7 +48,7 @@ pub struct EngineTokenDispositionBatchItem {
 }
 
 /// One request in a session relocation prepare batch.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct EnginePrepareRelocationItem {
     pub request_id: EngineRequestId,
     pub class_id: u16,
@@ -346,7 +346,7 @@ impl RuntimeSession {
                 request: record.view.request,
                 expected_snapshot: record.view.snapshot,
                 class_id: item.class_id,
-                policy: item.policy,
+                policy: item.policy.clone(),
             })
             .collect::<Vec<_>>();
         let prepared = self.manager.prepare_relocation_batch(&manager_items)?;

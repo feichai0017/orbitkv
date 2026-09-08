@@ -18,6 +18,7 @@ mod persistent_snapshot;
 mod prefix;
 mod protocol;
 mod reclamation;
+mod relocation_policy;
 mod relocation_transaction;
 #[cfg(test)]
 mod test_model;
@@ -61,13 +62,17 @@ pub use protocol::{
     ReleaseCompletion, RequestForkItem, RequestView, SnapshotPage, StepCompletion, SubmitBatchItem,
     SubmittedStep, TailAction, TailActionKind, WriteIntent,
 };
+pub use relocation_policy::{
+    RelocationAdmission, RelocationCostEnvelope, RelocationCostIdentity, RelocationCostMeasurement,
+    RelocationCostProfile, RelocationPolicy,
+};
 pub use token_virtualization::{
     ClassTokenDispositionUpdate, CompletedRelocationBatch, CompletedRelocationItem,
     PrepareRelocationItem, PreparedRelocation, RelocationCopyReceipt, RelocationDestination,
-    RelocationPageState, RelocationPlan, RelocationPolicy, RelocationUnobservedReceipt,
-    SubmittedRelocation, TokenDisposition, TokenDispositionBatchItem, TokenDispositionKind,
-    TokenDispositionUpdate, TokenLocation, TokenMove, TokenPlacement, TokenView, TokenViewQuery,
-    apply_token_relocation, mark_token_dispositions, plan_token_relocation, validate_token_view,
+    RelocationPageState, RelocationPlan, RelocationUnobservedReceipt, SubmittedRelocation,
+    TokenDisposition, TokenDispositionBatchItem, TokenDispositionKind, TokenDispositionUpdate,
+    TokenLocation, TokenMove, TokenPlacement, TokenView, TokenViewQuery, apply_token_relocation,
+    mark_token_dispositions, validate_token_view,
 };
 use token_virtualization::{PersistentTokenTable, apply_class_transition};
 

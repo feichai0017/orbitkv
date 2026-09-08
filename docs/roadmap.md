@@ -187,12 +187,15 @@ Only after this gate passes should R5/R6 become the primary product work.
 
 ## R4.2: Join state and graph compilation
 
-Status: the ownership boundary, persistent-alias constraint, and forward facts
-path are implemented. OrbitKV now emits backend-neutral state/layout facts; the
-executor binds them to stable arenas and injects them into Luminal's e-graph,
-with each paged-attention node linked to its state class. The two compilers still
-do not share a cost model, and token relocation still uses a fixed fragmentation
-threshold. This is not the intended end state.
+Status: the ownership boundary, persistent-alias constraint, forward facts
+path, and typed cost-feedback infrastructure are implemented. OrbitKV emits
+backend-neutral state/layout facts; the executor binds them to stable arenas and
+injects them into Luminal's e-graph, with each paged-attention node linked to its
+state class. Luminal exports fresh selected-bucket device metrics and final LLIR
+fingerprints. The executor combines matched source/target searches with measured
+relocation bandwidth, and OrbitKV admits only positive amortized benefit. No
+layout-changing rewrite exists yet, so production relocation remains disabled
+rather than relying on the former default fragmentation threshold.
 
 Build the joint path without making `orbitkv` depend on Luminal internals:
 
@@ -205,13 +208,20 @@ Build the joint path without making `orbitkv` depend on Luminal internals:
    include the fact digest in artifact identity. The fork may use egglog and
    backend-specific analyses internally; those types do not leak into the
    reusable manager. Layout-selecting rewrite rules remain open.
-3. Next: make every selected executable return a typed `ExecutionCostProfile` keyed
-   by manifest, bucket, layout alternative, and kernel fingerprint. Reject
-   stale or geometry-mismatched profiles.
-4. Replace `fragmentation_threshold_milli` as the production decision rule with
-   a costed choice among keep, compact, and defer. The manager remains the only
-   component allowed to reserve destinations or publish a relocated view.
-5. Search and persist layout plus executable as one qualified artifact, while
+3. Completed infrastructure: selected executables return fresh device cost,
+   sample count, bucket geometry, and final LLIR fingerprints. The executor
+   creates a `RelocationCostProfile` bound to manager plan, compiler facts,
+   source/target artifacts and schedules, class/layout pair, and proposal
+   envelope. Stale, weak, identical-program, or geometry-mismatched evidence is
+   rejected.
+4. Completed manager gate: the default policy disables relocation. A measured
+   policy compares expected step savings with CUDA-event D2D copy cost and a
+   required margin; only positive amortized benefit may reserve destinations.
+   The old static fragmentation rule is explicit test/qualification mode only.
+   The manager remains the only component allowed to reserve destinations or
+   publish a relocated view.
+5. Next: add egglog layout rewrites and packed attention kernels, then search
+   and persist layout plus executable as one qualified artifact, while
    keeping semantic validity independent from measured profitability. A missing
    cost profile may disable relocation; it may never weaken reclamation proof.
 

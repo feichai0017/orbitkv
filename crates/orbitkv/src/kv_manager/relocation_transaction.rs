@@ -4,13 +4,14 @@ use std::sync::Arc;
 use crate::plan::RetentionKind;
 
 use super::persistent_snapshot::{ClassRoot, RootLayout};
+use super::relocation_policy::RelocationPlanningContext;
+use super::token_virtualization::plan_token_relocation;
 use super::{
     BatchCompletionReceipt, CanonicalKvManager, CompletedRelocationBatch, KvManagerError,
     PagePhase, PersistentRootEntries, PrepareRelocationItem, PreparedRelocation, ReclamationState,
     RelocationCopyReceipt, RelocationDestination, RelocationLease, RelocationPageState,
     RelocationPlan, RelocationUnobservedReceipt, RequestSnapshot, SnapshotLease,
-    SubmittedRelocation, TokenView, ViewVersion, apply_token_relocation, plan_token_relocation,
-    validate_token_view,
+    SubmittedRelocation, TokenView, ViewVersion, apply_token_relocation, validate_token_view,
 };
 
 #[derive(Clone, Debug)]
@@ -271,8 +272,20 @@ impl CanonicalKvManager {
                     backend_index: root.backend_index,
                 });
             }
-            let plan = plan_token_relocation(&view, &page_states, &destinations, item.policy)?
-                .ok_or(KvManagerError::InvalidRelocationPlan)?;
+            let plan = plan_token_relocation(
+                &view,
+                &page_states,
+                &destinations,
+                RelocationPlanningContext {
+                    plan_fingerprint: self.plan_fingerprint,
+                    page_tokens: u32::try_from(self.page_tokens).map_err(|_| {
+                        KvManagerError::ArithmeticOverflow("relocation page tokens")
+                    })?,
+                    page_payload_bytes: class.page_payload_bytes,
+                },
+                &item.policy,
+            )?
+            .ok_or(KvManagerError::InvalidRelocationPlan)?;
             if plan.source_pages.len() != root.entries.len()
                 || plan.destination_pages.len() != destination_count
             {

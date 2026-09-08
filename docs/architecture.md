@@ -158,23 +158,29 @@ page types into the server. External KV transports live in `orbitkv-executor`
 because they operate on lowered tensor spans, while replica identity, pins,
 publication, and deletion authority stay in `orbitkv`.
 
-The current compiler boundary shares semantic lifetime, physical arena, and
+The compiler boundary shares semantic lifetime, physical arena, and
 persistent-state constraints in the OrbitKV-to-Luminal direction. A candidate
 that violates a required state alias is rejected before profiling, and an
-artifact containing such a candidate is rejected during load. The next boundary
-is a typed feedback path: Luminal returns bucket- and layout-specific measured
-costs, and OrbitKV chooses among already legal physical alternatives. This makes
-the compile-time exchange bidirectional without giving Luminal page identity,
-publication, or lifecycle authority. Backend-specific egglog and CUDA types stay
-inside the fork and executor.
+artifact containing such a candidate is rejected during load. The typed return
+path now exports fresh selected-bucket device time, sample count, bucket
+geometry, final LLIR fingerprints, and CUDA-event relocation bandwidth. The
+executor accepts only matched source/target searches and emits a backend-neutral
+`RelocationCostProfile`; OrbitKV then chooses among already legal physical
+alternatives. This makes the exchange bidirectional without giving Luminal page
+identity, publication, or lifecycle authority. Backend-specific egglog and CUDA
+types stay inside the fork and executor.
 
 Concretely, `RuntimeManifest::state_layout_facts` emits a backend-neutral view
 of every state class. `orbitkv-executor` joins token classes with stable arena
 registrations, emits deterministic e-graph facts, and binds each paged-attention
 custom op to its manager class. The fact digest participates in decoder artifact
 identity, so an artifact cannot silently survive a changed state/search
-contract. These facts currently constrain identity and provide a rewrite input;
-they do not yet select a packed layout or replace the relocation heuristic.
+contract. The manager no longer enables relocation from a default fragmentation
+heuristic: absent matched measured evidence, the default is disabled. A static
+fragmentation policy remains explicit for deterministic correctness
+qualification. The remaining joint-compiler gap is a legal packed-layout
+rewrite that changes the final executable and can therefore produce qualifying
+source/target evidence.
 
 `tools/verify_active_source.py` enforces these forbidden dependency edges,
 rejects physical KV ownership types in server source, requires all product

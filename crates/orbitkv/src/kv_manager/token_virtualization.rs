@@ -6,6 +6,9 @@ use serde::Serialize;
 use super::arena::RuntimeClass;
 use super::manager_state::{ClassDelta, ClassTransition};
 use super::persistent_snapshot::{ClassRoot, RootEntry, RootLayout};
+use super::relocation_policy::{
+    RelocationPlanningContext, RelocationPolicy, admits_relocation, minimum_fragmentation,
+};
 use super::{
     CanonicalKvManager, KvManagerError, PageLease, PhysicalResidencePolicy, RequestLease,
     RequestSnapshot, RequestView, SnapshotLease, TailActionKind, ViewVersion,
@@ -642,26 +645,6 @@ pub struct RelocationDestination {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-pub struct RelocationPolicy {
-    /// Fragmentation threshold in thousandths. The paper's default 0.25 is 250.
-    pub fragmentation_threshold_milli: u16,
-    pub maximum_source_pages: u32,
-    pub evacuation_headroom_pages: u32,
-    pub full_evacuation: bool,
-}
-
-impl Default for RelocationPolicy {
-    fn default() -> Self {
-        Self {
-            fragmentation_threshold_milli: 250,
-            maximum_source_pages: 32,
-            evacuation_headroom_pages: 8,
-            full_evacuation: false,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[repr(C)]
 pub struct TokenMove {
     pub token_id: u64,
@@ -694,7 +677,7 @@ pub struct CompletedRelocationBatch {
     pub retirements: Box<[super::ReclamationCertificate]>,
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct PrepareRelocationItem {
     pub request: RequestLease,
     pub expected_snapshot: SnapshotLease,
@@ -758,14 +741,17 @@ struct PageOccupancy {
 /// invalid relocation policy, checked arithmetic failure, or a placement that
 /// disagrees with its page census.
 #[allow(clippy::too_many_lines)]
-pub fn plan_token_relocation(
+pub(crate) fn plan_token_relocation(
     view: &TokenView,
     pages: &[RelocationPageState],
     destinations: &[RelocationDestination],
-    policy: RelocationPolicy,
+    context: RelocationPlanningContext,
+    policy: &RelocationPolicy,
 ) -> Result<Option<RelocationPlan>, KvManagerError> {
     validate_token_view(view)?;
-    validate_policy(policy)?;
+    let Some(fragmentation_threshold_milli) = minimum_fragmentation(policy)? else {
+        return Ok(None);
+    };
     let page_tokens = view.page_tokens;
     let page_states = pages
         .iter()
@@ -844,7 +830,7 @@ pub fn plan_token_relocation(
             / slots,
     )
     .map_err(|_| KvManagerError::ArithmeticOverflow("fragmentation ratio"))?;
-    if fragmentation < policy.fragmentation_threshold_milli {
+    if fragmentation < fragmentation_threshold_milli {
         return Ok(None);
     }
 
@@ -954,7 +940,7 @@ pub fn plan_token_relocation(
             .checked_add(1)
             .ok_or(KvManagerError::ViewVersionExhausted)?,
     );
-    Ok(Some(RelocationPlan {
+    let plan = RelocationPlan {
         class_id: view.class_id,
         base_version: view.version,
         target_version,
@@ -967,7 +953,8 @@ pub fn plan_token_relocation(
             .into_boxed_slice(),
         moves: moves.into_boxed_slice(),
         projected_reclaimed_pages: source_count - destination_count,
-    }))
+    };
+    admits_relocation(context, policy, &plan).map(|admitted| admitted.then_some(plan))
 }
 
 /// Applies a completed relocation to the logical token table.
@@ -1190,16 +1177,6 @@ pub fn validate_token_view(view: &TokenView) -> Result<(), KvManagerError> {
         {
             return Err(KvManagerError::InvalidTokenView);
         }
-    }
-    Ok(())
-}
-
-fn validate_policy(policy: RelocationPolicy) -> Result<(), KvManagerError> {
-    if policy.fragmentation_threshold_milli > 1000
-        || policy.maximum_source_pages == 0
-        || policy.evacuation_headroom_pages == 0
-    {
-        return Err(KvManagerError::InvalidRelocationPolicy);
     }
     Ok(())
 }

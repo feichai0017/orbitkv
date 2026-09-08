@@ -12,6 +12,7 @@ use crate::{ExecutorArena, ExecutorError, ExecutorPlan};
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct LuminalCompilerFacts {
     manifest_fingerprint: String,
+    manager_plan_fingerprint: [u8; 32],
     digest: String,
     classes: Box<[LuminalStateClassFacts]>,
     egglog: String,
@@ -35,6 +36,17 @@ impl LuminalCompilerFacts {
     #[must_use]
     pub fn digest(&self) -> &str {
         &self.digest
+    }
+
+    /// Binary SHA-256 digest of the exact declarations injected into Luminal.
+    #[must_use]
+    pub fn digest_bytes(&self) -> [u8; 32] {
+        Sha256::digest(self.egglog.as_bytes()).into()
+    }
+
+    #[must_use]
+    pub const fn manager_plan_fingerprint(&self) -> [u8; 32] {
+        self.manager_plan_fingerprint
     }
 
     #[must_use]
@@ -67,6 +79,9 @@ impl ExecutorPlan {
         {
             return Err(ExecutorError::CompilerFactsMismatch);
         }
+        let manager_plan_fingerprint = state_layout_facts
+            .manager_plan_fingerprint
+            .ok_or(ExecutorError::CompilerFactsMismatch)?;
         let token_states = state_layout_facts
             .classes
             .iter()
@@ -101,6 +116,7 @@ impl ExecutorPlan {
         let digest = format!("sha256:{:x}", Sha256::digest(egglog.as_bytes()));
         Ok(LuminalCompilerFacts {
             manifest_fingerprint: self.manifest_fingerprint.clone(),
+            manager_plan_fingerprint,
             digest,
             classes,
             egglog,
@@ -142,6 +158,8 @@ fn lower_egglog(
 (relation persistent-state-address-resettable (i64 i64))
 (relation persistent-state-layout-compiled (i64))
 (relation persistent-state-layout-packed-token-slots (i64))
+(relation persistent-state-selected-layout-compiled (i64))
+(relation persistent-state-selected-layout-packed-token-slots (i64))
 ",
     );
     writeln!(
@@ -228,6 +246,16 @@ fn write_class_facts(
         };
         write_unary_fact(output, relation, class_id);
     }
+    write_unary_fact(
+        output,
+        match class.state.selected_layout {
+            StateLayoutAlternative::Compiled => "persistent-state-selected-layout-compiled",
+            StateLayoutAlternative::PackedTokenSlots => {
+                "persistent-state-selected-layout-packed-token-slots"
+            }
+        },
+        class_id,
+    );
     Ok(())
 }
 
@@ -498,6 +526,14 @@ mod tests {
         let repeated = plan.luminal_compiler_facts(&arenas).unwrap();
         assert_eq!(facts.digest(), repeated.digest());
         assert_eq!(facts.manifest_fingerprint(), plan.manifest_fingerprint);
+        assert_eq!(
+            facts.manager_plan_fingerprint(),
+            plan.state_layout_facts.manager_plan_fingerprint.unwrap()
+        );
+        assert_eq!(
+            facts.digest(),
+            format!("sha256:{:x}", Sha256::digest(facts.egglog().as_bytes()))
+        );
         assert_eq!(facts.classes().len(), 2);
         assert!(
             facts

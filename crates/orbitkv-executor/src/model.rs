@@ -35,6 +35,13 @@ pub use config::{
 #[path = "model/weights.rs"]
 mod weights;
 use weights::{DecoderWeightFeatures, inspect_weight_features};
+#[path = "model/relocation_profile.rs"]
+mod relocation_profile;
+use relocation_profile::{DecoderProfileIdentity, decoder_measurement_identity};
+pub use relocation_profile::{
+    RelocationBandwidthProfile, RelocationBandwidthSample, RelocationProfileEnvelopeInput,
+    build_relocation_cost_profile,
+};
 
 #[derive(Debug, Error)]
 pub enum DecoderError {
@@ -60,6 +67,8 @@ pub enum DecoderError {
     MissingDecodeCapture,
     #[error("decode step does not match the captured CUDA graph signature")]
     DecodeCaptureMismatch,
+    #[error("invalid relocation cost evidence: {0}")]
+    RelocationProfile(&'static str),
 }
 
 /// Dynamic-shape and search policy for one compiled decoder executable.
@@ -132,6 +141,19 @@ impl DecoderArtifact {
             )));
         }
         Ok(artifact)
+    }
+
+    /// Stable digest of the complete portable decoder artifact.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if canonical JSON serialization fails.
+    pub fn fingerprint(&self) -> Result<[u8; 32], DecoderError> {
+        Ok(Sha256::digest(self.to_bytes()?).into())
+    }
+
+    fn schedule_fingerprint(&self) -> Result<[u8; 32], DecoderError> {
+        Ok(Sha256::digest(serde_json::to_vec(&self.schedule)?).into())
     }
 }
 
@@ -212,6 +234,7 @@ pub struct CompiledDecoder {
     page_tokens: usize,
     cache_updates_in_place: bool,
     dynamic_input_allocations: Box<[InputAllocation]>,
+    profile_identity: DecoderProfileIdentity,
 }
 
 #[derive(Clone)]
@@ -509,6 +532,7 @@ impl CompiledDecoder {
     /// # Errors
     ///
     /// Rejects incompatible artifacts and propagates model or device failures.
+    #[allow(clippy::too_many_lines)]
     #[allow(clippy::too_many_arguments)]
     pub fn compile_or_load(
         config: &DecoderConfig,
@@ -534,6 +558,8 @@ impl CompiledDecoder {
             compile,
             compiler_facts.digest(),
         )?;
+        let matched_execution_fingerprint =
+            decoder_measurement_identity(config, plan, arenas, weights, compile)?;
         if let Some(artifact) = artifact
             && artifact.identity != identity
         {
@@ -595,6 +621,31 @@ impl CompiledDecoder {
         runtime.release_pooled_memory();
         let dynamic_input_allocations = capture_input_allocations(&runtime, &decoder)?;
         let cache_updates_in_place = cache_updates_in_place(&runtime, &decoder);
+        let profile_identity = DecoderProfileIdentity {
+            matched_execution_fingerprint,
+            manager_plan_fingerprint: compiler_facts.manager_plan_fingerprint(),
+            compiler_facts_digest: compiler_facts.digest_bytes(),
+            artifact_fingerprint: effective_artifact.fingerprint()?,
+            schedule_fingerprint: effective_artifact.schedule_fingerprint()?,
+            bucket_program_fingerprints: effective_artifact
+                .schedule
+                .bucket_program_fingerprints()
+                .into_boxed_slice(),
+            class_layouts: compiler_facts
+                .classes()
+                .iter()
+                .map(|class| {
+                    class
+                        .state
+                        .manager_class_id
+                        .map(|class_id| (class_id, class.state.selected_layout))
+                        .ok_or(DecoderError::RelocationProfile(
+                            "compiler facts contain a non-manager class",
+                        ))
+                })
+                .collect::<Result<Vec<_>, DecoderError>>()?
+                .into_boxed_slice(),
+        };
         for cache in &mut persistent_cache {
             stream.memset_zeros(cache)?;
         }
@@ -610,6 +661,7 @@ impl CompiledDecoder {
                 page_tokens,
                 cache_updates_in_place,
                 dynamic_input_allocations,
+                profile_identity,
             },
             effective_artifact,
         ))
