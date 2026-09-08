@@ -14,7 +14,7 @@ operator passes all applicable layers.
 | Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Narrow same-executor L5: 27.8% less resident payload, 6.1% longer fixed-budget boundary, 0.77% lower median test-path time |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
-| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Stable per-class CUDA arenas, generation-checked slot lowering, Luminal required aliases, and event-gated evidence are implemented; GDN math is missing | Unsupported | Unproven |
+| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | Stable per-class CUDA arenas, generation-checked slot lowering, Luminal required aliases, and event-gated evidence are implemented; normalized gated-delta recurrence has an independent f32 sequence oracle and a pure Luminal single-token HLIR form, but no CUDA recurrence candidate | Unsupported | Unproven |
 | Convolution state | Generation-checked checkpoint lifecycle host-tested | Stable per-class CUDA arenas and the atomic state transaction are implemented; convolution math is missing | Unsupported | Unproven |
 | Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
 
@@ -47,8 +47,11 @@ generation-checked state slots to byte ranges, binds those allocations to
 Luminal as required in-place aliases, and releases success evidence only after
 a stream event completes. The two-step CUDA qualification is present but has
 not run on an accessible GPU in this revision. Execution remains fail-closed
-because the GDN and convolution math plus the model-level FP8 loader are not
-implemented. A small BF16 checkpoint with the same 3:1 state schedule is the
+because causal convolution, the GDN CUDA/search lowering, model graph wiring,
+and the model-level FP8 loader are not implemented. The gated-delta recurrence
+itself now has an independent f32 sequence oracle and a pure Luminal
+single-token HLIR expression whose token values and next state match that
+oracle. A small BF16 checkpoint with the same 3:1 state schedule is the
 correctness bring-up target.
 
 The latest open DeepSeek V4 Flash Vision checkpoint is tracked as a second

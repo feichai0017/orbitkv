@@ -71,10 +71,12 @@ single-device bring-up model.
 1. Run the stable fixed-state arena, shared-alias, and stream-ordered completion
    gate on the qualification GPU; keep it as a regression prerequisite for all
    recurrent/convolution kernels.
-2. Add a backend-neutral GDN semantic op. Start with an independent reference
-   implementation and a production CUDA candidate derived from an attributed,
-   license-compatible mature implementation; selection remains in Luminal's
-   egglog/search pipeline.
+2. Extend the backend-neutral gated-delta recurrence now represented by an
+   independent f32 oracle and a pure Luminal single-token HLIR graph. Add a
+   production CUDA state-update candidate derived from an attributed,
+   license-compatible mature implementation, then select it through Luminal's
+   egglog/search pipeline. The unfused HLIR expression remains the semantic
+   fallback and parity authority.
 3. Qualify recurrent decode, chunked prefill, causal-convolution history,
    cancellation, Prefix boundaries, and state-slot reuse on the small BF16
    checkpoint.

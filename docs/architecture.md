@@ -181,6 +181,15 @@ event recorded after the state writes has completed. The reference zero/copy
 transition and an ignored real-device qualification gate exist; recurrent and
 convolution math are still missing. These facts currently constrain identity and
 provide a rewrite input.
+
+The recurrent computation boundary is semantic rather than model-specific. A
+normalized gated-delta transition is expressed as pure Luminal HLIR over
+`query`, `key`, `value`, `log_decay`, `update_gate`, and previous state, yielding
+both token values and next state. An independent Rust sequence oracle defines
+f32 accumulation and proves that chunked continuation from a returned state is
+equivalent to one-shot execution. The current HLIR implementation covers one
+token per invocation; a CUDA in-place state-update rewrite and chunked prefill
+candidate remain future work.
 The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
 search can optimize the surrounding decoder graph and schedule but does not yet
 choose among multiple attention implementations or jointly derive a KV layout.
