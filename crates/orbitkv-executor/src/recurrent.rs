@@ -5,7 +5,8 @@ use thiserror::Error;
 /// Static head geometry for a gated delta-rule state transition.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct GatedDeltaGeometry {
-    pub heads: usize,
+    pub key_heads: usize,
+    pub value_heads: usize,
     pub key_width: usize,
     pub value_width: usize,
     pub normalization_epsilon: f32,
@@ -42,13 +43,13 @@ pub enum RecurrentError {
         expected: usize,
         actual: usize,
     },
-    #[error("recurrent state batch does not match the compiled state class")]
-    InvalidStateBatch,
 }
 
 impl GatedDeltaGeometry {
     fn validate(self) -> Result<(), RecurrentError> {
-        if self.heads == 0
+        if self.key_heads == 0
+            || self.value_heads == 0
+            || !self.value_heads.is_multiple_of(self.key_heads)
             || self.key_width == 0
             || u16::try_from(self.key_width).is_err()
             || self.value_width == 0
@@ -94,19 +95,23 @@ pub fn gated_delta_reference(
     let query_len = checked_product(&[
         input.batch_size,
         input.sequence_tokens,
-        geometry.heads,
+        geometry.key_heads,
         geometry.key_width,
     ])?;
     let value_len = checked_product(&[
         input.batch_size,
         input.sequence_tokens,
-        geometry.heads,
+        geometry.value_heads,
         geometry.value_width,
     ])?;
-    let gate_len = checked_product(&[input.batch_size, input.sequence_tokens, geometry.heads])?;
+    let gate_len = checked_product(&[
+        input.batch_size,
+        input.sequence_tokens,
+        geometry.value_heads,
+    ])?;
     let state_len = checked_product(&[
         input.batch_size,
-        geometry.heads,
+        geometry.value_heads,
         geometry.key_width,
         geometry.value_width,
     ])?;
@@ -123,11 +128,15 @@ pub fn gated_delta_reference(
     let state_head_len = geometry.key_width * geometry.value_width;
     for batch in 0..input.batch_size {
         for token in 0..input.sequence_tokens {
-            for head in 0..geometry.heads {
-                let gate_index = (batch * input.sequence_tokens + token) * geometry.heads + head;
-                let query_base = gate_index * geometry.key_width;
+            for head in 0..geometry.value_heads {
+                let gate_index =
+                    (batch * input.sequence_tokens + token) * geometry.value_heads + head;
+                let key_head = head / (geometry.value_heads / geometry.key_heads);
+                let query_base = ((batch * input.sequence_tokens + token) * geometry.key_heads
+                    + key_head)
+                    * geometry.key_width;
                 let value_base = gate_index * geometry.value_width;
-                let state_base = (batch * geometry.heads + head) * state_head_len;
+                let state_base = (batch * geometry.value_heads + head) * state_head_len;
                 transition_head(
                     geometry,
                     &input.query[query_base..query_base + geometry.key_width],
@@ -264,20 +273,25 @@ mod graph {
         if [query, key, value, log_decay, update_gate, previous_state]
             .iter()
             .any(|tensor| tensor.dtype != DType::F32 || tensor.graph_ref != query.graph_ref)
-            || query.dims() != [batch_size, geometry.heads.into(), geometry.key_width.into()]
+            || query.dims()
+                != [
+                    batch_size,
+                    geometry.key_heads.into(),
+                    geometry.key_width.into(),
+                ]
             || key.dims() != query.dims()
             || value.dims()
                 != [
                     batch_size,
-                    geometry.heads.into(),
+                    geometry.value_heads.into(),
                     geometry.value_width.into(),
                 ]
-            || log_decay.dims() != [batch_size, geometry.heads.into()]
+            || log_decay.dims() != [batch_size, geometry.value_heads.into()]
             || update_gate.dims() != log_decay.dims()
             || previous_state.dims()
                 != [
                     batch_size,
-                    geometry.heads.into(),
+                    geometry.value_heads.into(),
                     geometry.key_width.into(),
                     geometry.value_width.into(),
                 ]
@@ -285,6 +299,9 @@ mod graph {
             return Err(RecurrentError::InvalidGeometry);
         }
 
+        let group_size = geometry.value_heads / geometry.key_heads;
+        let query = query.expand_dim(2, group_size).merge_dims(1, 2) * 1.0;
+        let key = key.expand_dim(2, group_size).merge_dims(1, 2) * 1.0;
         let query_norm = normalize(&query, geometry.key_width, geometry.normalization_epsilon)
             * geometry.query_scale();
         let key_norm = normalize(&key, geometry.key_width, geometry.normalization_epsilon);
@@ -310,12 +327,18 @@ mod graph {
     }
 }
 #[cfg(feature = "cuda")]
+mod gated_delta;
+#[cfg(feature = "cuda")]
 mod state_graph;
 
 #[cfg(feature = "cuda")]
+pub use gated_delta::{
+    GatedDeltaProjectedInputs, GatedDeltaProjectedOutputs, gated_delta_projected_step,
+};
+#[cfg(feature = "cuda")]
 pub use graph::{GatedDeltaStepInputs, GatedDeltaStepOutputs, gated_delta_step};
 #[cfg(feature = "cuda")]
-pub use state_graph::{RecurrentStateGraphArena, RecurrentStateGraphBinding};
+pub use state_graph::RecurrentStateGraphArena;
 
 #[cfg(test)]
 mod tests {
@@ -325,7 +348,8 @@ mod tests {
     fn scalar_transition_has_exact_delta_rule_result() {
         let output = gated_delta_reference(
             GatedDeltaGeometry {
-                heads: 1,
+                key_heads: 1,
+                value_heads: 1,
                 key_width: 1,
                 value_width: 1,
                 normalization_epsilon: 0.0,
@@ -349,7 +373,8 @@ mod tests {
     #[test]
     fn chunked_reference_continues_from_returned_state() {
         let geometry = GatedDeltaGeometry {
-            heads: 1,
+            key_heads: 1,
+            value_heads: 1,
             key_width: 2,
             value_width: 2,
             normalization_epsilon: 1e-6,
@@ -412,13 +437,41 @@ mod tests {
         assert_close(&second.state, &whole.state);
     }
 
+    #[test]
+    fn grouped_query_heads_feed_multiple_value_state_heads() {
+        let geometry = GatedDeltaGeometry {
+            key_heads: 1,
+            value_heads: 2,
+            key_width: 1,
+            value_width: 1,
+            normalization_epsilon: 0.0,
+        };
+        let output = gated_delta_reference(
+            geometry,
+            GatedDeltaReferenceInput {
+                batch_size: 1,
+                sequence_tokens: 1,
+                query: &[1.0],
+                key: &[1.0],
+                value: &[2.0, 4.0],
+                log_decay: &[0.0, 0.0],
+                update_gate: &[0.5, 0.25],
+                initial_state: &[0.0, 0.0],
+            },
+        )
+        .unwrap();
+        assert_eq!(output.state.as_ref(), &[1.0, 1.0]);
+        assert_eq!(output.values.as_ref(), &[1.0, 1.0]);
+    }
+
     #[cfg(feature = "cuda")]
     #[test]
     fn luminal_semantic_step_matches_independent_reference() {
         use luminal::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
 
         let geometry = GatedDeltaGeometry {
-            heads: 2,
+            key_heads: 2,
+            value_heads: 2,
             key_width: 2,
             value_width: 2,
             normalization_epsilon: 1e-6,
@@ -492,6 +545,82 @@ mod tests {
             egraph_has_kernel(&graph, "KernelDeltaStateUpdate"),
             "the complete recurrence graph must expose the in-place CUDA state candidate",
         );
+    }
+
+    #[cfg(feature = "cuda")]
+    #[test]
+    fn luminal_grouped_heads_match_independent_reference() {
+        use luminal::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
+
+        let geometry = GatedDeltaGeometry {
+            key_heads: 1,
+            value_heads: 2,
+            key_width: 2,
+            value_width: 1,
+            normalization_epsilon: 1e-6,
+        };
+        let query = [1.0, 2.0];
+        let key = [2.0, 1.0];
+        let value = [0.5, 1.5];
+        let log_decay = [0.9_f32.ln(), 0.8_f32.ln()];
+        let update_gate = [0.25, 0.75];
+        let initial_state = [0.1, 0.2, 0.3, 0.4];
+        let expected = gated_delta_reference(
+            geometry,
+            GatedDeltaReferenceInput {
+                batch_size: 1,
+                sequence_tokens: 1,
+                query: &query,
+                key: &key,
+                value: &value,
+                log_decay: &log_decay,
+                update_gate: &update_gate,
+                initial_state: &initial_state,
+            },
+        )
+        .unwrap();
+
+        let mut graph = Graph::new();
+        let q = graph.named_tensor("query", (1, 1, 2));
+        let k = graph.named_tensor("key", (1, 1, 2));
+        let v = graph.named_tensor("value", (1, 2, 1));
+        let g = graph.named_tensor("log_decay", (1, 2));
+        let beta = graph.named_tensor("update_gate", (1, 2));
+        let state = graph.named_tensor("previous_state", (1, 2, 2, 1));
+        let outputs = gated_delta_step(
+            GatedDeltaStepInputs {
+                query: q,
+                key: k,
+                value: v,
+                log_decay: g,
+                update_gate: beta,
+                previous_state: state,
+                batch_size: 1.into(),
+            },
+            geometry,
+        )
+        .unwrap();
+        let values = outputs.values.output();
+        let next_state = outputs.next_state.output();
+        let mut runtime = graph.compile(
+            ReferenceRuntime::default(),
+            CompileOptions::default().search_graph_limit(1),
+        );
+        runtime.set_data(q, &query);
+        runtime.set_data(k, &key);
+        runtime.set_data(v, &value);
+        runtime.set_data(g, &log_decay);
+        runtime.set_data(beta, &update_gate);
+        runtime.set_data(state, &initial_state);
+        runtime.execute(&graph.dyn_map);
+
+        assert_close(runtime.get_f32(values), &expected.values);
+        assert_close(runtime.get_f32(next_state), &expected.state);
+
+        graph.build_search_space::<luminal_cuda_lite::runtime::CudaRuntime>(
+            CompileOptions::default(),
+        );
+        assert!(egraph_has_kernel(&graph, "KernelDeltaStateUpdate"));
     }
 
     #[cfg(feature = "cuda")]

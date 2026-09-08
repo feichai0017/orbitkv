@@ -335,7 +335,9 @@ fn test_config(layers: usize) -> DecoderConfig {
         norm_weights: DecoderNormWeights::Direct,
         local_rope_theta: None,
         attention_softmax_scale: 0.0,
+        attention_output_gate: false,
         layer_kinds: None,
+        gated_delta: None,
         weight_format: DecoderWeightFormat::Float,
     }
 }
@@ -431,6 +433,7 @@ fn omitted_tied_embedding_field_uses_the_hf_default() {
     )
     .unwrap();
     assert!(config.tied_embeddings);
+    assert!((config.attention_softmax_scale - 0.125).abs() < f64::EPSILON);
 }
 
 #[test]
@@ -447,6 +450,12 @@ fn parses_nested_hybrid_decoder_without_checkpoint_name_dispatch() {
                 "num_hidden_layers": 4, "hidden_size": 1024,
                 "intermediate_size": 3584, "num_attention_heads": 8,
                 "num_key_value_heads": 2, "head_dim": 256,
+                "attn_output_gate": true,
+                "linear_num_key_heads": 16,
+                "linear_num_value_heads": 16,
+                "linear_key_head_dim": 128,
+                "linear_value_head_dim": 128,
+                "linear_conv_kernel_dim": 4,
                 "vocab_size": 248320, "rms_norm_eps": 0.000001,
                 "hidden_act": "silu",
                 "rope_parameters": {
@@ -467,6 +476,18 @@ fn parses_nested_hybrid_decoder_without_checkpoint_name_dispatch() {
     assert_eq!(config.tensor_prefix, "model.language_model");
     assert!((config.rope_theta - 10_000_000.0).abs() < f32::EPSILON);
     assert_eq!(config.rotary_dimensions, 64);
+    assert!(config.attention_output_gate);
+    assert_eq!(config.norm_weights, DecoderNormWeights::UnitOffset);
+    assert_eq!(
+        config.gated_delta,
+        Some(GatedDeltaConfig {
+            key_heads: 16,
+            value_heads: 16,
+            key_width: 128,
+            value_width: 128,
+            convolution_kernel_width: 4,
+        })
+    );
     assert!(!config.tied_embeddings);
     assert_eq!(
         config.layer_kinds.as_deref(),
@@ -556,6 +577,18 @@ fn external_hybrid_checkpoint_reaches_the_explicit_execution_gate() {
         .expect("ORBITKV_MODEL_DIR is required");
     let bytes = std::fs::read(directory.join("config.json")).unwrap();
     let config = DecoderConfig::from_json(&bytes).unwrap();
+    let mut weight_files = std::fs::read_dir(&directory)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "safetensors")
+        })
+        .collect::<Vec<_>>();
+    weight_files.sort();
+    assert!(!weight_files.is_empty());
+    inspect_weight_features(&weight_files, &config).unwrap();
     assert_eq!(config.tensor_prefix, "model.language_model");
     assert!(config.rotary_dimensions < config.head_dim);
     assert!(

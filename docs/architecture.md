@@ -124,7 +124,12 @@ crates/orbitkv-executor/
     model/config.rs       structural decoder semantics from model config
     model/weights.rs      fail-closed checkpoint tensor contract
     model/block.rs        generic dense transformer block math
+    model/topology.rs     joint token-KV and fixed-state layer ownership
+    model/recurrent_layer.rs checkpoint-backed gated-delta graph composition
     model/runtime_input.rs bounded multi-class step validation
+    recurrent/            recurrent semantics and arena views
+    convolution.rs        minimal-history causal convolution semantics
+    state_graph.rs        shared fixed-state arena addressing and bindings
     cuda.rs               direct paged-attention and stream/event boundary
     transport.rs          external byte-movement contract
   tests/                  real-byte reference transport closures
@@ -175,30 +180,43 @@ participates in decoder artifact identity, so an artifact cannot silently
 survive a changed state/search contract. Fixed-state lifecycle joins token KV in
 one RuntimeSession transaction. The executor owns stable per-class CUDA
 allocations, lowers session-authored generation leases to byte ranges, and
-shares those allocations with Luminal through required aliases without
+shares those allocations with Luminal through typed state bindings without
 transferring lifecycle authority. A fixed graph sees the complete arena plus a
 small dynamic destination-slot tensor; manifest layer order determines the
 per-layer byte region. Search uses a private scratch allocation, so profiling
 cannot mutate live manager state. Success evidence is withheld until a Luminal
 execution receipt tied to the exact shared allocation and runtime registration
 has synchronized its CUDA event. The ignored real-device qualification gate
-executes two recurrent transitions and final drain; causal convolution and
-complete decoder wiring remain missing.
+executes two recurrent transitions and final drain; the production decoder and
+engine do not yet own these fixed-state resources.
+
+The fixed-state graph substrate is dtype- and shape-parameterized. Recurrent
+f32 matrices and BF16 causal-convolution histories share stable arena
+addressing, dynamic slot metadata, manifest layer ordering, and completion
+receipts. Binding policy is explicit: recurrent state currently requires an
+in-place selected schedule, while convolution may use a same-stream copy-back
+until a fused history-update candidate is qualified.
 
 The recurrent computation boundary is semantic rather than model-specific. A
 normalized gated-delta transition is expressed as pure Luminal HLIR over
 `query`, `key`, `value`, `log_decay`, `update_gate`, and previous state, yielding
 both token values and next state. An independent Rust sequence oracle defines
 f32 accumulation and proves that chunked continuation from a returned state is
-equivalent to one-shot execution. The current HLIR implementation covers one
-token per invocation. The Luminal fork recognizes the exact rank-four
+equivalent to one-shot execution. The single-token HLIR supports different key
+and value-head counts through an exact grouped-head broadcast. A second pure
+graph composes checkpoint-shaped input projections, minimal `K-1`
+causal-convolution history, delta gates, recurrence, gated RMS normalization,
+and output projection. The Luminal fork recognizes the exact rank-four
 `state * decay + key * delta` subgraph and adds an in-place CUDA state-update
 candidate to the same e-class. Its static resource pass proves ordered reads of
 the old state precede mutation and rejects competing reads. Binding selected
 source/destination slots is now represented by generic Gather/Scatter graph
 views over the stable arena, with source-to-destination initialization outside
-the graph and dynamic destination ids inside it. Real-device parity, complete
-decoder integration, fused readout, and chunked prefill remain open.
+the graph and dynamic destination ids inside it. A joint topology compiler
+proves each layer is owned by exactly one token-KV class or by the matching
+recurrent-plus-convolution pair. Production decoder/runtime integration,
+real-device parity, fused convolution/readout kernels, and packed-sequence
+prefill remain open.
 The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
 search can optimize the surrounding decoder graph and schedule but does not yet
 choose among multiple attention implementations or jointly derive a KV layout.

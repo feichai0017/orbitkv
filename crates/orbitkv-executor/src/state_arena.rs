@@ -4,8 +4,8 @@ use std::{collections::BTreeMap, sync::Arc};
 
 use luminal_cuda_lite::cudarc::driver::{CudaSlice, CudaStream, DevicePtr};
 use luminal_cuda_lite::runtime::{
-    CudaExecutionReceipt, CudaRuntime, CudaSharedStateBinding, copy_shared_device_range,
-    zero_shared_device_range,
+    CudaExecutionReceipt, CudaRuntime, CudaSharedStateBinding, CudaSharedStatePolicy,
+    copy_shared_device_range, zero_shared_device_range,
 };
 use orbitkv::{EngineFixedStateEvidence, EngineFixedStatePlan, StateSlotLease};
 use thiserror::Error;
@@ -68,6 +68,13 @@ pub struct FixedStateRuntimeBinding {
     state_id: u16,
     allocation: Arc<CudaSlice<u8>>,
     binding: CudaSharedStateBinding,
+}
+
+/// Compiler/runtime write strategy for one stable fixed-state arena.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum FixedStateWritePolicy {
+    RequiredInPlace,
+    CopyBackAllowed,
 }
 
 struct FixedStateDeviceArena {
@@ -249,32 +256,35 @@ impl FixedStateDeviceArenas {
         })
     }
 
-    /// Binds an entire stable arena as a required in-place Luminal state edge.
+    /// Binds an entire stable arena as a Luminal state edge.
     /// The runtime retains shared ownership of the allocation.
     ///
     /// # Errors
     ///
     /// Rejects an unknown state id.
-    pub fn bind_required_state(
+    pub fn bind_graph_state(
         &self,
         runtime: &mut CudaRuntime,
-        state_id: u16,
-        input: luminal::prelude::GraphTensor,
-        output: luminal::prelude::GraphTensor,
+        graph: crate::FixedStateGraphBinding,
+        policy: FixedStateWritePolicy,
     ) -> Result<FixedStateRuntimeBinding, FixedStateDeviceError> {
         let arena = self
             .arenas
-            .get(&state_id)
+            .get(&graph.state_id)
             .ok_or(FixedStateDeviceError::InvalidPlan)?;
         let allocation = Arc::clone(&arena.allocation);
-        let binding = runtime.alias_shared_state_required(
-            input,
-            output,
+        let binding = runtime.bind_shared_state(
+            graph.arena_input,
+            graph.arena_output,
             Arc::clone(&allocation),
             arena.registration.arena_bytes()?,
+            match policy {
+                FixedStateWritePolicy::RequiredInPlace => CudaSharedStatePolicy::RequiredInPlace,
+                FixedStateWritePolicy::CopyBackAllowed => CudaSharedStatePolicy::CopyBackAllowed,
+            },
         )?;
         Ok(FixedStateRuntimeBinding {
-            state_id,
+            state_id: graph.state_id,
             allocation,
             binding,
         })
@@ -358,7 +368,7 @@ impl InitializedFixedStateDeviceBatch {
         &self.batches
     }
 
-    /// Uploads manager-authored destination slots into every recurrent graph
+    /// Uploads manager-authored destination slots into every fixed-state graph
     /// binding in canonical request order.
     ///
     /// # Errors
@@ -367,7 +377,7 @@ impl InitializedFixedStateDeviceBatch {
     pub fn upload_destination_slots(
         self,
         runtime: &mut CudaRuntime,
-        bindings: &[crate::RecurrentStateGraphBinding],
+        bindings: &[crate::FixedStateGraphBinding],
     ) -> Result<ReadyFixedStateDeviceBatch, FixedStateDeviceError> {
         self.validate_state_ids(bindings.iter().map(|binding| binding.state_id))?;
         for binding in bindings {

@@ -31,7 +31,16 @@ use runtime_input::validate_step;
 mod config;
 pub use config::{
     DecoderActivation, DecoderBlockLayout, DecoderConfig, DecoderLayerKind, DecoderNormWeights,
-    DecoderWeightFormat,
+    DecoderWeightFormat, GatedDeltaConfig,
+};
+#[path = "model/topology.rs"]
+mod topology;
+use topology::DecoderTopology;
+#[path = "model/recurrent_layer.rs"]
+mod recurrent_layer;
+pub use recurrent_layer::{
+    GatedDeltaCore, GatedDeltaCoreOutput, GatedDeltaDecodeOutput, GatedDeltaProjection,
+    GatedDeltaStateBindings, GatedDeltaStateGraph,
 };
 #[path = "model/weights.rs"]
 mod weights;
@@ -51,6 +60,10 @@ pub enum DecoderError {
     Executor(#[from] crate::ExecutorError),
     #[error(transparent)]
     Device(#[from] luminal_cuda_lite::cudarc::driver::DriverError),
+    #[error(transparent)]
+    Recurrent(#[from] crate::RecurrentError),
+    #[error(transparent)]
+    Convolution(#[from] crate::ConvolutionError),
     #[error("decoder artifact is incompatible: {0}")]
     Artifact(String),
     #[error("decoder runtime input geometry exceeds its compiled capacity")]
@@ -329,7 +342,8 @@ impl DecoderGraph {
         plan: &ExecutorPlan,
         arenas: &[ExecutorArena],
     ) -> Result<Self, DecoderError> {
-        let (dimensions, class_dimensions) = validate_plan(config, plan, arenas)?;
+        let topology = executable_topology(config, plan)?;
+        let (dimensions, class_dimensions) = validate_plan(config, plan, arenas, &topology)?;
         let inputs = decoder_inputs(graph, &class_dimensions, dimensions);
         let embedding = weight(
             graph,
@@ -344,7 +358,12 @@ impl DecoderGraph {
         for layer in 0..config.layers {
             let layer =
                 u32::try_from(layer).map_err(|_| DecoderError::InvalidGeometry("layer index"))?;
-            let class = class_for_layer(plan, layer)?;
+            let class_id = topology.token_class(layer)?;
+            let class = plan
+                .classes
+                .get(usize::from(class_id))
+                .filter(|class| class.class_id == class_id)
+                .ok_or(DecoderError::UnsupportedPlan)?;
             let class_dimensions = class_dimensions
                 .get(usize::from(class.class_id))
                 .filter(|dimensions| dimensions.class_id == class.class_id)
@@ -422,6 +441,19 @@ impl DecoderGraph {
             class_dimensions,
         })
     }
+}
+
+fn executable_topology(
+    config: &DecoderConfig,
+    plan: &ExecutorPlan,
+) -> Result<DecoderTopology, DecoderError> {
+    let topology = DecoderTopology::compile(config, plan)?;
+    if topology.has_fixed_state() {
+        return Err(DecoderError::UnsupportedExecution(
+            "stateful decoder layer graph",
+        ));
+    }
+    Ok(topology)
 }
 
 impl CompiledDecoder {
@@ -1240,6 +1272,7 @@ fn validate_plan(
     config: &DecoderConfig,
     plan: &ExecutorPlan,
     arenas: &[ExecutorArena],
+    topology: &DecoderTopology,
 ) -> Result<(DecoderDimensions, Box<[DecoderClassDimensions]>), DecoderError> {
     let layer_count =
         u32::try_from(config.layers).map_err(|_| DecoderError::InvalidGeometry("layer count"))?;
@@ -1284,32 +1317,8 @@ fn validate_plan(
             cache_slots,
         });
     }
-    if layers != (0..layer_count).collect() {
+    if layers != topology.token_layers() {
         return Err(DecoderError::UnsupportedPlan);
-    }
-    if let Some(layer_kinds) = &config.layer_kinds {
-        for (layer, expected) in layer_kinds.iter().enumerate() {
-            if *expected == DecoderLayerKind::Linear {
-                return Err(DecoderError::UnsupportedExecution(
-                    "linear-attention state execution",
-                ));
-            }
-            let class = class_for_layer(
-                plan,
-                u32::try_from(layer).map_err(|_| DecoderError::InvalidGeometry("layer index"))?,
-            )?;
-            let matches = matches!(
-                (expected, class.visibility),
-                (DecoderLayerKind::Full, crate::AttentionVisibility::Full)
-                    | (
-                        DecoderLayerKind::Sliding,
-                        crate::AttentionVisibility::Sliding { .. }
-                    )
-            );
-            if !matches {
-                return Err(DecoderError::UnsupportedPlan);
-            }
-        }
     }
     Ok((
         DecoderDimensions {
@@ -1321,21 +1330,6 @@ fn validate_plan(
         },
         class_dimensions.into_boxed_slice(),
     ))
-}
-
-fn class_for_layer(
-    plan: &ExecutorPlan,
-    layer: u32,
-) -> Result<&crate::AttentionClass, DecoderError> {
-    let mut classes = plan
-        .classes
-        .iter()
-        .filter(|class| class.layers.contains(&layer));
-    let class = classes.next().ok_or(DecoderError::UnsupportedPlan)?;
-    if classes.next().is_some() {
-        return Err(DecoderError::UnsupportedPlan);
-    }
-    Ok(class)
 }
 
 fn decoder_inputs(

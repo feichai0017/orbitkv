@@ -23,8 +23,24 @@ pub struct DecoderConfig {
     pub norm_weights: DecoderNormWeights,
     pub local_rope_theta: Option<f32>,
     pub attention_softmax_scale: f64,
+    pub attention_output_gate: bool,
     pub layer_kinds: Option<Box<[DecoderLayerKind]>>,
+    pub gated_delta: Option<GatedDeltaConfig>,
     pub weight_format: DecoderWeightFormat,
+}
+
+/// Static state and projection geometry for one gated-delta decoder layer.
+///
+/// This is derived from structural checkpoint fields. It deliberately carries
+/// no model identity and is shared by graph construction, state-layout
+/// validation, and weight inspection.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct GatedDeltaConfig {
+    pub key_heads: usize,
+    pub value_heads: usize,
+    pub key_width: usize,
+    pub value_width: usize,
+    pub convolution_kernel_width: usize,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
@@ -82,9 +98,23 @@ struct DecoderConfigInput {
     #[serde(default)]
     query_pre_attn_scalar: Option<f64>,
     #[serde(default)]
+    attn_output_gate: Option<bool>,
+    #[serde(default)]
+    output_gate_type: Option<String>,
+    #[serde(default)]
     rope_local_base_freq: Option<f32>,
     #[serde(default)]
     layer_types: Option<Vec<String>>,
+    #[serde(default)]
+    linear_num_key_heads: Option<usize>,
+    #[serde(default)]
+    linear_num_value_heads: Option<usize>,
+    #[serde(default)]
+    linear_key_head_dim: Option<usize>,
+    #[serde(default)]
+    linear_value_head_dim: Option<usize>,
+    #[serde(default)]
+    linear_conv_kernel_dim: Option<usize>,
     #[serde(default)]
     attn_logit_softcapping: Option<f32>,
     #[serde(default)]
@@ -123,6 +153,14 @@ struct QuantizationConfig {
 }
 
 impl DecoderConfig {
+    pub(super) fn layer_kind(&self, layer: usize) -> DecoderLayerKind {
+        self.layer_kinds
+            .as_deref()
+            .and_then(|layers| layers.get(layer))
+            .copied()
+            .unwrap_or(DecoderLayerKind::Full)
+    }
+
     /// Parses the model geometry and semantic operations required by the graph.
     ///
     /// # Errors
@@ -154,15 +192,20 @@ impl DecoderConfig {
             .as_ref()
             .map(|layers| parse_layer_kinds(layers, input.num_hidden_layers))
             .transpose()?;
+        let gated_delta = input.gated_delta_config(layer_kinds.as_deref())?;
         let sandwich_norm = input.rope_local_base_freq.is_some();
+        let unit_offset_norm =
+            sandwich_norm || (input.attn_output_gate == Some(true) && gated_delta.is_some());
         if sandwich_norm && (activation != DecoderActivation::GeluTanh || layer_kinds.is_none()) {
             return Err(DecoderError::InvalidGeometry(
                 "incomplete sandwich-norm decoder semantics",
             ));
         }
-        let attention_softmax_scale = input
-            .query_pre_attn_scalar
-            .map_or(0.0, |scalar| scalar.sqrt().recip());
+        #[allow(clippy::cast_precision_loss)]
+        let attention_softmax_scale = input.query_pre_attn_scalar.map_or_else(
+            || (head_dim as f64).sqrt().recip(),
+            |scalar| scalar.sqrt().recip(),
+        );
         let rope_theta = input.rope_theta()?;
         let rotary_dimensions = input.rotary_dimensions(head_dim)?;
         let weight_format = input.weight_format()?;
@@ -200,14 +243,16 @@ impl DecoderConfig {
             } else {
                 DecoderBlockLayout::PreNorm
             },
-            norm_weights: if sandwich_norm {
+            norm_weights: if unit_offset_norm {
                 DecoderNormWeights::UnitOffset
             } else {
                 DecoderNormWeights::Direct
             },
             local_rope_theta: input.rope_local_base_freq,
             attention_softmax_scale,
+            attention_output_gate: input.attn_output_gate.unwrap_or(false),
             layer_kinds,
+            gated_delta,
             weight_format,
         })
     }
@@ -247,6 +292,12 @@ impl DecoderConfigInput {
         if self.layers_or_width_is_zero()
             || head_dim == 0
             || self.num_attention_heads.checked_mul(head_dim).is_none()
+            || (self.attn_output_gate == Some(true)
+                && self
+                    .num_attention_heads
+                    .checked_mul(head_dim)
+                    .and_then(|width| width.checked_mul(2))
+                    .is_none())
             || !self
                 .num_attention_heads
                 .is_multiple_of(self.num_key_value_heads)
@@ -369,6 +420,60 @@ impl DecoderConfigInput {
         }
     }
 
+    fn gated_delta_config(
+        &self,
+        layer_kinds: Option<&[DecoderLayerKind]>,
+    ) -> Result<Option<GatedDeltaConfig>, DecoderError> {
+        let has_stateful_layers =
+            layer_kinds.is_some_and(|layers| layers.contains(&DecoderLayerKind::Linear));
+        if self
+            .output_gate_type
+            .as_deref()
+            .is_some_and(|activation| activation != "swish")
+        {
+            return Err(DecoderError::InvalidGeometry(
+                "unsupported gated-delta output gate",
+            ));
+        }
+        let fields = [
+            self.linear_num_key_heads,
+            self.linear_num_value_heads,
+            self.linear_key_head_dim,
+            self.linear_value_head_dim,
+            self.linear_conv_kernel_dim,
+        ];
+        if !has_stateful_layers {
+            return if fields.iter().all(Option::is_none) {
+                Ok(None)
+            } else {
+                Err(DecoderError::InvalidGeometry(
+                    "state geometry without stateful layers",
+                ))
+            };
+        }
+        let [
+            Some(key_heads),
+            Some(value_heads),
+            Some(key_width),
+            Some(value_width),
+            Some(convolution_kernel_width),
+        ] = fields
+        else {
+            return Err(DecoderError::InvalidGeometry(
+                "incomplete gated-delta geometry",
+            ));
+        };
+        let geometry = GatedDeltaConfig {
+            key_heads,
+            value_heads,
+            key_width,
+            value_width,
+            convolution_kernel_width,
+        };
+        geometry.validate()?;
+        Ok(Some(geometry))
+    }
+
     fn layers_or_width_is_zero(&self) -> bool {
         self.num_hidden_layers == 0
             || self.hidden_size == 0
@@ -376,6 +481,56 @@ impl DecoderConfigInput {
             || self.num_attention_heads == 0
             || self.num_key_value_heads == 0
             || self.vocab_size == 0
+    }
+}
+
+impl GatedDeltaConfig {
+    fn validate(self) -> Result<(), DecoderError> {
+        if self.key_heads == 0
+            || self.value_heads == 0
+            || !self.value_heads.is_multiple_of(self.key_heads)
+            || self.key_width == 0
+            || self.value_width == 0
+            || self.convolution_kernel_width < 2
+            || self.recurrent_elements().is_none()
+            || self.convolution_elements().is_none()
+        {
+            return Err(DecoderError::InvalidGeometry("gated-delta dimensions"));
+        }
+        Ok(())
+    }
+
+    pub(super) fn recurrent_bytes(self) -> Option<u64> {
+        self.recurrent_elements()?.checked_mul(4)?.try_into().ok()
+    }
+
+    pub(super) fn convolution_bytes(self) -> Option<u64> {
+        self.convolution_elements()?.checked_mul(2)?.try_into().ok()
+    }
+
+    pub(super) fn key_elements(self) -> Option<usize> {
+        self.key_heads.checked_mul(self.key_width)
+    }
+
+    pub(super) fn value_elements(self) -> Option<usize> {
+        self.value_heads.checked_mul(self.value_width)
+    }
+
+    fn recurrent_elements(self) -> Option<usize> {
+        self.value_heads
+            .checked_mul(self.key_width)?
+            .checked_mul(self.value_width)
+    }
+
+    pub(super) fn convolution_channels(self) -> Option<usize> {
+        self.key_elements()?
+            .checked_mul(2)?
+            .checked_add(self.value_elements()?)
+    }
+
+    fn convolution_elements(self) -> Option<usize> {
+        self.convolution_channels()?
+            .checked_mul(self.convolution_kernel_width.checked_sub(1)?)
     }
 }
 
