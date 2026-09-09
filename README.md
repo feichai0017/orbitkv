@@ -131,15 +131,16 @@ Current compiled token lifetimes include:
 - Recurrent and convolution state: generation-checked checkpoints in the core;
   executor plans and compiler facts preserve their geometry, and
   `RuntimeSession` now owns their prepare/submit/complete/abort/release lifecycle
-  atomically with token KV. Device operators and arena bindings remain pending.
+  atomically with token KV. Stable arena bindings and typed packed convolution
+  and delta-scan operators pass narrow H20 gates; released-model qualification
+  remains pending.
 
 The primary model target is a 27B block-FP8 hybrid decoder with a 3:1 Gated
 DeltaNet/Full-attention schedule. Its real configuration already compiles to 16
 Full token-KV layers and 48 recurrent/convolution layers. The executor parses
 the nested text configuration, partial rotary geometry, and block-FP8 contract,
-and wires GDN state transactions for decode, but deliberately rejects hybrid
-prompt prefill and FP8 model
-loading are implemented. A smaller BF16 checkpoint with the same architecture
+and wires GDN state transactions for decode and packed prefill. FP8 model
+loading is not implemented. A smaller BF16 checkpoint with the same architecture
 is the bring-up target; existing dense checkpoints remain regression witnesses.
 The latest open DeepSeek V4 family is the second architecture target.
 

@@ -127,7 +127,7 @@ pub fn gated_delta_projected_step(
     })
 }
 
-fn softplus(input: &GraphTensor) -> GraphTensor {
+pub(crate) fn softplus(input: &GraphTensor) -> GraphTensor {
     input.maximum_f32(0.0) + ((-input.abs()).exp() + 1.0).log()
 }
 
@@ -240,6 +240,28 @@ mod tests {
 
         assert_close(runtime.get_f32(values), &expected);
         assert_close(runtime.get_f32(next_state), &reference.state);
+    }
+
+    #[test]
+    fn softplus_stays_stable_across_large_signed_gate_logits() {
+        let values = [-100.0_f32, -20.0, -1.0, 0.0, 1.0, 20.0, 100.0];
+        let mut graph = Graph::new();
+        let input = graph.named_tensor("gate", values.len());
+        let output = softplus(&input).output();
+        let mut runtime = graph.compile(
+            ReferenceRuntime::default(),
+            CompileOptions::default().search_graph_limit(1),
+        );
+        runtime.set_data(input, values.to_vec());
+        runtime.execute(&graph.dyn_map);
+        let expected = values.map(softplus_f32);
+        assert_close(runtime.get_f32(output), &expected);
+        assert!(
+            runtime
+                .get_f32(output)
+                .iter()
+                .all(|value| value.is_finite())
+        );
     }
 
     fn softplus_f32(value: f32) -> f32 {

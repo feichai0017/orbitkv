@@ -186,7 +186,7 @@ fn step_validation_enforces_compiled_capacities() {
 }
 
 #[test]
-fn stateful_decode_requires_one_token_and_state_plan_per_request() {
+fn stateful_step_requires_one_state_plan_per_request() {
     let attention = crate::AttentionBatch {
         class_id: 0,
         query_indptr: vec![0, 1, 2].into_boxed_slice(),
@@ -226,7 +226,7 @@ fn stateful_decode_requires_one_token_and_state_plan_per_request() {
             states: std::slice::from_ref(&state),
         },
     ];
-    assert!(validate_stateful_decode(step, &states).is_ok());
+    assert!(validate_stateful_step(step, &states).is_ok());
 
     let prefill_attention = crate::AttentionBatch {
         class_id: 0,
@@ -240,17 +240,25 @@ fn stateful_decode_requires_one_token_and_state_plan_per_request() {
         write_slots: &[0, 1],
         attention: &prefill_attention,
     }];
-    assert!(matches!(
-        validate_stateful_decode(
+    assert!(
+        validate_stateful_step(
             DecoderStep {
                 classes: &prefill_classes,
                 ..step
             },
             &states[..1],
+        )
+        .is_ok()
+    );
+    assert!(matches!(
+        validate_stateful_step(
+            DecoderStep {
+                classes: &prefill_classes,
+                ..step
+            },
+            &states,
         ),
-        Err(DecoderError::UnsupportedExecution(
-            "packed fixed-state prefill"
-        ))
+        Err(DecoderError::InputCapacity)
     ));
 }
 
@@ -1002,7 +1010,7 @@ fn graph_composes_token_attention_and_fixed_state_layers() {
             .collect::<Vec<_>>(),
         vec![
             (1, crate::FixedStateWritePolicy::RequiredInPlace),
-            (2, crate::FixedStateWritePolicy::CopyBackAllowed),
+            (2, crate::FixedStateWritePolicy::RequiredInPlace),
         ]
     );
 }

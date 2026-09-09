@@ -27,7 +27,7 @@ Historical results qualify only their recorded source closure.
 | External KV tier transactions | L2 host | Export/restore run through an object-safe async transport contract; a real-byte host adapter verifies compact partial tails, per-page checksums, deletion, cross-session restore, and unobserved/ambiguous fault mapping; Mooncake/NIXL and hybrid restore remain open |
 | Executor plan | L2 | Compiles and jointly validates per-layer token-KV or recurrent-plus-convolution ownership; the production decoder dispatches layers from this topology |
 | Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page decode/prefill pass; Luminal never allocates or recycles pages |
-| Bucketed model runtime | L4 correctness for token KV; L2 for fixed state | Token-KV graphs are searched once into decode/prefill executables. Stateful hybrid graphs currently admit bounded decode batches only. Dynamic inputs are preallocated and every state class has a stable arena |
+| Bucketed model runtime | L4 correctness for token KV; narrow L3 for fixed-state operators | Token-KV and stateful graphs are searched once into decode/prefill executables. Dynamic inputs are preallocated, request segmentation is shared across attention and recurrent operators, and every state class has a stable arena |
 | Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity, LLIR fingerprints, and required persistent-state aliases fail closed |
 | Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; historical narrow matched benefit | Capture accepts one-token-per-request decode batches. In its recorded source closure, batch-one child-graph replay reduced matched fixed-step wall time by 5.8-8.3%; exact-signature automatic C2 recapture reduced throughput by 13.7% and is not used by serving |
 | Compiler-constrained persistent state | Reference-gated measured improvement | A 16-candidate search selected 36/36 in-place K/V tensors in both buckets; four C2 epochs improved throughput 14.5%, TTFT 32.2%, TPOT 10.2%, and E2E 12.8% versus the prior OrbitKV artifact; random-trace digests differ |
@@ -48,8 +48,8 @@ Historical results qualify only their recorded source closure.
 | KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, and Prefix/COW lowering |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
 | Checkpoint family | Configuration-driven dense decoder plus nested hybrid text-config parsing with fail-closed capability gates; released Full and Full+Sliding checkpoints have real-device correctness evidence |
-| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Nested geometry, gated Full Attention, grouped GDN heads, real tensor/scale shapes, fixed-state compiler facts, stable CUDA arenas, dynamic slot/layer addressing, a complete single-token GDN graph, production decode composition, and event-backed state evidence exist; packed prefill, FP8 execution, and real-device qualification remain unsupported |
-| Not yet executable as complete models | Hybrid prompt prefill, quantized weights, MoE, sparse/latent attention, multimodal encoders, speculative decoding, and tensor/pipeline parallel models |
+| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Nested geometry, gated Full Attention, grouped GDN heads, real tensor/scale shapes, fixed-state compiler facts, stable CUDA arenas, dynamic slot/layer addressing, packed GDN/convolution operators, production graph composition, and event-backed state evidence exist; FP8 execution and released-model device qualification remain unsupported |
+| Not yet executable as complete models | Quantized hybrid checkpoints, MoE, sparse/latent attention, multimodal encoders, speculative decoding, and tensor/pipeline parallel models |
 
 Core support for a retention policy means its lifecycle can be compiled and
 host-tested. It does not by itself imply that all model operators or the
@@ -75,8 +75,8 @@ constraints.
 | Full + Sliding | Host-tested class-separated lifecycle and joint Prefix/COW | Manifest-driven layer binding and independent per-class inputs/arenas | Released 3-Full/15-Sliding checkpoint passes reference parity, retirement/reuse, cancellation, and final drain on H20 |
 | Exact Chunked token KV | Host-tested resettable epoch lifecycle | Implemented | Current architecture unqualified |
 | Full latent KV | Host-tested component-aware core lifecycle | Rejected until a matching Luminal kernel contract exists | Unqualified |
-| Recurrent checkpoints | Host-tested pool and joint RuntimeSession transaction | Geometry/compiler facts plus atomic prepare, submit, completion, abort, release, and reuse with token KV | Device operator unqualified |
-| Convolution state | Host-tested pool and joint RuntimeSession transaction | Ring geometry plus the same atomic token-KV/fixed-state lifecycle | Device operator unqualified |
+| Recurrent checkpoints | Host-tested pool and joint RuntimeSession transaction | Geometry/compiler facts plus atomic prepare, submit, completion, abort, release, and reuse with token KV | Ragged packed operator and stable-arena transitions pass on H20; released model unqualified |
+| Convolution state | Host-tested pool and joint RuntimeSession transaction | Minimal-history geometry plus the same atomic token-KV/fixed-state lifecycle | Ragged packed operator passes on H20; released model unqualified |
 | Per-head or region-partitioned layouts | Compiler primitives exist | Not generally admitted by the current executor plan | Unqualified |
 
 ## Compiled lifecycle

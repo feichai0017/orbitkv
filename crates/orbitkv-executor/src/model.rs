@@ -27,7 +27,7 @@ use orbitkv::{EngineFixedStatePlan, StatePoolIdentity};
 
 #[path = "model/runtime_input.rs"]
 mod runtime_input;
-use runtime_input::{validate_stateful_decode, validate_step};
+use runtime_input::{validate_stateful_step, validate_step};
 #[path = "model/artifact.rs"]
 mod artifact;
 pub use artifact::DecoderArtifact;
@@ -216,6 +216,7 @@ pub struct CompiledDecoder {
 pub struct DecoderInputs {
     pub token_ids: GraphTensor,
     pub positions: GraphTensor,
+    pub query_indptr: GraphTensor,
     pub classes: Vec<DecoderClassInputs>,
 }
 
@@ -452,11 +453,16 @@ impl DecoderLayerGraphBuilder<'_> {
                 topology::DecoderLayerState::GatedDelta { .. } => {
                     let envelope = DecoderLayerEnvelope::new(self.graph, self.config, layer_index);
                     let normalized = envelope.state_input(&hidden);
-                    let state_output =
-                        fixed_state
-                            .as_mut()
-                            .ok_or(DecoderError::UnsupportedPlan)?
-                            .apply_decode_core(self.graph, self.config, layer, &normalized)?;
+                    let state_output = fixed_state
+                        .as_mut()
+                        .ok_or(DecoderError::UnsupportedPlan)?
+                        .apply_packed_core(
+                        self.graph,
+                        self.config,
+                        layer,
+                        &normalized,
+                        self.inputs.query_indptr,
+                    )?;
                     hidden = envelope.finish(&hidden, state_output);
                 }
             }
@@ -717,29 +723,31 @@ impl CompiledDecoder {
         })
     }
 
-    /// Executes one decode token per request and returns authenticated
-    /// completion evidence for every fixed-state transition.
-    ///
     /// # Errors
-    ///
-    /// Rejects prefill, missing or reordered state plans, and any device or
-    /// graph execution failure.
+    /// Rejects invalid inputs or state plans and propagates device failures.
     pub fn execute_with_fixed_states(
         &mut self,
         step: DecoderStep<'_>,
         states: &[DecoderFixedStateStep<'_>],
     ) -> Result<StatefulDecoderStepOutput, DecoderError> {
-        validate_stateful_decode(step, states)?;
-        let initialized = self
+        validate_stateful_step(step, states)?;
+        validate_step(
+            step,
+            self.compile,
+            &self.decoder.class_dimensions,
+            self.page_tokens,
+            self.vocabulary_size,
+        )?;
+        let prepared = self
             .fixed_state
             .as_ref()
             .ok_or(DecoderError::UnsupportedExecution(
                 "fixed-state decoder step",
             ))?
             .arenas
-            .prepare_batch(states.iter().map(|state| (state.request_id, state.states)))?
-            .initialize()?;
+            .prepare_batch(states.iter().map(|state| (state.request_id, state.states)))?;
         self.prepare_graph(step)?;
+        let initialized = prepared.initialize()?;
         let fixed_state = self
             .fixed_state
             .as_ref()
@@ -748,6 +756,7 @@ impl CompiledDecoder {
             ))?;
         let ready =
             initialized.upload_destination_slots(&mut self.runtime, &fixed_state.graph_bindings)?;
+        self.validate_input_allocations()?;
         let pending = ready.complete_after(
             &mut self.runtime,
             &self.graph,
@@ -976,6 +985,10 @@ impl CompiledDecoder {
                 .map(|&position| i32::try_from(position).map_err(|_| DecoderError::InputCapacity))
                 .collect::<Result<Vec<_>, _>>()?,
         );
+        self.runtime.set_data(
+            self.decoder.inputs.query_indptr,
+            first_class.attention.query_indptr.to_vec(),
+        );
         for ((class_step, class_inputs), class_dimensions) in step
             .classes
             .iter()
@@ -996,8 +1009,12 @@ impl CompiledDecoder {
             );
             class_inputs
                 .attention
-                .upload(&mut self.runtime, class_step.attention)?;
+                .upload_class_metadata(&mut self.runtime, class_step.attention)?;
         }
+        self.validate_input_allocations()
+    }
+
+    fn validate_input_allocations(&self) -> Result<(), DecoderError> {
         if self.dynamic_input_allocations.iter().any(
             |(input, expected_pointer, expected_capacity)| {
                 self.runtime.input_allocation(*input)
@@ -1157,38 +1174,37 @@ fn register_persistent_cache(
 fn decoder_compile_options(
     decoder: &DecoderGraph,
     compile: DecoderCompileConfig,
-    stateful: bool,
 ) -> luminal::prelude::CompileOptions {
-    let query_buckets = if stateful {
-        vec![luminal::prelude::DimBucket::new(1, compile.maximum_batch_size).representative(1)]
-    } else {
-        vec![
-            luminal::prelude::DimBucket::new(1, 1),
-            luminal::prelude::DimBucket::new(2, compile.maximum_query_tokens)
-                .representative(compile.representative_prefill_tokens),
-        ]
-    };
-    let options = luminal::prelude::CompileOptions::default().dim_buckets('s', &query_buckets);
-    let options = if stateful {
-        options
-    } else {
-        options.dim_buckets(
-            'b',
-            &[luminal::prelude::DimBucket::new(1, compile.maximum_batch_size).representative(1)],
-        )
-    };
     decoder
         .class_dimensions
         .iter()
-        .fold(options, |options, class| {
-            options.dim_buckets(
-                class.context_pages,
-                &[
-                    luminal::prelude::DimBucket::new(1, compile.maximum_context_pages)
-                        .representative(compile.representative_context_pages),
-                ],
-            )
-        })
+        .fold(
+            luminal::prelude::CompileOptions::default()
+                .dim_buckets(
+                    's',
+                    &[
+                        luminal::prelude::DimBucket::new(1, 1),
+                        luminal::prelude::DimBucket::new(2, compile.maximum_query_tokens)
+                            .representative(compile.representative_prefill_tokens),
+                    ],
+                )
+                .dim_buckets(
+                    'b',
+                    &[
+                        luminal::prelude::DimBucket::new(1, compile.maximum_batch_size)
+                            .representative(1),
+                    ],
+                ),
+            |options, class| {
+                options.dim_buckets(
+                    class.context_pages,
+                    &[
+                        luminal::prelude::DimBucket::new(1, compile.maximum_context_pages)
+                            .representative(compile.representative_context_pages),
+                    ],
+                )
+            },
+        )
         .search_graph_limit(compile.search_graphs)
 }
 
@@ -1240,12 +1256,15 @@ impl DecodeCaptureSignature {
 }
 
 fn dynamic_inputs(decoder: &DecoderGraph) -> Vec<GraphTensor> {
-    let mut inputs = vec![decoder.inputs.token_ids, decoder.inputs.positions];
+    let mut inputs = vec![
+        decoder.inputs.token_ids,
+        decoder.inputs.positions,
+        decoder.inputs.query_indptr,
+    ];
     for class in &decoder.inputs.classes {
         inputs.extend([
             class.write_slots,
             class.attention.page_indices,
-            class.attention.query_indptr,
             class.attention.page_indptr,
             class.attention.last_page_len,
         ]);
@@ -1301,6 +1320,11 @@ fn seed_compile_inputs(
         (0..i32::try_from(representative_query_tokens).unwrap()).collect::<Vec<_>>(),
         compile.maximum_query_tokens * int_bytes,
     );
+    runtime.set_data_with_capacity(
+        decoder.inputs.query_indptr,
+        vec![0_i32, i32::try_from(representative_query_tokens).unwrap()],
+        (compile.maximum_batch_size + 1) * int_bytes,
+    );
     for (class, dimensions) in decoder.inputs.classes.iter().zip(&decoder.class_dimensions) {
         let base_page = i32::try_from(dimensions.backend_base_index).unwrap();
         let base_slot = dimensions
@@ -1319,11 +1343,6 @@ fn seed_compile_inputs(
             class.attention.page_indices,
             vec![base_page; compile.representative_context_pages],
             compile.maximum_context_pages * int_bytes,
-        );
-        runtime.set_data_with_capacity(
-            class.attention.query_indptr,
-            vec![0_i32, i32::try_from(representative_query_tokens).unwrap()],
-            (compile.maximum_batch_size + 1) * int_bytes,
         );
         runtime.set_data_with_capacity(
             class.attention.page_indptr,
@@ -1396,11 +1415,7 @@ fn validate_plan(
     Ok((
         DecoderDimensions {
             query_tokens: Expression::from('s'),
-            request_count: if topology.has_fixed_state() {
-                Expression::from('s')
-            } else {
-                Expression::from('b')
-            },
+            request_count: Expression::from('b'),
             kv_width: config
                 .kv_heads
                 .checked_mul(config.head_dim)
@@ -1421,6 +1436,9 @@ fn decoder_inputs(
     let positions = graph
         .named_tensor("positions", dimensions.query_tokens)
         .as_dtype(DType::Int);
+    let query_indptr = graph
+        .named_tensor("query_indptr", dimensions.request_count + 1)
+        .as_dtype(DType::Int);
     let classes = classes
         .iter()
         .map(|class| DecoderClassInputs {
@@ -1431,17 +1449,19 @@ fn decoder_inputs(
                     dimensions.query_tokens,
                 )
                 .as_dtype(DType::Int),
-            attention: PagedAttentionMetadata::new(
+            attention: PagedAttentionMetadata::with_query_indptr(
                 graph,
                 class.class_id,
                 dimensions.request_count,
                 Expression::from(class.context_pages),
+                query_indptr,
             ),
         })
         .collect();
     DecoderInputs {
         token_ids,
         positions,
+        query_indptr,
         classes,
     }
 }

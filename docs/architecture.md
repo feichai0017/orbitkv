@@ -188,26 +188,26 @@ small dynamic destination-slot tensor; manifest layer order determines the
 per-layer byte region. Search uses a private scratch allocation, so profiling
 cannot mutate live manager state. Success evidence is withheld until a Luminal
 execution receipt tied to the exact shared allocation and runtime registration
-has synchronized its CUDA event. The ignored real-device qualification gate
-executes two recurrent transitions and final drain. The production decoder now
+has synchronized its CUDA event. The ignored-by-default real-device
+qualification gate passes on H20 and executes two recurrent transitions and
+final drain. The production decoder now
 owns the same fixed-state device arenas, and the engine joins their event-backed
 receipts to token-KV evidence before submitting the transaction.
 
 The fixed-state graph substrate is dtype- and shape-parameterized. Recurrent
 f32 matrices and BF16 causal-convolution histories share stable arena
 addressing, dynamic slot metadata, manifest layer ordering, and completion
-receipts. Binding policy is explicit: recurrent state currently requires an
-in-place selected schedule, while convolution may use a same-stream copy-back
-until a fused history-update candidate is qualified.
+receipts. Binding policy is explicit: packed recurrent and convolution updates
+both require an in-place state-commit schedule selected through egglog.
 
 The recurrent computation boundary is semantic rather than model-specific. A
 normalized gated-delta transition is expressed as pure Luminal HLIR over
 `query`, `key`, `value`, `log_decay`, `update_gate`, and previous state, yielding
 both token values and next state. An independent Rust sequence oracle defines
 f32 accumulation and proves that chunked continuation from a returned state is
-equivalent to one-shot execution. The single-token HLIR supports different key
-and value-head counts through an exact grouped-head broadcast. A second pure
-graph composes checkpoint-shaped input projections, minimal `K-1`
+equivalent to one-shot execution. The semantic HLIR and packed CUDA path support
+different key and value-head counts through an exact grouped-head mapping. A
+second graph composes checkpoint-shaped input projections, minimal `K-1`
 causal-convolution history, delta gates, recurrence, gated RMS normalization,
 and output projection. The Luminal fork recognizes the exact rank-four
 `state * decay + key * delta` subgraph and adds an in-place CUDA state-update
@@ -219,9 +219,11 @@ the graph and dynamic destination ids inside it. A joint topology compiler
 proves each layer is owned by exactly one token-KV class or by the matching
 recurrent-plus-convolution pair. The production graph dispatches from this
 topology, so fixed-state layers do not fabricate token-KV tensors or attention
-weights. Stateful artifacts currently contain decode buckets only;
-packed-sequence prefill, real-device parity, and fused convolution/readout
-kernels remain open.
+weights. Stateful artifacts now contain decode and packed-prefill buckets.
+Production-rendered static and symbolic CUDA sources pass NVRTC compilation,
+and a ragged two-request H20 test matches independent convolution and recurrent
+references. Full released-model parity and fused projection/readout kernels
+remain open.
 The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
 search can optimize the surrounding decoder graph and schedule but does not yet
 choose among multiple attention implementations or jointly derive a KV layout.

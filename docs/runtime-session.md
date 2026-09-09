@@ -55,14 +55,14 @@ executor cannot manufacture a fixed-state success receipt. The CUDA state
 executor resolves those leases into stable arena ranges, initializes each
 destination from its published source (or zero), uploads manager-selected slot
 ids, and executes the Luminal graph. Only an opaque receipt tied to the exact
-runtime binding and recorded after both graph execution and any selected
-same-stream copy-back can release observed write evidence. Recurrent state
-currently requires direct in-place mutation; convolution history may use a
-measured copy-back schedule until a fused candidate is qualified. Rebinding the
-same pointer creates a new identity, so an older receipt cannot certify it.
-The production decoder exposes this as a separate stateful-decode operation:
-the ordinary execution method cannot update fixed state, and packed prefill is
-rejected until its sequence-state transition has independent parity coverage.
+runtime binding and recorded after graph execution can release observed write
+evidence. Packed recurrent and convolution state both require direct in-place
+commits selected through Luminal's egglog rules. Rebinding the same pointer
+creates a new identity, so an older receipt cannot certify it. The production
+decoder exposes this as a separate stateful execution operation: the ordinary
+execution method cannot update fixed state, while the stateful method accepts
+decode or packed-prefill CSR segments only with one manager-authored state plan
+per request.
 
 ## Prefix and copy-on-write
 

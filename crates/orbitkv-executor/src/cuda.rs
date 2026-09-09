@@ -59,15 +59,40 @@ impl PagedAttentionMetadata {
         request_count: Expression,
         context_pages: Expression,
     ) -> Self {
+        let query_indptr = graph
+            .named_tensor(
+                format!("attention.{class_id}.query_indptr"),
+                request_count + 1,
+            )
+            .as_dtype(DType::Int);
+        Self::with_query_indptr(graph, class_id, request_count, context_pages, query_indptr)
+    }
+
+    /// Creates per-class metadata around a shared decoder-level query
+    /// segmentation tensor.
+    ///
+    /// # Panics
+    ///
+    /// Panics when the shared tensor belongs to another graph or does not have
+    /// the required integer row-pointer shape.
+    #[must_use]
+    pub fn with_query_indptr(
+        graph: &mut Graph,
+        class_id: u16,
+        request_count: Expression,
+        context_pages: Expression,
+        query_indptr: GraphTensor,
+    ) -> Self {
         let rows = request_count + 1;
+        assert_eq!(query_indptr.graph_ref, std::ptr::from_mut::<Graph>(graph));
+        assert_eq!(query_indptr.dtype, DType::Int);
+        assert_eq!(query_indptr.dims(), [rows]);
         Self {
             class_id,
             page_indices: graph
                 .named_tensor(format!("attention.{class_id}.page_indices"), context_pages)
                 .as_dtype(DType::Int),
-            query_indptr: graph
-                .named_tensor(format!("attention.{class_id}.query_indptr"), rows)
-                .as_dtype(DType::Int),
+            query_indptr,
             page_indptr: graph
                 .named_tensor(format!("attention.{class_id}.page_indptr"), rows)
                 .as_dtype(DType::Int),
@@ -87,6 +112,22 @@ impl PagedAttentionMetadata {
         runtime: &mut CudaRuntime,
         batch: &AttentionBatch,
     ) -> Result<(), ExecutorError> {
+        self.upload_class_metadata(runtime, batch)?;
+        runtime.set_data(self.query_indptr, batch.query_indptr.to_vec());
+        Ok(())
+    }
+
+    /// Uploads class-local page metadata when query segmentation is shared by
+    /// the complete decoder graph and was uploaded once by its caller.
+    ///
+    /// # Errors
+    ///
+    /// Rejects a plan for another class or malformed CSR row cardinality.
+    pub fn upload_class_metadata(
+        self,
+        runtime: &mut CudaRuntime,
+        batch: &AttentionBatch,
+    ) -> Result<(), ExecutorError> {
         let rows = batch
             .query_indptr
             .len()
@@ -100,7 +141,6 @@ impl PagedAttentionMetadata {
             return Err(ExecutorError::InvalidRequestGeometry);
         }
         runtime.set_data(self.page_indices, batch.page_indices.to_vec());
-        runtime.set_data(self.query_indptr, batch.query_indptr.to_vec());
         runtime.set_data(self.page_indptr, batch.page_indptr.to_vec());
         runtime.set_data(self.last_page_len, batch.last_page_len.to_vec());
         Ok(())
