@@ -74,12 +74,7 @@ pub(super) fn prepare_decoder_compilation(
                 .allocate_compile_scratch(&mut runtime, state.policy),
         );
     }
-    let stateful = !decoder.outputs.fixed_states.is_empty();
-    let representative_query_tokens = if stateful {
-        1
-    } else {
-        compile.representative_prefill_tokens
-    };
+    let representative_query_tokens = compile.representative_prefill_tokens;
     graph.set_dim('s', representative_query_tokens);
     graph.set_dim('b', 1);
     for class in &decoder.class_dimensions {
@@ -92,7 +87,7 @@ pub(super) fn prepare_decoder_compilation(
         page_tokens,
         representative_query_tokens,
     );
-    let options = decoder_compile_options(&decoder, compile, stateful)
+    let options = decoder_compile_options(&decoder, compile)
         .compiler_facts(compiler_facts.egglog().to_owned());
     Ok(DecoderCompilation {
         graph,

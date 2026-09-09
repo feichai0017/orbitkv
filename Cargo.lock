@@ -3040,6 +3040,7 @@ name = "orbitkv-executor"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "half",
  "luminal",
  "luminal_cuda_lite",
  "luminal_nn",

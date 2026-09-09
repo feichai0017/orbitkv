@@ -1,10 +1,15 @@
 #![cfg(feature = "cuda")]
 #![forbid(unsafe_code)]
 
+use half::bf16;
 use luminal::{
     dtype::DType,
     op::Runtime,
-    prelude::{CompileOptions, Graph, ToId},
+    prelude::{CompileOptions, Expression, Graph, ToId},
+};
+use luminal_cuda_lite::kernel::sequence_state::{
+    PackedConvolutionPlan, PackedConvolutionSpec, PackedDeltaScanPlan, PackedDeltaScanSpec,
+    packed_causal_convolution, packed_delta_scan,
 };
 use luminal_cuda_lite::{cudarc::driver::CudaContext, runtime::CudaRuntime};
 use orbitkv::{
@@ -37,6 +42,7 @@ struct RecurrentExecution {
     runtime: CudaRuntime,
     binding: orbitkv_executor::FixedStateRuntimeBinding,
     graph_binding: FixedStateGraphBinding,
+    inputs: [luminal::prelude::GraphTensor; 5],
     value_output: luminal::prelude::GraphTensor,
 }
 
@@ -203,6 +209,7 @@ fn execute_step(
     let ready = initialized
         .upload_destination_slots(&mut execution.runtime, &[execution.graph_binding])
         .expect("upload manager destination slot");
+    seed_recurrent_inputs(&mut execution.runtime, &execution.inputs);
     let evidence = ready
         .complete_after(
             &mut execution.runtime,
@@ -304,6 +311,7 @@ fn recurrent_execution(
         runtime,
         binding,
         graph_binding,
+        inputs,
         value_output,
     }
 }
@@ -314,6 +322,295 @@ fn seed_recurrent_inputs(runtime: &mut CudaRuntime, inputs: &[luminal::prelude::
     runtime.set_data(inputs[2], vec![4.0_f32, 3.0, 2.0, 1.0]);
     runtime.set_data(inputs[3], vec![0.0_f32]);
     runtime.set_data(inputs[4], vec![0.5_f32]);
+}
+
+#[test]
+#[ignore = "requires an SM90 CUDA device"]
+#[allow(clippy::too_many_lines)]
+fn packed_state_kernels_match_ragged_sequence_references_on_h20() {
+    const TOKENS: usize = 5;
+    const REQUESTS: usize = 2;
+    const CHANNELS: usize = 4;
+    const HISTORY_WIDTH: usize = 2;
+
+    let context = CudaContext::new(0).expect("CUDA context");
+    context.bind_to_thread().expect("bind CUDA context");
+    let stream = context.default_stream();
+    let mut graph = Graph::new();
+    let input = graph
+        .named_tensor("packed_input", ('s', CHANNELS))
+        .as_dtype(DType::Bf16);
+    let weights = graph
+        .named_tensor("convolution_weights", (CHANNELS, HISTORY_WIDTH + 1))
+        .as_dtype(DType::Bf16);
+    let history = graph
+        .named_tensor("convolution_history", ('b', CHANNELS, HISTORY_WIDTH))
+        .as_dtype(DType::Bf16);
+    let query_indptr = graph
+        .named_tensor("query_indptr", Expression::from('b') + 1)
+        .as_dtype(DType::Int);
+    let convolution = packed_causal_convolution(
+        PackedConvolutionPlan {
+            input,
+            weights,
+            history,
+            query_indptr,
+        },
+        PackedConvolutionSpec {
+            channels: CHANNELS,
+            kernel_width: HISTORY_WIDTH + 1,
+        },
+    );
+    let convolution_values = convolution.values.output();
+    let convolution_history = convolution.history.output();
+    let recurrent_state = graph.named_tensor("recurrent_state", ('b', 2, 1, 1));
+    let log_decay = graph.named_tensor("log_decay", ('s', 2));
+    let update_gate = graph.named_tensor("update_gate", ('s', 2));
+    let convolved = convolution.values.cast(DType::F32);
+    let recurrent = packed_delta_scan(
+        PackedDeltaScanPlan {
+            query: convolved.slice((.., ..1)).split_dims(1, 1),
+            key: convolved.slice((.., 1..2)).split_dims(1, 1),
+            value: convolved.slice((.., 2..)).split_dims(1, 1),
+            log_decay,
+            update_gate,
+            state: recurrent_state,
+            query_indptr,
+        },
+        PackedDeltaScanSpec {
+            key_heads: 1,
+            value_heads: 2,
+            key_width: 1,
+            value_width: 1,
+            normalization_epsilon: 1e-6,
+        },
+    );
+    let recurrent_values = recurrent.values.output();
+    let recurrent_state_output = recurrent.state.output();
+
+    let input_data = [
+        0.5, 1.0, 1.5, 2.0, -0.5, 0.25, 0.75, 1.25, 1.0, -0.75, 0.5, 1.5, 0.25, 0.5, -1.0, 0.75,
+        1.25, 0.75, 1.0, -0.5,
+    ];
+    let weight_data = [
+        0.25, -0.5, 1.0, -0.25, 0.75, 0.5, 0.5, 0.25, -0.75, 0.1, 0.2, 0.8,
+    ];
+    let history_data = [
+        0.1, -0.2, 0.3, 0.4, -0.5, 0.25, 0.75, -0.1, -0.25, 0.5, 0.2, -0.4, 0.6, 0.3, -0.75, 0.2,
+    ];
+    let indptr = vec![0_i32, 2, 5];
+    let log_decay_data = vec![
+        -0.1, -0.2, -0.3, -0.15, -0.25, -0.4, -0.05, -0.2, -0.35, -0.1,
+    ];
+    let update_gate_data = vec![0.2, 0.4, 0.6, 0.3, 0.5, 0.7, 0.8, 0.45, 0.65, 0.25];
+    let state_data = vec![0.1, -0.2, 0.3, 0.4];
+    let input_bf16 = as_bf16(&input_data);
+    let weights_bf16 = as_bf16(&weight_data);
+    let history_bf16 = as_bf16(&history_data);
+
+    graph.set_dim('s', TOKENS);
+    graph.set_dim('b', REQUESTS);
+    let mut runtime = CudaRuntime::initialize(stream);
+    set_packed_inputs(
+        &mut runtime,
+        &[
+            input,
+            weights,
+            history,
+            query_indptr,
+            log_decay,
+            update_gate,
+            recurrent_state,
+        ],
+        &input_bf16,
+        &weights_bf16,
+        &history_bf16,
+        &indptr,
+        &log_decay_data,
+        &update_gate_data,
+        &state_data,
+    );
+    runtime = graph.compile(runtime, CompileOptions::default().search_graph_limit(1));
+    set_packed_inputs(
+        &mut runtime,
+        &[
+            input,
+            weights,
+            history,
+            query_indptr,
+            log_decay,
+            update_gate,
+            recurrent_state,
+        ],
+        &input_bf16,
+        &weights_bf16,
+        &history_bf16,
+        &indptr,
+        &log_decay_data,
+        &update_gate_data,
+        &state_data,
+    );
+    runtime.execute(&graph.dyn_map);
+
+    let (expected_convolution, expected_history) =
+        packed_convolution_reference(&input_bf16, &weights_bf16, &history_bf16, &[0, 2, 5]);
+    assert_bf16_close(
+        &runtime.get_bf16(convolution_values),
+        &expected_convolution,
+        2e-2,
+    );
+    assert_bf16_close(
+        &runtime.get_bf16(convolution_history),
+        &expected_history,
+        0.0,
+    );
+    let (expected_values, expected_state) = packed_delta_reference(
+        &expected_convolution,
+        &log_decay_data,
+        &update_gate_data,
+        &state_data,
+        &[0, 2, 5],
+    );
+    assert_f32_close(&runtime.get_f32(recurrent_values), &expected_values, 2e-5);
+    assert_f32_close(
+        &runtime.get_f32(recurrent_state_output),
+        &expected_state,
+        2e-5,
+    );
+}
+
+#[allow(clippy::too_many_arguments)]
+fn set_packed_inputs(
+    runtime: &mut CudaRuntime,
+    tensors: &[luminal::prelude::GraphTensor; 7],
+    input: &[bf16],
+    weights: &[bf16],
+    history: &[bf16],
+    query_indptr: &[i32],
+    log_decay: &[f32],
+    update_gate: &[f32],
+    state: &[f32],
+) {
+    runtime.set_data(tensors[0], input.to_vec());
+    runtime.set_data(tensors[1], weights.to_vec());
+    runtime.set_data(tensors[2], history.to_vec());
+    runtime.set_data(tensors[3], query_indptr.to_vec());
+    runtime.set_data(tensors[4], log_decay.to_vec());
+    runtime.set_data(tensors[5], update_gate.to_vec());
+    runtime.set_data(tensors[6], state.to_vec());
+}
+
+fn packed_convolution_reference(
+    input: &[bf16],
+    weights: &[bf16],
+    initial_history: &[bf16],
+    query_indptr: &[usize],
+) -> (Vec<bf16>, Vec<bf16>) {
+    const CHANNELS: usize = 4;
+    const HISTORY_WIDTH: usize = 2;
+    let mut values = vec![bf16::ZERO; input.len()];
+    let mut histories = initial_history.to_vec();
+    for request in 0..query_indptr.len() - 1 {
+        let history = &mut histories
+            [request * CHANNELS * HISTORY_WIDTH..(request + 1) * CHANNELS * HISTORY_WIDTH];
+        for token in query_indptr[request]..query_indptr[request + 1] {
+            for channel in 0..CHANNELS {
+                let history_base = channel * HISTORY_WIDTH;
+                let weight_base = channel * (HISTORY_WIDTH + 1);
+                let mut value = 0.0_f32;
+                for offset in 0..HISTORY_WIDTH {
+                    value = history[history_base + offset]
+                        .to_f32()
+                        .mul_add(weights[weight_base + offset].to_f32(), value);
+                }
+                value = input[token * CHANNELS + channel]
+                    .to_f32()
+                    .mul_add(weights[weight_base + HISTORY_WIDTH].to_f32(), value);
+                values[token * CHANNELS + channel] = bf16::from_f32(value / (1.0 + (-value).exp()));
+                history[history_base] = history[history_base + 1];
+                history[history_base + 1] = input[token * CHANNELS + channel];
+            }
+        }
+    }
+    (values, histories)
+}
+
+fn packed_delta_reference(
+    convolved: &[bf16],
+    log_decay: &[f32],
+    update_gate: &[f32],
+    initial_state: &[f32],
+    query_indptr: &[usize],
+) -> (Vec<f32>, Vec<f32>) {
+    let mut values = Vec::with_capacity(query_indptr.last().copied().unwrap_or_default() * 2);
+    let mut states = Vec::with_capacity(initial_state.len());
+    for request in 0..query_indptr.len() - 1 {
+        let token_range = query_indptr[request]..query_indptr[request + 1];
+        let mut query = Vec::with_capacity(token_range.len());
+        let mut key = Vec::with_capacity(token_range.len());
+        let mut value = Vec::with_capacity(token_range.len() * 2);
+        let mut decay = Vec::with_capacity(token_range.len() * 2);
+        let mut gate = Vec::with_capacity(token_range.len() * 2);
+        for token in token_range.clone() {
+            query.push(convolved[token * 4].to_f32());
+            key.push(convolved[token * 4 + 1].to_f32());
+            value.extend([
+                convolved[token * 4 + 2].to_f32(),
+                convolved[token * 4 + 3].to_f32(),
+            ]);
+            decay.extend_from_slice(&log_decay[token * 2..token * 2 + 2]);
+            gate.extend_from_slice(&update_gate[token * 2..token * 2 + 2]);
+        }
+        let result = orbitkv_executor::gated_delta_reference(
+            GatedDeltaGeometry {
+                key_heads: 1,
+                value_heads: 2,
+                key_width: 1,
+                value_width: 1,
+                normalization_epsilon: 1e-6,
+            },
+            orbitkv_executor::GatedDeltaReferenceInput {
+                batch_size: 1,
+                sequence_tokens: token_range.len(),
+                query: &query,
+                key: &key,
+                value: &value,
+                log_decay: &decay,
+                update_gate: &gate,
+                initial_state: &initial_state[request * 2..request * 2 + 2],
+            },
+        )
+        .expect("packed delta reference");
+        values.extend_from_slice(&result.values);
+        states.extend_from_slice(&result.state);
+    }
+    (values, states)
+}
+
+fn as_bf16(values: &[f32]) -> Vec<bf16> {
+    values.iter().copied().map(bf16::from_f32).collect()
+}
+
+fn assert_bf16_close(actual: &[bf16], expected: &[bf16], tolerance: f32) {
+    assert_eq!(actual.len(), expected.len());
+    for (&actual, &expected) in actual.iter().zip(expected) {
+        let actual = actual.to_f32();
+        let expected = expected.to_f32();
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "{actual} != {expected}"
+        );
+    }
+}
+
+fn assert_f32_close(actual: &[f32], expected: &[f32], tolerance: f32) {
+    assert_eq!(actual.len(), expected.len());
+    for (&actual, &expected) in actual.iter().zip(expected) {
+        assert!(
+            (actual - expected).abs() <= tolerance,
+            "{actual} != {expected}"
+        );
+    }
 }
 
 #[test]

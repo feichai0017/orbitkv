@@ -809,10 +809,6 @@ impl ModelWorker {
             self.decoder
                 .execute(decoder_step)
                 .map(|output| (output.token_ids, Box::default()))
-        } else if dispatch.tokens.len() != dispatch.request_ids.len() {
-            Err(orbitkv_executor::model::DecoderError::UnsupportedExecution(
-                "packed fixed-state prefill",
-            ))
         } else {
             self.decoder
                 .execute_with_fixed_states(decoder_step, &fixed_state_steps)

@@ -6,11 +6,16 @@ use luminal::{
 };
 
 use super::{DecoderConfig, DecoderError, GatedDeltaConfig, topology::DecoderTopology, weight};
+use crate::recurrent::gated_delta::softplus;
 use crate::{
     CausalConvolutionGeometry, CausalConvolutionStepInputs, ConvolutionStateGraphArena,
     ExecutorPlan, FixedStateArenaRegistration, FixedStateClass, FixedStateGraphBinding,
     GatedDeltaGeometry, GatedDeltaProjectedInputs, RecurrentStateGraphArena,
     causal_convolution_step, gated_delta_projected_step,
+};
+use luminal_cuda_lite::kernel::sequence_state::{
+    PackedConvolutionPlan, PackedConvolutionSpec, PackedDeltaScanPlan, PackedDeltaScanSpec,
+    packed_causal_convolution, packed_delta_scan,
 };
 
 /// Projection outputs whose q/k/v channels still require causal convolution.
@@ -29,7 +34,7 @@ pub struct GatedDeltaCoreOutput {
     pub next_recurrent_state: GraphTensor,
 }
 
-/// Complete single-token GDN result including both persistent state updates.
+/// Complete GDN result including both persistent state updates.
 #[derive(Clone, Copy)]
 pub struct GatedDeltaDecodeOutput {
     pub hidden: GraphTensor,
@@ -37,7 +42,7 @@ pub struct GatedDeltaDecodeOutput {
     pub next_convolution_history: GraphTensor,
 }
 
-/// Weight-backed GDN core shared by decode and future chunked-prefill builders.
+/// Weight-backed GDN core shared by decode and packed-prefill builders.
 pub struct GatedDeltaCore {
     geometry: GatedDeltaConfig,
     normalization_epsilon: f32,
@@ -56,7 +61,6 @@ pub struct GatedDeltaCore {
 /// gated-delta decoder stack.
 pub struct GatedDeltaStateGraph {
     geometry: GatedDeltaConfig,
-    batch_size: Expression,
     recurrent: RecurrentStateGraphArena,
     convolution: ConvolutionStateGraphArena,
 }
@@ -219,8 +223,6 @@ impl GatedDeltaCore {
         })
     }
 
-    /// Executes the complete one-token GDN core including its minimal
-    /// persistent causal-convolution history.
     /// Executes the complete one-token GDN core including minimal convolution history.
     ///
     /// # Errors
@@ -260,6 +262,93 @@ impl GatedDeltaCore {
             next_convolution_history: convolution.next_history,
         })
     }
+
+    /// Executes a ragged packed sequence and returns every token value plus
+    /// one final recurrent and convolution state per request.
+    ///
+    /// # Errors
+    ///
+    /// Rejects incompatible projection or persistent-state geometry.
+    pub fn forward_packed(
+        &self,
+        hidden: &GraphTensor,
+        previous_recurrent_state: &GraphTensor,
+        previous_convolution_history: &GraphTensor,
+        query_indptr: GraphTensor,
+    ) -> Result<GatedDeltaDecodeOutput, DecoderError> {
+        let projection = self.project(hidden)?;
+        if projection.convolution_input.dtype != DType::Bf16 {
+            return Err(DecoderError::InvalidGeometry(
+                "packed gated-delta activation dtype",
+            ));
+        }
+        let convolution = packed_causal_convolution(
+            PackedConvolutionPlan {
+                input: projection.convolution_input,
+                weights: self.convolution_weight.squeeze(1),
+                history: *previous_convolution_history,
+                query_indptr,
+            },
+            PackedConvolutionSpec {
+                channels: self.geometry.convolution_channels().ok_or(
+                    DecoderError::InvalidGeometry("gated-delta convolution width"),
+                )?,
+                kernel_width: self.geometry.convolution_kernel_width,
+            },
+        );
+        let key_elements = self
+            .geometry
+            .key_elements()
+            .ok_or(DecoderError::InvalidGeometry("gated-delta key width"))?;
+        let convolved = convolution.values.cast(DType::F32);
+        let query = convolved
+            .slice((.., ..key_elements))
+            .split_dims(1, self.geometry.key_width);
+        let key = convolved
+            .slice((.., key_elements..key_elements * 2))
+            .split_dims(1, self.geometry.key_width);
+        let value = convolved
+            .slice((.., key_elements * 2..))
+            .split_dims(1, self.geometry.value_width);
+        let tokens = hidden.dims()[0];
+        let decay_argument = projection.decay_gate_logits + self.decay_bias.expand_dim(0, tokens);
+        let log_decay =
+            -self.decay_log_rates.exp().expand_dim(0, tokens) * softplus(&decay_argument);
+        let recurrent = packed_delta_scan(
+            PackedDeltaScanPlan {
+                query,
+                key,
+                value,
+                log_decay,
+                update_gate: projection.update_gate_logits.sigmoid(),
+                state: *previous_recurrent_state,
+                query_indptr,
+            },
+            PackedDeltaScanSpec {
+                key_heads: self.geometry.key_heads,
+                value_heads: self.geometry.value_heads,
+                key_width: self.geometry.key_width,
+                value_width: self.geometry.value_width,
+                normalization_epsilon: 1e-6,
+            },
+        );
+        let values = recurrent.values.std_norm(2, self.normalization_epsilon)
+            * self
+                .output_norm
+                .expand_lhs([tokens, Expression::from(self.geometry.value_heads)])
+            * projection
+                .output_gate
+                .split_dims(1, self.geometry.value_width)
+                .swish();
+        Ok(GatedDeltaDecodeOutput {
+            hidden: values
+                .merge_dims(1, 2)
+                .cast(self.output.dtype)
+                .matmul(self.output.t()),
+            next_recurrent_state: recurrent.state,
+            next_convolution_history: convolution.history,
+        })
+    }
 }
 
 impl GatedDeltaStateGraph {
@@ -288,7 +377,6 @@ impl GatedDeltaStateGraph {
         let convolution_registration = unique_registration(registrations, convolution_state_id)?;
         Ok(Self {
             geometry,
-            batch_size,
             recurrent: RecurrentStateGraphArena::new(
                 graph,
                 recurrent_class,
@@ -311,12 +399,13 @@ impl GatedDeltaStateGraph {
     /// # Errors
     ///
     /// Rejects a non-stateful layer or incompatible hidden/state geometry.
-    pub fn apply_decode_core(
+    pub fn apply_packed_core(
         &mut self,
         graph: &mut Graph,
         config: &DecoderConfig,
         layer: u32,
         hidden: &GraphTensor,
+        query_indptr: GraphTensor,
     ) -> Result<GraphTensor, DecoderError> {
         let recurrent_geometry = GatedDeltaGeometry {
             key_heads: self.geometry.key_heads,
@@ -337,11 +426,11 @@ impl GatedDeltaStateGraph {
         let layer_index =
             usize::try_from(layer).map_err(|_| DecoderError::InvalidGeometry("layer index"))?;
         let core = GatedDeltaCore::new(graph, config, layer_index, hidden.dtype)?;
-        let output = core.forward_decode(
+        let output = core.forward_packed(
             hidden,
             &previous_recurrent,
             &previous_convolution,
-            self.batch_size,
+            query_indptr,
         )?;
         self.recurrent
             .commit_layer(layer, recurrent_geometry, output.next_recurrent_state)?;
@@ -372,7 +461,7 @@ impl GatedDeltaStateBindings {
     pub fn write_policies() -> [crate::FixedStateWritePolicy; 2] {
         [
             crate::FixedStateWritePolicy::RequiredInPlace,
-            crate::FixedStateWritePolicy::CopyBackAllowed,
+            crate::FixedStateWritePolicy::RequiredInPlace,
         ]
     }
 
@@ -590,8 +679,11 @@ mod tests {
             GatedDeltaStateGraph::new(&mut graph, &config, &plan, &registrations, 'b'.into())
                 .unwrap();
         let hidden = graph.named_tensor("hidden", ('b', 4)).as_dtype(DType::Bf16);
+        let query_indptr = graph
+            .named_tensor("query_indptr", Expression::from('b') + 1)
+            .as_dtype(DType::Int);
         let output = states
-            .apply_decode_core(&mut graph, &config, 0, &hidden)
+            .apply_packed_core(&mut graph, &config, 0, &hidden, query_indptr)
             .unwrap()
             .output();
         let bindings = states.finish();
@@ -601,7 +693,7 @@ mod tests {
             GatedDeltaStateBindings::write_policies(),
             [
                 crate::FixedStateWritePolicy::RequiredInPlace,
-                crate::FixedStateWritePolicy::CopyBackAllowed,
+                crate::FixedStateWritePolicy::RequiredInPlace,
             ]
         );
         assert_eq!(
@@ -611,7 +703,8 @@ mod tests {
         assert_eq!(output.dtype, DType::Bf16);
         graph.set_dim('b', 1);
         graph.build_search_space::<CudaRuntime>(CompileOptions::default());
-        assert!(egraph_has_kernel(&graph, "KernelDeltaStateUpdate"));
+        assert!(egraph_has_kernel(&graph, "CustomOpKind"));
+        assert_eq!(egraph_kernel_count(&graph, "KernelScatterNoCopy"), 2);
     }
 
     fn projection_weights() -> Vec<f32> {
@@ -636,25 +729,33 @@ mod tests {
     }
 
     fn egraph_has_kernel(graph: &Graph, kind: &str) -> bool {
+        egraph_kernel_count(graph, kind) != 0
+    }
+
+    fn egraph_kernel_count(graph: &Graph, kind: &str) -> usize {
         let egraph = graph.egraph().expect("CUDA search space");
-        egraph.eclasses.values().any(|(sort, nodes)| {
-            sort == "IR"
-                && nodes.iter().any(|node| {
-                    let Some(("Op", children)) = egraph
-                        .enodes
-                        .get(node)
-                        .map(|(label, children)| (label.as_str(), children))
-                    else {
-                        return false;
-                    };
-                    children.first().is_some_and(|kind_class| {
-                        egraph.eclasses[kind_class]
-                            .1
-                            .iter()
-                            .any(|kind_node| egraph.enodes[kind_node].0 == kind)
+        egraph
+            .eclasses
+            .values()
+            .filter(|(sort, nodes)| {
+                sort == "IR"
+                    && nodes.iter().any(|node| {
+                        let Some(("Op", children)) = egraph
+                            .enodes
+                            .get(node)
+                            .map(|(label, children)| (label.as_str(), children))
+                        else {
+                            return false;
+                        };
+                        children.first().is_some_and(|kind_class| {
+                            egraph.eclasses[kind_class]
+                                .1
+                                .iter()
+                                .any(|kind_node| egraph.enodes[kind_node].0 == kind)
+                        })
                     })
-                })
-        })
+            })
+            .count()
     }
 
     fn config() -> DecoderConfig {

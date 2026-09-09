@@ -327,7 +327,7 @@ mod graph {
     }
 }
 #[cfg(feature = "cuda")]
-mod gated_delta;
+pub(crate) mod gated_delta;
 #[cfg(feature = "cuda")]
 mod state_graph;
 
