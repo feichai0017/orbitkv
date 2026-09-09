@@ -137,7 +137,8 @@ The primary model target is a 27B block-FP8 hybrid decoder with a 3:1 Gated
 DeltaNet/Full-attention schedule. Its real configuration already compiles to 16
 Full token-KV layers and 48 recurrent/convolution layers. The executor parses
 the nested text configuration, partial rotary geometry, and block-FP8 contract,
-but deliberately rejects execution until GDN state transactions and FP8 model
+and wires GDN state transactions for decode, but deliberately rejects hybrid
+prompt prefill and FP8 model
 loading are implemented. A smaller BF16 checkpoint with the same architecture
 is the bring-up target; existing dense checkpoints remain regression witnesses.
 The latest open DeepSeek V4 family is the second architecture target.

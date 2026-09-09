@@ -60,6 +60,9 @@ same-stream copy-back can release observed write evidence. Recurrent state
 currently requires direct in-place mutation; convolution history may use a
 measured copy-back schedule until a fused candidate is qualified. Rebinding the
 same pointer creates a new identity, so an older receipt cannot certify it.
+The production decoder exposes this as a separate stateful-decode operation:
+the ordinary execution method cannot update fixed state, and packed prefill is
+rejected until its sequence-state transition has independent parity coverage.
 
 ## Prefix and copy-on-write
 

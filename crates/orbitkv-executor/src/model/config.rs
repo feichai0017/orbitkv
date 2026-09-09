@@ -258,15 +258,6 @@ impl DecoderConfig {
     }
 
     pub(super) fn require_executable(&self) -> Result<(), DecoderError> {
-        if self
-            .layer_kinds
-            .as_deref()
-            .is_some_and(|layers| layers.contains(&DecoderLayerKind::Linear))
-        {
-            return Err(DecoderError::UnsupportedExecution(
-                "linear-attention state execution",
-            ));
-        }
         if self.weight_format != DecoderWeightFormat::Float {
             return Err(DecoderError::UnsupportedExecution(
                 "quantized weight execution",

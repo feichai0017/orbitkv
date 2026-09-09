@@ -9,7 +9,7 @@ use luminal::{
 use luminal_cuda_lite::{cudarc::driver::CudaSlice, runtime::CudaRuntime};
 use thiserror::Error;
 
-use crate::{FixedStateArenaRegistration, FixedStateDeviceBatch};
+use crate::{FixedStateArenaRegistration, FixedStateDeviceBatch, FixedStateWritePolicy};
 
 #[derive(Clone, Copy, Debug, Eq, Error, PartialEq)]
 pub enum FixedStateGraphError {
@@ -27,6 +27,13 @@ pub struct FixedStateGraphBinding {
     pub arena_output: GraphTensor,
     pub destination_slots: GraphTensor,
     arena_bytes: usize,
+}
+
+/// One fixed-state graph edge and the write contract enforced during search.
+#[derive(Clone, Copy)]
+pub struct FixedStateGraphResource {
+    pub binding: FixedStateGraphBinding,
+    pub policy: FixedStateWritePolicy,
 }
 
 #[derive(Clone, Copy)]
@@ -194,8 +201,19 @@ impl FixedStateGraphArena {
 
 impl FixedStateGraphBinding {
     #[must_use]
-    pub fn allocate_compile_scratch(self, runtime: &mut CudaRuntime) -> CudaSlice<u8> {
-        runtime.alias_state_required(self.arena_input, self.arena_output, self.arena_bytes)
+    pub fn allocate_compile_scratch(
+        self,
+        runtime: &mut CudaRuntime,
+        policy: FixedStateWritePolicy,
+    ) -> CudaSlice<u8> {
+        match policy {
+            FixedStateWritePolicy::RequiredInPlace => {
+                runtime.alias_state_required(self.arena_input, self.arena_output, self.arena_bytes)
+            }
+            FixedStateWritePolicy::CopyBackAllowed => {
+                runtime.alias_state(self.arena_input, self.arena_output, self.arena_bytes)
+            }
+        }
     }
 
     /// Seeds a stable-capacity slot-id input before graph compilation.

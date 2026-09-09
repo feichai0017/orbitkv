@@ -39,7 +39,7 @@ pub mod cuda;
 #[cfg(feature = "cuda")]
 mod state_graph;
 #[cfg(feature = "cuda")]
-pub use state_graph::{FixedStateGraphBinding, FixedStateGraphError};
+pub use state_graph::{FixedStateGraphBinding, FixedStateGraphError, FixedStateGraphResource};
 #[cfg(feature = "cuda")]
 mod state_arena;
 #[cfg(feature = "cuda")]

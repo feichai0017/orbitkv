@@ -287,7 +287,8 @@ fn recurrent_execution(
     graph_binding
         .seed_destination_slots(&mut runtime, 1, 1)
         .expect("seed slot metadata");
-    let compile_scratch = graph_binding.allocate_compile_scratch(&mut runtime);
+    let compile_scratch = graph_binding
+        .allocate_compile_scratch(&mut runtime, FixedStateWritePolicy::RequiredInPlace);
     runtime = graph.compile(runtime, CompileOptions::default().search_graph_limit(8));
     let binding = state_arenas
         .bind_graph_state(

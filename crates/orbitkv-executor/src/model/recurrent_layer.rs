@@ -375,6 +375,22 @@ impl GatedDeltaStateBindings {
             crate::FixedStateWritePolicy::CopyBackAllowed,
         ]
     }
+
+    #[must_use]
+    pub fn resources(self) -> [crate::FixedStateGraphResource; 2] {
+        let [recurrent, convolution] = self.graph_bindings();
+        let [recurrent_policy, convolution_policy] = Self::write_policies();
+        [
+            crate::FixedStateGraphResource {
+                binding: recurrent,
+                policy: recurrent_policy,
+            },
+            crate::FixedStateGraphResource {
+                binding: convolution,
+                policy: convolution_policy,
+            },
+        ]
+    }
 }
 
 fn unique_state_class(

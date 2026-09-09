@@ -1,8 +1,8 @@
 use super::*;
 use orbitkv::{
     AttentionStatePlanInput, AttentionStateSpec, AttentionStateStorage, CacheSharingPolicy,
-    EngineAppendIntent, EngineRequestId, RuntimeSession, compile_attention_state_plan,
-    compile_plan, compile_runtime_manifest,
+    EngineAppendIntent, EngineRequestId, RecurrentFamily, RuntimeSession, StatePoolIdentity,
+    compile_attention_state_plan, compile_plan, compile_runtime_manifest,
     kv_manager::{BackendArenaRegistration, CanonicalKvManager, ManagerConfig},
     plan::RetentionKind,
 };
@@ -55,6 +55,7 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
         &config,
         &plan,
         &arenas,
+        &[],
         DecoderWeightFeatures::default(),
         compile,
         "facts-a",
@@ -66,6 +67,7 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
         &config,
         &plan,
         &changed_arena,
+        &[],
         DecoderWeightFeatures::default(),
         compile,
         "facts-a",
@@ -75,6 +77,7 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
         &config,
         &plan,
         &arenas,
+        &[],
         DecoderWeightFeatures::default(),
         DecoderCompileConfig {
             maximum_batch_size: 2,
@@ -87,6 +90,7 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
         &config,
         &plan,
         &arenas,
+        &[],
         DecoderWeightFeatures::default(),
         compile,
         "facts-b",
@@ -96,6 +100,37 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
     assert_ne!(identity, arena_identity);
     assert_ne!(identity, compile_identity);
     assert_ne!(identity, facts_identity);
+
+    let mut fixed_state = [FixedStateArenaRegistration {
+        state_id: 1,
+        engine_epoch: 1,
+        pool_epoch: 2,
+        pool_id: 3,
+        slot_count: 4,
+        slot_bytes: 64,
+    }];
+    let fixed_identity = decoder_artifact_identity(
+        &config,
+        &plan,
+        &arenas,
+        &fixed_state,
+        DecoderWeightFeatures::default(),
+        compile,
+        "facts-a",
+    )
+    .unwrap();
+    fixed_state[0].slot_count = 6;
+    let changed_fixed_identity = decoder_artifact_identity(
+        &config,
+        &plan,
+        &arenas,
+        &fixed_state,
+        DecoderWeightFeatures::default(),
+        compile,
+        "facts-a",
+    )
+    .unwrap();
+    assert_ne!(fixed_identity, changed_fixed_identity);
 }
 
 #[test]
@@ -148,6 +183,75 @@ fn step_validation_enforces_compiled_capacities() {
         )
         .is_err()
     );
+}
+
+#[test]
+fn stateful_decode_requires_one_token_and_state_plan_per_request() {
+    let attention = crate::AttentionBatch {
+        class_id: 0,
+        query_indptr: vec![0, 1, 2].into_boxed_slice(),
+        page_indptr: vec![0, 1, 2].into_boxed_slice(),
+        page_indices: vec![0, 1].into_boxed_slice(),
+        last_page_len: vec![1, 1].into_boxed_slice(),
+    };
+    let classes = [DecoderClassStep {
+        class_id: 0,
+        write_slots: &[0, 16],
+        attention: &attention,
+    }];
+    let step = DecoderStep {
+        tokens: &[1, 2],
+        positions: &[0, 0],
+        classes: &classes,
+    };
+    let state = orbitkv::EngineFixedStatePlan {
+        state_id: 1,
+        source: None,
+        destination: orbitkv::StateSlotLease {
+            engine_epoch: 1,
+            pool_epoch: 2,
+            generation: 1,
+            slot_id: 0,
+            pool_id: 3,
+        },
+        byte_count: 64,
+    };
+    let states = [
+        DecoderFixedStateStep {
+            request_id: 7,
+            states: std::slice::from_ref(&state),
+        },
+        DecoderFixedStateStep {
+            request_id: 8,
+            states: std::slice::from_ref(&state),
+        },
+    ];
+    assert!(validate_stateful_decode(step, &states).is_ok());
+
+    let prefill_attention = crate::AttentionBatch {
+        class_id: 0,
+        query_indptr: vec![0, 2].into_boxed_slice(),
+        page_indptr: vec![0, 1].into_boxed_slice(),
+        page_indices: vec![0].into_boxed_slice(),
+        last_page_len: vec![2].into_boxed_slice(),
+    };
+    let prefill_classes = [DecoderClassStep {
+        class_id: 0,
+        write_slots: &[0, 1],
+        attention: &prefill_attention,
+    }];
+    assert!(matches!(
+        validate_stateful_decode(
+            DecoderStep {
+                classes: &prefill_classes,
+                ..step
+            },
+            &states[..1],
+        ),
+        Err(DecoderError::UnsupportedExecution(
+            "packed fixed-state prefill"
+        ))
+    ));
 }
 
 #[test]
@@ -510,7 +614,7 @@ fn parses_nested_hybrid_decoder_without_checkpoint_name_dispatch() {
     assert!(matches!(
         config.require_executable(),
         Err(DecoderError::UnsupportedExecution(
-            "linear-attention state execution"
+            "quantized weight execution"
         ))
     ));
 }
@@ -571,7 +675,7 @@ fn nested_dense_decoder_inherits_top_level_embedding_policy() {
 
 #[test]
 #[ignore = "requires ORBITKV_MODEL_DIR containing an external hybrid-state checkpoint"]
-fn external_hybrid_checkpoint_reaches_the_explicit_execution_gate() {
+fn external_hybrid_checkpoint_passes_structural_execution_admission() {
     let directory = std::env::var_os("ORBITKV_MODEL_DIR")
         .map(std::path::PathBuf::from)
         .expect("ORBITKV_MODEL_DIR is required");
@@ -597,12 +701,16 @@ fn external_hybrid_checkpoint_reaches_the_explicit_execution_gate() {
             .as_deref()
             .is_some_and(|layers| layers.contains(&DecoderLayerKind::Linear))
     );
-    assert!(matches!(
-        config.require_executable(),
-        Err(DecoderError::UnsupportedExecution(
-            "linear-attention state execution"
-        ))
-    ));
+    if config.weight_format == DecoderWeightFormat::Float {
+        assert!(config.require_executable().is_ok());
+    } else {
+        assert!(matches!(
+            config.require_executable(),
+            Err(DecoderError::UnsupportedExecution(
+                "quantized weight execution"
+            ))
+        ));
+    }
 }
 
 #[test]
@@ -624,6 +732,7 @@ fn graph_rejects_manifest_layer_semantics_that_disagree_with_model_config() {
             DecoderWeightFeatures::default(),
             &hybrid_executor_plan(),
             &hybrid_arenas(),
+            &[],
         ),
         Err(DecoderError::UnsupportedPlan)
     ));
@@ -679,6 +788,81 @@ fn hybrid_arenas() -> [ExecutorArena; 2] {
             backend_base_index: 0,
         },
     ]
+}
+
+fn stateful_decoder_contract() -> (
+    DecoderConfig,
+    ExecutorPlan,
+    Vec<FixedStateArenaRegistration>,
+) {
+    let mut config = test_config(2);
+    config.hidden_size = 4;
+    config.intermediate_size = 8;
+    config.query_heads = 1;
+    config.head_dim = 64;
+    config.layer_kinds =
+        Some(vec![DecoderLayerKind::Linear, DecoderLayerKind::Full].into_boxed_slice());
+    config.gated_delta = Some(GatedDeltaConfig {
+        key_heads: 1,
+        value_heads: 2,
+        key_width: 2,
+        value_width: 1,
+        convolution_kernel_width: 3,
+    });
+    let plan = crate::test_support::executor_plan_with_fixed_states(
+        "stateful-decoder",
+        16,
+        vec![crate::AttentionClass {
+            class_id: 0,
+            name: "attention".into(),
+            layers: vec![1].into_boxed_slice(),
+            page_tokens: 16,
+            key_bytes_per_token_per_layer: 128,
+            value_bytes_per_token_per_layer: 128,
+            visibility: crate::AttentionVisibility::Full,
+        }],
+        vec![
+            crate::FixedStateClass {
+                state_id: 1,
+                name: "recurrent".into(),
+                layers: vec![0].into_boxed_slice(),
+                storage: crate::FixedStateStorage::Recurrent {
+                    family: RecurrentFamily::Gdn,
+                    bytes_per_layer: 16,
+                    slots_per_request: 2,
+                    bytes_per_request: 32,
+                },
+            },
+            crate::FixedStateClass {
+                state_id: 2,
+                name: "convolution".into(),
+                layers: vec![0].into_boxed_slice(),
+                storage: crate::FixedStateStorage::Convolution {
+                    bytes_per_layer: 24,
+                    kernel_width: 3,
+                    slots_per_request: 2,
+                    bytes_per_request: 48,
+                },
+            },
+        ],
+    );
+    let identities = [(1, (16, 2)), (2, (24, 3))].map(|(state_id, (byte_count, pool_id))| {
+        (
+            state_id,
+            StatePoolIdentity {
+                engine_epoch: 1,
+                pool_epoch: u64::from(pool_id),
+                byte_count,
+                pool_id,
+                slot_count: 4,
+            },
+        )
+    });
+    let registrations = plan
+        .fixed_state_registrations(&identities)
+        .unwrap()
+        .into_vec();
+    (config, plan, registrations)
 }
 
 fn hybrid_attention_input() -> AttentionStatePlanInput {
@@ -761,6 +945,7 @@ fn graph_builds_layers_from_independent_full_and_sliding_classes() {
         DecoderWeightFeatures::default(),
         &plan,
         &hybrid_arenas(),
+        &[],
     )
     .unwrap();
 
@@ -785,6 +970,44 @@ fn graph_builds_layers_from_independent_full_and_sliding_classes() {
 }
 
 #[test]
+fn graph_composes_token_attention_and_fixed_state_layers() {
+    let (config, plan, registrations) = stateful_decoder_contract();
+    let decoder = DecoderGraph::build(
+        &mut Graph::default(),
+        &config,
+        DecoderWeightFeatures::default(),
+        &plan,
+        &[ExecutorArena {
+            engine_epoch: 1,
+            pool_epoch: 1,
+            pool_id: 1,
+            class_id: 0,
+            backend_domain: 1,
+            first_page_id: 1,
+            page_count: 4,
+            backend_base_index: 0,
+        }],
+        &registrations,
+    )
+    .unwrap();
+
+    assert_eq!(decoder.outputs.cache.len(), 1);
+    assert_eq!(decoder.outputs.cache[0].binding.layer, 1);
+    assert_eq!(
+        decoder
+            .outputs
+            .fixed_states
+            .iter()
+            .map(|state| (state.binding.state_id, state.policy))
+            .collect::<Vec<_>>(),
+        vec![
+            (1, crate::FixedStateWritePolicy::RequiredInPlace),
+            (2, crate::FixedStateWritePolicy::CopyBackAllowed),
+        ]
+    );
+}
+
+#[test]
 fn graph_rejects_duplicate_or_missing_layer_ownership() {
     let mut duplicate = hybrid_executor_plan();
     duplicate.classes[1].layers[0] = 0;
@@ -795,6 +1018,7 @@ fn graph_rejects_duplicate_or_missing_layer_ownership() {
             DecoderWeightFeatures::default(),
             &duplicate,
             &hybrid_arenas(),
+            &[],
         ),
         Err(DecoderError::UnsupportedPlan)
     ));
@@ -808,6 +1032,7 @@ fn graph_rejects_duplicate_or_missing_layer_ownership() {
             DecoderWeightFeatures::default(),
             &missing,
             &hybrid_arenas(),
+            &[],
         ),
         Err(DecoderError::UnsupportedPlan)
     ));
@@ -933,6 +1158,7 @@ fn runtime_session_hybrid_plan_feeds_one_multi_class_decoder_step() {
         DecoderWeightFeatures::default(),
         &executor,
         &arenas,
+        &[],
     )
     .unwrap();
     let class_steps = prepared.steps()[0]

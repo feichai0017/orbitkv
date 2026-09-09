@@ -1,5 +1,6 @@
 use super::*;
-use orbitkv::{KvClassSpec, KvPlanInput, TokenStorageKind, plan::RetentionKind};
+use orbitkv::{KvClassSpec, KvPlanInput, RecurrentFamily, TokenStorageKind, plan::RetentionKind};
+use orbitkv_executor::{FixedStateClass, FixedStateStorage};
 use orbitkv_server::SamplingIntent;
 
 fn config(page_counts: Vec<u32>) -> ModelEngineConfig {
@@ -153,6 +154,62 @@ fn validates_each_compiled_class_page_budget_independently() {
         validate_page_budgets(&plan, &config(vec![64])),
         Err(ModelEngineError::InvalidConfig)
     );
+}
+
+#[test]
+fn fixed_state_pools_share_engine_epoch_and_reserve_two_slots_per_request() {
+    let plan = hybrid_plan();
+    let registrations = registrations(&[64, 33]).unwrap();
+    let manager = CanonicalKvManager::new(
+        &plan,
+        ManagerConfig {
+            maximum_requests: 3,
+            maximum_operations: 3,
+            maximum_prefixes: 1,
+            maximum_reclamations: 97,
+            maximum_step_tokens: 64,
+        },
+        &registrations,
+    )
+    .unwrap();
+    let arena_stats = manager.arena_stats();
+    let classes = [
+        FixedStateClass {
+            state_id: 2,
+            name: "recurrent".into(),
+            layers: vec![0, 1].into_boxed_slice(),
+            storage: FixedStateStorage::Recurrent {
+                family: RecurrentFamily::Gdn,
+                bytes_per_layer: 64,
+                slots_per_request: 2,
+                bytes_per_request: 256,
+            },
+        },
+        FixedStateClass {
+            state_id: 3,
+            name: "convolution".into(),
+            layers: vec![0, 1].into_boxed_slice(),
+            storage: FixedStateStorage::Convolution {
+                bytes_per_layer: 32,
+                kernel_width: 3,
+                slots_per_request: 2,
+                bytes_per_request: 128,
+            },
+        },
+    ];
+    let pools = build_fixed_state_pools(&classes, &arena_stats, 3).unwrap();
+    let identities = pools
+        .iter()
+        .map(|(state_id, pool)| (*state_id, pool.identity()))
+        .collect::<Vec<_>>();
+    assert_eq!(identities.len(), 2);
+    assert!(identities.iter().all(|(_, identity)| {
+        identity.engine_epoch == arena_stats[0].engine_epoch && identity.slot_count == 6
+    }));
+    assert_eq!(identities[0].1.byte_count, 128);
+    assert_eq!(identities[1].1.byte_count, 64);
+    assert_ne!(identities[0].1.pool_id, identities[1].1.pool_id);
+    assert_ne!(identities[0].1.pool_epoch, identities[1].1.pool_epoch);
 }
 
 #[test]

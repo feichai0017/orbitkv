@@ -121,6 +121,8 @@ crates/orbitkv-engine/
 crates/orbitkv-executor/
   src/
     model.rs              graph/runtime orchestration
+    model/artifact.rs     schedule serialization and structural identity
+    model/compiler.rs     graph preparation and persistent-device binding
     model/config.rs       structural decoder semantics from model config
     model/weights.rs      fail-closed checkpoint tensor contract
     model/block.rs        generic dense transformer block math
@@ -187,8 +189,9 @@ per-layer byte region. Search uses a private scratch allocation, so profiling
 cannot mutate live manager state. Success evidence is withheld until a Luminal
 execution receipt tied to the exact shared allocation and runtime registration
 has synchronized its CUDA event. The ignored real-device qualification gate
-executes two recurrent transitions and final drain; the production decoder and
-engine do not yet own these fixed-state resources.
+executes two recurrent transitions and final drain. The production decoder now
+owns the same fixed-state device arenas, and the engine joins their event-backed
+receipts to token-KV evidence before submitting the transaction.
 
 The fixed-state graph substrate is dtype- and shape-parameterized. Recurrent
 f32 matrices and BF16 causal-convolution histories share stable arena
@@ -214,9 +217,11 @@ source/destination slots is now represented by generic Gather/Scatter graph
 views over the stable arena, with source-to-destination initialization outside
 the graph and dynamic destination ids inside it. A joint topology compiler
 proves each layer is owned by exactly one token-KV class or by the matching
-recurrent-plus-convolution pair. Production decoder/runtime integration,
-real-device parity, fused convolution/readout kernels, and packed-sequence
-prefill remain open.
+recurrent-plus-convolution pair. The production graph dispatches from this
+topology, so fixed-state layers do not fabricate token-KV tensors or attention
+weights. Stateful artifacts currently contain decode buckets only;
+packed-sequence prefill, real-device parity, and fused convolution/readout
+kernels remain open.
 The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
 search can optimize the surrounding decoder graph and schedule but does not yet
 choose among multiple attention implementations or jointly derive a KV layout.
