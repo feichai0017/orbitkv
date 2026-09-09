@@ -51,16 +51,6 @@ impl DecoderTopology {
         })
     }
 
-    pub(super) fn token_class(&self, layer: u32) -> Result<u16, DecoderError> {
-        match usize::try_from(layer)
-            .ok()
-            .and_then(|layer| self.layers.get(layer))
-        {
-            Some(DecoderLayerState::TokenKv { class_id }) => Ok(*class_id),
-            _ => Err(DecoderError::UnsupportedPlan),
-        }
-    }
-
     pub(super) fn has_fixed_state(&self) -> bool {
         self.layers
             .iter()
@@ -90,7 +80,6 @@ impl DecoderTopology {
             .collect()
     }
 
-    #[cfg(test)]
     pub(super) fn layer(&self, layer: usize) -> Option<DecoderLayerState> {
         self.layers.get(layer).copied()
     }

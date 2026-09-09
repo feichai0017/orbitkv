@@ -14,13 +14,19 @@ use futures_util::stream;
 use orbitkv::{
     CacheSharingPolicy, EngineAppendIntent, EngineCompletionEvidence, EnginePublicationEvidence,
     EngineReleaseEvidence, EngineReleaseOutcome, EngineRequestId, EngineRetirementEvidence,
-    HfRetentionOptions, RuntimeSession, compile_hf_runtime_manifest,
-    kv_manager::{BackendArenaRegistration, CanonicalKvManager, ManagerConfig, ManagerStats},
+    HfRetentionOptions, RuntimeSession, StateCheckpointPool, StatePoolIdentity,
+    compile_hf_runtime_manifest,
+    kv_manager::{
+        ArenaStats, BackendArenaRegistration, CanonicalKvManager, ManagerConfig, ManagerStats,
+    },
 };
 use orbitkv_executor::{
-    AttentionBatch, ExecutorArena, ExecutorPlan,
+    AttentionBatch, ExecutorArena, ExecutorPlan, FixedStateClass, FixedStateStorage,
     model::DecoderArtifact,
-    model::{CompiledDecoder, DecoderClassStep, DecoderCompileConfig, DecoderConfig, DecoderStep},
+    model::{
+        CompiledDecoder, DecoderClassStep, DecoderCompileConfig, DecoderConfig,
+        DecoderFixedStateStep, DecoderStep, DecoderStorage,
+    },
 };
 use orbitkv_server::{
     BatchIntent, Engine, EngineAbortFuture, EngineEvent, EngineEventStream, EngineFuture,
@@ -424,9 +430,8 @@ impl ModelWorker {
             &registrations,
         )
         .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
-        let session = RuntimeSession::new(manager, CacheSharingPolicy::RequestPrivate);
-        let arenas = session
-            .arena_stats()
+        let arena_stats = manager.arena_stats();
+        let arenas = arena_stats
             .iter()
             .copied()
             .zip(registrations)
@@ -436,7 +441,32 @@ impl ModelWorker {
             .into_boxed_slice();
         let plan = ExecutorPlan::compile(&manifest)
             .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
-        let decoder = initialize_decoder(config, &decoder_config, &plan, &arenas)?;
+        let fixed_states = build_fixed_state_pools(
+            &plan.fixed_states,
+            &arena_stats,
+            config.maximum_active_requests,
+        )?;
+        let fixed_state_identities = fixed_states
+            .iter()
+            .map(|(state_id, pool)| (*state_id, pool.identity()))
+            .collect::<Vec<_>>();
+        let session = if fixed_states.is_empty() {
+            RuntimeSession::new(manager, CacheSharingPolicy::RequestPrivate)
+        } else {
+            RuntimeSession::with_fixed_states(
+                manager,
+                CacheSharingPolicy::RequestPrivate,
+                fixed_states,
+            )
+            .map_err(|error| ModelEngineError::Initialization(error.to_string()))?
+        };
+        let decoder = initialize_decoder(
+            config,
+            &decoder_config,
+            &plan,
+            &arenas,
+            &fixed_state_identities,
+        )?;
         Ok(Self {
             session,
             plan,
@@ -766,29 +796,49 @@ impl ModelWorker {
             }
         };
         let classes = decoder_class_steps(&write_slots, &attention);
-        let executed = self.decoder.execute(DecoderStep {
+        let decoder_step = DecoderStep {
             tokens: &dispatch.tokens,
             positions: &dispatch.positions,
             classes: &classes,
-        });
+        };
+        let fixed_state_steps = prepared
+            .fixed_state_requests()
+            .map(|(request_id, states)| DecoderFixedStateStep { request_id, states })
+            .collect::<Vec<_>>();
+        let executed = if self.plan.fixed_states.is_empty() {
+            self.decoder
+                .execute(decoder_step)
+                .map(|output| (output.token_ids, Box::default()))
+        } else if dispatch.tokens.len() != dispatch.request_ids.len() {
+            Err(orbitkv_executor::model::DecoderError::UnsupportedExecution(
+                "packed fixed-state prefill",
+            ))
+        } else {
+            self.decoder
+                .execute_with_fixed_states(decoder_step, &fixed_state_steps)
+                .map(|output| (output.token_ids, output.fixed_states))
+        };
         let sampled = match executed {
-            Ok(result) => match sampled_rows(&result.token_ids, &attention[0].query_indptr) {
-                Ok(sampled) if sampled.len() == dispatch.active_indices.len() => sampled,
-                Ok(_) => {
-                    self.session
-                        .quarantine_prepared_execution(batch_id)
-                        .map_err(lifecycle_error)?;
-                    return Err(ModelEngineError::Executor(
-                        "sampled-token row count does not match the dispatched batch".into(),
-                    ));
-                }
-                Err(error) => {
-                    self.session
-                        .quarantine_prepared_execution(batch_id)
-                        .map_err(lifecycle_error)?;
-                    return Err(error);
-                }
-            },
+            Ok((token_ids, fixed_states)) => {
+                let sampled = match sampled_rows(&token_ids, &attention[0].query_indptr) {
+                    Ok(sampled) if sampled.len() == dispatch.active_indices.len() => sampled,
+                    Ok(_) => {
+                        self.session
+                            .quarantine_prepared_execution(batch_id)
+                            .map_err(lifecycle_error)?;
+                        return Err(ModelEngineError::Executor(
+                            "sampled-token row count does not match the dispatched batch".into(),
+                        ));
+                    }
+                    Err(error) => {
+                        self.session
+                            .quarantine_prepared_execution(batch_id)
+                            .map_err(lifecycle_error)?;
+                        return Err(error);
+                    }
+                };
+                (sampled, fixed_states)
+            }
             Err(error) => {
                 self.session
                     .quarantine_prepared_execution(batch_id)
@@ -796,13 +846,14 @@ impl ModelWorker {
                 return Err(ModelEngineError::Executor(error.to_string()));
             }
         };
-        let evidence = match prepared.execution_evidence_after_success(&self.arenas) {
-            Ok(evidence) => evidence,
-            Err(error) => {
-                let _ = self.session.quarantine_prepared_execution(batch_id);
-                return Err(ModelEngineError::Executor(error.to_string()));
-            }
-        };
+        let evidence =
+            match prepared.execution_evidence_after_state_success(&self.arenas, &sampled.1) {
+                Ok(evidence) => evidence,
+                Err(error) => {
+                    let _ = self.session.quarantine_prepared_execution(batch_id);
+                    return Err(ModelEngineError::Executor(error.to_string()));
+                }
+            };
         let ticket = match self.session.submit_execution(&evidence) {
             Ok(ticket) => ticket,
             Err(error) => {
@@ -835,7 +886,7 @@ impl ModelWorker {
                 reclamation_receipts: retirement_evidence(&publication.retirements),
             })
             .map_err(lifecycle_error)?;
-        Ok(sampled)
+        Ok(sampled.0)
     }
 
     fn abort_prepared(
@@ -942,6 +993,7 @@ fn initialize_decoder(
     decoder_config: &DecoderConfig,
     plan: &ExecutorPlan,
     arenas: &[ExecutorArena],
+    fixed_states: &[(u16, StatePoolIdentity)],
 ) -> Result<CompiledDecoder, ModelEngineError> {
     let weights = checkpoint_weights(&config.model_directory)?;
     let artifact = config
@@ -962,7 +1014,7 @@ fn initialize_decoder(
     let (decoder, selected_artifact) = CompiledDecoder::compile_or_load_on_device(
         decoder_config,
         plan,
-        arenas,
+        DecoderStorage::new(arenas, fixed_states),
         config.device_index,
         &weights,
         DecoderCompileConfig {
@@ -1161,6 +1213,82 @@ fn registrations(page_counts: &[u32]) -> Result<Vec<BackendArenaRegistration>, M
                 reserved: 0,
                 backend_base_index: 0,
             })
+        })
+        .collect()
+}
+
+fn build_fixed_state_pools(
+    classes: &[FixedStateClass],
+    token_arenas: &[ArenaStats],
+    maximum_requests: usize,
+) -> Result<Vec<(u16, StateCheckpointPool)>, ModelEngineError> {
+    if classes.is_empty() {
+        return Ok(Vec::new());
+    }
+    let engine_epoch = token_arenas
+        .first()
+        .map(|arena| arena.engine_epoch)
+        .filter(|epoch| {
+            *epoch != 0
+                && token_arenas
+                    .iter()
+                    .all(|arena| arena.engine_epoch == *epoch)
+        })
+        .ok_or(ModelEngineError::InvalidConfig)?;
+    let base_pool_epoch = token_arenas
+        .iter()
+        .map(|arena| arena.pool_epoch)
+        .max()
+        .ok_or(ModelEngineError::InvalidConfig)?;
+    let base_pool_id = token_arenas
+        .iter()
+        .map(|arena| arena.pool_id)
+        .max()
+        .ok_or(ModelEngineError::InvalidConfig)?;
+    let maximum_requests =
+        u32::try_from(maximum_requests).map_err(|_| ModelEngineError::InvalidConfig)?;
+    let mut state_ids = std::collections::BTreeSet::new();
+    classes
+        .iter()
+        .enumerate()
+        .map(|(index, class)| {
+            if !state_ids.insert(class.state_id) {
+                return Err(ModelEngineError::InvalidConfig);
+            }
+            let (slots_per_request, bytes_per_request) = match class.storage {
+                FixedStateStorage::Recurrent {
+                    slots_per_request,
+                    bytes_per_request,
+                    ..
+                }
+                | FixedStateStorage::Convolution {
+                    slots_per_request,
+                    bytes_per_request,
+                    ..
+                } => (slots_per_request, bytes_per_request),
+            };
+            let slot_bytes = bytes_per_request
+                .checked_div(u64::from(slots_per_request))
+                .filter(|bytes| {
+                    *bytes > 0
+                        && bytes.checked_mul(u64::from(slots_per_request))
+                            == Some(bytes_per_request)
+                })
+                .ok_or(ModelEngineError::InvalidConfig)?;
+            let slot_count = maximum_requests
+                .checked_mul(slots_per_request)
+                .ok_or(ModelEngineError::InvalidConfig)?;
+            let offset = u32::try_from(index + 1).map_err(|_| ModelEngineError::InvalidConfig)?;
+            let pool_id = base_pool_id
+                .checked_add(offset)
+                .ok_or(ModelEngineError::InvalidConfig)?;
+            let pool_epoch = base_pool_epoch
+                .checked_add(u64::from(offset))
+                .ok_or(ModelEngineError::InvalidConfig)?;
+            let pool =
+                StateCheckpointPool::new(engine_epoch, pool_epoch, pool_id, slot_bytes, slot_count)
+                    .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
+            Ok((class.state_id, pool))
         })
         .collect()
 }

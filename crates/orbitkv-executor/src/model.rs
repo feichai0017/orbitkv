@@ -5,13 +5,11 @@ use std::collections::BTreeSet;
 use luminal::prelude::rand::SeedableRng;
 use luminal::{
     dtype::DType,
-    graph::SelectedSchedule,
     op::Runtime,
     prelude::{Expression, Graph, GraphTensor, Symbol, sym},
     shape::ToShape,
 };
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use thiserror::Error;
 
 use luminal_cuda_lite::{
@@ -20,13 +18,23 @@ use luminal_cuda_lite::{
 };
 
 use crate::{
-    ExecutorArena, ExecutorPlan,
+    ExecutorArena, ExecutorPlan, FixedStateArenaRegistration, FixedStateDeviceArenas,
+    FixedStateExecutionEvidence, FixedStateGraphBinding, FixedStateGraphResource,
+    FixedStateRuntimeBinding,
     cuda::{KvCacheBinding, PagedAttentionMetadata},
 };
+use orbitkv::{EngineFixedStatePlan, StatePoolIdentity};
 
 #[path = "model/runtime_input.rs"]
 mod runtime_input;
-use runtime_input::validate_step;
+use runtime_input::{validate_stateful_decode, validate_step};
+#[path = "model/artifact.rs"]
+mod artifact;
+pub use artifact::DecoderArtifact;
+use artifact::{decoder_artifact_identity, new_artifact};
+#[path = "model/compiler.rs"]
+mod compiler;
+use compiler::{bind_fixed_state, prepare_decoder_compilation};
 #[path = "model/config.rs"]
 mod config;
 pub use config::{
@@ -64,6 +72,10 @@ pub enum DecoderError {
     Recurrent(#[from] crate::RecurrentError),
     #[error(transparent)]
     Convolution(#[from] crate::ConvolutionError),
+    #[error(transparent)]
+    FixedState(#[from] crate::FixedStateDeviceError),
+    #[error(transparent)]
+    FixedStateGraph(#[from] crate::FixedStateGraphError),
     #[error("decoder artifact is incompatible: {0}")]
     Artifact(String),
     #[error("decoder runtime input geometry exceeds its compiled capacity")]
@@ -86,67 +98,6 @@ pub struct DecoderCompileConfig {
     pub representative_context_pages: usize,
     pub search_graphs: usize,
     pub search_seed: u64,
-}
-
-const DECODER_ARTIFACT_SCHEMA: u32 = 1;
-
-/// Portable graph-selection artifact for one native decoder configuration.
-///
-/// It contains no weights, device pointers, or KV contents. The identity binds
-/// the selected Luminal schedule to the canonical manifest, model semantics,
-/// weight-family geometry, physical arena shape, and compile buckets.
-#[derive(Clone, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct DecoderArtifact {
-    schema: u32,
-    identity: String,
-    schedule: SelectedSchedule,
-}
-
-#[derive(Serialize)]
-struct DecoderArtifactIdentity<'a> {
-    manifest_fingerprint: &'a str,
-    compiler_facts_digest: &'a str,
-    page_tokens: u32,
-    decoder: &'a DecoderConfig,
-    weights: DecoderWeightFeatures,
-    arenas: Vec<DecoderArtifactArena>,
-    compile: DecoderCompileConfig,
-}
-
-#[derive(Serialize)]
-struct DecoderArtifactArena {
-    class_id: u16,
-    backend_base_index: u64,
-    page_count: u32,
-}
-
-impl DecoderArtifact {
-    /// Serializes the artifact as compact JSON bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns serialization failures without emitting partial data.
-    pub fn to_bytes(&self) -> Result<Vec<u8>, DecoderError> {
-        serde_json::to_vec(self).map_err(DecoderError::from)
-    }
-
-    /// Parses a decoder artifact. Compatibility is checked when it is loaded
-    /// against a concrete model and executor plan.
-    ///
-    /// # Errors
-    ///
-    /// Rejects malformed JSON or an unknown artifact schema.
-    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DecoderError> {
-        let artifact = serde_json::from_slice::<Self>(bytes)?;
-        if artifact.schema != DECODER_ARTIFACT_SCHEMA {
-            return Err(DecoderError::Artifact(format!(
-                "schema {} != {DECODER_ARTIFACT_SCHEMA}",
-                artifact.schema
-            )));
-        }
-        Ok(artifact)
-    }
 }
 
 impl DecoderCompileConfig {
@@ -184,12 +135,44 @@ pub struct DecoderStep<'a> {
     pub classes: &'a [DecoderClassStep<'a>],
 }
 
+/// Manager-authored fixed-state transition for one request in a decoder step.
+#[derive(Clone, Copy)]
+pub struct DecoderFixedStateStep<'a> {
+    pub request_id: u64,
+    pub states: &'a [EngineFixedStatePlan],
+}
+
 /// Dynamic page metadata and write destinations for one compiled attention class.
 #[derive(Clone, Copy)]
 pub struct DecoderClassStep<'a> {
     pub class_id: u16,
     pub write_slots: &'a [u64],
     pub attention: &'a crate::AttentionBatch,
+}
+
+/// Persistent storage identities consumed while compiling one decoder.
+#[derive(Clone, Copy)]
+pub struct DecoderStorage<'a> {
+    pub token_arenas: &'a [ExecutorArena],
+    pub fixed_state_pools: &'a [(u16, StatePoolIdentity)],
+}
+
+impl<'a> DecoderStorage<'a> {
+    #[must_use]
+    pub const fn new(
+        token_arenas: &'a [ExecutorArena],
+        fixed_state_pools: &'a [(u16, StatePoolIdentity)],
+    ) -> Self {
+        Self {
+            token_arenas,
+            fixed_state_pools,
+        }
+    }
+
+    #[must_use]
+    pub const fn token_only(token_arenas: &'a [ExecutorArena]) -> Self {
+        Self::new(token_arenas, &[])
+    }
 }
 
 type InputAllocation = (GraphTensor, u64, usize);
@@ -221,6 +204,7 @@ pub struct CompiledDecoder {
     captured_decode: Option<CapturedDecode>,
     runtime: CudaRuntime,
     persistent_cache: Vec<CudaSlice<u8>>,
+    fixed_state: Option<CompiledFixedState>,
     compile: DecoderCompileConfig,
     vocabulary_size: usize,
     page_tokens: usize,
@@ -245,14 +229,45 @@ pub struct DecoderClassInputs {
 pub struct DecoderOutputs {
     pub logits: GraphTensor,
     pub sampled_tokens: GraphTensor,
-    pub cache_inputs: Vec<(GraphTensor, GraphTensor)>,
-    pub cache_updates: Vec<(GraphTensor, GraphTensor)>,
+    cache: Vec<DecoderCacheState>,
+    fixed_states: Box<[FixedStateGraphResource]>,
+}
+
+#[derive(Clone, Copy)]
+struct DecoderCacheState {
+    binding: KvCacheBinding,
+    key_update: GraphTensor,
+    value_update: GraphTensor,
+}
+
+struct CompiledFixedState {
+    arenas: FixedStateDeviceArenas,
+    graph_bindings: Box<[FixedStateGraphBinding]>,
+    runtime_bindings: Box<[FixedStateRuntimeBinding]>,
+}
+
+struct DecoderCompilation {
+    graph: Graph,
+    decoder: DecoderGraph,
+    runtime: CudaRuntime,
+    persistent_cache: Vec<CudaSlice<u8>>,
+    fixed_state_scratch: Vec<CudaSlice<u8>>,
+    options: luminal::prelude::CompileOptions,
+    identity: String,
+    page_tokens: usize,
 }
 
 /// Greedy token IDs returned by the default device execution path.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct DecoderStepOutput {
     pub token_ids: Box<[u32]>,
+}
+
+/// Decoder output paired with device-completion evidence for manager-owned
+/// recurrent and convolution state.
+pub struct StatefulDecoderStepOutput {
+    pub token_ids: Box<[u32]>,
+    pub fixed_states: Box<[FixedStateExecutionEvidence]>,
 }
 
 /// Persistent K/V update behavior selected for one dynamic-shape bucket.
@@ -284,6 +299,7 @@ pub struct DecoderGraph {
 #[derive(Clone, Copy)]
 struct DecoderDimensions {
     query_tokens: Expression,
+    request_count: Expression,
     kv_width: usize,
 }
 
@@ -296,34 +312,36 @@ struct DecoderClassDimensions {
     cache_slots: usize,
 }
 
+struct DecoderLayerGraphBuilder<'a> {
+    graph: &'a mut Graph,
+    config: &'a DecoderConfig,
+    weights: DecoderWeightFeatures,
+    plan: &'a ExecutorPlan,
+    inputs: &'a DecoderInputs,
+    dimensions: DecoderDimensions,
+    class_dimensions: &'a [DecoderClassDimensions],
+}
+
 impl DecoderGraph {
-    /// Returns the persistent K/V inputs indexed by compiled class and layer.
+    /// Returns the persistent K/V inputs for every token-attention layer.
     ///
     /// # Errors
     ///
-    /// Rejects a plan that does not assign every decoder layer exactly once.
+    /// Rejects a plan that does not assign every returned binding exactly once.
     pub fn cache_bindings(
         &self,
         plan: &ExecutorPlan,
     ) -> Result<Box<[KvCacheBinding]>, DecoderError> {
-        let mut bindings = Vec::with_capacity(self.outputs.cache_updates.len());
-        for (layer, &(key, value)) in self.outputs.cache_inputs.iter().enumerate() {
-            let layer =
-                u32::try_from(layer).map_err(|_| DecoderError::InvalidGeometry("layer index"))?;
-            let mut classes = plan
-                .classes
-                .iter()
-                .filter(|class| class.layers.contains(&layer));
-            let class = classes.next().ok_or(DecoderError::UnsupportedPlan)?;
-            if classes.next().is_some() {
+        let mut bindings = Vec::with_capacity(self.outputs.cache.len());
+        for state in &self.outputs.cache {
+            let matches = plan.classes.iter().filter(|class| {
+                class.class_id == state.binding.class_id
+                    && class.layers.contains(&state.binding.layer)
+            });
+            if matches.count() != 1 {
                 return Err(DecoderError::UnsupportedPlan);
             }
-            bindings.push(KvCacheBinding {
-                class_id: class.class_id,
-                layer,
-                key,
-                value,
-            });
+            bindings.push(state.binding);
         }
         Ok(bindings.into_boxed_slice())
     }
@@ -341,8 +359,9 @@ impl DecoderGraph {
         weights: DecoderWeightFeatures,
         plan: &ExecutorPlan,
         arenas: &[ExecutorArena],
+        fixed_state_registrations: &[FixedStateArenaRegistration],
     ) -> Result<Self, DecoderError> {
-        let topology = executable_topology(config, plan)?;
+        let topology = DecoderTopology::compile(config, plan)?;
         let (dimensions, class_dimensions) = validate_plan(config, plan, arenas, &topology)?;
         let inputs = decoder_inputs(graph, &class_dimensions, dimensions);
         let embedding = weight(
@@ -351,66 +370,30 @@ impl DecoderGraph {
             (config.vocabulary_size, config.hidden_size),
             DType::Bf16,
         );
-        let mut hidden = token_embedding(&embedding, &inputs.token_ids, config.hidden_size)
+        let hidden = token_embedding(&embedding, &inputs.token_ids, config.hidden_size)
             * config.embedding_scale;
-        let mut cache_inputs = Vec::with_capacity(config.layers);
-        let mut cache_updates = Vec::with_capacity(config.layers);
-        for layer in 0..config.layers {
-            let layer =
-                u32::try_from(layer).map_err(|_| DecoderError::InvalidGeometry("layer index"))?;
-            let class_id = topology.token_class(layer)?;
-            let class = plan
-                .classes
-                .get(usize::from(class_id))
-                .filter(|class| class.class_id == class_id)
-                .ok_or(DecoderError::UnsupportedPlan)?;
-            let class_dimensions = class_dimensions
-                .get(usize::from(class.class_id))
-                .filter(|dimensions| dimensions.class_id == class.class_id)
-                .ok_or(DecoderError::UnsupportedPlan)?;
-            let class_inputs = inputs
-                .classes
-                .get(usize::from(class.class_id))
-                .filter(|inputs| inputs.class_id == class.class_id)
-                .ok_or(DecoderError::UnsupportedPlan)?;
-            let k_cache = graph
-                .named_tensor(
-                    format!("kv.{layer}.key"),
-                    (class_dimensions.cache_slots, dimensions.kv_width),
+        let mut fixed_state = topology
+            .has_fixed_state()
+            .then(|| {
+                GatedDeltaStateGraph::new(
+                    graph,
+                    config,
+                    plan,
+                    fixed_state_registrations,
+                    dimensions.request_count,
                 )
-                .persist()
-                .as_dtype(DType::Bf16);
-            let v_cache = graph
-                .named_tensor(
-                    format!("kv.{layer}.value"),
-                    (class_dimensions.cache_slots, dimensions.kv_width),
-                )
-                .persist()
-                .as_dtype(DType::Bf16);
-            let block = DecoderLayer::new(
-                graph,
-                config,
-                weights,
-                usize::try_from(layer).map_err(|_| DecoderError::InvalidGeometry("layer index"))?,
-            );
-            let (next, key_update, value_update) = block.forward(
-                &LayerInputs {
-                    hidden: &hidden,
-                    positions: &inputs.positions,
-                    write_slots: &class_inputs.write_slots,
-                    metadata: &class_inputs.attention,
-                    k_cache: &k_cache,
-                    v_cache: &v_cache,
-                },
-                class,
-                config,
-                dimensions,
-                *class_dimensions,
-            )?;
-            hidden = next;
-            cache_inputs.push((k_cache, v_cache));
-            cache_updates.push((key_update.output(), value_update.output()));
+            })
+            .transpose()?;
+        let (hidden, cache) = DecoderLayerGraphBuilder {
+            graph,
+            config,
+            weights,
+            plan,
+            inputs: &inputs,
+            dimensions,
+            class_dimensions: &class_dimensions,
         }
+        .build(&topology, &mut fixed_state, hidden)?;
         let norm = DecoderNorm::new(
             graph,
             config,
@@ -435,25 +418,115 @@ impl DecoderGraph {
             outputs: DecoderOutputs {
                 logits,
                 sampled_tokens,
-                cache_inputs,
-                cache_updates,
+                cache,
+                fixed_states: fixed_state.map_or_else(
+                    || Vec::new().into_boxed_slice(),
+                    |states| Vec::from(states.finish().resources()).into_boxed_slice(),
+                ),
             },
             class_dimensions,
         })
     }
 }
 
-fn executable_topology(
-    config: &DecoderConfig,
-    plan: &ExecutorPlan,
-) -> Result<DecoderTopology, DecoderError> {
-    let topology = DecoderTopology::compile(config, plan)?;
-    if topology.has_fixed_state() {
-        return Err(DecoderError::UnsupportedExecution(
-            "stateful decoder layer graph",
-        ));
+impl DecoderLayerGraphBuilder<'_> {
+    fn build(
+        &mut self,
+        topology: &DecoderTopology,
+        fixed_state: &mut Option<GatedDeltaStateGraph>,
+        mut hidden: GraphTensor,
+    ) -> Result<(GraphTensor, Vec<DecoderCacheState>), DecoderError> {
+        let mut cache = Vec::with_capacity(topology.token_layers().len());
+        for layer_index in 0..self.config.layers {
+            let layer = u32::try_from(layer_index)
+                .map_err(|_| DecoderError::InvalidGeometry("layer index"))?;
+            match topology
+                .layer(layer_index)
+                .ok_or(DecoderError::UnsupportedPlan)?
+            {
+                topology::DecoderLayerState::TokenKv { class_id } => {
+                    let (next, state) = self.token_layer(layer, class_id, &hidden)?;
+                    hidden = next;
+                    cache.push(state);
+                }
+                topology::DecoderLayerState::GatedDelta { .. } => {
+                    let envelope = DecoderLayerEnvelope::new(self.graph, self.config, layer_index);
+                    let normalized = envelope.state_input(&hidden);
+                    let state_output =
+                        fixed_state
+                            .as_mut()
+                            .ok_or(DecoderError::UnsupportedPlan)?
+                            .apply_decode_core(self.graph, self.config, layer, &normalized)?;
+                    hidden = envelope.finish(&hidden, state_output);
+                }
+            }
+        }
+        Ok((hidden, cache))
     }
-    Ok(topology)
+
+    fn token_layer(
+        &mut self,
+        layer: u32,
+        class_id: u16,
+        hidden: &GraphTensor,
+    ) -> Result<(GraphTensor, DecoderCacheState), DecoderError> {
+        let class = self
+            .plan
+            .classes
+            .get(usize::from(class_id))
+            .filter(|class| class.class_id == class_id)
+            .ok_or(DecoderError::UnsupportedPlan)?;
+        let dimensions = self
+            .class_dimensions
+            .get(usize::from(class_id))
+            .filter(|dimensions| dimensions.class_id == class_id)
+            .ok_or(DecoderError::UnsupportedPlan)?;
+        let inputs = self
+            .inputs
+            .classes
+            .get(usize::from(class_id))
+            .filter(|inputs| inputs.class_id == class_id)
+            .ok_or(DecoderError::UnsupportedPlan)?;
+        let cache = |graph: &mut Graph, component: &str| {
+            graph
+                .named_tensor(
+                    format!("kv.{layer}.{component}"),
+                    (dimensions.cache_slots, self.dimensions.kv_width),
+                )
+                .persist()
+                .as_dtype(DType::Bf16)
+        };
+        let key = cache(self.graph, "key");
+        let value = cache(self.graph, "value");
+        let block = TokenAttentionLayer::new(self.graph, self.config, self.weights, layer as usize);
+        let (hidden, key_update, value_update) = block.forward(
+            &TokenAttentionInputs {
+                hidden,
+                positions: &self.inputs.positions,
+                write_slots: &inputs.write_slots,
+                metadata: &inputs.attention,
+                k_cache: &key,
+                v_cache: &value,
+            },
+            class,
+            self.config,
+            self.dimensions,
+            *dimensions,
+        )?;
+        Ok((
+            hidden,
+            DecoderCacheState {
+                binding: KvCacheBinding {
+                    class_id,
+                    layer,
+                    key,
+                    value,
+                },
+                key_update: key_update.output(),
+                value_update: value_update.output(),
+            },
+        ))
+    }
 }
 
 impl CompiledDecoder {
@@ -469,7 +542,7 @@ impl CompiledDecoder {
     pub fn compile_on_device(
         config: &DecoderConfig,
         plan: &ExecutorPlan,
-        arenas: &[ExecutorArena],
+        storage: DecoderStorage<'_>,
         device_index: usize,
         weight_files: &[std::path::PathBuf],
         compile: DecoderCompileConfig,
@@ -477,7 +550,7 @@ impl CompiledDecoder {
         Self::compile_or_load_on_device(
             config,
             plan,
-            arenas,
+            storage,
             device_index,
             weight_files,
             compile,
@@ -495,11 +568,10 @@ impl CompiledDecoder {
     /// # Errors
     ///
     /// Returns device, model, artifact, or compilation failures.
-    #[allow(clippy::too_many_arguments)]
     pub fn compile_or_load_on_device(
         config: &DecoderConfig,
         plan: &ExecutorPlan,
-        arenas: &[ExecutorArena],
+        storage: DecoderStorage<'_>,
         device_index: usize,
         weight_files: &[std::path::PathBuf],
         compile: DecoderCompileConfig,
@@ -510,7 +582,7 @@ impl CompiledDecoder {
         Self::compile_or_load(
             config,
             plan,
-            arenas,
+            storage,
             &stream,
             weight_files,
             compile,
@@ -532,12 +604,12 @@ impl CompiledDecoder {
     pub fn compile(
         config: &DecoderConfig,
         plan: &ExecutorPlan,
-        arenas: &[ExecutorArena],
+        storage: DecoderStorage<'_>,
         stream: &std::sync::Arc<CudaStream>,
         weight_files: &[std::path::PathBuf],
         compile: DecoderCompileConfig,
     ) -> Result<Self, DecoderError> {
-        Self::compile_or_load(config, plan, arenas, stream, weight_files, compile, None)
+        Self::compile_or_load(config, plan, storage, stream, weight_files, compile, None)
             .map(|(decoder, _)| decoder)
     }
 
@@ -546,32 +618,27 @@ impl CompiledDecoder {
     /// # Errors
     ///
     /// Rejects incompatible artifacts and propagates model or device failures.
-    #[allow(clippy::too_many_arguments)]
     pub fn compile_or_load(
         config: &DecoderConfig,
         plan: &ExecutorPlan,
-        arenas: &[ExecutorArena],
+        storage: DecoderStorage<'_>,
         stream: &std::sync::Arc<CudaStream>,
         weight_files: &[std::path::PathBuf],
         compile: DecoderCompileConfig,
         artifact: Option<&DecoderArtifact>,
     ) -> Result<(Self, DecoderArtifact), DecoderError> {
-        compile.validate()?;
-        config.require_executable()?;
-        if weight_files.is_empty() {
-            return Err(DecoderError::InvalidGeometry("weight files"));
-        }
-        let mut graph = Graph::default();
-        let weights = inspect_weight_features(weight_files, config)?;
-        let compiler_facts = plan.luminal_compiler_facts(arenas)?;
-        let identity = decoder_artifact_identity(
-            config,
-            plan,
-            arenas,
-            weights,
-            compile,
-            compiler_facts.digest(),
-        )?;
+        let prepared =
+            prepare_decoder_compilation(config, plan, storage, stream, weight_files, compile)?;
+        let DecoderCompilation {
+            mut graph,
+            decoder,
+            mut runtime,
+            mut persistent_cache,
+            fixed_state_scratch,
+            options,
+            identity,
+            page_tokens,
+        } = prepared;
         if let Some(artifact) = artifact
             && artifact.identity != identity
         {
@@ -579,31 +646,6 @@ impl CompiledDecoder {
                 "model, plan, arena, or compile identity changed".into(),
             ));
         }
-        let decoder = DecoderGraph::build(&mut graph, config, weights, plan, arenas)?;
-        let page_tokens = usize::try_from(plan.page_tokens)
-            .map_err(|_| DecoderError::InvalidGeometry("page tokens"))?;
-        if page_tokens > i32::MAX as usize {
-            return Err(DecoderError::InvalidGeometry("backend index range"));
-        }
-        let mut runtime = CudaRuntime::initialize(stream.clone());
-        for weights_path in weight_files {
-            runtime.load_safetensors(
-                &graph,
-                weights_path
-                    .to_str()
-                    .ok_or(DecoderError::InvalidGeometry("weights path"))?,
-            );
-        }
-        let mut persistent_cache = register_persistent_cache(&mut runtime, &decoder, plan, config)?;
-
-        graph.set_dim('s', compile.representative_prefill_tokens);
-        graph.set_dim('b', 1);
-        for class in &decoder.class_dimensions {
-            graph.set_dim(class.context_pages, compile.representative_context_pages);
-        }
-        seed_compile_inputs(&mut runtime, &decoder, compile, page_tokens);
-        let options = decoder_compile_options(&decoder, compile)
-            .compiler_facts(compiler_facts.egglog().to_owned());
         let effective_artifact = if let Some(artifact) = artifact {
             graph.prepare_selected_schedule(&options);
             graph.install_selected_schedule(artifact.schedule.clone());
@@ -615,15 +657,22 @@ impl CompiledDecoder {
             let mut rng =
                 luminal::prelude::rand::rngs::SmallRng::seed_from_u64(compile.search_seed);
             runtime = graph.compile_with_rng(runtime, options, &mut rng);
-            DecoderArtifact {
-                schema: DECODER_ARTIFACT_SCHEMA,
+            new_artifact(
                 identity,
-                schedule: graph
+                graph
                     .selected_schedule()
                     .cloned()
                     .ok_or_else(|| DecoderError::Artifact("selected schedule missing".into()))?,
-            }
+            )
         };
+        let fixed_state = bind_fixed_state(
+            plan,
+            storage.fixed_state_pools,
+            stream,
+            &decoder.outputs.fixed_states,
+            &mut runtime,
+            fixed_state_scratch,
+        )?;
         // Explicit-CSR attention may recapture library islands as context
         // geometry changes. Keep every searched bucket, but only one
         // materialized CUDA graph at a time so graph-pool reclamation cannot
@@ -643,6 +692,7 @@ impl CompiledDecoder {
                 captured_decode: None,
                 runtime,
                 persistent_cache,
+                fixed_state,
                 compile,
                 vocabulary_size: config.vocabulary_size,
                 page_tokens,
@@ -664,6 +714,49 @@ impl CompiledDecoder {
         self.execute_graph(step)?;
         Ok(DecoderStepOutput {
             token_ids: self.read_sampled_tokens(step.tokens.len())?,
+        })
+    }
+
+    /// Executes one decode token per request and returns authenticated
+    /// completion evidence for every fixed-state transition.
+    ///
+    /// # Errors
+    ///
+    /// Rejects prefill, missing or reordered state plans, and any device or
+    /// graph execution failure.
+    pub fn execute_with_fixed_states(
+        &mut self,
+        step: DecoderStep<'_>,
+        states: &[DecoderFixedStateStep<'_>],
+    ) -> Result<StatefulDecoderStepOutput, DecoderError> {
+        validate_stateful_decode(step, states)?;
+        let initialized = self
+            .fixed_state
+            .as_ref()
+            .ok_or(DecoderError::UnsupportedExecution(
+                "fixed-state decoder step",
+            ))?
+            .arenas
+            .prepare_batch(states.iter().map(|state| (state.request_id, state.states)))?
+            .initialize()?;
+        self.prepare_graph(step)?;
+        let fixed_state = self
+            .fixed_state
+            .as_ref()
+            .ok_or(DecoderError::UnsupportedExecution(
+                "fixed-state decoder step",
+            ))?;
+        let ready =
+            initialized.upload_destination_slots(&mut self.runtime, &fixed_state.graph_bindings)?;
+        let pending = ready.complete_after(
+            &mut self.runtime,
+            &self.graph,
+            &fixed_state.runtime_bindings,
+        )?;
+        let fixed_states = pending.wait()?;
+        Ok(StatefulDecoderStepOutput {
+            token_ids: self.read_sampled_tokens(step.tokens.len())?,
+            fixed_states,
         })
     }
 
@@ -735,6 +828,11 @@ impl CompiledDecoder {
         &mut self,
         step: DecoderStep<'_>,
     ) -> Result<DecoderStepOutput, DecoderError> {
+        if self.fixed_state.is_some() {
+            return Err(DecoderError::UnsupportedExecution(
+                "fixed-state CUDA graph replay",
+            ));
+        }
         validate_step(
             step,
             self.compile,
@@ -818,6 +916,17 @@ impl CompiledDecoder {
     }
 
     fn execute_graph(&mut self, step: DecoderStep<'_>) -> Result<(), DecoderError> {
+        if self.fixed_state.is_some() {
+            return Err(DecoderError::UnsupportedExecution(
+                "fixed-state decoder step requires state plans",
+            ));
+        }
+        self.prepare_graph(step)?;
+        self.runtime.execute(&self.graph.dyn_map);
+        Ok(())
+    }
+
+    fn prepare_graph(&mut self, step: DecoderStep<'_>) -> Result<(), DecoderError> {
         validate_step(
             step,
             self.compile,
@@ -838,7 +947,6 @@ impl CompiledDecoder {
             self.captured_decode = None;
         }
         self.bind_step_inputs(step)?;
-        self.runtime.execute(&self.graph.dyn_map);
         Ok(())
     }
 
@@ -922,11 +1030,11 @@ impl CompiledDecoder {
             .map(Vec::into_boxed_slice)
     }
 
-    /// Returns the stable persistent cache bindings for every compiled layer.
+    /// Returns stable persistent cache bindings for token-attention layers.
     ///
     /// # Errors
     ///
-    /// Rejects a plan that does not assign every decoder layer exactly once.
+    /// Rejects a plan that does not assign every returned binding exactly once.
     pub fn cache_bindings(
         &self,
         plan: &ExecutorPlan,
@@ -962,18 +1070,13 @@ impl CompiledDecoder {
             .map(|bucket_index| {
                 let mut in_place_tensors = 0usize;
                 let mut copy_back_bytes = 0usize;
-                for (layer, (&(key_input, value_input), &(key_output, value_output))) in self
-                    .decoder
-                    .outputs
-                    .cache_inputs
-                    .iter()
-                    .zip(&self.decoder.outputs.cache_updates)
+                for (layer, state) in self.decoder.outputs.cache.iter().enumerate() {
+                    for (component, (output, input)) in [
+                        (state.key_update, state.binding.key),
+                        (state.value_update, state.binding.value),
+                    ]
+                    .into_iter()
                     .enumerate()
-                {
-                    for (component, (output, input)) in
-                        [(key_output, key_input), (value_output, value_input)]
-                            .into_iter()
-                            .enumerate()
                     {
                         if self
                             .runtime
@@ -986,7 +1089,7 @@ impl CompiledDecoder {
                         }
                     }
                 }
-                let tensor_count = self.decoder.outputs.cache_updates.len() * 2;
+                let tensor_count = self.decoder.outputs.cache.len() * 2;
                 CacheUpdateBucket {
                     bucket_index,
                     tensor_count,
@@ -1019,34 +1122,6 @@ impl CompiledDecoder {
     }
 }
 
-fn decoder_artifact_identity(
-    config: &DecoderConfig,
-    plan: &ExecutorPlan,
-    arenas: &[ExecutorArena],
-    weights: DecoderWeightFeatures,
-    compile: DecoderCompileConfig,
-    compiler_facts_digest: &str,
-) -> Result<String, DecoderError> {
-    let identity = DecoderArtifactIdentity {
-        manifest_fingerprint: &plan.manifest_fingerprint,
-        compiler_facts_digest,
-        page_tokens: plan.page_tokens,
-        decoder: config,
-        weights,
-        arenas: arenas
-            .iter()
-            .map(|arena| DecoderArtifactArena {
-                class_id: arena.class_id,
-                backend_base_index: arena.backend_base_index,
-                page_count: arena.page_count,
-            })
-            .collect(),
-        compile,
-    };
-    let bytes = serde_json::to_vec(&identity)?;
-    Ok(format!("{:x}", Sha256::digest(bytes)))
-}
-
 fn register_persistent_cache(
     runtime: &mut CudaRuntime,
     decoder: &DecoderGraph,
@@ -1056,28 +1131,25 @@ fn register_persistent_cache(
     let bindings = decoder.cache_bindings(plan)?;
     decoder
         .outputs
-        .cache_inputs
+        .cache
         .iter()
-        .zip(&decoder.outputs.cache_updates)
         .zip(&bindings)
-        .map(
-            |((&(key_input, value_input), &(key_output, value_output)), binding)| {
-                let cache_bytes = decoder
-                    .class_dimensions
-                    .get(usize::from(binding.class_id))
-                    .filter(|class| class.class_id == binding.class_id)
-                    .ok_or(DecoderError::UnsupportedPlan)?
-                    .cache_slots
-                    .checked_mul(config.kv_heads)
-                    .and_then(|elements| elements.checked_mul(config.head_dim))
-                    .and_then(|elements| elements.checked_mul(2))
-                    .ok_or(DecoderError::InvalidGeometry("cache bytes"))?;
-                Ok([
-                    runtime.alias_state_required(key_input, key_output, cache_bytes),
-                    runtime.alias_state_required(value_input, value_output, cache_bytes),
-                ])
-            },
-        )
+        .map(|(state, binding)| {
+            let cache_bytes = decoder
+                .class_dimensions
+                .get(usize::from(binding.class_id))
+                .filter(|class| class.class_id == binding.class_id)
+                .ok_or(DecoderError::UnsupportedPlan)?
+                .cache_slots
+                .checked_mul(config.kv_heads)
+                .and_then(|elements| elements.checked_mul(config.head_dim))
+                .and_then(|elements| elements.checked_mul(2))
+                .ok_or(DecoderError::InvalidGeometry("cache bytes"))?;
+            Ok([
+                runtime.alias_state_required(state.binding.key, state.key_update, cache_bytes),
+                runtime.alias_state_required(state.binding.value, state.value_update, cache_bytes),
+            ])
+        })
         .collect::<Result<Vec<_>, DecoderError>>()
         .map(|caches| caches.into_iter().flatten().collect())
 }
@@ -1085,37 +1157,38 @@ fn register_persistent_cache(
 fn decoder_compile_options(
     decoder: &DecoderGraph,
     compile: DecoderCompileConfig,
+    stateful: bool,
 ) -> luminal::prelude::CompileOptions {
+    let query_buckets = if stateful {
+        vec![luminal::prelude::DimBucket::new(1, compile.maximum_batch_size).representative(1)]
+    } else {
+        vec![
+            luminal::prelude::DimBucket::new(1, 1),
+            luminal::prelude::DimBucket::new(2, compile.maximum_query_tokens)
+                .representative(compile.representative_prefill_tokens),
+        ]
+    };
+    let options = luminal::prelude::CompileOptions::default().dim_buckets('s', &query_buckets);
+    let options = if stateful {
+        options
+    } else {
+        options.dim_buckets(
+            'b',
+            &[luminal::prelude::DimBucket::new(1, compile.maximum_batch_size).representative(1)],
+        )
+    };
     decoder
         .class_dimensions
         .iter()
-        .fold(
-            luminal::prelude::CompileOptions::default()
-                .dim_buckets(
-                    's',
-                    &[
-                        luminal::prelude::DimBucket::new(1, 1),
-                        luminal::prelude::DimBucket::new(2, compile.maximum_query_tokens)
-                            .representative(compile.representative_prefill_tokens),
-                    ],
-                )
-                .dim_buckets(
-                    'b',
-                    &[
-                        luminal::prelude::DimBucket::new(1, compile.maximum_batch_size)
-                            .representative(1),
-                    ],
-                ),
-            |options, class| {
-                options.dim_buckets(
-                    class.context_pages,
-                    &[
-                        luminal::prelude::DimBucket::new(1, compile.maximum_context_pages)
-                            .representative(compile.representative_context_pages),
-                    ],
-                )
-            },
-        )
+        .fold(options, |options, class| {
+            options.dim_buckets(
+                class.context_pages,
+                &[
+                    luminal::prelude::DimBucket::new(1, compile.maximum_context_pages)
+                        .representative(compile.representative_context_pages),
+                ],
+            )
+        })
         .search_graph_limit(compile.search_graphs)
 }
 
@@ -1177,6 +1250,13 @@ fn dynamic_inputs(decoder: &DecoderGraph) -> Vec<GraphTensor> {
             class.attention.last_page_len,
         ]);
     }
+    inputs.extend(
+        decoder
+            .outputs
+            .fixed_states
+            .iter()
+            .map(|state| state.binding.destination_slots),
+    );
     inputs
 }
 
@@ -1197,15 +1277,10 @@ fn capture_input_allocations(
 }
 
 fn cache_updates_in_place(runtime: &CudaRuntime, decoder: &DecoderGraph) -> bool {
-    decoder
-        .outputs
-        .cache_inputs
-        .iter()
-        .zip(&decoder.outputs.cache_updates)
-        .all(|(&(key_input, value_input), &(key_output, value_output))| {
-            runtime.output_aliases_input_in_all_buckets(key_output, key_input)
-                && runtime.output_aliases_input_in_all_buckets(value_output, value_input)
-        })
+    decoder.outputs.cache.iter().all(|state| {
+        runtime.output_aliases_input_in_all_buckets(state.key_update, state.binding.key)
+            && runtime.output_aliases_input_in_all_buckets(state.value_update, state.binding.value)
+    })
 }
 
 fn seed_compile_inputs(
@@ -1213,16 +1288,17 @@ fn seed_compile_inputs(
     decoder: &DecoderGraph,
     compile: DecoderCompileConfig,
     page_tokens: usize,
+    representative_query_tokens: usize,
 ) {
     let int_bytes = std::mem::size_of::<i32>();
     runtime.set_data_with_capacity(
         decoder.inputs.token_ids,
-        vec![1_i32; compile.representative_prefill_tokens],
+        vec![1_i32; representative_query_tokens],
         compile.maximum_query_tokens * int_bytes,
     );
     runtime.set_data_with_capacity(
         decoder.inputs.positions,
-        (0..i32::try_from(compile.representative_prefill_tokens).unwrap()).collect::<Vec<_>>(),
+        (0..i32::try_from(representative_query_tokens).unwrap()).collect::<Vec<_>>(),
         compile.maximum_query_tokens * int_bytes,
     );
     for (class, dimensions) in decoder.inputs.classes.iter().zip(&decoder.class_dimensions) {
@@ -1234,7 +1310,7 @@ fn seed_compile_inputs(
             .unwrap();
         runtime.set_data_with_capacity(
             class.write_slots,
-            (0..i32::try_from(compile.representative_prefill_tokens).unwrap())
+            (0..i32::try_from(representative_query_tokens).unwrap())
                 .map(|offset| base_slot.checked_add(offset).unwrap())
                 .collect::<Vec<_>>(),
             compile.maximum_query_tokens * int_bytes,
@@ -1246,10 +1322,7 @@ fn seed_compile_inputs(
         );
         runtime.set_data_with_capacity(
             class.attention.query_indptr,
-            vec![
-                0_i32,
-                i32::try_from(compile.representative_prefill_tokens).unwrap(),
-            ],
+            vec![0_i32, i32::try_from(representative_query_tokens).unwrap()],
             (compile.maximum_batch_size + 1) * int_bytes,
         );
         runtime.set_data_with_capacity(
@@ -1262,7 +1335,7 @@ fn seed_compile_inputs(
         );
         runtime.set_data_with_capacity(
             class.attention.last_page_len,
-            vec![i32::try_from(page_tokens.min(compile.representative_prefill_tokens)).unwrap()],
+            vec![i32::try_from(page_tokens.min(representative_query_tokens)).unwrap()],
             compile.maximum_batch_size * int_bytes,
         );
     }
@@ -1323,6 +1396,11 @@ fn validate_plan(
     Ok((
         DecoderDimensions {
             query_tokens: Expression::from('s'),
+            request_count: if topology.has_fixed_state() {
+                Expression::from('s')
+            } else {
+                Expression::from('b')
+            },
             kv_width: config
                 .kv_heads
                 .checked_mul(config.head_dim)
@@ -1356,7 +1434,7 @@ fn decoder_inputs(
             attention: PagedAttentionMetadata::new(
                 graph,
                 class.class_id,
-                Expression::from('b'),
+                dimensions.request_count,
                 Expression::from(class.context_pages),
             ),
         })
@@ -1370,7 +1448,7 @@ fn decoder_inputs(
 
 #[path = "model/block.rs"]
 mod block;
-use block::{DecoderLayer, DecoderNorm, LayerInputs};
+use block::{DecoderLayerEnvelope, DecoderNorm, TokenAttentionInputs, TokenAttentionLayer};
 
 fn token_embedding(table: &GraphTensor, tokens: &GraphTensor, hidden: usize) -> GraphTensor {
     let count = tokens.dims1();

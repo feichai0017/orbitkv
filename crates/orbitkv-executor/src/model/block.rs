@@ -10,11 +10,8 @@ use super::{
 };
 use crate::cuda::{AttentionKernel, PagedAttentionInputs, PagedAttentionMetadata, paged_attention};
 
-pub(super) struct DecoderLayer {
-    attention_norm: DecoderNorm,
-    post_attention_norm: Option<DecoderNorm>,
-    feed_forward_norm: DecoderNorm,
-    post_feed_forward_norm: Option<DecoderNorm>,
+pub(super) struct TokenAttentionLayer {
+    envelope: DecoderLayerEnvelope,
     q_weight: GraphTensor,
     k_weight: GraphTensor,
     v_weight: GraphTensor,
@@ -24,9 +21,19 @@ pub(super) struct DecoderLayer {
     v_bias: Option<GraphTensor>,
     q_norm: Option<GraphTensor>,
     k_norm: Option<GraphTensor>,
+}
+
+/// Residual, normalization, and feed-forward structure shared by every
+/// decoder-layer state implementation.
+pub(super) struct DecoderLayerEnvelope {
+    input_norm: DecoderNorm,
+    post_state_norm: Option<DecoderNorm>,
+    feed_forward_norm: DecoderNorm,
+    post_feed_forward_norm: Option<DecoderNorm>,
     gate: GraphTensor,
     up: GraphTensor,
     down: GraphTensor,
+    activation: DecoderActivation,
 }
 
 pub(super) struct DecoderNorm {
@@ -57,7 +64,7 @@ impl DecoderNorm {
     }
 }
 
-pub(super) struct LayerInputs<'a> {
+pub(super) struct TokenAttentionInputs<'a> {
     pub(super) hidden: &'a GraphTensor,
     pub(super) positions: &'a GraphTensor,
     pub(super) write_slots: &'a GraphTensor,
@@ -66,7 +73,7 @@ pub(super) struct LayerInputs<'a> {
     pub(super) v_cache: &'a GraphTensor,
 }
 
-impl DecoderLayer {
+impl TokenAttentionLayer {
     pub(super) fn new(
         graph: &mut Graph,
         config: &DecoderConfig,
@@ -89,33 +96,6 @@ impl DecoderLayer {
                 DType::Bf16,
             )
         };
-        let sandwich = config.block_layout == DecoderBlockLayout::SandwichNorm;
-        let attention_norm =
-            DecoderNorm::new(graph, config, &format!("{prefix}.input_layernorm.weight"));
-        let post_attention_norm = sandwich.then(|| {
-            DecoderNorm::new(
-                graph,
-                config,
-                &format!("{prefix}.post_attention_layernorm.weight"),
-            )
-        });
-        let feed_forward_name = if sandwich {
-            "pre_feedforward_layernorm"
-        } else {
-            "post_attention_layernorm"
-        };
-        let feed_forward_norm = DecoderNorm::new(
-            graph,
-            config,
-            &format!("{prefix}.{feed_forward_name}.weight"),
-        );
-        let post_feed_forward_norm = sandwich.then(|| {
-            DecoderNorm::new(
-                graph,
-                config,
-                &format!("{prefix}.post_feedforward_layernorm.weight"),
-            )
-        });
         let q_bias = projection_bias(
             graph,
             weights.qkv_bias,
@@ -128,10 +108,7 @@ impl DecoderLayer {
         let q_norm = qk_weight(graph, weights.qk_norm, &prefix, "q_norm", config.head_dim);
         let k_norm = qk_weight(graph, weights.qk_norm, &prefix, "k_norm", config.head_dim);
         Self {
-            attention_norm,
-            post_attention_norm,
-            feed_forward_norm,
-            post_feed_forward_norm,
+            envelope: DecoderLayerEnvelope::new(graph, config, layer),
             q_weight: projection(graph, "q_proj", q_projection_width),
             k_weight: projection(graph, "k_proj", kv_width),
             v_weight: projection(graph, "v_proj", kv_width),
@@ -146,36 +123,18 @@ impl DecoderLayer {
             v_bias,
             q_norm,
             k_norm,
-            gate: weight(
-                graph,
-                format!("{prefix}.mlp.gate_proj.weight"),
-                (config.intermediate_size, config.hidden_size),
-                DType::Bf16,
-            ),
-            up: weight(
-                graph,
-                format!("{prefix}.mlp.up_proj.weight"),
-                (config.intermediate_size, config.hidden_size),
-                DType::Bf16,
-            ),
-            down: weight(
-                graph,
-                format!("{prefix}.mlp.down_proj.weight"),
-                (config.hidden_size, config.intermediate_size),
-                DType::Bf16,
-            ),
         }
     }
 
     pub(super) fn forward(
         &self,
-        inputs: &LayerInputs<'_>,
+        inputs: &TokenAttentionInputs<'_>,
         class: &crate::AttentionClass,
         config: &DecoderConfig,
         dimensions: DecoderDimensions,
         class_dimensions: DecoderClassDimensions,
     ) -> Result<(GraphTensor, GraphTensor, GraphTensor), DecoderError> {
-        let normalized = self.attention_norm.forward(inputs.hidden);
+        let normalized = self.envelope.state_input(inputs.hidden);
         let project = |weight: GraphTensor, bias: Option<GraphTensor>| {
             let output = normalized.matmul(weight.t());
             bias.map_or(output, |bias| bias.expand_lhs(&output.dims()[..1]) + output)
@@ -252,15 +211,84 @@ impl DecoderLayer {
         )?;
         let attention = attention.transpose(0, 1).merge_dims(1, 2);
         let attention = output_gate.map_or(attention, |gate| attention * gate.sigmoid());
-        let mut attention = attention.matmul(self.o_weight.t());
-        if let Some(norm) = &self.post_attention_norm {
-            attention = norm.forward(&attention);
+        let state_output = attention.matmul(self.o_weight.t());
+        let hidden = self.envelope.finish(inputs.hidden, state_output);
+        Ok((hidden, key_update, value_update))
+    }
+}
+
+impl DecoderLayerEnvelope {
+    pub(super) fn new(graph: &mut Graph, config: &DecoderConfig, layer: usize) -> Self {
+        let prefix = format!("{}.layers.{layer}", config.tensor_prefix);
+        let sandwich = config.block_layout == DecoderBlockLayout::SandwichNorm;
+        let input_norm =
+            DecoderNorm::new(graph, config, &format!("{prefix}.input_layernorm.weight"));
+        let post_state_norm = sandwich.then(|| {
+            DecoderNorm::new(
+                graph,
+                config,
+                &format!("{prefix}.post_attention_layernorm.weight"),
+            )
+        });
+        let feed_forward_name = if sandwich {
+            "pre_feedforward_layernorm"
+        } else {
+            "post_attention_layernorm"
+        };
+        Self {
+            input_norm,
+            post_state_norm,
+            feed_forward_norm: DecoderNorm::new(
+                graph,
+                config,
+                &format!("{prefix}.{feed_forward_name}.weight"),
+            ),
+            post_feed_forward_norm: sandwich.then(|| {
+                DecoderNorm::new(
+                    graph,
+                    config,
+                    &format!("{prefix}.post_feedforward_layernorm.weight"),
+                )
+            }),
+            gate: weight(
+                graph,
+                format!("{prefix}.mlp.gate_proj.weight"),
+                (config.intermediate_size, config.hidden_size),
+                DType::Bf16,
+            ),
+            up: weight(
+                graph,
+                format!("{prefix}.mlp.up_proj.weight"),
+                (config.intermediate_size, config.hidden_size),
+                DType::Bf16,
+            ),
+            down: weight(
+                graph,
+                format!("{prefix}.mlp.down_proj.weight"),
+                (config.hidden_size, config.intermediate_size),
+                DType::Bf16,
+            ),
+            activation: config.activation,
         }
-        let hidden = *inputs.hidden + attention;
+    }
+
+    pub(super) fn state_input(&self, hidden: &GraphTensor) -> GraphTensor {
+        self.input_norm.forward(hidden)
+    }
+
+    pub(super) fn finish(
+        &self,
+        residual: &GraphTensor,
+        mut state_output: GraphTensor,
+    ) -> GraphTensor {
+        if let Some(norm) = &self.post_state_norm {
+            state_output = norm.forward(&state_output);
+        }
+        let hidden = *residual + state_output;
         let normalized = self.feed_forward_norm.forward(&hidden);
         let gate = normalized.matmul(self.gate.t()).cast(DType::F32);
         let up = normalized.matmul(self.up.t()).cast(DType::F32);
-        let activated = match config.activation {
+        let activated = match self.activation {
             DecoderActivation::Silu => gate.swish(),
             DecoderActivation::GeluTanh => gelu_tanh(&gate),
         };
@@ -268,7 +296,7 @@ impl DecoderLayer {
         if let Some(norm) = &self.post_feed_forward_norm {
             feed_forward = norm.forward(&feed_forward);
         }
-        Ok((hidden + feed_forward, key_update, value_update))
+        hidden + feed_forward
     }
 }
 

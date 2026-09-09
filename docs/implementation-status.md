@@ -14,8 +14,8 @@ operator passes all applicable layers.
 | Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Narrow same-executor L5: 27.8% less resident payload, 6.1% longer fixed-budget boundary, 0.77% lower median test-path time |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
-| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | GDN has distinct key/value-head semantics, checkpoint-shaped split projections, gates, recurrent update, gated RMSNorm/readout, dynamic arena addressing, and an egglog-selected in-place update candidate for single-token decode; production decoder/runtime wiring and device qualification remain open | Unsupported | Unproven |
-| Convolution state | Generation-checked checkpoint lifecycle host-tested | Minimal `K-1` BF16 history, one-token depthwise causal convolution, dynamic arena addressing, and same-stream copy-back policy are host-tested; fused CUDA and packed-sequence prefill remain open | Unsupported | Unproven |
+| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | GDN has distinct key/value-head semantics, checkpoint-shaped split projections, gates, recurrent update, gated RMSNorm/readout, dynamic arena addressing, and an egglog-selected in-place update candidate; the production decoder owns and binds its stable arena for decode | Decode path wired but not device-qualified; packed prefill unsupported | Unproven |
+| Convolution state | Generation-checked checkpoint lifecycle host-tested | Minimal `K-1` BF16 history, one-token depthwise causal convolution, dynamic arena addressing, and same-stream copy-back are part of the production decode graph | Decode path wired but not device-qualified; packed prefill unsupported | Unproven |
 | Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
 
 The native dense decoder accepts multiple token-KV classes with exact,
@@ -49,10 +49,12 @@ Luminal graph. Search profiles a runtime-owned scratch arena; the real OrbitKV
 allocation is bound only after schedule selection. Success evidence requires an
 opaque receipt tied to the exact runtime alias and an event recorded after the
 model execution. The two-step CUDA qualification is present but has not run on
-an accessible GPU in this revision. Execution remains fail-closed because the
-production decoder/runtime does not yet own fixed-state arenas, packed-sequence
-prefill is missing, and the model-level FP8 loader is not implemented. The
-gated-delta recurrence has an independent f32 sequence oracle and a pure Luminal
+an accessible GPU in this revision. The production decoder now builds mixed
+token-KV/GDN layers, owns fixed-state device arenas, binds them after search,
+and returns event-backed evidence that the engine submits atomically with token
+KV. Execution still fails closed for packed-sequence prefill and block-FP8
+weights. The gated-delta recurrence has an independent f32 sequence oracle and
+a pure Luminal
 single-token HLIR expression whose token values and next state match that
 oracle, including grouped key/value heads. A checkpoint-shaped graph composes
 split projections, minimal-history causal convolution, gates, recurrent update,
@@ -61,8 +63,8 @@ checkpoint headers pass structural config, tensor, shape, dtype, and block-scale
 validation. The Luminal fork can derive an in-place CUDA state-update candidate
 from the complete rank-four state equation and a narrow gather/update/scatter
 rewrite can commit it to manager-selected slots in the whole arena. Its static
-alias validator accepts an ordered old-state read before mutation. The generic
-path is not yet embedded in the full decoder or qualified on a real device. A
+alias validator accepts an ordered old-state read before mutation. The path is
+embedded in the full decoder but is not yet qualified on a real device. A
 small BF16 checkpoint with the same 3:1 state schedule is the correctness
 bring-up target.
 

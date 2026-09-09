@@ -13,9 +13,9 @@ provides the client protocol. Planned work is not a current capability.
 - Full, Sliding, Full+Sliding, and exact Chunked lifetimes compile and pass host
   lifecycle tests. Token-level relocation and live-token compaction are not part
   of the product.
-- One symbolic decoder graph is searched once into decode and prefill buckets.
-  Dynamic inputs use stable addresses and each attention class has one persistent
-  K/V arena.
+- Token-KV decoders search one symbolic graph into decode and prefill buckets.
+  Stateful hybrid decoders currently search bounded decode batches only. Dynamic
+  inputs use stable addresses and each state class has one persistent arena.
 - Persistent K/V updates are required aliases during search and artifact load.
   Candidates that materialize incompatible state fail closed.
 - Recurrent and convolution classes now have stable per-class CUDA arenas,
@@ -23,7 +23,9 @@ provides the client protocol. Planned work is not a current capability.
   runtime-identity- and event-gated completion evidence. Dynamic slot metadata
   selects manager-authored destinations while the arena address stays fixed;
   graph search uses a private scratch arena and cannot mutate live OrbitKV
-  state. The explicit real-device gate has not run in the current environment.
+  state. The production decoder now owns these arenas and returns event-backed
+  state evidence for single-token decode; the explicit real-device gate has not
+  run in the current environment.
 - The current direct paged-attention node uses FlashInfer. Luminal searches the
   surrounding decoder graph, but does not yet select among multiple attention
   implementations or jointly derive a KV layout.
@@ -49,11 +51,11 @@ decoder is the forcing function for the product architecture: 64 layers with a
 convolution state, partial rotary dimensions, and dynamic block-FP8 linear
 operators. OrbitKV already compiles the checkpoint into 16 Full token-KV layers
 plus 48 recurrent and convolution layers. The executor now parses the nested
-text configuration and carries fixed-state geometry into its compiler contract,
-and its standalone single-token GDN graph now covers split projections, minimal
-convolution history, grouped-head recurrence, gating, normalization, and output
-projection. Production decoder/runtime wiring, packed prefill, and checkpoint
-FP8 execution remain explicit fail-closed gaps.
+  text configuration and carries fixed-state geometry into its compiler contract.
+  Its production single-token GDN graph covers split projections, minimal
+  convolution history, grouped-head recurrence, gating, normalization, output
+  projection, stable manager-owned arenas, and completion evidence. Packed
+  prefill and checkpoint FP8 execution remain explicit fail-closed gaps.
 
 Use the structurally equivalent small BF16 checkpoint as the bring-up target.
 It must exercise the same 3:1 layer schedule and state transitions before the
@@ -84,8 +86,10 @@ single-device bring-up model.
    while initialization copies the prior published slot before execution.
    Convolution currently uses graph-visible same-stream copy-back; the next
    kernel milestone is a searchable fused convolution/update candidate.
-   Remaining work is to connect these bindings to the production decoder,
-   qualify them on device, and add packed-sequence prefill candidates.
+   The production decoder now consumes the joint topology, binds both arenas
+   after search, executes stateful decode with manager-authored slot plans, and
+   returns event-backed evidence to the engine. Remaining work is real-device
+   qualification and packed-sequence prefill candidates.
 3. Qualify recurrent decode, chunked prefill, causal-convolution history,
    cancellation, Prefix boundaries, and state-slot reuse on the small BF16
    checkpoint.

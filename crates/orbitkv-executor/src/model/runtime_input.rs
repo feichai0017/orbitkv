@@ -1,6 +1,28 @@
 use super::{
-    DecoderClassDimensions, DecoderClassStep, DecoderCompileConfig, DecoderError, DecoderStep,
+    DecoderClassDimensions, DecoderClassStep, DecoderCompileConfig, DecoderError,
+    DecoderFixedStateStep, DecoderStep,
 };
+
+pub(super) fn validate_stateful_decode(
+    step: DecoderStep<'_>,
+    states: &[DecoderFixedStateStep<'_>],
+) -> Result<(), DecoderError> {
+    let batch_size = step
+        .classes
+        .first()
+        .and_then(|class| class.attention.query_indptr.len().checked_sub(1))
+        .ok_or(DecoderError::InputCapacity)?;
+    if batch_size == 0
+        || step.tokens.len() != batch_size
+        || states.len() != batch_size
+        || states.iter().any(|state| state.states.is_empty())
+    {
+        return Err(DecoderError::UnsupportedExecution(
+            "packed fixed-state prefill",
+        ));
+    }
+    Ok(())
+}
 
 pub(super) fn validate_step(
     step: DecoderStep<'_>,

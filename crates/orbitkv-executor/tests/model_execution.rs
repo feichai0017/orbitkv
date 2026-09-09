@@ -367,7 +367,7 @@ fn compile_hybrid_decoder(
     let decoder = CompiledDecoder::compile(
         config,
         &run.executor_plan,
-        &run.arenas,
+        orbitkv_executor::model::DecoderStorage::token_only(&run.arenas),
         &stream,
         &[model_dir.join("model.safetensors")],
         compile,
@@ -1046,7 +1046,7 @@ fn released_checkpoint_bounds_single_and_multi_request_logits() {
     let mut decoder = CompiledDecoder::compile(
         &config,
         &run.executor_plan,
-        &run.arenas,
+        orbitkv_executor::model::DecoderStorage::token_only(&run.arenas),
         &stream,
         &[model_dir.join("model.safetensors")],
         compile,
@@ -1237,7 +1237,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     let mut decoder = CompiledDecoder::compile(
         &config,
         &prepared_run.executor_plan,
-        &prepared_run.arenas,
+        orbitkv_executor::model::DecoderStorage::token_only(&prepared_run.arenas),
         &stream,
         &[model_dir.join("model.safetensors")],
         compile,
