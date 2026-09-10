@@ -106,7 +106,9 @@ single-device bring-up model.
    reference implementation and four pinned DeepGEMM SM90 1D2D schedules join
    the same e-class and are selected by device profiling. Full-graph search now
    fits within the compiler memory budget and bounded prefill/decode/drain
-   passes; independent output parity and serving-scale decode remain.
+   passes. An independent Transformers oracle matches the first prefill and
+   decode tokens with maximum absolute logit differences below 0.47;
+   serving-scale decode remains.
 6. Run the 27B FP8 text path on H20, first for deterministic token parity and
    complete state drain, then for continuous batching and long-context pressure.
 

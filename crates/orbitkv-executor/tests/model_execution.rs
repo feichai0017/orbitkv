@@ -1574,6 +1574,15 @@ fn qwen35_fp8_bounded_prefill_decode_executes_and_drains() {
     );
     assert_eq!(output.token_ids.len(), prompt.len());
     assert_eq!(output.logits.len(), prompt.len() * config.vocabulary_size);
+    let reference_directory = std::env::var_os("ORBITKV_REFERENCE_DIR").map(PathBuf::from);
+    if let Some(reference) = &reference_directory {
+        assert_reference_logits(
+            "prefill",
+            row_logits(&output.logits, prompt.len() - 1, config.vocabulary_size),
+            &reference.join("prefill-last.f32"),
+            5,
+        );
+    }
     complete_with_fixed_states(
         &mut run.session,
         &run.prepared,
@@ -1612,6 +1621,9 @@ fn qwen35_fp8_bounded_prefill_decode_executes_and_drains() {
     );
     assert_eq!(decode.token_ids.len(), 1);
     assert_eq!(decode.logits.len(), config.vocabulary_size);
+    if let Some(reference) = &reference_directory {
+        assert_reference_logits("decode", &decode.logits, &reference.join("decode.f32"), 0);
+    }
     complete_with_fixed_states(
         &mut run.session,
         &decode_prepared,
@@ -1626,6 +1638,32 @@ fn qwen35_fp8_bounded_prefill_decode_executes_and_drains() {
             && state.pending_retirements == 0
             && state.free_slots == u64::from(state.identity.slot_count)
     }));
+}
+
+fn assert_reference_logits(
+    phase: &str,
+    actual: &[f32],
+    path: &std::path::Path,
+    expected_token: u32,
+) {
+    let bytes = std::fs::read(path).unwrap();
+    assert_eq!(bytes.len(), std::mem::size_of_val(actual));
+    let reference = bytes
+        .chunks_exact(4)
+        .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
+        .collect::<Vec<_>>();
+    let maximum_absolute_difference = maximum_absolute_difference(actual, &reference);
+    let actual_top = top_two(actual);
+    let reference_top = top_two(&reference);
+    eprintln!(
+        "Qwen3.5 27B FP8 {phase} parity: actual_top={actual_top:?} reference_top={reference_top:?} max_abs={maximum_absolute_difference}"
+    );
+    assert_eq!(actual_top[0].0, expected_token);
+    assert_eq!(reference_top[0].0, expected_token);
+    assert!(
+        maximum_absolute_difference <= 1.0,
+        "{phase} maximum absolute logit difference was {maximum_absolute_difference}"
+    );
 }
 
 #[test]
