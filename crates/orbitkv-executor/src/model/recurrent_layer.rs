@@ -471,8 +471,8 @@ impl GatedDeltaStateBindings {
     #[must_use]
     pub fn write_policies() -> [crate::FixedStateWritePolicy; 2] {
         [
-            crate::FixedStateWritePolicy::CopyBackAllowed,
-            crate::FixedStateWritePolicy::CopyBackAllowed,
+            crate::FixedStateWritePolicy::RequiredInPlace,
+            crate::FixedStateWritePolicy::RequiredInPlace,
         ]
     }
 
@@ -703,8 +703,8 @@ mod tests {
         assert_eq!(
             GatedDeltaStateBindings::write_policies(),
             [
-                crate::FixedStateWritePolicy::CopyBackAllowed,
-                crate::FixedStateWritePolicy::CopyBackAllowed,
+                crate::FixedStateWritePolicy::RequiredInPlace,
+                crate::FixedStateWritePolicy::RequiredInPlace,
             ]
         );
         assert_eq!(

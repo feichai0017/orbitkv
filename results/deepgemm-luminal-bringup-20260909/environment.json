@@ -1,0 +1,38 @@
+{
+  "schema": "orbitkv.qwen35-deepgemm-environment",
+  "captured_at_utc": "2026-09-10T19:42:11Z",
+  "source": {
+    "orbitkv_base_commit": "e0a26c0f64bc64244582acc1fe2ead2070c4adc7",
+    "luminal_base_commit": "8983f72b67245c89b15bed968f646e581eafc6d9",
+    "deepgemm_revision": "559d79fb6994a58b8a15b4b93bf13ccc16edf247",
+    "note": "The LoopInput equivalence fix, required fixed-state aliases, and compact evidence are committed after qualification."
+  },
+  "accelerator": {
+    "name": "NVIDIA H20",
+    "compute_capability": "9.0",
+    "memory_mib": 97871,
+    "driver_version": "535.161.08"
+  },
+  "checkpoint": {
+    "path_label": "qwen3.8-27b-fp8",
+    "architecture": "Qwen3_5ForConditionalGeneration",
+    "config_sha256": "74227dd615bf1ea975aa676bdf355a0379858c12f394b5365cd9dfa5fc2c70bc",
+    "weights_index_sha256": "f0838c766951bdfe76d6afbdb2771a8f67aaa2231dedb3d33cebd817729843a2",
+    "tokenizer_sha256": "0997f410c57a1f4e53b09e4be8f4a172d90edd9564368fb0847030937229b9f3"
+  },
+  "oracle": {
+    "transformers": "5.12.1",
+    "torch": "2.11.0+cu130",
+    "deepgemm": "2.6.1"
+  },
+  "serving": {
+    "benchmark_client": "vLLM 0.29.0 bench serve",
+    "sglang": "0.5.17",
+    "vllm": "0.29.0",
+    "orbitkv_binary_sha256": "e27c08b2616bab245466f06499ab76dc0e289473730fb6f321100220a58e320f",
+    "test_artifact_bytes": 12531598,
+    "test_artifact_sha256": "890bbb43feeae57e02fe26049db87eff112fad16b83a98a733c3e18a02bf3474",
+    "serving_artifact_bytes": 12531868,
+    "serving_artifact_sha256": "3e87cb72b16f410c819f9da790c4e30307759042c2a53ae1125a60227cf3f448"
+  }
+}

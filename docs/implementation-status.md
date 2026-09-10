@@ -14,9 +14,9 @@ operator passes all applicable layers.
 | Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Narrow same-executor L5: 27.8% less resident payload, 6.1% longer fixed-budget boundary, 0.77% lower median test-path time |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
-| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | GDN has distinct key/value-head semantics, checkpoint-shaped split projections, gates, packed delta scan, gated RMSNorm/readout, dynamic arena addressing, and event-ordered copy-back to manager-owned state arenas | Ragged packed operator parity and bounded full-checkpoint prefill/decode/drain pass on H20 | Unproven |
-| Convolution state | Generation-checked checkpoint lifecycle host-tested | Minimal `K-1` BF16 history, typed packed causal convolution, dynamic arena addressing, and event-ordered copy-back to manager-owned history arenas are part of the production graph | Ragged packed operator parity and bounded full-checkpoint prefill/decode/drain pass on H20 | Unproven |
-| Block-FP8 linear compiler | Not a state owner | Provider-neutral BF16 x E4M3/128x128-scale semantics; independent CUDA reference plus four pinned DeepGEMM SM90 1D2D tile candidates share one e-class and are device-profiled per bucket | H20 reference parity, direct native execution, search selection, provider identity persistence, bounded full-checkpoint prefill/decode/drain, and independent Transformers token/logit parity pass | Bring-up measurements only |
+| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | GDN has distinct key/value-head semantics, checkpoint-shaped split projections, gates, packed delta scan, gated RMSNorm/readout, dynamic arena addressing, and required in-place writes to manager-owned state arenas | Ragged packed operator parity and bounded full-checkpoint prefill/decode/drain pass on H20; eight generated steps stay within 0.423 maximum absolute logit error, with one near-tie argmax difference | Negative bounded serving diagnostic |
+| Convolution state | Generation-checked checkpoint lifecycle host-tested | Minimal `K-1` BF16 history, typed packed causal convolution, dynamic arena addressing, and required in-place writes to manager-owned history arenas are part of the production graph | Ragged packed operator parity, bounded full-checkpoint drain, and eight-step logit parity pass on H20 | Negative bounded serving diagnostic |
+| Block-FP8 linear compiler | Not a state owner | Provider-neutral BF16 x E4M3/128x128-scale semantics; independent CUDA reference plus four pinned DeepGEMM SM90 1D2D tile candidates share one e-class and are device-profiled per bucket | H20 reference parity, direct native execution, search selection, provider identity persistence, bounded full-checkpoint drain, and eight-step independent Transformers logit parity pass | 0.445x SGLang and 0.390x vLLM throughput on the bounded C1 trace; no advantage |
 | Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
 
 The native dense decoder accepts multiple token-KV classes with exact,
@@ -60,8 +60,16 @@ reference and four pinned DeepGEMM SM90 1D2D schedules share one e-class and are
 selected by device profiling. Operator parity passes on H20, and a bounded
 full-checkpoint run now completes search, prefill, one decode step, manager
 publication, release, and token/fixed-state drain. An independent Transformers
-5.12.1 oracle matches the prefill and decode token ids; maximum absolute logit
-differences are below 0.47. Multi-token decode remains open.
+5.12.1 oracle matches the prefill and first decode token ids; maximum absolute
+logit differences are `0.421875` and `0.375`. Across eight generated steps, the
+largest measured error is `0.42285156`. The compiler now proves that
+equal-valued loop-input streams address the same slots and requires both fixed
+state classes to update in place. This removes the former multi-gigabyte
+copy-back path without changing the pre-rolling model graph. An eight-token
+fixed prompt chooses the near-tied runner-up at generated token four: the
+serving artifact reports `0=11.1875` and `46474=11.125`, while the oracle reports
+`46474=11.25` and `0=11.125`. Multi-token logit parity passes, but robust
+cross-implementation greedy equivalence remains open.
 The gated-delta recurrence
 has an independent f32 sequence oracle, a pure Luminal single-token expression,
 and a typed packed CUDA scan. Token values and next state match the oracle,
@@ -73,9 +81,8 @@ validation. The Luminal fork can derive in-place CUDA candidates for both
 recurrent-state and convolution-history commits. Its static alias validator
 accepts an ordered old-state read before mutation and rejects competing reads.
 The operator and arena paths are H20-qualified, while the complete checkpoint
-path is not. A
-small BF16 checkpoint with the same 3:1 state schedule is the correctness
-bring-up target.
+has only a bounded eight-step logit-parity closure and a negative short-trace
+serving diagnostic.
 
 The latest open DeepSeek V4 Flash Vision checkpoint is tracked as a second
 architecture target, not a current capability. Its sparse index, low-rank
@@ -155,6 +162,16 @@ there is not yet a set of alternative attention implementations whose measured
 cost can be selected from these facts.
 
 ## Evidence interpretation
+
+The 27B block-FP8 path is executable but not yet end-to-end qualified. On the
+current 4-input/8-output/C1 trace, OrbitKV provides 0.445x SGLang and 0.390x
+vLLM output throughput, with 2.65x and 2.72x median TPOT respectively. A fixed
+eight-token prompt matches the independent Transformers oracle through three
+generated tokens, then OrbitKV and vLLM choose its near-tied runner-up while
+SGLang remains equal. Direct per-step OrbitKV logits remain within 0.423 of the
+oracle across the full trace. Those measurements identify a performance deficit
+and a strict-output-equivalence boundary; they do not qualify a cross-engine
+benefit.
 
 The child CUDA Graph result demonstrates a narrow dispatch optimization. The
 released-hybrid residence experiment is the first narrow L5 compiler result:
