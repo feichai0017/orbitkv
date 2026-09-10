@@ -16,7 +16,7 @@ operator passes all applicable layers.
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
 | Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | GDN has distinct key/value-head semantics, checkpoint-shaped split projections, gates, packed delta scan, gated RMSNorm/readout, dynamic arena addressing, and event-ordered copy-back to manager-owned state arenas | Ragged packed operator parity and bounded full-checkpoint prefill/decode/drain pass on H20 | Unproven |
 | Convolution state | Generation-checked checkpoint lifecycle host-tested | Minimal `K-1` BF16 history, typed packed causal convolution, dynamic arena addressing, and event-ordered copy-back to manager-owned history arenas are part of the production graph | Ragged packed operator parity and bounded full-checkpoint prefill/decode/drain pass on H20 | Unproven |
-| Block-FP8 linear compiler | Not a state owner | Provider-neutral BF16 x E4M3/128x128-scale semantics; independent CUDA reference plus four pinned DeepGEMM SM90 1D2D tile candidates share one e-class and are device-profiled per bucket | H20 reference parity, direct native execution, search selection, provider identity persistence, and bounded full-checkpoint prefill/decode/drain pass; independent model-output parity remains open | Bring-up measurements only |
+| Block-FP8 linear compiler | Not a state owner | Provider-neutral BF16 x E4M3/128x128-scale semantics; independent CUDA reference plus four pinned DeepGEMM SM90 1D2D tile candidates share one e-class and are device-profiled per bucket | H20 reference parity, direct native execution, search selection, provider identity persistence, bounded full-checkpoint prefill/decode/drain, and independent Transformers token/logit parity pass | Bring-up measurements only |
 | Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
 
 The native dense decoder accepts multiple token-KV classes with exact,
@@ -59,8 +59,9 @@ segmentation. Block-FP8 projections now load the checkpoint's E4M3 tensors and
 reference and four pinned DeepGEMM SM90 1D2D schedules share one e-class and are
 selected by device profiling. Operator parity passes on H20, and a bounded
 full-checkpoint run now completes search, prefill, one decode step, manager
-publication, release, and token/fixed-state drain. Independent output parity
-and multi-token decode remain open.
+publication, release, and token/fixed-state drain. An independent Transformers
+5.12.1 oracle matches the prefill and decode token ids; maximum absolute logit
+differences are below 0.47. Multi-token decode remains open.
 The gated-delta recurrence
 has an independent f32 sequence oracle, a pure Luminal single-token expression,
 and a typed packed CUDA scan. Token values and next state match the oracle,

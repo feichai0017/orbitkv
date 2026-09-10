@@ -48,8 +48,11 @@ bucket and the final semantic LLIR fingerprint, the cold search/compile took
 2.698867 s and returned token id 5, and the one-token decode took 2.843313 s
 and returned token id 0. These are bring-up timings with diagnostic logits,
 not optimized serving numbers. Each selected bucket contains 28 DeepGEMM
-choices. Remaining qualification includes an independent logits/token oracle,
-multi-token decode soak/capacity checks, and matched vLLM/SGLang runs.
+choices. An independent Transformers 5.12.1 `Qwen3_5ForConditionalGeneration`
+oracle using its own DeepGEMM 2.6.1 path produced the same prefill/decode tokens
+(`5`, then `0`); maximum absolute logit differences were `0.4609375` and
+`0.453125`. Remaining qualification includes multi-token decode soak/capacity
+checks and matched vLLM/SGLang runs.
 
 The bring-up also exposed a compiler-scale boundary: before source-only values
 were treated as loop inputs, the 17,185-node full graph reached about 219 GiB
