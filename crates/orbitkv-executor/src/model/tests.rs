@@ -1108,8 +1108,8 @@ fn graph_composes_token_attention_and_fixed_state_layers() {
             .map(|state| (state.binding.state_id, state.policy))
             .collect::<Vec<_>>(),
         vec![
-            (1, crate::FixedStateWritePolicy::CopyBackAllowed),
-            (2, crate::FixedStateWritePolicy::CopyBackAllowed),
+            (1, crate::FixedStateWritePolicy::RequiredInPlace),
+            (2, crate::FixedStateWritePolicy::RequiredInPlace),
         ]
     );
 }

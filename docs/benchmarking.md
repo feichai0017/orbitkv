@@ -171,6 +171,29 @@ OrbitKV reached 679.32 versus 1136.68 token/s (0.598x), with 2.682 versus
 444.51 ms E2E (1.69x). This improves the previous executor baseline but does
 not qualify an OrbitKV-over-SGLang serving advantage.
 
+## Current Qwen3.5 27B block-FP8 diagnostic
+
+The primary checkpoint now runs through the same OpenAI benchmark client as
+SGLang 0.5.17 and vLLM 0.29.0. Two alternating epochs used four input tokens,
+eight forced output tokens, eight requests, C1, greedy sampling, and one H20.
+OrbitKV/SGLang output throughput was 14.07/31.61 token/s (0.445x), with
+226.14/118.06 ms median TTFT and 50.45/19.07 ms median TPOT. OrbitKV/vLLM was
+14.40/36.98 token/s (0.390x), with 219.97/87.17 ms median TTFT and
+49.47/18.18 ms median TPOT. The OrbitKV and SGLang random-trace digests match;
+vLLM differs on one of eight generated texts.
+
+A fixed pre-tokenized `[1,2,3,4]` SSE follow-up resolves the claim boundary.
+SGLang and the independent Transformers oracle generate
+`[5,0,31,46474,4,5,0,31]`; OrbitKV and vLLM generate
+`[5,0,31,0,31,0,31,0]`. Therefore the prior prefill plus one-decode logit gate
+was extended through all eight generated steps. The general artifact remains
+within `0.42285156` maximum absolute error throughout. At token four the
+serving artifact has a near tie (`0=11.1875`, `46474=11.125`) while the oracle
+has the reverse order (`46474=11.25`, `0=11.125`), with maximum absolute error
+`0.5`. This rules out state corruption but still prevents an exact-output
+comparison against vLLM. Compact evidence lives in
+`results/deepgemm-luminal-bringup-20260909/`.
+
 ## Promotion rule
 
 Only reviewed runs move from `.qualification/` to `results/`. A promoted result

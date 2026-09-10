@@ -35,17 +35,21 @@ provides the client protocol. Planned work is not a current capability.
   released-model-qualified.
 - The single-process Rust engine and OpenAI-compatible server pass bounded
   batching, cancellation, streaming, shutdown, and final-drain tests.
-- The best recorded matched product comparison remains negative: 0.598x stock
-  SGLang output throughput on the recorded C2 trace. The same configuration used
-  40.4% less K/V tensor payload because the reference disabled hybrid Sliding
-  memory. This is not a replacement or superiority claim.
+- The primary 27B block-FP8 checkpoint now has a bounded single-process serving
+  path. On the current 4-input/8-output/C1 diagnostic it reaches 0.445x SGLang
+  and 0.390x vLLM output throughput. An eight-token fixed-prompt trace selects
+  the runner-up at generated token four, although direct per-step logits remain
+  within 0.5 of the independent oracle and identify a near tie. This is a
+  negative diagnostic rather than a competitive result. The best older
+  released-model comparison remains 0.598x SGLang on its recorded C2 trace.
 - External export, restore, deletion, and failure semantics pass through the
   host-memory reference transport. Mooncake, NIXL, remote leases, and network
   benefit remain open.
 
 ## Product model strategy
 
-The primary release target is the Qwen3.8 27B block-FP8 checkpoint. Its text
+The primary release target is the local 27B block-FP8 checkpoint whose directory
+is named `qwen3.8-27b-fp8` but whose metadata identifies Qwen3.5. Its text
 decoder is the forcing function for the product architecture: 64 layers with a
 3:1 Gated DeltaNet/Full-attention schedule, persistent recurrent and causal
 convolution state, partial rotary dimensions, and dynamic block-FP8 linear
@@ -56,15 +60,17 @@ plus 48 recurrent and convolution layers. The executor now parses the nested
   convolution history, grouped-head recurrence, gating, normalization, output
   projection, stable manager-owned arenas, and completion evidence. Packed
   prefill now uses typed causal-convolution and delta-scan custom ops selected
-  through Luminal's normal rewrite/search path. Checkpoint FP8 execution and
-  released-model packed-prefill qualification remain explicit gaps.
+  through Luminal's normal rewrite/search path. Checkpoint FP8 execution,
+  bounded serving, and eight-step independent logit parity now pass; robust
+  near-tie output equivalence and serving-scale qualification remain explicit
+  gaps.
 
-Use the structurally equivalent small BF16 checkpoint as the bring-up target.
-It must exercise the same 3:1 layer schedule and state transitions before the
-27B FP8 qualification. Existing dense Full and Full+Sliding checkpoints remain
-regression and lifecycle witnesses; they are not parallel product targets.
-Model support stays structural, so no checkpoint name may select an operator or
-physical layout in product code.
+Keep the structurally equivalent small BF16 checkpoint as a fast regression
+witness for the same 3:1 layer schedule and state transitions. The 27B FP8
+checkpoint is now the active correctness and performance target. Existing dense
+Full and Full+Sliding checkpoints remain lifecycle witnesses; they are not
+parallel product targets. Model support stays structural, so no checkpoint name
+may select an operator or physical layout in product code.
 
 The second architecture target is the latest openly released DeepSeek family.
 At this roadmap revision that is DeepSeek V4 Flash Vision, whose text path adds
@@ -105,12 +111,15 @@ single-device bring-up model.
    provider-neutral `BlockScaledLinear` semantic op. An independent CUDA
    reference implementation and four pinned DeepGEMM SM90 1D2D schedules join
    the same e-class and are selected by device profiling. Full-graph search now
-   fits within the compiler memory budget and bounded prefill/decode/drain
-   passes. An independent Transformers oracle matches the first prefill and
-   decode tokens with maximum absolute logit differences below 0.47;
-   serving-scale decode remains.
-6. Run the 27B FP8 text path on H20, first for deterministic token parity and
-   complete state drain, then for continuous batching and long-context pressure.
+   fits within the compiler memory budget. A general egglog rule unifies
+   equal-valued `LoopInput` streams, allowing required in-place state contracts
+   to eliminate multi-gigabyte recurrent/convolution copy-back while preserving
+   the independent eight-step logit gate.
+6. Define a robust multi-token correctness gate for near-tied BF16/FP8 logits.
+   The current fixed prompt picks the oracle runner-up at generated token four
+   despite maximum absolute logit error of `0.5`; do not require exact greedy
+   text across implementations at that boundary. Then widen continuous-batching,
+   long-context, and pressure qualification.
 
 ## Searchable attention execution
 
@@ -156,6 +165,15 @@ a matched benefit experiment.
 ## Serving performance
 
 After attention becomes a real compiler choice, optimize the complete warm path:
+
+The first bounded 27B serving diagnostic now establishes the optimization
+baseline. For a 4-input/8-output, eight-request, C1 trace, OrbitKV reaches
+14.07 output token/s versus 31.61 for SGLang and 14.40 versus 36.98 for vLLM in
+separate two-epoch comparisons. Median OrbitKV TPOT is about 50 ms versus
+19.07 ms and 18.18 ms. The source-level large-state copy regression is fixed,
+so the remaining gap belongs to the full graph/runtime rather than a single
+2.7-second arena scatter. The strict text result cannot be promoted across the
+near-tied fourth token; performance optimization remains necessary regardless.
 
 1. Attribute TTFT and TPOT to attention, graph dispatch, scheduler, metadata
    upload, sampling, and frontend overhead.

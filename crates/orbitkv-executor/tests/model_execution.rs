@@ -1631,6 +1631,49 @@ fn qwen35_fp8_bounded_prefill_decode_executes_and_drains() {
         &decode.fixed_states,
         2,
     );
+
+    let mut generated_token = decode.token_ids[0];
+    for generated_index in 2..8_u64 {
+        let target_boundary = u64::try_from(prompt.len()).unwrap() + generated_index;
+        let (attention, prepared, _) = prepare_decode_step(&mut run, target_boundary);
+        let classes = decoder_class_steps(&prepared, &attention);
+        let states = prepared
+            .fixed_state_requests()
+            .map(
+                |(request_id, states)| orbitkv_executor::model::DecoderFixedStateStep {
+                    request_id,
+                    states,
+                },
+            )
+            .collect::<Vec<_>>();
+        let output = decoder
+            .execute_with_fixed_states_and_logits(
+                DecoderStep {
+                    tokens: &[generated_token],
+                    positions: &[u32::try_from(target_boundary - 1).unwrap()],
+                    classes: &classes,
+                },
+                &states,
+            )
+            .unwrap();
+        let next_token = output.token_ids[0];
+        if let Some(reference) = &reference_directory {
+            assert_reference_logits(
+                &format!("decode-{generated_index}"),
+                &output.logits,
+                &reference.join(format!("decode-{generated_index}.f32")),
+                next_token,
+            );
+        }
+        complete_with_fixed_states(
+            &mut run.session,
+            &prepared,
+            &run.arenas,
+            &output.fixed_states,
+            generated_index + 1,
+        );
+        generated_token = next_token;
+    }
     release_and_drain(&mut run.session, EngineRequestId(1));
     assert!(run.session.fixed_state_stats().iter().all(|(_, state)| {
         state.active_owners == 0
