@@ -6,16 +6,17 @@ use luminal_nn::scatter_rows;
 
 use super::{
     DecoderActivation, DecoderBlockLayout, DecoderClassDimensions, DecoderConfig,
-    DecoderDimensions, DecoderError, DecoderNormWeights, DecoderWeightFeatures, weight,
+    DecoderDimensions, DecoderError, DecoderLinearWeight, DecoderNormWeights,
+    DecoderWeightFeatures, linear_weight, weight,
 };
 use crate::cuda::{AttentionKernel, PagedAttentionInputs, PagedAttentionMetadata, paged_attention};
 
 pub(super) struct TokenAttentionLayer {
     envelope: DecoderLayerEnvelope,
-    q_weight: GraphTensor,
-    k_weight: GraphTensor,
-    v_weight: GraphTensor,
-    o_weight: GraphTensor,
+    q_weight: DecoderLinearWeight,
+    k_weight: DecoderLinearWeight,
+    v_weight: DecoderLinearWeight,
+    o_weight: DecoderLinearWeight,
     q_bias: Option<GraphTensor>,
     k_bias: Option<GraphTensor>,
     v_bias: Option<GraphTensor>,
@@ -30,9 +31,9 @@ pub(super) struct DecoderLayerEnvelope {
     post_state_norm: Option<DecoderNorm>,
     feed_forward_norm: DecoderNorm,
     post_feed_forward_norm: Option<DecoderNorm>,
-    gate: GraphTensor,
-    up: GraphTensor,
-    down: GraphTensor,
+    gate: DecoderLinearWeight,
+    up: DecoderLinearWeight,
+    down: DecoderLinearWeight,
     activation: DecoderActivation,
 }
 
@@ -89,10 +90,12 @@ impl TokenAttentionLayer {
         };
         let kv_width = config.kv_heads * config.head_dim;
         let projection = |graph: &mut Graph, name: &str, width| {
-            weight(
+            linear_weight(
                 graph,
-                format!("{prefix}.self_attn.{name}.weight"),
-                (width, config.hidden_size),
+                config,
+                &format!("{prefix}.self_attn.{name}.weight"),
+                width,
+                config.hidden_size,
                 DType::Bf16,
             )
         };
@@ -112,10 +115,12 @@ impl TokenAttentionLayer {
             q_weight: projection(graph, "q_proj", q_projection_width),
             k_weight: projection(graph, "k_proj", kv_width),
             v_weight: projection(graph, "v_proj", kv_width),
-            o_weight: weight(
+            o_weight: linear_weight(
                 graph,
-                format!("{prefix}.self_attn.o_proj.weight"),
-                (config.hidden_size, q_width),
+                config,
+                &format!("{prefix}.self_attn.o_proj.weight"),
+                config.hidden_size,
+                q_width,
                 DType::Bf16,
             ),
             q_bias,
@@ -135,8 +140,8 @@ impl TokenAttentionLayer {
         class_dimensions: DecoderClassDimensions,
     ) -> Result<(GraphTensor, GraphTensor, GraphTensor), DecoderError> {
         let normalized = self.envelope.state_input(inputs.hidden);
-        let project = |weight: GraphTensor, bias: Option<GraphTensor>| {
-            let output = normalized.matmul(weight.t());
+        let project = |weight: DecoderLinearWeight, bias: Option<GraphTensor>| {
+            let output = weight.forward(&normalized);
             bias.map_or(output, |bias| bias.expand_lhs(&output.dims()[..1]) + output)
         };
         let projected_q = project(self.q_weight, self.q_bias);
@@ -211,7 +216,7 @@ impl TokenAttentionLayer {
         )?;
         let attention = attention.transpose(0, 1).merge_dims(1, 2);
         let attention = output_gate.map_or(attention, |gate| attention * gate.sigmoid());
-        let state_output = attention.matmul(self.o_weight.t());
+        let state_output = self.o_weight.forward(&attention);
         let hidden = self.envelope.finish(inputs.hidden, state_output);
         Ok((hidden, key_update, value_update))
     }
@@ -250,22 +255,28 @@ impl DecoderLayerEnvelope {
                     &format!("{prefix}.post_feedforward_layernorm.weight"),
                 )
             }),
-            gate: weight(
+            gate: linear_weight(
                 graph,
-                format!("{prefix}.mlp.gate_proj.weight"),
-                (config.intermediate_size, config.hidden_size),
+                config,
+                &format!("{prefix}.mlp.gate_proj.weight"),
+                config.intermediate_size,
+                config.hidden_size,
                 DType::Bf16,
             ),
-            up: weight(
+            up: linear_weight(
                 graph,
-                format!("{prefix}.mlp.up_proj.weight"),
-                (config.intermediate_size, config.hidden_size),
+                config,
+                &format!("{prefix}.mlp.up_proj.weight"),
+                config.intermediate_size,
+                config.hidden_size,
                 DType::Bf16,
             ),
-            down: weight(
+            down: linear_weight(
                 graph,
-                format!("{prefix}.mlp.down_proj.weight"),
-                (config.hidden_size, config.intermediate_size),
+                config,
+                &format!("{prefix}.mlp.down_proj.weight"),
+                config.hidden_size,
+                config.intermediate_size,
                 DType::Bf16,
             ),
             activation: config.activation,
@@ -286,13 +297,13 @@ impl DecoderLayerEnvelope {
         }
         let hidden = *residual + state_output;
         let normalized = self.feed_forward_norm.forward(&hidden);
-        let gate = normalized.matmul(self.gate.t()).cast(DType::F32);
-        let up = normalized.matmul(self.up.t()).cast(DType::F32);
+        let gate = self.gate.forward(&normalized).cast(DType::F32);
+        let up = self.up.forward(&normalized).cast(DType::F32);
         let activated = match self.activation {
             DecoderActivation::Silu => gate.swish(),
             DecoderActivation::GeluTanh => gelu_tanh(&gate),
         };
-        let mut feed_forward = (activated * up).cast(DType::Bf16).matmul(self.down.t());
+        let mut feed_forward = self.down.forward(&(activated * up).cast(DType::Bf16));
         if let Some(norm) = &self.post_feed_forward_norm {
             feed_forward = norm.forward(&feed_forward);
         }

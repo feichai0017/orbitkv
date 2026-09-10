@@ -5,7 +5,10 @@ use luminal::{
     prelude::{Expression, Graph, GraphTensor},
 };
 
-use super::{DecoderConfig, DecoderError, GatedDeltaConfig, topology::DecoderTopology, weight};
+use super::{
+    DecoderConfig, DecoderError, DecoderLinearWeight, GatedDeltaConfig, linear_weight,
+    topology::DecoderTopology, weight,
+};
 use crate::recurrent::gated_delta::softplus;
 use crate::{
     CausalConvolutionGeometry, CausalConvolutionStepInputs, ConvolutionStateGraphArena,
@@ -46,15 +49,15 @@ pub struct GatedDeltaDecodeOutput {
 pub struct GatedDeltaCore {
     geometry: GatedDeltaConfig,
     normalization_epsilon: f32,
-    input_qkv: GraphTensor,
-    input_z: GraphTensor,
+    input_qkv: DecoderLinearWeight,
+    input_z: DecoderLinearWeight,
     input_b: GraphTensor,
     input_a: GraphTensor,
     convolution_weight: GraphTensor,
     decay_log_rates: GraphTensor,
     decay_bias: GraphTensor,
     output_norm: GraphTensor,
-    output: GraphTensor,
+    output: DecoderLinearWeight,
 }
 
 /// Joint graph builder for the recurrent and convolution arenas used by a
@@ -102,16 +105,20 @@ impl GatedDeltaCore {
         Ok(Self {
             geometry,
             normalization_epsilon: config.rms_epsilon,
-            input_qkv: weight(
+            input_qkv: linear_weight(
                 graph,
-                format!("{prefix}.in_proj_qkv.weight"),
-                (convolution_channels, config.hidden_size),
+                config,
+                &format!("{prefix}.in_proj_qkv.weight"),
+                convolution_channels,
+                config.hidden_size,
                 activation_dtype,
             ),
-            input_z: weight(
+            input_z: linear_weight(
                 graph,
-                format!("{prefix}.in_proj_z.weight"),
-                (value_elements, config.hidden_size),
+                config,
+                &format!("{prefix}.in_proj_z.weight"),
+                value_elements,
+                config.hidden_size,
                 activation_dtype,
             ),
             input_b: weight(
@@ -150,10 +157,12 @@ impl GatedDeltaCore {
                 geometry.value_width,
                 DType::F32,
             ),
-            output: weight(
+            output: linear_weight(
                 graph,
-                format!("{prefix}.out_proj.weight"),
-                (config.hidden_size, value_elements),
+                config,
+                &format!("{prefix}.out_proj.weight"),
+                config.hidden_size,
+                value_elements,
                 activation_dtype,
             ),
         })
@@ -169,8 +178,8 @@ impl GatedDeltaCore {
             return Err(DecoderError::InvalidGeometry("gated-delta hidden shape"));
         }
         Ok(GatedDeltaProjection {
-            convolution_input: (*hidden).matmul(self.input_qkv.t()),
-            output_gate: (*hidden).matmul(self.input_z.t()).cast(DType::F32),
+            convolution_input: self.input_qkv.forward(hidden),
+            output_gate: self.input_z.forward(hidden).cast(DType::F32),
             update_gate_logits: (*hidden).matmul(self.input_b.t()).cast(DType::F32),
             decay_gate_logits: (*hidden).matmul(self.input_a.t()).cast(DType::F32),
         })
@@ -216,9 +225,12 @@ impl GatedDeltaCore {
             },
             self.normalization_epsilon,
         )?;
-        let values = recurrent.values.merge_dims(1, 2).cast(self.output.dtype);
+        let values = recurrent
+            .values
+            .merge_dims(1, 2)
+            .cast(self.output.output_dtype());
         Ok(GatedDeltaCoreOutput {
-            hidden: values.matmul(self.output.t()),
+            hidden: self.output.forward(&values),
             next_recurrent_state: recurrent.next_state,
         })
     }
@@ -341,10 +353,9 @@ impl GatedDeltaCore {
                 .split_dims(1, self.geometry.value_width)
                 .swish();
         Ok(GatedDeltaDecodeOutput {
-            hidden: values
-                .merge_dims(1, 2)
-                .cast(self.output.dtype)
-                .matmul(self.output.t()),
+            hidden: self
+                .output
+                .forward(&values.merge_dims(1, 2).cast(DType::Bf16)),
             next_recurrent_state: recurrent.state,
             next_convolution_history: convolution.history,
         })
@@ -460,8 +471,8 @@ impl GatedDeltaStateBindings {
     #[must_use]
     pub fn write_policies() -> [crate::FixedStateWritePolicy; 2] {
         [
-            crate::FixedStateWritePolicy::RequiredInPlace,
-            crate::FixedStateWritePolicy::RequiredInPlace,
+            crate::FixedStateWritePolicy::CopyBackAllowed,
+            crate::FixedStateWritePolicy::CopyBackAllowed,
         ]
     }
 
@@ -548,9 +559,9 @@ mod tests {
             CompileOptions::default().search_graph_limit(1),
         );
         runtime.set_data(hidden, vec![1.0_f32, 2.0, 3.0, 4.0]);
-        runtime.set_data(core.input_qkv, projection_weights());
+        runtime.set_data(core.input_qkv.weight, projection_weights());
         runtime.set_data(
-            core.input_z,
+            core.input_z.weight,
             vec![1.0_f32, 0.0, 0.0, 0.0, 1.0, 0.0, 0.0, 0.0],
         );
         runtime.set_data(core.input_b, vec![0.0_f32; 8]);
@@ -560,7 +571,7 @@ mod tests {
         runtime.set_data(core.decay_bias, vec![0.0_f32; 2]);
         runtime.set_data(core.output_norm, vec![1.0_f32]);
         runtime.set_data(
-            core.output,
+            core.output.weight,
             vec![1.0_f32, 1.0, 0.0, 0.0, 0.0, 0.0, 1.0, 1.0],
         );
         runtime.set_data(recurrent_state, vec![0.0_f32; 4]);
@@ -692,8 +703,8 @@ mod tests {
         assert_eq!(
             GatedDeltaStateBindings::write_policies(),
             [
-                crate::FixedStateWritePolicy::RequiredInPlace,
-                crate::FixedStateWritePolicy::RequiredInPlace,
+                crate::FixedStateWritePolicy::CopyBackAllowed,
+                crate::FixedStateWritePolicy::CopyBackAllowed,
             ]
         );
         assert_eq!(

@@ -87,6 +87,7 @@ pub(super) fn prepare_decoder_compilation(
         page_tokens,
         representative_query_tokens,
     );
+    runtime.register_profile_single_row_indptr(decoder.inputs.query_indptr, 's');
     let options = decoder_compile_options(&decoder, compile)
         .compiler_facts(compiler_facts.egglog().to_owned());
     Ok(DecoderCompilation {

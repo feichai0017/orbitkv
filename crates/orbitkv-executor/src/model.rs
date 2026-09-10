@@ -14,6 +14,7 @@ use thiserror::Error;
 
 use luminal_cuda_lite::{
     cudarc::driver::{CudaContext, CudaSlice, CudaStream},
+    host::block_scaled_linear::{BlockScaledLinearSpec, block_scaled_linear},
     runtime::{CapturedCudaExecution, CudaRuntime},
 };
 
@@ -268,6 +269,12 @@ pub struct DecoderStepOutput {
 /// recurrent and convolution state.
 pub struct StatefulDecoderStepOutput {
     pub token_ids: Box<[u32]>,
+    pub fixed_states: Box<[FixedStateExecutionEvidence]>,
+}
+
+pub struct StatefulDecoderDiagnosticOutput {
+    pub token_ids: Box<[u32]>,
+    pub logits: Box<[f32]>,
     pub fixed_states: Box<[FixedStateExecutionEvidence]>,
 }
 
@@ -769,6 +776,36 @@ impl CompiledDecoder {
         })
     }
 
+    /// Executes a fixed-state step and additionally reads logits for bounded
+    /// correctness diagnostics. Production serving should use
+    /// [`Self::execute_with_fixed_states`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error when the step or fixed-state bindings are invalid,
+    /// execution fails, or the diagnostic logits are malformed.
+    pub fn execute_with_fixed_states_and_logits(
+        &mut self,
+        step: DecoderStep<'_>,
+        states: &[DecoderFixedStateStep<'_>],
+    ) -> Result<StatefulDecoderDiagnosticOutput, DecoderError> {
+        let output = self.execute_with_fixed_states(step, states)?;
+        let logits = self.runtime.get_f32(self.decoder.outputs.logits);
+        let expected = step
+            .tokens
+            .len()
+            .checked_mul(self.vocabulary_size)
+            .ok_or(DecoderError::InputCapacity)?;
+        if logits.len() != expected || logits.iter().any(|value| !value.is_finite()) {
+            return Err(DecoderError::InvalidGeometry("logits output"));
+        }
+        Ok(StatefulDecoderDiagnosticOutput {
+            token_ids: output.token_ids,
+            logits: logits.into_boxed_slice(),
+            fixed_states: output.fixed_states,
+        })
+    }
+
     /// Warms and captures one fixed-signature decode execution.
     ///
     /// The warmup is the execution represented by the returned token. The
@@ -1163,8 +1200,8 @@ fn register_persistent_cache(
                 .and_then(|elements| elements.checked_mul(2))
                 .ok_or(DecoderError::InvalidGeometry("cache bytes"))?;
             Ok([
-                runtime.alias_state_required(state.binding.key, state.key_update, cache_bytes),
-                runtime.alias_state_required(state.binding.value, state.value_update, cache_bytes),
+                runtime.alias_state(state.binding.key, state.key_update, cache_bytes),
+                runtime.alias_state(state.binding.value, state.value_update, cache_bytes),
             ])
         })
         .collect::<Result<Vec<_>, DecoderError>>()
@@ -1476,6 +1513,78 @@ fn token_embedding(table: &GraphTensor, tokens: &GraphTensor, hidden: usize) -> 
         (*tokens * hidden).expand_dim(1, hidden)
             + tokens.graph().arange(hidden).expand_dim(0, count),
     )
+}
+
+#[derive(Clone, Copy)]
+pub(super) struct DecoderLinearWeight {
+    pub(super) weight: GraphTensor,
+    scale: Option<GraphTensor>,
+    format: DecoderWeightFormat,
+    output_features: usize,
+    input_features: usize,
+}
+
+impl DecoderLinearWeight {
+    pub(super) fn output_dtype(self) -> DType {
+        match self.format {
+            DecoderWeightFormat::Float => self.weight.dtype,
+            DecoderWeightFormat::Fp8E4M3Block { .. } => DType::Bf16,
+        }
+    }
+
+    pub(super) fn forward(self, input: &GraphTensor) -> GraphTensor {
+        match (self.format, self.scale) {
+            (DecoderWeightFormat::Float, None) => (*input).matmul(self.weight.t()),
+            (DecoderWeightFormat::Fp8E4M3Block { rows, columns }, Some(weight_scale)) => {
+                block_scaled_linear(
+                    *input,
+                    self.weight,
+                    weight_scale,
+                    BlockScaledLinearSpec {
+                        rows: input.dims()[0],
+                        output_features: self.output_features,
+                        input_features: self.input_features,
+                        weight_block_rows: rows,
+                        weight_block_columns: columns,
+                    },
+                )
+            }
+            _ => unreachable!("decoder linear weight and scale must be constructed together"),
+        }
+    }
+}
+
+pub(super) fn linear_weight(
+    graph: &mut Graph,
+    config: &DecoderConfig,
+    name: &str,
+    output_features: usize,
+    input_features: usize,
+    float_dtype: DType,
+) -> DecoderLinearWeight {
+    let name = name.to_owned();
+    let (dtype, scale) = match config.weight_format {
+        DecoderWeightFormat::Float => (float_dtype, None),
+        DecoderWeightFormat::Fp8E4M3Block { rows, columns } => (
+            DType::F8E4M3,
+            Some(weight(
+                graph,
+                format!("{name}_scale_inv"),
+                (
+                    output_features.div_ceil(rows),
+                    input_features.div_ceil(columns),
+                ),
+                DType::F32,
+            )),
+        ),
+    };
+    DecoderLinearWeight {
+        weight: weight(graph, name, (output_features, input_features), dtype),
+        scale,
+        format: config.weight_format,
+        output_features,
+        input_features,
+    }
 }
 
 pub(super) fn weight(

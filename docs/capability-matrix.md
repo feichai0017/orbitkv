@@ -48,8 +48,8 @@ Historical results qualify only their recorded source closure.
 | KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, and Prefix/COW lowering |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
 | Checkpoint family | Configuration-driven dense decoder plus nested hybrid text-config parsing with fail-closed capability gates; released Full and Full+Sliding checkpoints have real-device correctness evidence |
-| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Nested geometry, gated Full Attention, grouped GDN heads, real tensor/scale shapes, fixed-state compiler facts, stable CUDA arenas, dynamic slot/layer addressing, packed GDN/convolution operators, production graph composition, and event-backed state evidence exist; FP8 execution and released-model device qualification remain unsupported |
-| Not yet executable as complete models | Quantized hybrid checkpoints, MoE, sparse/latent attention, multimodal encoders, speculative decoding, and tensor/pipeline parallel models |
+| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Projection weights and 128x128 inverse-scale tensors enter provider-neutral block-scaled linear nodes. Luminal generates four DeepGEMM SM90 candidates per node and device-profiles them per bucket. A bounded H20 full-checkpoint run now passes cold search, four-token prefill, one decode step, joint token/fixed-state evidence, release, and final drain; independent model-output parity remains open |
+| Not yet executable as complete models | The 27B quantized hybrid checkpoint still lacks independent logits/token parity and multi-token decode qualification; MoE, sparse/latent attention, multimodal encoders, speculative decoding, and tensor/pipeline parallel models remain unsupported |
 
 Core support for a retention policy means its lifecycle can be compiled and
 host-tested. It does not by itself imply that all model operators or the

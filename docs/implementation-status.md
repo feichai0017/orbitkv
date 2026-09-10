@@ -14,8 +14,9 @@ operator passes all applicable layers.
 | Full + Sliding interleaving | Independent class lifetimes and joint transactions host-tested | Manifest-driven per-layer graph construction, independent arenas, write slots, CSR metadata, and capture signatures pass host tests | Released 18-layer 3-Full/15-Sliding checkpoint passes independent token parity, retirement/reuse, cancellation, and final drain on H20 | Narrow same-executor L5: 27.8% less resident payload, 6.1% longer fixed-budget boundary, 0.77% lower median test-path time |
 | Exact Chunked attention | Resettable epoch arena host-tested; one whole-domain class only | Metadata lowering implemented | Not independently device-qualified | Unproven |
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
-| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | GDN has distinct key/value-head semantics, checkpoint-shaped split projections, gates, packed delta scan, gated RMSNorm/readout, dynamic arena addressing, and egglog-selected in-place state commits | Ragged packed operator parity passes on H20; complete released-model decode/prefill remains unqualified | Unproven |
-| Convolution state | Generation-checked checkpoint lifecycle host-tested | Minimal `K-1` BF16 history, typed packed causal convolution, dynamic arena addressing, and egglog-selected in-place history commits are part of the production graph | Ragged packed operator parity passes on H20; complete released-model decode/prefill remains unqualified | Unproven |
+| Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | GDN has distinct key/value-head semantics, checkpoint-shaped split projections, gates, packed delta scan, gated RMSNorm/readout, dynamic arena addressing, and event-ordered copy-back to manager-owned state arenas | Ragged packed operator parity and bounded full-checkpoint prefill/decode/drain pass on H20 | Unproven |
+| Convolution state | Generation-checked checkpoint lifecycle host-tested | Minimal `K-1` BF16 history, typed packed causal convolution, dynamic arena addressing, and event-ordered copy-back to manager-owned history arenas are part of the production graph | Ragged packed operator parity and bounded full-checkpoint prefill/decode/drain pass on H20 | Unproven |
+| Block-FP8 linear compiler | Not a state owner | Provider-neutral BF16 x E4M3/128x128-scale semantics; independent CUDA reference plus four pinned DeepGEMM SM90 1D2D tile candidates share one e-class and are device-profiled per bucket | H20 reference parity, direct native execution, search selection, provider identity persistence, and bounded full-checkpoint prefill/decode/drain pass; independent model-output parity remains open | Bring-up measurements only |
 | Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
 
 The native dense decoder accepts multiple token-KV classes with exact,
@@ -53,7 +54,14 @@ causal-convolution/delta-scan parity gate pass on H20. The production decoder
 now builds mixed token-KV/GDN layers, owns fixed-state device arenas, binds them
 after search, and returns event-backed evidence that the engine submits
 atomically with token KV. Packed prefill is admitted through shared request
-segmentation; block-FP8 weights remain fail-closed. The gated-delta recurrence
+segmentation. Block-FP8 projections now load the checkpoint's E4M3 tensors and
+128x128 inverse scales into a provider-neutral Luminal op. Its independent CUDA
+reference and four pinned DeepGEMM SM90 1D2D schedules share one e-class and are
+selected by device profiling. Operator parity passes on H20, and a bounded
+full-checkpoint run now completes search, prefill, one decode step, manager
+publication, release, and token/fixed-state drain. Independent output parity
+and multi-token decode remain open.
+The gated-delta recurrence
 has an independent f32 sequence oracle, a pure Luminal single-token expression,
 and a typed packed CUDA scan. Token values and next state match the oracle,
 including grouped key/value heads. A checkpoint-shaped graph composes
