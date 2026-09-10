@@ -258,9 +258,12 @@ impl DecoderConfig {
     }
 
     pub(super) fn require_executable(&self) -> Result<(), DecoderError> {
-        if self.weight_format != DecoderWeightFormat::Float {
+        if matches!(
+            self.weight_format,
+            DecoderWeightFormat::Fp8E4M3Block { rows, columns } if rows != 128 || columns != 128
+        ) {
             return Err(DecoderError::UnsupportedExecution(
-                "quantized weight execution",
+                "non-128x128 block-scaled weight execution",
             ));
         }
         Ok(())

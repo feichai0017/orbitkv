@@ -228,6 +228,24 @@ The direct OrbitKV paged-attention node is a FlashInfer custom op, so the curren
 search can optimize the surrounding decoder graph and schedule but does not yet
 choose among multiple attention implementations or jointly derive a KV layout.
 
+Block-scaled linear execution follows the same compiler boundary rather than a
+model-side backend switch. The decoder emits a provider-neutral semantic node
+whose inputs are BF16 activations, FP8 E4M3 weights, and 128x128 inverse scales.
+Its independent two-kernel CUDA implementation is the correctness fallback.
+Egglog unions four legal DeepGEMM SM90 1D2D tile schedules into that e-class;
+candidate preparation JIT-compiles the pinned upstream source before timing, and
+Luminal's normal device profiler chooses the implementation per dynamic bucket.
+The selected LLIR contains the provider revision and tile variant, so schedule
+serialization cannot silently replay against an unnamed kernel implementation.
+DeepGEMM receives only tensor pointers and a stream and has no state-management
+authority.
+
+Search profiling also refreshes the shared single-request `query_indptr` from
+the bucket's representative token count before timing. This keeps packed
+convolution and recurrent kernels valid when the compiler switches between the
+decode (`s=1`) and prefill (`s>1`) buckets; it is profiling metadata only and
+does not change OrbitKV-authored execution plans.
+
 `tools/verify_active_source.py` enforces these forbidden dependency edges,
 rejects physical KV ownership types in server source, requires all product
 Luminal dependencies to resolve through the visible submodule, rejects removed

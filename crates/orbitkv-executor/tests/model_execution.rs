@@ -7,7 +7,8 @@ use std::time::{Duration, Instant};
 use orbitkv::{
     CacheSharingPolicy, EngineAppendIntent, EngineCompletionEvidence, EnginePublicationEvidence,
     EngineReleaseEvidence, EngineReleaseOutcome, EngineRequestId, EngineRetirementEvidence,
-    HfRetentionOptions, RuntimeSession, RuntimeSessionError, compile_hf_runtime_manifest,
+    HfRetentionOptions, RuntimeSession, RuntimeSessionError, StateCheckpointPool,
+    StatePoolIdentity, compile_hf_runtime_manifest,
     kv_manager::{
         BackendArenaRegistration, CanonicalKvManager, KvManagerError, ManagerConfig,
         PhysicalResidencePolicy,
@@ -15,7 +16,10 @@ use orbitkv::{
 };
 use orbitkv_executor::{
     AttentionBatch, ExecutorArena, ExecutorPlan, PreparedBatch,
-    model::{CompiledDecoder, DecoderClassStep, DecoderCompileConfig, DecoderConfig, DecoderStep},
+    model::{
+        CompiledDecoder, DecoderArtifact, DecoderClassStep, DecoderCompileConfig, DecoderConfig,
+        DecoderStep,
+    },
 };
 
 const PAGE_TOKENS: u64 = 16;
@@ -38,6 +42,20 @@ fn search_graphs() -> usize {
         .ok()
         .and_then(|value| value.parse().ok())
         .unwrap_or(2)
+}
+
+fn weight_files(model_dir: &std::path::Path) -> Vec<PathBuf> {
+    let mut files = std::fs::read_dir(model_dir)
+        .unwrap()
+        .filter_map(Result::ok)
+        .map(|entry| entry.path())
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "safetensors")
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    files
 }
 
 struct PreparedModelRun {
@@ -150,7 +168,18 @@ fn model_harness(
         physical_residence,
     )
     .unwrap();
-    let session = RuntimeSession::new(manager, CacheSharingPolicy::RequestPrivate);
+    let executor_plan = ExecutorPlan::compile(&manifest).unwrap();
+    let fixed_states = build_fixed_state_pools(
+        &executor_plan.fixed_states,
+        &manager.arena_stats(),
+        maximum_requests,
+    );
+    let session = if fixed_states.is_empty() {
+        RuntimeSession::new(manager, CacheSharingPolicy::RequestPrivate)
+    } else {
+        RuntimeSession::with_fixed_states(manager, CacheSharingPolicy::RequestPrivate, fixed_states)
+            .unwrap()
+    };
     let arenas = session
         .arena_stats()
         .iter()
@@ -159,12 +188,69 @@ fn model_harness(
         .map(|(stats, registration)| ExecutorArena::bind(stats, registration).unwrap())
         .collect::<Vec<_>>()
         .into_boxed_slice();
-    let executor_plan = ExecutorPlan::compile(&manifest).unwrap();
     ModelBatchHarness {
         session,
         executor_plan,
         arenas,
     }
+}
+
+fn build_fixed_state_pools(
+    classes: &[orbitkv_executor::FixedStateClass],
+    token_arenas: &[orbitkv::kv_manager::ArenaStats],
+    maximum_requests: usize,
+) -> Vec<(u16, StateCheckpointPool)> {
+    if classes.is_empty() {
+        return Vec::new();
+    }
+    let engine_epoch = token_arenas[0].engine_epoch;
+    let base_pool_epoch = token_arenas
+        .iter()
+        .map(|arena| arena.pool_epoch)
+        .max()
+        .unwrap();
+    let base_pool_id = token_arenas
+        .iter()
+        .map(|arena| arena.pool_id)
+        .max()
+        .unwrap();
+    classes
+        .iter()
+        .enumerate()
+        .map(|(index, class)| {
+            let (slots_per_request, bytes_per_request) = match class.storage {
+                orbitkv_executor::FixedStateStorage::Recurrent {
+                    slots_per_request,
+                    bytes_per_request,
+                    ..
+                }
+                | orbitkv_executor::FixedStateStorage::Convolution {
+                    slots_per_request,
+                    bytes_per_request,
+                    ..
+                } => (slots_per_request, bytes_per_request),
+            };
+            let slot_bytes = bytes_per_request / u64::from(slots_per_request);
+            let offset = u32::try_from(index + 1).unwrap();
+            let pool = StateCheckpointPool::new(
+                engine_epoch,
+                base_pool_epoch + u64::from(offset),
+                base_pool_id + offset,
+                slot_bytes,
+                u32::try_from(maximum_requests).unwrap() * slots_per_request,
+            )
+            .unwrap();
+            (class.state_id, pool)
+        })
+        .collect()
+}
+
+fn fixed_state_identities(session: &RuntimeSession) -> Vec<(u16, StatePoolIdentity)> {
+    session
+        .fixed_state_stats()
+        .iter()
+        .map(|(state_id, stats)| (*state_id, stats.identity))
+        .collect()
 }
 
 fn model_batch_harness(
@@ -220,7 +306,28 @@ fn complete(
     completion_value: u64,
 ) {
     let evidence = prepared.execution_evidence_after_success(arenas).unwrap();
-    let ticket = session.submit_execution(&evidence).unwrap();
+    complete_evidence(session, &evidence, completion_value);
+}
+
+fn complete_with_fixed_states(
+    session: &mut RuntimeSession,
+    prepared: &PreparedBatch,
+    arenas: &[ExecutorArena],
+    fixed: &[orbitkv_executor::FixedStateExecutionEvidence],
+    completion_value: u64,
+) {
+    let evidence = prepared
+        .execution_evidence_after_state_success(arenas, fixed)
+        .unwrap();
+    complete_evidence(session, &evidence, completion_value);
+}
+
+fn complete_evidence(
+    session: &mut RuntimeSession,
+    evidence: &orbitkv::runtime_session::ExecutionEvidence,
+    completion_value: u64,
+) {
+    let ticket = session.submit_execution(evidence).unwrap();
     let publication = session
         .complete_execution_by_batch(
             ticket.batch_id(),
@@ -364,12 +471,14 @@ fn compile_hybrid_decoder(
         search_seed: 7,
     };
     let started = Instant::now();
+    let weight_files = weight_files(model_dir);
+    let fixed_states = fixed_state_identities(&run.session);
     let decoder = CompiledDecoder::compile(
         config,
         &run.executor_plan,
-        orbitkv_executor::model::DecoderStorage::token_only(&run.arenas),
+        orbitkv_executor::model::DecoderStorage::new(&run.arenas, &fixed_states),
         &stream,
-        &[model_dir.join("model.safetensors")],
+        &weight_files,
         compile,
     )
     .unwrap();
@@ -1043,12 +1152,13 @@ fn released_checkpoint_bounds_single_and_multi_request_logits() {
         search_graphs: search_graphs(),
         search_seed: 7,
     };
+    let fixed_states = fixed_state_identities(&run.session);
     let mut decoder = CompiledDecoder::compile(
         &config,
         &run.executor_plan,
-        orbitkv_executor::model::DecoderStorage::token_only(&run.arenas),
+        orbitkv_executor::model::DecoderStorage::new(&run.arenas, &fixed_states),
         &stream,
-        &[model_dir.join("model.safetensors")],
+        &weight_files(&model_dir),
         compile,
     )
     .unwrap();
@@ -1234,22 +1344,37 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
         search_seed: 7,
     };
     let compile_started = Instant::now();
-    let mut decoder = CompiledDecoder::compile(
+    let fixed_states = fixed_state_identities(&prepared_run.session);
+    let artifact_path = std::env::var_os("ORBITKV_DECODER_ARTIFACT").map(PathBuf::from);
+    let artifact = artifact_path
+        .as_deref()
+        .filter(|path| path.exists())
+        .map(|path| DecoderArtifact::from_bytes(&std::fs::read(path).unwrap()).unwrap());
+    let (mut decoder, selected_artifact) = CompiledDecoder::compile_or_load(
         &config,
         &prepared_run.executor_plan,
-        orbitkv_executor::model::DecoderStorage::token_only(&prepared_run.arenas),
+        orbitkv_executor::model::DecoderStorage::new(&prepared_run.arenas, &fixed_states),
         &stream,
-        &[model_dir.join("model.safetensors")],
+        &weight_files(&model_dir),
         compile,
+        artifact.as_ref(),
     )
     .unwrap();
+    if artifact.is_none()
+        && let Some(path) = artifact_path
+    {
+        std::fs::write(path, selected_artifact.to_bytes().unwrap()).unwrap();
+    }
     eprintln!(
         "decoder: one-time bucket search/compile completed after {:.1}s",
         compile_started.elapsed().as_secs_f64()
     );
     assert_eq!(decoder.compile_config(), compile);
     assert_eq!(decoder.compiled_bucket_count(), 2);
-    assert_eq!(decoder.persistent_cache_count(), config.layers * 2);
+    assert_eq!(
+        decoder.persistent_cache_count(),
+        prepared_run.executor_plan.classes[0].layers.len() * 2
+    );
     let cache_updates_in_place = decoder.cache_updates_in_place();
     eprintln!("decoder: selected KV updates in-place={cache_updates_in_place}");
     assert_eq!(
@@ -1257,7 +1382,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
             .cache_bindings(&prepared_run.executor_plan)
             .unwrap()
             .len(),
-        config.layers
+        prepared_run.executor_plan.classes[0].layers.len()
     );
 
     let positions = (0..u32::try_from(prompt.len()).unwrap()).collect::<Vec<_>>();
@@ -1370,6 +1495,137 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
         &prepared_run.arenas,
         4,
     );
+}
+
+#[test]
+#[ignore = "requires the Qwen3.5 27B FP8 checkpoint, CUDA, and provider headers"]
+#[allow(clippy::too_many_lines)]
+fn qwen35_fp8_bounded_prefill_decode_executes_and_drains() {
+    let model_dir = model_directory();
+    let config_bytes = std::fs::read(model_dir.join("config.json")).unwrap();
+    let config = DecoderConfig::from_json(&config_bytes).unwrap();
+    let prompt = [1_u32, 2, 3, 4];
+    let positions = [0_u32, 1, 2, 3];
+    let mut run = prepare_model_run(&config_bytes, prompt.len());
+    let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(0).unwrap();
+    let stream = context.new_stream().unwrap();
+    let compile = DecoderCompileConfig {
+        maximum_query_tokens: 8,
+        representative_prefill_tokens: prompt.len(),
+        maximum_batch_size: 1,
+        maximum_context_pages: usize::try_from(PAGE_COUNT).unwrap(),
+        representative_context_pages: run.attention[0].page_indices.len(),
+        search_graphs: search_graphs(),
+        search_seed: 7,
+    };
+    let fixed_states = fixed_state_identities(&run.session);
+    let artifact_path = std::env::var_os("ORBITKV_DECODER_ARTIFACT").map(PathBuf::from);
+    let artifact = artifact_path
+        .as_deref()
+        .filter(|path| path.exists())
+        .map(|path| DecoderArtifact::from_bytes(&std::fs::read(path).unwrap()).unwrap());
+    let started = Instant::now();
+    let (mut decoder, selected_artifact) = CompiledDecoder::compile_or_load(
+        &config,
+        &run.executor_plan,
+        orbitkv_executor::model::DecoderStorage::new(&run.arenas, &fixed_states),
+        &stream,
+        &weight_files(&model_dir),
+        compile,
+        artifact.as_ref(),
+    )
+    .unwrap();
+    if artifact.is_none()
+        && let Some(path) = artifact_path
+    {
+        std::fs::write(path, selected_artifact.to_bytes().unwrap()).unwrap();
+    }
+    eprintln!(
+        "Qwen3.5 27B FP8: decoder schedule ready after {:.3}s",
+        started.elapsed().as_secs_f64()
+    );
+
+    let classes = decoder_class_steps(&run.prepared, &run.attention);
+    let state_steps = run
+        .prepared
+        .fixed_state_requests()
+        .map(
+            |(request_id, states)| orbitkv_executor::model::DecoderFixedStateStep {
+                request_id,
+                states,
+            },
+        )
+        .collect::<Vec<_>>();
+    let execute_started = Instant::now();
+    let output = decoder
+        .execute_with_fixed_states_and_logits(
+            DecoderStep {
+                tokens: &prompt,
+                positions: &positions,
+                classes: &classes,
+            },
+            &state_steps,
+        )
+        .unwrap();
+    eprintln!(
+        "Qwen3.5 27B FP8: bounded prefill completed after {:.6}s token={:?}",
+        execute_started.elapsed().as_secs_f64(),
+        output.token_ids.last()
+    );
+    assert_eq!(output.token_ids.len(), prompt.len());
+    assert_eq!(output.logits.len(), prompt.len() * config.vocabulary_size);
+    complete_with_fixed_states(
+        &mut run.session,
+        &run.prepared,
+        &run.arenas,
+        &output.fixed_states,
+        1,
+    );
+
+    let prefill_token = *output.token_ids.last().unwrap();
+    let (decode_attention, decode_prepared, _) = prepare_decode_step(&mut run, 5);
+    let decode_classes = decoder_class_steps(&decode_prepared, &decode_attention);
+    let decode_states = decode_prepared
+        .fixed_state_requests()
+        .map(
+            |(request_id, states)| orbitkv_executor::model::DecoderFixedStateStep {
+                request_id,
+                states,
+            },
+        )
+        .collect::<Vec<_>>();
+    let decode_started = Instant::now();
+    let decode = decoder
+        .execute_with_fixed_states_and_logits(
+            DecoderStep {
+                tokens: &[prefill_token],
+                positions: &[4],
+                classes: &decode_classes,
+            },
+            &decode_states,
+        )
+        .unwrap();
+    eprintln!(
+        "Qwen3.5 27B FP8: bounded decode completed after {:.6}s token={:?}",
+        decode_started.elapsed().as_secs_f64(),
+        decode.token_ids.first()
+    );
+    assert_eq!(decode.token_ids.len(), 1);
+    assert_eq!(decode.logits.len(), config.vocabulary_size);
+    complete_with_fixed_states(
+        &mut run.session,
+        &decode_prepared,
+        &run.arenas,
+        &decode.fixed_states,
+        2,
+    );
+    release_and_drain(&mut run.session, EngineRequestId(1));
+    assert!(run.session.fixed_state_stats().iter().all(|(_, state)| {
+        state.active_owners == 0
+            && state.pending_transitions == 0
+            && state.pending_retirements == 0
+            && state.free_slots == u64::from(state.identity.slot_count)
+    }));
 }
 
 #[test]

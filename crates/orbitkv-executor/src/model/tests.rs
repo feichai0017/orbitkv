@@ -134,6 +134,44 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
 }
 
 #[test]
+fn fp8_linear_declares_checkpoint_scale_and_searchable_deepgemm_candidates() {
+    let mut config = test_config(1);
+    config.weight_format = DecoderWeightFormat::Fp8E4M3Block {
+        rows: 128,
+        columns: 128,
+    };
+    let mut graph = Graph::default();
+    let input = graph
+        .named_tensor("input", (1usize, config.hidden_size))
+        .as_dtype(DType::Bf16);
+    let linear = linear_weight(
+        &mut graph,
+        &config,
+        "model.layers.0.mlp.gate_proj.weight",
+        config.intermediate_size,
+        config.hidden_size,
+        DType::Bf16,
+    );
+    linear.forward(&input).output();
+
+    assert!(graph.input_meta.values().any(|(name, dtype)| {
+        name == "model.layers.0.mlp.gate_proj.weight" && *dtype == DType::F8E4M3
+    }));
+    assert!(graph.input_meta.values().any(|(name, dtype)| {
+        name == "model.layers.0.mlp.gate_proj.weight_scale_inv" && *dtype == DType::F32
+    }));
+    graph.build_search_space::<CudaRuntime>(luminal::prelude::CompileOptions::default());
+    assert!(
+        graph
+            .egraph()
+            .unwrap()
+            .enodes
+            .values()
+            .any(|(label, _)| label == "DeepGemmSm90")
+    );
+}
+
+#[test]
 fn step_validation_enforces_compiled_capacities() {
     let compile = DecoderCompileConfig {
         maximum_query_tokens: 4,
@@ -619,12 +657,7 @@ fn parses_nested_hybrid_decoder_without_checkpoint_name_dispatch() {
             columns: 128,
         }
     );
-    assert!(matches!(
-        config.require_executable(),
-        Err(DecoderError::UnsupportedExecution(
-            "quantized weight execution"
-        ))
-    ));
+    assert!(config.require_executable().is_ok());
 }
 
 #[test]
@@ -689,6 +722,15 @@ fn external_hybrid_checkpoint_passes_structural_execution_admission() {
         .expect("ORBITKV_MODEL_DIR is required");
     let bytes = std::fs::read(directory.join("config.json")).unwrap();
     let config = DecoderConfig::from_json(&bytes).unwrap();
+    let manifest = orbitkv::compile_hf_runtime_manifest(
+        &bytes,
+        orbitkv::HfRetentionOptions {
+            page_tokens: 16,
+            kv_dtype_bytes: 2,
+        },
+    )
+    .unwrap();
+    let plan = ExecutorPlan::compile(&manifest).unwrap();
     let mut weight_files = std::fs::read_dir(&directory)
         .unwrap()
         .filter_map(Result::ok)
@@ -709,16 +751,73 @@ fn external_hybrid_checkpoint_passes_structural_execution_admission() {
             .as_deref()
             .is_some_and(|layers| layers.contains(&DecoderLayerKind::Linear))
     );
-    if config.weight_format == DecoderWeightFormat::Float {
-        assert!(config.require_executable().is_ok());
-    } else {
-        assert!(matches!(
-            config.require_executable(),
-            Err(DecoderError::UnsupportedExecution(
-                "quantized weight execution"
-            ))
-        ));
-    }
+    assert!(config.require_executable().is_ok());
+
+    let arenas = plan
+        .classes
+        .iter()
+        .map(|class| ExecutorArena {
+            engine_epoch: 1,
+            pool_epoch: u64::from(class.class_id) + 1,
+            pool_id: u32::from(class.class_id) + 1,
+            class_id: class.class_id,
+            backend_domain: class.class_id + 1,
+            first_page_id: 1,
+            page_count: 1,
+            backend_base_index: 0,
+        })
+        .collect::<Vec<_>>();
+    let identities = plan
+        .fixed_states
+        .iter()
+        .map(|class| {
+            let (slots, bytes) = match class.storage {
+                crate::FixedStateStorage::Recurrent {
+                    slots_per_request,
+                    bytes_per_request,
+                    ..
+                }
+                | crate::FixedStateStorage::Convolution {
+                    slots_per_request,
+                    bytes_per_request,
+                    ..
+                } => (slots_per_request, bytes_per_request),
+            };
+            (
+                class.state_id,
+                StatePoolIdentity {
+                    engine_epoch: 1,
+                    pool_epoch: u64::from(class.state_id) + 100,
+                    byte_count: bytes / u64::from(slots),
+                    pool_id: u32::from(class.state_id) + 100,
+                    slot_count: slots,
+                },
+            )
+        })
+        .collect::<Vec<_>>();
+    let registrations = plan.fixed_state_registrations(&identities).unwrap();
+    let mut graph = Graph::default();
+    DecoderGraph::build(
+        &mut graph,
+        &config,
+        DecoderWeightFeatures::default(),
+        &plan,
+        &arenas,
+        &registrations,
+    )
+    .unwrap();
+    let fp8_weights = graph
+        .input_meta
+        .values()
+        .filter(|(name, dtype)| name.ends_with(".weight") && *dtype == DType::F8E4M3)
+        .count();
+    let scales = graph
+        .input_meta
+        .values()
+        .filter(|(name, dtype)| name.ends_with(".weight_scale_inv") && *dtype == DType::F32)
+        .count();
+    assert!(fp8_weights > 0);
+    assert_eq!(fp8_weights, scales);
 }
 
 #[test]
@@ -1009,8 +1108,8 @@ fn graph_composes_token_attention_and_fixed_state_layers() {
             .map(|state| (state.binding.state_id, state.policy))
             .collect::<Vec<_>>(),
         vec![
-            (1, crate::FixedStateWritePolicy::RequiredInPlace),
-            (2, crate::FixedStateWritePolicy::RequiredInPlace),
+            (1, crate::FixedStateWritePolicy::CopyBackAllowed),
+            (2, crate::FixedStateWritePolicy::CopyBackAllowed),
         ]
     );
 }

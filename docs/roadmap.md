@@ -100,9 +100,13 @@ single-device bring-up model.
    released-checkpoint closure.
 4. Add partial RoPE and text-only nested checkpoint loading without admitting
    unimplemented image/video inputs.
-5. Add block-FP8 weights, dynamic activation scaling, scaled matrix products,
-   and safetensors scale validation. Luminal already has FP8 dtypes, quantization
-   and cuBLASLt primitives; the model loader and block-scale graph remain open.
+5. Landed the first block-FP8 execution slice: the decoder now declares FP8
+   projection weights and their 128x128 inverse scales, while Luminal exposes a
+   provider-neutral `BlockScaledLinear` semantic op. An independent CUDA
+   reference implementation and four pinned DeepGEMM SM90 1D2D schedules join
+   the same e-class and are selected by device profiling. Full-graph search now
+   fits within the compiler memory budget and bounded prefill/decode/drain
+   passes; independent output parity and serving-scale decode remain.
 6. Run the 27B FP8 text path on H20, first for deterministic token parity and
    complete state drain, then for continuous batching and long-context pressure.
 
