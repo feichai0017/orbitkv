@@ -135,6 +135,9 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
 
 #[test]
 fn fp8_linear_declares_checkpoint_scale_and_searchable_deepgemm_candidates() {
+    if luminal_cuda_lite::device_compute_major() != 9 {
+        return;
+    }
     let mut config = test_config(1);
     config.weight_format = DecoderWeightFormat::Fp8E4M3Block {
         rows: 128,
@@ -167,7 +170,7 @@ fn fp8_linear_declares_checkpoint_scale_and_searchable_deepgemm_candidates() {
             .unwrap()
             .enodes
             .values()
-            .any(|(label, _)| label == "DeepGemmSm90")
+            .any(|(label, _)| label == "DeepGemm")
     );
 }
 

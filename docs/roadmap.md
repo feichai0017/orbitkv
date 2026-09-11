@@ -26,9 +26,16 @@ provides the client protocol. Planned work is not a current capability.
   state. The production decoder now owns these arenas and returns event-backed
   state evidence for decode and packed prefill. The stable-arena two-step gate
   and ragged packed-kernel parity gate pass on H20.
-- The current direct paged-attention node uses FlashInfer. Luminal searches the
-  surrounding decoder graph, but does not yet select among multiple attention
-  implementations or jointly derive a KV layout.
+- The decoder now emits a provider-neutral paged-attention semantic node.
+  FlashInfer is introduced as a legal implementation by egglog rather than
+  named by the model graph. It is currently the only optimized attention
+  provider, so real multi-provider selection and joint KV-layout derivation
+  remain open.
+- DeepGEMM and FlashInfer now share one pinned provider-source policy: explicit
+  local checkout or an explicit prefetch into Luminal's provider cache. Model
+  compilation itself does not fetch the network, and DeepGEMM is no longer a
+  recursive source submodule. Public provider names describe the library rather
+  than one current architecture implementation.
 - Released H20 closures exist for a dense Full checkpoint and an interleaved
   Full+Sliding checkpoint. Exact Chunked, MLA, recurrent/linear attention,
   convolution state, MoE, quantization, and multi-device execution are not
@@ -109,7 +116,7 @@ single-device bring-up model.
 5. Landed the first block-FP8 execution slice: the decoder now declares FP8
    projection weights and their 128x128 inverse scales, while Luminal exposes a
    provider-neutral `BlockScaledLinear` semantic op. An independent CUDA
-   reference implementation and four pinned DeepGEMM SM90 1D2D schedules join
+   reference implementation and four pinned DeepGEMM schedules join
    the same e-class and are selected by device profiling. Full-graph search now
    fits within the compiler memory budget. A general egglog rule unifies
    equal-valued `LoopInput` streams, allowing required in-place state contracts
@@ -124,8 +131,9 @@ single-device bring-up model.
 ## Searchable attention execution
 
 This is the first performance-compiler milestone after the primary hybrid model
-can execute. It turns the current FlashInfer integration from a fixed custom-op
-implementation into a genuine Luminal compiler choice.
+can execute. The semantic/provider boundary is now in place and FlashInfer is
+an egglog-added candidate; the remaining milestone is genuine competition
+between multiple legal implementations.
 
 1. Define one backend-neutral paged-attention semantic op carrying OrbitKV
    class identity, visibility, page geometry, dtype, head geometry, and bucket

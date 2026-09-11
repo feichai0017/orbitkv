@@ -113,5 +113,15 @@
     "serving_performance_advantage_over_sglang": false,
     "serving_performance_advantage_over_vllm": false,
     "production_ready": false
+  },
+  "provider_refactor_follow_up": {
+    "artifact_schema": 2,
+    "search_graphs": 16,
+    "artifact_sha256": "bca76dd2fef7513212a12e8bacff2b02a8c0fd21f64d33f68dd75b4dca41f04a",
+    "deepgemm_nodes_per_bucket": [28, 28],
+    "flashinfer_nodes_per_bucket": [1, 1],
+    "block_scaled_reference_nodes_per_bucket": [0, 0],
+    "eight_step_logit_parity_passed": true,
+    "maximum_absolute_logit_error": 0.5
   }
 }

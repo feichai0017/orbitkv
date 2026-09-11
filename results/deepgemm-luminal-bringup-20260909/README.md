@@ -9,14 +9,15 @@ not evidence for a model named Qwen 3.8.
 
 - DeepGEMM is pinned at `559d79fb6994a58b8a15b4b93bf13ccc16edf247`.
 - Luminal exposes a provider-neutral 128x128 block-scaled linear semantic op.
-  An independent CUDA reference and four DeepGEMM SM90 1D2D schedules are
+  An independent CUDA reference and four DeepGEMM schedules are
   unioned in egglog, JIT-compiled before timing, device-profiled per dynamic
   bucket, and persisted with provider revision and tile identity. Selection is
   not dispatched by checkpoint name or GPU name.
 - The selected DeepGEMM launch sequences participate in Luminal CUDA Graphs.
-  FlashInfer supplies the current paged-attention implementation; ordinary
-  BF16 matrix products use the existing cuBLASLt path. Attention does not yet
-  have multiple searchable backend candidates.
+  The model graph emits provider-neutral paged attention and egglog supplies
+  FlashInfer as its current optimized provider; ordinary BF16 matrix products
+  use the existing cuBLASLt path. Attention does not yet have a second
+  optimized candidate.
 - Loop rolling can independently construct read and commit streams with
   different nominal stream IDs but identical loop ID, dtype, and ordered
   per-iteration values. A general egglog equivalence rule now unions those
@@ -113,3 +114,14 @@ Then attribute the remaining TTFT/TPOT gap to block-scaled linear choices,
 unfused graph regions, gather/scatter metadata, scheduler/frontend overhead,
 and attention; widen the search space and rerun longer, higher-concurrency
 matched suites.
+
+## Provider-boundary follow-up
+
+The subsequent provider API refactor renamed the public implementation to
+`DeepGemm`, removed the recursive DeepGEMM source submodule, and moved both
+DeepGEMM and FlashInfer source discovery behind the same explicit prefetch/cache
+policy. It also changed the model graph to emit provider-neutral paged attention
+and made FlashInfer an egglog-added implementation. This intentionally bumped
+the decoder artifact schema to 2. A fresh 16-candidate H20 search selected 28
+`DeepGemm` nodes and one `FlashInferAttention` node in each bucket, selected no
+block-scaled reference nodes, and passed all eight independent logit checks.

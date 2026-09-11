@@ -5,7 +5,10 @@ use super::{DecoderCompileConfig, DecoderConfig, DecoderError, DecoderWeightFeat
 use crate::{ExecutorArena, ExecutorPlan, FixedStateArenaRegistration};
 use luminal::graph::SelectedSchedule;
 
-const DECODER_ARTIFACT_SCHEMA: u32 = 1;
+// Schema 2 separates semantic paged attention from provider-specific LLIR and
+// renames the DeepGEMM provider. Old schedules must be searched again rather
+// than remapped across changed e-graph identities.
+const DECODER_ARTIFACT_SCHEMA: u32 = 2;
 
 /// Portable graph-selection artifact for one native decoder configuration.
 ///

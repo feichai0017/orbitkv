@@ -16,7 +16,7 @@ operator passes all applicable layers.
 | MLA/latent KV | Component-aware latent/RoPE lifecycle compiles | Matching Luminal attention kernel contract missing | Unsupported | Unproven |
 | Mamba/GDN/KDA/linear attention | Recurrent checkpoint geometry compiles and checkpoint pool is host-tested | GDN has distinct key/value-head semantics, checkpoint-shaped split projections, gates, packed delta scan, gated RMSNorm/readout, dynamic arena addressing, and required in-place writes to manager-owned state arenas | Ragged packed operator parity and bounded full-checkpoint prefill/decode/drain pass on H20; eight generated steps stay within 0.423 maximum absolute logit error, with one near-tie argmax difference | Negative bounded serving diagnostic |
 | Convolution state | Generation-checked checkpoint lifecycle host-tested | Minimal `K-1` BF16 history, typed packed causal convolution, dynamic arena addressing, and required in-place writes to manager-owned history arenas are part of the production graph | Ragged packed operator parity, bounded full-checkpoint drain, and eight-step logit parity pass on H20 | Negative bounded serving diagnostic |
-| Block-FP8 linear compiler | Not a state owner | Provider-neutral BF16 x E4M3/128x128-scale semantics; independent CUDA reference plus four pinned DeepGEMM SM90 1D2D tile candidates share one e-class and are device-profiled per bucket | H20 reference parity, direct native execution, search selection, provider identity persistence, bounded full-checkpoint drain, and eight-step independent Transformers logit parity pass | 0.445x SGLang and 0.390x vLLM throughput on the bounded C1 trace; no advantage |
+| Block-FP8 linear compiler | Not a state owner | Provider-neutral BF16 x E4M3/128x128-scale semantics; independent CUDA reference plus four pinned DeepGEMM tile candidates share one e-class and are device-profiled per bucket | H20 reference parity, direct native execution, search selection, provider identity persistence, bounded full-checkpoint drain, and eight-step independent Transformers logit parity pass | 0.445x SGLang and 0.390x vLLM throughput on the bounded C1 trace; no advantage |
 | Sparse, tree, speculative, cross-attention | No complete general contract | Missing | Unsupported | Unproven |
 
 The native dense decoder accepts multiple token-KV classes with exact,
@@ -56,7 +56,7 @@ after search, and returns event-backed evidence that the engine submits
 atomically with token KV. Packed prefill is admitted through shared request
 segmentation. Block-FP8 projections now load the checkpoint's E4M3 tensors and
 128x128 inverse scales into a provider-neutral Luminal op. Its independent CUDA
-reference and four pinned DeepGEMM SM90 1D2D schedules share one e-class and are
+reference and four pinned DeepGEMM schedules share one e-class and are
 selected by device profiling. Operator parity passes on H20, and a bounded
 full-checkpoint run now completes search, prefill, one decode step, manager
 publication, release, and token/fixed-state drain. An independent Transformers
@@ -157,9 +157,14 @@ derives backend-neutral facts for storage components, retention, addressing, and
 retirement. The executor binds token classes to stable arenas, lowers
 deterministic facts into every Luminal search bucket, and tags each
 paged-attention custom op with its manager class. The facts digest is part of
-decoder artifact identity. The current custom op still dispatches FlashInfer;
-there is not yet a set of alternative attention implementations whose measured
-cost can be selected from these facts.
+decoder artifact identity. The model graph now emits a provider-neutral paged
+attention semantic op, and egglog contributes FlashInfer as a legal provider.
+There is not yet a second optimized attention implementation whose measured
+cost can compete with FlashInfer.
+DeepGEMM and FlashInfer sources are resolved by the same pinned provider-source
+manager. They can come from explicit local directories or an explicit prefetch
+into the Luminal cache; normal model compilation is offline and no recursive
+DeepGEMM source submodule is required.
 
 ## Evidence interpretation
 
