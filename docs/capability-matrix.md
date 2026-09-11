@@ -26,12 +26,12 @@ Historical results qualify only their recorded source closure.
 | RuntimeSession | L2 | Presents transactional engine operations without exposing manager capabilities |
 | External KV tier transactions | L2 host | Export/restore run through an object-safe async transport contract; a real-byte host adapter verifies compact partial tails, per-page checksums, deletion, cross-session restore, and unobserved/ambiguous fault mapping; Mooncake/NIXL and hybrid restore remain open |
 | Executor plan | L2 | Compiles and jointly validates per-layer token-KV or recurrent-plus-convolution ownership; the production decoder dispatches layers from this topology |
-| Luminal paged-attention boundary | L3 | Accepts OrbitKV-authored page geometry and CSR metadata; real-device block-page decode/prefill pass; Luminal never allocates or recycles pages |
+| Luminal paged-attention boundary | L3 | A provider-neutral semantic op accepts OrbitKV-authored page geometry and CSR metadata; egglog currently contributes FlashInfer as the optimized implementation; real-device block-page decode/prefill pass and Luminal never allocates or recycles pages |
 | Bucketed model runtime | L4 correctness for token KV; narrow L3 for fixed-state operators | Token-KV and stateful graphs are searched once into decode/prefill executables. Dynamic inputs are preallocated, request segmentation is shared across attention and recurrent operators, and every state class has a stable arena |
 | Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity, LLIR fingerprints, and required persistent-state aliases fail closed |
 | Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; historical narrow matched benefit | Capture accepts one-token-per-request decode batches. In its recorded source closure, batch-one child-graph replay reduced matched fixed-step wall time by 5.8-8.3%; exact-signature automatic C2 recapture reduced throughput by 13.7% and is not used by serving |
 | Compiler-constrained persistent state | Reference-gated measured improvement | A 16-candidate search selected 36/36 in-place K/V tensors in both buckets; four C2 epochs improved throughput 14.5%, TTFT 32.2%, TPOT 10.2%, and E2E 12.8% versus the prior OrbitKV artifact; random-trace digests differ |
-| Joint compiler facts | L2 + compile-path integration | `orbitkv` derives backend-neutral storage, retention, address, and retirement facts; the executor binds stable arenas, injects deterministic facts into every Luminal bucket, binds paged-attention nodes to class IDs, and fingerprints the contract in schedule identity. No attention-backend selection rewrite consumes these facts yet |
+| Joint compiler facts | L2 + compile-path integration | `orbitkv` derives backend-neutral storage, retention, address, and retirement facts; the executor binds stable arenas, injects deterministic facts into every Luminal bucket, binds paged-attention nodes to class IDs, and fingerprints the contract in schedule identity. FlashInfer consumes that semantic contract through an egglog provider rewrite; a second competing attention provider is still missing |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | Single-process model engine | Narrow L4 correctness + load closure | One dedicated thread owns bounded admission/output queues, an active set, `RuntimeSession`, and `CompiledDecoder`; released hybrid tests cover B=2 mixed scheduling and direct B=1/B=8 logit parity. Fresh-prompt/greedy only |
@@ -48,7 +48,7 @@ Historical results qualify only their recorded source closure.
 | KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, and Prefix/COW lowering |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
 | Checkpoint family | Configuration-driven dense decoder plus nested hybrid text-config parsing with fail-closed capability gates; released Full and Full+Sliding checkpoints have real-device correctness evidence |
-| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Projection weights and 128x128 inverse-scale tensors enter provider-neutral block-scaled linear nodes. Luminal generates four DeepGEMM SM90 candidates per node and device-profiles them per bucket. A bounded H20 full-checkpoint run passes cold search, four-token prefill, seven decode steps, joint token/fixed-state evidence, release, and final drain. An independent Transformers 5.12.1 oracle bounds maximum absolute logit error to 0.42285156 across all eight generated steps. Required in-place fixed-state writes and equal-valued loop-input equivalence remove the former multi-gigabyte state copy path. Bounded HTTP serving executes, but a near tie reverses the generated token-four argmax and the current C1 trace reaches only 0.445x SGLang / 0.390x vLLM throughput |
+| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Projection weights and 128x128 inverse-scale tensors enter provider-neutral block-scaled linear nodes. Luminal generates four DeepGEMM candidates per node and device-profiles them per bucket. A bounded H20 full-checkpoint run passes cold search, four-token prefill, seven decode steps, joint token/fixed-state evidence, release, and final drain. An independent Transformers 5.12.1 oracle bounds maximum absolute logit error to 0.42285156 across all eight generated steps. Required in-place fixed-state writes and equal-valued loop-input equivalence remove the former multi-gigabyte state copy path. Bounded HTTP serving executes, but a near tie reverses the generated token-four argmax and the current C1 trace reaches only 0.445x SGLang / 0.390x vLLM throughput |
 | Not yet end-to-end supported | The 27B quantized hybrid checkpoint still lacks robust near-tie output equivalence, soak, and serving-scale qualification; MoE, sparse/latent attention, multimodal encoders, speculative decoding, and tensor/pipeline parallel models remain unsupported |
 
 Core support for a retention policy means its lifecycle can be compiled and
@@ -60,11 +60,10 @@ candidate or stored artifact unless every K/V output resolves to the same
 registered input arena in every bucket. The qualified artifact reports 36/36
 in-place tensors and zero copy-back bytes for both decode/prefill buckets.
 
-Validated state facts enter the same e-graph as the decoder. This is the first
-half of joint compilation, not yet attention-kernel/layout search: the direct
-paged-attention node currently resolves to a FlashInfer custom op, while Luminal
-searches the surrounding equivalent graph schedules under stable-state alias
-constraints.
+Validated state facts enter the same e-graph as the decoder. The paged-attention
+semantic node is provider-neutral and FlashInfer enters through an egglog
+provider rewrite. This establishes the compiler boundary, but not yet real
+multi-provider attention or joint layout competition.
 
 ## Attention-state coverage
 

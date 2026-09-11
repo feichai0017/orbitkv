@@ -132,7 +132,7 @@ crates/orbitkv-executor/
     recurrent/            recurrent semantics and arena views
     convolution.rs        minimal-history causal convolution semantics
     state_graph.rs        shared fixed-state arena addressing and bindings
-    cuda.rs               direct paged-attention and stream/event boundary
+    cuda.rs               provider-neutral paged-attention and stream/event boundary
     transport.rs          external byte-movement contract
   tests/                  real-byte reference transport closures
 crates/orbitkv-server/
@@ -224,15 +224,16 @@ Production-rendered static and symbolic CUDA sources pass NVRTC compilation,
 and a ragged two-request H20 test matches independent convolution and recurrent
 references. Full released-model parity and fused projection/readout kernels
 remain open.
-The direct OrbitKV paged-attention node is a FlashInfer custom op, so the current
-search can optimize the surrounding decoder graph and schedule but does not yet
-choose among multiple attention implementations or jointly derive a KV layout.
+The OrbitKV graph emits a provider-neutral paged-attention semantic op. Egglog
+currently contributes FlashInfer as its optimized implementation, so the search
+can replace it when another legal provider is registered. There is not yet a
+second provider or joint KV-layout search.
 
 Block-scaled linear execution follows the same compiler boundary rather than a
 model-side backend switch. The decoder emits a provider-neutral semantic node
 whose inputs are BF16 activations, FP8 E4M3 weights, and 128x128 inverse scales.
 Its independent two-kernel CUDA implementation is the correctness fallback.
-Egglog unions four legal DeepGEMM SM90 1D2D tile schedules into that e-class;
+Egglog unions four legal DeepGEMM tile schedules into that e-class;
 candidate preparation JIT-compiles the pinned upstream source before timing, and
 Luminal's normal device profiler chooses the implementation per dynamic bucket.
 The selected LLIR contains the provider revision and tile variant, so schedule

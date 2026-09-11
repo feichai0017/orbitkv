@@ -5,7 +5,9 @@ use luminal::{
     prelude::{Expression, Graph, GraphTensor},
 };
 use luminal_cuda_lite::{
-    host::flashinfer::{PagedAttentionPlan, PagedAttentionSpec, paged_attention_with_plan},
+    host::paged_attention::{
+        PagedAttentionPlan, PagedAttentionSpec, paged_attention as compile_paged_attention,
+    },
     runtime::CudaRuntime,
 };
 
@@ -200,7 +202,7 @@ pub fn paged_attention(
                 .map_err(|_| ExecutorError::InvalidKernelGeometry)?,
         ),
     };
-    Ok(paged_attention_with_plan(
+    Ok(compile_paged_attention(
         PagedAttentionPlan {
             query: inputs.q,
             key_cache: inputs.k_cache,

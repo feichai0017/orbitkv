@@ -14,7 +14,7 @@ use thiserror::Error;
 
 use luminal_cuda_lite::{
     cudarc::driver::{CudaContext, CudaSlice, CudaStream},
-    host::block_scaled_linear::{BlockScaledLinearSpec, block_scaled_linear},
+    host::deepgemm::{BlockScaledLinearSpec, block_scaled_linear},
     runtime::{CapturedCudaExecution, CudaRuntime},
 };
 
