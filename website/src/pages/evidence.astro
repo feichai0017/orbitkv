@@ -1,49 +1,151 @@
 ---
 import DocsNav from "../components/DocsNav.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
-import { evidenceRows, metrics, repositoryUrl } from "../data/site";
-
-const resultsIndexUrl = `${repositoryUrl}/blob/main/results/README.md`;
+import {
+  evidenceHighlights,
+  evidenceRows,
+  records,
+  sourceUrl,
+} from "../data/site";
 ---
 
 <SiteLayout
-  title="Evidence | OrbitKV"
-  description="OrbitKV host status, open native-engine gates, and historical provenance."
+  title="Evidence — OrbitKV"
+  description="Recorded correctness, runtime behavior, performance boundaries, and open qualification work for OrbitKV."
   active="Evidence"
 >
   <header class="page-hero">
-    <p class="eyebrow">Evidence</p><h1>Every claim keeps its source boundary.</h1>
-    <p>Implementation, host verification, device correctness, complete-engine behavior, measured benefit, and production readiness are separate levels.</p>
+    <p class="eyebrow">Evidence &amp; qualification</p>
+    <h1>Progress you can inspect.</h1>
+    <p>
+      Every result belongs to its source revision, model, hardware, and
+      workload. These records show what has been tested and where the next work
+      begins.
+    </p>
   </header>
-
   <div class="docs-layout">
     <DocsNav active="Evidence" />
     <article class="prose">
-      <h2>Current architecture status</h2>
-      <div class="metric-grid compact">{metrics.map((item) => (<article><strong>{item.value}</strong><div><h3>{item.label}</h3><p>{item.detail}</p></div></article>))}</div>
-
-      <h2>Capability summary</h2>
-      <table class="evidence-table-native">
-        <thead><tr><th>Surface</th><th>Status</th><th>Contract</th><th>Boundary</th></tr></thead>
-        <tbody>{evidenceRows.map((item) => (<tr><td>{item.result}</td><td><code>{item.value}</code></td><td>{item.contract}</td><td>{item.boundary}</td></tr>))}</tbody>
-      </table>
-
-      <h2>Open end-to-end gates</h2>
-      <ul>
-        <li>Run a multi-class Full+Sliding model through one RuntimeSession and Luminal graph.</li>
-        <li>Ablate conservative versus compiled retention on the same executor and kernels.</li>
-        <li>Use vllm bench serve for matched OrbitKV/Luminal versus tuned SGLang runs.</li>
-        <li>Exercise Sliding and Chunked device retirement boundaries and repeated generation reuse.</li>
-        <li>Measure reserved and resident memory, capacity, latency, throughput, and copy overhead under the same workload.</li>
-        <li>Pass cancellation, pressure, long-running reuse, and final-drain tests.</li>
-      </ul>
-
-      <h2>Current records</h2>
+      <h2>The latest device qualification</h2>
       <p>
-        The repository retains only compact records directly relevant to the
-        current architecture. Their exact model, hardware, source, method, and
-        failed or successful gates remain scoped. Open the
-        <a href={resultsIndexUrl}>Results Index</a> for the retained evidence.
+        On 14 September 2026, the H20 qualification exercised the primary
+        Qwen3.8-27B-FP8 text checkpoint, FlashInfer and FlashAttention-3
+        candidates, strict artifact replay, and HTTP shutdown with active
+        requests.
+      </p>
+      <div class="metric-grid">
+        {evidenceHighlights.map((item) => (
+          <article>
+            <strong>{item.value}</strong>
+            <h3>{item.label}</h3>
+            <p>{item.detail}</p>
+          </article>
+        ))}
+      </div>
+      <p>
+        The recorded decode representative selected FlashInfer tensor-core
+        attention; the packed-prefill representative selected FlashAttention-3.
+        The 96 full-vocabulary comparisons reached a maximum absolute error of
+        0.71875 under the existing 1.0 gate. The HTTP runs matched the
+        independent token reference and returned all 64 KV pages and both
+        fixed-state pools to free state.
+      </p>
+      <p>
+        Warm full-logit decode measured about 24.1 ms in this diagnostic. This
+        run establishes no whole-model speedup against another backend or
+        engine. Inspect the{" "}
+        <a href={sourceUrl("results/provider-kernels-20260914/README.md")}>
+          full report, limits, and source identities
+        </a>
+        .
+      </p>
+      <h2>Where the implementation stands</h2>
+      <div
+        class="table-scroll"
+        tabindex="0"
+        role="region"
+        aria-label="Scrollable capability table"
+      >
+        <table class="data-table evidence-data">
+          <caption>Current capability and qualification boundaries</caption>
+          <thead>
+            <tr>
+              <th scope="col">Surface</th>
+              <th scope="col">Status</th>
+              <th scope="col">Evidence &amp; scope</th>
+            </tr>
+          </thead>
+          <tbody>
+            {evidenceRows.map((item) => (
+              <tr>
+                <td>{item.surface}</td>
+                <td>
+                  <span class="status-tag">{item.status}</span>
+                </td>
+                <td>
+                  {item.detail}
+                  <small>{item.boundary}</small>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+      <h2>Selected records</h2>
+      <div class="record-list">
+        {records.map((record) => (
+          <article class="record">
+            <div class="record-meta">
+              <time datetime={record.date.replaceAll(".", "-")}>
+                {record.date}
+              </time>
+              <span class="status-tag">{record.tag}</span>
+            </div>
+            <h3>
+              <a href={sourceUrl(record.path)}>
+                {record.name}
+                <span aria-hidden="true">↗</span>
+              </a>
+            </h3>
+            <p>{record.detail}</p>
+          </article>
+        ))}
+      </div>
+      <p>
+        The <a href={sourceUrl("results/README.md")}>complete evidence index</a>{" "}
+        also retains lifecycle, graph residency, compiler attribution, and
+        matched serving comparisons. Historical records keep their original
+        source and workload scope.
+      </p>
+      <h2>Performance is still an open question</h2>
+      <p>
+        Same-executor experiments have demonstrated lower live KV payload and
+        improvements from compiler selection. Recorded comparisons against vLLM
+        and SGLang still show a serving performance gap. A successful kernel
+        test or warm artifact replay does not settle end-to-end throughput.
+      </p>
+      <ul>
+        <li>
+          Attribute execution and search costs on the primary 27B workload.
+        </li>
+        <li>
+          Compare throughput, p95 time to first token, and inter-token latency
+          under matched load.
+        </li>
+        <li>
+          Extend batch, context, memory-pressure, and long-running reuse
+          coverage.
+        </li>
+        <li>
+          Qualify new state layouts, attention families, and external transports
+          independently.
+        </li>
+      </ul>
+      <p>
+        See the{" "}
+        <a href={sourceUrl("docs/benchmarking.md")}>measurement method</a> and{" "}
+        <a href={sourceUrl("docs/roadmap.md")}>roadmap</a> for the acceptance
+        criteria.
       </p>
     </article>
   </div>

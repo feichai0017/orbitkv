@@ -1,0 +1,124 @@
+{
+  "schema": "orbitkv.sglang-product-comparison",
+  "status": "completed_negative_performance_result",
+  "qualification": "released_checkpoint_artifact_fixed_c2_four_epochs",
+  "workload": {
+    "epochs": 4,
+    "alternating_order": true,
+    "requests_per_arm": 16,
+    "observed_input_tokens_per_request": 127,
+    "output_tokens_per_request": 256,
+    "max_concurrency": 2,
+    "request_rate": "infinite",
+    "temperature": 0,
+    "ignore_eos": true,
+    "seed": 7
+  },
+  "correctness_gates": {
+    "completed_requests_per_arm": 16,
+    "failed_requests_per_arm": 0,
+    "output_tokens_per_request_min": 256,
+    "output_tokens_per_request_max": 256,
+    "per_request_errors_empty": true,
+    "reference_probe_matches_both_engines": true,
+    "candidate_digest_stable_across_epochs": true,
+    "baseline_digest_stable_across_epochs": true,
+    "cross_engine_output_equivalence": false,
+    "candidate_generated_text_sha256": "b4f3908415f7b6a23fc955c8bfcb976c5d1d0c0a2301b7dc9b0a94fcfe56485b",
+    "baseline_generated_text_sha256": "c8dc59df1d129b389130f72c692d2a007ea5ee52f3effd40ea957c2108e2f914"
+  },
+  "median_measurements": {
+    "orbitkv": {
+      "ready_seconds": 10.514622,
+      "output_tokens_per_second": 592.317618,
+      "median_ttft_ms": 98.080608,
+      "median_tpot_ms": 2.996600,
+      "median_itl_ms": 2.857888,
+      "median_e2el_ms": 862.122853
+    },
+    "sglang": {
+      "ready_seconds": 30.319457,
+      "output_tokens_per_second": 1112.602828,
+      "median_ttft_ms": 15.138643,
+      "median_tpot_ms": 1.698921,
+      "median_itl_ms": 1.691587,
+      "median_e2el_ms": 448.321868
+    },
+    "orbitkv_over_sglang": {
+      "output_throughput": 0.533659,
+      "median_ttft": 6.500326,
+      "median_tpot": 1.760263,
+      "median_itl": 1.689470,
+      "median_e2el": 1.919935,
+      "ready_time": 0.346795
+    }
+  },
+  "epochs": [
+    {
+      "epoch": 1,
+      "order": ["sglang", "orbitkv"],
+      "orbitkv_output_tokens_per_second": 593.094582,
+      "sglang_output_tokens_per_second": 1096.104472,
+      "orbitkv_median_ttft_ms": 97.959066,
+      "sglang_median_ttft_ms": 15.767147,
+      "orbitkv_median_tpot_ms": 2.997505,
+      "sglang_median_tpot_ms": 1.703592,
+      "orbitkv_over_sglang_output_throughput": 0.541093
+    },
+    {
+      "epoch": 2,
+      "order": ["orbitkv", "sglang"],
+      "orbitkv_output_tokens_per_second": 594.161627,
+      "sglang_output_tokens_per_second": 1129.101184,
+      "orbitkv_median_ttft_ms": 98.001189,
+      "sglang_median_ttft_ms": 13.742873,
+      "orbitkv_median_tpot_ms": 2.983583,
+      "sglang_median_tpot_ms": 1.694249,
+      "orbitkv_over_sglang_output_throughput": 0.526225
+    },
+    {
+      "epoch": 3,
+      "order": ["sglang", "orbitkv"],
+      "orbitkv_output_tokens_per_second": 591.540655,
+      "sglang_output_tokens_per_second": 1093.052444,
+      "orbitkv_median_ttft_ms": 98.160026,
+      "sglang_median_ttft_ms": 16.058097,
+      "orbitkv_median_tpot_ms": 2.995694,
+      "sglang_median_tpot_ms": 1.711433,
+      "orbitkv_over_sglang_output_throughput": 0.541182
+    },
+    {
+      "epoch": 4,
+      "order": ["orbitkv", "sglang"],
+      "orbitkv_output_tokens_per_second": 583.021043,
+      "sglang_output_tokens_per_second": 1132.476031,
+      "orbitkv_median_ttft_ms": 98.491821,
+      "sglang_median_ttft_ms": 14.510139,
+      "orbitkv_median_tpot_ms": 3.020193,
+      "sglang_median_tpot_ms": 1.692832,
+      "orbitkv_over_sglang_output_throughput": 0.514820
+    }
+  ],
+  "raw_qualification_checksums": {
+    "run_json_sha256": "043aa66c6a4dafd0c9cb77c083f4e2a0e43b61d25481c47876c7329429e2e8c2",
+    "completed_json_sha256": "f843eea8433b13bd57b849ce5ecc1a9e2c5de558e42c007deacb9e320869c6f9"
+  },
+  "persistent_kv_payload": {
+    "basis": "resolved BF16 page and layer geometry",
+    "orbitkv_bytes": 90046464,
+    "orbitkv_mib": 85.875,
+    "sglang_bytes": 150994944,
+    "sglang_mib": 144.0,
+    "orbitkv_over_sglang": 0.596354,
+    "orbitkv_reduction_fraction": 0.403646,
+    "nvidia_smi_allocator_peak_measurement": false
+  },
+  "claims": {
+    "schedule_artifact_repeatability_qualified": true,
+    "lower_persistent_kv_payload_than_sglang": true,
+    "serving_performance_advantage": false,
+    "strict_cross_engine_output_equivalence": false,
+    "production_ready": false
+  },
+  "next_bottleneck": "continuous-batching decode execution and CUDA Graph integration"
+}

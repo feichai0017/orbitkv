@@ -1,7 +1,7 @@
 # Executor fork and upstream policy
 
 OrbitKV embeds a complete Luminal fork as the graph compiler and device
-executor. The fork is not a second inference engine: `core/` remains the only
+executor. The fork is not a second inference engine: `orbitkv` remains the only
 authority for logical visibility, page selection, generations, retirement, and
 reuse.
 
@@ -16,12 +16,10 @@ The current OrbitKV patch stack adds the following general executor contracts:
   identity and both planning and execution compile for that exact ratio;
 - guarded native calls: FlashInfer failures cross the C boundary as Rust errors
   instead of unwinding a C++ exception through Rust;
-- stream-ordered tensor-range copies and completion events, used to execute
-  manager-authored token relocation before the new page view is published;
 - runtime inspection that proves whether persistent-state outputs alias their
   registered inputs in every compiled dynamic-shape bucket;
-- direct range copies within persistent graph inputs, so relocation always
-  targets the stable K/V arena even when a bucket materializes its update;
+- caller and custom-op compiler facts injected into every e-graph bucket, with
+  paged-attention nodes bound to an external persistent-state class ID;
 - caller-owned capture of an already-warmed execution, plus a preparation-only
   path that refreshes stable input bindings before replay without replanning or
   executing the model;
@@ -81,27 +79,41 @@ The first implementation flattened every selected executable back into raw
 launches and was 24.9% slower in a matched diagnostic. The current implementation
 preserves each selected graph as one child node. On the same fixed batch-one
 decode step, it reduced median wall time by 8.3% over 20 alternating iterations
-and 5.8% over a 100-iteration confirmation. This narrow result does not qualify
+and 5.8% over a 100-iteration confirmation in its recorded source closure. This
+narrow historical result does not qualify
 continuous batching or end-to-end serving throughput.
 
-The persistent K/V buffers are registered as paired input/output state before
-profiling. Search may select an in-place scatter or a materialized update with
-a graph-visible D2D epilogue back into the same arena. Both preserve the stable
-address contract; `cache_updates_in_place()` reports which result was selected.
-The current two-candidate real-device smoke selected the materialized-copy
-form, so no zero-copy KV-write benefit is claimed. The final source run observed
-one-time search/compile at roughly 183 seconds, a four-token prefill dispatch at
-roughly 13 ms, first decode dispatch at roughly 36 ms, and a warm second decode
-at roughly 5 ms. These are diagnostic timings from one correctness run, not an
-L5 benchmark or speedup claim.
+The persistent K/V buffers are registered as required paired input/output
+state before profiling. Unlike an ordinary output registration, this contract
+rejects a candidate or loaded artifact unless every selected bucket resolves
+the output directly to the input arena. `cache_update_buckets()` reports the
+per-bucket in-place tensor count and any copy-back bytes. The qualified
+16-candidate artifact has 36/36 in-place K/V tensors and zero copy-back in both
+buckets. This compiler constraint produced a measured same-engine C2 benefit;
+it does not by itself close the remaining kernel gap to SGLang.
 
-The embedded decoder keeps all searched decode/prefill buckets but bounds active
-CUDA Graph materialization to one bucket. Explicit-CSR attention can rebuild
-captured library resources when context geometry changes; retaining another
-phase's materialization across such pool reclamation produced stale device
-state on the tested driver. Switching phase therefore rematerializes the target
-bucket without re-running graph search. A dedicated bucket-switch regression and
-the repeated released-hybrid residence workload cover this contract.
+The embedded decoder keeps all searched decode/prefill programs and exposes a
+positive materialized-bucket capacity, defaulting to one. Retained FlashInfer
+plans now own their integer metadata; preparing another shape cannot overwrite
+the plan captured by an inactive graph. Float scratch remains stream-ordered and
+shared, while pinned planner staging is locked and drained before reuse. Resource
+preflight charges retained metadata plus the temporary replacement generation.
+H20 regressions cover alternating provider graphs, repeated 27B model requests,
+and eviction after lowering the capacity. Explicit CSR changes still replan
+attention islands. See [graph residency](graph-residency.md) for ownership,
+configuration and the measured qualification boundary.
+
+Selected schedules, including graphs with explicit paged-attention custom ops,
+can be serialized independently of weights and KV contents. Loading replays the
+deterministic graph normalization, resolves the current custom-op table, and
+verifies the unrolled LLIR fingerprint of every bucket. OrbitKV wraps this in a
+decoder artifact identity covering the canonical manifest, decoder and weight
+family geometry, arena shape, and compile buckets. Incompatible artifacts fail
+closed. Decoder schema 9 also embeds generated CUDA module images with strict
+target/compiler/source validation. Older decoder formats must be regenerated.
+Weight loading, FlashInfer/DeepGEMM prepared resources and CUDA Graph
+materialization still run. See [module artifacts](module-artifacts.md) for the
+shared Luminal API, capture cost and compatibility boundary.
 
 ## Updating Luminal
 
@@ -113,22 +125,21 @@ parent repository:
    fork head;
 2. merge or rebase the desired upstream commit while preserving the small
    generic patch stack above;
-3. run Luminal's host tests and the paged-attention/device-copy regressions;
-4. run OrbitKV host gates, CUDA compile checks, and the released-model and
-   relocation device closures;
+3. run Luminal's host tests and paged-attention regressions;
+4. run OrbitKV host gates, CUDA compile checks, and released-model device
+   closures;
 5. push the fork commit, then update the parent submodule pointer;
-6. keep `executor/Cargo.toml` path dependencies pointed at that visible
+6. keep `crates/orbitkv-executor/Cargo.toml` path dependencies pointed at that visible
    submodule and let `tools/verify_active_source.py` reject any second remote
    Luminal source.
 
 An upstream update is therefore an explicit compiler-backend upgrade with
 qualification, rather than an automatic floating dependency.
 
-The current fork includes upstream through `c28a9fb`. That update retains
-shape-specific CUDA Graph variants on a shared arena and reclaims CUDA pools
-around graph replacement. After merging it with OrbitKV's external-page and
-child-graph changes, the generic child/D2D tests and the released-checkpoint
-prefill/capture/replay lifecycle passed on H20. A 20-iteration matched check
-remained favorable at 4662.4 us eager versus 4435.4 us child-graph replay
-(ratio 0.951). This is compatibility evidence for the upstream sync, not a new
-broad performance claim.
+The exact fork revision is the parent repository's submodule pointer rather than
+a duplicated version string in this document. The fork retains its own upstream
+workspace so it can be built and tested independently even though the parent
+explicitly excludes it from the three owned OrbitKV workspace members. Upstream
+syncs must preserve OrbitKV's external-page, required-alias, artifact, and
+child-graph contracts. Existing H20 measurements remain compatibility evidence
+for their recorded source closure, not a new broad performance claim.

@@ -1,0 +1,1702 @@
+{
+  "status": "passed",
+  "recorded_at_utc": "2026-09-14T01:06:25.598386+00:00",
+  "scope": "remove handwritten native attention; explicit FlashInfer algorithms and pinned FlashAttention-3 provider with measured search and capture ownership",
+  "decoder_artifact_schema": 9,
+  "historical_result_files_unchanged": 115,
+  "frozen_build_inputs_unchanged": 353,
+  "host_checks": {
+    "workspace-tests": {
+      "passed": 247,
+      "ignored": 2,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/workspace-tests.log",
+        "bytes": 25925,
+        "sha256": "3dfa28025503b785b7b2bdd05391383aff161222e2237febf199951e60298399"
+      }
+    },
+    "nn-tests": {
+      "passed": 27,
+      "ignored": 0,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/nn-tests.log",
+        "bytes": 2457,
+        "sha256": "4c1df022a873fc04120d544c1b4c1bafc6794ba161a12f86da37147995486fdf"
+      }
+    },
+    "executor-tests": {
+      "passed": 71,
+      "ignored": 2,
+      "log": {
+        "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/executor-tests.log",
+        "bytes": 7157,
+        "sha256": "117c26c0735adda249fe2111b8b32bc7c033f4c70d8c6ac8f702069daca8d955"
+      }
+    }
+  },
+  "directed_cuda_provider_runtime_checks": 79,
+  "model": [
+    {
+      "case": "model-search",
+      "schema": 1,
+      "reference_enabled": true,
+      "parity_steps": 32,
+      "sequences": 4,
+      "drain_passed": true,
+      "artifact_mode": "search",
+      "max_abs_error": 0.71875,
+      "stage_trace": {
+        "trace": {
+          "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/model-search-stages.jsonl",
+          "bytes": 1497155,
+          "sha256": "40fa43ac6ca05a7612db0ec138cc7a4f8e1ec8ab453f68033e45b431efe23b83"
+        },
+        "span_count": 6878,
+        "completed_with_zero_open_spans": true,
+        "stages": [
+          {
+            "name": "luminal.egglog.schedule",
+            "count": 18,
+            "inclusive_wall_ns": 135819689416,
+            "self_wall_ns": 135819689416,
+            "maximum_wall_ns": 68001239485
+          },
+          {
+            "name": "cuda.nvrtc.compile",
+            "count": 1624,
+            "inclusive_wall_ns": 24154356405,
+            "self_wall_ns": 24154356405,
+            "maximum_wall_ns": 41845157
+          },
+          {
+            "name": "luminal.egglog.setup_run",
+            "count": 2,
+            "inclusive_wall_ns": 16359672578,
+            "self_wall_ns": 16359672578,
+            "maximum_wall_ns": 8476096499
+          },
+          {
+            "name": "cuda.weights.upload",
+            "count": 1251,
+            "inclusive_wall_ns": 5364469484,
+            "self_wall_ns": 5364469484,
+            "maximum_wall_ns": 459686710
+          },
+          {
+            "name": "orbitkv.graph.build",
+            "count": 1,
+            "inclusive_wall_ns": 4276337648,
+            "self_wall_ns": 4276337648,
+            "maximum_wall_ns": 4276337648
+          },
+          {
+            "name": "luminal.graph.normalize",
+            "count": 1,
+            "inclusive_wall_ns": 2925599106,
+            "self_wall_ns": 2925599106,
+            "maximum_wall_ns": 2925599106
+          },
+          {
+            "name": "cuda.bucket.compile",
+            "count": 39,
+            "inclusive_wall_ns": 26973177788,
+            "self_wall_ns": 2901677032,
+            "maximum_wall_ns": 4334850655
+          },
+          {
+            "name": "cuda.resources.static_prepare",
+            "count": 35,
+            "inclusive_wall_ns": 2731906947,
+            "self_wall_ns": 2731906947,
+            "maximum_wall_ns": 612924520
+          },
+          {
+            "name": "cuda.execute",
+            "count": 48,
+            "inclusive_wall_ns": 1879745650,
+            "self_wall_ns": 1399823122,
+            "maximum_wall_ns": 183743929
+          },
+          {
+            "name": "luminal.egglog.bucket",
+            "count": 2,
+            "inclusive_wall_ns": 153647169372,
+            "self_wall_ns": 1092081289,
+            "maximum_wall_ns": 78454061207
+          },
+          {
+            "name": "cuda.candidate.evaluate",
+            "count": 31,
+            "inclusive_wall_ns": 15309064643,
+            "self_wall_ns": 923327111,
+            "maximum_wall_ns": 4978121888
+          },
+          {
+            "name": "cuda.weights.file",
+            "count": 66,
+            "inclusive_wall_ns": 6346629861,
+            "self_wall_ns": 838630602,
+            "maximum_wall_ns": 1077480422
+          },
+          {
+            "name": "luminal.search.next_candidate",
+            "count": 33,
+            "inclusive_wall_ns": 711207753,
+            "self_wall_ns": 711207753,
+            "maximum_wall_ns": 35722920
+          },
+          {
+            "name": "cuda.graph.materialize",
+            "count": 44,
+            "inclusive_wall_ns": 692267232,
+            "self_wall_ns": 692267232,
+            "maximum_wall_ns": 152946790
+          },
+          {
+            "name": "cuda.search",
+            "count": 1,
+            "inclusive_wall_ns": 27148904292,
+            "self_wall_ns": 690253041,
+            "maximum_wall_ns": 27148904292
+          },
+          {
+            "name": "cuda.module_artifact.capture",
+            "count": 1,
+            "inclusive_wall_ns": 7215687334,
+            "self_wall_ns": 640257683,
+            "maximum_wall_ns": 7215687334
+          },
+          {
+            "name": "luminal.egglog.serialize",
+            "count": 2,
+            "inclusive_wall_ns": 237511409,
+            "self_wall_ns": 237511409,
+            "maximum_wall_ns": 120226059
+          },
+          {
+            "name": "luminal.egglog.parse",
+            "count": 2,
+            "inclusive_wall_ns": 135408871,
+            "self_wall_ns": 135408871,
+            "maximum_wall_ns": 69140201
+          },
+          {
+            "name": "cuda.search.initialize",
+            "count": 2,
+            "inclusive_wall_ns": 134238115,
+            "self_wall_ns": 134238115,
+            "maximum_wall_ns": 69098795
+          },
+          {
+            "name": "cuda.search.bucket",
+            "count": 2,
+            "inclusive_wall_ns": 17157009833,
+            "self_wall_ns": 134141499,
+            "maximum_wall_ns": 8683288094
+          },
+          {
+            "name": "cuda.resources.retained",
+            "count": 8,
+            "inclusive_wall_ns": 107744296,
+            "self_wall_ns": 107744296,
+            "maximum_wall_ns": 21501942
+          },
+          {
+            "name": "cuda.weights.allocate",
+            "count": 1251,
+            "inclusive_wall_ns": 87611620,
+            "self_wall_ns": 87611620,
+            "maximum_wall_ns": 6235838
+          },
+          {
+            "name": "cuda.candidate.profile_deployment",
+            "count": 2,
+            "inclusive_wall_ns": 868357823,
+            "self_wall_ns": 71002618,
+            "maximum_wall_ns": 519891921
+          },
+          {
+            "name": "orbitkv.decoder.compile_or_load",
+            "count": 1,
+            "inclusive_wall_ns": 201655738795,
+            "self_wall_ns": 50590623,
+            "maximum_wall_ns": 201655738795
+          },
+          {
+            "name": "cuda.buckets.compile_and_validate",
+            "count": 37,
+            "inclusive_wall_ns": 27271621634,
+            "self_wall_ns": 40695163,
+            "maximum_wall_ns": 6522134103
+          },
+          {
+            "name": "cuda.providers.prepare",
+            "count": 8,
+            "inclusive_wall_ns": 150004387,
+            "self_wall_ns": 34392980,
+            "maximum_wall_ns": 78738232
+          },
+          {
+            "name": "cuda.inputs.prepare",
+            "count": 48,
+            "inclusive_wall_ns": 34104102,
+            "self_wall_ns": 34104102,
+            "maximum_wall_ns": 4299695
+          },
+          {
+            "name": "cuda.provider.jit",
+            "count": 19,
+            "inclusive_wall_ns": 32822016,
+            "self_wall_ns": 32822016,
+            "maximum_wall_ns": 31467509
+          },
+          {
+            "name": "cuda.weights.validate",
+            "count": 66,
+            "inclusive_wall_ns": 31482951,
+            "self_wall_ns": 31482951,
+            "maximum_wall_ns": 510559
+          },
+          {
+            "name": "luminal.search_space.build",
+            "count": 1,
+            "inclusive_wall_ns": 156601391990,
+            "self_wall_ns": 16023317,
+            "maximum_wall_ns": 156601391990
+          },
+          {
+            "name": "cuda.weights.tensor",
+            "count": 1251,
+            "inclusive_wall_ns": 5470562994,
+            "self_wall_ns": 13682081,
+            "maximum_wall_ns": 464131968
+          },
+          {
+            "name": "luminal.hlir.serialize",
+            "count": 1,
+            "inclusive_wall_ns": 12235609,
+            "self_wall_ns": 12235609,
+            "maximum_wall_ns": 12235609
+          },
+          {
+            "name": "cuda.initialize",
+            "count": 1,
+            "inclusive_wall_ns": 7494055,
+            "self_wall_ns": 7494055,
+            "maximum_wall_ns": 7494055
+          },
+          {
+            "name": "cuda.weights.convert",
+            "count": 705,
+            "inclusive_wall_ns": 4799809,
+            "self_wall_ns": 4799809,
+            "maximum_wall_ns": 71257
+          },
+          {
+            "name": "cuda.weights.metadata",
+            "count": 66,
+            "inclusive_wall_ns": 3623008,
+            "self_wall_ns": 3623008,
+            "maximum_wall_ns": 381503
+          },
+          {
+            "name": "orbitkv.weights.inspect",
+            "count": 1,
+            "inclusive_wall_ns": 2924974,
+            "self_wall_ns": 2924974,
+            "maximum_wall_ns": 2924974
+          },
+          {
+            "name": "luminal.egglog.setup_text",
+            "count": 2,
+            "inclusive_wall_ns": 2805809,
+            "self_wall_ns": 2805809,
+            "maximum_wall_ns": 1629378
+          },
+          {
+            "name": "orbitkv.decoder.finalize",
+            "count": 1,
+            "inclusive_wall_ns": 2675492,
+            "self_wall_ns": 2675492,
+            "maximum_wall_ns": 2675492
+          },
+          {
+            "name": "orbitkv.inputs.bind_and_seed",
+            "count": 1,
+            "inclusive_wall_ns": 1827859,
+            "self_wall_ns": 1827859,
+            "maximum_wall_ns": 1827859
+          },
+          {
+            "name": "cuda.weights.map",
+            "count": 66,
+            "inclusive_wall_ns": 1671285,
+            "self_wall_ns": 1671285,
+            "maximum_wall_ns": 36196
+          },
+          {
+            "name": "orbitkv.weights.load",
+            "count": 1,
+            "inclusive_wall_ns": 6347548340,
+            "self_wall_ns": 918479,
+            "maximum_wall_ns": 6347548340
+          },
+          {
+            "name": "cuda.weights.complete",
+            "count": 66,
+            "inclusive_wall_ns": 623205,
+            "self_wall_ns": 623205,
+            "maximum_wall_ns": 17769
+          },
+          {
+            "name": "cuda.candidate.profile_direct",
+            "count": 2,
+            "inclusive_wall_ns": 392554597,
+            "self_wall_ns": 418203,
+            "maximum_wall_ns": 236437919
+          },
+          {
+            "name": "luminal.egglog.declarations",
+            "count": 1,
+            "inclusive_wall_ns": 364586,
+            "self_wall_ns": 364586,
+            "maximum_wall_ns": 364586
+          },
+          {
+            "name": "orbitkv.decoder.prepare",
+            "count": 1,
+            "inclusive_wall_ns": 10636489064,
+            "self_wall_ns": 356188,
+            "maximum_wall_ns": 10636489064
+          },
+          {
+            "name": "cuda.weights.loaded",
+            "count": 66,
+            "inclusive_wall_ns": 35816,
+            "self_wall_ns": 35816,
+            "maximum_wall_ns": 838
+          }
+        ]
+      }
+    },
+    {
+      "case": "model-replay-prepared",
+      "schema": 1,
+      "reference_enabled": true,
+      "parity_steps": 32,
+      "sequences": 4,
+      "drain_passed": true,
+      "artifact_mode": "replay",
+      "max_abs_error": 0.71875,
+      "stage_trace": {
+        "trace": {
+          "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/model-replay-prepared-stages.jsonl",
+          "bytes": 1210267,
+          "sha256": "d6e749f1a1b7110661555593c69140272e6ac4bf997855aa2ccbe5d17756c587"
+        },
+        "span_count": 5415,
+        "completed_with_zero_open_spans": true,
+        "stages": [
+          {
+            "name": "cuda.weights.upload",
+            "count": 1251,
+            "inclusive_wall_ns": 6247782856,
+            "self_wall_ns": 6247782856,
+            "maximum_wall_ns": 539063372
+          },
+          {
+            "name": "orbitkv.graph.build",
+            "count": 1,
+            "inclusive_wall_ns": 4297967686,
+            "self_wall_ns": 4297967686,
+            "maximum_wall_ns": 4297967686
+          },
+          {
+            "name": "orbitkv.schedule.replay",
+            "count": 1,
+            "inclusive_wall_ns": 4873966709,
+            "self_wall_ns": 3683336663,
+            "maximum_wall_ns": 4873966709
+          },
+          {
+            "name": "cuda.weights.file",
+            "count": 66,
+            "inclusive_wall_ns": 7598006619,
+            "self_wall_ns": 1076221217,
+            "maximum_wall_ns": 1273236606
+          },
+          {
+            "name": "cuda.bucket.compile",
+            "count": 2,
+            "inclusive_wall_ns": 904900493,
+            "self_wall_ns": 904632246,
+            "maximum_wall_ns": 771643542
+          },
+          {
+            "name": "cuda.execute",
+            "count": 32,
+            "inclusive_wall_ns": 906633114,
+            "self_wall_ns": 803245619,
+            "maximum_wall_ns": 128617853
+          },
+          {
+            "name": "cuda.graph.materialize",
+            "count": 35,
+            "inclusive_wall_ns": 429684747,
+            "self_wall_ns": 429621214,
+            "maximum_wall_ns": 221566988
+          },
+          {
+            "name": "cuda.weights.allocate",
+            "count": 1251,
+            "inclusive_wall_ns": 217577705,
+            "self_wall_ns": 217577705,
+            "maximum_wall_ns": 22776867
+          },
+          {
+            "name": "cuda.provider.jit",
+            "count": 19,
+            "inclusive_wall_ns": 33374109,
+            "self_wall_ns": 33374109,
+            "maximum_wall_ns": 32234138
+          },
+          {
+            "name": "cuda.weights.validate",
+            "count": 66,
+            "inclusive_wall_ns": 31244783,
+            "self_wall_ns": 31244783,
+            "maximum_wall_ns": 522119
+          },
+          {
+            "name": "cuda.resources.retained",
+            "count": 1,
+            "inclusive_wall_ns": 21987035,
+            "self_wall_ns": 21987035,
+            "maximum_wall_ns": 21987035
+          },
+          {
+            "name": "cuda.inputs.prepare",
+            "count": 32,
+            "inclusive_wall_ns": 15633142,
+            "self_wall_ns": 15633142,
+            "maximum_wall_ns": 2185885
+          },
+          {
+            "name": "cuda.weights.tensor",
+            "count": 1251,
+            "inclusive_wall_ns": 6483994370,
+            "self_wall_ns": 13605966,
+            "maximum_wall_ns": 544061480
+          },
+          {
+            "name": "orbitkv.decoder.compile_or_load",
+            "count": 1,
+            "inclusive_wall_ns": 16787704132,
+            "self_wall_ns": 9074618,
+            "maximum_wall_ns": 16787704132
+          },
+          {
+            "name": "cuda.providers.prepare",
+            "count": 1,
+            "inclusive_wall_ns": 42055614,
+            "self_wall_ns": 8743104,
+            "maximum_wall_ns": 42055614
+          },
+          {
+            "name": "orbitkv.decoder.prepare_bucket",
+            "count": 2,
+            "inclusive_wall_ns": 125678585,
+            "self_wall_ns": 5315179,
+            "maximum_wall_ns": 121558220
+          },
+          {
+            "name": "cuda.weights.convert",
+            "count": 705,
+            "inclusive_wall_ns": 5027843,
+            "self_wall_ns": 5027843,
+            "maximum_wall_ns": 31608
+          },
+          {
+            "name": "cuda.weights.metadata",
+            "count": 66,
+            "inclusive_wall_ns": 4018860,
+            "self_wall_ns": 4018860,
+            "maximum_wall_ns": 384327
+          },
+          {
+            "name": "orbitkv.decoder.finalize",
+            "count": 1,
+            "inclusive_wall_ns": 2790385,
+            "self_wall_ns": 2790385,
+            "maximum_wall_ns": 2790385
+          },
+          {
+            "name": "orbitkv.weights.inspect",
+            "count": 1,
+            "inclusive_wall_ns": 2707195,
+            "self_wall_ns": 2707195,
+            "maximum_wall_ns": 2707195
+          },
+          {
+            "name": "orbitkv.inputs.bind_and_seed",
+            "count": 1,
+            "inclusive_wall_ns": 1970206,
+            "self_wall_ns": 1970206,
+            "maximum_wall_ns": 1970206
+          },
+          {
+            "name": "cuda.weights.map",
+            "count": 66,
+            "inclusive_wall_ns": 1898600,
+            "self_wall_ns": 1898600,
+            "maximum_wall_ns": 38988
+          },
+          {
+            "name": "orbitkv.weights.load",
+            "count": 1,
+            "inclusive_wall_ns": 7598965722,
+            "self_wall_ns": 959103,
+            "maximum_wall_ns": 7598965722
+          },
+          {
+            "name": "cuda.weights.complete",
+            "count": 66,
+            "inclusive_wall_ns": 590619,
+            "self_wall_ns": 590619,
+            "maximum_wall_ns": 21886
+          },
+          {
+            "name": "cuda.module_image.hit",
+            "count": 426,
+            "inclusive_wall_ns": 270181,
+            "self_wall_ns": 270181,
+            "maximum_wall_ns": 9282
+          },
+          {
+            "name": "orbitkv.decoder.prepare",
+            "count": 1,
+            "inclusive_wall_ns": 11901872420,
+            "self_wall_ns": 208628,
+            "maximum_wall_ns": 11901872420
+          },
+          {
+            "name": "cuda.buckets.compile_and_validate",
+            "count": 1,
+            "inclusive_wall_ns": 969063058,
+            "self_wall_ns": 119916,
+            "maximum_wall_ns": 969063058
+          },
+          {
+            "name": "cuda.initialize",
+            "count": 1,
+            "inclusive_wall_ns": 52983,
+            "self_wall_ns": 52983,
+            "maximum_wall_ns": 52983
+          },
+          {
+            "name": "cuda.weights.loaded",
+            "count": 66,
+            "inclusive_wall_ns": 38170,
+            "self_wall_ns": 38170,
+            "maximum_wall_ns": 980
+          },
+          {
+            "name": "orbitkv.decoder.prepare_execution",
+            "count": 1,
+            "inclusive_wall_ns": 125700152,
+            "self_wall_ns": 21567,
+            "maximum_wall_ns": 125700152
+          }
+        ]
+      }
+    },
+    {
+      "case": "model-replay-capacity-one",
+      "schema": 1,
+      "reference_enabled": true,
+      "parity_steps": 32,
+      "sequences": 4,
+      "drain_passed": true,
+      "artifact_mode": "replay",
+      "max_abs_error": 0.71875,
+      "stage_trace": {
+        "trace": {
+          "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/model-replay-capacity-one-stages.jsonl",
+          "bytes": 1209826,
+          "sha256": "432584b8e36501183867cb3c23938fd6dcf5b2a00a579468076723c4b15a9dd7"
+        },
+        "span_count": 5413,
+        "completed_with_zero_open_spans": true,
+        "stages": [
+          {
+            "name": "cuda.weights.upload",
+            "count": 1251,
+            "inclusive_wall_ns": 6238240317,
+            "self_wall_ns": 6238240317,
+            "maximum_wall_ns": 536799385
+          },
+          {
+            "name": "orbitkv.graph.build",
+            "count": 1,
+            "inclusive_wall_ns": 4295750448,
+            "self_wall_ns": 4295750448,
+            "maximum_wall_ns": 4295750448
+          },
+          {
+            "name": "orbitkv.schedule.replay",
+            "count": 1,
+            "inclusive_wall_ns": 4902043311,
+            "self_wall_ns": 3701354119,
+            "maximum_wall_ns": 4902043311
+          },
+          {
+            "name": "cuda.weights.file",
+            "count": 66,
+            "inclusive_wall_ns": 7492238620,
+            "self_wall_ns": 1083986015,
+            "maximum_wall_ns": 1270902997
+          },
+          {
+            "name": "cuda.bucket.compile",
+            "count": 2,
+            "inclusive_wall_ns": 911877672,
+            "self_wall_ns": 911610860,
+            "maximum_wall_ns": 778551009
+          },
+          {
+            "name": "cuda.execute",
+            "count": 32,
+            "inclusive_wall_ns": 1390582919,
+            "self_wall_ns": 885364964,
+            "maximum_wall_ns": 131435969
+          },
+          {
+            "name": "cuda.graph.materialize",
+            "count": 34,
+            "inclusive_wall_ns": 715487222,
+            "self_wall_ns": 715410510,
+            "maximum_wall_ns": 224204241
+          },
+          {
+            "name": "cuda.weights.allocate",
+            "count": 1251,
+            "inclusive_wall_ns": 113442309,
+            "self_wall_ns": 113442309,
+            "maximum_wall_ns": 19738026
+          },
+          {
+            "name": "cuda.provider.jit",
+            "count": 19,
+            "inclusive_wall_ns": 33199322,
+            "self_wall_ns": 33199322,
+            "maximum_wall_ns": 32011686
+          },
+          {
+            "name": "cuda.weights.validate",
+            "count": 66,
+            "inclusive_wall_ns": 30982060,
+            "self_wall_ns": 30982060,
+            "maximum_wall_ns": 549205
+          },
+          {
+            "name": "cuda.resources.retained",
+            "count": 1,
+            "inclusive_wall_ns": 22399276,
+            "self_wall_ns": 22399276,
+            "maximum_wall_ns": 22399276
+          },
+          {
+            "name": "cuda.inputs.prepare",
+            "count": 32,
+            "inclusive_wall_ns": 15715614,
+            "self_wall_ns": 15715614,
+            "maximum_wall_ns": 2977736
+          },
+          {
+            "name": "cuda.weights.tensor",
+            "count": 1251,
+            "inclusive_wall_ns": 6370673181,
+            "self_wall_ns": 13662755,
+            "maximum_wall_ns": 541556146
+          },
+          {
+            "name": "orbitkv.decoder.compile_or_load",
+            "count": 1,
+            "inclusive_wall_ns": 16707457842,
+            "self_wall_ns": 8999504,
+            "maximum_wall_ns": 16707457842
+          },
+          {
+            "name": "cuda.providers.prepare",
+            "count": 1,
+            "inclusive_wall_ns": 42083820,
+            "self_wall_ns": 8958709,
+            "maximum_wall_ns": 42083820
+          },
+          {
+            "name": "cuda.weights.convert",
+            "count": 705,
+            "inclusive_wall_ns": 5327800,
+            "self_wall_ns": 5327800,
+            "maximum_wall_ns": 37048
+          },
+          {
+            "name": "cuda.weights.metadata",
+            "count": 66,
+            "inclusive_wall_ns": 4074693,
+            "self_wall_ns": 4074693,
+            "maximum_wall_ns": 383679
+          },
+          {
+            "name": "orbitkv.decoder.finalize",
+            "count": 1,
+            "inclusive_wall_ns": 2679732,
+            "self_wall_ns": 2679732,
+            "maximum_wall_ns": 2679732
+          },
+          {
+            "name": "orbitkv.weights.inspect",
+            "count": 1,
+            "inclusive_wall_ns": 2661747,
+            "self_wall_ns": 2661747,
+            "maximum_wall_ns": 2661747
+          },
+          {
+            "name": "orbitkv.decoder.prepare_bucket",
+            "count": 1,
+            "inclusive_wall_ns": 4118226,
+            "self_wall_ns": 2337586,
+            "maximum_wall_ns": 4118226
+          },
+          {
+            "name": "cuda.weights.map",
+            "count": 66,
+            "inclusive_wall_ns": 1890555,
+            "self_wall_ns": 1890555,
+            "maximum_wall_ns": 38132
+          },
+          {
+            "name": "orbitkv.inputs.bind_and_seed",
+            "count": 1,
+            "inclusive_wall_ns": 1878040,
+            "self_wall_ns": 1878040,
+            "maximum_wall_ns": 1878040
+          },
+          {
+            "name": "orbitkv.weights.load",
+            "count": 1,
+            "inclusive_wall_ns": 7493195554,
+            "self_wall_ns": 956934,
+            "maximum_wall_ns": 7493195554
+          },
+          {
+            "name": "cuda.weights.complete",
+            "count": 66,
+            "inclusive_wall_ns": 596556,
+            "self_wall_ns": 596556,
+            "maximum_wall_ns": 21323
+          },
+          {
+            "name": "cuda.module_image.hit",
+            "count": 426,
+            "inclusive_wall_ns": 269313,
+            "self_wall_ns": 269313,
+            "maximum_wall_ns": 6692
+          },
+          {
+            "name": "orbitkv.decoder.prepare",
+            "count": 1,
+            "inclusive_wall_ns": 11793735295,
+            "self_wall_ns": 196611,
+            "maximum_wall_ns": 11793735295
+          },
+          {
+            "name": "cuda.buckets.compile_and_validate",
+            "count": 1,
+            "inclusive_wall_ns": 976484951,
+            "self_wall_ns": 124183,
+            "maximum_wall_ns": 976484951
+          },
+          {
+            "name": "cuda.initialize",
+            "count": 1,
+            "inclusive_wall_ns": 52895,
+            "self_wall_ns": 52895,
+            "maximum_wall_ns": 52895
+          },
+          {
+            "name": "cuda.weights.loaded",
+            "count": 66,
+            "inclusive_wall_ns": 35560,
+            "self_wall_ns": 35560,
+            "maximum_wall_ns": 830
+          },
+          {
+            "name": "orbitkv.decoder.prepare_execution",
+            "count": 1,
+            "inclusive_wall_ns": 4131851,
+            "self_wall_ns": 13625,
+            "maximum_wall_ns": 4131851
+          }
+        ]
+      }
+    }
+  ],
+  "http": {
+    "http-generate": {
+      "status": "passed",
+      "ready_seconds": 234.7972888983786,
+      "shutdown_seconds": 10.927783064544201,
+      "expected_text": "&!@",
+      "artifact_before": null,
+      "artifact_after": {
+        "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/decoder.json",
+        "bytes": 15221415,
+        "sha256": "0948fef78685a7fe194f63b3545f0851cabab20cdb347b661e2b2defa26c4143"
+      },
+      "shutdown": {
+        "stats": {
+          "manager": {
+            "active_requests": 0,
+            "active_snapshots": 0,
+            "active_prefixes": 0,
+            "evicted_prefixes": 0,
+            "prepared_steps": 0,
+            "submitted_steps": 0,
+            "free_pages": 64,
+            "reserved_pages": 0,
+            "writing_pages": 0,
+            "active_pages": 0,
+            "retiring_pages": 0,
+            "quarantined_pages": 0,
+            "exhausted_pages": 0,
+            "pending_reclamations": 0,
+            "total_request_page_refs": 0,
+            "total_prefix_page_refs": 0,
+            "total_reader_pins": 0
+          },
+          "queued_requests": 0,
+          "active_requests": 0,
+          "admitted_requests": 2,
+          "completed_requests": 2,
+          "cancelled_requests": 1,
+          "model_dispatches": 5,
+          "multi_request_dispatches": 0,
+          "mixed_phase_dispatches": 0,
+          "maximum_observed_batch_size": 1
+        },
+        "fixed_states": [
+          [
+            1,
+            {
+              "identity": {
+                "engine_epoch": 1,
+                "pool_epoch": 3,
+                "byte_count": 150994944,
+                "pool_id": 2,
+                "slot_count": 2
+              },
+              "free_slots": 2,
+              "reserved_slots": 0,
+              "copying_slots": 0,
+              "live_slots": 0,
+              "retiring_slots": 0,
+              "quarantined_slots": 0,
+              "active_owners": 0,
+              "pending_transitions": 0,
+              "pending_retirements": 0
+            }
+          ],
+          [
+            2,
+            {
+              "identity": {
+                "engine_epoch": 1,
+                "pool_epoch": 4,
+                "byte_count": 2949120,
+                "pool_id": 3,
+                "slot_count": 2
+              },
+              "free_slots": 2,
+              "reserved_slots": 0,
+              "copying_slots": 0,
+              "live_slots": 0,
+              "retiring_slots": 0,
+              "quarantined_slots": 0,
+              "active_owners": 0,
+              "pending_transitions": 0,
+              "pending_retirements": 0
+            }
+          ]
+        ],
+        "decoder_graph_builds": 2,
+        "materialized_decoder_graphs": 2
+      },
+      "startup": {
+        "elapsed": {
+          "secs": 233,
+          "nanos": 459474463
+        },
+        "preparation": {
+          "elapsed": {
+            "secs": 0,
+            "nanos": 100860566
+          },
+          "compiled_buckets": 2,
+          "buckets": [
+            {
+              "bucket_index": 1,
+              "dimensions": {
+                "b": 1,
+                "c_0": 1,
+                "s": 4
+              },
+              "elapsed": {
+                "secs": 0,
+                "nanos": 4036948
+              },
+              "graph_builds": 0
+            },
+            {
+              "bucket_index": 0,
+              "dimensions": {
+                "b": 1,
+                "c_0": 1,
+                "s": 1
+              },
+              "elapsed": {
+                "secs": 0,
+                "nanos": 96788660
+              },
+              "graph_builds": 1
+            }
+          ],
+          "cache": {
+            "graph_builds": 2,
+            "materialized_graphs": 2
+          }
+        }
+      },
+      "module_image_hits": 0,
+      "nvrtc_compiles": 1617,
+      "stage_trace": {
+        "trace": {
+          "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/http-generate/stages.jsonl",
+          "bytes": 1496706,
+          "sha256": "32fb8dbfdf7fe6bd7ed11deec4ebd7ad01fd825ec79abb90efa0dc6e1c7a41f8"
+        },
+        "span_count": 6841,
+        "completed_with_zero_open_spans": true,
+        "stages": [
+          {
+            "name": "luminal.egglog.schedule",
+            "count": 18,
+            "inclusive_wall_ns": 163046647376,
+            "self_wall_ns": 163046647376,
+            "maximum_wall_ns": 91006880204
+          },
+          {
+            "name": "cuda.nvrtc.compile",
+            "count": 1617,
+            "inclusive_wall_ns": 24292508211,
+            "self_wall_ns": 24292508211,
+            "maximum_wall_ns": 42195523
+          },
+          {
+            "name": "luminal.egglog.setup_run",
+            "count": 2,
+            "inclusive_wall_ns": 17228589799,
+            "self_wall_ns": 17228589799,
+            "maximum_wall_ns": 8882824589
+          },
+          {
+            "name": "cuda.weights.upload",
+            "count": 1251,
+            "inclusive_wall_ns": 6267368121,
+            "self_wall_ns": 6267368121,
+            "maximum_wall_ns": 534739173
+          },
+          {
+            "name": "orbitkv.graph.build",
+            "count": 1,
+            "inclusive_wall_ns": 4340965739,
+            "self_wall_ns": 4340965739,
+            "maximum_wall_ns": 4340965739
+          },
+          {
+            "name": "cuda.bucket.compile",
+            "count": 48,
+            "inclusive_wall_ns": 27721448339,
+            "self_wall_ns": 3511995820,
+            "maximum_wall_ns": 4522940965
+          },
+          {
+            "name": "cuda.resources.static_prepare",
+            "count": 44,
+            "inclusive_wall_ns": 3298801327,
+            "self_wall_ns": 3298801327,
+            "maximum_wall_ns": 584750721
+          },
+          {
+            "name": "luminal.graph.normalize",
+            "count": 1,
+            "inclusive_wall_ns": 2924078915,
+            "self_wall_ns": 2924078915,
+            "maximum_wall_ns": 2924078915
+          },
+          {
+            "name": "cuda.candidate.evaluate",
+            "count": 40,
+            "inclusive_wall_ns": 16908116020,
+            "self_wall_ns": 1230885901,
+            "maximum_wall_ns": 5138414090
+          },
+          {
+            "name": "cuda.weights.file",
+            "count": 66,
+            "inclusive_wall_ns": 7505840549,
+            "self_wall_ns": 1096156337,
+            "maximum_wall_ns": 1267681704
+          },
+          {
+            "name": "luminal.egglog.bucket",
+            "count": 2,
+            "inclusive_wall_ns": 181742549860,
+            "self_wall_ns": 1083086460,
+            "maximum_wall_ns": 101878353772
+          },
+          {
+            "name": "luminal.search.next_candidate",
+            "count": 42,
+            "inclusive_wall_ns": 920910727,
+            "self_wall_ns": 920910727,
+            "maximum_wall_ns": 36021786
+          },
+          {
+            "name": "cuda.search",
+            "count": 1,
+            "inclusive_wall_ns": 29127012746,
+            "self_wall_ns": 782877912,
+            "maximum_wall_ns": 29127012746
+          },
+          {
+            "name": "cuda.execute",
+            "count": 21,
+            "inclusive_wall_ns": 1004621199,
+            "self_wall_ns": 781257047,
+            "maximum_wall_ns": 140400834
+          },
+          {
+            "name": "cuda.module_artifact.capture",
+            "count": 1,
+            "inclusive_wall_ns": 7318945023,
+            "self_wall_ns": 726140860,
+            "maximum_wall_ns": 7318945023
+          },
+          {
+            "name": "cuda.graph.materialize",
+            "count": 19,
+            "inclusive_wall_ns": 533016940,
+            "self_wall_ns": 533016940,
+            "maximum_wall_ns": 93567908
+          },
+          {
+            "name": "luminal.egglog.serialize",
+            "count": 2,
+            "inclusive_wall_ns": 240169321,
+            "self_wall_ns": 240169321,
+            "maximum_wall_ns": 120373686
+          },
+          {
+            "name": "cuda.search.bucket",
+            "count": 2,
+            "inclusive_wall_ns": 19012175696,
+            "self_wall_ns": 146839522,
+            "maximum_wall_ns": 10306480404
+          },
+          {
+            "name": "luminal.egglog.parse",
+            "count": 2,
+            "inclusive_wall_ns": 141358356,
+            "self_wall_ns": 141358356,
+            "maximum_wall_ns": 72521775
+          },
+          {
+            "name": "cuda.search.initialize",
+            "count": 2,
+            "inclusive_wall_ns": 133833285,
+            "self_wall_ns": 133833285,
+            "maximum_wall_ns": 68055374
+          },
+          {
+            "name": "cuda.resources.retained",
+            "count": 8,
+            "inclusive_wall_ns": 112785997,
+            "self_wall_ns": 112785997,
+            "maximum_wall_ns": 22354942
+          },
+          {
+            "name": "cuda.weights.allocate",
+            "count": 1251,
+            "inclusive_wall_ns": 84978457,
+            "self_wall_ns": 84978457,
+            "maximum_wall_ns": 6315276
+          },
+          {
+            "name": "cuda.candidate.profile_deployment",
+            "count": 2,
+            "inclusive_wall_ns": 902476142,
+            "self_wall_ns": 75432248,
+            "maximum_wall_ns": 517923664
+          },
+          {
+            "name": "cuda.buckets.compile_and_validate",
+            "count": 46,
+            "inclusive_wall_ns": 28038303929,
+            "self_wall_ns": 53712781,
+            "maximum_wall_ns": 6543585682
+          },
+          {
+            "name": "orbitkv.decoder.compile_or_load",
+            "count": 1,
+            "inclusive_wall_ns": 233056006795,
+            "self_wall_ns": 51812786,
+            "maximum_wall_ns": 233056006795
+          },
+          {
+            "name": "cuda.providers.prepare",
+            "count": 8,
+            "inclusive_wall_ns": 150356812,
+            "self_wall_ns": 34011202,
+            "maximum_wall_ns": 79520100
+          },
+          {
+            "name": "cuda.provider.jit",
+            "count": 20,
+            "inclusive_wall_ns": 33346933,
+            "self_wall_ns": 33346933,
+            "maximum_wall_ns": 31950591
+          },
+          {
+            "name": "cuda.weights.validate",
+            "count": 66,
+            "inclusive_wall_ns": 31202918,
+            "self_wall_ns": 31202918,
+            "maximum_wall_ns": 545254
+          },
+          {
+            "name": "cuda.inputs.prepare",
+            "count": 21,
+            "inclusive_wall_ns": 26111657,
+            "self_wall_ns": 26111657,
+            "maximum_wall_ns": 4641068
+          },
+          {
+            "name": "luminal.search_space.build",
+            "count": 1,
+            "inclusive_wall_ns": 184695334667,
+            "self_wall_ns": 16177071,
+            "maximum_wall_ns": 184695334667
+          },
+          {
+            "name": "cuda.weights.tensor",
+            "count": 1251,
+            "inclusive_wall_ns": 6371704857,
+            "self_wall_ns": 14052928,
+            "maximum_wall_ns": 539271458
+          },
+          {
+            "name": "luminal.hlir.serialize",
+            "count": 1,
+            "inclusive_wall_ns": 12156033,
+            "self_wall_ns": 12156033,
+            "maximum_wall_ns": 12156033
+          },
+          {
+            "name": "cuda.initialize",
+            "count": 1,
+            "inclusive_wall_ns": 8616764,
+            "self_wall_ns": 8616764,
+            "maximum_wall_ns": 8616764
+          },
+          {
+            "name": "orbitkv.decoder.prepare_bucket",
+            "count": 2,
+            "inclusive_wall_ns": 100832175,
+            "self_wall_ns": 5649228,
+            "maximum_wall_ns": 96792898
+          },
+          {
+            "name": "cuda.weights.convert",
+            "count": 705,
+            "inclusive_wall_ns": 5305351,
+            "self_wall_ns": 5305351,
+            "maximum_wall_ns": 39161
+          },
+          {
+            "name": "cuda.weights.metadata",
+            "count": 66,
+            "inclusive_wall_ns": 4221231,
+            "self_wall_ns": 4221231,
+            "maximum_wall_ns": 386289
+          },
+          {
+            "name": "orbitkv.weights.inspect",
+            "count": 1,
+            "inclusive_wall_ns": 3019584,
+            "self_wall_ns": 3019584,
+            "maximum_wall_ns": 3019584
+          },
+          {
+            "name": "luminal.egglog.setup_text",
+            "count": 2,
+            "inclusive_wall_ns": 2698548,
+            "self_wall_ns": 2698548,
+            "maximum_wall_ns": 1543334
+          },
+          {
+            "name": "cuda.weights.map",
+            "count": 66,
+            "inclusive_wall_ns": 1956293,
+            "self_wall_ns": 1956293,
+            "maximum_wall_ns": 43921
+          },
+          {
+            "name": "orbitkv.decoder.finalize",
+            "count": 1,
+            "inclusive_wall_ns": 1777121,
+            "self_wall_ns": 1777121,
+            "maximum_wall_ns": 1777121
+          },
+          {
+            "name": "orbitkv.inputs.bind_and_seed",
+            "count": 1,
+            "inclusive_wall_ns": 1347843,
+            "self_wall_ns": 1347843,
+            "maximum_wall_ns": 1347843
+          },
+          {
+            "name": "orbitkv.weights.load",
+            "count": 1,
+            "inclusive_wall_ns": 7506813980,
+            "self_wall_ns": 973431,
+            "maximum_wall_ns": 7506813980
+          },
+          {
+            "name": "cuda.weights.complete",
+            "count": 66,
+            "inclusive_wall_ns": 556619,
+            "self_wall_ns": 556619,
+            "maximum_wall_ns": 19270
+          },
+          {
+            "name": "cuda.candidate.profile_direct",
+            "count": 2,
+            "inclusive_wall_ns": 413947135,
+            "self_wall_ns": 403482,
+            "maximum_wall_ns": 246522165
+          },
+          {
+            "name": "luminal.egglog.declarations",
+            "count": 1,
+            "inclusive_wall_ns": 372788,
+            "self_wall_ns": 372788,
+            "maximum_wall_ns": 372788
+          },
+          {
+            "name": "orbitkv.decoder.prepare",
+            "count": 1,
+            "inclusive_wall_ns": 11861124452,
+            "self_wall_ns": 360542,
+            "maximum_wall_ns": 11861124452
+          },
+          {
+            "name": "cuda.weights.loaded",
+            "count": 66,
+            "inclusive_wall_ns": 42294,
+            "self_wall_ns": 42294,
+            "maximum_wall_ns": 1194
+          },
+          {
+            "name": "orbitkv.decoder.prepare_execution",
+            "count": 1,
+            "inclusive_wall_ns": 100865972,
+            "self_wall_ns": 33797,
+            "maximum_wall_ns": 100865972
+          }
+        ]
+      }
+    },
+    "http-probe": {
+      "status": "passed",
+      "ready_seconds": 19.026130877435207,
+      "shutdown_seconds": 10.376937333494425,
+      "expected_text": "&!@",
+      "artifact_before": {
+        "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/decoder.json",
+        "bytes": 15221415,
+        "sha256": "0948fef78685a7fe194f63b3545f0851cabab20cdb347b661e2b2defa26c4143"
+      },
+      "artifact_after": {
+        "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/decoder.json",
+        "bytes": 15221415,
+        "sha256": "0948fef78685a7fe194f63b3545f0851cabab20cdb347b661e2b2defa26c4143"
+      },
+      "shutdown": {
+        "stats": {
+          "manager": {
+            "active_requests": 0,
+            "active_snapshots": 0,
+            "active_prefixes": 0,
+            "evicted_prefixes": 0,
+            "prepared_steps": 0,
+            "submitted_steps": 0,
+            "free_pages": 64,
+            "reserved_pages": 0,
+            "writing_pages": 0,
+            "active_pages": 0,
+            "retiring_pages": 0,
+            "quarantined_pages": 0,
+            "exhausted_pages": 0,
+            "pending_reclamations": 0,
+            "total_request_page_refs": 0,
+            "total_prefix_page_refs": 0,
+            "total_reader_pins": 0
+          },
+          "queued_requests": 0,
+          "active_requests": 0,
+          "admitted_requests": 2,
+          "completed_requests": 2,
+          "cancelled_requests": 1,
+          "model_dispatches": 5,
+          "multi_request_dispatches": 0,
+          "mixed_phase_dispatches": 0,
+          "maximum_observed_batch_size": 1
+        },
+        "fixed_states": [
+          [
+            1,
+            {
+              "identity": {
+                "engine_epoch": 1,
+                "pool_epoch": 3,
+                "byte_count": 150994944,
+                "pool_id": 2,
+                "slot_count": 2
+              },
+              "free_slots": 2,
+              "reserved_slots": 0,
+              "copying_slots": 0,
+              "live_slots": 0,
+              "retiring_slots": 0,
+              "quarantined_slots": 0,
+              "active_owners": 0,
+              "pending_transitions": 0,
+              "pending_retirements": 0
+            }
+          ],
+          [
+            2,
+            {
+              "identity": {
+                "engine_epoch": 1,
+                "pool_epoch": 4,
+                "byte_count": 2949120,
+                "pool_id": 3,
+                "slot_count": 2
+              },
+              "free_slots": 2,
+              "reserved_slots": 0,
+              "copying_slots": 0,
+              "live_slots": 0,
+              "retiring_slots": 0,
+              "quarantined_slots": 0,
+              "active_owners": 0,
+              "pending_transitions": 0,
+              "pending_retirements": 0
+            }
+          ]
+        ],
+        "decoder_graph_builds": 2,
+        "materialized_decoder_graphs": 2
+      },
+      "startup": {
+        "elapsed": {
+          "secs": 17,
+          "nanos": 227723575
+        },
+        "preparation": {
+          "elapsed": {
+            "secs": 0,
+            "nanos": 130647270
+          },
+          "compiled_buckets": 2,
+          "buckets": [
+            {
+              "bucket_index": 1,
+              "dimensions": {
+                "b": 1,
+                "c_0": 1,
+                "s": 4
+              },
+              "elapsed": {
+                "secs": 0,
+                "nanos": 4137822
+              },
+              "graph_builds": 0
+            },
+            {
+              "bucket_index": 0,
+              "dimensions": {
+                "b": 1,
+                "c_0": 1,
+                "s": 1
+              },
+              "elapsed": {
+                "secs": 0,
+                "nanos": 126487993
+              },
+              "graph_builds": 1
+            }
+          ],
+          "cache": {
+            "graph_builds": 2,
+            "materialized_graphs": 2
+          }
+        }
+      },
+      "module_image_hits": 423,
+      "nvrtc_compiles": 0,
+      "stage_trace": {
+        "trace": {
+          "path": "/workspace/orbitkv/.qualification/provider-kernels-20260914/http-probe/stages.jsonl",
+          "bytes": 1197726,
+          "sha256": "0ac27a8372614fd3bc7764dc04471d7d7d5c8c8d0172fb2c2bd74ba8cbcc8c8f"
+        },
+        "span_count": 5332,
+        "completed_with_zero_open_spans": true,
+        "stages": [
+          {
+            "name": "cuda.weights.upload",
+            "count": 1251,
+            "inclusive_wall_ns": 6172596415,
+            "self_wall_ns": 6172596415,
+            "maximum_wall_ns": 530172269
+          },
+          {
+            "name": "orbitkv.graph.build",
+            "count": 1,
+            "inclusive_wall_ns": 4314409978,
+            "self_wall_ns": 4314409978,
+            "maximum_wall_ns": 4314409978
+          },
+          {
+            "name": "orbitkv.schedule.replay",
+            "count": 1,
+            "inclusive_wall_ns": 5023812650,
+            "self_wall_ns": 3779993906,
+            "maximum_wall_ns": 5023812650
+          },
+          {
+            "name": "cuda.weights.file",
+            "count": 66,
+            "inclusive_wall_ns": 7380114276,
+            "self_wall_ns": 1069726723,
+            "maximum_wall_ns": 1258167088
+          },
+          {
+            "name": "cuda.bucket.compile",
+            "count": 2,
+            "inclusive_wall_ns": 958450376,
+            "self_wall_ns": 958190254,
+            "maximum_wall_ns": 823988001
+          },
+          {
+            "name": "cuda.graph.materialize",
+            "count": 8,
+            "inclusive_wall_ns": 347298767,
+            "self_wall_ns": 347232129,
+            "maximum_wall_ns": 221548618
+          },
+          {
+            "name": "cuda.execute",
+            "count": 5,
+            "inclusive_wall_ns": 161149511,
+            "self_wall_ns": 147268141,
+            "maximum_wall_ns": 37930811
+          },
+          {
+            "name": "cuda.weights.allocate",
+            "count": 1251,
+            "inclusive_wall_ns": 82020139,
+            "self_wall_ns": 82020139,
+            "maximum_wall_ns": 6484416
+          },
+          {
+            "name": "cuda.provider.jit",
+            "count": 20,
+            "inclusive_wall_ns": 33374336,
+            "self_wall_ns": 33374336,
+            "maximum_wall_ns": 32189051
+          },
+          {
+            "name": "cuda.weights.validate",
+            "count": 66,
+            "inclusive_wall_ns": 30346515,
+            "self_wall_ns": 30346515,
+            "maximum_wall_ns": 484641
+          },
+          {
+            "name": "cuda.resources.retained",
+            "count": 1,
+            "inclusive_wall_ns": 22379070,
+            "self_wall_ns": 22379070,
+            "maximum_wall_ns": 22379070
+          },
+          {
+            "name": "cuda.weights.tensor",
+            "count": 1251,
+            "inclusive_wall_ns": 6273488677,
+            "self_wall_ns": 13574568,
+            "maximum_wall_ns": 534636187
+          },
+          {
+            "name": "cuda.inputs.prepare",
+            "count": 5,
+            "inclusive_wall_ns": 13375973,
+            "self_wall_ns": 13375973,
+            "maximum_wall_ns": 7674803
+          },
+          {
+            "name": "orbitkv.decoder.compile_or_load",
+            "count": 1,
+            "inclusive_wall_ns": 16734536698,
+            "self_wall_ns": 9469405,
+            "maximum_wall_ns": 16734536698
+          },
+          {
+            "name": "cuda.providers.prepare",
+            "count": 1,
+            "inclusive_wall_ns": 41320123,
+            "self_wall_ns": 8010601,
+            "maximum_wall_ns": 41320123
+          },
+          {
+            "name": "orbitkv.decoder.prepare_bucket",
+            "count": 2,
+            "inclusive_wall_ns": 130631439,
+            "self_wall_ns": 5386687,
+            "maximum_wall_ns": 126491886
+          },
+          {
+            "name": "cuda.weights.convert",
+            "count": 705,
+            "inclusive_wall_ns": 5297555,
+            "self_wall_ns": 5297555,
+            "maximum_wall_ns": 48959
+          },
+          {
+            "name": "cuda.weights.metadata",
+            "count": 66,
+            "inclusive_wall_ns": 4013395,
+            "self_wall_ns": 4013395,
+            "maximum_wall_ns": 395735
+          },
+          {
+            "name": "orbitkv.weights.inspect",
+            "count": 1,
+            "inclusive_wall_ns": 2746141,
+            "self_wall_ns": 2746141,
+            "maximum_wall_ns": 2746141
+          },
+          {
+            "name": "cuda.weights.map",
+            "count": 66,
+            "inclusive_wall_ns": 1937653,
+            "self_wall_ns": 1937653,
+            "maximum_wall_ns": 47090
+          },
+          {
+            "name": "orbitkv.decoder.finalize",
+            "count": 1,
+            "inclusive_wall_ns": 1512410,
+            "self_wall_ns": 1512410,
+            "maximum_wall_ns": 1512410
+          },
+          {
+            "name": "orbitkv.inputs.bind_and_seed",
+            "count": 1,
+            "inclusive_wall_ns": 1330169,
+            "self_wall_ns": 1330169,
+            "maximum_wall_ns": 1330169
+          },
+          {
+            "name": "orbitkv.weights.load",
+            "count": 1,
+            "inclusive_wall_ns": 7381016259,
+            "self_wall_ns": 901983,
+            "maximum_wall_ns": 7381016259
+          },
+          {
+            "name": "cuda.weights.complete",
+            "count": 66,
+            "inclusive_wall_ns": 565498,
+            "self_wall_ns": 565498,
+            "maximum_wall_ns": 21180
+          },
+          {
+            "name": "cuda.module_image.hit",
+            "count": 423,
+            "inclusive_wall_ns": 261946,
+            "self_wall_ns": 261946,
+            "maximum_wall_ns": 3448
+          },
+          {
+            "name": "orbitkv.decoder.prepare",
+            "count": 1,
+            "inclusive_wall_ns": 11699742233,
+            "self_wall_ns": 186101,
+            "maximum_wall_ns": 11699742233
+          },
+          {
+            "name": "cuda.buckets.compile_and_validate",
+            "count": 1,
+            "inclusive_wall_ns": 1022270126,
+            "self_wall_ns": 120557,
+            "maximum_wall_ns": 1022270126
+          },
+          {
+            "name": "cuda.initialize",
+            "count": 1,
+            "inclusive_wall_ns": 53585,
+            "self_wall_ns": 53585,
+            "maximum_wall_ns": 53585
+          },
+          {
+            "name": "cuda.weights.loaded",
+            "count": 66,
+            "inclusive_wall_ns": 35815,
+            "self_wall_ns": 35815,
+            "maximum_wall_ns": 747
+          },
+          {
+            "name": "orbitkv.decoder.prepare_execution",
+            "count": 1,
+            "inclusive_wall_ns": 130650735,
+            "self_wall_ns": 19296,
+            "maximum_wall_ns": 130650735
+          }
+        ]
+      }
+    }
+  },
+  "limits": [
+    "H20 SM90 and the local 27B text checkpoint only; not wider device or model qualification",
+    "Four prompt tokens plus seven teacher-forced decode steps per sequence; unchanged full-vocabulary error gate of 1.0",
+    "search_graphs=1 and seed=7; runtime population initialization also profiles candidates; no optimal-search claim",
+    "Fresh search and replay timings include different work and are not a matched serving-performance comparison",
+    "FlashAttention-3 adapter: SM90, F16/BF16 equal HD64/128/256, NHD paged K/V, causal/sliding, non-TMA packed-GQA unsplit forward",
+    "No FA2/FA4, split-KV/TMA candidate, FlashMLA, Triton/TileLang adapter, or latent/sparse/contiguous KV execution contract",
+    "Handwritten native attention and experimental tuning flag removed; upstream CUDA kernels and independent CPU test oracle retained"
+  ]
+}

@@ -1,0 +1,557 @@
+{
+  "schema": "orbitkv.tests-directory-validation.v1",
+  "reviewed_at_utc": "2026-09-12T15:47:23.198306+00:00",
+  "status": "passed",
+  "convention": "All owned crate test source under tests/; private suites under tests/unit/, cfg(test) module bridges preserve private access. Maintained CUDA provider/search trace suites follow this convention.",
+  "root_checks": [
+    {
+      "name": "workspace-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--all-targets"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 4.166296284645796,
+      "log": "/workspace/orbitkv/.qualification/tests-directory-20260912/workspace-tests.log",
+      "log_sha256": "b82709f12f8e1e0b0fadbb080592b6568be4c6fcb38be00af2888c0cb170a69b",
+      "test_counts": [
+        {
+          "passed": 203,
+          "failed": 0,
+          "ignored": 1
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 18,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 18,
+          "failed": 0,
+          "ignored": 1
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 3,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 1,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 4,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "server-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "orbitkv-server",
+        "--features",
+        "vllm-frontend"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 2.5511496253311634,
+      "log": "/workspace/orbitkv/.qualification/tests-directory-20260912/server-tests.log",
+      "log_sha256": "34a249d20bdf1ebb88707cb887527470ee46047bd76fea8342fedf49b0e72cfe",
+      "test_counts": [
+        {
+          "passed": 11,
+          "failed": 0,
+          "ignored": 1
+        },
+        {
+          "passed": 0,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "engine-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "orbitkv-engine",
+        "--features",
+        "server",
+        "--lib",
+        "--bin",
+        "orbitkv-serve"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 4.803925804793835,
+      "log": "/workspace/orbitkv/.qualification/tests-directory-20260912/engine-tests.log",
+      "log_sha256": "da9df2612b84b4025a7f3c342833f061be244e4df8c73d06d2ae14b0ab78f963",
+      "test_counts": [
+        {
+          "passed": 14,
+          "failed": 0,
+          "ignored": 0
+        },
+        {
+          "passed": 5,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "executor-model-tests",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "orbitkv-executor",
+        "--features",
+        "cuda",
+        "--lib",
+        "model::tests"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 8.084089320152998,
+      "log": "/workspace/orbitkv/.qualification/tests-directory-20260912/executor-model-tests.log",
+      "log_sha256": "a6dc8c67df7cdfa64509ed753e95222cb9467d74001db5b49c1e59effedf1704",
+      "test_counts": [
+        {
+          "passed": 26,
+          "failed": 0,
+          "ignored": 1
+        }
+      ]
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "-p",
+        "orbitkv-executor",
+        "-p",
+        "orbitkv-engine",
+        "-p",
+        "orbitkv",
+        "-p",
+        "orbitkv-server",
+        "--features",
+        "orbitkv-executor/cuda,orbitkv-engine/server",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 4.7196919322013855,
+      "log": "/workspace/orbitkv/.qualification/tests-directory-20260912/clippy.log",
+      "log_sha256": "8a04925cf6a4ffc02b0f3f4d2b74f4b8f767228a7af7f958d344b91008ad032b",
+      "test_counts": []
+    }
+  ],
+  "provider_checks": [
+    {
+      "name": "cublaslt",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "luminal_cuda_lite",
+        "--lib",
+        "host::cublaslt::tests::",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 12.167130697518587,
+      "log": "/workspace/orbitkv/.qualification/tests-directory-20260912/provider/cublaslt.log",
+      "log_sha256": "df3ded98c172cc9ed9db30e8038e846a29e3b6184aec1177794d7117e11d26db",
+      "test_result": "test result: ok. 16 passed; 0 failed; 3 ignored; 0 measured; 472 filtered out; finished in 7.80s",
+      "test_counts": [
+        {
+          "passed": 16,
+          "failed": 0,
+          "ignored": 3
+        }
+      ]
+    },
+    {
+      "name": "deepgemm",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "luminal_cuda_lite",
+        "--lib",
+        "host::deepgemm::",
+        "--",
+        "--test-threads=1",
+        "--skip",
+        "deepgemm_candidates_share_reference_eclass"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 2.353044994175434,
+      "log": "/workspace/orbitkv/.qualification/tests-directory-20260912/provider/deepgemm.log",
+      "log_sha256": "66457f513a7bee909b971c7d30fd26ea1d902ee984e84b3feb47da23a237da7c",
+      "test_result": "test result: ok. 10 passed; 0 failed; 9 ignored; 0 measured; 472 filtered out; finished in 2.03s",
+      "test_counts": [
+        {
+          "passed": 10,
+          "failed": 0,
+          "ignored": 9
+        }
+      ]
+    },
+    {
+      "name": "flashinfer",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "luminal_cuda_lite",
+        "--lib",
+        "host::flashinfer::tests::",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.31763384491205215,
+      "log": "/workspace/orbitkv/.qualification/tests-directory-20260912/provider/flashinfer.log",
+      "log_sha256": "156170992a0ffe5c0c9bb31e3865914cea912e3bc37751628064bf9aed5df78e",
+      "test_result": "test result: ok. 7 passed; 0 failed; 0 ignored; 0 measured; 484 filtered out; finished in 0.00s",
+      "test_counts": [
+        {
+          "passed": 7,
+          "failed": 0,
+          "ignored": 0
+        }
+      ]
+    },
+    {
+      "name": "search-trace",
+      "command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "-p",
+        "luminal_cuda_lite",
+        "--lib",
+        "search::trace::tests::",
+        "--",
+        "--test-threads=1"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 0.8290023356676102,
+      "log": "/workspace/orbitkv/.qualification/tests-directory-20260912/provider/search-trace.log",
+      "log_sha256": "95d0510739e32a0f7b1576a2192faaf10c73c5b55390365361af13c0bf51e4dd",
+      "test_result": "test result: ok. 3 passed; 0 failed; 1 ignored; 0 measured; 487 filtered out; finished in 0.51s",
+      "test_counts": [
+        {
+          "passed": 3,
+          "failed": 0,
+          "ignored": 1
+        }
+      ]
+    },
+    {
+      "name": "clippy",
+      "command": [
+        "cargo",
+        "clippy",
+        "--offline",
+        "--locked",
+        "-p",
+        "luminal_cuda_lite",
+        "--lib",
+        "--tests",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "elapsed_seconds": 3.840431224554777,
+      "log": "/workspace/orbitkv/.qualification/tests-directory-20260912/provider/clippy.log",
+      "log_sha256": "6dbf03a1aa076a3880c688b896efe1a7f28830c805031fbb1f7bfcad9d834d55",
+      "test_counts": []
+    }
+  ],
+  "static_checks": {
+    "source_gate": {
+      "path": "/workspace/orbitkv/.qualification/tests-directory-20260912/source-gate.log",
+      "bytes": 156,
+      "sha256": "802aa61bc28a366f47fa3af709a4ecaca49c76e1fc8a0f43bc97dd7423d88eaa"
+    },
+    "format": {
+      "path": "/workspace/orbitkv/.qualification/tests-directory-20260912/format.log",
+      "bytes": 0,
+      "sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"
+    }
+  },
+  "move_receipts": [
+    {
+      "path": "/workspace/orbitkv/.qualification/tests-directory-20260912/orbitkv-core-tests-layout-moves-20260912.json",
+      "bytes": 9251,
+      "sha256": "417305cfd55e1dca85989061173eb4badc45db13d26ace47440ce646f9a488ef"
+    },
+    {
+      "path": "/workspace/orbitkv/.qualification/tests-directory-20260912/orbitkv-executor-tests-directory-moves.json",
+      "bytes": 6670,
+      "sha256": "0c6a6097affa106bd8377d39a407562266eb32142da1d74a0b4e8e78541d76e5"
+    }
+  ],
+  "production_equivalence": {
+    "status": "passed",
+    "baseline_source_manifest": "/workspace/orbitkv/.qualification/module-layout-20260912/source-before-build.json",
+    "unchanged_non_test_inputs": 226,
+    "test_only_bridge_changes": [
+      "crates/orbitkv-engine/src/bin/serve/main.rs",
+      "crates/orbitkv-engine/src/model_engine.rs",
+      "crates/orbitkv-executor/src/compiler_facts.rs",
+      "crates/orbitkv-executor/src/convolution.rs",
+      "crates/orbitkv-executor/src/cuda.rs",
+      "crates/orbitkv-executor/src/external_tier.rs",
+      "crates/orbitkv-executor/src/fixed_state.rs",
+      "crates/orbitkv-executor/src/lib.rs",
+      "crates/orbitkv-executor/src/model.rs",
+      "crates/orbitkv-executor/src/model/block.rs",
+      "crates/orbitkv-executor/src/model/recurrent_layer.rs",
+      "crates/orbitkv-executor/src/model/topology.rs",
+      "crates/orbitkv-executor/src/recurrent.rs",
+      "crates/orbitkv-executor/src/recurrent/gated_delta.rs",
+      "crates/orbitkv-executor/src/recurrent/state_graph.rs",
+      "crates/orbitkv-executor/src/state_graph.rs",
+      "crates/orbitkv-server/src/engine.rs",
+      "crates/orbitkv-server/src/intent.rs",
+      "crates/orbitkv-server/src/vllm_frontend.rs",
+      "crates/orbitkv-server/src/vllm_transport.rs",
+      "crates/orbitkv/src/attention_state.rs",
+      "crates/orbitkv/src/fixed_state.rs",
+      "crates/orbitkv/src/hf_config.rs",
+      "crates/orbitkv/src/kv_manager.rs",
+      "crates/orbitkv/src/layout_facts.rs",
+      "crates/orbitkv/src/plan.rs",
+      "crates/orbitkv/src/retention.rs",
+      "crates/orbitkv/src/runtime_manifest.rs",
+      "crates/orbitkv/src/runtime_session.rs",
+      "third_party/luminal/crates/luminal_cuda_lite/src/host/cublaslt/mod.rs",
+      "third_party/luminal/crates/luminal_cuda_lite/src/host/deepgemm/contract.rs",
+      "third_party/luminal/crates/luminal_cuda_lite/src/host/deepgemm/jit.rs",
+      "third_party/luminal/crates/luminal_cuda_lite/src/host/deepgemm/mod.rs",
+      "third_party/luminal/crates/luminal_cuda_lite/src/host/deepgemm/shared.rs",
+      "third_party/luminal/crates/luminal_cuda_lite/src/host/flashinfer/mod.rs",
+      "third_party/luminal/crates/luminal_cuda_lite/src/search/trace.rs"
+    ],
+    "excluded_test_inputs": 103,
+    "failures": [],
+    "scope": "Compared frozen GPU-replayed layout to final centralized-test layout. Only cfg(test) module path declarations differ in non-test inputs; this is not a hermetic toolchain proof.",
+    "unchanged_executor_integration_inputs": [
+      "crates/orbitkv-executor/tests/cuda_attention.rs",
+      "crates/orbitkv-executor/tests/external_transport.rs",
+      "crates/orbitkv-executor/tests/model_execution/logit_probe.rs",
+      "crates/orbitkv-executor/tests/model_execution/main.rs",
+      "crates/orbitkv-executor/tests/model_execution/quantized_batch.rs",
+      "crates/orbitkv-executor/tests/state_arena_cuda.rs",
+      "crates/orbitkv-executor/tests/state_execution.rs"
+    ]
+  },
+  "production_equivalence_receipt": {
+    "path": "/workspace/orbitkv/.qualification/tests-directory-20260912/production-equivalence.json",
+    "bytes": 2846,
+    "sha256": "63d08330577ec0a68740eeb06e3396b4d37e6cb133106f96a0f0f0cd9253ff6f"
+  },
+  "gpu_replay": {
+    "qualification_receipt": {
+      "path": "/workspace/orbitkv/.qualification/module-layout-20260912/model-reference/result.json",
+      "bytes": 22781,
+      "sha256": "4044cbe518dce86e1d511a4a7f7cb050d32ae948a8ac358341d871b532b8be34"
+    },
+    "build_receipt": {
+      "frozen_at_utc": "2026-09-12T15:38:06.909838+00:00",
+      "source_inputs_unchanged": true,
+      "source_file_count": 365,
+      "source_manifest_sha256": "80b22176c5a130f2e4e5be76cef1ca6ed87189d229d0de203d686c76caefe0d1",
+      "binary": {
+        "path": "/workspace/orbitkv/.qualification/module-layout-20260912/model_execution",
+        "bytes": 18198032,
+        "sha256": "9b4006ba2f309caa0b37f07d604d80f054b6149232224be8d1351d098279ea72"
+      },
+      "build_command": [
+        "cargo",
+        "test",
+        "--offline",
+        "--locked",
+        "--release",
+        "-p",
+        "orbitkv-executor",
+        "--features",
+        "cuda",
+        "--test",
+        "model_execution",
+        "--no-run",
+        "--message-format=json"
+      ]
+    },
+    "scope": "GPU run after initial module moves, followed by test-directory centralization. The recorded production-input comparison and final tests qualify that final placement; no performance comparison.",
+    "phases": [
+      {
+        "phase": "strict-replay",
+        "status": "passed",
+        "artifact": {
+          "bytes": 12655215,
+          "path": "/workspace/orbitkv/.qualification/module-layout-20260912/model-reference/decoder.json",
+          "sha256": "7bc027d8e5b39f7dacffc3ab90121d86ef0c59f00365b0c730e7b858c11d49d0"
+        },
+        "completion": {
+          "artifact_mode": "replay",
+          "drain_passed": true,
+          "parity_steps": 8,
+          "reference_enabled": true,
+          "schema": 1
+        },
+        "parity": [
+          {
+            "max_abs": 0.515625,
+            "phase": "prefill"
+          },
+          {
+            "max_abs": 0.515625,
+            "phase": "decode"
+          },
+          {
+            "max_abs": 0.50097656,
+            "phase": "decode-2"
+          },
+          {
+            "max_abs": 0.46875,
+            "phase": "decode-3"
+          },
+          {
+            "max_abs": 0.5423088,
+            "phase": "decode-4"
+          },
+          {
+            "max_abs": 0.484375,
+            "phase": "decode-5"
+          },
+          {
+            "max_abs": 0.40625,
+            "phase": "decode-6"
+          },
+          {
+            "max_abs": 0.53125,
+            "phase": "decode-7"
+          }
+        ]
+      },
+      {
+        "phase": "profile",
+        "status": "passed",
+        "artifact": {
+          "bytes": 12655215,
+          "path": "/workspace/orbitkv/.qualification/module-layout-20260912/model-reference/decoder.json",
+          "sha256": "7bc027d8e5b39f7dacffc3ab90121d86ef0c59f00365b0c730e7b858c11d49d0"
+        },
+        "completion": {
+          "artifact_mode": "replay",
+          "drain_passed": true,
+          "parity_steps": 8,
+          "reference_enabled": true,
+          "schema": 1
+        },
+        "parity": [
+          {
+            "max_abs": 0.515625,
+            "phase": "prefill"
+          },
+          {
+            "max_abs": 0.515625,
+            "phase": "decode"
+          },
+          {
+            "max_abs": 0.50097656,
+            "phase": "decode-2"
+          },
+          {
+            "max_abs": 0.46875,
+            "phase": "decode-3"
+          },
+          {
+            "max_abs": 0.5423088,
+            "phase": "decode-4"
+          },
+          {
+            "max_abs": 0.484375,
+            "phase": "decode-5"
+          },
+          {
+            "max_abs": 0.40625,
+            "phase": "decode-6"
+          },
+          {
+            "max_abs": 0.53125,
+            "phase": "decode-7"
+          }
+        ]
+      }
+    ]
+  }
+}

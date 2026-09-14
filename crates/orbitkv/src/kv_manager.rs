@@ -1,0 +1,62 @@
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+use crate::plan::{
+    AddressProgram, BlockDomain, ClassLayoutProgram, CompiledKvClass, CompiledKvPlan,
+    RetentionKind, RetirementProgram,
+};
+
+mod append_transaction;
+mod arena;
+mod error;
+mod external_tier;
+mod facade;
+mod identity;
+mod manager_state;
+mod persistent_snapshot;
+mod prefix;
+mod protocol;
+mod reclamation;
+mod transaction_recovery;
+mod transaction_rules;
+
+use arena::{Arena, PageCounts, PagePhase, PageState};
+#[cfg(test)]
+use facade::validate_class_program;
+use manager_state::{
+    CensusWork, ClassDelta, ClassTransition, OperationState, PrefixState, PreparedState,
+    ReclamationState, RequestState, StepDelta, SubmittedState,
+};
+use persistent_snapshot::{ClassRoot, PersistentRootEntries, RequestSnapshot, RootEntry};
+#[cfg(test)]
+use persistent_snapshot::{HotPathInstrumentation, RootTreeNode, root_instrumentation};
+
+pub use error::KvManagerError;
+pub(crate) use external_tier::PinnedSnapshotPage;
+pub use identity::{
+    PageLease, PrefixLease, PrefixSemanticKey, ReclamationLease, RequestLease, SnapshotLease,
+    StepLease, SubmissionLease, ViewVersion,
+};
+pub use manager_state::CanonicalKvManager;
+pub use protocol::{
+    ArenaStats, AttachedPrefix, BackendArenaRegistration, BackendBindReceipt, BackendCopyReceipt,
+    BackendUnobservedReceipt, BatchCompletionReceipt, CLASS_LOWERING_EPOCH_START,
+    CLASS_LOWERING_RESETTABLE, CancelAttachedRequestItem, ClassLowering, CompletionBatch,
+    CopyIntent, DetachedAction, DetachedBinding, DetachedReason, EvictedPrefix, ForkedRequest,
+    ManagerConfig, ManagerStats, MaterializedRequestView, PhysicalResidencePolicy,
+    PrefixAttachItem, PrefixEvictionBatch, PrefixLookupHint, PrefixPublishItem,
+    PrefixPublishRelease, PrepareBatchItem, PreparedStep, PublishedPrefix, PublishedReceipt,
+    ReclamationCertificate, ReclamationReceipt, ReleaseBatchCompletion, ReleaseBatchItem,
+    ReleaseCompletion, RequestForkItem, RequestView, SnapshotPage, StepCompletion, SubmitBatchItem,
+    SubmittedStep, TailAction, TailActionKind, WriteIntent,
+};
+
+const CANONICAL_PAGE_TOKENS: u64 = 16;
+const FIRST_POOL_EPOCH: u64 = 1;
+
+static NEXT_ENGINE_EPOCH: AtomicU64 = AtomicU64::new(1);
+
+#[cfg(test)]
+#[path = "../tests/unit/kv_manager/mod.rs"]
+mod tests;

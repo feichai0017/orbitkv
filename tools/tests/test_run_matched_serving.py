@@ -3,6 +3,7 @@ import json
 import sys
 import tempfile
 import unittest
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 
@@ -18,6 +19,9 @@ def result(metrics=None, generated=None):
     payload = {
         "completed": 4,
         "failed": 0,
+        "total_output_tokens": 128,
+        "output_lens": [32, 32, 32, 32],
+        "errors": ["", "", "", ""],
         "request_throughput": 2.0,
         "output_throughput": 20.0,
         "median_ttft_ms": 10.0,
@@ -41,13 +45,40 @@ def result(metrics=None, generated=None):
 
 
 class MatchedServingTest(unittest.TestCase):
+    def test_shutdown_retains_early_exit_status(self):
+        process = Mock()
+        process.poll.return_value = 7
+        with patch.object(MODULE.os, "killpg") as kill:
+            observed = MODULE.stop_server(process, 1.0)
+        self.assertEqual(observed, MODULE.ServerShutdown(7, False))
+        kill.assert_not_called()
+
+    def test_shutdown_records_graceful_exit(self):
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        process.wait.return_value = 0
+        with patch.object(MODULE.os, "killpg") as kill:
+            observed = MODULE.stop_server(process, 1.0)
+        self.assertEqual(observed, MODULE.ServerShutdown(0, False))
+        kill.assert_called_once_with(123, MODULE.signal.SIGTERM)
+
+    def test_shutdown_exposes_forced_kill(self):
+        process = Mock(pid=123)
+        process.poll.return_value = None
+        process.wait.side_effect = [MODULE.subprocess.TimeoutExpired("server", 1), -9]
+        with patch.object(MODULE.os, "killpg") as kill:
+            observed = MODULE.stop_server(process, 1.0)
+        self.assertEqual(observed, MODULE.ServerShutdown(-9, True))
+        self.assertEqual([call.args[1] for call in kill.call_args_list],
+                         [MODULE.signal.SIGTERM, MODULE.signal.SIGKILL])
+
     def test_command_parsing_accepts_relative_paths_during_dry_run(self):
         command = MODULE.parse_command(
-            "target/release/orbitkv-server --port 8000",
+            "target/release/orbitkv-serve --port 8000",
             "candidate",
             require_executable=False,
         )
-        self.assertEqual(command[0], "target/release/orbitkv-server")
+        self.assertEqual(command[0], "target/release/orbitkv-serve")
         self.assertEqual(command[-1], "8000")
 
     def test_bench_command_fixes_random_lengths_and_tail_metrics(self):
@@ -102,14 +133,33 @@ class MatchedServingTest(unittest.TestCase):
 
     def test_result_gate_requires_all_requests_and_metrics(self):
         metrics, digest = MODULE.benchmark_result(
-            result(generated=["a", "b", "c", "d"]), 4
+            result(generated=["a", "b", "c", "d"]), 4, 32
         )
         self.assertEqual(metrics["median_tpot_ms"], 5.0)
         self.assertEqual(len(digest), 64)
         with self.assertRaisesRegex(RuntimeError, "request gate failed"):
-            MODULE.benchmark_result(result({"failed": 1}), 4)
+            MODULE.benchmark_result(result({"failed": 1}), 4, 32)
         with self.assertRaisesRegex(ValueError, "median_itl_ms"):
-            MODULE.benchmark_result(result({"median_itl_ms": None}), 4)
+            MODULE.benchmark_result(result({"median_itl_ms": None}), 4, 32)
+
+    def test_result_gate_rejects_partial_stream_false_positive(self):
+        partial = result(
+            {
+                "total_output_tokens": 4,
+                "output_lens": [1, 1, 1, 1],
+            },
+            generated=["", "", "", ""],
+        )
+        with self.assertRaisesRegex(RuntimeError, "output-length gate failed"):
+            MODULE.benchmark_result(partial, 4, 32)
+
+        wrong_total = result({"total_output_tokens": 127})
+        with self.assertRaisesRegex(RuntimeError, "total-output gate failed"):
+            MODULE.benchmark_result(wrong_total, 4, 32)
+
+        errored = result({"errors": ["", "server error", "", ""]})
+        with self.assertRaisesRegex(RuntimeError, "per-request error gate failed"):
+            MODULE.benchmark_result(errored, 4, 32)
 
     def test_paired_summary_preserves_metric_direction(self):
         candidate_metrics, digest = MODULE.benchmark_result(
@@ -133,9 +183,10 @@ class MatchedServingTest(unittest.TestCase):
                 ["same"] * 4,
             ),
             4,
+            32,
         )
         baseline_metrics, baseline_digest = MODULE.benchmark_result(
-            result(generated=["same"] * 4), 4
+            result(generated=["same"] * 4), 4, 32
         )
         runs = []
         for epoch in (1, 2):

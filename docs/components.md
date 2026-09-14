@@ -1,6 +1,6 @@
 # Components and external projects
 
-OrbitKV is one Rust inference product assembled from three owned layers and a
+OrbitKV is one Rust inference product assembled from three owned crates and a
 small number of explicit external boundaries. An imported component never gains
 KV lifecycle authority.
 
@@ -8,21 +8,29 @@ KV lifecycle authority.
 
 | Component | Responsibility | Does not own |
 | --- | --- | --- |
-| `orbitkv` core | Compile attention-state semantics; own request/snapshot identity, page generations, Prefix/COW, token disposition, retirement, publication, and reuse | Kernels, HTTP, network byte movement |
+| `orbitkv` core | Compile attention-state semantics; own request/snapshot identity, page generations, Prefix/COW, retirement, publication, and reuse | Kernels, HTTP, network byte movement |
 | `orbitkv-executor` | Lower manager plans, bind persistent tensor arenas, execute Luminal graphs, move local or external bytes, and produce completion evidence | Page allocation, semantic liveness, final publication |
-| `orbitkv-server` | Tokenization/protocol adaptation, admission, batching, cancellation, backpressure, and output streaming | Physical page names, tensor addresses, retirement decisions |
-| Engine coordinator | Join one server batch to one `RuntimeSession` transaction, one Luminal execution, and optional tier operations | A second cache index or allocator |
+| `orbitkv-engine` | Logical request/event contracts, optional tokenization/HTTP adaptation, admission, batching, backpressure, cancellation, release, and execution coordination | A second cache index, allocator, or kernel runtime; protocol/frontend modules cannot name physical pages or device buffers |
 
-The engine coordinator is the largest missing production component. The public
-`Engine` trait exists, but the scheduler, continuous batching loop, cancellation
-drain, and model-backed HTTP path are not yet one released executable.
+The model coordinator is implemented and real-device qualified for bounded
+continuous batching. It compiles once at startup, merges fresh requests into
+decode-first token-budgeted dispatches, streams through bounded event queues,
+suppresses stop tokens, cancels at token boundaries, and drains manager state.
+The `orbitkv-serve` binary now wires that coordinator into the optional vLLM
+Rust HTTP frontend. A released-checkpoint H20 load qualification reaches eight
+concurrent requests with complete fixed-length outputs; the remaining serving
+gaps are fairness, long soak, the actual capacity failure point, and a matched
+reference-engine comparison.
 
 ## External projects
 
+The checked-in Luminal/CUDA Lite module boundaries, implemented fusion levels
+and GPU search objective are detailed in [Luminal design](luminal-design.md).
+
 | Project | Relationship | Reused or planned surface | Excluded surface |
 | --- | --- | --- | --- |
-| Luminal fork | Embedded compiler/executor | Graph IR, search, CUDA kernels, persistent inputs, bucket dispatch, child CUDA graphs | Luminal page allocation as KV authority |
-| vLLM | Optional frontend and benchmark client | Rust OpenAI/tokenizer/chat/SSE crates; `vllm bench serve` as the common load generator | vLLM scheduler or KV block manager in the OrbitKV process |
+| Luminal fork | Embedded compiler/executor | Graph IR, search, CUDA kernels, persistent inputs, bucket dispatch, child CUDA graphs, candidate filtering, and class-bound OrbitKV state/layout facts | Luminal page allocation or lifecycle decisions |
+| vLLM | Embedded frontend and benchmark client | Rust OpenAI/tokenizer/chat/SSE, request identity, stream-drop auto-abort; `vllm bench serve` as the common load generator | vLLM scheduler or KV block manager in the OrbitKV process |
 | PegaInfer | Design and measurement reference only | Small Rust server boundary, hybrid full/linear-attention operator structure, matched vLLM-client workflow | Source copying, model-name dispatch, contiguous model-owned KV cache |
 | Dynamo | Distributed-system reference and optional outer control plane | KV-aware routing ideas, event schemas, telemetry, service discovery where justified | `kvbm-logical`, `KvBlockManager`, lifecycle pins, or any second page manager |
 | Mooncake | Planned external storage transport | Registered memory, Store objects, placement/lease observations, RDMA/TCP transfer completion | Local page allocation, generation, retirement, or publication |

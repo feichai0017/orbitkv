@@ -1,0 +1,127 @@
+{
+  "schema": "orbitkv.qwen35-deepgemm-closure",
+  "status": "eight_step_logits_qualified_near_tie_token_divergence_performance_negative",
+  "workload": {
+    "input_tokens": 4,
+    "output_tokens": 8,
+    "requests": 8,
+    "max_concurrency": 1,
+    "epochs": 2,
+    "alternating_order": true,
+    "temperature": 0,
+    "ignore_eos": true,
+    "seed": 0
+  },
+  "independent_logit_gate": {
+    "prompt_token_ids": [1, 2, 3, 4],
+    "prefill_token": 5,
+    "decode_token": 0,
+    "prefill_max_abs": 0.421875,
+    "decode_max_abs": 0.375,
+    "maximum_allowed_abs": 1.0,
+    "passed": true
+  },
+  "device_step_profile_ms": {
+    "prefill_cuda_graph": 86.229,
+    "decode_cuda_graph": 53.785,
+    "prefill_copying_scatter": 1.817,
+    "decode_copying_scatter": 0.972,
+    "prefill_scatter_no_copy": 0.954,
+    "decode_scatter_no_copy": 0.898
+  },
+  "orbitkv_vs_sglang": {
+    "orbitkv_median": {
+      "output_tokens_per_second": 14.070021,
+      "ttft_ms": 226.140928,
+      "tpot_ms": 50.446022,
+      "itl_ms": 33.192283,
+      "e2el_ms": 579.671952
+    },
+    "sglang_median": {
+      "output_tokens_per_second": 31.610887,
+      "ttft_ms": 118.058424,
+      "tpot_ms": 19.068987,
+      "itl_ms": 19.055388,
+      "e2el_ms": 251.506343
+    },
+    "orbitkv_over_sglang": {
+      "output_throughput": 0.445295,
+      "ttft": 1.917143,
+      "tpot": 2.645534,
+      "itl": 1.741906,
+      "e2el": 2.305443
+    },
+    "random_trace_output_digest_equal": true
+  },
+  "orbitkv_vs_vllm": {
+    "orbitkv_median": {
+      "output_tokens_per_second": 14.404243,
+      "ttft_ms": 219.968214,
+      "tpot_ms": 49.473697,
+      "itl_ms": 33.157495,
+      "e2el_ms": 564.845423
+    },
+    "vllm_median": {
+      "output_tokens_per_second": 36.979578,
+      "ttft_ms": 87.168100,
+      "tpot_ms": 18.183734,
+      "itl_ms": 18.268176,
+      "e2el_ms": 214.366803
+    },
+    "orbitkv_over_vllm": {
+      "output_throughput": 0.389522,
+      "ttft": 2.523774,
+      "tpot": 2.720767,
+      "itl": 1.815041,
+      "e2el": 2.634987
+    },
+    "random_trace_output_digest_equal": false,
+    "matching_random_requests": 7,
+    "total_random_requests": 8
+  },
+  "fixed_eight_token_gate": {
+    "prompt_token_ids": [1, 2, 3, 4],
+    "orbitkv": [5, 0, 31, 0, 31, 0, 31, 0],
+    "sglang": [5, 0, 31, 46474, 4, 5, 0, 31],
+    "vllm": [5, 0, 31, 0, 31, 0, 31, 0],
+    "transformers_oracle": [5, 0, 31, 46474, 4, 5, 0, 31],
+    "orbitkv_matches_oracle": false,
+    "sglang_matches_oracle": true,
+    "vllm_matches_oracle": false,
+    "first_divergent_generated_token_one_based": 4,
+    "orbitkv_general_artifact_logits_pass_all_eight_steps": true,
+    "orbitkv_general_artifact_max_abs_over_eight_steps": 0.42285156,
+    "serving_artifact_token_four_max_abs": 0.5,
+    "serving_artifact_token_four_top_two": [[0, 11.1875], [46474, 11.125]],
+    "oracle_token_four_top_two": [[46474, 11.25], [0, 11.125]],
+    "classification": "bounded-logit-correct near-tie argmax divergence"
+  },
+  "raw_qualification_checksums": {
+    "sglang_run_json_sha256": "6ab330719d8470ffd47553c1941c4dfca96bf7e3d00484080686a7f711ef9793",
+    "sglang_completed_json_sha256": "157db896961f34528796b2498fc51c2fed06be6c2e0ae3806af045ae7938a86f",
+    "vllm_run_json_sha256": "d3b017adc5db59e515f9918c7d82b8f058b2900f1c4f16472beeb29487fb0d34",
+    "vllm_completed_json_sha256": "6a40062880f8aec65d185ffd82c6ae9a4424272790a31ceb7e91528ae25eb66d",
+    "fixed_orbitkv_json_sha256": "c1c47681f0edcbdda8e1e0cbc0a8f13dcf42e7e7639861555cecf61484b62d78",
+    "fixed_sglang_json_sha256": "b478b32de9e1e9933d83993fd814321202a7f95d76edf6f58a96b83297195e8c",
+    "fixed_vllm_json_sha256": "4af048dc9165c0dc1c3bea2b47c836b1f3032688809eb134f03d513c005f2119"
+  },
+  "claims": {
+    "searchable_deepgemm_integration": true,
+    "two_step_independent_parity": true,
+    "eight_step_orbitkv_logit_parity": true,
+    "eight_token_orbitkv_exact_argmax_parity": false,
+    "serving_performance_advantage_over_sglang": false,
+    "serving_performance_advantage_over_vllm": false,
+    "production_ready": false
+  },
+  "provider_refactor_follow_up": {
+    "artifact_schema": 2,
+    "search_graphs": 16,
+    "artifact_sha256": "bca76dd2fef7513212a12e8bacff2b02a8c0fd21f64d33f68dd75b4dca41f04a",
+    "deepgemm_nodes_per_bucket": [28, 28],
+    "flashinfer_nodes_per_bucket": [1, 1],
+    "block_scaled_reference_nodes_per_bucket": [0, 0],
+    "eight_step_logit_parity_passed": true,
+    "maximum_absolute_logit_error": 0.5
+  }
+}

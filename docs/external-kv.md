@@ -33,7 +33,7 @@ visible-token geometry, and an opaque external destination; it exposes no
 `PageLease`. The backend index is not a byte address. An executor adapter
 expands it through model-independent layer/component bindings into the iovecs
 required by a particular transport. The resulting tensor offsets use the same
-absolute backend-page indexing as normal writes and token relocation.
+absolute backend-page indexing as normal writes.
 An object key also carries the compiled plan fingerprint, so equal token bytes
 under incompatible model/KV layouts cannot produce a restore hit.
 

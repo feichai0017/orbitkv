@@ -1,5 +1,20 @@
 # Matched serving benchmarks
 
+Workload-profile controls and the separate search/replay/profile qualification
+workflow for the first FP8 region experiment are described in
+[FP8 region tuning](fp8-region-tuning.md).
+
+Compiler startup and CPU/GPU execution attribution are described in
+[stage tracing](stage-tracing.md). Use separate stage-instrumented and
+uninstrumented runs; neither diagnostic logit timings nor inclusive compiler
+span sums are serving TPOT.
+
+The fixed-artifact [weight-loading comparison](../results/weight-loading-20260913/README.md)
+uses frozen baseline and changed binaries, with a separate device-profile
+process for each timing run. Keep source/build manifests: a plain source
+snapshot has no Git identity of its own and must not inherit its parent
+checkout's revision. The runner records Git metadata only at a checkout root.
+
 OrbitKV uses `vllm bench serve` as a common OpenAI-compatible client for both
 the OrbitKV candidate and the reference server. Sharing the client removes one
 source of measurement drift; it does not by itself make the systems comparable.
@@ -10,7 +25,8 @@ source of measurement drift; it does not by itself make the systems comparable.
    must pass before timings are interpreted.
 2. Compiler ablation: run conservative retention and compiled retention through
    the same OrbitKV/Luminal executor. This isolates the compiler contribution.
-3. Product comparison: run OrbitKV/Luminal and tuned stock SGLang with the same
+3. Product comparison: run OrbitKV/Luminal, tuned stock SGLang, and tuned stock
+   vLLM with the same
    model, weights, dtype, kernels where possible, request trace, batching limits,
    device budget, and sampling semantics.
 4. Tier comparison: separately compare cold prefill, local retention, and
@@ -69,11 +85,11 @@ It writes unreviewed data under `.qualification/` by default. The command fails
 if the client is missing, a server never becomes ready, a benchmark exits
 non-zero, or the expected JSON is absent.
 
-Example, after a runnable OrbitKV engine binary is available:
+Example with the single-process OrbitKV server:
 
 ```bash
 python tools/run_matched_serving.py \
-  --candidate-command 'target/release/orbitkv-server --model /models/model --port 8000' \
+  --candidate-command 'target/release/orbitkv-serve --model /models/model --page-counts 128,66 --max-model-tokens 1024 --max-prefill-tokens 512 --max-batch-tokens 1024 --max-active-requests 2 --port 8000' \
   --baseline-command 'python -m sglang.launch_server --model-path /models/model --port 8000' \
   --candidate-url http://127.0.0.1:8000 \
   --baseline-url http://127.0.0.1:8000 \
@@ -92,7 +108,11 @@ It fixes the random dataset seed and explicitly requests p95/p99 for TTFT,
 TPOT, ITL, and end-to-end latency. It also fixes the random length range to zero
 instead of relying on a client-version default.
 Every run must report all requested completions, zero failures, and numeric
-TTFT/TPOT/ITL/throughput metrics. The generated paired summary reports
+TTFT/TPOT/ITL/throughput metrics. Detailed output lengths must equal the
+requested generation length, their sum must equal `total_output_tokens`, and
+every per-request error must be empty. These gates are mandatory because a
+streaming client can otherwise count an initial empty SSE frame followed by an
+error frame as a completed request. The generated paired summary reports
 candidate-over-baseline ratios. When the client emits detailed generated text,
 it also checks an output digest for each epoch; otherwise output equivalence is
 explicitly marked unevaluated. Raw metrics are never automatically promoted to
@@ -100,11 +120,135 @@ a performance claim. Ratios above one favor the candidate for throughput;
 ratios below one favor it for latency. The run manifest records the benchmark
 client version when the client exposes one.
 
+The harness also records each server's exit status and rejects shutdowns that
+require SIGKILL. OrbitKV emits `ORBITKV_ENGINE_SHUTDOWN` after joining its model
+worker; qualification must inspect the final KV/fixed-state census as well as
+HTTP completion. Other engines' shutdown contracts need their own audit. For a
+graph-cache comparison, freeze one binary and selected artifact and change only
+`--graph-cache-capacity`; keep the workload, weights, tuning profile and sampling
+identical. Short-output and longer-decode requests expose different fractions
+of phase-switch overhead. Record startup separately and retain tail metrics.
+
+For startup preparation, hold `--graph-cache-capacity` fixed and change only
+`--prepare-execution false/true`. Record `ORBITKV_ENGINE_STARTUP` as well as
+observed HTTP readiness. Keep the first generation request and its first decode
+interval in the results. The Python benchmark client's `--num-warmups 0` and
+`--ready-check-timeout-sec 0` prevent an unmeasured generation from warming the
+server before that request. Preparation time moves work ahead of readiness;
+it must not be presented as a kernel speedup or omitted from startup reporting.
+
+## Current single-process load closure
+
+A same-instance release-mode run of the released Full+Sliding checkpoint held
+the request trace fixed at 16 requests, 127 observed input tokens, and 256 output
+tokens per request while sweeping C1/C2/C4/C8. Every arm passed the strengthened
+completion gate. Output throughput was 184.24, 350.59, 448.43, and 518.88
+token/s. Median TTFT was 163.06, 296.07, 574.80, and 1127.81 ms; median TPOT was
+4.80, 4.51, 6.70, and 11.06 ms. This establishes executable capacity through
+C8 and a clear throughput/latency frontier; it does not locate the failure point
+or establish a win over another engine.
+
+Cross-batch-size generated text is not a correctness gate by itself for BF16
+greedy decoding near tied logits. The direct executor qualification instead
+teacher-forces the same inputs: all eight B=8 rows are bit-identical, B=1 versus
+B=8 has maximum absolute logit difference 0.4296875 over 16 positions, and no tested
+argmax differs. The C2/C4/C8 text digests match; C1 differs and is reported, not
+hidden.
+
+## Current stock-SGLang product comparison
+
+The released Full+Sliding checkpoint was compared with clean stock SGLang
+v0.5.17 for four alternating epochs. Both arms used BF16 weights/KV, page size
+16, 1024-token context, an eight-request/8192-token logical capacity, greedy
+sampling, and the same 16-request 127-to-256-token trace at C2. Radix prefix
+reuse was disabled because the trace contains no intentional shared prefix.
+Each arm passed the full-output and per-request error gates.
+
+OrbitKV loaded one strict selected-schedule artifact in every measured epoch;
+candidate logs contain no search and all candidate digests match across starts.
+Median output throughput was 592.32 token/s versus 1112.60 for SGLang
+(0.534x). Median TPOT was 2.997 versus 1.699 ms (1.76x), and median TTFT was
+98.08 versus 15.14 ms (6.50x). The candidate is therefore not serving-speed
+competitive on this trace.
+
+The persistent-state result points in the other direction. SGLang reports that
+hybrid SWA memory is disabled for this Gemma3 path, so its resolved 8192-token
+pool carries 144.0 MiB of BF16 K/V tensor payload across all 18 layers. OrbitKV
+uses separate Full and Sliding arenas totaling 85.875 MiB, 40.4% less. These are
+geometry-derived K/V payload bytes, not allocator peak.
+
+Both engines match the existing independent eight-token reference probe, but
+their full random-trace text digests differ. Consequently this is retained as a
+product diagnostic and negative performance result, not a matched-output
+benefit claim.
+
+## Compiler-constrained schedule follow-up
+
+R4.1 moved the persistent K/V address contract into Luminal candidate
+selection. All selected buckets must resolve every K/V output directly to its
+registered input arena; candidates and stored artifacts that require copy-back
+are rejected before deployment. A 16-candidate search produced two buckets
+with 36/36 K/V tensors in place and zero copy-back bytes.
+
+Against the prior two-candidate OrbitKV artifact, four alternating C2 epochs
+improved median throughput from 592.73 to 679.33 token/s (+14.5%), TTFT from
+98.30 to 66.64 ms (-32.2%), TPOT from 2.990 to 2.680 ms (-10.2%), and E2E from
+860.49 to 749.98 ms (-12.8%). Both arms were deterministic across their own
+epochs, but their random-trace text digests differ. The new artifact passes the
+existing independent B2 eight-token reference probe.
+
+The corresponding four-epoch stock-SGLang comparison remains negative:
+OrbitKV reached 679.32 versus 1136.68 token/s (0.598x), with 2.682 versus
+1.691 ms TPOT (1.59x), 66.75 versus 13.96 ms TTFT (4.79x), and 750.32 versus
+444.51 ms E2E (1.69x). This improves the previous executor baseline but does
+not qualify an OrbitKV-over-SGLang serving advantage.
+
+## Current Qwen3.8 27B block-FP8 diagnostic
+
+The primary checkpoint now runs through the same OpenAI benchmark client as
+SGLang 0.5.17 and vLLM 0.29.0. Two alternating epochs used four input tokens,
+eight forced output tokens, eight requests, C1, greedy sampling, and one H20.
+OrbitKV/SGLang output throughput was 14.07/31.61 token/s (0.445x), with
+226.14/118.06 ms median TTFT and 50.45/19.07 ms median TPOT. OrbitKV/vLLM was
+14.40/36.98 token/s (0.390x), with 219.97/87.17 ms median TTFT and
+49.47/18.18 ms median TPOT. The OrbitKV and SGLang random-trace digests match;
+vLLM differs on one of eight generated texts.
+
+A fixed pre-tokenized `[1,2,3,4]` SSE follow-up found a near-tied fourth token
+whose argmax can differ between implementations. The current correctness gate
+therefore teacher-forces the independent reference token after every step,
+requires `max_abs <= 1.0`, and requires exact top-1 whenever the reference margin
+exceeds the measured error envelope. A fresh schema-5 16-candidate artifact
+passes four-token prefill plus seven decode comparisons with maximum absolute
+logit error `0.74609375`, while selecting 32/32 token-KV updates in place in both
+buckets. The historical greedy benchmark remains useful as performance evidence,
+but its model labels should be read as Qwen3.8. Compact historical evidence lives in
+`results/deepgemm-luminal-bringup-20260909/`.
+
+A two-epoch rerun after schema 5 made all 32 token-KV writes mandatory in-place
+improves the same C1 diagnostic but remains negative. Against SGLang, median
+OrbitKV output throughput is about 19.98 versus 32.21 token/s (`0.620x`), median
+TTFT 141.26 versus 114.53 ms (`1.234x`), and median TPOT 38.68 versus 19.02 ms
+(`2.034x`). Against vLLM, throughput is about 19.63 versus 36.44 token/s
+(`0.539x`), median TTFT 143.77 versus 90.57 ms (`1.587x`), and median TPOT
+39.40 versus 18.15 ms (`2.170x`). All requests and token counts completed, but
+the generated-text digests differ, so this remains diagnostic evidence rather
+than a qualified performance comparison. Raw outputs are under
+`.qualification/qwen38-schema5-vs-{sglang,vllm}/` and are intentionally not
+promoted. The replayable decoder artifact is
+`.qualification/qwen38-27b-fp8-schema5-g16.json` with SHA-256
+`6b155436a83249f7c1b67d3013500c890bbee19da4b0df848f7e041f0602b40a`.
+
 ## Promotion rule
 
 Only reviewed runs move from `.qualification/` to `results/`. A promoted result
 contains environment identity, raw client JSON, a summary, and checksums—never a
 source checkout, build directory, model weights, or dependency cache. A positive
 claim requires all predeclared correctness, sample-count, confidence, and
-regression gates to pass. Failed experiments remain valid compact evidence when
-they inform an architectural decision.
+regression gates to pass. For the primary model, an overall performance-win
+claim additionally requires the lower confidence bound of output throughput to
+exceed both tuned vLLM and tuned SGLang while p95 TTFT and p95 TPOT are no worse.
+Decode-heavy, prefill-heavy, concurrency, long-context, and memory-pressure
+profiles remain separate rows; a single favorable row is not an overall win.
+Failed experiments remain valid compact evidence when they inform an
+architectural decision.

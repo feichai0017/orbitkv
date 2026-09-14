@@ -1,0 +1,47 @@
+{
+  "schema": "orbitkv.product-comparison-environment",
+  "captured_at_utc": "2026-09-07T11:31:28Z",
+  "source": {
+    "orbitkv_base_commit": "1bb88e5da528e7817bd57af53961a405f0a15885",
+    "luminal_commit": "2803d72e936668000b3ca69d46cdf5d06d40c51f",
+    "sglang_release": "v0.5.17",
+    "sglang_revision": "29481685462732237d80d86076d6563e1f658102",
+    "sglang_worktree_clean": true,
+    "note": "The OrbitKV artifact implementation and this compact evidence are committed together after the run."
+  },
+  "accelerator": {
+    "name": "NVIDIA H20",
+    "uuid": "GPU-3a35e57b-fc54-5620-56ee-deaf5a9c40d3",
+    "compute_capability": "9.0",
+    "memory_mib": 97871,
+    "driver_version": "535.161.08",
+    "cuda_driver_api": "13.1"
+  },
+  "checkpoint": {
+    "identity": "unsloth/gemma-3-270m-it",
+    "upstream_identity": "google/gemma-3-270m-it",
+    "config_sha256": "2706d3533059c6e1086badab27cc234e8ca2228975c3f73eeaef7f57cb5ec1db",
+    "weights_sha256": "700b710a9a99c295ed546647aa81cacf9f81f4c573ea2be613a0e2517a44afab",
+    "tokenizer_sha256": "4667f2089529e8e7657cfb6d1c19910ae71ff5f28aa7ab2ff2763330affad795"
+  },
+  "benchmark_client": {
+    "name": "vllm-bench",
+    "version": "0.1.0",
+    "vllm_revision": "60857baa53a743913d4e919f12b5fd8d608ded86",
+    "binary_sha256": "4d37440a57be4b513698bcc2a45dcc92f8cd72ba2041a9cac8cf942e8b465b24"
+  },
+  "sglang_runtime": {
+    "torch": "2.11.0+cu130",
+    "transformers": "5.12.1",
+    "flashinfer_python": "0.6.15.post1",
+    "sglang_kernel": "0.4.5",
+    "triton": "3.6.0",
+    "flash_attn_4": "4.0.0b19"
+  },
+  "decoder_artifact": {
+    "schema": 1,
+    "bytes": 2528535,
+    "sha256": "13a03b1d7fcec1e438f572fde1d6bc0c269643df19e92ea41280f4dcd915d66a",
+    "bucket_count": 2
+  }
+}

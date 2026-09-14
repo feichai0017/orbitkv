@@ -1,0 +1,50 @@
+{
+  "schema": "orbitkv.single-process-http-engine",
+  "status": "passed",
+  "qualification": "released_checkpoint_http_correctness_and_lifecycle_only",
+  "configuration": {
+    "dtype": "bfloat16",
+    "page_tokens": 16,
+    "page_counts": [128, 66],
+    "maximum_model_tokens": 1024,
+    "maximum_prefill_tokens": 512,
+    "maximum_batch_tokens": 1024,
+    "maximum_active_requests": 2,
+    "maximum_queued_requests": 8,
+    "event_buffer_size": 16,
+    "search_graphs_per_bucket": 2
+  },
+  "http": {
+    "models_endpoint": true,
+    "non_streaming_completion": true,
+    "non_streaming_token_ids": [106, 107, 106, 106],
+    "non_streaming_finish_reason": "length",
+    "ordered_sse_token_ids": [106, 107, 106, 106],
+    "sse_done": true,
+    "concurrent_request_count": 2,
+    "concurrent_output_tokens_per_request": 8,
+    "concurrent_outputs_equal": true,
+    "multi_request_dispatch_observed": true,
+    "dropped_stream_cancelled_requests": 1,
+    "dropped_stream_full_budget": 1000,
+    "graceful_shutdown": true,
+    "final_drain": true
+  },
+  "diagnostic": {
+    "rust_profile": "release",
+    "compiler_and_kernel_caches": "warm",
+    "complete_test_seconds": 33.26,
+    "benchmark_qualified": false
+  },
+  "claims": {
+    "single_process_http_model_execution": true,
+    "openai_non_streaming": true,
+    "openai_sse": true,
+    "client_disconnect_auto_abort": true,
+    "latency_benefit": false,
+    "throughput_benefit": false,
+    "fairness_qualified": false,
+    "capacity_qualified": false,
+    "production_ready": false
+  }
+}
