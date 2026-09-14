@@ -1,4 +1,32 @@
-# Matched serving benchmarks
+# Model serving benchmarks
+
+For a single-engine performance baseline, use `tools/run_model_serving.py`.
+It shares the paired harness's HTTP client and complete-request gates, repeats
+independent server processes, checks the final OrbitKV state drain, and samples
+process RSS/GPU memory after readiness. Use an existing decoder artifact and
+disable stage/device tracing. With the Python client, explicitly pass
+`--bench-arg=--num-warmups --bench-arg=0` and
+`--bench-arg=--ready-check-timeout-sec --bench-arg=0` so all served requests
+belong to the measured trace. Execution preparation still runs before readiness.
+
+`completed.json` retains individual runs and medians of per-run metrics.
+A median of run P95 values is not a pooled P95. GPU memory is sampled process
+usage, not an allocator peak; missing measurements remain null. Concurrency is
+the HTTP request limit, while the shutdown report records actual batch sizes.
+`--memory-device` additionally samples device-wide memory when PID namespaces
+prevent process attribution. Preserve that scope in tables; never substitute a
+device measurement for a process measurement without labeling it.
+
+Size the batch token budget for the workload. A budget equal to one maximum
+prefill leaves little space for concurrent decode and can prevent queued long
+prompts from joining the batch. For the bounded profile matrix, a budget of
+`maximum concurrency × maximum input length` admits a full prefill batch.
+Use compatible aggregate-query representatives in the tuning profile, and
+retain actual batch sizes and mixed-phase dispatch counts in the report.
+Publish reviewed model measurements as `results/<model-run>/performance.json`
+with schema `orbitkv.model-performance.v1`; the website imports these files.
+Compiler-only experiments and correctness diagnostics stay in development
+documents or ignored `.qualification/`.
 
 Workload-profile controls and the separate search/replay/profile qualification
 workflow for the first FP8 region experiment are described in
@@ -9,7 +37,7 @@ Compiler startup and CPU/GPU execution attribution are described in
 uninstrumented runs; neither diagnostic logit timings nor inclusive compiler
 span sums are serving TPOT.
 
-The fixed-artifact [weight-loading comparison](../results/weight-loading-20260913/README.md)
+The fixed-artifact [weight-loading comparison](validation/weight-loading-20260913/README.md)
 uses frozen baseline and changed binaries, with a separate device-profile
 process for each timing run. Keep source/build manifests: a plain source
 snapshot has no Git identity of its own and must not inherit its parent

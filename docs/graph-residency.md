@@ -90,7 +90,7 @@ The model transition fixture reuses one decoder and state arenas across four
 request lifecycles. Each request checks eight teacher-forced full-vocabulary
 logit rows and drains KV and fixed-state ownership. It retains buckets for the
 first three requests, then reduces capacity to one to exercise eviction. The
-[H20 qualification](../results/bucket-resources-20260913/README.md) records the
+[H20 qualification](validation/bucket-resources-20260913/README.md) records the
 fixed artifact, source/binary fingerprints, alternating capacity timings and
 graph-build counters.
 

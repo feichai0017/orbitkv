@@ -655,61 +655,9 @@
   .doc-links a span {
     color: var(--accent);
   }
-  .metric-grid {
-    display: grid;
-    grid-template-columns: repeat(3, 1fr);
-    gap: 3rem;
-    margin-block: 2.5rem;
-  }
-  .metric-grid strong {
-    font-size: clamp(3.5rem, 6.5vw, 6rem);
-    font-weight: 900;
-    letter-spacing: -0.075em;
-    line-height: 1;
-    color: var(--green);
-  }
-  .metric-grid h3 {
-    margin-block: 0.85rem 0.5rem;
-    font-size: 1.05rem;
-  }
-  .metric-grid p {
-    color: var(--muted);
-    font-size: 0.85rem;
-    max-width: 24rem;
-  }
   .compact {
     align-items: center;
     margin-bottom: 1rem;
-  }
-  .record-list article {
-    display: grid;
-    grid-template-columns: 1fr 4fr;
-    gap: 2rem;
-    padding-block: 1.5rem;
-    border-bottom: 1px solid var(--line);
-  }
-  .record-list time {
-    padding-top: 0.3rem;
-    font-family: var(--font-mono);
-    font-size: 0.7rem;
-    color: var(--muted);
-  }
-  .record-list h3 {
-    font-size: 1.2rem;
-  }
-  .record-list a {
-    text-decoration: none;
-  }
-  .record-list a:hover {
-    text-decoration: underline;
-  }
-  .record-list h3 span {
-    color: var(--accent);
-  }
-  .record-list p {
-    margin-top: 0.5rem;
-    font-size: 0.9rem;
-    color: var(--muted);
   }
 }
 
@@ -861,19 +809,6 @@
       grid-template-columns: 1fr 1fr;
       gap: 1.75rem;
     }
-    .metric-grid {
-      gap: 1rem;
-    }
-    .metric-grid h3 {
-      font-size: 0.95rem;
-    }
-    .metric-grid p {
-      font-size: 0.8rem;
-    }
-    .record-list article {
-      grid-template-columns: 1fr;
-      gap: 0.6rem;
-    }
     .doc-links {
       column-gap: 1.5rem;
     }
@@ -899,20 +834,110 @@
     .doc-links {
       grid-template-columns: 1fr;
     }
-    .metric-grid {
-      grid-template-columns: max-content minmax(0, 1fr);
-      gap: 1.75rem 1.25rem;
+  }
+}
+
+@layer components {
+  .model-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1.5rem 2.5rem;
+  }
+  .model-card {
+    padding-block: 1.25rem;
+    border-top: 1px solid var(--line);
+  }
+  .model-card h3 {
+    margin-block: 0.7rem;
+    font-size: 1.35rem;
+  }
+  .model-card p {
+    max-width: 36rem;
+  }
+  .model-status {
+    color: var(--accent);
+    font-size: 0.8rem;
+    letter-spacing: 0.04em;
+  }
+  .model-spec {
+    font-size: 0.9rem;
+  }
+  .performance-report {
+    margin-block: 2.5rem;
+  }
+  .report-heading h3 {
+    font-size: 1.5rem;
+    margin-bottom: 0.5rem;
+  }
+  .report-heading h3 span {
+    font-size: 0.9rem;
+    font-weight: 400;
+    margin-left: 0.75rem;
+  }
+  .report-heading p,
+  .table-note {
+    font-size: 0.85rem;
+  }
+  .table-scroll {
+    overflow-x: auto;
+    margin-block: 1.25rem;
+  }
+  .performance-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-variant-numeric: tabular-nums;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .performance-table caption {
+    text-align: left;
+    font-size: 0.85rem;
+    padding-bottom: 1rem;
+    white-space: normal;
+  }
+  .performance-table th,
+  .performance-table td {
+    padding: 1rem 0.85rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .performance-table thead th {
+    font-size: 0.8rem;
+    font-weight: 500;
+  }
+  .performance-table th:first-child {
+    text-align: left;
+    padding-left: 0;
+  }
+  .performance-table tbody th {
+    font-weight: 400;
+  }
+  .performance-value {
+    color: var(--accent);
+    font-weight: 600;
+  }
+  .metric-range {
+    display: block;
+    color: var(--muted);
+    font-size: 0.75rem;
+    font-weight: 400;
+  }
+  .table-note {
+    max-width: 55rem;
+    line-height: 1.6;
+  }
+  .table-note + .table-note {
+    margin-top: 0.75rem;
+  }
+}
+@layer responsive {
+  @media (max-width: 42rem) {
+    .model-grid {
+      grid-template-columns: 1fr;
+      gap: 0;
     }
-    .metric-grid article {
-      display: grid;
-      grid-column: 1 / -1;
-      grid-template-columns: subgrid;
-    }
-    .metric-grid strong {
-      grid-row: span 2;
-    }
-    .metric-grid h3 {
-      margin-block: 0.15rem 0.4rem;
+    .performance-table th,
+    .performance-table td {
+      padding: 0.85rem 0.65rem;
     }
   }
 }

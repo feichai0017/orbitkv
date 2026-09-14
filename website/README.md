@@ -26,13 +26,18 @@ contrast, overflow, and links. Browser tooling stays outside production dependen
 ## Layout
 
 ```text
-src/data/site.ts             navigation, crate descriptions, and evidence links
+src/data/site.ts             navigation and crate descriptions
+src/data/models.ts           model support and imported results/*/performance.json
 src/layouts/SiteLayout.astro metadata, header, and footer
 src/components/             compilation illustration
-src/pages/                  overview, architecture, evidence, and 404
+src/pages/                  overview, architecture, models/performance, and 404
 src/styles/global.css       shared tokens, layout, and responsive styles
 public/                     SVG mark and README wordmark
 ```
+
+Model support is maintained in `src/data/models.ts`. Performance tables import
+reviewed `results/*/performance.json` records directly; Pages rebuilds when these
+records change. Workload details and reproduction commands stay with each report.
 
 Keep public copy brief; link to repository documents for detailed contracts.
 Capability claims must match recorded evidence. Preserve historical results.

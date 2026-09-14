@@ -6,7 +6,7 @@
 诊断代码不改编译候选、模型定义、sampling 规则或误差阈值。
 
 两处原 serving 分岔的实际 logits、冻结版本证明和检查结果见
-[已审阅诊断报告](../results/fp8-logit-diagnosis-20260912/README.md)。
+[已审阅诊断报告](validation/fp8-logit-diagnosis-20260912/README.md)。
 
 ## 输入与边界
 

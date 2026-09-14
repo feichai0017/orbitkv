@@ -64,6 +64,6 @@ claim. Full measurements and tail metrics are in `summary.json`; source,
 artifact and environment identities are in `environment.json`. Raw binaries,
 source snapshots, logs and audit scripts remain under
 `.qualification/bucket-serving-20260913/`. Seven prior result packages retain
-their checksums. See [Luminal design](../../docs/luminal-design.md),
+their checksums. See [Model compiler](../../docs/compiler.md),
 [graph residency](../../docs/graph-residency.md) and the
 [roadmap](../../docs/roadmap.md).

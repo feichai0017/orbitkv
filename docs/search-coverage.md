@@ -142,14 +142,14 @@ Broader initial sampling can cost more compilation time and need not improve
 every workload. It is a foundation for measured region exploration; multi-choice
 region search and fresh-saturation canonicalization remain separate work.
 
-The [27B H20 qualification](../results/search-coverage-20260914/README.md) passes
+The [27B H20 qualification](validation/search-coverage-20260914/README.md) passes
 296 logit comparisons but records a mixed performance result. Every one of its
 263 rejected graphs violates a required state alias. B8 decode measures eight
 generic output projections while graphs with the cuBLASLt projection fail state
 validation elsewhere. Earlier rejection addresses wasted preparation; constrained
 exploration of expensive regions motivated the local phase above.
 
-The [state-preflight qualification](../results/state-preflight-20260914/README.md)
+The [state-preflight qualification](validation/state-preflight-20260914/README.md)
 passes another 296 logit comparisons and drains. Rejected-candidate evaluation
 totals 8.00 seconds against the preceding 81.06-second observation, while warmed
 decode stays close. Snapshot identities differ and caches were reused; this is
@@ -167,7 +167,7 @@ cargo test --release \
   -p orbitkv-cuda --test hotspot_search -- --ignored
 ```
 
-The [hotspot qualification](../results/hotspot-search-20260914/README.md) records
+The [hotspot qualification](validation/hotspot-search-20260914/README.md) records
 49 measured local neighbors with no state/resource rejection and two prefill
 provider transitions inside valid parents. All 296 reference comparisons pass.
 The B8 decode seed already uses cuBLASLt; improved historical runtime observations
@@ -196,3 +196,28 @@ external-checkpoint structural test can write one with
 `ORBITKV_RULE_FIXTURE_OUTPUT`. These settings exist only in tests. The fixture
 uses metadata, normalization and decode intervals; it does not load weights,
 profile GPU candidates or represent complete model compilation.
+
+## Reusing compilation setup across buckets
+
+`Graph::build_search_space` prepares operation declarations, backend facts,
+late-pass definitions and the normalized model program once. A model-local
+`PreparedEgglog` template is cloned before adding each bucket's interval facts.
+Every bucket still runs all original main and late schedules. Its unions,
+range proofs, aliases and rule execution state remain independent. No global
+cache, cross-model reuse, search-budget reduction or runtime provider preference
+is introduced. Single-run diagnostic helpers consume their setup directly.
+
+Setup, template cloning and bucket facts have separate tracing spans. Shared
+setup is outside the per-bucket saturation spans and must be counted once when
+attributing complete compilation. Tests check conflicting intervals, exact-value
+unions, alias isolation, late passes and fresh/prepared search-space agreement.
+The saturation implementation lives in `egglog_utils/saturation.rs`; private
+tests remain under the compiler crate's `tests/unit/egglog_utils/`.
+
+A same-executable decoder-fixture ABBA experiment compared the original argmax
+query with a staged rewrite. Medians were 26.51 s and 26.77 s, with identical
+operation counts and two observations per arm. The staged rewrite was discarded.
+These CPU diagnostics are not model inference performance; raw experiments stay
+under `.qualification/compilation-reuse-20260914/`. `kernel_specialize` remains
+an optimization target. Per-rule entry timers omit some parallel child work,
+so their sum must not be used to infer query-planning overhead.

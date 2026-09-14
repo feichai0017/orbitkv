@@ -115,8 +115,8 @@ Independent CPU softmax references live under CUDA `tests/unit/providers/attenti
 They exercise each admitted algorithm directly, including non-power-of-two GQA,
 ragged queries, permuted pages and sliding visibility. Separate tests cover
 semantic extraction, saved-schedule replay, changing CSR contents and captured
-allocation lifetime. See the current [provider qualification](../results/provider-kernels-20260914/README.md)
-for actual device/model gates and limits; the preceding [attention contract result](../results/attention-contract-20260914/README.md)
+allocation lifetime. See the current [provider qualification](validation/provider-kernels-20260914/README.md)
+for actual device/model gates and limits; the preceding [attention contract result](validation/attention-contract-20260914/README.md)
 documents the earlier implementation and schema.
 
 ## Reference engine designs
