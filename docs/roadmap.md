@@ -1,9 +1,25 @@
 # Roadmap
 
+The checkpoint/semantic boundary and inference-only fork reduction are implemented;
+see [checkpoint import](checkpoint-import.md) and its
+[qualification](../results/semantic-boundaries-20260914/README.md). Logical attention,
+explicit paged KV views and declarative provider admission are now separated;
+see [attention providers](attention-providers.md) and the
+[H20 provider qualification](../results/provider-kernels-20260914/README.md).
+FlashInfer algorithms and optional FlashAttention-3 replace the handwritten
+native attention candidate. Next prioritize workload-attributed region/search costs;
+additional KV representations and joint state/layout competition remain open.
+
 OrbitKV targets one native Rust inference process. `orbitkv` compiles and owns
 attention-state lifetimes, the Luminal fork compiles and executes model graphs,
-`orbitkv-engine` coordinates requests and device work, and `orbitkv-server`
-provides the client protocol. Planned work is not a current capability.
+`orbitkv-engine` combines request/device coordination and the optional client
+frontend behind separate internal modules. Planned work is not a current capability.
+
+The compiler direction is specified in [Joint compilation](joint-compilation.md).
+Qwen3.8 27B block-FP8 is the first acceptance workload. Optimizations must be
+selected from mathematical semantics, state/layout contracts, dtype, shape,
+and target capabilities; checkpoint names and fixed layer numbers must never
+select implementations.
 
 ## Current baseline
 
@@ -26,27 +42,29 @@ provides the client protocol. Planned work is not a current capability.
   state. The production decoder now owns these arenas and returns event-backed
   state evidence for decode and packed prefill. The stable-arena two-step gate
   and ragged packed-kernel parity gate pass on H20.
-- The decoder now emits a provider-neutral paged-attention semantic node.
-  FlashInfer is introduced as a legal implementation by egglog rather than
-  named by the model graph. It is currently the only optimized attention
-  provider, so real multi-provider selection and joint KV-layout derivation
-  remain open.
-- DeepGEMM and FlashInfer now share one pinned provider-source policy: explicit
-  local checkout or an explicit prefetch into Luminal's provider cache. Model
-  compilation itself does not fetch the network, and DeepGEMM is no longer a
-  recursive source submodule. Public provider names describe the library rather
-  than one current architecture implementation.
-- Released H20 closures exist for a dense Full checkpoint and an interleaved
-  Full+Sliding checkpoint. Exact Chunked, MLA, recurrent/linear attention,
-  convolution state, MoE, quantization, and multi-device execution are not
+- The decoder emits logical attention and an explicit paged KV view. Egglog
+  admits FlashInfer CUDA-core decode, FlashInfer tensor-core attention, and the
+  optional SM90 FlashAttention-3 adapter. The handwritten native attention
+  implementation and experimental attention flag have been removed.
+- DeepGEMM, FlashInfer and FlashAttention use one pinned provider-source policy:
+  explicit local checkout or explicit prefetch into Luminal's provider cache.
+  Model compilation performs no network fetch. Decoder schema 9 binds the
+  updated algorithm ABI; older artifacts require fresh search.
+- Released H20 closures exist for a dense Full checkpoint, an interleaved
+  Full+Sliding checkpoint, and bounded text-only Qwen3.8-27B-FP8 execution with
+  recurrent/convolution state and block-FP8 linear operators. Exact Chunked,
+  MLA, MoE, multimodal execution, and multi-device execution are not
   released-model-qualified.
 - The single-process Rust engine and OpenAI-compatible server pass bounded
   batching, cancellation, streaming, shutdown, and final-drain tests.
+  They now share `orbitkv-engine`: logical protocol, optional frontend, and
+  model scheduling remain separate modules, with all test source under `tests/`.
 - The primary 27B block-FP8 checkpoint now has a bounded single-process serving
-  path. On the current 4-input/8-output/C1 diagnostic it reaches 0.445x SGLang
-  and 0.390x vLLM output throughput. An eight-token fixed-prompt trace selects
-  the runner-up at generated token four, although direct per-step logits remain
-  within 0.5 of the independent oracle and identify a near tie. This is a
+  path. After schema 5 removed token-KV copy-back, the current 4-input/8-output/C1
+  diagnostic reaches 0.620x SGLang and 0.539x vLLM output throughput. An
+  eight-token fixed-prompt trace contains
+  a near-tied step; the current teacher-forced oracle gate keeps all steps on the
+  same input sequence and observes maximum absolute logit error 0.625. This is a
   negative diagnostic rather than a competitive result. The best older
   released-model comparison remains 0.598x SGLang on its recorded C2 trace.
 - External export, restore, deletion, and failure semantics pass through the
@@ -55,9 +73,11 @@ provides the client protocol. Planned work is not a current capability.
 
 ## Product model strategy
 
-The primary release target is the local 27B block-FP8 checkpoint whose directory
-is named `qwen3.8-27b-fp8` but whose metadata identifies Qwen3.5. Its text
-decoder is the forcing function for the product architecture: 64 layers with a
+The primary release target is the local official Qwen3.8-27B-FP8 checkpoint.
+Its Hugging Face architecture class remains `Qwen3_5ForConditionalGeneration`
+because Qwen3.8 is built on that architectural foundation; the model card and
+`base_model` identify the release as Qwen3.8. Its text decoder is the forcing
+function for the product architecture: 64 layers with a
 3:1 Gated DeltaNet/Full-attention schedule, persistent recurrent and causal
 convolution state, partial rotary dimensions, and dynamic block-FP8 linear
 operators. OrbitKV already compiles the checkpoint into 16 Full token-KV layers
@@ -73,9 +93,9 @@ plus 48 recurrent and convolution layers. The executor now parses the nested
   gaps.
 
 Keep the structurally equivalent small BF16 checkpoint as a fast regression
-witness for the same 3:1 layer schedule and state transitions. The 27B FP8
-checkpoint is now the active correctness and performance target. Existing dense
-Full and Full+Sliding checkpoints remain lifecycle witnesses; they are not
+witness for the same 3:1 layer schedule and state transitions. The Qwen3.8 27B
+FP8 checkpoint is now the active correctness and performance target. Existing
+dense Full and Full+Sliding checkpoints remain lifecycle witnesses; they are not
 parallel product targets. Model support stays structural, so no checkpoint name
 may select an operator or physical layout in product code.
 
@@ -85,6 +105,233 @@ sparse retrieval/index state, low-rank projections, MoE, mixed FP8/FP4 storage,
 and speculative heads. It follows the Qwen target because it needs several of
 the same quantized-linear and persistent-state foundations but is not a
 single-device bring-up model.
+
+## Joint compiler milestones
+
+The target compilation space has three complementary implementation levels.
+A compiled model may mix them, with profiling choosing among legal candidates
+at each boundary:
+
+| Level | Intended compilation effect | Current scope |
+| --- | --- | --- |
+| Provider selection | Choose a complete optimized implementation with explicit layout, resource, and state contracts | Logical attention + paged KV admits explicit FlashInfer algorithms and compatible FlashAttention-3; DeepGEMM variants implement block-FP8 linear. FlashMLA requires an adapter and the semantic/KV contract of the specific kernel, rather than selection by library or checkpoint name. |
+| Algorithm regions and fusion | Combine primitive operations, direct state access, and finite tiled algorithm templates into generated kernels | Elementwise and several dedicated rewrites exist. An opt-in egglog alternative shares FP8 activation preparation across projections while retaining separate quantizer/GEMM launches. General attention-internal scheduling, multiple packed GDN scan algorithms, and wider layout-aware fusion remain open. CUDA, Triton, and TileLang can supply implementations; DSL adapters are not integrated today. |
+| Generated persistent execution / megakernels | Derive bounded device schedules from model regions and reduce dispatch and intermediate materialization where measurements justify it | Planned. Requires explicit synchronization, resource-residency, state-access, and completion contracts. Whole-model single-kernel execution is not a release requirement. |
+
+Advance the following compiler milestones while retaining the primary model's
+correctness and serving qualification gates:
+
+1. **Reproducible contracts.** Bind provider caches to resolved source and
+   dependency contents, compiler identity, target, flags, and wrapper source.
+   Extend reusable layout/access facts for base storage, strides, aliasing, and
+   state mutations; preserve required state writes on both search and replay.
+   Record code, provider, artifact, oracle, and workload identities together.
+2. **Measured region optimization.** Supply valid batch/ragged/context profile
+   fixtures and compare multiple finalists on the deployment path under an
+   explicit compile budget. Prioritize quantized-linear preparation and
+   GDN/view/norm/gate regions using the primary model's attribution profile.
+   Each new implementation must pass independent numeric and next-state parity,
+   strict artifact replay, and a complete warm-path comparison.
+3. **Joint state-realization search.** Let the executor coordinate a small set
+   of explicitly supported OrbitKV physical realizations with Luminal algorithm,
+   provider, and kernel choices. Start with the admitted page-16 contract.
+   Changing a persistent layout requires a newly validated manifest and matching
+   bindings/artifact; prefill and decode must share a compatible state ABI or
+   pay for an explicit, validated conversion. Evaluate total state/workspace
+   memory, throughput, tail latency, and compilation cost on fixed workloads.
+4. **Bounded persistent-kernel candidates.** Introduce a generated schedule for
+   one legal region, including cross-layer regions when dependencies permit,
+   then widen its coverage only after correctness and measured
+   benefit. Preserve a deployable multi-kernel alternative, account for register
+   and shared-memory pressure, and express all cross-block synchronization.
+   External host-launched library calls remain explicit execution boundaries.
+   OrbitKV continues to authorize state ownership and publication; a device
+   schedule cannot infer page-reuse permission from its last local read.
+
+The first provider reproducibility slice is implemented: source/dependency and
+wrapper identities are checked during compiler-selected schedule replay, and
+shared-library keys include the resolved `nvcc` and declared compilation inputs.
+The first region slice adds artifact-bound workload profiles, valid private-page
+batch/ragged profiling inputs, multiple deployment finalists, and an opt-in
+shared-FP8 preparation alternative. Its acceptance evidence and limitations are
+recorded in [FP8 region tuning](fp8-region-tuning.md). Reusable layout/effect
+consolidation, a complete deployment/toolchain identity, broader regions and
+joint state-layout search remain open; see
+[implementation status](implementation-status.md) for the exact cache scope.
+
+The next work inside the measured-region milestone is search quality and compile
+cost. The current two-bucket attention-contract qualification spends 240.30 s in
+fresh `compile_or_load`, including 192.63 s building/saturating the search space;
+strict prepared replay takes 16.81 s. This reinforces the priority of reusable
+interval-invariant work. These are CPU wall intervals, not GPU kernel timings.
+The earlier seven-bucket 27B acceptance run spent about 953 seconds inside
+`compile_or_load` for fresh schedule creation and 42.5 seconds for strict replay;
+the corresponding test processes took 955.6 and 44.4 seconds. These intervals
+include more than compiler search and exclude the earlier Rust build. Its B8
+decode still selected a
+generic BF16 output projection that accounts for about 43 ms in the instrumented
+trace. Three deployment finalists can correct an ordering error among retained
+candidates, but cannot recover an implementation that exploration never retained.
+Stage-level measurements are now available; next isolate reusable interval-invariant work and
+direct finite exploration toward expensive operations and coherent multi-consumer
+regions using measured costs and semantic contracts. Keep this independent of
+checkpoint names, and repeat complete-workload comparisons before enabling a
+candidate by default.
+
+The first final-server off/on diagnostic reinforces this ordering: paired
+throughput rises only 1.82%, TPOT falls 5.82%, TTFT rises 8.26%, and two of eight
+generated texts differ. The on-mode decode changes its LM-head provider but
+does not select a quantizer with multiple consumers. Keep the option off by
+default. The subsequent frozen-v3 teacher-forced probe localizes both first
+divergences to tied OFF logits and Luminal's existing highest-index argmax rule;
+ON has unique maxima at those steps and matches the independent reference.
+This explains the observed sampling decisions, not the numerical error of each
+internal operator. Keep numerical tolerance and sampling tie semantics explicit;
+see [independent logits diagnosis](logit-diagnosis.md).
+
+[Structured candidate tracing](compiler-boundaries.md) now preserves program
+identity, complete operation manifests, rejection reasons, and direct/deployment
+scores together. A [compiler-boundary H20 check](../results/compiler-boundaries-20260912/README.md)
+verifies both bucket identities through saved-artifact replay, alongside eight
+reference steps and final drain. Use that evidence to explore coherent shared regions and
+expensive operations deliberately. Also measure first-use and
+bucket-transition costs. Budget retained prefill/decode executables together
+with KV storage and workspace instead of increasing graph residency without
+accounting for memory. These followups precede broader kernel families or a
+full-model megakernel.
+
+The [first stage-attribution run](../results/engine-stage-attribution-20260913/README.md)
+now separates those costs on a newly selected B1/two-bucket artifact. The 299.7 s
+search process includes 200.6 s building the search space (180.8 s executing
+egglog schedules), 70.9 s in CUDA search, and 26.7 s preparing graph/weights.
+These enclosing intervals explain the observed startup; inner NVRTC/provider
+timers overlap them and must not be added again. Strict replay takes 37.3 s,
+including 20.9 s weight loading and 11.1 s schedule loading. It still invokes
+NVRTC 425 times. A stage-off replay of the same artifact confirms the numerical
+result and roughly 24.2 ms warm diagnostic decode, while first decode is about
+138 ms. The traced first decode spends 89 ms materializing its CUDA Graph.
+These are bounded diagnostic timings with logits, not serving TPOT or an
+improvement over the earlier, differently selected artifact.
+
+The next implementation slices are:
+
+1. **Cold compilation:** measure the expensive main egglog rules within each
+   bucket, then separate reusable setup and bucket-independent transformations
+   from interval-dependent rewrites. Reuse requires a semantic key and must
+   preserve the bucket's alias, range, and state constraints. Candidate
+   generation costs 3.0 s here; the 118 rejected candidates account for 37.3 s
+   of evaluation. Move provable legality checks ahead of expensive preparation
+   while preserving accepted implementations. Keep candidate order and program
+   identities in comparisons: a fixed RNG seed alone is not evidence that two
+   runs explored the same programs.
+2. **Artifact startup:** generated module capture/replay is now connected through
+   [decoder schema 6](module-artifacts.md), with target/NVRTC/options checks,
+   source-keyed images, integrity checks and retained strict runtime lookup.
+   Older decoder formats now require regeneration; the schedule-only
+   compatibility and image-omission APIs are removed. The recorded fixed-program
+   image experiment qualifies replay startup and measures the extra capture
+   pass separately. [Weight loading](weight-loading.md) now borrows mapped bytes
+   for storage-compatible inputs and uses one typed buffer for conversions;
+   file, encoding and CUDA errors propagate through a single fallible API.
+3. **Runtime transitions and regions:** budget retained decode/prefill graphs
+   with KV, fixed state, and workspace; test prefill/decode alternation and
+   eviction before changing residency policy. Use the selected artifact to
+   target quantized projections and gather/cast/fused regions. The instrumented
+   profile does not identify attention as the dominant cost on this short
+   context. Preserve numerical and next-state gates, then repeat an
+   uninstrumented complete serving workload before claiming a benefit.
+
+The [module-image follow-up](../results/module-image-artifact-20260913/README.md)
+closes the generated-module replay slice. Two fixed-artifact ABBA timing pairs
+on H20 reduce schedule loading from 11.40 s to 4.96 s and complete diagnostic
+process time from 38.69 s to 33.28 s (medians). Each cached replay obtains all
+428 images and invokes NVRTC zero times. All nine processes preserve eight
+teacher-forced reference steps and drain, with maximum absolute error 0.5 under
+the unchanged 1.0 gate. Fresh compilation adds a 7.43 s selected-module capture
+pass; its newly selected programs differ from earlier records, so cold-process
+times must not be compared as a compiler speedup. Warm diagnostic decode stays
+about 24.5 ms.
+
+The [weight-loading follow-up](../results/weight-loading-20260913/README.md)
+finds 17.36–18.52 s of explicit host copies in the old loader. Two fixed-artifact
+timing pairs reduce weight loading from 23.12 s to 6.60 s median and complete
+diagnostic process time from 33.36 s to 17.04 s. All eight processes load the
+same 1,251 tensor bindings, hit all 428 module images without NVRTC, pass the
+same eight reference steps and drain. Warm diagnostic decode remains about
+24.6 ms. The new loader also validates a shard's encodings before binding,
+returns errors and keeps test source outside production modules.
+
+The [bucket ownership slice](graph-residency.md) now gives each retained FlashInfer
+plan private integer metadata, serializes pinned staging reuse, and accounts for
+the temporary coexistence of old and replacement plans. The executor and merged
+engine/server expose a finite bucket cache capacity, retaining the default of
+one. H20 provider and repeated 27B request regressions cover phase alternation,
+reference logits, state drain and eviction. Automatic residency selection from
+a joint budget and broader long-context/ragged model transitions remain open.
+Two [fixed-artifact timing pairs](../results/bucket-resources-20260913/README.md)
+compare capacities one and two without stage tracing: repeated prefill falls
+from 127.91 ms to 29.41 ms and first decode from 128.68 ms to 25.93 ms. Warm
+diagnostic decode stays about 24.4 ms. Five model processes pass 160 reference
+rows and 20 complete drains; these measurements qualify phase-switch savings.
+
+The [serving follow-up](../results/bucket-serving-20260913/README.md) now runs
+complete HTTP requests through one fixed serving artifact at capacities one and
+two. Eight C1 timing processes complete 128 requests and 4,608 tokens with exact
+paired text and final KV/fixed-state drain. Observed throughput rises 86.8% for
+eight-token output and 13.0% for 64-token output; steady inter-token latency stays
+about 23.6 ms. The short-output P99 TPOT increases 16.8%, including a slow first
+decode interval. Keep the default capacity of one and retain this tail result.
+The engine now returns a checked shutdown report; an active SSE request is
+cancelled and drained on SIGTERM.
+
+Explicit startup preparation now uses the selected artifact's valid bucket
+representatives and the configured residency capacity. The engine performs it
+before publishing readiness and exposes a startup report. Preparation preserves
+dynamic execution, does not launch the model or write persistent state, and
+applies the normal eviction policy. Existing materializations take priority;
+unused slots are filled in artifact order. Runtime residency, executor
+representative inputs and engine startup each have a separate module owner,
+with their tests under the corresponding `tests/` trees.
+
+The [startup preparation qualification](../results/startup-preparation-20260913/README.md)
+holds one binary/artifact fixed and checks preparation at capacities two and one.
+All 24 H20/C1 timing processes complete 352 requests and 13,824 tokens with
+paired output and final state drain. At capacity two, the short-output first
+stream interval is 138.9→29.9 ms and P99 TPOT 37.7→24.5 ms; approximately
+126 ms of preparation occurs before readiness. Steady ITL remains around
+23.6 ms. Context growth through 128 generated tokens passes; that profile's
+P99 TPOT is 25.1→24.8 ms. These are narrow paired observations, without a
+statistical-significance or production-tail claim. Four model processes compare
+128 full-vocabulary output rows against an independent reference and verify
+state release through 16 request lifecycles.
+
+The default capacity remains one. Its preparation preserves the already loaded
+bucket without an extra full graph build, while ordinary phase switches still
+require eviction. Its observed P99 TPOT is 42.4→43.9 ms and throughput
+is 18.34→18.12 token/s; no default-capacity performance benefit is established.
+A first implementation's unnecessary default-capacity eviction
+was caught, corrected and retained as a regression record under its earlier
+source identity. All final timing profiles were rerun on the corrected binary.
+An earlier 128-token prefill exceeded the fixed four-token admission limit;
+its empty responses were rejected by the output-length gate and remain outside
+the performance samples. Multi-request and long-prefill qualification require
+appropriate capacity configurations and artifacts. Automatic residency selection
+and workload-aware preparation ordering remain open.
+
+Extend the search objective to measured request costs
+before attempting automatic residency selection. For the selected program's
+dominant regions, add legal quantized-linear and gather/cast/norm/gate
+alternatives with independent parity and complete-request timing. The
+remaining replay graph construction (about 4.29 s) and schedule loading (4.97 s)
+are separate startup work. Repeat a complete uninstrumented serving workload
+after runtime changes; the current loading improvement does not raise token
+throughput.
+
+The output is a versioned execution program containing the state realization,
+compatible bucket schedules, provider/generated-kernel identities, resource
+plans, and runtime applicability guards. The search finds the best validated
+candidate within its supported space and budget; it does not claim global
+optimality or guarantee that a megakernel beats a mixed execution plan.
 
 ## Primary model closure
 
@@ -111,8 +358,8 @@ single-device bring-up model.
    cancellation, Prefix boundaries, and state-slot reuse on the small BF16
    checkpoint; the operator-level H20 gates do not substitute for this
    released-checkpoint closure.
-4. Add partial RoPE and text-only nested checkpoint loading without admitting
-   unimplemented image/video inputs.
+4. Preserve the implemented partial RoPE and nested text-checkpoint loading
+   contracts, and continue rejecting unimplemented image/video inputs.
 5. Landed the first block-FP8 execution slice: the decoder now declares FP8
    projection weights and their 128x128 inverse scales, while Luminal exposes a
    provider-neutral `BlockScaledLinear` semantic op. An independent CUDA
@@ -122,42 +369,53 @@ single-device bring-up model.
    equal-valued `LoopInput` streams, allowing required in-place state contracts
    to eliminate multi-gigabyte recurrent/convolution copy-back while preserving
    the independent eight-step logit gate.
-6. Define a robust multi-token correctness gate for near-tied BF16/FP8 logits.
-   The current fixed prompt picks the oracle runner-up at generated token four
-   despite maximum absolute logit error of `0.5`; do not require exact greedy
-   text across implementations at that boundary. Then widen continuous-batching,
-   long-context, and pressure qualification.
+6. The multi-token gate now teacher-forces the independent reference token
+   after each step and requires `max_abs <= 1.0`. Exact top-1 is required when
+   the reference margin exceeds that measured error envelope; near ties may
+   reorder only within the envelope. This avoids turning a one-step BF16/FP8
+   tie into a different downstream request while still rejecting material
+   semantic divergence. Next widen continuous-batching, long-context, and
+   pressure qualification.
 
 ## Searchable attention execution
 
-This is the first performance-compiler milestone after the primary hybrid model
-can execute. The semantic/provider boundary is now in place and FlashInfer is
-an egglog-added candidate; the remaining milestone is genuine competition
-between multiple legal implementations.
+Logical attention and KV storage have separate contracts. The production backend
+uses mature upstream kernels: FlashInfer CUDA-core decode, FlashInfer tensor-core
+attention, and optional FlashAttention-3 on SM90. The former handwritten native
+attention provider is removed. Algorithm identity belongs in serialized schedule,
+plan and capture keys; the selected family is not changed at request launch.
 
-1. Define one backend-neutral paged-attention semantic op carrying OrbitKV
-   class identity, visibility, page geometry, dtype, head geometry, and bucket
-   dimensions.
-2. Provide at least two semantically equivalent implementations for an admitted
-   geometry: initially FlashInfer and a Luminal-native CUDA implementation.
-3. Express matching and selection through egglog and Luminal extraction/search.
-   Do not add model-name, release-name, or GPU-name dispatch in product code.
-4. Preserve OrbitKV's required K/V aliases for every candidate and persist the
-   chosen implementation and kernel identity in the decoder artifact.
-5. Prove Full, Sliding, decode, and causal-prefill equivalence against an
-   independent reference before interpreting performance.
+Maintain these regression gates when expanding coverage:
 
-The milestone closes only when a real search containing more than one legal
-attention implementation selects by measured device cost and the selected
-artifact replays correctly on a released checkpoint. Merely wrapping FlashInfer
-in a Luminal custom op does not satisfy this gate.
+1. Keep attention mathematics in `AttentionSpec`, with state class, traversal
+   metadata and physical geometry in an explicit `KvView`.
+2. Admit complete dtype, head-dimension, layout, phase, page-size and target
+   combinations through provider capabilities.
+3. Express matching and selection through egglog and measured Luminal search.
+   Model-name, release-name and GPU-product-name dispatch do not belong here.
+4. Preserve required K/V aliases and account for metadata conversion, scheduler
+   launches, workspace and retained graph owners. Persist provider identity.
+5. Independently verify each candidate, then verify saved schedules, complete
+   models, changing CSR data, phase transitions, cancellation and final drain.
+
+The [provider contract](attention-providers.md) documents the implemented FA3
+non-TMA, packed-GQA, unsplit algorithm. Next, use measured workload evidence to
+prioritize split-KV/TMA candidates, narrower metadata tables and joint physical
+layout choices. A provider registry does not yet supply those alternatives.
+Historical native-provider evidence remains in its original result directories.
+That closure also found and removed an unsound 3-D RMSNorm candidate: logical
+`(tokens, heads, dim)` shape did not prove dense rows for Q/K slices with a
+wider projection pitch. Searchable fused RMSNorm is now limited to proven-dense
+2-D layouts; 3-D views remain on the semantic decomposition until base-layout
+facts are represented explicitly.
 
 ## Additional attention-state families
 
 Coverage advances by state family rather than checkpoint-name branches:
 
-1. Bind recurrent/linear attention plus convolution state to stable device
-   arenas and execute the host-qualified atomic engine step for the primary model.
+1. Preserve the implemented recurrent/convolution arena bindings and atomic
+   engine step; extend their bounded primary-model closure to longer sequences,
+   mixed requests, cancellation, and state-slot reuse.
 2. Independently qualify exact Chunked token KV on device.
 3. Add sparse retrieval/index state and low-rank attention components for the
    second architecture target.
@@ -172,16 +430,29 @@ a matched benefit experiment.
 
 ## Serving performance
 
-After attention becomes a real compiler choice, optimize the complete warm path:
+Attention is now a compiler choice for the admitted geometry. The active
+performance milestone optimizes the complete warm path:
 
 The first bounded 27B serving diagnostic now establishes the optimization
-baseline. For a 4-input/8-output, eight-request, C1 trace, OrbitKV reaches
-14.07 output token/s versus 31.61 for SGLang and 14.40 versus 36.98 for vLLM in
-separate two-epoch comparisons. Median OrbitKV TPOT is about 50 ms versus
-19.07 ms and 18.18 ms. The source-level large-state copy regression is fixed,
-so the remaining gap belongs to the full graph/runtime rather than a single
-2.7-second arena scatter. The strict text result cannot be promoted across the
-near-tied fourth token; performance optimization remains necessary regardless.
+baseline. After schema 5 makes every token-KV write in-place, a two-epoch
+4-input/8-output, eight-request, C1 trace reaches about 19.98 output token/s
+versus 32.21 for SGLang (`0.620x`) and 19.63 versus 36.44 for vLLM (`0.539x`).
+Median OrbitKV TPOT is about 38.68/39.40 ms versus 19.02/18.15 ms. This is a
+substantial improvement over the schema-4 14 token/s result, but it remains a
+negative diagnostic; generated-text digests also differ at a known near tie.
+
+A schema-4 CUDA-graph step profile first exposed a 12.1 ms decode copy-back from
+32 token-KV tensors. Schema 5 now makes those cache aliases mandatory rather
+than merely measuring them: cold search selected 32/32 in-place updates in both
+buckets, eliminated the 12.1 ms copy, and reduced the profiled decode graph from
+about 53.0 to 41.7 ms. The remaining decode cost is led by DeepGEMM variants
+(about 18.5 ms in aggregate), fused elementwise regions, and gathers; all 16
+FlashInfer attention calls together take only about 0.16 ms. These are
+instrumented attribution times; per-node events substantially perturb this
+graph. The first FP8 region experiment demonstrates preparation reuse, and also
+shows that changing the chosen BF16 LM-head kernel can dominate a whole-model
+comparison. Continue with deployment-path finalist selection, projection/GDN
+regions, and uninstrumented serving measurements.
 
 1. Attribute TTFT and TPOT to attention, graph dispatch, scheduler, metadata
    upload, sampling, and frontend overhead.

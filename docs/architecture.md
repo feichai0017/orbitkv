@@ -1,15 +1,23 @@
 # Architecture
 
-OrbitKV is one native inference stack with four owned crates.
+OrbitKV is one native inference stack with three owned crates.
+
+The target compiler architecture and its implementation gates are described in
+[Joint compilation](joint-compilation.md). The first acceptance model is
+Qwen3.8 27B block-FP8; product graph construction and optimization remain
+structural rather than checkpoint-specific.
+The implemented compiler/backend boundary, search objective and fusion limits
+are described in [Luminal design](luminal-design.md).
 
 ```text
 HTTP / SSE / WebSocket
         |
         v
-crates/orbitkv-server/  HTTP/tokenization + local scheduling/sampling boundary
-        | BatchIntent (logical request state only)
+crates/orbitkv-engine/
+  frontend             HTTP/tokenization and transport adapter
+        | protocol::Engine / BatchIntent (logical request state only)
         v
-crates/orbitkv-engine/  single-process request/lifecycle/execution coordinator
+  model_engine         single-process request/lifecycle/execution coordinator
         |
         +--> crates/orbitkv/ compile visibility and own the KV lifecycle
         |       | prepared pages, copies, views, retirement rules
@@ -29,20 +37,27 @@ The `orbitkv-executor` crate owns tensors, compiled graphs, kernel selection, st
 and sampling execution. It consumes immutable physical metadata selected by
 OrbitKV. Cached metadata is an execution artifact, never a second page table.
 
-The `orbitkv-server` crate owns client protocols, admission queues, batching, cancellation, and
-backpressure. Its public types contain request IDs, tokens, logical boundaries,
-sampling intent, and output events; they contain no page or device-buffer
-identity. The optional vLLM frontend reuses OpenAI HTTP, tokenizer, chat
+The `orbitkv-engine` crate owns the logical protocol, optional HTTP frontend,
+and request coordinator. Its `protocol` module defines request IDs, tokens,
+logical boundaries, sampling intent, and output events; those types contain no
+page or device-buffer identity. The `frontend` module depends on that logical
+contract and remains independent of the concrete coordinator. The optional vLLM frontend reuses OpenAI HTTP, tokenizer, chat
 template, and streaming code through a narrow Add/Abort transport. It does not
 import a second scheduler, KV allocator, or device runtime.
 
-The `orbitkv-engine` crate is the composition root. It implements the server's logical `Engine`
-trait while holding `RuntimeSession`, `ExecutorPlan`, stable device arenas, and
-`CompiledDecoder` behind one dedicated execution thread. It is allowed to join
-the other three layers, but it cannot mint pages or bypass manager transactions.
+Its `model_engine` module implements the logical `Engine` trait while holding `RuntimeSession`, `ExecutorPlan`, stable device arenas, and
+`CompiledDecoder` behind one dedicated execution thread. It joins the core and executor, but it cannot mint pages or bypass manager
+transactions.
 The scheduler has bounded admission and per-request output queues, keeps a
 bounded active set, and forms decode-first token-budgeted dispatches. Each public
 submission is one fresh prompt; continuation is internal scheduler state.
+
+`ModelEngine::shutdown` closes admission, cancels outstanding work and joins the
+execution worker. It returns the final scheduler, KV, fixed-state and graph
+statistics only after the worker has retired its decoder. Pending ownership or
+quarantined state makes shutdown fail; execution errors and worker panics reach
+the caller. The HTTP executable performs this blocking join outside the async
+frontend tasks and writes `ORBITKV_ENGINE_SHUTDOWN` as a structured diagnostic.
 
 External storage providers own byte movement and storage resources only. The
 core pins generation-checked source pages, validates exact durable receipts,
@@ -75,13 +90,50 @@ reference implementation and fault oracle, not a performance backend.
    bucket, runs on the owning stream without recompiling the model, and samples
    greedy token IDs on device. A warmed fixed-signature decode may instead
    replay one outer CUDA Graph; shape or CSR-indptr changes fail closed and
-   require recapture.
+require recapture.
 6. Completion evidence advances the Execution Frontier.
 7. RuntimeSession publishes new request heads, retires unreachable generations,
    validates cleanup acknowledgement, and only then permits reuse.
 8. Normal length, stop, cancellation, or disconnected-output termination all
    converge on request release and final drain. Ambiguous device execution is
    quarantined and the worker stops instead of fabricating completion.
+
+Materialized bucket capacity is an explicit deployment policy, separate from
+the selected artifact. Provider metadata stays owned by its captured plan;
+shared scratch is dependency-ordered, and replacing plans reserves both old and
+new allocations at peak. The runtime evicts least recently used buckets before
+constructing replacements. See [graph residency](graph-residency.md) for the
+engine/CLI configuration and qualification scope.
+
+## Joint compilation boundary
+
+The executor coordinates state and computation without moving their ownership
+boundaries. OrbitKV derives backend-neutral state facts from a validated
+manifest; the executor binds those facts to arena contracts and lowers them into
+Luminal's compiler vocabulary. Luminal matches and selects implementations in
+egglog, while the CUDA runtime owns candidate preparation, resource validation,
+profiling, and loading.
+
+The intended implementation space has three levels: complete optimized
+providers, generated algorithm regions and operator fusion, and later bounded
+persistent schedules or megakernels. A selected program can contain all three.
+FlashInfer, FlashAttention-3 and DeepGEMM are current providers; FlashMLA requires a future MLA
+contract and is not an interchangeable provider for arbitrary softmax/GQA
+attention. Triton and TileLang are possible code-generation providers, not
+current integrations.
+
+Current state facts describe one selected physical realization. Full joint
+layout search still requires explicit physical-choice inputs, deterministic
+OrbitKV validation, and matching manifest/arena/artifact identities. Runtime
+facts such as current sharing and page contiguity must be guarded rather than
+inferred from one profiling fixture. Luminal may optimize graph-local buffer
+lifetimes; OrbitKV retains page generations, cross-request references,
+publication, retirement, and reuse authority.
+
+Persistent-kernel execution is a planned candidate form. Its synchronization,
+resident resources, state effects, and completion protocol must be represented
+before deployment. Existing host-launched providers are execution boundaries;
+combining their binaries does not generate a fused device kernel.
 
 ## Physical-residence ablation
 
@@ -115,15 +167,19 @@ never the sum of heterogeneous physical class arenas.
 crates/orbitkv/
   src/                    compiler, manager, RuntimeSession, checkpoint pool
 crates/orbitkv-engine/
-  src/                    single-process model coordinator and failure policy
-  src/bin/serve.rs        typed single-process OpenAI server entry point
+  src/protocol.rs         logical Engine, request, and event contracts
+  src/frontend.rs         optional HTTP/tokenizer/protocol adapter
+  src/model_engine.rs     scheduling, lifecycle coordination, failure policy
+  src/bin/serve/main.rs    typed single-process OpenAI server entry point
   tests/                  released-model stream/stop/cancel/drain closure
 crates/orbitkv-executor/
   src/
     model.rs              graph/runtime orchestration
     model/artifact.rs     schedule serialization and structural identity
     model/compiler.rs     graph preparation and persistent-device binding
-    model/config.rs       structural decoder semantics from model config
+    model/config.rs       normalized decoder semantics
+    model/import.rs       explicit checkpoint architecture import
+    model/import/input.rs shared serialization and numeric validation
     model/weights.rs      fail-closed checkpoint tensor contract
     model/block.rs        generic dense transformer block math
     model/topology.rs     joint token-KV and fixed-state layer ownership
@@ -135,12 +191,14 @@ crates/orbitkv-executor/
     cuda.rs               provider-neutral paged-attention and stream/event boundary
     transport.rs          external byte-movement contract
   tests/                  real-byte reference transport closures
-crates/orbitkv-server/
-  src/                    local Engine, semantic requests, optional HTTP adapter
 docs/                     current product contracts
 third_party/luminal/      complete pinned compiler/executor fork
 results/                  compact reviewed current evidence, never active source
 ```
+
+The [code and test layout](code-layout.md) defines module entries, private unit
+tests, public-API integration suites, fixtures, and test helpers consistently
+across the three owned crates.
 
 The Luminal submodule preserves its upstream history. `crates/orbitkv-executor/Cargo.toml`
 depends directly on its local crates, so the reviewed fork source and the code
@@ -149,7 +207,7 @@ in the fork and pinned by the parent submodule pointer, rather than copied into
 model- or hardware-specific directories. See
 [executor-upstream.md](executor-upstream.md) for the update procedure.
 
-The root Cargo workspace contains exactly the four owned `crates/orbitkv-*`
+The root Cargo workspace contains exactly the three owned `crates/orbitkv-*`
 packages. `third_party/luminal` is a path dependency but is explicitly excluded
 from workspace membership, so upstream crates remain visibly third-party and
 can be synchronized and qualified independently.
@@ -158,11 +216,13 @@ can be synchronized and qualified independently.
 
 The crate graph is intentionally one-way. `orbitkv` has no executor, Luminal,
 server, async-runtime, or HTTP dependency. `orbitkv-executor` depends inward on
-`orbitkv` and the embedded compiler crates, but never on `orbitkv-server`.
-`orbitkv-server` owns only logical protocol contracts and depends on neither
-`orbitkv` nor `orbitkv-executor`. `orbitkv-engine` is the only outer crate
-allowed to depend on all three and implements the server trait without moving
-page types into the server. External KV transports live in `orbitkv-executor`
+`orbitkv` and the embedded compiler crates, but never on `orbitkv-engine`.
+`orbitkv-engine` joins core and executor and owns the optional frontend. Inside
+that crate, `protocol` and `frontend` remain logical boundaries: they cannot
+import core/executor/Luminal implementations or name page, arena, and decoder
+implementation types. `tools/verify_active_source.py` checks this source boundary
+in addition to the Cargo dependency graph. The frontend feature compiles and
+tests without enabling CUDA. External KV transports live in `orbitkv-executor`
 because they operate on lowered tensor spans, while replica identity, pins,
 publication, and deletion authority stay in `orbitkv`.
 
@@ -225,27 +285,52 @@ and a ragged two-request H20 test matches independent convolution and recurrent
 references. Full released-model parity and fused projection/readout kernels
 remain open.
 The OrbitKV graph emits a provider-neutral paged-attention semantic op. Egglog
-currently contributes FlashInfer as its optimized implementation, so the search
-can replace it when another legal provider is registered. There is not yet a
-second provider or joint KV-layout search.
+contributes explicit FlashInfer CUDA-core/tensor-core algorithms and optional
+FlashAttention-3 candidates. Each adapter declares its complete target and ABI
+scope. FA3 retains K/V payload allocations and converts CSR page metadata on the
+GPU; its scheduler and attention launches join the same measured program. The
+handwritten native attention provider has been removed. Joint KV-layout search
+remains open; see [attention providers](attention-providers.md).
+
+Every selectable LLIR must also preserve non-attention layout semantics. During
+the 27B 16-candidate closure, exact LLIR comparison exposed a fused RMSNorm
+candidate that flattened a 3-D Q/K slice even though its physical row pitch came
+from a wider projection. The compiler now offers that kernel only for 2-D dense
+rows proven by egglog stride facts; 3-D views stay decomposed until the graph IR
+can carry an explicit base-layout proof. Decoder artifact schema 5 invalidates
+the older unsafe search space and additionally requires every selected token-KV
+update to alias the manager-owned arena, eliminating full-cache copy-back.
 
 Block-scaled linear execution follows the same compiler boundary rather than a
 model-side backend switch. The decoder emits a provider-neutral semantic node
 whose inputs are BF16 activations, FP8 E4M3 weights, and 128x128 inverse scales.
-Its independent two-kernel CUDA implementation is the correctness fallback.
+Its independent two-kernel CUDA implementation is a correctness oracle and is
+not a deployment-eligible fallback.
 Egglog unions four legal DeepGEMM tile schedules into that e-class;
-candidate preparation JIT-compiles the pinned upstream source before timing, and
+candidate preparation JIT-compiles the resolved provider source before timing, and
 Luminal's normal device profiler chooses the implementation per dynamic bucket.
-The selected LLIR contains the provider revision and tile variant, so schedule
-serialization cannot silently replay against an unnamed kernel implementation.
+The selected LLIR contains a digest of provider/dependency and wrapper contents
+plus the tile variant. Strict replay checks the recorded provider identity
+against current sources before loading that implementation.
 DeepGEMM receives only tensor pointers and a stream and has no state-management
 authority.
 
-Search profiling also refreshes the shared single-request `query_indptr` from
-the bucket's representative token count before timing. This keeps packed
-convolution and recurrent kernels valid when the compiler switches between the
-decode (`s=1`) and prefill (`s>1`) buckets; it is profiling metadata only and
-does not change OrbitKV-authored execution plans.
+An opt-in egglog alternative exposes activation quantization as a graph-owned
+packed byte buffer consumed by prequantized DeepGEMM nodes. Identical activation,
+geometry, provider and ABI identities share the producer through the e-graph.
+The original combined providers remain legal choices. This reuses preparation
+across projections; it still launches a quantizer and GEMM kernels. It is not a
+fused megakernel. The shared quantizer source and packed ABI enter provider
+identity and resource validation.
+
+`DecoderTuningProfile` separates workload representatives and search budgets
+from executable capacity. The executor proposes feasible joint batch/query/page
+buckets and supplies synthetic query/page CSR metadata, unique private-page
+write slots, positions, and fixed-state slots before candidate preparation.
+CUDA compares the configured number of finalists on its deployment graph path.
+The profile is artifact-bound. Ordinary execution continues to use
+OrbitKV-authored metadata. Shared-Prefix physical-layout profiling and joint
+layout search remain open; see [FP8 region tuning](fp8-region-tuning.md).
 
 `tools/verify_active_source.py` enforces these forbidden dependency edges,
 rejects physical KV ownership types in server source, requires all product
@@ -255,6 +340,25 @@ bounds source-file size. The gate cannot prove every semantic ownership rule,
 so transaction and failure-atomicity tests remain the executable authority.
 
 ## Qualification boundary
+
+The compiler/provider modules, budget ownership, and structured candidate trace
+are mapped in [Compiler boundaries and extension points](compiler-boundaries.md).
+Compile/load orchestration is in `model/compiler.rs`; workload policy, feasible
+bucket construction and profiling fixtures are separate modules. Numerical ABI
+definitions, scratch ownership and DeepGEMM tile ordering have separate owners.
+
+[Generated module artifacts](module-artifacts.md) sit at the CUDA backend
+boundary. OrbitKV embeds the selected images with its schedule identity, while
+Luminal owns serialization, target/compiler checks and strict source lookup.
+The runtime retains that policy through bucket materialization and execution;
+weight loading, provider planning and live CUDA resources keep their own owners.
+
+The CUDA runtime's [weight loader](weight-loading.md) owns mapped checkpoint
+bytes, explicit dtype conversion and device upload. The executor owns the
+earlier model-wide tensor/shape contract. Storage-compatible bytes are borrowed
+from the mapping; conversions keep one typed allocation. A fallible load returns
+actual tensor/byte counts, drains each shard before releasing its mapping and
+propagates failures to decoder initialization.
 
 The current tree proves compiler, manager, lifecycle, and executor-metadata
 contracts on the host. Real-device tests additionally cover external block-page

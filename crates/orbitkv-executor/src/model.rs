@@ -2,19 +2,17 @@
 
 use std::collections::BTreeSet;
 
-use luminal::prelude::rand::SeedableRng;
 use luminal::{
     dtype::DType,
     op::Runtime,
     prelude::{Expression, Graph, GraphTensor, Symbol, sym},
     shape::ToShape,
 };
-use serde::{Deserialize, Serialize};
+use luminal_nn::ops::linear::{BlockScaledLinearSpec, block_scaled_linear};
 use thiserror::Error;
 
 use luminal_cuda_lite::{
-    cudarc::driver::{CudaContext, CudaSlice, CudaStream},
-    host::deepgemm::{BlockScaledLinearSpec, block_scaled_linear},
+    cudarc::driver::CudaSlice,
     runtime::{CapturedCudaExecution, CudaRuntime},
 };
 
@@ -26,32 +24,34 @@ use crate::{
 };
 use orbitkv::{EngineFixedStatePlan, StatePoolIdentity};
 
-#[path = "model/runtime_input.rs"]
 mod runtime_input;
 use runtime_input::{validate_stateful_step, validate_step};
-#[path = "model/artifact.rs"]
 mod artifact;
 pub use artifact::DecoderArtifact;
-use artifact::{decoder_artifact_identity, new_artifact};
-#[path = "model/compiler.rs"]
+#[cfg(test)]
+use artifact::decoder_artifact_identity;
 mod compiler;
-use compiler::{bind_fixed_state, prepare_decoder_compilation};
-#[path = "model/config.rs"]
+mod representative;
+mod residency;
+pub use residency::{
+    DEFAULT_GRAPH_CACHE_CAPACITY, DecoderGraphCacheStats, DecoderPreparationReport,
+    PreparedDecoderBucket,
+};
+mod tuning;
+pub use tuning::{DecoderCompileConfig, DecoderTuningProfile};
 mod config;
+mod import;
 pub use config::{
     DecoderActivation, DecoderBlockLayout, DecoderConfig, DecoderLayerKind, DecoderNormWeights,
     DecoderWeightFormat, GatedDeltaConfig,
 };
-#[path = "model/topology.rs"]
 mod topology;
 use topology::DecoderTopology;
-#[path = "model/recurrent_layer.rs"]
 mod recurrent_layer;
 pub use recurrent_layer::{
     GatedDeltaCore, GatedDeltaCoreOutput, GatedDeltaDecodeOutput, GatedDeltaProjection,
     GatedDeltaStateBindings, GatedDeltaStateGraph,
 };
-#[path = "model/weights.rs"]
 mod weights;
 use weights::{DecoderWeightFeatures, inspect_weight_features};
 
@@ -59,6 +59,8 @@ use weights::{DecoderWeightFeatures, inspect_weight_features};
 pub enum DecoderError {
     #[error("invalid decoder config JSON: {0}")]
     Json(#[from] serde_json::Error),
+    #[error("unsupported decoder checkpoint: {0}")]
+    UnsupportedCheckpoint(String),
     #[error("decoder geometry is invalid: {0}")]
     InvalidGeometry(&'static str),
     #[error("decoder attention classes do not exactly cover the model layers")]
@@ -79,6 +81,10 @@ pub enum DecoderError {
     FixedStateGraph(#[from] crate::FixedStateGraphError),
     #[error("decoder artifact is incompatible: {0}")]
     Artifact(String),
+    #[error("decoder weight loading failed: {0}")]
+    WeightLoading(String),
+    #[error("decoder execution preparation failed: {0}")]
+    Preparation(String),
     #[error("decoder runtime input geometry exceeds its compiled capacity")]
     InputCapacity,
     #[error("CUDA graph capture requires exactly one query token per request")]
@@ -87,45 +93,6 @@ pub enum DecoderError {
     MissingDecodeCapture,
     #[error("decode step does not match the captured CUDA graph signature")]
     DecodeCaptureMismatch,
-}
-
-/// Dynamic-shape and search policy for one compiled decoder executable.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct DecoderCompileConfig {
-    pub maximum_query_tokens: usize,
-    pub representative_prefill_tokens: usize,
-    pub maximum_batch_size: usize,
-    pub maximum_context_pages: usize,
-    pub representative_context_pages: usize,
-    pub search_graphs: usize,
-    pub search_seed: u64,
-}
-
-impl DecoderCompileConfig {
-    fn validate(self) -> Result<(), DecoderError> {
-        let int_bytes = std::mem::size_of::<i32>();
-        if self.maximum_query_tokens < 2
-            || !(2..=self.maximum_query_tokens).contains(&self.representative_prefill_tokens)
-            || self.maximum_batch_size == 0
-            || self.maximum_batch_size > self.maximum_query_tokens
-            || self.maximum_context_pages == 0
-            || !(1..=self.maximum_context_pages).contains(&self.representative_context_pages)
-            || self.search_graphs < 2
-            || self.maximum_query_tokens > i32::MAX as usize
-            || self.maximum_batch_size > i32::MAX as usize
-            || self.maximum_context_pages > i32::MAX as usize
-            || self.maximum_query_tokens.checked_mul(int_bytes).is_none()
-            || self.maximum_context_pages.checked_mul(int_bytes).is_none()
-            || self
-                .maximum_batch_size
-                .checked_add(1)
-                .and_then(|rows| rows.checked_mul(int_bytes))
-                .is_none()
-        {
-            return Err(DecoderError::InvalidGeometry("compile buckets"));
-        }
-        Ok(())
-    }
 }
 
 /// Inputs for one dispatch into the precompiled decoder buckets.
@@ -543,179 +510,6 @@ impl DecoderLayerGraphBuilder<'_> {
 }
 
 impl CompiledDecoder {
-    /// Builds and searches one decoder on a CUDA device selected by ordinal.
-    ///
-    /// This is the high-level composition boundary. Callers that do not need
-    /// to coordinate another CUDA subsystem should use it instead of depending
-    /// directly on Luminal's stream type.
-    ///
-    /// # Errors
-    ///
-    /// Returns device initialization or decoder compilation failures.
-    pub fn compile_on_device(
-        config: &DecoderConfig,
-        plan: &ExecutorPlan,
-        storage: DecoderStorage<'_>,
-        device_index: usize,
-        weight_files: &[std::path::PathBuf],
-        compile: DecoderCompileConfig,
-    ) -> Result<Self, DecoderError> {
-        Self::compile_or_load_on_device(
-            config,
-            plan,
-            storage,
-            device_index,
-            weight_files,
-            compile,
-            None,
-        )
-        .map(|(decoder, _)| decoder)
-    }
-
-    /// Builds a decoder from a stored schedule or searches a new schedule and
-    /// returns the exact artifact selected for this executable.
-    ///
-    /// A supplied artifact is strict: identity or LLIR validation failure is
-    /// returned to the caller and never falls back to a new search.
-    ///
-    /// # Errors
-    ///
-    /// Returns device, model, artifact, or compilation failures.
-    pub fn compile_or_load_on_device(
-        config: &DecoderConfig,
-        plan: &ExecutorPlan,
-        storage: DecoderStorage<'_>,
-        device_index: usize,
-        weight_files: &[std::path::PathBuf],
-        compile: DecoderCompileConfig,
-        artifact: Option<&DecoderArtifact>,
-    ) -> Result<(Self, DecoderArtifact), DecoderError> {
-        let context = CudaContext::new(device_index)?;
-        let stream = context.new_stream()?;
-        Self::compile_or_load(
-            config,
-            plan,
-            storage,
-            &stream,
-            weight_files,
-            compile,
-            artifact,
-        )
-    }
-
-    /// Builds and searches one decoder graph with decode and prefill buckets.
-    ///
-    /// The K/V arena is registered before search, so every candidate is
-    /// measured against the deployed persistent-state contract. Each selected
-    /// bucket either updates the registered arena in place or
-    /// pays a graph-visible device copy back to that same stable address.
-    ///
-    /// # Errors
-    ///
-    /// Rejects invalid bucket geometry or incompatible model plans. Luminal
-    /// compile failures currently surface through its native panic boundary.
-    pub fn compile(
-        config: &DecoderConfig,
-        plan: &ExecutorPlan,
-        storage: DecoderStorage<'_>,
-        stream: &std::sync::Arc<CudaStream>,
-        weight_files: &[std::path::PathBuf],
-        compile: DecoderCompileConfig,
-    ) -> Result<Self, DecoderError> {
-        Self::compile_or_load(config, plan, storage, stream, weight_files, compile, None)
-            .map(|(decoder, _)| decoder)
-    }
-
-    /// Compiles or strictly loads one selected decoder schedule.
-    ///
-    /// # Errors
-    ///
-    /// Rejects incompatible artifacts and propagates model or device failures.
-    pub fn compile_or_load(
-        config: &DecoderConfig,
-        plan: &ExecutorPlan,
-        storage: DecoderStorage<'_>,
-        stream: &std::sync::Arc<CudaStream>,
-        weight_files: &[std::path::PathBuf],
-        compile: DecoderCompileConfig,
-        artifact: Option<&DecoderArtifact>,
-    ) -> Result<(Self, DecoderArtifact), DecoderError> {
-        let prepared =
-            prepare_decoder_compilation(config, plan, storage, stream, weight_files, compile)?;
-        let DecoderCompilation {
-            mut graph,
-            decoder,
-            mut runtime,
-            mut persistent_cache,
-            fixed_state_scratch,
-            options,
-            identity,
-            page_tokens,
-        } = prepared;
-        if let Some(artifact) = artifact
-            && artifact.identity != identity
-        {
-            return Err(DecoderError::Artifact(
-                "model, plan, arena, or compile identity changed".into(),
-            ));
-        }
-        let effective_artifact = if let Some(artifact) = artifact {
-            graph.prepare_selected_schedule(&options);
-            graph.install_selected_schedule(artifact.schedule.clone());
-            graph
-                .load_selected_schedule(&mut runtime)
-                .map_err(DecoderError::Artifact)?;
-            artifact.clone()
-        } else {
-            let mut rng =
-                luminal::prelude::rand::rngs::SmallRng::seed_from_u64(compile.search_seed);
-            runtime = graph.compile_with_rng(runtime, options, &mut rng);
-            new_artifact(
-                identity,
-                graph
-                    .selected_schedule()
-                    .cloned()
-                    .ok_or_else(|| DecoderError::Artifact("selected schedule missing".into()))?,
-            )
-        };
-        let fixed_state = bind_fixed_state(
-            plan,
-            storage.fixed_state_pools,
-            stream,
-            &decoder.outputs.fixed_states,
-            &mut runtime,
-            fixed_state_scratch,
-        )?;
-        // Explicit-CSR attention may recapture library islands as context
-        // geometry changes. Keep every searched bucket, but only one
-        // materialized CUDA graph at a time so graph-pool reclamation cannot
-        // leave an inactive phase holding stale captured resources. A bucket
-        // switch rematerializes the target without repeating graph search.
-        runtime.set_max_materialized_buckets(Some(1));
-        runtime.release_pooled_memory();
-        let dynamic_input_allocations = capture_input_allocations(&runtime, &decoder)?;
-        let cache_updates_in_place = cache_updates_in_place(&runtime, &decoder);
-        for cache in &mut persistent_cache {
-            stream.memset_zeros(cache)?;
-        }
-        Ok((
-            Self {
-                graph,
-                decoder,
-                captured_decode: None,
-                runtime,
-                persistent_cache,
-                fixed_state,
-                compile,
-                vocabulary_size: config.vocabulary_size,
-                page_tokens,
-                cache_updates_in_place,
-                dynamic_input_allocations,
-            },
-            effective_artifact,
-        ))
-    }
-
     /// Executes one precompiled decode or prefill bucket and reads back only
     /// the on-device greedy token IDs.
     ///
@@ -1176,75 +970,6 @@ impl CompiledDecoder {
     }
 }
 
-fn register_persistent_cache(
-    runtime: &mut CudaRuntime,
-    decoder: &DecoderGraph,
-    plan: &ExecutorPlan,
-    config: &DecoderConfig,
-) -> Result<Vec<CudaSlice<u8>>, DecoderError> {
-    let bindings = decoder.cache_bindings(plan)?;
-    decoder
-        .outputs
-        .cache
-        .iter()
-        .zip(&bindings)
-        .map(|(state, binding)| {
-            let cache_bytes = decoder
-                .class_dimensions
-                .get(usize::from(binding.class_id))
-                .filter(|class| class.class_id == binding.class_id)
-                .ok_or(DecoderError::UnsupportedPlan)?
-                .cache_slots
-                .checked_mul(config.kv_heads)
-                .and_then(|elements| elements.checked_mul(config.head_dim))
-                .and_then(|elements| elements.checked_mul(2))
-                .ok_or(DecoderError::InvalidGeometry("cache bytes"))?;
-            Ok([
-                runtime.alias_state(state.binding.key, state.key_update, cache_bytes),
-                runtime.alias_state(state.binding.value, state.value_update, cache_bytes),
-            ])
-        })
-        .collect::<Result<Vec<_>, DecoderError>>()
-        .map(|caches| caches.into_iter().flatten().collect())
-}
-
-fn decoder_compile_options(
-    decoder: &DecoderGraph,
-    compile: DecoderCompileConfig,
-) -> luminal::prelude::CompileOptions {
-    decoder
-        .class_dimensions
-        .iter()
-        .fold(
-            luminal::prelude::CompileOptions::default()
-                .dim_buckets(
-                    's',
-                    &[
-                        luminal::prelude::DimBucket::new(1, 1),
-                        luminal::prelude::DimBucket::new(2, compile.maximum_query_tokens)
-                            .representative(compile.representative_prefill_tokens),
-                    ],
-                )
-                .dim_buckets(
-                    'b',
-                    &[
-                        luminal::prelude::DimBucket::new(1, compile.maximum_batch_size)
-                            .representative(1),
-                    ],
-                ),
-            |options, class| {
-                options.dim_buckets(
-                    class.context_pages,
-                    &[
-                        luminal::prelude::DimBucket::new(1, compile.maximum_context_pages)
-                            .representative(compile.representative_context_pages),
-                    ],
-                )
-            },
-        )
-        .search_graph_limit(compile.search_graphs)
-}
-
 impl DecodeCaptureSignature {
     fn from_step(step: DecoderStep<'_>) -> Result<Self, DecoderError> {
         let Some(first_class) = step.classes.first() else {
@@ -1337,64 +1062,6 @@ fn cache_updates_in_place(runtime: &CudaRuntime, decoder: &DecoderGraph) -> bool
         runtime.output_aliases_input_in_all_buckets(state.key_update, state.binding.key)
             && runtime.output_aliases_input_in_all_buckets(state.value_update, state.binding.value)
     })
-}
-
-fn seed_compile_inputs(
-    runtime: &mut CudaRuntime,
-    decoder: &DecoderGraph,
-    compile: DecoderCompileConfig,
-    page_tokens: usize,
-    representative_query_tokens: usize,
-) {
-    let int_bytes = std::mem::size_of::<i32>();
-    runtime.set_data_with_capacity(
-        decoder.inputs.token_ids,
-        vec![1_i32; representative_query_tokens],
-        compile.maximum_query_tokens * int_bytes,
-    );
-    runtime.set_data_with_capacity(
-        decoder.inputs.positions,
-        (0..i32::try_from(representative_query_tokens).unwrap()).collect::<Vec<_>>(),
-        compile.maximum_query_tokens * int_bytes,
-    );
-    runtime.set_data_with_capacity(
-        decoder.inputs.query_indptr,
-        vec![0_i32, i32::try_from(representative_query_tokens).unwrap()],
-        (compile.maximum_batch_size + 1) * int_bytes,
-    );
-    for (class, dimensions) in decoder.inputs.classes.iter().zip(&decoder.class_dimensions) {
-        let base_page = i32::try_from(dimensions.backend_base_index).unwrap();
-        let base_slot = dimensions
-            .backend_base_index
-            .checked_mul(page_tokens as u64)
-            .and_then(|slot| i32::try_from(slot).ok())
-            .unwrap();
-        runtime.set_data_with_capacity(
-            class.write_slots,
-            (0..i32::try_from(representative_query_tokens).unwrap())
-                .map(|offset| base_slot.checked_add(offset).unwrap())
-                .collect::<Vec<_>>(),
-            compile.maximum_query_tokens * int_bytes,
-        );
-        runtime.set_data_with_capacity(
-            class.attention.page_indices,
-            vec![base_page; compile.representative_context_pages],
-            compile.maximum_context_pages * int_bytes,
-        );
-        runtime.set_data_with_capacity(
-            class.attention.page_indptr,
-            vec![
-                0_i32,
-                i32::try_from(compile.representative_context_pages).unwrap(),
-            ],
-            (compile.maximum_batch_size + 1) * int_bytes,
-        );
-        runtime.set_data_with_capacity(
-            class.attention.last_page_len,
-            vec![i32::try_from(page_tokens.min(representative_query_tokens)).unwrap()],
-            compile.maximum_batch_size * int_bytes,
-        );
-    }
 }
 
 fn validate_plan(
@@ -1503,7 +1170,6 @@ fn decoder_inputs(
     }
 }
 
-#[path = "model/block.rs"]
 mod block;
 use block::{DecoderLayerEnvelope, DecoderNorm, TokenAttentionInputs, TokenAttentionLayer};
 
@@ -1597,5 +1263,5 @@ pub(super) fn weight(
 }
 
 #[cfg(test)]
-#[path = "model/tests.rs"]
+#[path = "../tests/unit/model/mod.rs"]
 mod tests;

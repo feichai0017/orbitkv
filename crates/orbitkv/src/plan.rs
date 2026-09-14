@@ -1337,4 +1337,5 @@ fn update_bytes(hash: &mut Sha256, bytes: &[u8]) {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/plan/mod.rs"]
 mod tests;

@@ -59,6 +59,12 @@ class ServerSpec:
     base_url: str
 
 
+@dataclass(frozen=True)
+class ServerShutdown:
+    returncode: int
+    forced: bool
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
@@ -293,15 +299,16 @@ def wait_until_ready(process: subprocess.Popen[bytes], url: str, timeout: float)
     raise TimeoutError(f"server did not become ready at {url}: {last_error}")
 
 
-def stop_server(process: subprocess.Popen[bytes], timeout: float) -> None:
-    if process.poll() is not None:
-        return
+def stop_server(process: subprocess.Popen[bytes], timeout: float) -> ServerShutdown:
+    returncode = process.poll()
+    if returncode is not None:
+        return ServerShutdown(returncode, False)
     os.killpg(process.pid, signal.SIGTERM)
     try:
-        process.wait(timeout=timeout)
+        return ServerShutdown(process.wait(timeout=timeout), False)
     except subprocess.TimeoutExpired:
         os.killpg(process.pid, signal.SIGKILL)
-        process.wait(timeout=5.0)
+        return ServerShutdown(process.wait(timeout=5.0), True)
 
 
 def run_one(
@@ -351,7 +358,7 @@ def run_one(
         metrics, output_digest = benchmark_result(
             result, workload.requests, workload.output_tokens
         )
-        return {
+        observation = {
             "server": server.name,
             "epoch": epoch,
             "ready_seconds": ready_seconds,
@@ -363,8 +370,12 @@ def run_one(
             "generated_texts_sha256": output_digest,
         }
     finally:
-        stop_server(process, args.shutdown_timeout_seconds)
+        shutdown = stop_server(process, args.shutdown_timeout_seconds)
         server_log.close()
+    if shutdown.forced:
+        raise RuntimeError(f"server {server.name} required SIGKILL during shutdown")
+    observation["shutdown"] = shutdown.__dict__
+    return observation
 
 
 def git_revision() -> dict[str, Any]:
@@ -418,7 +429,7 @@ def optional_command_output(command: list[str]) -> str | None:
 
 
 def environment_snapshot(client: tuple[str, ...], dry_run: bool) -> dict[str, Any]:
-    luminal = REPOSITORY_ROOT / "executor" / "luminal"
+    luminal = REPOSITORY_ROOT / "third_party" / "luminal"
     luminal_commit = None
     if (luminal / ".git").exists():
         luminal_commit = optional_command_output(

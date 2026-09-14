@@ -1,6 +1,5 @@
 use std::collections::{BTreeMap, VecDeque, btree_map::Entry};
-use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicBool, Ordering},
@@ -10,32 +9,34 @@ use std::thread::JoinHandle;
 use std::time::{Duration, Instant};
 use std::{any::Any, panic::AssertUnwindSafe};
 
+mod startup;
+pub use startup::EngineStartupReport;
+
+mod shutdown;
+pub use shutdown::EngineShutdownReport;
+
+use crate::{
+    BatchIntent, Engine, EngineAbortFuture, EngineEvent, EngineEventStream, EngineFuture,
+    FinishReason, RequestId, RequestIntent, TokenOutput,
+};
 use futures_util::stream;
 use orbitkv::{
     CacheSharingPolicy, EngineAppendIntent, EngineCompletionEvidence, EnginePublicationEvidence,
     EngineReleaseEvidence, EngineReleaseOutcome, EngineRequestId, EngineRetirementEvidence,
-    HfRetentionOptions, RuntimeSession, StateCheckpointPool, StatePoolIdentity,
-    compile_hf_runtime_manifest,
+    HfRetentionOptions, RuntimeSession, StateCheckpointPool, compile_hf_runtime_manifest,
     kv_manager::{
         ArenaStats, BackendArenaRegistration, CanonicalKvManager, ManagerConfig, ManagerStats,
     },
 };
 use orbitkv_executor::{
     AttentionBatch, ExecutorArena, ExecutorPlan, FixedStateClass, FixedStateStorage,
-    model::DecoderArtifact,
     model::{
-        CompiledDecoder, DecoderClassStep, DecoderCompileConfig, DecoderConfig,
-        DecoderFixedStateStep, DecoderStep, DecoderStorage,
+        CompiledDecoder, DecoderClassStep, DecoderConfig, DecoderFixedStateStep, DecoderStep,
+        DecoderTuningProfile,
     },
-};
-use orbitkv_server::{
-    BatchIntent, Engine, EngineAbortFuture, EngineEvent, EngineEventStream, EngineFuture,
-    FinishReason, RequestId, RequestIntent, TokenOutput,
 };
 use thiserror::Error;
 use tokio::sync::{mpsc as async_mpsc, oneshot};
-
-const MAX_DECODER_ARTIFACT_BYTES: u64 = 64 * 1024 * 1024;
 
 /// Startup and capacity policy for the single-process model engine.
 #[derive(Clone, Debug)]
@@ -44,6 +45,11 @@ pub struct ModelEngineConfig {
     /// Optional strict schedule artifact. Existing files are loaded; missing
     /// files are atomically created after a successful search.
     pub decoder_artifact: Option<PathBuf>,
+    /// Maximum materialized decode/prefill buckets. Separate from compilation
+    /// and KV capacity; each retained graph owns its provider plan resources.
+    pub graph_cache_capacity: std::num::NonZeroUsize,
+    /// Prepare retained representative buckets before publishing readiness.
+    pub prepare_execution: bool,
     pub device_index: usize,
     pub page_tokens: u64,
     /// Physical pages for each manifest class, in canonical class-id order.
@@ -80,7 +86,7 @@ impl ModelEngineConfig {
             || self.event_buffer_size < 3
             || self.batch_wait_timeout.is_zero()
             || self.batch_wait_timeout > Duration::from_secs(1)
-            || self.search_graphs < 2
+            || self.search_graphs == 0
         {
             return Err(ModelEngineError::InvalidConfig);
         }
@@ -114,6 +120,8 @@ pub enum ModelEngineError {
     Lifecycle(String),
     #[error("executor failed: {0}")]
     Executor(String),
+    #[error("engine shutdown left live resources: {0:?}")]
+    ShutdownIncomplete(Box<EngineShutdownReport>),
 }
 
 enum WorkerCommand {
@@ -132,7 +140,8 @@ struct EngineShared {
     commands: SyncSender<WorkerCommand>,
     registry: Arc<Mutex<RequestRegistry>>,
     shutdown: Arc<AtomicBool>,
-    worker: Mutex<Option<JoinHandle<()>>>,
+    worker: Mutex<Option<JoinHandle<Result<EngineShutdownReport, ModelEngineError>>>>,
+    startup_report: EngineStartupReport,
     maximum_model_tokens: u64,
     maximum_prefill_tokens: usize,
     maximum_total_requests: usize,
@@ -145,7 +154,7 @@ struct RequestRegistry {
 }
 
 /// Point-in-time manager and continuous-batching scheduler census.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, serde::Serialize)]
 pub struct EngineStats {
     pub manager: ManagerStats,
     pub queued_requests: u64,
@@ -161,14 +170,7 @@ pub struct EngineStats {
 
 impl Drop for EngineShared {
     fn drop(&mut self) {
-        self.shutdown.store(true, Ordering::Release);
-        if let Ok(mut registry) = self.registry.lock() {
-            registry.accepting = false;
-            for cancelled in registry.cancellations.values() {
-                cancelled.store(true, Ordering::Release);
-            }
-        }
-        let _ = self.commands.try_send(WorkerCommand::Shutdown);
+        let _ = self.request_shutdown();
         if let Ok(worker) = self.worker.get_mut()
             && let Some(worker) = worker.take()
         {
@@ -191,6 +193,18 @@ impl ModelEngine {
     /// Returns configuration, checkpoint, compiler, CUDA, or worker startup
     /// failures without exposing a partially initialized engine.
     pub fn start(config: ModelEngineConfig) -> Result<Self, ModelEngineError> {
+        Self::start_with_tuning(config, DecoderTuningProfile::default())
+    }
+
+    /// Starts the engine with an explicit, artifact-bound compiler workload.
+    ///
+    /// # Errors
+    /// Returns configuration, checkpoint, compiler, CUDA, or startup failures.
+    pub fn start_with_tuning(
+        config: ModelEngineConfig,
+        tuning: DecoderTuningProfile,
+    ) -> Result<Self, ModelEngineError> {
+        let started = Instant::now();
         config.validate()?;
         let maximum_model_tokens = config.maximum_model_tokens;
         let maximum_prefill_tokens = config.maximum_prefill_tokens;
@@ -210,23 +224,28 @@ impl ModelEngine {
         let worker_shutdown = Arc::clone(&shutdown);
         let worker = std::thread::Builder::new()
             .name("orbitkv-model-engine".into())
-            .spawn(move || match ModelWorker::initialize(&config) {
-                Ok(mut worker) => {
-                    let _ = ready_tx.send(Ok(()));
-                    worker.run(&receiver, &worker_registry, &worker_shutdown);
+            .spawn(move || match ModelWorker::initialize(&config, &tuning) {
+                Ok((mut worker, preparation)) => {
+                    let _ = ready_tx.send(Ok(EngineStartupReport {
+                        elapsed: started.elapsed(),
+                        preparation,
+                    }));
+                    worker.run(&receiver, &worker_registry, &worker_shutdown)
                 }
                 Err(error) => {
-                    let _ = ready_tx.send(Err(error));
+                    let _ = ready_tx.send(Err(error.clone()));
+                    Err(error)
                 }
             })
             .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
         match ready_rx.recv() {
-            Ok(Ok(())) => Ok(Self {
+            Ok(Ok(startup_report)) => Ok(Self {
                 shared: Arc::new(EngineShared {
                     commands,
                     registry,
                     shutdown,
                     worker: Mutex::new(Some(worker)),
+                    startup_report,
                     maximum_model_tokens,
                     maximum_prefill_tokens,
                     maximum_total_requests,
@@ -385,7 +404,16 @@ struct DispatchInput {
 }
 
 impl ModelWorker {
-    fn initialize(config: &ModelEngineConfig) -> Result<Self, ModelEngineError> {
+    fn initialize(
+        config: &ModelEngineConfig,
+        tuning: &DecoderTuningProfile,
+    ) -> Result<
+        (
+            Self,
+            Option<orbitkv_executor::model::DecoderPreparationReport>,
+        ),
+        ModelEngineError,
+    > {
         let config_bytes = std::fs::read(config.model_directory.join("config.json"))
             .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
         let decoder_config = DecoderConfig::from_json(&config_bytes)
@@ -460,24 +488,28 @@ impl ModelWorker {
             )
             .map_err(|error| ModelEngineError::Initialization(error.to_string()))?
         };
-        let decoder = initialize_decoder(
+        let (decoder, preparation) = startup::initialize_decoder(
             config,
             &decoder_config,
             &plan,
             &arenas,
             &fixed_state_identities,
+            tuning,
         )?;
-        Ok(Self {
-            session,
-            plan,
-            arenas,
-            decoder,
-            completion_value: 1,
-            maximum_active_requests: config.maximum_active_requests,
-            maximum_batch_tokens: config.maximum_batch_tokens,
-            batch_wait_timeout: config.batch_wait_timeout,
-            counters: SchedulerCounters::default(),
-        })
+        Ok((
+            Self {
+                session,
+                plan,
+                arenas,
+                decoder,
+                completion_value: 1,
+                maximum_active_requests: config.maximum_active_requests,
+                maximum_batch_tokens: config.maximum_batch_tokens,
+                batch_wait_timeout: config.batch_wait_timeout,
+                counters: SchedulerCounters::default(),
+            },
+            preparation,
+        ))
     }
 
     fn run(
@@ -485,7 +517,7 @@ impl ModelWorker {
         receiver: &Receiver<WorkerCommand>,
         registry: &Mutex<RequestRegistry>,
         shutdown_requested: &AtomicBool,
-    ) {
+    ) -> Result<EngineShutdownReport, ModelEngineError> {
         let mut queued = VecDeque::new();
         let mut active = Vec::new();
         let mut shutdown = false;
@@ -519,12 +551,13 @@ impl ModelWorker {
             });
             if let Err(error) = result {
                 fail_all_requests(&mut queued, &mut active, receiver, registry, &error);
-                break;
+                return Err(error);
             }
             if shutdown && queued.is_empty() && active.is_empty() {
                 break;
             }
         }
+        self.shutdown_report()
     }
 
     fn handle_command(
@@ -984,111 +1017,6 @@ impl ModelWorker {
     }
 }
 
-fn initialize_decoder(
-    config: &ModelEngineConfig,
-    decoder_config: &DecoderConfig,
-    plan: &ExecutorPlan,
-    arenas: &[ExecutorArena],
-    fixed_states: &[(u16, StatePoolIdentity)],
-) -> Result<CompiledDecoder, ModelEngineError> {
-    let weights = checkpoint_weights(&config.model_directory)?;
-    let artifact = config
-        .decoder_artifact
-        .as_deref()
-        .filter(|path| path.exists())
-        .map(read_decoder_artifact)
-        .transpose()?;
-    let page_tokens =
-        usize::try_from(config.page_tokens).map_err(|_| ModelEngineError::InvalidConfig)?;
-    let maximum_context_pages = config
-        .page_counts
-        .iter()
-        .copied()
-        .max()
-        .and_then(|pages| usize::try_from(pages).ok())
-        .ok_or(ModelEngineError::InvalidConfig)?;
-    let (decoder, selected_artifact) = CompiledDecoder::compile_or_load_on_device(
-        decoder_config,
-        plan,
-        DecoderStorage::new(arenas, fixed_states),
-        config.device_index,
-        &weights,
-        DecoderCompileConfig {
-            maximum_query_tokens: config.maximum_batch_tokens,
-            representative_prefill_tokens: config.representative_prefill_tokens,
-            maximum_batch_size: config.maximum_active_requests,
-            maximum_context_pages,
-            representative_context_pages: config
-                .representative_prefill_tokens
-                .div_ceil(page_tokens)
-                .max(1),
-            search_graphs: config.search_graphs,
-            search_seed: config.search_seed,
-        },
-        artifact.as_ref(),
-    )
-    .map_err(initialization_error)?;
-    if let Some(path) = &config.decoder_artifact {
-        if artifact.is_some() {
-            eprintln!("decoder: loaded schedule artifact {}", path.display());
-        } else {
-            persist_decoder_artifact(path, &selected_artifact)?;
-            eprintln!("decoder: stored schedule artifact {}", path.display());
-        }
-    }
-    for bucket in decoder.cache_update_buckets() {
-        eprintln!(
-            "decoder: bucket {} persistent KV in-place={}/{} copy-back tensors={} bytes={}",
-            bucket.bucket_index,
-            bucket.in_place_tensors,
-            bucket.tensor_count,
-            bucket.copy_back_tensors,
-            bucket.copy_back_bytes,
-        );
-    }
-    Ok(decoder)
-}
-
-fn initialization_error(error: impl std::fmt::Display) -> ModelEngineError {
-    ModelEngineError::Initialization(error.to_string())
-}
-
-fn read_decoder_artifact(path: &Path) -> Result<DecoderArtifact, ModelEngineError> {
-    let metadata = std::fs::metadata(path).map_err(initialization_error)?;
-    if metadata.len() > MAX_DECODER_ARTIFACT_BYTES {
-        return Err(ModelEngineError::Initialization(format!(
-            "decoder artifact exceeds {MAX_DECODER_ARTIFACT_BYTES} bytes"
-        )));
-    }
-    let bytes = std::fs::read(path).map_err(initialization_error)?;
-    DecoderArtifact::from_bytes(&bytes).map_err(initialization_error)
-}
-
-fn persist_decoder_artifact(
-    path: &Path,
-    artifact: &DecoderArtifact,
-) -> Result<(), ModelEngineError> {
-    let parent = path
-        .parent()
-        .filter(|parent| !parent.as_os_str().is_empty())
-        .unwrap_or(Path::new("."));
-    std::fs::create_dir_all(parent)
-        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
-    let mut temporary = tempfile::NamedTempFile::new_in(parent)
-        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
-    let bytes = artifact
-        .to_bytes()
-        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
-    temporary
-        .write_all(&bytes)
-        .and_then(|()| temporary.as_file().sync_all())
-        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
-    temporary
-        .persist_noclobber(path)
-        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?;
-    Ok(())
-}
-
 fn fail_all_requests(
     queued: &mut VecDeque<QueuedRequest>,
     active: &mut Vec<ActiveRequest>,
@@ -1342,30 +1270,6 @@ fn validate_batch(
     Ok(request)
 }
 
-fn checkpoint_weights(directory: &Path) -> Result<Vec<PathBuf>, ModelEngineError> {
-    let mut files = Vec::new();
-    for entry in std::fs::read_dir(directory)
-        .map_err(|error| ModelEngineError::Initialization(error.to_string()))?
-    {
-        let path = entry
-            .map_err(|error| ModelEngineError::Initialization(error.to_string()))?
-            .path();
-        if path
-            .extension()
-            .is_some_and(|extension| extension == "safetensors")
-        {
-            files.push(path);
-        }
-    }
-    files.sort();
-    if files.is_empty() {
-        return Err(ModelEngineError::Initialization(
-            "checkpoint has no safetensors weights".into(),
-        ));
-    }
-    Ok(files)
-}
-
 fn decoder_class_write_slots(
     steps: &[orbitkv_executor::PreparedStep],
     class_count: usize,
@@ -1453,4 +1357,5 @@ fn panic_message(payload: &Box<dyn Any + Send>) -> String {
 }
 
 #[cfg(test)]
+#[path = "../tests/unit/model_engine/mod.rs"]
 mod tests;

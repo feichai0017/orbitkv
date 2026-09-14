@@ -1,0 +1,49 @@
+{
+  "method": "Traverse serialized roots following saved choices; count reachable attention template nodes, before loop expansion.",
+  "buckets": [
+    {
+      "artifact": "model-decoder.json",
+      "representative": {
+        "c_0": 1,
+        "s": 1,
+        "b": 1
+      },
+      "reachable_attention_template_nodes": {
+        "flashinfer/tensor-core": 1
+      }
+    },
+    {
+      "artifact": "model-decoder.json",
+      "representative": {
+        "c_0": 1,
+        "s": 4,
+        "b": 1
+      },
+      "reachable_attention_template_nodes": {
+        "flashattention/fa3-paged": 1
+      }
+    },
+    {
+      "artifact": "decoder.json",
+      "representative": {
+        "c_0": 1,
+        "s": 1,
+        "b": 1
+      },
+      "reachable_attention_template_nodes": {
+        "flashinfer/tensor-core": 1
+      }
+    },
+    {
+      "artifact": "decoder.json",
+      "representative": {
+        "c_0": 1,
+        "s": 4,
+        "b": 1
+      },
+      "reachable_attention_template_nodes": {
+        "flashattention/fa3-paged": 1
+      }
+    }
+  ]
+}

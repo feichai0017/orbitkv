@@ -1326,5 +1326,5 @@ const fn was_issued(sequence: u64, next_sequence: u64) -> bool {
 }
 
 #[cfg(test)]
-#[path = "runtime_session/tests/mod.rs"]
+#[path = "../tests/unit/runtime_session/mod.rs"]
 mod tests;

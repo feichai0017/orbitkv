@@ -12,7 +12,7 @@ use orbitkv::{
 };
 use orbitkv_executor::{
     AttentionBatch, ExecutorArena, ExecutorPlan, PreparedBatch,
-    cuda::{AttentionKernel, PagedAttentionInputs, PagedAttentionMetadata, paged_attention},
+    cuda::{AttentionGeometry, PagedAttentionInputs, PagedAttentionMetadata, paged_attention},
 };
 
 const PAGE_TOKENS: usize = 16;
@@ -168,12 +168,12 @@ fn external_block_page_plan_executes_on_cuda() {
         },
         metadata,
         &executor_plan.classes[0],
-        AttentionKernel {
+        AttentionGeometry {
             query_heads: 1,
             kv_heads: 1,
             head_dim: HEAD_DIM,
             dtype: DType::Bf16,
-            softmax_scale: 0.0,
+            softmax_scale: f64::from(u32::try_from(HEAD_DIM).unwrap()).sqrt().recip(),
         },
     )
     .unwrap()

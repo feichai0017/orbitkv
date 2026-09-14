@@ -2,10 +2,10 @@
 #![forbid(unsafe_code)]
 
 use futures_util::StreamExt;
-use orbitkv_engine::{ModelEngine, ModelEngineConfig};
-use orbitkv_server::{
+use orbitkv_engine::{
     BatchIntent, Engine, EngineEvent, FinishReason, RequestId, RequestIntent, SamplingIntent,
 };
+use orbitkv_engine::{ModelEngine, ModelEngineConfig};
 
 const REFERENCE_TOKENS: [u32; 8] = [236_743, 199, 236_820, 34_280, 236_813, 208, 236_820, 34_280];
 
@@ -17,6 +17,8 @@ fn engine_config(maximum_active_requests: usize) -> ModelEngineConfig {
             .expect("ORBITKV_MODEL_DIR must point to a released checkpoint"),
         decoder_artifact: std::env::var_os("ORBITKV_DECODER_ARTIFACT")
             .map(std::path::PathBuf::from),
+        graph_cache_capacity: orbitkv_executor::model::DEFAULT_GRAPH_CACHE_CAPACITY,
+        prepare_execution: true,
         device_index: 0,
         page_tokens: 16,
         page_counts: vec![64 * concurrent_requests, 33 * concurrent_requests],

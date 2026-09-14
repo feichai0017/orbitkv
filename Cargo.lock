@@ -2536,6 +2536,7 @@ dependencies = [
  "libloading 0.8.9",
  "lru",
  "luminal",
+ "luminal_nn",
  "luminal_tracing",
  "memmap2",
  "pretty-duration",
@@ -2563,6 +2564,8 @@ name = "luminal_tracing"
 version = "0.1.0"
 dependencies = [
  "prost 0.13.5",
+ "serde_json",
+ "tracing",
  "tracing-appender",
  "tracing-perfetto",
  "tracing-subscriber",
@@ -3023,16 +3026,20 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "clap",
+ "futures-core",
  "futures-util",
  "orbitkv",
  "orbitkv-executor",
- "orbitkv-server",
  "reqwest 0.12.28",
+ "serde",
  "serde_json",
  "tempfile",
  "thiserror 2.0.20",
  "tokio",
  "tokio-util",
+ "vllm-engine-core-client",
+ "vllm-server",
+ "zeromq",
 ]
 
 [[package]]
@@ -3044,6 +3051,7 @@ dependencies = [
  "luminal",
  "luminal_cuda_lite",
  "luminal_nn",
+ "luminal_tracing",
  "orbitkv",
  "parking_lot",
  "serde",
@@ -3051,24 +3059,6 @@ dependencies = [
  "sha2",
  "thiserror 2.0.20",
  "tokio",
-]
-
-[[package]]
-name = "orbitkv-server"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures-core",
- "futures-util",
- "reqwest 0.12.28",
- "serde_json",
- "tempfile",
- "thiserror 2.0.20",
- "tokio",
- "tokio-util",
- "vllm-engine-core-client",
- "vllm-server",
- "zeromq",
 ]
 
 [[package]]

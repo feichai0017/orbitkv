@@ -1,5 +1,6 @@
 [package]
 name = "orbitkv-executor"
+authors.workspace = true
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.88"
@@ -12,6 +13,7 @@ cuda = [
     "dep:luminal",
     "dep:luminal_cuda_lite",
     "dep:luminal_nn",
+    "dep:luminal_tracing",
 ]
 
 [dependencies]
@@ -19,6 +21,7 @@ async-trait = "0.1.89"
 luminal = { path = "../../third_party/luminal", optional = true }
 luminal_cuda_lite = { path = "../../third_party/luminal/crates/luminal_cuda_lite", optional = true }
 luminal_nn = { path = "../../third_party/luminal/crates/luminal_nn", optional = true }
+luminal_tracing = { path = "../../third_party/luminal/crates/luminal_tracing", optional = true }
 orbitkv = { path = "../orbitkv" }
 parking_lot = "0.12.5"
 serde = { version = "1.0.228", features = ["derive"] }

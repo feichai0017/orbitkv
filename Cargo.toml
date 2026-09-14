@@ -3,13 +3,14 @@ members = [
     "crates/orbitkv",
     "crates/orbitkv-engine",
     "crates/orbitkv-executor",
-    "crates/orbitkv-server",
 ]
 exclude = ["third_party/luminal"]
 default-members = [
     "crates/orbitkv",
     "crates/orbitkv-engine",
     "crates/orbitkv-executor",
-    "crates/orbitkv-server",
 ]
 resolver = "3"
+
+[workspace.package]
+authors = ["feichai"]

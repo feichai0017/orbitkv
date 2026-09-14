@@ -1,6 +1,6 @@
 # Components and external projects
 
-OrbitKV is one Rust inference product assembled from four owned crates and a
+OrbitKV is one Rust inference product assembled from three owned crates and a
 small number of explicit external boundaries. An imported component never gains
 KV lifecycle authority.
 
@@ -10,8 +10,7 @@ KV lifecycle authority.
 | --- | --- | --- |
 | `orbitkv` core | Compile attention-state semantics; own request/snapshot identity, page generations, Prefix/COW, retirement, publication, and reuse | Kernels, HTTP, network byte movement |
 | `orbitkv-executor` | Lower manager plans, bind persistent tensor arenas, execute Luminal graphs, move local or external bytes, and produce completion evidence | Page allocation, semantic liveness, final publication |
-| `orbitkv-server` | Tokenization/protocol adaptation, admission, batching, cancellation, backpressure, and output streaming | Physical page names, tensor addresses, retirement decisions |
-| `orbitkv-engine` | Join logical requests into bounded token-step batches and one `RuntimeSession`/Luminal transaction; own admission, active-set scheduling, backpressure, cancellation, release, and failure policy | A second cache index, allocator, protocol stack, or kernel runtime |
+| `orbitkv-engine` | Logical request/event contracts, optional tokenization/HTTP adaptation, admission, batching, backpressure, cancellation, release, and execution coordination | A second cache index, allocator, or kernel runtime; protocol/frontend modules cannot name physical pages or device buffers |
 
 The model coordinator is implemented and real-device qualified for bounded
 continuous batching. It compiles once at startup, merges fresh requests into
@@ -24,6 +23,9 @@ gaps are fairness, long soak, the actual capacity failure point, and a matched
 reference-engine comparison.
 
 ## External projects
+
+The checked-in Luminal/CUDA Lite module boundaries, implemented fusion levels
+and GPU search objective are detailed in [Luminal design](luminal-design.md).
 
 | Project | Relationship | Reused or planned surface | Excluded surface |
 | --- | --- | --- | --- |

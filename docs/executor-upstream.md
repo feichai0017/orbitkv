@@ -92,13 +92,16 @@ per-bucket in-place tensor count and any copy-back bytes. The qualified
 buckets. This compiler constraint produced a measured same-engine C2 benefit;
 it does not by itself close the remaining kernel gap to SGLang.
 
-The embedded decoder keeps all searched decode/prefill buckets but bounds active
-CUDA Graph materialization to one bucket. Explicit-CSR attention can rebuild
-captured library resources when context geometry changes; retaining another
-phase's materialization across such pool reclamation produced stale device
-state on the tested driver. Switching phase therefore rematerializes the target
-bucket without re-running graph search. A dedicated bucket-switch regression and
-the repeated released-hybrid residence workload cover this contract.
+The embedded decoder keeps all searched decode/prefill programs and exposes a
+positive materialized-bucket capacity, defaulting to one. Retained FlashInfer
+plans now own their integer metadata; preparing another shape cannot overwrite
+the plan captured by an inactive graph. Float scratch remains stream-ordered and
+shared, while pinned planner staging is locked and drained before reuse. Resource
+preflight charges retained metadata plus the temporary replacement generation.
+H20 regressions cover alternating provider graphs, repeated 27B model requests,
+and eviction after lowering the capacity. Explicit CSR changes still replan
+attention islands. See [graph residency](graph-residency.md) for ownership,
+configuration and the measured qualification boundary.
 
 Selected schedules, including graphs with explicit paged-attention custom ops,
 can be serialized independently of weights and KV contents. Loading replays the
@@ -106,8 +109,11 @@ deterministic graph normalization, resolves the current custom-op table, and
 verifies the unrolled LLIR fingerprint of every bucket. OrbitKV wraps this in a
 decoder artifact identity covering the canonical manifest, decoder and weight
 family geometry, arena shape, and compile buckets. Incompatible artifacts fail
-closed. The artifact removes cross-process search variation; CUDA module and
-FlashInfer prepared-resource materialization are not yet fully serialized.
+closed. Decoder schema 9 also embeds generated CUDA module images with strict
+target/compiler/source validation. Older decoder formats must be regenerated.
+Weight loading, FlashInfer/DeepGEMM prepared resources and CUDA Graph
+materialization still run. See [module artifacts](module-artifacts.md) for the
+shared Luminal API, capture cost and compatibility boundary.
 
 ## Updating Luminal
 
@@ -133,7 +139,7 @@ qualification, rather than an automatic floating dependency.
 The exact fork revision is the parent repository's submodule pointer rather than
 a duplicated version string in this document. The fork retains its own upstream
 workspace so it can be built and tested independently even though the parent
-explicitly excludes it from the four owned OrbitKV workspace members. Upstream
+explicitly excludes it from the three owned OrbitKV workspace members. Upstream
 syncs must preserve OrbitKV's external-page, required-alias, artifact, and
 child-graph contracts. Existing H20 measurements remain compatibility evidence
 for their recorded source closure, not a new broad performance claim.

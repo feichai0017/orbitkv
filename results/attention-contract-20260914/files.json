@@ -1,0 +1,337 @@
+[
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/artifact-tests.log",
+    "bytes": 2359,
+    "sha256": "9f874926dbd345b18fef43ee4344bc763ae111b50a390098b7da339f3958d7d3"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/build-summary.json",
+    "bytes": 1011,
+    "sha256": "9d40524fdb2770c19e0ae155a17671476e8a388bd10b31322a50eee76130feff"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/changed-files.txt",
+    "bytes": 2152,
+    "sha256": "c6a669e4544ac76a5b02e5da25518c5880ee6cc79c724f3c80136b5436ab8c4d"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/cuda-build.log",
+    "bytes": 417,
+    "sha256": "8b61279d1ed8437dc2a492ced95179f7d44f564553c4412005c0ced1cb37c254"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/cuda-final-build.log",
+    "bytes": 348,
+    "sha256": "8dcc8c7a9082d195fd7dbb61de066b2f7b0d9626d9fa39143c0fa426630f2e03"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/decoder.json",
+    "bytes": 15222025,
+    "sha256": "b9b054433f11f53e138ce22715b233472fb51e6c46498530580449fbfd89e968"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/executor-build.log",
+    "bytes": 554,
+    "sha256": "9871202e0cb099d9fefdbac14e43fa490355115501d7cdf87e0c8ea8b379e0da"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/executor-tests.log",
+    "bytes": 7336,
+    "sha256": "a8a99626c5f48a5c2742fcb07b8c3dd827e715ffb34c0de3ad1aa6d8e3d19abc"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/format-layout-checks.json",
+    "bytes": 757,
+    "sha256": "dd7f197827d03192426ffe0923cf596b854d0a8a3302b8ce98b33f233253c5ea"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/gpu-after.txt",
+    "bytes": 42,
+    "sha256": "34a432870dd04f007ab75fdf812cb2a895b35cddfc3e24d28e0925860f03e083"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/gpu-checks.json",
+    "bytes": 2467,
+    "sha256": "12f0e83e3a4cd55c07a4449632c86357d2fc11fc9150401211124b6bcc1646a2"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/gpu.txt",
+    "bytes": 118,
+    "sha256": "24a20557c0ab8d9b9e59dc33cc38b8ab5149dae9e18c24a03fb4eb273f3b1030"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/gpu_checks.py",
+    "bytes": 2000,
+    "sha256": "b253155c6c3ff85a32271bcd3d1c24bf2690a2ff9b4cb2d2e93f9db04da6d5d1"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/historical-results.json",
+    "bytes": 13804,
+    "sha256": "1de38872576dea38ef656ae21efa75a4655f55389afd0b4809bfd63a7b99e51f"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/host-attention-tests.log",
+    "bytes": 2432,
+    "sha256": "527480d183b46fc08d4c0bd04dddbc7fd0e77a6af29e82326be9cbc3950e86f8"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/host-flashinfer-tests.log",
+    "bytes": 1203,
+    "sha256": "5bc35d7c5a751416848de6c2c93736af87059c8591d97c9887e334243f5f2a9e"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/host-native_attention-tests.log",
+    "bytes": 202,
+    "sha256": "0e76194728e6696f51464e3cd75bb0bd443c52b68466fd7cd00c16194abaabba"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/host-tests.log",
+    "bytes": 910,
+    "sha256": "286b8c87401020e119701d6d8b36c27cfc39958d7b5dfbed665b5c4582309443"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-generate/result.json",
+    "bytes": 6293,
+    "sha256": "956c375847f7f4acd91f97740e3dde716153e25938646360a76fdaa77ae54fed"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-generate/run.json",
+    "bytes": 1516,
+    "sha256": "6ec2749cc2ad4e41c213445d9f57ca5902c1f968afeac0b85c85132f3f60bbad"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-generate/server.log",
+    "bytes": 4047,
+    "sha256": "735b8121a71002a3400caee431a23bb756a47e49cf686fefbef8ca7e8ba1ca52"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-generate/stages.jsonl",
+    "bytes": 1494675,
+    "sha256": "ab4dfeba03bd71876ca5136991c28a6a713b59efb23e31918a2a89c999c4ab8e"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-oracle-rows.json",
+    "bytes": 600,
+    "sha256": "9183653423f1ff7518322df15ccf5401270a43fb106ff164f6dd6fbae1a2b14e"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-probe/result.json",
+    "bytes": 6484,
+    "sha256": "b2fa309dc147545f1b508753624e34aa7e04d36900a311fb11946e6b81ab7382"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-probe/run.json",
+    "bytes": 1708,
+    "sha256": "3f6917181321e791bdc2b1f744968c44f5dec7b8c49895c2ef3b52c2996f03fb"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-probe/server.log",
+    "bytes": 2089,
+    "sha256": "156f9ebf6ef3b8a25c48c8c6d696cd56e67bd6ad8ce944827f2047a6bd91c057"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http-probe/stages.jsonl",
+    "bytes": 1197892,
+    "sha256": "b9dc77ed896eb5f84f2b3d9737cfed7c925448ba6f06178a9ab3653acec95b5f"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http_generate.py",
+    "bytes": 5481,
+    "sha256": "553a4f1744deb8a1dc84c0757e31cc9265ac2cceb4fc47c1b63fa7479c6b7723"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/http_probe.py",
+    "bytes": 5499,
+    "sha256": "b2d98a5e415644c626c3659ec0db97dcc432dfc18eff183b932211917c887b91"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/initial-host-attention-tests.log",
+    "bytes": 399,
+    "sha256": "48fcd89167fabcaec57c7048ff248b4fbd7a4980fed10f6c8074688c42798632"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/initial-host-flashinfer-tests.log",
+    "bytes": 972,
+    "sha256": "387c279387284d18be15caaa4cc31f62d5beca35e28b0cae2d7ac64ba6c342c3"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/initial-host-native_attention-tests.log",
+    "bytes": 202,
+    "sha256": "9afc78ac3ba3c31b500650866afd39ed3fc5e63f55442affef1f9e324a741598"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/initial-host-paged_attention_tests.log",
+    "bytes": 1642,
+    "sha256": "791c4e21801d813acfc2a394743f40b7f17a7995b6f094a22251b5352d2acd5f"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/luminal-clippy-final.log",
+    "bytes": 176,
+    "sha256": "8f6a9c5857c3f6740316c875c08c54ab9533e3fa8e9abc460496119fb5957924"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/luminal-clippy.log",
+    "bytes": 4817,
+    "sha256": "16c27b510da9fd8a6da53fedb6d19e04a9568379ae9441ee85ede6ebbe1813ba"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-build.log",
+    "bytes": 297,
+    "sha256": "11ee32eaf4d39f392cde6a234e9834884d73f5eccf5cf09f3c00293c34344e80"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-checks.json",
+    "bytes": 5690,
+    "sha256": "bac6680d7cef3f250d2ae5b9fbbc2c05f312d421e6d313676fa816fcabdb2776"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-decoder.json",
+    "bytes": 15263298,
+    "sha256": "bbf1d88edcb2960263f517a47c99db4b270ee89af294af3925859761fe4ccfac"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-replay-capacity-one-stage-summary.json",
+    "bytes": 27757,
+    "sha256": "ddc702034241a980c0d4df215a54a7916058e364f0da0269f0ca4c9d53966a9d"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-replay-capacity-one-stages.jsonl",
+    "bytes": 1209032,
+    "sha256": "562f230d411817f766344ac70fd032da63e7d358644aded1373abda9383c3bb1"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-replay-capacity-one.log",
+    "bytes": 9850,
+    "sha256": "48c8fe6f18396dddce36ae12b839e8e278d24ad90fb415d1d928faebcb7a29d5"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-replay-prepared-stage-summary.json",
+    "bytes": 27748,
+    "sha256": "6e3514d809a576db0630e853295e4d7f94cb9d072d5b43c77b9a81d0bdb250c1"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-replay-prepared-stages.jsonl",
+    "bytes": 1209465,
+    "sha256": "f50b8989a284fa9e51d2e06785217d777fa11ac82e16985d1788bb1c63d21c02"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-replay-prepared.log",
+    "bytes": 9960,
+    "sha256": "b460c4fb4e65eba152850e6768b78111f87e1752757d51ef6cedd764554c73eb"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-search-stage-summary.json",
+    "bytes": 40162,
+    "sha256": "d8b0dec7f20146908d19b44cea79b7ad00fb688b4ab4f041ee1b843aa2db9a1d"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-search-stages.jsonl",
+    "bytes": 1496340,
+    "sha256": "b53a811ac8d8d5e926c2576e94258d9e2f2cccf059e893e0eda09785b3b5883c"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model-search.log",
+    "bytes": 11678,
+    "sha256": "e7e597b300a8bc9b04e887940bac3e6b259ff86f9ba908bb2c0ec55fd60eb624"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/model_checks.py",
+    "bytes": 2722,
+    "sha256": "766dcc8d60c6ef4d85a43328629b7dbe1c77058ac7776aeda85c0b14baa85a75"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/nn-contract.log",
+    "bytes": 1247,
+    "sha256": "d5b73a11f446109e1ac41d91f9a9dfcc63aaa0c7a31fc748e77d9e7df32885f7"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/nn-tests.log",
+    "bytes": 2547,
+    "sha256": "9e219a9e41af530b678e56d90fb5c1c5049b8b9903a8e49b7a6f4f2ee9d6bca4"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/old-artifact-reject-stages.jsonl",
+    "bytes": 221,
+    "sha256": "a3104a734674adcd74192d675ac514da5d7b938f4f7edcf834e780f017908430"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/old-artifact-reject.log",
+    "bytes": 522,
+    "sha256": "0e1106454b95811b9d4ba377937ea6394a8a278f19ce0d035c0813616f53979f"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/record_results.py",
+    "bytes": 7165,
+    "sha256": "ff7d7b40af363fb6b55ad8adcf1d90dd11b615bcae07925342c7ceac33a3677d"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/runtime-residency-tests.log",
+    "bytes": 2516,
+    "sha256": "504935113a95109f6a1e1e4c53341ed7a05d77e6d2c2ad405a0d51138429fa58"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/source-before.tar.gz",
+    "bytes": 1480800,
+    "sha256": "12e7ec77765707000c0102f60e6c73799d372573ea20fd898915be3c073ed707"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/build-receipt.json",
+    "bytes": 1011,
+    "sha256": "9d40524fdb2770c19e0ae155a17671476e8a388bd10b31322a50eee76130feff"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/build.jsonl",
+    "bytes": 489138,
+    "sha256": "d478dc55f94889a1494ddf41ca30e983171b7473ee1c4729c10fad8cfa4c4a2d"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/build.py",
+    "bytes": 2980,
+    "sha256": "421a00661694809128c04b39609987a4e2d8ddeaa808ce0f978c4374fd50d7d3"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/build.stderr.log",
+    "bytes": 417,
+    "sha256": "020006113d3d747f535b3a15a5659e814a6b8d44ba69517b9dd2e5bc2ee0253c"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/cuda-binary.json",
+    "bytes": 190,
+    "sha256": "758d7dcd6a3431952d895a0b77fe466e24448983f66ec1756e00a8f6db31ebfb"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/cuda-tests",
+    "bytes": 32283584,
+    "sha256": "f741e95865c11a336b50e8936ce914fc40ad45a5324a707201cfe89a1276a1cb"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/model-binary.json",
+    "bytes": 168,
+    "sha256": "fe86f69591fea30c407b3193c6e7eedc7513b6cb7de952ee0487997d58f9867a"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/model-tests",
+    "bytes": 18871048,
+    "sha256": "20b1f26748d053c8e2eb34b5d4cc7a10394771ad06103b8bbb5f2ec0ba12841c"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/orbitkv-serve",
+    "bytes": 65693568,
+    "sha256": "0e1859f1c6ff7f3e156572bdbd9ff8a21c60db9e786d60f633cb20b71fd0c188"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/verified/source-before-build.json",
+    "bytes": 66697,
+    "sha256": "eaccabd6dca270fb13f4a9f691c2f970e05a390703e669eba3dd842e5fba3447"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/workspace-clippy.log",
+    "bytes": 551,
+    "sha256": "1192d5961dc36cb961a6e28b6619eab8facf6d17d8816d652bbbe9425b084a81"
+  },
+  {
+    "path": "/workspace/orbitkv/.qualification/attention-contract-20260914/workspace-tests.log",
+    "bytes": 26343,
+    "sha256": "f3ea8231a3f75e22bd9e4ef34ba9739ed8ff72b499599c57166fa8bbdb36135f"
+  }
+]

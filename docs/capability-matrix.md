@@ -2,7 +2,7 @@
 
 This matrix separates implemented source, host verification, device execution,
 measured benefit, and production readiness for the current
-`orbitkv + orbitkv-executor + orbitkv-server + orbitkv-engine` architecture.
+`orbitkv + orbitkv-executor + orbitkv-engine` architecture.
 Historical results qualify only their recorded source closure.
 
 ## Evidence levels
@@ -26,30 +26,41 @@ Historical results qualify only their recorded source closure.
 | RuntimeSession | L2 | Presents transactional engine operations without exposing manager capabilities |
 | External KV tier transactions | L2 host | Export/restore run through an object-safe async transport contract; a real-byte host adapter verifies compact partial tails, per-page checksums, deletion, cross-session restore, and unobserved/ambiguous fault mapping; Mooncake/NIXL and hybrid restore remain open |
 | Executor plan | L2 | Compiles and jointly validates per-layer token-KV or recurrent-plus-convolution ownership; the production decoder dispatches layers from this topology |
-| Luminal paged-attention boundary | L3 | A provider-neutral semantic op accepts OrbitKV-authored page geometry and CSR metadata; egglog currently contributes FlashInfer as the optimized implementation; real-device block-page decode/prefill pass and Luminal never allocates or recycles pages |
+| Luminal attention/view boundary | L3 | Logical attention and OrbitKV-authored paged KV have separate contracts; capability rules admit FlashInfer CUDA-core/tensor-core algorithms and optional SM90 FlashAttention-3. Provider-owned scratch and metadata conversion do not transfer page allocation or recycling authority from OrbitKV |
 | Bucketed model runtime | L4 correctness for token KV; narrow L3 for fixed-state operators | Token-KV and stateful graphs are searched once into decode/prefill executables. Dynamic inputs are preallocated, request segmentation is shared across attention and recurrent operators, and every state class has a stable arena |
-| Decoder schedule artifact | L3 + narrow L4 correctness | Persists selected decode/prefill schedules with paged-attention custom ops; strict manifest/model/arena/bucket identity, LLIR fingerprints, and required persistent-state aliases fail closed |
+| Decoder schedule artifact | L3 + narrow L4 correctness | Schema 6 persists selected decode/prefill schedules and required generated CUDA module images; strict manifest/model/arena/bucket identity, LLIR fingerprints, required persistent-state aliases, and RMSNorm layout legality fail closed; older formats require regeneration |
 | Fixed-signature decode CUDA Graph | L3 + narrow L4 correctness; historical narrow matched benefit | Capture accepts one-token-per-request decode batches. In its recorded source closure, batch-one child-graph replay reduced matched fixed-step wall time by 5.8-8.3%; exact-signature automatic C2 recapture reduced throughput by 13.7% and is not used by serving |
 | Compiler-constrained persistent state | Reference-gated measured improvement | A 16-candidate search selected 36/36 in-place K/V tensors in both buckets; four C2 epochs improved throughput 14.5%, TTFT 32.2%, TPOT 10.2%, and E2E 12.8% versus the prior OrbitKV artifact; random-trace digests differ |
-| Joint compiler facts | L2 + compile-path integration | `orbitkv` derives backend-neutral storage, retention, address, and retirement facts; the executor binds stable arenas, injects deterministic facts into every Luminal bucket, binds paged-attention nodes to class IDs, and fingerprints the contract in schedule identity. FlashInfer consumes that semantic contract through an egglog provider rewrite; a second competing attention provider is still missing |
+| Joint compiler facts | L2 + compile-path integration | `orbitkv` derives backend-neutral storage, retention, address, and retirement facts; the executor binds stable arenas, injects deterministic facts into every Luminal bucket, binds paged-attention nodes to class IDs, and fingerprints the contract in schedule identity. FlashInfer and FlashAttention consume that contract through egglog provider rewrites; physical-layout competition remains open |
+| Workload tuning | L2 + bounded L4 model integration | Artifact-bound batch/query/context representatives, feasible joint buckets, private-page profiling metadata, cooperative exploration budgets and configurable CUDA Graph finalists; B4/B8 aligned and ragged reference/replay/drain pass on one seven-bucket artifact. Shared-Prefix physical-layout tuning remains open |
+| Shared FP8 preparation | L3 + bounded L4 model parity | Opt-in egglog producer sharing and prequantized DeepGEMM consumers preserve the combined alternatives. Independent packed-byte/output checks and eight-step B1 plus B4/B8 aligned/ragged reference/replay/drain pass on H20. Captured scratch owners survive dynamic growth and resident graph reuse. The isolated two-consumer gain is not a whole-model serving claim; see [FP8 region tuning](fp8-region-tuning.md) |
 | On-device greedy sampling | L3 + narrow L4 parity | Fused dynamic-row argmax runs in the decoder graph; default execution reads one token ID per query row, and released-checkpoint outputs match host argmax across prefill and decode |
 | Rust server boundary | L2 contract | Async local `Engine` accepts logical batch/sampling intent, streams output events, and exposes cancellation without physical state |
 | Single-process model engine | Narrow L4 correctness + load closure | One dedicated thread owns bounded admission/output queues, an active set, `RuntimeSession`, and `CompiledDecoder`; released hybrid tests cover B=2 mixed scheduling and direct B=1/B=8 logit parity. Fresh-prompt/greedy only |
 | vLLM frontend adapter | L2 protocol + narrow L4 integration | Pinned Rust request/tokenizer/chat/SSE crates; tokenized Add/Abort, request-ID mapping, unsupported-field rejection, and dropped-stream auto-abort pass through the real model engine |
 | OpenAI-compatible API | Narrow L4 correctness + load closure | `orbitkv-serve` passes real-checkpoint non-streaming, ordered SSE, cancellation, shutdown, final drain, and a fixed C1/C2/C4/C8 load trace with complete outputs; fairness, soak, capacity limit, and comparative benefit remain open |
-| Complete model executor | Narrow L4 correctness closure | Configuration-driven Full and released Full+Sliding dense checkpoints complete on H20; the hybrid closure includes independent reference-token parity, native-window retirement/reuse, cancellation, final drain, B=8 logit isolation, bounded continuous batching, and the real HTTP path |
+| Complete model executor | Narrow L4 correctness closure | Configuration-driven Full and released Full+Sliding dense checkpoints complete on H20; the 27B hybrid path also passes a fresh 16-candidate prefill plus seven-step teacher-forced logit gate after excluding unproven 3-D fused-RMSNorm layouts. Lifecycle closure includes native-window retirement/reuse, cancellation, final drain, B=8 logit isolation, bounded continuous batching, and the real HTTP path |
 
 ## Decoder operator and model boundary
 
 | Capability | Current status |
 | --- | --- |
+| Checkpoint import | Explicit `qwen2`, `mistral`, `gemma3_text` and Qwen3.5 text/envelope importers; unknown or contradictory architecture metadata is rejected. [Import contracts](checkpoint-import.md) are distinct from device/model qualification |
 | Dense decoder blocks | BF16 embedding, linear projections, pre-norm or sandwich-norm residuals, direct or unit-offset RMSNorm weights, global/local RoPE, SwiGLU or GeGLU, optional QKV bias, QK norm, and per-head attention output gates |
-| Attention | MHA/GQA paged attention; query-head count must divide by KV-head count; default scale is `head_dim^-0.5`; head dimension 64, 128, 256, or 512 when the compiled FlashInfer specialization exists |
+| Attention | MHA/GQA paged attention; query-head count must be divisible by KV-head count; default scale is `head_dim^-0.5`; head dimension 64, 128, 256, or 512 when the compiled FlashInfer specialization exists |
 | KV execution | Manager-authored CSR page views, stable persistent arena, scatter writes, and Prefix/COW lowering |
 | Output | Tied or untied LM head; fused on-device greedy argmax by default; full logits only through an explicit diagnostic path |
 | Checkpoint family | Configuration-driven dense decoder plus nested hybrid text-config parsing with fail-closed capability gates; released Full and Full+Sliding checkpoints have real-device correctness evidence |
-| Primary target boundary | The 27B block-FP8 hybrid checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Projection weights and 128x128 inverse-scale tensors enter provider-neutral block-scaled linear nodes. Luminal generates four DeepGEMM candidates per node and device-profiles them per bucket. A bounded H20 full-checkpoint run passes cold search, four-token prefill, seven decode steps, joint token/fixed-state evidence, release, and final drain. An independent Transformers 5.12.1 oracle bounds maximum absolute logit error to 0.42285156 across all eight generated steps. Required in-place fixed-state writes and equal-valued loop-input equivalence remove the former multi-gigabyte state copy path. Bounded HTTP serving executes, but a near tie reverses the generated token-four argmax and the current C1 trace reaches only 0.445x SGLang / 0.390x vLLM throughput |
-| Not yet end-to-end supported | The 27B quantized hybrid checkpoint still lacks robust near-tie output equivalence, soak, and serving-scale qualification; MoE, sparse/latent attention, multimodal encoders, speculative decoding, and tensor/pipeline parallel models remain unsupported |
+| Primary target boundary | The Qwen3.8-27B-FP8 checkpoint compiles to 16 Full plus 48 recurrent/convolution layers. Projection weights and 128x128 inverse-scale tensors enter provider-neutral block-scaled linear nodes. Luminal generates four DeepGEMM variants per node for per-bucket search. A recorded schema-5 16-candidate artifact selects 32/32 in-place token-KV updates in both buckets and passes four-token prefill, seven teacher-forced decode steps, joint token/fixed-state evidence, release, and final drain on H20. That independent Transformers 5.12.1 reference run observed maximum absolute logit error 0.7461; the later seven-bucket artifact passes B4/B8 aligned and ragged cases with a maximum of 0.90625 under the unchanged 1.0 gate. Required in-place fixed-state writes and equal-valued loop-input equivalence remove the former multi-gigabyte state copy path. The recorded cross-engine C1 diagnostic reaches 0.620x SGLang / 0.539x vLLM throughput, with differing output digests at a known near tie |
+| Not yet end-to-end supported | Qwen3.8-27B-FP8 still lacks soak, serving-scale and long-context qualification; its vision encoder and MTP path are not admitted. MoE, sparse/latent attention, speculative decoding, and tensor/pipeline parallel models remain unsupported |
+
+The [schema 7 boundary qualification](../results/semantic-boundaries-20260914/README.md)
+records the preceding fork reduction, backend-free semantic construction, final
+27B replay/reference and HTTP lifecycle gates. Import no longer hardcodes CUDA
+head sizes; the attention row above describes the previously qualified provider
+geometries, not a parser restriction. Current schema 9 separates
+logical attention/KV views and records explicit provider algorithms; see
+[attention providers](attention-providers.md).
 
 Core support for a retention policy means its lifecycle can be compiled and
 host-tested. It does not by itself imply that all model operators or the
@@ -60,10 +71,10 @@ candidate or stored artifact unless every K/V output resolves to the same
 registered input arena in every bucket. The qualified artifact reports 36/36
 in-place tensors and zero copy-back bytes for both decode/prefill buckets.
 
-Validated state facts enter the same e-graph as the decoder. The paged-attention
-semantic node is provider-neutral and FlashInfer enters through an egglog
-provider rewrite. This establishes the compiler boundary, but not yet real
-multi-provider attention or joint layout competition.
+Validated state facts enter the same e-graph as the decoder. Logical attention and the
+paged KV view are provider-neutral. FlashInfer algorithms and optional FlashAttention-3 enter through guarded egglog
+provider rewrites. This establishes multiple executable candidates, with exact
+ABI/target constraints, while joint physical-layout competition remains open.
 
 ## Attention-state coverage
 
