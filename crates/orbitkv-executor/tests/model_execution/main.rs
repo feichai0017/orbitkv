@@ -1547,8 +1547,11 @@ fn assert_reference_logits(
     let bytes = std::fs::read(path).unwrap();
     assert_eq!(bytes.len(), std::mem::size_of_val(actual));
     let reference = bytes
-        .chunks_exact(4)
-        .map(|bytes| f32::from_le_bytes(bytes.try_into().unwrap()))
+        .as_chunks()
+        .0
+        .iter()
+        .copied()
+        .map(f32::from_le_bytes)
         .collect::<Vec<_>>();
     assert!(actual.iter().all(|value| value.is_finite()));
     assert!(reference.iter().all(|value| value.is_finite()));

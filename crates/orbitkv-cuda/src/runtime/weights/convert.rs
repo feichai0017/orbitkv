@@ -85,14 +85,12 @@ impl Conversion {
 }
 
 fn convert<const N: usize, T>(bytes: &[u8], convert: impl Fn([u8; N]) -> T) -> Result<Vec<T>> {
-    let chunks = bytes.chunks_exact(N);
+    let (chunks, remainder) = bytes.as_chunks::<N>();
     ensure!(
-        chunks.remainder().is_empty(),
+        remainder.is_empty(),
         "weight byte count is not divisible by source element size {N}"
     );
-    Ok(chunks
-        .map(|chunk| convert(chunk.try_into().unwrap()))
-        .collect())
+    Ok(chunks.iter().copied().map(convert).collect())
 }
 
 #[cfg(test)]

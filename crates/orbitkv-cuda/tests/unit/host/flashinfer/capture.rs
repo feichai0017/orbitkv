@@ -149,8 +149,10 @@ impl Case {
         self.exec.launch(stream).unwrap();
         let bytes = stream.clone_dtoh(self.storage.last().unwrap()).unwrap();
         for (actual, expected) in bytes
-            .chunks_exact(2)
-            .map(|bytes| bf16::from_le_bytes(bytes.try_into().unwrap()).to_f32())
+            .as_chunks()
+            .0
+            .iter()
+            .map(|&bytes| bf16::from_le_bytes(bytes).to_f32())
             .zip(&self.expected)
         {
             assert!(

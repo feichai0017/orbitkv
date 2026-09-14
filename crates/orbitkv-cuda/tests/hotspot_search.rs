@@ -71,8 +71,11 @@ fn local_search_measures_gemm_alternatives_without_losing_persistent_state() {
         }
         let actual = stream.clone_dtoh(&allocation).unwrap();
         let actual = actual
-            .chunks_exact(4)
-            .map(|x| f32::from_ne_bytes(x.try_into().unwrap()))
+            .as_chunks()
+            .0
+            .iter()
+            .copied()
+            .map(f32::from_ne_bytes)
             .collect::<Vec<_>>();
         let mut expected = vec![0.0f32; 16];
         expected[row * 4..row * 4 + 4].copy_from_slice(&[2.0, 3.0, 5.0, 7.0]);

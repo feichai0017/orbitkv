@@ -144,9 +144,9 @@ impl Buffers {
     pub fn check(&self, stream: &Arc<CudaStream>, dtype: DType, expected: &[f32]) {
         let bytes = stream.clone_dtoh(self.storage.last().unwrap()).unwrap();
         assert_eq!(bytes.len(), expected.len() * size_of::<bf16>());
-        let actual = bytes.chunks_exact(2).map(|value| match dtype {
-            DType::Bf16 => bf16::from_le_bytes(value.try_into().unwrap()).to_f32(),
-            DType::F16 => f16::from_le_bytes(value.try_into().unwrap()).to_f32(),
+        let actual = bytes.as_chunks().0.iter().map(|&value| match dtype {
+            DType::Bf16 => bf16::from_le_bytes(value).to_f32(),
+            DType::F16 => f16::from_le_bytes(value).to_f32(),
             _ => unreachable!(),
         });
         for (actual, &expected) in actual.zip(expected) {
