@@ -1,0 +1,2560 @@
+{
+  "schema": "orbitkv.search-coverage.v1",
+  "correctness": "passed",
+  "performance": "mixed; no general improvement established",
+  "scope": "One new frozen binary, nine bounded full-vocabulary teacher-forced processes. Historical comparison changes snapshot, budget, initial sampling and finalist count; it does not isolate an algorithm effect or measure serving throughput.",
+  "comparisons": 296,
+  "maximum_absolute_logit_error": 0.8671875,
+  "unchanged_error_gate": 1.0,
+  "policy": {
+    "seed": 7,
+    "search_graphs_per_bucket": 8,
+    "initial_candidates": 8,
+    "keep_best": 2,
+    "trials": 3,
+    "resident_graph_capacity": 2,
+    "batch_capacity": 8,
+    "tuning_profile": {
+      "path": "/workspace/orbitkv/benchmarks/search-coverage.json",
+      "bytes": 243,
+      "sha256": "53a9b70d8ef9b82b04ce44281813b63634dfc36f3b53702ebc737a91928eaee0"
+    }
+  },
+  "search_events": {
+    "search_started": 1,
+    "bucket_started": 7,
+    "program": 319,
+    "direct": 319,
+    "deployment": 14,
+    "finalist_validation": 7,
+    "selected": 7,
+    "search_completed": 1
+  },
+  "coverage": [
+    {
+      "bucket": 0,
+      "dimensions": {
+        "b": 1,
+        "c_0": 8,
+        "s": 1
+      },
+      "snapshot_sha256": "c302510f9f6fa2bec9e3e9a9d1fdbbb593dafe8361355cba8d973ffa848cee4a",
+      "outcomes": {
+        "measured": 8,
+        "rejected": 9
+      },
+      "sampling": {
+        "Coverage": {
+          "measured": 1,
+          "rejected": 7
+        },
+        "Mutation": {
+          "rejected": 2,
+          "measured": 7
+        }
+      },
+      "output_projection_measured": {
+        "Gemv": 8
+      },
+      "output_projection_in_rejected_graphs": {
+        "CuBlasLt": 4,
+        "GenericMatmul": 2,
+        "Gemv": 3
+      },
+      "selected_output_projection": "Gemv"
+    },
+    {
+      "bucket": 1,
+      "dimensions": {
+        "b": 1,
+        "c_0": 8,
+        "s": 4
+      },
+      "snapshot_sha256": "7581eae841356faa4b8acb8384ab432ec5896569060c4ce2c884b8285ad4badb",
+      "outcomes": {
+        "rejected": 7,
+        "measured": 8
+      },
+      "sampling": {
+        "Coverage": {
+          "rejected": 7,
+          "measured": 4
+        },
+        "Mutation": {
+          "measured": 4
+        }
+      },
+      "output_projection_measured": {
+        "CuBlasLt": 7,
+        "GenericMatmul": 1
+      },
+      "output_projection_in_rejected_graphs": {
+        "GenericMatmul": 2,
+        "CuBlasLt": 5
+      },
+      "selected_output_projection": "CuBlasLt"
+    },
+    {
+      "bucket": 2,
+      "dimensions": {
+        "b": 1,
+        "c_0": 8,
+        "s": 32
+      },
+      "snapshot_sha256": "b7eae17ae5861a025d2f16ce65a4c1d1fa964b7301b1d4fe5b27f3d3c302635c",
+      "outcomes": {
+        "rejected": 83,
+        "measured": 8
+      },
+      "sampling": {
+        "Coverage": {
+          "rejected": 83,
+          "measured": 1
+        },
+        "Mutation": {
+          "measured": 7
+        }
+      },
+      "output_projection_measured": {
+        "CuBlasLt": 8
+      },
+      "output_projection_in_rejected_graphs": {
+        "CuBlasLt": 55,
+        "GenericMatmul": 28
+      },
+      "selected_output_projection": "CuBlasLt"
+    },
+    {
+      "bucket": 3,
+      "dimensions": {
+        "b": 2,
+        "c_0": 8,
+        "s": 4
+      },
+      "snapshot_sha256": "dd5d2876098df05a1df79f873a75edace6bc3b9ac9bf2146e974ddfbd57cb233",
+      "outcomes": {
+        "rejected": 42,
+        "measured": 8
+      },
+      "sampling": {
+        "Coverage": {
+          "rejected": 42,
+          "measured": 1
+        },
+        "Mutation": {
+          "measured": 7
+        }
+      },
+      "output_projection_measured": {
+        "GenericMatmul": 8
+      },
+      "output_projection_in_rejected_graphs": {
+        "GenericMatmul": 13,
+        "CuBlasLt": 29
+      },
+      "selected_output_projection": "GenericMatmul"
+    },
+    {
+      "bucket": 4,
+      "dimensions": {
+        "b": 2,
+        "c_0": 8,
+        "s": 32
+      },
+      "snapshot_sha256": "433598c130fed5c041baa090daaedd0fd13ef7cd355985f6a8fec604fb77bcee",
+      "outcomes": {
+        "rejected": 25,
+        "measured": 8
+      },
+      "sampling": {
+        "Coverage": {
+          "rejected": 25,
+          "measured": 2
+        },
+        "Mutation": {
+          "measured": 6
+        }
+      },
+      "output_projection_measured": {
+        "GenericMatmul": 8
+      },
+      "output_projection_in_rejected_graphs": {
+        "CuBlasLt": 18,
+        "GenericMatmul": 7
+      },
+      "selected_output_projection": "GenericMatmul"
+    },
+    {
+      "bucket": 5,
+      "dimensions": {
+        "b": 8,
+        "c_0": 8,
+        "s": 8
+      },
+      "snapshot_sha256": "4cb25ec1961f037d22eb8467aca133f8fc38dba0d45e69128343083665b74920",
+      "outcomes": {
+        "rejected": 69,
+        "measured": 8
+      },
+      "sampling": {
+        "Coverage": {
+          "rejected": 68,
+          "measured": 1
+        },
+        "Mutation": {
+          "measured": 7,
+          "rejected": 1
+        }
+      },
+      "output_projection_measured": {
+        "GenericMatmul": 8
+      },
+      "output_projection_in_rejected_graphs": {
+        "CuBlasLt": 46,
+        "GenericMatmul": 23
+      },
+      "selected_output_projection": "GenericMatmul"
+    },
+    {
+      "bucket": 6,
+      "dimensions": {
+        "b": 8,
+        "c_0": 8,
+        "s": 32
+      },
+      "snapshot_sha256": "bd9192b7ebd787a453e31fc7fa695b276430137aae1a06a673316e0af7782c50",
+      "outcomes": {
+        "rejected": 28,
+        "measured": 8
+      },
+      "sampling": {
+        "Coverage": {
+          "rejected": 28,
+          "measured": 3
+        },
+        "Mutation": {
+          "measured": 5
+        }
+      },
+      "output_projection_measured": {
+        "GenericMatmul": 1,
+        "CuBlasLt": 7
+      },
+      "output_projection_in_rejected_graphs": {
+        "CuBlasLt": 19,
+        "GenericMatmul": 9
+      },
+      "selected_output_projection": "CuBlasLt"
+    }
+  ],
+  "output_projection_audit": "Post-run diagnostic identifies the vocabulary matrix in arithmetic descriptors using this checkpoint's vocabulary extent, then checks one match per program. It is not an implementation-selection rule.",
+  "compiler": {
+    "process_seconds": 753.1822551451623,
+    "compile_seconds": 750.97047504,
+    "egglog_seconds": 518.279388961,
+    "ruleset_search_apply_seconds": {
+      "glumoe": 337.086332307,
+      "kernel_specialize": 61.07624758000001,
+      "expr": 21.462248465,
+      "matmul_flatten": 5.959210081,
+      "matmul_backend": 5.061244027,
+      "kernel_fuse_late_pre_rope": 1.512345395,
+      "kernel_fuse_late_pre_rms": 0.51720793,
+      "cuda_scatter_uses": 0.21750185,
+      "kernel_fuse_late": 0.210807743,
+      "dtype_prop": 0.137183818,
+      "kernel_lower": 0.130141668,
+      "kernel_fuse_late_pre_flashinfer": 0.107728868,
+      "fusion_inline_safe_late": 0.039159855,
+      "cleanup": 0.040350787,
+      "fusion_grow": 0.038955424999999995,
+      "interval_expr": 0.037071215000000005,
+      "post_cleanup": 0.018052738999999998,
+      "cuda_scatter_reuse": 0.022592276,
+      "kernel_fuse_late_pre_topk": 0.020482590999999998,
+      "base_cleanup": 0.007180987000000001,
+      "kernel_fuse_late2_flashinfer_value": 0.006034905000000001,
+      "kernel_fuse_late2_rope": 0.002931059,
+      "kernel_fuse_late2_flashinfer_request": 0.00066541,
+      "kernel_fuse_late2_flashinfer_softmax_source": 0.00029945499999999996,
+      "kernel_fuse_late2_flashinfer_qk": 0.000233966,
+      "kernel_fuse_late2_flashinfer_softmax_denominator": 0.000222623,
+      "kernel_fuse_late2_flashinfer_final": 0.00022149700000000002,
+      "buffer_reuse": 0.0,
+      "direct_kernel": 0.0,
+      "fusion_merge": 0.0,
+      "fusion_pair": 0.0,
+      "kernel_fuse_late2_sink_attention": 0.0,
+      "kernel_fuse_late_pre_sink_attention_base": 0.0,
+      "kernel_fuse_late_pre_sink_attention_finish": 0.0,
+      "kernel_fuse_late_pre_sink_attention_past": 0.0,
+      "kernel_fuse_late_pre_sink_attention_request": 0.0
+    }
+  },
+  "runs": [
+    {
+      "run": "b1",
+      "phase": "cold-search",
+      "status": "passed",
+      "process_seconds": 753.1822551451623,
+      "stage_instrumented": true,
+      "cuda_graph_instrumented": false,
+      "parity_comparisons": 8,
+      "maximum_absolute_logit_error": 0.8671875,
+      "completion": {
+        "artifact_mode": "search",
+        "batch_capacity": 8,
+        "batch_size": 1,
+        "compile_seconds": 750.97047504,
+        "drain_passed": true,
+        "parity_request_steps": 8,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "diagnostic_wall_timings": [
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "prefill",
+          "query_indptr": [
+            0,
+            4
+          ],
+          "query_tokens": 4,
+          "seconds": 0.140694489
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.125257207
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-2",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024439777
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-3",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024359383
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-4",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024366288
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-5",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024309899
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-6",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024280623
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-7",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.02429682
+        }
+      ],
+      "subsequent_decode_median_ms": 24.334640999999998,
+      "module_artifact": null,
+      "stage_totals": [
+        {
+          "count": 63,
+          "inclusive_wall_ns": 446885149329,
+          "maximum_wall_ns": 67452476525,
+          "name": "luminal.egglog.schedule",
+          "self_wall_ns": 446885149329
+        },
+        {
+          "count": 7,
+          "inclusive_wall_ns": 67509379075,
+          "maximum_wall_ns": 10901017330,
+          "name": "luminal.egglog.setup_run",
+          "self_wall_ns": 67509379075
+        },
+        {
+          "count": 3654,
+          "inclusive_wall_ns": 56069338428,
+          "maximum_wall_ns": 28337652,
+          "name": "cuda.nvrtc.compile",
+          "self_wall_ns": 56069338428
+        },
+        {
+          "count": 7,
+          "inclusive_wall_ns": 185304896207,
+          "maximum_wall_ns": 38492308694,
+          "name": "cuda.search.bucket",
+          "self_wall_ns": 41428157830
+        },
+        {
+          "count": 354,
+          "inclusive_wall_ns": 90434616216,
+          "maximum_wall_ns": 4548915936,
+          "name": "cuda.bucket.compile",
+          "self_wall_ns": 34365277788
+        },
+        {
+          "count": 340,
+          "inclusive_wall_ns": 25241639868,
+          "maximum_wall_ns": 767265779,
+          "name": "cuda.resources.static_prepare",
+          "self_wall_ns": 25241639868
+        },
+        {
+          "count": 288,
+          "inclusive_wall_ns": 25443482399,
+          "maximum_wall_ns": 242385534,
+          "name": "cuda.execute",
+          "self_wall_ns": 22625596705
+        },
+        {
+          "count": 319,
+          "inclusive_wall_ns": 124935405813,
+          "maximum_wall_ns": 8150632890,
+          "name": "cuda.candidate.evaluate",
+          "self_wall_ns": 10016817228
+        },
+        {
+          "count": 326,
+          "inclusive_wall_ns": 8062220833,
+          "maximum_wall_ns": 112606964,
+          "name": "luminal.search.next_candidate",
+          "self_wall_ns": 8062220833
+        },
+        {
+          "count": 45,
+          "inclusive_wall_ns": 7737132549,
+          "maximum_wall_ns": 7701241576,
+          "name": "cuda.provider.jit",
+          "self_wall_ns": 7737132549
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 4829468730,
+          "maximum_wall_ns": 420043816,
+          "name": "cuda.weights.upload",
+          "self_wall_ns": 4829468730
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 4315161180,
+          "maximum_wall_ns": 4315161180,
+          "name": "orbitkv.graph.build",
+          "self_wall_ns": 4315161180
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 204886340424,
+          "maximum_wall_ns": 204886340424,
+          "name": "cuda.search",
+          "self_wall_ns": 3686749454
+        },
+        {
+          "count": 80,
+          "inclusive_wall_ns": 3558012811,
+          "maximum_wall_ns": 116657077,
+          "name": "cuda.graph.materialize",
+          "self_wall_ns": 3558012811
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 2939920212,
+          "maximum_wall_ns": 2939920212,
+          "name": "luminal.graph.normalize",
+          "self_wall_ns": 2939920212
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 13880939481,
+          "maximum_wall_ns": 13880939481,
+          "name": "cuda.module_artifact.capture",
+          "self_wall_ns": 2536527863
+        },
+        {
+          "count": 7,
+          "inclusive_wall_ns": 518279388961,
+          "maximum_wall_ns": 77975159740,
+          "name": "luminal.egglog.run",
+          "self_wall_ns": 1766150184
+        },
+        {
+          "count": 7,
+          "inclusive_wall_ns": 1353592257,
+          "maximum_wall_ns": 222707081,
+          "name": "luminal.egglog.serialize",
+          "self_wall_ns": 1353592257
+        },
+        {
+          "count": 79,
+          "inclusive_wall_ns": 1169630261,
+          "maximum_wall_ns": 80221957,
+          "name": "cuda.resources.retained",
+          "self_wall_ns": 1169630261
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 6093185626,
+          "maximum_wall_ns": 994887671,
+          "name": "cuda.weights.file",
+          "self_wall_ns": 839780507
+        }
+      ],
+      "metric_counts": {
+        "luminal.egglog.rule": 6972,
+        "luminal.egglog.ruleset": 399
+      }
+    },
+    {
+      "run": "b1",
+      "phase": "strict-replay",
+      "status": "passed",
+      "process_seconds": 19.43857792764902,
+      "stage_instrumented": true,
+      "cuda_graph_instrumented": false,
+      "parity_comparisons": 8,
+      "maximum_absolute_logit_error": 0.8671875,
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 1,
+        "compile_seconds": 17.982826887999998,
+        "drain_passed": true,
+        "parity_request_steps": 8,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "diagnostic_wall_timings": [
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "prefill",
+          "query_indptr": [
+            0,
+            4
+          ],
+          "query_tokens": 4,
+          "seconds": 0.133159138
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.117084182
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-2",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024362992
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-3",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024269249
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-4",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024204512
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-5",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024198825
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-6",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024238212
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-7",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024156207
+        }
+      ],
+      "subsequent_decode_median_ms": 24.221362,
+      "module_artifact": null,
+      "stage_totals": [
+        {
+          "count": 1,
+          "inclusive_wall_ns": 7690862993,
+          "maximum_wall_ns": 7690862993,
+          "name": "orbitkv.schedule.replay",
+          "self_wall_ns": 5562555198
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 4832717177,
+          "maximum_wall_ns": 428747553,
+          "name": "cuda.weights.upload",
+          "self_wall_ns": 4832717177
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 4273768968,
+          "maximum_wall_ns": 4273768968,
+          "name": "orbitkv.graph.build",
+          "self_wall_ns": 4273768968
+        },
+        {
+          "count": 7,
+          "inclusive_wall_ns": 1748510979,
+          "maximum_wall_ns": 785382561,
+          "name": "cuda.bucket.compile",
+          "self_wall_ns": 1748115151
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 5991996290,
+          "maximum_wall_ns": 998772893,
+          "name": "cuda.weights.file",
+          "self_wall_ns": 839560260
+        },
+        {
+          "count": 9,
+          "inclusive_wall_ns": 404754939,
+          "maximum_wall_ns": 249093284,
+          "name": "cuda.graph.materialize",
+          "self_wall_ns": 404671183
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 265249493,
+          "maximum_wall_ns": 16877291,
+          "name": "cuda.weights.allocate",
+          "self_wall_ns": 265249493
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 389254572,
+          "maximum_wall_ns": 130144296,
+          "name": "cuda.execute",
+          "self_wall_ns": 226008944
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 75070753,
+          "maximum_wall_ns": 75070753,
+          "name": "cuda.resources.retained",
+          "self_wall_ns": 75070753
+        },
+        {
+          "count": 38,
+          "inclusive_wall_ns": 33609299,
+          "maximum_wall_ns": 31153659,
+          "name": "cuda.provider.jit",
+          "self_wall_ns": 33609299
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 30291149,
+          "maximum_wall_ns": 490752,
+          "name": "cuda.weights.validate",
+          "self_wall_ns": 30291149
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 55040155,
+          "maximum_wall_ns": 55040155,
+          "name": "cuda.providers.prepare",
+          "self_wall_ns": 21514612
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 5115791641,
+          "maximum_wall_ns": 433133054,
+          "name": "cuda.weights.tensor",
+          "self_wall_ns": 13127198
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 9559507,
+          "maximum_wall_ns": 9559507,
+          "name": "orbitkv.decoder.finalize",
+          "self_wall_ns": 9559507
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 17982669725,
+          "maximum_wall_ns": 17982669725,
+          "name": "orbitkv.decoder.compile_or_load",
+          "self_wall_ns": 7710228
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 7583973,
+          "maximum_wall_ns": 4227510,
+          "name": "cuda.inputs.prepare",
+          "self_wall_ns": 7583973
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 395568430,
+          "maximum_wall_ns": 133138817,
+          "name": "orbitkv.qualification.step",
+          "self_wall_ns": 6313858
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 4872884,
+          "maximum_wall_ns": 4872884,
+          "name": "orbitkv.inputs.bind_and_seed",
+          "self_wall_ns": 4872884
+        },
+        {
+          "count": 705,
+          "inclusive_wall_ns": 4697773,
+          "maximum_wall_ns": 26479,
+          "name": "cuda.weights.convert",
+          "self_wall_ns": 4697773
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 3893710,
+          "maximum_wall_ns": 367684,
+          "name": "cuda.weights.metadata",
+          "self_wall_ns": 3893710
+        }
+      ],
+      "metric_counts": {}
+    },
+    {
+      "run": "b1",
+      "phase": "profile",
+      "status": "passed",
+      "process_seconds": 19.538803290575743,
+      "stage_instrumented": true,
+      "cuda_graph_instrumented": true,
+      "parity_comparisons": 8,
+      "maximum_absolute_logit_error": 0.8671875,
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 1,
+        "compile_seconds": 17.79231327,
+        "drain_passed": true,
+        "parity_request_steps": 8,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "diagnostic_wall_timings": [
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "prefill",
+          "query_indptr": [
+            0,
+            4
+          ],
+          "query_tokens": 4,
+          "seconds": 0.147464159
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.129502052
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-2",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.060221929
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-3",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.060606605
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-4",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.059791717
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-5",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.05999817
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-6",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.061160732
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-7",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.06000119
+        }
+      ],
+      "subsequent_decode_median_ms": 60.1115595,
+      "module_artifact": null,
+      "stage_totals": [
+        {
+          "count": 1,
+          "inclusive_wall_ns": 7756988976,
+          "maximum_wall_ns": 7756988976,
+          "name": "orbitkv.schedule.replay",
+          "self_wall_ns": 5653522601
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 4748946505,
+          "maximum_wall_ns": 415140136,
+          "name": "cuda.weights.upload",
+          "self_wall_ns": 4748946505
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 4282821720,
+          "maximum_wall_ns": 4282821720,
+          "name": "orbitkv.graph.build",
+          "self_wall_ns": 4282821720
+        },
+        {
+          "count": 7,
+          "inclusive_wall_ns": 1749043986,
+          "maximum_wall_ns": 784031296,
+          "name": "cuda.bucket.compile",
+          "self_wall_ns": 1748645938
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 5725862138,
+          "maximum_wall_ns": 987094541,
+          "name": "cuda.weights.file",
+          "self_wall_ns": 842288041
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 629208881,
+          "maximum_wall_ns": 144562804,
+          "name": "cuda.execute",
+          "self_wall_ns": 359756682
+        },
+        {
+          "count": 9,
+          "inclusive_wall_ns": 344910787,
+          "maximum_wall_ns": 224260647,
+          "name": "cuda.graph.materialize",
+          "self_wall_ns": 344824109
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 141480175,
+          "maximum_wall_ns": 18499233,
+          "name": "cuda.graph.profile",
+          "self_wall_ns": 141480175
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 79877332,
+          "maximum_wall_ns": 6237464,
+          "name": "cuda.weights.allocate",
+          "self_wall_ns": 79877332
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 74758348,
+          "maximum_wall_ns": 74758348,
+          "name": "cuda.resources.retained",
+          "self_wall_ns": 74758348
+        },
+        {
+          "count": 38,
+          "inclusive_wall_ns": 33546140,
+          "maximum_wall_ns": 31123030,
+          "name": "cuda.provider.jit",
+          "self_wall_ns": 33546140
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 30087432,
+          "maximum_wall_ns": 646763,
+          "name": "cuda.weights.validate",
+          "self_wall_ns": 30087432
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 54829664,
+          "maximum_wall_ns": 54829664,
+          "name": "cuda.providers.prepare",
+          "self_wall_ns": 21370202
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 4846841595,
+          "maximum_wall_ns": 419849731,
+          "name": "cuda.weights.tensor",
+          "self_wall_ns": 13293894
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 9784693,
+          "maximum_wall_ns": 9784693,
+          "name": "orbitkv.decoder.finalize",
+          "self_wall_ns": 9784693
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 638638959,
+          "maximum_wall_ns": 147447293,
+          "name": "orbitkv.qualification.step",
+          "self_wall_ns": 9430078
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 17792173554,
+          "maximum_wall_ns": 17792173554,
+          "name": "orbitkv.decoder.compile_or_load",
+          "self_wall_ns": 7801399
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 7321884,
+          "maximum_wall_ns": 4043415,
+          "name": "cuda.inputs.prepare",
+          "self_wall_ns": 7321884
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 5027155,
+          "maximum_wall_ns": 5027155,
+          "name": "orbitkv.inputs.bind_and_seed",
+          "self_wall_ns": 5027155
+        },
+        {
+          "count": 705,
+          "inclusive_wall_ns": 4723864,
+          "maximum_wall_ns": 40591,
+          "name": "cuda.weights.convert",
+          "self_wall_ns": 4723864
+        }
+      ],
+      "metric_counts": {
+        "cuda.graph.dimension": 24,
+        "cuda.graph.step": 35966
+      }
+    },
+    {
+      "run": "b8",
+      "phase": "strict-replay",
+      "status": "passed",
+      "process_seconds": 19.639593541622162,
+      "stage_instrumented": true,
+      "cuda_graph_instrumented": false,
+      "parity_comparisons": 64,
+      "maximum_absolute_logit_error": 0.625,
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 8,
+        "compile_seconds": 17.697387285,
+        "drain_passed": true,
+        "parity_request_steps": 64,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "diagnostic_wall_timings": [
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "prefill",
+          "query_indptr": [
+            0,
+            4,
+            8,
+            12,
+            16,
+            20,
+            24,
+            28,
+            32
+          ],
+          "query_tokens": 32,
+          "seconds": 0.076956414
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.176441334
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-2",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.08132718
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-3",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.081162691
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-4",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.081115739
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-5",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.081112221
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-6",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.081180992
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-7",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.081462525
+        }
+      ],
+      "subsequent_decode_median_ms": 81.1718415,
+      "module_artifact": null,
+      "stage_totals": [
+        {
+          "count": 1,
+          "inclusive_wall_ns": 7681494616,
+          "maximum_wall_ns": 7681494616,
+          "name": "orbitkv.schedule.replay",
+          "self_wall_ns": 5555584993
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 4726521303,
+          "maximum_wall_ns": 406563781,
+          "name": "cuda.weights.upload",
+          "self_wall_ns": 4726521303
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 4295625393,
+          "maximum_wall_ns": 4295625393,
+          "name": "orbitkv.graph.build",
+          "self_wall_ns": 4295625393
+        },
+        {
+          "count": 7,
+          "inclusive_wall_ns": 1748425573,
+          "maximum_wall_ns": 786983398,
+          "name": "cuda.bucket.compile",
+          "self_wall_ns": 1748021159
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 5692347934,
+          "maximum_wall_ns": 969236042,
+          "name": "cuda.weights.file",
+          "self_wall_ns": 829331866
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 685220086,
+          "maximum_wall_ns": 171286787,
+          "name": "cuda.execute",
+          "self_wall_ns": 596541971
+        },
+        {
+          "count": 9,
+          "inclusive_wall_ns": 330770535,
+          "maximum_wall_ns": 247366220,
+          "name": "cuda.graph.materialize",
+          "self_wall_ns": 330685484
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 82892829,
+          "maximum_wall_ns": 6284455,
+          "name": "cuda.weights.allocate",
+          "self_wall_ns": 82892829
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 74760175,
+          "maximum_wall_ns": 74760175,
+          "name": "cuda.resources.retained",
+          "self_wall_ns": 74760175
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 740601376,
+          "maximum_wall_ns": 176422043,
+          "name": "orbitkv.qualification.step",
+          "self_wall_ns": 55381290
+        },
+        {
+          "count": 38,
+          "inclusive_wall_ns": 33364147,
+          "maximum_wall_ns": 30922198,
+          "name": "cuda.provider.jit",
+          "self_wall_ns": 33364147
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 29737852,
+          "maximum_wall_ns": 484192,
+          "name": "cuda.weights.validate",
+          "self_wall_ns": 29737852
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 54801342,
+          "maximum_wall_ns": 54801342,
+          "name": "cuda.providers.prepare",
+          "self_wall_ns": 21522246
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 4826871416,
+          "maximum_wall_ns": 411363077,
+          "name": "cuda.weights.tensor",
+          "self_wall_ns": 12821019
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 10284358,
+          "maximum_wall_ns": 10284358,
+          "name": "orbitkv.decoder.finalize",
+          "self_wall_ns": 10284358
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 17697225329,
+          "maximum_wall_ns": 17697225329,
+          "name": "orbitkv.decoder.compile_or_load",
+          "self_wall_ns": 7835207
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 5629905,
+          "maximum_wall_ns": 5629905,
+          "name": "orbitkv.inputs.bind_and_seed",
+          "self_wall_ns": 5629905
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 5273800,
+          "maximum_wall_ns": 3574888,
+          "name": "cuda.inputs.prepare",
+          "self_wall_ns": 5273800
+        },
+        {
+          "count": 705,
+          "inclusive_wall_ns": 4636265,
+          "maximum_wall_ns": 30422,
+          "name": "cuda.weights.convert",
+          "self_wall_ns": 4636265
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 3932127,
+          "maximum_wall_ns": 368768,
+          "name": "cuda.weights.metadata",
+          "self_wall_ns": 3932127
+        }
+      ],
+      "metric_counts": {}
+    },
+    {
+      "run": "b8",
+      "phase": "profile",
+      "status": "passed",
+      "process_seconds": 20.140836127102375,
+      "stage_instrumented": true,
+      "cuda_graph_instrumented": true,
+      "parity_comparisons": 64,
+      "maximum_absolute_logit_error": 0.625,
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 8,
+        "compile_seconds": 17.861045652,
+        "drain_passed": true,
+        "parity_request_steps": 64,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "diagnostic_wall_timings": [
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "prefill",
+          "query_indptr": [
+            0,
+            4,
+            8,
+            12,
+            16,
+            20,
+            24,
+            28,
+            32
+          ],
+          "query_tokens": 32,
+          "seconds": 0.1247362
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.196761817
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-2",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.118418457
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-3",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.119006325
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-4",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.117256635
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-5",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.117551305
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-6",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.118238985
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-7",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.117248049
+        }
+      ],
+      "subsequent_decode_median_ms": 117.895145,
+      "module_artifact": null,
+      "stage_totals": [
+        {
+          "count": 1,
+          "inclusive_wall_ns": 7652234010,
+          "maximum_wall_ns": 7652234010,
+          "name": "orbitkv.schedule.replay",
+          "self_wall_ns": 5545973721
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 4692047677,
+          "maximum_wall_ns": 405186495,
+          "name": "cuda.weights.upload",
+          "self_wall_ns": 4692047677
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 4275554000,
+          "maximum_wall_ns": 4275554000,
+          "name": "orbitkv.graph.build",
+          "self_wall_ns": 4275554000
+        },
+        {
+          "count": 7,
+          "inclusive_wall_ns": 1749999509,
+          "maximum_wall_ns": 783692901,
+          "name": "cuda.bucket.compile",
+          "self_wall_ns": 1749595878
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 5906589274,
+          "maximum_wall_ns": 960150975,
+          "name": "cuda.weights.file",
+          "self_wall_ns": 821073259
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 969472047,
+          "maximum_wall_ns": 191104952,
+          "name": "cuda.execute",
+          "self_wall_ns": 748813684
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 339971984,
+          "maximum_wall_ns": 29971990,
+          "name": "cuda.weights.allocate",
+          "self_wall_ns": 339971984
+        },
+        {
+          "count": 9,
+          "inclusive_wall_ns": 302520059,
+          "maximum_wall_ns": 225348645,
+          "name": "cuda.graph.materialize",
+          "self_wall_ns": 302435753
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 138060988,
+          "maximum_wall_ns": 19822059,
+          "name": "cuda.graph.profile",
+          "self_wall_ns": 138060988
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 75248817,
+          "maximum_wall_ns": 75248817,
+          "name": "cuda.resources.retained",
+          "self_wall_ns": 75248817
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 1029089339,
+          "maximum_wall_ns": 196744647,
+          "name": "orbitkv.qualification.step",
+          "self_wall_ns": 59617292
+        },
+        {
+          "count": 38,
+          "inclusive_wall_ns": 33413635,
+          "maximum_wall_ns": 30966469,
+          "name": "cuda.provider.jit",
+          "self_wall_ns": 33413635
+        },
+        {
+          "count": 66,
+          "inclusive_wall_ns": 29814231,
+          "maximum_wall_ns": 488485,
+          "name": "cuda.weights.validate",
+          "self_wall_ns": 29814231
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 55071071,
+          "maximum_wall_ns": 55071071,
+          "name": "cuda.providers.prepare",
+          "self_wall_ns": 21741742
+        },
+        {
+          "count": 1251,
+          "inclusive_wall_ns": 5049441025,
+          "maximum_wall_ns": 409771561,
+          "name": "cuda.weights.tensor",
+          "self_wall_ns": 12840958
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 9751561,
+          "maximum_wall_ns": 9751561,
+          "name": "orbitkv.decoder.finalize",
+          "self_wall_ns": 9751561
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 17860889875,
+          "maximum_wall_ns": 17860889875,
+          "name": "orbitkv.decoder.compile_or_load",
+          "self_wall_ns": 7765412
+        },
+        {
+          "count": 8,
+          "inclusive_wall_ns": 5425961,
+          "maximum_wall_ns": 3705456,
+          "name": "cuda.inputs.prepare",
+          "self_wall_ns": 5425961
+        },
+        {
+          "count": 1,
+          "inclusive_wall_ns": 5029555,
+          "maximum_wall_ns": 5029555,
+          "name": "orbitkv.inputs.bind_and_seed",
+          "self_wall_ns": 5029555
+        },
+        {
+          "count": 705,
+          "inclusive_wall_ns": 4580406,
+          "maximum_wall_ns": 33905,
+          "name": "cuda.weights.convert",
+          "self_wall_ns": 4580406
+        }
+      ],
+      "metric_counts": {
+        "cuda.graph.dimension": 24,
+        "cuda.graph.step": 35006
+      }
+    },
+    {
+      "run": "b1-uninstrumented",
+      "phase": "strict-replay",
+      "status": "passed",
+      "process_seconds": 19.48892366141081,
+      "stage_instrumented": false,
+      "cuda_graph_instrumented": false,
+      "parity_comparisons": 8,
+      "maximum_absolute_logit_error": 0.8671875,
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 1,
+        "compile_seconds": 17.874554458,
+        "drain_passed": true,
+        "parity_request_steps": 8,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "diagnostic_wall_timings": [
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "prefill",
+          "query_indptr": [
+            0,
+            4
+          ],
+          "query_tokens": 4,
+          "seconds": 0.134302823
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.120515343
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-2",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024406274
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-3",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024298496
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-4",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024238873
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-5",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024209616
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-6",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.02419541
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-7",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.024164709
+        }
+      ],
+      "subsequent_decode_median_ms": 24.2242445,
+      "module_artifact": null
+    },
+    {
+      "run": "b1-uninstrumented",
+      "phase": "profile",
+      "status": "passed",
+      "process_seconds": 19.48883666098118,
+      "stage_instrumented": false,
+      "cuda_graph_instrumented": true,
+      "parity_comparisons": 8,
+      "maximum_absolute_logit_error": 0.8671875,
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 1,
+        "compile_seconds": 17.809682149,
+        "drain_passed": true,
+        "parity_request_steps": 8,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "diagnostic_wall_timings": [
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "prefill",
+          "query_indptr": [
+            0,
+            4
+          ],
+          "query_tokens": 4,
+          "seconds": 0.140084415
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.122222403
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-2",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.049075212
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-3",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.049079341
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-4",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.048823253
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-5",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.048987792
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-6",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.048912711
+        },
+        {
+          "batch_size": 1,
+          "diagnostic_logits": true,
+          "phase": "decode-7",
+          "query_indptr": [
+            0,
+            1
+          ],
+          "query_tokens": 1,
+          "seconds": 0.048861838
+        }
+      ],
+      "subsequent_decode_median_ms": 48.95025149999999,
+      "module_artifact": null
+    },
+    {
+      "run": "b8-uninstrumented",
+      "phase": "strict-replay",
+      "status": "passed",
+      "process_seconds": 19.338150411844254,
+      "stage_instrumented": false,
+      "cuda_graph_instrumented": false,
+      "parity_comparisons": 64,
+      "maximum_absolute_logit_error": 0.625,
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 8,
+        "compile_seconds": 17.416798692,
+        "drain_passed": true,
+        "parity_request_steps": 64,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "diagnostic_wall_timings": [
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "prefill",
+          "query_indptr": [
+            0,
+            4,
+            8,
+            12,
+            16,
+            20,
+            24,
+            28,
+            32
+          ],
+          "query_tokens": 32,
+          "seconds": 0.077322381
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.179845034
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-2",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.07905157
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-3",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.078937379
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-4",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.079040639
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-5",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.078895984
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-6",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.078976395
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-7",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.078873335
+        }
+      ],
+      "subsequent_decode_median_ms": 78.95688700000001,
+      "module_artifact": null
+    },
+    {
+      "run": "b8-uninstrumented",
+      "phase": "profile",
+      "status": "passed",
+      "process_seconds": 19.68957356736064,
+      "stage_instrumented": false,
+      "cuda_graph_instrumented": true,
+      "parity_comparisons": 64,
+      "maximum_absolute_logit_error": 0.625,
+      "completion": {
+        "artifact_mode": "replay",
+        "batch_capacity": 8,
+        "batch_size": 8,
+        "compile_seconds": 17.580769379,
+        "drain_passed": true,
+        "parity_request_steps": 64,
+        "parity_steps": 8,
+        "ragged_prefill": false,
+        "reference_enabled": true,
+        "schema": 1
+      },
+      "diagnostic_wall_timings": [
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "prefill",
+          "query_indptr": [
+            0,
+            4,
+            8,
+            12,
+            16,
+            20,
+            24,
+            28,
+            32
+          ],
+          "query_tokens": 32,
+          "seconds": 0.113377996
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.189900045
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-2",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.106935007
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-3",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.107359793
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-4",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.107010341
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-5",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.106676804
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-6",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.106419589
+        },
+        {
+          "batch_size": 8,
+          "diagnostic_logits": true,
+          "phase": "decode-7",
+          "query_indptr": [
+            0,
+            1,
+            2,
+            3,
+            4,
+            5,
+            6,
+            7,
+            8
+          ],
+          "query_tokens": 8,
+          "seconds": 0.106604437
+        }
+      ],
+      "subsequent_decode_median_ms": 106.8059055,
+      "module_artifact": null
+    }
+  ],
+  "historical_reference": {
+    "path": "../workload-attribution-20260914/summary.json",
+    "sha256": "ac514369b9671e023b2889f35ed7a625d5a667d490d3ff347dcadccbc6ca1e2d",
+    "runs": [
+      {
+        "run": "b1-uninstrumented",
+        "phase": "strict-replay",
+        "status": "passed",
+        "process_seconds": 18.837810155004263,
+        "stage_instrumented": false,
+        "cuda_graph_instrumented": false,
+        "parity_comparisons": 8,
+        "maximum_absolute_logit_error": 0.515625,
+        "completion": {
+          "artifact_mode": "replay",
+          "batch_capacity": 8,
+          "batch_size": 1,
+          "compile_seconds": 17.38856719,
+          "drain_passed": true,
+          "parity_request_steps": 8,
+          "parity_steps": 8,
+          "ragged_prefill": false,
+          "reference_enabled": true,
+          "schema": 1
+        },
+        "diagnostic_wall_timings": [
+          {
+            "batch_size": 1,
+            "diagnostic_logits": true,
+            "phase": "prefill",
+            "query_indptr": [
+              0,
+              4
+            ],
+            "query_tokens": 4,
+            "seconds": 0.152503445
+          },
+          {
+            "batch_size": 1,
+            "diagnostic_logits": true,
+            "phase": "decode",
+            "query_indptr": [
+              0,
+              1
+            ],
+            "query_tokens": 1,
+            "seconds": 0.084649125
+          },
+          {
+            "batch_size": 1,
+            "diagnostic_logits": true,
+            "phase": "decode-2",
+            "query_indptr": [
+              0,
+              1
+            ],
+            "query_tokens": 1,
+            "seconds": 0.024523582
+          },
+          {
+            "batch_size": 1,
+            "diagnostic_logits": true,
+            "phase": "decode-3",
+            "query_indptr": [
+              0,
+              1
+            ],
+            "query_tokens": 1,
+            "seconds": 0.024485542
+          },
+          {
+            "batch_size": 1,
+            "diagnostic_logits": true,
+            "phase": "decode-4",
+            "query_indptr": [
+              0,
+              1
+            ],
+            "query_tokens": 1,
+            "seconds": 0.024453113
+          },
+          {
+            "batch_size": 1,
+            "diagnostic_logits": true,
+            "phase": "decode-5",
+            "query_indptr": [
+              0,
+              1
+            ],
+            "query_tokens": 1,
+            "seconds": 0.024416176
+          },
+          {
+            "batch_size": 1,
+            "diagnostic_logits": true,
+            "phase": "decode-6",
+            "query_indptr": [
+              0,
+              1
+            ],
+            "query_tokens": 1,
+            "seconds": 0.024394344
+          },
+          {
+            "batch_size": 1,
+            "diagnostic_logits": true,
+            "phase": "decode-7",
+            "query_indptr": [
+              0,
+              1
+            ],
+            "query_tokens": 1,
+            "seconds": 0.02439499
+          }
+        ],
+        "subsequent_decode_median_ms": 24.434644499999997,
+        "module_artifact": null
+      },
+      {
+        "run": "b8-uninstrumented",
+        "phase": "strict-replay",
+        "status": "passed",
+        "process_seconds": 19.33915200829506,
+        "stage_instrumented": false,
+        "cuda_graph_instrumented": false,
+        "parity_comparisons": 64,
+        "maximum_absolute_logit_error": 0.8125,
+        "completion": {
+          "artifact_mode": "replay",
+          "batch_capacity": 8,
+          "batch_size": 8,
+          "compile_seconds": 17.527265766,
+          "drain_passed": true,
+          "parity_request_steps": 64,
+          "parity_steps": 8,
+          "ragged_prefill": false,
+          "reference_enabled": true,
+          "schema": 1
+        },
+        "diagnostic_wall_timings": [
+          {
+            "batch_size": 8,
+            "diagnostic_logits": true,
+            "phase": "prefill",
+            "query_indptr": [
+              0,
+              4,
+              8,
+              12,
+              16,
+              20,
+              24,
+              28,
+              32
+            ],
+            "query_tokens": 32,
+            "seconds": 0.247364387
+          },
+          {
+            "batch_size": 8,
+            "diagnostic_logits": true,
+            "phase": "decode",
+            "query_indptr": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "query_tokens": 8,
+            "seconds": 0.142940194
+          },
+          {
+            "batch_size": 8,
+            "diagnostic_logits": true,
+            "phase": "decode-2",
+            "query_indptr": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "query_tokens": 8,
+            "seconds": 0.036886211
+          },
+          {
+            "batch_size": 8,
+            "diagnostic_logits": true,
+            "phase": "decode-3",
+            "query_indptr": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "query_tokens": 8,
+            "seconds": 0.037087304
+          },
+          {
+            "batch_size": 8,
+            "diagnostic_logits": true,
+            "phase": "decode-4",
+            "query_indptr": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "query_tokens": 8,
+            "seconds": 0.036984589
+          },
+          {
+            "batch_size": 8,
+            "diagnostic_logits": true,
+            "phase": "decode-5",
+            "query_indptr": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "query_tokens": 8,
+            "seconds": 0.037100687
+          },
+          {
+            "batch_size": 8,
+            "diagnostic_logits": true,
+            "phase": "decode-6",
+            "query_indptr": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "query_tokens": 8,
+            "seconds": 0.036900691
+          },
+          {
+            "batch_size": 8,
+            "diagnostic_logits": true,
+            "phase": "decode-7",
+            "query_indptr": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              6,
+              7,
+              8
+            ],
+            "query_tokens": 8,
+            "seconds": 0.036917372
+          }
+        ],
+        "subsequent_decode_median_ms": 36.9509805,
+        "module_artifact": null
+      }
+    ]
+  }
+}

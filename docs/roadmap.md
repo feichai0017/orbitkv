@@ -9,8 +9,11 @@ see [attention providers](attention-providers.md) and the
 FlashInfer algorithms and optional FlashAttention-3 replace the handwritten
 native attention candidate. [B1/B8 workload attribution](../results/workload-attribution-20260914/README.md)
 now connects full rule identities, bucket dimensions and GPU execution steps.
-The immediate priorities are reproducible candidate exploration, measured
-coverage of expensive matrix products, and the costly `glumoe` ruleset.
+Fixed-snapshot sampling and bounded initial exploration are implemented; the
+[27B coverage follow-up](../results/search-coverage-20260914/README.md) passes
+correctness but records mixed performance. The immediate priorities are early
+state-alias constraints, measured exploration of expensive regions inside valid
+graphs, and the costly `glumoe` ruleset.
 Additional KV representations and joint state/layout competition remain open.
 
 OrbitKV targets one native Rust inference process. `orbitkv` compiles and owns
@@ -232,10 +235,28 @@ profile, although its saved equivalence class contains a `cublaslt` candidate.
 Both modes pass the unchanged logit gate. Search coverage is the immediate
 runtime problem; this result does not establish a serving improvement.
 
+[Snapshot sampling and bounded initial coverage](search-coverage.md) now remove
+hash-table iteration from candidate draws, mutation pools and cycle repair.
+Caller-selected `initial_candidates` adds broad initial exploration before
+mutation; trace records identify snapshots, sampling origins and measured kernel
+implementations. Fixed-snapshot GPU regression covers generated matrix products
+and cuBLASLt with independent numerical checks. Fresh saturation is still not
+canonicalized, and broad sampling does not guarantee that expensive regions
+receive all useful provider alternatives.
+
+The [eight-graph qualification](../results/search-coverage-20260914/README.md)
+records 319 evaluations, 56 measured graphs and 263 state-alias rejections. All
+296 logit comparisons and final drains pass, but B8 decode's eight measured
+graphs all retain the slow generic vocabulary projection. Forty-six graphs with
+the cuBLASLt projection fail state validation elsewhere. The next coverage slice
+must preserve a valid surrounding genome while exploring expensive regions and
+apply provable state constraints before costly preparation. Increasing whole
+genome diversity alone has not resolved this selection miss.
+
 The next implementation slices are:
 
-1. **Candidate coverage and cold compilation:** stabilize candidate enumeration
-   and record the actual programs evaluated. Measure legal provider alternatives
+1. **Candidate coverage and cold compilation:** build on stable snapshot sampling
+   and recorded evaluated programs. Measure legal provider alternatives
    for expensive regions under a shared budget, covering both prefill and decode.
    Do not force a provider by model name or tensor dimensions. Restructure the
    `glumoe` joins in egglog using semantic anchors, then separate reusable setup

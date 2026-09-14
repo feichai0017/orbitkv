@@ -59,9 +59,9 @@ explicitly before model compilation.
 
 Active development. Bounded NVIDIA H20 qualification covers dense Full,
 Full + Sliding, and the Qwen3.8-27B-FP8 hybrid text decoder with Gated DeltaNet
-and convolution state. The [latest report](results/provider-kernels-20260914/README.md)
-includes independent logit checks, attention selection, strict artifact replay,
-and the HTTP lifecycle. Serving performance remains an optimization target.
+and convolution state. The [latest report](results/search-coverage-20260914/README.md)
+covers independent logits, artifact replay and compiler search. Broader sampling
+still misses expensive kernel choices; serving performance remains an optimization target.
 
 See the [capability matrix](docs/capability-matrix.md) for supported contracts
 and qualification limits.

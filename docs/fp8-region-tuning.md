@@ -54,6 +54,7 @@ accepts `--tuning-profile PATH`.
 | `prefill_tokens` | Preferred total query-token counts, not per-request lengths |
 | `context_pages` | Preferred flattened CSR page counts |
 | `keep_best` | Finalists compared on the CUDA Graph deployment path |
+| `initial_candidates` | Initial genomes from per-class coverage cycles, including the first executable seed; defaults to 1 and is clamped to the graph budget |
 | `trials` | Profiling trials per candidate |
 | `search_time_limit_ms` | Cooperative genetic-search budget, starting after graph saturation; synchronous compiler calls are not preempted |
 | `maximum_buckets` | Bound on the proposed Cartesian bucket count before search-space construction |
@@ -63,6 +64,14 @@ accepts `--tuning-profile PATH`.
 executable admitting at least 8 requests and 128 query tokens. Representatives
 must fit configured capacity, and `keep_best` must not exceed the graph-search
 limit. Empty lists retain the existing bucket policy.
+
+For broader initial exploration, [search-coverage.json](../benchmarks/search-coverage.json)
+reserves eight initial genomes and two deployment finalists. Use it with
+`--search-graphs 8` or a larger graph budget. After the first executable seed,
+duplicate programs and rejected genomes consume the initial allowance; remaining
+measurement budget then goes to mutation and restarts. This is bounded sampling
+of admitted alternatives, not guaranteed measurement of every provider. See
+[search coverage](search-coverage.md) for ordering and reproducibility limits.
 
 The compiler chooses feasible joint representative shapes within bucket ranges.
 The synthetic fixture supplies all query and page CSR rows, per-request write
