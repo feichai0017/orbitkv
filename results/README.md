@@ -1,5 +1,10 @@
 # Current evidence
 
+The [integrated workspace qualification](workspace-integration-20260914/README.md)
+records the compiler/crate migration, fresh compilation, and final-binary B1/B8
+replay. Earlier records retain their original source identities.
+
+
 This directory contains only compact evidence that directly qualifies the
 current `core + Luminal executor + Rust engine/HTTP frontend` architecture. A record keeps
 the concrete model, hardware/software environment, measured result, source

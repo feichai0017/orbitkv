@@ -1,6 +1,6 @@
 # Compiler boundaries and extension points
 
-The executor describes model semantics and the state-manager contract. Luminal
+The executor describes model semantics and the state-manager contract. OrbitKV compiler
 owns rewrite alternatives, candidate measurement, and deployment. A checkpoint
 name or a successful benchmark shape must not select an implementation in
 application code.
@@ -18,19 +18,19 @@ the table below assigns compiler responsibilities within that structure.
 | Serialized tuning policy | `model/tuning.rs` | Workload representatives and caller-selected search budgets |
 | Feasible correlated buckets | `model/tuning/buckets.rs` | Query/request/page ranges and each physical arena's capacity |
 | Profiling input fixture | `model/tuning/fixture.rs` | Typed graph bindings with explicit capacities; private-page CSR metadata |
-| Graph alternatives and generic extraction | Luminal `src/graph.rs`, `src/egglog_utils`, `src/search` | Semantic rewrites and executable dependencies; no GPU measurement in core |
-| Snapshot sampling and initial coverage | Luminal `src/egglog_utils/sampling.rs`, `src/search/genetic.rs` | Existing admitted egraph alternatives, RNG state and caller budgets; no provider preference or graph rewriting |
-| Local extraction and cost attribution | Luminal `src/egglog_utils/neighborhood.rs`, `src/search/profile.rs`, `src/search/unroll.rs` | Exact extraction provenance, runtime region costs and bounded single-choice neighbors; no new rewrites |
-| CUDA evaluation and deployment ranking | `luminal_cuda_lite/src/search.rs` | Actual device measurements plus resource checks |
-| Search evidence | `luminal_cuda_lite/src/search/trace.rs` | Candidate program identity, full operation manifest, outcomes and scores |
-| CPU stage attribution | `luminal_tracing/src/stages.rs`, exposed by executor `diagnostics.rs` | Buffered synchronous wall spans; explicit completion, no added device synchronization |
+| Graph alternatives and generic extraction | OrbitKV compiler `src/graph.rs`, `src/egglog_utils`, `src/search` | Semantic rewrites and executable dependencies; no GPU measurement in core |
+| Snapshot sampling and initial coverage | OrbitKV compiler `src/egglog_utils/sampling.rs`, `src/search/genetic.rs` | Existing admitted egraph alternatives, RNG state and caller budgets; no provider preference or graph rewriting |
+| Local extraction and cost attribution | OrbitKV compiler `src/egglog_utils/neighborhood.rs`, `src/search/profile.rs`, `src/search/unroll.rs` | Exact extraction provenance, runtime region costs and bounded single-choice neighbors; no new rewrites |
+| CUDA evaluation and deployment ranking | `orbitkv-cuda/src/search.rs` | Actual device measurements plus resource checks |
+| Search evidence | `orbitkv-cuda/src/search/trace.rs` | Candidate program identity, full operation manifest, outcomes and scores |
+| CPU stage attribution | `orbitkv-tracing/src/stages.rs`, exposed by executor `diagnostics.rs` | Buffered synchronous wall spans; explicit completion, no added device synchronization |
 | FP8 numerical/storage ABI | `host/deepgemm/contract.rs` | Block geometry, scale stride, alignment, checked sizes, quantizer source |
 | Captured scratch ownership | `host/deepgemm/scratch.rs` | Exact allocation owners retained until graph retirement |
 | Provider tile legality and initial ordering | `host/deepgemm/tiling.rs` | Supported device architecture, dimensions, pinned-provider constraints |
 | Source generation/loading | `host/deepgemm/jit.rs` | Contract, tile configuration and content-addressed provider identity |
 
 The CUDA provider paths in the last rows are relative to
-`third_party/luminal/crates/luminal_cuda_lite/src`. Existing public decoder entry
+`crates/orbitkv-cuda/src`. Existing public decoder entry
 points and the tuning JSON representation remain compatible with this layout.
 
 The profiling fixture stores each input binding together with its maximum byte
@@ -75,7 +75,7 @@ diagnostic environment boundary without adding a trace path to artifact-bound
 tuning JSON:
 
 ```sh
-LUMINAL_SEARCH_TRACE=/absolute/path/new-search.jsonl orbitkv-serve ...
+ORBITKV_SEARCH_TRACE=/absolute/path/new-search.jsonl orbitkv-serve ...
 ```
 
 The explicit builder option takes precedence over the environment variable.
@@ -142,7 +142,7 @@ durations and work on parallel threads cannot be added into a startup total.
 
 Checkpoint syntax is normalized by an explicit importer; unrelated RoPE/gating
 fields no longer infer the normalization convention. Attention and FP8 linear
-semantics live in `luminal_nn::ops`, with CUDA providers supplying egglog
+semantics live in `orbitkv_ops::ops`, with CUDA providers supplying egglog
 implementations. See [checkpoint import](checkpoint-import.md) for admitted
 formats, extension rules and the current artifact migration.
 
@@ -158,7 +158,7 @@ fixtures rather than production selection branches.
 For numerical diagnostics, [logit_probe.py](../tools/logit_probe.py) accepts
 manifest-driven inputs and compares full-vocabulary teacher-forced traces.
 It reports actual selected tokens separately from a canonical lowest-index
-argmax: Luminal's current `argmax`/`argmin` contract chooses the highest index on
+argmax: OrbitKV compiler's current `argmax`/`argmin` contract chooses the highest index on
 ties. A different sampling tie policy is a semantic compatibility change, not
 an optimization or a way to qualify a numerically different schedule.
 

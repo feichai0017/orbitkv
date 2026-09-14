@@ -476,7 +476,7 @@ fn compile_hybrid_decoder(
     model_dir: &std::path::Path,
     prompt_tokens: usize,
 ) -> (CompiledDecoder, Duration) {
-    let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(0).unwrap();
+    let context = orbitkv_cuda::cudarc::driver::CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let compile = DecoderCompileConfig {
         maximum_query_tokens: prompt_tokens,
@@ -1163,7 +1163,7 @@ fn released_checkpoint_bounds_single_and_multi_request_logits() {
     let prompt_positions = (0..u32::try_from(prompt.len()).unwrap()).collect::<Vec<_>>();
     let batch_size = 8_usize;
     let mut run = model_batch_harness(&config_bytes, batch_size + 1, prompt.len() * batch_size);
-    let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(0).unwrap();
+    let context = orbitkv_cuda::cudarc::driver::CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let compile = DecoderCompileConfig {
         maximum_query_tokens: 1_024,
@@ -1354,7 +1354,7 @@ fn released_decoder_reuses_one_compiled_runtime_and_kv_arena() {
     let config = DecoderConfig::from_json(&config_bytes).unwrap();
     let prompt = [1_u32, 2, 3, 4];
     let mut prepared_run = prepare_model_run(&config_bytes, prompt.len());
-    let context = luminal_cuda_lite::cudarc::driver::CudaContext::new(0).unwrap();
+    let context = orbitkv_cuda::cudarc::driver::CudaContext::new(0).unwrap();
     let stream = context.new_stream().unwrap();
     let compile = DecoderCompileConfig {
         maximum_query_tokens: 8,

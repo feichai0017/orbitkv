@@ -6,7 +6,7 @@ pub mod diagnostics;
 use std::collections::BTreeSet;
 
 mod compiler_facts;
-pub use compiler_facts::{LuminalCompilerFacts, LuminalFixedStateFacts, LuminalStateClassFacts};
+pub use compiler_facts::{CompilerFacts, FixedStateFacts, StateClassFacts};
 mod fixed_state;
 use fixed_state::compile_fixed_state;
 pub use fixed_state::{
@@ -74,7 +74,7 @@ use orbitkv::{
 };
 use thiserror::Error;
 
-/// A model-independent attention class accepted by the Luminal executor.
+/// A model-independent attention class accepted by the `OrbitKV` executor.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttentionClass {
     pub class_id: u16,
@@ -94,7 +94,7 @@ pub enum AttentionVisibility {
     Chunked { blocks_per_epoch: u64 },
 }
 
-/// Immutable part of the joint OrbitKV/Luminal execution contract.
+/// Immutable part of the joint `OrbitKV`/`OrbitKV` execution contract.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct ExecutorPlan {
     pub manifest_fingerprint: String,
@@ -105,7 +105,7 @@ pub struct ExecutorPlan {
 }
 
 /// Physical pool registration retained by the composition layer that created
-/// the `OrbitKV` session and the Luminal KV buffers.
+/// the `OrbitKV` session and the `OrbitKV` KV buffers.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ExecutorArena {
     pub engine_epoch: u64,
@@ -118,7 +118,7 @@ pub struct ExecutorArena {
     pub backend_base_index: u64,
 }
 
-/// Device metadata consumed directly by Luminal paged attention.
+/// Device metadata consumed directly by `OrbitKV` paged attention.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct AttentionBatch {
     pub class_id: u16,
@@ -128,7 +128,7 @@ pub struct AttentionBatch {
     pub last_page_len: Box<[i32]>,
 }
 
-/// Physical writes and copies that must precede one Luminal forward.
+/// Physical writes and copies that must precede one `OrbitKV` forward.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct PreparedBatch {
     source: EngineBatchPlan,
@@ -159,7 +159,7 @@ pub struct TokenCopy {
 pub enum ExecutorError {
     #[error(transparent)]
     Manifest(#[from] RuntimeManifestError),
-    #[error("Luminal currently accepts token KV only")]
+    #[error("OrbitKV currently accepts token KV only")]
     UnsupportedStateStorage,
     #[error("compiled attention classes do not match their layout classes")]
     ClassMismatch,
@@ -169,7 +169,7 @@ pub enum ExecutorError {
     DuplicateRequest,
     #[error("attention request geometry is invalid")]
     InvalidRequestGeometry,
-    #[error("physical page index exceeds Luminal's i32 metadata range")]
+    #[error("physical page index exceeds OrbitKV's i32 metadata range")]
     PageIndexOverflow,
     #[error("prepared batch refers to an unknown class")]
     UnknownClass,
@@ -228,7 +228,7 @@ impl ExecutorArena {
 
 impl ExecutorPlan {
     /// Compiles the engine-neutral `OrbitKV` manifest into the subset currently
-    /// executable by the forked Luminal backend.
+    /// executable by the forked `OrbitKV` backend.
     ///
     /// # Errors
     ///
@@ -280,7 +280,7 @@ impl ExecutorPlan {
         })
     }
 
-    /// Builds the explicit CSR page-table metadata consumed by Luminal.
+    /// Builds the explicit CSR page-table metadata consumed by `OrbitKV`.
     ///
     /// # Errors
     ///

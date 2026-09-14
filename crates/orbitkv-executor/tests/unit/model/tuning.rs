@@ -98,7 +98,7 @@ fn tuning_buckets_supply_valid_ragged_metadata_and_cover_feasible_intervals() {
     let mut saw_ragged = false;
     for dims in profiles {
         let values = inputs.values(dims);
-        let get = |input: luminal::prelude::NodeIndex| {
+        let get = |input: orbitkv_compiler::prelude::NodeIndex| {
             values
                 .iter()
                 .find(|(tensor, _)| *tensor == input)

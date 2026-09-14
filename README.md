@@ -9,12 +9,12 @@
   <a href="results/README.md">Results</a>
 </p>
 
-**An attention-state compiler and native Rust inference stack.**
+**A state-aware, compiled inference engine in Rust.**
 
 OrbitKV turns attention lifetimes into memory plans and owns KV pages and
-persistent model state. The inference-only [Luminal fork](third_party/luminal)
-compiles model graphs, profiles legal implementations on CUDA, and saves the
-selected programs for replay.
+persistent model state. Its integrated compiler builds model graphs, profiles
+legal implementations on CUDA, and saves selected programs for replay. State
+management, compilation and serving share one workspace and release.
 
 - **State ownership:** prefix sharing, copy-on-write, cancellation, and safe reuse.
 - **Measured compilation:** generated CUDA alongside cuBLASLt, DeepGEMM,
@@ -27,7 +27,11 @@ selected programs for replay.
 | Crate | Responsibility |
 | --- | --- |
 | [`orbitkv`](crates/orbitkv) | Backend-independent state compiler and KV manager; usable on its own |
-| [`orbitkv-executor`](crates/orbitkv-executor) | Model import, Luminal execution, state bindings, and artifacts |
+| [`orbitkv-compiler`](crates/orbitkv-compiler) | Symbolic tensor graphs, equivalence rules, and search infrastructure |
+| [`orbitkv-ops`](crates/orbitkv-ops) | Portable inference semantics and graph builders |
+| [`orbitkv-cuda`](crates/orbitkv-cuda) | CUDA implementations, device measurement, and execution |
+| [`orbitkv-tracing`](crates/orbitkv-tracing) | Compiler and runtime diagnostics |
+| [`orbitkv-executor`](crates/orbitkv-executor) | Model import, state bindings, compilation, and artifacts |
 | [`orbitkv-engine`](crates/orbitkv-engine) | Request scheduling, batching, streaming, and HTTP serving |
 
 Model semantics, state contracts, shapes, and device capabilities determine
@@ -39,7 +43,7 @@ is the [next compiler direction](docs/joint-compilation.md).
 Host tests need current stable Rust and Python 3.
 
 ```sh
-git clone --recurse-submodules https://github.com/feichai0017/orbitkv.git
+git clone https://github.com/feichai0017/orbitkv.git
 cd orbitkv
 cargo test --locked --all-targets
 ```
@@ -59,9 +63,9 @@ explicitly before model compilation.
 
 Active development. Bounded NVIDIA H20 qualification covers dense Full,
 Full + Sliding, and the Qwen3.8-27B-FP8 hybrid text decoder with Gated DeltaNet
-and convolution state. The [latest report](results/state-preflight-20260914/README.md)
-covers independent logits, artifact replay and state checks before CUDA
-compilation. Search coverage and serving performance remain optimization targets.
+and convolution state. The [latest report](results/workspace-integration-20260914/README.md)
+covers workspace integration, independent logits, artifact replay, and state
+correctness. Search coverage and serving performance remain optimization targets.
 
 See the [capability matrix](docs/capability-matrix.md) for supported contracts
 and qualification limits, and [model targets](docs/model-targets.md) for the
@@ -69,13 +73,13 @@ Qwen, GLM, Kimi and DeepSeek roadmap on one H20.
 
 ## Documentation
 
-- [Luminal and CUDA compilation](docs/luminal-design.md)
+- [OrbitKV compiler and CUDA compilation](docs/compiler.md)
 - [State ownership and lifecycle](docs/runtime-session.md)
 - [Execution artifacts](docs/module-artifacts.md)
 - [External KV tiers](docs/external-kv.md)
 - [Code and test layout](docs/code-layout.md)
 - [Benchmarking](docs/benchmarking.md)
 
-[MIT licensed](LICENSE). Built on Luminal and the CUDA provider libraries;
-the optional frontend reuses vLLM's Rust components. See
+[Core MIT licensed](LICENSE). The compiler crates derive from Luminal and retain
+their MIT/Apache-2.0 licenses. The optional frontend reuses vLLM's Rust components. See
 [upstream components and licenses](docs/components.md).

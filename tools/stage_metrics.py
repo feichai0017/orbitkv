@@ -55,10 +55,10 @@ def egglog_runs(spans: dict, metrics: list[dict]) -> list[dict]:
     seen = set()
     for metric in metrics:
         kind = metric["name"]
-        if kind not in ("luminal.egglog.rule", "luminal.egglog.ruleset"):
+        if kind not in ("orbitkv.compiler.egglog.rule", "orbitkv.compiler.egglog.ruleset"):
             continue
         parent = spans.get(metric["parent"])
-        if parent is None or parent["name"] != "luminal.egglog.schedule":
+        if parent is None or parent["name"] != "orbitkv.compiler.egglog.schedule":
             raise ValueError("egglog measurement has no schedule parent")
         fields = metric["fields"]
         identity = "rule" if kind.endswith(".rule") else "ruleset"
@@ -77,9 +77,9 @@ def egglog_runs(spans: dict, metrics: list[dict]) -> list[dict]:
 
     phases = defaultdict(list)
     for stage in sorted(spans.values(), key=lambda row: row["start_ns"]):
-        if stage["name"] != "luminal.egglog.schedule":
+        if stage["name"] != "orbitkv.compiler.egglog.schedule":
             continue
-        run = ancestor(stage, spans, "luminal.egglog.run")
+        run = ancestor(stage, spans, "orbitkv.compiler.egglog.run")
         if run is None:
             raise ValueError("egglog schedule has no run parent")
         fields = stage["fields"]
@@ -98,9 +98,9 @@ def egglog_runs(spans: dict, metrics: list[dict]) -> list[dict]:
         })
     output = []
     for stage in sorted(spans.values(), key=lambda row: row["start_ns"]):
-        if stage["name"] != "luminal.egglog.run":
+        if stage["name"] != "orbitkv.compiler.egglog.run":
             continue
-        bucket = ancestor(stage, spans, "luminal.egglog.bucket")
+        bucket = ancestor(stage, spans, "orbitkv.compiler.egglog.bucket")
         run_phases = phases[stage["id"]]
         if not run_phases or len(run_phases) != integer(stage["fields"], "schedule_count"):
             raise ValueError("egglog schedule measurements are incomplete")

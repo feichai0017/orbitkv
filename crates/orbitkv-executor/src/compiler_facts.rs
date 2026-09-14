@@ -8,33 +8,33 @@ use sha2::{Digest, Sha256};
 
 use crate::{ExecutorArena, ExecutorError, ExecutorPlan};
 
-/// `OrbitKV` state facts lowered into Luminal's compile-time vocabulary.
+/// `OrbitKV` state facts lowered into `OrbitKV`'s compile-time vocabulary.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LuminalCompilerFacts {
+pub struct CompilerFacts {
     manifest_fingerprint: String,
     digest: String,
-    classes: Box<[LuminalStateClassFacts]>,
-    fixed_states: Box<[LuminalFixedStateFacts]>,
+    classes: Box<[StateClassFacts]>,
+    fixed_states: Box<[FixedStateFacts]>,
     egglog: String,
 }
 
 /// One manager-owned state class plus its stable runtime arena binding.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LuminalStateClassFacts {
+pub struct StateClassFacts {
     pub state: StateClassLayoutFacts,
     pub backend_base_index: u64,
     pub page_count: u32,
     pub address_stable: bool,
 }
 
-/// One non-token persistent-state class made visible to Luminal compilation.
+/// One non-token persistent-state class made visible to `OrbitKV` compilation.
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub struct LuminalFixedStateFacts {
+pub struct FixedStateFacts {
     pub state_id: u16,
     pub state: StateClassLayoutFacts,
 }
 
-impl LuminalCompilerFacts {
+impl CompilerFacts {
     #[must_use]
     pub fn manifest_fingerprint(&self) -> &str {
         &self.manifest_fingerprint
@@ -46,12 +46,12 @@ impl LuminalCompilerFacts {
     }
 
     #[must_use]
-    pub fn classes(&self) -> &[LuminalStateClassFacts] {
+    pub fn classes(&self) -> &[StateClassFacts] {
         &self.classes
     }
 
     #[must_use]
-    pub fn fixed_states(&self) -> &[LuminalFixedStateFacts] {
+    pub fn fixed_states(&self) -> &[FixedStateFacts] {
         &self.fixed_states
     }
 
@@ -63,16 +63,13 @@ impl LuminalCompilerFacts {
 
 impl ExecutorPlan {
     /// Binds static state/layout facts to stable executor arenas and lowers
-    /// them into declarations consumed during Luminal e-graph construction.
+    /// them into declarations consumed during `OrbitKV` e-graph construction.
     ///
     /// # Errors
     ///
     /// Rejects missing, reordered, or geometrically inconsistent class/arena
     /// bindings before graph compilation.
-    pub fn luminal_compiler_facts(
-        &self,
-        arenas: &[ExecutorArena],
-    ) -> Result<LuminalCompilerFacts, ExecutorError> {
+    pub fn compiler_facts(&self, arenas: &[ExecutorArena]) -> Result<CompilerFacts, ExecutorError> {
         crate::validate_arenas(arenas, self.classes.len())?;
         let state_layout_facts = &self.state_layout_facts;
         if state_layout_facts.manifest_fingerprint != self.manifest_fingerprint
@@ -101,7 +98,7 @@ impl ExecutorPlan {
                 {
                     return Err(ExecutorError::CompilerFactsMismatch);
                 }
-                Ok(LuminalStateClassFacts {
+                Ok(StateClassFacts {
                     state: state.clone(),
                     backend_base_index: arena.backend_base_index,
                     page_count: arena.page_count,
@@ -124,7 +121,7 @@ impl ExecutorPlan {
                     })
                     .cloned()
                     .ok_or(ExecutorError::CompilerFactsMismatch)?;
-                Ok::<_, ExecutorError>(LuminalFixedStateFacts {
+                Ok::<_, ExecutorError>(FixedStateFacts {
                     state_id: fixed.state_id,
                     state,
                 })
@@ -133,7 +130,7 @@ impl ExecutorPlan {
             .into_boxed_slice();
         let egglog = lower_egglog(state_layout_facts, &classes, &fixed_states)?;
         let digest = format!("sha256:{:x}", Sha256::digest(egglog.as_bytes()));
-        Ok(LuminalCompilerFacts {
+        Ok(CompilerFacts {
             manifest_fingerprint: self.manifest_fingerprint.clone(),
             digest,
             classes,
@@ -145,8 +142,8 @@ impl ExecutorPlan {
 
 fn lower_egglog(
     facts: &StateLayoutFacts,
-    classes: &[LuminalStateClassFacts],
-    fixed_states: &[LuminalFixedStateFacts],
+    classes: &[StateClassFacts],
+    fixed_states: &[FixedStateFacts],
 ) -> Result<String, ExecutorError> {
     let mut output = String::from(
         r"(relation persistent-state-manifest (String))
@@ -199,7 +196,7 @@ fn lower_egglog(
 
 fn write_fixed_state_facts(
     output: &mut String,
-    fixed: &LuminalFixedStateFacts,
+    fixed: &FixedStateFacts,
 ) -> Result<(), ExecutorError> {
     let state_id = i64::from(fixed.state_id);
     let state = &fixed.state;
@@ -263,10 +260,7 @@ const fn recurrent_family_name(family: orbitkv::RecurrentFamily) -> &'static str
     }
 }
 
-fn write_class_facts(
-    output: &mut String,
-    class: &LuminalStateClassFacts,
-) -> Result<(), ExecutorError> {
+fn write_class_facts(output: &mut String, class: &StateClassFacts) -> Result<(), ExecutorError> {
     let class_id = class
         .state
         .manager_class_id
@@ -381,7 +375,7 @@ fn write_storage_facts(
 fn write_retention_facts(
     output: &mut String,
     class_id: i64,
-    class: &LuminalStateClassFacts,
+    class: &StateClassFacts,
 ) -> Result<(), ExecutorError> {
     match (class.state.retention, class.state.window_tokens) {
         (Some(RetentionKind::Full), None) => {
@@ -416,7 +410,7 @@ fn write_retention_facts(
 fn write_address_facts(
     output: &mut String,
     class_id: i64,
-    class: &LuminalStateClassFacts,
+    class: &StateClassFacts,
 ) -> Result<(), ExecutorError> {
     match class
         .state
@@ -461,7 +455,7 @@ fn write_address_facts(
 fn write_retirement_facts(
     output: &mut String,
     class_id: i64,
-    class: &LuminalStateClassFacts,
+    class: &StateClassFacts,
 ) -> Result<(), ExecutorError> {
     match class
         .state
@@ -492,7 +486,7 @@ fn write_retirement_facts(
     Ok(())
 }
 
-fn class_page_tokens(class: &LuminalStateClassFacts) -> Result<u64, ExecutorError> {
+fn class_page_tokens(class: &StateClassFacts) -> Result<u64, ExecutorError> {
     let StateStorageFacts::TokenSlots {
         bytes_per_token_per_layer,
         page_bytes_per_layer,

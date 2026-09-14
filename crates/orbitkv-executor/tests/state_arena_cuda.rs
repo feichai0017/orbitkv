@@ -2,16 +2,6 @@
 #![forbid(unsafe_code)]
 
 use half::bf16;
-use luminal::{
-    dtype::DType,
-    op::Runtime,
-    prelude::{CompileOptions, Expression, Graph, ToId},
-};
-use luminal_cuda_lite::kernel::sequence_state::{
-    PackedConvolutionPlan, PackedConvolutionSpec, PackedDeltaScanPlan, PackedDeltaScanSpec,
-    packed_causal_convolution, packed_delta_scan,
-};
-use luminal_cuda_lite::{cudarc::driver::CudaContext, runtime::CudaRuntime};
 use orbitkv::{
     AttentionStatePlanInput, AttentionStateSpec, AttentionStateStorage, CacheSharingPolicy,
     EngineAppendIntent, EngineCompletionEvidence, EnginePublicationEvidence, EngineReleaseEvidence,
@@ -21,6 +11,16 @@ use orbitkv::{
     kv_manager::{BackendArenaRegistration, CanonicalKvManager, ManagerConfig},
     plan::RetentionKind,
 };
+use orbitkv_compiler::{
+    dtype::DType,
+    op::Runtime,
+    prelude::{CompileOptions, Expression, Graph, ToId},
+};
+use orbitkv_cuda::kernel::sequence_state::{
+    PackedConvolutionPlan, PackedConvolutionSpec, PackedDeltaScanPlan, PackedDeltaScanSpec,
+    packed_causal_convolution, packed_delta_scan,
+};
+use orbitkv_cuda::{cudarc::driver::CudaContext, runtime::CudaRuntime};
 use orbitkv_executor::{
     ExecutorArena, ExecutorPlan, FixedStateDeviceArenas, FixedStateDeviceBatch,
     FixedStateExecutionEvidence, FixedStateGraphBinding, FixedStateWritePolicy, GatedDeltaGeometry,
@@ -42,8 +42,8 @@ struct RecurrentExecution {
     runtime: CudaRuntime,
     binding: orbitkv_executor::FixedStateRuntimeBinding,
     graph_binding: FixedStateGraphBinding,
-    inputs: [luminal::prelude::GraphTensor; 5],
-    value_output: luminal::prelude::GraphTensor,
+    inputs: [orbitkv_compiler::prelude::GraphTensor; 5],
+    value_output: orbitkv_compiler::prelude::GraphTensor,
 }
 
 fn state_input() -> AttentionStatePlanInput {
@@ -241,7 +241,7 @@ fn execute_step(
 fn recurrent_execution(
     control: &TestControlPlane,
     state_arenas: &FixedStateDeviceArenas,
-    stream: std::sync::Arc<luminal_cuda_lite::cudarc::driver::CudaStream>,
+    stream: std::sync::Arc<orbitkv_cuda::cudarc::driver::CudaStream>,
 ) -> RecurrentExecution {
     let registration = control
         .executor_plan
@@ -303,7 +303,7 @@ fn recurrent_execution(
             graph_binding,
             FixedStateWritePolicy::RequiredInPlace,
         )
-        .expect("bind OrbitKV arena to Luminal");
+        .expect("bind OrbitKV arena to OrbitKV");
     drop(compile_scratch);
     seed_recurrent_inputs(&mut runtime, &inputs);
     RecurrentExecution {
@@ -316,7 +316,10 @@ fn recurrent_execution(
     }
 }
 
-fn seed_recurrent_inputs(runtime: &mut CudaRuntime, inputs: &[luminal::prelude::GraphTensor; 5]) {
+fn seed_recurrent_inputs(
+    runtime: &mut CudaRuntime,
+    inputs: &[orbitkv_compiler::prelude::GraphTensor; 5],
+) {
     runtime.set_data(inputs[0], vec![1.0_f32, 0.0, 0.0, 0.0]);
     runtime.set_data(inputs[1], vec![1.0_f32, 0.0, 0.0, 0.0]);
     runtime.set_data(inputs[2], vec![4.0_f32, 3.0, 2.0, 1.0]);
@@ -482,7 +485,7 @@ fn packed_state_kernels_match_ragged_sequence_references_on_h20() {
 #[allow(clippy::too_many_arguments)]
 fn set_packed_inputs(
     runtime: &mut CudaRuntime,
-    tensors: &[luminal::prelude::GraphTensor; 7],
+    tensors: &[orbitkv_compiler::prelude::GraphTensor; 7],
     input: &[bf16],
     weights: &[bf16],
     history: &[bf16],

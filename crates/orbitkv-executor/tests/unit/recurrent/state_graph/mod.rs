@@ -1,6 +1,6 @@
-use luminal::prelude::{CompileOptions, ReferenceRuntime, Runtime};
-use luminal_cuda_lite::runtime::CudaRuntime;
 use orbitkv::RecurrentFamily;
+use orbitkv_compiler::prelude::{CompileOptions, ReferenceRuntime, Runtime};
+use orbitkv_cuda::runtime::CudaRuntime;
 
 use super::*;
 

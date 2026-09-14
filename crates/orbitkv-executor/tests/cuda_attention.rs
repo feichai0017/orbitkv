@@ -1,8 +1,6 @@
 #![cfg(feature = "cuda")]
 #![forbid(unsafe_code)]
 
-use luminal::prelude::*;
-use luminal_cuda_lite::runtime::CudaRuntime;
 use orbitkv::{
     AttentionStatePlanInput, AttentionStateSpec, AttentionStateStorage, CacheSharingPolicy,
     EngineAppendIntent, EngineCompletionEvidence, EnginePublicationEvidence, EngineRequestId,
@@ -10,6 +8,8 @@ use orbitkv::{
     kv_manager::{BackendArenaRegistration, CanonicalKvManager, ManagerConfig},
     plan::RetentionKind,
 };
+use orbitkv_compiler::prelude::*;
+use orbitkv_cuda::runtime::CudaRuntime;
 use orbitkv_executor::{
     AttentionBatch, ExecutorArena, ExecutorPlan, PreparedBatch,
     cuda::{AttentionGeometry, PagedAttentionInputs, PagedAttentionMetadata, paged_attention},

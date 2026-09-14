@@ -1,17 +1,17 @@
-//! Configuration-driven decoder graph using OrbitKV-managed paged attention.
+//! Configuration-driven decoder graph using `OrbitKV`-managed paged attention.
 
 use std::collections::BTreeSet;
 
-use luminal::{
+use orbitkv_compiler::{
     dtype::DType,
     op::Runtime,
     prelude::{Expression, Graph, GraphTensor, Symbol, sym},
     shape::ToShape,
 };
-use luminal_nn::ops::linear::{BlockScaledLinearSpec, block_scaled_linear};
+use orbitkv_ops::ops::linear::{BlockScaledLinearSpec, block_scaled_linear};
 use thiserror::Error;
 
-use luminal_cuda_lite::{
+use orbitkv_cuda::{
     cudarc::driver::CudaSlice,
     runtime::{CapturedCudaExecution, CudaRuntime},
 };
@@ -70,7 +70,7 @@ pub enum DecoderError {
     #[error(transparent)]
     Executor(#[from] crate::ExecutorError),
     #[error(transparent)]
-    Device(#[from] luminal_cuda_lite::cudarc::driver::DriverError),
+    Device(#[from] orbitkv_cuda::cudarc::driver::DriverError),
     #[error(transparent)]
     Recurrent(#[from] crate::RecurrentError),
     #[error(transparent)]
@@ -221,7 +221,7 @@ struct DecoderCompilation {
     runtime: CudaRuntime,
     persistent_cache: Vec<CudaSlice<u8>>,
     fixed_state_scratch: Vec<CudaSlice<u8>>,
-    options: luminal::prelude::CompileOptions,
+    options: orbitkv_compiler::prelude::CompileOptions,
     identity: String,
     page_tokens: usize,
 }
@@ -901,7 +901,7 @@ impl CompiledDecoder {
     }
 
     /// Whether every selected bucket writes directly into the persistent K/V
-    /// arena. `false` means Luminal selected a materializing update followed by
+    /// arena. `false` means `OrbitKV` selected a materializing update followed by
     /// the registered device-to-device copy back into the same stable arena.
     #[must_use]
     pub const fn cache_updates_in_place(&self) -> bool {

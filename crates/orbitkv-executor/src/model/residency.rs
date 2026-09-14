@@ -1,7 +1,7 @@
 //! Deployment graph residency; independent of the selected computation and
 //! artifact identity. Compiled kernels and state arenas retain their owners.
 
-// Luminal symbols are stable interned dimension identities.
+// OrbitKV symbols are stable interned dimension identities.
 #![allow(clippy::mutable_key_type)]
 
 use std::{
@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use luminal::prelude::{DynMap, tracing};
+use orbitkv_compiler::prelude::{DynMap, tracing};
 use serde::Serialize;
 
 use super::{CompiledDecoder, DecoderError, representative::RepresentativeInputs};
@@ -63,7 +63,7 @@ impl CompiledDecoder {
     /// resource errors. A failed preparation must not publish engine readiness.
     pub fn prepare_execution(&mut self) -> Result<DecoderPreparationReport, DecoderError> {
         let _stage =
-            tracing::info_span!(target: "luminal::stage", "orbitkv.decoder.prepare_execution")
+            tracing::info_span!(target: "orbitkv::stage", "orbitkv.decoder.prepare_execution")
                 .entered();
         let started = Instant::now();
         let schedule = self
@@ -95,7 +95,7 @@ impl CompiledDecoder {
         let mut buckets = Vec::with_capacity(order.len());
         for bucket_index in order {
             let dims = &representatives[bucket_index];
-            let _bucket = tracing::info_span!(target: "luminal::stage", "orbitkv.decoder.prepare_bucket", bucket = bucket_index).entered();
+            let _bucket = tracing::info_span!(target: "orbitkv::stage", "orbitkv.decoder.prepare_bucket", bucket = bucket_index).entered();
             let bucket_started = Instant::now();
             let before = self.graph_cache_stats();
             for (input, values) in inputs.values(dims) {
@@ -138,7 +138,7 @@ impl CompiledDecoder {
     }
 
     /// Full builds and current residency; surgical provider recaptures are
-    /// reported separately by Luminal's per-operation diagnostics.
+    /// reported separately by `OrbitKV`'s per-operation diagnostics.
     #[must_use]
     pub fn graph_cache_stats(&self) -> DecoderGraphCacheStats {
         let (graph_builds, materialized_graphs) = self.runtime.cuda_graph_residency_stats();

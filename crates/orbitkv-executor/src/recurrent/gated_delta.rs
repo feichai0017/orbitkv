@@ -1,6 +1,6 @@
 //! Gated-delta semantics after input projection and causal convolution.
 
-use luminal::{
+use orbitkv_compiler::{
     dtype::DType,
     prelude::{Expression, GraphTensor},
 };

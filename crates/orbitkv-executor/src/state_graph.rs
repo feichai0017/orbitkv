@@ -2,11 +2,11 @@
 
 use std::collections::BTreeMap;
 
-use luminal::{
+use orbitkv_compiler::{
     dtype::DType,
     prelude::{Expression, Graph, GraphTensor},
 };
-use luminal_cuda_lite::{cudarc::driver::CudaSlice, runtime::CudaRuntime};
+use orbitkv_cuda::{cudarc::driver::CudaSlice, runtime::CudaRuntime};
 use thiserror::Error;
 
 use crate::{FixedStateArenaRegistration, FixedStateDeviceBatch, FixedStateWritePolicy};

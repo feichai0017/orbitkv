@@ -1,6 +1,6 @@
-//! Luminal graph views over an OrbitKV-owned recurrent-state arena.
+//! `OrbitKV` graph views over an `OrbitKV`-owned recurrent-state arena.
 
-use luminal::prelude::{Expression, Graph, GraphTensor};
+use orbitkv_compiler::prelude::{Expression, Graph, GraphTensor};
 
 use crate::{
     FixedStateArenaRegistration, FixedStateClass, FixedStateGraphBinding, FixedStateStorage,
@@ -45,7 +45,7 @@ impl RecurrentStateGraphArena {
                     bytes_per_layer,
                     slots_per_request,
                     bytes_per_request,
-                    dtype: luminal::dtype::DType::F32,
+                    dtype: orbitkv_compiler::dtype::DType::F32,
                 },
                 registration,
                 batch_size,

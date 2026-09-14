@@ -145,7 +145,7 @@ fn decoder_artifact_identity_covers_plan_arena_and_compile_geometry() {
 
 #[test]
 fn fp8_linear_declares_checkpoint_scale_and_searchable_deepgemm_candidates() {
-    if luminal_cuda_lite::device_compute_major() != 9 {
+    if orbitkv_cuda::device_compute_major() != 9 {
         return;
     }
     let mut config = test_config(1);
@@ -173,7 +173,7 @@ fn fp8_linear_declares_checkpoint_scale_and_searchable_deepgemm_candidates() {
     assert!(graph.input_meta.values().any(|(name, dtype)| {
         name == "model.layers.0.mlp.gate_proj.weight_scale_inv" && *dtype == DType::F32
     }));
-    graph.build_search_space::<CudaRuntime>(luminal::prelude::CompileOptions::default());
+    graph.build_search_space::<CudaRuntime>(orbitkv_compiler::prelude::CompileOptions::default());
     assert!(
         graph
             .egraph()

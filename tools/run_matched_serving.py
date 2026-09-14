@@ -429,12 +429,6 @@ def optional_command_output(command: list[str]) -> str | None:
 
 
 def environment_snapshot(client: tuple[str, ...], dry_run: bool) -> dict[str, Any]:
-    luminal = REPOSITORY_ROOT / "third_party" / "luminal"
-    luminal_commit = None
-    if (luminal / ".git").exists():
-        luminal_commit = optional_command_output(
-            ["git", "-C", str(luminal), "rev-parse", "HEAD"]
-        )
     return {
         "platform": platform.platform(),
         "python": sys.version.splitlines()[0],
@@ -452,7 +446,7 @@ def environment_snapshot(client: tuple[str, ...], dry_run: bool) -> dict[str, An
                 ]
             )
         ),
-        "luminal_commit": luminal_commit,
+        "source_commit": optional_command_output(["git", "rev-parse", "HEAD"]),
     }
 
 

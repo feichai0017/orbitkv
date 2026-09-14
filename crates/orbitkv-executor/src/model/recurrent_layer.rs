@@ -1,6 +1,6 @@
 //! Checkpoint-backed gated-delta graph components.
 
-use luminal::{
+use orbitkv_compiler::{
     dtype::DType,
     prelude::{Expression, Graph, GraphTensor},
 };
@@ -16,7 +16,7 @@ use crate::{
     GatedDeltaGeometry, GatedDeltaProjectedInputs, RecurrentStateGraphArena,
     causal_convolution_step, gated_delta_projected_step,
 };
-use luminal_cuda_lite::kernel::sequence_state::{
+use orbitkv_cuda::kernel::sequence_state::{
     PackedConvolutionPlan, PackedConvolutionSpec, PackedDeltaScanPlan, PackedDeltaScanSpec,
     packed_causal_convolution, packed_delta_scan,
 };

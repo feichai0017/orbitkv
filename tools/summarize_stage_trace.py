@@ -100,7 +100,7 @@ def summarize(path: Path) -> dict:
     for metric in metrics:
         metric_counts[metric["name"]] += 1
     return {
-        "schema": "luminal.stage-summary.v2", "status": "passed", "span_count": len(spans),
+        "schema": "orbitkv.compiler.stage-summary.v2", "status": "passed", "span_count": len(spans),
         "clock": "CPU-side monotonic wall time; no added device synchronization",
         "self_time_rule": "subtract union of direct child intervals on the same thread; other threads may overlap",
         "stages": [{"name": name, **data} for name, data in sorted(totals.items(), key=lambda pair: -pair[1]["self_wall_ns"])],

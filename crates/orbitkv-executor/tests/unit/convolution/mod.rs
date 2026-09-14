@@ -1,6 +1,6 @@
 use super::*;
 #[cfg(feature = "cuda")]
-use luminal::prelude::{DType, Graph, bf16};
+use orbitkv_compiler::prelude::{DType, Graph, bf16};
 
 #[test]
 fn reference_keeps_only_future_visible_history() {
@@ -24,8 +24,8 @@ fn reference_keeps_only_future_visible_history() {
 
 #[cfg(feature = "cuda")]
 #[test]
-fn luminal_step_matches_minimal_history_reference() {
-    use luminal::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
+fn compiler_step_matches_minimal_history_reference() {
+    use orbitkv_compiler::prelude::{CompileOptions, Graph, ReferenceRuntime, Runtime};
 
     let geometry = CausalConvolutionGeometry {
         channels: 2,
@@ -69,7 +69,7 @@ fn luminal_step_matches_minimal_history_reference() {
 #[cfg(feature = "cuda")]
 #[test]
 fn convolution_arena_uses_bf16_minimal_history_and_manifest_order() {
-    use luminal::prelude::{CompileOptions, ReferenceRuntime, Runtime};
+    use orbitkv_compiler::prelude::{CompileOptions, ReferenceRuntime, Runtime};
 
     let class = crate::FixedStateClass {
         state_id: 5,
@@ -122,8 +122,8 @@ fn convolution_arena_uses_bf16_minimal_history_and_manifest_order() {
 #[cfg(feature = "cuda")]
 #[test]
 fn convolution_arena_retains_a_materialized_commit_candidate() {
-    use luminal::prelude::CompileOptions;
-    use luminal_cuda_lite::runtime::CudaRuntime;
+    use orbitkv_compiler::prelude::CompileOptions;
+    use orbitkv_cuda::runtime::CudaRuntime;
 
     let class = crate::FixedStateClass {
         state_id: 5,

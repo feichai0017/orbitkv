@@ -1,6 +1,6 @@
 # Search coverage
 
-Luminal generates implementation alternatives in egglog. Core samples complete
+OrbitKV compiler generates implementation alternatives in egglog. Core samples complete
 genomes from those existing equivalence classes; the CUDA runtime checks their
 resource contracts, prepares them and measures executable graphs on the GPU.
 Deployment-mode measurement chooses among retained finalists. Neither sampling
@@ -119,7 +119,7 @@ materializing implementations, and mutation-order checks remain mandatory.
 
 ## Verification and use
 
-Host regressions under Luminal's `tests/unit/egglog` and `tests/unit/search`
+Host regressions under OrbitKV compiler's `tests/unit/egglog` and `tests/unit/search`
 exercise map reallocation, alternative ordering, cycle repair, per-class
 coverage and finite exploration when genomes produce duplicate programs.
 The CUDA integration test `search_coverage` saturates each small BF16 matrix
@@ -130,8 +130,8 @@ Selected outputs are compared with independent CPU matrix products.
 On a configured CUDA machine:
 
 ```sh
-cargo test --release --manifest-path third_party/luminal/Cargo.toml \
-  -p luminal_cuda_lite --test search_coverage -- --ignored
+cargo test --release \
+  -p orbitkv-cuda --test search_coverage -- --ignored
 ```
 
 [search-coverage.json](../benchmarks/search-coverage.json) supplies a bounded
@@ -163,8 +163,8 @@ Core regressions cover fixed-feedback replay, unaffected bindings, rejected
 parent feedback, finite neighbors, shared-region cost and loop provenance.
 
 ```sh
-cargo test --release --manifest-path third_party/luminal/Cargo.toml \
-  -p luminal_cuda_lite --test hotspot_search -- --ignored
+cargo test --release \
+  -p orbitkv-cuda --test hotspot_search -- --ignored
 ```
 
 The [hotspot qualification](../results/hotspot-search-20260914/README.md) records

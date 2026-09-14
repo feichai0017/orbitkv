@@ -81,12 +81,12 @@ python tools/logit_probe.py compare \
 
 ## 并列值的语义
 
-Luminal 当前 `argmax` 和 `argmin` 在有限输入的并列极值中取**最大 index**；
+OrbitKV compiler 当前 `argmax` 和 `argmin` 在有限输入的并列极值中取**最大 index**；
 CUDA 融合实现保留这个规则。PyTorch argmax 取最小 index。
 报告中的 `argmax_equal` 是从导出的 logits 计算、统一采用最小 token ID 的比较，
 必须结合 `first_selected_token_difference` 读取，不能用它代替运行时实际输出。
 `highest_token_id_argmax_equal` 和 `candidate_selected_matches_highest_maximum_token_id`
-则直接检查 Luminal 的规则。
+则直接检查 OrbitKV compiler 的规则。
 
 参考与候选之间的数值变化可能制造或打破并列值。只有实际保存的 logits
 才能区分这种情况和选 token 实现错误；不能因文本差异较小就称为可接受误差。

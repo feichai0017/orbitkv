@@ -10,7 +10,7 @@ use crate::{
 /// Backend-neutral persistent-state facts derived from one validated manifest.
 ///
 /// These facts are the stable boundary for compiler backends. They describe
-/// semantic and physical choices without exposing Luminal, egglog, CUDA, or
+/// semantic and physical choices without exposing compiler internals, egglog, CUDA, or
 /// device-pointer types. Dynamic facts such as current Prefix ownership and
 /// physical contiguity are intentionally supplied by the runtime binding layer.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]

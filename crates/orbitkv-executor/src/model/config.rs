@@ -94,7 +94,7 @@ impl DecoderConfig {
     pub(super) fn require_executable(&self) -> Result<(), DecoderError> {
         if matches!(
             self.weight_format,
-            DecoderWeightFormat::Fp8E4M3Block { rows, columns } if rows != luminal_nn::ops::linear::FP8_SCALE_BLOCK || columns != luminal_nn::ops::linear::FP8_SCALE_BLOCK
+            DecoderWeightFormat::Fp8E4M3Block { rows, columns } if rows != orbitkv_ops::ops::linear::FP8_SCALE_BLOCK || columns != orbitkv_ops::ops::linear::FP8_SCALE_BLOCK
         ) {
             return Err(DecoderError::UnsupportedExecution(
                 "non-128x128 block-scaled weight execution",

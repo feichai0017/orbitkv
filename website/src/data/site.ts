@@ -21,10 +21,34 @@ export const layers = [
     path: "crates/orbitkv/README.md",
   },
   {
+    name: "orbitkv-compiler",
+    role: "Explore equivalent programs.",
+    detail: "Build symbolic tensor graphs and legal implementation search spaces.",
+    path: "crates/orbitkv-compiler/README.md",
+  },
+  {
+    name: "orbitkv-ops",
+    role: "Describe the computation.",
+    detail: "Express inference semantics independently of CUDA providers.",
+    path: "crates/orbitkv-ops/README.md",
+  },
+  {
+    name: "orbitkv-cuda",
+    role: "Measure and execute.",
+    detail: "Compile kernels, compare legal candidates on the GPU, and execute selected programs.",
+    path: "crates/orbitkv-cuda/README.md",
+  },
+  {
+    name: "orbitkv-tracing",
+    role: "Make costs visible.",
+    detail: "Record compiler stages, search decisions, and execution measurements.",
+    path: "crates/orbitkv-tracing/README.md",
+  },
+  {
     name: "orbitkv-executor",
     role: "Compile the work.",
     detail:
-      "Import model graphs, bind state to Luminal, profile CUDA candidates, and save execution artifacts.",
+      "Import model graphs, bind state arenas, profile CUDA candidates, and save execution artifacts.",
     path: "crates/orbitkv-executor/README.md",
   },
   {
@@ -57,10 +81,10 @@ export const evidenceHighlights = [
     detail: "Qwen3.8 block-FP8 on NVIDIA H20.",
   },
   {
-    value: "296",
-    label: "Logit comparisons",
+    value: "144",
+    label: "Final-binary comparisons",
     detail:
-      "Full vocabulary at B1 and B8, across search and artifact replay.",
+      "Full vocabulary at B1 and B8 after workspace integration.",
   },
   {
     value: "7",
@@ -71,7 +95,7 @@ export const evidenceHighlights = [
 
 export const docs = [
   { name: "System architecture", path: "docs/architecture.md" },
-  { name: "Luminal compiler", path: "docs/luminal-design.md" },
+  { name: "Model compiler", path: "docs/compiler.md" },
   { name: "State lifecycle", path: "docs/runtime-session.md" },
   { name: "Execution artifacts", path: "docs/module-artifacts.md" },
   { name: "Joint compilation", path: "docs/joint-compilation.md" },
@@ -80,6 +104,12 @@ export const docs = [
 ];
 
 export const records = [
+  {
+    date: "2026-09-14",
+    name: "Integrated compiler workspace",
+    detail: "Seven owned crates. The final binary passes 144 B1/B8 reference comparisons and state drains.",
+    path: "results/workspace-integration-20260914/README.md",
+  },
   {
     date: "2026-09-14",
     name: "State checks before CUDA compilation",

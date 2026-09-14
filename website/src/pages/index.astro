@@ -5,7 +5,6 @@ import { layers, localUrl, sourceUrl } from "../data/site";
 
 const quickstart = [
   "# From a checkout of OrbitKV",
-  "git submodule update --init --recursive",
   "cargo test --locked --all-targets",
 ].join("\n");
 ---
@@ -13,7 +12,7 @@ const quickstart = [
 <SiteLayout active="Overview">
   <section class="hero container" aria-labelledby="hero-title">
     <div class="hero-copy">
-      <p class="eyebrow">State compiler / native inference</p>
+      <p class="eyebrow">Compiled inference in Rust</p>
       <h1 id="hero-title">
         Compile
         <br />
@@ -22,8 +21,8 @@ const quickstart = [
         <span class="highlight">of state.</span>
       </h1>
       <p class="hero-description">
-        OrbitKV plans what the model keeps. <br />
-        Luminal compiles the work that uses it.
+        Plan the model's state. <br />
+        Compile and measure the work that uses it.
       </p>
       <div class="hero-actions">
         <a class="button primary" href={localUrl("/docs/")}>
@@ -41,7 +40,7 @@ const quickstart = [
       <div>
         <p class="eyebrow">01 / The system</p>
         <h2 id="stack-title">
-          Three crates.
+          One workspace.
           <br />
           One process.
         </h2>

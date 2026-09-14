@@ -11,9 +11,9 @@ have been removed.
 
 | Owner | Contract |
 | --- | --- |
-| NN `AttentionSpec` | Query/KV head counts, independent QK and value dimensions, dtype, explicit scale and logical visibility |
-| NN `AttentionInputs` | Packed queries, query segmentation and a typed KV view |
-| NN `KvView::Paged` | Separate K/V allocations, page size, NHD/HND element order, page traversal metadata and external state class |
+| `orbitkv-ops` `AttentionSpec` | Query/KV head counts, independent QK and value dimensions, dtype, explicit scale and logical visibility |
+| `orbitkv-ops` `AttentionInputs` | Packed queries, query segmentation and a typed KV view |
+| `orbitkv-ops` `KvView::Paged` | Separate K/V allocations, page size, NHD/HND element order, page traversal metadata and external state class |
 | CUDA `AttentionProviderCapabilities` | Admitted target families and complete dtype/dimension/layout/phase/page/algorithm combinations |
 | Provider `HostOp` | Native preparation, launch ABI, captured resources, workspace ownership and output layout |
 | OrbitKV | Page identities, CSR contents, visibility, state updates, generations, completion, publication and retirement |
@@ -94,16 +94,16 @@ integration does not claim their coverage or a whole-model speedup.
 Prepare sources explicitly before compilation:
 
 ```sh
-cargo run --manifest-path third_party/luminal/Cargo.toml -p luminal_cuda_lite --bin fetch-provider -- flashattention
+cargo run -p orbitkv-cuda --bin fetch-provider -- flashattention
 ```
 
-Alternatively set `LUMINAL_FLASHATTENTION_DIR` to a complete checkout with its
+Alternatively set `ORBITKV_FLASHATTENTION_DIR` to a complete checkout with its
 pinned CUTLASS dependency. Model compilation performs no network fetch.
-`LUMINAL_FLASHATTENTION_CACHE_DIR` overrides the native-library cache. Source,
+`ORBITKV_FLASHATTENTION_CACHE_DIR` overrides the native-library cache. Source,
 wrapper and ABI content determine provider identity; compiler/flags determine
 additional native-library cache identity, following the common provider policy.
 
-Decoder artifact schema 10 retains request-count expressions in the FlashInfer
+Decoder artifact schema 11 retains request-count expressions in the FlashInfer
 operator ABI. Schema 9 and older artifacts require fresh search. Historical qualification directories remain immutable.
 External `.so` libraries are cached separately from generated CUDA module images.
 

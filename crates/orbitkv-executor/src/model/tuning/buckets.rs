@@ -1,9 +1,9 @@
 //! Feasible joint shape representatives for packed decoder requests.
 
-// Luminal symbols are stable interned dimension identities.
+// OrbitKV symbols are stable interned dimension identities.
 #![allow(clippy::mutable_key_type)]
 
-use luminal::prelude::{CompileOptions, DimBucket, DynMap, Symbol};
+use orbitkv_compiler::prelude::{CompileOptions, DimBucket, DynMap, Symbol};
 
 use super::{
     DecoderCompileConfig, DecoderTuningProfile, FIRST_MULTI_TOKEN_QUERY, SINGLE_QUERY_TOKEN,
@@ -111,7 +111,7 @@ fn feasible_representatives(
     page_tokens: usize,
 ) -> Result<Vec<DynMap>, DecoderError> {
     let mut representatives = Vec::new();
-    for indices in luminal::search::bucket_index_combinations(&options.dim_buckets) {
+    for indices in orbitkv_compiler::search::bucket_index_combinations(&options.dim_buckets) {
         let bucket = |dim| &options.dim_buckets[&dim][indices[&dim]];
         let sb = bucket(Symbol::from('s'));
         let bb = bucket(Symbol::from('b'));

@@ -49,8 +49,8 @@ fn plan_and_arenas() -> (ExecutorPlan, [ExecutorArena; 2]) {
 #[test]
 fn lowers_manifest_and_arena_contract_to_deterministic_facts() {
     let (plan, arenas) = plan_and_arenas();
-    let facts = plan.luminal_compiler_facts(&arenas).unwrap();
-    let repeated = plan.luminal_compiler_facts(&arenas).unwrap();
+    let facts = plan.compiler_facts(&arenas).unwrap();
+    let repeated = plan.compiler_facts(&arenas).unwrap();
     assert_eq!(facts.digest(), repeated.digest());
     assert_eq!(facts.manifest_fingerprint(), plan.manifest_fingerprint);
     assert_eq!(facts.classes().len(), 2);
@@ -72,14 +72,14 @@ fn rejects_reordered_or_overflowing_arena_bindings() {
     let (plan, mut arenas) = plan_and_arenas();
     arenas.swap(0, 1);
     assert!(matches!(
-        plan.luminal_compiler_facts(&arenas),
+        plan.compiler_facts(&arenas),
         Err(ExecutorError::PreparedGeometryMismatch)
     ));
 
     let (plan, mut arenas) = plan_and_arenas();
     arenas[0].backend_base_index = u64::MAX;
     assert!(matches!(
-        plan.luminal_compiler_facts(&arenas),
+        plan.compiler_facts(&arenas),
         Err(ExecutorError::CompilerFactsMismatch)
     ));
 }
@@ -122,7 +122,7 @@ fn lowers_fixed_state_geometry_alongside_token_arenas() {
         page_count: 8,
         backend_base_index: 0,
     }];
-    let facts = plan.luminal_compiler_facts(&arenas).unwrap();
+    let facts = plan.compiler_facts(&arenas).unwrap();
     assert_eq!(facts.classes().len(), 1);
     assert_eq!(facts.fixed_states().len(), 1);
     assert_eq!(facts.fixed_states()[0].state_id, 1);

@@ -5,11 +5,11 @@
 //! by the KV manager. Startup may use these descriptors to prepare graphs, but
 //! must never execute the model against manager-owned state with them.
 
-// Luminal symbols are stable interned dimension identities.
+// OrbitKV symbols are stable interned dimension identities.
 #![allow(clippy::mutable_key_type)]
 
-use luminal::prelude::{DynMap, NodeIndex, Symbol};
-use luminal_cuda_lite::runtime::CudaRuntime;
+use orbitkv_compiler::prelude::{DynMap, NodeIndex, Symbol};
+use orbitkv_cuda::runtime::CudaRuntime;
 
 use super::DecoderCompileConfig;
 

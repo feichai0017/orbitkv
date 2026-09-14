@@ -1,5 +1,11 @@
 # Roadmap
 
+The model compiler is now integrated as four owned OrbitKV crates in the root
+workspace. The [migration qualification](../results/workspace-integration-20260914/README.md)
+records source identities, B1/B8 replay, numeric parity and state drains.
+See [compiler maintenance](compiler-maintenance.md) for the package/namespace
+change and artifact regeneration requirements.
+
 The checkpoint/semantic boundary and inference-only fork reduction are implemented;
 see [checkpoint import](checkpoint-import.md) and its
 [qualification](../results/semantic-boundaries-20260914/README.md). Logical attention,
@@ -29,7 +35,7 @@ search ablation or a serving claim. The `glumoe` counters still total 358.31 s.
 Additional KV representations and joint state/layout competition remain open.
 
 OrbitKV targets one native Rust inference process. `orbitkv` compiles and owns
-attention-state lifetimes, the Luminal fork compiles and executes model graphs,
+attention-state lifetimes, the OrbitKV compiler compiles and executes model graphs,
 `orbitkv-engine` combines request/device coordination and the optional client
 frontend behind separate internal modules. Planned work is not a current capability.
 
@@ -58,7 +64,7 @@ smaller architecture witnesses, hardware blockers and acceptance gates.
 - Persistent K/V updates are required aliases during search and artifact load.
   Candidates that materialize incompatible state fail closed.
 - Recurrent and convolution classes now have stable per-class CUDA arenas,
-  generation-checked byte-range lowering, typed Luminal state bindings, and
+  generation-checked byte-range lowering, typed OrbitKV compiler state bindings, and
   runtime-identity- and event-gated completion evidence. Dynamic slot metadata
   selects manager-authored destinations while the arena address stays fixed;
   graph search uses a private scratch arena and cannot mutate live OrbitKV
@@ -70,8 +76,8 @@ smaller architecture witnesses, hardware blockers and acceptance gates.
   optional SM90 FlashAttention-3 adapter. The handwritten native attention
   implementation and experimental attention flag have been removed.
 - DeepGEMM, FlashInfer and FlashAttention use one pinned provider-source policy:
-  explicit local checkout or explicit prefetch into Luminal's provider cache.
-  Model compilation performs no network fetch. Decoder schema 10 binds explicit
+  explicit local checkout or explicit prefetch into OrbitKV compiler's provider cache.
+  Model compilation performs no network fetch. Decoder schema 11 binds explicit
   request geometry through provider lowering; older artifacts require fresh search.
 - Released H20 closures exist for a dense Full checkpoint, an interleaved
   Full+Sliding checkpoint, and bounded text-only Qwen3.8-27B-FP8 execution with
@@ -110,7 +116,7 @@ plus 48 recurrent and convolution layers. The executor now parses the nested
   convolution history, grouped-head recurrence, gating, normalization, output
   projection, stable manager-owned arenas, and completion evidence. Packed
   prefill now uses typed causal-convolution and delta-scan custom ops selected
-  through Luminal's normal rewrite/search path. Checkpoint FP8 execution,
+  through OrbitKV compiler's normal rewrite/search path. Checkpoint FP8 execution,
   bounded serving, and eight-step independent logit parity now pass; robust
   near-tie output equivalence and serving-scale qualification remain explicit
   gaps.
@@ -159,7 +165,7 @@ correctness and serving qualification gates:
    Each new implementation must pass independent numeric and next-state parity,
    strict artifact replay, and a complete warm-path comparison.
 3. **Joint state-realization search.** Let the executor coordinate a small set
-   of explicitly supported OrbitKV physical realizations with Luminal algorithm,
+   of explicitly supported OrbitKV physical realizations with OrbitKV compiler algorithm,
    provider, and kernel choices. Start with the admitted page-16 contract.
    Changing a persistent layout requires a newly validated manifest and matching
    bindings/artifact; prefill and decode must share a compatible state ABI or
@@ -209,7 +215,7 @@ throughput rises only 1.82%, TPOT falls 5.82%, TTFT rises 8.26%, and two of eigh
 generated texts differ. The on-mode decode changes its LM-head provider but
 does not select a quantizer with multiple consumers. Keep the option off by
 default. The subsequent frozen-v3 teacher-forced probe localizes both first
-divergences to tied OFF logits and Luminal's existing highest-index argmax rule;
+divergences to tied OFF logits and OrbitKV compiler's existing highest-index argmax rule;
 ON has unique maxima at those steps and matches the independent reference.
 This explains the observed sampling decisions, not the numerical error of each
 internal operator. Keep numerical tolerance and sampling tie semantics explicit;
@@ -408,10 +414,10 @@ optimality or guarantee that a megakernel beats a mixed execution plan.
    completion, and ragged packed-kernel parity gates as regression prerequisites
    for all recurrent/convolution kernels.
 2. The backend-neutral gated-delta recurrence now has an independent f32 oracle,
-   grouped key/value heads, and a pure Luminal single-token graph. Projection,
+   grouped key/value heads, and a pure OrbitKV compiler single-token graph. Projection,
    minimal `K-1` causal-convolution history, gates, recurrent update, gated
    RMSNorm, and output projection compose without model-name dispatch. The
-   first Luminal-native in-place state-update candidate exists and is
+   first OrbitKV compiler-native in-place state-update candidate exists and is
    introduced only by an exact rank-four egglog match. A generic graph arena
    gathers and commits manager-selected request slots in manifest layer order,
    while initialization copies the prior published slot before execution.
@@ -430,7 +436,7 @@ optimality or guarantee that a megakernel beats a mixed execution plan.
 4. Preserve the implemented partial RoPE and nested text-checkpoint loading
    contracts, and continue rejecting unimplemented image/video inputs.
 5. Landed the first block-FP8 execution slice: the decoder now declares FP8
-   projection weights and their 128x128 inverse scales, while Luminal exposes a
+   projection weights and their 128x128 inverse scales, while OrbitKV compiler exposes a
    provider-neutral `BlockScaledLinear` semantic op. An independent CUDA
    reference implementation and four pinned DeepGEMM schedules join
    the same e-class and are selected by device profiling. Full-graph search now
@@ -460,7 +466,7 @@ Maintain these regression gates when expanding coverage:
    metadata and physical geometry in an explicit `KvView`.
 2. Admit complete dtype, head-dimension, layout, phase, page-size and target
    combinations through provider capabilities.
-3. Express matching and selection through egglog and measured Luminal search.
+3. Express matching and selection through egglog and measured OrbitKV compiler search.
    Model-name, release-name and GPU-product-name dispatch do not belong here.
 4. Preserve required K/V aliases and account for metadata conversion, scheduler
    launches, workspace and retained graph owners. Persist provider identity.

@@ -1,7 +1,7 @@
 # CUDA weight loading
 
 The executor validates checkpoint names, shapes and model semantics before
-building its graph. Luminal owns storage decoding and upload for the graph's
+building its graph. OrbitKV compiler owns storage decoding and upload for the graph's
 named inputs. This boundary depends on source and destination dtypes; checkpoint
 names, layer counts and model families do not select an upload implementation.
 

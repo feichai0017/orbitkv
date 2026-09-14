@@ -34,17 +34,17 @@ for qualified model paths.
 
 ## Operation ownership
 
-`luminal_nn::ops::attention` owns logical scaled dot-product attention and explicit
+`orbitkv_ops::ops::attention` owns logical scaled dot-product attention and explicit
 KV-view contracts. Computation and storage facts are separate. Its scale is explicit, positive and finite; the
-frontend resolves default scaling rather than passing a zero sentinel. `luminal_nn::ops::linear` owns block-scaled FP8 linear
+frontend resolves default scaling rather than passing a zero sentinel. `orbitkv_ops::ops::linear` owns block-scaled FP8 linear
 arithmetic, including 128-element activation tiles, the scale floor, rounding,
 weight scaling and accumulation/output dtypes. The 128 tile is part of this
 numerical contract, not a device tuning preference. A different quantization
 policy requires explicit semantics and matching rewrite guards.
 
-Luminal core represents an unlowered custom operation distinctly from executable
+OrbitKV compiler core represents an unlowered custom operation distinctly from executable
 dialects. Extraction rejects it before profiling if no implementation exists.
-CUDA providers supply equivalent implementations through egglog; NN has no CUDA
+CUDA providers supply equivalent implementations through egglog; `orbitkv-ops` has no CUDA
 or provider dependency. Capability rules admit FlashInfer algorithms and optional FlashAttention-3
 for the supported paged combinations. DeepGEMM variants and optional shared quantization
 remain alternatives for FP8 linear. The portable CUDA FP8 oracle is only built
@@ -62,7 +62,7 @@ semantics; a new kernel requires a semantic contract, guarded egglog equivalence
 resource/launch ownership and an independent numerical gate. No Rust LLIR
 pattern-rewriting pass is used.
 
-Decoder artifact schema 10 retains explicit attention algorithms and request-count
+Decoder artifact schema 11 retains explicit attention algorithms and request-count
 expressions through provider lowering. Schema 9 and earlier artifacts require fresh search. CUDA module integrity, target and
 compiler checks still apply; historical qualification records retain the schema
 and source identities they actually measured.
