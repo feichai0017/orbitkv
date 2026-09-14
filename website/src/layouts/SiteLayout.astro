@@ -1,11 +1,5 @@
 ---
-import {
-  author,
-  localUrl,
-  navigation,
-  repositoryUrl,
-  sourceUrl,
-} from "../data/site";
+import { localUrl, navigation, repositoryUrl, sourceUrl } from "../data/site";
 import "../styles/global.css";
 
 interface Props {
@@ -16,7 +10,7 @@ interface Props {
 
 const {
   title = "OrbitKV — Compile the lifetime of state",
-  description = "An attention-state compiler and native Rust inference stack. OrbitKV plans state lifetimes; Luminal searches and executes model graphs on CUDA.",
+  description = "An attention-state compiler and native Rust inference stack. State ownership by OrbitKV. Measured CUDA compilation by Luminal.",
   active = "",
 } = Astro.props;
 const canonical = new URL(Astro.url.pathname, Astro.site);
@@ -29,7 +23,6 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <meta name="viewport" content="width=device-width" />
     <meta name="generator" content={Astro.generator} />
     <meta name="description" content={description} />
-    <meta name="author" content={author.name} />
     <meta name="theme-color" content="#f6f5f0" />
     <link rel="icon" type="image/svg+xml" href={localUrl("/favicon.svg")} />
     <link rel="canonical" href={canonical} />
@@ -47,68 +40,47 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     <a class="skip-link" href="#content">
       Skip to content
     </a>
-    <div class="site-shell">
-      <header class="site-header">
-        <a class="brand" href={localUrl("/")} aria-label="OrbitKV home">
-          <img src={localUrl("/favicon.svg")} width="34" height="34" alt="" />
-          <span>
-            Orbit<span class="brand-kv">KV</span>
-          </span>
-        </a>
-        <nav aria-label="Primary navigation">
-          {navigation.map((item) => (
-            <a
-              href={localUrl(item.href)}
-              aria-current={active === item.label ? "page" : undefined}
-            >
-              {item.label}
-            </a>
-          ))}
-        </nav>
-        <a
-          class="source-link"
-          href={repositoryUrl}
-          aria-label="OrbitKV source on GitHub"
-        >
-          <svg
-            viewBox="0 0 24 24"
-            width="18"
-            height="18"
-            fill="currentColor"
-            aria-hidden="true"
+    <header class="site-header container">
+      <a class="brand" href={localUrl("/")} aria-label="OrbitKV home">
+        <img src={localUrl("/favicon.svg")} width="32" height="32" alt="" />
+        <span>ORBITKV</span>
+      </a>
+      <nav aria-label="Primary navigation">
+        {navigation.map((item) => (
+          <a
+            href={localUrl(item.href)}
+            aria-current={active === item.label ? "page" : undefined}
           >
-            <path d="M12 .8a11.2 11.2 0 0 0-3.54 21.83c.56.1.76-.24.76-.54v-2.1c-3.12.68-3.78-1.33-3.78-1.33-.51-1.3-1.25-1.65-1.25-1.65-1.02-.7.08-.69.08-.69 1.13.08 1.72 1.16 1.72 1.16 1 1.72 2.63 1.22 3.27.94.1-.73.4-1.22.71-1.5-2.49-.28-5.11-1.25-5.11-5.54 0-1.22.44-2.22 1.15-3-.12-.28-.5-1.42.11-2.97 0 0 .94-.3 3.08 1.15A10.7 10.7 0 0 1 12 6.19c.95 0 1.9.13 2.8.38 2.13-1.45 3.06-1.15 3.06-1.15.61 1.55.23 2.69.12 2.98.71.77 1.14 1.77 1.14 2.99 0 4.3-2.62 5.25-5.12 5.53.4.35.76 1.03.76 2.08v3.09c0 .3.2.65.77.54A11.2 11.2 0 0 0 12 .8Z" />
-          </svg>
-          <span>GitHub</span>
-          <span aria-hidden="true">↗</span>
-        </a>
-      </header>
-      <main id="content">
-        <slot />
-      </main>
-      <footer class="site-footer">
-        <div>
-          <a class="brand footer-brand" href={localUrl("/")}>
-            Orbit<span class="brand-kv">KV</span>
+            {item.label}
           </a>
-          <p>Compile the lifetime of state.</p>
-        </div>
-        <div class="footer-links">
-          <a href={localUrl("/docs/")}>Architecture</a>
-          <a href={localUrl("/evidence/")}>Evidence</a>
-          <a href={sourceUrl("docs/roadmap.md")}>Roadmap ↗</a>
-          <a href={sourceUrl("LICENSE")}>MIT license ↗</a>
-        </div>
-        <div class="footer-credit">
-          <span>
-            Created by{" "}
-            <a href={author.url} rel="author">
-              {author.name}
-            </a>
-          </span>
-          <span>Built with Rust &amp; Luminal.</span>
-        </div>
-      </footer>
-    </div>
+        ))}
+      </nav>
+      <a
+        class="source-link"
+        href={repositoryUrl}
+        aria-label="OrbitKV source on GitHub"
+      >
+        GitHub <span aria-hidden="true">↗</span>
+      </a>
+    </header>
+    <main id="content" tabindex="-1">
+      <slot />
+    </main>
+    <footer class="site-footer container">
+      <p>
+        ORBITKV <span>Rust. CUDA. Open source.</span>
+      </p>
+      <div class="footer-links">
+        <a href={sourceUrl("docs/roadmap.md")}>
+          Roadmap <span aria-hidden="true">↗</span>
+        </a>
+        <a href={repositoryUrl}>
+          Source <span aria-hidden="true">↗</span>
+        </a>
+        <a href={sourceUrl("LICENSE")}>
+          MIT <span aria-hidden="true">↗</span>
+        </a>
+      </div>
+    </footer>
   </body>
 </html>

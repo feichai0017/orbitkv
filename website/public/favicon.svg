@@ -1,7 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <rect width="64" height="64" rx="16" fill="#203b30"/>
-  <circle cx="32" cy="32" r="17" fill="none" stroke="#f6f5f0" stroke-width="2.5"/>
-  <ellipse cx="32" cy="32" rx="27" ry="10" transform="rotate(-35 32 32)" fill="none" stroke="#f6f5f0" stroke-width="2"/>
-  <circle cx="32" cy="32" r="5" fill="#f6f5f0"/>
-  <circle cx="47" cy="17" r="5" fill="#f08a61" stroke="#203b30" stroke-width="2"/>
+  <title>OrbitKV</title>
+  <rect width="64" height="64" rx="8" fill="#f6f5f0"/>
+  <path d="M18 4H36V18H24L18 24V40L24 46H40L46 40V28H60V46L46 60H18L4 46V18Z" fill="#203b30"/>
+  <path d="M40 4H46L60 18V24H46V22L42 18H40Z" fill="#ab4d29"/>
 </svg>

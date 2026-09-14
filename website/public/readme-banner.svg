@@ -1,28 +1,14 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1200 340" fill="none" role="img" aria-labelledby="title description">
-  <title id="title">OrbitKV — Compile the lifetime of state</title>
-  <desc id="description">An attention-state compiler and native Rust inference stack, created by feichai. An orbital diagram connects state retention, execution, and reuse.</desc>
-  <rect width="1200" height="340" rx="12" fill="#f6f5f0"/>
-  <path d="M0 1H1200M0 339H1200" stroke="#d7dcd2"/>
-  <rect x="44" y="43" width="36" height="36" rx="10" fill="#203b30"/>
-  <circle cx="62" cy="61" r="10" stroke="#f6f5f0" stroke-width="1.5"/>
-  <ellipse cx="62" cy="61" rx="15" ry="6" transform="rotate(-35 62 61)" stroke="#f6f5f0" stroke-width="1.3"/>
-  <circle cx="62" cy="61" r="3" fill="#f6f5f0"/>
-  <circle cx="70" cy="52" r="3" fill="#f08a61"/>
-  <text x="92" y="69" font-family="Arial, Helvetica, sans-serif" font-size="25" font-weight="600" letter-spacing="-1" fill="#202d26">Orbit<tspan font-weight="400">KV</tspan></text>
-  <text x="46" y="150" font-family="Arial, Helvetica, sans-serif" font-size="49" letter-spacing="-2" fill="#202d26">Compile the lifetime of <tspan fill="#ab4d29" font-family="Georgia, serif" font-style="italic">state.</tspan></text>
-  <text x="48" y="198" font-family="Arial, Helvetica, sans-serif" font-size="18" fill="#60695f">An attention-state compiler and native Rust inference stack.</text>
-  <path d="M48 240H653" stroke="#d7dcd2"/>
-  <text x="48" y="277" font-family="Consolas, monospace" font-size="12" letter-spacing="1" fill="#60695f">RUST / LUMINAL / CUDA</text>
-  <text x="560" y="277" font-family="Consolas, monospace" font-size="12" fill="#ab4d29">by feichai</text>
-  <rect x="749" y="25" width="424" height="290" rx="6" fill="#18231f"/>
-  <path d="M749 170H1173M961 25V315" stroke="#3b4b41" stroke-dasharray="3 7"/>
-  <circle cx="961" cy="164" r="92" stroke="#485650"/>
-  <ellipse cx="961" cy="164" rx="175" ry="61" transform="rotate(-27 961 164)" stroke="#8a9b8c"/>
-  <ellipse cx="961" cy="164" rx="154" ry="63" transform="rotate(27 961 164)" stroke="#485650"/>
-  <circle cx="961" cy="164" r="38" fill="#203b30" stroke="#75897c"/>
-  <path d="M947 150h11v11h-11zm17 0h11v11h-11zm-17 17h11v11h-11zm17 0h11v11h-11z" fill="#e9eee7"/>
-  <circle cx="1030" cy="104" r="6" fill="#f08a61"/>
-  <circle cx="829" cy="108" r="5" fill="#b7c7b4"/>
-  <text x="778" y="51" fill="#b0beb3" font-family="Consolas, monospace" font-size="10" letter-spacing="1">ONE STATE OWNER</text>
-  <text x="779" y="291" fill="#b0beb3" font-family="Consolas, monospace" font-size="10" letter-spacing="1">RETAIN → EXECUTE → REUSE</text>
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="224" viewBox="0 0 1200 224" role="img" aria-labelledby="title desc">
+  <title id="title">OrbitKV</title>
+  <desc id="desc">Compile the lifetime of state. A geometric ring with a terracotta segment.</desc>
+  <rect width="1200" height="224" fill="#f6f5f0"/>
+  <g transform="translate(66 60) scale(1.625)">
+    <path d="M18 4H36V18H24L18 24V40L24 46H40L46 40V28H60V46L46 60H18L4 46V18Z" fill="#203b30"/>
+    <path d="M40 4H46L60 18V24H46V22L42 18H40Z" fill="#ab4d29"/>
+  </g>
+  <text x="210" y="125" fill="#203b30" font-family="Arial, Helvetica, sans-serif" font-size="76" font-weight="900" letter-spacing="-4">ORBITKV</text>
+  <text x="214" y="160" fill="#60695f" font-family="Consolas, 'Liberation Mono', monospace" font-size="16" letter-spacing="1">COMPILE THE LIFETIME OF STATE.</text>
+  <path d="M1040 76H1112V148H1040Z" fill="none" stroke="#d7dcd2"/>
+  <path d="M1020 96H1092V168H1020Z" fill="none" stroke="#d7dcd2"/>
+  <path d="M1000 116H1072V188H1000Z" fill="none" stroke="#d7dcd2"/>
 </svg>

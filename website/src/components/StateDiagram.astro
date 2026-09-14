@@ -1,152 +1,62 @@
----
-const pages = [
-  "retired",
-  "retired",
-  "active",
-  "active",
-  "active",
-  "active",
-  "free",
-  "free",
-];
----
-
 <figure class="state-diagram">
-  <div class="diagram-header">
-    <span>ATTENTION → STATE → EXECUTION</span>
-    <span class="diagram-index">FIG. 01</span>
+  <div class="diagram-label">Semantics → state + execution</div>
+  <div class="model-sheet">
+    <span class="diagram-label">Input</span>
+    <strong>Model semantics</strong>
+    <span class="model-rule"></span>
+    <span class="model-rule short"></span>
   </div>
-  <div class="orbit-visual" aria-hidden="true">
-    <svg class="orbit-svg" viewBox="0 0 480 320" fill="none">
-      <defs>
-        <pattern
-          id="orbit-grid"
-          width="24"
-          height="24"
-          patternUnits="userSpaceOnUse"
-        >
-          <circle cx="1" cy="1" r="1" fill="#36413f" />
-        </pattern>
-      </defs>
-      <rect width="480" height="320" fill="url(#orbit-grid)" />
-      <path d="M0 160H480M240 0V320" stroke="#35403c" stroke-dasharray="3 7" />
-      <circle cx="240" cy="160" r="108" stroke="#485650" />
-      <ellipse
-        cx="240"
-        cy="160"
-        rx="193"
-        ry="74"
-        transform="rotate(-28 240 160)"
-        stroke="#72857a"
-      />
-      <ellipse
-        cx="240"
-        cy="160"
-        rx="176"
-        ry="73"
-        transform="rotate(28 240 160)"
-        stroke="#485650"
-      />
-      <path
-        d="M145 109a108 108 0 0 1 195 88"
-        stroke="#f08a61"
-        stroke-width="2"
-      />
-      <circle cx="240" cy="160" r="51" fill="#1d2b26" stroke="#75897c" />
-      <circle
-        cx="240"
-        cy="160"
-        r="41"
-        stroke="#40554a"
-        stroke-dasharray="2 5"
-      />
-      <path
-        d="M225 150h12v12h-12zm18 0h12v12h-12zm-18 18h12v12h-12zm18 0h12v12h-12z"
-        fill="#e9eee7"
-        transform="translate(0 -5)"
-      />
-      <circle
-        cx="145"
-        cy="109"
-        r="7"
-        fill="#f08a61"
-        stroke="#18231f"
-        stroke-width="3"
-      />
-      <circle
-        cx="413"
-        cy="74"
-        r="6"
-        fill="#b7c7b4"
-        stroke="#18231f"
-        stroke-width="3"
-      />
-      <circle
-        cx="126"
-        cy="66"
-        r="5"
-        fill="#7a9383"
-        stroke="#18231f"
-        stroke-width="3"
-      />
-      <path d="M82 218h56M341 252h53M350 63h35" stroke="#94a598" />
-      <text
-        x="43"
-        y="240"
-        fill="#afc0b3"
-        font-family="ui-monospace, monospace"
-        font-size="10"
-        letter-spacing="1"
-      >
-        RETAIN
-      </text>
-      <text
-        x="354"
-        y="272"
-        fill="#afc0b3"
-        font-family="ui-monospace, monospace"
-        font-size="10"
-        letter-spacing="1"
-      >
-        EXECUTE
-      </text>
-      <text
-        x="342"
-        y="50"
-        fill="#efae92"
-        font-family="ui-monospace, monospace"
-        font-size="10"
-        letter-spacing="1"
-      >
-        REUSE
-      </text>
-    </svg>
-    <span class="orbit-center-label">ONE STATE OWNER</span>
-  </div>
-  <div class="memory-view">
-    <div class="memory-label">
-      <span>SLIDING WINDOW / PAGE LIFETIME</span>
-      <span aria-hidden="true">→</span>
+  <svg
+    class="diagram-connector"
+    viewBox="0 0 400 42"
+    fill="none"
+    aria-hidden="true"
+  >
+    <path d="M200 0V20H95V42M200 20H305V42" />
+    <path d="m90 36 5 5 5-5m200 0 5 5 5-5" />
+  </svg>
+  <div class="diagram-branches">
+    <div class="state-sheet">
+      <span class="diagram-label">OrbitKV</span>
+      <strong>
+        STATE
+        <br />
+        PLAN
+      </strong>
+      <span class="diagram-detail">Lifetimes &amp; arenas</span>
+      <div class="page-blocks" aria-hidden="true">
+        <i></i>
+        <i></i>
+        <i></i>
+        <i></i>
+      </div>
     </div>
-    <div class="memory-pages" aria-hidden="true">
-      {pages.map((state, index) => (
-        <span class={state}>{String(index).padStart(2, "0")}</span>
-      ))}
-    </div>
-    <div class="memory-legend">
-      <span>
-        <i class="retired"></i>Retired
-      </span>
-      <span>
-        <i class="active"></i>Visible
-      </span>
-      <span>
-        <i class="free"></i>Available
-      </span>
+    <div class="program-sheet">
+      <span class="diagram-label">Luminal</span>
+      <strong>
+        CUDA
+        <br />
+        PROGRAM
+      </strong>
+      <span class="diagram-detail">Generated + providers</span>
+      <div class="program-blocks" aria-hidden="true">
+        <i></i>
+        <i></i>
+        <i></i>
+      </div>
     </div>
   </div>
-  <figcaption>
-    <span class="diagram-dot" aria-hidden="true"></span>Reuse follows
-    visibility, device completion, and acknowledgement.
-  </figcaption>
+  <svg
+    class="diagram-connector join"
+    viewBox="0 0 400 42"
+    fill="none"
+    aria-hidden="true"
+  >
+    <path d="M95 0V20H305V0M200 20V42m-5-6 5 5 5-5" />
+  </svg>
+  <div class="runtime-sheet">
+    <strong>ONE RUNTIME.</strong>
+    <span class="diagram-label">Own · execute · reuse</span>
+  </div>
+  <figcaption>State contracts bind the program to its memory.</figcaption>
 </figure>

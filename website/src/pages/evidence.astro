@@ -1,38 +1,28 @@
 ---
-import DocsNav from "../components/DocsNav.astro";
 import SiteLayout from "../layouts/SiteLayout.astro";
-import {
-  evidenceHighlights,
-  evidenceRows,
-  records,
-  sourceUrl,
-} from "../data/site";
+import { evidenceHighlights, records, sourceUrl } from "../data/site";
 ---
 
 <SiteLayout
   title="Evidence — OrbitKV"
-  description="Recorded correctness, runtime behavior, performance boundaries, and open qualification work for OrbitKV."
+  description="Recorded OrbitKV correctness checks, artifact replay, and performance qualification."
   active="Evidence"
 >
-  <header class="page-hero">
-    <p class="eyebrow">Evidence &amp; qualification</p>
-    <h1>Progress you can inspect.</h1>
-    <p>
-      Every result belongs to its source revision, model, hardware, and
-      workload. These records show what has been tested and where the next work
-      begins.
-    </p>
-  </header>
-  <div class="docs-layout">
-    <DocsNav active="Evidence" />
-    <article class="prose">
-      <h2>The latest device qualification</h2>
+  <div class="container interior">
+    <header class="page-hero">
+      <p class="eyebrow">Evidence / 14 September 2026</p>
+      <h1>
+        Measure.
+        <br />
+        <span class="highlight">Then optimize.</span>
+      </h1>
       <p>
-        On 14 September 2026, the H20 qualification exercised the primary
-        Qwen3.8-27B-FP8 text checkpoint, FlashInfer and FlashAttention-3
-        candidates, strict artifact replay, and HTTP shutdown with active
-        requests.
+        Results belong to a workload, hardware, and source revision. <br />
+        These are the current checkpoints.
       </p>
+    </header>
+    <section class="detail-section" aria-labelledby="qualification-title">
+      <h2 id="qualification-title">The latest H20 qualification</h2>
       <div class="metric-grid">
         {evidenceHighlights.map((item) => (
           <article>
@@ -42,111 +32,49 @@ import {
           </article>
         ))}
       </div>
-      <p>
-        The recorded decode representative selected FlashInfer tensor-core
-        attention; the packed-prefill representative selected FlashAttention-3.
-        The 96 full-vocabulary comparisons reached a maximum absolute error of
-        0.71875 under the existing 1.0 gate. The HTTP runs matched the
-        independent token reference and returned all 64 KV pages and both
-        fixed-state pools to free state.
+      <p class="reading-copy">
+        The recorded decode bucket selected FlashInfer tensor-core attention;
+        packed prefill selected FlashAttention-3. Logit comparisons stayed
+        within the existing error gate. HTTP cancellation and shutdown returned
+        all KV pages and fixed-state pools to free state.
       </p>
-      <p>
-        Warm full-logit decode measured about 24.1 ms in this diagnostic. This
-        run establishes no whole-model speedup against another backend or
-        engine. Inspect the{" "}
-        <a href={sourceUrl("results/provider-kernels-20260914/README.md")}>
-          full report, limits, and source identities
+      <p class="reading-copy">
+        Serving performance remains an open optimization target. Current results
+        establish no throughput advantage over vLLM or SGLang.
+      </p>
+      <a class="text-link" href={sourceUrl("docs/capability-matrix.md")}>
+        Full capability and qualification limits{" "}
+        <span aria-hidden="true">↗</span>
+      </a>
+    </section>
+    <section class="detail-section" aria-labelledby="records-title">
+      <div class="section-heading compact">
+        <h2 id="records-title">Source records</h2>
+        <a class="text-link" href={sourceUrl("results/README.md")}>
+          All results <span aria-hidden="true">↗</span>
         </a>
-        .
-      </p>
-      <h2>Where the implementation stands</h2>
-      <div
-        class="table-scroll"
-        tabindex="0"
-        role="region"
-        aria-label="Scrollable capability table"
-      >
-        <table class="data-table evidence-data">
-          <caption>Current capability and qualification boundaries</caption>
-          <thead>
-            <tr>
-              <th scope="col">Surface</th>
-              <th scope="col">Status</th>
-              <th scope="col">Evidence &amp; scope</th>
-            </tr>
-          </thead>
-          <tbody>
-            {evidenceRows.map((item) => (
-              <tr>
-                <td>{item.surface}</td>
-                <td>
-                  <span class="status-tag">{item.status}</span>
-                </td>
-                <td>
-                  {item.detail}
-                  <small>{item.boundary}</small>
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
       </div>
-      <h2>Selected records</h2>
       <div class="record-list">
         {records.map((record) => (
-          <article class="record">
-            <div class="record-meta">
-              <time datetime={record.date.replaceAll(".", "-")}>
-                {record.date}
-              </time>
-              <span class="status-tag">{record.tag}</span>
+          <article>
+            <time datetime={record.date}>{record.date}</time>
+            <div>
+              <h3>
+                <a href={sourceUrl(record.path)}>
+                  {record.name} <span aria-hidden="true">↗</span>
+                </a>
+              </h3>
+              <p>{record.detail}</p>
             </div>
-            <h3>
-              <a href={sourceUrl(record.path)}>
-                {record.name}
-                <span aria-hidden="true">↗</span>
-              </a>
-            </h3>
-            <p>{record.detail}</p>
           </article>
         ))}
       </div>
-      <p>
-        The <a href={sourceUrl("results/README.md")}>complete evidence index</a>{" "}
-        also retains lifecycle, graph residency, compiler attribution, and
-        matched serving comparisons. Historical records keep their original
-        source and workload scope.
+      <p class="reading-copy">
+        Next: attribute 27B runtime and compile costs, optimize measured
+        regions, then expand joint state and execution planning. See the{" "}
+        <a href={sourceUrl("docs/roadmap.md")}>roadmap</a> and{" "}
+        <a href={sourceUrl("docs/benchmarking.md")}>measurement method</a>.
       </p>
-      <h2>Performance is still an open question</h2>
-      <p>
-        Same-executor experiments have demonstrated lower live KV payload and
-        improvements from compiler selection. Recorded comparisons against vLLM
-        and SGLang still show a serving performance gap. A successful kernel
-        test or warm artifact replay does not settle end-to-end throughput.
-      </p>
-      <ul>
-        <li>
-          Attribute execution and search costs on the primary 27B workload.
-        </li>
-        <li>
-          Compare throughput, p95 time to first token, and inter-token latency
-          under matched load.
-        </li>
-        <li>
-          Extend batch, context, memory-pressure, and long-running reuse
-          coverage.
-        </li>
-        <li>
-          Qualify new state layouts, attention families, and external transports
-          independently.
-        </li>
-      </ul>
-      <p>
-        See the{" "}
-        <a href={sourceUrl("docs/benchmarking.md")}>measurement method</a> and{" "}
-        <a href={sourceUrl("docs/roadmap.md")}>roadmap</a> for the acceptance
-        criteria.
-      </p>
-    </article>
+    </section>
   </div>
 </SiteLayout>
