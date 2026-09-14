@@ -1287,15 +1287,19 @@ pub(crate) fn prepare_cublaslt_matmul_with_workspace(
     Ok(prepared)
 }
 
-/// Autotuning launches real matmuls, which is only safe when the stream is
-/// not mid-capture (the benchmark kernels would be recorded into the graph)
-/// and the operand pointers are live.
+/// Whether measured algorithm selection is enabled for this process.
+pub(crate) fn autotune_enabled() -> bool {
+    std::env::var_os("ORBITKV_CUBLASLT_AUTOTUNE").is_some_and(|v| v == "1")
+}
+
+/// Autotuning launches real matmuls, which requires live operand pointers and
+/// a stream outside capture so benchmarks cannot enter the captured graph.
 fn autotune_allowed(stream: &Arc<CudaStream>, ptrs: LtMatmulPointers) -> bool {
     // Opt-in: measured on Llama 3 8B decode, the heuristic's first choice was
     // already within noise of the benchmarked best (the GEMV slack is fixed
     // per-launch cost, not algorithm choice), while the one-time benchmark
     // sweep added ~60ms to first-step latency.
-    if std::env::var_os("ORBITKV_CUBLASLT_AUTOTUNE").is_none_or(|v| v != "1") {
+    if !autotune_enabled() {
         return false;
     }
     if ptrs.a == 0 || ptrs.b == 0 || ptrs.d == 0 {
@@ -1851,6 +1855,10 @@ impl CuBlasLt {
 }
 
 impl HostOp for CuBlasLt {
+    fn provider_dependencies(&self) -> Vec<super::registry::ProviderId> {
+        vec![super::registry::ProviderId::CublasLt]
+    }
+
     fn stats_name(&self) -> Option<&'static str> {
         Some("CuBlasLt")
     }

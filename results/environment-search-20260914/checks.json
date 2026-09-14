@@ -1,0 +1,275 @@
+{
+  "host": [
+    {
+      "name": "host-tests",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--all-targets"
+      ],
+      "exit_code": 0,
+      "seconds": 55.54333992302418,
+      "passed": 503,
+      "ignored": 3
+    },
+    {
+      "name": "doctests",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "--doc"
+      ],
+      "exit_code": 0,
+      "seconds": 5.043655149638653,
+      "passed": 5,
+      "ignored": 1
+    },
+    {
+      "name": "host-clippy",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "clippy",
+        "--locked",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "seconds": 0.3174256533384323
+    },
+    {
+      "name": "frontend-tests",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "test",
+        "--locked",
+        "-p",
+        "orbitkv-engine",
+        "--features",
+        "vllm-frontend"
+      ],
+      "exit_code": 0,
+      "seconds": 0.4692678079009056,
+      "passed": 11,
+      "ignored": 1
+    },
+    {
+      "name": "frontend-clippy",
+      "command": [
+        "cargo",
+        "+1.98.0",
+        "clippy",
+        "--locked",
+        "-p",
+        "orbitkv-engine",
+        "--features",
+        "vllm-frontend",
+        "--all-targets",
+        "--",
+        "-D",
+        "warnings"
+      ],
+      "exit_code": 0,
+      "seconds": 12.166113451123238
+    },
+    {
+      "name": "source-layout",
+      "command": [
+        "python",
+        "tools/verify_active_source.py"
+      ],
+      "exit_code": 0,
+      "seconds": 0.2251213975250721
+    },
+    {
+      "name": "python-tools",
+      "command": [
+        "python",
+        "-m",
+        "unittest",
+        "discover",
+        "-s",
+        "tools/tests",
+        "-p",
+        "test_*.py"
+      ],
+      "exit_code": 0,
+      "seconds": 1.5225670337677002
+    }
+  ],
+  "cuda": {
+    "binary_sha256": "ca1e36d063331811399f59821260a9d8d0a2bafc0d3db9b5fe554af3c5cfe646",
+    "gates": [
+      {
+        "name": "environment",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "environment::tests::",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 5,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "routed-rewrite",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "tests::routed_rewrite::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 4,
+        "failed": 0,
+        "ignored": 1
+      },
+      {
+        "name": "providers",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "providers::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 68,
+        "failed": 0,
+        "ignored": 16
+      },
+      {
+        "name": "target",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "target::tests::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "cublaslt-identity",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "providers::cublaslt::tests::identity::",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 3,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "cublaslt-recapture",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "providers::cublaslt::tests::recapture::",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "deepgemm-reference",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "deepgemm_matches_independent_reference_on_sm90",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "shared-fp8-replay",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "shared_fp8_semantic_search_and_schedule_replay_on_sm90",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "flashinfer-rewrites",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "tests::flashinfer::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 31,
+        "failed": 0,
+        "ignored": 5
+      },
+      {
+        "name": "module-artifacts",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "artifact::tests::",
+          "--test-threads=1",
+          "--include-ignored"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 7,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "name": "kernel-contracts",
+        "command": [
+          "/workspace/orbitkv/.qualification/environment-search-20260914/cuda-tests",
+          "kernel::",
+          "--test-threads=1"
+        ],
+        "exit_code": 0,
+        "status": "ok",
+        "passed": 30,
+        "failed": 0,
+        "ignored": 2
+      }
+    ]
+  },
+  "executor_unit": {
+    "status": "passed",
+    "passed": 71,
+    "ignored": 2,
+    "environment": "Same provider source overrides as the model qualification",
+    "log": "executor-unit-configured.log"
+  },
+  "format": "passed: cargo +1.98.0 fmt --all -- --check",
+  "cuda_clippy": "passed: Rust 1.98, CUDA/executor/server all targets",
+  "development_failure": "An executor unit run omitted the DeepGEMM source override: 70 passed and one candidate-admission assertion failed. The same frozen binary passes all 71 after configuring the provider source; no production rule or tolerance was changed.",
+  "website": {
+    "check": "passed: npm run check; zero errors/warnings/hints",
+    "build": "passed: npm run build; Astro static output"
+  }
+}

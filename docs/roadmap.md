@@ -30,8 +30,8 @@ before fusion source generation and CUDA compilation, with final-load checks
 retained. [Profile-directed local exploration](search-coverage.md) is now
 implemented behind an artifact-bound attempt budget: exact execution provenance
 orders single-choice neighbors of measured valid parents. Whole-graph and final
-CUDA Graph scores still select programs. Multi-choice dependency closures and
-the costly `glumoe` ruleset remain the next compiler priorities.
+CUDA Graph scores still select programs. Multi-choice dependency closures,
+`kernel_specialize` query cost and repeated bucket setup remain compiler priorities.
 The [preflight qualification](../results/state-preflight-20260914/README.md)
 passes 296 reference comparisons; candidate rejection is cheaper in the recorded
 run, while warmed decode remains close to the preceding observation.
@@ -39,8 +39,18 @@ The [hotspot qualification](../results/hotspot-search-20260914/README.md)
 passes 296 comparisons: 49 local candidates are measured, including two prefill
 provider transitions inside valid parents. B8 diagnostic decode is 37.29 ms,
 but its initial seed already contains cuBLASLt; this is not a same-snapshot
-search ablation or a serving claim. The `glumoe` counters still total 358.31 s.
+search ablation or a serving claim. That run's `glumoe` counters total 358.31 s.
 Additional KV representations and joint state/layout competition remain open.
+
+The [environment/search qualification](../results/environment-search-20260914/README.md)
+now binds selected artifacts to device, CUDA/compiler and native-provider facts,
+with explicit recompilation/retuning diagnostics and dependency checks across
+all buckets. Staged MXFP4 matching reduces the isolated decoder-query median
+from 102.91 s to 27.04 s, with small routed-graph regressions reported separately.
+The full 27B run compiles in 350.16 s versus the prior 943.10 s observation and
+passes 152 reference comparisons and all drains. Independent search snapshots
+and retained caches limit the whole-model comparison; no serving improvement
+is established. `glumoe` search/apply now totals 0.824 s in this trace.
 
 OrbitKV targets one native Rust inference process. `orbitkv` compiles and owns
 attention-state lifetimes, the OrbitKV compiler compiles and executes model graphs,
@@ -297,9 +307,10 @@ The next implementation slices are:
    Extend beyond single-choice neighbors only where measured misses require a
    dependency closure, preserving unrelated bindings. Measure legal provider alternatives
    for expensive regions under a shared budget, covering both prefill and decode.
-   Do not force a provider by model name or tensor dimensions. Restructure the
-   `glumoe` joins in egglog using semantic anchors, then separate reusable setup
-   and bucket-independent transformations from interval-dependent rewrites.
+   Do not force a provider by model name or tensor dimensions. The staged MXFP4
+   matcher now removes the large `glumoe` query cost without changing its
+   admitted implementation. Next address `kernel_specialize` and separate reusable
+   setup and bucket-independent transformations from interval-dependent rewrites.
    Reuse requires a semantic key and must preserve the bucket's alias, range,
    and state constraints. In the earlier stage-only run, candidate
    generation costs 3.0 s here; the 118 rejected candidates account for 37.3 s
@@ -308,10 +319,12 @@ The next implementation slices are:
    identities in comparisons: a fixed RNG seed alone is not evidence that two
    runs explored the same programs.
 2. **Artifact startup:** generated module capture/replay is now connected through
-   [decoder schema 6](module-artifacts.md), with target/NVRTC/options checks,
+   [decoder artifacts](module-artifacts.md), with target/NVRTC/options checks,
    source-keyed images, integrity checks and retained strict runtime lookup.
    Older decoder formats now require regeneration; the schedule-only
-   compatibility and image-omission APIs are removed. The recorded fixed-program
+   compatibility and image-omission APIs are removed. The selected execution
+   environment also validates actual libraries, native source/compiler identity,
+   device tuning properties and inventory before replay. The recorded fixed-program
    image experiment qualifies replay startup and measures the extra capture
    pass separately. [Weight loading](weight-loading.md) now borrows mapped bytes
    for storage-compatible inputs and uses one typed buffer for conversions;

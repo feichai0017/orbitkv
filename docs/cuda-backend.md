@@ -18,6 +18,7 @@ selects an implementation by checkpoint name.
 | `src/providers/<provider>.rs`, `<provider>/` | Provider admission, C ABI, preparation and launches |
 | `src/kernel/` | Generated kernel contracts, lowering and fusion regions |
 | `src/compilation.rs`, `src/artifact.rs` | NVRTC, compilation limits and checksummed CUDA module images |
+| `src/environment.rs`, `src/environment/` | Selected-provider provenance and replay/retuning compatibility |
 | `src/runtime/`, `src/search/` | Memory budgets, profiling, selected schedules, capture and execution |
 | `tests/` | Unit, contract, numerical and device qualification tests |
 
@@ -88,10 +89,15 @@ pipes. Sources and toolchains remain fixed after first resolution in a process;
 restart after editing them. This is not a hermetic toolchain fingerprint: host
 compiler binaries, auxiliary tools and all system headers are not hashed.
 
-Selected provider nodes bind source/wrapper identity. Decoder artifact identity
-also binds the provider lock. CUDA module images separately validate architecture,
-NVRTC version/options and image checksums. Native libraries remain separate
-artifacts. An artifact from before this breaking change requires fresh search;
+Selected provider nodes bind source/wrapper identity. The decoder's execution
+environment records the provider inventory, selected library/source identities,
+device, CUDA driver API, NVRTC and native compiler facts. Providers declare their
+dependencies through `HostOp`, including calls nested inside CUDA Graphs. Replay
+reports whether a changed component requires recompilation or retuning and rejects
+both; it never silently keeps an old timing result. CUDA module images separately
+validate architecture, NVRTC version/options and image checksums. Native libraries
+remain separate artifacts. See [artifact validation](module-artifacts.md#execution-environment)
+for the exact coverage and limits. An older artifact requires fresh search;
 serialization version numbers have not been incremented for this unreleased
 refactor.
 

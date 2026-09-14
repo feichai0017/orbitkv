@@ -257,6 +257,10 @@ impl EgglogOp for FlashAttention {
 }
 
 impl HostOp for FlashAttention {
+    fn provider_dependencies(&self) -> Vec<super::registry::ProviderId> {
+        vec![super::registry::ProviderId::FlashAttention]
+    }
+
     fn prepare_compilation(
         &self,
         stream: &Arc<CudaStream>,

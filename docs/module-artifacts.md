@@ -38,7 +38,7 @@ cache keys; their libraries and prepared plans are not embedded here.
 
 | Format | Behavior |
 | --- | --- |
-| Decoder schema 11 | Explicit checkpoint import, portable operation semantics and attention algorithms with compiled request geometry; requires a CUDA module artifact and strict image replay |
+| Decoder schema 11 | Explicit checkpoint import, operation semantics, request geometry, required execution environment and strict CUDA image replay |
 | CUDA module schema 3 | Sorted source-digest map, base64 images, per-image SHA-256 |
 
 The existing model/arena/tuning identity and per-bucket LLIR fingerprints remain
@@ -56,6 +56,32 @@ across arbitrary SDK installations or an expansion of supported GPU families.
 Only decoder schema 11 and CUDA module schema 3 are accepted. Earlier decoder artifacts must be regenerated for the integrated compiler namespace. The decoder owns a required module artifact and exposes
 `module_image_count() -> usize`; there is no schedule-only decoder mode or
 compatibility conversion API.
+
+## Execution environment
+
+The decoder also requires a `CudaExecutionEnvironment`. Each selected `HostOp`
+declares its native dependencies; captured CUDA Graphs propagate those declarations.
+The record covers every retained bucket, including inactive buckets. Unselected
+source checkouts and libraries are not probed.
+
+| Changed fact | Strict replay diagnostic |
+| --- | --- |
+| Compute target, NVRTC version/options, selected provider source or cuBLASLt version, native compiler identity/environment | Recompilation required |
+| Device name/SM count/total memory, CUDA driver API version, provider inventory, cuBLASLt autotuning setting | Retuning required |
+
+Both categories reject replay and require a newly selected artifact. They explain
+the recovery requirement; they do not trigger automatic search or claim that every
+version difference is binary-incompatible. Validation runs before weight loading;
+after installing the schedule, its actual provider declarations are checked again
+so an omitted dependency cannot bypass admission.
+
+This remains a conservative provenance record, not a hermetic environment hash.
+The driver field is the CUDA API version, not the OS driver patch version. Library
+versions do not distinguish repacked binaries with the same version. Native build
+keys do not hash every auxiliary compiler, system header or driver component.
+Device UUIDs, live pointers, free-memory readings and clocks are excluded.
+Earlier unreleased schema-11 artifacts without the environment field must be
+regenerated; no compatibility conversion or version bump is provided.
 
 ## Qualification
 

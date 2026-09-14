@@ -63,9 +63,9 @@ explicitly before model compilation.
 
 Active development. Bounded NVIDIA H20 qualification covers dense Full,
 Full + Sliding, and the Qwen3.8-27B-FP8 hybrid text decoder with Gated DeltaNet
-and convolution state. The [latest report](results/cuda-backend-refactor-20260914/README.md)
-covers the CUDA backend reorganization, provider builds, independent logits,
-artifact replay, and state correctness. Search coverage and serving performance
+and convolution state. The [latest report](results/environment-search-20260914/README.md)
+covers execution-environment validation, faster query compilation, independent
+logits, artifact replay, and state correctness. Search coverage and serving performance
 remain optimization targets.
 
 See the [capability matrix](docs/capability-matrix.md) for supported contracts

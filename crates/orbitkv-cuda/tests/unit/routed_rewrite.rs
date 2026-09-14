@@ -11,6 +11,8 @@ const TOP_K: usize = 2;
 const MOE_INTERMEDIATE: usize = 12;
 const RMS_NORM_EPS: f32 = 1e-6;
 
+mod compilation;
+
 struct QwenMoeGraph {
     graph: Graph,
     x: GraphTensor,
@@ -290,10 +292,6 @@ fn run_gemma_moe(include_glumoe: bool) -> Vec<f32> {
 
 #[test]
 fn test_glumoe_matches_qwen_swiglu_pattern() {
-    if get_cuda_stream().is_none() {
-        return;
-    }
-
     let mut model = build_qwen_moe_graph();
     model.graph.set_dim('s', SEQ);
     model
@@ -304,10 +302,6 @@ fn test_glumoe_matches_qwen_swiglu_pattern() {
 
 #[test]
 fn test_glumoe_matches_gemma_gelu_pattern() {
-    if get_cuda_stream().is_none() {
-        return;
-    }
-
     let mut model = build_gemma_moe_graph();
     model.graph.set_dim('s', SEQ);
     model

@@ -7,6 +7,7 @@ mod artifact;
 pub use artifact::CudaModuleArtifact;
 mod compilation;
 pub mod dyn_backend;
+pub mod environment;
 pub mod kernel;
 pub mod providers;
 mod resource;

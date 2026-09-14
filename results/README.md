@@ -1,5 +1,11 @@
 # Current evidence
 
+The [environment and search qualification](environment-search-20260914/README.md)
+records strict provider/toolchain admission, 152 passing model reference
+comparisons and a 73.7% reduction in an isolated decoder-query benchmark.
+Complete cold compilation is 350 s in this run; steady serving performance
+remains unqualified by this experiment.
+
 The [CUDA backend qualification](cuda-backend-refactor-20260914/README.md) records
 provider source/build identities, device-aware compiler facts, 148 backend test
 executions and 152 passing B1/B8 reference comparisons. Cold compilation remains
@@ -35,6 +41,7 @@ ablation or serving claim.
 
 | Record | Evidence | Boundary |
 | --- | --- | --- |
+| [environment-search-20260914](environment-search-20260914/README.md) | Selected CUDA environment validation, four expected artifact rejections, staged MXFP4 matching and 152 passing B1/B8 reference comparisons | Isolated decoder-query median 103→27 s; small routed graphs regress slightly; complete cold compile 350 s is a historical comparison, not a serving-speedup claim |
 | [cuda-backend-refactor-20260914](cuda-backend-refactor-20260914/README.md) | Unified provider lock/build cache, separated Rust/CUDA/egglog sources, device facts joined with state constraints, and final-binary B1/B8 parity and replay | Unchanged provider pins and package versions; cold compile 943 s and replay preparation about 17.5 s; no serving-speedup or joint KV-layout search claim |
 | [state-preflight-20260914](state-preflight-20260914/README.md) | Required state aliases checked before CUDA preparation; 296 reference comparisons and final drains pass | Rejected-candidate evaluation is 8.00 s versus the preceding 81.06 s observation; independent snapshots and reused caches prevent causal speedup claims; warmed decode remains close |
 | [search-coverage-20260914](search-coverage-20260914/README.md) | Fixed-snapshot sampling, bounded initial exploration, 56 measured graphs and 296 passing logit comparisons on H20 | Mixed performance: B8 prefill improves against the prior observation while decode regresses; all 263 rejected graphs violate state aliases; no serving speedup claim |

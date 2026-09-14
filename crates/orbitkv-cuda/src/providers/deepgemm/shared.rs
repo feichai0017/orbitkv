@@ -136,6 +136,10 @@ impl BlockScaledQuantize {
 }
 
 impl HostOp for BlockScaledQuantize {
+    fn provider_dependencies(&self) -> Vec<crate::providers::registry::ProviderId> {
+        vec![crate::providers::registry::ProviderId::DeepGemm]
+    }
+
     fn prepare_compilation(
         &self,
         stream: &Arc<CudaStream>,

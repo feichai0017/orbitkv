@@ -253,6 +253,10 @@ impl EgglogOp for GLUMoE {
 }
 
 impl HostOp for GLUMoE {
+    fn provider_dependencies(&self) -> Vec<super::registry::ProviderId> {
+        vec![super::registry::ProviderId::CublasLt]
+    }
+
     fn execute(
         &self,
         stream: &Arc<CudaStream>,

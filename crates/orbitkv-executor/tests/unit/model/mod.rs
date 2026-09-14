@@ -7,6 +7,7 @@ use orbitkv::{
     plan::RetentionKind,
 };
 
+mod compilation;
 mod tuning;
 
 #[test]
@@ -534,7 +535,7 @@ fn external_hybrid_checkpoint_passes_structural_execution_admission() {
         .collect::<Vec<_>>();
     weight_files.sort();
     assert!(!weight_files.is_empty());
-    inspect_weight_features(&weight_files, &config).unwrap();
+    let weights = inspect_weight_features(&weight_files, &config).unwrap();
     assert_eq!(config.tensor_prefix, "model.language_model");
     assert!(config.rotary_dimensions < config.head_dim);
     assert!(
@@ -589,15 +590,8 @@ fn external_hybrid_checkpoint_passes_structural_execution_admission() {
         .collect::<Vec<_>>();
     let registrations = plan.fixed_state_registrations(&identities).unwrap();
     let mut graph = Graph::default();
-    DecoderGraph::build(
-        &mut graph,
-        &config,
-        DecoderWeightFeatures::default(),
-        &plan,
-        &arenas,
-        &registrations,
-    )
-    .unwrap();
+    let decoder =
+        DecoderGraph::build(&mut graph, &config, weights, &plan, &arenas, &registrations).unwrap();
     let fp8_weights = graph
         .input_meta
         .values()
@@ -610,6 +604,7 @@ fn external_hybrid_checkpoint_passes_structural_execution_admission() {
         .count();
     assert!(fp8_weights > 0);
     assert_eq!(fp8_weights, scales);
+    compilation::export_saturation_fixture(&mut graph, &decoder, &plan, &arenas);
 }
 
 #[test]

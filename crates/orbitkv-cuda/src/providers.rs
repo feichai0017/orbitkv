@@ -1,7 +1,7 @@
 //! Provider adapters and their graph-visible execution contracts.
 
 pub mod attention;
-mod build;
+pub(crate) mod build;
 pub mod cache;
 pub(crate) mod cublaslt;
 pub mod deepgemm;
