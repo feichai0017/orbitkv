@@ -13,11 +13,19 @@ Fixed-snapshot sampling and bounded initial exploration are implemented; the
 [27B coverage follow-up](../results/search-coverage-20260914/README.md) passes
 correctness but records mixed performance. Required state-alias checks now run
 before fusion source generation and CUDA compilation, with final-load checks
-retained. The immediate priorities are measured exploration of expensive regions
-inside valid graphs and the costly `glumoe` ruleset.
+retained. [Profile-directed local exploration](search-coverage.md) is now
+implemented behind an artifact-bound attempt budget: exact execution provenance
+orders single-choice neighbors of measured valid parents. Whole-graph and final
+CUDA Graph scores still select programs. Multi-choice dependency closures and
+the costly `glumoe` ruleset remain the next compiler priorities.
 The [preflight qualification](../results/state-preflight-20260914/README.md)
 passes 296 reference comparisons; candidate rejection is cheaper in the recorded
 run, while warmed decode remains close to the preceding observation.
+The [hotspot qualification](../results/hotspot-search-20260914/README.md)
+passes 296 comparisons: 49 local candidates are measured, including two prefill
+provider transitions inside valid parents. B8 diagnostic decode is 37.29 ms,
+but its initial seed already contains cuBLASLt; this is not a same-snapshot
+search ablation or a serving claim. The `glumoe` counters still total 358.31 s.
 Additional KV representations and joint state/layout competition remain open.
 
 OrbitKV targets one native Rust inference process. `orbitkv` compiles and owns
@@ -261,14 +269,19 @@ records 319 evaluations, 56 measured graphs and 263 state-alias rejections. All
 296 logit comparisons and final drains pass, but B8 decode's eight measured
 graphs all retain the slow generic vocabulary projection. Forty-six graphs with
 the cuBLASLt projection fail state validation elsewhere. The next coverage slice
-must preserve a valid surrounding genome while exploring expensive regions and
-apply provable state constraints before costly preparation. Increasing whole
-genome diversity alone has not resolved this selection miss.
+motivated preserving a valid surrounding genome while exploring expensive
+regions and applying provable state constraints before costly preparation.
+The optional hotspot phase now implements single-choice exploration with those
+checks; its measured coverage must be distinguished from broad random draws.
 
 The next implementation slices are:
 
-1. **Candidate coverage and cold compilation:** build on stable snapshot sampling
-   and recorded evaluated programs. Measure legal provider alternatives
+1. **Candidate coverage and cold compilation:** build on the bounded hotspot
+   qualification. Add a same-snapshot search ablation and a matched serving run
+   before changing defaults, retaining exact parent/choice traces and independent
+   full-model outputs.
+   Extend beyond single-choice neighbors only where measured misses require a
+   dependency closure, preserving unrelated bindings. Measure legal provider alternatives
    for expensive regions under a shared budget, covering both prefill and decode.
    Do not force a provider by model name or tensor dimensions. Restructure the
    `glumoe` joins in egglog using semantic anchors, then separate reusable setup

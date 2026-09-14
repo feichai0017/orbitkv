@@ -1,0 +1,4407 @@
+{
+  "scope": "Local profile costs only order exploration. Direct scores and separately reranked deployment scores are not serving latency. Vocabulary extent is a post-run checkpoint diagnostic. Missing direct records may be duplicate/cyclic extractions.",
+  "vocabulary_extent": 248320,
+  "buckets": {
+    "0": {
+      "snapshot": {
+        "event": "bucket_started",
+        "bucket": 0,
+        "snapshot_format": 1,
+        "snapshot_sha256": "722fe7dbd188d0a8fc179e58e000ff67810e05562e4bfdc0d3a79c3f5ef48622",
+        "snapshot_scope": "ordered serialized egraph and custom-op descriptors; excludes compiler binary, data, and device state",
+        "classes": 14026,
+        "nodes": 39254,
+        "dimensions": {
+          "b": 1,
+          "c_0": 8,
+          "s": 1
+        }
+      },
+      "outcomes": {
+        "measured": 8
+      },
+      "origins": {
+        "Coverage": {
+          "measured": 1
+        },
+        "Hotspot": {
+          "measured": 7
+        }
+      },
+      "projection": {
+        "measured": {
+          "Gemv": 8
+        }
+      },
+      "local_transitions": [
+        {
+          "candidate": "CandidateId(1)",
+          "program": "173acd5a71da19bfcf779bac90f6c025",
+          "parent": "CandidateId(0)",
+          "parent_program": "6b6bba7f3e55cf2dde0817a8b428d5e7",
+          "class": "IR-5927",
+          "from": "function-2079-Op",
+          "to": "function-2055-Op",
+          "parent_cost_seconds": 0.003531040050089359,
+          "status": "measured",
+          "projection_before": [
+            "Gemv"
+          ],
+          "projection_after": [
+            "Gemv"
+          ],
+          "parent_direct_ns": 31449706,
+          "candidate_direct_ns": 31153610
+        },
+        {
+          "candidate": "CandidateId(2)",
+          "program": "8ba8629b340d86c956c397d2bbbb2523",
+          "parent": "CandidateId(1)",
+          "parent_program": "173acd5a71da19bfcf779bac90f6c025",
+          "class": "IR-5927",
+          "from": "function-2055-Op",
+          "to": "function-2071-Op",
+          "parent_cost_seconds": 0.003317887999117374,
+          "status": "measured",
+          "projection_before": [
+            "Gemv"
+          ],
+          "projection_after": [
+            "Gemv"
+          ],
+          "parent_direct_ns": 31153610,
+          "candidate_direct_ns": 31367871
+        },
+        {
+          "candidate": "CandidateId(3)",
+          "program": "c169900de5a1bf7456f93b4ce6f8df2b",
+          "parent": "CandidateId(1)",
+          "parent_program": "173acd5a71da19bfcf779bac90f6c025",
+          "class": "IR-5927",
+          "from": "function-2055-Op",
+          "to": "function-2097-Op",
+          "parent_cost_seconds": 0.003317887999117374,
+          "status": "measured",
+          "projection_before": [
+            "Gemv"
+          ],
+          "projection_after": [
+            "Gemv"
+          ],
+          "parent_direct_ns": 31153610,
+          "candidate_direct_ns": 31156650
+        },
+        {
+          "candidate": "CandidateId(4)",
+          "program": "5396967b9a321b84456316273cde666a",
+          "parent": "CandidateId(1)",
+          "parent_program": "173acd5a71da19bfcf779bac90f6c025",
+          "class": "IR-5763",
+          "from": "function-2088-Op",
+          "to": "function-2064-Op",
+          "parent_cost_seconds": 0.002694847993552685,
+          "status": "measured",
+          "projection_before": [
+            "Gemv"
+          ],
+          "projection_after": [
+            "Gemv"
+          ],
+          "parent_direct_ns": 31153610,
+          "candidate_direct_ns": 31202581
+        },
+        {
+          "candidate": "CandidateId(5)",
+          "program": "af56522b6091d1fba4078590f1ece795",
+          "parent": "CandidateId(1)",
+          "parent_program": "173acd5a71da19bfcf779bac90f6c025",
+          "class": "IR-5763",
+          "from": "function-2088-Op",
+          "to": "function-2077-Op",
+          "parent_cost_seconds": 0.002694847993552685,
+          "status": "measured",
+          "projection_before": [
+            "Gemv"
+          ],
+          "projection_after": [
+            "Gemv"
+          ],
+          "parent_direct_ns": 31153610,
+          "candidate_direct_ns": 31106772
+        },
+        {
+          "candidate": "CandidateId(6)",
+          "program": "c6bdfb4bc6a4dd9efc90add13bc71115",
+          "parent": "CandidateId(5)",
+          "parent_program": "af56522b6091d1fba4078590f1ece795",
+          "class": "IR-5927",
+          "from": "function-2055-Op",
+          "to": "function-2071-Op",
+          "parent_cost_seconds": 0.003318144008517265,
+          "status": "measured",
+          "projection_before": [
+            "Gemv"
+          ],
+          "projection_after": [
+            "Gemv"
+          ],
+          "parent_direct_ns": 31106772,
+          "candidate_direct_ns": 31283403
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "e3eadfba3e6ee136a7b6109ac4e583fc",
+          "parent": "CandidateId(5)",
+          "parent_program": "af56522b6091d1fba4078590f1ece795",
+          "class": "IR-5927",
+          "from": "function-2055-Op",
+          "to": "function-2079-Op",
+          "parent_cost_seconds": 0.003318144008517265,
+          "status": "measured",
+          "projection_before": [
+            "Gemv"
+          ],
+          "projection_after": [
+            "Gemv"
+          ],
+          "parent_direct_ns": 31106772,
+          "candidate_direct_ns": 32756938
+        }
+      ],
+      "unmapped_profile_nodes": 0,
+      "top_regions": [
+        {
+          "candidate": "CandidateId(0)",
+          "program": "6b6bba7f3e55cf2dde0817a8b428d5e7",
+          "duration_seconds": 0.0006614720225334167,
+          "operations": [
+            {
+              "node": 4815,
+              "semantic": "LLIROp(DialectOp(KernelGemv { n: 248320, k: 5120, dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Gemv",
+              "inputs": [
+                4817,
+                4816
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(0)",
+          "program": "6b6bba7f3e55cf2dde0817a8b428d5e7",
+          "duration_seconds": 7.468800246715545e-05,
+          "operations": [
+            {
+              "node": 6316,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                6460,
+                6449,
+                6401
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(0)",
+          "program": "6b6bba7f3e55cf2dde0817a8b428d5e7",
+          "duration_seconds": 7.423999905586243e-05,
+          "operations": [
+            {
+              "node": 4880,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                4928,
+                4907,
+                4891
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(1)",
+          "program": "173acd5a71da19bfcf779bac90f6c025",
+          "duration_seconds": 0.0006622400283813476,
+          "operations": [
+            {
+              "node": 4815,
+              "semantic": "LLIROp(DialectOp(KernelGemv { n: 248320, k: 5120, dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Gemv",
+              "inputs": [
+                4817,
+                4816
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(1)",
+          "program": "173acd5a71da19bfcf779bac90f6c025",
+          "duration_seconds": 7.440000027418137e-05,
+          "operations": [
+            {
+              "node": 4882,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                4930,
+                4905,
+                4889
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(1)",
+          "program": "173acd5a71da19bfcf779bac90f6c025",
+          "duration_seconds": 7.407999783754349e-05,
+          "operations": [
+            {
+              "node": 4873,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                4921,
+                4914,
+                4898
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(2)",
+          "program": "8ba8629b340d86c956c397d2bbbb2523",
+          "duration_seconds": 0.0006615359783172607,
+          "operations": [
+            {
+              "node": 4815,
+              "semantic": "LLIROp(DialectOp(KernelGemv { n: 248320, k: 5120, dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Gemv",
+              "inputs": [
+                4817,
+                4816
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(2)",
+          "program": "8ba8629b340d86c956c397d2bbbb2523",
+          "duration_seconds": 7.545600086450576e-05,
+          "operations": [
+            {
+              "node": 6356,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                6500,
+                6409,
+                6361
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(2)",
+          "program": "8ba8629b340d86c956c397d2bbbb2523",
+          "duration_seconds": 7.459200173616409e-05,
+          "operations": [
+            {
+              "node": 6328,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                6472,
+                6437,
+                6389
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(3)",
+          "program": "c169900de5a1bf7456f93b4ce6f8df2b",
+          "duration_seconds": 0.0006606720089912414,
+          "operations": [
+            {
+              "node": 4815,
+              "semantic": "LLIROp(DialectOp(KernelGemv { n: 248320, k: 5120, dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Gemv",
+              "inputs": [
+                4817,
+                4816
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(3)",
+          "program": "c169900de5a1bf7456f93b4ce6f8df2b",
+          "duration_seconds": 0.00013820800185203552,
+          "operations": [
+            {
+              "node": 4619,
+              "semantic": "LLIROp(DialectOp(FusionEnd { shape: [1, 48, 128, 128], strides: [(z*786432), (z*16384), (z*128), z], dtype: Int }))",
+              "host_provider": null,
+              "kernel": "FusionEnd",
+              "inputs": [
+                4667
+              ]
+            },
+            {
+              "node": 4802,
+              "semantic": "LLIROp(DialectOp(CudaBinaryElementwise { op: \"Add\", out_shape: [1, 48, 128, 128], a_stride: [0, (z*16384), (z*128), z], b_stride: [z, 0, 0, 0], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: Int }))",
+              "host_provider": null,
+              "kernel": "CudaBinaryElementwise",
+              "inputs": [
+                4810,
+                4803
+              ]
+            },
+            {
+              "node": 4667,
+              "semantic": "LLIROp(DialectOp(CudaBinaryElementwise { op: \"Add\", out_shape: [1, 48, 128, 128], a_stride: [(z*786432), (z*16384), (z*128), z], b_stride: [0, 0, 0, 0], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: Int }))",
+              "host_provider": null,
+              "kernel": "CudaBinaryElementwise",
+              "inputs": [
+                4802,
+                4715
+              ]
+            },
+            {
+              "node": 4810,
+              "semantic": "LLIROp(DialectOp(FusionStart { shape: [1, 48, 128, 128], strides: [0, (z*16384), (z*128), z], dtype: Int }))",
+              "host_provider": null,
+              "kernel": "FusionStart",
+              "inputs": [
+                4811
+              ]
+            },
+            {
+              "node": 4803,
+              "semantic": "LLIROp(DialectOp(FusionStart { shape: [1, 48, 128, 128], strides: [z, 0, 0, 0], dtype: Int }))",
+              "host_provider": null,
+              "kernel": "FusionStart",
+              "inputs": [
+                4804
+              ]
+            },
+            {
+              "node": 4715,
+              "semantic": "LLIROp(DialectOp(FusionStart { shape: [1, 48, 128, 128], strides: [0, 0, 0, 0], dtype: Int }))",
+              "host_provider": null,
+              "kernel": "FusionStart",
+              "inputs": [
+                4794
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(3)",
+          "program": "c169900de5a1bf7456f93b4ce6f8df2b",
+          "duration_seconds": 7.440000027418137e-05,
+          "operations": [
+            {
+              "node": 4882,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                4930,
+                4905,
+                4889
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(4)",
+          "program": "5396967b9a321b84456316273cde666a",
+          "duration_seconds": 0.0006621760129928588,
+          "operations": [
+            {
+              "node": 4815,
+              "semantic": "LLIROp(DialectOp(KernelGemv { n: 248320, k: 5120, dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Gemv",
+              "inputs": [
+                4817,
+                4816
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(4)",
+          "program": "5396967b9a321b84456316273cde666a",
+          "duration_seconds": 7.430399954319001e-05,
+          "operations": [
+            {
+              "node": 4870,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                4918,
+                4917,
+                4901
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(4)",
+          "program": "5396967b9a321b84456316273cde666a",
+          "duration_seconds": 7.423999905586243e-05,
+          "operations": [
+            {
+              "node": 4876,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                4924,
+                4911,
+                4895
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(5)",
+          "program": "af56522b6091d1fba4078590f1ece795",
+          "duration_seconds": 0.0006619520187377929,
+          "operations": [
+            {
+              "node": 4815,
+              "semantic": "LLIROp(DialectOp(KernelGemv { n: 248320, k: 5120, dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Gemv",
+              "inputs": [
+                4817,
+                4816
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(5)",
+          "program": "af56522b6091d1fba4078590f1ece795",
+          "duration_seconds": 7.427199929952622e-05,
+          "operations": [
+            {
+              "node": 4880,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                4928,
+                4907,
+                4891
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(5)",
+          "program": "af56522b6091d1fba4078590f1ece795",
+          "duration_seconds": 7.40479975938797e-05,
+          "operations": [
+            {
+              "node": 4883,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                4931,
+                4904,
+                4888
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(6)",
+          "program": "c6bdfb4bc6a4dd9efc90add13bc71115",
+          "duration_seconds": 0.0006624959707260132,
+          "operations": [
+            {
+              "node": 4815,
+              "semantic": "LLIROp(DialectOp(KernelGemv { n: 248320, k: 5120, dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Gemv",
+              "inputs": [
+                4817,
+                4816
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(6)",
+          "program": "c6bdfb4bc6a4dd9efc90add13bc71115",
+          "duration_seconds": 7.440000027418137e-05,
+          "operations": [
+            {
+              "node": 6326,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                6470,
+                6439,
+                6391
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(6)",
+          "program": "c6bdfb4bc6a4dd9efc90add13bc71115",
+          "duration_seconds": 7.407999783754349e-05,
+          "operations": [
+            {
+              "node": 6317,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                6461,
+                6448,
+                6400
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "e3eadfba3e6ee136a7b6109ac4e583fc",
+          "duration_seconds": 0.0006622080206871032,
+          "operations": [
+            {
+              "node": 4815,
+              "semantic": "LLIROp(DialectOp(KernelGemv { n: 248320, k: 5120, dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Gemv",
+              "inputs": [
+                4817,
+                4816
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "e3eadfba3e6ee136a7b6109ac4e583fc",
+          "duration_seconds": 8.902399986982346e-05,
+          "operations": [
+            {
+              "node": 8668,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                6940,
+                8801,
+                8753
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "e3eadfba3e6ee136a7b6109ac4e583fc",
+          "duration_seconds": 8.009599894285202e-05,
+          "operations": [
+            {
+              "node": 242,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: 1, output_features: 10240, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV1",
+              "kernel": null,
+              "inputs": [
+                386,
+                385,
+                337
+              ]
+            }
+          ]
+        }
+      ],
+      "bucket_indices": {
+        "b": 0,
+        "c_0": 0,
+        "s": 0
+      },
+      "selected": {
+        "program": "af56522b6091d1fba4078590f1ece795",
+        "projection": [
+          {
+            "node": 4815,
+            "semantic": "LLIROp(DialectOp(KernelGemv { n: 248320, k: 5120, dtype: Bf16 }))",
+            "host_provider": null,
+            "kernel": "Gemv",
+            "inputs": [
+              4817,
+              4816
+            ]
+          }
+        ]
+      }
+    },
+    "1": {
+      "snapshot": {
+        "event": "bucket_started",
+        "bucket": 1,
+        "snapshot_format": 1,
+        "snapshot_sha256": "9bf6b4dcc6e6f45e9b44391d20471182b7813392b0ea7aed4748f307ca86d759",
+        "snapshot_scope": "ordered serialized egraph and custom-op descriptors; excludes compiler binary, data, and device state",
+        "classes": 14074,
+        "nodes": 39264,
+        "dimensions": {
+          "b": 1,
+          "c_0": 8,
+          "s": 4
+        }
+      },
+      "outcomes": {
+        "rejected": 14,
+        "measured": 8
+      },
+      "origins": {
+        "Coverage": {
+          "rejected": 14,
+          "measured": 1
+        },
+        "Hotspot": {
+          "measured": 7
+        }
+      },
+      "projection": {
+        "rejected": {
+          "CuBlasLt": 10,
+          "GenericMatmul": 4
+        },
+        "measured": {
+          "GenericMatmul": 1,
+          "CuBlasLt": 7
+        }
+      },
+      "local_transitions": [
+        {
+          "candidate": "CandidateId(15)",
+          "program": "cf9787e17a2b56c60fc75b856d745950",
+          "parent": "CandidateId(14)",
+          "parent_program": "35bd9ce8fb8f985c74443cec7a4ac941",
+          "class": "IR-7941",
+          "from": "function-2052-Op",
+          "to": "function-2118-Op",
+          "parent_cost_seconds": 0.0215219841003418,
+          "status": "measured",
+          "projection_before": [
+            "GenericMatmul"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 54213759,
+          "candidate_direct_ns": 33364779
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "1fb15f62dc99c4fd15dc9a6d3a5ca626",
+          "parent": "CandidateId(15)",
+          "parent_program": "cf9787e17a2b56c60fc75b856d745950",
+          "class": "IR-5930",
+          "from": "function-2070-Op",
+          "to": "function-2092-Op",
+          "parent_cost_seconds": 0.003343232035636902,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 33364779,
+          "candidate_direct_ns": 33565119
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "aa2d517493b4642ca4c2b60730b344f1",
+          "parent": "CandidateId(15)",
+          "parent_program": "cf9787e17a2b56c60fc75b856d745950",
+          "class": "IR-5930",
+          "from": "function-2070-Op",
+          "to": "function-2109-Op",
+          "parent_cost_seconds": 0.003343232035636902,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 33364779,
+          "candidate_direct_ns": 33291275
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "4a6e52111b54cc7fb060e1bacfa5da78",
+          "parent": "CandidateId(17)",
+          "parent_program": "aa2d517493b4642ca4c2b60730b344f1",
+          "class": "IR-5930",
+          "from": "function-2109-Op",
+          "to": "function-2110-Op",
+          "parent_cost_seconds": 0.003324799984693526,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 33291275,
+          "candidate_direct_ns": 33549738
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "e61f6c3c3c8bd793ad439fbeaf207033",
+          "parent": "CandidateId(17)",
+          "parent_program": "aa2d517493b4642ca4c2b60730b344f1",
+          "class": "IR-5766",
+          "from": "function-2062-Op",
+          "to": "function-2065-Op",
+          "parent_cost_seconds": 0.002714815985411406,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 33291275,
+          "candidate_direct_ns": 33272854
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "ce2bcefeb615602ae4ecbb76a23651a7",
+          "parent": "CandidateId(19)",
+          "parent_program": "e61f6c3c3c8bd793ad439fbeaf207033",
+          "class": "IR-5930",
+          "from": "function-2109-Op",
+          "to": "function-2070-Op",
+          "parent_cost_seconds": 0.0033318080082535735,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 33272854,
+          "candidate_direct_ns": 33307616
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "88dea1c109ab6f19647667316cc16046",
+          "parent": "CandidateId(19)",
+          "parent_program": "e61f6c3c3c8bd793ad439fbeaf207033",
+          "class": "IR-5930",
+          "from": "function-2109-Op",
+          "to": "function-2092-Op",
+          "parent_cost_seconds": 0.0033318080082535735,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 33272854,
+          "candidate_direct_ns": 33505674
+        }
+      ],
+      "unmapped_profile_nodes": 0,
+      "top_regions": [
+        {
+          "candidate": "CandidateId(14)",
+          "program": "35bd9ce8fb8f985c74443cec7a4ac941",
+          "duration_seconds": 0.0215219841003418,
+          "operations": [
+            {
+              "node": 5011,
+              "semantic": "LLIROp(DialectOp(GenericMatmul { out_shape: [s, 248320], mul_shape: [s, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "GenericMatmul",
+              "inputs": [
+                5013,
+                5012
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(14)",
+          "program": "35bd9ce8fb8f985c74443cec7a4ac941",
+          "duration_seconds": 7.030399888753891e-05,
+          "operations": [
+            {
+              "node": 6112,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                6256,
+                6199,
+                6151
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(14)",
+          "program": "35bd9ce8fb8f985c74443cec7a4ac941",
+          "duration_seconds": 7.027199864387512e-05,
+          "operations": [
+            {
+              "node": 5077,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                5125,
+                5102,
+                5086
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(15)",
+          "program": "cf9787e17a2b56c60fc75b856d745950",
+          "duration_seconds": 0.0006759039759635925,
+          "operations": [
+            {
+              "node": 5011,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: s, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5013,
+                5012
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(15)",
+          "program": "cf9787e17a2b56c60fc75b856d745950",
+          "duration_seconds": 7.0592001080513e-05,
+          "operations": [
+            {
+              "node": 6130,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                6274,
+                6181,
+                6133
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(15)",
+          "program": "cf9787e17a2b56c60fc75b856d745950",
+          "duration_seconds": 7.049600034952164e-05,
+          "operations": [
+            {
+              "node": 5075,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                5123,
+                5104,
+                5088
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "1fb15f62dc99c4fd15dc9a6d3a5ca626",
+          "duration_seconds": 0.0006782079935073852,
+          "operations": [
+            {
+              "node": 5011,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: s, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5013,
+                5012
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "1fb15f62dc99c4fd15dc9a6d3a5ca626",
+          "duration_seconds": 7.56160020828247e-05,
+          "operations": [
+            {
+              "node": 6088,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                6232,
+                6223,
+                6175
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "1fb15f62dc99c4fd15dc9a6d3a5ca626",
+          "duration_seconds": 7.475200295448303e-05,
+          "operations": [
+            {
+              "node": 6097,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                6241,
+                6214,
+                6166
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "aa2d517493b4642ca4c2b60730b344f1",
+          "duration_seconds": 0.0006748800277709961,
+          "operations": [
+            {
+              "node": 5011,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: s, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5013,
+                5012
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "aa2d517493b4642ca4c2b60730b344f1",
+          "duration_seconds": 6.992000341415406e-05,
+          "operations": [
+            {
+              "node": 6093,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV1",
+              "kernel": null,
+              "inputs": [
+                6237,
+                6218,
+                6170
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "aa2d517493b4642ca4c2b60730b344f1",
+          "duration_seconds": 6.98240026831627e-05,
+          "operations": [
+            {
+              "node": 6105,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV1",
+              "kernel": null,
+              "inputs": [
+                6249,
+                6206,
+                6158
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "4a6e52111b54cc7fb060e1bacfa5da78",
+          "duration_seconds": 0.0006763520240783691,
+          "operations": [
+            {
+              "node": 5011,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: s, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5013,
+                5012
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "4a6e52111b54cc7fb060e1bacfa5da78",
+          "duration_seconds": 7.487999647855759e-05,
+          "operations": [
+            {
+              "node": 6108,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                6252,
+                6203,
+                6155
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "4a6e52111b54cc7fb060e1bacfa5da78",
+          "duration_seconds": 7.48480036854744e-05,
+          "operations": [
+            {
+              "node": 6128,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                6272,
+                6183,
+                6135
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "e61f6c3c3c8bd793ad439fbeaf207033",
+          "duration_seconds": 0.0006768959760665894,
+          "operations": [
+            {
+              "node": 5011,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: s, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5013,
+                5012
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "e61f6c3c3c8bd793ad439fbeaf207033",
+          "duration_seconds": 7.001599669456483e-05,
+          "operations": [
+            {
+              "node": 5073,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                5121,
+                5106,
+                5090
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "e61f6c3c3c8bd793ad439fbeaf207033",
+          "duration_seconds": 7.001599669456483e-05,
+          "operations": [
+            {
+              "node": 6126,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV1",
+              "kernel": null,
+              "inputs": [
+                6270,
+                6185,
+                6137
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "ce2bcefeb615602ae4ecbb76a23651a7",
+          "duration_seconds": 0.0006783360242843628,
+          "operations": [
+            {
+              "node": 5011,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: s, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5013,
+                5012
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "ce2bcefeb615602ae4ecbb76a23651a7",
+          "duration_seconds": 0.0002698560059070587,
+          "operations": [
+            {
+              "node": 5014,
+              "semantic": "LLIROp(DialectOp(FusionEnd { shape: [5120], strides: [z], dtype: F32 }))",
+              "host_provider": null,
+              "kernel": "FusionEnd",
+              "inputs": [
+                5015
+              ]
+            },
+            {
+              "node": 5015,
+              "semantic": "LLIROp(DialectOp(CudaBinaryElementwise { op: \"Add\", out_shape: [5120], a_stride: [z], b_stride: [0], out_stride: [z], dtype: F32 }))",
+              "host_provider": null,
+              "kernel": "CudaBinaryElementwise",
+              "inputs": [
+                5016,
+                530
+              ]
+            },
+            {
+              "node": 530,
+              "semantic": "LLIROp(DialectOp(FusionStart { shape: [5120], strides: [0], dtype: F32 }))",
+              "host_provider": null,
+              "kernel": "FusionStart",
+              "inputs": [
+                531
+              ]
+            },
+            {
+              "node": 5016,
+              "semantic": "LLIROp(DialectOp(FusionStart { shape: [5120], strides: [z], dtype: F32 }))",
+              "host_provider": null,
+              "kernel": "FusionStart",
+              "inputs": [
+                5017
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "ce2bcefeb615602ae4ecbb76a23651a7",
+          "duration_seconds": 7.039999961853027e-05,
+          "operations": [
+            {
+              "node": 6125,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                6269,
+                6186,
+                6138
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "88dea1c109ab6f19647667316cc16046",
+          "duration_seconds": 0.0006750079989433288,
+          "operations": [
+            {
+              "node": 5011,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: s, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5013,
+                5012
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "88dea1c109ab6f19647667316cc16046",
+          "duration_seconds": 7.472000271081924e-05,
+          "operations": [
+            {
+              "node": 6131,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                6275,
+                6180,
+                6132
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "88dea1c109ab6f19647667316cc16046",
+          "duration_seconds": 7.440000027418137e-05,
+          "operations": [
+            {
+              "node": 6095,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                6239,
+                6216,
+                6168
+              ]
+            }
+          ]
+        }
+      ],
+      "bucket_indices": {
+        "b": 0,
+        "c_0": 0,
+        "s": 1
+      },
+      "selected": {
+        "program": "e61f6c3c3c8bd793ad439fbeaf207033",
+        "projection": [
+          {
+            "node": 5011,
+            "semantic": "LLIROp(DialectOp(CuBlasLt { m: s, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+            "host_provider": "CuBlasLt",
+            "kernel": null,
+            "inputs": [
+              5013,
+              5012
+            ]
+          }
+        ]
+      }
+    },
+    "2": {
+      "snapshot": {
+        "event": "bucket_started",
+        "bucket": 2,
+        "snapshot_format": 1,
+        "snapshot_sha256": "fd935d8b923083670c1e8bc7a3ad16ba7be293a25096a0089b8c84eaa43ad23a",
+        "snapshot_scope": "ordered serialized egraph and custom-op descriptors; excludes compiler binary, data, and device state",
+        "classes": 14051,
+        "nodes": 39280,
+        "dimensions": {
+          "b": 1,
+          "c_0": 8,
+          "s": 32
+        }
+      },
+      "outcomes": {
+        "rejected": 15,
+        "measured": 8
+      },
+      "origins": {
+        "Coverage": {
+          "rejected": 15,
+          "measured": 1
+        },
+        "Hotspot": {
+          "measured": 7
+        }
+      },
+      "projection": {
+        "rejected": {
+          "CuBlasLt": 10,
+          "GenericMatmul": 5
+        },
+        "measured": {
+          "CuBlasLt": 8
+        }
+      },
+      "local_transitions": [
+        {
+          "candidate": "CandidateId(16)",
+          "program": "2106e4367a38f9cee6cdc03788e41800",
+          "parent": "CandidateId(15)",
+          "parent_program": "2a0086bd8ebd8db78f08801563447a0d",
+          "class": "IR-5930",
+          "from": "function-2098-Op",
+          "to": "function-2067-Op",
+          "parent_cost_seconds": 0.0037370559796690945,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52527296,
+          "candidate_direct_ns": 52266091
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "8b5339e889049a60ed9d37900036d70d",
+          "parent": "CandidateId(16)",
+          "parent_program": "2106e4367a38f9cee6cdc03788e41800",
+          "class": "IR-5930",
+          "from": "function-2067-Op",
+          "to": "function-2089-Op",
+          "parent_cost_seconds": 0.0034874240010976795,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52266091,
+          "candidate_direct_ns": 53074987
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "3b40951319ce981c6144dda4d83d200d",
+          "parent": "CandidateId(16)",
+          "parent_program": "2106e4367a38f9cee6cdc03788e41800",
+          "class": "IR-5930",
+          "from": "function-2067-Op",
+          "to": "function-2111-Op",
+          "parent_cost_seconds": 0.0034874240010976795,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52266091,
+          "candidate_direct_ns": 52091285
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "413bdd7c6403871991e6e22ef5e606a5",
+          "parent": "CandidateId(18)",
+          "parent_program": "3b40951319ce981c6144dda4d83d200d",
+          "class": "IR-5766",
+          "from": "function-2114-Op",
+          "to": "function-2081-Op",
+          "parent_cost_seconds": 0.0027590079978108413,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52091285,
+          "candidate_direct_ns": 52112895
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "aefce7b403d6c878cf1261c3ec2c2bc5",
+          "parent": "CandidateId(18)",
+          "parent_program": "3b40951319ce981c6144dda4d83d200d",
+          "class": "IR-5766",
+          "from": "function-2114-Op",
+          "to": "function-2106-Op",
+          "parent_cost_seconds": 0.0027590079978108413,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52091285,
+          "candidate_direct_ns": 52258219
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "26f283580ea8cd4eea68a3fd99cf7e44",
+          "parent": "CandidateId(18)",
+          "parent_program": "3b40951319ce981c6144dda4d83d200d",
+          "class": "IR-5766",
+          "from": "function-2114-Op",
+          "to": "function-2122-Op",
+          "parent_cost_seconds": 0.0027590079978108413,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52091285,
+          "candidate_direct_ns": 52051647
+        },
+        {
+          "candidate": "CandidateId(22)",
+          "program": "7e0a92b15184e6eeb3969d4a8de8f212",
+          "parent": "CandidateId(21)",
+          "parent_program": "26f283580ea8cd4eea68a3fd99cf7e44",
+          "class": "IR-5930",
+          "from": "function-2111-Op",
+          "to": "function-2067-Op",
+          "parent_cost_seconds": 0.0033452160358428957,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52051647,
+          "candidate_direct_ns": 52144651
+        }
+      ],
+      "unmapped_profile_nodes": 0,
+      "top_regions": [
+        {
+          "candidate": "CandidateId(15)",
+          "program": "2a0086bd8ebd8db78f08801563447a0d",
+          "duration_seconds": 0.0007162560224533081,
+          "operations": [
+            {
+              "node": 5594,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                12710,
+                5595
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(15)",
+          "program": "2a0086bd8ebd8db78f08801563447a0d",
+          "duration_seconds": 0.0002564480006694794,
+          "operations": [
+            {
+              "node": 12290,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12306
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(15)",
+          "program": "2a0086bd8ebd8db78f08801563447a0d",
+          "duration_seconds": 0.000256415992975235,
+          "operations": [
+            {
+              "node": 12285,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12301
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "2106e4367a38f9cee6cdc03788e41800",
+          "duration_seconds": 0.0007132160067558289,
+          "operations": [
+            {
+              "node": 5594,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                12710,
+                5595
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "2106e4367a38f9cee6cdc03788e41800",
+          "duration_seconds": 0.0002568959891796112,
+          "operations": [
+            {
+              "node": 12288,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12304
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "2106e4367a38f9cee6cdc03788e41800",
+          "duration_seconds": 0.0002566719949245453,
+          "operations": [
+            {
+              "node": 12278,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12294
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "8b5339e889049a60ed9d37900036d70d",
+          "duration_seconds": 0.0007272639870643616,
+          "operations": [
+            {
+              "node": 5594,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                12710,
+                5595
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "8b5339e889049a60ed9d37900036d70d",
+          "duration_seconds": 0.00025676798820495605,
+          "operations": [
+            {
+              "node": 12282,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12298
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "8b5339e889049a60ed9d37900036d70d",
+          "duration_seconds": 0.0002564480006694794,
+          "operations": [
+            {
+              "node": 12275,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12291
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "3b40951319ce981c6144dda4d83d200d",
+          "duration_seconds": 0.000723583996295929,
+          "operations": [
+            {
+              "node": 5594,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                12710,
+                5595
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "3b40951319ce981c6144dda4d83d200d",
+          "duration_seconds": 0.00025702399015426635,
+          "operations": [
+            {
+              "node": 12285,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12301
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "3b40951319ce981c6144dda4d83d200d",
+          "duration_seconds": 0.00025676798820495605,
+          "operations": [
+            {
+              "node": 12288,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12304
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "413bdd7c6403871991e6e22ef5e606a5",
+          "duration_seconds": 0.0007146559953689575,
+          "operations": [
+            {
+              "node": 5594,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                12710,
+                5595
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "413bdd7c6403871991e6e22ef5e606a5",
+          "duration_seconds": 0.00025699201226234435,
+          "operations": [
+            {
+              "node": 12288,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12304
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "413bdd7c6403871991e6e22ef5e606a5",
+          "duration_seconds": 0.0002560000121593475,
+          "operations": [
+            {
+              "node": 12290,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12306
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "aefce7b403d6c878cf1261c3ec2c2bc5",
+          "duration_seconds": 0.0007320640087127685,
+          "operations": [
+            {
+              "node": 5594,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                12710,
+                5595
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "aefce7b403d6c878cf1261c3ec2c2bc5",
+          "duration_seconds": 0.0002571200132369995,
+          "operations": [
+            {
+              "node": 12290,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12306
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "aefce7b403d6c878cf1261c3ec2c2bc5",
+          "duration_seconds": 0.00025705599784851075,
+          "operations": [
+            {
+              "node": 12284,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12300
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "26f283580ea8cd4eea68a3fd99cf7e44",
+          "duration_seconds": 0.0007295359969139099,
+          "operations": [
+            {
+              "node": 5594,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                12710,
+                5595
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "26f283580ea8cd4eea68a3fd99cf7e44",
+          "duration_seconds": 0.00025657600164413454,
+          "operations": [
+            {
+              "node": 12276,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12292
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "26f283580ea8cd4eea68a3fd99cf7e44",
+          "duration_seconds": 0.00025651198625564574,
+          "operations": [
+            {
+              "node": 12280,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12296
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(22)",
+          "program": "7e0a92b15184e6eeb3969d4a8de8f212",
+          "duration_seconds": 0.0007168639898300171,
+          "operations": [
+            {
+              "node": 5594,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                12710,
+                5595
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(22)",
+          "program": "7e0a92b15184e6eeb3969d4a8de8f212",
+          "duration_seconds": 0.0002571519911289215,
+          "operations": [
+            {
+              "node": 12287,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12303
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(22)",
+          "program": "7e0a92b15184e6eeb3969d4a8de8f212",
+          "duration_seconds": 0.0002567040026187897,
+          "operations": [
+            {
+              "node": 12288,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12234,
+                12233,
+                12304
+              ]
+            }
+          ]
+        }
+      ],
+      "bucket_indices": {
+        "b": 0,
+        "c_0": 0,
+        "s": 2
+      },
+      "selected": {
+        "program": "3b40951319ce981c6144dda4d83d200d",
+        "projection": [
+          {
+            "node": 5594,
+            "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+            "host_provider": "CuBlasLt",
+            "kernel": null,
+            "inputs": [
+              12710,
+              5595
+            ]
+          }
+        ]
+      }
+    },
+    "3": {
+      "snapshot": {
+        "event": "bucket_started",
+        "bucket": 3,
+        "snapshot_format": 1,
+        "snapshot_sha256": "49adbeb1e51ad7721975c7b2319179597c4a792391534418139485ff92c07f63",
+        "snapshot_scope": "ordered serialized egraph and custom-op descriptors; excludes compiler binary, data, and device state",
+        "classes": 14081,
+        "nodes": 39275,
+        "dimensions": {
+          "b": 2,
+          "c_0": 8,
+          "s": 4
+        }
+      },
+      "outcomes": {
+        "measured": 8
+      },
+      "origins": {
+        "Coverage": {
+          "measured": 1
+        },
+        "Hotspot": {
+          "measured": 7
+        }
+      },
+      "projection": {
+        "measured": {
+          "CuBlasLt": 8
+        }
+      },
+      "local_transitions": [
+        {
+          "candidate": "CandidateId(1)",
+          "program": "3e67624ee1693bc923aa00933a9e51ac",
+          "parent": "CandidateId(0)",
+          "parent_program": "6f40d547ce2cac35542f0619d6d1b578",
+          "class": "IR-5930",
+          "from": "function-2118-Op",
+          "to": "function-2055-Op",
+          "parent_cost_seconds": 0.0035480000004172326,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 34617611,
+          "candidate_direct_ns": 34518187
+        },
+        {
+          "candidate": "CandidateId(2)",
+          "program": "66dbb104e5728642063c5649b8b5dc02",
+          "parent": "CandidateId(1)",
+          "parent_program": "3e67624ee1693bc923aa00933a9e51ac",
+          "class": "IR-5930",
+          "from": "function-2055-Op",
+          "to": "function-2079-Op",
+          "parent_cost_seconds": 0.003348096035420895,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 34518187,
+          "candidate_direct_ns": 34582174
+        },
+        {
+          "candidate": "CandidateId(3)",
+          "program": "ba323e15dc623645e1e53e1f3d1e3e57",
+          "parent": "CandidateId(1)",
+          "parent_program": "3e67624ee1693bc923aa00933a9e51ac",
+          "class": "IR-5930",
+          "from": "function-2055-Op",
+          "to": "function-2103-Op",
+          "parent_cost_seconds": 0.003348096035420895,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 34518187,
+          "candidate_direct_ns": 34409941
+        },
+        {
+          "candidate": "CandidateId(4)",
+          "program": "c4e966e2d153b57e00fe1bc7963460d0",
+          "parent": "CandidateId(3)",
+          "parent_program": "ba323e15dc623645e1e53e1f3d1e3e57",
+          "class": "IR-5766",
+          "from": "function-2074-Op",
+          "to": "function-2076-Op",
+          "parent_cost_seconds": 0.002775744017213583,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 34409941,
+          "candidate_direct_ns": 34369534
+        },
+        {
+          "candidate": "CandidateId(5)",
+          "program": "9737873e2818aa4e3992162d9bfe4280",
+          "parent": "CandidateId(4)",
+          "parent_program": "c4e966e2d153b57e00fe1bc7963460d0",
+          "class": "IR-5930",
+          "from": "function-2103-Op",
+          "to": "function-2055-Op",
+          "parent_cost_seconds": 0.0033340799957513813,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 34369534,
+          "candidate_direct_ns": 34452159
+        },
+        {
+          "candidate": "CandidateId(6)",
+          "program": "0ed689843e43fead8cbec90385773ccc",
+          "parent": "CandidateId(4)",
+          "parent_program": "c4e966e2d153b57e00fe1bc7963460d0",
+          "class": "IR-5930",
+          "from": "function-2103-Op",
+          "to": "function-2079-Op",
+          "parent_cost_seconds": 0.0033340799957513813,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 34369534,
+          "candidate_direct_ns": 34621909
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "868169b9ac48fe2a3f4e77fc429be4e8",
+          "parent": "CandidateId(4)",
+          "parent_program": "c4e966e2d153b57e00fe1bc7963460d0",
+          "class": "IR-5930",
+          "from": "function-2103-Op",
+          "to": "function-2118-Op",
+          "parent_cost_seconds": 0.0033340799957513813,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 34369534,
+          "candidate_direct_ns": 34730027
+        }
+      ],
+      "unmapped_profile_nodes": 0,
+      "top_regions": [
+        {
+          "candidate": "CandidateId(0)",
+          "program": "6f40d547ce2cac35542f0619d6d1b578",
+          "duration_seconds": 0.0006782400012016296,
+          "operations": [
+            {
+              "node": 5878,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13578,
+                5879
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(0)",
+          "program": "6f40d547ce2cac35542f0619d6d1b578",
+          "duration_seconds": 7.494399696588516e-05,
+          "operations": [
+            {
+              "node": 7293,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                7437,
+                7394,
+                7346
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(0)",
+          "program": "6f40d547ce2cac35542f0619d6d1b578",
+          "duration_seconds": 7.443200051784515e-05,
+          "operations": [
+            {
+              "node": 7317,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                7461,
+                7370,
+                7322
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(1)",
+          "program": "3e67624ee1693bc923aa00933a9e51ac",
+          "duration_seconds": 0.0006776959896087647,
+          "operations": [
+            {
+              "node": 5878,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13578,
+                5879
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(1)",
+          "program": "3e67624ee1693bc923aa00933a9e51ac",
+          "duration_seconds": 7.414399832487107e-05,
+          "operations": [
+            {
+              "node": 5939,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                5987,
+                5972,
+                5956
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(1)",
+          "program": "3e67624ee1693bc923aa00933a9e51ac",
+          "duration_seconds": 7.414399832487107e-05,
+          "operations": [
+            {
+              "node": 5941,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                5989,
+                5970,
+                5954
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(2)",
+          "program": "66dbb104e5728642063c5649b8b5dc02",
+          "duration_seconds": 0.0006780160069465637,
+          "operations": [
+            {
+              "node": 5878,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13578,
+                5879
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(2)",
+          "program": "66dbb104e5728642063c5649b8b5dc02",
+          "duration_seconds": 7.478400319814682e-05,
+          "operations": [
+            {
+              "node": 5932,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                5980,
+                5979,
+                5963
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(2)",
+          "program": "66dbb104e5728642063c5649b8b5dc02",
+          "duration_seconds": 7.475200295448303e-05,
+          "operations": [
+            {
+              "node": 7287,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                7431,
+                7400,
+                7352
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(3)",
+          "program": "ba323e15dc623645e1e53e1f3d1e3e57",
+          "duration_seconds": 0.000675104022026062,
+          "operations": [
+            {
+              "node": 5878,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13578,
+                5879
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(3)",
+          "program": "ba323e15dc623645e1e53e1f3d1e3e57",
+          "duration_seconds": 7.558400183916092e-05,
+          "operations": [
+            {
+              "node": 5935,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                5983,
+                5976,
+                5960
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(3)",
+          "program": "ba323e15dc623645e1e53e1f3d1e3e57",
+          "duration_seconds": 7.523199915885926e-05,
+          "operations": [
+            {
+              "node": 5938,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                5986,
+                5973,
+                5957
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(4)",
+          "program": "c4e966e2d153b57e00fe1bc7963460d0",
+          "duration_seconds": 0.0006786559820175171,
+          "operations": [
+            {
+              "node": 5878,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13578,
+                5879
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(4)",
+          "program": "c4e966e2d153b57e00fe1bc7963460d0",
+          "duration_seconds": 7.503999769687653e-05,
+          "operations": [
+            {
+              "node": 5932,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                5980,
+                5979,
+                5963
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(4)",
+          "program": "c4e966e2d153b57e00fe1bc7963460d0",
+          "duration_seconds": 7.430399954319001e-05,
+          "operations": [
+            {
+              "node": 5942,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                5990,
+                5969,
+                5953
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(5)",
+          "program": "9737873e2818aa4e3992162d9bfe4280",
+          "duration_seconds": 0.0006807360053062439,
+          "operations": [
+            {
+              "node": 5878,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13578,
+                5879
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(5)",
+          "program": "9737873e2818aa4e3992162d9bfe4280",
+          "duration_seconds": 7.436800003051758e-05,
+          "operations": [
+            {
+              "node": 5941,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                5989,
+                5970,
+                5954
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(5)",
+          "program": "9737873e2818aa4e3992162d9bfe4280",
+          "duration_seconds": 7.40479975938797e-05,
+          "operations": [
+            {
+              "node": 5935,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                5983,
+                5976,
+                5960
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(6)",
+          "program": "0ed689843e43fead8cbec90385773ccc",
+          "duration_seconds": 0.0006768320202827454,
+          "operations": [
+            {
+              "node": 5878,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13578,
+                5879
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(6)",
+          "program": "0ed689843e43fead8cbec90385773ccc",
+          "duration_seconds": 7.500799745321274e-05,
+          "operations": [
+            {
+              "node": 5937,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                5985,
+                5974,
+                5958
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(6)",
+          "program": "0ed689843e43fead8cbec90385773ccc",
+          "duration_seconds": 7.48480036854744e-05,
+          "operations": [
+            {
+              "node": 7280,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                7424,
+                7407,
+                7359
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "868169b9ac48fe2a3f4e77fc429be4e8",
+          "duration_seconds": 0.0006811519861221314,
+          "operations": [
+            {
+              "node": 5878,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13578,
+                5879
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "868169b9ac48fe2a3f4e77fc429be4e8",
+          "duration_seconds": 7.526399940252305e-05,
+          "operations": [
+            {
+              "node": 7305,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                7449,
+                7382,
+                7334
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "868169b9ac48fe2a3f4e77fc429be4e8",
+          "duration_seconds": 7.523199915885926e-05,
+          "operations": [
+            {
+              "node": 7278,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                7422,
+                7409,
+                7361
+              ]
+            }
+          ]
+        }
+      ],
+      "bucket_indices": {
+        "b": 1,
+        "c_0": 0,
+        "s": 1
+      },
+      "selected": {
+        "program": "ba323e15dc623645e1e53e1f3d1e3e57",
+        "projection": [
+          {
+            "node": 5878,
+            "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+            "host_provider": "CuBlasLt",
+            "kernel": null,
+            "inputs": [
+              13578,
+              5879
+            ]
+          }
+        ]
+      }
+    },
+    "4": {
+      "snapshot": {
+        "event": "bucket_started",
+        "bucket": 4,
+        "snapshot_format": 1,
+        "snapshot_sha256": "146ad69437a270ea3ecdbd14e0a9c5d26a07bde515cf624f280ec086ff9e9265",
+        "snapshot_scope": "ordered serialized egraph and custom-op descriptors; excludes compiler binary, data, and device state",
+        "classes": 14055,
+        "nodes": 39288,
+        "dimensions": {
+          "b": 2,
+          "c_0": 8,
+          "s": 32
+        }
+      },
+      "outcomes": {
+        "rejected": 9,
+        "measured": 8
+      },
+      "origins": {
+        "Coverage": {
+          "rejected": 9,
+          "measured": 1
+        },
+        "Hotspot": {
+          "measured": 7
+        }
+      },
+      "projection": {
+        "rejected": {
+          "GenericMatmul": 3,
+          "CuBlasLt": 6
+        },
+        "measured": {
+          "CuBlasLt": 8
+        }
+      },
+      "local_transitions": [
+        {
+          "candidate": "CandidateId(10)",
+          "program": "95303fe95d90eaa870a1179e0bad1d82",
+          "parent": "CandidateId(9)",
+          "parent_program": "9610b296bcbe5e81098b5068d56c5f99",
+          "class": "IR-5930",
+          "from": "function-2063-Op",
+          "to": "function-2064-Op",
+          "parent_cost_seconds": 0.003492736041545868,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52556544,
+          "candidate_direct_ns": 53384619
+        },
+        {
+          "candidate": "CandidateId(11)",
+          "program": "6a8aafd1a55f428924bd4c93fa7ccb59",
+          "parent": "CandidateId(9)",
+          "parent_program": "9610b296bcbe5e81098b5068d56c5f99",
+          "class": "IR-5930",
+          "from": "function-2063-Op",
+          "to": "function-2088-Op",
+          "parent_cost_seconds": 0.003492736041545868,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52556544,
+          "candidate_direct_ns": 52716958
+        },
+        {
+          "candidate": "CandidateId(12)",
+          "program": "b6891b966d90ca14129ed19626a916f0",
+          "parent": "CandidateId(9)",
+          "parent_program": "9610b296bcbe5e81098b5068d56c5f99",
+          "class": "IR-5930",
+          "from": "function-2063-Op",
+          "to": "function-2100-Op",
+          "parent_cost_seconds": 0.003492736041545868,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52556544,
+          "candidate_direct_ns": 52378379
+        },
+        {
+          "candidate": "CandidateId(13)",
+          "program": "754b41320bb9cf67d12871a82cdeb4da",
+          "parent": "CandidateId(12)",
+          "parent_program": "b6891b966d90ca14129ed19626a916f0",
+          "class": "IR-5825",
+          "from": "function-2105-Op",
+          "to": "function-2061-Op",
+          "parent_cost_seconds": 0.0028702399916946887,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52378379,
+          "candidate_direct_ns": 52189494
+        },
+        {
+          "candidate": "CandidateId(14)",
+          "program": "209561b5cc1eb8363fed9351ddd9ee51",
+          "parent": "CandidateId(13)",
+          "parent_program": "754b41320bb9cf67d12871a82cdeb4da",
+          "class": "IR-5930",
+          "from": "function-2100-Op",
+          "to": "function-2063-Op",
+          "parent_cost_seconds": 0.003343936011195182,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52189494,
+          "candidate_direct_ns": 52419680
+        },
+        {
+          "candidate": "CandidateId(15)",
+          "program": "afbee6caf1d25121ceb2f57804e69697",
+          "parent": "CandidateId(13)",
+          "parent_program": "754b41320bb9cf67d12871a82cdeb4da",
+          "class": "IR-5930",
+          "from": "function-2100-Op",
+          "to": "function-2064-Op",
+          "parent_cost_seconds": 0.003343936011195182,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52189494,
+          "candidate_direct_ns": 53263061
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "995c8b6c694acae801ffb5d2d3caf932",
+          "parent": "CandidateId(13)",
+          "parent_program": "754b41320bb9cf67d12871a82cdeb4da",
+          "class": "IR-5930",
+          "from": "function-2100-Op",
+          "to": "function-2088-Op",
+          "parent_cost_seconds": 0.003343936011195182,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 52189494,
+          "candidate_direct_ns": 52596778
+        }
+      ],
+      "unmapped_profile_nodes": 0,
+      "top_regions": [
+        {
+          "candidate": "CandidateId(9)",
+          "program": "9610b296bcbe5e81098b5068d56c5f99",
+          "duration_seconds": 0.0007169600129127503,
+          "operations": [
+            {
+              "node": 5871,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13727,
+                5872
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(9)",
+          "program": "9610b296bcbe5e81098b5068d56c5f99",
+          "duration_seconds": 0.00025724801421165465,
+          "operations": [
+            {
+              "node": 13306,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13322
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(9)",
+          "program": "9610b296bcbe5e81098b5068d56c5f99",
+          "duration_seconds": 0.00025699201226234435,
+          "operations": [
+            {
+              "node": 13304,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13320
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(10)",
+          "program": "95303fe95d90eaa870a1179e0bad1d82",
+          "duration_seconds": 0.0007169600129127503,
+          "operations": [
+            {
+              "node": 5871,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13727,
+                5872
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(10)",
+          "program": "95303fe95d90eaa870a1179e0bad1d82",
+          "duration_seconds": 0.0002568959891796112,
+          "operations": [
+            {
+              "node": 13304,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13320
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(10)",
+          "program": "95303fe95d90eaa870a1179e0bad1d82",
+          "duration_seconds": 0.00025679999589920045,
+          "operations": [
+            {
+              "node": 13307,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13323
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(11)",
+          "program": "6a8aafd1a55f428924bd4c93fa7ccb59",
+          "duration_seconds": 0.0007135040163993836,
+          "operations": [
+            {
+              "node": 5871,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13727,
+                5872
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(11)",
+          "program": "6a8aafd1a55f428924bd4c93fa7ccb59",
+          "duration_seconds": 0.0002568959891796112,
+          "operations": [
+            {
+              "node": 13312,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13328
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(11)",
+          "program": "6a8aafd1a55f428924bd4c93fa7ccb59",
+          "duration_seconds": 0.0002561919987201691,
+          "operations": [
+            {
+              "node": 13313,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13329
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(12)",
+          "program": "b6891b966d90ca14129ed19626a916f0",
+          "duration_seconds": 0.0007276800274848938,
+          "operations": [
+            {
+              "node": 5871,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13727,
+                5872
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(12)",
+          "program": "b6891b966d90ca14129ed19626a916f0",
+          "duration_seconds": 0.00025673601031303404,
+          "operations": [
+            {
+              "node": 13313,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13329
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(12)",
+          "program": "b6891b966d90ca14129ed19626a916f0",
+          "duration_seconds": 0.00025657600164413454,
+          "operations": [
+            {
+              "node": 13315,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13331
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(13)",
+          "program": "754b41320bb9cf67d12871a82cdeb4da",
+          "duration_seconds": 0.0007183679938316345,
+          "operations": [
+            {
+              "node": 5871,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13727,
+                5872
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(13)",
+          "program": "754b41320bb9cf67d12871a82cdeb4da",
+          "duration_seconds": 0.0002580479979515076,
+          "operations": [
+            {
+              "node": 13316,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13332
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(13)",
+          "program": "754b41320bb9cf67d12871a82cdeb4da",
+          "duration_seconds": 0.0002566719949245453,
+          "operations": [
+            {
+              "node": 13302,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13318
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(14)",
+          "program": "209561b5cc1eb8363fed9351ddd9ee51",
+          "duration_seconds": 0.0007292159795761108,
+          "operations": [
+            {
+              "node": 5871,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13727,
+                5872
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(14)",
+          "program": "209561b5cc1eb8363fed9351ddd9ee51",
+          "duration_seconds": 0.00025705599784851075,
+          "operations": [
+            {
+              "node": 13304,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13320
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(14)",
+          "program": "209561b5cc1eb8363fed9351ddd9ee51",
+          "duration_seconds": 0.00025699201226234435,
+          "operations": [
+            {
+              "node": 13310,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13326
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(15)",
+          "program": "afbee6caf1d25121ceb2f57804e69697",
+          "duration_seconds": 0.0007155519723892212,
+          "operations": [
+            {
+              "node": 5871,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13727,
+                5872
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(15)",
+          "program": "afbee6caf1d25121ceb2f57804e69697",
+          "duration_seconds": 0.00025721600651741025,
+          "operations": [
+            {
+              "node": 13302,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13318
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(15)",
+          "program": "afbee6caf1d25121ceb2f57804e69697",
+          "duration_seconds": 0.0002564480006694794,
+          "operations": [
+            {
+              "node": 13316,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13332
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "995c8b6c694acae801ffb5d2d3caf932",
+          "duration_seconds": 0.0007124800086021424,
+          "operations": [
+            {
+              "node": 5871,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13727,
+                5872
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "995c8b6c694acae801ffb5d2d3caf932",
+          "duration_seconds": 0.0002573440074920654,
+          "operations": [
+            {
+              "node": 13308,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13324
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "995c8b6c694acae801ffb5d2d3caf932",
+          "duration_seconds": 0.0002566719949245453,
+          "operations": [
+            {
+              "node": 13315,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                13259,
+                13258,
+                13331
+              ]
+            }
+          ]
+        }
+      ],
+      "bucket_indices": {
+        "b": 1,
+        "c_0": 0,
+        "s": 2
+      },
+      "selected": {
+        "program": "754b41320bb9cf67d12871a82cdeb4da",
+        "projection": [
+          {
+            "node": 5871,
+            "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: 32, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+            "host_provider": "CuBlasLt",
+            "kernel": null,
+            "inputs": [
+              13727,
+              5872
+            ]
+          }
+        ]
+      }
+    },
+    "5": {
+      "snapshot": {
+        "event": "bucket_started",
+        "bucket": 5,
+        "snapshot_format": 1,
+        "snapshot_sha256": "67c1270adca9fc4dbdc905b5c7d63287a569ad21baebc3b6a7f42beef242ca14",
+        "snapshot_scope": "ordered serialized egraph and custom-op descriptors; excludes compiler binary, data, and device state",
+        "classes": 14078,
+        "nodes": 39273,
+        "dimensions": {
+          "b": 8,
+          "c_0": 8,
+          "s": 8
+        }
+      },
+      "outcomes": {
+        "rejected": 6,
+        "measured": 8
+      },
+      "origins": {
+        "Coverage": {
+          "rejected": 6,
+          "measured": 1
+        },
+        "Hotspot": {
+          "measured": 7
+        }
+      },
+      "projection": {
+        "rejected": {
+          "GenericMatmul": 2,
+          "CuBlasLt": 4
+        },
+        "measured": {
+          "CuBlasLt": 8
+        }
+      },
+      "local_transitions": [
+        {
+          "candidate": "CandidateId(7)",
+          "program": "4d997708338c6a1e75030a6baf6131ca",
+          "parent": "CandidateId(6)",
+          "parent_program": "5943ae6a6c33855c9bc3d217303e7d32",
+          "class": "IR-5931",
+          "from": "function-2100-Op",
+          "to": "function-2077-Op",
+          "parent_cost_seconds": 0.003361407995223999,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 42706698,
+          "candidate_direct_ns": 42991765
+        },
+        {
+          "candidate": "CandidateId(8)",
+          "program": "9a02b9df8a5d6a0890535d2e4530dd21",
+          "parent": "CandidateId(6)",
+          "parent_program": "5943ae6a6c33855c9bc3d217303e7d32",
+          "class": "IR-5931",
+          "from": "function-2100-Op",
+          "to": "function-2078-Op",
+          "parent_cost_seconds": 0.003361407995223999,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 42706698,
+          "candidate_direct_ns": 43032895
+        },
+        {
+          "candidate": "CandidateId(9)",
+          "program": "1e001534e32700bad04c21d608ed4dc8",
+          "parent": "CandidateId(6)",
+          "parent_program": "5943ae6a6c33855c9bc3d217303e7d32",
+          "class": "IR-5931",
+          "from": "function-2100-Op",
+          "to": "function-2098-Op",
+          "parent_cost_seconds": 0.003361407995223999,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 42706698,
+          "candidate_direct_ns": 42751349
+        },
+        {
+          "candidate": "CandidateId(10)",
+          "program": "1fedebafc166f93308e554e5d8c80130",
+          "parent": "CandidateId(6)",
+          "parent_program": "5943ae6a6c33855c9bc3d217303e7d32",
+          "class": "IR-5767",
+          "from": "function-2115-Op",
+          "to": "function-2086-Op",
+          "parent_cost_seconds": 0.0027557119876146312,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 42706698,
+          "candidate_direct_ns": 42782100
+        },
+        {
+          "candidate": "CandidateId(11)",
+          "program": "12be7a0c80b932180f14db4cf3184b04",
+          "parent": "CandidateId(6)",
+          "parent_program": "5943ae6a6c33855c9bc3d217303e7d32",
+          "class": "IR-5767",
+          "from": "function-2115-Op",
+          "to": "function-2091-Op",
+          "parent_cost_seconds": 0.0027557119876146312,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 42706698,
+          "candidate_direct_ns": 42755156
+        },
+        {
+          "candidate": "CandidateId(12)",
+          "program": "983964ac03105afbf5906d8089403a34",
+          "parent": "CandidateId(6)",
+          "parent_program": "5943ae6a6c33855c9bc3d217303e7d32",
+          "class": "IR-5767",
+          "from": "function-2115-Op",
+          "to": "function-2116-Op",
+          "parent_cost_seconds": 0.0027557119876146312,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 42706698,
+          "candidate_direct_ns": 42798932
+        },
+        {
+          "candidate": "CandidateId(13)",
+          "program": "3748117f6afed29d2d0e8acd46f5ffa5",
+          "parent": "CandidateId(6)",
+          "parent_program": "5943ae6a6c33855c9bc3d217303e7d32",
+          "class": "IR-5826",
+          "from": "function-2069-Op",
+          "to": "function-2057-Op",
+          "parent_cost_seconds": 0.0026735359951853754,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 42706698,
+          "candidate_direct_ns": 42817440
+        }
+      ],
+      "unmapped_profile_nodes": 0,
+      "top_regions": [
+        {
+          "candidate": "CandidateId(6)",
+          "program": "5943ae6a6c33855c9bc3d217303e7d32",
+          "duration_seconds": 0.0006769919991493225,
+          "operations": [
+            {
+              "node": 5583,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13317,
+                5584
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(6)",
+          "program": "5943ae6a6c33855c9bc3d217303e7d32",
+          "duration_seconds": 7.075200229883194e-05,
+          "operations": [
+            {
+              "node": 7083,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                7227,
+                7134,
+                7086
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(6)",
+          "program": "5943ae6a6c33855c9bc3d217303e7d32",
+          "duration_seconds": 7.0592001080513e-05,
+          "operations": [
+            {
+              "node": 7066,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                7210,
+                7151,
+                7103
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "4d997708338c6a1e75030a6baf6131ca",
+          "duration_seconds": 0.0006790080070495605,
+          "operations": [
+            {
+              "node": 5583,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13317,
+                5584
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "4d997708338c6a1e75030a6baf6131ca",
+          "duration_seconds": 7.548800110816955e-05,
+          "operations": [
+            {
+              "node": 7064,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                7208,
+                7153,
+                7105
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(7)",
+          "program": "4d997708338c6a1e75030a6baf6131ca",
+          "duration_seconds": 7.542400062084198e-05,
+          "operations": [
+            {
+              "node": 7043,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV2",
+              "kernel": null,
+              "inputs": [
+                7187,
+                7174,
+                7126
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(8)",
+          "program": "9a02b9df8a5d6a0890535d2e4530dd21",
+          "duration_seconds": 0.000676800012588501,
+          "operations": [
+            {
+              "node": 5583,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13317,
+                5584
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(8)",
+          "program": "9a02b9df8a5d6a0890535d2e4530dd21",
+          "duration_seconds": 7.526399940252305e-05,
+          "operations": [
+            {
+              "node": 7047,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                7191,
+                7170,
+                7122
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(8)",
+          "program": "9a02b9df8a5d6a0890535d2e4530dd21",
+          "duration_seconds": 7.503999769687653e-05,
+          "operations": [
+            {
+              "node": 7043,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV3",
+              "kernel": null,
+              "inputs": [
+                7187,
+                7174,
+                7126
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(9)",
+          "program": "1e001534e32700bad04c21d608ed4dc8",
+          "duration_seconds": 0.000681984007358551,
+          "operations": [
+            {
+              "node": 5583,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13317,
+                5584
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(9)",
+          "program": "1e001534e32700bad04c21d608ed4dc8",
+          "duration_seconds": 7.049600034952164e-05,
+          "operations": [
+            {
+              "node": 5644,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                5692,
+                5677,
+                5661
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(9)",
+          "program": "1e001534e32700bad04c21d608ed4dc8",
+          "duration_seconds": 7.043199986219406e-05,
+          "operations": [
+            {
+              "node": 5639,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                5687,
+                5682,
+                5666
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(10)",
+          "program": "1fedebafc166f93308e554e5d8c80130",
+          "duration_seconds": 0.0006774399876594544,
+          "operations": [
+            {
+              "node": 5583,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13317,
+                5584
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(10)",
+          "program": "1fedebafc166f93308e554e5d8c80130",
+          "duration_seconds": 7.0592001080513e-05,
+          "operations": [
+            {
+              "node": 7051,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                7195,
+                7166,
+                7118
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(10)",
+          "program": "1fedebafc166f93308e554e5d8c80130",
+          "duration_seconds": 7.0592001080513e-05,
+          "operations": [
+            {
+              "node": 7083,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                7227,
+                7134,
+                7086
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(11)",
+          "program": "12be7a0c80b932180f14db4cf3184b04",
+          "duration_seconds": 0.000677951991558075,
+          "operations": [
+            {
+              "node": 5583,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13317,
+                5584
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(11)",
+          "program": "12be7a0c80b932180f14db4cf3184b04",
+          "duration_seconds": 7.062400132417679e-05,
+          "operations": [
+            {
+              "node": 7066,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                7210,
+                7151,
+                7103
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(11)",
+          "program": "12be7a0c80b932180f14db4cf3184b04",
+          "duration_seconds": 7.049600034952164e-05,
+          "operations": [
+            {
+              "node": 7063,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                7207,
+                7154,
+                7106
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(12)",
+          "program": "983964ac03105afbf5906d8089403a34",
+          "duration_seconds": 0.0006790400147438049,
+          "operations": [
+            {
+              "node": 5583,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13317,
+                5584
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(12)",
+          "program": "983964ac03105afbf5906d8089403a34",
+          "duration_seconds": 7.065600156784058e-05,
+          "operations": [
+            {
+              "node": 7083,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                7227,
+                7134,
+                7086
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(12)",
+          "program": "983964ac03105afbf5906d8089403a34",
+          "duration_seconds": 7.056000083684921e-05,
+          "operations": [
+            {
+              "node": 7063,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                7207,
+                7154,
+                7106
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(13)",
+          "program": "3748117f6afed29d2d0e8acd46f5ffa5",
+          "duration_seconds": 0.0006775680184364319,
+          "operations": [
+            {
+              "node": 5583,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                13317,
+                5584
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(13)",
+          "program": "3748117f6afed29d2d0e8acd46f5ffa5",
+          "duration_seconds": 7.078400254249573e-05,
+          "operations": [
+            {
+              "node": 7057,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                7201,
+                7160,
+                7112
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(13)",
+          "program": "3748117f6afed29d2d0e8acd46f5ffa5",
+          "duration_seconds": 7.065600156784058e-05,
+          "operations": [
+            {
+              "node": 7065,
+              "semantic": "LLIROp(DialectOp(DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }))",
+              "host_provider": "DeepGemmV0",
+              "kernel": null,
+              "inputs": [
+                7209,
+                7152,
+                7104
+              ]
+            }
+          ]
+        }
+      ],
+      "bucket_indices": {
+        "b": 2,
+        "c_0": 0,
+        "s": 1
+      },
+      "selected": {
+        "program": "5943ae6a6c33855c9bc3d217303e7d32",
+        "projection": [
+          {
+            "node": 5583,
+            "semantic": "LLIROp(DialectOp(CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+            "host_provider": "CuBlasLt",
+            "kernel": null,
+            "inputs": [
+              13317,
+              5584
+            ]
+          }
+        ]
+      }
+    },
+    "6": {
+      "snapshot": {
+        "event": "bucket_started",
+        "bucket": 6,
+        "snapshot_format": 1,
+        "snapshot_sha256": "2f6438b6a07d23e715fe3183b8b910e8f43d9f85732bbf3b6730b72b84e91ea9",
+        "snapshot_scope": "ordered serialized egraph and custom-op descriptors; excludes compiler binary, data, and device state",
+        "classes": 14057,
+        "nodes": 39293,
+        "dimensions": {
+          "b": 8,
+          "c_0": 8,
+          "s": 32
+        }
+      },
+      "outcomes": {
+        "rejected": 16,
+        "measured": 8
+      },
+      "origins": {
+        "Coverage": {
+          "rejected": 16,
+          "measured": 1
+        },
+        "Hotspot": {
+          "measured": 7
+        }
+      },
+      "projection": {
+        "rejected": {
+          "CuBlasLt": 11,
+          "GenericMatmul": 5
+        },
+        "measured": {
+          "GenericMatmul": 1,
+          "CuBlasLt": 7
+        }
+      },
+      "local_transitions": [
+        {
+          "candidate": "CandidateId(17)",
+          "program": "ac993a30179dc86e9703433757768b51",
+          "parent": "CandidateId(16)",
+          "parent_program": "5fd86b3c48e6f66251b41dd1945cf73c",
+          "class": "IR-7938",
+          "from": "function-2123-Op",
+          "to": "function-2132-Op",
+          "parent_cost_seconds": 0.17121919250488282,
+          "status": "measured",
+          "projection_before": [
+            "GenericMatmul"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 229789815,
+          "candidate_direct_ns": 59146143
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "a4b49bfc7e681a00ff2b7910d0f8cc08",
+          "parent": "CandidateId(17)",
+          "parent_program": "ac993a30179dc86e9703433757768b51",
+          "class": "IR-5931",
+          "from": "function-2087-Op",
+          "to": "function-2064-Op",
+          "parent_cost_seconds": 0.004364000000059606,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 59146143,
+          "candidate_direct_ns": 58524854
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "6c2120634ed05f4e06a28f8c50e4c197",
+          "parent": "CandidateId(18)",
+          "parent_program": "a4b49bfc7e681a00ff2b7910d0f8cc08",
+          "class": "IR-5931",
+          "from": "function-2064-Op",
+          "to": "function-2101-Op",
+          "parent_cost_seconds": 0.0037286080121994017,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 58524854,
+          "candidate_direct_ns": 58247947
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "98f79cc85a9bc457c478f8d09bf04d23",
+          "parent": "CandidateId(19)",
+          "parent_program": "6c2120634ed05f4e06a28f8c50e4c197",
+          "class": "IR-5931",
+          "from": "function-2101-Op",
+          "to": "function-2104-Op",
+          "parent_cost_seconds": 0.0034892160370945937,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 58247947,
+          "candidate_direct_ns": 58105900
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "040d0ca646bfc613dfc616b8750c57cd",
+          "parent": "CandidateId(20)",
+          "parent_program": "98f79cc85a9bc457c478f8d09bf04d23",
+          "class": "IR-5826",
+          "from": "function-2122-Op",
+          "to": "function-2077-Op",
+          "parent_cost_seconds": 0.0028686079978942867,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 58105900,
+          "candidate_direct_ns": 57931711
+        },
+        {
+          "candidate": "CandidateId(22)",
+          "program": "33282012819c1d19b95669e54c075325",
+          "parent": "CandidateId(21)",
+          "parent_program": "040d0ca646bfc613dfc616b8750c57cd",
+          "class": "IR-5931",
+          "from": "function-2104-Op",
+          "to": "function-2064-Op",
+          "parent_cost_seconds": 0.0033385920152068137,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 57931711,
+          "candidate_direct_ns": 58387456
+        },
+        {
+          "candidate": "CandidateId(23)",
+          "program": "ee14da0e72f06191de4a706a7fe84806",
+          "parent": "CandidateId(21)",
+          "parent_program": "040d0ca646bfc613dfc616b8750c57cd",
+          "class": "IR-5931",
+          "from": "function-2104-Op",
+          "to": "function-2087-Op",
+          "parent_cost_seconds": 0.0033385920152068137,
+          "status": "measured",
+          "projection_before": [
+            "CuBlasLt"
+          ],
+          "projection_after": [
+            "CuBlasLt"
+          ],
+          "parent_direct_ns": 57931711,
+          "candidate_direct_ns": 59020915
+        }
+      ],
+      "unmapped_profile_nodes": 0,
+      "top_regions": [
+        {
+          "candidate": "CandidateId(16)",
+          "program": "5fd86b3c48e6f66251b41dd1945cf73c",
+          "duration_seconds": 0.17121919250488282,
+          "operations": [
+            {
+              "node": 5880,
+              "semantic": "LLIROp(DialectOp(GenericMatmul { out_shape: [32, 248320], mul_shape: [32, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "GenericMatmul",
+              "inputs": [
+                5882,
+                5881
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "5fd86b3c48e6f66251b41dd1945cf73c",
+          "duration_seconds": 0.00025702399015426635,
+          "operations": [
+            {
+              "node": 13043,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13059
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(16)",
+          "program": "5fd86b3c48e6f66251b41dd1945cf73c",
+          "duration_seconds": 0.0002560960054397583,
+          "operations": [
+            {
+              "node": 13053,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13069
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "ac993a30179dc86e9703433757768b51",
+          "duration_seconds": 0.0007148159742355346,
+          "operations": [
+            {
+              "node": 5880,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 32, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5882,
+                5881
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "ac993a30179dc86e9703433757768b51",
+          "duration_seconds": 0.0002563839852809906,
+          "operations": [
+            {
+              "node": 13049,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13065
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(17)",
+          "program": "ac993a30179dc86e9703433757768b51",
+          "duration_seconds": 0.0002563520073890686,
+          "operations": [
+            {
+              "node": 13050,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13066
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "a4b49bfc7e681a00ff2b7910d0f8cc08",
+          "duration_seconds": 0.0007150080204010009,
+          "operations": [
+            {
+              "node": 5880,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 32, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5882,
+                5881
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "a4b49bfc7e681a00ff2b7910d0f8cc08",
+          "duration_seconds": 0.0002567040026187897,
+          "operations": [
+            {
+              "node": 13049,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13065
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(18)",
+          "program": "a4b49bfc7e681a00ff2b7910d0f8cc08",
+          "duration_seconds": 0.0002560319900512695,
+          "operations": [
+            {
+              "node": 13044,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13060
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "6c2120634ed05f4e06a28f8c50e4c197",
+          "duration_seconds": 0.0007226240038871765,
+          "operations": [
+            {
+              "node": 5880,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 32, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5882,
+                5881
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "6c2120634ed05f4e06a28f8c50e4c197",
+          "duration_seconds": 0.0002574400007724762,
+          "operations": [
+            {
+              "node": 13041,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13057
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(19)",
+          "program": "6c2120634ed05f4e06a28f8c50e4c197",
+          "duration_seconds": 0.0002571839988231659,
+          "operations": [
+            {
+              "node": 13049,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13065
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "98f79cc85a9bc457c478f8d09bf04d23",
+          "duration_seconds": 0.0007145599722862243,
+          "operations": [
+            {
+              "node": 5880,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 32, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5882,
+                5881
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "98f79cc85a9bc457c478f8d09bf04d23",
+          "duration_seconds": 0.00025724801421165465,
+          "operations": [
+            {
+              "node": 13046,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13062
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(20)",
+          "program": "98f79cc85a9bc457c478f8d09bf04d23",
+          "duration_seconds": 0.00025724801421165465,
+          "operations": [
+            {
+              "node": 13049,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13065
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "040d0ca646bfc613dfc616b8750c57cd",
+          "duration_seconds": 0.0007161279916763306,
+          "operations": [
+            {
+              "node": 5880,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 32, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5882,
+                5881
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "040d0ca646bfc613dfc616b8750c57cd",
+          "duration_seconds": 0.0002566719949245453,
+          "operations": [
+            {
+              "node": 13042,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13058
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(21)",
+          "program": "040d0ca646bfc613dfc616b8750c57cd",
+          "duration_seconds": 0.00025648000836372373,
+          "operations": [
+            {
+              "node": 13045,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13061
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(22)",
+          "program": "33282012819c1d19b95669e54c075325",
+          "duration_seconds": 0.0007141119837760925,
+          "operations": [
+            {
+              "node": 5880,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 32, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5882,
+                5881
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(22)",
+          "program": "33282012819c1d19b95669e54c075325",
+          "duration_seconds": 0.00025772801041603087,
+          "operations": [
+            {
+              "node": 13050,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13066
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(22)",
+          "program": "33282012819c1d19b95669e54c075325",
+          "duration_seconds": 0.0002561599910259247,
+          "operations": [
+            {
+              "node": 13049,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13065
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(23)",
+          "program": "ee14da0e72f06191de4a706a7fe84806",
+          "duration_seconds": 0.0007152640223503112,
+          "operations": [
+            {
+              "node": 5880,
+              "semantic": "LLIROp(DialectOp(CuBlasLt { m: 32, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+              "host_provider": "CuBlasLt",
+              "kernel": null,
+              "inputs": [
+                5882,
+                5881
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(23)",
+          "program": "ee14da0e72f06191de4a706a7fe84806",
+          "duration_seconds": 0.0002564480006694794,
+          "operations": [
+            {
+              "node": 13046,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13062
+              ]
+            }
+          ]
+        },
+        {
+          "candidate": "CandidateId(23)",
+          "program": "ee14da0e72f06191de4a706a7fe84806",
+          "duration_seconds": 0.0002560960054397583,
+          "operations": [
+            {
+              "node": 13043,
+              "semantic": "LLIROp(DialectOp(KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }))",
+              "host_provider": null,
+              "kernel": "Scatter",
+              "inputs": [
+                12999,
+                12998,
+                13059
+              ]
+            }
+          ]
+        }
+      ],
+      "bucket_indices": {
+        "b": 2,
+        "c_0": 0,
+        "s": 2
+      },
+      "selected": {
+        "program": "040d0ca646bfc613dfc616b8750c57cd",
+        "projection": [
+          {
+            "node": 5880,
+            "semantic": "LLIROp(DialectOp(CuBlasLt { m: 32, n: 248320, k: 5120, a_layout: CUBLAS_OP_N, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_ROW, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_ROW, d_order: CUBLASLT_ORDER_ROW, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }))",
+            "host_provider": "CuBlasLt",
+            "kernel": null,
+            "inputs": [
+              5882,
+              5881
+            ]
+          }
+        ]
+      }
+    }
+  }
+}

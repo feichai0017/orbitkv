@@ -44,12 +44,58 @@ Cycles describe draws before dependency repair. Unreachable choices, cycle
 repair, duplicate programs and resource rejection mean spelling coverage does
 not guarantee executable-provider coverage. The trace's measured `direct`
 events, joined to their `program` operations, establish what was actually timed.
-Their `sampling` field identifies initial coverage, mutation or restart.
+Their `sampling` field identifies initial coverage, hotspot exploration, mutation or restart.
 
 The fixed seed does not by itself reproduce the complete search: snapshot,
 options, RNG state, runtime outcomes and ranking feedback must also match.
 Timing noise can change parents, finalists and cooperative stopping points.
 The snapshot digest is deliberately separate from the selected program identity.
+
+## Profile-directed local exploration
+
+`CompileOptions::hotspot_candidates(n)` adds a bounded local phase after a
+measured executable seed. OrbitKV exposes the same artifact-bound field in
+`DecoderTuningProfile`. Zero is the default. Adding this field changes the
+artifact-bound tuning digest, including the zero/default policy; regenerate
+older decoder artifacts before loading them with this version. The
+[hotspot workload profile](../benchmarks/hotspot-search.json) requests 32 local
+attempts, one initial seed and two deployment finalists, with eight measured
+graphs per bucket supplied by the qualification runner.
+
+The CUDA runtime first measures each complete candidate normally. It then runs
+a separate direct execution with CUDA events around generated kernels, fused
+regions and library islands. These diagnostic intervals can include launch gaps;
+they order exploration and never replace the uninstrumented whole-program
+fitness score. Deployment finalists are still remeasured as CUDA Graphs.
+
+Extraction retains a sidecar mapping from each LLIR operation to its own IR
+choice and the OpKind/IList bindings that decoded it. Operand IR producers have
+their own provenance. Loop materialization copies that mapping alongside each
+unrolled operation, and CUDA fusion retains all constituent LLIR nodes. One
+fused region has one measured cost: it is shared across its distinct mutable
+choices. Repeated uses of a shared choice accumulate cost. This metadata is
+excluded from program identities and executable artifacts.
+
+Starting from measured parents, search visits the highest-cost reachable choice
+and enumerates its other admitted nodes in snapshot order. A neighbor changes
+exactly one binding. All other bindings, including choices in newly reachable
+dependencies, retain the parent's values. The extractor does not repair an
+invalid neighbor by changing unrelated decisions. Cycle, state-alias, layout and
+resource checks still apply to the complete result. Shared e-classes can affect
+multiple operations; a single binding change is not necessarily one kernel change.
+
+A measured improvement can become the next parent immediately. Rejected,
+cyclic and duplicate neighbors consume the local attempt allowance, while
+rejected candidates do not displace valid parents or consume the graph
+measurement budget. Once local exploration is exhausted, ordinary coverage and
+genetic exploration continue within the remaining budget. No implementation
+family receives a preference in Rust.
+
+This is coordinate exploration over an existing egraph. It does not guarantee a
+global optimum, jointly repair a dependency closure, add fusion rules, or create
+a whole-model megakernel. Fresh-snapshot identity and measurement noise still
+affect the search. Multi-choice regions and joint KV-layout alternatives remain
+separate compiler work.
 
 ## State constraints before preparation
 
@@ -67,8 +113,8 @@ leaves the current executable intact.
 
 This reuses existing operation contracts and does not rewrite LLIR, force a
 provider, or remove alternatives from egglog. It saves preparation of rejected
-graphs; generating state-compatible genomes and exploring regions within a
-valid surrounding graph remain further work. Optional aliases still permit
+graphs; local exploration now preserves the remaining parent bindings, while
+state-compatible dependency-closure generation remains further work. Optional aliases still permit
 materializing implementations, and mutation-order checks remain mandatory.
 
 ## Verification and use
@@ -93,8 +139,7 @@ decoder workload with eight initial genomes and two finalists. Pass it through
 `--tuning-profile` with `--search-graphs 8`, retain the search trace, and verify
 independent logits and strict artifact replay before interpreting timings.
 Broader initial sampling can cost more compilation time and need not improve
-every workload. It is a foundation for measured region exploration; expensive
-region prioritization, fresh-saturation canonicalization and `glumoe` join
+every workload. It is a foundation for measured region exploration; multi-choice region search, fresh-saturation canonicalization and `glumoe` join
 optimization remain separate work.
 
 The [27B H20 qualification](../results/search-coverage-20260914/README.md) passes
@@ -102,11 +147,28 @@ The [27B H20 qualification](../results/search-coverage-20260914/README.md) passe
 263 rejected graphs violates a required state alias. B8 decode measures eight
 generic output projections while graphs with the cuBLASLt projection fail state
 validation elsewhere. Earlier rejection addresses wasted preparation; constrained
-exploration of expensive regions inside a valid surrounding genome remains the
-next search-space improvement.
+exploration of expensive regions motivated the local phase above.
 
 The [state-preflight qualification](../results/state-preflight-20260914/README.md)
 passes another 296 logit comparisons and drains. Rejected-candidate evaluation
 totals 8.00 seconds against the preceding 81.06-second observation, while warmed
 decode stays close. Snapshot identities differ and caches were reused; this is
 not a paired compiler-speedup or serving-throughput claim.
+
+The `hotspot_search` CUDA regression combines a GEMM with a separate persistent
+scatter branch. It requires a measured local transition between generated GEMM
+and cuBLASLt, checks every measured region's LLIR provenance, and verifies CPU
+matrix products plus exact updated and untouched state rows across two requests.
+Core regressions cover fixed-feedback replay, unaffected bindings, rejected
+parent feedback, finite neighbors, shared-region cost and loop provenance.
+
+```sh
+cargo test --release --manifest-path third_party/luminal/Cargo.toml \
+  -p luminal_cuda_lite --test hotspot_search -- --ignored
+```
+
+The [hotspot qualification](../results/hotspot-search-20260914/README.md) records
+49 measured local neighbors with no state/resource rejection and two prefill
+provider transitions inside valid parents. All 296 reference comparisons pass.
+The B8 decode seed already uses cuBLASLt; improved historical runtime observations
+are not proof of a hotspot provider transition or serving speedup.

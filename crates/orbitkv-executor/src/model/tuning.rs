@@ -86,6 +86,10 @@ pub struct DecoderTuningProfile {
     /// Includes the first executable seed; subsequent rejected and duplicate
     /// programs consume this allowance too. Seed discovery has separate retries.
     pub initial_candidates: usize,
+    /// Local neighbor attempts after a measured seed, including rejected and
+    /// duplicate programs. Zero disables runtime hotspot feedback. Independent
+    /// of the measured-graph budget so invalid neighbors cannot exhaust it.
+    pub hotspot_candidates: usize,
     /// Repeated measurements per candidate; must be nonzero.
     pub trials: usize,
     /// Cooperative search limit; synchronous compiler calls cannot be preempted.
@@ -104,6 +108,7 @@ impl Default for DecoderTuningProfile {
             context_pages: Vec::new(),
             keep_best: DEFAULT_RETAINED_CANDIDATES,
             initial_candidates: DEFAULT_INITIAL_CANDIDATES,
+            hotspot_candidates: 0,
             trials: DEFAULT_PROFILING_TRIALS,
             search_time_limit_ms: None,
             maximum_buckets: DEFAULT_MAXIMUM_BUCKETS,

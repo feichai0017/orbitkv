@@ -4,12 +4,8 @@ use crate::model::tuning;
 
 use super::*;
 
-#[test]
-fn tuning_identity_covers_workload_budget_and_experimental_candidates() {
-    let config = test_config(4);
-    let plan = hybrid_executor_plan();
-    let arenas = hybrid_arenas();
-    let compile = DecoderCompileConfig {
+fn compile_fixture() -> DecoderCompileConfig {
+    DecoderCompileConfig {
         maximum_query_tokens: 32,
         representative_prefill_tokens: 8,
         maximum_batch_size: 4,
@@ -17,7 +13,15 @@ fn tuning_identity_covers_workload_budget_and_experimental_candidates() {
         representative_context_pages: 2,
         search_graphs: 4,
         search_seed: 1,
-    };
+    }
+}
+
+#[test]
+fn tuning_identity_covers_workload_budget_and_experimental_candidates() {
+    let config = test_config(4);
+    let plan = hybrid_executor_plan();
+    let arenas = hybrid_arenas();
+    let compile = compile_fixture();
     let identity = |tuning: &DecoderTuningProfile| {
         artifact::decoder_artifact_identity_with_tuning(
             &config,
@@ -33,6 +37,10 @@ fn tuning_identity_covers_workload_budget_and_experimental_candidates() {
     };
     let original = identity(&DecoderTuningProfile::default());
     for tuning in [
+        DecoderTuningProfile {
+            hotspot_candidates: 16,
+            ..Default::default()
+        },
         DecoderTuningProfile {
             initial_candidates: 4,
             ..Default::default()
@@ -70,26 +78,20 @@ fn tuning_buckets_supply_valid_ragged_metadata_and_cover_feasible_intervals() {
         &[],
     )
     .unwrap();
-    let compile = DecoderCompileConfig {
-        maximum_query_tokens: 32,
-        representative_prefill_tokens: 8,
-        maximum_batch_size: 4,
-        maximum_context_pages: 8,
-        representative_context_pages: 2,
-        search_graphs: 4,
-        search_seed: 1,
-    };
+    let compile = compile_fixture();
     let tuning = DecoderTuningProfile {
         batch_sizes: vec![1, 2, 4],
         prefill_tokens: vec![2, 16],
         keep_best: 3,
         initial_candidates: 4,
+        hotspot_candidates: 16,
         search_time_limit_ms: Some(5000),
         ..Default::default()
     };
     let options = tuning::decoder_compile_options(&decoder, compile, &tuning, 16).unwrap();
     assert_eq!(options.keep_best, 3);
     assert_eq!(options.initial_population, 4);
+    assert_eq!(options.hotspot_candidates, 16);
     assert_eq!(options.search_time_limit, std::time::Duration::from_secs(5));
     let profiles = options.bucket_representatives.as_ref().unwrap();
     let inputs = representative::RepresentativeInputs::new(&decoder, compile, 16);

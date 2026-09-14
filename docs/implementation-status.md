@@ -374,3 +374,20 @@ reaches 0.598x stock SGLang throughput with 1.59x TPOT and 4.79x TTFT. Its confi
 persistent K/V tensor payload is 40.4% smaller on the same Gemma3 capacity
 because SGLang disables hybrid SWA memory. Executor performance, not KV lifetime
 correctness, is the next blocker.
+
+
+Profile-directed local search is available through artifact-bound
+`hotspot_candidates` (default zero). Extraction provenance survives loop copies
+and CUDA fusion. A separate CUDA-event pass orders existing egraph choices;
+complete uninstrumented candidates and deployment CUDA Graphs remain the ranking
+objectives. The H20 regression requires a measured generated-GEMM/cuBLASLt local
+transition beside exact persistent-state updates. It is bounded coordinate
+exploration, with independent dependency-closure repair, joint layout search and
+whole-model persistent kernels still open. See [search coverage](search-coverage.md).
+
+The [27B hotspot qualification](../results/hotspot-search-20260914/README.md)
+passes 296 reference comparisons with 0.8125 maximum absolute logit error and
+all drains. It records 49 measured local neighbors with no state/resource
+rejection and two measured prefill provider transitions. B8 diagnostic decode
+is 37.29 ms; its seed already uses cuBLASLt, so the historical difference is not
+a causal search or serving result. `glumoe` remains the dominant compile cost.

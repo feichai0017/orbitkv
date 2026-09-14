@@ -10,6 +10,13 @@ Removed records remain recoverable from Git history. They are not current
 product evidence. New experiments should first write to `.qualification/` and
 move a compact reviewed result here only after its checks pass.
 
+The [hotspot-search qualification](hotspot-search-20260914/README.md) passes
+296 reference comparisons and records 49 measured local neighbors with no
+state/resource rejection. Two prefill neighbors replace generated vocabulary
+GEMMs with cuBLASLt. B8 diagnostic decode is 37.29 ms, while B1 is unchanged;
+the B8 seed already uses cuBLASLt, so historical differences are not a search
+ablation or serving claim.
+
 ## Retained records
 
 | Record | Evidence | Boundary |
