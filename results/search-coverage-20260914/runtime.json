@@ -1,0 +1,3963 @@
+{
+  "scope": "Event-instrumented CUDA Graph execution steps, not serving latency. Includes complete native provider steps. Top implementation lists retain full descriptors; raw traces contain every step.",
+  "profiles": [
+    {
+      "program": "6ffb6a2ced140cb2d7e800783237efbd",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 1,
+        "diagnostic_logits": true,
+        "phase": "prefill",
+        "query_tokens": 4
+      },
+      "dimensions": {
+        "b": 1,
+        "c_0": 1,
+        "s": 4
+      },
+      "total_device_ms": 43.76387196686119,
+      "run": "b1",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 9.374752003699541,
+          "steps": 1806
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 9.335552003234625,
+          "steps": 208
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 5.146847997792065,
+          "steps": 865
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 3.7299199998378754,
+          "steps": 64
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 3.027391997165978,
+          "steps": 64
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 2.246432000771165,
+          "steps": 64
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 1.8220159895718098,
+          "steps": 131
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 1.728671994060278,
+          "steps": 48
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.6819839957170188,
+          "steps": 330
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 1.194879981689155,
+          "steps": 49
+        },
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 0.9830079977400601,
+          "steps": 128
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 0.8757440014742315,
+          "steps": 129
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6891520023345947,
+          "steps": 147
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.466560001950711,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.42182400031015277,
+          "steps": 64
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.3768320009112358,
+          "steps": 48
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.3608319987542927,
+          "steps": 66
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.2412480004131794,
+          "steps": 16
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.04047999996691942,
+          "steps": 9
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.01974399946630001,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 4.4986559972167015,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 64
+        },
+        {
+          "duration_ms": 3.7299199998378754,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.768703993409872,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9735360033810139,
+          "implementation": "DeepGemm { rows: s, output_features: 10240, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.937600003555417,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 6144, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 64
+        },
+        {
+          "duration_ms": 1.728671994060278,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.681824002880603,
+          "implementation": "FusionEnd { shape: [s, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.3098240066319704,
+          "implementation": "DeepGemm { rows: s, output_features: 6144, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.1319360048510134,
+          "implementation": "FusionEnd { shape: [(max((((s-1)*48)+47), 0)+1)], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 240
+        },
+        {
+          "duration_ms": 0.9279679916799068,
+          "implementation": "KernelScatter { dest_shape: [s, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [s, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 0.9184639975428581,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7032640017569065,
+          "implementation": "FusionEnd { shape: [s, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6759359836578369,
+          "implementation": "CuBlasLt { m: 248320, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 248320, ldd: 248320, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }",
+          "operator": "CuBlasLt",
+          "records": 1
+        },
+        {
+          "duration_ms": 0.6722879982553422,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6710079982876778,
+          "implementation": "DeepGemm { rows: s, output_features: 12288, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.5842879987321794,
+          "implementation": "FusionEnd { shape: [s, 5120], strides: [(z*5120), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 114
+        },
+        {
+          "duration_ms": 0.5409599961712956,
+          "implementation": "GenericMatmul { out_shape: [s, 48], mul_shape: [s, 48, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*245760), (z*5120)], sum_iter_stride: z, out_strides: [(z*48), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.5189439980313182,
+          "implementation": "CuBlasLt { m: 48, n: s, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 48, ldd: 48, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }",
+          "operator": "CuBlasLt",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.4980799984186888,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.4975999975576997,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [((128+s)*6144)], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        }
+      ],
+      "step_count": 4333
+    },
+    {
+      "program": "3c19842e52e3d89e83a8411335d1480a",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 1,
+        "diagnostic_logits": true,
+        "phase": "decode",
+        "query_tokens": 1
+      },
+      "dimensions": {
+        "b": 1,
+        "c_0": 1,
+        "s": 1
+      },
+      "total_device_ms": 42.07625604933128,
+      "run": "b1",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 9.49964800523594,
+          "steps": 1915
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 8.922400037758052,
+          "steps": 176
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 4.950303997378796,
+          "steps": 865
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 3.602240008302033,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 2.9017599895596504,
+          "steps": 64
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 2.818079996854067,
+          "steps": 80
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.9356160126626492,
+          "steps": 406
+        },
+        {
+          "operator": "Gemv",
+          "duration_ms": 1.1283200001344085,
+          "steps": 49
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 1.1010560020804405,
+          "steps": 48
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 0.968959997408092,
+          "steps": 130
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 0.8723520012572408,
+          "steps": 130
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.7631680001504719,
+          "steps": 144
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6758399996906519,
+          "steps": 147
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.5193599993363023,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.44723200239241123,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.3253760007210076,
+          "steps": 49
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.30419200100004673,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.19199999794363976,
+          "steps": 16
+        },
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 0.08416000008583069,
+          "steps": 17
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.04470399999991059,
+          "steps": 10
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019487999379634857,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 4.4984320551157,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.738143991678953,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.7249280028045177,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9927359968423843,
+          "implementation": "DeepGemm { rows: 1, output_features: 10240, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.6370879979804158,
+          "implementation": "FusionEnd { shape: [1, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.4539839923381805,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.3891839981079102,
+          "implementation": "DeepGemm { rows: 1, output_features: 6144, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.1010560020804405,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9436799990944564,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 193
+        },
+        {
+          "duration_ms": 0.9090239927172661,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.9066560007631779,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.9065600042231381,
+          "implementation": "FusionEnd { shape: [48], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 192
+        },
+        {
+          "duration_ms": 0.790975998621434,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 160
+        },
+        {
+          "duration_ms": 0.6621119976043701,
+          "implementation": "KernelGemv { n: 248320, k: 5120, dtype: Bf16 }",
+          "operator": "Gemv",
+          "records": 1
+        },
+        {
+          "duration_ms": 0.6565119968727231,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6462400034070015,
+          "implementation": "DeepGemm { rows: 1, output_features: 12288, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.5222399979829788,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.5193599993363023,
+          "implementation": "CuBlasLt { m: 48, n: 1, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 48, ldd: 48, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }",
+          "operator": "CuBlasLt",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.494399999268353,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [792576], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.4925759993493557,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        }
+      ],
+      "step_count": 4519
+    },
+    {
+      "program": "3c19842e52e3d89e83a8411335d1480a",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 1,
+        "diagnostic_logits": true,
+        "phase": "decode-2",
+        "query_tokens": 1
+      },
+      "dimensions": {
+        "b": 1,
+        "c_0": 1,
+        "s": 1
+      },
+      "total_device_ms": 41.57452803850174,
+      "run": "b1",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 9.40569602837786,
+          "steps": 1915
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 8.784575977362692,
+          "steps": 176
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 4.922783988527954,
+          "steps": 865
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 3.5489280158653855,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 2.8585600070655346,
+          "steps": 64
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 2.757439998909831,
+          "steps": 80
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.9180480088107288,
+          "steps": 406
+        },
+        {
+          "operator": "Gemv",
+          "duration_ms": 1.1255040112882853,
+          "steps": 49
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 1.092128001153469,
+          "steps": 48
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 0.9624959956854582,
+          "steps": 130
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 0.8645440018735826,
+          "steps": 130
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.7571840016171336,
+          "steps": 144
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6845760010182858,
+          "steps": 147
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.4812800036743283,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.4489280004054308,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.319967997726053,
+          "steps": 49
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.30089599918574095,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.19251199904829264,
+          "steps": 16
+        },
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 0.08323200000450015,
+          "steps": 17
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.04556800005957484,
+          "steps": 10
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019680000841617584,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 4.445535980165005,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.7015039958059788,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6910720095038414,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9609280079603195,
+          "implementation": "DeepGemm { rows: 1, output_features: 10240, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.6141120065003633,
+          "implementation": "FusionEnd { shape: [1, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.4156480021774769,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.3527040015906096,
+          "implementation": "DeepGemm { rows: 1, output_features: 6144, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.092128001153469,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9384960024617612,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 193
+        },
+        {
+          "duration_ms": 0.8976319991052151,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8950400059111416,
+          "implementation": "FusionEnd { shape: [48], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 192
+        },
+        {
+          "duration_ms": 0.8924799971282482,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7823680019937456,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 160
+        },
+        {
+          "duration_ms": 0.6616640090942383,
+          "implementation": "KernelGemv { n: 248320, k: 5120, dtype: Bf16 }",
+          "operator": "Gemv",
+          "records": 1
+        },
+        {
+          "duration_ms": 0.6474879984743893,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6373760066926479,
+          "implementation": "DeepGemm { rows: 1, output_features: 12288, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.5122560001909733,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.49398399610072374,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.4902719995006919,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [792576], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.4812800036743283,
+          "implementation": "CuBlasLt { m: 48, n: 1, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 48, ldd: 48, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }",
+          "operator": "CuBlasLt",
+          "records": 48
+        }
+      ],
+      "step_count": 4519
+    },
+    {
+      "program": "3c19842e52e3d89e83a8411335d1480a",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 1,
+        "diagnostic_logits": true,
+        "phase": "decode-3",
+        "query_tokens": 1
+      },
+      "dimensions": {
+        "b": 1,
+        "c_0": 1,
+        "s": 1
+      },
+      "total_device_ms": 41.52003201842308,
+      "run": "b1",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 9.391296027693897,
+          "steps": 1915
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 8.782655998133123,
+          "steps": 176
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 4.910527997650206,
+          "steps": 865
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 3.5468799974769354,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 2.8533759862184525,
+          "steps": 64
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 2.758591990917921,
+          "steps": 80
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.913216011133045,
+          "steps": 406
+        },
+        {
+          "operator": "Gemv",
+          "duration_ms": 1.1232000030577183,
+          "steps": 49
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 1.096576001495123,
+          "steps": 48
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 0.9641919992864132,
+          "steps": 130
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 0.8640639986842871,
+          "steps": 130
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.7541120015084743,
+          "steps": 144
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.673536001238972,
+          "steps": 147
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.4778880001977086,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.44720000214874744,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.3184000002220273,
+          "steps": 49
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.30012800032272935,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.19628800079226494,
+          "steps": 16
+        },
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 0.08326399931684136,
+          "steps": 17
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.04496000008657575,
+          "steps": 10
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019680000841617584,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 4.444255992770195,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.7027200050652027,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6898240000009537,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9561919867992401,
+          "implementation": "DeepGemm { rows: 1, output_features: 10240, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.6090560015290976,
+          "implementation": "FusionEnd { shape: [1, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.4144640024751425,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.353791993111372,
+          "implementation": "DeepGemm { rows: 1, output_features: 6144, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.096576001495123,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9363840003497899,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 193
+        },
+        {
+          "duration_ms": 0.8971839994192123,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8937919996678829,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8917440087534487,
+          "implementation": "FusionEnd { shape: [48], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 192
+        },
+        {
+          "duration_ms": 0.7838720018044114,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 160
+        },
+        {
+          "duration_ms": 0.6621440052986145,
+          "implementation": "KernelGemv { n: 248320, k: 5120, dtype: Bf16 }",
+          "operator": "Gemv",
+          "records": 1
+        },
+        {
+          "duration_ms": 0.6447999966330826,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6369599960744381,
+          "implementation": "DeepGemm { rows: 1, output_features: 12288, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.5110079981386662,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.493151999078691,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.48908800166100264,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [792576], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.4778880001977086,
+          "implementation": "CuBlasLt { m: 48, n: 1, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 48, ldd: 48, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }",
+          "operator": "CuBlasLt",
+          "records": 48
+        }
+      ],
+      "step_count": 4519
+    },
+    {
+      "program": "3c19842e52e3d89e83a8411335d1480a",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 1,
+        "diagnostic_logits": true,
+        "phase": "decode-4",
+        "query_tokens": 1
+      },
+      "dimensions": {
+        "b": 1,
+        "c_0": 1,
+        "s": 1
+      },
+      "total_device_ms": 41.496736022643745,
+      "run": "b1",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 9.362240013666451,
+          "steps": 1915
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 8.796000020578504,
+          "steps": 176
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 4.900479984935373,
+          "steps": 865
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 3.5555520048364997,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 2.86201598867774,
+          "steps": 64
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 2.7590399868786335,
+          "steps": 80
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.910048013087362,
+          "steps": 406
+        },
+        {
+          "operator": "Gemv",
+          "duration_ms": 1.1241280175745487,
+          "steps": 49
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 1.094527991488576,
+          "steps": 48
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 0.9577279980294406,
+          "steps": 130
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 0.8595520006492734,
+          "steps": 130
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.7530559995211661,
+          "steps": 144
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6750080012716353,
+          "steps": 147
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.47967999894171953,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.44729600194841623,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.31830399855971336,
+          "steps": 49
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.29996800096705556,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.19420799985527992,
+          "steps": 16
+        },
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 0.08313600067049265,
+          "steps": 17
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.04544000048190355,
+          "steps": 10
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019328000023961067,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 4.450624026358128,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.7050880044698715,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.69564800709486,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9646399952471256,
+          "implementation": "DeepGemm { rows: 1, output_features: 10240, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.6051520011387765,
+          "implementation": "FusionEnd { shape: [1, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.4191679898649454,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.3526719883084297,
+          "implementation": "DeepGemm { rows: 1, output_features: 6144, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.094527991488576,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9369919998571277,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 193
+        },
+        {
+          "duration_ms": 0.8973759934306145,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.89504000172019,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8898240034468472,
+          "implementation": "FusionEnd { shape: [48], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 192
+        },
+        {
+          "duration_ms": 0.778432001825422,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 160
+        },
+        {
+          "duration_ms": 0.6614400148391724,
+          "implementation": "KernelGemv { n: 248320, k: 5120, dtype: Bf16 }",
+          "operator": "Gemv",
+          "records": 1
+        },
+        {
+          "duration_ms": 0.6431359965354204,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6392959989607334,
+          "implementation": "DeepGemm { rows: 1, output_features: 12288, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.5113279968500137,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.4929599966853857,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.4887039987370372,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [792576], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.47967999894171953,
+          "implementation": "CuBlasLt { m: 48, n: 1, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 48, ldd: 48, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }",
+          "operator": "CuBlasLt",
+          "records": 48
+        }
+      ],
+      "step_count": 4519
+    },
+    {
+      "program": "3c19842e52e3d89e83a8411335d1480a",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 1,
+        "diagnostic_logits": true,
+        "phase": "decode-5",
+        "query_tokens": 1
+      },
+      "dimensions": {
+        "b": 1,
+        "c_0": 1,
+        "s": 1
+      },
+      "total_device_ms": 41.52403203910217,
+      "run": "b1",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 9.390656019560993,
+          "steps": 1915
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 8.789215994998813,
+          "steps": 176
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 4.9032959952019155,
+          "steps": 865
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 3.5536319985985756,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 2.855712004005909,
+          "steps": 64
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 2.7598079983145,
+          "steps": 80
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.9104960085824132,
+          "steps": 406
+        },
+        {
+          "operator": "Gemv",
+          "duration_ms": 1.1246720217168331,
+          "steps": 49
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 1.0982719995081425,
+          "steps": 48
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 0.9564799992367625,
+          "steps": 130
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 0.8615359989926219,
+          "steps": 130
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.7561599998734891,
+          "steps": 144
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.676127998623997,
+          "steps": 147
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.4816640019416809,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.44560000067576766,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.31871999939903617,
+          "steps": 49
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.29827200062572956,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.1944319996982813,
+          "steps": 16
+        },
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 0.08431999990716577,
+          "steps": 17
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.045440000016242266,
+          "steps": 10
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019519999623298645,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 4.447200000286102,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.704351991415024,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6921599991619587,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9578880034387112,
+          "implementation": "DeepGemm { rows: 1, output_features: 10240, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.609472005162388,
+          "implementation": "FusionEnd { shape: [1, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.416864002123475,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.3530880007892847,
+          "implementation": "DeepGemm { rows: 1, output_features: 6144, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.0982719995081425,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9356160005554557,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 193
+        },
+        {
+          "duration_ms": 0.8978240005671978,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8972800020128489,
+          "implementation": "FusionEnd { shape: [48], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 192
+        },
+        {
+          "duration_ms": 0.893183995038271,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7785280011594296,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 160
+        },
+        {
+          "duration_ms": 0.661952018737793,
+          "implementation": "KernelGemv { n: 248320, k: 5120, dtype: Bf16 }",
+          "operator": "Gemv",
+          "records": 1
+        },
+        {
+          "duration_ms": 0.6456639976240695,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6391679979860783,
+          "implementation": "DeepGemm { rows: 1, output_features: 12288, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.5135360024869442,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.49398400355130434,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.49033599719405174,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [792576], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.4816640019416809,
+          "implementation": "CuBlasLt { m: 48, n: 1, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 48, ldd: 48, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }",
+          "operator": "CuBlasLt",
+          "records": 48
+        }
+      ],
+      "step_count": 4519
+    },
+    {
+      "program": "3c19842e52e3d89e83a8411335d1480a",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 1,
+        "diagnostic_logits": true,
+        "phase": "decode-6",
+        "query_tokens": 1
+      },
+      "dimensions": {
+        "b": 1,
+        "c_0": 1,
+        "s": 1
+      },
+      "total_device_ms": 41.500960000324994,
+      "run": "b1",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 9.385856031440198,
+          "steps": 1915
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 8.779072003439069,
+          "steps": 176
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 4.904992000199854,
+          "steps": 865
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 3.5442879907786846,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 2.8526719994843006,
+          "steps": 64
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 2.755007991567254,
+          "steps": 80
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.9130880096927285,
+          "steps": 406
+        },
+        {
+          "operator": "Gemv",
+          "duration_ms": 1.1261119712144136,
+          "steps": 49
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 1.096576001495123,
+          "steps": 48
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 0.9599360004067421,
+          "steps": 130
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 0.861120002809912,
+          "steps": 130
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.7556800013408065,
+          "steps": 144
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6774399960413575,
+          "steps": 147
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.4796480005607009,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.44758399948477745,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.320096000097692,
+          "steps": 49
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.2991999979130924,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.19379200134426355,
+          "steps": 16
+        },
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 0.08313600020483136,
+          "steps": 17
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.045792000368237495,
+          "steps": 10
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019872000440955162,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 4.443999998271465,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.70006400346756,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6879999935626984,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9569279961287975,
+          "implementation": "DeepGemm { rows: 1, output_features: 10240, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.609504004009068,
+          "implementation": "FusionEnd { shape: [1, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.4142400026321411,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.3524159993976355,
+          "implementation": "DeepGemm { rows: 1, output_features: 6144, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.096576001495123,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9381440016441047,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 193
+        },
+        {
+          "duration_ms": 0.8957440033555031,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8926079943776131,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8925440046004951,
+          "implementation": "FusionEnd { shape: [48], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 192
+        },
+        {
+          "duration_ms": 0.7793920035474002,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 160
+        },
+        {
+          "duration_ms": 0.6624959707260132,
+          "implementation": "KernelGemv { n: 248320, k: 5120, dtype: Bf16 }",
+          "operator": "Gemv",
+          "records": 1
+        },
+        {
+          "duration_ms": 0.6464320002123713,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6361919976770878,
+          "implementation": "DeepGemm { rows: 1, output_features: 12288, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.5099839977920055,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.49369600135833025,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.4912639996036887,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [792576], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.4796480005607009,
+          "implementation": "CuBlasLt { m: 48, n: 1, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 48, ldd: 48, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }",
+          "operator": "CuBlasLt",
+          "records": 48
+        }
+      ],
+      "step_count": 4519
+    },
+    {
+      "program": "3c19842e52e3d89e83a8411335d1480a",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 1,
+        "diagnostic_logits": true,
+        "phase": "decode-7",
+        "query_tokens": 1
+      },
+      "dimensions": {
+        "b": 1,
+        "c_0": 1,
+        "s": 1
+      },
+      "total_device_ms": 41.51427201554179,
+      "run": "b1",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 9.379648030735552,
+          "steps": 1915
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 8.79401601664722,
+          "steps": 176
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 4.898111985530704,
+          "steps": 865
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 3.5518079893663526,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 2.8571520000696182,
+          "steps": 64
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 2.760255990549922,
+          "steps": 80
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.9096320089884102,
+          "steps": 406
+        },
+        {
+          "operator": "Gemv",
+          "duration_ms": 1.1258879909291863,
+          "steps": 49
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 1.0963200014084578,
+          "steps": 48
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 0.959519999101758,
+          "steps": 130
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 0.8634559982456267,
+          "steps": 130
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.7558720009401441,
+          "steps": 144
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6760959993116558,
+          "steps": 147
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.47807999793440104,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.4469760018400848,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.3193280017003417,
+          "steps": 49
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.2992000002413988,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.19564800057560205,
+          "steps": 16
+        },
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 0.08256000094115734,
+          "steps": 17
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.045376000460237265,
+          "steps": 10
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019328000023961067,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 4.451616019010544,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 17408, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.7054399996995926,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.693759985268116,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9584959968924522,
+          "implementation": "DeepGemm { rows: 1, output_features: 10240, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.6108480063267052,
+          "implementation": "FusionEnd { shape: [1, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.4163199979811907,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.353567996993661,
+          "implementation": "DeepGemm { rows: 1, output_features: 6144, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.0963200014084578,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9378559989854693,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 193
+        },
+        {
+          "duration_ms": 0.898656003177166,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8950399942696095,
+          "implementation": "DeepGemm { rows: 1, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.893280001822859,
+          "implementation": "FusionEnd { shape: [48], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 192
+        },
+        {
+          "duration_ms": 0.778080003336072,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 160
+        },
+        {
+          "duration_ms": 0.6620799899101257,
+          "implementation": "KernelGemv { n: 248320, k: 5120, dtype: Bf16 }",
+          "operator": "Gemv",
+          "records": 1
+        },
+        {
+          "duration_ms": 0.645855997223407,
+          "implementation": "FusionEnd { shape: [1, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6372800059616566,
+          "implementation": "DeepGemm { rows: 1, output_features: 12288, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.5116479992866516,
+          "implementation": "DeepGemm { rows: 1, output_features: 5120, input_features: 6144, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.49199999682605267,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.48975999653339386,
+          "implementation": "KernelGather { out_shape: [1, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [792576], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.47807999793440104,
+          "implementation": "CuBlasLt { m: 48, n: 1, k: 5120, a_layout: CUBLAS_OP_T, b_layout: CUBLAS_OP_N, a_order: CUBLASLT_ORDER_COL, b_order: CUBLASLT_ORDER_COL, c_order: CUBLASLT_ORDER_COL, d_order: CUBLASLT_ORDER_COL, lda: (z*5120), ldb: (z*5120), ldc: 48, ldd: 48, batch_count: 1, stride_a: 0, stride_b: 0, stride_c: 0, stride_d: 0, a_dtype: Bf16, b_dtype: Bf16, c_dtype: Bf16, d_dtype: Bf16, compute_type: CUBLAS_COMPUTE_32F_FAST_16BF, scale_dtype: F32, alpha: 1.0, beta: 0.0, epilogue: CUBLASLT_EPILOGUE_DEFAULT, a_scale_input: false, b_scale_input: false }",
+          "operator": "CuBlasLt",
+          "records": 48
+        }
+      ],
+      "step_count": 4519
+    },
+    {
+      "program": "1802a22f2b5608798ef57d3c309db1b6",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 8,
+        "diagnostic_logits": true,
+        "phase": "prefill",
+        "query_tokens": 32
+      },
+      "dimensions": {
+        "b": 8,
+        "c_0": 8,
+        "s": 32
+      },
+      "total_device_ms": 65.20393592957407,
+      "run": "b8",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 12.129536011721939,
+          "steps": 2091
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 9.650560002308339,
+          "steps": 865
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 9.533727950416505,
+          "steps": 130
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 8.089087993837893,
+          "steps": 192
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 6.23718399181962,
+          "steps": 112
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 4.8183039873838425,
+          "steps": 48
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 3.204703990370035,
+          "steps": 48
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 3.184351993724704,
+          "steps": 130
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.8403199957683682,
+          "steps": 331
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 1.7506240159273148,
+          "steps": 97
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 1.5209920015186071,
+          "steps": 48
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.9750079954974353,
+          "steps": 160
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6935999956913292,
+          "steps": 147
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.4829440014436841,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.4655680004507303,
+          "steps": 96
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.25347200129181147,
+          "steps": 16
+        },
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 0.2064000004902482,
+          "steps": 34
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.10473600076511502,
+          "steps": 16
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.03887999942526221,
+          "steps": 9
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.02393599972128868,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 6.154719948768616,
+          "implementation": "KernelScatter { dest_shape: [32, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [32, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 5.69209598749876,
+          "implementation": "DeepGemm { rows: 32, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 96
+        },
+        {
+          "duration_ms": 4.8183039873838425,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 3.388799987733364,
+          "implementation": "DeepGemm { rows: 32, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6731199957430363,
+          "implementation": "KernelScatterNoCopy { dest_shape: [603979776], dest_strides: [z], index_shape: [8, 48, 128, 128], index_strides: [(z*786432), (z*16384), (z*128), z], src_strides: [(z*786432), (z*16384), (z*128), z], out_strides: [z], dtype: F32 }",
+          "operator": "ScatterNoCopy",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.650464002043009,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.4150080010294914,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [6488064], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.958527997136116,
+          "implementation": "DeepGemm { rows: 32, output_features: 10240, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.6795840058475733,
+          "implementation": "FusionEnd { shape: [32, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.6734080016613007,
+          "implementation": "KernelScatter { dest_shape: [32, 24, 64, 2], dest_strides: [(z*3072), (z*128), (z*2), z], index_shape: [32, 24, 64], index_strides: [(z*1536), (z*64), z], src_strides: [(z*1536), (z*64), z], out_strides: [(z*3072), (z*128), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 1.5209920015186071,
+          "implementation": "DeepGemm { rows: 32, output_features: 5120, input_features: 6144, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.4766719862818718,
+          "implementation": "DeepGemm { rows: 32, output_features: 5120, input_features: 17408, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 1.3663360103964806,
+          "implementation": "FusionEnd { shape: [1536], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 288
+        },
+        {
+          "duration_ms": 1.3187199998646975,
+          "implementation": "DeepGemm { rows: 32, output_features: 6144, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.2020800015889108,
+          "implementation": "FusionEnd { shape: [32, 5120], strides: [(z*5120), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 225
+        },
+        {
+          "duration_ms": 1.177055997774005,
+          "implementation": "KernelScatter { dest_shape: [32, 4, 256, 2], dest_strides: [(z*2048), (z*512), (z*2), z], index_shape: [32, 4, 256], index_strides: [(z*1024), (z*256), z], src_strides: [(z*1024), (z*256), z], out_strides: [(z*2048), (z*512), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 1.1633920054882765,
+          "implementation": "FusionEnd { shape: [8, 48, 128, 128], strides: [(z*786432), (z*16384), (z*128), z], dtype: Int }",
+          "operator": "FusedRegion",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9811520092189312,
+          "implementation": "DeepGemm { rows: 32, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.9428800083696842,
+          "implementation": "DeepGemm { rows: 32, output_features: 17408, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7468799948692322,
+          "implementation": "DeepGemm { rows: 32, output_features: 12288, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 16
+        }
+      ],
+      "step_count": 4619
+    },
+    {
+      "program": "e23374b559d9d9ada4a9b3e844d3aadc",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 8,
+        "diagnostic_logits": true,
+        "phase": "decode",
+        "query_tokens": 8
+      },
+      "dimensions": {
+        "b": 8,
+        "c_0": 8,
+        "s": 8
+      },
+      "total_device_ms": 95.74912058655173,
+      "run": "b8",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 44.39228854747489,
+          "steps": 161
+        },
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 10.241856002248824,
+          "steps": 1800
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 9.432000000961125,
+          "steps": 864
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 7.442304011434317,
+          "steps": 144
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 5.481792036443949,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 4.62975999340415,
+          "steps": 160
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 3.150495998095721,
+          "steps": 130
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 2.937823996413499,
+          "steps": 130
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 2.492896005511284,
+          "steps": 48
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.7144320057705045,
+          "steps": 342
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 0.9099839963018894,
+          "steps": 16
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6956159975379705,
+          "steps": 146
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.5190079966560006,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.4576000031083822,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.4247999978251755,
+          "steps": 65
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.3437119973823428,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.23113599978387356,
+          "steps": 16
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.17248000111430883,
+          "steps": 33
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.053663999773561954,
+          "steps": 12
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.01974399946630001,
+          "steps": 1
+        },
+        {
+          "operator": "Embed",
+          "duration_ms": 0.005727999843657017,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 43.029056549072266,
+          "implementation": "GenericMatmul { out_shape: [s, 248320], mul_shape: [s, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 1
+        },
+        {
+          "duration_ms": 5.479584015905857,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 96
+        },
+        {
+          "duration_ms": 4.821920037269592,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.6560959964990616,
+          "implementation": "KernelScatterNoCopy { dest_shape: [603979776], dest_strides: [z], index_shape: [8, 48, 128, 128], index_strides: [(z*786432), (z*16384), (z*128), z], src_strides: [(z*786432), (z*16384), (z*128), z], out_strides: [z], dtype: F32 }",
+          "operator": "ScatterNoCopy",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6391039937734604,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.492896005511284,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.409888006746769,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [((1024+s)*6144)], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9627199955284595,
+          "implementation": "DeepGemm { rows: s, output_features: 10240, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9543679989874363,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 6144, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 64
+        },
+        {
+          "duration_ms": 1.6856319983489811,
+          "implementation": "FusionEnd { shape: [s, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.6807039938867092,
+          "implementation": "KernelScatter { dest_shape: [s, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [s, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 1.3039999958127737,
+          "implementation": "DeepGemm { rows: s, output_features: 6144, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.1563200000673532,
+          "implementation": "FusionEnd { shape: [8, 48, 128, 128], strides: [(z*786432), (z*16384), (z*128), z], dtype: Int }",
+          "operator": "FusedRegion",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9099839963018894,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.9096320010721684,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7189119998365641,
+          "implementation": "GenericMatmul { out_shape: [s, 48], mul_shape: [s, 48, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*245760), (z*5120)], sum_iter_stride: z, out_strides: [(z*48), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.7166079999879003,
+          "implementation": "FusionEnd { shape: [s, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.694912004750222,
+          "implementation": "FusionEnd { shape: [(max((((s-1)*48)+47), 0)+1)], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 144
+        },
+        {
+          "duration_ms": 0.6598719991743565,
+          "implementation": "DeepGemm { rows: s, output_features: 12288, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.649791996460408,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 129
+        }
+      ],
+      "step_count": 4341
+    },
+    {
+      "program": "e23374b559d9d9ada4a9b3e844d3aadc",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 8,
+        "diagnostic_logits": true,
+        "phase": "decode-2",
+        "query_tokens": 8
+      },
+      "dimensions": {
+        "b": 8,
+        "c_0": 8,
+        "s": 8
+      },
+      "total_device_ms": 95.15811098413542,
+      "run": "b8",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 44.38195098005235,
+          "steps": 161
+        },
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 10.131456003990024,
+          "steps": 1800
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 9.370495994575322,
+          "steps": 864
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 7.334367997944355,
+          "steps": 144
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 5.419264003634453,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 4.519391997717321,
+          "steps": 160
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 3.1416000043973327,
+          "steps": 130
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 2.9285760005004704,
+          "steps": 130
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 2.487840000540018,
+          "steps": 48
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.6893440010026097,
+          "steps": 342
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 0.8990399986505508,
+          "steps": 16
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6876479992642999,
+          "steps": 146
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.4824640015140176,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.4567680028267205,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.4199359994381666,
+          "steps": 65
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.33532799826934934,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.22393599897623062,
+          "steps": 16
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.1704320008866489,
+          "steps": 33
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.052959999069571495,
+          "steps": 12
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.01990400068461895,
+          "steps": 1
+        },
+        {
+          "operator": "Embed",
+          "duration_ms": 0.005408000200986862,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 43.032958984375,
+          "implementation": "GenericMatmul { out_shape: [s, 248320], mul_shape: [s, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 1
+        },
+        {
+          "duration_ms": 5.406111989170313,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 96
+        },
+        {
+          "duration_ms": 4.769792005419731,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.65446400642395,
+          "implementation": "KernelScatterNoCopy { dest_shape: [603979776], dest_strides: [z], index_shape: [8, 48, 128, 128], index_strides: [(z*786432), (z*16384), (z*128), z], src_strides: [(z*786432), (z*16384), (z*128), z], out_strides: [z], dtype: F32 }",
+          "operator": "ScatterNoCopy",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6319999992847443,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.487840000540018,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.4050559997558594,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [((1024+s)*6144)], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9282560087740421,
+          "implementation": "DeepGemm { rows: s, output_features: 10240, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9050560016185045,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 6144, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 64
+        },
+        {
+          "duration_ms": 1.6768319979310036,
+          "implementation": "KernelScatter { dest_shape: [s, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [s, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 1.651296001393348,
+          "implementation": "FusionEnd { shape: [s, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.2726079989224672,
+          "implementation": "DeepGemm { rows: s, output_features: 6144, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.1563840005546808,
+          "implementation": "FusionEnd { shape: [8, 48, 128, 128], strides: [(z*786432), (z*16384), (z*128), z], dtype: Int }",
+          "operator": "FusedRegion",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9001599960029125,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8990399986505508,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7122559966519475,
+          "implementation": "GenericMatmul { out_shape: [s, 48], mul_shape: [s, 48, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*245760), (z*5120)], sum_iter_stride: z, out_strides: [(z*48), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.7099520019255579,
+          "implementation": "FusionEnd { shape: [s, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6804480059072375,
+          "implementation": "FusionEnd { shape: [(max((((s-1)*48)+47), 0)+1)], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 144
+        },
+        {
+          "duration_ms": 0.6494719982147217,
+          "implementation": "DeepGemm { rows: s, output_features: 12288, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.6424319976940751,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 129
+        }
+      ],
+      "step_count": 4341
+    },
+    {
+      "program": "e23374b559d9d9ada4a9b3e844d3aadc",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 8,
+        "diagnostic_logits": true,
+        "phase": "decode-3",
+        "query_tokens": 8
+      },
+      "dimensions": {
+        "b": 8,
+        "c_0": 8,
+        "s": 8
+      },
+      "total_device_ms": 95.20025677001104,
+      "run": "b8",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 44.37494478886947,
+          "steps": 161
+        },
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 10.158655994106084,
+          "steps": 1800
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 9.386976002249867,
+          "steps": 864
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 7.332576002925634,
+          "steps": 144
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 5.413695991039276,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 4.520672000944614,
+          "steps": 160
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 3.143551983870566,
+          "steps": 130
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 2.9300160040147603,
+          "steps": 130
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 2.485663991421461,
+          "steps": 48
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.6931520067155361,
+          "steps": 342
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 0.8981440030038357,
+          "steps": 16
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6884160018526018,
+          "steps": 146
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.48246399965137243,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.46035199984908104,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.41977600008249283,
+          "steps": 65
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.33574399817734957,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.2244800003245473,
+          "steps": 16
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.1721920003183186,
+          "steps": 33
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.05334400059655309,
+          "steps": 12
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019840000197291374,
+          "steps": 1
+        },
+        {
+          "operator": "Embed",
+          "duration_ms": 0.00559999980032444,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 43.023616790771484,
+          "implementation": "GenericMatmul { out_shape: [s, 248320], mul_shape: [s, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 1
+        },
+        {
+          "duration_ms": 5.406048007309437,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 96
+        },
+        {
+          "duration_ms": 4.764799989759922,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.652191985398531,
+          "implementation": "KernelScatterNoCopy { dest_shape: [603979776], dest_strides: [z], index_shape: [8, 48, 128, 128], index_strides: [(z*786432), (z*16384), (z*128), z], src_strides: [(z*786432), (z*16384), (z*128), z], out_strides: [z], dtype: F32 }",
+          "operator": "ScatterNoCopy",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6359359957277775,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.485663991421461,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.407488003373146,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [((1024+s)*6144)], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9265279956161976,
+          "implementation": "DeepGemm { rows: s, output_features: 10240, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9076799992471933,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 6144, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 64
+        },
+        {
+          "duration_ms": 1.6761280074715614,
+          "implementation": "KernelScatter { dest_shape: [s, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [s, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 1.6607360006310046,
+          "implementation": "FusionEnd { shape: [s, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.2747200019657612,
+          "implementation": "DeepGemm { rows: s, output_features: 6144, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.1572159957140684,
+          "implementation": "FusionEnd { shape: [8, 48, 128, 128], strides: [(z*786432), (z*16384), (z*128), z], dtype: Int }",
+          "operator": "FusedRegion",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.8981440030038357,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8969920016825199,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7122239992022514,
+          "implementation": "GenericMatmul { out_shape: [s, 48], mul_shape: [s, 48, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*245760), (z*5120)], sum_iter_stride: z, out_strides: [(z*48), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.7106879986822605,
+          "implementation": "FusionEnd { shape: [s, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6843200009316206,
+          "implementation": "FusionEnd { shape: [(max((((s-1)*48)+47), 0)+1)], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 144
+        },
+        {
+          "duration_ms": 0.6488960012793541,
+          "implementation": "DeepGemm { rows: s, output_features: 12288, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.6464959946461022,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 129
+        }
+      ],
+      "step_count": 4341
+    },
+    {
+      "program": "e23374b559d9d9ada4a9b3e844d3aadc",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 8,
+        "diagnostic_logits": true,
+        "phase": "decode-4",
+        "query_tokens": 8
+      },
+      "dimensions": {
+        "b": 8,
+        "c_0": 8,
+        "s": 8
+      },
+      "total_device_ms": 95.20518487179652,
+      "run": "b8",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 44.37596886511892,
+          "steps": 161
+        },
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 10.14006399968639,
+          "steps": 1800
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 9.382655992172658,
+          "steps": 864
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 7.344672009348869,
+          "steps": 144
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 5.429728016257286,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 4.528928006999195,
+          "steps": 160
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 3.14105600817129,
+          "steps": 130
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 2.9322559819556773,
+          "steps": 130
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 2.4827839955687523,
+          "steps": 48
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.6895680045709014,
+          "steps": 342
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 0.9010879993438721,
+          "steps": 16
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6866880021989346,
+          "steps": 146
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.4822399988770485,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.45942400116473436,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.41759999608621,
+          "steps": 65
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.337055996991694,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.22467199712991714,
+          "steps": 16
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.16985599929466844,
+          "steps": 33
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.052703999914228916,
+          "steps": 12
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019936000928282738,
+          "steps": 1
+        },
+        {
+          "operator": "Embed",
+          "duration_ms": 0.006240000016987324,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 43.02592086791992,
+          "implementation": "GenericMatmul { out_shape: [s, 248320], mul_shape: [s, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 1
+        },
+        {
+          "duration_ms": 5.412000015377998,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 96
+        },
+        {
+          "duration_ms": 4.778112016618252,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.6535040102899075,
+          "implementation": "KernelScatterNoCopy { dest_shape: [603979776], dest_strides: [z], index_shape: [8, 48, 128, 128], index_strides: [(z*786432), (z*16384), (z*128), z], src_strides: [(z*786432), (z*16384), (z*128), z], out_strides: [z], dtype: F32 }",
+          "operator": "ScatterNoCopy",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6378559917211533,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.4827839955687523,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.4061440005898476,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [((1024+s)*6144)], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.932671993970871,
+          "implementation": "DeepGemm { rows: s, output_features: 10240, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.912448002025485,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 6144, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 64
+        },
+        {
+          "duration_ms": 1.6787199899554253,
+          "implementation": "KernelScatter { dest_shape: [s, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [s, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 1.6537280050106347,
+          "implementation": "FusionEnd { shape: [s, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.2736320029944181,
+          "implementation": "DeepGemm { rows: s, output_features: 6144, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.156703993678093,
+          "implementation": "FusionEnd { shape: [8, 48, 128, 128], strides: [(z*786432), (z*16384), (z*128), z], dtype: Int }",
+          "operator": "FusedRegion",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9010879993438721,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.9008640013635159,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7142719989642501,
+          "implementation": "GenericMatmul { out_shape: [s, 48], mul_shape: [s, 48, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*245760), (z*5120)], sum_iter_stride: z, out_strides: [(z*48), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.7122559989802539,
+          "implementation": "FusionEnd { shape: [s, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6789760049432516,
+          "implementation": "FusionEnd { shape: [(max((((s-1)*48)+47), 0)+1)], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 144
+        },
+        {
+          "duration_ms": 0.6516159996390343,
+          "implementation": "DeepGemm { rows: s, output_features: 12288, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.6478399969637394,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 129
+        }
+      ],
+      "step_count": 4341
+    },
+    {
+      "program": "e23374b559d9d9ada4a9b3e844d3aadc",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 8,
+        "diagnostic_logits": true,
+        "phase": "decode-5",
+        "query_tokens": 8
+      },
+      "dimensions": {
+        "b": 8,
+        "c_0": 8,
+        "s": 8
+      },
+      "total_device_ms": 95.22185429697856,
+      "run": "b8",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 44.382238294929266,
+          "steps": 161
+        },
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 10.141472017858177,
+          "steps": 1800
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 9.390848010778427,
+          "steps": 864
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 7.3341760113835335,
+          "steps": 144
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 5.4240319691598415,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 4.52863999363035,
+          "steps": 160
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 3.1467200107872486,
+          "steps": 130
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 2.9401919874362648,
+          "steps": 130
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 2.4903359934687614,
+          "steps": 48
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.6889280038885772,
+          "steps": 342
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 0.9005440026521683,
+          "steps": 16
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6841280004009604,
+          "steps": 146
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.48294400330632925,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.45756800193339586,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.41820799838751554,
+          "steps": 65
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.3356479983776808,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.22489599790424109,
+          "steps": 16
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.17145600030198693,
+          "steps": 33
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.05347200017422438,
+          "steps": 12
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019872000440955162,
+          "steps": 1
+        },
+        {
+          "operator": "Embed",
+          "duration_ms": 0.005535999778658152,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 43.03132629394531,
+          "implementation": "GenericMatmul { out_shape: [s, 248320], mul_shape: [s, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 1
+        },
+        {
+          "duration_ms": 5.406912002712488,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 96
+        },
+        {
+          "duration_ms": 4.773791968822479,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.654720012098551,
+          "implementation": "KernelScatterNoCopy { dest_shape: [603979776], dest_strides: [z], index_shape: [8, 48, 128, 128], index_strides: [(z*786432), (z*16384), (z*128), z], src_strides: [(z*786432), (z*16384), (z*128), z], out_strides: [z], dtype: F32 }",
+          "operator": "ScatterNoCopy",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6346240006387234,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.4903359934687614,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.40752000361681,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [((1024+s)*6144)], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9272640086710453,
+          "implementation": "DeepGemm { rows: s, output_features: 10240, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.908543998375535,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 6144, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 64
+        },
+        {
+          "duration_ms": 1.6810559816658497,
+          "implementation": "KernelScatter { dest_shape: [s, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [s, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 1.6533440062776208,
+          "implementation": "FusionEnd { shape: [s, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.275424001738429,
+          "implementation": "DeepGemm { rows: s, output_features: 6144, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.1566719990223646,
+          "implementation": "FusionEnd { shape: [8, 48, 128, 128], strides: [(z*786432), (z*16384), (z*128), z], dtype: Int }",
+          "operator": "FusedRegion",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9015999957919121,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.9005440026521683,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7124159997329116,
+          "implementation": "GenericMatmul { out_shape: [s, 48], mul_shape: [s, 48, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*245760), (z*5120)], sum_iter_stride: z, out_strides: [(z*48), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.7078080014325678,
+          "implementation": "FusionEnd { shape: [s, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6796160065568984,
+          "implementation": "FusionEnd { shape: [(max((((s-1)*48)+47), 0)+1)], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 144
+        },
+        {
+          "duration_ms": 0.6502400003373623,
+          "implementation": "DeepGemm { rows: s, output_features: 12288, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.6475199949927628,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 129
+        }
+      ],
+      "step_count": 4341
+    },
+    {
+      "program": "e23374b559d9d9ada4a9b3e844d3aadc",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 8,
+        "diagnostic_logits": true,
+        "phase": "decode-6",
+        "query_tokens": 8
+      },
+      "dimensions": {
+        "b": 8,
+        "c_0": 8,
+        "s": 8
+      },
+      "total_device_ms": 95.16051109600812,
+      "run": "b8",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 44.38079912401736,
+          "steps": 161
+        },
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 10.115840000100434,
+          "steps": 1800
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 9.359263970516622,
+          "steps": 864
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 7.34979198127985,
+          "steps": 144
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 5.427264016121626,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 4.526272004470229,
+          "steps": 160
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 3.1393919861875474,
+          "steps": 130
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 2.9314880101010203,
+          "steps": 130
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 2.4889919981360435,
+          "steps": 48
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.6883520032279193,
+          "steps": 342
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 0.8997440040111542,
+          "steps": 16
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.684704000595957,
+          "steps": 146
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.48416000232100487,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.4583039996214211,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.4167039985768497,
+          "steps": 65
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.3367359973490238,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.22479999996721745,
+          "steps": 16
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.16972799925133586,
+          "steps": 33
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.05267199967056513,
+          "steps": 12
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.01990400068461895,
+          "steps": 1
+        },
+        {
+          "operator": "Embed",
+          "duration_ms": 0.00559999980032444,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 43.03081512451172,
+          "implementation": "GenericMatmul { out_shape: [s, 248320], mul_shape: [s, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 1
+        },
+        {
+          "duration_ms": 5.415807981044054,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 96
+        },
+        {
+          "duration_ms": 4.777888014912605,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.6543039865791798,
+          "implementation": "KernelScatterNoCopy { dest_shape: [603979776], dest_strides: [z], index_shape: [8, 48, 128, 128], index_strides: [(z*786432), (z*16384), (z*128), z], src_strides: [(z*786432), (z*16384), (z*128), z], out_strides: [z], dtype: F32 }",
+          "operator": "ScatterNoCopy",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.6325119882822037,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.4889919981360435,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.4052799828350544,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [((1024+s)*6144)], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.933984000235796,
+          "implementation": "DeepGemm { rows: s, output_features: 10240, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.9094400014728308,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 6144, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 64
+        },
+        {
+          "duration_ms": 1.678624015301466,
+          "implementation": "KernelScatter { dest_shape: [s, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [s, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 1.6534400032833219,
+          "implementation": "FusionEnd { shape: [s, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.2741440068930387,
+          "implementation": "DeepGemm { rows: s, output_features: 6144, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.1558719985187054,
+          "implementation": "FusionEnd { shape: [8, 48, 128, 128], strides: [(z*786432), (z*16384), (z*128), z], dtype: Int }",
+          "operator": "FusedRegion",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9016639962792397,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.8997440040111542,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7136320006102324,
+          "implementation": "GenericMatmul { out_shape: [s, 48], mul_shape: [s, 48, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*245760), (z*5120)], sum_iter_stride: z, out_strides: [(z*48), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.711232001427561,
+          "implementation": "FusionEnd { shape: [s, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6795520023442805,
+          "implementation": "FusionEnd { shape: [(max((((s-1)*48)+47), 0)+1)], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 144
+        },
+        {
+          "duration_ms": 0.6493760012090206,
+          "implementation": "DeepGemm { rows: s, output_features: 12288, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.6449279962107539,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 129
+        }
+      ],
+      "step_count": 4341
+    },
+    {
+      "program": "e23374b559d9d9ada4a9b3e844d3aadc",
+      "graph_node": 0,
+      "workload": {
+        "batch_size": 8,
+        "diagnostic_logits": true,
+        "phase": "decode-7",
+        "query_tokens": 8
+      },
+      "dimensions": {
+        "b": 8,
+        "c_0": 8,
+        "s": 8
+      },
+      "total_device_ms": 95.2200952838175,
+      "run": "b8",
+      "phase": "profile",
+      "by_operator": [
+        {
+          "operator": "GenericMatmul",
+          "duration_ms": 44.39283125847578,
+          "steps": 161
+        },
+        {
+          "operator": "FusedRegion",
+          "duration_ms": 10.109152006916702,
+          "steps": 1800
+        },
+        {
+          "operator": "Gather",
+          "duration_ms": 9.36137600056827,
+          "steps": 864
+        },
+        {
+          "operator": "DeepGemmV3",
+          "duration_ms": 7.363040000200272,
+          "steps": 144
+        },
+        {
+          "operator": "DeepGemmV2",
+          "duration_ms": 5.445728030055761,
+          "steps": 80
+        },
+        {
+          "operator": "DeepGemmV1",
+          "duration_ms": 4.541632000356913,
+          "steps": 160
+        },
+        {
+          "operator": "ScatterNoCopy",
+          "duration_ms": 3.1431999993510544,
+          "steps": 130
+        },
+        {
+          "operator": "Scatter",
+          "duration_ms": 2.9364159936085343,
+          "steps": 130
+        },
+        {
+          "operator": "PackedDeltaScan",
+          "duration_ms": 2.4889599941670895,
+          "steps": 48
+        },
+        {
+          "operator": "Cast",
+          "duration_ms": 1.6849920051172376,
+          "steps": 342
+        },
+        {
+          "operator": "DeepGemmV0",
+          "duration_ms": 0.9025920033454895,
+          "steps": 16
+        },
+        {
+          "operator": "Iota",
+          "duration_ms": 0.6855999957770109,
+          "steps": 146
+        },
+        {
+          "operator": "CuBlasLt",
+          "duration_ms": 0.48067199904471636,
+          "steps": 48
+        },
+        {
+          "operator": "LessThan",
+          "duration_ms": 0.45545600121840835,
+          "steps": 96
+        },
+        {
+          "operator": "RMSNorm",
+          "duration_ms": 0.4177599982358515,
+          "steps": 65
+        },
+        {
+          "operator": "PackedCausalConvolution",
+          "duration_ms": 0.3362239981070161,
+          "steps": 48
+        },
+        {
+          "operator": "FlashInferAttention",
+          "duration_ms": 0.22412799950689077,
+          "steps": 16
+        },
+        {
+          "operator": "SumReduce",
+          "duration_ms": 0.171231999527663,
+          "steps": 33
+        },
+        {
+          "operator": "Constant",
+          "duration_ms": 0.053215999621897936,
+          "steps": 12
+        },
+        {
+          "operator": "Argmax",
+          "duration_ms": 0.019872000440955162,
+          "steps": 1
+        },
+        {
+          "operator": "Embed",
+          "duration_ms": 0.006016000173985958,
+          "steps": 1
+        }
+      ],
+      "top_implementations": [
+        {
+          "duration_ms": 43.04102325439453,
+          "implementation": "GenericMatmul { out_shape: [s, 248320], mul_shape: [s, 248320, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*1271398400), (z*5120)], sum_iter_stride: z, out_strides: [(z*248320), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 1
+        },
+        {
+          "duration_ms": 5.427775997668505,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 96
+        },
+        {
+          "duration_ms": 4.792448028922081,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 17408, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 64
+        },
+        {
+          "duration_ms": 2.6539519988000393,
+          "implementation": "KernelScatterNoCopy { dest_shape: [603979776], dest_strides: [z], index_shape: [8, 48, 128, 128], index_strides: [(z*786432), (z*16384), (z*128), z], src_strides: [(z*786432), (z*16384), (z*128), z], out_strides: [z], dtype: F32 }",
+          "operator": "ScatterNoCopy",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.634112000465393,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [603979776], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.4889599941670895,
+          "implementation": "PackedDeltaScanKernel { tokens: s, requests: b, spec: PackedDeltaScanSpec { key_heads: 16, value_heads: 48, key_width: 128, value_width: 128, normalization_epsilon: 1e-6 } }",
+          "operator": "PackedDeltaScan",
+          "records": 48
+        },
+        {
+          "duration_ms": 2.408704001456499,
+          "implementation": "KernelGather { out_shape: [8, 48, 128, 128], index_stride: [(z*786432), (z*16384), (z*128), z], data_shape: [((1024+s)*6144)], data_stride: [z], out_stride: [(z*786432), (z*16384), (z*128), z], dtype: F32 }",
+          "operator": "Gather",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.935264002531767,
+          "implementation": "DeepGemm { rows: s, output_features: 10240, input_features: 5120, variant: 3, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV3",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.91427200473845,
+          "implementation": "DeepGemm { rows: s, output_features: 5120, input_features: 6144, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 64
+        },
+        {
+          "duration_ms": 1.6806399933993816,
+          "implementation": "KernelScatter { dest_shape: [s, 24, 256, 2], dest_strides: [(z*12288), (z*512), (z*2), z], index_shape: [s, 24, 256], index_strides: [(z*6144), (z*256), z], src_strides: [(z*6144), (z*256), z], out_strides: [(z*12288), (z*512), (z*2), z], dtype: Bf16 }",
+          "operator": "Scatter",
+          "records": 32
+        },
+        {
+          "duration_ms": 1.6466880030930042,
+          "implementation": "FusionEnd { shape: [s, 48], strides: [(z*48), z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 336
+        },
+        {
+          "duration_ms": 1.2781760022044182,
+          "implementation": "DeepGemm { rows: s, output_features: 6144, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 48
+        },
+        {
+          "duration_ms": 1.1574079990386963,
+          "implementation": "FusionEnd { shape: [8, 48, 128, 128], strides: [(z*786432), (z*16384), (z*128), z], dtype: Int }",
+          "operator": "FusedRegion",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.9029119946062565,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 1, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV1",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.9025920033454895,
+          "implementation": "DeepGemm { rows: s, output_features: 17408, input_features: 5120, variant: 0, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV0",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.7151680020615458,
+          "implementation": "GenericMatmul { out_shape: [s, 48], mul_shape: [s, 48, 5120], k: 5120, lhs_strides: [(z*5120), 0, z], rhs_strides: [0, (z*5120), z], sum_input_strides: [(z*245760), (z*5120)], sum_iter_stride: z, out_strides: [(z*48), z], dtype: Bf16 }",
+          "operator": "GenericMatmul",
+          "records": 48
+        },
+        {
+          "duration_ms": 0.7076480025425553,
+          "implementation": "FusionEnd { shape: [s, 5120], strides: [(z*5120), z], dtype: Bf16 }",
+          "operator": "FusedRegion",
+          "records": 129
+        },
+        {
+          "duration_ms": 0.6805440047755837,
+          "implementation": "FusionEnd { shape: [(max((((s-1)*48)+47), 0)+1)], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 144
+        },
+        {
+          "duration_ms": 0.6532800011336803,
+          "implementation": "DeepGemm { rows: s, output_features: 12288, input_features: 5120, variant: 2, provider: \"deepgemm@sha256:44ba0bd2a9ecc7424012ff4ce0f11e66cc0eab4b11cd2723e18e4c519bbaacc0\" }",
+          "operator": "DeepGemmV2",
+          "records": 16
+        },
+        {
+          "duration_ms": 0.6445119958370924,
+          "implementation": "FusionEnd { shape: [5120], strides: [z], dtype: F32 }",
+          "operator": "FusedRegion",
+          "records": 129
+        }
+      ],
+      "step_count": 4341
+    }
+  ]
+}

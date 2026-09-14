@@ -21,6 +21,7 @@ const FIRST_MULTI_TOKEN_QUERY: usize = SINGLE_QUERY_TOKEN + 1;
 // choose any nonzero budget that fits their available compilation resources.
 const DEFAULT_RETAINED_CANDIDATES: usize = 1;
 const DEFAULT_PROFILING_TRIALS: usize = 3;
+const DEFAULT_INITIAL_CANDIDATES: usize = 1;
 const DEFAULT_MAXIMUM_BUCKETS: usize = 32;
 
 // The current attention and fixed-state metadata ABI uses i32 indices.
@@ -81,6 +82,10 @@ pub struct DecoderTuningProfile {
     pub context_pages: Vec<usize>,
     /// Candidate graphs retained for deployment-mode measurement in each bucket.
     pub keep_best: usize,
+    /// Initial broad-coverage genomes, within the total graph budget.
+    /// Includes the first executable seed; subsequent rejected and duplicate
+    /// programs consume this allowance too. Seed discovery has separate retries.
+    pub initial_candidates: usize,
     /// Repeated measurements per candidate; must be nonzero.
     pub trials: usize,
     /// Cooperative search limit; synchronous compiler calls cannot be preempted.
@@ -98,6 +103,7 @@ impl Default for DecoderTuningProfile {
             prefill_tokens: Vec::new(),
             context_pages: Vec::new(),
             keep_best: DEFAULT_RETAINED_CANDIDATES,
+            initial_candidates: DEFAULT_INITIAL_CANDIDATES,
             trials: DEFAULT_PROFILING_TRIALS,
             search_time_limit_ms: None,
             maximum_buckets: DEFAULT_MAXIMUM_BUCKETS,
@@ -109,6 +115,7 @@ impl Default for DecoderTuningProfile {
 impl DecoderTuningProfile {
     fn validate(&self, compile: DecoderCompileConfig) -> Result<(), DecoderError> {
         if self.keep_best == 0
+            || self.initial_candidates == 0
             || self.keep_best > compile.search_graphs
             || self.trials == 0
             || self.maximum_buckets == 0

@@ -34,8 +34,8 @@ import { evidenceHighlights, records, sourceUrl } from "../data/site";
       </div>
       <p class="reading-copy">
         Search and replay pass the existing logit and state-drain gates.
-        Attribution exposes expensive compiler rules and inconsistent matrix
-        kernel choices: faster decode can come with slower prefill.
+        Broader sampling still misses expensive matrix choices: the latest
+        record has faster prefill and slower decode than the prior observation.
       </p>
       <p class="reading-copy">
         Serving performance remains an open optimization target. Current results
@@ -69,7 +69,7 @@ import { evidenceHighlights, records, sourceUrl } from "../data/site";
         ))}
       </div>
       <p class="reading-copy">
-        Next: improve candidate coverage and measured region selection,
+        Next: apply state constraints earlier and explore expensive regions,
         then expand joint state and execution planning. See the{" "}
         <a href={sourceUrl("docs/roadmap.md")}>roadmap</a> and{" "}
         <a href={sourceUrl("docs/benchmarking.md")}>measurement method</a>.

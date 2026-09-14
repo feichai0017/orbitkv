@@ -1,0 +1,169 @@
+{
+  "hardware_and_toolchain": {
+    "gpu": {
+      "command": [
+        "nvidia-smi",
+        "--query-gpu=name,driver_version,compute_cap,memory.total",
+        "--format=csv,noheader"
+      ],
+      "output": "NVIDIA H20, 535.161.08, 9.0, 97871 MiB"
+    },
+    "cuda": {
+      "command": [
+        "/usr/local/cuda/bin/nvcc",
+        "--version"
+      ],
+      "output": "nvcc: NVIDIA (R) Cuda compiler driver\nCopyright (c) 2005-2025 NVIDIA Corporation\nBuilt on Tue_Dec_16_07:23:41_PM_PST_2025\nCuda compilation tools, release 13.1, V13.1.115\nBuild cuda_13.1.r13.1/compiler.37061995_0"
+    },
+    "rust": {
+      "command": [
+        "rustc",
+        "--version",
+        "--verbose"
+      ],
+      "output": "rustc 1.97.1 (8bab26f4f 2026-07-14)\nbinary: rustc\ncommit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452\ncommit-date: 2026-07-14\nhost: x86_64-unknown-linux-gnu\nrelease: 1.97.1\nLLVM version: 22.1.6"
+    }
+  },
+  "build": {
+    "root_commit": "43f870d1c90f27946a5d5df154513cfc24031ec2",
+    "luminal_commit": "e70df3c330564bbfa9b1ff3f3946b59e02b24e94",
+    "binary": "/workspace/orbitkv/.qualification/search-coverage-20260914/final/model_execution",
+    "binary_sha256": "376322e37b1c8ef376784f0730ccef0e69f753ccd73a4d6e2de4f5b74db6bb5f",
+    "source_inputs_unchanged": true,
+    "source_snapshot_sha256": "7b9ca9ecc56828b7e648cfaa2dde72b49f0504e1be8881730c064c0f13ffd88c",
+    "command": [
+      "cargo",
+      "test",
+      "--offline",
+      "--locked",
+      "--release",
+      "-p",
+      "orbitkv-executor",
+      "--features",
+      "cuda",
+      "--test",
+      "model_execution",
+      "--no-run",
+      "--message-format=json"
+    ]
+  },
+  "source_note": "Base commits precede the final commits. The frozen source snapshot and checked code hashes identify the uncommitted inputs actually built; code inputs remained unchanged through qualification.",
+  "source_snapshot": {
+    "path": "/workspace/orbitkv/.qualification/search-coverage-20260914/final/source.json",
+    "bytes": 73007,
+    "sha256": "7b9ca9ecc56828b7e648cfaa2dde72b49f0504e1be8881730c064c0f13ffd88c"
+  },
+  "code_files_unchanged": 368,
+  "historical_result_files_unchanged": 133,
+  "model_oracle_binary": {
+    "binary": {
+      "bytes": 19123112,
+      "path": "/workspace/orbitkv/.qualification/search-coverage-20260914/final/model_execution",
+      "sha256": "376322e37b1c8ef376784f0730ccef0e69f753ccd73a4d6e2de4f5b74db6bb5f"
+    },
+    "model": [
+      {
+        "bytes": 51350,
+        "path": "/workspace/models/qwen3.8-27b-fp8/config.json",
+        "sha256": "74227dd615bf1ea975aa676bdf355a0379858c12f394b5365cd9dfa5fc2c70bc"
+      },
+      {
+        "bytes": 137335,
+        "path": "/workspace/models/qwen3.8-27b-fp8/model.safetensors.index.json",
+        "sha256": "f0838c766951bdfe76d6afbdb2771a8f67aaa2231dedb3d33cebd817729843a2"
+      },
+      {
+        "bytes": 65249,
+        "path": "/workspace/models/qwen3.8-27b-fp8/README.md",
+        "sha256": "a247d876f5398eed9ae898f32a984083552de57237b5e20714657e1675e26d2e"
+      }
+    ],
+    "oracle": [
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/prefill-last.f32",
+        "sha256": "f9c956e374b36648cc4e5bba0a9743f36ff8007059372e5d8cf1f47ae35728d8"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode.f32",
+        "sha256": "12117266c12a5f43273b3e04a990737b092e52530aa48f700ab5e3f7a26887c0"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-2.f32",
+        "sha256": "3da428b9b66f10eb312545b5ddac4a8eab0ae8c419e355ee943acf99442dabef"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-3.f32",
+        "sha256": "2c99df81e22d3ff7f06a90a460fc2409f668fe361bc44de492cce788f9c82d9a"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-4.f32",
+        "sha256": "ca01f6c57c2cfe46a7d2a3e085a313e31e112ec2c3c1a248ab1bad5d9d91332c"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-5.f32",
+        "sha256": "cf7f66b0a1ac34012c817b02c2e966ac52399dbc6dad23bbd248d011d4b81c58"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-6.f32",
+        "sha256": "ebb677f0dae674a26ed4fcb2c0cf8f0b17bd64d7ffd9294821830445c8a3a2a1"
+      },
+      {
+        "bytes": 993280,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/decode-7.f32",
+        "sha256": "956101bab707008994b3267dfa33416b09be54604c9c2df72f73a9369e44875b"
+      },
+      {
+        "bytes": 342,
+        "path": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference/metadata.json",
+        "sha256": "1eb065aaa6d4bb06e4ef632b714053ea9e2f0e90e51097568220bf3028ab938c"
+      }
+    ],
+    "replay_artifact": null,
+    "stage_metrics": {
+      "bytes": 7961,
+      "path": "/workspace/orbitkv/tools/stage_metrics.py",
+      "sha256": "aca30b881f66e1719714e2d997d2fcb936f9c82850f70cc1adde03973dd2ca3e"
+    },
+    "stage_summarizer": {
+      "bytes": 6095,
+      "path": "/workspace/orbitkv/tools/summarize_stage_trace.py",
+      "sha256": "f502c0e5a6d2fa937f823376f317917e7809a472ed20a6b364fc3b2e0d7fe775"
+    },
+    "tuning_profile": {
+      "bytes": 243,
+      "path": "/workspace/orbitkv/benchmarks/search-coverage.json",
+      "sha256": "53a9b70d8ef9b82b04ce44281813b63634dfc36f3b53702ebc737a91928eaee0"
+    }
+  },
+  "selected_environment": {
+    "CUDA_HOME": "/usr/local/cuda",
+    "FLASHINFER_CUDA_ARCH": "sm_90",
+    "LUMINAL_DEEPGEMM_DIR": "/root/.cache/luminal/providers/deepgemm/559d79fb6994",
+    "LUMINAL_FLASHATTENTION_DIR": "/root/.cache/luminal/providers/flashattention/8d3a3b80d475",
+    "LUMINAL_FLASHINFER_DIR": "/root/.cache/luminal/providers/flashinfer/f1e6fdcb8f65",
+    "LUMINAL_SEARCH_TRACE": "/workspace/orbitkv/.qualification/search-coverage-20260914/qualified/search.jsonl",
+    "LUMINAL_STAGE_TRACE": "/workspace/orbitkv/.qualification/search-coverage-20260914/qualified/b1/cold-search/stages.jsonl",
+    "ORBITKV_DECODER_ARTIFACT": "/workspace/orbitkv/.qualification/search-coverage-20260914/qualified/b1/decoder.json",
+    "ORBITKV_GRAPH_CACHE_CAPACITY": "2",
+    "ORBITKV_MODEL_DIR": "/workspace/models/qwen3.8-27b-fp8",
+    "ORBITKV_QUALIFICATION_BATCH_CAPACITY": "8",
+    "ORBITKV_QUALIFICATION_BATCH_SIZE": "1",
+    "ORBITKV_REFERENCE_DIR": "/workspace/orbitkv/.qualification/workload-attribution-20260914/reference",
+    "ORBITKV_SEARCH_GRAPHS": "8",
+    "ORBITKV_TUNING_PROFILE": "/workspace/orbitkv/benchmarks/search-coverage.json",
+    "PATH": "/usr/local/cuda/bin:/root/.local/share/mise/installs/node/24.19.0/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex-path:/root/.codex/tmp/arg0/codex-arg0b8e4D2:/root/.local/bin:/root/.local/share/mise/installs/node/24.19.0/bin:/root/.local/bin:/root/.cargo/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
+  },
+  "artifact": {
+    "path": "/workspace/orbitkv/.qualification/search-coverage-20260914/qualified/b1/decoder.json",
+    "bytes": 48075872,
+    "sha256": "bb8bde30772c62e0db609864fca403f7bc8257323d7f0e21503b523e9769ec4e"
+  },
+  "cache_scope": "Existing content-addressed provider/CUDA JIT caches reused; no empty-cache or paired serving comparison."
+}

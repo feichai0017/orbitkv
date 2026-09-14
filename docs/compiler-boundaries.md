@@ -19,6 +19,7 @@ the table below assigns compiler responsibilities within that structure.
 | Feasible correlated buckets | `model/tuning/buckets.rs` | Query/request/page ranges and each physical arena's capacity |
 | Profiling input fixture | `model/tuning/fixture.rs` | Typed graph bindings with explicit capacities; private-page CSR metadata |
 | Graph alternatives and generic extraction | Luminal `src/graph.rs`, `src/egglog_utils`, `src/search` | Semantic rewrites and executable dependencies; no GPU measurement in core |
+| Snapshot sampling and initial coverage | Luminal `src/egglog_utils/sampling.rs`, `src/search/genetic.rs` | Existing admitted egraph alternatives, RNG state and caller budgets; no provider preference or graph rewriting |
 | CUDA evaluation and deployment ranking | `luminal_cuda_lite/src/search.rs` | Actual device measurements plus resource checks |
 | Search evidence | `luminal_cuda_lite/src/search/trace.rs` | Candidate program identity, full operation manifest, outcomes and scores |
 | CPU stage attribution | `luminal_tracing/src/stages.rs`, exposed by executor `diagnostics.rs` | Buffered synchronous wall spans; explicit completion, no added device synchronization |
@@ -85,9 +86,10 @@ Schema 1 is JSON Lines:
 
 | Event | Evidence |
 | --- | --- |
-| `search_started` | Backend, search/trial budgets, schema and fingerprint scope |
-| `program` | Semantic program identity, all operations, ordered inputs and available host-provider labels |
-| `direct` | Candidate/bucket, actual dimensions, measurement/rejection, timeout decision, device and evaluation wall times |
+| `search_started` | Backend, search/trial/initial-population budgets, schema and fingerprint scope |
+| `bucket_started` | SHA-256 of the ordered serialized egraph and custom-op descriptors, format/scope, size and representative dimensions |
+| `program` | Semantic program identity, all operations, ordered inputs, available host-provider and generated-kernel labels |
+| `direct` | Candidate/bucket, sampling origin (`Coverage`, `Mutation`, `Restart`), actual dimensions, measurement/rejection, timeout decision, device and evaluation wall times |
 | `deployment` | Same program identity, direct rank/score, deployment CUDA Graph score or rejection |
 | `deployment_extraction_rejected` | Direct rank and available extraction failure reason |
 | `finalist_validation` | Deployment rank and final resource-validation result |
@@ -106,6 +108,14 @@ fingerprints that included cache state must be regenerated through fresh search.
 Use the accompanying artifact/environment receipts for those identities.
 Operation counts are LLIR nodes, not CUDA launch counts. No model name, output
 head shape, or preferred provider determines which operations are recorded.
+
+Sampling orders class and node IDs within an existing snapshot. Its digest is
+an input identity, not a canonical semantic hash across fresh saturation runs;
+it excludes compiler binaries, input data and device state. Fixed-snapshot
+sampling also needs the same RNG state, options and feedback to reproduce later
+generations. GPU timing noise and time budgets can change rankings and stopping
+points. [Search coverage](search-coverage.md) describes the scope of the initial
+exploration policy and its regression checks.
 
 Direct measurements may use early-stop/trial limits; those options and the
 early-stop hint are retained, and a score does not certify that every trial

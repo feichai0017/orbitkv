@@ -1,0 +1,482 @@
+[
+  {
+    "indices": {
+      "c_0": 0,
+      "b": 0,
+      "s": 0
+    },
+    "representative": {
+      "c_0": 8,
+      "s": 1,
+      "b": 1
+    },
+    "unrolled_llir_fingerprint": [
+      4330637851187468446,
+      9486904165819041802
+    ],
+    "selected_generic_matmuls": [
+      {
+        "result_class": "IR-6150",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (1)) (ECons (MNum (4)) (ENil))) (ECons (MNum (1)) (ECons (MNum (4)) (ECons (MNum (256)) (ENil)))) (MNum (256)) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (4))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-6377",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (1)) (ECons (MNum (32)) (ENil))) (ECons (MNum (1)) (ECons (MNum (32)) (ECons (MNum (1)) (ENil)))) (MNum (1)) (ECons (MIter) (ECons (MNum (0)) (ECons (MNum (0)) (ENil)))) (ECons (MNum (0)) (ECons (MIter) (ECons (MNum (0)) (ENil)))) (ECons (MMul (MIter) (MNum (32))) (ECons (MIter) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (32))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      }
+    ],
+    "attention_templates": [
+      {
+        "result_class": "IR-7603",
+        "selected": "FlashInferAttention",
+        "kind": "(FlashInferAttention (MNum (24)) (MNum (4)) (MNum (256)) (MNum (16)) (MNum (1)) (MVar (\"c_0\")) (MNum (1)) (Bf16) (0.0625) (-1.0) (\"tensor-core\") (\"flashinfer@sha256:27503b37f51a369b1098e3678dabb98e3669a9741bc3818435241ac19c53c8fd\"))",
+        "alternative_kinds": [
+          "CustomOpKind",
+          "FlashAttention",
+          "FlashInferAttention"
+        ]
+      }
+    ]
+  },
+  {
+    "indices": {
+      "c_0": 0,
+      "b": 0,
+      "s": 1
+    },
+    "representative": {
+      "c_0": 8,
+      "s": 4,
+      "b": 1
+    },
+    "unrolled_llir_fingerprint": [
+      8069159898552994994,
+      15557685428989980605
+    ],
+    "selected_generic_matmuls": [
+      {
+        "result_class": "IR-4902",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ECons (MNum (48)) (ENil))) (ECons (MVar (\"s\")) (ECons (MNum (48)) (ECons (MNum (5120)) (ENil)))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MNum (0)) (ECons (MIter) (ENil)))) (ECons (MNum (0)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil)))) (ECons (MMul (MMul (MIter) (MNum (5120))) (MNum (48))) (ECons (MMul (MIter) (MNum (5120))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (48))) (ECons (MIter) (ENil))) (Bf16))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "cublaslt"
+        ]
+      },
+      {
+        "result_class": "IR-5388",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ECons (MNum (48)) (ENil))) (ECons (MVar (\"s\")) (ECons (MNum (48)) (ECons (MNum (128)) (ENil)))) (MNum (128)) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (128))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (128))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (128))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (48))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-6153",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ECons (MNum (4)) (ENil))) (ECons (MVar (\"s\")) (ECons (MNum (4)) (ECons (MNum (256)) (ENil)))) (MNum (256)) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (4))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-7697",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ENil)) (ECons (MVar (\"s\")) (ECons (MNum (5120)) (ENil))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ENil)) (MIter) (ECons (MIter) (ENil)) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      }
+    ],
+    "attention_templates": [
+      {
+        "result_class": "IR-7606",
+        "selected": "FlashInferAttention",
+        "kind": "(FlashInferAttention (MNum (24)) (MNum (4)) (MNum (256)) (MNum (16)) (MVar (\"s\")) (MVar (\"c_0\")) (MNum (1)) (Bf16) (0.0625) (-1.0) (\"tensor-core\") (\"flashinfer@sha256:27503b37f51a369b1098e3678dabb98e3669a9741bc3818435241ac19c53c8fd\"))",
+        "alternative_kinds": [
+          "CustomOpKind",
+          "FlashAttention",
+          "FlashInferAttention"
+        ]
+      }
+    ]
+  },
+  {
+    "indices": {
+      "c_0": 0,
+      "b": 0,
+      "s": 2
+    },
+    "representative": {
+      "c_0": 8,
+      "s": 32,
+      "b": 1
+    },
+    "unrolled_llir_fingerprint": [
+      7366690612345776179,
+      1573960719586105066
+    ],
+    "selected_generic_matmuls": [
+      {
+        "result_class": "IR-3201",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ENil)) (ECons (MNum (32)) (ECons (MNum (5120)) (ENil))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ENil)) (MIter) (ECons (MIter) (ENil)) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-4902",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ECons (MNum (48)) (ENil))) (ECons (MNum (32)) (ECons (MNum (48)) (ECons (MNum (5120)) (ENil)))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MNum (0)) (ECons (MIter) (ENil)))) (ECons (MNum (0)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil)))) (ECons (MMul (MMul (MIter) (MNum (5120))) (MNum (48))) (ECons (MMul (MIter) (MNum (5120))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (48))) (ECons (MIter) (ENil))) (Bf16))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "cublaslt"
+        ]
+      },
+      {
+        "result_class": "IR-5388",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ECons (MNum (48)) (ENil))) (ECons (MNum (32)) (ECons (MNum (48)) (ECons (MNum (128)) (ENil)))) (MNum (128)) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (128))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (128))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (128))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (48))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-5571",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ENil)) (ECons (MNum (32)) (ECons (MNum (5120)) (ENil))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ENil)) (MIter) (ECons (MIter) (ENil)) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-6153",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ECons (MNum (4)) (ENil))) (ECons (MNum (32)) (ECons (MNum (4)) (ECons (MNum (256)) (ENil)))) (MNum (256)) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (4))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-6062",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ECons (MNum (24)) (ENil))) (ECons (MNum (32)) (ECons (MNum (24)) (ECons (MNum (256)) (ENil)))) (MNum (256)) (ECons (MMul (MIter) (MNum (12288))) (ECons (MMul (MIter) (MNum (512))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (12288))) (ECons (MMul (MIter) (MNum (512))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (256))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (24))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      }
+    ],
+    "attention_templates": [
+      {
+        "result_class": "IR-7601",
+        "selected": "FlashInferAttention",
+        "kind": "(FlashInferAttention (MNum (24)) (MNum (4)) (MNum (256)) (MNum (16)) (MNum (32)) (MVar (\"c_0\")) (MNum (1)) (Bf16) (0.0625) (-1.0) (\"tensor-core\") (\"flashinfer@sha256:27503b37f51a369b1098e3678dabb98e3669a9741bc3818435241ac19c53c8fd\"))",
+        "alternative_kinds": [
+          "CustomOpKind",
+          "FlashAttention",
+          "FlashInferAttention"
+        ]
+      }
+    ]
+  },
+  {
+    "indices": {
+      "c_0": 0,
+      "b": 1,
+      "s": 1
+    },
+    "representative": {
+      "c_0": 8,
+      "s": 4,
+      "b": 2
+    },
+    "unrolled_llir_fingerprint": [
+      10693147095933877813,
+      7889023456263636572
+    ],
+    "selected_generic_matmuls": [
+      {
+        "result_class": "IR-7942",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ECons (MNum (248320)) (ENil))) (ECons (MVar (\"s\")) (ECons (MNum (248320)) (ECons (MNum (5120)) (ENil)))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MNum (0)) (ECons (MIter) (ENil)))) (ECons (MNum (0)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil)))) (ECons (MMul (MMul (MIter) (MNum (5120))) (MNum (248320))) (ECons (MMul (MIter) (MNum (5120))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (248320))) (ECons (MIter) (ENil))) (Bf16))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "cublaslt"
+        ]
+      },
+      {
+        "result_class": "IR-5571",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ENil)) (ECons (MVar (\"s\")) (ECons (MNum (5120)) (ENil))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ENil)) (MIter) (ECons (MIter) (ENil)) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-5941",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ENil)) (ECons (MVar (\"s\")) (ECons (MNum (5120)) (ENil))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ENil)) (MIter) (ECons (MIter) (ENil)) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-6153",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ECons (MNum (4)) (ENil))) (ECons (MVar (\"s\")) (ECons (MNum (4)) (ECons (MNum (256)) (ENil)))) (MNum (256)) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (4))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-6381",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ECons (MNum (32)) (ENil))) (ECons (MVar (\"s\")) (ECons (MNum (32)) (ECons (MNum (1)) (ENil)))) (MNum (1)) (ECons (MIter) (ECons (MNum (0)) (ECons (MNum (0)) (ENil)))) (ECons (MNum (0)) (ECons (MIter) (ECons (MNum (0)) (ENil)))) (ECons (MMul (MIter) (MNum (32))) (ECons (MIter) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (32))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-6062",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ECons (MNum (24)) (ENil))) (ECons (MVar (\"s\")) (ECons (MNum (24)) (ECons (MNum (256)) (ENil)))) (MNum (256)) (ECons (MMul (MIter) (MNum (12288))) (ECons (MMul (MIter) (MNum (512))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (12288))) (ECons (MMul (MIter) (MNum (512))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (256))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (24))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      }
+    ],
+    "attention_templates": [
+      {
+        "result_class": "IR-7607",
+        "selected": "FlashAttention",
+        "kind": "(FlashAttention (MNum (24)) (MNum (4)) (MNum (256)) (MNum (16)) (MVar (\"s\")) (MVar (\"c_0\")) (MVar (\"b\")) (Bf16) (0.0625) (-1.0) (\"flashattention@sha256:25a09b6e9ba5aa3493d69b24dcab639daeedb36dbc291678061bd0f85e62a794\"))",
+        "alternative_kinds": [
+          "CustomOpKind",
+          "FlashAttention",
+          "FlashInferAttention"
+        ]
+      }
+    ]
+  },
+  {
+    "indices": {
+      "c_0": 0,
+      "b": 1,
+      "s": 2
+    },
+    "representative": {
+      "c_0": 8,
+      "s": 32,
+      "b": 2
+    },
+    "unrolled_llir_fingerprint": [
+      17148205228044870680,
+      10812573081623699582
+    ],
+    "selected_generic_matmuls": [
+      {
+        "result_class": "IR-7937",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ECons (MNum (248320)) (ENil))) (ECons (MNum (32)) (ECons (MNum (248320)) (ECons (MNum (5120)) (ENil)))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MNum (0)) (ECons (MIter) (ENil)))) (ECons (MNum (0)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil)))) (ECons (MMul (MMul (MIter) (MNum (5120))) (MNum (248320))) (ECons (MMul (MIter) (MNum (5120))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (248320))) (ECons (MIter) (ENil))) (Bf16))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "cublaslt"
+        ]
+      },
+      {
+        "result_class": "IR-6062",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ECons (MNum (24)) (ENil))) (ECons (MNum (32)) (ECons (MNum (24)) (ECons (MNum (256)) (ENil)))) (MNum (256)) (ECons (MMul (MIter) (MNum (12288))) (ECons (MMul (MIter) (MNum (512))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (12288))) (ECons (MMul (MIter) (MNum (512))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (256))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (24))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-7693",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ENil)) (ECons (MNum (32)) (ECons (MNum (5120)) (ENil))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ENil)) (MIter) (ECons (MIter) (ENil)) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      }
+    ],
+    "attention_templates": [
+      {
+        "result_class": "IR-7602",
+        "selected": "FlashInferAttention",
+        "kind": "(FlashInferAttention (MNum (24)) (MNum (4)) (MNum (256)) (MNum (16)) (MNum (32)) (MVar (\"c_0\")) (MVar (\"b\")) (Bf16) (0.0625) (-1.0) (\"tensor-core\") (\"flashinfer@sha256:27503b37f51a369b1098e3678dabb98e3669a9741bc3818435241ac19c53c8fd\"))",
+        "alternative_kinds": [
+          "CustomOpKind",
+          "FlashAttention",
+          "FlashInferAttention"
+        ]
+      }
+    ]
+  },
+  {
+    "indices": {
+      "c_0": 0,
+      "b": 2,
+      "s": 1
+    },
+    "representative": {
+      "c_0": 8,
+      "s": 8,
+      "b": 8
+    },
+    "unrolled_llir_fingerprint": [
+      16299499798629308845,
+      11865212503452789468
+    ],
+    "selected_generic_matmuls": [
+      {
+        "result_class": "IR-4903",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ECons (MNum (48)) (ENil))) (ECons (MVar (\"s\")) (ECons (MNum (48)) (ECons (MNum (5120)) (ENil)))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MNum (0)) (ECons (MIter) (ENil)))) (ECons (MNum (0)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil)))) (ECons (MMul (MMul (MIter) (MNum (5120))) (MNum (48))) (ECons (MMul (MIter) (MNum (5120))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (48))) (ECons (MIter) (ENil))) (Bf16))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "cublaslt"
+        ]
+      },
+      {
+        "result_class": "IR-7943",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ECons (MNum (248320)) (ENil))) (ECons (MVar (\"s\")) (ECons (MNum (248320)) (ECons (MNum (5120)) (ENil)))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MNum (0)) (ECons (MIter) (ENil)))) (ECons (MNum (0)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil)))) (ECons (MMul (MMul (MIter) (MNum (5120))) (MNum (248320))) (ECons (MMul (MIter) (MNum (5120))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (248320))) (ECons (MIter) (ENil))) (Bf16))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "cublaslt"
+        ]
+      },
+      {
+        "result_class": "IR-5389",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ECons (MNum (48)) (ENil))) (ECons (MVar (\"s\")) (ECons (MNum (48)) (ECons (MNum (128)) (ENil)))) (MNum (128)) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (128))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (128))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (128))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (48))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-5572",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ENil)) (ECons (MVar (\"s\")) (ECons (MNum (5120)) (ENil))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ENil)) (MIter) (ECons (MIter) (ENil)) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-5942",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MVar (\"s\")) (ENil)) (ECons (MVar (\"s\")) (ECons (MNum (5120)) (ENil))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ENil)) (MIter) (ECons (MIter) (ENil)) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      }
+    ],
+    "attention_templates": [
+      {
+        "result_class": "IR-7608",
+        "selected": "FlashInferAttention",
+        "kind": "(FlashInferAttention (MNum (24)) (MNum (4)) (MNum (256)) (MNum (16)) (MVar (\"s\")) (MVar (\"c_0\")) (MNum (8)) (Bf16) (0.0625) (-1.0) (\"tensor-core\") (\"flashinfer@sha256:27503b37f51a369b1098e3678dabb98e3669a9741bc3818435241ac19c53c8fd\"))",
+        "alternative_kinds": [
+          "CustomOpKind",
+          "FlashAttention",
+          "FlashInferAttention"
+        ]
+      }
+    ]
+  },
+  {
+    "indices": {
+      "c_0": 0,
+      "b": 2,
+      "s": 2
+    },
+    "representative": {
+      "c_0": 8,
+      "s": 32,
+      "b": 8
+    },
+    "unrolled_llir_fingerprint": [
+      1730123530337912953,
+      10301277420147028406
+    ],
+    "selected_generic_matmuls": [
+      {
+        "result_class": "IR-6154",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ECons (MNum (4)) (ENil))) (ECons (MNum (32)) (ECons (MNum (4)) (ECons (MNum (256)) (ENil)))) (MNum (256)) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (1024))) (ECons (MMul (MIter) (MNum (256))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (4))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-6377",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ECons (MNum (32)) (ENil))) (ECons (MNum (32)) (ECons (MNum (32)) (ECons (MNum (1)) (ENil)))) (MNum (1)) (ECons (MIter) (ECons (MNum (0)) (ECons (MNum (0)) (ENil)))) (ECons (MNum (0)) (ECons (MIter) (ECons (MNum (0)) (ENil)))) (ECons (MMul (MIter) (MNum (32))) (ECons (MIter) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (32))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-6063",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ECons (MNum (24)) (ENil))) (ECons (MNum (32)) (ECons (MNum (24)) (ECons (MNum (256)) (ENil)))) (MNum (256)) (ECons (MMul (MIter) (MNum (12288))) (ECons (MMul (MIter) (MNum (512))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (12288))) (ECons (MMul (MIter) (MNum (512))) (ECons (MIter) (ENil)))) (ECons (MMul (MIter) (MNum (6144))) (ECons (MMul (MIter) (MNum (256))) (ENil))) (MIter) (ECons (MMul (MIter) (MNum (24))) (ECons (MIter) (ENil))) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      },
+      {
+        "result_class": "IR-7907",
+        "selected": "GenericMatmul",
+        "kind": "(GenericMatmul (ECons (MNum (32)) (ENil)) (ECons (MNum (32)) (ECons (MNum (5120)) (ENil))) (MNum (5120)) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ECons (MIter) (ENil))) (ECons (MMul (MIter) (MNum (5120))) (ENil)) (MIter) (ECons (MIter) (ENil)) (F32))",
+        "alternative_kinds": [
+          "GenericMatmul",
+          "KernelSum"
+        ]
+      }
+    ],
+    "attention_templates": [
+      {
+        "result_class": "IR-7603",
+        "selected": "FlashInferAttention",
+        "kind": "(FlashInferAttention (MNum (24)) (MNum (4)) (MNum (256)) (MNum (16)) (MNum (32)) (MVar (\"c_0\")) (MNum (8)) (Bf16) (0.0625) (-1.0) (\"tensor-core\") (\"flashinfer@sha256:27503b37f51a369b1098e3678dabb98e3669a9741bc3818435241ac19c53c8fd\"))",
+        "alternative_kinds": [
+          "CustomOpKind",
+          "FlashAttention",
+          "FlashInferAttention"
+        ]
+      }
+    ]
+  }
+]

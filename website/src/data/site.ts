@@ -57,10 +57,10 @@ export const evidenceHighlights = [
     detail: "Qwen3.8 block-FP8 on NVIDIA H20.",
   },
   {
-    value: "592",
+    value: "296",
     label: "Logit comparisons",
     detail:
-      "Full vocabulary at B1 and B8, across two builds, search, and replay.",
+      "Full vocabulary at B1 and B8, across search and artifact replay.",
   },
   {
     value: "7",
@@ -79,6 +79,13 @@ export const docs = [
 ];
 
 export const records = [
+  {
+    date: "2026-09-14",
+    name: "Search coverage and limits",
+    detail:
+      "Stable snapshot sampling and 56 measured graphs. Correctness passes; performance remains mixed.",
+    path: "results/search-coverage-20260914/README.md",
+  },
   {
     date: "2026-09-14",
     name: "Compiler and runtime attribution",

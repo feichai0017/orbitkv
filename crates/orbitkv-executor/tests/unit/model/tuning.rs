@@ -34,6 +34,10 @@ fn tuning_identity_covers_workload_budget_and_experimental_candidates() {
     let original = identity(&DecoderTuningProfile::default());
     for tuning in [
         DecoderTuningProfile {
+            initial_candidates: 4,
+            ..Default::default()
+        },
+        DecoderTuningProfile {
             batch_sizes: vec![1, 2],
             ..Default::default()
         },
@@ -79,11 +83,13 @@ fn tuning_buckets_supply_valid_ragged_metadata_and_cover_feasible_intervals() {
         batch_sizes: vec![1, 2, 4],
         prefill_tokens: vec![2, 16],
         keep_best: 3,
+        initial_candidates: 4,
         search_time_limit_ms: Some(5000),
         ..Default::default()
     };
     let options = tuning::decoder_compile_options(&decoder, compile, &tuning, 16).unwrap();
     assert_eq!(options.keep_best, 3);
+    assert_eq!(options.initial_population, 4);
     assert_eq!(options.search_time_limit, std::time::Duration::from_secs(5));
     let profiles = options.bucket_representatives.as_ref().unwrap();
     let inputs = representative::RepresentativeInputs::new(&decoder, compile, 16);
@@ -178,6 +184,10 @@ fn tuning_rejects_ambiguous_representatives_and_unbounded_bucket_growth() {
         search_seed: 1,
     };
     for tuning in [
+        DecoderTuningProfile {
+            initial_candidates: 0,
+            ..Default::default()
+        },
         DecoderTuningProfile {
             batch_sizes: vec![2, 2],
             ..Default::default()
